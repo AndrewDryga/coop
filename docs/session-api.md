@@ -17,7 +17,7 @@ trusted local service
   -> owner-only Unix socket
   -> durable Coop session controller
   -> one Coop fork and private ACP state per session
-  -> short-lived boxed ACP child for each turn
+  -> boxed ACP child, cold per turn or bounded warm by operator policy
 ```
 
 The socket and state files are mode `0600`; their directories are mode `0700`. The daemon refuses
@@ -56,6 +56,7 @@ policies:
     max_queued_turns: 20
     max_queued_bytes: 1048576
     turn_timeout: 1h
+    warm_idle_timeout: 15m
     max_patch_bytes: 1048576
 ```
 
@@ -69,6 +70,7 @@ The parser rejects unknown fields and requires:
 - `max_queued_turns`: `1..1000`;
 - `max_queued_bytes`: `1..67108864`;
 - `turn_timeout`: positive and no longer than 24 hours;
+- `warm_idle_timeout`: optional, positive, and no longer than one hour;
 - `max_patch_bytes`: `1..1048576`.
 
 The selected account must already be authenticated. If the target omits `@account`, Coop resolves
@@ -177,10 +179,16 @@ create -> open/parked
           -> discard plan -> discarded
 ```
 
-One worker owns a session. Turns are a bounded durable FIFO and only one runs at a time. Coop starts
-one short-lived `coop fork <name> acp <target>` child for a turn, resumes the exact recorded native
-session, records only its terminal assistant message for public consumption, and tears down the
-child and run-labeled box before parking.
+One worker owns a session. Turns are a bounded durable FIFO and only one runs at a time. Without
+`warm_idle_timeout`, Coop starts one short-lived `coop fork <name> acp <target>` child for a turn,
+resumes the exact recorded native session, records only its terminal assistant message for public
+consumption, and tears down the child and run-labeled box before parking.
+
+With `warm_idle_timeout`, Coop can prepare the authenticated ACP connection before the first turn
+and reuse that exact process and native session across serialized turns. The daemon retains at most
+20 warm sessions. Expiry, cancellation, failure, close, discard, or daemon shutdown stops the
+process, removes its run-labeled box and services, and deletes projected credentials. Provider-native
+history remains durable, so the next cold child can load the exact session again.
 
 On restart, queued turns that were never sent remain eligible. A turn interrupted after send intent
 is terminalized as interrupted and is not silently replayed. Provider-declared projected credential
@@ -221,6 +229,7 @@ configuration.
 | `POST` | `/v1/sessions` | `policy`, `task` |
 | `GET` | `/v1/sessions?limit=100` | `limit` is `1..1000` |
 | `GET` | `/v1/sessions/{session_id}` | none |
+| `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; policy must enable warm execution |
 
 The public session includes IDs, target, policy digest, primary base commit, companion aliases,
 in-box paths and pinned commits, generated fork name, revision, state, activity, queue/budget

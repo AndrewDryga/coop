@@ -316,6 +316,10 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 		if sessionHTTPMethod(w, r, http.MethodPost) {
 			h.extendBudget(w, r, sessionID)
 		}
+	case len(parts) == 2 && parts[1] == "prepare":
+		if sessionHTTPMethod(w, r, http.MethodPost) {
+			h.prepareSession(w, r, sessionID)
+		}
 	case len(parts) == 2 && parts[1] == "review":
 		if sessionHTTPMethod(w, r, http.MethodPost) {
 			h.review(w, r, sessionID)
@@ -479,6 +483,24 @@ func (h *sessionHTTPHandler) submitTurn(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	writeSessionJSON(w, http.StatusOK, sessionMutationTurnResponse{Operation: publicOperation(op), Turn: publicTurn(turn)})
+}
+
+func (h *sessionHTTPHandler) prepareSession(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if !h.requirePost(w, r) {
+		return
+	}
+	var body struct {
+		ExpectedRevision int64 `json:"expected_revision"`
+	}
+	if !decodeSessionJSON(w, r, &body) {
+		return
+	}
+	sess, err := h.service.PrepareSession(r.Context(), sessionID, body.ExpectedRevision)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, publicSession(sess))
 }
 
 func (h *sessionHTTPHandler) listTurns(w http.ResponseWriter, r *http.Request, sessionID string) {

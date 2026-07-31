@@ -41,13 +41,14 @@ func TestParseSessionPoliciesIsStrictAndPinsOneTarget(t *testing.T) {
 	cfg := &config.Config{ConfigDir: configRoot}
 	valid := []byte("version: 1\npolicies:\n  responder:\n    repository: " + repo +
 		"\n    companions:\n      - name: application\n        repository: " + companion +
-		"\n    target: codex:model/high@work\n    max_turns: 100\n    max_queued_turns: 20\n    max_queued_bytes: 1048576\n    max_patch_bytes: 1048576\n    turn_timeout: 1h\n")
+		"\n    target: codex:model/high@work\n    max_turns: 100\n    max_queued_turns: 20\n    max_queued_bytes: 1048576\n    max_patch_bytes: 1048576\n    turn_timeout: 1h\n    warm_idle_timeout: 15m\n")
 	policies, err := parseSessionPolicies(valid, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := policies["responder"]; got.Target != "codex:model/high@work" ||
 		got.Repository != repo || got.TurnTimeout != time.Hour ||
+		got.WarmIdleTimeout != 15*time.Minute ||
 		len(got.Companions) != 1 ||
 		got.Companions[0] != (SessionCompanionPolicy{
 			Name: "application", Repository: companion,
@@ -62,6 +63,20 @@ func TestParseSessionPoliciesIsStrictAndPinsOneTarget(t *testing.T) {
 		if _, err := parseSessionPolicies([]byte(body), cfg); err == nil {
 			t.Fatalf("%s policy unexpectedly accepted", name)
 		}
+	}
+	tooLong := strings.Replace(string(valid), "warm_idle_timeout: 15m", "warm_idle_timeout: 61m", 1)
+	if _, err := parseSessionPolicies([]byte(tooLong), cfg); err == nil ||
+		!strings.Contains(err.Error(), "warm_idle_timeout") {
+		t.Fatalf("oversized warm idle timeout error = %v", err)
+	}
+}
+
+func TestWarmIdleTimeoutIsBoundIntoPolicyDigest(t *testing.T) {
+	policy := SessionPolicy{Name: "conversation", Repository: "/repo", Target: "codex@work", TurnTimeout: time.Hour}
+	cold := resolvedSessionPolicyDigest(policy)
+	policy.WarmIdleTimeout = 15 * time.Minute
+	if warm := resolvedSessionPolicyDigest(policy); warm == cold {
+		t.Fatal("warm idle timeout did not change the immutable policy digest")
 	}
 }
 
@@ -601,6 +616,60 @@ func TestSessionServiceCleanupFailureDoesNotBrickStartup(t *testing.T) {
 	}
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatalf("startup failed because one historical cleanup failed: %v", err)
+	}
+}
+
+type closedCleaningRunner struct {
+	startupCalls atomic.Int32
+	closedCalls  atomic.Int32
+}
+
+func (*closedCleaningRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+	return turn, nil
+}
+
+func (r *closedCleaningRunner) CleanupSession(_ context.Context, _ session.Session) error {
+	r.startupCalls.Add(1)
+	return nil
+}
+
+func (r *closedCleaningRunner) CleanupClosedSession(_ context.Context, _ session.Session) error {
+	r.closedCalls.Add(1)
+	return nil
+}
+
+func TestSessionServiceCloseUsesKnownRuntimeCleanupWithoutStartupScan(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &closedCleaningRunner{}
+	service, err := NewSessionService(SessionServiceConfig{
+		StateRoot: filepath.Join(t.TempDir(), "state"),
+		Policies:  testSessionPolicies(repo),
+		Runner:    runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	sess, err := service.CreateRemoteSession(context.Background(), "create-close-cleanup", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "close cleanup",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision}
+	closed, err := service.Close(context.Background(), "close-cleanup", req)
+	if err != nil || closed.State != session.SessionClosed {
+		t.Fatalf("close = %+v, err=%v", closed, err)
+	}
+	if _, err := service.Close(context.Background(), "close-cleanup", req); err != nil {
+		t.Fatalf("close replay = %v", err)
+	}
+	if got := runner.closedCalls.Load(); got != 1 {
+		t.Fatalf("closed cleanup calls = %d, want 1", got)
+	}
+	if got := runner.startupCalls.Load(); got != 0 {
+		t.Fatalf("startup cleanup calls during close = %d, want 0", got)
 	}
 }
 

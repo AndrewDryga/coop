@@ -32,6 +32,7 @@ const (
 	sessionPolicyFileLimit           = 1 << 20
 	sessionPolicyMaxCompanions       = 32
 	sessionPolicyMaxTurnTimeout      = 24 * time.Hour
+	sessionPolicyMaxWarmIdleTimeout  = time.Hour
 	sessionServiceDefaultStopTimeout = 5 * time.Second
 	sessionServiceCleanupInterval    = time.Minute
 )
@@ -39,15 +40,16 @@ const (
 // SessionPolicy is operator-owned authority for one remote session. It is intentionally small:
 // repository, target, and resource bounds are not request fields.
 type SessionPolicy struct {
-	Name           string
-	Repository     string
-	Companions     []SessionCompanionPolicy
-	Target         string
-	MaxTurns       int
-	MaxQueuedTurns int
-	MaxQueuedBytes int
-	TurnTimeout    time.Duration
-	MaxPatchBytes  int
+	Name            string
+	Repository      string
+	Companions      []SessionCompanionPolicy
+	Target          string
+	MaxTurns        int
+	MaxQueuedTurns  int
+	MaxQueuedBytes  int
+	TurnTimeout     time.Duration
+	WarmIdleTimeout time.Duration
+	MaxPatchBytes   int
 }
 
 type SessionCompanionPolicy struct {
@@ -61,14 +63,15 @@ type rawSessionPolicyFile struct {
 }
 
 type rawSessionPolicy struct {
-	Repository     string                      `yaml:"repository"`
-	Companions     []rawSessionCompanionPolicy `yaml:"companions"`
-	Target         string                      `yaml:"target"`
-	MaxTurns       int                         `yaml:"max_turns"`
-	MaxQueuedTurns int                         `yaml:"max_queued_turns"`
-	MaxQueuedBytes int                         `yaml:"max_queued_bytes"`
-	TurnTimeout    string                      `yaml:"turn_timeout"`
-	MaxPatchBytes  int                         `yaml:"max_patch_bytes"`
+	Repository      string                      `yaml:"repository"`
+	Companions      []rawSessionCompanionPolicy `yaml:"companions"`
+	Target          string                      `yaml:"target"`
+	MaxTurns        int                         `yaml:"max_turns"`
+	MaxQueuedTurns  int                         `yaml:"max_queued_turns"`
+	MaxQueuedBytes  int                         `yaml:"max_queued_bytes"`
+	TurnTimeout     string                      `yaml:"turn_timeout"`
+	WarmIdleTimeout string                      `yaml:"warm_idle_timeout"`
+	MaxPatchBytes   int                         `yaml:"max_patch_bytes"`
 }
 
 type rawSessionCompanionPolicy struct {
@@ -281,11 +284,19 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 	if err != nil || timeout <= 0 || timeout > sessionPolicyMaxTurnTimeout {
 		return SessionPolicy{}, fmt.Errorf("turn_timeout must be positive and no longer than %s", sessionPolicyMaxTurnTimeout)
 	}
+	var warmIdleTimeout time.Duration
+	if raw.WarmIdleTimeout != "" {
+		warmIdleTimeout, err = time.ParseDuration(raw.WarmIdleTimeout)
+		if err != nil || warmIdleTimeout <= 0 || warmIdleTimeout > sessionPolicyMaxWarmIdleTimeout {
+			return SessionPolicy{}, fmt.Errorf("warm_idle_timeout must be positive and no longer than %s", sessionPolicyMaxWarmIdleTimeout)
+		}
+	}
 	return SessionPolicy{
 		Name: name, Repository: realRepo, Companions: companions,
 		Target: target.String(), MaxTurns: raw.MaxTurns,
 		MaxQueuedTurns: raw.MaxQueuedTurns, MaxQueuedBytes: raw.MaxQueuedBytes,
-		TurnTimeout: timeout, MaxPatchBytes: raw.MaxPatchBytes,
+		TurnTimeout: timeout, WarmIdleTimeout: warmIdleTimeout,
+		MaxPatchBytes: raw.MaxPatchBytes,
 	}, nil
 }
 
@@ -339,6 +350,26 @@ type SessionRunner interface {
 
 type sessionRunnerStartupCleaner interface {
 	CleanupSession(context.Context, session.Session) error
+}
+
+type sessionRunnerParkedCleaner interface {
+	CleanupParkedSession(context.Context, session.Session) error
+}
+
+type sessionRunnerClosedCleaner interface {
+	CleanupClosedSession(context.Context, session.Session) error
+}
+
+type sessionRunnerPreparer interface {
+	PrepareSession(context.Context, session.Session, time.Duration) error
+}
+
+type sessionRunnerWarmInspector interface {
+	WarmSessionReady(session.Session) bool
+}
+
+type sessionRunnerCloser interface {
+	CloseWarmSessions() error
 }
 
 type sessionRunnerStartupReaper interface {
@@ -476,21 +507,23 @@ func cloneSessionPolicies(in map[string]SessionPolicy) map[string]SessionPolicy 
 
 func resolvedSessionPolicyDigest(policy SessionPolicy) string {
 	canonical := struct {
-		Name           string                   `json:"name"`
-		Repository     string                   `json:"repository"`
-		Companions     []SessionCompanionPolicy `json:"companions,omitempty"`
-		Target         string                   `json:"target"`
-		MaxTurns       int                      `json:"max_turns"`
-		MaxQueuedTurns int                      `json:"max_queued_turns"`
-		MaxQueuedBytes int                      `json:"max_queued_bytes"`
-		TurnTimeout    int64                    `json:"turn_timeout_ns"`
-		MaxPatchBytes  int                      `json:"max_patch_bytes"`
+		Name            string                   `json:"name"`
+		Repository      string                   `json:"repository"`
+		Companions      []SessionCompanionPolicy `json:"companions,omitempty"`
+		Target          string                   `json:"target"`
+		MaxTurns        int                      `json:"max_turns"`
+		MaxQueuedTurns  int                      `json:"max_queued_turns"`
+		MaxQueuedBytes  int                      `json:"max_queued_bytes"`
+		TurnTimeout     int64                    `json:"turn_timeout_ns"`
+		WarmIdleTimeout int64                    `json:"warm_idle_timeout_ns"`
+		MaxPatchBytes   int                      `json:"max_patch_bytes"`
 	}{
 		Name: policy.Name, Repository: policy.Repository, Companions: policy.Companions,
 		Target:   policy.Target,
 		MaxTurns: policy.MaxTurns, MaxQueuedTurns: policy.MaxQueuedTurns,
 		MaxQueuedBytes: policy.MaxQueuedBytes, TurnTimeout: int64(policy.TurnTimeout),
-		MaxPatchBytes: policy.MaxPatchBytes,
+		WarmIdleTimeout: int64(policy.WarmIdleTimeout),
+		MaxPatchBytes:   policy.MaxPatchBytes,
 	}
 	data, _ := json.Marshal(canonical)
 	sum := sha256.Sum256(data)
@@ -658,8 +691,9 @@ func (s *SessionService) runParkedSessionCleanup(ctx context.Context) {
 }
 
 func (s *SessionService) cleanupParkedSessions(ctx context.Context) {
-	cleaner, ok := s.runner.(sessionRunnerStartupCleaner)
-	if !ok {
+	parkedCleaner, parkedOK := s.runner.(sessionRunnerParkedCleaner)
+	cleaner, cleanupOK := s.runner.(sessionRunnerStartupCleaner)
+	if !parkedOK && !cleanupOK {
 		return
 	}
 	sessions, err := s.store.ListSessionsForRecovery(ctx)
@@ -677,7 +711,11 @@ func (s *SessionService) cleanupParkedSessions(ctx context.Context) {
 		unlock := s.lockSessionRuntime(candidate.ID)
 		current, getErr := s.store.GetSession(ctx, candidate.ID)
 		if getErr == nil && current.Activity == session.ActivityParked && current.ActiveTurnID == "" {
-			getErr = cleaner.CleanupSession(ctx, current)
+			if parkedOK {
+				getErr = parkedCleaner.CleanupParkedSession(ctx, current)
+			} else {
+				getErr = cleaner.CleanupSession(ctx, current)
+			}
 		}
 		unlock()
 		if getErr != nil && ctx.Err() == nil {
@@ -689,6 +727,10 @@ func (s *SessionService) cleanupParkedSessions(ctx context.Context) {
 func (s *SessionService) runBoundSessionTurn(ctx context.Context, bound session.Session, leased session.Turn) (session.Turn, error) {
 	unlock := s.lockSessionRuntime(bound.ID)
 	defer unlock()
+	if policy, ok := s.policies[bound.Policy]; ok &&
+		resolvedSessionPolicyDigest(policy) == bound.PolicyDigest && policy.WarmIdleTimeout > 0 {
+		ctx = context.WithValue(ctx, sessionWarmIdleTimeoutContextKey{}, policy.WarmIdleTimeout)
+	}
 	return s.runner.Run(ctx, bound, leased)
 }
 
@@ -725,6 +767,11 @@ func (s *SessionService) Stop() error {
 	s.mu.Lock()
 	if !s.started {
 		s.mu.Unlock()
+		if closer, ok := s.runner.(sessionRunnerCloser); ok {
+			if err := closer.CloseWarmSessions(); err != nil {
+				return err
+			}
+		}
 		return s.store.Close()
 	}
 	cancel := s.cancel
@@ -745,6 +792,11 @@ func (s *SessionService) Stop() error {
 	s.workers = make(map[string]*sessionWorker)
 	s.active = make(map[string]*activeSessionTurn)
 	s.mu.Unlock()
+	if closer, ok := s.runner.(sessionRunnerCloser); ok {
+		if err := closer.CloseWarmSessions(); err != nil {
+			return err
+		}
+	}
 	if err := s.store.Close(); err != nil {
 		return err
 	}
@@ -1082,6 +1134,45 @@ func (s *SessionService) GetSession(ctx context.Context, id string) (session.Ses
 	return s.store.GetSession(ctx, id)
 }
 
+func (s *SessionService) PrepareSession(ctx context.Context, id string, expectedRevision int64) (session.Session, error) {
+	unlock := s.lockSessionRuntime(id)
+	defer unlock()
+	bound, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if bound.Revision != expectedRevision {
+		if inspector, ok := s.runner.(sessionRunnerWarmInspector); ok && inspector.WarmSessionReady(bound) {
+			return bound, nil
+		}
+		return session.Session{}, &session.Error{
+			Code:   session.CodeRevisionConflict,
+			Detail: fmt.Sprintf("expected revision %d, current revision %d", expectedRevision, bound.Revision),
+		}
+	}
+	if bound.State != session.SessionOpen || bound.Activity != session.ActivityParked ||
+		bound.ActiveTurnID != "" || bound.QueuedTurnCount != 0 {
+		return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: "session must be open and idle before it can be prepared"}
+	}
+	policy, ok := s.policies[bound.Policy]
+	if !ok || resolvedSessionPolicyDigest(policy) != bound.PolicyDigest {
+		return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: "session policy no longer matches the operator policy"}
+	}
+	if policy.WarmIdleTimeout <= 0 {
+		return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: "session policy does not enable warm execution"}
+	}
+	preparer, ok := s.runner.(sessionRunnerPreparer)
+	if !ok {
+		return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: "session runner does not support warm execution"}
+	}
+	prepareCtx, cancel := context.WithTimeout(ctx, policy.TurnTimeout)
+	defer cancel()
+	if err := preparer.PrepareSession(prepareCtx, bound, policy.WarmIdleTimeout); err != nil {
+		return session.Session{}, err
+	}
+	return s.store.GetSession(ctx, id)
+}
+
 func (s *SessionService) ListSessions(ctx context.Context, limit int) ([]session.Session, error) {
 	return s.store.ListSessions(ctx, limit)
 }
@@ -1111,6 +1202,27 @@ func (s *SessionService) ExtendBudget(ctx context.Context, key string, req sessi
 }
 
 func (s *SessionService) Close(ctx context.Context, key string, req session.CloseSessionRequest) (session.Session, error) {
+	unlock := s.lockSessionRuntime(req.SessionID)
+	defer unlock()
+	current, err := s.store.GetSession(ctx, req.SessionID)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if current.State == session.SessionClosed {
+		return s.store.CloseSession(ctx, key, req)
+	}
+	if current.Revision != req.ExpectedRevision {
+		return session.Session{}, session.ErrRevisionConflict
+	}
+	if cleaner, ok := s.runner.(sessionRunnerClosedCleaner); ok {
+		if err := cleaner.CleanupClosedSession(ctx, current); err != nil {
+			return session.Session{}, err
+		}
+	} else if cleaner, ok := s.runner.(sessionRunnerStartupCleaner); ok {
+		if err := cleaner.CleanupSession(ctx, current); err != nil {
+			return session.Session{}, err
+		}
+	}
 	return s.store.CloseSession(ctx, key, req)
 }
 

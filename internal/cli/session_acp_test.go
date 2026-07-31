@@ -87,6 +87,115 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	}
 }
 
+func TestSessionTurnRunnerReusesWarmACPProcessAcrossTurns(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	warmContext := func() context.Context {
+		return context.WithValue(contextWithTurnDeadline(t), sessionWarmIdleTimeoutContextKey{}, time.Minute)
+	}
+	first := fixture.submit(t, "first warm prompt")
+	if _, err := fixture.runner.Run(warmContext(), fixture.session, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); err != nil {
+		t.Fatalf("warm credential projection was not retained: %v", err)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.session = bound
+	second := fixture.submit(t, "second warm prompt")
+	if _, err := fixture.runner.Run(warmContext(), fixture.session, second); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := readSessionACPLog(t, fixture.childLog), []string{
+		"initialize", "session/new", "session/prompt", "session/prompt",
+	}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("warm ACP methods = %v, want %v", got, want)
+	}
+	if got := strings.Count(strings.TrimSpace(readFile(t, fixture.envLog)), "\n") + 1; got != 1 {
+		t.Fatalf("warm ACP child starts = %d, want 1", got)
+	}
+	if err := fixture.runner.CloseWarmSessions(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); !os.IsNotExist(err) {
+		t.Fatalf("warm credential remains after shutdown: %v", err)
+	}
+}
+
+func TestSessionTurnRunnerPreparesAndExpiresWarmExecution(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	if err := fixture.runner.PrepareSession(contextWithTurnDeadline(t), fixture.session, 500*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.NativeSessionID != "" {
+		t.Fatalf("preparation consumed durable native identity: %q", bound.NativeSessionID)
+	}
+	if got, want := readSessionACPLog(t, fixture.childLog), []string{"initialize", "session/new"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("prepared ACP methods = %v, want %v", got, want)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("warm execution did not expire and remove projected credentials")
+}
+
+func TestSessionTurnRunnerPreparedProcessHandlesFirstPromptWithoutRestart(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	t.Cleanup(func() { _ = fixture.runner.CloseWarmSessions() })
+	if err := fixture.runner.PrepareSession(contextWithTurnDeadline(t), fixture.session, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	turn := fixture.submit(t, "use the prepared process")
+	ctx := context.WithValue(contextWithTurnDeadline(t), sessionWarmIdleTimeoutContextKey{}, time.Minute)
+	if _, err := fixture.runner.Run(ctx, fixture.session, turn); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := readSessionACPLog(t, fixture.childLog), []string{
+		"initialize", "session/new", "session/prompt",
+	}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("prepared first-turn methods = %v, want %v", got, want)
+	}
+	if got := strings.Count(strings.TrimSpace(readFile(t, fixture.envLog)), "\n") + 1; got != 1 {
+		t.Fatalf("prepared ACP child starts = %d, want 1", got)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.NativeSessionID != "native-1" {
+		t.Fatalf("first prompt native session = %q, want native-1", bound.NativeSessionID)
+	}
+}
+
+func TestSessionTurnRunnerFallsBackToColdWhenCredentialCannotCoverWarmLease(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	credential := filepath.Join(fixture.source, "codex", "profiles", "work", "auth.json")
+	if err := os.WriteFile(credential, []byte(codexTestCredential(time.Now().Add(30*time.Minute))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	turn := fixture.submit(t, "do not trade correctness for warmth")
+	ctx := context.WithValue(contextWithTurnDeadline(t), sessionWarmIdleTimeoutContextKey{}, time.Hour)
+	if _, err := fixture.runner.Run(ctx, fixture.session, turn); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.runner.WarmSessionReady(fixture.session) {
+		t.Fatal("short-lived credentials unexpectedly left a warm execution")
+	}
+	if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); !os.IsNotExist(err) {
+		t.Fatalf("cold fallback credential remains: %v", err)
+	}
+}
+
 func TestSessionTurnRunnerSendsDurableImageArtifact(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	data := []byte("\x89PNG\r\n\x1a\nimage")

@@ -11,7 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/session"
 )
@@ -272,6 +274,51 @@ func TestSessionHTTPRouteWiring(t *testing.T) {
 	discardResponse := post("/v1/sessions/"+sessionID+"/discard", fmt.Sprintf(`{"plan_operation_id":%q}`, planned.Plan.OperationID), "route-discard")
 	if discardResponse.Code != http.StatusOK {
 		t.Fatalf("discard status = %d body=%s", discardResponse.Code, discardResponse.Body.String())
+	}
+}
+
+type preparingHTTPRunner struct{ calls atomic.Int32 }
+
+func (*preparingHTTPRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+	return turn, nil
+}
+
+func (r *preparingHTTPRunner) PrepareSession(_ context.Context, _ session.Session, _ time.Duration) error {
+	r.calls.Add(1)
+	return nil
+}
+
+func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	policies := testSessionPolicies(repo)
+	policy := policies["responder"]
+	policy.WarmIdleTimeout = 15 * time.Minute
+	policies["responder"] = policy
+	runner := &preparingHTTPRunner{}
+	service, err := NewSessionService(SessionServiceConfig{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies, Runner: runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	handler := newSessionHTTPHandler(service)
+	createdResponse := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions",
+		`{"policy":"responder","task":"warm route"}`, "warm-create", "application/json",
+	)
+	var created sessionMutationSessionResponse
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	prepared := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/prepare",
+		fmt.Sprintf(`{"expected_revision":%d}`, created.Session.Revision),
+		"warm-prepare", "application/json",
+	)
+	if prepared.Code != http.StatusOK || runner.calls.Load() != 1 {
+		t.Fatalf("prepare status=%d calls=%d body=%s", prepared.Code, runner.calls.Load(), prepared.Body.String())
 	}
 }
 

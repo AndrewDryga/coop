@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -34,6 +35,7 @@ const (
 	sessionACPTermGrace       = 250 * time.Millisecond
 	sessionACPKillGrace       = 750 * time.Millisecond
 	sessionACPCleanupTimeout  = 2 * time.Second
+	sessionACPWarmLimit       = 20
 )
 
 const (
@@ -50,9 +52,19 @@ const (
 type sessionACPCommand func(string, ...string) *exec.Cmd
 
 type sessionCancelRequestContextKey struct{}
+type sessionWarmIdleTimeoutContextKey struct{}
 
-// sessionTurnRunner owns one short-lived ACP child. The child is the same Coop executable used by
-// `coop fork <name> acp <target>`; the existing fork path owns the box assembly and labels.
+type sessionWarmExecution struct {
+	bound              session.Session
+	child              *sessionACPProcess
+	projection         *sessionACPProjection
+	credentialDeadline time.Time
+	expiresAt          time.Time
+	timer              *time.Timer
+}
+
+// sessionTurnRunner owns boxed ACP children. Policy-opted sessions can retain one authenticated
+// child across serialized turns; the same Coop fork path still owns box assembly and labels.
 type sessionTurnRunner struct {
 	sourceCfg  *config.Config
 	stateRoot  string
@@ -60,6 +72,9 @@ type sessionTurnRunner struct {
 	rt         runtime.Runtime
 	executable string
 	command    sessionACPCommand
+	warmMu     sync.Mutex
+	warm       map[string]*sessionWarmExecution
+	warming    int
 }
 
 func newSessionTurnRunner(sourceCfg *config.Config, stateRoot string, store *session.Store, rt runtime.Runtime, executable string, command ...sessionACPCommand) *sessionTurnRunner {
@@ -70,29 +85,37 @@ func newSessionTurnRunner(sourceCfg *config.Config, stateRoot string, store *ses
 	return &sessionTurnRunner{
 		sourceCfg: sourceCfg, stateRoot: stateRoot,
 		store: store, rt: rt, executable: executable, command: start,
+		warm: make(map[string]*sessionWarmExecution),
 	}
 }
 
 // Run executes exactly one turn returned by Store.LeaseNextTurn. It never leases another turn.
 func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leased session.Turn) (result session.Turn, runErr error) {
-	var child *sessionACPProcess
-	var projection *sessionACPProjection
+	var execution *sessionWarmExecution
 	var assistant string
 	protocolComplete := false
+	parked := false
+	warmIdleTimeout, _ := ctx.Value(sessionWarmIdleTimeoutContextKey{}).(time.Duration)
 
 	defer func() {
 		var cleanup []error
 		cleanupFailed := false
-		if child != nil {
-			cleanup = append(cleanup, child.stop())
-			cleanup = append(cleanup, r.removeTurnBox(child.runID))
+		baseErr := runErr
+		if protocolComplete && baseErr == nil && warmIdleTimeout > 0 && execution != nil {
+			parked = r.parkWarmExecution(execution, warmIdleTimeout)
+			if parked {
+				execution = nil
+			}
+		}
+		if execution != nil && execution.child != nil {
+			cleanup = append(cleanup, execution.child.stop())
+			cleanup = append(cleanup, r.removeTurnBox(execution.child.runID))
 			cleanup = append(cleanup, r.stopSessionServices(context.Background(), bound))
 		}
-		if projection != nil {
-			cleanup = append(cleanup, projection.remove())
+		if execution != nil && execution.projection != nil {
+			cleanup = append(cleanup, execution.projection.remove())
 		}
 
-		baseErr := runErr
 		for _, err := range cleanup {
 			if err != nil {
 				cleanupFailed = true
@@ -106,6 +129,9 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			completed, err := r.completeTurn(bound, leased, assistant)
 			if err != nil {
 				baseErr = err
+				if parked {
+					baseErr = errors.Join(baseErr, r.evictWarmExecution(bound.ID))
+				}
 			} else {
 				result = completed
 			}
@@ -161,19 +187,42 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		return result, runErr
 	}
 
-	projection, err = r.projectCredentials(bound, target, agent, deadline)
-	if err != nil {
-		runErr = err
-		return result, runErr
+	if warmIdleTimeout > 0 {
+		execution = r.takeWarmExecution(bound)
+	} else {
+		_ = r.evictWarmExecution(bound.ID)
+	}
+	if execution == nil {
+		credentialDeadline := deadline
+		if warmIdleTimeout > 0 {
+			credentialDeadline = time.Now().Add(warmIdleTimeout + bound.TurnTimeout)
+		}
+		projection, err := r.projectCredentials(bound, target, agent, credentialDeadline)
+		if err != nil && projection != nil {
+			_ = projection.remove()
+		}
+		if err != nil && warmIdleTimeout > 0 {
+			warmIdleTimeout = 0
+			credentialDeadline = deadline
+			projection, err = r.projectCredentials(bound, target, agent, credentialDeadline)
+		}
+		if err != nil {
+			if projection != nil {
+				_ = projection.remove()
+			}
+			runErr = err
+			return result, runErr
+		}
+		child, err := r.startChild(ctx, bound, leased, projection.privateRoot)
+		if err != nil {
+			_ = projection.remove()
+			runErr = err
+			return result, runErr
+		}
+		execution = &sessionWarmExecution{bound: bound, child: child, projection: projection, credentialDeadline: credentialDeadline}
 	}
 
-	child, err = r.startChild(ctx, bound, leased, projection.privateRoot)
-	if err != nil {
-		runErr = err
-		return result, runErr
-	}
-
-	assistant, err = r.runACP(ctx, child, bound, leased)
+	assistant, err = r.runACP(ctx, execution.child, bound, leased)
 	if err != nil {
 		runErr = err
 		return result, runErr
@@ -262,6 +311,221 @@ func (r *sessionTurnRunner) ReapInterruptedTurn(ctx context.Context, bound sessi
 		r.removeTurnBox(sessionTurnRunID(turn.SessionID, turn.ID)),
 		r.stopSessionServices(ctx, bound),
 	)
+}
+
+func sessionWarmExecutionMatches(execution *sessionWarmExecution, bound session.Session) bool {
+	if execution == nil || execution.child == nil || execution.projection == nil ||
+		execution.child.exited.Load() {
+		return false
+	}
+	return execution.bound.ID == bound.ID &&
+		execution.bound.Target == bound.Target &&
+		execution.bound.PolicyDigest == bound.PolicyDigest &&
+		execution.bound.Repository == bound.Repository &&
+		execution.bound.Workspace == bound.Workspace &&
+		execution.bound.ForkName == bound.ForkName
+}
+
+func (r *sessionTurnRunner) takeWarmExecution(bound session.Session) *sessionWarmExecution {
+	r.warmMu.Lock()
+	execution := r.warm[bound.ID]
+	if execution != nil {
+		delete(r.warm, bound.ID)
+		if execution.timer != nil {
+			execution.timer.Stop()
+			execution.timer = nil
+		}
+	}
+	r.warmMu.Unlock()
+	if execution == nil {
+		return nil
+	}
+	if time.Now().Before(execution.expiresAt) && sessionWarmExecutionMatches(execution, bound) {
+		return execution
+	}
+	_ = r.cleanupWarmExecution(execution)
+	return nil
+}
+
+func (r *sessionTurnRunner) parkWarmExecution(execution *sessionWarmExecution, idleTimeout time.Duration) bool {
+	if execution == nil || idleTimeout <= 0 || !sessionWarmExecutionMatches(execution, execution.bound) {
+		return false
+	}
+	expiresAt := time.Now().Add(idleTimeout)
+	credentialLimit := execution.credentialDeadline.Add(-execution.bound.TurnTimeout)
+	if credentialLimit.Before(expiresAt) {
+		expiresAt = credentialLimit
+	}
+	if !expiresAt.After(time.Now()) {
+		return false
+	}
+	r.warmMu.Lock()
+	if _, exists := r.warm[execution.bound.ID]; !exists && len(r.warm) >= sessionACPWarmLimit {
+		r.warmMu.Unlock()
+		return false
+	}
+	previous := r.warm[execution.bound.ID]
+	execution.expiresAt = expiresAt
+	execution.timer = time.AfterFunc(time.Until(expiresAt), func() {
+		r.expireWarmExecution(execution.bound.ID, execution)
+	})
+	r.warm[execution.bound.ID] = execution
+	r.warmMu.Unlock()
+	if previous != nil && previous != execution {
+		_ = r.cleanupWarmExecution(previous)
+	}
+	return true
+}
+
+func (r *sessionTurnRunner) expireWarmExecution(sessionID string, expected *sessionWarmExecution) {
+	r.warmMu.Lock()
+	if r.warm[sessionID] != expected {
+		r.warmMu.Unlock()
+		return
+	}
+	delete(r.warm, sessionID)
+	expected.timer = nil
+	r.warmMu.Unlock()
+	_ = r.cleanupWarmExecution(expected)
+}
+
+func (r *sessionTurnRunner) evictWarmExecution(sessionID string) error {
+	r.warmMu.Lock()
+	execution := r.warm[sessionID]
+	delete(r.warm, sessionID)
+	if execution != nil && execution.timer != nil {
+		execution.timer.Stop()
+		execution.timer = nil
+	}
+	r.warmMu.Unlock()
+	return r.cleanupWarmExecution(execution)
+}
+
+func (r *sessionTurnRunner) cleanupWarmExecution(execution *sessionWarmExecution) error {
+	if execution == nil {
+		return nil
+	}
+	var errs []error
+	if execution.child != nil {
+		errs = append(errs, execution.child.stop())
+		errs = append(errs, r.removeTurnBox(execution.child.runID))
+		errs = append(errs, r.stopSessionServices(context.Background(), execution.bound))
+	}
+	if execution.projection != nil {
+		errs = append(errs, execution.projection.remove())
+	}
+	return errors.Join(errs...)
+}
+
+func (r *sessionTurnRunner) PrepareSession(ctx context.Context, bound session.Session, idleTimeout time.Duration) error {
+	if idleTimeout <= 0 || idleTimeout > sessionPolicyMaxWarmIdleTimeout {
+		return acpFailure(sessionACPInvalidTurn, "warm idle timeout is invalid")
+	}
+	r.warmMu.Lock()
+	existing := r.warm[bound.ID]
+	ready := existing != nil && time.Now().Before(existing.expiresAt) && sessionWarmExecutionMatches(existing, bound)
+	if existing != nil && !ready {
+		delete(r.warm, bound.ID)
+		if existing.timer != nil {
+			existing.timer.Stop()
+			existing.timer = nil
+		}
+	}
+	full := !ready && len(r.warm)+r.warming >= sessionACPWarmLimit
+	if !ready && !full {
+		r.warming++
+	}
+	r.warmMu.Unlock()
+	if existing != nil && !ready {
+		_ = r.cleanupWarmExecution(existing)
+	}
+	if ready {
+		return nil
+	}
+	if full {
+		return acpFailure(sessionACPProcessError, "warm session limit reached")
+	}
+	defer func() {
+		r.warmMu.Lock()
+		r.warming--
+		r.warmMu.Unlock()
+	}()
+	target, err := agents.ParseTarget(bound.Target)
+	if err != nil || len(target.Accounts) > 1 {
+		return acpFailure(sessionACPInvalidTarget, "session target must be one explicit provider and account")
+	}
+	agent, ok := agents.Get(target.Provider)
+	if !ok {
+		return acpFailure(sessionACPInvalidTarget, "session target provider is unavailable")
+	}
+	credentialDeadline := time.Now().Add(idleTimeout + bound.TurnTimeout)
+	projection, err := r.projectCredentials(bound, target, agent, credentialDeadline)
+	if err != nil {
+		if projection != nil {
+			_ = projection.remove()
+		}
+		return err
+	}
+	child, err := r.startChildWithRunID(ctx, bound, sessionWarmRunID(bound.ID), projection.privateRoot)
+	if err != nil {
+		_ = projection.remove()
+		return err
+	}
+	execution := &sessionWarmExecution{bound: bound, child: child, projection: projection, credentialDeadline: credentialDeadline}
+	if _, err := r.runACP(ctx, child, bound, session.Turn{}); err != nil {
+		return errors.Join(err, r.cleanupWarmExecution(execution))
+	}
+	if current, err := r.store.GetSession(ctx, bound.ID); err == nil {
+		execution.bound = current
+	} else {
+		return errors.Join(err, r.cleanupWarmExecution(execution))
+	}
+	if !r.parkWarmExecution(execution, idleTimeout) {
+		return errors.Join(acpFailure(sessionACPProcessError, "warm execution could not be retained"), r.cleanupWarmExecution(execution))
+	}
+	return nil
+}
+
+func (r *sessionTurnRunner) WarmSessionReady(bound session.Session) bool {
+	r.warmMu.Lock()
+	defer r.warmMu.Unlock()
+	execution := r.warm[bound.ID]
+	return execution != nil && time.Now().Before(execution.expiresAt) &&
+		sessionWarmExecutionMatches(execution, bound)
+}
+
+func (r *sessionTurnRunner) CleanupParkedSession(ctx context.Context, bound session.Session) error {
+	r.warmMu.Lock()
+	execution := r.warm[bound.ID]
+	ready := execution != nil && time.Now().Before(execution.expiresAt) && sessionWarmExecutionMatches(execution, bound)
+	r.warmMu.Unlock()
+	if ready {
+		return nil
+	}
+	return r.cleanupKnownSessionRuntime(ctx, bound)
+}
+
+func (r *sessionTurnRunner) CleanupClosedSession(ctx context.Context, bound session.Session) error {
+	return r.cleanupKnownSessionRuntime(ctx, bound)
+}
+
+func (r *sessionTurnRunner) CloseWarmSessions() error {
+	r.warmMu.Lock()
+	executions := make([]*sessionWarmExecution, 0, len(r.warm))
+	for id, execution := range r.warm {
+		delete(r.warm, id)
+		if execution.timer != nil {
+			execution.timer.Stop()
+			execution.timer = nil
+		}
+		executions = append(executions, execution)
+	}
+	r.warmMu.Unlock()
+	var errs []error
+	for _, execution := range executions {
+		errs = append(errs, r.cleanupWarmExecution(execution))
+	}
+	return errors.Join(errs...)
 }
 
 type sessionACPProjection struct {
@@ -475,6 +739,14 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(sourceRoot string, project
 // session history and Compose volumes are deliberately preserved.
 func (r *sessionTurnRunner) CleanupSession(ctx context.Context, bound session.Session) error {
 	return errors.Join(
+		r.cleanupKnownSessionRuntime(ctx, bound),
+		r.removeTurnBox(sessionWarmRunID(bound.ID)),
+	)
+}
+
+func (r *sessionTurnRunner) cleanupKnownSessionRuntime(ctx context.Context, bound session.Session) error {
+	return errors.Join(
+		r.evictWarmExecution(bound.ID),
 		r.cleanupSessionCredentials(bound),
 		r.stopSessionServices(ctx, bound),
 	)
@@ -680,6 +952,10 @@ func writePrivateConfig(path string, data []byte) error {
 }
 
 func (r *sessionTurnRunner) startChild(ctx context.Context, bound session.Session, leased session.Turn, privateRoot string) (*sessionACPProcess, error) {
+	return r.startChildWithRunID(ctx, bound, sessionTurnRunID(bound.ID, leased.ID), privateRoot)
+}
+
+func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound session.Session, runID, privateRoot string) (*sessionACPProcess, error) {
 	executable := r.executable
 	if executable == "" {
 		var err error
@@ -693,7 +969,9 @@ func (r *sessionTurnRunner) startChild(ctx context.Context, bound session.Sessio
 		!validExistingForkName(bound.ForkName) || bound.Target == "" {
 		return nil, acpFailure(sessionACPProcessError, "bound fork identity is invalid")
 	}
-	runID := sessionTurnRunID(bound.ID, leased.ID)
+	if !validSessionRunID(runID) {
+		return nil, acpFailure(sessionACPProcessError, "session run identity is invalid")
+	}
 	env := sessionACPChildEnvironment(
 		bound.Repository, bound.Companions, privateRoot, runID,
 		r.sourceCfg, r.rt.Name,
@@ -792,6 +1070,11 @@ func sessionTurnRunID(sessionID, turnID string) string {
 	return "session-" + fmt.Sprintf("%x", sum[:12])
 }
 
+func sessionWarmRunID(sessionID string) string {
+	sum := sha256.Sum256([]byte("warm\x00" + sessionID))
+	return "session-" + fmt.Sprintf("%x", sum[:12])
+}
+
 func validSessionRunID(value string) bool {
 	if !strings.HasPrefix(value, "session-") || len(value) != len("session-")+24 {
 		return false
@@ -813,15 +1096,22 @@ func sessionRunIDFromEnv() string {
 }
 
 type sessionACPProcess struct {
-	cmd       *exec.Cmd
-	stdin     io.WriteCloser
-	stdout    io.ReadCloser
-	wait      chan error
-	readStop  chan struct{}
-	closeOnce sync.Once
-	stopOnce  sync.Once
-	stopErr   error
-	runID     string
+	cmd                    *exec.Cmd
+	stdin                  io.WriteCloser
+	stdout                 io.ReadCloser
+	wait                   chan error
+	readStop               chan struct{}
+	frames                 chan sessionACPFrame
+	closeOnce              sync.Once
+	stopOnce               sync.Once
+	stopErr                error
+	runID                  string
+	nextID                 int64
+	initialized            bool
+	nativeSessionID        string
+	imageCapable           bool
+	embeddedContextCapable bool
+	exited                 atomic.Bool
 }
 
 func startSessionACPProcess(cmd *exec.Cmd) (*sessionACPProcess, error) {
@@ -837,13 +1127,19 @@ func startSessionACPProcess(cmd *exec.Cmd) (*sessionACPProcess, error) {
 	process := &sessionACPProcess{
 		cmd: cmd, stdin: stdin, stdout: stdout,
 		wait: make(chan error, 1), readStop: make(chan struct{}),
+		frames: make(chan sessionACPFrame, 1),
 	}
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {
 		process.closePipes()
 		return nil, acpFailure(sessionACPProcessError, "ACP child could not be started")
 	}
-	go func() { process.wait <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		process.exited.Store(true)
+		process.wait <- err
+	}()
+	go readSessionACPFrames(process.stdout, process.readStop, process.frames)
 	return process, nil
 }
 
@@ -932,15 +1228,16 @@ type sessionACPFrame struct {
 }
 
 func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProcess, bound session.Session, leased session.Turn) (string, error) {
-	frames := make(chan sessionACPFrame, 1)
-	go readSessionACPFrames(process.stdout, process.readStop, frames)
-	var nextID int64
+	if process == nil || process.frames == nil {
+		return "", acpFailure(sessionACPProcessError, "ACP child is unavailable")
+	}
+	frames := process.frames
 	var transcriptBytes int
 	var assistant []byte
 	collectAssistant := false
 	next := func() json.RawMessage {
-		nextID++
-		return json.RawMessage(strconv.FormatInt(nextID, 10))
+		process.nextID++
+		return json.RawMessage(strconv.FormatInt(process.nextID, 10))
 	}
 	writeRequest := func(id json.RawMessage, method string, params any) error {
 		line, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
@@ -1053,58 +1350,71 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 		return waitResponse(id, expectedSession, false)
 	}
 
-	initializeResult, err := request("initialize", map[string]any{
-		"protocolVersion":    1,
-		"clientCapabilities": map[string]any{},
-	}, "")
-	if err != nil {
-		return "", err
-	}
-	var initialized struct {
-		ProtocolVersion   int `json:"protocolVersion"`
-		AgentCapabilities struct {
-			PromptCapabilities struct {
-				Image           bool `json:"image"`
-				EmbeddedContext bool `json:"embeddedContext"`
-			} `json:"promptCapabilities"`
-		} `json:"agentCapabilities"`
-	}
-	if json.Unmarshal(initializeResult, &initialized) != nil || initialized.ProtocolVersion != 1 {
-		return "", acpFailure(sessionACPProtocolError, "ACP protocol version is unsupported")
-	}
-	nativeID := bound.NativeSessionID
-	if nativeID == "" {
-		result, err := request("session/new", map[string]any{"cwd": bound.Workspace, "mcpServers": []any{}}, "")
+	if !process.initialized {
+		initializeResult, err := request("initialize", map[string]any{
+			"protocolVersion":    1,
+			"clientCapabilities": map[string]any{},
+		}, "")
 		if err != nil {
 			return "", err
 		}
-		var created struct {
-			SessionID string `json:"sessionId"`
+		var initialized struct {
+			ProtocolVersion   int `json:"protocolVersion"`
+			AgentCapabilities struct {
+				PromptCapabilities struct {
+					Image           bool `json:"image"`
+					EmbeddedContext bool `json:"embeddedContext"`
+				} `json:"promptCapabilities"`
+			} `json:"agentCapabilities"`
 		}
-		if json.Unmarshal(result, &created) != nil || !validACPSessionID(created.SessionID) {
-			return "", acpFailure(sessionACPProtocolError, "session/new returned an invalid session id")
+		if json.Unmarshal(initializeResult, &initialized) != nil || initialized.ProtocolVersion != 1 {
+			return "", acpFailure(sessionACPProtocolError, "ACP protocol version is unsupported")
 		}
+		process.imageCapable = initialized.AgentCapabilities.PromptCapabilities.Image
+		process.embeddedContextCapable = initialized.AgentCapabilities.PromptCapabilities.EmbeddedContext
+		nativeID := bound.NativeSessionID
+		if nativeID == "" {
+			result, err := request("session/new", map[string]any{"cwd": bound.Workspace, "mcpServers": []any{}}, "")
+			if err != nil {
+				return "", err
+			}
+			var created struct {
+				SessionID string `json:"sessionId"`
+			}
+			if json.Unmarshal(result, &created) != nil || !validACPSessionID(created.SessionID) {
+				return "", acpFailure(sessionACPProtocolError, "session/new returned an invalid session id")
+			}
+			nativeID = created.SessionID
+		} else if !validACPSessionID(nativeID) {
+			return "", acpFailure(sessionACPProtocolError, "stored native session id is invalid")
+		} else if _, err := request("session/load", map[string]any{"sessionId": nativeID, "cwd": bound.Workspace, "mcpServers": []any{}}, nativeID); err != nil {
+			return "", err
+		}
+		process.nativeSessionID = nativeID
+		process.initialized = true
+	}
+	nativeID := process.nativeSessionID
+	if !validACPSessionID(nativeID) || (bound.NativeSessionID != "" && bound.NativeSessionID != nativeID) {
+		return "", acpFailure(sessionACPProtocolError, "warm ACP session identity changed")
+	}
+	if leased.ID == "" {
+		return "", nil
+	}
+	if bound.NativeSessionID == "" {
 		ctxBind, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
-		_, err = r.store.BindNativeSession(ctxBind, bound.ID, created.SessionID)
+		_, err := r.store.BindNativeSession(ctxBind, bound.ID, nativeID)
 		cancel()
 		if err != nil {
 			return "", err
 		}
-		nativeID = created.SessionID
-	} else if !validACPSessionID(nativeID) {
-		return "", acpFailure(sessionACPProtocolError, "stored native session id is invalid")
-	} else {
-		if _, err := request("session/load", map[string]any{"sessionId": nativeID, "cwd": bound.Workspace, "mcpServers": []any{}}, nativeID); err != nil {
-			return "", err
-		}
 	}
 	checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
-	_, err = r.store.MarkTurnSendIntent(checkpointCtx, bound.ID, leased.ID)
+	_, err := r.store.MarkTurnSendIntent(checkpointCtx, bound.ID, leased.ID)
 	checkpointCancel()
 	if err != nil {
 		return "", acpFailure(session.CodeInternal, "turn sent checkpoint failed")
 	}
-	content, err := sessionACPInputContent(leased, initialized.AgentCapabilities.PromptCapabilities.Image, initialized.AgentCapabilities.PromptCapabilities.EmbeddedContext)
+	content, err := sessionACPInputContent(leased, process.imageCapable, process.embeddedContextCapable)
 	if err != nil {
 		return "", err
 	}
