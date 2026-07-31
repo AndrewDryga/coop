@@ -95,9 +95,7 @@ func TestSessionTurnRunnerSendsDurableImageArtifact(t *testing.T) {
 		Name: "bug.png", MediaType: "image/png",
 		SHA256: hex.EncodeToString(digest[:]), Data: data,
 	}})
-	if _, err := fixture.runner.Run(
-		contextWithTurnDeadline(t), fixture.session, turn,
-	); err != nil {
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn); err != nil {
 		t.Fatal(err)
 	}
 	wire := readFile(t, fixture.childLog)
@@ -387,7 +385,14 @@ func TestSessionACPChildEnvironmentForwardsOnlyResolvedBoxSettings(t *testing.T)
 	t.Setenv("OPENAI_API_KEY", "ambient-secret")
 	cfg := config.Load()
 	got := map[string]string{}
-	for _, item := range sessionACPChildEnvironment("/repo", "/private", "session-000000000000000000000000", cfg, "docker") {
+	companions := []session.CompanionRepository{{
+		Name: "topology", Repository: "/source",
+		Workspace: "/snapshot", BaseCommit: strings.Repeat("a", 40),
+	}}
+	for _, item := range sessionACPChildEnvironment(
+		"/repo", companions, "/private", "session-000000000000000000000000",
+		cfg, "docker",
+	) {
 		key, value, _ := strings.Cut(item, "=")
 		got[key] = value
 	}
@@ -402,6 +407,13 @@ func TestSessionACPChildEnvironmentForwardsOnlyResolvedBoxSettings(t *testing.T)
 		if got[key] != want {
 			t.Fatalf("%s = %q, want %q", key, got[key], want)
 		}
+	}
+	var gotCompanions []session.CompanionRepository
+	if err := json.Unmarshal(
+		[]byte(got["COOP_SESSION_COMPANIONS"]), &gotCompanions,
+	); err != nil || len(gotCompanions) != 1 ||
+		gotCompanions[0] != companions[0] {
+		t.Fatalf("companion environment = %+v, %v", gotCompanions, err)
 	}
 	for _, key := range []string{"COOP_RUN_ARGS", "OPENAI_API_KEY", "COOP_MCP_FILE"} {
 		if _, ok := got[key]; ok {
@@ -525,8 +537,7 @@ func (f *sessionACPFixture) submitArtifacts(
 		t.Fatal(err)
 	}
 	_, err = f.store.SubmitTurn(context.Background(), "turn-"+prompt, session.SubmitTurnRequest{
-		SessionID: sess.ID, ExpectedRevision: sess.Revision,
-		Prompt: prompt, Artifacts: artifacts,
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: prompt, Artifacts: artifacts,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -580,6 +591,38 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("%s mode = %04o, want %04o", path, got, want)
+	}
+}
+
+func TestAccumulateSessionACPUpdateDecodesContentByUpdateType(t *testing.T) {
+	var assistant []byte
+	toolCall := json.RawMessage(`{
+		"sessionId":"native-1",
+		"update":{
+			"sessionUpdate":"tool_call",
+			"toolCallId":"tool-1",
+			"content":[{"type":"terminal","terminalId":"terminal-1"}]
+		}
+	}`)
+	if err := accumulateSessionACPUpdate(toolCall, "native-1", &assistant); err != nil {
+		t.Fatalf("valid tool-call update = %v", err)
+	}
+	if len(assistant) != 0 {
+		t.Fatalf("tool-call content leaked into assistant message: %q", assistant)
+	}
+
+	message := json.RawMessage(`{
+		"sessionId":"native-1",
+		"update":{
+			"sessionUpdate":"agent_message_chunk",
+			"content":{"type":"text","text":"verified result"}
+		}
+	}`)
+	if err := accumulateSessionACPUpdate(message, "native-1", &assistant); err != nil {
+		t.Fatalf("agent message update = %v", err)
+	}
+	if got, want := string(assistant), "verified result"; got != want {
+		t.Fatalf("assistant message = %q, want %q", got, want)
 	}
 }
 

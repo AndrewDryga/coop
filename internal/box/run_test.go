@@ -278,6 +278,87 @@ func TestRunUsesTrustedPolicyRepo(t *testing.T) {
 	}
 }
 
+func TestRunAppliesTrustedReviewEnvironment(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectFile := "review:\n  env:\n    CI: \"1\"\n    DATABASE_URL: postgres://postgres@db/test\n"
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(projectFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		Review: true, Batch: true, Quiet: true,
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	for _, want := range []string{"COOP_REVIEW=1", "CI=1", "DATABASE_URL=postgres://postgres@db/test"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("review environment %q missing from:\n%s", want, args)
+		}
+	}
+}
+
+func TestRunCleansUpTrustedReviewServices(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(repo, ".agent", "project.yaml"),
+		[]byte("review:\n  compose: review-compose.yml\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(repo, "review-compose.yml"),
+		[]byte("services:\n  db:\n    image: postgres:18\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{
+		ConfigDir: t.TempDir(), HomeInBox: "/home/node",
+		Egress: "open", AutoUp: true, ServicesNet: "ordinary-shared-network",
+	}
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		Review: true, Network: true, Batch: true, Quiet: true,
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	if !strings.Contains(args, "up -d --wait --remove-orphans") {
+		t.Fatalf("review service startup missing from:\n%s", args)
+	}
+	if !strings.Contains(args, "down --remove-orphans --volumes") {
+		t.Fatalf("review service cleanup missing from:\n%s", args)
+	}
+	reviewNetwork := ComposeProject(repo) + "_default"
+	if !containsSeq(strings.Fields(args), []string{"--network", reviewNetwork}) {
+		t.Fatalf("review box did not join its disposable service network %q:\n%s", reviewNetwork, args)
+	}
+	if containsSeq(strings.Fields(args), []string{"--network", cfg.ServicesNet}) {
+		t.Fatalf("review box joined the ordinary shared-services network:\n%s", args)
+	}
+}
+
 func TestRunKeepsGeneratedGitMountsOutOfConfigHome(t *testing.T) {
 	repo := t.TempDir()
 	ignore := filepath.Join(t.TempDir(), "global-ignore")
@@ -312,6 +393,46 @@ func TestRunKeepsGeneratedGitMountsOutOfConfigHome(t *testing.T) {
 	}
 	if strings.Contains(args, ":/home/node/.config/") {
 		t.Fatalf("generated mount would make Docker create a root-owned config parent:\n%s", args)
+	}
+}
+
+func TestRunMountsCompanionRepositoriesReadOnly(t *testing.T) {
+	repo := t.TempDir()
+	companion := t.TempDir()
+	companion, err := filepath.EvalSymlinks(companion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{
+		ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open",
+	}
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace",
+		Cmd: []string{"true"}, Batch: true, Quiet: true,
+		CompanionRepositories: []CompanionRepository{{
+			Name: "topology", HostPath: companion,
+			BaseCommit: strings.Repeat("a", 40),
+		}},
+	}
+	if code, err := Run(
+		cfg, recorderRuntime(t, recorder), spec,
+	); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	if !strings.Contains(
+		args, companion+":/coop/repositories/topology:ro",
+	) {
+		t.Fatalf("companion read-only mount missing from:\n%s", args)
+	}
+	if !strings.Contains(args, "COOP_COMPANION_REPOSITORIES_JSON=") ||
+		!strings.Contains(args, `"path":"/coop/repositories/topology"`) {
+		t.Fatalf("companion environment missing from:\n%s", args)
 	}
 }
 

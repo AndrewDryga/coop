@@ -56,9 +56,12 @@ func (a codexAgent) Headless(cfg *config.Config, prompt string) []string {
 	return append(append([]string{b[0], "exec"}, b[1:]...), prompt)
 }
 
-// ACP is a separate adapter binary that takes no agent flags, and codex reads no model
-// env var — its model under ACP comes from its own config.toml.
-func (codexAgent) ACP(*config.Config) []string { return []string{"codex-acp"} }
+// ACP is a separate adapter binary whose default "agent" mode enables Codex's inner
+// bubblewrap sandbox. Coop's box is already the security boundary and cannot nest that
+// namespace, so pin the adapter's supported full-access mode to this process only.
+func (codexAgent) ACP(*config.Config) []string {
+	return []string{"env", "INITIAL_AGENT_MODE=agent-full-access", "codex-acp"}
+}
 
 // ACPSessionDirs: codex stores rollouts under ~/.codex/sessions (best-effort — codex-acp's resume
 // story is weaker than claude's; sharing the dir is the most we can do without a preset-id).

@@ -155,6 +155,26 @@ func TestSessionWorkspaceInspectTypedChangesAndOddFilenames(t *testing.T) {
 	if strings.Contains(changes.Patch, oddName) || strings.Contains(changes.Patch, "untracked contents") {
 		t.Fatal("untracked contents were embedded in tracked patch")
 	}
+	first, err := inspectSessionChangesPage(repo, created.Path, base, 0, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := inspectSessionChangesPage(
+		repo,
+		created.Path,
+		base,
+		first.PatchNextOffset,
+		64,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.PatchDigest == "" || first.PatchDigest != second.PatchDigest ||
+		first.PatchBytes != second.PatchBytes || !first.PatchHasMore ||
+		second.PatchOffset != first.PatchNextOffset ||
+		string(first.Patch)+string(second.Patch) == "" {
+		t.Fatalf("patch pages = first %+v second %+v", first, second)
+	}
 
 	sessionWorkspaceWrite(t, filepath.Join(repo, "parent-only.txt"), "parent advanced\n")
 	git("add", "parent-only.txt")

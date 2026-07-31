@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 2
+	SchemaVersion = 3
 
 	MaxIDBytes              = 256
 	MaxMethodBytes          = 128
@@ -19,13 +19,13 @@ const (
 	MaxTargetBytes          = 512
 	MaxExternalRefBytes     = 512
 	MaxPromptBytes          = 64 << 10
-	MaxEventPayloadBytes    = 256 << 10
-	MaxOperationResultBytes = 2 << 20
-	MaxErrorDetailBytes     = 4 << 10
 	MaxTurnArtifacts        = 4
 	MaxArtifactBytes        = 8 << 20
 	MaxTurnArtifactBytes    = 8 << 20
 	MaxArtifactNameBytes    = 255
+	MaxEventPayloadBytes    = 256 << 10
+	MaxOperationResultBytes = 2 << 20
+	MaxErrorDetailBytes     = 4 << 10
 
 	MaxTurnsLimit         = 10000
 	MaxQueuedTurnsLimit   = 1000
@@ -196,31 +196,42 @@ type Operation struct {
 }
 
 type Session struct {
-	ID                string        `json:"id"`
-	ExternalRef       string        `json:"external_ref"`
-	Target            string        `json:"target"`
-	Policy            string        `json:"policy"`
-	PolicyDigest      string        `json:"policy_digest"`
-	Repository        string        `json:"repository"`
-	Workspace         string        `json:"workspace"`
-	ForkName          string        `json:"fork_name"`
-	BaseCommit        string        `json:"base_commit"`
-	NativeSessionID   string        `json:"native_session_id"`
-	TurnTimeout       time.Duration `json:"turn_timeout"`
-	MaxPatchBytes     int           `json:"max_patch_bytes"`
-	Revision          int64         `json:"revision"`
-	State             SessionState  `json:"state"`
-	Activity          ActivityState `json:"activity"`
-	MaxTurns          int           `json:"max_turns"`
-	MaxQueuedTurns    int           `json:"max_queued_turns"`
-	MaxQueuedBytes    int           `json:"max_queued_bytes"`
-	TurnsUsed         int           `json:"turns_used"`
-	QueuedTurnCount   int           `json:"queued_turn_count"`
-	QueuedPromptBytes int           `json:"queued_prompt_bytes"`
-	ActiveTurnID      string        `json:"active_turn_id"`
-	LastEventSequence int64         `json:"last_event_sequence"`
-	CreatedAt         time.Time     `json:"created_at"`
-	UpdatedAt         time.Time     `json:"updated_at"`
+	ID                string                `json:"id"`
+	ExternalRef       string                `json:"external_ref"`
+	Target            string                `json:"target"`
+	Policy            string                `json:"policy"`
+	PolicyDigest      string                `json:"policy_digest"`
+	Repository        string                `json:"repository"`
+	Workspace         string                `json:"workspace"`
+	ForkName          string                `json:"fork_name"`
+	BaseCommit        string                `json:"base_commit"`
+	Companions        []CompanionRepository `json:"companions,omitempty"`
+	NativeSessionID   string                `json:"native_session_id"`
+	TurnTimeout       time.Duration         `json:"turn_timeout"`
+	MaxPatchBytes     int                   `json:"max_patch_bytes"`
+	Revision          int64                 `json:"revision"`
+	State             SessionState          `json:"state"`
+	Activity          ActivityState         `json:"activity"`
+	MaxTurns          int                   `json:"max_turns"`
+	MaxQueuedTurns    int                   `json:"max_queued_turns"`
+	MaxQueuedBytes    int                   `json:"max_queued_bytes"`
+	TurnsUsed         int                   `json:"turns_used"`
+	QueuedTurnCount   int                   `json:"queued_turn_count"`
+	QueuedPromptBytes int                   `json:"queued_prompt_bytes"`
+	ActiveTurnID      string                `json:"active_turn_id"`
+	LastEventSequence int64                 `json:"last_event_sequence"`
+	CreatedAt         time.Time             `json:"created_at"`
+	UpdatedAt         time.Time             `json:"updated_at"`
+}
+
+// CompanionRepository is an operator-policy-selected repository snapshot available read-only
+// during a session. Repository and Workspace are durable host bindings and are omitted from the
+// public HTTP DTO; BaseCommit is the immutable identity presented to clients.
+type CompanionRepository struct {
+	Name       string `json:"name"`
+	Repository string `json:"repository"`
+	Workspace  string `json:"workspace"`
+	BaseCommit string `json:"base_commit"`
 }
 
 type Turn struct {
@@ -232,6 +243,7 @@ type Turn struct {
 	State            TurnState       `json:"state"`
 	SendState        SendState       `json:"send_state"`
 	Prompt           string          `json:"prompt"`
+	Artifacts        []InputArtifact `json:"-"`
 	QueuedAt         time.Time       `json:"queued_at"`
 	StartedAt        time.Time       `json:"started_at"`
 	FinishedAt       time.Time       `json:"finished_at"`
@@ -239,11 +251,10 @@ type Turn struct {
 	AssistantMessage string          `json:"assistant_message"`
 	ErrorCode        ErrorCode       `json:"error_code"`
 	ErrorDetail      string          `json:"error_detail"`
-	Artifacts        []InputArtifact `json:"-"`
 }
 
-// InputArtifact is bounded user context attached to one turn. The public turn representation
-// omits Data so neither APIs nor event logs accidentally expose uploaded content.
+// InputArtifact is opaque user-supplied context attached to one turn. Data is accepted only on
+// turn admission and never appears in the public session API or durable operation result.
 type InputArtifact struct {
 	Name      string `json:"name"`
 	MediaType string `json:"media_type"`
@@ -263,20 +274,21 @@ type Event struct {
 }
 
 type CreateSessionRequest struct {
-	ID             string        `json:"id"`
-	ExternalRef    string        `json:"external_ref"`
-	Target         string        `json:"target"`
-	Policy         string        `json:"policy"`
-	PolicyDigest   string        `json:"policy_digest"`
-	Repository     string        `json:"repository"`
-	Workspace      string        `json:"workspace"`
-	ForkName       string        `json:"fork_name"`
-	BaseCommit     string        `json:"base_commit"`
-	TurnTimeout    time.Duration `json:"turn_timeout"`
-	MaxPatchBytes  int           `json:"max_patch_bytes"`
-	MaxTurns       int           `json:"max_turns"`
-	MaxQueuedTurns int           `json:"max_queued_turns"`
-	MaxQueuedBytes int           `json:"max_queued_bytes"`
+	ID             string                `json:"id"`
+	ExternalRef    string                `json:"external_ref"`
+	Target         string                `json:"target"`
+	Policy         string                `json:"policy"`
+	PolicyDigest   string                `json:"policy_digest"`
+	Repository     string                `json:"repository"`
+	Workspace      string                `json:"workspace"`
+	ForkName       string                `json:"fork_name"`
+	BaseCommit     string                `json:"base_commit"`
+	Companions     []CompanionRepository `json:"companions,omitempty"`
+	TurnTimeout    time.Duration         `json:"turn_timeout"`
+	MaxPatchBytes  int                   `json:"max_patch_bytes"`
+	MaxTurns       int                   `json:"max_turns"`
+	MaxQueuedTurns int                   `json:"max_queued_turns"`
+	MaxQueuedBytes int                   `json:"max_queued_bytes"`
 }
 
 type SubmitTurnRequest struct {

@@ -39,6 +39,7 @@ type SessionDTO struct {
 	Policy            string                `json:"policy"`
 	PolicyDigest      string                `json:"policy_digest"`
 	BaseCommit        string                `json:"base_commit"`
+	Companions        []SessionCompanionDTO `json:"companions,omitempty"`
 	ForkName          string                `json:"fork_name"`
 	Revision          int64                 `json:"revision"`
 	State             session.SessionState  `json:"state"`
@@ -53,6 +54,12 @@ type SessionDTO struct {
 	LastEventSequence int64                 `json:"last_event_sequence"`
 	CreatedAt         time.Time             `json:"created_at"`
 	UpdatedAt         time.Time             `json:"updated_at"`
+}
+
+type SessionCompanionDTO struct {
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	BaseCommit string `json:"base_commit"`
 }
 
 type TurnDTO struct {
@@ -120,6 +127,11 @@ type SessionChangesDTO struct {
 	ParentDivergence SessionParentDivergenceDTO `json:"parent_divergence"`
 	Patch            []byte                     `json:"patch,omitempty"`
 	Truncated        bool                       `json:"truncated"`
+	PatchDigest      string                     `json:"patch_digest,omitempty"`
+	PatchBytes       int64                      `json:"patch_bytes"`
+	PatchOffset      int64                      `json:"patch_offset"`
+	PatchNextOffset  int64                      `json:"patch_next_offset"`
+	PatchHasMore     bool                       `json:"patch_has_more"`
 }
 
 type SessionReviewDTO struct {
@@ -140,6 +152,9 @@ type SessionReviewDTO struct {
 	PolicyFindings        []string                  `json:"policy_findings,omitempty"`
 	Patch                 []byte                    `json:"patch,omitempty"`
 	PatchTruncated        bool                      `json:"patch_truncated"`
+	PatchArtifactID       string                    `json:"patch_artifact_id,omitempty"`
+	PatchDigest           string                    `json:"patch_digest,omitempty"`
+	PatchBytes            int64                     `json:"patch_bytes"`
 	Publishable           bool                      `json:"publishable"`
 	NotPublishableReasons []string                  `json:"not_publishable_reasons,omitempty"`
 }
@@ -348,6 +363,11 @@ func (h *sessionHTTPHandler) serveOperationPath(w http.ResponseWriter, r *http.R
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/operations/"), "/")
+	if len(parts) == 2 && parts[1] == "review-patch" &&
+		validSessionHTTPPathID(parts[0]) {
+		h.reviewPatch(w, r, parts[0])
+		return
+	}
 	if len(parts) != 1 || !validSessionHTTPPathID(parts[0]) {
 		writeSessionHTTPError(w, http.StatusNotFound, "not_found", "operation not found")
 		return
@@ -358,6 +378,25 @@ func (h *sessionHTTPHandler) serveOperationPath(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeSessionJSON(w, http.StatusOK, publicOperation(op))
+}
+
+func (h *sessionHTTPHandler) reviewPatch(
+	w http.ResponseWriter,
+	r *http.Request,
+	operationID string,
+) {
+	file, dossier, err := h.service.OpenReviewPatch(r.Context(), operationID)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	defer file.Close()
+	w.Header().Set("Content-Type", "text/x-diff; charset=utf-8")
+	w.Header().Set("Content-Length", strconv.FormatInt(dossier.PatchBytes, 10))
+	w.Header().Set("ETag", `"`+dossier.PatchDigest+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, file)
 }
 
 func (h *sessionHTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
@@ -422,14 +461,14 @@ func (h *sessionHTTPHandler) submitTurn(w http.ResponseWriter, r *http.Request, 
 	var body struct {
 		ExpectedRevision int64                   `json:"expected_revision"`
 		Prompt           string                  `json:"prompt"`
-		Artifacts        []session.InputArtifact `json:"artifacts"`
+		Artifacts        []session.InputArtifact `json:"artifacts,omitempty"`
 	}
 	if !decodeSessionJSONLimit(w, r, &body, sessionHTTPTurnMaxBody) {
 		return
 	}
 	turn, err := h.service.SubmitTurn(r.Context(), sessionIdempotencyKey(r), session.SubmitTurnRequest{
-		SessionID: sessionID, ExpectedRevision: body.ExpectedRevision,
-		Prompt: body.Prompt, Artifacts: body.Artifacts,
+		SessionID: sessionID, ExpectedRevision: body.ExpectedRevision, Prompt: body.Prompt,
+		Artifacts: body.Artifacts,
 	})
 	if err != nil {
 		writeSessionServiceError(w, err)
@@ -538,10 +577,58 @@ func (h *sessionHTTPHandler) extendBudget(w http.ResponseWriter, r *http.Request
 }
 
 func (h *sessionHTTPHandler) getChanges(w http.ResponseWriter, r *http.Request, sessionID string) {
-	if !sessionQueryOnly(w, r) {
+	if !sessionQueryOnly(w, r, "patch_offset", "patch_limit") {
 		return
 	}
-	changes, err := h.service.GetChanges(r.Context(), sessionID)
+	query := r.URL.Query()
+	patchOffset := int64(0)
+	if raw := query.Get("patch_offset"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 || parsed > 1<<30 {
+			writeSessionHTTPError(
+				w,
+				http.StatusBadRequest,
+				"invalid_request",
+				"patch_offset is outside bounds",
+			)
+			return
+		}
+		patchOffset = parsed
+	}
+	patchLimit := 0
+	if raw := query.Get("patch_limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > session.MaxPatchBytesLimit {
+			writeSessionHTTPError(
+				w,
+				http.StatusBadRequest,
+				"invalid_request",
+				"patch_limit is outside bounds",
+			)
+			return
+		}
+		patchLimit = parsed
+	}
+	var changes SessionWorkspaceChanges
+	var err error
+	if patchLimit == 0 && patchOffset == 0 {
+		changes, err = h.service.GetChanges(r.Context(), sessionID)
+	} else if patchLimit == 0 {
+		writeSessionHTTPError(
+			w,
+			http.StatusBadRequest,
+			"invalid_request",
+			"patch_limit is required when patch_offset is set",
+		)
+		return
+	} else {
+		changes, err = h.service.GetChangesPage(
+			r.Context(),
+			sessionID,
+			patchOffset,
+			patchLimit,
+		)
+	}
 	if err != nil {
 		writeSessionServiceError(w, err)
 		return
@@ -691,14 +778,10 @@ func decodeSessionJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 	return decodeSessionJSONLimit(w, r, value, sessionHTTPMaxBody)
 }
 
-func decodeSessionJSONLimit(
-	w http.ResponseWriter,
-	r *http.Request,
-	value any,
-	limit int64,
-) bool {
+func decodeSessionJSONLimit(w http.ResponseWriter, r *http.Request, value any, limit int64) bool {
+	detail := fmt.Sprintf("request body exceeds %d bytes", limit)
 	if r.ContentLength > limit {
-		writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds its bound")
+		writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", detail)
 		return false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
@@ -706,7 +789,7 @@ func decodeSessionJSONLimit(
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(value); err != nil {
 		if isSessionBodyTooLarge(err) {
-			writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds its bound")
+			writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", detail)
 		} else if errors.Is(err, io.EOF) {
 			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "request body must contain one JSON value")
 		} else {
@@ -717,7 +800,7 @@ func decodeSessionJSONLimit(
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
 		if isSessionBodyTooLarge(err) {
-			writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds its bound")
+			writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "request_too_large", detail)
 		} else {
 			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "request body must contain exactly one JSON value")
 		}
@@ -822,9 +905,17 @@ func sessionQueryOnly(w http.ResponseWriter, r *http.Request, allowed ...string)
 }
 
 func publicSession(value session.Session) SessionDTO {
+	companions := make([]SessionCompanionDTO, 0, len(value.Companions))
+	for _, companion := range value.Companions {
+		companions = append(companions, SessionCompanionDTO{
+			Name: companion.Name, Path: sessionCompanionBoxPath(companion.Name),
+			BaseCommit: companion.BaseCommit,
+		})
+	}
 	return SessionDTO{
 		ID: value.ID, ExternalRef: value.ExternalRef, Target: value.Target, Policy: value.Policy,
-		PolicyDigest: value.PolicyDigest, BaseCommit: value.BaseCommit, ForkName: value.ForkName,
+		PolicyDigest: value.PolicyDigest, BaseCommit: value.BaseCommit,
+		Companions: companions, ForkName: value.ForkName,
 		Revision: value.Revision, State: value.State, Activity: value.Activity, MaxTurns: value.MaxTurns,
 		MaxQueuedTurns: value.MaxQueuedTurns, MaxQueuedBytes: value.MaxQueuedBytes, TurnsUsed: value.TurnsUsed,
 		QueuedTurnCount: value.QueuedTurnCount, QueuedPromptBytes: value.QueuedPromptBytes,
@@ -872,6 +963,9 @@ func publicChanges(value SessionWorkspaceChanges) SessionChangesDTO {
 		Untracked: convert(value.Untracked), Conflicts: convert(value.Conflicts),
 		ParentDivergence: SessionParentDivergenceDTO{Ahead: value.ParentDivergence.Ahead, Behind: value.ParentDivergence.Behind, BaseToFork: value.ParentDivergence.BaseToFork, BaseToParent: value.ParentDivergence.BaseToParent, Diverged: value.ParentDivergence.Diverged},
 		Patch:            []byte(value.Patch), Truncated: value.Truncated,
+		PatchDigest: value.PatchDigest, PatchBytes: value.PatchBytes,
+		PatchOffset: value.PatchOffset, PatchNextOffset: value.PatchNextOffset,
+		PatchHasMore: value.PatchHasMore,
 	}
 }
 
@@ -882,7 +976,9 @@ func publicReview(value SessionReviewDossier) SessionReviewDTO {
 		SourceTree: value.SourceTree, ParentHead: value.ParentHead, ParentTree: value.ParentTree,
 		CandidateHead: value.CandidateHead, CandidateTree: value.CandidateTree, Rebase: value.Rebase,
 		Gate: value.Gate, PolicyFindings: append([]string(nil), value.PolicyFindings...),
-		Patch: append([]byte(nil), value.Patch...), PatchTruncated: value.PatchTruncated, Publishable: value.Publishable,
+		Patch: append([]byte(nil), value.Patch...), PatchTruncated: value.PatchTruncated,
+		PatchArtifactID: value.PatchArtifactID, PatchDigest: value.PatchDigest,
+		PatchBytes: value.PatchBytes, Publishable: value.Publishable,
 		NotPublishableReasons: append([]string(nil), value.NotPublishableReasons...),
 	}
 	if value.GateError != "" {

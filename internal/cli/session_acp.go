@@ -694,7 +694,10 @@ func (r *sessionTurnRunner) startChild(ctx context.Context, bound session.Sessio
 		return nil, acpFailure(sessionACPProcessError, "bound fork identity is invalid")
 	}
 	runID := sessionTurnRunID(bound.ID, leased.ID)
-	env := sessionACPChildEnvironment(bound.Repository, privateRoot, runID, r.sourceCfg, r.rt.Name)
+	env := sessionACPChildEnvironment(
+		bound.Repository, bound.Companions, privateRoot, runID,
+		r.sourceCfg, r.rt.Name,
+	)
 	cmd := r.command(executable, "fork", bound.ForkName, "acp", bound.Target)
 	if cmd == nil {
 		return nil, acpFailure(sessionACPProcessError, "Coop child could not be constructed")
@@ -711,7 +714,13 @@ func (r *sessionTurnRunner) startChild(ctx context.Context, bound session.Sessio
 	return process, err
 }
 
-func sessionACPChildEnvironment(repo, privateRoot, runID string, cfg *config.Config, runtimeName string) []string {
+func sessionACPChildEnvironment(
+	repo string,
+	companions []session.CompanionRepository,
+	privateRoot, runID string,
+	cfg *config.Config,
+	runtimeName string,
+) []string {
 	blocked := map[string]bool{}
 	for _, name := range agents.Names() {
 		if agent, ok := agents.Get(name); ok {
@@ -735,6 +744,11 @@ func sessionACPChildEnvironment(repo, privateRoot, runID string, cfg *config.Con
 		"COOP_HOMES=1",
 		"COOP_SESSION_RUN_ID="+runID,
 	)
+	if len(companions) > 0 {
+		// CompanionRepository contains strings only, so this encoding cannot fail.
+		data, _ := json.Marshal(companions)
+		env = append(env, "COOP_SESSION_COMPANIONS="+string(data))
+	}
 	if runtimeName != "" {
 		env = append(env, "COOP_RUNTIME="+runtimeName)
 	}
@@ -1090,11 +1104,7 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 	if err != nil {
 		return "", acpFailure(session.CodeInternal, "turn sent checkpoint failed")
 	}
-	content, err := sessionACPInputContent(
-		leased,
-		initialized.AgentCapabilities.PromptCapabilities.Image,
-		initialized.AgentCapabilities.PromptCapabilities.EmbeddedContext,
-	)
+	content, err := sessionACPInputContent(leased, initialized.AgentCapabilities.PromptCapabilities.Image, initialized.AgentCapabilities.PromptCapabilities.EmbeddedContext)
 	if err != nil {
 		return "", err
 	}
@@ -1240,11 +1250,8 @@ func accumulateSessionACPUpdate(raw json.RawMessage, expectedSession string, ass
 	var envelope struct {
 		SessionID string `json:"sessionId"`
 		Update    struct {
-			SessionUpdate string `json:"sessionUpdate"`
-			Content       struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
+			SessionUpdate string          `json:"sessionUpdate"`
+			Content       json.RawMessage `json:"content"`
 		} `json:"update"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
@@ -1256,12 +1263,19 @@ func accumulateSessionACPUpdate(raw json.RawMessage, expectedSession string, ass
 	if envelope.Update.SessionUpdate != "assistant_message_chunk" && envelope.Update.SessionUpdate != "agent_message_chunk" {
 		return nil
 	}
-	if envelope.Update.Content.Type != "text" || envelope.Update.Content.Text == "" {
+	var content struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(envelope.Update.Content, &content); err != nil {
+		return acpFailure(sessionACPProtocolError, "malformed assistant message update")
+	}
+	if content.Type != "text" || content.Text == "" {
 		return nil
 	}
-	if !utf8.ValidString(envelope.Update.Content.Text) || len(*assistant)+len(envelope.Update.Content.Text) > sessionACPMessageLimit {
+	if !utf8.ValidString(content.Text) || len(*assistant)+len(content.Text) > sessionACPMessageLimit {
 		return acpFailure(sessionACPProtocolError, "assistant message exceeded its bound")
 	}
-	*assistant = append(*assistant, envelope.Update.Content.Text...)
+	*assistant = append(*assistant, content.Text...)
 	return nil
 }

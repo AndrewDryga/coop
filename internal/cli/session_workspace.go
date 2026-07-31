@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,6 +60,11 @@ type sessionWorkspaceChanges struct {
 	ParentDivergence sessionWorkspaceParentDivergence `json:"parent_divergence"`
 	Patch            string                           `json:"patch,omitempty"`
 	Truncated        bool                             `json:"truncated"`
+	PatchDigest      string                           `json:"patch_digest,omitempty"`
+	PatchBytes       int64                            `json:"patch_bytes"`
+	PatchOffset      int64                            `json:"patch_offset"`
+	PatchNextOffset  int64                            `json:"patch_next_offset"`
+	PatchHasMore     bool                             `json:"patch_has_more"`
 }
 
 type SessionWorkspaceChanges = sessionWorkspaceChanges
@@ -89,6 +95,14 @@ type sessionWorkspaceLimitedWriter struct {
 	buf       bytes.Buffer
 	limit     int
 	truncated bool
+}
+
+type sessionWorkspaceWindowWriter struct {
+	buf    bytes.Buffer
+	digest hash.Hash
+	offset int64
+	limit  int64
+	total  int64
 }
 
 func (w *sessionWorkspaceLimitedWriter) Write(p []byte) (int, error) {
@@ -123,6 +137,68 @@ func runSessionWorkspaceGit(dir string, limit int, args ...string) ([]byte, bool
 		return nil, false, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
 	return stdout.buf.Bytes(), stdout.truncated, nil
+}
+
+func (w *sessionWorkspaceWindowWriter) Write(p []byte) (int, error) {
+	if w.offset < 0 || w.limit < 0 {
+		return 0, errors.New("negative output window")
+	}
+	if w.digest == nil {
+		w.digest = sha256.New()
+	}
+	_, _ = w.digest.Write(p)
+	start := w.total
+	w.total += int64(len(p))
+	windowStart := w.offset
+	windowEnd := w.offset + w.limit
+	chunkEnd := start + int64(len(p))
+	copyStart := max(start, windowStart)
+	copyEnd := min(chunkEnd, windowEnd)
+	if copyStart < copyEnd {
+		from := copyStart - start
+		to := copyEnd - start
+		_, _ = w.buf.Write(p[from:to])
+	}
+	return len(p), nil
+}
+
+func runSessionWorkspaceGitWindow(
+	dir string,
+	offset int64,
+	limit int,
+	args ...string,
+) ([]byte, int64, string, bool, error) {
+	if offset < 0 || limit < 1 || limit > sessionWorkspacePatchLimit {
+		return nil, 0, "", false, errors.New("invalid output window")
+	}
+	stdout := &sessionWorkspaceWindowWriter{
+		digest: sha256.New(),
+		offset: offset,
+		limit:  int64(limit),
+	}
+	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
+	cmd := exec.Command("git", gitArgs(dir, args)...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.buf.String())
+		if detail != "" {
+			return nil, 0, "", false, fmt.Errorf(
+				"git %s: %w: %s",
+				strings.Join(args, " "),
+				err,
+				detail,
+			)
+		}
+		return nil, 0, "", false, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	if offset > stdout.total {
+		return nil, stdout.total, hex.EncodeToString(stdout.digest.Sum(nil)), false,
+			errors.New("output window starts beyond the patch")
+	}
+	hasMore := offset+int64(stdout.buf.Len()) < stdout.total
+	return stdout.buf.Bytes(), stdout.total,
+		hex.EncodeToString(stdout.digest.Sum(nil)), hasMore, nil
 }
 
 func sessionWorkspaceGitText(dir string, limit int, args ...string) ([]byte, error) {
@@ -451,11 +527,24 @@ func sessionWorkspaceCount(dir string, args ...string) (int, error) {
 }
 
 func inspectSessionChanges(repo, workspace, base string, maxPatchBytes int) (sessionWorkspaceChanges, error) {
+	return inspectSessionChangesPage(repo, workspace, base, 0, maxPatchBytes)
+}
+
+func inspectSessionChangesPage(
+	repo string,
+	workspace string,
+	base string,
+	patchOffset int64,
+	patchLimit int,
+) (sessionWorkspaceChanges, error) {
 	if repo == "" || workspace == "" {
 		return sessionWorkspaceChanges{}, errors.New("repository and workspace are required")
 	}
-	if maxPatchBytes < 0 || maxPatchBytes > sessionWorkspacePatchLimit {
-		return sessionWorkspaceChanges{}, fmt.Errorf("patch limit must be between 0 and %d bytes", sessionWorkspacePatchLimit)
+	if patchOffset < 0 {
+		return sessionWorkspaceChanges{}, errors.New("patch offset must not be negative")
+	}
+	if patchLimit < 1 || patchLimit > sessionWorkspacePatchLimit {
+		return sessionWorkspaceChanges{}, fmt.Errorf("patch limit must be between 1 and %d bytes", sessionWorkspacePatchLimit)
 	}
 	baseCommit, err := sessionWorkspaceCommit(repo, base)
 	if err != nil {
@@ -495,7 +584,10 @@ func inspectSessionChanges(repo, workspace, base string, maxPatchBytes int) (ses
 		return sessionWorkspaceChanges{}, fmt.Errorf("parse committed workspace changes: %w", err)
 	}
 
-	patch, patchTruncated, err := runSessionWorkspaceGit(workspace, maxPatchBytes,
+	patch, patchBytes, patchDigest, patchHasMore, err := runSessionWorkspaceGitWindow(
+		workspace,
+		patchOffset,
+		patchLimit,
 		"diff", "--no-ext-diff", "--no-textconv", "--binary", baseCommit, "--")
 	if err != nil {
 		return sessionWorkspaceChanges{}, fmt.Errorf("inspect tracked workspace patch: %w", err)
@@ -530,7 +622,12 @@ func inspectSessionChanges(repo, workspace, base string, maxPatchBytes int) (ses
 		Diverged:     ahead > 0 && behind > 0,
 	}
 	changes.Patch = string(patch)
-	changes.Truncated = patchTruncated
+	changes.PatchDigest = patchDigest
+	changes.PatchBytes = patchBytes
+	changes.PatchOffset = patchOffset
+	changes.PatchNextOffset = patchOffset + int64(len(patch))
+	changes.PatchHasMore = patchHasMore
+	changes.Truncated = patchOffset > 0 || patchHasMore
 	return changes, nil
 }
 

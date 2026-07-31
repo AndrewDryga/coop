@@ -98,7 +98,7 @@ func TestCommands(t *testing.T) {
 		{"codex",
 			[]string{"codex", "--dangerously-bypass-approvals-and-sandbox"},
 			[]string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "go"},
-			[]string{"codex-acp"},
+			[]string{"env", "INITIAL_AGENT_MODE=agent-full-access", "codex-acp"},
 			[]string{"codex", "exec", "-s", "read-only", "q"}},
 		{"gemini",
 			[]string{"gemini", "--yolo"},
@@ -167,7 +167,7 @@ func TestModelSelection(t *testing.T) {
 		headlessHasModelFlag bool
 	}{
 		{"claude", []string{"claude", "--dangerously-skip-permissions", "--model", "opus"}, []string{"claude-agent-acp"}, true},
-		{"codex", []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "gpt-5"}, []string{"codex-acp"}, true},
+		{"codex", []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "gpt-5"}, []string{"env", "INITIAL_AGENT_MODE=agent-full-access", "codex-acp"}, true},
 		// gemini's ACP is its own binary, so the model rides the ACP command too.
 		{"gemini", []string{"gemini", "--yolo", "--model", "gemini-2.5-pro"}, []string{"gemini", "--acp", "--model", "gemini-2.5-pro"}, true},
 		// grok's ACP is its own binary; the model flag goes BEFORE the `stdio` mode.
@@ -240,7 +240,7 @@ func TestEffortSelection(t *testing.T) {
 		interactive, acp []string
 	}{
 		{"claude", []string{"claude", "--dangerously-skip-permissions", "--effort", "xhigh"}, []string{"claude-agent-acp"}},
-		{"codex", []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=high"}, []string{"codex-acp"}},
+		{"codex", []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=high"}, []string{"env", "INITIAL_AGENT_MODE=agent-full-access", "codex-acp"}},
 		{"gemini", []string{"gemini", "--yolo"}, []string{"gemini", "--acp"}}, // no effort flag anywhere
 		// grok's ACP is its own binary; the effort flag goes BEFORE the `stdio` mode, like the model.
 		{"grok", []string{"grok", "--permission-mode", "bypassPermissions", "--reasoning-effort", "high"}, []string{"grok", "agent", "--reasoning-effort", "high", "stdio"}},

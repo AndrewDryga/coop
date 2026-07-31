@@ -248,8 +248,8 @@ func TestForkReviewGateOutcomes(t *testing.T) {
 		wantCode int
 		wantLine string
 	}{
-		{name: "green", green: true, wantCode: 0, wantLine: "green on rebased scratch (read-only)"},
-		{name: "red", green: false, wantCode: 1, wantLine: "red on rebased scratch (read-only)"},
+		{name: "green", green: true, wantCode: 0, wantLine: "green on isolated rebased scratch"},
+		{name: "red", green: false, wantCode: 1, wantLine: "red on isolated rebased scratch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, ws := setupReviewGateFork(t, false)

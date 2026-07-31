@@ -9,19 +9,13 @@ import (
 	"github.com/AndrewDryga/coop/internal/session"
 )
 
-func sessionACPInputContent(
-	turn session.Turn,
-	imageCapable, resourceCapable bool,
-) ([]map[string]any, error) {
+func sessionACPInputContent(turn session.Turn, imageCapable, resourceCapable bool) ([]map[string]any, error) {
 	content := []map[string]any{{"type": "text", "text": turn.Prompt}}
 	for _, artifact := range turn.Artifacts {
 		switch {
 		case strings.HasPrefix(artifact.MediaType, "image/"):
 			if !imageCapable {
-				return nil, acpFailure(
-					sessionACPProtocolError,
-					"selected agent does not accept image input",
-				)
+				return nil, acpFailure(sessionACPProtocolError, "selected agent does not accept image input")
 			}
 			content = append(content, map[string]any{
 				"type": "image", "data": base64.StdEncoding.EncodeToString(artifact.Data),
@@ -29,10 +23,7 @@ func sessionACPInputContent(
 			})
 		case isTextArtifact(artifact.MediaType):
 			if !utf8.Valid(artifact.Data) {
-				return nil, acpFailure(
-					sessionACPProtocolError,
-					"text artifact is not valid UTF-8",
-				)
+				return nil, acpFailure(sessionACPProtocolError, "text artifact is not valid UTF-8")
 			}
 			content = append(content, map[string]any{
 				"type": "text",
@@ -43,10 +34,7 @@ func sessionACPInputContent(
 			})
 		default:
 			if !resourceCapable {
-				return nil, acpFailure(
-					sessionACPProtocolError,
-					"selected agent does not accept embedded file input",
-				)
+				return nil, acpFailure(sessionACPProtocolError, "selected agent does not accept embedded file input")
 			}
 			content = append(content, map[string]any{
 				"type": "resource",

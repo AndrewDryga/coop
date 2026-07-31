@@ -104,7 +104,7 @@ FLAGS (every short flag has a long form):
   -f, --follow    logs: keep streaming new output
 
 REVIEW  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.
-        --gate rebases in a scratch clone and runs the parent's gate read-only; red/conflict exits 1 (not with --open).
+        --gate rebases in an isolated scratch clone and runs the parent's gate; source mutations fail review.
 NAMES   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.
 
 Run 'coop help' for all commands.

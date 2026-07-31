@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -69,6 +70,114 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 	}
 	if _, err := service.RunReview(context.Background(), "review-clean", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision + 1}); session.CodeOf(err) != session.CodeIdempotencyConflict {
 		t.Fatalf("idempotency conflict = %v", err)
+	}
+}
+
+func TestSessionServiceRunReviewUsesCapturedBaseAfterParentHistoryRewrite(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "original base")
+	service := newReviewTestService(t, repo, 1<<20, SessionReviewGateFunc(func(_ context.Context, _, _ string) (SessionReviewGateResult, error) {
+		return SessionReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	defer service.Stop()
+	sess := createReviewSession(t, service, "rewritten-parent")
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceGit(t, sess.Workspace, "add", "change.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "task-local change")
+
+	// Model a rebased/force-pushed parent with no shared first-parent history. The review must replay
+	// only the task-local commits after the session's captured creation base.
+	git("checkout", "-q", "--orphan", "rewritten")
+	git("commit", "-q", "--allow-empty", "-m", "rewritten parent")
+
+	dossier, err := service.RunReview(
+		context.Background(),
+		"review-rewritten-parent",
+		RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dossier.Publishable || dossier.Rebase != SessionReviewRebaseClean {
+		t.Fatalf("rewritten-parent review = %+v", dossier)
+	}
+	if !bytes.Contains(dossier.Patch, []byte("change.txt")) {
+		t.Fatalf("candidate patch = %q", dossier.Patch)
+	}
+}
+
+func TestSessionServiceRunReviewAllowsBuildOutputButRejectsSourceMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		gateWrite   func(*testing.T, string)
+		wantPublish bool
+	}{
+		{
+			name: "ignored build output",
+			gateWrite: func(t *testing.T, candidate string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Join(candidate, "build"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(candidate, "build", "result"), []byte("ok\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantPublish: true,
+		},
+		{
+			name: "tracked source mutation",
+			gateWrite: func(t *testing.T, candidate string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(candidate, "change.txt"), []byte("mutated by gate\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "untracked source mutation",
+			gateWrite: func(t *testing.T, candidate string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(candidate, "unexpected.txt"), []byte("created by gate\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, git := gitRepo(t)
+			if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("/build/\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			git("add", ".gitignore")
+			git("commit", "-qm", "base")
+			service := newReviewTestService(t, repo, 1<<20, SessionReviewGateFunc(func(_ context.Context, _, candidate string) (SessionReviewGateResult, error) {
+				tc.gateWrite(t, candidate)
+				return SessionReviewGateResult{Configured: true, Passed: true}, nil
+			}))
+			defer service.Stop()
+			sess := createReviewSession(t, service, strings.ReplaceAll(tc.name, " ", "-"))
+			if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sessionWorkspaceGit(t, sess.Workspace, "add", "change.txt")
+			sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "review change")
+
+			dossier, err := service.RunReview(context.Background(), "review-"+strings.ReplaceAll(tc.name, " ", "-"), RunReviewRequest{
+				SessionID: sess.ID, ExpectedRevision: sess.Revision,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dossier.Publishable != tc.wantPublish {
+				t.Fatalf("publishable = %t, reasons = %v", dossier.Publishable, dossier.NotPublishableReasons)
+			}
+			if !tc.wantPublish && !containsReviewReason(dossier.NotPublishableReasons, "gate_modified_candidate") {
+				t.Fatalf("reasons = %v, want gate_modified_candidate", dossier.NotPublishableReasons)
+			}
+		})
 	}
 }
 
@@ -462,7 +571,7 @@ func TestSessionServiceRunReviewConcurrentReplayWaitsForFirst(t *testing.T) {
 	}
 }
 
-func TestSessionServiceRunReviewTruncatesBoundedPatch(t *testing.T) {
+func TestSessionServiceRunReviewKeepsBoundedPreviewAndCompleteArtifact(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newReviewTestService(t, repo, 48, SessionReviewGateFunc(func(context.Context, string, string) (SessionReviewGateResult, error) {
@@ -476,11 +585,104 @@ func TestSessionServiceRunReviewTruncatesBoundedPatch(t *testing.T) {
 	sessionWorkspaceGit(t, sess.Workspace, "add", "large.txt")
 	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "large review")
 	dossier, err := service.RunReview(context.Background(), "review-truncated", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
-	if err != nil || !dossier.PatchTruncated || dossier.Publishable || !containsReviewReason(dossier.NotPublishableReasons, "patch_truncated") || len(dossier.Patch) > 48 {
+	if err != nil || !dossier.PatchTruncated || !dossier.Publishable ||
+		len(dossier.NotPublishableReasons) != 0 || len(dossier.Patch) > 48 ||
+		dossier.PatchArtifactID == "" || dossier.PatchDigest == "" ||
+		dossier.PatchBytes <= int64(len(dossier.Patch)) {
 		t.Fatalf("truncated review = %+v, err=%v", dossier, err)
+	}
+	file, artifactDossier, err := service.OpenReviewPatch(
+		context.Background(),
+		dossier.OperationID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, readErr := io.ReadAll(file)
+	_ = file.Close()
+	if readErr != nil || int64(len(artifact)) != dossier.PatchBytes ||
+		artifactDossier.PatchDigest != dossier.PatchDigest ||
+		!bytes.Contains(artifact, []byte("large review line")) {
+		t.Fatalf(
+			"review artifact bytes=%d dossier=%+v read=%v",
+			len(artifact),
+			artifactDossier,
+			readErr,
+		)
 	}
 	if data, err := json.Marshal(dossier); err != nil || len(data) > session.MaxOperationResultBytes {
 		t.Fatalf("truncated dossier size = %d, err=%v", len(data), err)
+	}
+}
+
+func TestSessionReviewArtifactIsRemovedWithDiscardedSession(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newReviewTestService(
+		t,
+		repo,
+		48,
+		SessionReviewGateFunc(func(context.Context, string, string) (SessionReviewGateResult, error) {
+			return SessionReviewGateResult{Configured: true, Passed: true}, nil
+		}),
+	)
+	defer service.Stop()
+	sess := createReviewSession(t, service, "artifact-gc")
+	if err := os.WriteFile(
+		filepath.Join(sess.Workspace, "change.txt"),
+		[]byte("review artifact cleanup\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceGit(t, sess.Workspace, "add", "change.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "artifact cleanup")
+	dossier, err := service.RunReview(
+		context.Background(),
+		"review-artifact-gc",
+		RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(
+		service.stateRoot,
+		"review-artifacts",
+		dossier.OperationID+".diff",
+	)
+	if !pathExists(artifactPath) {
+		t.Fatal("review artifact was not created")
+	}
+	closed, err := service.Close(
+		context.Background(),
+		"close-artifact-gc",
+		session.CloseSessionRequest{
+			SessionID: sess.ID, ExpectedRevision: sess.Revision,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.PlanDiscard(
+		context.Background(),
+		"plan-artifact-gc",
+		PlanDiscardRequest{
+			SessionID: sess.ID, ExpectedRevision: closed.Revision,
+			AcceptUnmerged: true,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Discard(
+		context.Background(),
+		"discard-artifact-gc",
+		DiscardRequest{PlanOperationID: plan.OperationID},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(artifactPath) {
+		t.Fatal("review artifact remained after session discard")
 	}
 }
 

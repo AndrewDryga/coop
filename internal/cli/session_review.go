@@ -2,13 +2,17 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 
@@ -21,6 +25,7 @@ const (
 	sessionReviewFindingLimit      = 64
 	sessionReviewFindingBytes      = 1024
 	sessionReviewFindingTotalBytes = 32 << 10
+	sessionReviewArtifactMaxBytes  = 64 << 20
 )
 
 type SessionReviewGateStatus string
@@ -63,6 +68,9 @@ type SessionReviewDossier struct {
 	PolicyFindings        []string                  `json:"policy_findings,omitempty"`
 	Patch                 []byte                    `json:"patch,omitempty"`
 	PatchTruncated        bool                      `json:"patch_truncated"`
+	PatchArtifactID       string                    `json:"patch_artifact_id,omitempty"`
+	PatchDigest           string                    `json:"patch_digest,omitempty"`
+	PatchBytes            int64                     `json:"patch_bytes"`
 	Publishable           bool                      `json:"publishable"`
 	NotPublishableReasons []string                  `json:"not_publishable_reasons,omitempty"`
 }
@@ -75,8 +83,9 @@ type SessionReviewGateResult struct {
 	StartupError string
 }
 
-// SessionReviewGate is the narrow gate seam used by RunReview. Implementations must only
-// inspect treeDir; they must not mutate gateRepo or the candidate.
+// SessionReviewGate is the narrow gate seam used by RunReview. Implementations must not mutate
+// gateRepo. A gate may create ignored build output in the disposable candidate; RunReview rejects
+// any change to its pinned commit, tree, branch, tracked files, or non-ignored untracked files.
 type SessionReviewGate interface {
 	Run(context.Context, string, string) (SessionReviewGateResult, error)
 }
@@ -410,6 +419,9 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 	if err != nil {
 		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("run review gate: %w", err))
 	}
+	if !sessionReviewCandidateUnchanged(candidate.dir, candidate.name, candidateHead, candidateTree) {
+		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "gate_modified_candidate")
+	}
 	switch {
 	case gateResult.StartupError != "":
 		dossier.Gate = SessionReviewGateStartupError
@@ -424,10 +436,7 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 		dossier.Gate = SessionReviewGateFailed
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "gate_failed")
 	}
-	if err := candidate.detachBase(); err != nil {
-		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("detach review candidate: %w", err))
-	}
-	dossier.PolicyFindings = boundedSessionReviewFindings(policyScan(candidate.dir, candidate.name))
+	dossier.PolicyFindings = boundedSessionReviewFindings(policyScan(candidate.dir, candidateHead))
 	if len(dossier.PolicyFindings) > 0 {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "policy_findings")
 	}
@@ -436,8 +445,21 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("compute review candidate patch: %w", err))
 	}
 	dossier.Patch, dossier.PatchTruncated = patch, truncated
-	if truncated {
-		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "patch_truncated")
+	artifact, err := s.writeReviewPatchArtifact(
+		candidate.dir,
+		candidateParentHead,
+		candidateHead,
+		op.ID,
+	)
+	if err != nil {
+		dossier.NotPublishableReasons = append(
+			dossier.NotPublishableReasons,
+			"patch_artifact_unavailable",
+		)
+	} else {
+		dossier.PatchArtifactID = op.ID
+		dossier.PatchDigest = artifact.Digest
+		dossier.PatchBytes = artifact.Bytes
 	}
 	if current, err := captureSessionReviewParent(intent.Repository); err != nil || current.Head != intent.ParentHead || current.Tree != intent.ParentTree {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "parent_moved")
@@ -449,8 +471,20 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "fork_owner_active")
 	}
 	dossier.NotPublishableReasons = stableSessionReviewReasons(dossier.NotPublishableReasons)
-	dossier.Publishable = dossier.Rebase == SessionReviewRebaseClean && dossier.Gate == SessionReviewGatePassed && !dossier.PatchTruncated && len(dossier.PolicyFindings) == 0 && len(dossier.NotPublishableReasons) == 0
+	dossier.Publishable = dossier.Rebase == SessionReviewRebaseClean &&
+		dossier.Gate == SessionReviewGatePassed &&
+		dossier.PatchArtifactID != "" &&
+		dossier.PatchDigest != "" &&
+		dossier.PatchBytes > 0 &&
+		len(dossier.PolicyFindings) == 0 &&
+		len(dossier.NotPublishableReasons) == 0
 	return s.completeReview(ctx, dossier)
+}
+
+func sessionReviewCandidateUnchanged(dir, branch, head, tree string) bool {
+	current, err := captureSessionReviewSource("", dir, branch)
+	return err == nil && current.Head == head && current.Tree == tree &&
+		current.Branch == branch && current.StatusDigest == sessionWorkspaceStatusDigest(nil)
 }
 
 func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (forkReviewCandidate, error) {
@@ -494,7 +528,20 @@ func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (forkRevie
 	if sourceHead != intent.SourceHead || sourceTree != intent.SourceTree {
 		return c, errors.New("captured review source tree is unavailable")
 	}
-	if err := gitRun(c.dir, "rebase", c.base, c.name); err != nil {
+	creationBase, _, err := sessionReviewGitIdentity(c.dir, intent.CreationBase)
+	if err != nil {
+		return c, fmt.Errorf("resolve captured creation base: %w", err)
+	}
+	creationBaseIsAncestor, err := sessionReviewIsAncestor(c.dir, creationBase, sourceHead)
+	if err != nil {
+		return c, fmt.Errorf("verify captured creation base: %w", err)
+	}
+	if !creationBaseIsAncestor {
+		return c, errors.New("captured creation base is not an ancestor of the review source")
+	}
+	// Replay exactly the task-local commits captured at session creation. Inferring the upstream
+	// from the current parent would also replay rewritten parent history after a force-push/rebase.
+	if err := gitRun(c.dir, "rebase", "--onto", c.base, creationBase, c.name); err != nil {
 		if abortErr := gitRun(c.dir, "rebase", "--abort"); abortErr != nil {
 			return c, fmt.Errorf("rebase captured review scratch failed and abort failed: %v; %w", err, abortErr)
 		}
@@ -511,6 +558,171 @@ func sessionReviewPatch(dir, parentHead, candidateHead string, maxBytes int) ([]
 		return nil, false, err
 	}
 	return patch, truncated, nil
+}
+
+type sessionReviewPatchArtifact struct {
+	Digest string
+	Bytes  int64
+}
+
+type sessionReviewArtifactWriter struct {
+	file     *os.File
+	digest   hashWriter
+	written  int64
+	maxBytes int64
+}
+
+type hashWriter interface {
+	io.Writer
+	Sum([]byte) []byte
+}
+
+func (w *sessionReviewArtifactWriter) Write(p []byte) (int, error) {
+	if w.written+int64(len(p)) > w.maxBytes {
+		return 0, fmt.Errorf(
+			"review patch exceeds %d bytes",
+			w.maxBytes,
+		)
+	}
+	n, err := w.file.Write(p)
+	if n > 0 {
+		_, _ = w.digest.Write(p[:n])
+		w.written += int64(n)
+	}
+	return n, err
+}
+
+func (s *SessionService) writeReviewPatchArtifact(
+	dir string,
+	parentHead string,
+	candidateHead string,
+	operationID string,
+) (sessionReviewPatchArtifact, error) {
+	var artifact sessionReviewPatchArtifact
+	if s.stateRoot == "" || !validSessionPathComponent(operationID) {
+		return artifact, errors.New("review artifact identity is invalid")
+	}
+	root := filepath.Join(s.stateRoot, "review-artifacts")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return artifact, fmt.Errorf("create review artifact root: %w", err)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		return artifact, fmt.Errorf("protect review artifact root: %w", err)
+	}
+	file, err := os.CreateTemp(root, "."+operationID+"-*.tmp")
+	if err != nil {
+		return artifact, fmt.Errorf("create review patch artifact: %w", err)
+	}
+	temp := file.Name()
+	keep := false
+	defer func() {
+		_ = file.Close()
+		if !keep {
+			_ = os.Remove(temp)
+		}
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		return artifact, fmt.Errorf("protect review patch artifact: %w", err)
+	}
+	writer := &sessionReviewArtifactWriter{
+		file: file, digest: sha256.New(), maxBytes: sessionReviewArtifactMaxBytes,
+	}
+	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
+	args := []string{
+		"diff", "--binary", "--no-ext-diff", "--no-textconv",
+		parentHead, candidateHead, "--",
+	}
+	cmd := exec.Command("git", gitArgs(dir, args)...)
+	cmd.Stdout = writer
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.buf.String())
+		if detail != "" {
+			return artifact, fmt.Errorf("write review patch artifact: %w: %s", err, detail)
+		}
+		return artifact, fmt.Errorf("write review patch artifact: %w", err)
+	}
+	if writer.written == 0 {
+		return artifact, errors.New("review patch artifact is empty")
+	}
+	if err := file.Sync(); err != nil {
+		return artifact, fmt.Errorf("sync review patch artifact: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return artifact, fmt.Errorf("close review patch artifact: %w", err)
+	}
+	target := filepath.Join(root, operationID+".diff")
+	if err := os.Rename(temp, target); err != nil {
+		return artifact, fmt.Errorf("publish review patch artifact: %w", err)
+	}
+	keep = true
+	return sessionReviewPatchArtifact{
+		Digest: fmt.Sprintf("%x", writer.digest.Sum(nil)),
+		Bytes:  writer.written,
+	}, nil
+}
+
+func (s *SessionService) OpenReviewPatch(
+	ctx context.Context,
+	operationID string,
+) (*os.File, SessionReviewDossier, error) {
+	var dossier SessionReviewDossier
+	if !validSessionPathComponent(operationID) {
+		return nil, dossier, &session.Error{
+			Code: session.CodeInvalidRequest, Detail: "invalid review operation id",
+		}
+	}
+	op, err := s.store.GetOperationByID(ctx, operationID)
+	if err != nil {
+		return nil, dossier, err
+	}
+	if op.Method != "RunReview" || op.State != session.OperationSucceeded {
+		return nil, dossier, &session.Error{
+			Code:   session.CodeInvalidRequest,
+			Detail: "operation is not a completed review",
+		}
+	}
+	dossier, err = decodeSessionReviewDossier(op.Result)
+	if err != nil {
+		return nil, dossier, err
+	}
+	if dossier.OperationID != operationID ||
+		dossier.PatchArtifactID != operationID ||
+		dossier.PatchDigest == "" ||
+		dossier.PatchBytes < 1 ||
+		dossier.PatchBytes > sessionReviewArtifactMaxBytes {
+		return nil, dossier, errors.New("review patch artifact metadata is invalid")
+	}
+	path := filepath.Join(s.stateRoot, "review-artifacts", operationID+".diff")
+	lstat, err := os.Lstat(path)
+	if err != nil {
+		return nil, dossier, fmt.Errorf("inspect review patch artifact path: %w", err)
+	}
+	if lstat.Mode()&os.ModeSymlink != 0 || !lstat.Mode().IsRegular() {
+		return nil, dossier, errors.New("review patch artifact path is unsafe")
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, dossier, fmt.Errorf("open review patch artifact: %w", err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if file == nil {
+		_ = syscall.Close(fd)
+		return nil, dossier, errors.New("open review patch artifact returned no file")
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, dossier, fmt.Errorf("inspect review patch artifact: %w", err)
+	}
+	owner, ownerOK := sessionFileOwner(info)
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 ||
+		!ownerOK || (owner != uint64(os.Geteuid()) && owner != 0) ||
+		info.Size() != dossier.PatchBytes {
+		_ = file.Close()
+		return nil, dossier, errors.New("review patch artifact does not match its metadata")
+	}
+	return file, dossier, nil
 }
 
 func boundedSessionReviewFindings(findings []string) []string {
@@ -570,7 +782,13 @@ func stableSessionReviewReasons(reasons []string) []string {
 
 func (s *SessionService) completeReview(ctx context.Context, dossier SessionReviewDossier) (SessionReviewDossier, error) {
 	dossier.NotPublishableReasons = stableSessionReviewReasons(dossier.NotPublishableReasons)
-	if dossier.Gate != SessionReviewGatePassed || dossier.Rebase != SessionReviewRebaseClean || dossier.PatchTruncated || len(dossier.PolicyFindings) != 0 || len(dossier.NotPublishableReasons) != 0 {
+	if dossier.Gate != SessionReviewGatePassed ||
+		dossier.Rebase != SessionReviewRebaseClean ||
+		dossier.PatchArtifactID == "" ||
+		dossier.PatchDigest == "" ||
+		dossier.PatchBytes < 1 ||
+		len(dossier.PolicyFindings) != 0 ||
+		len(dossier.NotPublishableReasons) != 0 {
 		dossier.Publishable = false
 	}
 	data, err := json.Marshal(dossier)

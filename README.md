@@ -953,6 +953,11 @@ generated fork, a persistent FIFO of turns, private provider/ACP state, structur
 inspection, a read-only review, non-destructive close, and explicit two-step discard. Each turn
 starts a boxed ACP child and tears it down before parking, so an idle conversation consumes no box.
 
+An operator-owned session policy may also declare up to 32 companion Git repositories. Coop pins
+each at session creation and mounts a detached snapshot read-only at
+`/coop/repositories/<alias>`. The primary fork remains the only writable and reviewable tree;
+companion host paths never enter the request or public API.
+
 The API deliberately cannot merge, sign, push, publish a PR, accept arbitrary host paths, or choose
 credentials and sandbox settings from a request. A same-UID caller is trusted at the Unix-account
 boundary. See the complete [local remote-session API](docs/session-api.md) and the separate

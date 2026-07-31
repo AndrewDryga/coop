@@ -168,7 +168,7 @@ func forkHelpText(p ui.Palette) string {
 		fmt.Fprintf(&b, "  %s%s\n", pad(f.flag, 16), f.desc)
 	}
 	fmt.Fprintf(&b, "\n%s  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.\n", p.Bold("REVIEW"))
-	fmt.Fprint(&b, "        --gate rebases in a scratch clone and runs the parent's gate read-only; red/conflict exits 1 (not with --open).\n")
+	fmt.Fprint(&b, "        --gate rebases in an isolated scratch clone and runs the parent's gate; source mutations fail review.\n")
 	fmt.Fprintf(&b, "%s   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.\n", p.Bold("NAMES"))
 	fmt.Fprint(&b, "\nRun 'coop help' for all commands.\n") // match every other command's help footer
 	return b.String()
@@ -1178,9 +1178,15 @@ func (a *app) forkReview(args []string) (int, error) {
 		}
 		defer candidate.cleanup()
 		reviewRepo, ref = candidate.dir, candidate.name
+		pinnedCandidateHead := ""
 		if candidate.conflict {
 			outcome = forkReviewGateConflict
 		} else {
+			candidateHead, candidateTree, identityErr := sessionReviewGitIdentity(candidate.dir, candidate.name)
+			if identityErr != nil {
+				return -1, fmt.Errorf("pin review scratch: %w", identityErr)
+			}
+			pinnedCandidateHead = candidateHead
 			img, gateErr := a.mergeGate(repo)
 			if gateErr != nil {
 				return -1, gateErr
@@ -1198,11 +1204,25 @@ func (a *app) forkReview(args []string) (int, error) {
 					outcome = forkReviewGateRed
 				}
 			}
+			if !sessionReviewCandidateUnchanged(candidate.dir, candidate.name, candidateHead, candidateTree) {
+				outcome = forkReviewGateRed
+				if err := gitRun(candidate.dir, "reset", "--hard", candidateHead); err != nil {
+					return -1, fmt.Errorf("restore review scratch after gate mutation: %w", err)
+				}
+				if err := gitRun(candidate.dir, "clean", "-fd"); err != nil {
+					return -1, fmt.Errorf("clean review scratch after gate mutation: %w", err)
+				}
+			}
 		}
 		// The candidate branch stays at its rebased tip while HEAD returns to the captured parent base,
 		// preserving the existing HEAD...ref dossier/diff contract inside the scratch clone.
 		if err := candidate.detachBase(); err != nil {
 			return -1, fmt.Errorf("detach review scratch after gate: %w", err)
+		}
+		if outcome != forkReviewGateConflict {
+			if err := gitRun(candidate.dir, "branch", "-f", candidate.name, pinnedCandidateHead); err != nil {
+				return -1, fmt.Errorf("restore pinned review branch after gate: %w", err)
+			}
 		}
 	} else if err := gitFetchInto(repo, ws, name); err != nil {
 		return -1, fmt.Errorf("%s: git fetch: %w", name, err)
@@ -1428,9 +1448,9 @@ func (a *app) forkBrief(repo, ws, name, ref string, gateOutcome forkReviewGateOu
 	case forkReviewGateNone:
 		fmt.Printf("%s none configured — rebase clean\n", ui.Bold("gate:"))
 	case forkReviewGateGreen:
-		fmt.Printf("%s %s green on rebased scratch (read-only)\n", ui.Bold("gate:"), ui.Green("✓"))
+		fmt.Printf("%s %s green on isolated rebased scratch\n", ui.Bold("gate:"), ui.Green("✓"))
 	case forkReviewGateRed:
-		fmt.Printf("%s %s red on rebased scratch (read-only)\n", ui.Bold("gate:"), ui.Red("✗"))
+		fmt.Printf("%s %s red on isolated rebased scratch\n", ui.Bold("gate:"), ui.Red("✗"))
 	case forkReviewGateConflict:
 		fmt.Printf("%s %s conflict while rebasing onto current parent — gate not run\n", ui.Bold("gate:"), ui.Yellow("⚠"))
 	}

@@ -72,7 +72,14 @@ const ComposeFileRel = project.DefaultCompose
 // FILE itself is read from the workspace at that path — so a fork uses the parent's committed choice
 // of WHERE the compose file lives, but its OWN copy of the file. For a plain repo pass repo twice.
 func ComposeFile(workspace, policyRepo string) string {
-	f := filepath.Join(workspace, filepath.FromSlash(project.ComposePath(policyRepo)))
+	return ComposeFileAt(workspace, project.ComposePath(policyRepo))
+}
+
+// ComposeFileAt returns the tracked compose file selected by a trusted project policy. The
+// relative path has already been validated by project.Load; this helper keeps review-specific
+// dependency stacks bound to the disposable candidate rather than the parent checkout.
+func ComposeFileAt(workspace, relativePath string) string {
+	f := filepath.Join(workspace, filepath.FromSlash(relativePath))
 	if fi, err := os.Stat(f); err == nil && !fi.IsDir() && fi.Size() > 0 {
 		return f
 	}

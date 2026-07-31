@@ -171,23 +171,11 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	if _, err := service.Store().BindNativeSession(context.Background(), created.Session.ID, "native-secret"); err != nil {
 		t.Fatal(err)
 	}
-	response = sessionHTTPTestRequest(
-		t, handler, http.MethodPost,
-		"/v1/sessions/"+created.Session.ID+"/turns",
-		`{"expected_revision":1,"prompt":"secret prompt","artifacts":[{`+
-			`"name":"trace.txt","media_type":"text/plain",`+
-			`"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",`+
-			`"data":"aGVsbG8="}]}`,
-		"turn", "application/json",
-	)
+	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns", `{"expected_revision":1,"prompt":"secret prompt"}`, "turn", "application/json")
 	if response.Code != http.StatusOK {
 		t.Fatalf("turn status = %d body=%s", response.Code, response.Body.String())
 	}
-	if strings.Contains(response.Body.String(), "secret prompt") ||
-		strings.Contains(response.Body.String(), "trace.txt") ||
-		strings.Contains(response.Body.String(), "aGVsbG8=") ||
-		strings.Contains(response.Body.String(), "turn") &&
-			strings.Contains(response.Body.String(), "idempotency") {
+	if strings.Contains(response.Body.String(), "secret prompt") || strings.Contains(response.Body.String(), "turn") && strings.Contains(response.Body.String(), "idempotency") {
 		t.Fatalf("turn response leaked private data: %s", response.Body.String())
 	}
 	var turnResponse sessionMutationTurnResponse

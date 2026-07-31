@@ -454,6 +454,42 @@ func (s *Store) GetOperationByID(ctx context.Context, id string) (Operation, err
 	return s.getOperation(ctx, `WHERE id = ?`, id)
 }
 
+func (s *Store) ListOperationIDsForResource(
+	ctx context.Context,
+	method string,
+	resourceType string,
+	resourceID string,
+) ([]string, error) {
+	if method == "" || resourceType == "" || resourceID == "" {
+		return nil, errors.New("operation resource query is incomplete")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id
+		FROM operations
+		WHERE method = ? AND resource_type = ? AND resource_id = ?
+		ORDER BY created_at, id`,
+		method,
+		resourceType,
+		resourceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list operation resource IDs: %w", err)
+	}
+	defer rows.Close()
+	var result []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan operation resource ID: %w", err)
+		}
+		result = append(result, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list operation resource IDs: %w", err)
+	}
+	return result, nil
+}
+
 func (s *Store) getOperation(ctx context.Context, where string, arg string) (Operation, error) {
 	op, err := scanOperation(s.db.QueryRowContext(ctx, `
 		SELECT id, method, idempotency_key, request_hash, state, resource_type,
@@ -521,6 +557,7 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 		Workspace:      req.Workspace,
 		ForkName:       req.ForkName,
 		BaseCommit:     req.BaseCommit,
+		Companions:     append([]CompanionRepository(nil), req.Companions...),
 		TurnTimeout:    req.TurnTimeout,
 		MaxPatchBytes:  req.MaxPatchBytes,
 		Revision:       1,
@@ -535,12 +572,17 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 	if sess.ID == "" {
 		sess.ID = s.id("ses")
 	}
+	companions, err := json.Marshal(sess.Companions)
+	if err != nil {
+		return Session{}, fmt.Errorf("encode companion repositories: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
-		(id, external_ref, target, policy, policy_digest, repository, workspace, fork_name, base_commit,
+		(id, external_ref, target, policy, policy_digest, repository, workspace, fork_name, base_commit, companions,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
 		sess.Policy, sess.PolicyDigest, sess.Repository, sess.Workspace, sess.ForkName, sess.BaseCommit,
+		string(companions),
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
 		sess.MaxQueuedTurns, sess.MaxQueuedBytes, now.UnixNano(), now.UnixNano()); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: sessions.id") {
@@ -591,8 +633,10 @@ func normalizeCreateRequest(req CreateSessionRequest) CreateSessionRequest {
 		req.MaxPatchBytes = DefaultMaxPatchBytes
 	}
 	if req.PolicyDigest == "" {
+		companions, _ := json.Marshal(req.Companions)
 		sum := sha256.Sum256([]byte(strings.Join([]string{
 			req.Policy, req.Target, req.Repository, req.Workspace, req.ForkName, req.BaseCommit,
+			string(companions),
 			fmt.Sprintf("%d", req.TurnTimeout), fmt.Sprintf("%d", req.MaxPatchBytes),
 		}, "\x00")))
 		req.PolicyDigest = hex.EncodeToString(sum[:])
@@ -634,6 +678,18 @@ func validateCreateRequest(req CreateSessionRequest) error {
 	}
 	if boundCount != 0 && boundCount != len(bindings) {
 		return &Error{Code: CodeInvalidRequest, Detail: "session bindings must be all-or-none"}
+	}
+	seenCompanions := make(map[string]bool, len(req.Companions))
+	for _, companion := range req.Companions {
+		if companion.Name == "" || seenCompanions[companion.Name] ||
+			!validBoundedText(companion.Name, MaxBindingBytes) ||
+			!validBoundedText(companion.Repository, MaxBindingBytes) ||
+			!validBoundedText(companion.Workspace, MaxBindingBytes) ||
+			!validBoundedText(companion.BaseCommit, MaxBindingBytes) ||
+			companion.Repository == "" || companion.Workspace == "" || companion.BaseCommit == "" {
+			return &Error{Code: CodeInvalidRequest, Detail: "companion repository binding is invalid"}
+		}
+		seenCompanions[companion.Name] = true
 	}
 	return nil
 }
@@ -734,7 +790,7 @@ func (s *Store) ListInterruptedTurns(ctx context.Context) ([]Turn, error) {
 }
 
 const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, repository, workspace, fork_name,
-	   base_commit, native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
+	   base_commit, companions, native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
 	   max_turns, max_queued_turns, max_queued_bytes, turns_used, queued_turn_count,
 	   queued_prompt_bytes, active_turn_id, last_event_sequence, created_at, updated_at
 FROM sessions`
@@ -744,15 +800,19 @@ type rowScanner interface{ Scan(...any) error }
 func scanSession(row rowScanner) (Session, error) {
 	var sess Session
 	var state, activity, active string
+	var companions string
 	var turnTimeout int64
 	var createdAt, updatedAt int64
 	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest,
-		&sess.Repository, &sess.Workspace, &sess.ForkName, &sess.BaseCommit, &sess.NativeSessionID,
+		&sess.Repository, &sess.Workspace, &sess.ForkName, &sess.BaseCommit, &companions, &sess.NativeSessionID,
 		&turnTimeout, &sess.MaxPatchBytes, &sess.Revision, &state, &activity, &sess.MaxTurns,
 		&sess.MaxQueuedTurns, &sess.MaxQueuedBytes, &sess.TurnsUsed, &sess.QueuedTurnCount,
 		&sess.QueuedPromptBytes, &active,
 		&sess.LastEventSequence, &createdAt, &updatedAt); err != nil {
 		return Session{}, err
+	}
+	if err := json.Unmarshal([]byte(companions), &sess.Companions); err != nil {
+		return Session{}, fmt.Errorf("decode companion repositories: %w", err)
 	}
 	sess.State = SessionState(state)
 	sess.Activity = ActivityState(activity)
@@ -922,7 +982,7 @@ func artifactMediaMatches(mediaType string, data []byte) bool {
 	case "application/pdf":
 		return len(data) >= 5 && string(data[:5]) == "%PDF-"
 	default:
-		return utf8.Valid(data) && !bytes.ContainsRune(data, 0)
+		return utf8.Valid(data) && strings.IndexByte(string(data), 0) < 0
 	}
 }
 

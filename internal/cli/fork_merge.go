@@ -148,14 +148,23 @@ func (a *app) mergeGate(repo string) (string, error) {
 // gateRepo (the trusted parent), never treeDir — a fork can't weaken its own checker — but it RUNS
 // against treeDir (the rebased candidate), so a red gate never touches the parent. A non-zero gate
 // is a normal red result; an error means the box never started.
-func (a *app) runGateMode(gateRepo, treeDir, img string, readOnly bool) (bool, error) {
+func (a *app) runGateMode(gateRepo, treeDir, img string, review bool) (bool, error) {
 	gate := a.gateFor(gateRepo)
 	ui.Info("revalidating: %s", strings.Join(gate, " "))
+	reviewBase := strings.TrimSpace(gitOut(treeDir, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
+	if reviewBase == "" {
+		reviewBase = strings.TrimSpace(gitOut(gateRepo, "rev-parse", "--verify", "HEAD^{commit}"))
+	}
+	if reviewBase == "" {
+		return false, errors.New("resolve trusted review base commit")
+	}
 	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: treeDir, Cmd: gate, Batch: true,
-		PolicyRepo:   gateRepo,
-		RepoReadOnly: readOnly,
-		Homes:        a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+		PolicyRepo: gateRepo,
+		Review:     review,
+		Serve:      review,
+		ExtraArgs:  []string{"-e", "COOP_REVIEW_BASE=" + reviewBase},
+		Homes:      a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 	if err != nil {
 		return false, err
@@ -177,8 +186,9 @@ func (a *app) gatePasses(gateRepo, treeDir, img string) bool {
 	return a.runGate(gateRepo, treeDir, img)
 }
 
-// reviewGatePasses is the review-only gate path. Its disposable candidate is mounted read-only,
-// and startup errors remain distinguishable from an ordinary red gate.
+// reviewGatePasses is the review-only gate path. The disposable candidate may write ignored build
+// output; its caller verifies the pinned source identity and cleanliness after the gate returns.
+// Startup errors remain distinguishable from an ordinary red gate.
 func (a *app) reviewGatePasses(gateRepo, treeDir, img string) (bool, error) {
 	if a.gateOK != nil {
 		return a.gateOK(gateRepo, treeDir, img), nil

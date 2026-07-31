@@ -22,7 +22,12 @@ import (
 // gates on a compose-capable runtime (Apple `container` has no compose). Shared by `coop up`
 // and box.Run's auto-start.
 func EnsureServices(rt runtime.Runtime, workspace, policyRepo string, stdout, stderr io.Writer) ([]string, error) {
-	file := ComposeFile(workspace, policyRepo)
+	return EnsureServicesFile(rt, workspace, ComposeFile(workspace, policyRepo), stdout, stderr)
+}
+
+// EnsureServicesFile is the explicit-file form used by trusted review policy. The file must live
+// inside workspace; ValidateComposeFile enforces that its bind mounts cannot escape that boundary.
+func EnsureServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer) ([]string, error) {
 	if file == "" {
 		return nil, nil
 	}
@@ -85,13 +90,25 @@ func DownServices(rt runtime.Runtime, workspace, policyRepo string, volumes bool
 	if file == "" {
 		return nil
 	}
+	currentErr := DownServicesFile(rt, workspace, file, volumes, stdout, stderr)
+	legacyErr := reconcileLegacyServices(rt, workspace, file, stdout, stderr)
+	return errors.Join(currentErr, legacyErr)
+}
+
+// DownServicesFile is the explicit-file counterpart to EnsureServicesFile. Review runs use it to
+// remove their short-lived project, network, and volumes before the disposable candidate goes away.
+func DownServicesFile(rt runtime.Runtime, workspace, file string, volumes bool, stdout, stderr io.Writer) error {
+	if file == "" {
+		return nil
+	}
+	if err := ValidateComposeFile(file, workspace); err != nil {
+		return fmt.Errorf("refusing to stop %s: %w", filepath.Base(file), err)
+	}
 	args := []string{"compose", "-p", ComposeProject(workspace), "-f", file, "down", "--remove-orphans"}
 	if volumes {
 		args = append(args, "--volumes")
 	}
-	currentErr := runCompose(rt, stdout, stderr, "down", args)
-	legacyErr := reconcileLegacyServices(rt, workspace, file, stdout, stderr)
-	return errors.Join(currentErr, legacyErr)
+	return runCompose(rt, stdout, stderr, "down", args)
 }
 
 const (

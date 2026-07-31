@@ -63,6 +63,9 @@ func TestLoadInvalid(t *testing.T) {
 		"bad env key":                    "box:\n  env:\n    1HOST: db\n",
 		"reserved env key":               "box:\n  env:\n    COOP_BOX: fake\n",
 		"multiline env value":            "box:\n  env:\n    VALUE: |\n      one\n      two\n",
+		"escaping review compose":        "review:\n  compose: ../compose.yml\n",
+		"reserved review env":            "review:\n  env:\n    COOP_BOX: fake\n",
+		"multiline review env":           "review:\n  env:\n    VALUE: |\n      one\n      two\n",
 	}
 	for name, body := range cases {
 		if _, err := Load(writeProject(t, body)); err == nil {
@@ -74,7 +77,7 @@ func TestLoadInvalid(t *testing.T) {
 // TestLoadBoxGate: the committed box policy + merge gate parse; pointer booleans keep absent ≠ false;
 // an all-comments file (the scaffolded template) is valid and empty.
 func TestLoadBoxGate(t *testing.T) {
-	p, err := Load(writeProject(t, "box:\n  env:\n    PGHOST: db\n    PGPORT: \"5432\"\n  egress: none\n  auto_up: false\n  memory: 4g\n  cpus: \"2\"\n  pids: 2048\ngate: make check\n"))
+	p, err := Load(writeProject(t, "box:\n  env:\n    PGHOST: db\n    PGPORT: \"5432\"\n  egress: none\n  auto_up: false\n  memory: 4g\n  cpus: \"2\"\n  pids: 2048\nreview:\n  compose: dev/review-compose.yml\n  env:\n    CI: \"1\"\n    DATABASE_URL: postgres://postgres@db/test\ngate: make check\n"))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -92,6 +95,9 @@ func TestLoadBoxGate(t *testing.T) {
 	}
 	if p.Gate != "make check" {
 		t.Errorf("gate = %q", p.Gate)
+	}
+	if p.Review.Compose != "dev/review-compose.yml" || p.Review.Env["CI"] != "1" {
+		t.Errorf("review = %+v", p.Review)
 	}
 	// An all-comments file (what coop init scaffolds) parses as empty, not an EOF error.
 	if p, err := Load(writeProject(t, "# only comments\n#box:\n#  egress: none\n")); err != nil || p.Box.Egress != "" {

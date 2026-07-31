@@ -1,13 +1,17 @@
 package box
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +58,12 @@ type RunSpec struct {
 	// RepoReadOnlyPaths remounts real descendant directories read-only after a writable Repo bind.
 	// Review stages use it for task queues so source-fixing access never grants lifecycle access.
 	RepoReadOnlyPaths []string
+	// Review selects the trusted review-only compose file and literal environment. The disposable
+	// candidate remains writable for ignored build output; callers verify source identity afterward.
+	Review bool
+	// CompanionRepositories are policy-pinned snapshots mounted read-only at
+	// /coop/repositories/<name>. The remote request surface cannot populate this field.
+	CompanionRepositories []CompanionRepository
 
 	Homes   bool // mount per-agent home dirs, env-file, INSTRUCTIONS, and MCP configs
 	Network bool // join the sibling-services network if `coop up` created one
@@ -124,6 +134,18 @@ type RunSpec struct {
 	Preset *preset.Preset
 }
 
+type CompanionRepository struct {
+	Name       string `json:"name"`
+	HostPath   string `json:"-"`
+	BaseCommit string `json:"base_commit"`
+}
+
+type companionRepositoryEnvironment struct {
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	BaseCommit string `json:"base_commit"`
+}
+
 // ttyMode is how stdin and the tty are wired for a run.
 type ttyMode int
 
@@ -191,9 +213,27 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// default), on a copy so the shared Config is never mutated. A broken project.yaml warns and
 	// is skipped (same best-effort posture as appendPublish) rather than bricking every launch.
 	var projectEnv map[string]string
+	var composeFile string
 	if p, err := project.Load(projectPolicyRepo(spec)); err == nil {
 		cfg = applyProjectPolicy(cfg, p, &spec)
 		projectEnv = p.Box.Env
+		composeFile = ComposeFile(spec.Repo, projectPolicyRepo(spec))
+		if spec.Review {
+			if p.Review.Compose != "" {
+				composeFile = ComposeFileAt(spec.Repo, p.Review.Compose)
+			}
+			spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_REVIEW=1")
+			keys := make([]string, 0, len(p.Review.Env))
+			for key := range p.Review.Env {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				// Explicit -e arguments follow --env-file, so trusted review policy cannot be
+				// weakened by an operator's ordinary agent environment.
+				spec.ExtraArgs = append(spec.ExtraArgs, "-e", key+"="+p.Review.Env[key])
+			}
+		}
 	} else if !spec.Quiet {
 		ui.Info("%v — ignoring its box policy", err) // err already names .agent/project.yaml
 	}
@@ -212,6 +252,23 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, err
 		}
 		mounts = append(mounts, protected...)
+	}
+	companionMounts, companionEnvironment, err := companionRepositoryMounts(
+		spec.CompanionRepositories,
+	)
+	if err != nil {
+		return -1, err
+	}
+	mounts = append(mounts, companionMounts...)
+	if len(companionEnvironment) > 0 {
+		data, err := json.Marshal(companionEnvironment)
+		if err != nil {
+			return -1, fmt.Errorf("encode companion repository environment: %w", err)
+		}
+		spec.ExtraArgs = append(
+			spec.ExtraArgs,
+			"-e", "COOP_COMPANION_REPOSITORIES_JSON="+string(data),
+		)
 	}
 	if n := ShadowCount(mounts); n > 0 && !spec.Quiet {
 		ui.Info("shadowed %d secret path(s)", n)
@@ -474,8 +531,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// them all. Gated like the network join below (on the services net, online, compose-capable
 	// runtime) plus COOP_AUTO_UP. Idempotent; progress goes to stderr (never stdout, which may
 	// carry ACP/JSON) and only when not Quiet; a failure warns but never blocks the session.
+	reviewServicesAttempted := false
 	if autoUpServices(cfg, spec, rt.Name) {
-		if cf := ComposeFile(spec.Repo, projectPolicyRepo(spec)); cf != "" {
+		if cf := composeFile; cf != "" {
+			reviewServicesAttempted = spec.Review
 			if !spec.Quiet {
 				ui.Info("starting sibling services (%s)", filepath.Base(cf))
 			}
@@ -484,7 +543,16 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// output (and the real error) when you need to diagnose a failure. EnsureServices validates
 			// the file first, so a refusal (an unsafe compose an agent wrote) surfaces here and the
 			// session continues WITHOUT services rather than running anything host-dangerous.
-			if _, err := EnsureServices(rt, spec.Repo, projectPolicyRepo(spec), io.Discard, io.Discard); err != nil {
+			var composeStderr bytes.Buffer
+			if _, err := EnsureServicesFile(rt, spec.Repo, cf, io.Discard, &composeStderr); err != nil {
+				if spec.Review {
+					cleanupErr := DownServicesFile(rt, spec.Repo, cf, true, io.Discard, io.Discard)
+					detail := strings.TrimSpace(composeStderr.String())
+					if detail != "" {
+						err = fmt.Errorf("%w: %s", err, detail)
+					}
+					return -1, errors.Join(fmt.Errorf("start review services: %w", err), cleanupErr)
+				}
 				ui.Info("services: %v — continuing without them (run 'coop up' to retry)", err)
 			}
 		}
@@ -496,7 +564,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// inside the box identically to the host browser. Gated like the network join, not on auto-up —
 	// the services may already be running from `coop up`. Best-effort; no sidecars → nothing added.
 	if cfg.Egress == "open" && spec.Network && rt.Name != "container" {
-		if cf := ComposeFile(spec.Repo, projectPolicyRepo(spec)); cf != "" {
+		if cf := composeFile; cf != "" {
 			if svc := ServicePorts(rt, spec.Repo, cf); len(svc) > 0 {
 				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_FORWARD="+forwardEnv(svc))
 				for _, p := range svc {
@@ -512,7 +580,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// an offline box (COOP_EGRESS=none) has nothing to reach, so skip the services-net join.
 	if cfg.Egress == "open" && spec.Network {
 		net := cfg.ServicesNet
-		if net == "" {
+		if spec.Review && composeFile != "" {
+			// A review candidate owns a short-lived Compose project. It must never join the
+			// operator's ordinary shared-services network, even when COOP_SERVICES_NET is set.
+			net = ComposeProject(spec.Repo) + "_default"
+		} else if net == "" {
 			net = ComposeProject(spec.Repo) + "_default"
 		}
 		if rt.Silent("network", "inspect", net) {
@@ -522,19 +594,106 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 
 	limits := boxLimits(cfg, rt)
 	args := assembleArgs(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
+	finish := func(code int, runErr error) (int, error) {
+		if reviewServicesAttempted {
+			cleanupErr := DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard)
+			runErr = errors.Join(runErr, cleanupErr)
+		}
+		return code, runErr
+	}
 	if spec.Ctx != nil {
 		code, runErr := rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
 		if spec.Ctx.Err() == nil || spec.RunID == "" {
-			return code, runErr
+			return finish(code, runErr)
 		}
 		// Killing a Docker/Podman client does not guarantee its daemon-owned container exits.
 		// The loop run id owns one box at a time, so remove that exact canceled box as a backstop.
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, cleanupErr := rt.RemoveByLabel(cleanupCtx, LabelRun, spec.RunID)
-		return code, errors.Join(runErr, cleanupErr)
+		return finish(code, errors.Join(runErr, cleanupErr))
 	}
-	return rt.Run(stdin, stdout, stderr, args...)
+	code, runErr := rt.Run(stdin, stdout, stderr, args...)
+	return finish(code, runErr)
+}
+
+func companionRepositoryMounts(
+	repositories []CompanionRepository,
+) ([]Mount, []companionRepositoryEnvironment, error) {
+	seen := make(map[string]bool, len(repositories))
+	mounts := make([]Mount, 0, len(repositories))
+	environment := make([]companionRepositoryEnvironment, 0, len(repositories))
+	for _, repository := range repositories {
+		if !validCompanionName(repository.Name) || seen[repository.Name] {
+			return nil, nil, fmt.Errorf(
+				"invalid or duplicate companion repository name %q",
+				repository.Name,
+			)
+		}
+		if repository.HostPath == "" || !filepath.IsAbs(repository.HostPath) ||
+			filepath.Clean(repository.HostPath) != repository.HostPath {
+			return nil, nil, fmt.Errorf(
+				"companion repository %q must use an absolute clean host path",
+				repository.Name,
+			)
+		}
+		realPath, err := filepath.EvalSymlinks(repository.HostPath)
+		if err != nil || realPath != repository.HostPath {
+			return nil, nil, fmt.Errorf(
+				"companion repository %q must name a real path",
+				repository.Name,
+			)
+		}
+		info, err := os.Stat(realPath)
+		if err != nil || !info.IsDir() {
+			return nil, nil, fmt.Errorf(
+				"companion repository %q is not a directory",
+				repository.Name,
+			)
+		}
+		if !validCommitIdentity(repository.BaseCommit) {
+			return nil, nil, fmt.Errorf(
+				"companion repository %q has an invalid commit identity",
+				repository.Name,
+			)
+		}
+		seen[repository.Name] = true
+		target := path.Join("/coop/repositories", repository.Name)
+		mounts = append(mounts, Mount{
+			Kind: Bind, Source: realPath, Target: target, RO: true,
+		})
+		environment = append(environment, companionRepositoryEnvironment{
+			Name: repository.Name, Path: target,
+			BaseCommit: repository.BaseCommit,
+		})
+	}
+	return mounts, environment, nil
+}
+
+func validCompanionName(name string) bool {
+	if name == "" || name == "primary" || len(name) > 48 {
+		return false
+	}
+	for index, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
+			(index > 0 && (r == '-' || r == '_')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validCommitIdentity(commit string) bool {
+	if len(commit) != 40 && len(commit) != 64 {
+		return false
+	}
+	for _, r := range commit {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func repoReadOnlyPathMounts(repo, workdir string, paths []string) ([]Mount, error) {

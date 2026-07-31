@@ -53,6 +53,7 @@ type Project struct {
 	Subprojects []string `yaml:"subprojects"` // monorepo member dirs (repo-relative), each its own coop project
 	Serve       Serve    `yaml:"serve"`
 	Box         Box      `yaml:"box"`     // committed box policy (below an explicit COOP_* setting)
+	Review      Review   `yaml:"review"`  // publication-review-only services and literal environment
 	Context     Context  `yaml:"context"` // path-routed instruction/rule/KB compilation (coop context)
 	Gate        string   `yaml:"gate"`    // fork-merge revalidation command (an explicit COOP_GATE wins)
 }
@@ -90,6 +91,14 @@ type Box struct {
 	Memory  string `yaml:"memory"`  // docker --memory syntax, passed through (e.g. 4g)
 	CPUs    string `yaml:"cpus"`    // docker --cpus value
 	Pids    string `yaml:"pids"`    // --pids-limit: a positive integer, or ""/0/unlimited for none
+}
+
+// Review is the trusted, committed environment used only for a disposable review candidate.
+// It lets a repository use a minimal CI-like dependency stack instead of copying ignored local
+// development state into the scratch clone.
+type Review struct {
+	Compose string            `yaml:"compose"`
+	Env     map[string]string `yaml:"env"`
 }
 
 // Load reads <repo>/.agent/project.yaml. A missing file is not an error — it returns an empty Project,
@@ -140,15 +149,14 @@ func Load(repo string) (*Project, error) {
 	if p.Box.Compose, err = boxRelPath("compose", p.Box.Compose); err != nil {
 		return nil, err
 	}
-	for key, value := range p.Box.Env {
-		switch {
-		case !validEnvName(key):
-			return nil, fmt.Errorf("%s: box.env key %q must be a POSIX environment name", File, key)
-		case strings.HasPrefix(key, "COOP_"):
-			return nil, fmt.Errorf("%s: box.env key %q uses Coop's reserved COOP_ namespace", File, key)
-		case strings.ContainsAny(value, "\r\n\x00"):
-			return nil, fmt.Errorf("%s: box.env value for %s must be a single literal line", File, key)
-		}
+	if p.Review.Compose, err = reviewRelPath("compose", p.Review.Compose); err != nil {
+		return nil, err
+	}
+	if err := validateLiteralEnv("box.env", p.Box.Env); err != nil {
+		return nil, err
+	}
+	if err := validateLiteralEnv("review.env", p.Review.Env); err != nil {
+		return nil, err
 	}
 	// context.routes: every include doc and match glob must be a relative path inside the repo — the
 	// compiler reads committed files on the host from a possibly-untrusted repo, so a route can never
@@ -169,6 +177,20 @@ func Load(repo string) (*Project, error) {
 		}
 	}
 	return &p, nil
+}
+
+func validateLiteralEnv(field string, values map[string]string) error {
+	for key, value := range values {
+		switch {
+		case !validEnvName(key):
+			return fmt.Errorf("%s: %s key %q must be a POSIX environment name", File, field, key)
+		case strings.HasPrefix(key, "COOP_"):
+			return fmt.Errorf("%s: %s key %q uses Coop's reserved COOP_ namespace", File, field, key)
+		case strings.ContainsAny(value, "\r\n\x00"):
+			return fmt.Errorf("%s: %s value for %s must be a single literal line", File, field, key)
+		}
+	}
+	return nil
 }
 
 func validEnvName(key string) bool {
@@ -198,6 +220,17 @@ func boxRelPath(field, val string) (string, error) {
 	clean := filepath.Clean(val)
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("%s: box.%s %q must be a relative path inside the repo", File, field, val)
+	}
+	return clean, nil
+}
+
+func reviewRelPath(field, val string) (string, error) {
+	if val == "" {
+		return "", nil
+	}
+	clean := filepath.Clean(val)
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s: review.%s %q must be a relative path inside the repo", File, field, val)
 	}
 	return clean, nil
 }

@@ -96,6 +96,10 @@ func (a *app) lockInteractiveSession(agent, repo string) (func(), error) {
 }
 
 func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, session bool) (int, error) {
+	companionRepositories, err := sessionCompanionRepositoriesFromEnvironment()
+	if err != nil {
+		return -1, err
+	}
 	repo, img, err := a.resolveImage()
 	if err != nil {
 		return -1, err
@@ -115,11 +119,39 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, ConsultLead: lead, Peers: peers, Preset: a.preset,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
+		CompanionRepositories: companionRepositories,
 	})
 	// An interactive/run box makes unsigned commits; sign what THIS session produced on exit so a
 	// protected remote accepts them. Best-effort, session-scoped, skipped for a dirty tree.
 	a.signOnBoxExit(repo, pre, false)
 	return code, err
+}
+
+func sessionCompanionRepositoriesFromEnvironment() ([]box.CompanionRepository, error) {
+	raw := os.Getenv("COOP_SESSION_COMPANIONS")
+	if raw == "" {
+		return nil, nil
+	}
+	if len(raw) > sessionPolicyFileLimit {
+		return nil, errors.New("session companion repository binding is too large")
+	}
+	var bindings []struct {
+		Name       string `json:"name"`
+		Repository string `json:"repository"`
+		Workspace  string `json:"workspace"`
+		BaseCommit string `json:"base_commit"`
+	}
+	if err := json.Unmarshal([]byte(raw), &bindings); err != nil {
+		return nil, errors.New("session companion repository binding is malformed")
+	}
+	repositories := make([]box.CompanionRepository, 0, len(bindings))
+	for _, binding := range bindings {
+		repositories = append(repositories, box.CompanionRepository{
+			Name: binding.Name, HostPath: binding.Workspace,
+			BaseCommit: binding.BaseCommit,
+		})
+	}
+	return repositories, nil
 }
 
 func (a *app) cmdRun(args []string) (int, error) {

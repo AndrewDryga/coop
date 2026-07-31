@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,7 +20,13 @@ import (
 func TestParseSessionPoliciesIsStrictAndPinsOneTarget(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
+	companion, companionGit := gitRepo(t)
+	companionGit("commit", "-q", "--allow-empty", "-m", "companion base")
 	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	companion, err = filepath.EvalSymlinks(companion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,12 +39,19 @@ func TestParseSessionPoliciesIsStrictAndPinsOneTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{ConfigDir: configRoot}
-	valid := []byte("version: 1\npolicies:\n  responder:\n    repository: " + repo + "\n    target: codex:model/high@work\n    max_turns: 100\n    max_queued_turns: 20\n    max_queued_bytes: 1048576\n    max_patch_bytes: 1048576\n    turn_timeout: 1h\n")
+	valid := []byte("version: 1\npolicies:\n  responder:\n    repository: " + repo +
+		"\n    companions:\n      - name: application\n        repository: " + companion +
+		"\n    target: codex:model/high@work\n    max_turns: 100\n    max_queued_turns: 20\n    max_queued_bytes: 1048576\n    max_patch_bytes: 1048576\n    turn_timeout: 1h\n")
 	policies, err := parseSessionPolicies(valid, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := policies["responder"]; got.Target != "codex:model/high@work" || got.Repository != repo || got.TurnTimeout != time.Hour {
+	if got := policies["responder"]; got.Target != "codex:model/high@work" ||
+		got.Repository != repo || got.TurnTimeout != time.Hour ||
+		len(got.Companions) != 1 ||
+		got.Companions[0] != (SessionCompanionPolicy{
+			Name: "application", Repository: companion,
+		}) {
 		t.Fatalf("parsed policy = %+v", got)
 	}
 	for name, body := range map[string]string{
@@ -48,6 +62,59 @@ func TestParseSessionPoliciesIsStrictAndPinsOneTarget(t *testing.T) {
 		if _, err := parseSessionPolicies([]byte(body), cfg); err == nil {
 			t.Fatalf("%s policy unexpectedly accepted", name)
 		}
+	}
+}
+
+func TestParseSessionPoliciesRejectsUnsafeCompanions(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := "version: 1\npolicies:\n  responder:\n    repository: " + repo + "\n"
+	suffix := "    target: codex@work\n    max_turns: 1\n    max_queued_turns: 1\n" +
+		"    max_queued_bytes: 1\n    max_patch_bytes: 1\n    turn_timeout: 1s\n"
+	for name, companions := range map[string]string{
+		"primary alias":    "    companions:\n      - name: primary\n        repository: " + repo + "\n",
+		"uppercase alias":  "    companions:\n      - name: Application\n        repository: " + repo + "\n",
+		"duplicate source": "    companions:\n      - name: application\n        repository: " + repo + "\n",
+	} {
+		if _, err := parseSessionPolicies(
+			[]byte(prefix+companions+suffix), nil,
+		); err == nil {
+			t.Fatalf("%s companion unexpectedly accepted", name)
+		}
+	}
+}
+
+func TestParseSessionPoliciesBoundsCompanionCount(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var companions string
+	for index := 0; index <= sessionPolicyMaxCompanions; index++ {
+		companion, companionGit := gitRepo(t)
+		companionGit("commit", "-q", "--allow-empty", "-m", "base")
+		companion, err = filepath.EvalSymlinks(companion)
+		if err != nil {
+			t.Fatal(err)
+		}
+		companions += fmt.Sprintf(
+			"      - name: repo%d\n        repository: %s\n",
+			index, companion,
+		)
+	}
+	body := "version: 1\npolicies:\n  responder:\n    repository: " + repo +
+		"\n    companions:\n" + companions +
+		"    target: codex@work\n    max_turns: 1\n    max_queued_turns: 1\n" +
+		"    max_queued_bytes: 1\n    max_patch_bytes: 1\n    turn_timeout: 1s\n"
+	if _, err := parseSessionPolicies([]byte(body), nil); err == nil ||
+		!strings.Contains(err.Error(), "limited to 32") {
+		t.Fatalf("oversized companion set error = %v", err)
 	}
 }
 
@@ -142,6 +209,101 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 	replayed, err := service.CreateRemoteSession(context.Background(), "create-1", request)
 	if err != nil || replayed.ID != sess.ID || replayed.Workspace != sess.Workspace {
 		t.Fatalf("create replay = %+v, err=%v", replayed, err)
+	}
+}
+
+func TestSessionServicePinsPersistsAndDiscardsCompanionRepositories(t *testing.T) {
+	primary, primaryGit := gitRepo(t)
+	primaryGit("commit", "-q", "--allow-empty", "-m", "primary base")
+	companion, companionGit := gitRepo(t)
+	if err := os.WriteFile(
+		filepath.Join(companion, "topology.txt"), []byte("v1\n"), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	companionGit("add", "topology.txt")
+	companionGit("commit", "-qm", "companion base")
+	companionBase := gitOut(companion, "rev-parse", "HEAD")
+	policies := testSessionPolicies(primary)
+	policy := policies["responder"]
+	policy.Companions = []SessionCompanionPolicy{{
+		Name: "topology", Repository: companion,
+	}}
+	policies["responder"] = policy
+	service := newTestSessionService(
+		t, filepath.Join(t.TempDir(), "state"), policies, nil,
+	)
+	defer service.Stop()
+
+	created, err := service.CreateRemoteSession(
+		context.Background(), "create-companion",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "multi-repo"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Companions) != 1 ||
+		created.Companions[0].Name != "topology" ||
+		created.Companions[0].BaseCommit != companionBase ||
+		created.Companions[0].Workspace == companion {
+		t.Fatalf("created companion binding = %+v", created.Companions)
+	}
+	if branch := gitOut(created.Companions[0].Workspace, "rev-parse", "--abbrev-ref", "HEAD"); branch != "HEAD" {
+		t.Fatalf("companion snapshot branch = %q, want detached HEAD", branch)
+	}
+	if got := readFile(
+		t, filepath.Join(created.Companions[0].Workspace, "topology.txt"),
+	); got != "v1\n" {
+		t.Fatalf("companion snapshot = %q", got)
+	}
+	if err := os.WriteFile(
+		filepath.Join(companion, "topology.txt"), []byte("v2\n"), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	companionGit("commit", "-qam", "advance companion")
+	if got := readFile(
+		t, filepath.Join(created.Companions[0].Workspace, "topology.txt"),
+	); got != "v1\n" {
+		t.Fatalf("pinned companion changed with source = %q", got)
+	}
+	persisted, err := service.GetSession(context.Background(), created.ID)
+	if err != nil || len(persisted.Companions) != 1 ||
+		persisted.Companions[0] != created.Companions[0] {
+		t.Fatalf("persisted companion = %+v, %v", persisted.Companions, err)
+	}
+	public := publicSession(persisted)
+	if len(public.Companions) != 1 ||
+		public.Companions[0].Path != "/coop/repositories/topology" ||
+		public.Companions[0].BaseCommit != companionBase {
+		t.Fatalf("public companion = %+v", public.Companions)
+	}
+
+	closed, err := service.Close(
+		context.Background(), "close-companion",
+		session.CloseSessionRequest{
+			SessionID: created.ID, ExpectedRevision: created.Revision,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.PlanDiscard(
+		context.Background(), "plan-companion",
+		PlanDiscardRequest{
+			SessionID: created.ID, ExpectedRevision: closed.Revision,
+		},
+	)
+	if err != nil || len(plan.Plan.Companions) != 1 {
+		t.Fatalf("companion discard plan = %+v, %v", plan, err)
+	}
+	discarded, err := service.Discard(
+		context.Background(), "discard-companion",
+		DiscardRequest{PlanOperationID: plan.OperationID},
+	)
+	if err != nil || discarded.State != session.SessionDiscarded ||
+		pathExists(created.Companions[0].Workspace) {
+		t.Fatalf("companion discard = %+v, %v", discarded, err)
 	}
 }
 

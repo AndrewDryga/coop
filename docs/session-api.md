@@ -46,6 +46,11 @@ version: 1
 policies:
   emisar-observe:
     repository: /srv/repos/emisar
+    companions:
+      - name: coop
+        repository: /srv/repos/coop
+      - name: responder
+        repository: /srv/repos/responder
     target: codex:gpt-5.6/medium@oncall
     max_turns: 100
     max_queued_turns: 20
@@ -57,6 +62,8 @@ policies:
 The parser rejects unknown fields and requires:
 
 - `repository`: the absolute, canonical root of an existing Git worktree;
+- `companions`: at most 32 uniquely named absolute, canonical Git worktree roots; aliases use
+  lowercase letters, numbers, hyphens, or underscores and cannot be `primary`;
 - `target`: one ACP-capable target and at most one account;
 - `max_turns`: `1..10000`;
 - `max_queued_turns`: `1..1000`;
@@ -72,6 +79,14 @@ Repository, target, and limits are immutable session fields. `policy_digest` ide
 resolved fields. Explicit non-secret box settings from the daemon's Coop configuration and the
 repository's trusted box policy control the child. Raw runtime arguments, task queues, and merge
 gates are not forwarded into a turn.
+
+On session creation Coop pins each companion at its current commit and creates a detached, clean
+snapshot worktree under the owner-private session state root. The agent sees only read-only mounts
+at `/coop/repositories/<alias>` plus
+`COOP_COMPANION_REPOSITORIES_JSON` containing aliases, in-box paths, and commits. The primary
+repository remains the current working directory and is the only writable, reviewable tree.
+Companion host paths are never returned by the API. Discard verifies and removes both the primary
+fork and every owned companion snapshot.
 
 The daemon's `mcp.json`, `env`, and `INSTRUCTIONS.md` are copied into private session state only
 while a turn runs, then removed with the projected provider credential. This lets an operator run
@@ -136,9 +151,8 @@ Idempotency-Key: <globally unique caller-owned key>
 ```
 
 The key and content type must each occur exactly once. Mutation URLs accept no query parameters.
-Bodies are limited to 128 KiB except turn submission, which permits 12 MiB for encoded artifacts.
-Every body must contain exactly one JSON value and rejects unknown fields. Prompts are further
-limited to 64 KiB of valid UTF-8 without NUL.
+Bodies are limited to 128 KiB, must contain exactly one JSON value, and reject unknown fields.
+Prompts are further limited to 64 KiB of valid UTF-8 without NUL.
 
 Use a stable key for one logical action. Repeating the exact method, key, and canonical body returns
 the recorded result without repeating the action. Reusing a key with a different method or body
@@ -208,9 +222,10 @@ configuration.
 | `GET` | `/v1/sessions?limit=100` | `limit` is `1..1000` |
 | `GET` | `/v1/sessions/{session_id}` | none |
 
-The public session includes IDs, target, policy digest, base commit, generated fork name, revision,
-state, activity, queue/budget counters, event cursor, and timestamps. It excludes repository and
-workspace paths, native session ID, prompts, credentials, environment, mounts, and runtime data.
+The public session includes IDs, target, policy digest, primary base commit, companion aliases,
+in-box paths and pinned commits, generated fork name, revision, state, activity, queue/budget
+counters, event cursor, and timestamps. It excludes host repository and workspace paths, native
+session ID, prompts, credentials, environment, caller-defined mounts, and runtime data.
 
 ### Turns
 
@@ -226,7 +241,7 @@ curl --unix-socket "$SOCKET" \
 
 | Method | Path | Body/query |
 | --- | --- | --- |
-| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt`, optional `artifacts` |
+| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt` |
 | `GET` | `/v1/sessions/{session_id}/turns?after=0&limit=100` | ordinal cursor |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}` | none |
 | `POST` | `/v1/sessions/{session_id}/turns/{turn_id}/cancel` | `expected_revision` |
@@ -234,14 +249,6 @@ curl --unix-socket "$SOCKET" \
 A public turn excludes its prompt and idempotency data. A completed turn's `assistant_message` is
 the user-facing response. Coop does not publish hidden reasoning, raw tool calls, raw ACP frames, or
 box logs.
-
-Each artifact has `name`, `media_type`, lowercase hex `sha256`, and base64-encoded `data`. A turn
-accepts at most four artifacts and 8 MiB of decoded content in total. Supported media types are
-PNG, JPEG, WebP, GIF, UTF-8 text/Markdown/CSV/JSON/YAML, and PDF. Coop validates the filename,
-content signature, size, and digest before admission. The agent receives negotiated ACP image,
-text, or embedded-resource blocks. Artifact bytes are omitted from every public turn and event,
-survive a daemon restart only while the turn is pending or active, and are deleted when the turn
-completes, fails, is cancelled, is interrupted after send, or is exhausted by budget.
 
 Cancellation asks ACP to cancel, then stops and reaps the exact process group and run-labeled box.
 It does not claim that external side effects were reversed.
@@ -305,7 +312,16 @@ curl --unix-socket "$SOCKET" \
 - immutable `base_commit`, current `fork_head`, and current `parent_head`;
 - committed, staged, unstaged, untracked, and conflicted typed path records;
 - ahead/behind and base-to-head divergence counts;
-- a bounded `--binary --full-index` patch and `truncated`.
+- a bounded binary patch page;
+- `patch_digest`, exact `patch_bytes`, `patch_offset`, `patch_next_offset`, and
+  `patch_has_more`.
+
+Call
+`GET /v1/sessions/{session_id}/changes?patch_offset=<next>&patch_limit=<bytes>` to read another
+bounded page. `patch_limit` cannot exceed the session policy's `max_patch_bytes`; offsets are
+bounded to 1 GiB. Consumers must bind navigation to `patch_digest` and restart at offset zero if
+the digest changes. The legacy `truncated` field is true whenever the response is not the complete
+patch.
 
 JSON encodes `patch` and every `*_bytes` field as base64. A normal UTF-8 path also appears in
 `path`; an arbitrary byte path is preserved in `path_bytes`. Empty change lists are not used to
@@ -330,16 +346,21 @@ against current parent `HEAD`, runs the trusted parent gate read-only, and retur
 - creation base, source, parent, and candidate commit/tree identities;
 - rebase status and gate status;
 - bounded policy findings;
-- an exact binary patch from parent tree to candidate tree;
-- `patch_truncated`, `publishable`, and stable not-publishable reason codes.
+- a bounded inline patch preview from parent tree to candidate tree;
+- `patch_truncated`, complete `patch_digest` and `patch_bytes`, an opaque
+  `patch_artifact_id`, `publishable`, and stable not-publishable reason codes.
 
-The patch is base64 in JSON. `publishable` is evidence about this exact candidate, not permission to
-push or merge. It is false for conflict, no/failed gate, startup failure, policy findings, parent or
-source movement, active fork ownership, or a truncated patch.
+The preview is base64 in JSON. A truncated preview is a transport condition and does not by itself
+make the review unpublishable. The complete owner-private artifact is capped at 64 MiB and is
+available only through
+`GET /v1/operations/{patch_artifact_id}/review-patch`. The response is raw `text/x-diff`, with the
+review digest as its ETag. Consumers must verify its size and SHA-256 digest before use.
 
-There is no bundle or generic artifact endpoint in v1. An external publisher can apply a
-non-truncated review patch to the exact `parent_head` in an isolated checkout and verify the
-resulting tree equals `candidate_tree`. It must stop on any mismatch and owns all GitHub credentials,
+`publishable` is evidence about this exact candidate, not permission to push or merge. It is false
+for conflict, no/failed gate, startup failure, policy findings, parent or source movement, active
+fork ownership, or an unavailable/oversized complete artifact. An external publisher applies the
+verified artifact to the exact `parent_head` in an isolated checkout and verifies that the resulting
+tree equals `candidate_tree`. It must stop on any mismatch and owns all GitHub credentials,
 branching, secret scans, commit creation, and draft-PR idempotency.
 
 ### Close and discard
@@ -405,7 +426,7 @@ Common status mapping:
 | `400` | invalid or over-bounds request |
 | `404` | session, turn, or operation not found |
 | `409` | idempotency, revision, state, queue, budget, resume, uncertainty, or discard conflict |
-| `413` | request body exceeds its route-specific bound |
+| `413` | request body exceeds 128 KiB |
 | `500` | internal failure; host paths and raw internal errors are suppressed |
 | `503` | readiness endpoint is not ready |
 

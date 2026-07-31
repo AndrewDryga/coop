@@ -30,6 +30,7 @@ import (
 const (
 	sessionPolicyVersion             = 1
 	sessionPolicyFileLimit           = 1 << 20
+	sessionPolicyMaxCompanions       = 32
 	sessionPolicyMaxTurnTimeout      = 24 * time.Hour
 	sessionServiceDefaultStopTimeout = 5 * time.Second
 	sessionServiceCleanupInterval    = time.Minute
@@ -40,6 +41,7 @@ const (
 type SessionPolicy struct {
 	Name           string
 	Repository     string
+	Companions     []SessionCompanionPolicy
 	Target         string
 	MaxTurns       int
 	MaxQueuedTurns int
@@ -48,19 +50,30 @@ type SessionPolicy struct {
 	MaxPatchBytes  int
 }
 
+type SessionCompanionPolicy struct {
+	Name       string `json:"name"`
+	Repository string `json:"repository"`
+}
+
 type rawSessionPolicyFile struct {
 	Version  int                         `yaml:"version"`
 	Policies map[string]rawSessionPolicy `yaml:"policies"`
 }
 
 type rawSessionPolicy struct {
-	Repository     string `yaml:"repository"`
-	Target         string `yaml:"target"`
-	MaxTurns       int    `yaml:"max_turns"`
-	MaxQueuedTurns int    `yaml:"max_queued_turns"`
-	MaxQueuedBytes int    `yaml:"max_queued_bytes"`
-	TurnTimeout    string `yaml:"turn_timeout"`
-	MaxPatchBytes  int    `yaml:"max_patch_bytes"`
+	Repository     string                      `yaml:"repository"`
+	Companions     []rawSessionCompanionPolicy `yaml:"companions"`
+	Target         string                      `yaml:"target"`
+	MaxTurns       int                         `yaml:"max_turns"`
+	MaxQueuedTurns int                         `yaml:"max_queued_turns"`
+	MaxQueuedBytes int                         `yaml:"max_queued_bytes"`
+	TurnTimeout    string                      `yaml:"turn_timeout"`
+	MaxPatchBytes  int                         `yaml:"max_patch_bytes"`
+}
+
+type rawSessionCompanionPolicy struct {
+	Name       string `yaml:"name"`
+	Repository string `yaml:"repository"`
 }
 
 // LoadSessionPolicies parses the strict operator policy file. A config is required when the
@@ -182,6 +195,48 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 	if err != nil {
 		return SessionPolicy{}, err
 	}
+	if len(raw.Companions) > sessionPolicyMaxCompanions {
+		return SessionPolicy{}, fmt.Errorf(
+			"companions are limited to %d repositories",
+			sessionPolicyMaxCompanions,
+		)
+	}
+	companions := make([]SessionCompanionPolicy, 0, len(raw.Companions))
+	seenNames := make(map[string]bool, len(raw.Companions))
+	seenRepositories := map[string]bool{realRepo: true}
+	for _, companion := range raw.Companions {
+		if !validCompanionRepositoryName(companion.Name) {
+			return SessionPolicy{}, fmt.Errorf(
+				"companion name %q must use 1-48 lowercase letters, numbers, hyphens, or underscores and cannot be primary",
+				companion.Name,
+			)
+		}
+		if seenNames[companion.Name] {
+			return SessionPolicy{}, fmt.Errorf("companion name %q is duplicated", companion.Name)
+		}
+		if companion.Repository == "" || !filepath.IsAbs(companion.Repository) ||
+			filepath.Clean(companion.Repository) != companion.Repository {
+			return SessionPolicy{}, fmt.Errorf(
+				"companion %q repository must be an absolute, clean path",
+				companion.Name,
+			)
+		}
+		realCompanion, err := realGitRepository(companion.Repository)
+		if err != nil {
+			return SessionPolicy{}, fmt.Errorf("companion %q: %w", companion.Name, err)
+		}
+		if seenRepositories[realCompanion] {
+			return SessionPolicy{}, fmt.Errorf(
+				"companion %q repeats the primary or another companion repository",
+				companion.Name,
+			)
+		}
+		seenNames[companion.Name] = true
+		seenRepositories[realCompanion] = true
+		companions = append(companions, SessionCompanionPolicy{
+			Name: companion.Name, Repository: realCompanion,
+		})
+	}
 	target, err := agents.ParseTarget(raw.Target)
 	if err != nil {
 		return SessionPolicy{}, fmt.Errorf("invalid ACP target: %w", err)
@@ -227,10 +282,25 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 		return SessionPolicy{}, fmt.Errorf("turn_timeout must be positive and no longer than %s", sessionPolicyMaxTurnTimeout)
 	}
 	return SessionPolicy{
-		Name: name, Repository: realRepo, Target: target.String(), MaxTurns: raw.MaxTurns,
+		Name: name, Repository: realRepo, Companions: companions,
+		Target: target.String(), MaxTurns: raw.MaxTurns,
 		MaxQueuedTurns: raw.MaxQueuedTurns, MaxQueuedBytes: raw.MaxQueuedBytes,
 		TurnTimeout: timeout, MaxPatchBytes: raw.MaxPatchBytes,
 	}, nil
+}
+
+func validCompanionRepositoryName(name string) bool {
+	if name == "" || name == "primary" || len(name) > 48 {
+		return false
+	}
+	for index, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
+			(index > 0 && (r == '-' || r == '_')) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func realGitRepository(path string) (string, error) {
@@ -320,6 +390,7 @@ type sessionOperationLock struct {
 
 type SessionService struct {
 	store           *session.Store
+	stateRoot       string
 	policies        map[string]SessionPolicy
 	sourceCfg       *config.Config
 	rt              runtime.Runtime
@@ -369,7 +440,8 @@ func NewSessionService(cfg SessionServiceConfig) (*SessionService, error) {
 		return nil, err
 	}
 	service := &SessionService{
-		store: store, policies: cloneSessionPolicies(policies), sourceCfg: sourceCfg,
+		store: store, stateRoot: cfg.StateRoot,
+		policies: cloneSessionPolicies(policies), sourceCfg: sourceCfg,
 		rt: cfg.Runtime, executable: cfg.Executable, runner: cfg.Runner,
 		reviewGate:      cfg.ReviewGate,
 		stopTimeout:     cfg.StopTimeout,
@@ -396,6 +468,7 @@ func cloneSessionPolicies(in map[string]SessionPolicy) map[string]SessionPolicy 
 		if policy.Name == "" {
 			policy.Name = name
 		}
+		policy.Companions = append([]SessionCompanionPolicy(nil), policy.Companions...)
 		out[name] = policy
 	}
 	return out
@@ -403,16 +476,18 @@ func cloneSessionPolicies(in map[string]SessionPolicy) map[string]SessionPolicy 
 
 func resolvedSessionPolicyDigest(policy SessionPolicy) string {
 	canonical := struct {
-		Name           string `json:"name"`
-		Repository     string `json:"repository"`
-		Target         string `json:"target"`
-		MaxTurns       int    `json:"max_turns"`
-		MaxQueuedTurns int    `json:"max_queued_turns"`
-		MaxQueuedBytes int    `json:"max_queued_bytes"`
-		TurnTimeout    int64  `json:"turn_timeout_ns"`
-		MaxPatchBytes  int    `json:"max_patch_bytes"`
+		Name           string                   `json:"name"`
+		Repository     string                   `json:"repository"`
+		Companions     []SessionCompanionPolicy `json:"companions,omitempty"`
+		Target         string                   `json:"target"`
+		MaxTurns       int                      `json:"max_turns"`
+		MaxQueuedTurns int                      `json:"max_queued_turns"`
+		MaxQueuedBytes int                      `json:"max_queued_bytes"`
+		TurnTimeout    int64                    `json:"turn_timeout_ns"`
+		MaxPatchBytes  int                      `json:"max_patch_bytes"`
 	}{
-		Name: policy.Name, Repository: policy.Repository, Target: policy.Target,
+		Name: policy.Name, Repository: policy.Repository, Companions: policy.Companions,
+		Target:   policy.Target,
 		MaxTurns: policy.MaxTurns, MaxQueuedTurns: policy.MaxQueuedTurns,
 		MaxQueuedBytes: policy.MaxQueuedBytes, TurnTimeout: int64(policy.TurnTimeout),
 		MaxPatchBytes: policy.MaxPatchBytes,
@@ -880,12 +955,13 @@ func (s *SessionService) replayCreateOperation(ctx context.Context, op session.O
 }
 
 type sessionCreateIntent struct {
-	OperationID string        `json:"operation_id"`
-	Policy      SessionPolicy `json:"policy"`
-	Task        string        `json:"task"`
-	SessionID   string        `json:"session_id"`
-	ForkName    string        `json:"fork_name"`
-	BaseCommit  string        `json:"base_commit"`
+	OperationID string                        `json:"operation_id"`
+	Policy      SessionPolicy                 `json:"policy"`
+	Task        string                        `json:"task"`
+	SessionID   string                        `json:"session_id"`
+	ForkName    string                        `json:"fork_name"`
+	BaseCommit  string                        `json:"base_commit"`
+	Companions  []session.CompanionRepository `json:"companions,omitempty"`
 }
 
 func (s *SessionService) executeCreate(ctx context.Context, op session.Operation, req CreateRemoteSessionRequest) (session.Session, error) {
@@ -897,9 +973,31 @@ func (s *SessionService) executeCreate(ctx context.Context, op session.Operation
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("pin parent HEAD: %w", err))
 	}
+	sessionID := deterministicSessionID(op.ID)
+	companions := make([]session.CompanionRepository, 0, len(policy.Companions))
+	for _, companion := range policy.Companions {
+		commit, err := sessionWorkspaceCommit(companion.Repository, "HEAD")
+		if err != nil {
+			return session.Session{}, s.failServiceOperation(
+				ctx, op.ID,
+				fmt.Errorf("pin companion %q HEAD: %w", companion.Name, err),
+			)
+		}
+		workspace, err := sessionCompanionWorkspace(
+			s.store.Root(), sessionID, companion.Name,
+		)
+		if err != nil {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+		}
+		companions = append(companions, session.CompanionRepository{
+			Name: companion.Name, Repository: companion.Repository,
+			Workspace: workspace, BaseCommit: commit,
+		})
+	}
 	intent := sessionCreateIntent{
 		OperationID: op.ID, Policy: policy, Task: req.Task,
-		SessionID: deterministicSessionID(op.ID), ForkName: deterministicForkName(op.ID), BaseCommit: base,
+		SessionID: sessionID, ForkName: deterministicForkName(op.ID), BaseCommit: base,
+		Companions: companions,
 	}
 	data, err := json.Marshal(intent)
 	if err != nil {
@@ -922,18 +1020,34 @@ func deterministicForkName(operationID string) string {
 }
 
 func (s *SessionService) executeCreateIntent(ctx context.Context, op session.Operation, intent sessionCreateIntent) (session.Session, error) {
-	if intent.OperationID != op.ID || intent.SessionID == "" || !validForkName(intent.ForkName) || !validSessionWorkspaceCommit(intent.BaseCommit) {
+	if intent.OperationID != op.ID || intent.SessionID == "" ||
+		!validForkName(intent.ForkName) ||
+		!validSessionWorkspaceCommit(intent.BaseCommit) {
 		return session.Session{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "create operation intent is invalid"}
 	}
 	workspace, err := ensureSessionWorkspace(intent.Policy.Repository, intent.ForkName, intent.BaseCommit)
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("ensure session workspace: %w", err))
 	}
+	companions := make([]session.CompanionRepository, 0, len(intent.Companions))
+	for _, companion := range intent.Companions {
+		resolved, err := ensureSessionCompanion(
+			s.store.Root(), intent.SessionID, companion,
+		)
+		if err != nil {
+			return session.Session{}, s.failServiceOperation(
+				ctx, op.ID,
+				fmt.Errorf("ensure companion %q: %w", companion.Name, err),
+			)
+		}
+		companions = append(companions, resolved)
+	}
 	createReq := session.CreateSessionRequest{
 		ID: intent.SessionID, ExternalRef: intent.Task, Target: intent.Policy.Target, Policy: intent.Policy.Name,
 		PolicyDigest: resolvedSessionPolicyDigest(intent.Policy),
 		Repository:   intent.Policy.Repository, Workspace: workspace.Path, ForkName: intent.ForkName,
-		BaseCommit: intent.BaseCommit, MaxTurns: intent.Policy.MaxTurns,
+		BaseCommit: intent.BaseCommit, Companions: companions,
+		MaxTurns:       intent.Policy.MaxTurns,
 		MaxQueuedTurns: intent.Policy.MaxQueuedTurns, MaxQueuedBytes: intent.Policy.MaxQueuedBytes,
 		TurnTimeout: intent.Policy.TurnTimeout, MaxPatchBytes: intent.Policy.MaxPatchBytes,
 	}
@@ -1012,6 +1126,34 @@ func (s *SessionService) GetChanges(ctx context.Context, sessionID string) (Sess
 	return inspectSessionChanges(sess.Repository, sess.Workspace, sess.BaseCommit, sess.MaxPatchBytes)
 }
 
+func (s *SessionService) GetChangesPage(
+	ctx context.Context,
+	sessionID string,
+	patchOffset int64,
+	patchLimit int,
+) (SessionWorkspaceChanges, error) {
+	sess, err := s.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionWorkspaceChanges{}, err
+	}
+	if patchLimit < 1 || patchLimit > sess.MaxPatchBytes {
+		return SessionWorkspaceChanges{}, &session.Error{
+			Code: session.CodeInvalidRequest,
+			Detail: fmt.Sprintf(
+				"patch limit must be between 1 and %d bytes",
+				sess.MaxPatchBytes,
+			),
+		}
+	}
+	return inspectSessionChangesPage(
+		sess.Repository,
+		sess.Workspace,
+		sess.BaseCommit,
+		patchOffset,
+		patchLimit,
+	)
+}
+
 type PlanDiscardRequest struct {
 	SessionID        string `json:"session_id"`
 	ExpectedRevision int64  `json:"expected_revision"`
@@ -1020,9 +1162,10 @@ type PlanDiscardRequest struct {
 }
 
 type SessionDiscardPlan struct {
-	SessionID string                      `json:"session_id"`
-	Revision  int64                       `json:"revision"`
-	Workspace SessionWorkspaceDiscardPlan `json:"workspace"`
+	SessionID  string                        `json:"session_id"`
+	Revision   int64                         `json:"revision"`
+	Workspace  SessionWorkspaceDiscardPlan   `json:"workspace"`
+	Companions []sessionCompanionDiscardPlan `json:"companions,omitempty"`
 }
 
 type PlanDiscardResult struct {
@@ -1076,7 +1219,24 @@ func (s *SessionService) executePlanDiscard(ctx context.Context, op session.Oper
 	if plan.Running {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidSessionState, Detail: "workspace has active or pending work"})
 	}
-	result := PlanDiscardResult{OperationID: op.ID, Plan: SessionDiscardPlan{SessionID: sess.ID, Revision: sess.Revision, Workspace: plan}}
+	companions := make([]sessionCompanionDiscardPlan, 0, len(sess.Companions))
+	for _, companion := range sess.Companions {
+		companionPlan, err := planSessionCompanionDiscard(companion)
+		if err != nil {
+			return PlanDiscardResult{}, s.failServiceOperation(
+				ctx, op.ID,
+				fmt.Errorf("plan companion %q discard: %w", companion.Name, err),
+			)
+		}
+		companions = append(companions, companionPlan)
+	}
+	result := PlanDiscardResult{
+		OperationID: op.ID,
+		Plan: SessionDiscardPlan{
+			SessionID: sess.ID, Revision: sess.Revision,
+			Workspace: plan, Companions: companions,
+		},
+	}
 	data, err := json.Marshal(result)
 	if err != nil {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, err)
@@ -1169,6 +1329,9 @@ func (s *SessionService) executeDiscard(ctx context.Context, op session.Operatio
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	if sess.State == session.SessionDiscarded {
+		if err := s.removeSessionReviewArtifacts(ctx, sess.ID); err != nil {
+			return session.Session{}, session.ErrOperationUncertain
+		}
 		completed, err := s.completeDiscardOperation(ctx, op.ID, sess)
 		if err != nil {
 			return session.Session{}, session.ErrOperationUncertain
@@ -1178,8 +1341,25 @@ func (s *SessionService) executeDiscard(ctx context.Context, op session.Operatio
 	if sess.Revision != planned.Plan.Revision || sess.State != session.SessionClosed || sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeDiscardPlanStale, Detail: "discard plan no longer matches session state"})
 	}
+	if s.rt.Name != "" {
+		if err := box.DownServices(
+			s.rt,
+			planned.Plan.Workspace.Workspace,
+			planned.Plan.Workspace.Repo,
+			true,
+			io.Discard,
+			io.Discard,
+		); err != nil {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("remove session services: %w", err))
+		}
+	}
 	if err := discardSessionWorkspace(planned.Plan.Workspace); err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeDiscardPlanStale, Detail: boundedSessionServiceError(err)})
+	}
+	for _, companion := range planned.Plan.Companions {
+		if err := discardSessionCompanion(companion); err != nil {
+			return session.Session{}, session.ErrOperationUncertain
+		}
 	}
 	if err := removePrivateSessionState(s.store.Root(), planned.Plan.SessionID); err != nil {
 		return session.Session{}, session.ErrOperationUncertain
@@ -1188,11 +1368,40 @@ func (s *SessionService) executeDiscard(ctx context.Context, op session.Operatio
 	if err != nil {
 		return session.Session{}, session.ErrOperationUncertain
 	}
+	if err := s.removeSessionReviewArtifacts(ctx, sess.ID); err != nil {
+		return session.Session{}, session.ErrOperationUncertain
+	}
 	completed, err := s.completeDiscardOperation(ctx, op.ID, sess)
 	if err != nil {
 		return session.Session{}, session.ErrOperationUncertain
 	}
 	return completed, nil
+}
+
+func (s *SessionService) removeSessionReviewArtifacts(
+	ctx context.Context,
+	sessionID string,
+) error {
+	operationIDs, err := s.store.ListOperationIDsForResource(
+		ctx,
+		"RunReview",
+		"review",
+		sessionID,
+	)
+	if err != nil {
+		return err
+	}
+	root := filepath.Join(s.stateRoot, "review-artifacts")
+	for _, operationID := range operationIDs {
+		if !validSessionPathComponent(operationID) {
+			return errors.New("stored review operation has an invalid artifact identity")
+		}
+		path := filepath.Join(root, operationID+".diff")
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove review patch artifact: %w", err)
+		}
+	}
+	return nil
 }
 
 func replaySessionOperation(op session.Operation) (session.Session, error) {

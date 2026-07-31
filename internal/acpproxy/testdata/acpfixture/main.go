@@ -106,7 +106,15 @@ func serveRuntime(args []string) error {
 			}
 		}
 	}
-	provider, err := adapterProvider(args[imageAt+1:])
+	adapterArgs := args[imageAt+1:]
+	if len(adapterArgs) > 0 && filepath.Base(adapterArgs[0]) == "env" {
+		adapterArgs = adapterArgs[1:]
+		for len(adapterArgs) > 0 && strings.Contains(adapterArgs[0], "=") {
+			env = setEnv(env, adapterArgs[0])
+			adapterArgs = adapterArgs[1:]
+		}
+	}
+	provider, err := adapterProvider(adapterArgs)
 	if err != nil {
 		return err
 	}
