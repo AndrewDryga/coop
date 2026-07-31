@@ -74,6 +74,9 @@ func TestParseSessionPoliciesIsStrictAndPinsOneTarget(t *testing.T) {
 func TestWarmIdleTimeoutIsBoundIntoPolicyDigest(t *testing.T) {
 	policy := SessionPolicy{Name: "conversation", Repository: "/repo", Target: "codex@work", TurnTimeout: time.Hour}
 	cold := resolvedSessionPolicyDigest(policy)
+	if want := "0f7066c5d36ac4cfd709ce3908092be4f92f8ee2b93d4d6983cea527e8bc2ddb"; cold != want {
+		t.Fatalf("cold policy digest = %q, want backward-compatible %q", cold, want)
+	}
 	policy.WarmIdleTimeout = 15 * time.Minute
 	if warm := resolvedSessionPolicyDigest(policy); warm == cold {
 		t.Fatal("warm idle timeout did not change the immutable policy digest")

@@ -515,7 +515,7 @@ func resolvedSessionPolicyDigest(policy SessionPolicy) string {
 		MaxQueuedTurns  int                      `json:"max_queued_turns"`
 		MaxQueuedBytes  int                      `json:"max_queued_bytes"`
 		TurnTimeout     int64                    `json:"turn_timeout_ns"`
-		WarmIdleTimeout int64                    `json:"warm_idle_timeout_ns"`
+		WarmIdleTimeout int64                    `json:"warm_idle_timeout_ns,omitempty"`
 		MaxPatchBytes   int                      `json:"max_patch_bytes"`
 	}{
 		Name: policy.Name, Repository: policy.Repository, Companions: policy.Companions,
