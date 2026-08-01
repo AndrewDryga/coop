@@ -1215,6 +1215,39 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
+	// The work stage's auth rotation is only half the story: without the same rotation here, a
+	// signoff would hard-stop the run on the very credential the work stage just routed around.
+	t.Run("signoff rotates past an auth-failed credential", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+		taskID := "signoff-auth-rotation"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		dead := loopRecoveryTarget("codex", "signoff-model", "personal")
+		healthy := loopRecoveryTarget("codex", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{dead, healthy}, nil, 3)
+		attempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: dead, Stage: "signoff", Result: "authentication"},
+			{Target: healthy, Stage: "signoff", Result: "pass"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopReview(t, suite, work, 30*time.Second)
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, fmt.Sprintf("review target %q authentication failed — switching to %q", dead, healthy)) {
+			t.Fatalf("signoff auth rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		// A review stage records one row for its settled outcome, not one per attempt — the
+		// rotated-past attempt shows up as the retry that earned it, on the account that worked.
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 2 || records[1].Stage != "signoff" || records[1].Outcome != "success" ||
+			records[1].Account != "work" || records[1].Retries != 1 {
+			t.Fatalf("signoff auth rotation telemetry = %#v", records)
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
+	})
+
 	t.Run("hard stop after review receipt leaves task done", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		taskID := "hard-stop-after-review-reopen"

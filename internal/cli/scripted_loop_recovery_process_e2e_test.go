@@ -134,6 +134,41 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		}
 	})
 
+	// The complement of the fast-fail case above: one dead credential must not abandon a queue that
+	// a second signed-in account can still drain. This is the failure that motivated the rotation —
+	// an expired refresh token on rung 1 burned a 133-task overnight run while rung 2 sat idle.
+	t.Run("authentication rotates past a dead credential", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "authentication-rotation"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		dead := loopRecoveryTarget("claude", "auth-model", "personal")
+		healthy := loopRecoveryTarget("claude", "auth-model", "work")
+		writeLoopRecoveryPreset(t, suite.layout.Repo, "auth-rotation", []string{dead, healthy})
+		attempts := []loopProcessAttempt{
+			{Target: dead, Stage: "work", Result: "authentication"},
+			{Target: healthy, Stage: "work", Result: "complete"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopRecovery(t, suite, "auth-rotation")
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(result.Stderr, fmt.Sprintf("target %q authentication failed — switching to %q", dead, healthy)) ||
+			!strings.Contains(result.Stderr, "coop login claude@personal") ||
+			strings.Contains(result.Stderr, "retrying in") {
+			t.Fatalf("authentication rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		assertLoopAttemptContracts(t, suite, trace, taskID, attempts)
+		parsed, _ := agents.ParseTarget(healthy)
+		assertLoopProcessResult(t, suite, "claude", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 2, false)
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 2 ||
+			records[0].Outcome != "authentication" || records[0].Account != "personal" ||
+			records[1].Outcome != "success" || records[1].Account != "work" {
+			t.Fatalf("authentication rotation telemetry = %#v", records)
+		}
+		assertLoopTraceProcessesGone(t, trace)
+	})
+
 	t.Run("output exhaustion resumes the same target", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		taskID := "output-resume-codex"

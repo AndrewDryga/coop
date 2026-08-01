@@ -165,7 +165,12 @@ func (claudeAgent) LiveCredentials() LiveCredentialSpec {
 			Name: ".credentials.json", Primary: true, Project: projectClaudeCredential,
 		}},
 		Portability: claudeCredentialPortability,
-		AuthSignals: []string{"not logged in", "invalid auth", "authentication_error", "please run /login"},
+		// "failed to authenticate" / "oauth session expired" are what the CLI actually prints when a
+		// stored refresh token is dead ("Failed to authenticate: OAuth session expired and could not
+		// be refreshed"). Without them an expired account reads as an ordinary process failure and
+		// burns the loop's whole retry budget on a rung no retry can fix.
+		AuthSignals: []string{"not logged in", "invalid auth", "authentication_error", "please run /login",
+			"failed to authenticate", "oauth session expired"},
 	}
 }
 

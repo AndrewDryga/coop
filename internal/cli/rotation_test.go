@@ -357,3 +357,56 @@ func TestOneOffLadder(t *testing.T) {
 		t.Error("empty account after @ should error")
 	}
 }
+
+// An expired credential on the first rung must not abandon a queue that another signed-in account
+// could still drain — the failure that motivated auth rotation.
+func TestRotationAuthFailureAdvances(t *testing.T) {
+	r := rts("personal", "backup")
+	if !r.onAuthFailure() {
+		t.Fatal("auth failure with a healthy rung left = false, want a switch")
+	}
+	if r.active().String() != "claude@backup" {
+		t.Fatalf("after personal failed auth, active = %q, want claude@backup", r.active())
+	}
+	// Sticky: no reset revives a logged-out account, so the dead rung never comes back around.
+	now := time.Unix(1000, 0)
+	if sleep, _ := r.onLimit(now.Add(time.Hour), 1, now); sleep <= 0 {
+		t.Errorf("backup limited with personal auth-dead: sleep=%v, want a wait rather than a switch", sleep)
+	}
+	if r.active().String() != "claude@backup" {
+		t.Errorf("a rate limit rotated back onto the auth-dead rung: active = %q", r.active())
+	}
+}
+
+// Every rung dead is the one case that still stops the run.
+func TestRotationAuthFailureExhausted(t *testing.T) {
+	r := rts("personal", "backup")
+	if !r.onAuthFailure() {
+		t.Fatal("first auth failure should switch to backup")
+	}
+	if r.onAuthFailure() {
+		t.Error("auth failure with every rung dead = true, want a stop")
+	}
+	failed := r.authFailedTargets()
+	if len(failed) != 2 || failed[0].String() != "claude@personal" || failed[1].String() != "claude@backup" {
+		t.Errorf("authFailedTargets = %v, want both accounts in rotation order", failed)
+	}
+}
+
+// A single-rung run has nothing to switch to and must keep failing fast, exactly as before.
+func TestRotationAuthFailureSingleRung(t *testing.T) {
+	r := rts("only")
+	if r.onAuthFailure() {
+		t.Error("single-rung auth failure = true, want a stop")
+	}
+}
+
+// A timeout rotation must not wander onto a rung whose credential is already known dead.
+func TestRotationTimeoutSkipsAuthDeadRung(t *testing.T) {
+	r := rts("personal", "backup")
+	r.onAuthFailure() // personal dead, active = backup
+	r.advanceOnTimeout(time.Unix(1000, 0))
+	if r.active().String() != "claude@backup" {
+		t.Errorf("timeout advance landed on %q, want to stay on claude@backup (personal is auth-dead)", r.active())
+	}
+}

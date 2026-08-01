@@ -129,9 +129,12 @@ func TestDetectIterationLimitRejectsNarration(t *testing.T) {
 func TestIterationAuthenticationRejectsNarration(t *testing.T) {
 	for _, provider := range agents.Names() {
 		agent, _ := agents.Get(provider)
-		signal := agent.LiveCredentials().AuthSignals[0]
-		if iterationAuthentication(provider, "review "+signal+" handling before retrying") {
-			t.Errorf("%s treated ordinary authentication prose as a terminal failure", provider)
+		// EVERY signal, not just the first: a newly added signal is exactly where a too-broad
+		// match would slip in and start reading ordinary prose as a terminal failure.
+		for _, signal := range agent.LiveCredentials().AuthSignals {
+			if iterationAuthentication(provider, "review "+signal+" handling before retrying") {
+				t.Errorf("%s treated ordinary authentication prose (%q) as a terminal failure", provider, signal)
+			}
 		}
 	}
 }
@@ -348,6 +351,10 @@ func TestIterationOutcome(t *testing.T) {
 	}{
 		{name: "success", provider: "codex", want: "success"},
 		{name: "auth", provider: "codex", code: 1, output: "authentication required", want: "authentication"},
+		// Verbatim from a real loop: an expired claude refresh token. This read as "process_failure"
+		// once and burned the loop's whole retry budget on a rung no retry could fix.
+		{name: "claude expired oauth session", provider: "claude", code: 1,
+			output: "Failed to authenticate: OAuth session expired and could not be refreshed", want: "authentication"},
 		{name: "rate", provider: "codex", code: 1, output: "rate limit exceeded", want: "rate_limit"},
 		{name: "output", provider: "codex", code: 1, output: "maximum output length", want: "output_limit"},
 		{name: "process", provider: "codex", code: 1, output: "boom", want: "process_failure"},

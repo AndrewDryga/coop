@@ -1812,9 +1812,33 @@ func interruptedReviewResult(last reviewRunResult, retries int) reviewRunResult 
 
 func iterationAuthenticationError(target agents.Target) error {
 	if account := target.Account(); account != "" {
-		return fmt.Errorf("%s authentication failed for account %q — run `coop login %s@%s`", target.Provider, account, target.Provider, account)
+		return fmt.Errorf("%s authentication failed for account %q — run `%s`", target.Provider, account, loginCommand(target))
 	}
-	return fmt.Errorf("%s authentication failed — run `coop login %s`", target.Provider, target.Provider)
+	return fmt.Errorf("%s authentication failed — run `%s`", target.Provider, loginCommand(target))
+}
+
+// loginCommand renders the `coop login` invocation that restores one target's credential.
+func loginCommand(t agents.Target) string {
+	if account := t.Account(); account != "" {
+		return "coop login " + t.Provider + "@" + account
+	}
+	return "coop login " + t.Provider
+}
+
+// rotationAuthenticationError reports a run that has no usable credential left. Once a rotation has
+// burned through several accounts, naming only the last one tried would send the human to restore
+// one login and hit the same wall on the next rung — so list every account that failed.
+func rotationAuthenticationError(r *rotation, target agents.Target) error {
+	failed := r.authFailedTargets()
+	if len(failed) < 2 {
+		return iterationAuthenticationError(target)
+	}
+	names := make([]string, 0, len(failed))
+	for _, t := range failed {
+		names = append(names, t.String())
+	}
+	return fmt.Errorf("authentication failed for every target (%s) — restore one with `%s`",
+		strings.Join(names, ", "), loginCommand(failed[0]))
 }
 
 func reviewRepoReadOnly(writes loopcfg.ReviewWrites) bool { return !writes.RepositoryWritable() }
@@ -1919,7 +1943,15 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 		case actStop:
 			return last, fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)", fails)
 		case actAuthStop:
-			return last, iterationAuthenticationError(target)
+			// Same rotation as the work stage: without it a between-task audit would hard-stop the
+			// run on the very credential the work stage just routed around.
+			if rev.rotates() && rev.onAuthFailure() {
+				totalRetries++
+				ui.Warn("review target %q authentication failed — switching to %q (restore it with `%s`)",
+					target, rev.active(), loginCommand(target))
+				break
+			}
+			return last, rotationAuthenticationError(rev, target)
 		case actOutputStop:
 			return last, fmt.Errorf("review stage reached the model output limit %d times — stopping", outputRetries)
 		}
@@ -3409,7 +3441,16 @@ reviewAgain:
 				}
 				return code, fmt.Errorf("iteration failed %d times since the last success — stopping", fails)
 			case actAuthStop:
-				return code, iterationAuthenticationError(target)
+				// A dead credential is no reason to abandon the queue while another account can still
+				// work: mark this rung unusable for the run and switch, exactly as a rate limit does.
+				// The mark is sticky, so this rotates at most once per rung and can't spin. Only when
+				// EVERY rung has failed authentication is there nothing left to try.
+				if rot.rotates() && rot.onAuthFailure() {
+					ui.Warn("target %q authentication failed — switching to %q (restore it with `%s`)",
+						target, rot.active(), loginCommand(target))
+					break
+				}
+				return code, rotationAuthenticationError(rot, target)
 			case actOutputStop:
 				return code, fmt.Errorf("iteration reached the model output limit %d times — stopping", retries)
 			}
