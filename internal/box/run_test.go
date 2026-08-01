@@ -1083,6 +1083,15 @@ func TestAgentBaseInstructions(t *testing.T) {
 	if !strings.Contains(got, "Environment (coop box)") || !strings.Contains(got, "python (= python3)") {
 		t.Errorf("box note missing/incomplete with no user file:\n%s", got)
 	}
+	// A tracked shadowed path reads as modified, so the note has to say what that is AND that
+	// staging it would commit an empty decoy over real repository content — an agent that only
+	// knows "you can't read them" still reasons its way there once per run, or sweeps them into a
+	// blanket `git add -A`.
+	for _, want := range []string{"shows as modified", "Never stage, commit", "git add -A"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("box note does not warn about shadowed decoys in git status (%q):\n%s", want, got)
+		}
+	}
 	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("MY RULE"), 0o644)
 	got = agentBaseInstructions(cfg, "claude", "CLAUDE.md")
 	if i, j := strings.Index(got, "Environment (coop box)"), strings.Index(got, "MY RULE"); i < 0 || j < 0 || i > j {

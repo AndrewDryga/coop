@@ -977,7 +977,11 @@ You run inside a coop container: a Debian box that IS your sandbox and security 
   file-write tools work. Paths outside the repo may be refused; for scratch, write in-repo or
   use a shell command.
 - Files that look like secrets (.env*, *.key, *.pem, id_rsa*, .ssh, …) are shadowed with empty
-  read-only decoys. You can't read or write them, by design — don't try to bypass it.
+  read-only decoys. You can't read or write them, by design — don't try to bypass it. A shadowed
+  path that is TRACKED therefore shows as modified in git status — that is the decoy, not your
+  work. Never stage, commit, check out, or git restore those paths: it would replace real
+  repository content with an empty file. Leave them untouched and unstaged, and don't reach for a
+  blanket "git add -A" / "git commit -a" that would sweep them in.
 `
 
 // agentBaseInstructions is what an agent receives as its global instructions: the always-on
