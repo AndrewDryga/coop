@@ -2535,9 +2535,16 @@ func TestResumeLine(t *testing.T) {
 	// reparents every descendant — it rewrote a whole 286-commit branch once — so the line must
 	// forbid it by name and route to a block instead.
 	deep := resumeLine("my-task", []string{"abc123"}, false)
-	for _, want := range []string{"STOP", "NOT HEAD", "reparent every", "rebase, cherry-pick, or plumbing", "coop tasks block my-task", "decision.md"} {
+	for _, want := range []string{"STOP", "NOT HEAD", "reparent every", "rebase, cherry-pick, or plumbing", "50_blocked/", "decision.md"} {
 		if !strings.Contains(deep, want) {
 			t.Errorf("deep resume line missing %q:\n%s", want, deep)
+		}
+	}
+	// This text is read by an agent INSIDE the box, where the loop prompt says coop is not
+	// installed and state changes are folder moves. Prescribing a coop command there is unrunnable.
+	for _, line := range []string{l, deep, taskBindingRecovery("my-task")} {
+		if strings.Contains(line, "coop tasks") {
+			t.Errorf("in-box guidance prescribes the coop CLI, which the box does not have:\n%s", line)
 		}
 	}
 }
@@ -2589,7 +2596,7 @@ func TestTaskBindingRecoveryNeverPrescribesDeepRewrite(t *testing.T) {
 			t.Errorf("binding recovery still prescribes %q:\n%s", forbidden, r)
 		}
 	}
-	for _, want := range []string{"already reachable but is NOT HEAD", "do not rewrite it", "reparents every commit after it", "coop tasks block"} {
+	for _, want := range []string{"already reachable but is NOT HEAD", "do not rewrite it", "reparents every commit after it", "50_blocked/"} {
 		if !strings.Contains(r, want) {
 			t.Errorf("binding recovery missing %q:\n%s", want, r)
 		}
@@ -4784,7 +4791,7 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"completion rejected", "expected exactly one commit", "git commit --amend --only --no-edit --trailer", "already reachable but is NOT HEAD", "do not rewrite it", "coop tasks block", "rewrite or squash", id} {
+	for _, want := range []string{"completion rejected", "expected exactly one commit", "git commit --amend --only --no-edit --trailer", "already reachable but is NOT HEAD", "do not rewrite it", "50_blocked/", "rewrite or squash", id} {
 		if !strings.Contains(string(log), want) {
 			t.Errorf("rejection log missing %q:\n%s", want, log)
 		}
@@ -4806,7 +4813,7 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	if rejectErr == nil {
 		t.Fatal("unbindable completion must stop the controller")
 	}
-	for _, want := range []string{"completion rejected", "restored to in_progress", "git commit --amend --only --no-edit --trailer", "already reachable but is NOT HEAD", "do not rewrite it", "coop tasks block", "rewrite/squash", id} {
+	for _, want := range []string{"completion rejected", "restored to in_progress", "git commit --amend --only --no-edit --trailer", "already reachable but is NOT HEAD", "do not rewrite it", "50_blocked/", "rewrite/squash", id} {
 		if !strings.Contains(rejectErr.Error(), want) {
 			t.Errorf("controller error missing %q: %v", want, rejectErr)
 		}

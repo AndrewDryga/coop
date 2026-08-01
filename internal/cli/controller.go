@@ -2871,9 +2871,9 @@ func taskBindingRecovery(id string) string {
 		"if the implementation commit is HEAD and only lacks the trailer, amend its message without touching the index "+
 			"(`git commit --amend --only --no-edit --trailer %q`); if a commit carrying that trailer is already "+
 			"reachable but is NOT HEAD, do not rewrite it — that reparents every commit after it — and never add a "+
-			"second task-bound commit: verify the work and run `coop tasks block %s`, recording in its decision.md "+
-			"what you verified so a human can finish it",
-		coopTaskTrailer+": "+id, id,
+			"second task-bound commit: verify the work and park the task in 50_blocked/, its decision.md naming "+
+			"what you verified, so a human can finish it",
+		coopTaskTrailer+": "+id,
 	)
 }
 
@@ -2938,8 +2938,8 @@ func resumeLine(id string, commits []string, atHead bool) string {
 	// descendants carry OTHER tasks' trailers and trip the foreign-binding guard.
 	return line + " STOP — that bound commit is NOT HEAD: amending or rewriting it would reparent every " +
 		"commit after it and rewrite the branch. Never do that, by rebase, cherry-pick, or plumbing. " +
-		"Neither recipe is workable here, so run `coop tasks block " + id + "` and record in its decision.md " +
-		"which case applies and what you verified, so a human can finish it. Then stop."
+		"Neither recipe is workable here, so move this task's folder into 50_blocked/ and record in its " +
+		"decision.md which case applies and what you verified, so a human can finish it. Then stop."
 }
 
 // boundTaskCommitIsHead reports whether the task's single bound commit is HEAD itself. Only then is
