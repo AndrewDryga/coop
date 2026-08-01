@@ -1436,7 +1436,7 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 	if err != nil {
 		return "", nil, err
 	}
-	content[0]["text"] = fmt.Sprintf("<coop-output>Save generated images and charts in %s. Use PNG, JPEG, WebP, or GIF; at most %d files and %d bytes total. Do not put image bytes or data URLs in your reply. Refer to saved filenames in the structured response when the caller requests visuals. Direct image outputs returned by tools are captured in order as generated-1.png (or the matching image extension), generated-2.png, and so on.</coop-output>\n\n%s", outputRelative, session.MaxTurnArtifacts, session.MaxTurnArtifactBytes, leased.Prompt)
+	content[0]["text"] = fmt.Sprintf("<coop-output>Save only final generated images and charts in %s. Use PNG, JPEG, WebP, or GIF; at most %d files and %d bytes total. Keep source data, virtual environments, caches, and other scratch content outside this directory. Do not put image bytes or data URLs in your reply. Refer to saved filenames in the structured response when the caller requests visuals. Direct image outputs returned by tools are captured in order as generated-1.png (or the matching image extension), generated-2.png, and so on.</coop-output>\n\n%s", outputRelative, session.MaxTurnArtifacts, session.MaxTurnArtifactBytes, leased.Prompt)
 	prompt := map[string]any{"sessionId": nativeID, "prompt": content}
 	id := next()
 	if err := writeRequest(id, "session/prompt", prompt); err != nil {

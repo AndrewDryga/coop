@@ -59,15 +59,18 @@ func collectSessionOutputDir(dir string) ([]session.OutputArtifact, error) {
 		return nil, fmt.Errorf("read turn output directory: %w", err)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	if len(entries) > session.MaxTurnArtifacts {
-		return nil, errors.New("turn produced too many output artifacts")
-	}
 	artifacts := make([]session.OutputArtifact, 0, len(entries))
 	total := 0
 	for _, entry := range entries {
 		name := entry.Name()
+		if !supportedOutputExtension(name) {
+			continue
+		}
 		if !validOutputName(name) || entry.Type()&os.ModeSymlink != 0 || !entry.Type().IsRegular() {
 			return nil, errors.New("turn produced an unsafe output artifact")
+		}
+		if len(artifacts) >= session.MaxTurnArtifacts {
+			return nil, errors.New("turn produced too many output artifacts")
 		}
 		path := filepath.Join(dir, name)
 		file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
@@ -138,6 +141,15 @@ func validOutputName(name string) bool {
 		}
 	}
 	return true
+}
+
+func supportedOutputExtension(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+		return true
+	default:
+		return false
+	}
 }
 
 func outputMediaType(name string, data []byte) (string, bool) {
