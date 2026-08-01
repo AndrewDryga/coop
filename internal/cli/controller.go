@@ -2658,7 +2658,9 @@ func ordinaryBindingMatchesRaw(repo, head, id string) bool {
 // unbindableTasks returns finished ids without exactly one Coop-Task binding both in this
 // iteration's range and across history reachable from the proposed HEAD. Reopened work therefore
 // has to rewrite its existing bound commit instead of adding a second one. A no-HEAD-change
-// completion always fails closed; crash recovery restores it for a fresh range.
+// completion always fails closed — a zero-commit close is valid ONLY under fresh host audit
+// authority, so task prose claiming a reopen can never buy one; crash recovery restores it for a
+// fresh range.
 func unbindableTasks(repo, base, head string, finished []string) []string {
 	if base == "" || head == "" || base == head {
 		return slices.Clone(finished)
@@ -2859,18 +2861,19 @@ func unbindableCompletionError(ids []string, restoreErr error) error {
 	return errors.New(msg)
 }
 
-// taskBindingRecovery describes both safe history shapes. A bare amend is deliberately absent:
+// taskBindingRecovery describes the safe history shapes. A bare amend is deliberately absent:
 // without --only it can absorb unrelated staged work, and when the implementation is not HEAD it
-// would attach the task to the wrong commit.
+// would attach the task to the wrong commit. Rewriting a commit that is not HEAD is never
+// prescribed — it reparents every descendant, and a binding that is already reachable needs no
+// rewrite to count.
 func taskBindingRecovery(id string) string {
 	return fmt.Sprintf(
 		"if the implementation commit is HEAD and only lacks the trailer, amend its message without touching the index "+
-			"(`git commit --amend --only --no-edit --trailer %q`); if the implementation commit is older than HEAD, "+
-			"do not amend the current HEAD — reword that implementation commit and replay its descendants; if the "+
-			"matching trailer already exists outside the new range, amend or rewrite that same commit with the rework "+
-			"and a unique `Coop-Recovery: <current UTC timestamp>` trailer while preserving exactly one reachable %s "+
-			"binding; never add a second task-bound commit",
-		coopTaskTrailer+": "+id, coopTaskTrailer,
+			"(`git commit --amend --only --no-edit --trailer %q`); if a commit carrying that trailer is already "+
+			"reachable but is NOT HEAD, do not rewrite it — that reparents every commit after it — and never add a "+
+			"second task-bound commit: verify the work and run `coop tasks block %s`, recording in its decision.md "+
+			"what you verified so a human can finish it",
+		coopTaskTrailer+": "+id, id,
 	)
 }
 
@@ -2914,11 +2917,11 @@ func unownedCompletionError(ids []string, restoreErr error) error {
 // blind-resume path stays byte-identical). It names the fact but doesn't assume the case, because a
 // landed trailer means EITHER a crash after commit before the folder-move OR a review reopen for
 // rework — so it tells the agent to disambiguate from the task's own log.md/state.md.
-func resumeLine(id string, commits []string) string {
+func resumeLine(id string, commits []string, atHead bool) string {
 	if len(commits) == 0 {
 		return ""
 	}
-	return "Task " + id + " has commit(s) " + strings.Join(commits, ", ") + " already in history carrying " +
+	line := "Task " + id + " has commit(s) " + strings.Join(commits, ", ") + " already in history carrying " +
 		"its Coop-Task trailer. Read its log.md/state.md and determine which case applies: (a) a prior " +
 		"attempt COMMITTED then was interrupted before moving the folder to 99_done/ — verify that work " +
 		"against the acceptance criteria, amend the commit with a unique `Coop-Recovery: <current UTC timestamp>` " +
@@ -2926,6 +2929,27 @@ func resumeLine(id string, commits []string) string {
 		"(its log.md will say what's wrong) — independently reproduce the finding; if it is false, re-close without a receipt-only commit; " +
 		"otherwise do the rework by amending or rewriting the already-bound implementation commit, leaving exactly one reachable Coop-Task " +
 		"binding and semantically unchanged later task commits; do not add a second task-bound commit. Disambiguate before acting."
+	if atHead {
+		return line
+	}
+	// Both recipes above end at "amend/rewrite the bound commit". That is safe only while it IS
+	// HEAD. Deeper, the same instruction reparents every descendant — it rewrote a whole 286-commit
+	// branch once — and the result can never pass validation anyway, because the reparented
+	// descendants carry OTHER tasks' trailers and trip the foreign-binding guard.
+	return line + " STOP — that bound commit is NOT HEAD: amending or rewriting it would reparent every " +
+		"commit after it and rewrite the branch. Never do that, by rebase, cherry-pick, or plumbing. " +
+		"Neither recipe is workable here, so run `coop tasks block " + id + "` and record in its decision.md " +
+		"which case applies and what you verified, so a human can finish it. Then stop."
+}
+
+// boundTaskCommitIsHead reports whether the task's single bound commit is HEAD itself. Only then is
+// the amend recipe safe: rewriting any older commit reparents everything after it.
+func boundTaskCommitIsHead(repo string, commits []string) bool {
+	if len(commits) != 1 {
+		return false
+	}
+	head := gitOut(repo, "rev-parse", "--verify", "HEAD")
+	return head != "" && head == gitOut(repo, "rev-parse", "--verify", commits[0]+"^{commit}")
 }
 
 // auditResumeLine is the informed-resume preamble when the assigned lease carries the host's
@@ -2953,7 +2977,8 @@ func (a *app) resumePrefixFor(repo, id string, reopen *auditReopenRecord) string
 	if reopen != nil {
 		return auditResumeLine(id)
 	}
-	return resumeLine(id, commitsForTask(repo, "", id))
+	commits := commitsForTask(repo, "", id)
+	return resumeLine(id, commits, boundTaskCommitIsHead(repo, commits))
 }
 
 func validateLeasedAuditReopen(repo, head, id string, reopen *auditReopenRecord) error {

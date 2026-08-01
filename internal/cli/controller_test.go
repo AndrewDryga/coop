@@ -2517,15 +2517,81 @@ func TestFinalizeQueuedCompletionStateFailureIsRetryable(t *testing.T) {
 
 func TestResumeLine(t *testing.T) {
 	// No landed commit → empty (blind-resume path stays byte-identical).
-	if resumeLine("x", nil) != "" {
+	if resumeLine("x", nil, true) != "" {
 		t.Error("no commits should yield no resume line")
 	}
 	// A landed commit → a line that names the sha and BOTH cases (finish-the-move vs reopened-rework),
 	// so it never falsely asserts the task is done.
-	l := resumeLine("my-task", []string{"abc123"})
+	l := resumeLine("my-task", []string{"abc123"}, true)
 	for _, want := range []string{"my-task", "abc123", "log.md", "REOPENED", "Coop-Recovery", "finish the move", "exactly one reachable", "do not add a second"} {
 		if !strings.Contains(l, want) {
 			t.Errorf("resume line missing %q:\n%s", want, l)
+		}
+	}
+	if strings.Contains(l, "STOP") {
+		t.Errorf("a bound commit AT head is amendable and must not be blocked:\n%s", l)
+	}
+	// The amend recipe is safe only while the bound commit IS HEAD. Deeper, the same instruction
+	// reparents every descendant — it rewrote a whole 286-commit branch once — so the line must
+	// forbid it by name and route to a block instead.
+	deep := resumeLine("my-task", []string{"abc123"}, false)
+	for _, want := range []string{"STOP", "NOT HEAD", "reparent every", "rebase, cherry-pick, or plumbing", "coop tasks block my-task", "decision.md"} {
+		if !strings.Contains(deep, want) {
+			t.Errorf("deep resume line missing %q:\n%s", want, deep)
+		}
+	}
+}
+
+// boundTaskCommitIsHead is the switch between the two recipes, so it has to be exact: one commit
+// later and the amend recipe becomes a branch rewrite.
+func TestBoundTaskCommitIsHead(t *testing.T) {
+	repo := t.TempDir()
+	env := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "g"),
+		"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "s"))
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = repo, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("config", "user.email", "t@t")
+	git("config", "user.name", "T")
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	git("commit", "-q", "--allow-empty", "-m", "impl\n\nCoop-Task: task-42")
+	bound := commitsForTask(repo, "", "task-42")
+	if len(bound) != 1 {
+		t.Fatalf("bound commits = %v, want one", bound)
+	}
+	if !boundTaskCommitIsHead(repo, bound) {
+		t.Error("the bound commit IS HEAD, so the amend recipe must stay available")
+	}
+	git("commit", "-q", "--allow-empty", "-m", "a later, unrelated commit")
+	if boundTaskCommitIsHead(repo, bound) {
+		t.Error("one commit later the bound commit is no longer HEAD — amending it would reparent that descendant")
+	}
+	if boundTaskCommitIsHead(repo, nil) || boundTaskCommitIsHead(repo, []string{bound[0], bound[0]}) {
+		t.Error("only a single unambiguous binding may authorize the amend recipe")
+	}
+}
+
+// The rejection guidance must never send an agent to rewrite a commit that is not HEAD: that
+// reparents every descendant, and the reparented ones carry OTHER tasks' trailers, so the result
+// trips the foreign-binding guard and can never pass. A 286-deep amend rewrote a whole branch
+// before this was forbidden by name.
+func TestTaskBindingRecoveryNeverPrescribesDeepRewrite(t *testing.T) {
+	r := taskBindingRecovery("my-task")
+	for _, forbidden := range []string{"replay its descendants", "reword that implementation commit"} {
+		if strings.Contains(r, forbidden) {
+			t.Errorf("binding recovery still prescribes %q:\n%s", forbidden, r)
+		}
+	}
+	for _, want := range []string{"already reachable but is NOT HEAD", "do not rewrite it", "reparents every commit after it", "coop tasks block"} {
+		if !strings.Contains(r, want) {
+			t.Errorf("binding recovery missing %q:\n%s", want, r)
 		}
 	}
 }
@@ -2717,8 +2783,9 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 		t.Errorf("empty then foreign task binding = %v, want [task-42]", m)
 	}
 	git("reset", "--hard", "-q", head)
-	// No-HEAD-change work must fail closed even if an old exact trailer is reachable. Crash-left
-	// completion recovery restores the task and requires a new range-bound amend/recommit.
+	// No-HEAD-change work must fail closed even if an old exact trailer is reachable: a zero-commit
+	// close is valid ONLY under fresh host audit authority, so a resumed task cannot buy one by
+	// pointing at history. Crash recovery restores it for a fresh range instead.
 	if m := unbindableTasks(repo, head, head, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("unchanged HEAD used historical task binding: %v", m)
 	}
@@ -4717,7 +4784,7 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"completion rejected", "expected exactly one commit", "git commit --amend --only --no-edit --trailer", "implementation commit is older than HEAD", "do not amend the current HEAD", "rewrite or squash", id} {
+	for _, want := range []string{"completion rejected", "expected exactly one commit", "git commit --amend --only --no-edit --trailer", "already reachable but is NOT HEAD", "do not rewrite it", "coop tasks block", "rewrite or squash", id} {
 		if !strings.Contains(string(log), want) {
 			t.Errorf("rejection log missing %q:\n%s", want, log)
 		}
@@ -4739,7 +4806,7 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	if rejectErr == nil {
 		t.Fatal("unbindable completion must stop the controller")
 	}
-	for _, want := range []string{"completion rejected", "restored to in_progress", "git commit --amend --only --no-edit --trailer", "implementation commit is older than HEAD", "do not amend the current HEAD", "rewrite/squash", id} {
+	for _, want := range []string{"completion rejected", "restored to in_progress", "git commit --amend --only --no-edit --trailer", "already reachable but is NOT HEAD", "do not rewrite it", "coop tasks block", "rewrite/squash", id} {
 		if !strings.Contains(rejectErr.Error(), want) {
 			t.Errorf("controller error missing %q: %v", want, rejectErr)
 		}
