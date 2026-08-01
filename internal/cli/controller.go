@@ -974,6 +974,46 @@ func blockedTaskIDs(hosts []string) []string {
 	return ids
 }
 
+// alreadyCommittedInProgress reports the in_progress tasks whose implementation commit is ALREADY
+// reachable from HEAD, with that commit and how many commits sit on top of it. That state means the
+// run died between the commit and the folder move — a hard Ctrl-C, a crash, or a background-timeout
+// handoff un-completing finished work — and nothing else surfaces it: the loop just re-picks the
+// task, and the resume recipe is only safe while the commit is still HEAD. Reporting it at startup
+// turns a silent trap into something a human can confirm or close. Sorted; read-only.
+func alreadyCommittedInProgress(repo string, hosts []string) []struct {
+	ID, Commit string
+	Depth      int
+} {
+	var out []struct {
+		ID, Commit string
+		Depth      int
+	}
+	for id, st := range queueSnapshot(hosts) {
+		if st != stateInProgress {
+			continue
+		}
+		commits := commitsForTask(repo, "", id)
+		if len(commits) == 0 {
+			continue
+		}
+		depth := 0
+		if n := gitOut(repo, "rev-list", "--count", commits[0]+"..HEAD"); n != "" {
+			depth, _ = strconv.Atoi(n)
+		}
+		out = append(out, struct {
+			ID, Commit string
+			Depth      int
+		}{ID: id, Commit: commits[0], Depth: depth})
+	}
+	slices.SortFunc(out, func(a, b struct {
+		ID, Commit string
+		Depth      int
+	}) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out
+}
+
 type semanticHistoryCommit struct {
 	sha      string
 	semantic auditReopenCommit

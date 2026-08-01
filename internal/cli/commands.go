@@ -3023,6 +3023,13 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	if rot.rotates() {
 		ui.Info("rotating %d targets on rate limit: %s", len(rot.targets), strings.Join(rot.members(), ", "))
 	}
+	// An in_progress task whose commit is already in history means a previous run died between the
+	// commit and the folder move. Say so before working it: the resume recipe only stays safe while
+	// that commit is HEAD, and left unnoticed these sat in the queue for days.
+	for _, t := range alreadyCommittedInProgress(repo, hosts) {
+		ui.Warn("task %s is in progress but its commit %s is already in history (%s on top) — it may be finished; verify it and `coop tasks done %s`, or leave it to be resumed",
+			t.ID, t.Commit, ui.Count(t.Depth, "commit"), t.ID)
+	}
 	fails, waits, retries, handoffs, timeouts, completed, stalls := 0, 0, 0, 0, 0, 0, 0
 	completedThisRun := map[string]bool{}
 	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)

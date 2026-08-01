@@ -5228,3 +5228,57 @@ func TestUnblockResolvedDoesNotUpgradeAuditAuthority(t *testing.T) {
 		t.Fatal("authority read error did not fail closed")
 	}
 }
+
+// A task left in_progress with its commit already in history is the silent trap: the run died
+// between the commit and the folder move, and nothing surfaced it. Both emisar landmines that
+// preceded a 283-commit rewrite sat in exactly this state.
+func TestAlreadyCommittedInProgress(t *testing.T) {
+	repo := t.TempDir()
+	env := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "g"),
+		"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "s"))
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = repo, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("config", "user.email", "t@t")
+	git("config", "user.name", "T")
+	git("commit", "-q", "--allow-empty", "-m", "base")
+
+	root := filepath.Join(repo, ".agent", "tasks")
+	committed, fresh, finished := "2026-01-01-committed", "2026-01-01-fresh", "2026-01-01-finished"
+	writeTaskFile(t, filepath.Join(root, stateInProgress, committed, "task.md"), "# Committed\n")
+	writeTaskFile(t, filepath.Join(root, stateInProgress, fresh, "task.md"), "# Fresh\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, finished, "task.md"), "# Finished\n")
+	hosts := []string{root}
+
+	// Nothing bound yet: an ordinary start must stay silent.
+	if got := alreadyCommittedInProgress(repo, hosts); len(got) != 0 {
+		t.Fatalf("no bound commits yet, want no report, got %+v", got)
+	}
+
+	git("commit", "-q", "--allow-empty", "-m", "impl\n\nCoop-Task: "+committed)
+	git("commit", "-q", "--allow-empty", "-m", "done work\n\nCoop-Task: "+finished)
+	git("commit", "-q", "--allow-empty", "-m", "an unrelated later commit")
+
+	got := alreadyCommittedInProgress(repo, hosts)
+	if len(got) != 1 {
+		t.Fatalf("want only the in_progress task with a commit, got %+v", got)
+	}
+	if got[0].ID != committed {
+		t.Errorf("reported %q, want %q (a done task's binding is not a landmine)", got[0].ID, committed)
+	}
+	// Depth is what tells a human whether the resume recipe is still safe: at 0 the commit is HEAD
+	// and amendable, deeper it is not.
+	if got[0].Depth != 2 {
+		t.Errorf("depth = %d, want 2 commits on top of the binding", got[0].Depth)
+	}
+	if got[0].Commit == "" {
+		t.Error("report must name the commit so a human can verify it")
+	}
+}
