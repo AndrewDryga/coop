@@ -764,7 +764,7 @@ func assertLoopAttemptContracts(t *testing.T, suite *directProcessSuite, trace [
 			t.Fatal(err)
 		}
 		provider := target.Provider
-		prompt := loopWorkPrompt(suite.layout.Repo, []string{tasksRoot}, taskID, provider, nil, nil, false)
+		prompt := loopWorkPrompt(suite.layout.Repo, tasksRoot, taskID, provider, nil, nil, false)
 		// Built-in loop attempts always request the adapter stream — redirected runs
 		// included — because it feeds the provider watchdog.
 		argv, ok := iterationCommand(provider, loopProcessArgv(provider, target.Model, target.Effort, prompt), nil)

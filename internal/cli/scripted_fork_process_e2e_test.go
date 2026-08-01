@@ -418,7 +418,7 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 		t.Fatal("fork loop changed the parent queue before merge")
 	}
 	forkLoopArgv, forkLoopStreaming := iterationCommand(provider,
-		loopProcessArgv(provider, model, effort, loopWorkPrompt(ws, []string{tasksRoot}, taskID, provider, nil, nil, false)), nil)
+		loopProcessArgv(provider, model, effort, loopWorkPrompt(ws, tasksRoot, taskID, provider, nil, nil, false)), nil)
 	if !forkLoopStreaming {
 		t.Fatalf("provider %s has no streaming loop command", provider)
 	}

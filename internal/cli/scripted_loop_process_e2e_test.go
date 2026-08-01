@@ -70,7 +70,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 					t.Fatalf("coop loop %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", target, result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
 				}
 
-				prompt := loopWorkPrompt(suite.layout.Repo, []string{tasksRoot}, taskID, provider, nil, nil, false)
+				prompt := loopWorkPrompt(suite.layout.Repo, tasksRoot, taskID, provider, nil, nil, false)
 				argv, streaming := iterationCommand(provider, loopProcessArgv(provider, model, effort, prompt), nil)
 				if !streaming {
 					t.Fatalf("provider %s has no streaming loop command", provider)
