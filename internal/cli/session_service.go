@@ -1082,13 +1082,21 @@ func (s *SessionService) executeCreateIntent(ctx context.Context, op session.Ope
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("ensure session workspace: %w", err))
 	}
 	companions := make([]session.CompanionRepository, 0, len(intent.Companions))
+	failCreate := func(cause error) (session.Session, error) {
+		if cleanupErr := rollbackSessionCreate(workspace, companions); cleanupErr != nil {
+			cause = errors.Join(
+				cause,
+				fmt.Errorf("rollback partial session creation: %w", cleanupErr),
+			)
+		}
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, cause)
+	}
 	for _, companion := range intent.Companions {
 		resolved, err := ensureSessionCompanion(
 			s.store.Root(), intent.SessionID, companion,
 		)
 		if err != nil {
-			return session.Session{}, s.failServiceOperation(
-				ctx, op.ID,
+			return failCreate(
 				fmt.Errorf("ensure companion %q: %w", companion.Name, err),
 			)
 		}
@@ -1105,7 +1113,7 @@ func (s *SessionService) executeCreateIntent(ctx context.Context, op session.Ope
 	}
 	sess, err := s.store.CreateSession(ctx, "create-session-"+op.ID, createReq)
 	if err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+		return failCreate(err)
 	}
 	result, err := json.Marshal(sess)
 	if err != nil {
@@ -1115,6 +1123,37 @@ func (s *SessionService) executeCreateIntent(ctx context.Context, op session.Ope
 		return session.Session{}, err
 	}
 	return sess, nil
+}
+
+func rollbackSessionCreate(
+	workspace sessionWorkspace,
+	companions []session.CompanionRepository,
+) error {
+	var cleanupErrors []error
+	for index := len(companions) - 1; index >= 0; index-- {
+		companion := companions[index]
+		plan, err := planSessionCompanionDiscard(companion)
+		if err == nil {
+			err = discardSessionCompanion(plan)
+		}
+		if err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf(
+				"companion %q: %w", companion.Name, err,
+			))
+		}
+	}
+	plan, err := planSessionWorkspaceDiscard(
+		workspace.Repo, workspace.Path, false, false,
+	)
+	if err == nil {
+		err = discardSessionWorkspace(plan)
+	}
+	if err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf(
+			"primary workspace: %w", err,
+		))
+	}
+	return errors.Join(cleanupErrors...)
 }
 
 func (s *SessionService) failServiceOperation(ctx context.Context, id string, err error) error {

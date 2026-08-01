@@ -325,6 +325,69 @@ func TestSessionServicePinsPersistsAndDiscardsCompanionRepositories(t *testing.T
 	}
 }
 
+func TestSessionServiceCreateRollsBackPartialMultiRepositoryWorkspace(t *testing.T) {
+	primary, primaryGit := gitRepo(t)
+	primaryGit("commit", "-q", "--allow-empty", "-m", "primary base")
+	first, firstGit := gitRepo(t)
+	firstGit("commit", "-q", "--allow-empty", "-m", "first base")
+	blocked, blockedGit := gitRepo(t)
+	blockedGit("commit", "-q", "--allow-empty", "-m", "blocked base")
+	policies := testSessionPolicies(primary)
+	policy := policies["responder"]
+	policy.Companions = []SessionCompanionPolicy{
+		{Name: "first", Repository: first},
+		{Name: "blocked", Repository: blocked},
+	}
+	policies["responder"] = policy
+	service := newTestSessionService(
+		t, filepath.Join(t.TempDir(), "state"), policies, nil,
+	)
+	defer service.Stop()
+	ctx := context.Background()
+	request := CreateRemoteSessionRequest{
+		Policy: "responder", Task: "partial multi-repository create",
+	}
+	op, replay, err := service.Store().ReserveOperation(
+		ctx, "CreateRemoteSession", "create-partial-cleanup", request,
+	)
+	if err != nil || replay {
+		t.Fatalf("reserve create = %+v, replay=%t, err=%v", op, replay, err)
+	}
+	sessionID := deterministicSessionID(op.ID)
+	blockedPath, err := sessionCompanionWorkspace(
+		service.Store().Root(), sessionID, "blocked",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(blockedPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blockedPath, []byte("operator-owned\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.CreateRemoteSession(ctx, "create-partial-cleanup", request)
+	if err == nil || !strings.Contains(err.Error(), `ensure companion "blocked"`) {
+		t.Fatalf("create error = %v", err)
+	}
+	primaryPath := forkWorkspace(primary, deterministicForkName(op.ID))
+	firstPath, err := sessionCompanionWorkspace(
+		service.Store().Root(), sessionID, "first",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(primaryPath) || pathExists(firstPath) {
+		t.Fatalf(
+			"partial workspaces survived: primary=%t companion=%t",
+			pathExists(primaryPath), pathExists(firstPath),
+		)
+	}
+	if got := readFile(t, blockedPath); got != "operator-owned\n" {
+		t.Fatalf("ambiguous blocked path was changed: %q", got)
+	}
+}
+
 func TestSessionServiceFIFOOneWorkerAndCancel(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
