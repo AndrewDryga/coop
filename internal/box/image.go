@@ -254,14 +254,18 @@ if [ "$provider_exit" -ne 0 ]; then
   exit "$provider_exit"
 fi
 
+# One ordering governs shutdown: consult timeout (600s, internal/fusion/wrapper.go) < this drain
+# < the watchdog's provider idle deadline (30m, internal/cli/watchdog.go). A detached consult
+# must expire on its own before the drain notices it, and the drain must finish before the
+# watchdog fires.
 # This MUST stay well under the host watchdog's provider idle deadline (providerIdleDeadline in
 # internal/cli/watchdog.go, 30m). The drain emits no stream events, so both clocks run from the
 # provider's last activity: at equal values the watchdog always wins the race, the box is reported
 # as a wedged provider instead of a descendant handoff, and the drain's own exit codes become
 # unreachable. Tests and operators may shorten it at the container boundary; invalid values fail
 # closed to the same bounded default.
-handoff_wait=${COOP_DESCENDANT_TIMEOUT:-600}
-case "$handoff_wait" in ''|*[!0-9]*) handoff_wait=600;; esac
+handoff_wait=${COOP_DESCENDANT_TIMEOUT:-900}
+case "$handoff_wait" in ''|*[!0-9]*) handoff_wait=900;; esac
 IFS=. read -r now _ < /proc/uptime
 deadline=$(( now + handoff_wait ))
 saw_live_job=

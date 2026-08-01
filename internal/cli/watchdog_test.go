@@ -8,6 +8,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/fusion"
 )
 
 // activityRecorder captures the semantic events a decoder reports, for decoder-side tests.
@@ -239,6 +240,25 @@ func TestDescendantDrainStaysUnderIdleDeadline(t *testing.T) {
 		t.Fatalf("drain default %q is not a number: %v", m[1], err)
 	}
 	drain := time.Duration(seconds) * time.Second
+
+	// The consult wrapper spawns its peer DETACHED, so a consult that outlives its provider has to
+	// expire on its own before the drain notices it — otherwise coop's own wrapper is the descendant
+	// holding the box open, and the handoff un-completes a finished task. That makes one chain:
+	// consult timeout < drain < idle deadline.
+	cm := regexp.MustCompile(`COOP_CONSULT_TIMEOUT:-(\d+)`).FindStringSubmatch(fusion.ConsultWrapper())
+	if cm == nil {
+		t.Fatal("could not find the consult timeout default in the generated wrapper")
+	}
+	consultSeconds, err := strconv.Atoi(cm[1])
+	if err != nil {
+		t.Fatalf("consult default %q is not a number: %v", cm[1], err)
+	}
+	consult := time.Duration(consultSeconds) * time.Second
+	if consult >= drain {
+		t.Fatalf("consult timeout %s >= descendant drain %s: a stray consult cannot self-terminate before the drain notices it",
+			consult, drain)
+	}
+
 	if drain >= providerIdleDeadline {
 		t.Fatalf("descendant drain %s >= provider idle deadline %s: a leaked descendant would be killed as a wedged provider instead of a descendant handoff",
 			drain, providerIdleDeadline)

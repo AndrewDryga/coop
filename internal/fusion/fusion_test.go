@@ -932,7 +932,7 @@ func TestConsultWrapperEmptyReplyAndTimeout(t *testing.T) {
 			provider:    "echo SHOULD_NOT_RUN",
 			timeoutBody: "exit 124",
 			wantCode:    124,
-			wantText:    "no reply within 1800s",
+			wantText:    "no reply within 600s",
 		},
 	}
 	for _, tc := range cases {

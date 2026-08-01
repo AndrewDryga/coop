@@ -105,7 +105,11 @@ func renderConsult(as []consultInput) string {
 # COOP_CONSULT_<ROLE>_TARGETS value is an ordered fallback ladder; each target remains
 # READ-ONLY. --fresh starts at rung one. --continue resumes the successful rung and,
 # if that provider is now rate limited, starts the next provider fresh. Each rung is
-# attempted once and each attempt is time-bounded (default 30m; COOP_CONSULT_TIMEOUT).
+# attempted once and each attempt is time-bounded (default 10m; COOP_CONSULT_TIMEOUT). That
+# default MUST stay under the box's descendant drain (COOP_DESCENDANT_TIMEOUT, internal/box/
+# image.go): a consult is spawned detached, so one that outlives its provider has to expire on
+# its own before the drain notices it — otherwise coop's own wrapper holds the box open and the
+# handoff un-completes a finished task.
 set -u
 umask 077
 
@@ -130,7 +134,7 @@ esac
 fresh_retry="coop-consult $name --fresh \"<full prompt>\""
 continue_retry="coop-consult $name --continue \"<delta>\""
 key=$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')
-consult_timeout=${COOP_CONSULT_TIMEOUT:-1800}
+consult_timeout=${COOP_CONSULT_TIMEOUT:-600}
 case "$consult_timeout" in '' | *[!0-9]*) die "COOP_CONSULT_TIMEOUT must be whole seconds" ;; esac
 [ "$consult_timeout" -ge 1 ] && [ "$consult_timeout" -le 86400 ] || die "COOP_CONSULT_TIMEOUT must be within 1..86400 seconds"
 
