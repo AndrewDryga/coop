@@ -102,6 +102,22 @@ CREATE TABLE IF NOT EXISTS turn_artifacts (
 CREATE INDEX IF NOT EXISTS turn_artifacts_turn ON turn_artifacts(turn_id, ordinal);
 `
 
+const schemaV4 = `
+CREATE TABLE IF NOT EXISTS turn_output_artifacts (
+    turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    data BLOB NOT NULL,
+    PRIMARY KEY(turn_id, id),
+    UNIQUE(turn_id, ordinal),
+    UNIQUE(turn_id, sha256)
+);
+CREATE INDEX IF NOT EXISTS turn_output_artifacts_turn ON turn_output_artifacts(turn_id, ordinal);
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -136,6 +152,12 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v3: %w", err)
 		}
 		version = 3
+	}
+	if version < 4 {
+		if _, err := tx.Exec(schemaV4); err != nil {
+			return fmt.Errorf("migrate schema v4: %w", err)
+		}
+		version = 4
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)

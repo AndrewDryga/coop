@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 3
+	SchemaVersion = 4
 
 	MaxIDBytes              = 256
 	MaxMethodBytes          = 128
@@ -235,22 +235,34 @@ type CompanionRepository struct {
 }
 
 type Turn struct {
-	ID               string          `json:"id"`
-	SessionID        string          `json:"session_id"`
-	Ordinal          int64           `json:"ordinal"`
-	IdempotencyKey   string          `json:"idempotency_key"`
-	RequestHash      string          `json:"request_hash"`
-	State            TurnState       `json:"state"`
-	SendState        SendState       `json:"send_state"`
-	Prompt           string          `json:"prompt"`
-	Artifacts        []InputArtifact `json:"-"`
-	QueuedAt         time.Time       `json:"queued_at"`
-	StartedAt        time.Time       `json:"started_at"`
-	FinishedAt       time.Time       `json:"finished_at"`
-	StopReason       StopReason      `json:"stop_reason"`
-	AssistantMessage string          `json:"assistant_message"`
-	ErrorCode        ErrorCode       `json:"error_code"`
-	ErrorDetail      string          `json:"error_detail"`
+	ID               string           `json:"id"`
+	SessionID        string           `json:"session_id"`
+	Ordinal          int64            `json:"ordinal"`
+	IdempotencyKey   string           `json:"idempotency_key"`
+	RequestHash      string           `json:"request_hash"`
+	State            TurnState        `json:"state"`
+	SendState        SendState        `json:"send_state"`
+	Prompt           string           `json:"prompt"`
+	Artifacts        []InputArtifact  `json:"-"`
+	OutputArtifacts  []OutputArtifact `json:"output_artifacts,omitempty"`
+	QueuedAt         time.Time        `json:"queued_at"`
+	StartedAt        time.Time        `json:"started_at"`
+	FinishedAt       time.Time        `json:"finished_at"`
+	StopReason       StopReason       `json:"stop_reason"`
+	AssistantMessage string           `json:"assistant_message"`
+	ErrorCode        ErrorCode        `json:"error_code"`
+	ErrorDetail      string           `json:"error_detail"`
+}
+
+// OutputArtifact is a bounded generated file produced by one completed turn. Public turn
+// responses expose metadata only; Data is available through the authenticated artifact endpoint.
+type OutputArtifact struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	MediaType string `json:"media_type"`
+	SHA256    string `json:"sha256"`
+	Bytes     int64  `json:"bytes"`
+	Data      []byte `json:"-"`
 }
 
 // InputArtifact is opaque user-supplied context attached to one turn. Data is accepted only on
@@ -313,6 +325,7 @@ type CompleteTurnRequest struct {
 	SessionID string
 	TurnID    string
 	Message   string
+	Artifacts []OutputArtifact
 }
 
 type FailTurnRequest struct {

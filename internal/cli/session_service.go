@@ -1193,6 +1193,10 @@ func (s *SessionService) ListTurns(ctx context.Context, sessionID string, afterO
 	return s.store.ListTurns(ctx, sessionID, afterOrdinal, limit)
 }
 
+func (s *SessionService) GetOutputArtifact(ctx context.Context, sessionID, turnID, artifactID string) (session.OutputArtifact, error) {
+	return s.store.GetOutputArtifact(ctx, sessionID, turnID, artifactID)
+}
+
 func (s *SessionService) ListEvents(ctx context.Context, sessionID string, after int64, limit int) ([]session.Event, error) {
 	return s.store.ListEvents(ctx, sessionID, after, limit)
 }

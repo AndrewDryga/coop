@@ -244,6 +244,51 @@ func TestTurnArtifactsAreDurableBoundAndRemovedAfterCompletion(t *testing.T) {
 	}
 }
 
+func TestCompletedTurnOutputArtifactExposesMetadataAndExactBytes(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "output-session", CreateSessionRequest{Target: "codex:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := store.SubmitTurn(ctx, "output-turn", SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "draw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leased, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok || leased.ID != turn.ID {
+		t.Fatalf("lease = %+v ok=%v err=%v", leased, ok, err)
+	}
+	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkTurnSent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("\x89PNG\r\n\x1a\nvisual")
+	digest := sha256.Sum256(data)
+	artifact := OutputArtifact{
+		ID: "artifact_123", Name: "load.png", MediaType: "image/png",
+		SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data)), Data: data,
+	}
+	completed, err := store.CompleteTurn(ctx, CompleteTurnRequest{SessionID: sess.ID, TurnID: turn.ID, Message: "done", Artifacts: []OutputArtifact{artifact}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed.OutputArtifacts) != 1 || len(completed.OutputArtifacts[0].Data) != 0 {
+		t.Fatalf("completion exposed artifact data: %+v", completed.OutputArtifacts)
+	}
+	loaded, err := store.GetTurn(ctx, sess.ID, turn.ID)
+	if err != nil || len(loaded.OutputArtifacts) != 1 || len(loaded.OutputArtifacts[0].Data) != 0 {
+		t.Fatalf("loaded metadata = %+v err=%v", loaded.OutputArtifacts, err)
+	}
+	got, err := store.GetOutputArtifact(ctx, sess.ID, turn.ID, artifact.ID)
+	if err != nil || string(got.Data) != string(data) || got.SHA256 != artifact.SHA256 {
+		t.Fatalf("artifact = %+v err=%v", got, err)
+	}
+}
+
 func TestTurnArtifactValidationAndIdempotencyBinding(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))

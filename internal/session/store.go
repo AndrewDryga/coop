@@ -973,6 +973,24 @@ func validateInputArtifact(artifact InputArtifact) error {
 	return nil
 }
 
+func validateOutputArtifact(artifact OutputArtifact) error {
+	if artifact.ID == "" || !validBoundedText(artifact.ID, MaxIDBytes) {
+		return &Error{Code: CodeInvalidRequest, Detail: "output artifact id is invalid"}
+	}
+	input := InputArtifact{Name: artifact.Name, MediaType: artifact.MediaType, SHA256: artifact.SHA256, Data: artifact.Data}
+	if err := validateInputArtifact(input); err != nil {
+		return err
+	}
+	if artifact.MediaType != "image/png" && artifact.MediaType != "image/jpeg" &&
+		artifact.MediaType != "image/webp" && artifact.MediaType != "image/gif" {
+		return &Error{Code: CodeInvalidRequest, Detail: "output artifact media type is unsupported"}
+	}
+	if artifact.Bytes != int64(len(artifact.Data)) {
+		return &Error{Code: CodeInvalidRequest, Detail: "output artifact byte count does not match its content"}
+	}
+	return nil
+}
+
 func artifactMediaMatches(mediaType string, data []byte) bool {
 	switch mediaType {
 	case "image/png", "image/jpeg", "image/gif":
@@ -1253,6 +1271,10 @@ func (s *Store) GetTurn(ctx context.Context, sessionID, turnID string) (Turn, er
 	if err != nil {
 		return Turn{}, fmt.Errorf("get turn: %w", err)
 	}
+	turn.OutputArtifacts, err = readOutputArtifactMetadata(ctx, s.db, turn.ID)
+	if err != nil {
+		return Turn{}, err
+	}
 	return turn, nil
 }
 
@@ -1276,7 +1298,6 @@ func (s *Store) ListTurns(ctx context.Context, sessionID string, afterOrdinal in
 	if err != nil {
 		return nil, fmt.Errorf("list turns: %w", err)
 	}
-	defer rows.Close()
 	var turns []Turn
 	for rows.Next() {
 		turn, err := scanTurn(rows)
@@ -1286,9 +1307,62 @@ func (s *Store) ListTurns(ctx context.Context, sessionID string, afterOrdinal in
 		turns = append(turns, turn)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, fmt.Errorf("list turns: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close listed turns: %w", err)
+	}
+	for i := range turns {
+		turns[i].OutputArtifacts, err = readOutputArtifactMetadata(ctx, s.db, turns[i].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return turns, nil
+}
+
+func (s *Store) GetOutputArtifact(ctx context.Context, sessionID, turnID, artifactID string) (OutputArtifact, error) {
+	if !validBoundedText(sessionID, MaxIDBytes) || !validBoundedText(turnID, MaxIDBytes) || !validBoundedText(artifactID, MaxIDBytes) {
+		return OutputArtifact{}, &Error{Code: CodeInvalidRequest, Detail: "invalid output artifact identity"}
+	}
+	var artifact OutputArtifact
+	err := s.db.QueryRowContext(ctx, `SELECT a.id, a.name, a.media_type, a.sha256, length(a.data), a.data
+		FROM turn_output_artifacts a JOIN turns t ON t.id = a.turn_id
+		WHERE t.session_id = ? AND t.id = ? AND a.id = ?`, sessionID, turnID, artifactID).
+		Scan(&artifact.ID, &artifact.Name, &artifact.MediaType, &artifact.SHA256, &artifact.Bytes, &artifact.Data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return OutputArtifact{}, ErrTurnNotFound
+	}
+	if err != nil {
+		return OutputArtifact{}, fmt.Errorf("get output artifact: %w", err)
+	}
+	return artifact, nil
+}
+
+type queryContexter interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func readOutputArtifactMetadata(ctx context.Context, db queryContexter, turnID string) ([]OutputArtifact, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id, name, media_type, sha256, length(data)
+		FROM turn_output_artifacts WHERE turn_id = ? ORDER BY ordinal`, turnID)
+	if err != nil {
+		return nil, fmt.Errorf("read output artifacts: %w", err)
+	}
+	defer rows.Close()
+	var artifacts []OutputArtifact
+	for rows.Next() {
+		var artifact OutputArtifact
+		if err := rows.Scan(&artifact.ID, &artifact.Name, &artifact.MediaType, &artifact.SHA256, &artifact.Bytes); err != nil {
+			return nil, fmt.Errorf("scan output artifact: %w", err)
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read output artifacts: %w", err)
+	}
+	return artifacts, nil
 }
 
 func scanTurn(row rowScanner) (Turn, error) {
@@ -1426,6 +1500,25 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	if len(req.Message) > MaxEventPayloadBytes || !utf8.ValidString(req.Message) {
 		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "assistant message is outside bounds"}
 	}
+	if len(req.Artifacts) > MaxTurnArtifacts {
+		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "turn has too many output artifacts"}
+	}
+	total := 0
+	seenIDs := make(map[string]bool, len(req.Artifacts))
+	seenDigests := make(map[string]bool, len(req.Artifacts))
+	for _, artifact := range req.Artifacts {
+		if err := validateOutputArtifact(artifact); err != nil {
+			return Turn{}, err
+		}
+		if seenIDs[artifact.ID] || seenDigests[artifact.SHA256] {
+			return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "turn has duplicate output artifacts"}
+		}
+		seenIDs[artifact.ID], seenDigests[artifact.SHA256] = true, true
+		if total > MaxTurnArtifactBytes-len(artifact.Data) {
+			return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "turn output artifact content exceeds its bound"}
+		}
+		total += len(artifact.Data)
+	}
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return Turn{}, fmt.Errorf("begin turn completion: %w", err)
@@ -1459,6 +1552,14 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	}
 	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
 		return Turn{}, err
+	}
+	for i, artifact := range req.Artifacts {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO turn_output_artifacts(turn_id, ordinal, id, name, media_type, sha256, data)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`, turn.ID, i, artifact.ID, artifact.Name, artifact.MediaType, artifact.SHA256, artifact.Data); err != nil {
+			return Turn{}, fmt.Errorf("store output artifact: %w", err)
+		}
+		artifact.Data = nil
+		turn.OutputArtifacts = append(turn.OutputArtifacts, artifact)
 	}
 	if req.Message != "" {
 		if _, err := s.appendEventTx(ctx, tx, req.SessionID, req.TurnID, EventAssistantMessage, 1, mustJSON(map[string]any{"text": req.Message, "final": true})); err != nil {

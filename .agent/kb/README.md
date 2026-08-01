@@ -62,6 +62,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [acp-replay-publication](acp-replay-publication.md) — publish replacement native bindings atomically before releasing held editor work
 - [acp-target-commit](acp-target-commit.md) — commit model/effort truth from the effective provider response, including Grok migrations
 - [acp-carry-echo](acp-carry-echo.md) — inject best-effort context once and hide only its exact provider echo from the editor
+- [acp-generated-output-boundary](acp-generated-output-boundary.md) — generated images bypass transcript bytes but remain bounded, immutable turn artifacts
 - [codex-acp-agent-mode](codex-acp-agent-mode.md) — Codex ACP must select full-access mode explicitly because session config does not override its per-turn sandbox policy
 - [review-host-owned-verdicts](review-host-owned-verdicts.md) — review boxes report bounded evidence; Coop alone applies validated task lifecycle changes
 - [signoff-scope-is-run-anchored](signoff-scope-is-run-anchored.md) — signoff subjects are a run-anchored folder diff; re-anchor only on receipt-consistent rounds, from the post-review done set

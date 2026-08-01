@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -274,6 +276,70 @@ func TestSessionHTTPRouteWiring(t *testing.T) {
 	discardResponse := post("/v1/sessions/"+sessionID+"/discard", fmt.Sprintf(`{"plan_operation_id":%q}`, planned.Plan.OperationID), "route-discard")
 	if discardResponse.Code != http.StatusOK {
 		t.Fatalf("discard status = %d body=%s", discardResponse.Code, discardResponse.Body.String())
+	}
+}
+
+func TestSessionHTTPGeneratedArtifactIsSeparateFromTurnJSON(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	handler := newSessionHTTPHandler(service)
+	createdResponse := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"image"}`,
+		"image-create", "application/json",
+	)
+	var created sessionMutationSessionResponse
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	turnResponse := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
+		`{"expected_revision":1,"prompt":"draw"}`, "image-turn", "application/json",
+	)
+	var submitted sessionMutationTurnResponse
+	if err := json.Unmarshal(turnResponse.Body.Bytes(), &submitted); err != nil {
+		t.Fatal(err)
+	}
+	turn, found, err := service.store.LeaseNextTurn(context.Background(), created.Session.ID)
+	if err != nil || !found {
+		t.Fatalf("lease generated-image turn = %+v, %v, %v", turn, found, err)
+	}
+	if _, err := service.store.MarkTurnSendIntent(context.Background(), created.Session.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.store.MarkTurnSent(context.Background(), created.Session.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("\x89PNG\r\n\x1a\nchart")
+	digest := sha256.Sum256(data)
+	digestHex := hex.EncodeToString(digest[:])
+	completed, err := service.store.CompleteTurn(context.Background(), session.CompleteTurnRequest{
+		SessionID: created.Session.ID, TurnID: submitted.Turn.ID, Message: "Chart attached.",
+		Artifacts: []session.OutputArtifact{{
+			ID: "artifact_chart", Name: "load.png", MediaType: "image/png",
+			SHA256: digestHex, Bytes: int64(len(data)), Data: data,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turnGet := sessionHTTPTestRequest(
+		t, handler, http.MethodGet,
+		"/v1/sessions/"+created.Session.ID+"/turns/"+completed.ID, "", "", "",
+	)
+	if turnGet.Code != http.StatusOK || !strings.Contains(turnGet.Body.String(), `"name":"load.png"`) ||
+		strings.Contains(turnGet.Body.String(), "Y2hhcnQ=") {
+		t.Fatalf("turn metadata response = %d %s", turnGet.Code, turnGet.Body.String())
+	}
+	artifactGet := sessionHTTPTestRequest(
+		t, handler, http.MethodGet,
+		"/v1/sessions/"+created.Session.ID+"/turns/"+completed.ID+"/artifacts/artifact_chart",
+		"", "", "",
+	)
+	if artifactGet.Code != http.StatusOK || artifactGet.Header().Get("Content-Type") != "image/png" ||
+		artifactGet.Header().Get("ETag") != `"`+digestHex+`"` ||
+		!strings.Contains(artifactGet.Header().Get("Content-Disposition"), "load.png") ||
+		!bytes.Equal(artifactGet.Body.Bytes(), data) {
+		t.Fatalf("artifact response = %d headers=%v bytes=%q", artifactGet.Code, artifactGet.Header(), artifactGet.Body.Bytes())
 	}
 }
 

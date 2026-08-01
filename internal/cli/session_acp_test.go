@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -212,6 +213,44 @@ func TestSessionTurnRunnerSendsDurableImageArtifact(t *testing.T) {
 		!strings.Contains(wire, `"mimeType":"image/png"`) ||
 		!strings.Contains(wire, base64.StdEncoding.EncodeToString(data)) {
 		t.Fatalf("ACP image prompt was not projected: %q", wire)
+	}
+}
+
+func TestSessionTurnRunnerCapturesGeneratedImageOutsideTranscript(t *testing.T) {
+	fixture := newSessionACPFixture(t, "image-output")
+	turn := fixture.submit(t, "generate a chart")
+	completed, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed.OutputArtifacts) != 1 {
+		t.Fatalf("output artifacts = %+v", completed.OutputArtifacts)
+	}
+	artifact := completed.OutputArtifacts[0]
+	if artifact.MediaType != "image/png" || artifact.Bytes <= sessionACPTranscriptLimit || len(artifact.Data) != 0 {
+		t.Fatalf("output artifact metadata = %+v", artifact)
+	}
+	got, err := fixture.store.GetOutputArtifact(context.Background(), fixture.session.ID, turn.ID, artifact.ID)
+	if err != nil || int64(len(got.Data)) != artifact.Bytes {
+		t.Fatalf("stored output artifact bytes=%d err=%v", len(got.Data), err)
+	}
+}
+
+func TestSessionTurnRunnerCapturesGeneratedImageFromToolUpdate(t *testing.T) {
+	fixture := newSessionACPFixture(t, "tool-image-output")
+	turn := fixture.submit(t, "generate a chart with an image tool")
+	completed, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed.OutputArtifacts) != 1 || completed.OutputArtifacts[0].Name != "generated-1.png" {
+		t.Fatalf("output artifacts = %+v", completed.OutputArtifacts)
+	}
+	artifact, err := fixture.store.GetOutputArtifact(
+		context.Background(), fixture.session.ID, turn.ID, completed.OutputArtifacts[0].ID,
+	)
+	if err != nil || len(artifact.Data) <= sessionACPTranscriptLimit {
+		t.Fatalf("stored tool image bytes=%d err=%v", len(artifact.Data), err)
 	}
 }
 
@@ -820,6 +859,21 @@ func TestSessionACPChildHelper(t *testing.T) {
 			}
 		case "session/prompt":
 			switch scenario {
+			case "image-output":
+				image := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0}, sessionACPTranscriptLimit+1024)...)
+				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "image", "mimeType": "image/png", "data": base64.StdEncoding.EncodeToString(image)}}}})
+				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": "chart attached"}}}})
+				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
+			case "tool-image-output":
+				image := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0}, sessionACPTranscriptLimit+1024)...)
+				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{
+					"sessionUpdate": "tool_call_update", "toolCallId": "image-tool-1",
+					"content": []any{map[string]any{"type": "content", "content": map[string]string{
+						"type": "image", "mimeType": "image/png", "data": base64.StdEncoding.EncodeToString(image),
+					}}},
+				}}})
+				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": "chart attached"}}}})
+				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
 			case "malformed":
 				_, _ = writer.WriteString("not-json\n")
 				_ = writer.Flush()

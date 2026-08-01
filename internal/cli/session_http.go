@@ -75,6 +75,15 @@ type TurnDTO struct {
 	QueuedAt         time.Time          `json:"queued_at"`
 	StartedAt        time.Time          `json:"started_at,omitempty"`
 	FinishedAt       time.Time          `json:"finished_at,omitempty"`
+	OutputArtifacts  []TurnArtifactDTO  `json:"output_artifacts,omitempty"`
+}
+
+type TurnArtifactDTO struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	MediaType string `json:"media_type"`
+	SHA256    string `json:"sha256"`
+	Bytes     int64  `json:"bytes"`
 }
 
 type EventDTO struct {
@@ -345,6 +354,15 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 		if sessionHTTPMethod(w, r, http.MethodGet) {
 			h.getTurn(w, r, sessionID, turnID)
 		}
+	case len(parts) == 5 && parts[1] == "turns" && parts[3] == "artifacts" && parts[2] != "" && parts[4] != "":
+		turnID, artifactID := parts[2], parts[4]
+		if !validSessionHTTPPathID(turnID) || !validSessionHTTPPathID(artifactID) {
+			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "invalid artifact identity")
+			return
+		}
+		if sessionHTTPMethod(w, r, http.MethodGet) {
+			h.getTurnArtifact(w, r, sessionID, turnID, artifactID)
+		}
 	case len(parts) == 4 && parts[1] == "turns" && parts[3] == "cancel" && parts[2] != "":
 		turnID := parts[2]
 		if !validSessionHTTPPathID(turnID) {
@@ -530,6 +548,24 @@ func (h *sessionHTTPHandler) getTurn(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 	writeSessionJSON(w, http.StatusOK, publicTurn(turn))
+}
+
+func (h *sessionHTTPHandler) getTurnArtifact(w http.ResponseWriter, r *http.Request, sessionID, turnID, artifactID string) {
+	if !sessionQueryOnly(w, r) {
+		return
+	}
+	artifact, err := h.service.GetOutputArtifact(r.Context(), sessionID, turnID, artifactID)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", artifact.MediaType)
+	w.Header().Set("Content-Length", strconv.FormatInt(artifact.Bytes, 10))
+	w.Header().Set("ETag", `"`+artifact.SHA256+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": artifact.Name}))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(artifact.Data)
 }
 
 func (h *sessionHTTPHandler) listEvents(w http.ResponseWriter, r *http.Request, sessionID string) {
@@ -947,11 +983,18 @@ func publicSession(value session.Session) SessionDTO {
 }
 
 func publicTurn(value session.Turn) TurnDTO {
+	artifacts := make([]TurnArtifactDTO, 0, len(value.OutputArtifacts))
+	for _, artifact := range value.OutputArtifacts {
+		artifacts = append(artifacts, TurnArtifactDTO{
+			ID: artifact.ID, Name: artifact.Name, MediaType: artifact.MediaType,
+			SHA256: artifact.SHA256, Bytes: artifact.Bytes,
+		})
+	}
 	return TurnDTO{
 		ID: value.ID, SessionID: value.SessionID, Ordinal: value.Ordinal, State: value.State,
 		SendState: value.SendState, AssistantMessage: value.AssistantMessage, StopReason: value.StopReason,
 		ErrorCode: value.ErrorCode, ErrorDetail: publicSessionErrorDetail(value.ErrorCode, value.ErrorDetail), QueuedAt: value.QueuedAt,
-		StartedAt: value.StartedAt, FinishedAt: value.FinishedAt,
+		StartedAt: value.StartedAt, FinishedAt: value.FinishedAt, OutputArtifacts: artifacts,
 	}
 }
 

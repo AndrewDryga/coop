@@ -93,6 +93,7 @@ func newSessionTurnRunner(sourceCfg *config.Config, stateRoot string, store *ses
 func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leased session.Turn) (result session.Turn, runErr error) {
 	var execution *sessionWarmExecution
 	var assistant string
+	var outputArtifacts []session.OutputArtifact
 	protocolComplete := false
 	parked := false
 	warmIdleTimeout, _ := ctx.Value(sessionWarmIdleTimeoutContextKey{}).(time.Duration)
@@ -126,7 +127,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			}
 		}
 		if protocolComplete && baseErr == nil {
-			completed, err := r.completeTurn(bound, leased, assistant)
+			completed, err := r.completeTurn(bound, leased, assistant, outputArtifacts)
 			if err != nil {
 				baseErr = err
 				if parked {
@@ -222,7 +223,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		execution = &sessionWarmExecution{bound: bound, child: child, projection: projection, credentialDeadline: credentialDeadline}
 	}
 
-	assistant, err = r.runACP(ctx, execution.child, bound, leased)
+	assistant, outputArtifacts, err = r.runACP(ctx, execution.child, bound, leased)
 	if err != nil {
 		runErr = err
 		return result, runErr
@@ -255,10 +256,10 @@ func classifyContextFailure(err error) error {
 	return acpFailure(sessionACPCancelledError, "turn cancelled")
 }
 
-func (r *sessionTurnRunner) completeTurn(bound session.Session, leased session.Turn, assistant string) (session.Turn, error) {
+func (r *sessionTurnRunner) completeTurn(bound session.Session, leased session.Turn, assistant string, artifacts []session.OutputArtifact) (session.Turn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
 	defer cancel()
-	return r.store.CompleteTurn(ctx, session.CompleteTurnRequest{SessionID: bound.ID, TurnID: leased.ID, Message: assistant})
+	return r.store.CompleteTurn(ctx, session.CompleteTurnRequest{SessionID: bound.ID, TurnID: leased.ID, Message: assistant, Artifacts: artifacts})
 }
 
 func (r *sessionTurnRunner) failTurn(bound session.Session, leased session.Turn, cause error, current session.Turn) session.Turn {
@@ -472,7 +473,7 @@ func (r *sessionTurnRunner) PrepareSession(ctx context.Context, bound session.Se
 		return err
 	}
 	execution := &sessionWarmExecution{bound: bound, child: child, projection: projection, credentialDeadline: credentialDeadline}
-	if _, err := r.runACP(ctx, child, bound, session.Turn{}); err != nil {
+	if _, _, err := r.runACP(ctx, child, bound, session.Turn{}); err != nil {
 		return errors.Join(err, r.cleanupWarmExecution(execution))
 	}
 	if current, err := r.store.GetSession(ctx, bound.ID); err == nil {
@@ -1227,13 +1228,14 @@ type sessionACPFrame struct {
 	err  error
 }
 
-func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProcess, bound session.Session, leased session.Turn) (string, error) {
+func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProcess, bound session.Session, leased session.Turn) (string, []session.OutputArtifact, error) {
 	if process == nil || process.frames == nil {
-		return "", acpFailure(sessionACPProcessError, "ACP child is unavailable")
+		return "", nil, acpFailure(sessionACPProcessError, "ACP child is unavailable")
 	}
 	frames := process.frames
 	var transcriptBytes int
 	var assistant []byte
+	var outputArtifacts []session.OutputArtifact
 	collectAssistant := false
 	next := func() json.RawMessage {
 		process.nextID++
@@ -1248,10 +1250,6 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 		return writeSessionACP(ctx, process.stdin, line)
 	}
 	handle := func(frame []byte, expectedSession string) (json.RawMessage, string, error) {
-		transcriptBytes += len(frame) + 1
-		if transcriptBytes > sessionACPTranscriptLimit {
-			return nil, "", acpFailure(sessionACPProtocolError, "ACP transcript exceeded its bound")
-		}
 		var envelope struct {
 			JSONRPC string          `json:"jsonrpc"`
 			ID      json.RawMessage `json:"id"`
@@ -1263,12 +1261,23 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 		if err := json.Unmarshal(frame, &envelope); err != nil || envelope.JSONRPC != "2.0" {
 			return nil, "", acpFailure(sessionACPProtocolError, "malformed ACP frame")
 		}
+		imageFrame := false
 		if envelope.Method != "" {
 			if envelope.Method == "session/update" {
 				if collectAssistant {
-					if err := accumulateSessionACPUpdate(envelope.Params, expectedSession, &assistant); err != nil {
+					var err error
+					imageFrame, err = accumulateSessionACPUpdateArtifacts(envelope.Params, expectedSession, &assistant, &outputArtifacts)
+					if err != nil {
 						return nil, "", err
 					}
+				}
+				if imageFrame {
+					transcriptBytes += 512
+				} else {
+					transcriptBytes += len(frame) + 1
+				}
+				if transcriptBytes > sessionACPTranscriptLimit {
+					return nil, "", acpFailure(sessionACPProtocolError, "ACP transcript exceeded its bound")
 				}
 				return nil, "", nil
 			}
@@ -1295,6 +1304,10 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 				return nil, "", err
 			}
 			return nil, "", nil
+		}
+		transcriptBytes += len(frame) + 1
+		if transcriptBytes > sessionACPTranscriptLimit {
+			return nil, "", acpFailure(sessionACPProtocolError, "ACP transcript exceeded its bound")
 		}
 		return envelope.ID, string(envelope.Result), nil
 	}
@@ -1356,7 +1369,7 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 			"clientCapabilities": map[string]any{},
 		}, "")
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		var initialized struct {
 			ProtocolVersion   int `json:"protocolVersion"`
@@ -1368,7 +1381,7 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 			} `json:"agentCapabilities"`
 		}
 		if json.Unmarshal(initializeResult, &initialized) != nil || initialized.ProtocolVersion != 1 {
-			return "", acpFailure(sessionACPProtocolError, "ACP protocol version is unsupported")
+			return "", nil, acpFailure(sessionACPProtocolError, "ACP protocol version is unsupported")
 		}
 		process.imageCapable = initialized.AgentCapabilities.PromptCapabilities.Image
 		process.embeddedContextCapable = initialized.AgentCapabilities.PromptCapabilities.EmbeddedContext
@@ -1376,81 +1389,104 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 		if nativeID == "" {
 			result, err := request("session/new", map[string]any{"cwd": bound.Workspace, "mcpServers": []any{}}, "")
 			if err != nil {
-				return "", err
+				return "", nil, err
 			}
 			var created struct {
 				SessionID string `json:"sessionId"`
 			}
 			if json.Unmarshal(result, &created) != nil || !validACPSessionID(created.SessionID) {
-				return "", acpFailure(sessionACPProtocolError, "session/new returned an invalid session id")
+				return "", nil, acpFailure(sessionACPProtocolError, "session/new returned an invalid session id")
 			}
 			nativeID = created.SessionID
 		} else if !validACPSessionID(nativeID) {
-			return "", acpFailure(sessionACPProtocolError, "stored native session id is invalid")
+			return "", nil, acpFailure(sessionACPProtocolError, "stored native session id is invalid")
 		} else if _, err := request("session/load", map[string]any{"sessionId": nativeID, "cwd": bound.Workspace, "mcpServers": []any{}}, nativeID); err != nil {
-			return "", err
+			return "", nil, err
 		}
 		process.nativeSessionID = nativeID
 		process.initialized = true
 	}
 	nativeID := process.nativeSessionID
 	if !validACPSessionID(nativeID) || (bound.NativeSessionID != "" && bound.NativeSessionID != nativeID) {
-		return "", acpFailure(sessionACPProtocolError, "warm ACP session identity changed")
+		return "", nil, acpFailure(sessionACPProtocolError, "warm ACP session identity changed")
 	}
 	if leased.ID == "" {
-		return "", nil
+		return "", nil, nil
 	}
 	if bound.NativeSessionID == "" {
 		ctxBind, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
 		_, err := r.store.BindNativeSession(ctxBind, bound.ID, nativeID)
 		cancel()
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 	}
 	checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
 	_, err := r.store.MarkTurnSendIntent(checkpointCtx, bound.ID, leased.ID)
 	checkpointCancel()
 	if err != nil {
-		return "", acpFailure(session.CodeInternal, "turn sent checkpoint failed")
+		return "", nil, acpFailure(session.CodeInternal, "turn sent checkpoint failed")
 	}
+	outputDir, outputRelative, err := prepareSessionOutputDir(bound.Workspace, leased.ID)
+	if err != nil {
+		return "", nil, acpFailure(sessionACPProtocolError, "turn output directory could not be prepared")
+	}
+	defer removeSessionOutputDir(outputDir)
 	content, err := sessionACPInputContent(leased, process.imageCapable, process.embeddedContextCapable)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
+	content[0]["text"] = fmt.Sprintf("<coop-output>Save generated images and charts in %s. Use PNG, JPEG, WebP, or GIF; at most %d files and %d bytes total. Do not put image bytes or data URLs in your reply. Refer to saved filenames in the structured response when the caller requests visuals. Direct image outputs returned by tools are captured in order as generated-1.png (or the matching image extension), generated-2.png, and so on.</coop-output>\n\n%s", outputRelative, session.MaxTurnArtifacts, session.MaxTurnArtifactBytes, leased.Prompt)
 	prompt := map[string]any{"sessionId": nativeID, "prompt": content}
 	id := next()
 	if err := writeRequest(id, "session/prompt", prompt); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	checkpointCtx, checkpointCancel = context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
 	_, err = r.store.MarkTurnSent(checkpointCtx, bound.ID, leased.ID)
 	checkpointCancel()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	collectAssistant = true
 	result, err := waitResponse(id, nativeID, true)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var promptResult struct {
 		StopReason string `json:"stopReason"`
 	}
 	if json.Unmarshal(result, &promptResult) != nil || !validACPStopReason(promptResult.StopReason) {
-		return "", acpFailure(sessionACPProtocolError, "session/prompt returned an invalid stop reason")
+		return "", nil, acpFailure(sessionACPProtocolError, "session/prompt returned an invalid stop reason")
 	}
 	if promptResult.StopReason == "cancelled" || promptResult.StopReason == "error" {
-		return "", acpFailure(sessionACPCancelledError, "ACP prompt was cancelled")
+		return "", nil, acpFailure(sessionACPCancelledError, "ACP prompt was cancelled")
 	}
 	if len(assistant) > sessionACPMessageLimit || !utf8.Valid(assistant) {
-		return "", acpFailure(sessionACPProtocolError, "assistant message exceeded its bound")
+		return "", nil, acpFailure(sessionACPProtocolError, "assistant message exceeded its bound")
 	}
 	payload, err := json.Marshal(map[string]any{"text": string(assistant), "final": true})
 	if err != nil || len(payload) > session.MaxEventPayloadBytes {
-		return "", acpFailure(sessionACPProtocolError, "assistant message exceeded its durable event bound")
+		return "", nil, acpFailure(sessionACPProtocolError, "assistant message exceeded its durable event bound")
 	}
-	return string(assistant), nil
+	files, err := collectSessionOutputDir(outputDir)
+	if err != nil {
+		return "", nil, acpFailure(sessionACPProtocolError, err.Error())
+	}
+	for _, artifact := range files {
+		outputArtifacts = appendOutputArtifact(outputArtifacts, artifact.Name, artifact.MediaType, artifact.Data)
+	}
+	if len(outputArtifacts) > session.MaxTurnArtifacts {
+		return "", nil, acpFailure(sessionACPProtocolError, "turn produced too many output artifacts")
+	}
+	total := 0
+	for _, artifact := range outputArtifacts {
+		total += len(artifact.Data)
+	}
+	if total > session.MaxTurnArtifactBytes {
+		return "", nil, acpFailure(sessionACPProtocolError, "turn output artifacts exceed their total bound")
+	}
+	return string(assistant), outputArtifacts, nil
 }
 
 func readSessionACPFrames(reader io.Reader, stop <-chan struct{}, frames chan<- sessionACPFrame) {
@@ -1557,6 +1593,11 @@ func chooseSessionACPAllow(options []permOption) string {
 }
 
 func accumulateSessionACPUpdate(raw json.RawMessage, expectedSession string, assistant *[]byte) error {
+	_, err := accumulateSessionACPUpdateArtifacts(raw, expectedSession, assistant, nil)
+	return err
+}
+
+func accumulateSessionACPUpdateArtifacts(raw json.RawMessage, expectedSession string, assistant *[]byte, artifacts *[]session.OutputArtifact) (bool, error) {
 	var envelope struct {
 		SessionID string `json:"sessionId"`
 		Update    struct {
@@ -1565,27 +1606,103 @@ func accumulateSessionACPUpdate(raw json.RawMessage, expectedSession string, ass
 		} `json:"update"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return acpFailure(sessionACPProtocolError, "malformed session update")
+		return false, acpFailure(sessionACPProtocolError, "malformed session update")
 	}
 	if envelope.SessionID != "" && envelope.SessionID != expectedSession {
-		return acpFailure(sessionACPProtocolError, "session update belongs to another session")
+		return false, acpFailure(sessionACPProtocolError, "session update belongs to another session")
+	}
+	imageFrame, err := collectACPOutputImages(envelope.Update.Content, artifacts)
+	if err != nil {
+		return false, acpFailure(sessionACPProtocolError, err.Error())
 	}
 	if envelope.Update.SessionUpdate != "assistant_message_chunk" && envelope.Update.SessionUpdate != "agent_message_chunk" {
-		return nil
+		return imageFrame, nil
 	}
 	var content struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		Data     string `json:"data"`
+		MimeType string `json:"mimeType"`
 	}
 	if err := json.Unmarshal(envelope.Update.Content, &content); err != nil {
-		return acpFailure(sessionACPProtocolError, "malformed assistant message update")
+		return false, acpFailure(sessionACPProtocolError, "malformed assistant message update")
+	}
+	if content.Type == "image" {
+		return imageFrame, nil
 	}
 	if content.Type != "text" || content.Text == "" {
-		return nil
+		return false, nil
 	}
 	if !utf8.ValidString(content.Text) || len(*assistant)+len(content.Text) > sessionACPMessageLimit {
-		return acpFailure(sessionACPProtocolError, "assistant message exceeded its bound")
+		return false, acpFailure(sessionACPProtocolError, "assistant message exceeded its bound")
 	}
 	*assistant = append(*assistant, content.Text...)
-	return nil
+	return imageFrame, nil
+}
+
+func collectACPOutputImages(raw json.RawMessage, artifacts *[]session.OutputArtifact) (bool, error) {
+	if artifacts == nil || len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return false, nil
+	}
+	var content any
+	if err := json.Unmarshal(raw, &content); err != nil {
+		return false, errors.New("malformed session update content")
+	}
+	nodes := 0
+	return visitACPOutputImages(content, artifacts, 0, &nodes)
+}
+
+func visitACPOutputImages(value any, artifacts *[]session.OutputArtifact, depth int, nodes *int) (bool, error) {
+	*nodes++
+	if depth > 32 || *nodes > 4096 {
+		return false, errors.New("session update content exceeded its structural bound")
+	}
+	switch value := value.(type) {
+	case []any:
+		found := false
+		for _, item := range value {
+			itemFound, err := visitACPOutputImages(item, artifacts, depth+1, nodes)
+			if err != nil {
+				return false, err
+			}
+			found = found || itemFound
+		}
+		return found, nil
+	case map[string]any:
+		if value["type"] == "image" {
+			data, _ := value["data"].(string)
+			mediaType, _ := value["mimeType"].(string)
+			artifact, err := decodeACPOutputImage(data, mediaType, len(*artifacts))
+			if err != nil {
+				return false, err
+			}
+			*artifacts = appendOutputArtifact(*artifacts, artifact.Name, artifact.MediaType, artifact.Data)
+			return true, nil
+		}
+		if value["type"] == "resource" {
+			if resource, ok := value["resource"].(map[string]any); ok {
+				blob, _ := resource["blob"].(string)
+				mediaType, _ := resource["mimeType"].(string)
+				if blob != "" && strings.HasPrefix(mediaType, "image/") {
+					artifact, err := decodeACPOutputImage(blob, mediaType, len(*artifacts))
+					if err != nil {
+						return false, err
+					}
+					*artifacts = appendOutputArtifact(*artifacts, artifact.Name, artifact.MediaType, artifact.Data)
+					return true, nil
+				}
+			}
+		}
+		found := false
+		for _, item := range value {
+			itemFound, err := visitACPOutputImages(item, artifacts, depth+1, nodes)
+			if err != nil {
+				return false, err
+			}
+			found = found || itemFound
+		}
+		return found, nil
+	default:
+		return false, nil
+	}
 }
