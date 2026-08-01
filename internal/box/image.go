@@ -221,6 +221,20 @@ live_jobs() {
   done
 } 2>/dev/null
 
+# Distinct command names behind a PID list, so a drain notice says "chromium-headle" rather than a
+# row of numbers the operator would have to exec into the box to resolve.
+job_names() {
+  names=
+  for pid in $1; do
+    IFS= read -r comm < "/proc/$pid/comm" || continue
+    case " $names " in *" $comm "*) ;; *) names="$names $comm" ;; esac
+  done
+  # echo, not printf: a literal format verb here would look like an unresolved Dockerfile
+  # template placeholder. Command substitution strips the trailing newline, so the notice stays
+  # on one line.
+  if [ -n "$names" ]; then echo "${names# }"; else echo unknown; fi
+} 2>/dev/null
+
 terminate_jobs() {
   jobs=$1
   [ -n "$jobs" ] || return
@@ -251,6 +265,9 @@ quiescence_rescan=
 while :; do
   jobs=$(live_jobs)
   if [ -n "$jobs" ]; then
+    # Announce the wait ONCE. Without this the box is silent for the whole window, which reads as a
+    # hung loop rather than a drain, and the operator cannot tell what is holding it open.
+    [ -n "$saw_live_job" ] || echo "coop: provider exited with background work still live — waiting up to ${handoff_wait}s for: $(job_names "$jobs")" >&2
     saw_live_job=1
     IFS=. read -r now _ < /proc/uptime
     [ "$now" -lt "$deadline" ] || break
@@ -269,6 +286,7 @@ while :; do
 done
 [ -n "$saw_live_job" ] || exit 0
 [ -z "$jobs" ] && exit "$coop_drained_exit"
+echo "coop: background work did not exit within ${handoff_wait}s — terminating: $(job_names "$jobs")" >&2
 terminate_jobs "$jobs"
 exit "$coop_timeout_exit"
 ENTRY

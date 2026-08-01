@@ -10,8 +10,10 @@ observed twice in emisar on 2026-08-01:
 
 1. The agent commits with its `Coop-Task` trailer and moves the folder to `99_done/`.
 2. A descendant it started never exits — a leaked headless Chromium from a browser test is the real
-   case. `coop-entry` waits `COOP_DESCENDANT_TIMEOUT` (default **1800s**, `internal/box/image.go:245`)
-   and exits `DescendantsTimedOutExit` (191).
+   case. `coop-entry` waits `COOP_DESCENDANT_TIMEOUT` (default **1800s**, `internal/box/image.go`)
+   and exits `DescendantsTimedOutExit` (191). It now announces that wait once with the process names
+   holding the box open, and names them again on termination — before that it was silent for the
+   whole window, which reads as a hung loop.
 3. `classifyIteration` returns `background_timeout`, and `restoreBackgroundHandoffCompletion`
    **moves the finished task back to `in_progress`** (`internal/cli/commands.go:3152`) — the commit
    stays, the completion does not.
