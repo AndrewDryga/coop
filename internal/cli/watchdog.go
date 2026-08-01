@@ -15,6 +15,11 @@ import (
 // tool within the tool deadline. Only semantic stream events (streamActivity) feed it — never
 // process names, CPU, lease heartbeats, redraws, or raw bytes — so a wedged provider is killed
 // while long reasoning and a slow foreground gate survive.
+// providerIdleDeadline must stay comfortably ABOVE the box's descendant-drain wait
+// (COOP_DESCENDANT_TIMEOUT in internal/box/image.go, 10m). A draining box emits no stream events,
+// so the two clocks run from the same instant: if the drain could reach this deadline, every box
+// held open by a leaked descendant would be killed as a wedged provider instead of surfacing as a
+// descendant handoff, and the drain's own exit codes would never be observed.
 const (
 	providerStartDeadline = 10 * time.Minute
 	providerIdleDeadline  = 30 * time.Minute

@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -217,5 +220,32 @@ func TestIsProviderTimeout(t *testing.T) {
 		if isProviderTimeout(outcome) {
 			t.Errorf("isProviderTimeout(%q) = true", outcome)
 		}
+	}
+}
+
+// The box's descendant drain and this watchdog's idle deadline measure the same silence: a draining
+// box emits no stream events, so both clocks run from the provider's last activity. If the drain
+// could reach the idle deadline, the watchdog would kill every box held open by a leaked descendant
+// as a wedged provider — the wrong outcome, the wrong recovery, and the drain's own exit codes would
+// never be seen. That is exactly what happened before the drain default was lowered, so pin the
+// ordering here: the two constants live in different packages and nothing else couples them.
+func TestDescendantDrainStaysUnderIdleDeadline(t *testing.T) {
+	m := regexp.MustCompile(`COOP_DESCENDANT_TIMEOUT:-(\d+)`).FindStringSubmatch(box.BaseDockerfile())
+	if m == nil {
+		t.Fatal("could not find the descendant drain default in the base Dockerfile")
+	}
+	seconds, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("drain default %q is not a number: %v", m[1], err)
+	}
+	drain := time.Duration(seconds) * time.Second
+	if drain >= providerIdleDeadline {
+		t.Fatalf("descendant drain %s >= provider idle deadline %s: a leaked descendant would be killed as a wedged provider instead of a descendant handoff",
+			drain, providerIdleDeadline)
+	}
+	// Not merely less — the drain has to finish and the box exit before the deadline, so keep real
+	// headroom rather than a one-second margin that a slow teardown would eat.
+	if drain*2 > providerIdleDeadline {
+		t.Errorf("descendant drain %s leaves too little headroom under the idle deadline %s", drain, providerIdleDeadline)
 	}
 }

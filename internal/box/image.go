@@ -254,10 +254,14 @@ if [ "$provider_exit" -ne 0 ]; then
   exit "$provider_exit"
 fi
 
-# The default is deliberately bounded but long enough for the default consult wrapper timeout.
-# Tests and operators may shorten it at the container boundary; invalid values fail closed to 30m.
-handoff_wait=${COOP_DESCENDANT_TIMEOUT:-1800}
-case "$handoff_wait" in ''|*[!0-9]*) handoff_wait=1800;; esac
+# This MUST stay well under the host watchdog's provider idle deadline (providerIdleDeadline in
+# internal/cli/watchdog.go, 30m). The drain emits no stream events, so both clocks run from the
+# provider's last activity: at equal values the watchdog always wins the race, the box is reported
+# as a wedged provider instead of a descendant handoff, and the drain's own exit codes become
+# unreachable. Tests and operators may shorten it at the container boundary; invalid values fail
+# closed to the same bounded default.
+handoff_wait=${COOP_DESCENDANT_TIMEOUT:-600}
+case "$handoff_wait" in ''|*[!0-9]*) handoff_wait=600;; esac
 IFS=. read -r now _ < /proc/uptime
 deadline=$(( now + handoff_wait ))
 saw_live_job=
