@@ -113,7 +113,7 @@ func taskProjectAddError(name string, choices []taskProjectChoice) error {
 	}
 	var b strings.Builder
 	if name == "" {
-		b.WriteString("coop tasks add: this umbrella project has multiple task queues; choose one with --project <name>")
+		b.WriteString("coop tasks add: this umbrella project has multiple task queues; use --project root for repo-wide work or --project <subproject> for project-local work")
 	} else {
 		fmt.Fprintf(&b, "coop tasks add: unknown project %q; choose one with --project <name>", name)
 	}

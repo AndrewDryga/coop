@@ -87,24 +87,54 @@ func queueProgress(hosts []string) (taskCounts, string) {
 
 const progressActivityWidth = 48
 
-// progressLine is the queue's at-a-glance state: done/total (done greened when nonzero), a
-// blocked tally only when there is one, and the task being worked. The loop prints it both
-// in the per-iteration banner and live, on its own, whenever a task changes state mid-run.
-func progressLine(c taskCounts, activity string) string {
+func progressState(c taskCounts) string {
 	s := fmt.Sprintf("%s/%d done", paintCount(c.Done, ui.Green), c.total())
 	if c.Blocked > 0 {
 		s += fmt.Sprintf(" · %s blocked", paintCount(c.Blocked, ui.Red))
 	}
+	return s
+}
+
+func progressStateWidth(c taskCounts) int {
+	s := fmt.Sprintf("%d/%d done", c.Done, c.total())
+	if c.Blocked > 0 {
+		s += fmt.Sprintf(" · %d blocked", c.Blocked)
+	}
+	return len([]rune(s))
+}
+
+// progressLine is the queue's at-a-glance state: done/total (done greened when nonzero), a
+// blocked tally only when there is one, and the task being worked. The loop prints it both
+// in the per-iteration banner and live, on its own, whenever a task changes state mid-run.
+func progressLine(c taskCounts, activity string) string {
+	s := progressState(c)
 	if activity != "" {
 		s += " · now: " + truncate(activity, progressActivityWidth)
 	}
 	return s
 }
 
+// progressLineWidth fits the optional activity into a complete line budget. Structural queue
+// state is never abbreviated; on an impossibly narrow row Region remains the final clip guard.
+func progressLineWidth(c taskCounts, activity string, width int) string {
+	s := progressState(c)
+	const separator = " · now: "
+	activityW := width - progressStateWidth(c) - len([]rune(separator))
+	if activity == "" || activityW <= 0 {
+		return s
+	}
+	return s + separator + truncate(activity, activityW)
+}
+
 // progressBanner is progressLine prefixed with the iteration number, printed at the top of
 // each loop iteration.
 func progressBanner(n int, c taskCounts, active string) string {
 	return fmt.Sprintf("iteration %d · %s", n, progressLine(c, active))
+}
+
+func progressBannerWidth(n int, c taskCounts, active string, width int) string {
+	prefix := fmt.Sprintf("iteration %d · ", n)
+	return prefix + progressLineWidth(c, active, width-len([]rune(prefix)))
 }
 
 // paintCount renders a count, applying paint only when it's nonzero so a zero stays

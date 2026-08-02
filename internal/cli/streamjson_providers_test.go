@@ -117,6 +117,154 @@ func TestProviderAssistantNarrationNeverBecomesTerminalDiagnostic(t *testing.T) 
 	}
 }
 
+func TestProviderStreamLiveDisplayResamplesTerminalWidth(t *testing.T) {
+	detail := "command-" + strings.Repeat("x", 80) + "-tail-past-the-old-cap"
+	quoted, err := jsonQuote(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errorText := "failure-" + strings.Repeat("y", 100) + "-error-tail"
+	quotedError, err := jsonQuote(errorText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		agent      string
+		toolEvent  string
+		errorEvent string
+	}{
+		{
+			agent:      "claude",
+			toolEvent:  `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"wide","name":"Bash","input":{"command":` + quoted + `}}]}}`,
+			errorEvent: `{"type":"result","subtype":"error","is_error":true,"result":` + quotedError + `}`,
+		},
+		{
+			agent:      "codex",
+			toolEvent:  `{"type":"item.started","item":{"id":"wide","type":"command_execution","command":` + quoted + `}}`,
+			errorEvent: `{"type":"turn.failed","error":{"message":` + quotedError + `}}`,
+		},
+		{
+			agent:      "gemini",
+			toolEvent:  `{"type":"tool_use","tool_name":"run_shell_command","tool_id":"wide","parameters":{"command":` + quoted + `}}`,
+			errorEvent: `{"type":"error","severity":"error","message":` + quotedError + `}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.agent, func(t *testing.T) {
+			var out, tail bytes.Buffer
+			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, nil, "", "", "model")
+			width, samples := 180, 0
+			decoder.setDisplayWidth(func() int {
+				samples++
+				return width
+			})
+			_, _ = decoder.Write([]byte(tc.toolEvent + "\n"))
+			if got := out.String(); !strings.Contains(got, "tail-past-the-old-cap") {
+				t.Fatalf("wide live tool line retained old cap: %q", got)
+			}
+
+			width = 42
+			_, _ = decoder.Write([]byte(tc.errorEvent + "\n"))
+			lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+			narrow := lines[len(lines)-1]
+			if !strings.HasPrefix(narrow, "✗ ") || !strings.Contains(narrow, "…") {
+				t.Fatalf("narrow live error lost status or elision: %q", narrow)
+			}
+			if got, max := len([]rune(narrow)), width-1; got > max {
+				t.Fatalf("narrow live error width = %d, want <= %d: %q", got, max, narrow)
+			}
+			if samples < 2 {
+				t.Fatalf("display width sampled %d times, want once per event", samples)
+			}
+		})
+	}
+}
+
+func TestProviderStreamRedirectedDisplayKeepsFallbackCaps(t *testing.T) {
+	detail := "command-" + strings.Repeat("x", 80) + "-tail-past-the-old-cap"
+	quoted, err := jsonQuote(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errorText := "failure-" + strings.Repeat("y", 100) + "-error-tail"
+	quotedError, err := jsonQuote(errorText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		agent, toolEvent, errorEvent string
+	}{
+		{
+			"claude",
+			`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"fixed","name":"Bash","input":{"command":` + quoted + `}}]}}`,
+			`{"type":"result","subtype":"error","is_error":true,"result":` + quotedError + `}`,
+		},
+		{
+			"codex",
+			`{"type":"item.started","item":{"id":"fixed","type":"command_execution","command":` + quoted + `}}`,
+			`{"type":"turn.failed","error":{"message":` + quotedError + `}}`,
+		},
+		{
+			"gemini",
+			`{"type":"tool_use","tool_name":"run_shell_command","tool_id":"fixed","parameters":{"command":` + quoted + `}}`,
+			`{"type":"error","severity":"error","message":` + quotedError + `}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.agent, func(t *testing.T) {
+			var out, tail bytes.Buffer
+			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, nil, "", "", "model")
+			_, _ = decoder.Write([]byte(tc.toolEvent + "\n"))
+			if got := out.String(); strings.Contains(got, "tail-past-the-old-cap") || !strings.Contains(got, "…") {
+				t.Fatalf("redirected tool line did not keep its fixed fallback cap: %q", got)
+			}
+			_, _ = decoder.Write([]byte(tc.errorEvent + "\n"))
+			lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+			got := lines[len(lines)-1]
+			if strings.Contains(got, "error-tail") || !strings.Contains(got, "…") {
+				t.Fatalf("redirected error line did not keep its fixed fallback cap: %q", got)
+			}
+			if cells, want := len([]rune(got)), len([]rune("✗ "))+streamErrorTextWidth; cells != want {
+				t.Fatalf("redirected error width = %d, want %d: %q", cells, want, got)
+			}
+		})
+	}
+}
+
+func TestProviderStreamFailureLinePreservesStructureAtLiveWidth(t *testing.T) {
+	d := newNDJSONDecoder(nil, nil, nil)
+	width := 180
+	d.setDisplayWidth(func() int { return width })
+	diagnostic := "compile-" + strings.Repeat("z", 80) + "-tail-past-the-old-cap"
+	if got := d.streamFailureLine("make check", " (exit 7)", diagnostic, streamToolTextWidth); !strings.Contains(got, "tail-past-the-old-cap") {
+		t.Fatalf("wide live failure retained old diagnostic cap: %q", got)
+	}
+	width = 38
+	got := d.streamFailureLine(strings.Repeat("command", 20), " (exit 7)", diagnostic, streamToolTextWidth)
+	if !strings.HasPrefix(got, "  ✗ ") || !strings.Contains(got, "(exit 7)") || !strings.Contains(got, "…") {
+		t.Fatalf("narrow live failure lost marker, exit status, or elision: %q", got)
+	}
+	if cells, max := len([]rune(got)), width-1; cells > max {
+		t.Fatalf("narrow live failure width = %d, want <= %d: %q", cells, max, got)
+	}
+}
+
+func TestGrokLiveNarrationRemainsFull(t *testing.T) {
+	text := "narration-" + strings.Repeat("g", 100) + "-full-tail"
+	quoted, err := jsonQuote(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, tail bytes.Buffer
+	decoder := newIterationStreamDecoder("grok", &out, &tail, nil, "", "", "model")
+	decoder.setDisplayWidth(func() int { return 32 })
+	_, _ = decoder.Write([]byte(`{"type":"text","data":` + quoted + `}` + "\n" + `{"type":"end","usage":{},"num_turns":1}` + "\n"))
+	decoder.flush()
+	if !strings.Contains(out.String(), text) || !strings.Contains(tail.String(), text) {
+		t.Fatalf("Grok narration was presentation-truncated: out=%q tail=%q", out.String(), tail.String())
+	}
+}
+
 func TestCodexStreamDecoder(t *testing.T) {
 	lines := []string{
 		`{"type":"thread.started","thread_id":"..."}`,

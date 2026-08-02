@@ -194,7 +194,7 @@ func TestIntegrationUmbrellaAddRequiresProject(t *testing.T) {
 	}
 	msg := err.Error()
 	for _, want := range []string{
-		"this umbrella project has multiple task queues; choose one with --project <name>",
+		"this umbrella project has multiple task queues; use --project root for repo-wide work or --project <subproject> for project-local work",
 		"usage:\n  coop tasks add --project <project> \"<title>\"",
 		"root    .agent/tasks",
 		"repo-wide or cross-project work",

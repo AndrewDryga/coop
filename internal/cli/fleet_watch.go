@@ -13,14 +13,16 @@ import (
 )
 
 const (
-	fleetNameW = 14 // fork-name column width
-	fleetBarW  = 10 // per-fork progress bar width
+	fleetNameW     = 14 // preferred minimum fork-name column width when the terminal has room
+	fleetBarW      = 10 // per-fork progress bar width
+	fleetActivityW = 16 // primary text kept ahead of the secondary log on constrained rows
+	fleetRowFixedW = 24 // glyph/badge/separators/bar around the variable name, count, and text cells
 )
 
 // fleetTotalBarW sizes the bottom roll-up bar so its right edge lines up with the per-fork
 // bars above it. Both prefixes start with the same fixed-width state mark, so it cancels; the
 // per-fork row then adds an agent badge, two spaces, and the name (nameW + 3 columns).
-const fleetTotalBarW = fleetNameW + fleetBarW + 3
+func fleetTotalBarW(nameW int) int { return nameW + fleetBarW + 3 }
 
 // fleetRow is one fork's fast-changing state for the live dashboard. It reads only the cheap
 // sources (the queue file, the pidfile, the log tail) so the dashboard can refresh several
@@ -94,7 +96,8 @@ func (a *app) fleetWatch() (int, error) {
 	// lines up from the bottom, so once the dashboard is taller than the terminal pane each refresh
 	// scrolls the top line ("coop fleet — N running") into scrollback — the reported spam. The alt
 	// buffer has no scrollback to pollute and is restored on exit.
-	screen := ui.NewAltScreen(os.Stdout, func() int { return ui.TermWidth(os.Stdout) })
+	width := func() int { return ui.TermWidth(os.Stdout) }
+	screen := ui.NewAltScreen(os.Stdout, width)
 	name := filepath.Base(repo)
 	prev := map[string]fleetRow{} // last good row per fork, to ride out a torn task-tree read
 	sawRunning := false           // seen any fork running? — so we don't auto-exit during the startup window
@@ -112,7 +115,7 @@ func (a *app) fleetWatch() (int, error) {
 			}
 		}
 		prev = next
-		frame := fleetDashboard(name, rows, spin)
+		frame := fleetDashboard(name, rows, spin, width())
 		screen.Frame(frame)
 		// Conclude "finished" — nothing running, nothing left to start — only after a fork's been seen
 		// running (the live case), or every fork is already terminal at startup (fleetSettled); never
@@ -152,7 +155,7 @@ func fleetSettled(rows []fleetRow) bool {
 
 // fleetDashboard renders the watch view: a header, one row per fork, and a global progress bar.
 // Pure (it takes the already-gathered rows) so it unit-tests without a real fleet.
-func fleetDashboard(name string, rows []fleetRow, spin int) []string {
+func fleetDashboard(name string, rows []fleetRow, spin, width int) []string {
 	var running, doing, blocked, done, total int
 	var totalCost float64
 	// Size the done/total column to the widest count actually present (min "0/0"), so every count
@@ -172,13 +175,14 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 			countW = w
 		}
 	}
+	nameW := fleetNameWidth(rows, countW, width)
 	body := make([]string, 0, len(rows))
 	for _, r := range rows {
-		body = append(body, fleetRowLine(r, spin, countW))
+		body = append(body, fleetRowLine(r, spin, countW, nameW, width))
 	}
 	header := fmt.Sprintf("%s — %d running, %s blocked", ui.Bold(name+" fleet"), running, paintCount(blocked, ui.Red))
 	bar := fmt.Sprintf("%s %s %s tasks · %d running · %s blocked",
-		stateGlyph(running > 0, done, total, spin), ui.ProgressBarStates(done, doing, blocked, total, fleetTotalBarW), fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
+		stateGlyph(running > 0, done, total, spin), ui.ProgressBarStates(done, doing, blocked, total, fleetTotalBarW(nameW)), fmt.Sprintf("%d/%d", done, total), running, paintCount(blocked, ui.Red))
 	if totalCost > 0 {
 		bar += fmt.Sprintf(" · $%.2f", totalCost)
 	}
@@ -188,6 +192,31 @@ func fleetDashboard(name string, rows []fleetRow, spin int) []string {
 	out = append(out, body...)
 	out = append(out, "", bar)
 	return out
+}
+
+// fleetNameWidth keeps the identity column aligned while letting a wide terminal show the actual
+// longest fork name. A constrained terminal may shrink the old 14-column default, but only after
+// reserving the fixed row cells, the widest cost, and a useful slice of primary activity text.
+func fleetNameWidth(rows []fleetRow, countW, width int) int {
+	desired, costW := fleetNameW, 0
+	for _, r := range rows {
+		if n := len([]rune(r.name)); n > desired {
+			desired = n
+		}
+		if r.cost > 0 {
+			if n := len([]rune(fmt.Sprintf("  $%.2f", r.cost))); n > costW {
+				costW = n
+			}
+		}
+	}
+	maxName := width - 1 - fleetRowFixedW - countW - costW - fleetActivityW
+	if maxName < 1 {
+		maxName = 1
+	}
+	if desired > maxName {
+		return maxName
+	}
+	return desired
 }
 
 // stateGlyph is the fixed-width status mark shared by the per-fork rows and the roll-up bar: an
@@ -207,7 +236,7 @@ func stateGlyph(running bool, done, total, spin int) string {
 
 // fleetRowLine renders one fork's row: a state glyph (spinner running / ‖ idle / ✓ done), a
 // small progress bar, the done/total count, what it's working on, and the last line of its log.
-func fleetRowLine(r fleetRow, spin, countW int) string {
+func fleetRowLine(r fleetRow, spin, countW, nameW, width int) string {
 	total := r.counts.total()
 	allDone := total > 0 && r.counts.Done == total // "done" = every task in done/, not just "no todo/ left"
 	// stopped: the loop exited (not running) with tasks unfinished — it ran and quit at N/M. Distinct
@@ -226,30 +255,57 @@ func fleetRowLine(r fleetRow, spin, countW int) string {
 	case blocked:
 		glyph = ui.Red(glyph) // blocked: needs a human to clear the [B]
 	}
-	var doing string // a terminal/non-actionable state wins; else the task it's on or will take next
+	doing := "" // a terminal/non-actionable state wins; else the task it's on or will take next
+	paintDoing := func(s string) string { return s }
 	switch {
 	case r.cleanup:
-		doing = ui.Red("cleanup")
+		doing, paintDoing = "cleanup", ui.Red
 	case total == 0 && r.running:
 		doing = "starting" // loop is alive and still seeding its queue (the --tasks copy) — transient
 	case total == 0:
 		doing = "(no queue)"
 	case allDone:
-		doing = ui.Green("✓ done")
+		doing, paintDoing = "✓ done", ui.Green
 	case stopped:
-		doing = ui.Yellow("stopped") // it quit, isn't working its next task
+		doing, paintDoing = "stopped", ui.Yellow // it quit, isn't working its next task
 	case blocked:
-		doing = ui.Red("blocked") // every remaining task is [B]
+		doing, paintDoing = "blocked", ui.Red // every remaining task is [B]
 	default:
-		doing = truncate(r.active, 32)
+		doing = r.active
 	}
-	line := fmt.Sprintf("%s %s %-*s %s %-*s  %s",
-		glyph, agentBadge(r.agent), fleetNameW, truncate(r.name, fleetNameW), ui.ProgressBarStates(r.counts.Done, r.counts.Doing, r.counts.Blocked, total, fleetBarW), countW, fmt.Sprintf("%d/%d", r.counts.Done, total), doing)
+	cost := ""
 	if r.cost > 0 {
-		line += "  " + ui.Dim(fmt.Sprintf("$%.2f", r.cost))
+		cost = fmt.Sprintf("  $%.2f", r.cost)
 	}
-	if r.lastLog != "" {
-		line += "  " + ui.Dim(truncate(r.lastLog, 44))
+	available := width - 1 - fleetRowFixedW - nameW - countW - len([]rune(cost))
+	doingW, logW := available, 0
+	if r.lastLog != "" && available > 2 {
+		if need := len([]rune(doing)) + 2 + len([]rune(r.lastLog)); need <= available {
+			logW = len([]rune(r.lastLog))
+		} else {
+			// Activity is primary, but keep up to a third of a constrained row for the secondary
+			// log. If activity is short, its unused share automatically flows back to the log.
+			reserveLog := min(len([]rune(r.lastLog)), available/3)
+			doingW = min(len([]rune(doing)), available-2-reserveLog)
+			logW = min(len([]rune(r.lastLog)), available-2-doingW)
+		}
+	}
+	if doingW < 0 {
+		doingW = 0
+	}
+	line := fmt.Sprintf("%s %s %s %s %s  %s",
+		glyph,
+		agentBadge(r.agent),
+		padRight(truncate(r.name, nameW), nameW),
+		ui.ProgressBarStates(r.counts.Done, r.counts.Doing, r.counts.Blocked, total, fleetBarW),
+		padRight(fmt.Sprintf("%d/%d", r.counts.Done, total), countW),
+		paintDoing(truncate(doing, doingW)),
+	)
+	if cost != "" {
+		line += ui.Dim(cost)
+	}
+	if logW > 0 {
+		line += "  " + ui.Dim(truncate(r.lastLog, logW))
 	}
 	if !r.running && !allDone && !stopped && !blocked {
 		line = ui.DimLine(line) // only a quiet, never-started fork with todos left recedes

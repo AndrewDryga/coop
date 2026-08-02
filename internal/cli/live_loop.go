@@ -24,6 +24,7 @@ func loopBarSupported(_ string, stdoutTTY, stderrTTY bool) bool {
 // above the bar so the bar stays correctly positioned. Built only for a fully interactive run.
 type loopBar struct {
 	region   *ui.Region
+	width    func() int
 	start    time.Time
 	mu       sync.Mutex
 	c        taskCounts
@@ -31,17 +32,25 @@ type loopBar struct {
 	spin     int
 }
 
-func newLoopBar(region *ui.Region, start time.Time, c taskCounts, activity string) *loopBar {
-	return &loopBar{region: region, start: start, c: c, activity: activity}
+func newLoopBar(region *ui.Region, width func() int, start time.Time, c taskCounts, activity string) *loopBar {
+	return &loopBar{region: region, width: width, start: start, c: c, activity: activity}
 }
 
 // line renders the bar from current state (caller holds b.mu).
 func (b *loopBar) line() string {
+	elapsedText := elapsed(b.start)
+	width := 80
+	if b.width != nil {
+		width = b.width()
+	}
+	// Reserve the screen's no-wrap column plus the fixed spinner, bar, separators, and elapsed
+	// suffix. Counts and blocked state inside progressLineWidth win over optional activity text.
+	progressW := width - 1 - ui.SpinnerWidth - (20 + 2) - len([]rune(elapsedText)) - 3
 	return fmt.Sprintf("%s %s %s %s",
 		ui.SpinFrame(b.spin),
 		ui.ProgressBarStates(b.c.Done, b.c.Doing, b.c.Blocked, b.c.total(), 20),
-		progressLine(b.c, b.activity),
-		ui.Dim(elapsed(b.start)))
+		progressLineWidth(b.c, b.activity, progressW),
+		ui.Dim(elapsedText))
 }
 
 func (b *loopBar) render(history string) {

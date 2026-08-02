@@ -10,6 +10,8 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
+func loopWidth(n int) func() int { return func() int { return n } }
+
 func TestLoopBarSupported(t *testing.T) {
 	for _, c := range []struct {
 		name                 string
@@ -36,8 +38,9 @@ func TestLoopBarSupported(t *testing.T) {
 // it. This proves a ui.Info reaches the bar's region rather than going straight to stderr.
 func TestLoopBarReceivesUILines(t *testing.T) {
 	var buf bytes.Buffer
-	region := ui.NewRegion(&buf, func() int { return 80 })
-	bar := newLoopBar(region, time.Now(), taskCounts{Todo: 1}, "demo")
+	width := loopWidth(80)
+	region := ui.NewRegion(&buf, width)
+	bar := newLoopBar(region, width, time.Now(), taskCounts{Todo: 1}, "demo")
 	ui.SetLiveSink(bar.history)
 	defer ui.SetLiveSink(nil)
 
@@ -54,7 +57,8 @@ func TestLoopBarSpinnerCanFreezeWithoutColor(t *testing.T) {
 	t.Setenv("COOP_SPINNER", "0")
 
 	var buf bytes.Buffer
-	bar := newLoopBar(ui.NewRegion(&buf, func() int { return 80 }), time.Now(), taskCounts{Todo: 1}, "demo")
+	width := loopWidth(80)
+	bar := newLoopBar(ui.NewRegion(&buf, width), width, time.Now(), taskCounts{Todo: 1}, "demo")
 	bar.render("")
 	bar.tick()
 	out := buf.String()
@@ -67,9 +71,32 @@ func TestLoopBarSpinnerCanFreezeWithoutColor(t *testing.T) {
 }
 
 func TestLoopBarShowsTinyActiveShare(t *testing.T) {
-	bar := newLoopBar(nil, time.Now(), taskCounts{Todo: 99, Doing: 1}, "demo")
+	bar := newLoopBar(nil, loopWidth(80), time.Now(), taskCounts{Todo: 99, Doing: 1}, "demo")
 	if line := bar.line(); !strings.Contains(line, "█") {
 		t.Errorf("loop bar should keep a visible active cell: %q", line)
+	}
+}
+
+func TestLoopBarActivityUsesAvailableTerminalWidth(t *testing.T) {
+	activity := "Reconcile every provider credential rotation before the deployment cutover"
+	width := 160
+	bar := newLoopBar(nil, func() int { return width }, time.Now(), taskCounts{Doing: 1}, activity)
+
+	wide := bar.line()
+	if !strings.Contains(wide, activity) {
+		t.Errorf("wide loop bar should show activity past the old fixed cap: %q", wide)
+	}
+
+	width = 60 // the callback is sampled again, just as it is after a terminal resize
+	narrow := bar.line()
+	if strings.Contains(narrow, activity) || !strings.Contains(narrow, "…") {
+		t.Errorf("narrow loop bar should elide activity: %q", narrow)
+	}
+	if !strings.HasSuffix(narrow, "0:00") {
+		t.Errorf("narrow loop bar should preserve elapsed suffix: %q", narrow)
+	}
+	if got, max := len([]rune(narrow)), width-1; got > max {
+		t.Errorf("narrow loop bar width = %d, want at most %d: %q", got, max, narrow)
 	}
 }
 
@@ -105,7 +132,8 @@ func TestLoopBarActivityDoesNotFollowQueueSelection(t *testing.T) {
 			moving := tc.setup(t, root)
 			counts, _ := queueProgress([]string{root})
 			var output bytes.Buffer
-			bar := newLoopBar(ui.NewRegion(&output, func() int { return 100 }), time.Now(), counts, tc.activity)
+			width := loopWidth(100)
+			bar := newLoopBar(ui.NewRegion(&output, width), width, time.Now(), counts, tc.activity)
 			newState := stateDone
 			if moving.State == stateTodo {
 				newState = stateInProgress
@@ -133,8 +161,9 @@ func TestReviewActivityNamesStageAndSubjectsCompactly(t *testing.T) {
 			t.Errorf("%s activity = %q", stage, got)
 		}
 	}
-	got := reviewActivity("signoff", []string{"2026-07-14-a-very-long-task-name-that-needs-truncation", "task-b", "task-c"})
-	if !strings.HasPrefix(got, "signoff: 2026-07-14-") || !strings.HasSuffix(got, " +2") || len([]rune(got)) > progressActivityWidth {
-		t.Errorf("multi-subject review activity = %q", got)
+	first := "2026-07-14-a-very-long-task-name-that-must-reach-the-live-width-renderer"
+	got := reviewActivity("signoff", []string{first, "task-b", "task-c"})
+	if want := "signoff: " + first + " +2"; got != want || len([]rune(got)) <= progressActivityWidth {
+		t.Errorf("multi-subject review activity = %q, want untruncated %q", got, want)
 	}
 }

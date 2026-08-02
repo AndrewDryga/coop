@@ -337,7 +337,7 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 		if msg == "" {
 			msg = "turn failed"
 		}
-		d.emit(ui.Red("✗ " + truncate(firstLine(msg), 80)))
+		d.emit(d.streamErrorLine(msg))
 		d.toTail(msg)
 		d.toDiagnostic(msg)
 	default:
@@ -390,9 +390,8 @@ func (d *codexStreamDecoder) itemStarted(item codexStreamItem) {
 	switch item.Type {
 	case "command_execution":
 		label := streamCommandLabel(item.Command)
-		shown := truncate(label, 60)
-		d.emit(streamToolLine("⚙", shown, false))
-		d.tool[item.ID] = shown
+		d.emit(d.streamToolLine("⚙", label, false))
+		d.tool[item.ID] = label
 	case "web_search":
 		d.showItem(item, "⌕", codexWebSearchLabel(item.Query))
 	case "collab_tool_call":
@@ -415,17 +414,9 @@ func (d *codexStreamDecoder) itemCompleted(item codexStreamItem) {
 		}
 		label := d.tool[item.ID]
 		if label == "" {
-			label = truncate(streamCommandLabel(item.Command), 60)
+			label = streamCommandLabel(item.Command)
 		}
-		line := "  " + ui.Red("✗")
-		if label != "" {
-			line += " " + label
-		}
-		line += fmt.Sprintf(" (exit %d)", *item.ExitCode)
-		if diag := commandFailureDiagnostic(item.AggregatedOutput); diag != "" {
-			line += ": " + truncate(diag, 60)
-		}
-		d.emit(line)
+		d.emit(d.streamFailureLine(label, fmt.Sprintf(" (exit %d)", *item.ExitCode), commandFailureDiagnostic(item.AggregatedOutput), streamToolTextWidth))
 	case "file_change":
 		d.fileChange(item)
 	case "web_search":
@@ -446,11 +437,11 @@ func (d *codexStreamDecoder) fileChange(item codexStreamItem) {
 			continue
 		}
 		label, inside := repoRel(d.root, path)
-		d.emit(streamToolLine("✎", label, !inside))
+		d.emit(d.streamToolLine("✎", label, !inside))
 		shown = true
 	}
 	if !shown {
-		d.emit(streamToolLine("✎", "file change", false))
+		d.emit(d.streamToolLine("✎", "file change", false))
 	}
 }
 
@@ -460,7 +451,7 @@ func (d *codexStreamDecoder) showItem(item codexStreamItem, glyph, label string)
 		return
 	}
 	d.shown[key] = struct{}{}
-	d.emit(streamToolLine(glyph, label, false))
+	d.emit(d.streamToolLine(glyph, label, false))
 }
 
 func codexWebSearchLabel(query string) string {
@@ -615,7 +606,7 @@ func (d *geminiStreamDecoder) event(raw json.RawMessage) {
 		if msg == "" {
 			msg = "error"
 		}
-		d.emit(ui.Red("✗ " + truncate(firstLine(msg), 80)))
+		d.emit(d.streamErrorLine(msg))
 		d.toTail(msg)
 		d.toDiagnostic(msg)
 	default:
@@ -648,7 +639,7 @@ func (d *geminiStreamDecoder) toolUse(ev *geminiStreamEvent) {
 		label, line = d.fileToolLine("✎", ev.Parameters.FilePath)
 	case "run_shell_command":
 		label = firstLine(stripLeadingCD(ev.Parameters.Command))
-		line = streamToolLine("⚙", label, false)
+		line = d.streamToolLine("⚙", label, false)
 	default:
 		label = ev.Parameters.Description
 		line = ui.Dim("· " + strings.TrimSpace(name+" "+label))
@@ -659,7 +650,7 @@ func (d *geminiStreamDecoder) toolUse(ev *geminiStreamEvent) {
 
 func (d *geminiStreamDecoder) fileToolLine(glyph, path string) (label, line string) {
 	label, inside := repoRel(d.root, path)
-	return label, streamToolLine(glyph, label, !inside)
+	return label, d.streamToolLine(glyph, label, !inside)
 }
 
 func (d *geminiStreamDecoder) toolResult(ev *geminiStreamEvent) {
@@ -667,18 +658,11 @@ func (d *geminiStreamDecoder) toolResult(ev *geminiStreamEvent) {
 	if ev.Status == "success" {
 		return
 	}
-	line := "  " + ui.Red("✗")
-	if label := d.tool[ev.ToolID]; label != "" {
-		line += " " + label
-	}
 	output := ev.Output
 	if output == "" {
 		output = jsonEventMessage(ev.Error)
 	}
-	if first := firstLine(output); first != "" {
-		line += ": " + truncate(first, 60)
-	}
-	d.emit(line)
+	d.emit(d.streamFailureLine(d.tool[ev.ToolID], "", firstLine(output), 0))
 }
 
 func (d *geminiStreamDecoder) result(ev *geminiStreamEvent) {
@@ -700,7 +684,7 @@ func (d *geminiStreamDecoder) result(ev *geminiStreamEvent) {
 	if msg == "" {
 		msg = ev.Status
 	}
-	d.emit(ui.Red("✗ " + truncate(firstLine(msg), 80)))
+	d.emit(d.streamErrorLine(msg))
 	d.toTail(msg)
 	d.toDiagnostic(msg)
 }
@@ -852,18 +836,6 @@ type grokStreamEvent struct {
 		OutputTokens         int `json:"output_tokens"`
 		ReasoningTokens      int `json:"reasoning_tokens"`
 	} `json:"usage"`
-}
-
-func streamToolLine(glyph, label string, outside bool) string {
-	line := glyph
-	if label == "" {
-		return line
-	}
-	shown := truncate(label, 60)
-	if outside {
-		return line + " " + ui.Yellow("⚠ "+shown)
-	}
-	return line + " " + ui.Dim(shown)
 }
 
 func jsonEventMessage(raw json.RawMessage) string {

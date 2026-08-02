@@ -3,7 +3,7 @@ name: loop-provider-watchdog
 description: built-in attempts always stream; the watchdog trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
 subsystem: loop
 sources: [internal/cli/watchdog.go, internal/cli/streamjson.go, internal/cli/commands.go, internal/runtime/runtime.go]
-updated: 2026-07-26
+updated: 2026-08-02
 ---
 
 Every built-in loop/review/preflight attempt requests the provider's structured stream —
@@ -35,4 +35,6 @@ Traps the code doesn't obviously carry:
   an interrupted run stays `interrupted`, never a provider timeout.
 
 ## Changelog
+- 2026-08-02 — reverified while making decoded live presentation width-aware; display fitting is
+  downstream of the unchanged trusted activity callbacks and stream byte bounds.
 - 2026-07-26 — created with the watchdog implementation (verified against the sources above).

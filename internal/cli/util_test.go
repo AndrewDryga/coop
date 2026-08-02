@@ -152,6 +152,23 @@ func TestProgressBanner(t *testing.T) {
 	}
 }
 
+func TestProgressBannerWidthUsesAvailableTerminalWidth(t *testing.T) {
+	activity := "Reconcile every provider credential rotation before the deployment cutover"
+	wide := progressBannerWidth(3, taskCounts{Doing: 1}, activity, 120)
+	if !strings.Contains(wide, activity) {
+		t.Errorf("wide progress banner should show activity past the old fixed cap: %q", wide)
+	}
+
+	const narrowWidth = 44
+	narrow := progressBannerWidth(3, taskCounts{Doing: 1}, activity, narrowWidth)
+	if strings.Contains(narrow, activity) || !strings.Contains(narrow, "…") {
+		t.Errorf("narrow progress banner should elide activity: %q", narrow)
+	}
+	if got := len([]rune(narrow)); got > narrowWidth {
+		t.Errorf("narrow progress banner width = %d, want at most %d: %q", got, narrowWidth, narrow)
+	}
+}
+
 func TestProgressLine(t *testing.T) {
 	// The mid-iteration line the monitor prints live: done/total, blocked only when there
 	// is some, and the active task — no "iteration N" prefix.

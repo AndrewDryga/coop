@@ -3111,7 +3111,12 @@ reviewAgain:
 			}
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 			active := assigned.Item.Title
-			ui.Info("%s · owned by %s", progressBanner(n, c, active), agent)
+			owner := " · owned by " + agent
+			banner := progressBanner(n, c, active)
+			if ui.IsTerminal(os.Stderr) {
+				banner = progressBannerWidth(n, c, active, ui.TermWidth(os.Stderr)-1-len([]rune("coop: "+owner)))
+			}
+			ui.Info("%s%s", banner, owner)
 			// Informed resume: a lease carrying host audit-reopen authority gets the audit-rework
 			// preamble (verify the finding; zero-commit re-close or a real tree change — never a
 			// Coop-Recovery receipt); otherwise a landed Coop-Task commit (a crash after commit before
@@ -3956,10 +3961,12 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	termOut, termErr := io.Writer(os.Stdout), io.Writer(os.Stderr)
 	var bar *loopBar
 	var funnel *lineWriter
+	var liveWidth func() int
 	if live {
-		region := ui.NewRegion(os.Stderr, func() int { return ui.TermWidth(os.Stderr) })
+		liveWidth = func() int { return ui.TermWidth(os.Stderr) }
+		region := ui.NewRegion(os.Stderr, liveWidth)
 		c0, _ := queueProgress(hosts)
-		bar = newLoopBar(region, time.Now(), c0, activity)
+		bar = newLoopBar(region, liveWidth, time.Now(), c0, activity)
 		funnel = &lineWriter{fn: bar.history} // agent/loop lines scroll above the bar
 		termOut, termErr = funnel, funnel
 		// Route coop's own status lines (ui.Info etc. — from here AND box.Run's startup: "shadowed",
@@ -3989,6 +3996,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		dec = newIterationStreamDecoder(agent, io.MultiWriter(outWs...), tail, diagnostic, a.cfg.ActiveProfile(agent), box.Workdir(a.cfg, repo), a.cfg.ModelFor(agent))
 	}
 	if dec != nil {
+		dec.setDisplayWidth(liveWidth)
 		stdoutW = dec
 		if rawTrace != nil {
 			stdoutW = io.MultiWriter(rawTrace, dec)
@@ -4152,9 +4160,5 @@ func reviewActivity(stage string, subjects []string) string {
 	if len(subjects) > 1 {
 		suffix = fmt.Sprintf(" +%d", len(subjects)-1)
 	}
-	budget := progressActivityWidth - len([]rune(prefix+suffix))
-	if budget < 1 {
-		return truncate(stage, progressActivityWidth)
-	}
-	return prefix + truncate(subjects[0], budget) + suffix
+	return prefix + subjects[0] + suffix
 }

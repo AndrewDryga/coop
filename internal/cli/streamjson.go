@@ -55,6 +55,7 @@ type iterationStreamDecoder interface {
 	lastIterResult() *iterResult
 	streamOutcome() providerStreamOutcome
 	setActivity(streamActivity)
+	setDisplayWidth(func() int)
 }
 
 // streamActivity receives the host-trusted semantic activity one provider attempt proves. Only
@@ -127,20 +128,23 @@ func newIterationStreamDecoder(agent string, out, tail, diagnostic io.Writer, pr
 // Writes, final-line flushing, and raw passthrough for diagnostics that are not JSON events.
 // Provider decoders only handle complete, valid JSON values.
 type ndjsonDecoder struct {
-	out        io.Writer
-	tail       io.Writer
-	diagnostic io.Writer
-	buf        []byte
-	dropping   bool
-	malformed  bool
-	event      func(json.RawMessage)
-	beforeRaw  func()
-	activity   streamActivity
+	out          io.Writer
+	tail         io.Writer
+	diagnostic   io.Writer
+	buf          []byte
+	dropping     bool
+	malformed    bool
+	event        func(json.RawMessage)
+	beforeRaw    func()
+	activity     streamActivity
+	displayWidth func() int
 }
 
 const (
 	maxStreamEventBytes     = 1 << 20
 	maxStreamNarrationBytes = 64 << 10
+	streamToolTextWidth     = 60
+	streamErrorTextWidth    = 80
 )
 
 func newNDJSONDecoder(out, tail io.Writer, event func(json.RawMessage)) *ndjsonDecoder {
@@ -198,6 +202,10 @@ func (d *ndjsonDecoder) flush() {
 // provider decoders may report activity through, and only from valid decoded events.
 func (d *ndjsonDecoder) setActivity(a streamActivity) { d.activity = a }
 
+// setDisplayWidth enables terminal-aware presentation for a live loop. A nil callback retains
+// the fixed, deterministic caps used by redirected output and direct decoder consumers.
+func (d *ndjsonDecoder) setDisplayWidth(width func() int) { d.displayWidth = width }
+
 func (d *ndjsonDecoder) noteBootstrap() {
 	if d.activity != nil {
 		d.activity.bootstrap()
@@ -229,6 +237,109 @@ func (d *ndjsonDecoder) noteTerminal() {
 }
 
 func (d *ndjsonDecoder) emit(s string) { fmt.Fprintln(d.out, s) }
+
+// fitDisplayText trims one plain-text segment to the current live row, reserving fixed cells and
+// the final no-wrap safety column. Redirected output uses the caller's established fixed cap.
+func (d *ndjsonDecoder) fitDisplayText(text string, fallback, fixed int) string {
+	limit := fallback
+	if d.displayWidth != nil {
+		limit = d.displayWidth() - 1 - fixed
+	}
+	return truncate(text, limit)
+}
+
+func (d *ndjsonDecoder) streamErrorLine(message string) string {
+	const prefix = "✗ "
+	shown := d.fitDisplayText(firstLine(message), streamErrorTextWidth, len([]rune(prefix)))
+	return ui.Red(prefix + shown)
+}
+
+func (d *ndjsonDecoder) streamToolLine(glyph, label string, outside bool) string {
+	if label == "" {
+		return glyph
+	}
+	prefix := glyph + " "
+	if outside {
+		const warning = "⚠ "
+		shown := d.fitDisplayText(label, streamToolTextWidth, len([]rune(prefix+warning)))
+		return prefix + ui.Yellow(warning+shown)
+	}
+	shown := d.fitDisplayText(label, streamToolTextWidth, len([]rune(prefix)))
+	if shown == "" {
+		return glyph
+	}
+	return prefix + ui.Dim(shown)
+}
+
+func (d *ndjsonDecoder) streamNamedToolLine(glyph, name, label string, outside bool) string {
+	line := glyph
+	if name != "" {
+		shown := name
+		if d.displayWidth != nil {
+			shown = d.fitDisplayText(name, len([]rune(name)), len([]rune(glyph+" ")))
+		}
+		if shown != "" {
+			line += " " + shown
+		}
+		if shown != name {
+			return line
+		}
+	}
+	if label == "" {
+		return line
+	}
+	prefix := line + " "
+	if outside {
+		const warning = "⚠ "
+		shown := d.fitDisplayText(label, streamToolTextWidth, len([]rune(prefix+warning)))
+		return prefix + ui.Yellow(warning+shown)
+	}
+	shown := d.fitDisplayText(label, streamToolTextWidth, len([]rune(prefix)))
+	if shown == "" {
+		return line
+	}
+	return prefix + ui.Dim(shown)
+}
+
+// streamFailureLine preserves the failure marker and caller-supplied structural suffix. In live
+// output the label yields to that suffix, then the diagnostic uses any remaining row; redirected
+// output preserves the old per-field caps (labelFallback=0 means the label was uncapped).
+func (d *ndjsonDecoder) streamFailureLine(label, suffix, diagnostic string, labelFallback int) string {
+	if d.displayWidth == nil {
+		if labelFallback > 0 {
+			label = truncate(label, labelFallback)
+		}
+		diagnostic = truncate(diagnostic, streamToolTextWidth)
+		rest := ""
+		if primary := label + suffix; primary != "" {
+			rest = " " + primary
+		}
+		if diagnostic != "" {
+			rest += ": " + diagnostic
+		}
+		return "  " + ui.Red("✗") + rest
+	}
+
+	available := d.displayWidth() - 1 - len([]rune("  ✗"))
+	if available <= 0 {
+		return "  " + ui.Red("✗")
+	}
+	rest := ""
+	if suffix != "" {
+		shownSuffix := truncate(suffix, available)
+		labelBudget := available - len([]rune(shownSuffix)) - 1
+		if shownLabel := truncate(label, labelBudget); shownLabel != "" {
+			rest = " " + shownLabel
+		}
+		rest += shownSuffix
+	} else if shownLabel := truncate(label, available-1); shownLabel != "" {
+		rest = " " + shownLabel
+	}
+	if remaining := available - len([]rune(rest)); diagnostic != "" && remaining > 0 {
+		rest += truncate(": "+diagnostic, remaining)
+	}
+	return "  " + ui.Red("✗") + rest
+}
 
 func (d *ndjsonDecoder) toTail(s string) {
 	if d.tail != nil && s != "" {
@@ -385,18 +496,8 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 		case "tool_use":
 			d.terminalLimitNotice = ""
 			glyph, displayName, label, outside := toolDisplay(d.root, b.Name, b.Input)
-			line := glyph + " " + displayName
-			if label != "" {
-				shown := truncate(label, 60)
-				if outside {
-					// The agent reached outside the repo tree — flag it (⚠) and highlight the
-					// path yellow, vs the dim repo-relative path an in-tree call shows.
-					line += " " + ui.Yellow("⚠ "+shown)
-				} else {
-					line += " " + ui.Dim(shown)
-				}
-			}
-			d.emit(line)
+			// An outside path keeps its warning and yellow treatment; ordinary detail is dim.
+			d.emit(d.streamNamedToolLine(glyph, displayName, label, outside))
 			d.tool[b.ID] = strings.TrimSpace(displayName + " " + label)
 			d.noteToolStart(b.ID)
 		}
@@ -449,14 +550,7 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 		if !b.IsError {
 			continue
 		}
-		line := "  " + ui.Red("✗")
-		if label := d.tool[b.ToolUseID]; label != "" {
-			line += " " + label
-		}
-		if first := firstLine(rawText(b.Content)); first != "" {
-			line += ": " + truncate(first, 60)
-		}
-		d.emit(line)
+		d.emit(d.streamFailureLine(d.tool[b.ToolUseID], "", firstLine(rawText(b.Content)), 0))
 	}
 }
 
@@ -521,7 +615,7 @@ func (d *streamDecoder) result(ev *streamEvent) {
 			msg = "error"
 		}
 		if !d.limitShown || !streamLimitNotice(msg) {
-			d.emit(ui.Red("✗ " + truncate(firstLine(msg), 80)))
+			d.emit(d.streamErrorLine(msg))
 		}
 		d.toTail(msg)
 		d.toDiagnostic(msg)
