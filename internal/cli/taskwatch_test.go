@@ -51,7 +51,7 @@ func TestTasksWatchFrame(t *testing.T) {
 		{ID: "f", Title: "another done", State: stateDone},
 	}
 	c, _ := taskTreeCounts(items)
-	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merge(items), 0), "\n")
+	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merge(items), 0, 80), "\n")
 
 	for _, want := range []string{"2 todo", "1 in_progress", "1 blocked", "2 done"} {
 		if !strings.Contains(joined, want) {
@@ -94,7 +94,7 @@ func TestTaskWatchMarkersStayCompact(t *testing.T) {
 		}
 	}
 
-	line := mergedQueue(p, []mergedTask{{taskItem: taskItem{Title: "Task title", State: stateInProgress}}}, 0)[0]
+	line := mergedQueue(p, []mergedTask{{taskItem: taskItem{Title: "Task title", State: stateInProgress}}}, 0, 80)[0]
 	if line != "  ◰ Task title · unleased" {
 		t.Errorf("compact task row = %q, want %q", line, "  ◰ Task title · unleased")
 	}
@@ -107,7 +107,7 @@ func TestTaskWatchMarkersStayCompact(t *testing.T) {
 	} {
 		line := mergedQueue(p, []mergedTask{{
 			taskItem: taskItem{Title: "Task title", State: stateInProgress}, lease: tc.lease,
-		}}, 0)[0]
+		}}, 0, 80)[0]
 		if !strings.Contains(line, tc.want) {
 			t.Errorf("lease row = %q, want %q", line, tc.want)
 		}
@@ -116,6 +116,36 @@ func TestTaskWatchMarkersStayCompact(t *testing.T) {
 	t.Setenv("COOP_SPINNER", "0")
 	if got := taskWatchMarker(p, stateInProgress, 4); got != ui.CompactSpinFrames[0] {
 		t.Errorf("frozen task marker = %q, want %q", got, ui.CompactSpinFrames[0])
+	}
+}
+
+func TestTaskWatchTitleUsesAvailableTerminalWidth(t *testing.T) {
+	title := "Log every cloud error envelope instead of silently swallowing the useful diagnostic details"
+	merged := []mergedTask{{
+		taskItem: taskItem{ID: "errors", Title: title, State: stateInProgress},
+		fork:     "worker",
+		lease:    taskLeaseObservation{State: leaseBusy, Provider: "claude"},
+	}}
+	rowAt := func(width int) string {
+		frame := tasksWatchFrame(nil, merged, 0, width)
+		return frame[len(frame)-1]
+	}
+
+	wide := rowAt(120)
+	if !strings.Contains(wide, title) {
+		t.Errorf("wide task row should use columns beyond the old fixed title cap: %q", wide)
+	}
+
+	const narrowWidth = 52
+	narrow := rowAt(narrowWidth)
+	if strings.Contains(narrow, title) || !strings.Contains(narrow, "…") {
+		t.Errorf("narrow task row should elide its title: %q", narrow)
+	}
+	if want := "  ← worker · busy claude"; !strings.HasSuffix(narrow, want) {
+		t.Errorf("narrow task row should preserve suffix %q: %q", want, narrow)
+	}
+	if got, max := len([]rune(narrow)), narrowWidth-1; got > max {
+		t.Errorf("narrow task row width = %d, want at most %d: %q", got, max, narrow)
 	}
 }
 
@@ -128,7 +158,7 @@ func TestTasksWatchFrameMergesForks(t *testing.T) {
 	cf, _ := taskTreeCounts(forked)
 	sources := []watchSource{{label: ".agent/tasks", counts: cl}, {label: "api", counts: cf}}
 	merged := []mergedTask{{taskItem: local[0]}, {taskItem: forked[0], fork: "api"}}
-	joined := strings.Join(tasksWatchFrame(sources, merged, 0), "\n")
+	joined := strings.Join(tasksWatchFrame(sources, merged, 0, 80), "\n")
 
 	for _, want := range []string{".agent/tasks", "api", "Local thing", "Wire auth", "← api"} {
 		if !strings.Contains(joined, want) {
@@ -144,7 +174,7 @@ func TestTasksWatchFrameCapsLongBacklog(t *testing.T) {
 		items = append(items, taskItem{ID: string(rune('a' + i)), Title: "task " + string(rune('A'+i)), State: stateTodo})
 	}
 	c, _ := taskTreeCounts(items)
-	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merge(items), 0), "\n")
+	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merge(items), 0, 80), "\n")
 	if !strings.Contains(joined, "+3 more") { // 11 todo, cap 8 → 3 elided
 		t.Errorf("a >8 backlog should elide with '+3 more':\n%s", joined)
 	}
@@ -165,7 +195,7 @@ func TestTasksWatchQueueNeverElidesActive(t *testing.T) {
 		items = append(items, taskItem{ID: string(rune('a' + i)), Title: "todo " + string(rune('A'+i)), State: stateTodo})
 	}
 	c, _ := taskTreeCounts(items)
-	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merge(items), 0), "\n")
+	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merge(items), 0, 80), "\n")
 	if !strings.Contains(joined, "RUNNING NOW") {
 		t.Errorf("in-progress task must never be elided behind the cap:\n%s", joined)
 	}

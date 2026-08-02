@@ -261,6 +261,10 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 		"Coop-Task: <task-id>` trailer", "NOT its SHA", "re-signs your commit",
 		// Discovered separate work: simple → 00_todo/, big → xx_backlog/ (never in this commit).
 		"SPOT a SEPARATE task", "create its folder under", "/00_todo/", "xx_backlog/",
+		// An agent that tidies ANOTHER task's folder makes an unleased completion, which the host
+		// rejects — taking the agent's own valid completion down with it and ending the loop run.
+		// "don't claim another task" did not read as "don't tidy a finished-looking one".
+		"Move ONLY your assigned task's folder", "UNLEASED completion", "rejects your own completion",
 		// The contract is auto-loaded as the agent's instruction file — the prompt must not force a
 		// re-read of ~2K tokens already in context, only offer the path as a fallback.
 		"already loaded in your context", "only if its content is not",

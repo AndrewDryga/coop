@@ -93,12 +93,13 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 		return 0, nil
 	}
 
-	screen := ui.NewAltScreen(os.Stdout, func() int { return ui.TermWidth(os.Stdout) })
+	width := func() int { return ui.TermWidth(os.Stdout) }
+	screen := ui.NewAltScreen(os.Stdout, width)
 	sawActive, sawFork := false, false // the fleet's startup guard — see tasksWatchSettling
 	tick := func(spin int) ([]string, bool) {
 		sources, merged, running, nForks := read()
 		c := mergedCounts(merged)
-		frame := tasksWatchFrame(sources, merged, spin)
+		frame := tasksWatchFrame(sources, merged, spin, width())
 		screen.Frame(frame)
 		if running > 0 || c.Doing > 0 {
 			sawActive = true // a fork/loop is on it — work has started
@@ -145,7 +146,7 @@ func tasksWatchSettling(c taskCounts, running int, sawActive, sawFork bool) bool
 // label); several sources — configured queues and/or active forks — each get a labeled progress
 // line, so they're tellable apart. Below, the deduped tasks group by state — in progress (with the
 // fork that claimed it), todo, blocked; done is the header count. Pure, so it unit-tests headless.
-func tasksWatchFrame(sources []watchSource, merged []mergedTask, spin int) []string {
+func tasksWatchFrame(sources []watchSource, merged []mergedTask, spin, width int) []string {
 	p := ui.For(os.Stdout)
 	// Lead with the whole picture: the merged (deduped) progress bar + per-state counter.
 	out := []string{tasksProgressLine(p, mergedCounts(merged))}
@@ -163,7 +164,7 @@ func tasksWatchFrame(sources []watchSource, merged []mergedTask, spin int) []str
 		}
 	}
 	out = append(out, "")
-	return append(out, mergedQueue(p, merged, spin)...)
+	return append(out, mergedQueue(p, merged, spin, width)...)
 }
 
 // tasksProgressLine is the overall header: the merged progress bar and the per-state counts (each in
@@ -208,20 +209,30 @@ func tasksCountSummary(p ui.Palette, c taskCounts) string {
 // (taskWatchMarker) carries its state, matching the top counter legend. Active work (in_progress and
 // blocked) is never elided; only the cold todo backlog tail is capped so the board stays glanceable.
 // An in-progress task claimed by a fork is tagged (← name). Done tasks are omitted (header count).
-func mergedQueue(p ui.Palette, merged []mergedTask, spin int) []string {
+func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
 	byState := map[string][]mergedTask{}
 	for _, m := range merged {
 		byState[m.State] = append(byState[m.State], m)
 	}
-	const todoCap = 8 // cap only the cold todo backlog; in_progress + blocked always show in full
+	const (
+		todoCap            = 8 // cap only the cold todo backlog; active work always shows in full
+		taskRowPrefixWidth = 4 // two-space indent + one-column marker + separating space
+	)
 	var out []string
 	emit := func(m mergedTask) {
-		line := "  " + taskWatchMarker(p, m.State, spin) + " " + truncate(oneLineTitle(m.Title), 58)
+		suffix := ""
 		if m.fork != "" && m.State == stateInProgress {
-			line += p.Dim("  ← " + m.fork)
+			suffix += "  ← " + m.fork
 		}
 		if m.State == stateInProgress {
-			line += p.Dim(" · " + m.lease.label())
+			suffix += " · " + m.lease.label()
+		}
+		// AltScreen leaves the terminal's final column empty so a full row cannot auto-wrap. Give
+		// the title everything before that safety column and the row's fixed prefix/suffix.
+		titleWidth := width - 1 - taskRowPrefixWidth - len([]rune(suffix))
+		line := "  " + taskWatchMarker(p, m.State, spin) + " " + truncate(oneLineTitle(m.Title), titleWidth)
+		if suffix != "" {
+			line += p.Dim(suffix)
 		}
 		out = append(out, line)
 	}
