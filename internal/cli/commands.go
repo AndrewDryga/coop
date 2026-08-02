@@ -1862,7 +1862,7 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 		target := rev.active()
 		cmd, streaming := iterCmd(agent, prompt) // build after rotation so argv matches this provider
 		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-		code, out, usage, classification, windows, runErr := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowReview, subjects, reviewRepoReadOnly(writes), sink, peers, activity)
+		code, out, usage, classification, windows, runErr := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowReview, subjects, reviewRepoReadOnly(writes), sink, peers, activity, "")
 		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target, concurrent: concurrent}
 		if errors.Is(runErr, errCompletionWindowSetup) {
 			return last, runErr
@@ -3003,7 +3003,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
-			pfCode, _, _, pfClassification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, completionWindowReview, nil, false, sink, peers, "preflight")
+			pfCode, _, _, pfClassification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, completionWindowReview, nil, false, sink, peers, "preflight", "")
 			if errors.Is(runErr, errCompletionWindowSetup) {
 				return 1, runErr
 			}
@@ -3140,7 +3140,7 @@ reviewAgain:
 			}
 			iterStart := time.Now()
 			cmd, streaming := iterCmd(agent, iterWork)
-			code, _, res, classification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowWork, []string{assigned.Item.ID}, false, sink, peers, active)
+			code, _, res, classification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowWork, []string{assigned.Item.ID}, false, sink, peers, active, assigned.Item.ID)
 			if errors.Is(runErr, errCompletionWindowSetup) {
 				return 1, errors.Join(runErr, lease.release())
 			}
@@ -3932,7 +3932,7 @@ func (p *claudePlainLimitProbe) limited(code int) bool {
 // live bar watches task counts while its explicit activity remains fixed. On interactive terminals
 // the agent's output is funneled into the scroll history above a sticky progress bar (a
 // Docker-build-style live view). Non-terminal output goes straight to the destination unchanged.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity string) (code int, output string, res *iterResult, classification iterationClassification, windows *completionWindowSet, err error) {
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string) (code int, output string, res *iterResult, classification iterationClassification, windows *completionWindowSet, err error) {
 	if windowMode == completionWindowReview {
 		windows, err = beginReviewCompletionWindows(hosts, reviewSubjects)
 	} else if windowMode == completionWindowWork {
@@ -4053,7 +4053,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		boxCtx = childCtx
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: a.forkOwner, ConsultLead: lead, Peers: peers, Preset: a.preset, RunID: a.runID,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: a.forkOwner, ConsultLead: lead, Peers: peers, Preset: a.preset, RunID: a.runID, AssignedTask: assignedTask,
 		SuperviseDescendants: true,
 		RepoReadOnly:         repoReadOnly,
 		RepoReadOnlyPaths:    reviewReadOnlyPaths(windowMode, repoReadOnly, hosts),

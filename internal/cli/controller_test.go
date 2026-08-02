@@ -1256,7 +1256,7 @@ func TestRunIterationStopsBeforeLaunchOnCompletionWindowSetupFailure(t *testing.
 	a := &app{}
 	code, output, usage, classification, windows, err := a.runIteration(
 		context.Background(), t.TempDir(), "must-not-launch", "codex", "", []string{"must-not-launch"},
-		false, []string{root}, completionWindowStrict, nil, true, io.Discard, nil, "setup failure",
+		false, []string{root}, completionWindowStrict, nil, true, io.Discard, nil, "setup failure", "",
 	)
 	if code != 1 || !errors.Is(err, errCompletionWindowSetup) || windows != nil || output != "" || usage != nil {
 		t.Fatalf("setup-failed iteration = code %d output %q usage %#v windows %#v err %v", code, output, usage, windows, err)

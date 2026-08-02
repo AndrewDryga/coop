@@ -9,25 +9,39 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// prepareCommitMsgHook replaces the agent CLI's machine co-author line with coop's own, so a box
-// commit is attributed to coop (and the exact target) whichever agent made it. It runs even under
+// prepareCommitMsgHook stamps the two trailers a box commit must carry, from git config values the
+// box gitconfig sets (so the script itself is static): coop.trailer replaces the agent CLI's machine
+// co-author line, so the commit is attributed to coop and the exact target whichever agent made it;
+// coop.task stamps the assigned loop task's Coop-Task binding.
+//
+// The task stamp exists because a loop iteration's completion is REJECTED outright when its commit
+// carries no parseable Coop-Task trailer: an agent that simply forgets one loses the whole
+// iteration, and the trailer-less commit is then invisible to the informed-resume hint, leaving the
+// retry on the blind path. Remembering should not be the agent's job.
+//
+// The two are INDEPENDENT — neither may gate the other, or a run that sets only one silently loses
+// it. Both use addIfDifferent, so an agent that wrote the correct trailer itself gets no duplicate
+// and --amend stays idempotent (a duplicate binding is itself a rejection cause). Runs even under
 // `git commit --no-verify` (that skips commit-msg/pre-commit, NOT prepare-commit-msg), and leaves
-// merge/squash messages and any HUMAN Co-authored-by line untouched. The trailer value comes from
-// git config coop.trailer (set in the box gitconfig), so the script itself is static.
+// merge/squash messages and any HUMAN Co-authored-by line untouched.
 const prepareCommitMsgHook = `#!/bin/sh
 case "$2" in
 	merge|squash) exit 0 ;;
 esac
-trailer=$(git config coop.trailer 2>/dev/null) || exit 0
-[ -n "$trailer" ] || exit 0
 f="$1"
-# Drop machine co-author lines — the agent CLIs' and any prior coop one (so --amend stays idempotent)
-# — keyed off the vendor name or noreply domain on the Co-authored-by line; a human co-author matches
-# none of these and survives.
-tmp="$f.coop.$$"
-grep -viE '^Co-authored-by:.*(claude|chatgpt|codex|gemini|grok|coop|noreply@(anthropic|openai|google|x\.ai|coop))' "$f" > "$tmp" && mv "$tmp" "$f"
-# Append coop's line with correct trailer placement; addIfDifferent keeps it to one.
-git interpret-trailers --if-exists addIfDifferent --trailer "Co-authored-by: $trailer" --in-place "$f"
+trailer=$(git config coop.trailer 2>/dev/null || true)
+if [ -n "$trailer" ]; then
+	# Drop machine co-author lines — the agent CLIs' and any prior coop one (so --amend stays
+	# idempotent) — keyed off the vendor name or noreply domain on the Co-authored-by line; a human
+	# co-author matches none of these and survives.
+	tmp="$f.coop.$$"
+	grep -viE '^Co-authored-by:.*(claude|chatgpt|codex|gemini|grok|coop|noreply@(anthropic|openai|google|x\.ai|coop))' "$f" > "$tmp" && mv "$tmp" "$f"
+	git interpret-trailers --if-exists addIfDifferent --trailer "Co-authored-by: $trailer" --in-place "$f"
+fi
+task=$(git config coop.task 2>/dev/null || true)
+if [ -n "$task" ]; then
+	git interpret-trailers --if-exists addIfDifferent --trailer "Coop-Task: $task" --in-place "$f"
+fi
 `
 
 // The box has no ambient ~/.gitconfig of its own, so without this an agent would
@@ -68,7 +82,7 @@ func buildGitConfig(name, email string) string {
 
 // gitConfigForBox is buildGitConfig with the host user's global identity, plus the optional coop
 // co-author hook, global ignore file, and trailer used inside the box.
-func gitConfigForBox(coAuthor, hooksPath, excludesPath string) string {
+func gitConfigForBox(coAuthor, hooksPath, excludesPath, assignedTask string) string {
 	var b strings.Builder
 	b.WriteString(buildGitConfig(hostGitGlobal("user.name"), hostGitGlobal("user.email")))
 	if hooksPath != "" || excludesPath != "" {
@@ -80,8 +94,14 @@ func gitConfigForBox(coAuthor, hooksPath, excludesPath string) string {
 			b.WriteString("\texcludesFile = " + excludesPath + "\n")
 		}
 	}
-	if coAuthor != "" {
-		b.WriteString("[coop]\n\ttrailer = " + coAuthor + "\n")
+	if coAuthor != "" || assignedTask != "" {
+		b.WriteString("[coop]\n")
+		if coAuthor != "" {
+			b.WriteString("\ttrailer = " + coAuthor + "\n")
+		}
+		if assignedTask != "" {
+			b.WriteString("\ttask = " + assignedTask + "\n")
+		}
 	}
 	return b.String()
 }

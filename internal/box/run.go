@@ -116,6 +116,11 @@ type RunSpec struct {
 	// to the lead so peers it spawns don't recurse. Empty = no consult directive.
 	ConsultLead string
 
+	// AssignedTask is the loop task this iteration owns. The box's prepare-commit-msg hook stamps
+	// its Coop-Task trailer, so an agent that forgets one does not lose the whole completion.
+	// Empty outside a loop work iteration — nothing is assigned, so nothing is stamped.
+	AssignedTask string
+
 	// Peers is the EXPLICIT peer set for this run — the targets named by repeatable
 	// --peer (fusion, a normal run, or a loop run), each provider[:model] (no
 	// account: a peer runs on its default). It REPLACES the old implicit "every authed
@@ -473,7 +478,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// stamps. Empty for a raw run (no agent), which then gets no hook and no trailer.
 		coAuthor := boxCommitTrailer(cfg, spec)
 		hooksPath := ""
-		if coAuthor != "" {
+		if coAuthor != "" || spec.AssignedTask != "" {
 			if dir, err := gitHookDir(); err == nil {
 				tmpDirs = append(tmpDirs, dir)
 				hooksPath = filepath.Join(cfg.HomeInBox, boxGitHooksName)
@@ -488,7 +493,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				gitMounts = append(gitMounts, extraMount{p, excludesPath})
 			}
 		}
-		if p, err := writeTempFile(gitConfigForBox(coAuthor, hooksPath, excludesPath)); err == nil {
+		if p, err := writeTempFile(gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask)); err == nil {
 			tmpFiles = append(tmpFiles, p)
 			gitMounts = append(gitMounts, extraMount{p, cfg.HomeInBox + "/.gitconfig"})
 		}
