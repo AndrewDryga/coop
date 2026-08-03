@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -2016,4 +2017,50 @@ func TestReviewReopenReceiptStillVoidsOnTrailingModelContent(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A verdict rejected as "malformed" must show WHAT it rejected. Without this the failure is not
+// diagnosable from the log: the captured output is not persisted anywhere else, and a protected
+// audit is expensive to reproduce — the receipt can look perfect in the rendered log while some
+// invisible trailing byte is what actually voided it.
+func TestReceiptFailureTailMakesTheRejectionDiagnosable(t *testing.T) {
+	t.Run("names the trailing content that voided the receipt", func(t *testing.T) {
+		out := "AUDIT EVIDENCE — t — gate: green\nREVIEW COMPLETE — PASS — reopened: none\nOne more thing."
+		got := receiptFailureTail(out)
+		if !strings.Contains(got, "One more thing.") {
+			t.Errorf("tail did not name the trailing line:\n%s", got)
+		}
+		if !strings.Contains(got, "REVIEW COMPLETE") {
+			t.Errorf("tail dropped the receipt itself, losing the comparison:\n%s", got)
+		}
+	})
+
+	// Trailing whitespace and control bytes are invisible in a log but break a terminal-receipt
+	// parser, so the tail must quote rather than print.
+	t.Run("makes invisible trailing bytes visible", func(t *testing.T) {
+		got := receiptFailureTail("REVIEW COMPLETE — PASS — reopened: none\t \r")
+		if !strings.Contains(got, `\t`) && !strings.Contains(got, `\r`) {
+			t.Errorf("invisible trailing bytes were not escaped:\n%s", got)
+		}
+	})
+
+	t.Run("is bounded", func(t *testing.T) {
+		var b strings.Builder
+		for i := 0; i < 50; i++ {
+			fmt.Fprintf(&b, "line %d %s\n", i, strings.Repeat("x", 400))
+		}
+		got := receiptFailureTail(b.String())
+		if strings.Count(got, "⏎") > 2 {
+			t.Errorf("tail exceeded three lines:\n%s", got)
+		}
+		if len(got) > 700 {
+			t.Errorf("tail was not clipped: %d bytes", len(got))
+		}
+	})
+
+	t.Run("empty output says so instead of being blank", func(t *testing.T) {
+		if got := receiptFailureTail("\n\n  \n"); got != "(empty)" {
+			t.Errorf("receiptFailureTail(blank) = %q, want %q", got, "(empty)")
+		}
+	})
 }

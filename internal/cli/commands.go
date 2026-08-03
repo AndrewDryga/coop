@@ -2108,6 +2108,37 @@ func parseReviewReceiptLine(line string) (reviewReceipt, bool) {
 	return reviewReceipt{verdict: parts[0], reopened: ids}, true
 }
 
+// receiptFailureTail renders the last few non-empty lines of a rejected review output so the
+// failure can be diagnosed from the log alone.
+//
+// A verdict rejected as "malformed" used to say only that. When it happened on a real run the
+// receipt looked perfect in the rendered log, so there was no way to tell WHAT trailed it — the
+// captured output is not otherwise persisted, and reproducing a protected audit is expensive. That
+// left the choice between guessing at a fix and waiting for a recurrence with better luck.
+//
+// Bounded on purpose: three lines, each clipped, quoted so trailing whitespace and stray control
+// bytes are visible rather than invisible — those are exactly the shapes that break a parser that
+// requires the receipt to be terminal.
+func receiptFailureTail(output string) string {
+	const maxLines, maxLen = 3, 160
+	lines := strings.Split(output, "\n")
+	var tail []string
+	for i := len(lines) - 1; i >= 0 && len(tail) < maxLines; i-- {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		line := lines[i]
+		if len(line) > maxLen {
+			line = line[:maxLen] + "…"
+		}
+		tail = append([]string{strconv.Quote(line)}, tail...)
+	}
+	if len(tail) == 0 {
+		return "(empty)"
+	}
+	return strings.Join(tail, " ⏎ ")
+}
+
 // wrapperFooterLine reports whether a trailing line is transport-owned wrapper noise rather than
 // model output. The Codex wrapper prints `tokens used` and a formatted count, and those RACE the
 // final-message echo into the captured stream — so they can land after the receipt, split apart, or
@@ -2249,7 +2280,7 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 	output = normalizeReviewVerdictOutput(output)
 	receipt, ok := reviewReopenReceipt(output)
 	if !ok {
-		return nil, fmt.Errorf("%w: %w: missing or malformed terminal receipt", errReviewVerdict, errReviewVerdictMalformed)
+		return nil, fmt.Errorf("%w: %w: missing or malformed terminal receipt; output tail was %s", errReviewVerdict, errReviewVerdictMalformed, receiptFailureTail(output))
 	}
 	if len(subjects) == 0 {
 		if len(receipt.reopened) != 0 {
