@@ -1969,3 +1969,51 @@ func TestScaffoldAgentSet(t *testing.T) {
 		t.Errorf("no flag + no creds → empty, got %v", got)
 	}
 }
+
+// The Codex wrapper's `tokens used` footer races the final-message echo into the captured stream,
+// so it can land AFTER the receipt, split apart, or with only one half present. That voided
+// byte-perfect verdicts intermittently in emisar — it killed two runs, one discarding a legitimate
+// security FAIL — and forced their between-audit ladder to demote luna to failover.
+func TestReviewReopenReceiptSurvivesARacingWrapperFooter(t *testing.T) {
+	const receipt = "REVIEW COMPLETE — PASS — reopened: none"
+	for _, tc := range []struct{ name, output string }{
+		{"paired footer after the receipt", receipt + "\ntokens used\n162,824"},
+		{"marker only, count lost to the race", receipt + "\ntokens used"},
+		{"count only, marker lost to the race", receipt + "\n162,824"},
+		{"footer separated by blank lines", receipt + "\n\ntokens used\n\n162,824\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := reviewReopenReceipt(tc.output)
+			if !ok {
+				t.Fatalf("a valid receipt was voided by a wrapper footer:\n%q", tc.output)
+			}
+			if got.verdict != "PASS" || len(got.reopened) != 0 {
+				t.Errorf("receipt = %+v, want PASS with no reopened ids", got)
+			}
+		})
+	}
+
+	// A FAIL must survive the same way — that is the case whose loss was expensive.
+	fail := "REVIEW COMPLETE — FAIL — reopened: a-task,b-task\ntokens used\n1,024"
+	got, ok := reviewReopenReceipt(fail)
+	if !ok || got.verdict != "FAIL" || !slices.Equal(got.reopened, []string{"a-task", "b-task"}) {
+		t.Fatalf("FAIL receipt with a footer = %+v, ok=%v; want FAIL with both ids", got, ok)
+	}
+}
+
+// The narrowness is the point: only the known wrapper shapes are skipped. Trailing model content
+// must still void the receipt, because the between prompt requires nothing after it.
+func TestReviewReopenReceiptStillVoidsOnTrailingModelContent(t *testing.T) {
+	const receipt = "REVIEW COMPLETE — PASS — reopened: none"
+	for _, tc := range []struct{ name, output string }{
+		{"prose after the receipt", receipt + "\nOne more thought: the migration looks risky."},
+		{"a second receipt after a footer", receipt + "\ntokens used\n162,824\n" + receipt},
+		{"footer then prose", receipt + "\ntokens used\n162,824\nAlso, I skipped the security review."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, ok := reviewReopenReceipt(tc.output); ok {
+				t.Errorf("content after the receipt was silently accepted:\n%q", tc.output)
+			}
+		})
+	}
+}

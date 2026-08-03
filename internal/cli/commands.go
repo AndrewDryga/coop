@@ -2108,6 +2108,24 @@ func parseReviewReceiptLine(line string) (reviewReceipt, bool) {
 	return reviewReceipt{verdict: parts[0], reopened: ids}, true
 }
 
+// wrapperFooterLine reports whether a trailing line is transport-owned wrapper noise rather than
+// model output. The Codex wrapper prints `tokens used` and a formatted count, and those RACE the
+// final-message echo into the captured stream — so they can land after the receipt, split apart, or
+// with only one half present, none of which the paired-footer normalization recognizes.
+//
+// Measured in emisar: a byte-perfect verdict voided intermittently because the receipt was no
+// longer the last non-empty line. It killed two runs, one of them discarding a legitimate security
+// FAIL, and forced their between-audit ladder to demote luna to failover — which made the audit
+// same-vendor and defeated the cross-vendor rationale of the preset.
+//
+// Deliberately narrow: ONLY these exact shapes are skipped. Ordinary model content after a receipt
+// still voids it, because the between prompt requires nothing after the receipt. The point is to
+// stop a FOOTER from voiding an otherwise valid receipt, not to license trailing prose.
+func wrapperFooterLine(line string) bool {
+	line = strings.TrimSpace(line)
+	return line == codexReviewFooter || codexTokenCount(line)
+}
+
 // reviewReopenReceipt parses the strict terminal receipt emitted by every review. A receipt-looking
 // line earlier in the response is rejected too: otherwise ordinary prose could contain an old
 // verdict while the parser silently trusted a later block.
@@ -2116,7 +2134,7 @@ func reviewReopenReceipt(output string) (reviewReceipt, bool) {
 	lines := strings.Split(output, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if line == "" {
+		if line == "" || wrapperFooterLine(line) {
 			continue
 		}
 		receipt, ok := parseReviewReceiptLine(line)
