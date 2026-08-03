@@ -243,6 +243,39 @@ terminate_jobs() {
   for pid in $(live_jobs); do kill -KILL "$pid" 2>/dev/null || true; done
 }
 
+# coop's OWN detached consult, marked with COOP_CONSULT_OWNED=1 by internal/fusion/wrapper.go
+# before it detaches (children inherit the environment).
+owned_jobs() {
+  for pid in $1; do
+    tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -q "^COOP_CONSULT_OWNED=1$" && echo "$pid"
+  done
+} 2>/dev/null
+
+# Reap ONLY the listed pids. terminate_jobs deliberately KILLs everything still live after its
+# grace period, which is right at shutdown but wrong here — genuine agent background work must
+# keep its full drain window.
+reap_jobs() {
+  [ -n "$1" ] || return
+  for pid in $1; do kill -TERM "$pid" 2>/dev/null || true; done
+  sleep 1
+  for pid in $1; do kill -KILL "$pid" 2>/dev/null || true; done
+}
+
+# Drop the second list from the first. A pid that was just reaped can linger for a moment while it
+# dies, and its /proc entry no longer carries the ownership marker — so without this it would be
+# miscounted as agent background work and earn a handoff exit.
+without_pids() {
+  keep=
+  for pid in $1; do
+    skip=
+    for gone in $2; do
+      [ "$pid" = "$gone" ] && { skip=1; break; }
+    done
+    [ -n "$skip" ] || keep="$keep $pid"
+  done
+  echo "${keep# }"
+}
+
 provider_exit=0
 setsid "$@" & provider=$!
 trap 'kill -TERM -- -$provider 2>/dev/null || true; wait "$provider" 2>/dev/null; terminate_jobs "$(live_jobs)"; exit 143' INT TERM HUP
@@ -254,24 +287,44 @@ if [ "$provider_exit" -ne 0 ]; then
   exit "$provider_exit"
 fi
 
-# One ordering governs shutdown: consult timeout (600s, internal/fusion/wrapper.go) < this drain
-# < the watchdog's provider idle deadline (30m, internal/cli/watchdog.go). A detached consult
-# must expire on its own before the drain notices it, and the drain must finish before the
-# watchdog fires.
-# This MUST stay well under the host watchdog's provider idle deadline (providerIdleDeadline in
-# internal/cli/watchdog.go, 30m). The drain emits no stream events, so both clocks run from the
-# provider's last activity: at equal values the watchdog always wins the race, the box is reported
-# as a wedged provider instead of a descendant handoff, and the drain's own exit codes become
-# unreachable. Tests and operators may shorten it at the container boundary; invalid values fail
-# closed to the same bounded default.
+# A stranded consult is coop's own work, not the agent's, and it is worthless the moment the
+# provider that asked the question exits — nothing can read the reply any more. Reap it here, so
+# it costs neither the drain window nor a background handoff (which un-completes a finished task
+# and re-runs it). This replaces the old timing contract "consult timeout < drain < watchdog idle":
+# both outer bounds are now unlimited by default, so ordering can no longer be relied on. Ownership
+# is a fact; a deadline was only ever a guess.
+# The reap itself runs inside the scan loop below, not once here: a double-setsid child can be
+# invisible on the first scan (the same race quiescence_rescan exists for), so a one-shot sweep
+# misses exactly the consult it is meant to catch.
+#
+# The remaining wait is for GENUINE agent background work. It must stay well under the host
+# watchdog's provider idle deadline when one is configured (providerIdleDeadline in
+# internal/cli/watchdog.go; 0/disabled by default). The drain emits no stream events, so both
+# clocks would run from the provider's last activity: at equal values the watchdog wins the race,
+# the box is reported as a wedged provider instead of a descendant handoff, and the drain's own
+# exit codes become unreachable. Tests and operators may shorten it at the container boundary;
+# invalid values fail closed to the same bounded default.
 handoff_wait=${COOP_DESCENDANT_TIMEOUT:-900}
 case "$handoff_wait" in ''|*[!0-9]*) handoff_wait=900;; esac
 IFS=. read -r now _ < /proc/uptime
 deadline=$(( now + handoff_wait ))
 saw_live_job=
 quiescence_rescan=
+reaped_consult=
+reaped_pids=
 while :; do
   jobs=$(live_jobs)
+  # coop's own stranded consult is reaped on sight and never counts as background work: its reply
+  # died with the provider that asked for it, so waiting the window and then reporting a handoff
+  # would un-complete a finished task for nothing.
+  owned=$(owned_jobs "$jobs")
+  if [ -n "$owned" ]; then
+    [ -n "$reaped_consult" ] || echo "coop: consult(s) outlived the provider that asked — their reply can no longer be read; reaping: $(job_names "$owned")" >&2
+    reaped_consult=1
+    reap_jobs "$owned"
+    reaped_pids="$reaped_pids $owned"
+  fi
+  jobs=$(without_pids "$jobs" "$reaped_pids")
   if [ -n "$jobs" ]; then
     # Announce the wait ONCE. Without this the box is silent for the whole window, which reads as a
     # hung loop rather than a drain, and the operator cannot tell what is holding it open.

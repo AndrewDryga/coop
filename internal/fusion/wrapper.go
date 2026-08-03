@@ -438,6 +438,13 @@ publish_candidate_telemetry() {
 # bound; then the -k grace terminates a peer that ignores SIGTERM (GNU timeout exits 124/137).
 run() {
 	active_run_group=0
+	# Mark this subtree as coop's OWN. The box entrypoint's descendant drain reads it from
+	# /proc/<pid>/environ (children inherit it) to tell a stranded consult apart from genuine agent
+	# background work: once the provider that asked the question is gone, the answer can never be
+	# read, so the drain reaps it instead of waiting the full window and reporting a handoff — a
+	# handoff that un-completes an already finished task. See internal/box/image.go.
+	COOP_CONSULT_OWNED=1
+	export COOP_CONSULT_OWNED
 	# Unlimited (the default): exec the peer directly, with no timeout wrapper to cut it off.
 	if [ "$consult_timeout" -eq 0 ]; then
 		if command -v setsid >/dev/null 2>&1; then

@@ -56,6 +56,34 @@ func TestRuntimeEntrypointDescendantSupervision(t *testing.T) {
 		awaitRuntimeInitMarker(t, filepath.Join(repo, "term"), "term\n")
 	})
 
+	// A consult that outlives the provider that asked is coop's OWN work and is already worthless —
+	// nothing can read the reply. It must be reaped outright: no drain wait, and no handoff exit
+	// (which un-completes a finished task and re-runs it). The marker, not a deadline, is what
+	// distinguishes it; both the consult timeout and the watchdog are unlimited by default now.
+	t.Run("stranded consult is reaped instead of draining", func(t *testing.T) {
+		start := time.Now()
+		code, err := run(
+			"COOP_CONSULT_OWNED=1 setsid setsid sh -c 'trap \"\" TERM; while :; do sleep 1; done' &",
+			"-e", "COOP_DESCENDANT_TIMEOUT=30",
+		)
+		if err != nil || code != 0 {
+			t.Fatalf("stranded consult = exit %d, err %v; want exit 0 (reaped, no handoff)", code, err)
+		}
+		// It must not have sat through the 30s window it would get as agent background work.
+		if elapsed := time.Since(start); elapsed > 20*time.Second {
+			t.Fatalf("a coop-owned consult consumed the agent drain window: %s", elapsed)
+		}
+	})
+
+	// The marker is narrow on purpose: unmarked background work keeps its full drain.
+	t.Run("unmarked background work still drains", func(t *testing.T) {
+		code, err := run("setsid setsid sh -c 'sleep 1; echo still > /workspace/still' &", "-e", "COOP_DESCENDANT_TIMEOUT=5")
+		if err != nil || code != DescendantsDrainedExit {
+			t.Fatalf("unmarked descendant = exit %d, err %v; want exit %d (still drains)", code, err, DescendantsDrainedExit)
+		}
+		awaitRuntimeInitMarker(t, filepath.Join(repo, "still"), "still\n")
+	})
+
 	t.Run("forwarder does not delay a failed provider", func(t *testing.T) {
 		start := time.Now()
 		code, err := run("exit 7", "-e", "COOP_FORWARD=45678:missing:45678", "-e", "COOP_DESCENDANT_TIMEOUT=1")
