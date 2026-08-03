@@ -3012,13 +3012,78 @@ func auditResumeLine(id string) string {
 // resumePrefixFor builds the informed-resume preamble for the assigned task. A lease carrying the
 // host's audit-reopen authority selects the audit-rework preamble regardless of commit presence;
 // otherwise the Coop-Task trailer already in history selects the crash/reopen disambiguation line.
-// Empty when neither applies, so a fresh claim keeps the ordinary prompt.
-func (a *app) resumePrefixFor(repo, id string, reopen *auditReopenRecord) string {
+// With neither, an interrupted attempt may still have left UNCOMMITTED work behind, so that case
+// gets its own line. Empty only for a genuinely untouched resume.
+func (a *app) resumePrefixFor(repo, id, state string, reopen *auditReopenRecord) string {
 	if reopen != nil {
 		return auditResumeLine(id)
 	}
 	commits := commitsForTask(repo, "", id)
+	if len(commits) == 0 {
+		// Only for a RESUMED task. A fresh claim in a dirty checkout means someone else's work is
+		// in the tree, and telling a new task to go read it would be noise at best and an
+		// invitation to touch another task's files at worst.
+		if state != stateInProgress {
+			return ""
+		}
+		return uncommittedResumeLine(id, interruptedWorkFiles(repo))
+	}
 	return resumeLine(id, commits, boundTaskCommitIsHead(repo, commits))
+}
+
+// uncommittedResumeLine covers the OTHER interrupted shape: an in_progress task with NO bound
+// commit, resumed while the working tree carries changes. state.md cannot be trusted to reveal
+// this — a hard kill (OOM, a crashed container runtime, `docker kill`) never runs the agent's
+// checkpoint, so the snapshot keeps whatever it last said. Measured: a task killed after ~13h left
+// four modified files and a new rule card uncommitted while its state.md still read "not started";
+// a fresh agent had every reason to start over and redo all of it.
+//
+// It deliberately does NOT claim the changes belong to this task — in a shared checkout they may be
+// another task's, or a human's. It says what is there and makes reading it the first step, because
+// the expensive mistake is not reading at all.
+func uncommittedResumeLine(id string, files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	shown := files
+	if len(shown) > 12 {
+		shown = shown[:12]
+	}
+	line := "Task " + id + " is being resumed and has NO commit in history, but the working tree already " +
+		"carries uncommitted changes: " + strings.Join(shown, ", ")
+	if len(files) > len(shown) {
+		line += fmt.Sprintf(" (+%d more)", len(files)-len(shown))
+	}
+	return line + ". A previous attempt may have been killed before it could commit or checkpoint, so " +
+		"its state.md may understate what was done — do not trust it over the tree. FIRST run `git diff` " +
+		"and `git status` and read that work; judge it on its merits and finish or correct it rather than " +
+		"starting over. Some of it may belong to a DIFFERENT task or to a human, so commit only the paths " +
+		"that are yours, never `git add -A`."
+}
+
+// interruptedWorkFiles lists the working tree's changed paths for the resume hint. The task queue
+// is gitignored working state, so it never appears here; a clean tree yields nothing and the
+// blind-resume prompt stays byte-identical.
+func interruptedWorkFiles(repo string) []string {
+	out := gitOut(repo, "status", "--porcelain")
+	if out == "" {
+		return nil
+	}
+	var files []string
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		// Porcelain v1: XY then a space then the path; a rename reads "old -> new", keep the new one.
+		path := strings.TrimSpace(line[3:])
+		if i := strings.LastIndex(path, " -> "); i >= 0 {
+			path = path[i+4:]
+		}
+		if path = strings.Trim(path, `"`); path != "" {
+			files = append(files, path)
+		}
+	}
+	return files
 }
 
 func validateLeasedAuditReopen(repo, head, id string, reopen *auditReopenRecord) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -2625,10 +2626,10 @@ func TestAuditResumeLine(t *testing.T) {
 	}
 	// The lease's host audit authority — not commit presence — selects the audit preamble.
 	record := auditReopenRecord{TaskID: "my-task"}
-	if got := (&app{}).resumePrefixFor(t.TempDir(), "my-task", &record); got != l {
+	if got := (&app{}).resumePrefixFor(t.TempDir(), "my-task", stateInProgress, &record); got != l {
 		t.Errorf("resumePrefixFor with audit authority = %q, want the audit resume line", got)
 	}
-	if got := (&app{}).resumePrefixFor(t.TempDir(), "my-task", nil); got != "" {
+	if got := (&app{}).resumePrefixFor(t.TempDir(), "my-task", stateInProgress, nil); got != "" {
 		t.Errorf("resumePrefixFor without commits or authority = %q, want empty", got)
 	}
 }
@@ -5280,5 +5281,87 @@ func TestAlreadyCommittedInProgress(t *testing.T) {
 	}
 	if got[0].Commit == "" {
 		t.Error("report must name the commit so a human can verify it")
+	}
+}
+
+// A task killed before it could commit OR checkpoint leaves its work only in the tree, with a
+// state.md that still says whatever it last said. The resume preamble must point the next agent at
+// that work — this is the case that cost a ~13h task a full redo.
+func TestUncommittedResumeLinePointsAtTheStrandedWork(t *testing.T) {
+	line := uncommittedResumeLine("2026-08-03-some-task", []string{"runner/internal/catalog/catalog.go", "packs/AGENTS.md"})
+	for _, want := range []string{
+		"NO commit in history",
+		"runner/internal/catalog/catalog.go",
+		"git diff",
+		"do not trust it over the tree",
+		"never `git add -A`",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("resume line missing %q:\n%s", want, line)
+		}
+	}
+}
+
+// A clean tree must keep the ordinary prompt byte-identical — no hint, no noise.
+func TestUncommittedResumeLineIsSilentOnACleanTree(t *testing.T) {
+	if got := uncommittedResumeLine("t", nil); got != "" {
+		t.Errorf("clean tree produced a resume hint: %q", got)
+	}
+}
+
+// The list is bounded: a wide-open tree must not paste hundreds of paths into every prompt.
+func TestUncommittedResumeLineBoundsTheFileList(t *testing.T) {
+	var many []string
+	for i := 0; i < 40; i++ {
+		many = append(many, fmt.Sprintf("file-%02d.go", i))
+	}
+	line := uncommittedResumeLine("t", many)
+	if !strings.Contains(line, "(+28 more)") {
+		t.Errorf("file list was not bounded to 12 with a remainder count:\n%s", line)
+	}
+	if strings.Contains(line, "file-30.go") {
+		t.Error("resume line listed beyond the bound")
+	}
+}
+
+// Rename entries are "old -> new"; the resume hint must name the file that exists now.
+func TestInterruptedWorkFilesReportsRenameTargets(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "before.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "add before.txt")
+	git(t, repo, "mv", "before.txt", "after.txt")
+
+	files := interruptedWorkFiles(repo)
+	if !slices.Contains(files, "after.txt") {
+		t.Errorf("interruptedWorkFiles(renamed) = %v, want it to name after.txt", files)
+	}
+	if slices.Contains(files, "before.txt -> after.txt") {
+		t.Errorf("rename arrow leaked into the file list: %v", files)
+	}
+}
+
+// The stranded-work hint is for RESUMED tasks only. A fresh claim in a dirty checkout is somebody
+// else's work in the tree; pointing a new task at it invites cross-task edits.
+func TestResumePrefixOnlyFlagsStrandedWorkForAResumedTask(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "stranded.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed := (&app{}).resumePrefixFor(repo, "t", stateInProgress, nil)
+	if !strings.Contains(resumed, "stranded.go") {
+		t.Errorf("a resumed task was not told about the uncommitted work:\n%s", resumed)
+	}
+	if fresh := (&app{}).resumePrefixFor(repo, "t", stateTodo, nil); fresh != "" {
+		t.Errorf("a freshly claimed task was pointed at another task's dirty tree:\n%s", fresh)
 	}
 }

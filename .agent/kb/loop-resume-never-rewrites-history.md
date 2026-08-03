@@ -3,7 +3,7 @@ name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
 sources: [internal/cli/controller.go, internal/cli/commands.go, internal/box/image.go, internal/box/run.go]
-updated: 2026-08-01
+updated: 2026-08-03
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
 observed twice in emisar on 2026-08-01:
@@ -42,5 +42,24 @@ The cheap mitigation for a repo whose tests leak browsers is a bounded drain:
 var. The real fix is not leaking the descendant. See [[box-entrypoint-descendant-handoff]] and
 [[task-state-is-the-folder]].
 
+## The other interrupted shape: no commit, work only in the tree
+
+The chain above is the *committed* interruption. The opposite one is quieter and was costlier per
+occurrence: a hard kill (OOM, a crashed container runtime, `docker kill`) stops the agent before it
+commits AND before it checkpoints. Nothing lands in history, and `state.md` keeps whatever it last
+said — **"not started" for a task that had run ~13 hours**, while four modified files and a new rule
+card sat uncommitted in the shared checkout.
+
+So `state.md` is a best-effort snapshot, never evidence: it is written by the very process that got
+killed. The tree is the evidence. `resumePrefixFor` now handles this case — no bound commit + a
+resumed (`10_in_progress`) task + a dirty tree yields `uncommittedResumeLine`, which names the
+changed paths and makes `git diff` the first step, explicitly telling the agent not to trust
+state.md over the tree and to commit only its own paths (never `git add -A`, since a shared checkout
+can hold another task's work at the same time).
+
+It is gated on the resumed state on purpose: a FRESH claim in a dirty tree is somebody else's work,
+and pointing a new task at it invites cross-task edits.
+
 ## Changelog
 - 2026-08-01 — created: traced the leaked-descendant → un-complete → deep-amend chain after it rewrote 283 and nearly 286 commits of emisar's main; gated the amend recipe on boundTaskCommitIsHead.
+- 2026-08-03 — added the uncommitted-interruption case: a hard-killed task left ~13h of work in the tree with a state.md still reading "not started"; resumePrefixFor now points a resumed agent at the stranded diff instead of letting it start over.

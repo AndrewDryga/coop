@@ -3147,7 +3147,7 @@ reviewAgain:
 			}
 			work := loopWorkPrompt(repo, assigned.Root, assigned.Item.ID, agent, peers, a.preset, lease.reopen != nil)
 			iterWork := work
-			if pre := a.resumePrefixFor(repo, assigned.Item.ID, lease.reopen); pre != "" {
+			if pre := a.resumePrefixFor(repo, assigned.Item.ID, assigned.Item.State, lease.reopen); pre != "" {
 				iterWork = pre + "\n\n" + work
 			}
 			iterStart := time.Now()
