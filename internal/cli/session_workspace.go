@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 const (
@@ -789,7 +791,9 @@ func discardSessionWorkspace(plan sessionWorkspaceDiscardPlan) error {
 	if !samePinnedForkWorkspace(plan.Workspace, info) {
 		return errors.New("discard plan is stale: workspace was replaced before removal")
 	}
-	if err := destroyFork(plan.Repo, plan.Name); err != nil {
+	// Zero runtime on purpose: the session service already brought this workspace's services
+	// down (with its volumes) before planning the discard, so destroyFork must not do it twice.
+	if err := destroyFork(runtime.Runtime{}, plan.Repo, plan.Name); err != nil {
 		return fmt.Errorf("discard session workspace: %w", err)
 	}
 	return nil

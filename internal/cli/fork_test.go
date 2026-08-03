@@ -11,6 +11,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -918,7 +919,7 @@ func TestForkLifecycle(t *testing.T) {
 	}
 
 	// destroyFork removes the workspace and the review ref.
-	if err := destroyFork(repo, "perf"); err != nil {
+	if err := destroyFork(runtime.Runtime{}, repo, "perf"); err != nil {
 		t.Fatalf("destroyFork: %v", err)
 	}
 	if pathExists(ws) {
@@ -1283,5 +1284,69 @@ func TestForkLogsUnknownErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no such fork") {
 		t.Errorf("error = %q, want it to mention 'no such fork'", err)
+	}
+}
+
+// Removing a fork must stop its sibling services, and must do it WHILE the fork's compose file
+// still exists: teardown is driven by that file, so once the worktree is deleted DownServices
+// finds nothing and silently no-ops. That ordering bug left a removed fork's containers running
+// for five days, holding disk the whole time.
+func TestDestroyForkStopsServicesBeforeRemovingTheWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	stubDir := t.TempDir()
+	record := filepath.Join(stubDir, "invocations")
+	// The stub stands in for the container runtime: it records its argv, and — the point of the
+	// test — whether the compose file it was pointed at still existed when it ran.
+	stub := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >>" + record + "\n" +
+		"for a in \"$@\"; do\n" +
+		"  case \"$a\" in *compose.yml)\n" +
+		"    if [ -f \"$a\" ]; then printf 'compose-file-present\\n' >>" + record + "\n" +
+		"    else printf 'compose-file-ALREADY-GONE\\n' >>" + record + "; fi ;;\n" +
+		"  esac\n" +
+		"done\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "stubruntime"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	repo := initRepo(t)
+	ws, err := setupFork(repo, "svc")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	compose := filepath.Join(ws, filepath.FromSlash(project.DefaultCompose))
+	if err := os.MkdirAll(filepath.Dir(compose), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: postgres:18.4-alpine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := destroyFork(runtime.Runtime{Name: "stubruntime"}, repo, "svc"); err != nil {
+		t.Fatalf("destroyFork: %v", err)
+	}
+
+	got, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("the runtime was never invoked, so the fork's services were left running: %v", err)
+	}
+	calls := string(got)
+	if !strings.Contains(calls, "down") {
+		t.Errorf("destroyFork did not bring the fork's services down:\n%s", calls)
+	}
+	if !strings.Contains(calls, "--volumes") {
+		t.Errorf("a disposable fork's volumes were left behind:\n%s", calls)
+	}
+	if strings.Contains(calls, "compose-file-ALREADY-GONE") {
+		t.Errorf("services were stopped AFTER the worktree was deleted, so the teardown was a no-op:\n%s", calls)
+	}
+	if !strings.Contains(calls, "compose-file-present") {
+		t.Errorf("teardown never saw the fork's compose file:\n%s", calls)
+	}
+	if pathExists(ws) {
+		t.Error("workspace was not removed")
 	}
 }

@@ -505,7 +505,7 @@ func (a *app) pruneFleet(repo string, force, yes bool) (int, error) {
 			unlock()
 			continue
 		}
-		if err := destroyFork(repo, n); err != nil {
+		if err := destroyFork(a.rt, repo, n); err != nil {
 			ui.Error("prune %s: %v", n, err)
 			kept++
 			unlock()

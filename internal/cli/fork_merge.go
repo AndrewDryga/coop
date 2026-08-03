@@ -444,7 +444,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 	// Default-No delete confirm (the land above was the default-Yes step); --yes is already required
 	// for a non-interactive run, so this only prompts at a TTY. Declining just keeps the landed fork.
 	if destroyGate("remove the landed fork "+name, yes) == nil {
-		if err := destroyFork(repo, name); err != nil {
+		if err := destroyFork(a.rt, repo, name); err != nil {
 			return -1, err
 		}
 		ui.OK("removed fork %s", name)
@@ -504,7 +504,7 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 			if gitDirty(ws) { // interrupted iteration — don't discard uncommitted work in the batch cleanup
 				ui.Warn("keeping fork %s — uncommitted changes; 'coop fork rm %s --force' after review", n, n)
 			} else {
-				_ = destroyFork(repo, n)
+				_ = destroyFork(a.rt, repo, n)
 			}
 			landed = append(landed, n)
 		}

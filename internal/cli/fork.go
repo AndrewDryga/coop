@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -488,7 +490,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 				unlock()
 				return 1, fmt.Errorf("--fresh: fork %q changed while awaiting recreation: %w", fa.name, err)
 			}
-			if err := destroyFork(repo, fa.name); err != nil {
+			if err := destroyFork(a.rt, repo, fa.name); err != nil {
 				unlock()
 				return -1, err
 			}
@@ -851,9 +853,23 @@ func excludeFork(ws, pattern string) {
 
 // destroyFork removes a fork's workspace and its review/<name> ref, then prunes an
 // empty forks home. Best-effort on the ref so it works for partially-built forks.
-func destroyFork(repo, name string) error {
+func destroyFork(rt runtime.Runtime, repo, name string) error {
+	ws := forkWorkspace(repo, name)
+	// Stop the fork's sibling services BEFORE its worktree goes. Teardown is driven by the fork's
+	// own compose file, so once the workspace is deleted there is nothing left to drive it:
+	// DownServices finds no file and silently no-ops, which is how removed forks left containers
+	// running for days (measured: a fork's keycloak + postgres still up five days after `fork rm`,
+	// holding disk the whole time). Volumes go with them — a fork is disposable by definition.
+	//
+	// Best effort: a service that refuses to stop must not block the removal the operator asked
+	// for, but it must not vanish silently either.
+	if rt.Name != "" {
+		if err := box.DownServices(rt, ws, repo, true, io.Discard, io.Discard); err != nil {
+			ui.Info("fork %s: sibling services did not stop cleanly (%v) — check 'coop ps'", name, err)
+		}
+	}
 	_ = gitRun(repo, "branch", "-q", "-D", "review/"+name)
-	if err := os.RemoveAll(forkWorkspace(repo, name)); err != nil {
+	if err := os.RemoveAll(ws); err != nil {
 		return err
 	}
 	if entries, _ := os.ReadDir(forkHome(repo)); len(entries) == 0 {
@@ -1572,7 +1588,7 @@ func (a *app) forkRm(args []string) (int, error) {
 	if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
 		return 1, fmt.Errorf("fork %q changed while awaiting confirmation: %w", name, err)
 	}
-	if err := destroyFork(repo, name); err != nil {
+	if err := destroyFork(a.rt, repo, name); err != nil {
 		return -1, err
 	}
 	ui.OK("removed fork %s", name)
