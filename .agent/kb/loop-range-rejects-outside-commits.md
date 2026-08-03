@@ -3,7 +3,7 @@ name: loop-range-rejects-outside-commits
 description: any commit landing while an iteration runs joins its range; one carrying another task's Coop-Task trailer rejects that iteration's completion
 subsystem: loop
 sources: [internal/cli/controller.go, internal/cli/commands.go]
-updated: 2026-08-01
+updated: 2026-08-03
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the
 proposed HEAD. That range is a *time* window on one branch, not a set of commits the agent authored
@@ -25,6 +25,21 @@ is running against a repo, do not commit to it from the host. If work is unavoid
 first — and stop it at an iteration boundary, because a hard kill between the agent's commit and its
 folder move leaves the task in the state [[loop-resume-never-rewrites-history]] describes.
 
+## The worst source of a foreign commit is a second loop
+
+A human committing mid-iteration is the obvious case; the expensive one is **two `coop loop`
+processes sharing a checkout**. Each works a *different* task, so the per-task lease in
+`completionwindow.go` never fires — it only stops two loops claiming the SAME task. Both commit,
+each one's range then contains the other's `Coop-Task` binding, and **both** completions are
+rejected. Observed 2026-08-03: `7769ead7` (10:21:41) and `33cb8a41` (10:27:05), two different
+tasks, both rejected and reopened after they were finished.
+
+`lockLoopCheckout` (`internal/cli/fork_loop.go`) now makes this impossible: `a.loop` takes an
+exclusive flock per checkout before touching any queue state, so the second loop fails fast and
+names the holding pid. It is keyed on the **resolved worktree path**, never the repo name — a fork
+fleet hands each loop its own `ws`, so concurrent forks keep separate locks and stay parallel.
+Serializing the fleet would defeat forks; isolate the state instead.
+
 Recovery is cheap and does not need history surgery: the rejected task is restored to
 `10_in_progress/` with its commit still in history, the loop's startup now warns that its commit is
 already reachable (with the depth), and the next iteration resumes it — amending in place while that
@@ -32,3 +47,4 @@ commit is still HEAD.
 
 ## Changelog
 - 2026-08-01 — created: a host commit made during an iteration rejected that iteration's completed task; documents that the range is a time window and that single-writer covers commits.
+- 2026-08-03 — two concurrent loops in one checkout were observed rejecting each other's completions (the per-task lease cannot catch it); added `lockLoopCheckout` and recorded why the lock is keyed per worktree so fork fleets stay parallel.

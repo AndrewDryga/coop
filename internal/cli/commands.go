@@ -2818,6 +2818,13 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	if !slices.ContainsFunc(hosts, isTaskDir) {
 		return -1, fmt.Errorf("no task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(queues, ", "))
 	}
+	// One loop per checkout, claimed before ANY queue state is touched — the reconcilers just
+	// below already mutate it. Per-worktree, so a fork fleet stays parallel (see lockLoopCheckout).
+	releaseCheckout, err := lockLoopCheckout(a.cfg, repo)
+	if err != nil {
+		return 1, err
+	}
+	defer releaseCheckout()
 	// .agent/loop.yaml is the committed loop config (prompts, per-step models, settings). A bad file
 	// fails the run here, before any box work. Absent → an empty config (all built-in defaults).
 	// The snapshot pins this ONE read for the whole run — announced here so every log names the
