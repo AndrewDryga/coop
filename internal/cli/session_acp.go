@@ -1271,11 +1271,11 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 						return nil, "", err
 					}
 				}
-				if imageFrame {
-					transcriptBytes += 512
-				} else {
-					transcriptBytes += len(frame) + 1
-				}
+				transcriptBytes += sessionACPUpdateTranscriptBytes(
+					envelope.Params,
+					len(frame)+1,
+					imageFrame,
+				)
 				if transcriptBytes > sessionACPTranscriptLimit {
 					return nil, "", acpFailure(sessionACPProtocolError, "ACP transcript exceeded its bound")
 				}
@@ -1487,6 +1487,29 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 		return "", nil, acpFailure(sessionACPProtocolError, "turn output artifacts exceed their total bound")
 	}
 	return string(assistant), outputArtifacts, nil
+}
+
+func sessionACPUpdateTranscriptBytes(raw json.RawMessage, frameBytes int, imageFrame bool) int {
+	if imageFrame {
+		return 512
+	}
+	var envelope struct {
+		Update struct {
+			SessionUpdate string `json:"sessionUpdate"`
+		} `json:"update"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil {
+		return frameBytes
+	}
+	switch envelope.Update.SessionUpdate {
+	case "assistant_message_chunk", "agent_message_chunk":
+		return frameBytes
+	default:
+		// Tool updates are inspected one frame at a time and then discarded. Charging their
+		// cumulative bytes as retained transcript makes legitimate long turns fail without
+		// adding a memory-safety boundary; the per-frame and turn deadline bounds still apply.
+		return 0
+	}
 }
 
 func readSessionACPFrames(reader io.Reader, stop <-chan struct{}, frames chan<- sessionACPFrame) {

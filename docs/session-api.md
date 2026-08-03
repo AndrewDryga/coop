@@ -266,7 +266,9 @@ safe filename, media type, SHA-256 digest, and exact byte count, never inline by
 returns that one immutable file with matching `Content-Type`, `Content-Length`, and `ETag` headers.
 Typed image and embedded image-resource blocks nested in ACP tool updates are captured in output
 order as `generated-1.<ext>`, `generated-2.<ext>`, and so on; their encoded bytes do not consume the
-text transcript budget. Other tool output remains subject to the transcript and frame bounds.
+text transcript budget. Text tool updates are inspected one bounded frame at a time and discarded,
+so their cumulative bytes do not terminate a legitimate long turn. Assistant text, each wire frame,
+the turn deadline, and durable output artifacts remain independently bounded.
 Only PNG, JPEG, WebP, and GIF are accepted. Coop rejects symlinks, special files, mismatched content,
 more than four files, a file over 8 MiB, or more than 8 MiB total. The scratch directory is removed
 before the turn completes, so generated charts do not appear as repository changes.

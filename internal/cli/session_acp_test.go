@@ -254,6 +254,18 @@ func TestSessionTurnRunnerCapturesGeneratedImageFromToolUpdate(t *testing.T) {
 	}
 }
 
+func TestSessionTurnRunnerStreamsLargeToolOutputWithoutAbortingTurn(t *testing.T) {
+	fixture := newSessionACPFixture(t, "large-tool-output")
+	turn := fixture.submit(t, "investigate all relevant evidence")
+	completed, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.AssistantMessage != "investigation complete" {
+		t.Fatalf("assistant message = %q", completed.AssistantMessage)
+	}
+}
+
 func TestSessionTurnRunnerRejectsLoadFailureAndBindsConflicts(t *testing.T) {
 	fixture := newSessionACPFixture(t, "load-fail")
 	bound, err := fixture.store.BindNativeSession(context.Background(), fixture.session.ID, "native-existing")
@@ -859,6 +871,20 @@ func TestSessionACPChildHelper(t *testing.T) {
 			}
 		case "session/prompt":
 			switch scenario {
+			case "large-tool-output":
+				chunk := strings.Repeat("e", 1<<20)
+				for i := 0; i < 5; i++ {
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+						"sessionId": frame.Params.SessionID,
+						"update": map[string]any{
+							"sessionUpdate": "tool_call_update",
+							"toolCallId":    "large-tool",
+							"content":       []any{map[string]any{"type": "content", "content": map[string]string{"type": "text", "text": chunk}}},
+						},
+					}})
+				}
+				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": "investigation complete"}}}})
+				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
 			case "image-output":
 				image := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0}, sessionACPTranscriptLimit+1024)...)
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "image", "mimeType": "image/png", "data": base64.StdEncoding.EncodeToString(image)}}}})

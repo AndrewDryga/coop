@@ -1,9 +1,9 @@
 ---
 name: acp-generated-output-boundary
-description: Generated images bypass transcript bytes but remain bounded, immutable turn artifacts.
+description: Discarded tool streams bypass transcript bytes while durable outputs remain bounded.
 subsystem: acp
 sources: [internal/cli/session_acp.go, internal/cli/session_output.go, internal/session/store.go, internal/cli/session_http.go]
-updated: 2026-07-31
+updated: 2026-08-02
 ---
 
 ACP image chunks can be several megabytes of base64. Counting those bytes as ordinary transcript
@@ -20,5 +20,11 @@ treated as artifacts.
 Public turn JSON contains metadata only. Consumers fetch one immutable image through the turn
 artifact endpoint and must verify its advertised size and SHA-256 digest before publication.
 
+Text tool updates follow the same retained-state distinction. Coop inspects each already
+frame-bounded update for artifacts and then discards it, so cumulative tool traffic is not retained
+transcript and must not become a correctness limit. Assistant text, individual frames, turn
+deadlines, artifacts, and the native provider context remain independently governed.
+
 ## Changelog
+- 2026-08-02 — stopped cumulative discarded text tool updates from aborting long valid turns.
 - 2026-07-31 — created with the bounded generated-image turn contract.
