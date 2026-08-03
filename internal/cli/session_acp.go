@@ -36,6 +36,7 @@ const (
 	sessionACPKillGrace       = 750 * time.Millisecond
 	sessionACPCleanupTimeout  = 2 * time.Second
 	sessionACPWarmLimit       = 20
+	sessionACPStderrLimit     = 4 << 10
 )
 
 const (
@@ -1112,7 +1113,64 @@ type sessionACPProcess struct {
 	nativeSessionID        string
 	imageCapable           bool
 	embeddedContextCapable bool
+	stderr                 *sessionACPStderr
 	exited                 atomic.Bool
+}
+
+type sessionACPStderr struct {
+	mu   sync.Mutex
+	tail []byte
+}
+
+func (w *sessionACPStderr) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(p) >= sessionACPStderrLimit {
+		w.tail = append(w.tail[:0], p[len(p)-sessionACPStderrLimit:]...)
+		return len(p), nil
+	}
+	overflow := len(w.tail) + len(p) - sessionACPStderrLimit
+	if overflow > 0 {
+		copy(w.tail, w.tail[overflow:])
+		w.tail = w.tail[:len(w.tail)-overflow]
+	}
+	w.tail = append(w.tail, p...)
+	return len(p), nil
+}
+
+func (w *sessionACPStderr) String() string {
+	if w == nil {
+		return ""
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return string(w.tail)
+}
+
+func safeSessionACPExitDetail(stderr string) string {
+	text := strings.ToLower(stderr)
+	switch {
+	case strings.Contains(text, "image \"") && strings.Contains(text, "not built") && strings.Contains(text, "coop build"):
+		return "Coop box image is not built; run 'coop build'"
+	case strings.Contains(text, "no space left on device"):
+		return "Coop runtime storage is full"
+	case strings.Contains(text, "cannot connect to the docker daemon") || strings.Contains(text, "is the docker daemon running"):
+		return "Coop cannot reach the Docker runtime"
+	case strings.Contains(text, "not authenticated") && strings.Contains(text, "coop login"):
+		return "the configured Coop account is not authenticated; run 'coop login'"
+	default:
+		return ""
+	}
+}
+
+func sessionACPChildClosedFailure(process *sessionACPProcess) error {
+	detail := "ACP child closed before its response"
+	if process != nil {
+		if diagnostic := safeSessionACPExitDetail(process.stderr.String()); diagnostic != "" {
+			detail += ": " + diagnostic
+		}
+	}
+	return acpFailure(sessionACPProcessError, detail)
 }
 
 func startSessionACPProcess(cmd *exec.Cmd) (*sessionACPProcess, error) {
@@ -1128,9 +1186,9 @@ func startSessionACPProcess(cmd *exec.Cmd) (*sessionACPProcess, error) {
 	process := &sessionACPProcess{
 		cmd: cmd, stdin: stdin, stdout: stdout,
 		wait: make(chan error, 1), readStop: make(chan struct{}),
-		frames: make(chan sessionACPFrame, 1),
+		frames: make(chan sessionACPFrame, 1), stderr: &sessionACPStderr{},
 	}
-	cmd.Stderr = io.Discard
+	cmd.Stderr = process.stderr
 	if err := cmd.Start(); err != nil {
 		process.closePipes()
 		return nil, acpFailure(sessionACPProcessError, "ACP child could not be started")
@@ -1332,7 +1390,7 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 			case frame := <-frames:
 				if frame.err != nil {
 					if errors.Is(frame.err, io.EOF) {
-						return nil, acpFailure(sessionACPProcessError, "ACP child closed before its response")
+						return nil, sessionACPChildClosedFailure(process)
 					}
 					return nil, frame.err
 				}

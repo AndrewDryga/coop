@@ -299,6 +299,30 @@ func TestSessionTurnRunnerPreservesInitializeFailure(t *testing.T) {
 	}
 }
 
+func TestSessionTurnRunnerReportsSafeChildLaunchDiagnostic(t *testing.T) {
+	fixture := newSessionACPFixture(t, "missing-image")
+	turn := fixture.submit(t, "launch failure")
+	_, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	if err == nil || !strings.Contains(err.Error(), "Coop box image is not built; run 'coop build'") {
+		t.Fatalf("missing image failure = %v", err)
+	}
+	got, getErr := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if got.State != session.TurnFailed || got.ErrorCode != sessionACPProcessError ||
+		!strings.Contains(got.ErrorDetail, "Coop box image is not built") {
+		t.Fatalf("missing image turn = %+v", got)
+	}
+}
+
+func TestSafeSessionACPExitDetailSuppressesArbitraryStderr(t *testing.T) {
+	stderr := "provider failed with bearer secret-token and internal stack trace"
+	if got := safeSessionACPExitDetail(stderr); got != "" {
+		t.Fatalf("unsafe child diagnostic was exposed: %q", got)
+	}
+}
+
 func TestSessionTurnRunnerPermissionAndUnknownRequests(t *testing.T) {
 	fixture := newSessionACPFixture(t, "requests")
 	turn := fixture.submit(t, "permission prompt")
@@ -813,6 +837,10 @@ func TestSessionACPChildHelper(t *testing.T) {
 	_ = os.WriteFile(privateNative, []byte("native"), 0o600)
 
 	scenario := os.Getenv("COOP_TEST_SESSION_SCENARIO")
+	if scenario == "missing-image" {
+		_, _ = os.Stderr.WriteString("image \"coop-box\" not built - run 'coop build'\n")
+		os.Exit(7)
+	}
 	reader := bufio.NewScanner(os.Stdin)
 	reader.Buffer(make([]byte, 1024), sessionACPFrameLimit)
 	writer := bufio.NewWriter(os.Stdout)
