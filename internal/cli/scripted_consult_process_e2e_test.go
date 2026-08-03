@@ -258,7 +258,9 @@ func TestProviderScriptedConsultTimeoutAndOverflowMatrix(t *testing.T) {
 			}
 		}
 	}
-	setTimeout := func(seconds int) {
+	// Both consult bounds default to 0 (unlimited) in production, so a case that needs one raises
+	// it here — the same opt-in a real run would make.
+	setFixtureEnv := func(key string, value int) {
 		t.Helper()
 		path := filepath.Join(suite.layout.Config, "env")
 		body, err := os.ReadFile(path)
@@ -267,17 +269,21 @@ func TestProviderScriptedConsultTimeoutAndOverflowMatrix(t *testing.T) {
 		}
 		lines, found := strings.Split(string(body), "\n"), 0
 		for index, line := range lines {
-			if strings.HasPrefix(line, "COOP_CONSULT_TIMEOUT=") {
-				lines[index] = fmt.Sprintf("COOP_CONSULT_TIMEOUT=%d", seconds)
+			if strings.HasPrefix(line, key+"=") {
+				lines[index] = fmt.Sprintf("%s=%d", key, value)
 				found++
 			}
 		}
 		if found != 1 {
-			t.Fatalf("fixture env has %d COOP_CONSULT_TIMEOUT entries, want 1", found)
+			t.Fatalf("fixture env has %d %s entries, want 1", found, key)
 		}
 		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	setTimeout := func(seconds int) {
+		t.Helper()
+		setFixtureEnv("COOP_CONSULT_TIMEOUT", seconds)
 	}
 
 	t.Run("timeout", func(t *testing.T) {
@@ -303,6 +309,9 @@ func TestProviderScriptedConsultTimeoutAndOverflowMatrix(t *testing.T) {
 	// Overflow classification must not race the deliberately tiny deadline used above.
 	setTimeout(10)
 	t.Run("overflow", func(t *testing.T) {
+		// This case is ABOUT the bound, so it asks for one; unbounded is the default everywhere else.
+		setFixtureEnv("COOP_CONSULT_STREAM_LIMIT", 1<<20)
+		t.Cleanup(func() { setFixtureEnv("COOP_CONSULT_STREAM_LIMIT", 0) })
 		for index, peer := range providers {
 			lead := providers[(index+1)%len(providers)]
 			peer, lead := peer, lead

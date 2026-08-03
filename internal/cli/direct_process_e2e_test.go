@@ -247,6 +247,8 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 	allCredKeys := sortedKeys(credentialSet)
 	envFile.WriteString("FIXTURE_SAFE=visible\n")
 	envFile.WriteString("COOP_CONSULT_TIMEOUT=2\n")
+	// 0 = unlimited, matching production. A case that needs the bound raises it explicitly.
+	envFile.WriteString("COOP_CONSULT_STREAM_LIMIT=0\n")
 	for _, key := range allCredKeys {
 		fmt.Fprintf(&envFile, "%s=must-be-stripped\n", key)
 	}

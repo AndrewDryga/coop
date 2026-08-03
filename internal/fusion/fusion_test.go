@@ -712,9 +712,10 @@ func runConsultWrapperStub(t *testing.T, role, peer, providerBody, timeoutBody, 
 		"COOP_PEERS="+peer,
 		"COOP_CONSULT_"+key+"_TARGETS="+peer+":test",
 		"COOP_RUN_ID="+runID,
-		// Consults are UNBOUNDED by default; a case that exercises the bound opts in explicitly,
+		// Consults are UNBOUNDED by default; a case that exercises a bound opts in explicitly,
 		// which is exactly how a real run would.
 		"COOP_CONSULT_TIMEOUT="+os.Getenv("COOP_CONSULT_TIMEOUT_FOR_TEST"),
+		"COOP_CONSULT_STREAM_LIMIT="+os.Getenv("COOP_CONSULT_STREAM_LIMIT_FOR_TEST"),
 	)
 	out, err := cmd.CombinedOutput()
 	code := 0
@@ -832,6 +833,9 @@ exec "$@"`
 func TestConsultWrapperCodexTelemetryWaitsForFullAttemptAcceptance(t *testing.T) {
 	const passTimeout = `shift 3
 exec "$@"`
+	// Opts into a bound: this asserts that a REJECTED attempt appends no telemetry, so it needs
+	// an attempt that gets rejected. Nothing is bounded by default.
+	t.Setenv("COOP_CONSULT_STREAM_LIMIT_FOR_TEST", strconv.Itoa(consultStreamLimitBytes))
 	body := fmt.Sprintf(`printf '%%s\n' \
 '{"type":"thread.started","thread_id":"thread-overflow"}' \
 '{"type":"item.completed","item":{"type":"agent_message","text":"VALID_REPLY"}}' \
@@ -1100,14 +1104,40 @@ printf '%s\n' \
 	}
 }
 
+// These cases move megabytes on purpose; a failure must not dump one into the test log.
+func truncateForTest(s string) string {
+	if len(s) <= 2<<10 {
+		return s
+	}
+	return s[:2<<10] + fmt.Sprintf("\n… (%d bytes total)", len(s))
+}
+
 func TestConsultWrapperBoundsProviderOutputAndContinuation(t *testing.T) {
 	const passTimeout = `shift 3
 exec "$@"`
-	t.Run("reply overflow is terminal", func(t *testing.T) {
+	// A big answer is the DEFAULT case, not an error case. Discarding one cost the whole consult
+	// plus the narrowed retry that followed, so an unbounded run must hand back every byte.
+	t.Run("a reply past the old cap is delivered whole by default", func(t *testing.T) {
+		const size = 1 << 20 // the cap this used to die on, exactly
+		body := fmt.Sprintf(`dd if=/dev/zero bs=%d count=1 2>/dev/null | tr '\000' X`, size)
+		out, code, _, _ := runConsultWrapperStub(t, "reply-large", "claude", body, passTimeout, "")
+		if code != 0 {
+			t.Fatalf("large reply = exit %d, want it accepted:\n%s", code, truncateForTest(out))
+		}
+		if strings.Contains(out, "reply exceeded") {
+			t.Errorf("large reply was rejected by a cap that should be off: %s", truncateForTest(out))
+		}
+		if strings.Count(out, "X") < size {
+			t.Errorf("large reply was truncated: got %d X bytes, want %d", strings.Count(out, "X"), size)
+		}
+	})
+
+	t.Run("an explicitly requested limit is still terminal", func(t *testing.T) {
+		t.Setenv("COOP_CONSULT_STREAM_LIMIT_FOR_TEST", "1048576")
 		body := `dd if=/dev/zero bs=1048577 count=1 2>/dev/null | tr '\000' X`
 		out, code, _, resumable := runConsultWrapperStub(t, "reply-overflow", "claude", body, passTimeout, "")
 		if code != 1 || !strings.Contains(out, "reply exceeded 1048576 bytes") {
-			t.Fatalf("reply overflow = exit %d, bytes %d:\n%s", code, len(out), out)
+			t.Fatalf("reply overflow = exit %d, bytes %d:\n%s", code, len(out), truncateForTest(out))
 		}
 		if resumable {
 			t.Error("overflowed reply became resumable")
@@ -1147,34 +1177,46 @@ exec "$@"`
 		}
 	})
 
-	t.Run("capture helper failure is terminal", func(t *testing.T) {
-		dir := t.TempDir()
-		wrapper := filepath.Join(dir, "coop-consult")
-		for name, body := range map[string]string{
-			"claude":  "#!/bin/sh\necho SHOULD_NOT_BE_ACCEPTED\n",
-			"dd":      "#!/bin/sh\nexit 70\n",
-			"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
-		} {
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+	// A capture helper that dies must never leave a half-read stream looking like the answer.
+	// Both paths have to hold it: the default unlimited capture (cat) and the bounded spool a
+	// run opts into (dd).
+	for _, tc := range []struct{ name, helper, limit string }{
+		{name: "unlimited capture", helper: "cat"},
+		{name: "bounded capture", helper: "dd", limit: "1048576"},
+	} {
+		t.Run("capture helper failure is terminal — "+tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			wrapper := filepath.Join(dir, "coop-consult")
+			for name, body := range map[string]string{
+				"claude":  "#!/bin/sh\necho SHOULD_NOT_BE_ACCEPTED\n",
+				tc.helper: "#!/bin/sh\nexit 70\n",
+				"timeout": "#!/bin/sh\nshift 3\nexec \"$@\"\n",
+			} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
 				t.Fatal(err)
 			}
-		}
-		if err := os.WriteFile(wrapper, []byte(ConsultWrapper()), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		role := "capture-failure"
-		cmd := exec.Command(wrapper, role, "--fresh", "question")
-		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
-			"COOP_PEERS=claude", "COOP_CONSULT_CAPTURE_FAILURE_TARGETS=claude:test")
-		out, err := cmd.CombinedOutput()
-		if err == nil || !strings.Contains(string(out), "failed to capture provider output safely") {
-			t.Fatalf("capture failure was not terminal: %v\n%s", err, out)
-		}
-		stateDir := filepath.Join(dir, "coop-consult-state")
-		if _, err := os.Stat(filepath.Join(stateDir, "CAPTURE_FAILURE.state")); !os.IsNotExist(err) {
-			t.Errorf("capture failure retained continuation state: %v", err)
-		}
-	})
+			role := "capture-failure"
+			cmd := exec.Command(wrapper, role, "--fresh", "question")
+			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TMPDIR="+dir,
+				"COOP_PEERS=claude", "COOP_CONSULT_CAPTURE_FAILURE_TARGETS=claude:test",
+				"COOP_CONSULT_STREAM_LIMIT="+tc.limit)
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), "failed to capture provider output safely") {
+				t.Fatalf("capture failure was not terminal: %v\n%s", err, truncateForTest(string(out)))
+			}
+			if strings.Contains(string(out), "SHOULD_NOT_BE_ACCEPTED") {
+				t.Error("a failed capture still delivered the provider's output as the reply")
+			}
+			stateDir := filepath.Join(dir, "coop-consult-state")
+			if _, err := os.Stat(filepath.Join(stateDir, "CAPTURE_FAILURE.state")); !os.IsNotExist(err) {
+				t.Errorf("capture failure retained continuation state: %v", err)
+			}
+		})
+	}
 
 	t.Run("transcript overflow delivers reply then clears continuity", func(t *testing.T) {
 		dir := t.TempDir()

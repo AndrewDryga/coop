@@ -105,15 +105,15 @@ func renderConsult(as []consultInput) string {
 # COOP_CONSULT_<ROLE>_TARGETS value is an ordered fallback ladder; each target remains
 # READ-ONLY. --fresh starts at rung one. --continue resumes the successful rung and,
 # if that provider is now rate limited, starts the next provider fresh. Each rung is
-# attempted once and each attempt is time-bounded (default 10m; COOP_CONSULT_TIMEOUT). That
-# default MUST stay under the box's descendant drain (COOP_DESCENDANT_TIMEOUT, internal/box/
-# image.go): a consult is spawned detached, so one that outlives its provider has to expire on
-# its own before the drain notices it — otherwise coop's own wrapper holds the box open and the
-# handoff un-completes a finished task.
+# attempted once. Nothing is bounded by default: a working model is left to work, because killing
+# one costs the whole answer AND the retry that follows. COOP_CONSULT_TIMEOUT (seconds) and
+# COOP_CONSULT_STREAM_LIMIT (bytes) can each impose a bound; if you set a timeout, keep it under
+# the box's descendant drain (COOP_DESCENDANT_TIMEOUT, internal/box/image.go) — a consult is
+# spawned detached, so one that outlives its provider has to expire on its own before the drain
+# notices it, or coop's own wrapper holds the box open and the handoff un-completes a finished task.
 set -u
 umask 077
 
-consult_stream_limit=` + strconv.Itoa(consultStreamLimitBytes) + `
 consult_prompt_limit=` + strconv.Itoa(consultPromptLimitBytes) + `
 consult_context_limit=` + strconv.Itoa(consultContextLimitBytes) + `
 
@@ -141,6 +141,12 @@ key=$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')
 consult_timeout=${COOP_CONSULT_TIMEOUT:-0}
 case "$consult_timeout" in '' | *[!0-9]*) die "COOP_CONSULT_TIMEOUT must be whole seconds (0 = unlimited)" ;; esac
 [ "$consult_timeout" -le 86400 ] || die "COOP_CONSULT_TIMEOUT must be 0 (unlimited) or within 1..86400 seconds"
+
+# Unlimited by default. A capped reply was WORSE than no cap: the advisor ran to completion, the
+# answer blew the cap, and the whole thing was discarded — so the run paid for the full consult,
+# got nothing, and paid again for the narrowed retry. If a model works, take its answer.
+consult_stream_limit=${COOP_CONSULT_STREAM_LIMIT:-0}
+case "$consult_stream_limit" in '' | *[!0-9]*) die "COOP_CONSULT_STREAM_LIMIT must be whole bytes (0 = unlimited)" ;; esac
 
 state_dir=${TMPDIR:-/tmp}/coop-consult-state
 [ ! -L "$state_dir" ] || die "state path is a symlink: $state_dir"
@@ -464,15 +470,20 @@ run() {
 	return "$st"
 }
 
-# Drain one producer into a fixed-size spool without ever letting a provider fill the box disk.
-# The one-byte read after the cap distinguishes exact-size EOF from overflow; overflow is marked,
-# the remaining producer stream is drained to /dev/null, and no partial reply is accepted later.
+# Drain one producer into a spool. Unlimited by default: take the whole stream.
+# With COOP_CONSULT_STREAM_LIMIT set, spool to that fixed size instead so a provider cannot fill
+# the box disk — the one-byte read after the cap distinguishes exact-size EOF from overflow;
+# overflow is marked, the rest is drained to /dev/null, and no partial reply is accepted later.
 bounded_capture() {
 	destination=$1
 	overflow=$2
 	chunk=$3
 	: >"$destination"
 	rm -f "$overflow" "$chunk"
+	if [ "$consult_stream_limit" -eq 0 ]; then
+		cat >>"$destination" || return 1
+		return 0
+	fi
 	total=0
 	while [ "$total" -lt "$consult_stream_limit" ]; do
 		remaining=$((consult_stream_limit - total))
