@@ -712,6 +712,9 @@ func runConsultWrapperStub(t *testing.T, role, peer, providerBody, timeoutBody, 
 		"COOP_PEERS="+peer,
 		"COOP_CONSULT_"+key+"_TARGETS="+peer+":test",
 		"COOP_RUN_ID="+runID,
+		// Consults are UNBOUNDED by default; a case that exercises the bound opts in explicitly,
+		// which is exactly how a real run would.
+		"COOP_CONSULT_TIMEOUT="+os.Getenv("COOP_CONSULT_TIMEOUT_FOR_TEST"),
 	)
 	out, err := cmd.CombinedOutput()
 	code := 0
@@ -919,6 +922,7 @@ func TestConsultWrapperEmptyReplyAndTimeout(t *testing.T) {
 		timeoutBody string
 		wantCode    int
 		wantText    string
+		timeout     string // COOP_CONSULT_TIMEOUT; empty = the unbounded default
 	}{
 		{
 			name:        "empty provider success",
@@ -928,16 +932,21 @@ func TestConsultWrapperEmptyReplyAndTimeout(t *testing.T) {
 			wantText:    "provider returned no usable reply",
 		},
 		{
+			// The bound is OPT-IN now: unbounded is the default, because a clock cannot tell a long
+			// review from a wedged one and killing a working peer costs its answer plus the task
+			// restart that follows. This case sets it explicitly, as a run wanting a bound would.
 			name:        "wrapper timeout",
 			provider:    "echo SHOULD_NOT_RUN",
 			timeoutBody: "exit 124",
 			wantCode:    124,
-			wantText:    "no reply within 600s",
+			wantText:    "no reply within 30s",
+			timeout:     "30",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			role := "delivery-" + strings.ReplaceAll(tc.name, " ", "-")
+			t.Setenv("COOP_CONSULT_TIMEOUT_FOR_TEST", tc.timeout)
 			out, code, _, resumable := runConsultWrapperStub(t, role, "claude", tc.provider, tc.timeoutBody, "")
 			if code != tc.wantCode {
 				t.Fatalf("exit = %d, want %d:\n%s", code, tc.wantCode, out)

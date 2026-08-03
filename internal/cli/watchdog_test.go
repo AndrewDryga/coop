@@ -2,11 +2,9 @@ package cli
 
 import (
 	"regexp"
-	"strconv"
 	"testing"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
 )
@@ -224,48 +222,44 @@ func TestIsProviderTimeout(t *testing.T) {
 	}
 }
 
-// The box's descendant drain and this watchdog's idle deadline measure the same silence: a draining
-// box emits no stream events, so both clocks run from the provider's last activity. If the drain
-// could reach the idle deadline, the watchdog would kill every box held open by a leaked descendant
-// as a wedged provider — the wrong outcome, the wrong recovery, and the drain's own exit codes would
-// never be seen. That is exactly what happened before the drain default was lowered, so pin the
-// ordering here: the two constants live in different packages and nothing else couples them.
-func TestDescendantDrainStaysUnderIdleDeadline(t *testing.T) {
-	m := regexp.MustCompile(`COOP_DESCENDANT_TIMEOUT:-(\d+)`).FindStringSubmatch(box.BaseDockerfile())
-	if m == nil {
-		t.Fatal("could not find the descendant drain default in the base Dockerfile")
+// No coop clock may interrupt a provider that is producing work. These are the defaults; a run that
+// wants a bound sets COOP_CONSULT_TIMEOUT or COOP_PROVIDER_TIMEOUTS explicitly.
+//
+// This replaced an ordering test (consult < drain < idle) whose whole premise was that all three
+// were finite. They are not any more: a clock cannot tell a long review from a wedged one, and
+// killing a working peer loses its answer AND costs the task restart that follows.
+func TestNoDefaultDeadlineInterruptsAWorkingProvider(t *testing.T) {
+	for _, d := range []struct {
+		name string
+		got  time.Duration
+	}{
+		{"start", providerStartDeadline},
+		{"idle", providerIdleDeadline},
+		{"tool", providerToolDeadline},
+	} {
+		if d.got != 0 {
+			t.Errorf("provider %s deadline defaults to %s, want 0 (disabled)", d.name, d.got)
+		}
 	}
-	seconds, err := strconv.Atoi(m[1])
-	if err != nil {
-		t.Fatalf("drain default %q is not a number: %v", m[1], err)
-	}
-	drain := time.Duration(seconds) * time.Second
-
-	// The consult wrapper spawns its peer DETACHED, so a consult that outlives its provider has to
-	// expire on its own before the drain notices it — otherwise coop's own wrapper is the descendant
-	// holding the box open, and the handoff un-completes a finished task. That makes one chain:
-	// consult timeout < drain < idle deadline.
 	cm := regexp.MustCompile(`COOP_CONSULT_TIMEOUT:-(\d+)`).FindStringSubmatch(fusion.ConsultWrapper())
 	if cm == nil {
 		t.Fatal("could not find the consult timeout default in the generated wrapper")
 	}
-	consultSeconds, err := strconv.Atoi(cm[1])
-	if err != nil {
-		t.Fatalf("consult default %q is not a number: %v", cm[1], err)
+	if cm[1] != "0" {
+		t.Errorf("consult timeout defaults to %ss, want 0 (unlimited)", cm[1])
 	}
-	consult := time.Duration(consultSeconds) * time.Second
-	if consult >= drain {
-		t.Fatalf("consult timeout %s >= descendant drain %s: a stray consult cannot self-terminate before the drain notices it",
-			consult, drain)
+	// A disabled deadline must create no timer at all, or a stale one could still fire.
+	var armed int
+	w := startProviderWatchdog(watchdogDeadlines{}, func() { t.Error("cancelled with no deadline set") },
+		time.Now, func(time.Duration, func()) watchdogTimer { armed++; return &fakeWatchdogTimer{} })
+	w.progress()
+	w.toolStart("t1")
+	w.toolEnd("t1")
+	w.progress()
+	if armed != 0 {
+		t.Errorf("armed %d timer(s) with deadlines disabled, want 0", armed)
 	}
-
-	if drain >= providerIdleDeadline {
-		t.Fatalf("descendant drain %s >= provider idle deadline %s: a leaked descendant would be killed as a wedged provider instead of a descendant handoff",
-			drain, providerIdleDeadline)
-	}
-	// Not merely less — the drain has to finish and the box exit before the deadline, so keep real
-	// headroom rather than a one-second margin that a slow teardown would eat.
-	if drain*2 > providerIdleDeadline {
-		t.Errorf("descendant drain %s leaves too little headroom under the idle deadline %s", drain, providerIdleDeadline)
+	if fired := w.timedOut(); fired != "" {
+		t.Errorf("watchdog fired %q with deadlines disabled", fired)
 	}
 }

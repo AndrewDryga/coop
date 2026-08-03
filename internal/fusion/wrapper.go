@@ -134,9 +134,13 @@ esac
 fresh_retry="coop-consult $name --fresh \"<full prompt>\""
 continue_retry="coop-consult $name --continue \"<delta>\""
 key=$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')
-consult_timeout=${COOP_CONSULT_TIMEOUT:-600}
-case "$consult_timeout" in '' | *[!0-9]*) die "COOP_CONSULT_TIMEOUT must be whole seconds" ;; esac
-[ "$consult_timeout" -ge 1 ] && [ "$consult_timeout" -le 86400 ] || die "COOP_CONSULT_TIMEOUT must be within 1..86400 seconds"
+# 0 (the default) means UNLIMITED: a consult runs until it answers. A clock here cannot tell a long
+# review from a wedged one, and killing a working peer costs its answer AND the task restart that
+# follows — measured, a bounded critic "terminated without a usable answer" on a security review the
+# lead had asked for. Set COOP_CONSULT_TIMEOUT to whole seconds to opt back into a bound.
+consult_timeout=${COOP_CONSULT_TIMEOUT:-0}
+case "$consult_timeout" in '' | *[!0-9]*) die "COOP_CONSULT_TIMEOUT must be whole seconds (0 = unlimited)" ;; esac
+[ "$consult_timeout" -le 86400 ] || die "COOP_CONSULT_TIMEOUT must be 0 (unlimited) or within 1..86400 seconds"
 
 state_dir=${TMPDIR:-/tmp}/coop-consult-state
 [ ! -L "$state_dir" ] || die "state path is a symlink: $state_dir"
@@ -348,7 +352,10 @@ total=$#
 # provider timeout plus its termination grace. Coop's image provides flock, whose kernel-held lock
 # is released even after SIGKILL/OOM. The mkdir fallback keeps custom images usable, but an unclean
 # kill there fails closed until its private lock directory is removed.
+# Derived from the per-attempt bound, so an unlimited consult waits for the lock indefinitely too:
+# a shorter wait would kill the SECOND consult for the first one legitimately taking its time.
 lock_limit=$(((consult_timeout + 35) * total + 5))
+[ "$consult_timeout" -eq 0 ] && lock_limit=0
 if command -v flock >/dev/null 2>&1; then
 	[ ! -L "$lockfile" ] || die "unsafe continuation lock: $lockfile"
 	if [ ! -e "$lockfile" ]; then (set -C; : >"$lockfile") 2>/dev/null || :; fi
@@ -360,14 +367,18 @@ if command -v flock >/dev/null 2>&1; then
 	lock_path_identity=$(stat -c 'gnu:%d:%i' "$lockfile" 2>/dev/null || stat -f 'bsd:%i' "$lockfile" 2>/dev/null || :)
 	lock_fd_identity=$(stat -Lc 'gnu:%d:%i' "$lock_fd" 2>/dev/null || stat -Lf 'bsd:%i' "$lock_fd" 2>/dev/null || :)
 	[ -n "$lock_path_identity" ] && [ "$lock_path_identity" = "$lock_fd_identity" ] || die "continuation lock changed while opening: $lockfile"
-	flock -w "$lock_limit" 8 || die "timed out waiting for another $name consult to finish"
+	if [ "$lock_limit" -eq 0 ]; then
+		flock 8 || die "cannot take the continuation lock for $name"
+	else
+		flock -w "$lock_limit" 8 || die "timed out waiting for another $name consult to finish"
+	fi
 else
 	lockdir=$lockfile.d
 	lock_wait=0
 	while ! mkdir "$lockdir" 2>/dev/null; do
 		[ ! -L "$lockdir" ] && [ -d "$lockdir" ] || die "unsafe continuation lock: $lockdir"
 		lock_wait=$((lock_wait + 1))
-		[ "$lock_wait" -le "$lock_limit" ] || die "timed out waiting for another $name consult to finish; remove $lockdir after confirming no consult is running"
+		[ "$lock_limit" -eq 0 ] || [ "$lock_wait" -le "$lock_limit" ] || die "timed out waiting for another $name consult to finish; remove $lockdir after confirming no consult is running"
 		sleep 1
 	done
 	lock_owned=1
@@ -416,11 +427,20 @@ publish_candidate_telemetry() {
 	candidate_telemetry_raw=
 }
 
-# Bound every consult so a slow or wedged peer cannot stall the lead's wait. The default is 30m.
-# The -k grace terminates a peer that ignores SIGTERM; GNU timeout exits 124 (TERM) or 137 (KILL).
+# Consults are UNBOUNDED by default: a peer that is still working is still working, and cutting it
+# off loses its answer and costs the task restart that follows. COOP_CONSULT_TIMEOUT opts into a
+# bound; then the -k grace terminates a peer that ignores SIGTERM (GNU timeout exits 124/137).
 run() {
 	active_run_group=0
-	if command -v setsid >/dev/null 2>&1; then
+	# Unlimited (the default): exec the peer directly, with no timeout wrapper to cut it off.
+	if [ "$consult_timeout" -eq 0 ]; then
+		if command -v setsid >/dev/null 2>&1; then
+			setsid "$@" &
+			active_run_group=1
+		else
+			"$@" &
+		fi
+	elif command -v setsid >/dev/null 2>&1; then
 		setsid timeout -k 30 "$consult_timeout" "$@" &
 		active_run_group=1
 	else
@@ -646,7 +666,7 @@ while [ "$index" -le "$total" ]; do
 	if [ "$st" -eq 124 ] || [ "$st" -eq 137 ]; then
 		rm -f "$candidate_idfile"
 		clear_failed_resume
-		echo "[$peer: no reply within ${consult_timeout}s — skipped; synthesize without it]" >&2
+		echo "[$peer: no reply within ${consult_timeout}s (COOP_CONSULT_TIMEOUT) — skipped; synthesize without it]" >&2
 		exit "$st"
 	fi
 	if [ -f "$reply_overflow" ] || [ -f "$diagnostics_overflow" ]; then

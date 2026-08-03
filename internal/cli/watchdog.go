@@ -15,15 +15,21 @@ import (
 // tool within the tool deadline. Only semantic stream events (streamActivity) feed it — never
 // process names, CPU, lease heartbeats, redraws, or raw bytes — so a wedged provider is killed
 // while long reasoning and a slow foreground gate survive.
-// providerIdleDeadline must stay comfortably ABOVE the box's descendant-drain wait
-// (COOP_DESCENDANT_TIMEOUT in internal/box/image.go, 10m). A draining box emits no stream events,
-// so the two clocks run from the same instant: if the drain could reach this deadline, every box
-// held open by a leaked descendant would be killed as a wedged provider instead of surfacing as a
-// descendant handoff, and the drain's own exit codes would never be observed.
+// No deadline by default: 0 disables that phase's clock entirely.
+//
+// These clocks cannot tell LONG from WEDGED — they only measure silence — and killing a provider
+// that is genuinely working is expensive twice over: the answer is lost, and the loop then restarts
+// the task, re-reads its whole context and re-pays for it. Measured: a bounded consult died with
+// "exceeded the wrapper cap and terminated without a usable answer" on a security review the lead
+// had asked for, and a delegate was killed ten minutes in, after which the lead wrote the diff
+// itself. A run that wants a bound sets COOP_PROVIDER_TIMEOUTS explicitly.
+//
+// The retry CAPS (maxLoopFailures, maxProviderTimeouts) are untouched: they count outcomes that
+// already happened rather than interrupting work in flight.
 const (
-	providerStartDeadline = 10 * time.Minute
-	providerIdleDeadline  = 30 * time.Minute
-	providerToolDeadline  = 2 * time.Hour
+	providerStartDeadline = 0
+	providerIdleDeadline  = 0
+	providerToolDeadline  = 0
 )
 
 // Provider-attempt timeout outcomes, recorded verbatim in stage telemetry and handled by the
@@ -134,6 +140,16 @@ func startProviderWatchdog(deadline watchdogDeadlines, cancel func(), now func()
 // concurrently-firing stale timer a no-op.
 func (w *providerWatchdog) arm(d time.Duration, outcome string) {
 	if w.stopped || w.fired != "" {
+		return
+	}
+	// A non-positive deadline is disabled: create no timer at all, so a working provider is never
+	// interrupted. This is the default (see the deadline constants above).
+	if d <= 0 {
+		if w.timer != nil {
+			w.timer.Stop()
+			w.timer = nil
+		}
+		w.gen++
 		return
 	}
 	if w.timer != nil {
