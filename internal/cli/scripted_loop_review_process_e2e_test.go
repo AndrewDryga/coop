@@ -166,6 +166,11 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stdout+result.Stderr, "review left 1 task actionable") {
 			t.Fatalf("review verdict correction matrix = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
+		// The retry rescues this, so without the cause in the warning a fault that costs a whole
+		// extra review reports nothing at all — seen repeatedly in a real run, diagnosable never.
+		if !strings.Contains(result.Stdout+result.Stderr, "output tail was") {
+			t.Errorf("the malformed-verdict warning did not carry what it rejected:\n%s", result.Stdout+result.Stderr)
+		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) ||
 			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
 			t.Fatal("valid corrected FAIL verdict was not applied exactly once")

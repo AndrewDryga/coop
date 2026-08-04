@@ -2052,7 +2052,11 @@ func (a *app) runReviewVerdict(ctx context.Context, repo, img string, rev *rotat
 		if reviewStopRequested(ctx, wake) {
 			return interruptedReviewResult(last, last.retries), errReviewInterrupted
 		}
-		ui.Warn("%s process succeeded but its structured verdict was malformed — re-running the full review once with a receipt-format correction", activity)
+		// Carry the parse failure into the warning. The retry usually rescues this, and when it does
+		// the error is discarded here and the run reports nothing — so a fault that costs a whole
+		// extra review stays invisible for as long as it keeps being rescued. That is exactly how
+		// this one hid: seen repeatedly, diagnosable never. The error carries a bounded output tail.
+		ui.Warn("%s process succeeded but its structured verdict was malformed (%v) — re-running the full review once with a receipt-format correction", activity, err)
 	}
 	return last, nil
 }
