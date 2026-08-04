@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 7.3.0
 
 - **Monorepo members are detected at any depth, and registered for you.** `coop init` only
   looked one directory down, so an umbrella whose members nest — `terraform/environments/va1` in
