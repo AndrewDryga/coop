@@ -478,7 +478,7 @@ coop context — compile the committed docs relevant to a scope (instructions + 
         - paths: ["portal/**", "**/*.ex"]
           include: [.agent/kb/portal.md]
 
-coop backlog — park the BIG or not-yet-ready as task folders (.agent/tasks/xx_backlog/).
+coop backlog — park the genuinely LARGE as task folders (.agent/tasks/xx_backlog/).
 
   Usage: coop backlog [--tasks <path>]... [ls | add "<title>" | rm <id> | promote <id>]
 
@@ -490,10 +490,11 @@ coop backlog — park the BIG or not-yet-ready as task folders (.agent/tasks/xx_
   The backlog is the SAME task-folder format as the queue, in an xx_backlog/ drawer that lives
   OUTSIDE the lifecycle — the loop, the Stop hook, and 'coop tasks' all ignore it, so an idea
   sits here with no nagging until you promote it (a folder move, not a rewrite). This drawer is
-  for work that needs a spec, a decision, or real scoping first — a simple, ready task you found
-  goes straight to the queue ('coop tasks add'), never here. Defaults to .agent/tasks/ — or, in
-  a monorepo, every subproject's queue (see coop tasks): ls rolls up across them and rm/promote
-  find the item in whichever queue holds it, while add needs a single --tasks.
+  for work one iteration couldn't finish, or that needs a spec or a decision before anyone can
+  start; everything else goes straight to the queue ('coop tasks add'), and a close call belongs
+  in the queue too. Defaults to .agent/tasks/ — or, in a monorepo, every subproject's queue (see
+  coop tasks): ls rolls up across them and rm/promote find the item in whichever queue holds it,
+  while add needs a single --tasks.
 
 coop loop [agent] — work the task queue until done, then sign off.
 

@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Work an agent discovers now defaults to the queue instead of the backlog.** The loop work
+  prompt, `AGENTS.md`, `coop backlog --help`, and the queue README all stated the rule as "simple
+  and ready → `00_todo/`, needs a spec → `xx_backlog/`", but "needs a spec" is self-certifying: an
+  agent that just found something can always call it design-shaped, so findings piled up in a
+  drawer the loop never reads. The bar for the backlog is now the genuinely large — work one
+  iteration couldn't finish, or a spec-sized idea a human must scope first — and a close call goes
+  to `00_todo/`, where the loop picks it up.
+
 - **Trusted local services can now hold persistent conversations in isolated Coop forks.**
   `coop sessions serve` exposes a strict versioned JSON API over an owner-only Unix socket, with
   durable idempotent operations, one bounded FIFO per session, exact native ACP resume, per-turn
