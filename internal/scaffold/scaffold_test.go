@@ -949,23 +949,26 @@ func TestInitIdempotent(t *testing.T) {
 	os.WriteFile(claudeSettings, []byte("MY CLAUDE SETTINGS"), 0o644)
 	os.WriteFile(claudeGate, []byte("#!/bin/sh\n# MY CLAUDE GATE\n"), 0o755)
 
-	// Capture the re-run's log. An unchanged symlink must read as "kept existing", not the action
-	// verb "linked" (which looks like a rewrite on every subsequent init); and a kept skill must
-	// carry the same leading slash the added branch prints, so the wording can't flip run-to-run.
+	// A re-run that changes nothing must SAY nothing changed. It reports one "kept N" total, and
+	// no action verb anywhere — an unchanged symlink read as "linked", or a present file as
+	// "wrote", made every routine init look like it had rewritten the repo.
 	out, err := captureScaffoldStderr(t, func() error {
 		return Init(repo, "", nil, []string{"claude", "codex", "gemini"})
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, "linked CLAUDE.md") {
-		t.Errorf("re-run reported an unchanged symlink as freshly linked, want 'kept existing':\n%s", out)
+	for _, verb := range []string{"linked ", "wrote ", "added skill", "restored skill", "set core.hooksPath"} {
+		if strings.Contains(out, verb) {
+			t.Errorf("re-run reported %q, but nothing changed:\n%s", verb, out)
+		}
 	}
-	if !strings.Contains(out, "kept existing CLAUDE.md") {
-		t.Errorf("re-run should report the unchanged CLAUDE.md symlink as kept existing:\n%s", out)
+	if !strings.Contains(out, "kept ") {
+		t.Errorf("re-run should report what it kept as one total:\n%s", out)
 	}
-	if !strings.Contains(out, "kept existing skill /") {
-		t.Errorf("re-run should render a kept skill with the same leading slash as the added branch:\n%s", out)
+	// One line, not one per file — the wall of "kept existing" is the thing being removed.
+	if n := strings.Count(out, "kept "); n != 1 {
+		t.Errorf("kept-total should be a single line, got %d:\n%s", n, out)
 	}
 
 	if b, _ := os.ReadFile(readme); string(b) != "MY EDITS" {

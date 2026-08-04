@@ -1408,15 +1408,20 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	// A re-init asks nothing. Every scaffold write is no-clobber, so on an already-initialized repo
+	// an answer to either prompt below could not take effect — and `coop init` is run from inside a
+	// repo often enough (after a coop upgrade, or just from a subdirectory) that interrogating the
+	// user each time is pure friction. --services / --stack still work explicitly.
+	already := scaffold.Initialized(repo)
 	// Detect the repo's stack(s) for the commit gate; if nothing's detected and we're at a
 	// terminal, ask rather than guess — coop never imposes a check the repo doesn't use.
 	langs := scaffold.DetectStacks(repo)
-	if len(langs) == 0 && ui.IsTerminal(os.Stdin) {
+	if len(langs) == 0 && !already && ui.IsTerminal(os.Stdin) {
 		langs = promptGateLangs(os.Stdin)
 	}
 	// Sibling services (db/redis) are opt-in — coop doesn't add a compose file a project may
 	// not want. Ask at a terminal unless --services already said.
-	if !servicesSet && ui.IsTerminal(os.Stdin) {
+	if !servicesSet && !already && ui.IsTerminal(os.Stdin) {
 		services = promptServices(os.Stdin)
 	}
 	// Which per-agent dirs to scaffold: `--agents` if given (a name list, or "all"), else the agents
@@ -1435,7 +1440,13 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// One "coop:" anchor closes the dim per-file log; then the optional Docker-box guidance
 	// (only when the repo has its own Docker and no .agent/Dockerfile yet); then the actions you
 	// need to take next stand on their own — derived from what actually landed, not a fixed script.
-	ui.Info("scaffolded into %s", repo)
+	if already {
+		// Name the repo explicitly: `coop init` scaffolds the git ROOT, so run from a subdirectory
+		// it acts somewhere other than where you're standing, and saying so is the whole message.
+		ui.Info("already initialized at %s — anything missing above was added", repo)
+	} else {
+		ui.Info("scaffolded into %s", repo)
+	}
 	if len(agentDirs) > 0 {
 		ui.Info("per-agent dirs: %s — missing artifacts synthesize in-box from shared sources on demand", strings.Join(agentDirs, ", "))
 	} else {
@@ -1471,7 +1482,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 		}
 	}
 	scaffold.SuggestDocker(repo)
-	ui.Steps(initNextSteps(repo, services)...)
+	// "review .agent/Dockerfile, then `coop build`" is first-run advice. On a repo that has been
+	// building for weeks it's noise at best and misleading at worst.
+	if !already {
+		ui.Steps(initNextSteps(repo, services)...)
+	}
 	return 0, nil
 }
 

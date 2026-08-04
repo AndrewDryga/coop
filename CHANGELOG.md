@@ -4,6 +4,19 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Re-running `coop init` is quiet now, and stops interrogating you.** On an
+  already-scaffolded repo it printed a prompt ("add sibling services for the box?") whose answer
+  could not take effect — every scaffold write is no-clobber — then twenty `kept existing …` lines
+  whose entire content was "nothing happened", then first-run advice ("review .agent/Dockerfile,
+  then `coop build`") to a repo that had been building for weeks. It also claimed to
+  `set core.hooksPath=.githooks` when that was already the value, and announced "scaffolding an
+  asdf-driven .agent/Dockerfile" one line before reporting it kept the existing one. A re-init now
+  asks nothing, reports what it kept as a single total, and says `already initialized at <repo>` —
+  naming the path because `coop init` scaffolds the git ROOT, so run from a subdirectory it acts
+  somewhere other than where you're standing. Anything genuinely new (a skill added by a coop
+  upgrade) still prints on its own line, where it's now actually visible. `--services` / `--stack`
+  are unaffected.
+
 - **`coop check-secrets` stopped calling a secret's NAME a secret.** Two shapes that are
   everywhere in Terraform were flagged as literal credentials: a secret-manager path
   (`GITHUB_TOKEN = "secrets/desktop-release-manager/github-token"`) and a kebab-case resource id

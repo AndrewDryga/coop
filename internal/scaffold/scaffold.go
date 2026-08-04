@@ -144,7 +144,12 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 	case "":
 		if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err == nil {
 			stack = "asdf"
-			ui.Detail("detected .tool-versions — scaffolding an asdf-driven .agent/Dockerfile")
+			// Only announce the scaffold when there's actually one to do — saying "scaffolding an
+			// asdf-driven .agent/Dockerfile" and then "kept existing .agent/Dockerfile" one line
+			// later reads as a contradiction on every re-init.
+			if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(project.DefaultDockerfile))); err != nil {
+				ui.Detail("detected .tool-versions — scaffolding an asdf-driven .agent/Dockerfile")
+			}
 		}
 	case "asdf":
 		// scaffolded below
@@ -168,13 +173,44 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 		}
 	}
 
+	// One line for everything that was already in place, instead of one line each. A re-init used
+	// to print twenty "kept existing" lines — a wall of text whose entire content was "nothing
+	// happened", which buried the one line that mattered when something DID change.
+	if s.kept > 0 {
+		ui.Detail("kept %d existing file(s)", s.kept)
+	}
+
 	// The "scaffolded into …" summary, the optional Docker-box suggestion, and the next-step
 	// actions are all printed by the caller (cmdInit), which has the full picture (services,
 	// mcp) and orders them as one block after the faint per-file log.
 	return nil
 }
 
-type scaffolder struct{ repo string }
+// Initialized reports whether repo already carries a coop scaffold. `coop init` uses it to stay
+// quiet on a re-run: with the working set already in place there is nothing an interactive prompt
+// could change (every write is no-clobber), so asking again is pure friction — and the first-run
+// "next steps" are the wrong advice for a repo that's been building for weeks.
+func Initialized(repo string) bool {
+	for _, rel := range []string{"AGENTS.md", filepath.Join(".agent", "tasks")} {
+		if _, err := os.Lstat(filepath.Join(repo, rel)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+type scaffolder struct {
+	repo string
+	// kept counts artifacts already in place, changed records whether anything was actually
+	// written. A re-init reports "kept N existing" as one line instead of N lines that all say
+	// nothing happened — the noise that made a routine `coop init` look like it did work.
+	kept    int
+	changed bool
+}
+
+// keep records an artifact that was already correct. Nothing is printed per-file: Init prints the
+// total, so the log carries only what CHANGED.
+func (s *scaffolder) keep() { s.kept++ }
 
 // skillsSource keeps an established shared source instead of creating a competing skill tree.
 func skillsSource(repo string) string {
@@ -198,7 +234,7 @@ func (s *scaffolder) rel(p string) string {
 
 func (s *scaffolder) writeIfAbsent(dest, embedPath string, perm os.FileMode) error {
 	if _, err := os.Lstat(dest); err == nil {
-		ui.Detail("kept existing %s", s.rel(dest))
+		s.keep()
 		return nil // present: don't even read the template
 	}
 	data, err := templates.ReadFile(embedPath)
@@ -219,7 +255,7 @@ func (s *scaffolder) writeContentIfAbsent(dest, content string, perm os.FileMode
 // two IfAbsent wrappers, which differ only in their byte source.
 func (s *scaffolder) writeNewFile(dest string, data []byte, perm os.FileMode) error {
 	if _, err := os.Lstat(dest); err == nil {
-		ui.Detail("kept existing %s", s.rel(dest))
+		s.keep()
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -228,6 +264,7 @@ func (s *scaffolder) writeNewFile(dest string, data []byte, perm os.FileMode) er
 	if err := os.WriteFile(dest, data, perm); err != nil {
 		return err
 	}
+	s.changed = true
 	ui.Detail("wrote %s", s.rel(dest))
 	return nil
 }
@@ -245,15 +282,16 @@ func (s *scaffolder) linkIfAbsent(target, link string) error {
 	case isLink && current == target:
 		// Already the symlink we'd create — a re-run is a no-op, so say so rather than report
 		// "linked" (an action verb that reads like a rewrite) on every subsequent init.
-		ui.Detail("kept existing %s", s.rel(link))
+		s.keep()
 	case os.IsNotExist(err), isLink:
 		_ = os.Remove(link)
 		if err := os.Symlink(target, link); err != nil {
 			return err
 		}
+		s.changed = true
 		ui.Detail("linked %s -> %s", s.rel(link), target)
 	default:
-		ui.Detail("kept existing %s (real file, not a symlink)", s.rel(link))
+		s.keep()
 	}
 	return nil
 }
@@ -262,7 +300,7 @@ func (s *scaffolder) linkIfAbsent(target, link string) error {
 func (s *scaffolder) linkSkillsIfAbsent(target, link string) error {
 	if info, err := os.Lstat(link); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		if resolved, err := os.Stat(link); err == nil && resolved.IsDir() {
-			ui.Detail("kept existing %s", s.rel(link))
+			s.keep()
 			return nil
 		}
 	}
@@ -285,7 +323,7 @@ func (s *scaffolder) copySkills() error {
 		// existing skill" forever while the skill stayed empty and every .../skills symlink pointed
 		// at nothing. copyEmbedDir restores only what's missing, so a customized file survives.
 		if _, err := os.Stat(filepath.Join(dest, "SKILL.md")); err == nil {
-			ui.Detail("kept existing skill /%s", name)
+			s.keep()
 			continue
 		}
 		restored := false
@@ -295,6 +333,7 @@ func (s *scaffolder) copySkills() error {
 		if err := copyEmbedDir("templates/skills/"+name, dest); err != nil {
 			return err
 		}
+		s.changed = true
 		if restored {
 			ui.Detail("restored skill /%s (was empty)", name)
 		} else {
@@ -358,7 +397,14 @@ func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 		if err := gitConfigSet(s.repo, "core.hooksPath", ".githooks"); err != nil {
 			return err
 		}
-		ui.Detail("set core.hooksPath=.githooks (pre-commit format gate for every committer)")
+		// Only report it as an action when it WAS one — re-announcing a setting that already held
+		// makes every re-init look like it reconfigured your repo.
+		if current == "" {
+			s.changed = true
+			ui.Detail("set core.hooksPath=.githooks (pre-commit format gate for every committer)")
+		} else {
+			s.keep()
+		}
 		if prepareExists && !prepareIsStock {
 			ui.Detail("kept existing .githooks/prepare-commit-msg; chain $HOME/.coop-git-hooks/prepare-commit-msg from it for coop box attribution")
 		}
