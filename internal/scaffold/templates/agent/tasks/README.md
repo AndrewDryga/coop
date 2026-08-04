@@ -76,24 +76,25 @@ header comment says exactly this, so the reminder travels with the task.
 **Example:**
 
     ---
-    id: 2026-06-26-egress-fail-closed
-    title: COOP_EGRESS fails closed on an unknown value
-    labels: [security]
+    id: 2026-06-26-timeout-fail-closed
+    title: An unparseable REQUEST_TIMEOUT falls back to the default, not to 0
+    labels: [reliability]
     updated: 2026-06-26T09:00:00Z
     ---
 
-    # COOP_EGRESS fails closed on an unknown value
+    # An unparseable REQUEST_TIMEOUT falls back to the default, not to 0
 
-    **Context:** A typo like `COOP_EGRESS=None` currently grants full network instead of
-    going offline (internal/box/egress.go) — a silent fail-open.
-    **Acceptance criteria:** `make check` green; a new test asserts an unrecognised value
-    maps to offline, and the README documents the allowed values.
-    **Approach:** Parse into an enum; default the unknown case to offline; table-test it.
+    **Context:** A typo like `REQUEST_TIMEOUT=30sec` parses to 0, which disables the timeout
+    instead of shortening it — one slow upstream then hangs the whole request pool. The parse
+    lives in the startup config loader.
+    **Acceptance criteria:** The gate green; a new test asserts an unparseable value keeps the
+    documented default and never 0, and the README states the accepted format.
+    **Approach:** Parse strictly; on error keep the default and log it once. Table-test it.
 
     ## Subtasks
-    - [x] enumerate allowed values + default unknown → offline
+    - [x] parse strictly; unparseable → documented default
     - [ ] table test for typo / empty / valid
-    - [ ] document the values in README
+    - [ ] document the accepted format in the README
 
 A subtask is a `- [ ]` line; `[x]` marks it done and `coop tasks` shows the count. Lines inside
 fenced code blocks don't count, so you can paste examples freely.
@@ -118,12 +119,12 @@ a few lines, and on resume read it first.
 
 **Example** (mid-task):
 
-    # State — COOP_EGRESS fails closed
+    # State — REQUEST_TIMEOUT falls back to the default
 
-    **Status:** in progress — enum landed, writing tests
-    **Done so far:** added egressMode enum; unknown → offline; committed (a1b2c3d)
-    **Next action:** add the table test for "" and "None", then update the README
-    **Traps:** egress is read in TWO places (entrypoint + doctor) — keep them in sync
+    **Status:** in progress — strict parse landed, writing tests
+    **Done so far:** parse fails → documented default, never 0; committed (a1b2c3d)
+    **Next action:** add the table test for "" and "30sec", then update the README
+    **Traps:** the timeout is read in TWO places (startup + reload) — keep them in sync
 
 After the final commit, refresh the same snapshot with `**Status:** complete` and
 `**Next action:** none`, preserving the useful summary and traps. Then move the folder to done as
@@ -144,11 +145,11 @@ reviewer (or the next agent) needs. Add to the bottom; never rewrite it. This is
 
 **Example:**
 
-    # Log — COOP_EGRESS fails closed
+    # Log — REQUEST_TIMEOUT falls back to the default
 
-    ## 2026-06-26 — enum over string compare
-    - Switched the raw string check to an egressMode enum, so an unknown value has ONE
-      home (the default arm) instead of being scattered. Default = offline (fail closed).
+    ## 2026-06-26 — one parse site, not two
+    - Moved the fallback into the parser itself, so an unparseable value has ONE home
+      (the error arm) instead of being handled per call site. Fallback = the default.
     - Dead end: tried defaulting in the caller — too easy to forget at the second call site.
 
 ---
@@ -181,16 +182,16 @@ or do both at once with `coop tasks unblock <id> "<answer>"`.**
 
 **Example** (agent filled, awaiting the human):
 
-    # Decision: store egress mode where?
+    # Decision: where does the timeout setting live?
 
-    **Blocks:** this task (`2026-06-26-egress-fail-closed`).
+    **Blocks:** this task (`2026-06-26-timeout-fail-closed`).
 
-    **The decision:** Whether the mode is an env var only or also persisted in .agent/config —
-    persisting changes the on-disk format (a one-way door for older coop).
+    **The decision:** Whether the timeout stays an env var only, or is also persisted in the
+    config file — persisting changes the on-disk format, which older releases can't read.
 
     **Options:**
     - **A — env only:** simplest; no format change; set per run.
-    - **B — persist in config:** sticky across runs, but old coop can't read the new key.
+    - **B — persist in config:** sticky across restarts, but old releases break on the new key.
 
     **Recommendation:** A — env-only keeps the format stable; revisit if users ask for sticky.
 

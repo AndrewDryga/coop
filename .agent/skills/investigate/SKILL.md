@@ -12,8 +12,8 @@ that's wrong and say *why*. Never edit a test to make a real failure pass.
 
 ## Method
 
-1. **Reproduce.** Run the exact failing command (`go test ./pkg -run TestX`, the CLI
-   invocation, the request). No repro → you're guessing.
+1. **Reproduce.** Run the exact failing command — this repo's single-test invocation, the
+   CLI call, the request. No repro → you're guessing.
 2. **Read the WHOLE error.** The full panic / stack trace / output, not the summary
    line. The first frame in *our* code (not a dependency) is usually the spot.
 3. **Locate + read the code.** Open the failing function and the data it touched.

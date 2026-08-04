@@ -112,5 +112,5 @@ verify:
 # template variables — coop substitutes them before the pass runs:
 #   {loop.changes}   the full per-task change block (commits + files, grouped by task)
 #   {loop.tasks}     the completed task ids, comma-separated
-#   {loop.affected}  the affected areas (e.g. internal/box, internal/cli)
+#   {loop.affected}  the affected areas (the top-level dirs the run touched)
 # e.g.  prompt: |  e2e {loop.affected}; the features are the tasks: {loop.tasks}

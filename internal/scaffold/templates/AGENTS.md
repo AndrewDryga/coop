@@ -15,7 +15,7 @@
 ## Use the agent stack
 - **Set the objective.** For anything longer than a quick answer, set the runtime's persistent goal/tracker if it exists (`/goal` or equivalent), and keep it current. If your agent does not have that feature, use `.agent/tasks/` as the durable goal state. A goal is the stop condition, not a substitute for a plan.
 - **Batch independent reads.** Use tool batching (`/batch`, parallel tool calls, or backgrounded shell reads) for independent searches, file reads, log collection, and docs lookups. Do not batch dependent steps or mutating commands that can race.
-- **Keep supervised output static and bounded.** For long loops, gates, builds, watches, and tests, follow `.agent/rules/static-bounded-supervision.md`: disable repainting where supported, redirect the full log, preserve the exit status, and inspect only bounded tails or targeted filters.
+- **Keep supervised output static and bounded.** For long loops, gates, builds, watches, and tests: disable repainting where supported, redirect the full log, preserve the exit status, and inspect only bounded tails or targeted filters.
 - **Delegate thinking, keep ownership.** Use native subagents/Task workers for broad research, codebase surveys, second opinions, review, and root-cause hypotheses. Treat them as read-only advisors unless your runtime explicitly gives them an isolated workspace. The lead agent makes the decision, edits files, runs the gate, and owns the result.
 - **Keep writes serialized in this checkout.** Native workers are for thinking unless the runtime proves they have separate workspaces. Never let two workers edit the same checkout at once.
 - **Use real capabilities only.** If a named feature does not exist in your runtime, do the closest safe thing with the tools you actually have; do not invent slash commands, tools, or worker APIs.
@@ -23,8 +23,8 @@
 ## Orchestration — spend the big model where it matters
 When an orchestration preset is active, its routing contract sits at the top of your
 instructions — follow it: it names your roles and their exact invocations. The shapes:
-- **Native subagents** (`.claude/agents/`: deep-reasoner pinned to a big model,
-  fast-worker to a cheap one) — deep thinking and mechanical work inside your session.
+- **Native subagents** (whatever your runtime offers, plus any this repo commits under
+  `.claude/agents/`) — deep thinking and mechanical work inside your session.
 - **A read-only peer** (`coop-consult`, only when it's on PATH) — a different vendor
   with different blind spots. It analyses and reports; it never edits. Without it,
   skip peers — don't improvise a substitute.
@@ -34,8 +34,10 @@ instructions — follow it: it names your roles and their exact invocations. The
 Credentials (accounts) and presets (orchestration recipes) are the human's to configure;
 never edit credential stores from inside the box.
 
-## The gate (adapt to this repo)
-`<format-check> && <build --warnings-as-errors> && <tests>`
+## The gate (fill this in for this repo)
+`<format-check> && <the strictest build/typecheck this stack has> && <tests>`
+One command that must exit 0 before anything is committed. If a step doesn't exist here
+(no compiler, no formatter), drop it — don't substitute a weaker check for it.
 
 ## The contract
 - A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change: on the host use `coop tasks` (never a manual `mv`); inside the box — where `coop` isn't installed — move the folder yourself. There is no status field and no fifth state.

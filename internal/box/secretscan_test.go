@@ -218,4 +218,44 @@ func TestScanSecretsUUIDValueStillFlagged(t *testing.T) {
 	if f := ScanSecrets(`heroku_api_key = "f47ac10b-58cc-4372-a567-0e02b2c3d479"`); len(f) == 0 {
 		t.Error("a UUID-shaped credential value must keep firing (Heroku API keys are UUIDs)")
 	}
+	// A UUID starting with a letter is still pure hex — the non-hex-letter tell in
+	// looksLikeNamedIdent is what stops it being read as a dash-separated name.
+	if f := ScanSecrets(`heroku_api_key = "a47ac10b-58cc-4372-a567-0e02b2c3d479"`); len(f) == 0 {
+		t.Error("a letter-leading UUID credential must keep firing too")
+	}
+}
+
+// Naming WHERE a secret lives is not leaking it. Both shapes below are ubiquitous in Terraform
+// and produced 10 of the 12 findings on one real infra repo — the kind of noise that gets a
+// scanner switched off. Each case pairs the false positive with a true positive on the same key.
+func TestScanSecretsSkipsSecretNamesAndPaths(t *testing.T) {
+	quiet := []string{
+		// Secret-manager paths — relative, so the absolute-path guard never saw them.
+		`BLITZ_DELTA_BUILDER_SERVER_TOKEN = "secrets/desktop-delta-builder/server-token"`,
+		`GITHUB_TOKEN = "secrets/desktop-release-manager/github-token"`,
+		`ZENDESK_OAUTH_ACCESS_TOKEN = "secrets/frontend-utilities/zendesk-oauth-access-token"`,
+		// Kebab-case resource names — bareIdentRe only understood snake_case.
+		`enrollment_secret = "emisar-gcp-runner-enrollment-key"`,
+		`tfe_token_secret = "emisar-gcp-runner-tfe-token"`,
+		`bunnycdn_secret = "emisar-gcp-runner-bunnycdn-api-key"`,
+		// Placeholder vocabulary in a committed .example file.
+		`tailscale_oauth_client_secret = "tskey-client-REPLACE"`,
+	}
+	for _, line := range quiet {
+		if f := ScanSecrets(line); len(f) != 0 {
+			t.Errorf("naming a secret is not leaking it, still flagged: %s → %v", line, f)
+		}
+	}
+	// …and the real thing on those same keys must still fire.
+	loud := []string{
+		`auth_token = "850cb6abb7fc844f89c7bcc8adce5e9d0a2e7dc80f6c96c8f4022d8c45747ad6"`, // hex digest
+		`enrollment_secret = "AKIAIOSFODNN7REALKEY"`,                                      // uppercase
+		`GITHUB_TOKEN = "ghp_16C7e42F292c6912E7710c838347Ae178B4a"`,                       // mixed case
+		`tfe_token_secret = "x8Kd0pQ2vB7nL4mR9tW1yZ6cF3jH5gS0"`,                           // base64-ish
+	}
+	for _, line := range loud {
+		if f := ScanSecrets(line); len(f) == 0 {
+			t.Errorf("a real literal credential must still fire: %s", line)
+		}
+	}
 }

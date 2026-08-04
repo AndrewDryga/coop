@@ -4,6 +4,68 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop check-secrets` stopped calling a secret's NAME a secret.** Two shapes that are
+  everywhere in Terraform were flagged as literal credentials: a secret-manager path
+  (`GITHUB_TOKEN = "secrets/desktop-release-manager/github-token"`) and a kebab-case resource id
+  (`enrollment_secret = "emisar-gcp-runner-tfe-token"`). The absolute-path guard never saw the
+  first (the path is relative) and the bare-identifier guard only understood snake_case, not
+  kebab. On one real infra repo that was 10 of 12 findings — the ratio that gets a scanner turned
+  off, at which point it catches nothing. A value now reads as a NAME when every segment is
+  lowercase alphanumeric joined by `-` `_` `.` `/` **and** it contains a letter outside the hex
+  alphabet; that second condition is what keeps UUID-shaped credentials firing (Heroku API keys
+  are UUIDs). `REPLACE`/`REPLACE_ME` joins the placeholder vocabulary. Same repo now reports 1
+  finding — a real committed token the scan was right about.
+
+- **The box image now fits the repo's toolchain instead of imposing one.** The asdf
+  `.agent/Dockerfile` was a static file that installed Erlang's build deps, a Postgres client and
+  inotify into *every* repo, seeded hex/rebar, and set kerl's build flags — while installing no
+  Python. So a Terraform repo carried a stack it never used, and `coop build` failed outright the
+  moment `.tool-versions` pinned a tool whose asdf plugin installs through pip (`checkov`,
+  `ansible`, `awscli`, …) or that asdf compiles from source (`python`, `ruby`). The Dockerfile is
+  now GENERATED from `.tool-versions` the same way the commit gates already were: a universal base
+  plus exactly the system packages the pinned tools need. An unknown tool contributes nothing and
+  the generated file says where to add its packages. A failing `asdf plugin add` now fails the
+  build instead of being swallowed and surfacing later as a missing command.
+
+- **Scaffolded docs no longer teach coop's own repo.** The templates are coop's real working
+  files, so its stack leaked into every project: `/investigate` told an agent to reproduce with
+  `go test ./pkg -run TestX`, the `.agent/tasks/README.md` worked example (task, `state.md`,
+  `log.md` and `decision.md`) was coop's own `COOP_EGRESS` bug in `internal/box/egress.go` verified
+  by `make check`, `project.yaml` illustrated context routes with `**/*.ex`, and `AGENTS.md`'s gate
+  assumed a compiler (`<build --warnings-as-errors>`). All are now stack-neutral — a Terraform repo
+  gets examples it can actually follow.
+
+- **`coop init` no longer commits starter subagents.** It used to scaffold
+  `.claude/agents/deep-reasoner.md` and `fast-worker.md` into every repo. A preset already
+  generates its own `coop-<role>` subagent in the box, so a repo with its own roles ended up
+  carrying two competing sets — and a repo that wanted neither had to delete them after every
+  init. Subagents are now yours to write; nothing is scaffolded under `.claude/agents/`.
+
+- **`coop init` scaffolds one copy of the Claude commit gate, not two.** A repo that keeps a
+  project `.claude/` adapter also received a byte-identical `.agent/claude/hooks/commit-gate.sh`
+  plus a near-identical `settings.json` — files the box never reads, because the project artifact
+  always shadows the fallback. Init now writes the project copy when the repo keeps `.claude/`,
+  and the `.agent/claude/` fallback only when it doesn't.
+
+- **`coop init` stopped leaving `AGENTS.md` pointing at files that aren't there.** It wrote
+  `.agent/tasks/README.md` and then, in the same run, a `.gitignore` block that excluded it — so
+  the BOOT protocol's own entry point was missing from every fresh clone. It also cited
+  `.agent/rules/static-bounded-supervision.md`, a coop-internal rule no scaffold ever wrote. The
+  queue's layout doc is now un-ignored (the task folders around it stay local state), and the
+  supervision rule reads inline instead of as a link to a file the repo doesn't have.
+
+- **A re-init no longer duplicates the `.gitignore` block.** Coop probed only for the modern
+  `**/.agent/*` spelling, so a repo scaffolded by a pre-monorepo coop got a whole second block
+  appended — including a second copy of the `.gemini` stanza it already had. The root-anchored
+  rules are now upgraded in place, each newer rule spliced in at its load-bearing position. The
+  `.gemini` rules are also written only for a repo that actually keeps a `.gemini/`.
+
+- **An empty skill directory no longer stays empty forever.** `coop init` checked whether a
+  skill's *directory* existed, so a half-removed skill — or one whose files a `git clean` took —
+  was reported as "kept existing skill" on every run while `.claude/skills`, `.codex/skills`, and
+  `.gemini/skills` all pointed at an empty tree. Init now checks for the skill's `SKILL.md` and
+  restores what's missing, leaving customized files alone.
+
 - **Work an agent discovers now defaults to the queue instead of the backlog.** The loop work
   prompt, `AGENTS.md`, `coop backlog --help`, and the queue README all stated the rule as "simple
   and ready → `00_todo/`, needs a spec → `xx_backlog/`", but "needs a spec" is self-certifying: an

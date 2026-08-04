@@ -654,16 +654,16 @@ coop claude:claude-fable-5 --peer codex --peer gemini   # run it; --peer mounts 
 For a *standing* arrangement (a lead model + its roles you don't retype), put it in a
 [preset](#presets-the-whole-arrangement-in-one-yaml-file) and run `coop <name>` (or `coop loop <name>`).
 
-- **Tiered subagents** — `coop init` scaffolds `.claude/agents/deep-reasoner.md` (pinned
-  to Opus: architecture, complex debugging, algorithm design) and `fast-worker.md`
-  (pinned to Sonnet: boilerplate, tests, mechanical edits). They're native Claude Code
-  subagents: the lead auto-delegates on their descriptions, each turn bills at *its*
-  model, and the lead's context stays lean. Commit them; edit them freely.
+- **Tiered subagents** — pin a reasoning specialist to a big model and a mechanical worker
+  to a cheap one in `.claude/agents/`. They're native Claude Code subagents: the lead
+  auto-delegates on their descriptions, each turn bills at *its* model, and the lead's
+  context stays lean. `coop init` scaffolds none — a preset generates its own `coop-<role>`
+  in the box, and your repo's roles are yours to write.
 - **Peer engineers, not reviewers** — with `--peer <peer>…` (or fusion), the lead can ask
   the named peers (e.g. codex, gemini) read-only via `coop-consult <peer>`: different training, different
   blind spots. **The `--peer` flag matters** — a plain `coop claude` deliberately
   doesn't mount peer credentials, so peers only answer in a consult/fusion box.
-- **High-stakes calls** — task deep-reasoner *and* a peer on the same problem in
+- **High-stakes calls** — task a native subagent *and* a peer on the same problem in
   parallel, without showing either the other's answer, then synthesize. (This is the
   move coop's fusion directive already teaches its governor.)
 

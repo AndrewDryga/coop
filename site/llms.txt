@@ -629,11 +629,9 @@ coop init [--stack asdf] — scaffold coop's working set into the repo.
   real .claude/skills already exists and .agent/skills does not, init keeps it as
   the shared source instead of creating a competing skills tree.
 
-  Writes AGENTS.md, the .agent/ queue, the Claude + git commit hooks, the
-  workflow skills, and two starter subagents for the orchestrator pattern —
-  .claude/agents/deep-reasoner.md (pinned to Opus, for reasoning-heavy phases)
-  and fast-worker.md (pinned to Sonnet, for mechanical work) — so a lead on a
-  bigger model spends its tokens on planning and synthesis (see the README's
+  Writes AGENTS.md, the .agent/ queue, the Claude + git commit hooks, and the
+  workflow skills. Subagents are left to you: a preset generates its own
+  coop-<role> in the box, so init commits none to the repo (see the README's
   "orchestrator pattern"). The commit hooks' format gate matches the repo's stack —
   detected from go.mod / *.tf / mix.exs / Cargo.toml or .tool-versions (gofmt,
   terraform fmt, mix format, cargo fmt). With nothing detected the gate is left

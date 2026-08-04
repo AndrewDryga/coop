@@ -61,14 +61,90 @@ func TestAsdfDockerfilePackagesMatchRegistry(t *testing.T) {
 	}
 }
 
+// The box image carries the system packages THIS repo's pinned tools need — and nothing else.
+// Shipping erlang's build deps into a Terraform repo is dead weight; shipping none of python's
+// into a checkov repo is a failed `coop build` (which is exactly how this was found).
+func TestAsdfDockerfileFitsThePinnedToolchain(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		tools         []string
+		want, notWant []string
+	}{{
+		name:    "terraform + a pip-backed plugin",
+		tools:   []string{"terraform", "checkov"},
+		want:    []string{"gnupg", "python3-pip"},
+		notWant: []string{"autoconf", "libncurses-dev", "KERL_", "mix local.hex", "build-essential"},
+	}, {
+		name:    "erlang + elixir",
+		tools:   []string{"erlang", "elixir"},
+		want:    []string{"autoconf", "m4", "libncurses-dev", "KERL_BUILD_DOCS", "mix local.hex"},
+		notWant: []string{"python3-pip", "gnupg"},
+	}, {
+		name:    "python builds from source",
+		tools:   []string{"python"},
+		want:    []string{"build-essential", "libffi-dev", "zlib1g-dev"},
+		notWant: []string{"KERL_", "mix local.hex", "autoconf"},
+	}, {
+		name:  "a binary-download toolchain needs nothing extra",
+		tools: []string{"golang", "kubectl"},
+		// The universal base only — no compiler, no interpreter, no seed step.
+		notWant: []string{"build-essential", "python3-pip", "KERL_", "mix local.hex", "gnupg"},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			set := map[string]bool{}
+			for _, x := range tc.tools {
+				set[x] = true
+			}
+			got, err := asdfDockerfile(set)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Assert on the INSTRUCTIONS, never the prose: the template's comment names
+			// python3-pip as the example a reader should add, which would match a naive
+			// whole-file search and make "carries nothing extra" pass by accident.
+			body := dockerfileInstructions(got)
+			for _, w := range tc.want {
+				if !strings.Contains(body, w) {
+					t.Errorf("%v box is missing %q:\n%s", tc.tools, w, body)
+				}
+			}
+			for _, w := range tc.notWant {
+				if strings.Contains(body, w) {
+					t.Errorf("%v box carries %q it never uses:\n%s", tc.tools, w, body)
+				}
+			}
+			if strings.Contains(got, "@SYSTEM_PACKAGES@") || strings.Contains(got, "@TOOLCHAIN_ENV@") || strings.Contains(got, "@TOOLCHAIN_SEED@") {
+				t.Errorf("unsubstituted placeholder left in the rendered Dockerfile:\n%s", got)
+			}
+			// An empty slot must not leave a line that is nothing but a continuation.
+			for i, line := range strings.Split(got, "\n") {
+				if strings.TrimSpace(line) == "\\" || strings.TrimSpace(line) == "&& \\" {
+					t.Errorf("empty substitution left a dangling continuation at line %d:\n%s", i+1, got)
+				}
+			}
+		})
+	}
+}
+
+// dockerfileInstructions strips comment lines so an assertion about what the image INSTALLS
+// can't be satisfied (or defeated) by the template's explanatory prose.
+func dockerfileInstructions(dockerfile string) string {
+	var kept []string
+	for _, line := range strings.Split(dockerfile, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
 // The profile drop-in belongs after the expensive toolchain layer: login shells keep the shims,
 // while editing this small layer does not rebuild every version pinned in .tool-versions.
 func TestAsdfDockerfileKeepsToolchainsOnLoginPath(t *testing.T) {
-	data, err := os.ReadFile("templates/dockerfile/asdf")
+	content, err := asdfDockerfile(map[string]bool{"erlang": true, "elixir": true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := string(data)
 	const dropIn = `RUN printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`
 	installAt := strings.Index(content, ` && MAKEFLAGS="-j$(nproc)" asdf install`)
 	rootAt := strings.LastIndex(content, "\nUSER root\n")
@@ -123,7 +199,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules/\n.agent/*.log\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&scaffolder{repo: repo}).updateGitignore(); err != nil {
+	if err := (&scaffolder{repo: repo}).updateGitignore(true); err != nil {
 		t.Fatal(err)
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -135,7 +211,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 		}
 	}
 	// Idempotent: a second run doesn't duplicate the block.
-	_ = (&scaffolder{repo: repo}).updateGitignore()
+	_ = (&scaffolder{repo: repo}).updateGitignore(true)
 	gi2, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	if n := strings.Count(string(gi2), "\n**/.agent/*\n"); n != 1 {
 		t.Errorf("coop block written %d times, want 1:\n%s", n, gi2)
@@ -157,10 +233,10 @@ func TestUpdateGitignoreAddsClaudeFallbackToExistingBlock(t *testing.T) {
 	}
 
 	s := &scaffolder{repo: repo}
-	if err := s.updateGitignore(); err != nil {
+	if err := s.updateGitignore(true); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.updateGitignore(); err != nil {
+	if err := s.updateGitignore(true); err != nil {
 		t.Fatal(err)
 	}
 	gi, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -181,6 +257,94 @@ func TestUpdateGitignoreAddsClaudeFallbackToExistingBlock(t *testing.T) {
 
 // TestInitSubproject: a member gets ONLY its own task queue — never the full scaffold (AGENTS.md,
 // .claude/, rules), a project.yaml (the root's alone), nor the retired BACKLOG.md.
+// A repo scaffolded by a pre-monorepo coop carries the same rules ROOT-anchored (".agent/*").
+// Re-init must upgrade those lines in place: probing only for the "**/" spelling appended a whole
+// second block, so the repo ended up with two coop stanzas and a duplicate of every stanza after it.
+func TestUpdateGitignoreUpgradesLegacyRootAnchoredBlock(t *testing.T) {
+	repo := t.TempDir()
+	legacy := "node_modules/\n\n" +
+		"# coop working state (commit knowledge, ignore state)\n" +
+		".agent/*\n!.agent/rules/\n!.agent/skills/\n\n" +
+		"# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n" +
+		"!.gemini/\n.gemini/*\n!.gemini/skills\n"
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &scaffolder{repo: repo}
+	for range 2 { // twice: the upgrade must be idempotent too
+		if err := s.updateGitignore(true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	for line, want := range map[string]int{
+		"\n**/.agent/*\n":    1,
+		"\n!.gemini/\n":      1, // the appended block used to bring a second copy of this stanza
+		"\n!.agent/rules/\n": 0, // legacy spelling is rewritten, not left beside the new one
+	} {
+		if n := strings.Count(string(gi), line); n != want {
+			t.Errorf("%q appears %d times, want %d:\n%s", line, n, want, gi)
+		}
+	}
+	// The upgrade splices the newer rules in at their load-bearing position, not at the end.
+	for _, want := range []string{"!**/.agent/rules/", "!**/.agent/claude/", "!**/.agent/Dockerfile", "!.agent/project.yaml", "!**/.agent/tasks/README.md"} {
+		if !strings.Contains(string(gi), want) {
+			t.Errorf("upgraded block missing %q:\n%s", want, gi)
+		}
+	}
+}
+
+// The .gemini rules exist to rescue that dir's skills symlink from a global ignore — a repo that
+// doesn't keep a .gemini/ shouldn't be given rules for one.
+func TestUpdateGitignoreSkipsGeminiRulesWhenUnused(t *testing.T) {
+	repo := t.TempDir()
+	if err := (&scaffolder{repo: repo}).updateGitignore(false); err != nil {
+		t.Fatal(err)
+	}
+	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if strings.Contains(string(gi), ".gemini") {
+		t.Errorf("gemini rules written for a repo with no .gemini/:\n%s", gi)
+	}
+	// …and adding gemini later still gets them, exactly once.
+	if err := (&scaffolder{repo: repo}).updateGitignore(true); err != nil {
+		t.Fatal(err)
+	}
+	gi, _ = os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if n := strings.Count(string(gi), "!.gemini/skills"); n != 1 {
+		t.Errorf("gemini rules appear %d times after enabling gemini, want 1:\n%s", n, gi)
+	}
+}
+
+// An empty leftover skill directory used to make init report "kept existing skill" forever while
+// the skill stayed empty — and every .../skills symlink pointed at nothing.
+func TestInitRestoresEmptySkillDir(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent", "skills", "spec"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logged, err := captureScaffoldStderr(t, func() error {
+		return Init(repo, "", nil, []string{"claude"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(filepath.Join(repo, ".agent/skills/spec/SKILL.md")); err != nil || fi.Size() == 0 {
+		t.Fatalf("an empty skill dir was left empty: %v", err)
+	}
+	if !strings.Contains(logged, "restored skill /spec") {
+		t.Errorf("restoring an empty skill should say so, not report it kept:\n%s", logged)
+	}
+	// A skill with its SKILL.md is still left alone, edits and all.
+	custom := filepath.Join(repo, ".agent/skills/work/SKILL.md")
+	os.WriteFile(custom, []byte("MY SKILL"), 0o644)
+	if err := Init(repo, "", nil, []string{"claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(custom); string(b) != "MY SKILL" {
+		t.Error("re-init clobbered a customized skill")
+	}
+}
+
 func TestInitSubproject(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "member")
@@ -250,9 +414,7 @@ func TestInit(t *testing.T) {
 	for _, rel := range []string{
 		"AGENTS.md", ".agent/tasks/README.md",
 		".agent/skills/sweep/queue-guard.sh",
-		".agent/claude/settings.json", ".agent/claude/hooks/commit-gate.sh",
 		".claude/settings.json", ".claude/hooks/commit-gate.sh",
-		".claude/agents/deep-reasoner.md", ".claude/agents/fast-worker.md",
 		".githooks/pre-commit", ".githooks/prepare-commit-msg",
 	} {
 		fi, err := os.Stat(filepath.Join(repo, rel))
@@ -271,16 +433,17 @@ func TestInit(t *testing.T) {
 		t.Error(".agent/BACKLOG.md should no longer be scaffolded (retired for `coop backlog`)")
 	}
 
-	// The starter subagents carry the model tiering that is their whole point — the reasoning
-	// specialist pinned to Opus, the mechanical worker to Sonnet — via Claude Code's native
-	// frontmatter, so a lead on a bigger model spends its tokens on planning and synthesis.
-	for rel, model := range map[string]string{
-		".claude/agents/deep-reasoner.md": "model: opus",
-		".claude/agents/fast-worker.md":   "model: sonnet",
-	} {
-		data, _ := os.ReadFile(filepath.Join(repo, rel))
-		if !strings.Contains(string(data), model) {
-			t.Errorf("%s missing its %q pin:\n%s", rel, model, data)
+	// Subagents are the repo's own business: a preset generates its coop-<role> in the box, and a
+	// repo with its own roles doesn't want a competing starter set committed alongside them.
+	if _, err := os.Stat(filepath.Join(repo, ".claude/agents")); err == nil {
+		t.Error(".claude/agents should not be scaffolded (presets generate coop-<role> in the box)")
+	}
+
+	// Exactly ONE copy of the Claude commit gate + settings: the project .claude/ artifact always
+	// wins over the .agent/claude/ fallback, so scaffolding both commits a file nothing reads.
+	for _, rel := range []string{".agent/claude/settings.json", ".agent/claude/hooks/commit-gate.sh"} {
+		if _, err := os.Stat(filepath.Join(repo, rel)); err == nil {
+			t.Errorf("%s duplicates the project .claude/ artifact that shadows it", rel)
 		}
 	}
 
@@ -292,7 +455,7 @@ func TestInit(t *testing.T) {
 	}
 
 	// Hooks are executable; the old project-global Stop guard is not scaffolded.
-	for _, rel := range []string{".agent/claude/hooks/commit-gate.sh", ".claude/hooks/commit-gate.sh"} {
+	for _, rel := range []string{".githooks/pre-commit", ".claude/hooks/commit-gate.sh"} {
 		if fi, _ := os.Stat(filepath.Join(repo, rel)); fi == nil || fi.Mode()&0o100 == 0 {
 			t.Errorf("%s is missing or not executable", rel)
 		}
@@ -302,16 +465,6 @@ func TestInit(t *testing.T) {
 			t.Errorf("retired global hook %s should not be scaffolded", rel)
 		}
 	}
-	sharedSettings, err := os.ReadFile(filepath.Join(repo, ".agent/claude/settings.json"))
-	if err != nil || !json.Valid(sharedSettings) {
-		t.Fatalf("shared Claude settings are missing or invalid JSON: %v\n%s", err, sharedSettings)
-	}
-	for _, want := range []string{"$CLAUDE_PROJECT_DIR/.claude/hooks/", "$CLAUDE_CONFIG_DIR/hooks/"} {
-		if !strings.Contains(string(sharedSettings), want) {
-			t.Errorf("shared Claude settings missing hook fallback %q:\n%s", want, sharedSettings)
-		}
-	}
-	assertClaudeHookFallbacks(t, sharedSettings)
 	projectSettings, err := os.ReadFile(filepath.Join(repo, ".claude/settings.json"))
 	if err != nil || !json.Valid(projectSettings) {
 		t.Fatalf("project Claude settings are missing or invalid JSON: %v\n%s", err, projectSettings)
@@ -611,10 +764,12 @@ func TestInitGitHooks(t *testing.T) {
 	} else if fi.Mode()&0o100 == 0 {
 		t.Error("prepare-commit-msg hook is not executable")
 	}
-	if fi, err := os.Stat(filepath.Join(repo, ".agent/claude/hooks/commit-gate.sh")); err != nil {
-		t.Fatalf("shared Claude commit gate missing: %v", err)
+	// With a project .claude/ scaffolded, THAT copy is the Claude commit gate — the .agent/claude/
+	// fallback would only be a byte-identical file the box never reads.
+	if fi, err := os.Stat(filepath.Join(repo, ".claude/hooks/commit-gate.sh")); err != nil {
+		t.Fatalf("project Claude commit gate missing: %v", err)
 	} else if fi.Mode()&0o100 == 0 {
-		t.Error("shared Claude commit gate is not executable")
+		t.Error("project Claude commit gate is not executable")
 	}
 	if logged, err := captureInit(repo); err != nil {
 		t.Fatal(err)
@@ -789,10 +944,10 @@ func TestInitIdempotent(t *testing.T) {
 	// Edit a file, then re-init: it must be kept, not overwritten.
 	readme := filepath.Join(repo, ".agent/tasks/README.md")
 	os.WriteFile(readme, []byte("MY EDITS"), 0o644)
-	sharedSettings := filepath.Join(repo, ".agent/claude/settings.json")
-	sharedGate := filepath.Join(repo, ".agent/claude/hooks/commit-gate.sh")
-	os.WriteFile(sharedSettings, []byte("MY CLAUDE SETTINGS"), 0o644)
-	os.WriteFile(sharedGate, []byte("#!/bin/sh\n# MY CLAUDE GATE\n"), 0o755)
+	claudeSettings := filepath.Join(repo, ".claude/settings.json")
+	claudeGate := filepath.Join(repo, ".claude/hooks/commit-gate.sh")
+	os.WriteFile(claudeSettings, []byte("MY CLAUDE SETTINGS"), 0o644)
+	os.WriteFile(claudeGate, []byte("#!/bin/sh\n# MY CLAUDE GATE\n"), 0o755)
 
 	// Capture the re-run's log. An unchanged symlink must read as "kept existing", not the action
 	// verb "linked" (which looks like a rewrite on every subsequent init); and a kept skill must
@@ -816,11 +971,11 @@ func TestInitIdempotent(t *testing.T) {
 	if b, _ := os.ReadFile(readme); string(b) != "MY EDITS" {
 		t.Error("re-init clobbered an edited .agent/tasks/README.md")
 	}
-	if b, _ := os.ReadFile(sharedSettings); string(b) != "MY CLAUDE SETTINGS" {
-		t.Error("re-init clobbered edited shared Claude settings")
+	if b, _ := os.ReadFile(claudeSettings); string(b) != "MY CLAUDE SETTINGS" {
+		t.Error("re-init clobbered edited project Claude settings")
 	}
-	if b, _ := os.ReadFile(sharedGate); string(b) != "#!/bin/sh\n# MY CLAUDE GATE\n" {
-		t.Error("re-init clobbered edited shared Claude commit gate")
+	if b, _ := os.ReadFile(claudeGate); string(b) != "#!/bin/sh\n# MY CLAUDE GATE\n" {
+		t.Error("re-init clobbered edited project Claude commit gate")
 	}
 	// .gitignore rule must not be duplicated.
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -993,11 +1148,24 @@ func TestInitAgentDirsGating(t *testing.T) {
 	if !exists(filepath.Join(repo2, ".agent", "rules")) {
 		t.Error(".agent/ is always scaffolded even with no agents")
 	}
+	// With no project .claude/ to shadow it, the fallback IS the repo's Claude adapter — so it must
+	// be scaffolded here, and its hook command must resolve either way (the box copies it to the
+	// USER-level ~/.claude, where $CLAUDE_PROJECT_DIR/.claude/hooks/ may not exist).
 	for _, rel := range []string{".agent/claude/settings.json", ".agent/claude/hooks/commit-gate.sh"} {
 		if !exists(filepath.Join(repo2, rel)) {
 			t.Errorf("shared Claude fallback %s should be scaffolded with no per-agent dirs", rel)
 		}
 	}
+	sharedSettings, err := os.ReadFile(filepath.Join(repo2, ".agent/claude/settings.json"))
+	if err != nil || !json.Valid(sharedSettings) {
+		t.Fatalf("shared Claude settings are missing or invalid JSON: %v\n%s", err, sharedSettings)
+	}
+	for _, want := range []string{"$CLAUDE_PROJECT_DIR/.claude/hooks/", "$CLAUDE_CONFIG_DIR/hooks/"} {
+		if !strings.Contains(string(sharedSettings), want) {
+			t.Errorf("shared Claude settings missing hook fallback %q:\n%s", want, sharedSettings)
+		}
+	}
+	assertClaudeHookFallbacks(t, sharedSettings)
 	if exists(filepath.Join(repo2, ".agent/claude/hooks/stop-guard.sh")) {
 		t.Error("shared Claude fallback should not scaffold the retired global Stop guard")
 	}

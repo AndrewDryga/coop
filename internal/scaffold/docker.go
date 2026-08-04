@@ -6,12 +6,108 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
+
+// toolSystemDeps maps a tool a repo can pin in .tool-versions to the Debian packages its asdf
+// plugin needs beyond the universal base — either because asdf BUILDS it from source (erlang,
+// python, ruby) or because the plugin shells out to another toolchain (a pip-installed tool
+// needs python3 + python3-pip). A tool that isn't here contributes nothing: a binary-download
+// plugin (golang, nodejs, kubectl, …) needs no system packages, and for anything exotic the
+// generated Dockerfile is the user's to edit — its comment says so.
+//
+// This list is why the Dockerfile is GENERATED and not one static file: shipping erlang's build
+// deps into a Terraform repo is dead weight, and shipping none of python's into a checkov repo
+// is a failed `coop build`. Same "detect, then generate" rule as the commit gates.
+var toolSystemDeps = map[string][]string{
+	// Compiled from source by the plugin.
+	"erlang": {"build-essential", "autoconf", "m4", "libncurses-dev", "libssl-dev"},
+	"python": {"build-essential", "libssl-dev", "zlib1g-dev", "libbz2-dev", "libreadline-dev", "libsqlite3-dev", "libffi-dev", "liblzma-dev"},
+	"ruby":   {"build-essential", "libssl-dev", "zlib1g-dev", "libyaml-dev"},
+	"rust":   {"build-essential"}, // cargo shells out to a linker
+	// Release archives that need a verifier or an extractor beyond the base.
+	"terraform": {"gnupg"}, // the plugin checks HashiCorp's signature
+	// Plugins that are a thin `pip3 install` wrapper.
+	"ansible":      {"python3", "python3-pip"},
+	"ansible-lint": {"python3", "python3-pip"},
+	"awscli":       {"python3", "python3-pip"},
+	"aws-sam-cli":  {"python3", "python3-pip"},
+	"cfn-lint":     {"python3", "python3-pip"},
+	"checkov":      {"python3", "python3-pip"},
+	"pre-commit":   {"python3", "python3-pip"},
+	"sqlfluff":     {"python3", "python3-pip"},
+	"yamllint":     {"python3", "python3-pip"},
+}
+
+// toolchainEnv and toolchainSeed are the non-package setup a pinned tool needs: build tuning it
+// reads from the environment, and a post-install step. Kept beside toolSystemDeps so adding a
+// stack is one edit. Erlang's kerl options cut the GUI/doc build a headless box can't use;
+// Elixir seeds hex + rebar so `mix deps.get` doesn't stop to prompt for them unattended.
+var toolchainEnv = map[string][]string{
+	"erlang": {
+		`KERL_BUILD_DOCS=no`,
+		`KERL_CONFIGURE_OPTIONS="--without-wx --without-observer --without-debugger --without-et --without-megaco --without-javac"`,
+	},
+}
+
+var toolchainSeed = map[string]string{
+	"elixir": `{ command -v mix >/dev/null 2>&1 && mix local.hex --force && mix local.rebar --force || true; }`,
+}
+
+// asdfDockerfile renders the asdf box image for the tools this repo pins. Unknown tools are fine
+// — they just add nothing, and the user edits the generated file.
+func asdfDockerfile(tools map[string]bool) (string, error) {
+	data, err := templates.ReadFile("templates/dockerfile/asdf")
+	if err != nil {
+		return "", err
+	}
+	names := make([]string, 0, len(tools))
+	for t := range tools {
+		names = append(names, t)
+	}
+	slices.Sort(names) // deterministic output; a re-render can't reorder packages
+
+	var pkgs, env, seed []string
+	for _, t := range names {
+		for _, p := range toolSystemDeps[t] {
+			if !slices.Contains(pkgs, p) { // erlang + python both want build-essential
+				pkgs = append(pkgs, p)
+			}
+		}
+		env = append(env, toolchainEnv[t]...)
+		if s, ok := toolchainSeed[t]; ok {
+			seed = append(seed, s)
+		}
+	}
+	slices.Sort(pkgs)
+
+	out := string(data)
+	out = strings.ReplaceAll(out, "@SYSTEM_PACKAGES@", indentedContinuation(strings.Join(pkgs, " "), "      "))
+	out = strings.ReplaceAll(out, "@TOOLCHAIN_ENV@", indentedContinuation(strings.Join(env, " \\\n    "), "    "))
+	out = strings.ReplaceAll(out, "@TOOLCHAIN_SEED@", seedContinuation(seed))
+	return out, nil
+}
+
+// indentedContinuation renders body as a backslash-continued next line, or "" when there's
+// nothing to add — so an empty slot leaves no dangling continuation behind.
+func indentedContinuation(body, indent string) string {
+	if body == "" {
+		return ""
+	}
+	return " \\\n" + indent + body
+}
+
+func seedContinuation(seed []string) string {
+	if len(seed) == 0 {
+		return ""
+	}
+	return " \\\n && " + strings.Join(seed, " \\\n && ")
+}
 
 // dockerFinds is what detectDocker turned up: the repo's own Dockerfiles and compose files
 // (coop's own .agent/Dockerfile / .agent/compose.yml live in the hidden .agent/, never scanned),

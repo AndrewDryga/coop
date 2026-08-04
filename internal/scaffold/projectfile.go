@@ -77,7 +77,7 @@ func projectYAML(subprojects []string) string {
 		}
 	} else {
 		b.WriteString("# A monorepo? List member dirs (each its own coop project with a .agent/):\n")
-		b.WriteString("# subprojects: [runner, packs]\n")
+		b.WriteString("# subprojects: [api, web]\n")
 	}
 	b.WriteString("\n# Ports a dev server in the box listens on — coop publishes each to a stable host\n")
 	b.WriteString("# port so you can open it in your browser (bind the server to 0.0.0.0 in the box):\n")
@@ -105,12 +105,12 @@ func projectYAML(subprojects []string) string {
 # one of its globs (* within a segment, ** across segments).
 # context:
 #   routes:
-#     - paths: [portal/**, "**/*.ex"]
-#       include: [.agent/kb/portal.md]
+#     - paths: [billing/**, "**/*.sql"]
+#       include: [.agent/kb/billing.md]
 
 # gate: the revalidation 'coop fork merge' runs IN THE BOX before landing a fork (rolled back on
-# failure). Same shape as COOP_GATE; an explicit COOP_GATE wins.
-# gate: make check
+# failure). Same shape as COOP_GATE; an explicit COOP_GATE wins. Use the gate AGENTS.md names.
+# gate: <this repo's gate command>
 `)
 	return b.String()
 }

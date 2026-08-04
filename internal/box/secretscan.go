@@ -79,10 +79,37 @@ func looksLikeCodeRef(v string) bool {
 		return true // a dotted reference: var.x, google_storage_hmac_key.s3.access_id
 	case bareIdentRe.MatchString(v):
 		return true // a bare snake_case variable: gateway_group_token, braintree_private_key
+	case looksLikeNamedIdent(v):
+		return true // a named thing, not a token: secrets/app/github-token, my-runner-enrollment-key
 	default:
 		return false
 	}
 }
+
+// looksLikeNamedIdent reports whether a value is a human-authored NAME — a secret-manager path
+// (secrets/desktop-release-manager/github-token), a resource id (emisar-gcp-runner-tfe-token) —
+// rather than a literal credential. bareIdentRe covers only snake_case with no slashes, so these
+// two extremely common Terraform shapes were flagged as secrets; naming where a secret LIVES is
+// not leaking it.
+//
+// Two conditions, both required, chosen so they cannot hide a real credential:
+//
+//   - every segment is all-lowercase alphanumeric, separated by - _ . or / — a base64 token is
+//     mixed-case (an all-lowercase base64 run of 20+ chars is ~1e-8 likely), so this excludes it.
+//   - at least one letter is OUTSIDE the hex alphabet. This is what keeps a UUID firing: a UUID
+//     is lowercase and dash-separated and would otherwise match, but it is pure [0-9a-f-], and
+//     real credentials ARE UUIDs (see TestScanSecretsUUIDValueStillFlagged). A hex digest has no
+//     separators and no non-hex letter either way.
+func looksLikeNamedIdent(v string) bool {
+	if !namedIdentRe.MatchString(v) {
+		return false
+	}
+	return strings.ContainsAny(v, "ghijklmnopqrstuvwxyz")
+}
+
+// namedIdentRe matches lowercase alphanumeric segments joined by - _ . or /, with at least one
+// separator (a single bare word is left to the entropy check).
+var namedIdentRe = regexp.MustCompile(`^[a-z0-9]+([._\-/][a-z0-9]+)+$`)
 
 // bareIdentRe matches an all-lowercase snake_case variable (gateway_group_token) or an
 // all-uppercase SCREAMING_SNAKE constant (PUBLIC_ACCESS_TOKEN) — a reference, not a literal
@@ -96,7 +123,7 @@ var bareIdentRe = regexp.MustCompile(`^([a-z][a-z0-9]*(_[a-z0-9]+)+|[A-Z][A-Z0-9
 // secret value isn't the literal word "password"/"secret". Applied to both the entropy
 // value and the matched provider token, so AKIA…EXAMPLE, password = "very-long-password-1"
 // and payment_method_token = "fake-payment-method-token" are all skipped.
-var placeholderRe = regexp.MustCompile(`(?i)(example|placeholder|redacted|change[-_]?me|x{6,})|\b(password|passwd|secret|fake|dummy|sample)\b|your[-_]`)
+var placeholderRe = regexp.MustCompile(`(?i)(example|placeholder|redacted|change[-_]?me|replace[-_]?(me)?\b|x{6,})|\b(password|passwd|secret|fake|dummy|sample)\b|your[-_]`)
 
 // commentRe matches a line whose content is a comment (#, ;, //). Comments hold examples
 // and placeholders, not live secrets — so the fuzzy entropy heuristic skips them. (The
