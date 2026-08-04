@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -105,5 +106,44 @@ func TestTaskQueues(t *testing.T) {
 	// A path escaping the repo is rejected.
 	if _, err := taskQueues(cfg, repo, []string{"../outside/tasks"}); err == nil {
 		t.Error("a path escaping the repo should error")
+	}
+}
+
+// A nested member's full path is a mouthful (terraform/environments/va1); the last segment is
+// what anyone reaches for. It resolves only when unambiguous — silently picking one of two
+// same-named members would file work in the wrong queue.
+func TestFindTaskProjectChoiceShorthand(t *testing.T) {
+	choices := []taskProjectChoice{
+		{Name: "root", Rel: ".agent/tasks"},
+		{Name: "terraform/environments/va1", Rel: "terraform/environments/va1/.agent/tasks"},
+		{Name: "portal", Rel: "portal/.agent/tasks"},
+	}
+	for _, tc := range []struct{ in, want string }{
+		{"terraform/environments/va1", "terraform/environments/va1"}, // full path
+		{"va1", "terraform/environments/va1"},                        // shorthand
+		{"portal", "portal"},                                         // depth-1 is its own basename
+		{"root", "root"},
+	} {
+		got, ok := findTaskProjectChoice(choices, tc.in)
+		if !ok || got.Name != tc.want {
+			t.Errorf("findTaskProjectChoice(%q) = (%q, %v), want %q", tc.in, got.Name, ok, tc.want)
+		}
+	}
+
+	// Two members ending in the same segment: ambiguous, so it must NOT resolve — and the error
+	// has to name both, or you cannot tell why your unambiguous-looking name was rejected.
+	ambiguous := []taskProjectChoice{
+		{Name: "root", Rel: ".agent/tasks"},
+		{Name: "apps/web", Rel: "apps/web/.agent/tasks"},
+		{Name: "site/web", Rel: "site/web/.agent/tasks"},
+	}
+	if got, ok := findTaskProjectChoice(ambiguous, "web"); ok {
+		t.Errorf("ambiguous shorthand resolved to %q, want a refusal", got.Name)
+	}
+	err := taskProjectAddError("web", ambiguous)
+	for _, want := range []string{"matches 2 projects", "apps/web", "site/web", "use the full path"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ambiguity error missing %q:\n%s", want, err)
+		}
 	}
 }

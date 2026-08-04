@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -85,13 +86,43 @@ func taskProjectChoices(repo string) ([]taskProjectChoice, bool, error) {
 	return choices, true, nil
 }
 
+// findTaskProjectChoice resolves --project by full path first, then by BASENAME when that is
+// unambiguous. Members are repo-relative paths, and a nested one is a mouthful
+// (terraform/environments/va1) — typing the last segment is what anyone actually reaches for. The
+// shorthand only resolves when exactly one member ends in that segment: with two (apps/web and
+// site/web) the name is genuinely ambiguous and picking one silently would file work in the wrong
+// queue, so it stays an error listing the candidates.
 func findTaskProjectChoice(choices []taskProjectChoice, name string) (taskProjectChoice, bool) {
 	for _, ch := range choices {
 		if ch.Name == name {
 			return ch, true
 		}
 	}
+	var matches []taskProjectChoice
+	for _, ch := range choices {
+		if ch.Name != "root" && path.Base(ch.Name) == name {
+			matches = append(matches, ch)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], true
+	}
 	return taskProjectChoice{}, false
+}
+
+// ambiguousTaskProjects returns the members a shorthand name matches when there is more than one,
+// so the error can name them instead of just saying "unknown".
+func ambiguousTaskProjects(choices []taskProjectChoice, name string) []string {
+	var matches []string
+	for _, ch := range choices {
+		if ch.Name != "root" && path.Base(ch.Name) == name {
+			matches = append(matches, ch.Name)
+		}
+	}
+	if len(matches) < 2 {
+		return nil
+	}
+	return matches
 }
 
 func taskProjectAddError(name string, choices []taskProjectChoice) error {
@@ -114,6 +145,9 @@ func taskProjectAddError(name string, choices []taskProjectChoice) error {
 	var b strings.Builder
 	if name == "" {
 		b.WriteString("coop tasks add: this umbrella project has multiple task queues; use --project root for repo-wide work or --project <subproject> for project-local work")
+	} else if dupes := ambiguousTaskProjects(choices, name); dupes != nil {
+		fmt.Fprintf(&b, "coop tasks add: %q matches %d projects (%s); use the full path",
+			name, len(dupes), strings.Join(dupes, ", "))
 	} else {
 		fmt.Fprintf(&b, "coop tasks add: unknown project %q; choose one with --project <name>", name)
 	}

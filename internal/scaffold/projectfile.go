@@ -2,7 +2,9 @@ package scaffold
 
 import (
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -15,7 +17,10 @@ import (
 // .agent/project.yaml (members never get their own) — so they're pure task-queue holders. Each member
 // still has its OWN tasks (per-component work) and backlog (the xx_backlog drawer, created on demand by
 // `coop backlog add`); the root keeps a queue too, for changes that span members. Writes only what's absent.
-func InitSubproject(dir string) error {
+// repo is the monorepo root and dir the member: progress is reported repo-relative, so a nested
+// member reads as terraform/environments/va1/… and two members with the same basename stay
+// distinct (rendering from the member's PARENT collapsed both to "va1/…").
+func InitSubproject(repo, dir string) error {
 	dirs := make([]string, 0, len(taskstate.All))
 	for _, st := range taskstate.All {
 		dirs = append(dirs, filepath.Join(dir, ".agent", "tasks", st))
@@ -23,31 +28,52 @@ func InitSubproject(dir string) error {
 	if err := mkdirs(dirs...); err != nil {
 		return err
 	}
-	// Member progress is shown from the monorepo root, so repeated queue paths stay distinct.
-	s := &scaffolder{repo: filepath.Dir(dir)}
+	s := &scaffolder{repo: repo}
 	return s.writeIfAbsent(filepath.Join(dir, ".agent", "tasks", "README.md"), "templates/agent/tasks/README.md", 0o644)
 }
 
-// DetectSubprojects returns repo's direct child directories that are themselves coop projects (they
-// contain a .agent/ dir) — a monorepo's members. Sorted; empty for a single project. Hidden dirs
-// (.git, .agent, …) are skipped, and only depth-1 children are considered (deeper layouts are a
-// hand-edit of .agent/project.yaml).
+// DetectSubprojects returns the directories under repo that are themselves coop projects (they
+// contain a .agent/ dir) — a monorepo's members. Paths are repo-relative and slash-separated
+// ("terraform/environments/va1"), sorted; empty for a single project.
+//
+// The walk goes to ANY depth, because a member is not always a direct child: an infra repo nests
+// its terraform roots (terraform/environments/va1), and requiring depth-1 meant those layouts had
+// to hand-edit .agent/project.yaml forever. Three prunes keep it cheap and correct:
+//   - hidden dirs (.git, .agent, .terraform, …) — never members, and the heavy ones live there
+//   - the build/vendor dirs in subprojectSkipDirs, which can hold thousands of files
+//   - a member's own subtree: once a directory is a member, its children are ITS business, so
+//     nesting a member inside a member can't produce two overlapping queues for the same work
 func DetectSubprojects(repo string) []string {
-	entries, err := os.ReadDir(repo)
-	if err != nil {
-		return nil
-	}
 	var subs []string
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
+	var walk func(dir, rel string)
+	walk = func(dir, rel string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
 		}
-		if fi, err := os.Stat(filepath.Join(repo, e.Name(), ".agent")); err == nil && fi.IsDir() {
-			subs = append(subs, e.Name())
+		for _, e := range entries {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || subprojectSkipDirs[e.Name()] {
+				continue
+			}
+			childRel := path.Join(rel, e.Name())
+			child := filepath.Join(dir, e.Name())
+			if fi, err := os.Stat(filepath.Join(child, ".agent")); err == nil && fi.IsDir() {
+				subs = append(subs, childRel) // a member — do not descend into it
+				continue
+			}
+			walk(child, childRel)
 		}
 	}
+	walk(repo, "")
 	sort.Strings(subs)
 	return subs
+}
+
+// subprojectSkipDirs are directories the member walk never descends into: dependency and build
+// output that can hold tens of thousands of files and never holds a coop project.
+var subprojectSkipDirs = map[string]bool{
+	"node_modules": true, "vendor": true, "deps": true, "_build": true, "target": true,
+	"build": true, "dist": true, "tmp": true, "coverage": true, "__pycache__": true,
 }
 
 // WriteProject writes <dir>/.agent/project.yaml if it's absent, reporting whether it wrote one. A
@@ -63,6 +89,73 @@ func WriteProject(dir string, subprojects []string) (bool, error) {
 		return false, err
 	}
 	return true, os.WriteFile(dest, []byte(projectYAML(subprojects)), 0o644)
+}
+
+// RegisterSubprojects adds any detected member missing from an EXISTING project.yaml's
+// subprojects: list, returning what it added. A repo grows members after its first init, and
+// leaving them unlisted means coop silently ignores their queues — the old behaviour was to print
+// "add these to subprojects:" and make you do it by hand, every init, forever.
+//
+// The edit is surgical text, not a YAML re-marshal: project.yaml is a commented template that
+// documents every key, and round-tripping it through a YAML encoder would strip all of that.
+// Missing file, or a subprojects: block coop can't confidently locate → returns nothing and
+// changes nothing, so the caller's advisory stays the fallback.
+func RegisterSubprojects(repo string, detected []string) ([]string, error) {
+	dest := filepath.Join(repo, project.File)
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		return nil, nil // no project.yaml — WriteProject creates one with the members already in it
+	}
+	pj, err := project.Load(repo)
+	if err != nil {
+		return nil, err // malformed: don't compound it by editing
+	}
+	var missing []string
+	for _, s := range detected {
+		if !slices.Contains(pj.Subprojects, s) {
+			missing = append(missing, s)
+		}
+	}
+	if len(missing) == 0 {
+		return nil, nil
+	}
+
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	entries := make([]string, 0, len(missing))
+	for _, s := range missing {
+		entries = append(entries, "  - "+s)
+	}
+
+	// Case 1: a real `subprojects:` block — append after its last item, keeping the list sorted.
+	if at := indexOfLine(lines, "subprojects:"); at >= 0 {
+		end := at + 1
+		for end < len(lines) && strings.HasPrefix(lines[end], "  - ") {
+			end++
+		}
+		merged := append(append([]string{}, lines[at+1:end]...), entries...)
+		sort.Strings(merged)
+		lines = append(lines[:at+1], append(merged, lines[end:]...)...)
+	} else if at := indexOfLine(lines, "# subprojects: [api, web]"); at >= 0 {
+		// Case 2: the untouched placeholder from the scaffold — replace it with a real block.
+		block := append([]string{"subprojects:"}, entries...)
+		sort.Strings(block[1:])
+		lines = append(lines[:at], append(block, lines[at+1:]...)...)
+	} else {
+		return nil, nil // hand-restructured file — leave it alone and let the caller advise
+	}
+	if err := os.WriteFile(dest, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		return nil, err
+	}
+	return missing, nil
+}
+
+func indexOfLine(lines []string, want string) int {
+	for i, l := range lines {
+		if strings.TrimRight(l, " \t") == want {
+			return i
+		}
+	}
+	return -1
 }
 
 func projectYAML(subprojects []string) string {

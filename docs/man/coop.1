@@ -451,8 +451,10 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   (including -i) roll up across all of them, and the id commands (claim/block/unblock/done/
   rm) find their task in whichever queue holds it — erroring only when an id matches in
   more than one queue (split slices share ids with their source). In a monorepo, add requires
-  --project root|<subproject> so creation picks an explicit queue; with raw --tasks overrides,
-  add and split still need a single --tasks because they create into a queue.
+  --project root|<subproject> so creation picks an explicit queue; a nested member takes its
+  full path (terraform/environments/va1) or just its last segment (va1) when no other member
+  ends in the same one. With raw --tasks overrides, add and split still need a single --tasks
+  because they create into a queue.
 
 coop context — compile the committed docs relevant to a scope (instructions + rules + KB).
 
@@ -649,10 +651,13 @@ coop init [--stack asdf] — scaffold coop's working set into the repo.
   its own Docker and no .agent/Dockerfile yet, it suggests how to build the box on it.
   Also seeds an empty ~/.config/coop/agents/mcp.json (the shared MCP source of truth,
   inert until you add a server) so there's an obvious place to declare MCP servers.
-  Writes the TOP-LEVEL .agent/project.yaml (committed): in a monorepo — detected by
-  direct child dirs that are themselves coop projects (each with a .agent/) — it lists
-  them under 'subprojects:' so coop aggregates their task queues automatically (no
-  COOP_TASKS). coop init scaffolds each member with ONLY its own task queue + backlog
+  Writes the TOP-LEVEL .agent/project.yaml (committed): in a monorepo — detected by any
+  dir at ANY depth that is itself a coop project (it has a .agent/), so a nested layout
+  like terraform/environments/va1 is found too — it lists them under 'subprojects:' so
+  coop aggregates their task queues automatically (no COOP_TASKS). A member you add later
+  is registered on the next init, in place, leaving the file's comments intact. The walk
+  skips hidden dirs, dependency/build output, and anything inside a member.
+  coop init scaffolds each member with ONLY its own task queue + backlog
   (it shares the root's AGENTS.md/.claude); the member's queue is for its own work, the
   root's for changes spanning members. A single repo gets a project.yaml template with
   commented serve/subprojects examples. The .gitignore ignores .agent/ state at any

@@ -348,7 +348,7 @@ func TestInitRestoresEmptySkillDir(t *testing.T) {
 func TestInitSubproject(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "member")
-	logged, err := captureScaffoldStderr(t, func() error { return InitSubproject(dir) })
+	logged, err := captureScaffoldStderr(t, func() error { return InitSubproject(root, dir) })
 	if err != nil {
 		t.Fatal(err)
 	}

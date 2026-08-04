@@ -4,6 +4,22 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Monorepo members are detected at any depth, and registered for you.** `coop init` only
+  looked one directory down, so an umbrella whose members nest — `terraform/environments/va1` in
+  an infra repo — could never be detected, and its own help said deeper layouts were "a hand-edit
+  of .agent/project.yaml". Worse, even a detected member was only *reported* on a repo that
+  already had a project.yaml ("add these to 'subprojects:'"), every init, forever — and an
+  unlisted member is a queue coop silently ignores. Detection now walks to any depth (skipping
+  hidden dirs, dependency/build output, and anything inside a member), and a newly-found member is
+  written into `subprojects:` by a surgical line edit that leaves the file's commented template
+  intact. A repo with no members, and an existing umbrella like emisar's five, are both unchanged.
+
+- **`--project` takes a member's last segment when that's unambiguous.** Filing work in a nested
+  member meant typing `--project terraform/environments/va1`; `--project va1` was an "unknown
+  project" error. The shorthand resolves when exactly one member ends in that segment. With two
+  (`apps/web`, `site/web`) it stays an error — silently picking one would file the work in the
+  wrong queue — and the message now names both candidates instead of just saying "unknown".
+
 - **Re-running `coop init` is quiet now, and stops interrogating you.** On an
   already-scaffolded repo it printed a prompt ("add sibling services for the box?") whose answer
   could not take effect — every scaffold write is no-clobber — then twenty `kept existing …` lines

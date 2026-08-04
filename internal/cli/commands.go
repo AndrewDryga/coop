@@ -1437,6 +1437,47 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if err := a.writeMCPStub(); err != nil {
 		return 0, err
 	}
+	// Monorepo: detect member dirs (each with a .agent/), record them in the root .agent/project.yaml
+	// so coop aggregates their task queues, and give each member a project.yaml if it lacks one. A
+	// single repo still gets a project.yaml template. Never clobbers an existing file.
+	subs := scaffold.DetectSubprojects(repo)
+	if _, err := scaffold.WriteProject(repo, subs); err != nil {
+		return 0, err
+	}
+	for _, s := range subs {
+		// Members get only the minimal set — their own task queue (plus a backlog drawer on demand)
+		// — since they share the root's AGENTS.md, skills, rules, hooks, box, and its single
+		// top-level project.yaml. A member never gets a project.yaml of its own.
+		if err := scaffold.InitSubproject(repo, filepath.Join(repo, filepath.FromSlash(s))); err != nil {
+			return 0, err
+		}
+	}
+	if len(subs) > 0 {
+		// A re-init keeps an existing project.yaml, so newly-added members were previously only
+		// REPORTED and you had to list them by hand. Register them instead — an unlisted member is
+		// a queue coop silently ignores, which is never what you wanted when you created it.
+		added, err := scaffold.RegisterSubprojects(repo, subs)
+		if err != nil {
+			return 0, err
+		}
+		if len(added) > 0 {
+			ui.Detail("registered in subprojects: %s", strings.Join(added, ", "))
+		}
+		ui.Info("monorepo: %d member(s) (%s) — .agent/project.yaml aggregates their task queues", len(subs), strings.Join(subs, ", "))
+		// Only if the edit couldn't be placed (a hand-restructured project.yaml) does the advisory
+		// remain — coop never silently drops a member on the floor.
+		if pj, err := project.Load(repo); err == nil {
+			var missing []string
+			for _, s := range subs {
+				if !slices.Contains(pj.Subprojects, s) {
+					missing = append(missing, s)
+				}
+			}
+			if len(missing) > 0 {
+				ui.Warn("add these to 'subprojects:' in .agent/project.yaml: %s", strings.Join(missing, ", "))
+			}
+		}
+	}
 	// One "coop:" anchor closes the dim per-file log; then the optional Docker-box guidance
 	// (only when the repo has its own Docker and no .agent/Dockerfile yet); then the actions you
 	// need to take next stand on their own — derived from what actually landed, not a fixed script.
@@ -1451,35 +1492,6 @@ func (a *app) cmdInit(args []string) (int, error) {
 		ui.Info("per-agent dirs: %s — missing artifacts synthesize in-box from shared sources on demand", strings.Join(agentDirs, ", "))
 	} else {
 		ui.Info("no agents signed in — scaffolded .agent/ only; sign in and run, or `coop init --agents claude,codex`")
-	}
-	// Monorepo: detect member dirs (each with a .agent/), record them in the root .agent/project.yaml
-	// so coop aggregates their task queues, and give each member a project.yaml if it lacks one. A
-	// single repo still gets a project.yaml template. Never clobbers an existing file.
-	subs := scaffold.DetectSubprojects(repo)
-	if _, err := scaffold.WriteProject(repo, subs); err != nil {
-		return 0, err
-	}
-	for _, s := range subs {
-		// Members get only the minimal set — their task queue + backlog + project.yaml — since they
-		// share the root's AGENTS.md, skills, rules, hooks, and box.
-		if err := scaffold.InitSubproject(filepath.Join(repo, s)); err != nil {
-			return 0, err
-		}
-	}
-	if len(subs) > 0 {
-		ui.Info("monorepo: %d member(s) (%s) — .agent/project.yaml aggregates their task queues", len(subs), strings.Join(subs, ", "))
-		// A re-init keeps an existing project.yaml; flag any detected members it doesn't list yet.
-		if pj, err := project.Load(repo); err == nil {
-			var missing []string
-			for _, s := range subs {
-				if !slices.Contains(pj.Subprojects, s) {
-					missing = append(missing, s)
-				}
-			}
-			if len(missing) > 0 {
-				ui.Warn("add these to 'subprojects:' in .agent/project.yaml: %s", strings.Join(missing, ", "))
-			}
-		}
 	}
 	scaffold.SuggestDocker(repo)
 	// "review .agent/Dockerfile, then `coop build`" is first-run advice. On a repo that has been
