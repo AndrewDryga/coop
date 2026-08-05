@@ -46,9 +46,13 @@ version: 1
 policies:
   emisar-observe:
     repository: /srv/repos/emisar
+    remote: origin
+    branch: main
     companions:
       - name: coop
         repository: /srv/repos/coop
+        remote: origin
+        branch: main
       - name: responder
         repository: /srv/repos/responder
     target: codex:gpt-5.6/medium@oncall
@@ -63,8 +67,12 @@ policies:
 The parser rejects unknown fields and requires:
 
 - `repository`: the absolute, canonical root of an existing Git worktree;
+- `remote` and `branch`: optional, paired fields that make Coop fetch and pin the exact current
+  remote branch commit without switching, pulling, resetting, or otherwise changing the local
+  checkout; a refresh failure stops session creation rather than falling back to stale `HEAD`;
 - `companions`: at most 32 uniquely named absolute, canonical Git worktree roots; aliases use
-  lowercase letters, numbers, hyphens, or underscores and cannot be `primary`;
+  lowercase letters, numbers, hyphens, or underscores and cannot be `primary`; each companion may
+  configure its own paired `remote` and `branch`;
 - `target`: one ACP-capable target and at most one account;
 - `max_turns`: `1..10000`;
 - `max_queued_turns`: `1..1000`;
@@ -82,8 +90,12 @@ resolved fields. Explicit non-secret box settings from the daemon's Coop configu
 repository's trusted box policy control the child. Raw runtime arguments, task queues, and merge
 gates are not forwarded into a turn.
 
-On session creation Coop pins each companion at its current commit and creates a detached, clean
-snapshot worktree under the owner-private session state root. The agent sees only read-only mounts
+On session creation Coop resolves all configured repositories concurrently. A repository with
+`remote` and `branch` is pinned to that remote branch's exact commit; otherwise Coop preserves the
+legacy local-`HEAD` behavior. Remote refresh imports only the immutable commit object and does not
+move local branches, update tracking refs, write `FETCH_HEAD`, or touch working-tree changes. Coop
+then creates each companion as a detached, clean snapshot worktree under the owner-private session
+state root. The agent sees only read-only mounts
 at `/coop/repositories/<alias>` plus
 `COOP_COMPANION_REPOSITORIES_JSON` containing aliases, in-box paths, and commits. The primary
 repository remains the current working directory and is the only writable, reviewable tree.

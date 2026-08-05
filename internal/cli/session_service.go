@@ -31,6 +31,8 @@ const (
 	sessionPolicyVersion             = 1
 	sessionPolicyFileLimit           = 1 << 20
 	sessionPolicyMaxCompanions       = 32
+	sessionPolicyRemoteTimeout       = 30 * time.Second
+	sessionPolicyRemoteConcurrency   = 4
 	sessionPolicyMaxTurnTimeout      = 24 * time.Hour
 	sessionPolicyMaxWarmIdleTimeout  = time.Hour
 	sessionServiceDefaultStopTimeout = 5 * time.Second
@@ -42,6 +44,8 @@ const (
 type SessionPolicy struct {
 	Name            string
 	Repository      string
+	Remote          string
+	Branch          string
 	Companions      []SessionCompanionPolicy
 	Target          string
 	MaxTurns        int
@@ -55,6 +59,8 @@ type SessionPolicy struct {
 type SessionCompanionPolicy struct {
 	Name       string `json:"name"`
 	Repository string `json:"repository"`
+	Remote     string `json:"remote,omitempty"`
+	Branch     string `json:"branch,omitempty"`
 }
 
 type rawSessionPolicyFile struct {
@@ -64,6 +70,8 @@ type rawSessionPolicyFile struct {
 
 type rawSessionPolicy struct {
 	Repository      string                      `yaml:"repository"`
+	Remote          string                      `yaml:"remote"`
+	Branch          string                      `yaml:"branch"`
 	Companions      []rawSessionCompanionPolicy `yaml:"companions"`
 	Target          string                      `yaml:"target"`
 	MaxTurns        int                         `yaml:"max_turns"`
@@ -77,6 +85,8 @@ type rawSessionPolicy struct {
 type rawSessionCompanionPolicy struct {
 	Name       string `yaml:"name"`
 	Repository string `yaml:"repository"`
+	Remote     string `yaml:"remote"`
+	Branch     string `yaml:"branch"`
 }
 
 // LoadSessionPolicies parses the strict operator policy file. A config is required when the
@@ -198,6 +208,9 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 	if err != nil {
 		return SessionPolicy{}, err
 	}
+	if err := validateSessionRepositorySource(raw.Remote, raw.Branch); err != nil {
+		return SessionPolicy{}, err
+	}
 	if len(raw.Companions) > sessionPolicyMaxCompanions {
 		return SessionPolicy{}, fmt.Errorf(
 			"companions are limited to %d repositories",
@@ -228,6 +241,9 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 		if err != nil {
 			return SessionPolicy{}, fmt.Errorf("companion %q: %w", companion.Name, err)
 		}
+		if err := validateSessionRepositorySource(companion.Remote, companion.Branch); err != nil {
+			return SessionPolicy{}, fmt.Errorf("companion %q: %w", companion.Name, err)
+		}
 		if seenRepositories[realCompanion] {
 			return SessionPolicy{}, fmt.Errorf(
 				"companion %q repeats the primary or another companion repository",
@@ -238,6 +254,7 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 		seenRepositories[realCompanion] = true
 		companions = append(companions, SessionCompanionPolicy{
 			Name: companion.Name, Repository: realCompanion,
+			Remote: companion.Remote, Branch: companion.Branch,
 		})
 	}
 	target, err := agents.ParseTarget(raw.Target)
@@ -292,12 +309,39 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 		}
 	}
 	return SessionPolicy{
-		Name: name, Repository: realRepo, Companions: companions,
-		Target: target.String(), MaxTurns: raw.MaxTurns,
+		Name: name, Repository: realRepo, Remote: raw.Remote, Branch: raw.Branch,
+		Companions: companions,
+		Target:     target.String(), MaxTurns: raw.MaxTurns,
 		MaxQueuedTurns: raw.MaxQueuedTurns, MaxQueuedBytes: raw.MaxQueuedBytes,
 		TurnTimeout: timeout, WarmIdleTimeout: warmIdleTimeout,
 		MaxPatchBytes: raw.MaxPatchBytes,
 	}, nil
+}
+
+func validateSessionRepositorySource(remote, branch string) error {
+	if remote == "" && branch == "" {
+		return nil
+	}
+	if remote == "" || branch == "" {
+		return errors.New("remote and branch must be configured together")
+	}
+	if len(remote) > 128 || remote[0] == '-' {
+		return errors.New("remote must be a safe Git remote name")
+	}
+	for _, r := range remote {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			continue
+		}
+		return errors.New("remote must be a safe Git remote name")
+	}
+	if len(branch) > 240 || strings.ContainsAny(branch, "\x00\r\n") {
+		return errors.New("branch must be a valid Git branch name")
+	}
+	if err := exec.Command("git", "check-ref-format", "refs/heads/"+branch).Run(); err != nil {
+		return errors.New("branch must be a valid Git branch name")
+	}
+	return nil
 }
 
 func validCompanionRepositoryName(name string) bool {
@@ -509,6 +553,8 @@ func resolvedSessionPolicyDigest(policy SessionPolicy) string {
 	canonical := struct {
 		Name            string                   `json:"name"`
 		Repository      string                   `json:"repository"`
+		Remote          string                   `json:"remote,omitempty"`
+		Branch          string                   `json:"branch,omitempty"`
 		Companions      []SessionCompanionPolicy `json:"companions,omitempty"`
 		Target          string                   `json:"target"`
 		MaxTurns        int                      `json:"max_turns"`
@@ -518,7 +564,8 @@ func resolvedSessionPolicyDigest(policy SessionPolicy) string {
 		WarmIdleTimeout int64                    `json:"warm_idle_timeout_ns,omitempty"`
 		MaxPatchBytes   int                      `json:"max_patch_bytes"`
 	}{
-		Name: policy.Name, Repository: policy.Repository, Companions: policy.Companions,
+		Name: policy.Name, Repository: policy.Repository,
+		Remote: policy.Remote, Branch: policy.Branch, Companions: policy.Companions,
 		Target:   policy.Target,
 		MaxTurns: policy.MaxTurns, MaxQueuedTurns: policy.MaxQueuedTurns,
 		MaxQueuedBytes: policy.MaxQueuedBytes, TurnTimeout: int64(policy.TurnTimeout),
@@ -1021,20 +1068,13 @@ func (s *SessionService) executeCreate(ctx context.Context, op session.Operation
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	base, err := sessionWorkspaceCommit(policy.Repository, "HEAD")
-	if err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("pin parent HEAD: %w", err))
-	}
 	sessionID := deterministicSessionID(op.ID)
+	base, companionCommits, err := pinSessionPolicyRepositories(ctx, policy)
+	if err != nil {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+	}
 	companions := make([]session.CompanionRepository, 0, len(policy.Companions))
-	for _, companion := range policy.Companions {
-		commit, err := sessionWorkspaceCommit(companion.Repository, "HEAD")
-		if err != nil {
-			return session.Session{}, s.failServiceOperation(
-				ctx, op.ID,
-				fmt.Errorf("pin companion %q HEAD: %w", companion.Name, err),
-			)
-		}
+	for index, companion := range policy.Companions {
 		workspace, err := sessionCompanionWorkspace(
 			s.store.Root(), sessionID, companion.Name,
 		)
@@ -1043,7 +1083,7 @@ func (s *SessionService) executeCreate(ctx context.Context, op session.Operation
 		}
 		companions = append(companions, session.CompanionRepository{
 			Name: companion.Name, Repository: companion.Repository,
-			Workspace: workspace, BaseCommit: commit,
+			Workspace: workspace, BaseCommit: companionCommits[index],
 		})
 	}
 	intent := sessionCreateIntent{
@@ -1142,8 +1182,8 @@ func rollbackSessionCreate(
 			))
 		}
 	}
-	plan, err := planSessionWorkspaceDiscard(
-		workspace.Repo, workspace.Path, false, false,
+	plan, err := planSessionWorkspaceDiscardAtParent(
+		workspace.Repo, workspace.Path, workspace.BaseCommit, false, false,
 	)
 	if err == nil {
 		err = discardSessionWorkspace(plan)
@@ -1278,7 +1318,13 @@ func (s *SessionService) GetChanges(ctx context.Context, sessionID string) (Sess
 	if err != nil {
 		return SessionWorkspaceChanges{}, err
 	}
-	return inspectSessionChanges(sess.Repository, sess.Workspace, sess.BaseCommit, sess.MaxPatchBytes)
+	parentHead, err := s.pinCurrentSessionParent(ctx, sess)
+	if err != nil {
+		return SessionWorkspaceChanges{}, err
+	}
+	return inspectSessionChangesPageAtParent(
+		sess.Repository, sess.Workspace, sess.BaseCommit, parentHead, 0, sess.MaxPatchBytes,
+	)
 }
 
 func (s *SessionService) GetChangesPage(
@@ -1300,10 +1346,15 @@ func (s *SessionService) GetChangesPage(
 			),
 		}
 	}
-	return inspectSessionChangesPage(
+	parentHead, err := s.pinCurrentSessionParent(ctx, sess)
+	if err != nil {
+		return SessionWorkspaceChanges{}, err
+	}
+	return inspectSessionChangesPageAtParent(
 		sess.Repository,
 		sess.Workspace,
 		sess.BaseCommit,
+		parentHead,
 		patchOffset,
 		patchLimit,
 	)
@@ -1367,7 +1418,13 @@ func (s *SessionService) executePlanDiscard(ctx context.Context, op session.Oper
 	if sess.Revision != req.ExpectedRevision || sess.State != session.SessionClosed || sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidSessionState, Detail: "discard planning requires a closed idle session"})
 	}
-	plan, err := planSessionWorkspaceDiscard(sess.Repository, sess.Workspace, req.AcceptDirty, req.AcceptUnmerged)
+	parentHead, err := s.pinCurrentSessionParent(ctx, sess)
+	if err != nil {
+		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	plan, err := planSessionWorkspaceDiscardAtParent(
+		sess.Repository, sess.Workspace, parentHead, req.AcceptDirty, req.AcceptUnmerged,
+	)
 	if err != nil {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}

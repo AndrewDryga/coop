@@ -73,6 +73,81 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 	}
 }
 
+func TestSessionServiceRunReviewUsesConfiguredRemoteParent(t *testing.T) {
+	seed, seedGit := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(seed, "version.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedGit("add", "version.txt")
+	seedGit("commit", "-qm", "v1")
+	seedGit("branch", "-M", "main")
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	runGitTest(t, "", "init", "-q", "--bare", remote)
+	seedGit("remote", "add", "origin", remote)
+	seedGit("push", "-q", "-u", "origin", "main")
+
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	runGitTest(t, "", "clone", "-q", "-b", "main", remote, checkout)
+	runGitTest(t, checkout, "config", "user.email", "t@t")
+	runGitTest(t, checkout, "config", "user.name", "T")
+	localMain := gitOut(checkout, "rev-parse", "HEAD")
+	runGitTest(t, checkout, "checkout", "-qb", "local-feature")
+	runGitTest(t, checkout, "commit", "-q", "--allow-empty", "-m", "local-only")
+	localHead := gitOut(checkout, "rev-parse", "HEAD")
+
+	if err := os.WriteFile(filepath.Join(seed, "version.txt"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedGit("commit", "-qam", "v2")
+	seedGit("push", "-q", "origin", "main")
+	remoteHead := gitOut(seed, "rev-parse", "HEAD")
+
+	policies := testSessionPolicies(checkout)
+	policy := policies["responder"]
+	policy.Remote, policy.Branch = "origin", "main"
+	policies["responder"] = policy
+	service, err := NewSessionService(SessionServiceConfig{
+		StateRoot: filepath.Join(t.TempDir(), "state"),
+		Policies:  policies,
+		ReviewGate: SessionReviewGateFunc(func(_ context.Context, _, _ string) (SessionReviewGateResult, error) {
+			return SessionReviewGateResult{Configured: true, Passed: true}, nil
+		}),
+		Runner: SessionRunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+			return turn, nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	sess := createReviewSession(t, service, "remote-parent")
+	if sess.BaseCommit != remoteHead {
+		t.Fatalf("session base = %s, want remote %s", sess.BaseCommit, remoteHead)
+	}
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "change.txt"), []byte("reviewed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceGit(t, sess.Workspace, "add", "change.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "review change")
+
+	dossier, err := service.RunReview(
+		context.Background(), "review-remote-parent",
+		RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dossier.ParentHead != remoteHead || !dossier.Publishable || dossier.Rebase != SessionReviewRebaseClean {
+		t.Fatalf("remote review = %+v, want publishable against %s", dossier, remoteHead)
+	}
+	if got := gitOut(checkout, "rev-parse", "HEAD"); got != localHead {
+		t.Fatalf("local HEAD moved to %s, want %s", got, localHead)
+	}
+	if got := gitOut(checkout, "rev-parse", "refs/remotes/origin/main"); got != localMain {
+		t.Fatalf("tracking ref moved to %s, want %s", got, localMain)
+	}
+}
+
 func TestSessionServiceRunReviewUsesCapturedBaseAfterParentHistoryRewrite(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "original base")

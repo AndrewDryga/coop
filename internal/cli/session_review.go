@@ -278,7 +278,11 @@ func (s *SessionService) captureReviewIntent(ctx context.Context, operationID st
 	if !ancestor {
 		return sessionReviewIntent{}, errors.New("creation base is not an ancestor of source HEAD")
 	}
-	parent, err := captureSessionReviewParent(sess.Repository)
+	parentHead, err := s.pinCurrentSessionParent(ctx, sess)
+	if err != nil {
+		return sessionReviewIntent{}, fmt.Errorf("refresh current parent: %w", err)
+	}
+	parent, err := captureSessionReviewParent(sess.Repository, parentHead)
 	if err != nil {
 		return sessionReviewIntent{}, fmt.Errorf("inspect current parent: %w", err)
 	}
@@ -332,8 +336,8 @@ func captureSessionReviewSource(repo, workspace, branch string) (sessionReviewSo
 	return sessionReviewSourceIdentity{Head: head, Tree: tree, Branch: gotBranch, StatusDigest: sessionWorkspaceStatusDigest(status)}, nil
 }
 
-func captureSessionReviewParent(repo string) (sessionReviewParentIdentity, error) {
-	head, tree, err := sessionReviewGitIdentity(repo, "HEAD")
+func captureSessionReviewParent(repo, revision string) (sessionReviewParentIdentity, error) {
+	head, tree, err := sessionReviewGitIdentity(repo, revision)
 	if err != nil {
 		return sessionReviewParentIdentity{}, err
 	}
@@ -461,7 +465,15 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 		dossier.PatchDigest = artifact.Digest
 		dossier.PatchBytes = artifact.Bytes
 	}
-	if current, err := captureSessionReviewParent(intent.Repository); err != nil || current.Head != intent.ParentHead || current.Tree != intent.ParentTree {
+	currentParentMatches := false
+	if sess, err := s.store.GetSession(ctx, intent.SessionID); err == nil {
+		if currentHead, err := s.pinCurrentSessionParent(ctx, sess); err == nil {
+			if current, err := captureSessionReviewParent(intent.Repository, currentHead); err == nil {
+				currentParentMatches = current.Head == intent.ParentHead && current.Tree == intent.ParentTree
+			}
+		}
+	}
+	if !currentParentMatches {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "parent_moved")
 	}
 	if current, err := captureSessionReviewSource(intent.Repository, intent.Workspace, intent.SourceBranch); err != nil || current.Head != intent.SourceHead || current.Tree != intent.SourceTree || current.Branch != intent.SourceBranch || current.StatusDigest != intent.SourceStatusDigest {

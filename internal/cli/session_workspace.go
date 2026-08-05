@@ -83,6 +83,7 @@ type sessionWorkspaceDiscardPlan struct {
 	WorkspaceIdentity sessionWorkspaceIdentity `json:"workspace_identity"`
 	Branch            string                   `json:"branch"`
 	Head              string                   `json:"head"`
+	ParentHead        string                   `json:"parent_head"`
 	StatusDigest      string                   `json:"status_digest"`
 	Dirty             bool                     `json:"dirty"`
 	Unmerged          bool                     `json:"unmerged"`
@@ -529,13 +530,32 @@ func sessionWorkspaceCount(dir string, args ...string) (int, error) {
 }
 
 func inspectSessionChanges(repo, workspace, base string, maxPatchBytes int) (sessionWorkspaceChanges, error) {
-	return inspectSessionChangesPage(repo, workspace, base, 0, maxPatchBytes)
+	parentHead, err := sessionWorkspaceCommit(repo, "HEAD")
+	if err != nil {
+		return sessionWorkspaceChanges{}, fmt.Errorf("resolve current parent HEAD: %w", err)
+	}
+	return inspectSessionChangesPageAtParent(repo, workspace, base, parentHead, 0, maxPatchBytes)
 }
 
 func inspectSessionChangesPage(
 	repo string,
 	workspace string,
 	base string,
+	patchOffset int64,
+	patchLimit int,
+) (sessionWorkspaceChanges, error) {
+	parentHead, err := sessionWorkspaceCommit(repo, "HEAD")
+	if err != nil {
+		return sessionWorkspaceChanges{}, fmt.Errorf("resolve current parent HEAD: %w", err)
+	}
+	return inspectSessionChangesPageAtParent(repo, workspace, base, parentHead, patchOffset, patchLimit)
+}
+
+func inspectSessionChangesPageAtParent(
+	repo string,
+	workspace string,
+	base string,
+	parent string,
 	patchOffset int64,
 	patchLimit int,
 ) (sessionWorkspaceChanges, error) {
@@ -556,9 +576,9 @@ func inspectSessionChangesPage(
 	if err != nil {
 		return sessionWorkspaceChanges{}, fmt.Errorf("resolve workspace HEAD: %w", err)
 	}
-	parentHead, err := sessionWorkspaceCommit(repo, "HEAD")
+	parentHead, err := sessionWorkspaceCommit(repo, parent)
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("resolve current parent HEAD: %w", err)
+		return sessionWorkspaceChanges{}, fmt.Errorf("resolve current parent: %w", err)
 	}
 
 	statusRaw, statusTruncated, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
@@ -666,6 +686,17 @@ func sessionWorkspaceStatusDigest(raw []byte) string {
 }
 
 func planSessionWorkspaceDiscard(repo, workspace string, acceptDirty, acceptUnmerged bool) (sessionWorkspaceDiscardPlan, error) {
+	parentHead, err := sessionWorkspaceCommit(repo, "HEAD")
+	if err != nil {
+		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("resolve discard parent: %w", err)
+	}
+	return planSessionWorkspaceDiscardAtParent(repo, workspace, parentHead, acceptDirty, acceptUnmerged)
+}
+
+func planSessionWorkspaceDiscardAtParent(
+	repo, workspace, parent string,
+	acceptDirty, acceptUnmerged bool,
+) (sessionWorkspaceDiscardPlan, error) {
 	name, err := sessionWorkspaceName(repo, workspace)
 	if err != nil {
 		return sessionWorkspaceDiscardPlan{}, err
@@ -704,7 +735,14 @@ func planSessionWorkspaceDiscard(repo, workspace string, acceptDirty, acceptUnme
 	dirty := len(statusRaw) > 0
 	// "Unmerged" means committed work that is not already contained by the parent, matching
 	// `coop fork rm`; a clean fork with valuable commits still requires explicit loss consent.
-	unmerged := forkUnmerged(repo, workspace)
+	parentHead, err := sessionWorkspaceCommit(repo, parent)
+	if err != nil {
+		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("resolve discard parent: %w", err)
+	}
+	unmerged, err := sessionWorkspaceUnmergedFromParent(repo, workspace, parentHead)
+	if err != nil {
+		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("compare workspace with discard parent: %w", err)
+	}
 	return sessionWorkspaceDiscardPlan{
 		Repo:              repo,
 		Name:              name,
@@ -712,6 +750,7 @@ func planSessionWorkspaceDiscard(repo, workspace string, acceptDirty, acceptUnme
 		WorkspaceIdentity: identity,
 		Branch:            branch,
 		Head:              head,
+		ParentHead:        parentHead,
 		StatusDigest:      sessionWorkspaceStatusDigest(statusRaw),
 		Dirty:             dirty,
 		Unmerged:          unmerged,
@@ -775,7 +814,10 @@ func discardSessionWorkspace(plan sessionWorkspaceDiscardPlan) error {
 		return fmt.Errorf("discard plan is stale: parse status: %w", err)
 	}
 	dirty := len(statusRaw) > 0
-	unmerged := forkUnmerged(plan.Repo, plan.Workspace)
+	unmerged, err := sessionWorkspaceUnmergedFromParent(plan.Repo, plan.Workspace, plan.ParentHead)
+	if err != nil {
+		return fmt.Errorf("discard plan is stale: compare parent: %w", err)
+	}
 	if branch != plan.Branch || head != plan.Head || sessionWorkspaceStatusDigest(statusRaw) != plan.StatusDigest || dirty != plan.Dirty || unmerged != plan.Unmerged {
 		return errors.New("discard plan is stale: workspace HEAD, branch, or status changed")
 	}
@@ -797,4 +839,28 @@ func discardSessionWorkspace(plan sessionWorkspaceDiscardPlan) error {
 		return fmt.Errorf("discard session workspace: %w", err)
 	}
 	return nil
+}
+
+func sessionWorkspaceUnmergedFromParent(repo, workspace, parentHead string) (bool, error) {
+	if !validSessionWorkspaceCommit(parentHead) {
+		return false, errors.New("parent commit is invalid")
+	}
+	if _, _, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
+		"fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--", repo, parentHead); err != nil {
+		return false, fmt.Errorf("fetch parent commit: %w", err)
+	}
+	head, err := sessionWorkspaceCommit(workspace, "HEAD")
+	if err != nil {
+		return false, err
+	}
+	cmd := exec.Command("git", gitArgs(workspace, []string{"merge-base", "--is-ancestor", head, parentHead})...)
+	err = cmd.Run()
+	if err == nil {
+		return false, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return true, nil
+	}
+	return false, fmt.Errorf("git merge-base --is-ancestor: %w", err)
 }

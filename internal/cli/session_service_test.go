@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -40,18 +41,22 @@ func TestParseSessionPoliciesIsStrictAndPinsOneTarget(t *testing.T) {
 	}
 	cfg := &config.Config{ConfigDir: configRoot}
 	valid := []byte("version: 1\npolicies:\n  responder:\n    repository: " + repo +
+		"\n    remote: origin\n    branch: main" +
 		"\n    companions:\n      - name: application\n        repository: " + companion +
+		"\n        remote: upstream\n        branch: master" +
 		"\n    target: codex:model/high@work\n    max_turns: 100\n    max_queued_turns: 20\n    max_queued_bytes: 1048576\n    max_patch_bytes: 1048576\n    turn_timeout: 1h\n    warm_idle_timeout: 15m\n")
 	policies, err := parseSessionPolicies(valid, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := policies["responder"]; got.Target != "codex:model/high@work" ||
-		got.Repository != repo || got.TurnTimeout != time.Hour ||
+		got.Repository != repo || got.Remote != "origin" || got.Branch != "main" ||
+		got.TurnTimeout != time.Hour ||
 		got.WarmIdleTimeout != 15*time.Minute ||
 		len(got.Companions) != 1 ||
 		got.Companions[0] != (SessionCompanionPolicy{
 			Name: "application", Repository: companion,
+			Remote: "upstream", Branch: "master",
 		}) {
 		t.Fatalf("parsed policy = %+v", got)
 	}
@@ -69,6 +74,19 @@ func TestParseSessionPoliciesIsStrictAndPinsOneTarget(t *testing.T) {
 		!strings.Contains(err.Error(), "warm_idle_timeout") {
 		t.Fatalf("oversized warm idle timeout error = %v", err)
 	}
+	for name, source := range map[string]string{
+		"remote only":    "    remote: origin\n",
+		"branch only":    "    branch: main\n",
+		"unsafe remote":  "    remote: ../origin\n    branch: main\n",
+		"invalid branch": "    remote: origin\n    branch: bad..branch\n",
+	} {
+		body := "version: 1\npolicies:\n  responder:\n    repository: " + repo + "\n" + source +
+			"    target: codex@work\n    max_turns: 1\n    max_queued_turns: 1\n" +
+			"    max_queued_bytes: 1\n    max_patch_bytes: 1\n    turn_timeout: 1s\n"
+		if _, err := parseSessionPolicies([]byte(body), nil); err == nil {
+			t.Fatalf("%s source unexpectedly accepted", name)
+		}
+	}
 }
 
 func TestWarmIdleTimeoutIsBoundIntoPolicyDigest(t *testing.T) {
@@ -80,6 +98,11 @@ func TestWarmIdleTimeoutIsBoundIntoPolicyDigest(t *testing.T) {
 	policy.WarmIdleTimeout = 15 * time.Minute
 	if warm := resolvedSessionPolicyDigest(policy); warm == cold {
 		t.Fatal("warm idle timeout did not change the immutable policy digest")
+	}
+	policy.WarmIdleTimeout = 0
+	policy.Remote, policy.Branch = "origin", "main"
+	if remote := resolvedSessionPolicyDigest(policy); remote == cold {
+		t.Fatal("remote repository source did not change the immutable policy digest")
 	}
 }
 
@@ -227,6 +250,222 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 	replayed, err := service.CreateRemoteSession(context.Background(), "create-1", request)
 	if err != nil || replayed.ID != sess.ID || replayed.Workspace != sess.Workspace {
 		t.Fatalf("create replay = %+v, err=%v", replayed, err)
+	}
+}
+
+func TestSessionServicePinsConfiguredRemoteWithoutChangingLocalCheckout(t *testing.T) {
+	seed, seedGit := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(seed, "version.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedGit("add", "version.txt")
+	seedGit("commit", "-qm", "v1")
+	seedGit("branch", "-M", "main")
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	runGitTest(t, "", "init", "-q", "--bare", remote)
+	seedGit("remote", "add", "origin", remote)
+	seedGit("push", "-q", "-u", "origin", "main")
+
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	runGitTest(t, "", "clone", "-q", remote, checkout)
+	runGitTest(t, checkout, "config", "user.email", "t@t")
+	runGitTest(t, checkout, "config", "user.name", "T")
+	localMain := gitOut(checkout, "rev-parse", "HEAD")
+	runGitTest(t, checkout, "checkout", "-qb", "local-feature")
+	runGitTest(t, checkout, "commit", "-q", "--allow-empty", "-m", "local feature")
+	localHead := gitOut(checkout, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(checkout, "local-only.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statusBefore := gitOut(checkout, "status", "--porcelain=v1")
+
+	if err := os.WriteFile(filepath.Join(seed, "version.txt"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedGit("commit", "-qam", "v2")
+	seedGit("push", "-q", "origin", "main")
+	remoteHead := gitOut(seed, "rev-parse", "HEAD")
+	if remoteHead == localMain {
+		t.Fatal("remote did not advance")
+	}
+
+	companionSeed, companionSeedGit := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(companionSeed, "topology.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	companionSeedGit("add", "topology.txt")
+	companionSeedGit("commit", "-qm", "old topology")
+	companionSeedGit("branch", "-M", "master")
+	companionRemote := filepath.Join(t.TempDir(), "companion.git")
+	runGitTest(t, "", "init", "-q", "--bare", companionRemote)
+	companionSeedGit("remote", "add", "origin", companionRemote)
+	companionSeedGit("push", "-q", "-u", "origin", "master")
+	companionCheckout := filepath.Join(t.TempDir(), "companion-checkout")
+	runGitTest(t, "", "clone", "-q", "-b", "master", companionRemote, companionCheckout)
+	companionLocalHead := gitOut(companionCheckout, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(companionSeed, "topology.txt"), []byte("current\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	companionSeedGit("commit", "-qam", "current topology")
+	companionSeedGit("push", "-q", "origin", "master")
+	companionRemoteHead := gitOut(companionSeed, "rev-parse", "HEAD")
+
+	policies := testSessionPolicies(checkout)
+	policy := policies["responder"]
+	policy.Remote, policy.Branch = "origin", "main"
+	policy.Companions = []SessionCompanionPolicy{{
+		Name: "topology", Repository: companionCheckout,
+		Remote: "origin", Branch: "master",
+	}}
+	policies["responder"] = policy
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+	sess, err := service.CreateRemoteSession(
+		context.Background(), "remote-source-create",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "fresh remote snapshot"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.BaseCommit != remoteHead || gitOut(sess.Workspace, "rev-parse", "HEAD") != remoteHead {
+		t.Fatalf("session base = %s, workspace HEAD = %s, want remote %s", sess.BaseCommit, gitOut(sess.Workspace, "rev-parse", "HEAD"), remoteHead)
+	}
+	if got := readFile(t, filepath.Join(sess.Workspace, "version.txt")); got != "v2\n" {
+		t.Fatalf("session version = %q, want fresh remote v2", got)
+	}
+	if len(sess.Companions) != 1 || sess.Companions[0].BaseCommit != companionRemoteHead {
+		t.Fatalf("session companion = %+v, want remote %s", sess.Companions, companionRemoteHead)
+	}
+	if got := readFile(t, filepath.Join(sess.Companions[0].Workspace, "topology.txt")); got != "current\n" {
+		t.Fatalf("companion topology = %q, want current remote snapshot", got)
+	}
+	if got := gitOut(checkout, "rev-parse", "HEAD"); got != localHead {
+		t.Fatalf("local HEAD moved to %s, want %s", got, localHead)
+	}
+	if got := gitOut(checkout, "symbolic-ref", "--short", "HEAD"); got != "local-feature" {
+		t.Fatalf("local branch = %q, want local-feature", got)
+	}
+	if got := gitOut(checkout, "status", "--porcelain=v1"); got != statusBefore {
+		t.Fatalf("local status changed from %q to %q", statusBefore, got)
+	}
+	if got := gitOut(checkout, "rev-parse", "refs/remotes/origin/main"); got != localMain {
+		t.Fatalf("tracking ref moved to %s, want unchanged %s", got, localMain)
+	}
+	if got := gitOut(companionCheckout, "rev-parse", "HEAD"); got != companionLocalHead {
+		t.Fatalf("companion local HEAD moved to %s, want %s", got, companionLocalHead)
+	}
+	if got := gitOut(companionCheckout, "rev-parse", "refs/remotes/origin/master"); got != companionLocalHead {
+		t.Fatalf("companion tracking ref moved to %s, want %s", got, companionLocalHead)
+	}
+	changes, err := service.GetChanges(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changes.ParentHead != remoteHead || changes.ParentDivergence.Ahead != 0 ||
+		changes.ParentDivergence.Behind != 0 || changes.ParentDivergence.Diverged {
+		t.Fatalf("remote-backed changes = %+v, want clean comparison with %s", changes, remoteHead)
+	}
+	closed, err := service.Close(
+		context.Background(), "remote-source-close",
+		session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.PlanDiscard(
+		context.Background(), "remote-source-plan-discard",
+		PlanDiscardRequest{SessionID: sess.ID, ExpectedRevision: closed.Revision},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Plan.Workspace.ParentHead != remoteHead || plan.Plan.Workspace.Unmerged {
+		t.Fatalf("remote-backed discard plan = %+v, want merged into %s", plan.Plan.Workspace, remoteHead)
+	}
+	if _, err := service.Discard(
+		context.Background(), "remote-source-discard",
+		DiscardRequest{PlanOperationID: plan.OperationID},
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSessionServiceConfiguredRemoteFailureDoesNotFallBackToLocalHead(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "local base")
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	runGitTest(t, "", "init", "-q", "--bare", remote)
+	git("remote", "add", "origin", remote)
+	policies := testSessionPolicies(repo)
+	policy := policies["responder"]
+	policy.Remote, policy.Branch = "origin", "main"
+	policies["responder"] = policy
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+	_, err := service.CreateRemoteSession(
+		context.Background(), "missing-remote-branch",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "must not use stale head"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "check the remote, branch, network, and Git credentials") {
+		t.Fatalf("remote failure = %v", err)
+	}
+	sessions, listErr := service.ListSessions(context.Background(), 10)
+	if listErr != nil || len(sessions) != 0 {
+		t.Fatalf("sessions after failed refresh = %+v, err=%v", sessions, listErr)
+	}
+}
+
+func TestSessionServiceConcurrentCreatesPinTheSameRemoteCommit(t *testing.T) {
+	seed, seedGit := gitRepo(t)
+	seedGit("commit", "-q", "--allow-empty", "-m", "base")
+	seedGit("branch", "-M", "main")
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	runGitTest(t, "", "clone", "-q", seed, checkout)
+	seedGit("commit", "-q", "--allow-empty", "-m", "remote advance")
+	remoteHead := gitOut(seed, "rev-parse", "HEAD")
+
+	policies := testSessionPolicies(checkout)
+	policy := policies["responder"]
+	policy.Remote, policy.Branch = "origin", "main"
+	policies["responder"] = policy
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+
+	type result struct {
+		session session.Session
+		err     error
+	}
+	results := make(chan result, 2)
+	var wg sync.WaitGroup
+	for _, key := range []string{"concurrent-a", "concurrent-b"} {
+		key := key
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sess, err := service.CreateRemoteSession(
+				context.Background(), key,
+				CreateRemoteSessionRequest{Policy: "responder", Task: key},
+			)
+			results <- result{session: sess, err: err}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	for got := range results {
+		if got.err != nil || got.session.BaseCommit != remoteHead {
+			t.Fatalf("concurrent create = %+v, err=%v, want base %s", got.session, got.err, remoteHead)
+		}
+	}
+}
+
+func runGitTest(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
 
