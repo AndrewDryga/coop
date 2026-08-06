@@ -87,7 +87,12 @@ local (git-ignored) so it never creates commit noise or merge churn.
   promote <id>` moves an item into `tasks/00_todo/` (a folder move, not a rewrite) once it's ready and
   fleshed into a spec. Shipped or cancelled? `coop backlog rm <id>` — a shipped idea's record is its
   commits. The loop reads the lifecycle states only; per-task reasoning lives in each task's own `log.md`.
-- `rules/` — the taste knowledge base, NORMATIVE ("do X, not Y") (committed).
+- `rules/` — the taste knowledge base, NORMATIVE ("do X, not Y") (committed). Same shape and
+  discipline as `kb/`: read `rules/README.md`'s index at boot, open a rule only when your change
+  touches its `scope` (a full audit like `/review-board` is the deliberate exception). Every card
+  carries `sources`, `updated`, and a `check:` — the command that fails on a violation, or `none`
+  when only review catches it, so `grep -l 'check: none' .agent/rules/*.md` is the standing list of
+  rules nobody has mechanized yet. `make rules-check` gates the cards themselves.
 - `kb/` — the DESCRIPTIVE knowledge base (committed): subsystem maps, cross-cutting traps, and
   gotchas the code doesn't obviously carry. A SELF-IMPROVING wiki you maintain directly — no inbox,
   no human gate. Read `kb/README.md`'s index at boot; open a card only when your task touches its
@@ -113,6 +118,8 @@ cut a versioned, tagged release. They live once in
 `.agent/skills/`; each agent's dir (`.claude`, `.codex`, `.gemini`) symlinks to it.
 
 ## Taste
-Every correction from me becomes a rule the same day: fix it, record it in
-.agent/rules/, sweep the codebase for siblings, and graduate it into a lint/hook
-when it's mechanically checkable.
+Every correction from me becomes a rule the same day: fix it, record it as a card in
+`.agent/rules/` (format + protocol in its README), sweep the tree for siblings and write what
+you found in the card's changelog, and graduate it into a lint/hook when it's mechanically
+checkable — then put that command in the card's `check:`. A rule that has never been run
+against the tree is a hypothesis; a `check:` you can't run is worse than `none`.

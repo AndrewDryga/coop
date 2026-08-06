@@ -1,3 +1,12 @@
+---
+name: loop-failover-profiles
+description: "failover swaps the active credential, never a session; the loop has no session to lose"
+scope: loop
+sources: [internal/cli/rotation.go, internal/cli/ratelimit.go, internal/config/config.go]
+check: "none"
+updated: 2026-07-11
+---
+
 # Loop failover swaps the active credential profile, never a session
 
 When the unattended loop hits a rate/usage limit and more than one credential profile is
@@ -40,3 +49,8 @@ could be committed (this is the tool whose job is catching exactly that).
   count toward the stop cap. Otherwise a healthy multi-account run would trip the cap.
 - Never put a credential in a repo. A preset's `agent:` ladder may name accounts
   (`model@account`), but the logins themselves stay in the vault, never committed.
+
+## Changelog
+- 2026-06-17 — created
+- 2026-07-11 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

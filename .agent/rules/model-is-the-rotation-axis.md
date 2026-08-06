@@ -1,3 +1,12 @@
+---
+name: model-is-the-rotation-axis
+description: "rotation walks an `agent:` ladder of targets; accounts are a suffix on the model, never their own axis"
+scope: cli-grammar
+sources: [internal/cli/target.go, internal/preset/preset.go]
+check: "none"
+updated: 2026-07-11
+---
+
 # Model is the one axis: rotation walks an `agent:` ladder of targets, not a pool
 
 **The rule:** Every rotation/fallback surface names WHO runs the same way — a **target**,
@@ -33,3 +42,8 @@ agent-wide default (`COOP_<AGENT>_MODEL`) > the agent CLI's own default. Fan-out
 bare model is marked-default account first, then the rest alphabetically (`accountsFor`). See
 [[loop-failover-profiles]] for how rotation swaps the active account each iteration, and
 [[credentials-not-profiles]] for the user-facing naming.
+
+## Changelog
+- 2026-07-03 — created
+- 2026-07-11 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

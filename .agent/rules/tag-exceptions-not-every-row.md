@@ -1,3 +1,12 @@
+---
+name: tag-exceptions-not-every-row
+description: "tag only the exceptional row; explain the scheme once in a dim caption"
+scope: cli-output
+sources: [internal/cli/models.go]
+check: "none"
+updated: 2026-07-10
+---
+
 # Tag the exception row, not every row
 
 In list output, a state tag goes only on rows in the *exceptional* state; the common case
@@ -25,3 +34,7 @@ the eye on the signal.
 - Not mechanically lintable (a tag string is just text) — enforce in review.
 
 See also [[no-color-in-width-fields]], [[command-output-tiers]], [[help-output-style]].
+
+## Changelog
+- 2026-07-10 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

@@ -1,3 +1,12 @@
+---
+name: box-logins-device-code
+description: "boxed agent logins use device-code/paste flows; browser OAuth hangs in a container"
+scope: box
+sources: [internal/agent/codex.go, internal/agent/claude.go]
+check: "none"
+updated: 2026-06-17
+---
+
 # Agent logins in the box use device-code flows, not browser OAuth
 
 The box is a headless container: it has no browser, and an agent's default
@@ -17,3 +26,8 @@ hangs.
 
 **How to apply:** for any new boxed agent login, prefer a device-code / paste-token
 flow over browser OAuth. Not mechanically lint-checkable, so it lives here.
+
+## Changelog
+- 2026-06-14 — created
+- 2026-06-17 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

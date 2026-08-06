@@ -1,3 +1,12 @@
+---
+name: box-toolchain-on-login-path
+description: "a box toolchain goes on the login PATH too, not just the `ENV` PATH"
+scope: box
+sources: [internal/box/image.go]
+check: "go test ./internal/box -run TestBaseDockerfileInstallsAgentPackages"
+updated: 2026-06-20
+---
+
 # A box toolchain must be on the login PATH, not just the ENV PATH
 
 The box gets its `.tool-versions` toolchains (go, ruby, erlang, …) from asdf as
@@ -20,3 +29,7 @@ the shims for login shells, matching the `ENV` behavior. `image_test.go` locks i
 **How to apply:** any PATH a boxed tool relies on must be set in BOTH the image
 `ENV` (non-login) AND an `/etc/profile.d/*.sh` drop-in (login). Never depend on
 `ENV PATH` alone for something an agent might invoke via a login shell.
+
+## Changelog
+- 2026-06-20 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

@@ -1,3 +1,12 @@
+---
+name: scaffold-fits-the-repo
+description: "`coop init` generates for the detected stack and stays neutral when it detects nothing"
+scope: scaffold
+sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go]
+check: "none"
+updated: 2026-07-16
+---
+
 # coop init scaffolds what the repo uses — it never imposes a stack
 
 `coop init` is dogfooded from coop's own Go repo, which is exactly why it once shipped a
@@ -40,3 +49,8 @@ blocks. Guessing wrong is worse than doing nothing.
   `go test`, whose stdin is often a tty).
 - A no-clobber write (`writeContentIfAbsent`) so re-running `coop init` never overwrites a
   gate the user has since customized.
+
+## Changelog
+- 2026-06-19 — created
+- 2026-07-16 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

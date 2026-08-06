@@ -1,3 +1,12 @@
+---
+name: scaffold-config-reads-well
+description: "scaffolded config leads every field with its comment and works as-is"
+scope: scaffold
+sources: [internal/preset/template.go, .agent/presets/frontier/preset.yaml]
+check: "none"
+updated: 2026-07-03
+---
+
 # Scaffolded, editable config reads top-down and works as-is
 
 Files that `coop <x> init` writes for a human to open and edit (preset.yaml,
@@ -47,3 +56,7 @@ not something you MUST fill in (even though it's recommended)."
 
 See [[scaffold-fits-the-repo]] (a scaffold suits the target repo) and
 [[help-output-style]].
+
+## Changelog
+- 2026-07-03 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

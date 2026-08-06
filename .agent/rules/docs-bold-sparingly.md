@@ -1,3 +1,12 @@
+---
+name: docs-bold-sparingly
+description: "bold marks structure, never mid-sentence emphasis, never inline code"
+scope: docs
+sources: [README.md]
+check: "none"
+updated: 2026-06-17
+---
+
 # Docs: bold is for structure, not emphasis
 
 In the README and prose docs, bold (`**…**`) marks STRUCTURE — table-group headers, the
@@ -19,3 +28,7 @@ aid. (The README had grown to ~100 bold spans, most of them inline emphasis.)
 - Smell check: `grep -oE '\*\*[^*]+\*\*' README.md | wc -l` should be in the dozens, and
   nearly every hit should be a header, a table cell, a step, or a lead-in label — not
   prose emphasis.
+
+## Changelog
+- 2026-06-17 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

@@ -1,3 +1,12 @@
+---
+name: command-output-tiers
+description: "dim progress log, one `coop:` anchor, a bright next-steps block; standalone results use the outcome glyphs"
+scope: cli-output
+sources: [internal/ui/ui.go, internal/cli/commands.go]
+check: "none"
+updated: 2026-07-04
+---
+
 # Command output: dim log, one `coop:` anchor, a bright "next steps" block
 
 A command that scaffolds or sets things up (e.g. `coop init`) emits three visually distinct
@@ -47,3 +56,8 @@ the command-name echo, and errors that name the fix.
   step from real state (see `initNextSteps` in `internal/cli/commands.go`).
 
 See also [[help-output-style]] and [[no-color-in-width-fields]].
+
+## Changelog
+- 2026-06-19 — created
+- 2026-07-04 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

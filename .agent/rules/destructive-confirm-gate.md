@@ -1,3 +1,12 @@
+---
+name: destructive-confirm-gate
+description: "every unrecoverable delete routes through the one shared `destroyGate`"
+scope: security
+sources: [internal/cli/util.go]
+check: "none"
+updated: 2026-07-14
+---
+
 # Every unrecoverable delete goes through the one shared confirmation gate
 
 Any command that irreversibly deletes user state (a task folder, a credential profile + its login
@@ -28,3 +37,8 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
   to screenshots, artifacts, task folders, archives, credentials, forks, or unspecified scratch.
 
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
+
+## Changelog
+- 2026-07-02 — created
+- 2026-07-14 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

@@ -1,3 +1,12 @@
+---
+name: isolate-state-dont-serialize
+description: "when shared state breaks concurrency, isolate the state; never lock the users of it"
+scope: box
+sources: [internal/box/mounts.go, internal/agent/codex.go]
+check: "none"
+updated: 2026-07-12
+---
+
 # Isolate the state, don't serialize the users of it
 
 **The rule:** when shared mutable state breaks concurrency (codex ≥0.144's single-writer
@@ -31,3 +40,7 @@ collision entirely — nothing left to lock.
 - A guard that can fire on a respawn/retry path multiplies: fail-fast checks at spawn time
   interact with supervisor respawn loops (rapid-fail caps). If a guard is ever needed, it
   must be idempotent across generations of the same logical session.
+
+## Changelog
+- 2026-07-12 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

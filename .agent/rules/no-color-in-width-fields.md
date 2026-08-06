@@ -1,3 +1,12 @@
+---
+name: no-color-in-width-fields
+description: "pad plain text to the column width, then style; never style inside a `%-16s`"
+scope: cli-output
+sources: [internal/ui/ui.go]
+check: "none"
+updated: 2026-06-17
+---
+
 # Never style a string inside a width-padded format field
 
 When printing aligned, columnar output, pad **plain** text to the column width, then apply
@@ -31,3 +40,7 @@ when output.
   `grep -rnE 'ui\.(Bold|Dim|Green|Red)\(' internal/ | grep -v _test` and confirm none lands
   inside a `%-N` width field. After a fix the only hits should be non-width `%s` uses or
   whole-line wrapping.
+
+## Changelog
+- 2026-06-17 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

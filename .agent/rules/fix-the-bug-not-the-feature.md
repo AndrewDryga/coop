@@ -1,3 +1,12 @@
+---
+name: fix-the-bug-not-the-feature
+description: "root-cause the misbehavior; deleting the feature is never the fix without the human"
+scope: agent-workflow
+sources: [AGENTS.md]
+check: "none"
+updated: 2026-07-10
+---
+
 # Never fix a bug by deleting the feature
 
 When a feature misbehaves (a rendering glitch, a race, a flaky path), the fix is to root-cause
@@ -22,3 +31,7 @@ revert plus the actual fix (park the cursor at column 0 after every paint) to re
 
 See also [[destructive-confirm-gate]] (destruction needs a human gate — that spirit applies to
 code, too).
+
+## Changelog
+- 2026-07-10 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

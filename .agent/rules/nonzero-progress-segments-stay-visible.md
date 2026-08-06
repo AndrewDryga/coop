@@ -1,3 +1,12 @@
+---
+name: nonzero-progress-segments-stay-visible
+description: "a positive live or blocked count always gets at least one bar cell"
+scope: cli-output
+sources: [internal/ui/live.go]
+check: "go test ./internal/ui -run TestProgressBarStatesLiveSegmentsNeverHidden"
+updated: 2026-07-14
+---
+
 # Nonzero live progress segments must stay visible
 
 When a fixed-width state bar represents a positive live or attention-required count, reserve at
@@ -17,3 +26,7 @@ same row reported in text.
   supplies the state count instead of a placeholder zero.
 - Pin proportional, rounded-to-zero, combined protected-state, and tiny-width cases with distinct
   color sentinels, then verify at least one real colored terminal rendering.
+
+## Changelog
+- 2026-07-14 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

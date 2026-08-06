@@ -1,3 +1,12 @@
+---
+name: destructive-verb-rm
+description: "destructive subcommands are `rm`, the only spelling (no `remove` alias in v3)"
+scope: cli-grammar
+sources: [internal/cli/help.go, internal/cli/conformance_test.go]
+check: "go test ./internal/cli -run TestCLIConformance"
+updated: 2026-07-03
+---
+
 # Destructive subcommands use `rm` — the only spelling (no `remove` alias in v3)
 
 Every destructive subcommand uses `rm` as its verb — in the dispatch, `usage:` string, help row, and
@@ -19,3 +28,8 @@ dual-accepting compat. Mirrors [[list-verb-ls]] (ls is the only list verb).
 
 See also [[destructive-confirm-gate]] (rm shares one confirmation gate), [[list-verb-ls]],
 [[help-output-style]], and [[bare-subcommand-shows-help]].
+
+## Changelog
+- 2026-06-28 — created
+- 2026-07-03 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

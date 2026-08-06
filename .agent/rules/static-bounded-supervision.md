@@ -1,3 +1,12 @@
+---
+name: static-bounded-supervision
+description: "supervised long commands keep output static and only a bounded excerpt in context"
+scope: agent-workflow
+sources: [AGENTS.md]
+check: "none"
+updated: 2026-07-26
+---
+
 # Agent-supervised long commands use static, bounded output
 
 When an agent supervises a long loop, gate, watch, build, or test command, keep the command's
@@ -17,3 +26,7 @@ frames, consumes context without adding evidence, and can obscure the final exit
   the interactive UI in product code to satisfy this supervision rule.
 
 See also [[command-output-tiers]] and [[fix-the-bug-not-the-feature]].
+
+## Changelog
+- 2026-07-26 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

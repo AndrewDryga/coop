@@ -1,3 +1,12 @@
+---
+name: entity-blocks-with-labeled-fields
+description: "multi-fact listings get one labeled block per entity, not one dense row"
+scope: cli-output
+sources: [internal/cli/models.go, internal/ui/ui.go]
+check: "none"
+updated: 2026-07-10
+---
+
 # Multi-fact listings: one labeled block per entity, not one dense row
 
 When each entity in a listing carries more than one fact (its models, its freshness, an
@@ -26,3 +35,7 @@ per task in `coop tasks` would be noise (see [[tag-exceptions-not-every-row]]).
   instead of printing a separate status log that repeats every name.
 
 See also [[command-output-tiers]], [[list-output-echoes-source]].
+
+## Changelog
+- 2026-07-10 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

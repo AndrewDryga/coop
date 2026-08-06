@@ -1,3 +1,12 @@
+---
+name: spinner-frames-animate-one-object
+description: "spinner frames are successive states of one recognizable object"
+scope: cli-output
+sources: [internal/ui/live.go]
+check: "go test ./internal/ui -run TestSpinFramesAndFreeze"
+updated: 2026-07-14
+---
+
 # Spinner frames must animate one recognizable object
 
 A compact spinner's frames must read as successive states of the same object. Keep the object's
@@ -15,3 +24,7 @@ around one square, so the animation remains recognizable at a glance in a dense 
 - Pin the exact frame order and width in tests, including animated and frozen behavior.
 - Keep surface-specific width contracts: compact rows may use a one-column companion while wider
   progress surfaces retain the full signature spinner.
+
+## Changelog
+- 2026-07-14 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

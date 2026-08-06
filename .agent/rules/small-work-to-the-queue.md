@@ -1,3 +1,12 @@
+---
+name: small-work-to-the-queue
+description: "ready work goes to `00_todo/`; only the genuinely large or unscoped goes to the backlog"
+scope: agent-workflow
+sources: [AGENTS.md, .agent/tasks/README.md]
+check: "none"
+updated: 2026-07-13
+---
+
 # Small discovered work goes to the queue, not the backlog
 
 When you spot a SEPARATE task while working — not part of the one you're on — where it lands depends
@@ -22,3 +31,7 @@ the big/unready keeps it a short, meaningful list of things that actually need a
 - Never fold the discovered fix into the current task's commit — one task = one commit.
 
 Related: [[fix-the-bug-not-the-feature]].
+
+## Changelog
+- 2026-07-13 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

@@ -1,3 +1,12 @@
+---
+name: agents-are-one-file
+description: "a coding agent is one self-registering file in `internal/agent`, never a switch elsewhere"
+scope: architecture
+sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go]
+check: "go test ./internal/agent -run TestRegistry"
+updated: 2026-07-16
+---
+
 # A coding agent is one file in internal/agent — never a switch elsewhere
 
 Every per-agent difference (commands, session resume, ACP binary, MCP translation,
@@ -19,3 +28,8 @@ adding an agent a single new file.
 - Never hard-code the provider set outside `internal/agent`. Validation is `agents.Valid`; the default agent is `agents.Default()`.
 - The narrow exceptions are the `testdata` process-test oracles — `internal/cli/testdata/providerfixture` (native provider argv/output) and `internal/acpproxy/testdata/acpfixture` (per-provider ACP scripts): each is an independent oracle that must enumerate provider shapes instead of reusing production adapter code. Their registry-completeness tests must fail when a new adapter has no oracle arm.
 - Guard production code only: `rg '\"(claude|codex|gemini|grok)\"' internal -g '!**/*_test.go' -g '!internal/agent/**' -g '!internal/cli/testdata/providerfixture/**' -g '!internal/acpproxy/testdata/acpfixture/**'` should return nothing.
+
+## Changelog
+- 2026-06-16 — created
+- 2026-07-16 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

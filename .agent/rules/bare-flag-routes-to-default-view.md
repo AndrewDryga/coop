@@ -1,3 +1,12 @@
+---
+name: bare-flag-routes-to-default-view
+description: "a leading flag where a subcommand goes routes to the group's default listing"
+scope: cli-grammar
+sources: [internal/cli/tasks.go, internal/cli/taskcmd.go]
+check: "none"
+updated: 2026-07-17
+---
+
 # A bare leading flag routes to the group's default view
 
 `coop tasks --blocked` — a flag where a subcommand would go — must run the group's default
@@ -19,3 +28,7 @@ text is longest and least relevant to what they asked.
   bare-subcommand-shows-help.md.
 - Not mechanically lintable (needs per-dispatcher flow analysis), so it stays a reviewed
   rule; check it whenever a list command grows flags.
+
+## Changelog
+- 2026-07-17 — created
+- 2026-08-06 — card metadata added (format v1); body unchanged

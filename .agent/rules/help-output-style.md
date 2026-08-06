@@ -1,3 +1,12 @@
+---
+name: help-output-style
+description: "UPPERCASE headers, one command per line, no `·`, command cell under 32 runes"
+scope: cli-output
+sources: [internal/cli/help.go]
+check: "go test ./internal/cli -run TestHelpRowsAlign"
+updated: 2026-07-11
+---
+
 # Help output: UPPERCASE section headers, one command per line, no "·"
 
 `coop help` and every `coop <cmd> --help` are a scannable command reference, not prose:
@@ -35,3 +44,8 @@ services" hides the one thing that makes the row make sense.
 - Never put `·` in a help string. Guard (help text only — runtime status/stat lines may
   still use `·` as a separator): `grep -n '·' internal/cli/help.go` should be empty, and in
   `internal/cli/fork.go` only the non-help paths (`forkBrief`, the merge prompt) may have it.
+
+## Changelog
+- 2026-06-17 — created
+- 2026-07-11 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

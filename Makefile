@@ -49,7 +49,10 @@ casts-check: ## Validate published casts for private paths, credentials, and sec
 tools-test: ## Run standard-library tests for repository maintenance tools
 	@python3 -m unittest discover -s tools -p 'test_*.py'
 
-check: lint test provider-scripted-e2e live-process-control docs-check casts-check tools-test ## What CI runs: lint + tests + deterministic provider process E2E + docs/cast freshness
+rules-check: ## Fail if a .agent/rules card is malformed, unindexed, or names a source/check that doesn't exist
+	@python3 tools/check_rules.py
+
+check: lint test provider-scripted-e2e live-process-control docs-check casts-check tools-test rules-check ## What CI runs: lint + tests + deterministic provider process E2E + docs/cast/rules freshness
 
 provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
 	@go test ./internal/testutil/procharness ./internal/cli/testdata/providerfixture

@@ -1,3 +1,12 @@
+---
+name: align-trailing-comments
+description: "trailing `#` comments in an example line up in one column"
+scope: docs
+sources: [internal/cli/help.go, tools/align-comments.py, README.md]
+check: "make align"
+updated: 2026-07-14
+---
+
 # Trailing `#` comments in an example line up in one column
 
 In a code example, every trailing comment sits in ONE vertical column — one space past
@@ -33,3 +42,8 @@ counts width visually (HTML tags/entities and the `<pre>` `>` don't count). The 
 and outlier calls are heuristic, so it's an aid, not a gate — confirm the result in review.
 
 See also [[help-output-style]], [[no-color-in-width-fields]], [[tag-exceptions-not-every-row]].
+
+## Changelog
+- 2026-07-10 — created
+- 2026-07-14 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

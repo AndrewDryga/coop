@@ -1,3 +1,12 @@
+---
+name: usage-placeholder-style
+description: "one frozen `<angle>` lexicon for every usage string and error hint"
+scope: cli-grammar
+sources: [internal/cli/help.go]
+check: "none"
+updated: 2026-08-06
+---
+
 # One frozen lexicon for usage placeholders
 
 Every `Usage:`/`usage:` string and error hint spells a value the SAME way, in `<angle>` brackets,
@@ -20,6 +29,14 @@ the CLI read as several tools. A user shouldn't have to learn that `m` and `<mod
 **How to apply:**
 - A new usage/error string → use the placeholders above; wrap in `<…>`; ASCII `...` for repetition.
 - Never abbreviate to a single letter (`p`, `m`) and never use the Unicode ellipsis in a usage string.
-- The `coop-conformance` test ([[2026-07-02-cli-conformance-test-graduate-agent-rules-into-t]]) enforces this once it lands.
+- NOT mechanically gated yet. `TestCLIConformance` (`internal/cli/conformance_test.go`) landed and
+  graduates [[list-verb-ls]], [[destructive-verb-rm]], and [[help-output-style]] — but it does not
+  read usage strings for this lexicon. Enforce in review until someone adds that arm, then put its
+  command in `check:`.
 
 See also [[help-output-style]].
+
+## Changelog
+- 2026-07-02 — created
+- 2026-07-11 — revised
+- 2026-08-06 — card metadata added; corrected the stale conformance claim — TestCLIConformance landed, but it covers ls/rm/help rows, NOT the placeholder lexicon

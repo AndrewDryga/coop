@@ -1,3 +1,12 @@
+---
+name: agent-instructions-use-in-box-capabilities
+description: "agent-facing instructions name in-box capabilities, never host-side `coop fork`/`fleet`"
+scope: agent-workflow
+sources: [AGENTS.md, internal/scaffold/scaffold.go]
+check: "none"
+updated: 2026-07-11
+---
+
 # Agent-facing instructions use in-box capabilities only
 
 Instructions mounted into Claude, Codex, and Gemini run inside the coop box. They must
@@ -19,3 +28,8 @@ human/operator layer; the boxed agent should use only its runtime's native tools
   agents. Those can stay in user/operator docs such as README command references.
 - If a native capability may not exist, phrase it as "if your runtime has it" and require
   the closest safe fallback instead of inventing slash commands or APIs.
+
+## Changelog
+- 2026-06-26 — created
+- 2026-07-11 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

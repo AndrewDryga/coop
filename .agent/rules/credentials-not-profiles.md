@@ -1,3 +1,12 @@
+---
+name: credentials-not-profiles
+description: "a stored account is publicly a \"credential\"; \"profile\" is retired, not aliased"
+scope: cli-grammar
+sources: [internal/cli/profiles.go, internal/cli/help.go]
+check: "none"
+updated: 2026-07-04
+---
+
 # The account concept is publicly named "credentials", never "profiles"
 
 **The rule:** Every user-facing surface — command names, flags, help, errors, hints, docs —
@@ -22,3 +31,8 @@ reads.
 **Mechanical check:** grep new user-facing strings for `profile` before landing:
 `grep -rn '"' internal/cli --include='*.go' | grep -i profile` should surface only
 the `coop profiles` tombstone line and internal identifiers.
+
+## Changelog
+- 2026-07-03 — created
+- 2026-07-04 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged

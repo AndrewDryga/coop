@@ -1,3 +1,12 @@
+---
+name: list-output-echoes-source
+description: "list output echoes the on-disk form, and grouped sections breathe"
+scope: cli-output
+sources: [internal/cli/tasks.go]
+check: "none"
+updated: 2026-07-09
+---
+
 # List output echoes the source's own format, and groups breathe
 
 A command that prints items which exist in a canonical on-disk form should render them in
@@ -23,3 +32,8 @@ between task files and some - or * before [ ]."
   agent — give it the same inter-section blank line if it's ever touched.
 - Pairs with [[help-output-style]] (the help reference's scannability) and
   [[no-color-in-width-fields]] (column alignment).
+
+## Changelog
+- 2026-06-17 — created
+- 2026-07-09 — revised
+- 2026-08-06 — card metadata added (format v1); body unchanged
