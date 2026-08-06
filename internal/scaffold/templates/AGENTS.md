@@ -83,7 +83,7 @@ local (git-ignored) so it never creates commit noise or merge churn.
   member keeps its own `tasks/`, backlog drawer included; every coop task command aggregates them,
   and the root queue holds work that spans members) and the `serve:` ports coop
   publishes so a dev server in the box is reachable from the host browser. When working
-  inside a subproject, also honor its own `.agent/rules/` and `AGENTS.md` if present.
+  inside a subproject, also honor its own `.agent/kb/rules/` and `AGENTS.md` if present.
 
 ## Skills
 Use these workflow skills when present instead of hand-rolling: `/spec` before a multi-file
@@ -96,5 +96,5 @@ Selected agent dirs (`.claude`, `.codex`, `.gemini`) link to the established sou
 
 ## Taste
 Every correction from me becomes a rule the same day: fix it, record it in
-.agent/rules/, sweep the codebase for siblings, and graduate it into a lint/hook
+.agent/kb/rules/, sweep the codebase for siblings, and graduate it into a lint/hook
 when it's mechanically checkable.

@@ -160,7 +160,7 @@ func candidateFiles(repo string, includeIgnored bool) ([]string, error) {
 // queue, logs, notes) that `coop init` ignores but a box still reads. check-secrets scans them by
 // default, so a secret pasted into agent prose isn't a silent, box-readable leak. Empty when git is
 // unavailable or .agent/ has no ignored files (e.g. a repo that doesn't gitignore it — then they're
-// already untracked/tracked and in the default set). .agent/rules + .agent/skills are tracked, so
+// already untracked/tracked and in the default set). .agent/kb/rules + .agent/skills are tracked, so
 // they arrive via --cached, not here.
 func ignoredAgentFiles(repo string) []string {
 	args := gitArgs(repo, []string{"ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", ".agent"})

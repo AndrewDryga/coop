@@ -1,9 +1,13 @@
 # .agent/kb — the self-improving knowledge base
 
 Descriptive operational knowledge an agent needs but the code doesn't obviously carry: subsystem
-maps, cross-cutting traps, hard-won gotchas. Sibling of `rules/` — but `rules/` is NORMATIVE
-("do X, not Y") while a card here is DESCRIPTIVE ("here's how X actually works, and the trap"). A
-rule may link to a card for background.
+maps, cross-cutting traps, hard-won gotchas. A card directly under `kb/` is DESCRIPTIVE ("here's how
+X actually works, and the trap").
+
+The NORMATIVE floor lives one level down in **[`rules/`](rules/README.md)** ("do X, not Y") — a
+verdict a review can fail against, with its own index, card format, and `check:` field. Read that
+index at boot too; a rule may link up to a card here for background. One committed knowledge tree,
+two registers.
 
 ## Reading protocol
 Read this INDEX at boot; open a card ONLY when your task touches its subsystem. Never bulk-load the

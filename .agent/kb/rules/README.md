@@ -1,8 +1,8 @@
-# .agent/rules — the taste knowledge base
+# .agent/kb/rules — the taste knowledge base
 
-NORMATIVE constraints a change must obey: "do X, not Y." Sibling of `kb/` — a card there is
-DESCRIPTIVE ("here's how X actually works, and the trap"), a rule here is a verdict you can fail a
-review against. A rule may link to a card for background.
+NORMATIVE constraints a change must obey: "do X, not Y." The normative floor of the one knowledge
+tree: a card in `kb/` proper is DESCRIPTIVE ("here's how X actually works, and the trap"), a rule
+here is a verdict you can fail a review against. A rule may link up to a card for background.
 
 Every rule here started as a correction from the human. That's the intake: a correction becomes a
 rule the same day, and the rule outlives the conversation that produced it.
@@ -18,8 +18,8 @@ rule against a diff on purpose.
 it. This is the graduation ladder made visible: a rule with `check: none` is one nobody has
 mechanized yet, and
 
-    grep -L 'check: none' .agent/rules/*.md    # rules that gate themselves
-    grep -l 'check: none' .agent/rules/*.md    # rules still riding on review
+    grep -L 'check: none' .agent/kb/rules/*.md    # rules that gate themselves
+    grep -l 'check: none' .agent/kb/rules/*.md    # rules still riding on review
 
 is the honest scoreboard. When a rule becomes mechanically checkable, write the test or the make
 target, put its command in `check:`, and say so in the changelog. Never name a command here that

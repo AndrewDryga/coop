@@ -14,7 +14,7 @@ If there's no plan yet and the change is non-trivial, run `/spec` first.
 1. **State the step** in one line so progress is visible.
 2. **Build it** in the surrounding style. If you're unsure a function, option, or
    flag exists — yours or a dependency's — `/verify-api` before you write it; don't
-   guess. Obey `AGENTS.md` and match `.agent/rules/`.
+   guess. Obey `AGENTS.md` and match `.agent/kb/rules/`.
 3. **Gate before moving on** — run the repo's exact gate (`AGENTS.md` → "The gate").
 4. **Red gate → stop.** Don't pile the next step on a broken one. Fix it, or report
    the blocker with the error and your read on it. Never edit a test to make a real

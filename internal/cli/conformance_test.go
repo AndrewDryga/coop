@@ -7,10 +7,10 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// TestCLIConformance graduates the committed .agent/rules into the gate: it walks the CLI surface as
+// TestCLIConformance graduates the committed .agent/kb/rules into the gate: it walks the CLI surface as
 // data and asserts the taste rules mechanically, so drift (a lister that forgot `list`, a destructive
 // verb without `remove`, a verb added with no help row, a retired alias quietly re-accepted) fails CI
-// instead of review. See .agent/rules/{list-verb-ls,destructive-verb-rm,help-output-style}.md.
+// instead of review. See .agent/kb/rules/{list-verb-ls,destructive-verb-rm,help-output-style}.md.
 func TestCLIConformance(t *testing.T) {
 	newApp := func() *app {
 		return &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}

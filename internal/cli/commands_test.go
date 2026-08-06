@@ -336,7 +336,7 @@ func TestLoopPreflightAndReviewFolder(t *testing.T) {
 		"For EVERY task listed above", // the directive binds to the header, not the done/ dir
 		"SENIOR REVIEWER", "99_done/",
 		"acceptance criterion",                      // 1. meets its goal
-		".agent/rules",                              // 2. follows the standards
+		".agent/kb/rules",                           // 2. follows the standards
 		"FAILURE/edge path",                         // 3. tested for real
 		"docs/README/CHANGELOG",                     // 4. polished
 		"ONCE across the WHOLE repo (not per task)", // single whole-repo gate

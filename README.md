@@ -1097,7 +1097,7 @@ state has acquirable work. Name the agent
 (`claude`/`codex`/`gemini`/`grok`, or a preset name whose lead supplies it); loop.yaml `work.command` still overrides the whole
 iteration command if you need something custom. When the queue empties, a fresh, **demanding
 signoff** pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance
-criterion and subtask), standards followed (`AGENTS.md` + `.agent/rules`, no scope creep),
+criterion and subtask), standards followed (`AGENTS.md` + `.agent/kb/rules`, no scope creep),
 the **failure path** tested, the change polished (docs/CHANGELOG updated), plus bookkeeping.
 Coop atomically finalizes each completed `state.md` before review. Reviewers never mutate an
 archived task in place; an unexpected lifecycle defect is reopened and reported like any other

@@ -22,7 +22,7 @@ updated: 2026-08-06
 - 2026-08-06 — created
 """
 
-INDEX = """# .agent/rules
+INDEX = """# .agent/kb/rules
 
 ## Index
 - [sample-rule](sample-rule.md) — a sample rule
@@ -30,7 +30,7 @@ INDEX = """# .agent/rules
 
 
 def scaffold(root, card=GOOD_CARD, index=INDEX):
-    rules = root / ".agent" / "rules"
+    rules = root / ".agent" / "kb" / "rules"
     rules.mkdir(parents=True)
     (rules / "sample-rule.md").write_text(card)
     (rules / "README.md").write_text(index)
@@ -100,7 +100,7 @@ class AuditTest(unittest.TestCase):
     def test_unindexed_rule_is_caught(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            scaffold(root, index="# .agent/rules\n\n## Index\n")
+            scaffold(root, index="# .agent/kb/rules\n\n## Index\n")
             problems, _, _ = audit(root)
             self.assertTrue(any("not in the README index" in p for p in problems))
 

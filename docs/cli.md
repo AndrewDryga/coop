@@ -504,7 +504,7 @@ coop loop [agent] — work the task queue until done, then sign off.
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
-  acceptance criterion + subtask), standards followed (AGENTS.md + .agent/rules, no scope
+  acceptance criterion + subtask), standards followed (AGENTS.md + .agent/kb/rules, no scope
   creep), the FAILURE path tested, the change polished (docs/CHANGELOG updated), plus
   bookkeeping — then runs the repo's gate ONCE across the whole repo, reopening anything
   short of "merge with no changes". If the signoff reopened work, the loop drains and

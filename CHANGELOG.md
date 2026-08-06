@@ -4,6 +4,30 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **BREAKING: the rules KB moved to `.agent/kb/rules/`.** Rules and the descriptive kb were
+  siblings, so the same normative note lived at a different path in every repo — and a rule
+  couldn't move between them without a rewrite. There is now ONE committed knowledge tree:
+  descriptive cards directly under `.agent/kb/`, the normative floor in `.agent/kb/rules/`.
+  `coop init` scaffolds that path and un-ignores `**/.agent/kb/` in place of
+  `**/.agent/rules/`. **A repo scaffolded by an older coop keeps working, but its rules stay
+  where they are** — re-run `coop init` to migrate the `.gitignore` (the retired un-ignore is
+  rewritten in place, never left beside its replacement), then
+  `git mv .agent/rules .agent/kb/rules` yourself; coop never moves your files.
+
+- **Rules are cards now, with metadata that shows their age.** Each rule carries `name`,
+  `description`, `scope`, `sources`, `check`, and `updated`, plus a changelog — the same
+  discipline the kb cards already had, so a rule that has drifted from the code it governs is
+  visible instead of silently obeyed. `check:` names the command that fails on a violation, or
+  `none`, which makes the graduation ladder countable: `grep -l 'check: none'` is the list of
+  rules still riding on review. `make rules-check` (new, in `make check`) verifies every card
+  parses, is indexed, and doesn't name a `sources:` path or a `check:` command that doesn't
+  exist — a gate that can't be run is worse than none.
+
+- **New `/rules-propose` skill** mines the repo's own history for failure shapes that recur,
+  requires two independent incidents before proposing anything, and reports separately when a
+  rule already covers a cluster — meaning the rule isn't holding and needs a check rather than a
+  rewrite. It proposes; a human accepts. Coop-only, alongside `/release`.
+
 ## 7.3.0
 
 - **Monorepo members are detected at any depth, and registered for you.** `coop init` only

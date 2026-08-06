@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that every .agent/rules card is well-formed, indexed, and honest.
+"""Check that every .agent/kb/rules card is well-formed, indexed, and honest.
 
 A rule is a verdict a review can fail against, so its metadata has to be true:
 a `sources:` path that no longer exists means the rule may describe code that
@@ -81,7 +81,7 @@ def check_command(cmd, slug, root):
 
 def audit(root):
     """Return (problems, cards, gated) for the rules KB under root."""
-    rules = root / ".agent" / "rules"
+    rules = root / ".agent" / "kb" / "rules"
     problems = []
     if not rules.is_dir():
         return ([f"no {rules} directory"], [], 0)
@@ -94,7 +94,7 @@ def audit(root):
 
         fm = parse_frontmatter(text)
         if fm is None:
-            problems.append(f"{slug}: no frontmatter (see .agent/rules/README.md for the card format)")
+            problems.append(f"{slug}: no frontmatter (see .agent/kb/rules/README.md for the card format)")
             continue
 
         for key in REQUIRED:
@@ -148,10 +148,10 @@ def main(argv):
     problems, cards, gated = audit(pathlib.Path("."))
     if problems:
         if not quiet:
-            print(f"✗ {len(problems)} problem(s) in .agent/rules:\n", file=sys.stderr)
+            print(f"✗ {len(problems)} problem(s) in .agent/kb/rules:\n", file=sys.stderr)
             for p in problems:
                 print(f"  - {p}", file=sys.stderr)
-            print("\n  the card format is documented in .agent/rules/README.md", file=sys.stderr)
+            print("\n  the card format is documented in .agent/kb/rules/README.md", file=sys.stderr)
         return 1
     if not quiet:
         print(f"✓ {len(cards)} rule cards valid and indexed — {gated} gated by a command, "

@@ -1,6 +1,6 @@
 ---
 name: review-board
-description: The heavyweight pre-merge review — convene a board of expert hats (correctness, this repo's own rules, security, plus PM/UX/maintainer and any hat the change earns) as parallel reviewers, then synthesize ONE ranked verdict and an ordered plan to fix everything. Reads the project's OWN `.agent/rules/` and runs its OWN gate — no hardcoded laws. Read-only. Works on local changes, a commit, a range, a branch/ref, or a PR. Use before landing anything substantial, or when you want a thorough multi-perspective review.
+description: The heavyweight pre-merge review — convene a board of expert hats (correctness, this repo's own rules, security, plus PM/UX/maintainer and any hat the change earns) as parallel reviewers, then synthesize ONE ranked verdict and an ordered plan to fix everything. Reads the project's OWN `.agent/kb/rules/` and runs its OWN gate — no hardcoded laws. Read-only. Works on local changes, a commit, a range, a branch/ref, or a PR. Use before landing anything substantial, or when you want a thorough multi-perspective review.
 argument-hint: "[nothing = local changes · commit · a..b range · branch/ref · PR number · -- pathspec]"
 allowed-tools: Read, Grep, Glob, Bash, Agent
 ---
@@ -9,7 +9,7 @@ allowed-tools: Read, Grep, Glob, Bash, Agent
 
 Convene a board of expert hats; each reviews the change through ONE lens; then YOU
 (the parent) synthesize one ranked verdict and an ordered plan to fix everything.
-The hats read this repo's **own** taste — `AGENTS.md` plus every `.agent/rules/*.md`
+The hats read this repo's **own** taste — `AGENTS.md` plus every `.agent/kb/rules/*.md`
 — not any fixed checklist, so the review sharpens as the project's rules grow.
 **Read-only: the board reviews; it never edits.** The deliverable is a *fix plan*, not just notes.
 
@@ -32,7 +32,7 @@ Run the repo's gate (`AGENTS.md` → "The gate"). A **red gate is an automatic B
 ## 3. Convene the hats the change earns
 **Standing — always, for any code change:**
 - **Staff engineer** — correctness & edge cases, the simplest thing that works, over-engineering, maintainability, "would I approve this PR?"
-- **Rules** — does it obey `AGENTS.md` (the creed) and **every** `.agent/rules/*.md`? Read them; check the diff against each. (No rules yet → just the creed; don't invent any.)
+- **Rules** — does it obey `AGENTS.md` (the creed) and **every** `.agent/kb/rules/*.md`? Read them; check the diff against each. (No rules yet → just the creed; don't invent any.)
 - **Security** — lead with the abuse case: untrusted input, secrets, authz, injection, data leak.
 
 **Earned — add when the diff touches the surface (lean toward MORE coverage):**

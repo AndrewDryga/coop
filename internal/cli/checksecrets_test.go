@@ -171,7 +171,7 @@ func TestScanVisibleTreeScansAgentByDefault(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mk(".gitignore", ".agent/*\n!.agent/rules/\n")
+	mk(".gitignore", ".agent/*\n!.agent/kb/rules/\n")
 	mk(".agent/tasks/2026-01-01-x/log.md", "pasted token: ghp_abcdefghijklmnopqrstuvwxyz0123456789\n")
 	git(t, repo, "add", ".gitignore")
 	git(t, repo, "commit", "-qm", "init")

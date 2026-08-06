@@ -38,7 +38,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 	has := func(a string) bool { return slices.Contains(agentDirs, a) }
 	skillsRoot := skillsSource(repo)
 	dirs := []string{
-		filepath.Join(repo, ".agent", "rules"),
+		filepath.Join(repo, ".agent", "kb", "rules"),
 		skillsRoot,
 		filepath.Join(repo, ".agent", "presets"), // orchestration recipes live here (coop presets init writes one)
 	}
@@ -437,7 +437,8 @@ func gitConfigSet(repo, key, value string) error {
 // its LAST matching rule, so a line's position is part of its meaning.
 //
 // **/.agent/* ignores .agent/ state at any depth, so a monorepo member's working state (its
-// tasks/backlog) is ignored too. Committed KNOWLEDGE — rules/skills/presets and the loop.yaml
+// tasks/backlog) is ignored too. Committed KNOWLEDGE — kb/ (descriptive cards plus the normative
+// rules/ inside it), skills/presets and the loop.yaml
 // config — is un-ignored at any depth as well, since a large monorepo member may carry its own;
 // only project.yaml is TOP-LEVEL (the single subprojects+serve config), so its un-ignore stays
 // root-anchored. tasks/ needs the three-step dance because git never descends into an excluded
@@ -446,7 +447,7 @@ var (
 	coopIgnoreStanza = []string{
 		"# coop working state (commit knowledge, ignore state)",
 		"**/.agent/*",
-		"!**/.agent/rules/",
+		"!**/.agent/kb/",
 		"!**/.agent/skills/",
 		"!**/.agent/presets/",
 		"!**/.agent/claude/",
@@ -487,14 +488,15 @@ func (s *scaffolder) updateGitignore(wantGemini bool) error {
 		switch strings.TrimSpace(l) {
 		case ".agent/*":
 			lines[i] = "**/.agent/*"
-		case "!.agent/rules/":
-			lines[i] = "!**/.agent/rules/"
 		case "!.agent/skills/":
 			lines[i] = "!**/.agent/skills/"
 		case "!.agent/presets/":
 			lines[i] = "!**/.agent/presets/"
 		}
 	}
+	// The rules KB moved under kb/ (one committed knowledge tree, matching the sibling repos).
+	// An older scaffold un-ignored .agent/rules/ directly, at either anchoring.
+	lines = migrateRulesUnignore(lines)
 
 	if !hasIgnoreLine(lines, "**/.agent/*") {
 		lines = appendIgnoreStanza(lines, coopIgnoreStanza)
@@ -502,6 +504,7 @@ func (s *scaffolder) updateGitignore(wantGemini bool) error {
 		// Splice into an older stanza only what it lacks, each after the line it must follow. The
 		// order here is the stanza's own, so an anchor is always in place before the rule that needs it.
 		for _, up := range [][2]string{
+			{"!**/.agent/kb/", "**/.agent/*"},
 			{"!**/.agent/presets/", "!**/.agent/skills/"},
 			{"!**/.agent/claude/", "!**/.agent/presets/"},
 			{"!**/.agent/loop.yaml", "!**/.agent/claude/"},
@@ -531,8 +534,31 @@ func (s *scaffolder) updateGitignore(wantGemini bool) error {
 	if err := os.WriteFile(gi, []byte(out), 0o644); err != nil {
 		return err
 	}
-	ui.Detail("updated .gitignore (.agent state ignored at any depth; rules/skills/presets/claude/loop + project.yaml + the tasks README tracked)")
+	ui.Detail("updated .gitignore (.agent state ignored at any depth; kb/skills/presets/claude/loop + project.yaml + the tasks README tracked)")
 	return nil
+}
+
+// migrateRulesUnignore retires the standalone .agent/rules/ un-ignore now that the rules KB lives
+// under kb/. The first occurrence becomes the kb un-ignore in place, so it keeps its load-bearing
+// position right after **/.agent/*; any further one is dropped rather than rewritten, or a repo
+// that already carries the kb line would end up with two.
+func migrateRulesUnignore(lines []string) []string {
+	const kb = "!**/.agent/kb/"
+	have := hasIgnoreLine(lines, kb)
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		switch strings.TrimSpace(l) {
+		case "!.agent/rules/", "!**/.agent/rules/":
+			if have {
+				continue
+			}
+			have = true
+			out = append(out, kb)
+		default:
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func hasIgnoreLine(lines []string, want string) bool {

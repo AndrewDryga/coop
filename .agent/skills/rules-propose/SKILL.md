@@ -38,7 +38,7 @@ Discard clusters that are: a single incident, a one-off environment problem, or
 already prevented by a test that now exists.
 
 ## 3. Dedupe against what's already written
-`.agent/rules/README.md`'s index is the routing table — one line per rule. Read
+`.agent/kb/rules/README.md`'s index is the routing table — one line per rule. Read
 it and drop any cluster it already covers.
 
 A cluster that IS already covered is the most valuable output this skill
@@ -60,12 +60,12 @@ proposing — a short honest list beats a padded one.
 
 ## 5. On accept — write it properly
 Only after the human picks:
-1. Write the card per the format in `.agent/rules/README.md` (frontmatter +
+1. Write the card per the format in `.agent/kb/rules/README.md` (frontmatter +
    **Why:** citing the evidence commits + **How to apply:** + changelog).
 2. **Sweep the tree for existing violations** — run the `check:`, or grep the
    `sources:`. Record what you found in the changelog. A rule that fires
    everywhere or nowhere is wrong: narrow it or drop it.
-3. Add its index line to `.agent/rules/README.md`.
+3. Add its index line to `.agent/kb/rules/README.md`.
 4. `make rules-check`.
 5. Fixing the violations you found is a SEPARATE task (`coop tasks add`) — the
    rule commit carries the rule, not a tree-wide refactor.

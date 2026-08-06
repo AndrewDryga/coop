@@ -32,7 +32,7 @@ func printHelp(cfg *config.Config) { fmt.Print(helpText(cfg)) }
 // groupHelp prints a command group's focused help (its commandHelp entry) and returns exit
 // 0 — the response to a bare `coop <group>` with no subcommand. A group must never answer a
 // missing subcommand with an `unknown <group> command ""` error; that path is for a *mistyped*
-// subcommand. See .agent/rules/bare-subcommand-shows-help.md.
+// subcommand. See .agent/kb/rules/bare-subcommand-shows-help.md.
 func groupHelp(cmd string) (int, error) {
 	if h, ok := commandHelp[cmd]; ok {
 		printCommandHelp(h)
@@ -705,7 +705,7 @@ var commandHelp = map[string]string{
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
-  acceptance criterion + subtask), standards followed (AGENTS.md + .agent/rules, no scope
+  acceptance criterion + subtask), standards followed (AGENTS.md + .agent/kb/rules, no scope
   creep), the FAILURE path tested, the change polished (docs/CHANGELOG updated), plus
   bookkeeping — then runs the repo's gate ONCE across the whole repo, reopening anything
   short of "merge with no changes". If the signoff reopened work, the loop drains and

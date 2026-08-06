@@ -213,7 +213,7 @@ func TestScanSecretsJWT(t *testing.T) {
 // exempted: real credentials ARE canonical UUIDs (Heroku API keys are lowercase v4), so
 // blanking the 8-4-4-4-12 shape would hide a live credential class. Value-shape guards
 // must be structural tells a random token never has, and hex+dash is a credential
-// alphabet (.agent/rules/secret-scan-literals-not-refs.md).
+// alphabet (.agent/kb/rules/secret-scan-literals-not-refs.md).
 func TestScanSecretsUUIDValueStillFlagged(t *testing.T) {
 	if f := ScanSecrets(`heroku_api_key = "f47ac10b-58cc-4372-a567-0e02b2c3d479"`); len(f) == 0 {
 		t.Error("a UUID-shaped credential value must keep firing (Heroku API keys are UUIDs)")

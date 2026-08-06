@@ -15,7 +15,7 @@
 ## Use the agent stack
 - **Set the objective.** For anything longer than a quick answer, set the runtime's persistent goal/tracker if it exists (`/goal` or equivalent), and keep it current. If your agent does not have that feature, use `.agent/tasks/` as the durable goal state. A goal is the stop condition, not a substitute for a plan.
 - **Batch independent reads.** Use tool batching (`/batch`, parallel tool calls, or backgrounded shell reads) for independent searches, file reads, log collection, and docs lookups. Do not batch dependent steps or mutating commands that can race.
-- **Keep supervised output static and bounded.** For long loops, gates, builds, watches, and tests, follow `.agent/rules/static-bounded-supervision.md`: disable repainting where supported, redirect the full log, preserve the exit status, and inspect only bounded tails or targeted filters.
+- **Keep supervised output static and bounded.** For long loops, gates, builds, watches, and tests, follow `.agent/kb/rules/static-bounded-supervision.md`: disable repainting where supported, redirect the full log, preserve the exit status, and inspect only bounded tails or targeted filters.
 - **Delegate thinking, keep ownership.** Use native subagents/Task workers for broad research, codebase surveys, second opinions, review, and root-cause hypotheses. Treat them as read-only advisors unless your runtime explicitly gives them an isolated workspace. The lead agent makes the decision, edits files, runs the gate, and owns the result.
 - **Keep writes serialized in this checkout.** Native workers are for thinking unless the runtime proves they have separate workspaces. Never let two workers edit the same checkout at once.
 - **Use real capabilities only.** If a named feature does not exist in your runtime, do the closest safe thing with the tools you actually have; do not invent slash commands, tools, or worker APIs.
@@ -91,7 +91,7 @@ local (git-ignored) so it never creates commit noise or merge churn.
   discipline as `kb/`: read `rules/README.md`'s index at boot, open a rule only when your change
   touches its `scope` (a full audit like `/review-board` is the deliberate exception). Every card
   carries `sources`, `updated`, and a `check:` — the command that fails on a violation, or `none`
-  when only review catches it, so `grep -l 'check: none' .agent/rules/*.md` is the standing list of
+  when only review catches it, so `grep -l 'check: none' .agent/kb/rules/*.md` is the standing list of
   rules nobody has mechanized yet. `make rules-check` gates the cards themselves.
 - `kb/` — the DESCRIPTIVE knowledge base (committed): subsystem maps, cross-cutting traps, and
   gotchas the code doesn't obviously carry. A SELF-IMPROVING wiki you maintain directly — no inbox,
@@ -106,7 +106,7 @@ local (git-ignored) so it never creates commit noise or merge churn.
   member keeps its own `tasks/`, backlog drawer included; every coop task command aggregates them,
   and the root queue holds work that spans members) and the `serve:` ports coop
   publishes so a dev server in the box is reachable from the host browser. When working
-  inside a subproject, also honor its own `.agent/rules/` and `AGENTS.md` if present.
+  inside a subproject, also honor its own `.agent/kb/rules/` and `AGENTS.md` if present.
 
 ## Skills
 Use the workflow skills instead of hand-rolling: `/spec` before a multi-file
@@ -120,7 +120,7 @@ cut a versioned, tagged release. They live once in
 
 ## Taste
 Every correction from me becomes a rule the same day: fix it, record it as a card in
-`.agent/rules/` (format + protocol in its README), sweep the tree for siblings and write what
+`.agent/kb/rules/` (format + protocol in its README), sweep the tree for siblings and write what
 you found in the card's changelog, and graduate it into a lint/hook when it's mechanically
 checkable — then put that command in the card's `check:`. A rule that has never been run
 against the tree is a hypothesis; a `check:` you can't run is worse than `none`.

@@ -37,9 +37,9 @@ func writeRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
 	for rel, body := range map[string]string{
-		"AGENTS.md":              "agents",
-		".agent/kb/portal.md":    "portal kb",
-		".agent/rules/elixir.md": "elixir rule",
+		"AGENTS.md":                 "agents",
+		".agent/kb/portal.md":       "portal kb",
+		".agent/kb/rules/elixir.md": "elixir rule",
 	} {
 		p := filepath.Join(repo, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -66,13 +66,13 @@ func TestCompileOrderingAndDedup(t *testing.T) {
 	repo := writeRepo(t)
 	routes := []project.Route{
 		{Paths: []string{"portal/**"}, Include: []string{".agent/kb/portal.md"}},
-		{Paths: []string{"**/*.ex"}, Include: []string{".agent/rules/elixir.md", ".agent/kb/portal.md"}},
+		{Paths: []string{"**/*.ex"}, Include: []string{".agent/kb/rules/elixir.md", ".agent/kb/portal.md"}},
 	}
 	sel, err := Compile(repo, routes, []string{"portal/lib/user.ex"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"AGENTS.md", ".agent/kb/portal.md", ".agent/rules/elixir.md"}
+	want := []string{"AGENTS.md", ".agent/kb/portal.md", ".agent/kb/rules/elixir.md"}
 	if got := fileList(sel); !equal(got, want) {
 		t.Errorf("files = %v, want %v", got, want)
 	}

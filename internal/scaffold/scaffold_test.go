@@ -205,7 +205,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	// Knowledge (rules/skills) is un-ignored at any depth so a member may carry its own; only
 	// project.yaml is top-level.
-	for _, want := range []string{"**/.agent/*\n", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/claude/", "!**/.agent/Dockerfile", "!.agent/project.yaml"} {
+	for _, want := range []string{"**/.agent/*\n", "!**/.agent/kb/", "!**/.agent/skills/", "!**/.agent/claude/", "!**/.agent/Dockerfile", "!.agent/project.yaml"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf("coop's block missing %q after a broad .agent/*.log line:\n%s", want, gi)
 		}
@@ -222,7 +222,7 @@ func TestUpdateGitignoreAddsClaudeFallbackToExistingBlock(t *testing.T) {
 	repo := t.TempDir()
 	oldBlock := "# coop working state (commit knowledge, ignore state)\n" +
 		"**/.agent/*\n" +
-		"!**/.agent/rules/\n" +
+		"!**/.agent/rules/\n" + // retired: the rules KB moved under kb/
 		"!**/.agent/skills/\n" +
 		"!**/.agent/presets/\n" +
 		"!**/.agent/loop.yaml\n" +
@@ -253,6 +253,14 @@ func TestUpdateGitignoreAddsClaudeFallbackToExistingBlock(t *testing.T) {
 	if n := strings.Count(string(gi), "!**/.agent/Dockerfile"); n != 1 {
 		t.Fatalf("Dockerfile un-ignore appears %d times, want 1:\n%s", n, gi)
 	}
+	// The rules KB moved under kb/: the retired un-ignore is rewritten in place, exactly once,
+	// and never left beside its replacement (which would un-ignore a directory that isn't there).
+	if n := strings.Count(string(gi), "!**/.agent/kb/"); n != 1 {
+		t.Fatalf("kb un-ignore appears %d times, want 1:\n%s", n, gi)
+	}
+	if strings.Contains(string(gi), "!**/.agent/rules/") {
+		t.Fatalf("retired rules un-ignore survived the upgrade:\n%s", gi)
+	}
 }
 
 // TestInitSubproject: a member gets ONLY its own task queue — never the full scaffold (AGENTS.md,
@@ -278,16 +286,19 @@ func TestUpdateGitignoreUpgradesLegacyRootAnchoredBlock(t *testing.T) {
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	for line, want := range map[string]int{
-		"\n**/.agent/*\n":    1,
-		"\n!.gemini/\n":      1, // the appended block used to bring a second copy of this stanza
-		"\n!.agent/rules/\n": 0, // legacy spelling is rewritten, not left beside the new one
+		"\n**/.agent/*\n":        1,
+		"\n!.gemini/\n":          1, // the appended block used to bring a second copy of this stanza
+		"\n!.agent/rules/\n":     0, // legacy spelling is rewritten, not left beside the new one
+		"\n!**/.agent/rules/\n":  0, // and the rules KB's own move retires it entirely
+		"\n!**/.agent/kb/\n":     1, // exactly one replacement, never a duplicate
+		"\n!**/.agent/skills/\n": 1,
 	} {
 		if n := strings.Count(string(gi), line); n != want {
 			t.Errorf("%q appears %d times, want %d:\n%s", line, n, want, gi)
 		}
 	}
 	// The upgrade splices the newer rules in at their load-bearing position, not at the end.
-	for _, want := range []string{"!**/.agent/rules/", "!**/.agent/claude/", "!**/.agent/Dockerfile", "!.agent/project.yaml", "!**/.agent/tasks/README.md"} {
+	for _, want := range []string{"!**/.agent/kb/", "!**/.agent/claude/", "!**/.agent/Dockerfile", "!.agent/project.yaml", "!**/.agent/tasks/README.md"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf("upgraded block missing %q:\n%s", want, gi)
 		}
@@ -360,7 +371,7 @@ func TestInitSubproject(t *testing.T) {
 			t.Errorf("member missing %s: %v", rel, err)
 		}
 	}
-	for _, rel := range []string{"AGENTS.md", ".claude", ".agent/rules", ".agent/skills", "CLAUDE.md", ".agent/project.yaml", ".agent/BACKLOG.md"} {
+	for _, rel := range []string{"AGENTS.md", ".claude", ".agent/kb/rules", ".agent/skills", "CLAUDE.md", ".agent/project.yaml", ".agent/BACKLOG.md"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
 			t.Errorf("member should NOT have %s (top-level only / retired)", rel)
 		}
@@ -524,7 +535,7 @@ func TestInit(t *testing.T) {
 	// .gitignore ignores .agent/ state at any depth and tracks knowledge (rules/skills/presets and
 	// the loop.yaml config) at any depth; only project.yaml is top-level.
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	for _, want := range []string{"**/.agent/*", "!**/.agent/rules/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/claude/", "!**/.agent/loop.yaml", "!.agent/project.yaml", "!.gemini/skills"} {
+	for _, want := range []string{"**/.agent/*", "!**/.agent/kb/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/claude/", "!**/.agent/loop.yaml", "!.agent/project.yaml", "!.gemini/skills"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf(".gitignore missing %q:\n%s", want, gi)
 		}
@@ -1075,7 +1086,7 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 func TestSkillsTemplatesMatchCanonical(t *testing.T) {
 	// coop-only skills — never scaffolded into a user repo.
 	//   release       — cuts coop's own versioned release
-	//   rules-propose — leans on coop's rule-card format (.agent/rules/README.md) and
+	//   rules-propose — leans on coop's rule-card format (.agent/kb/rules/README.md) and
 	//                   `make rules-check`, neither of which `coop init` writes; shipping it
 	//                   would point a fresh repo at files it doesn't have (scaffold-fits-the-repo).
 	canonicalOnly := []string{"release", "rules-propose"}
@@ -1161,7 +1172,7 @@ func TestInitAgentDirsGating(t *testing.T) {
 			t.Errorf("%s should NOT be scaffolded with no agents", d)
 		}
 	}
-	if !exists(filepath.Join(repo2, ".agent", "rules")) {
+	if !exists(filepath.Join(repo2, ".agent", "kb", "rules")) {
 		t.Error(".agent/ is always scaffolded even with no agents")
 	}
 	// With no project .claude/ to shadow it, the fallback IS the repo's Claude adapter — so it must
