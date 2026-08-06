@@ -113,7 +113,8 @@ Use the workflow skills instead of hand-rolling: `/spec` before a multi-file
 change, `/work` to execute a plan step by step against the gate, `/sweep` to
 drain `.agent/tasks/` unattended, `/investigate` to root-cause a failure before
 fixing, `/verify-api` before calling anything you're not sure exists,
-`/review-board` for a thorough multi-hat review before landing, and `/release` to
+`/review-board` for a thorough multi-hat review before landing, `/rules-propose` to
+mine the repo's own history for taste nobody wrote down, and `/release` to
 cut a versioned, tagged release. They live once in
 `.agent/skills/`; each agent's dir (`.claude`, `.codex`, `.gemini`) symlinks to it.
 

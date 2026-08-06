@@ -1073,7 +1073,20 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 // (it cuts a coop release via GoReleaser/install.sh and must never ship to a user repo), so it lives
 // in the canonical tree but not the templates.
 func TestSkillsTemplatesMatchCanonical(t *testing.T) {
-	const canonicalOnly = "release" // coop's own release skill — never scaffolded into a user repo
+	// coop-only skills — never scaffolded into a user repo.
+	//   release       — cuts coop's own versioned release
+	//   rules-propose — leans on coop's rule-card format (.agent/rules/README.md) and
+	//                   `make rules-check`, neither of which `coop init` writes; shipping it
+	//                   would point a fresh repo at files it doesn't have (scaffold-fits-the-repo).
+	canonicalOnly := []string{"release", "rules-propose"}
+	coopOnly := func(rel string) bool {
+		for _, s := range canonicalOnly {
+			if rel == s || strings.HasPrefix(rel, s+"/") {
+				return true
+			}
+		}
+		return false
+	}
 	canonicalRoot := filepath.Join("..", "..", ".agent", "skills")
 
 	// Every embedded template skill file exists and is byte-identical in the canonical tree.
@@ -1107,7 +1120,7 @@ func TestSkillsTemplatesMatchCanonical(t *testing.T) {
 		}
 		rel, _ := filepath.Rel(canonicalRoot, p)
 		rel = filepath.ToSlash(rel)
-		if rel == canonicalOnly || strings.HasPrefix(rel, canonicalOnly+"/") {
+		if coopOnly(rel) {
 			return nil // coop-only: intentionally absent from the templates
 		}
 		if _, err := templates.ReadFile("templates/skills/" + rel); err != nil {
