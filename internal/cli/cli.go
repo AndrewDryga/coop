@@ -72,6 +72,10 @@ func Main(argv []string) int {
 	// Once a day, check for a newer coop in the background and mention it as the command's
 	// parting line (deferred, so it runs on every return path). See startUpdateCheck.
 	defer startUpdateCheck(cfg, argv)()
+	// Sweep temp entries no box is using. Per-run cleanup is a deferred call
+	// and a killed process skips it, so what supervision and restarts leave
+	// behind accumulates until it fills the volume.
+	startTempReap(cfg)
 
 	// Bare `coop`, help, and version all work without a container runtime. Bare
 	// `coop` prints help rather than launching an agent — running one is explicit
