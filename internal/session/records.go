@@ -105,20 +105,21 @@ const (
 type EventType string
 
 const (
-	EventSessionCreated      EventType = "session.created"
-	EventSessionStateChanged EventType = "session.state_changed"
-	EventTurnQueued          EventType = "turn.queued"
-	EventTurnStarted         EventType = "turn.started"
-	EventActivityChanged     EventType = "activity.changed"
-	EventAssistantMessage    EventType = "assistant.message"
-	EventTurnCompleted       EventType = "turn.completed"
-	EventTurnFailed          EventType = "turn.failed"
-	EventTurnCancelled       EventType = "turn.cancelled"
-	EventTurnInterrupted     EventType = "turn.interrupted"
-	EventBudgetExhausted     EventType = "budget.exhausted"
-	EventSessionParked       EventType = "session.parked"
-	EventSessionClosed       EventType = "session.closed"
-	EventWorkspaceDiscarded  EventType = "workspace.discarded"
+	EventSessionCreated       EventType = "session.created"
+	EventSessionStateChanged  EventType = "session.state_changed"
+	EventTurnQueued           EventType = "turn.queued"
+	EventTurnStarted          EventType = "turn.started"
+	EventActivityChanged      EventType = "activity.changed"
+	EventAssistantMessage     EventType = "assistant.message"
+	EventTurnCompleted        EventType = "turn.completed"
+	EventTurnFailed           EventType = "turn.failed"
+	EventTurnCancelled        EventType = "turn.cancelled"
+	EventTurnInterrupted      EventType = "turn.interrupted"
+	EventBudgetExhausted      EventType = "budget.exhausted"
+	EventSessionTargetRotated EventType = "session.target_rotated"
+	EventSessionParked        EventType = "session.parked"
+	EventSessionClosed        EventType = "session.closed"
+	EventWorkspaceDiscarded   EventType = "workspace.discarded"
 )
 
 type ErrorCode string

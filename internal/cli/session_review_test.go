@@ -765,7 +765,7 @@ func newReviewTestService(t *testing.T, repo string, maxPatchBytes int, gate Ses
 	t.Helper()
 	policies := testSessionPolicies(repo)
 	policies["responder"] = SessionPolicy{
-		Name: "responder", Repository: repo, Target: "codex@work", MaxTurns: 10,
+		Name: "responder", Repository: repo, Targets: mustTargets("codex@work"), MaxTurns: 10,
 		MaxQueuedTurns: 5, MaxQueuedBytes: 1 << 20, MaxPatchBytes: maxPatchBytes, TurnTimeout: time.Second,
 	}
 	service, err := NewSessionService(SessionServiceConfig{

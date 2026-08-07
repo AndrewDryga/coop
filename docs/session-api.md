@@ -55,7 +55,7 @@ policies:
         branch: main
       - name: responder
         repository: /srv/repos/responder
-    target: codex:gpt-5.6/medium@oncall
+    target: [codex:gpt-5.6/medium@oncall, claude@oncall]
     max_turns: 100
     max_queued_turns: 20
     max_queued_bytes: 1048576
@@ -73,7 +73,8 @@ The parser rejects unknown fields and requires:
 - `companions`: at most 32 uniquely named absolute, canonical Git worktree roots; aliases use
   lowercase letters, numbers, hyphens, or underscores and cannot be `primary`; each companion may
   configure its own paired `remote` and `branch`;
-- `target`: one ACP-capable target and at most one account;
+- `target`: an ACP-capable target, or a list of up to 4 of them forming a fallback ladder; each
+  rung names at most one credential, and no rung may repeat another;
 - `max_turns`: `1..10000`;
 - `max_queued_turns`: `1..1000`;
 - `max_queued_bytes`: `1..67108864`;
@@ -81,12 +82,36 @@ The parser rejects unknown fields and requires:
 - `warm_idle_timeout`: optional, positive, and no longer than one hour;
 - `max_patch_bytes`: `1..1048576`.
 
-The selected account must already be authenticated. If the target omits `@account`, Coop resolves
-and stores the operator's current default account when it loads the policy. Multi-provider presets
-are not supported.
+Every rung's credential must already be authenticated. A rung that omits `@credential` resolves to
+that provider's current default when Coop loads the policy. Presets are not supported.
 
-Repository, target, and limits are immutable session fields. `policy_digest` identifies those
-resolved fields. Explicit non-secret box settings from the daemon's Coop configuration and the
+## Target ladders
+
+A `target` list is an ordered fallback ladder, and it may be cross-provider:
+
+```yaml
+    target: [codex:gpt-5.6-sol/xhigh@oncall, claude@oncall]
+```
+
+Sessions start on the first rung. When a provider rate limits an in-flight turn, Coop marks that
+rung as cooling, moves the session to the next rung that is not, and delivers the same turn again —
+so a usage limit costs a retry rather than the turn. Only a proven rate limit rotates: an
+expired credential, a protocol error, or limit wording inside the model's own answer all surface
+as the failure they are.
+
+A rotation is durable. `target` on the session becomes the rung now in use, and a
+`session.target_rotated` event carries `from`, `to`, and `native_session_reset`. The last is what a
+client needs to know: a rung on the same provider keeps the conversation, but a cross-provider hop
+drops the native transcript, because the new provider cannot load the previous one's session. A
+client that wants continuity across a hop re-seeds it from its own durable context.
+
+When every rung is cooling the turn fails with `rate_limited`, whose detail names the soonest
+reset. Coop does not hold a queued turn waiting for one: the client owns retry and its own backoff.
+Cooldowns live only in the running controller — a restart resumes on the session's stored rung and
+re-probes the others.
+
+Repository, target ladder, and limits are immutable session fields. `policy_digest` identifies those
+resolved fields; a one-rung ladder digests exactly as the equivalent pre-ladder policy did. Explicit non-secret box settings from the daemon's Coop configuration and the
 repository's trusted box policy control the child. Raw runtime arguments, task queues, and merge
 gates are not forwarded into a turn.
 

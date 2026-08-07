@@ -14,11 +14,12 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/session"
 )
 
-func TestParseSessionPoliciesIsStrictAndPinsOneTarget(t *testing.T) {
+func TestParseSessionPoliciesIsStrictAndPinsOneCredentialPerTarget(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	companion, companionGit := gitRepo(t)
@@ -49,7 +50,7 @@ func TestParseSessionPoliciesIsStrictAndPinsOneTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := policies["responder"]; got.Target != "codex:model/high@work" ||
+	if got := policies["responder"]; sessionTargetList(got.Targets) != "codex:model/high@work" ||
 		got.Repository != repo || got.Remote != "origin" || got.Branch != "main" ||
 		got.TurnTimeout != time.Hour ||
 		got.WarmIdleTimeout != 15*time.Minute ||
@@ -89,8 +90,84 @@ func TestParseSessionPoliciesIsStrictAndPinsOneTarget(t *testing.T) {
 	}
 }
 
+func TestParseSessionPoliciesAcceptsATargetLadder(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configRoot := t.TempDir()
+	signIn := func(agent, credential, marker string) {
+		dir := filepath.Join(configRoot, agent, "profiles", credential)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, marker), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	signIn("codex", "oncall", "auth.json")
+	signIn("codex", "default", "auth.json")
+	signIn("claude", "oncall", ".credentials.json")
+	cfg := &config.Config{ConfigDir: configRoot}
+	policy := func(target string) []byte {
+		return []byte("version: 1\npolicies:\n  responder:\n    repository: " + repo +
+			"\n    target: " + target +
+			"\n    max_turns: 1\n    max_queued_turns: 1\n    max_queued_bytes: 1\n" +
+			"    max_patch_bytes: 1\n    turn_timeout: 1s\n")
+	}
+
+	policies, err := parseSessionPolicies(policy("[codex:gpt-5.6-sol/xhigh@oncall, claude@oncall]"), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionTargetList(policies["responder"].Targets); got != "codex:gpt-5.6-sol/xhigh@oncall claude@oncall" {
+		t.Fatalf("cross-provider ladder = %q", got)
+	}
+
+	// A rung with no @credential resolves to that provider's default, exactly as a scalar does.
+	policies, err = parseSessionPolicies(policy("[claude@oncall, codex]"), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionTargetList(policies["responder"].Targets); got != "claude@oncall codex@default" {
+		t.Fatalf("default-credential rung = %q", got)
+	}
+
+	for target, want := range map[string]string{
+		"[]":                            "target is an empty list",
+		"{provider: codex}":             "target must be a target",
+		"[[codex@oncall]]":              "target[0] must be a target",
+		"[codex@oncall, codex@oncall]":  `target[1] "codex@oncall" is repeated`,
+		"[codex, codex@default]":        `target[1] "codex@default" is repeated`,
+		`["codex@oncall,default"]`:      "target[0] must name zero or one credential",
+		"[codex@oncall, nosuch@oncall]": `target[1] unknown provider "nosuch"`,
+		"[codex@oncall, claude@oncall, codex:a@oncall, codex:b@oncall, codex:c@oncall]": "limited to 4 rungs",
+	} {
+		_, err := parseSessionPolicies(policy(target), cfg)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("target %s error = %v, want %q", target, err, want)
+		}
+	}
+
+	// The rung a diagnostic names is the one an operator has to go fix — the whole point of
+	// checking every rung rather than only the one a session starts on.
+	_, err = parseSessionPolicies(policy("[codex@oncall, claude@absent]"), cfg)
+	if err == nil || !strings.Contains(err.Error(), "target[1]") ||
+		!strings.Contains(err.Error(), "not authenticated") {
+		t.Fatalf("unauthenticated rung error = %v", err)
+	}
+	// A scalar target is not a one-rung ladder to the operator, so it is not indexed.
+	_, err = parseSessionPolicies(policy("codex@absent"), cfg)
+	if err == nil || strings.Contains(err.Error(), "target[") ||
+		!strings.Contains(err.Error(), "not authenticated") {
+		t.Fatalf("scalar target error = %v", err)
+	}
+}
+
 func TestWarmIdleTimeoutIsBoundIntoPolicyDigest(t *testing.T) {
-	policy := SessionPolicy{Name: "conversation", Repository: "/repo", Target: "codex@work", TurnTimeout: time.Hour}
+	policy := SessionPolicy{Name: "conversation", Repository: "/repo", Targets: mustTargets("codex@work"), TurnTimeout: time.Hour}
 	cold := resolvedSessionPolicyDigest(policy)
 	if want := "0f7066c5d36ac4cfd709ce3908092be4f92f8ee2b93d4d6983cea527e8bc2ddb"; cold != want {
 		t.Fatalf("cold policy digest = %q, want backward-compatible %q", cold, want)
@@ -1294,9 +1371,22 @@ func TestSessionServiceDiscardReplaysAfterPostDeleteCleanupFailure(t *testing.T)
 	}
 }
 
+// mustTargets builds a policy's target ladder from wire-form literals.
+func mustTargets(values ...string) []agents.Target {
+	ladder := make([]agents.Target, len(values))
+	for i, value := range values {
+		target, err := agents.ParseTarget(value)
+		if err != nil {
+			panic(err)
+		}
+		ladder[i] = target
+	}
+	return ladder
+}
+
 func testSessionPolicies(repo string) map[string]SessionPolicy {
 	return map[string]SessionPolicy{"responder": {
-		Name: "responder", Repository: repo, Target: "codex@work", MaxTurns: 10,
+		Name: "responder", Repository: repo, Targets: mustTargets("codex@work"), MaxTurns: 10,
 		MaxQueuedTurns: 5, MaxQueuedBytes: 1 << 20, MaxPatchBytes: 1 << 20, TurnTimeout: time.Second,
 	}}
 }

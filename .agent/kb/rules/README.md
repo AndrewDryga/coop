@@ -104,7 +104,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [isolate-state-dont-serialize](isolate-state-dont-serialize.md) — when shared state breaks concurrency, isolate the state; never lock the users of it
 
 **The loop**
-- [loop-failover-profiles](loop-failover-profiles.md) — failover swaps the active credential, never a session; the loop has no session to lose
+- [loop-failover-profiles](loop-failover-profiles.md) — in the loop, failover swaps the active credential and never a session; the session API is the one surface that rotates the session itself
 
 **Scaffolding**
 - [scaffold-fits-the-repo](scaffold-fits-the-repo.md) — `coop init` generates for the detected stack and stays neutral when it detects nothing

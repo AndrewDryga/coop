@@ -1,10 +1,10 @@
 ---
 name: loop-failover-profiles
-description: "failover swaps the active credential, never a session; the loop has no session to lose"
+description: "in the loop, failover swaps the active credential and never a session; the session API is the one surface that rotates the session itself"
 scope: loop
-sources: [internal/cli/rotation.go, internal/cli/ratelimit.go, internal/config/config.go]
+sources: [internal/cli/rotation.go, internal/cli/ratelimit.go, internal/config/config.go, internal/cli/session_acp.go]
 check: "none"
-updated: 2026-07-11
+updated: 2026-08-07
 ---
 
 # Loop failover swaps the active credential profile, never a session
@@ -35,6 +35,16 @@ against the signed-in accounts. A ladder names *accounts* (`provider:model@accou
 the credentials themselves stay in the vault outside the repo, so nothing lands where it
 could be committed (this is the tool whose job is catching exactly that).
 
+**The session API is the one surface where failover DOES move a session.** `coop sessions serve`
+holds durable sessions, so it cannot borrow the loop's "nothing to lose" reasoning. There, a
+rate-limited turn rotates the SESSION onto the next rung of its policy ladder
+(`Store.RotateTurnTarget`): the durable `target` becomes the new rung, a cross-provider hop clears
+`native_session_id` because the new provider cannot load the old transcript, and the turn's
+delivery ledger is rewound so the same prompt can be sent again — all in one transaction. It also
+does NOT wait out an all-rungs-limited ladder the way the editor path does; it fails the turn with
+`rate_limited` and lets the client's own backoff own the retry. Cooldowns still live only in
+memory, as below.
+
 **How to apply / extend:**
 - Anything that needs "the agent's home for this run" goes through `cfg.AgentDir`, never a
   hand-built `filepath.Join(ConfigDir, agent)` — that join is the seam the active profile
@@ -54,3 +64,6 @@ could be committed (this is the tool whose job is catching exactly that).
 - 2026-06-17 — created
 - 2026-07-11 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-07 — recorded the session API exception: it rotates the session's rung, not the active
+  credential, and fails instead of waiting when the whole ladder is cooling. The old title claim
+  ("never a session") was true only while the loop was the sole failover surface.

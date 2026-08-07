@@ -48,12 +48,16 @@ const (
 	sessionACPCleanupError    session.ErrorCode = "session_cleanup_error"
 	sessionACPInvalidTarget   session.ErrorCode = "invalid_session_target"
 	sessionACPInvalidTurn     session.ErrorCode = "invalid_leased_turn"
+	// sessionACPRateLimited survives to the client only when the whole ladder is cooling: a
+	// rung that still has a free sibling is rotated onto it instead, inside the turn.
+	sessionACPRateLimited session.ErrorCode = "rate_limited"
 )
 
 type sessionACPCommand func(string, ...string) *exec.Cmd
 
 type sessionCancelRequestContextKey struct{}
 type sessionWarmIdleTimeoutContextKey struct{}
+type sessionTargetLadderContextKey struct{}
 
 type sessionWarmExecution struct {
 	bound              session.Session
@@ -76,6 +80,18 @@ type sessionTurnRunner struct {
 	warmMu     sync.Mutex
 	warm       map[string]*sessionWarmExecution
 	warming    int
+	// Rate-limit cooldowns per session, so a rung limited on one turn is still skipped on the
+	// next. Deliberately in memory: the durable Session.Target already says which rung a
+	// restarted controller resumes on, and re-probing a cooled rung once costs one turn.
+	rotateMu  sync.Mutex
+	rotations map[string]*sessionLadder
+}
+
+// sessionLadder is a session's rotation plus the ladder it was built from, so a policy edit
+// rebuilds it instead of rotating against rungs that no longer exist.
+type sessionLadder struct {
+	rendered string
+	rotation *rotation
 }
 
 func newSessionTurnRunner(sourceCfg *config.Config, stateRoot string, store *session.Store, rt runtime.Runtime, executable string, command ...sessionACPCommand) *sessionTurnRunner {
@@ -86,8 +102,77 @@ func newSessionTurnRunner(sourceCfg *config.Config, stateRoot string, store *ses
 	return &sessionTurnRunner{
 		sourceCfg: sourceCfg, stateRoot: stateRoot,
 		store: store, rt: rt, executable: executable, command: start,
-		warm: make(map[string]*sessionWarmExecution),
+		warm:      make(map[string]*sessionWarmExecution),
+		rotations: make(map[string]*sessionLadder),
 	}
+}
+
+// sessionRotation returns the session's ladder rotation, pointed at the rung the session is
+// actually on. Session.Target is the durable truth across a restart; the cooldown marks are not,
+// so they are carried in memory for as long as the controller lives.
+func (r *sessionTurnRunner) sessionRotation(sessionID string, ladder []agents.Target, active string) *rotation {
+	if len(ladder) < 2 {
+		return nil
+	}
+	rendered := sessionTargetList(ladder)
+	r.rotateMu.Lock()
+	defer r.rotateMu.Unlock()
+	entry := r.rotations[sessionID]
+	if entry == nil || entry.rendered != rendered {
+		entry = &sessionLadder{rendered: rendered, rotation: newRotation(ladder)}
+		r.rotations[sessionID] = entry
+	}
+	for i := range entry.rotation.targets {
+		if entry.rotation.targets[i].String() == active {
+			entry.rotation.idx = i
+			break
+		}
+	}
+	return entry.rotation
+}
+
+func (r *sessionTurnRunner) forgetRotation(sessionID string) {
+	r.rotateMu.Lock()
+	delete(r.rotations, sessionID)
+	r.rotateMu.Unlock()
+}
+
+// rotateOnLimit moves the session onto another rung after the active one was rate limited, and
+// reports whether the turn should be retried. Only a proven rate limit rotates: an expired or
+// revoked credential looks like a failure, not a limit, and must surface so a human fixes it
+// instead of having the ladder quietly paper over it.
+//
+// bound and leased are updated in place to the rung and rewound turn the retry runs on. Each
+// rotation marks a rung cooling, so the caller's loop turns over at most once per rung before
+// this reports that none is free.
+func (r *sessionTurnRunner) rotateOnLimit(
+	ctx context.Context, bound *session.Session, leased *session.Turn, rot *rotation, cause error,
+) (bool, error) {
+	var failure *sessionACPFailure
+	if rot == nil || !errors.As(cause, &failure) || failure.code != sessionACPRateLimited {
+		return false, nil
+	}
+	sleep, until := rot.onLimit(failure.resetAt, 0, time.Now())
+	if sleep > 0 {
+		// Every rung is cooling. Unlike an editor session, a queued turn does not wait it out:
+		// the client owns retry and its own backoff, and holding the turn only burns its
+		// deadline before failing anyway. Hand back the soonest reset so it can time that retry.
+		return false, acpFailure(sessionACPRateLimited,
+			"every target in the policy ladder is rate limited until "+until.UTC().Format(time.RFC3339))
+	}
+	next := rot.active()
+	current, err := agents.ParseTarget(bound.Target)
+	if err != nil {
+		return false, acpFailure(sessionACPInvalidTarget, "session target is unparseable")
+	}
+	rotated, rewound, err := r.store.RotateTurnTarget(
+		ctx, bound.ID, leased.ID, bound.Target, next.String(), current.Provider != next.Provider,
+	)
+	if err != nil {
+		return false, err
+	}
+	*bound, *leased = rotated, rewound
+	return true, nil
 }
 
 // Run executes exactly one turn returned by Store.LeaseNextTurn. It never leases another turn.
@@ -178,56 +263,76 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		return result, runErr
 	}
 
-	target, err := agents.ParseTarget(bound.Target)
-	if err != nil || len(target.Accounts) > 1 {
-		runErr = acpFailure(sessionACPInvalidTarget, "session target must be one explicit provider and account")
-		return result, runErr
-	}
-	agent, ok := agents.Get(target.Provider)
-	if !ok {
-		runErr = acpFailure(sessionACPInvalidTarget, "session target provider is unavailable")
-		return result, runErr
-	}
+	ladder, _ := ctx.Value(sessionTargetLadderContextKey{}).([]agents.Target)
+	rot := r.sessionRotation(bound.ID, ladder, bound.Target)
 
-	if warmIdleTimeout > 0 {
-		execution = r.takeWarmExecution(bound)
-	} else {
-		_ = r.evictWarmExecution(bound.ID)
-	}
-	if execution == nil {
-		credentialDeadline := deadline
+	for {
+		target, err := agents.ParseTarget(bound.Target)
+		if err != nil || len(target.Accounts) > 1 {
+			runErr = acpFailure(sessionACPInvalidTarget, "session target must be one explicit provider and credential")
+			return result, runErr
+		}
+		agent, ok := agents.Get(target.Provider)
+		if !ok {
+			runErr = acpFailure(sessionACPInvalidTarget, "session target provider is unavailable")
+			return result, runErr
+		}
+
 		if warmIdleTimeout > 0 {
-			credentialDeadline = time.Now().Add(warmIdleTimeout + bound.TurnTimeout)
+			execution = r.takeWarmExecution(bound)
+		} else {
+			_ = r.evictWarmExecution(bound.ID)
 		}
-		projection, err := r.projectCredentials(bound, target, agent, credentialDeadline)
-		if err != nil && projection != nil {
-			_ = projection.remove()
-		}
-		if err != nil && warmIdleTimeout > 0 {
-			warmIdleTimeout = 0
-			credentialDeadline = deadline
-			projection, err = r.projectCredentials(bound, target, agent, credentialDeadline)
-		}
-		if err != nil {
-			if projection != nil {
+		if execution == nil {
+			credentialDeadline := deadline
+			if warmIdleTimeout > 0 {
+				credentialDeadline = time.Now().Add(warmIdleTimeout + bound.TurnTimeout)
+			}
+			projection, err := r.projectCredentials(bound, target, agent, credentialDeadline)
+			if err != nil && projection != nil {
 				_ = projection.remove()
 			}
-			runErr = err
-			return result, runErr
+			if err != nil && warmIdleTimeout > 0 {
+				warmIdleTimeout = 0
+				credentialDeadline = deadline
+				projection, err = r.projectCredentials(bound, target, agent, credentialDeadline)
+			}
+			if err != nil {
+				if projection != nil {
+					_ = projection.remove()
+				}
+				runErr = err
+				return result, runErr
+			}
+			child, err := r.startChild(ctx, bound, leased, projection.privateRoot)
+			if err != nil {
+				_ = projection.remove()
+				runErr = err
+				return result, runErr
+			}
+			execution = &sessionWarmExecution{bound: bound, child: child, projection: projection, credentialDeadline: credentialDeadline}
 		}
-		child, err := r.startChild(ctx, bound, leased, projection.privateRoot)
-		if err != nil {
-			_ = projection.remove()
-			runErr = err
-			return result, runErr
-		}
-		execution = &sessionWarmExecution{bound: bound, child: child, projection: projection, credentialDeadline: credentialDeadline}
-	}
 
-	assistant, outputArtifacts, err = r.runACP(ctx, execution.child, bound, leased)
-	if err != nil {
-		runErr = err
-		return result, runErr
+		assistant, outputArtifacts, err = r.runACP(ctx, execution.child, bound, leased)
+		if err == nil {
+			break
+		}
+		retry, rotateErr := r.rotateOnLimit(ctx, &bound, &leased, rot, err)
+		if rotateErr != nil {
+			runErr = rotateErr
+			return result, runErr
+		}
+		if !retry {
+			runErr = err
+			return result, runErr
+		}
+		// The next rung needs its own credential projection and box, and the rotated bound no
+		// longer matches this execution, so it cannot be reused or parked.
+		if cleanupErr := r.cleanupWarmExecution(execution); cleanupErr != nil {
+			runErr = errors.Join(err, cleanupErr)
+			return result, runErr
+		}
+		execution = nil
 	}
 	protocolComplete = true
 	return result, nil
@@ -236,6 +341,9 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 type sessionACPFailure struct {
 	code   session.ErrorCode
 	detail string
+	// resetAt is set only on sessionACPRateLimited, when the provider said when it frees up.
+	// Zero means "limited, but it did not say" — the ladder falls back to bounded backoff.
+	resetAt time.Time
 }
 
 func (e *sessionACPFailure) Error() string { return string(e.code) + ": " + e.detail }
@@ -752,6 +860,7 @@ func (r *sessionTurnRunner) CleanupSession(ctx context.Context, bound session.Se
 }
 
 func (r *sessionTurnRunner) cleanupKnownSessionRuntime(ctx context.Context, bound session.Session) error {
+	r.forgetRotation(bound.ID)
 	return errors.Join(
 		r.evictWarmExecution(bound.ID),
 		r.cleanupSessionCredentials(bound),
@@ -1296,6 +1405,9 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 		return "", nil, acpFailure(sessionACPProcessError, "ACP child is unavailable")
 	}
 	frames := process.frames
+	// The adapter's own rate-limit markers, resolved from the rung this child is running.
+	limitTarget, _ := agents.ParseTarget(bound.Target)
+	limitProvider := limitTarget.Provider
 	var transcriptBytes int
 	var assistant []byte
 	var outputArtifacts []session.OutputArtifact
@@ -1411,6 +1523,18 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 						return nil, acpFailure(sessionACPProtocolError, "malformed ACP response")
 					}
 					if len(envelope.Error) != 0 && string(envelope.Error) != "null" {
+						// A rate limit is the one rejection a target ladder can act on, so it is
+						// classified here instead of being flattened into the generic rejection.
+						// Output exhaustion is excluded: the same rung can continue that turn.
+						if hint := acpErrorLimitHint(
+							envelope.Error, time.Now(), acpRateSignals(limitProvider),
+						); hint.limited && !hint.outputLimited {
+							return nil, &sessionACPFailure{
+								code:    sessionACPRateLimited,
+								detail:  "provider rate limited the turn",
+								resetAt: hint.resetAt,
+							}
+						}
 						return nil, acpFailure(sessionACPProtocolError, "ACP request was rejected")
 					}
 					return json.RawMessage(result), nil

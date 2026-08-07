@@ -31,6 +31,8 @@ const (
 	sessionPolicyVersion             = 1
 	sessionPolicyFileLimit           = 1 << 20
 	sessionPolicyMaxCompanions       = 32
+	sessionPolicyMaxTargets          = 4
+	sessionTargetGrammar             = "provider[:model][/effort][@credential]"
 	sessionPolicyRemoteTimeout       = 30 * time.Second
 	sessionPolicyRemoteConcurrency   = 4
 	sessionPolicyMaxTurnTimeout      = 24 * time.Hour
@@ -47,7 +49,7 @@ type SessionPolicy struct {
 	Remote          string
 	Branch          string
 	Companions      []SessionCompanionPolicy
-	Target          string
+	Targets         []agents.Target
 	MaxTurns        int
 	MaxQueuedTurns  int
 	MaxQueuedBytes  int
@@ -73,7 +75,7 @@ type rawSessionPolicy struct {
 	Remote          string                      `yaml:"remote"`
 	Branch          string                      `yaml:"branch"`
 	Companions      []rawSessionCompanionPolicy `yaml:"companions"`
-	Target          string                      `yaml:"target"`
+	Target          yaml.Node                   `yaml:"target"`
 	MaxTurns        int                         `yaml:"max_turns"`
 	MaxQueuedTurns  int                         `yaml:"max_queued_turns"`
 	MaxQueuedBytes  int                         `yaml:"max_queued_bytes"`
@@ -257,30 +259,37 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 			Remote: companion.Remote, Branch: companion.Branch,
 		})
 	}
-	target, err := agents.ParseTarget(raw.Target)
+	ladder, err := sessionTargetLadder(&raw.Target)
 	if err != nil {
-		return SessionPolicy{}, fmt.Errorf("invalid ACP target: %w", err)
+		return SessionPolicy{}, err
 	}
-	if len(target.Accounts) > 1 {
-		return SessionPolicy{}, errors.New("target must name zero or one account")
-	}
-	agent, ok := agents.Get(target.Provider)
 	checkCfg := cfg
 	if checkCfg == nil {
 		checkCfg = &config.Config{}
 	}
-	if !ok || len(agent.ACP(checkCfg)) == 0 {
-		return SessionPolicy{}, errors.New("target provider has no ACP adapter")
-	}
-	account := target.Account()
-	if cfg != nil {
-		if account == "" {
-			account = cfg.DefaultProfileOf(target.Provider)
+	seenTargets := make(map[string]bool, len(ladder))
+	for i := range ladder {
+		label := sessionTargetLabel(&raw.Target, i)
+		agent, ok := agents.Get(ladder[i].Provider)
+		if !ok || len(agent.ACP(checkCfg)) == 0 {
+			return SessionPolicy{}, fmt.Errorf("%s provider has no ACP adapter", label)
 		}
-		if !box.ProfileAuthed(cfg, target.Provider, account) {
-			return SessionPolicy{}, fmt.Errorf("target account %q is not authenticated", account)
+		if cfg != nil {
+			account := ladder[i].Account()
+			if account == "" {
+				account = cfg.DefaultProfileOf(ladder[i].Provider)
+			}
+			if !box.ProfileAuthed(cfg, ladder[i].Provider, account) {
+				return SessionPolicy{}, fmt.Errorf("%s credential %q is not authenticated", label, account)
+			}
+			ladder[i].Accounts = []string{account}
 		}
-		target.Accounts = []string{account}
+		// Duplicates are checked after credential resolution, so `codex` and `codex@default`
+		// are caught as the same rung — a rung that can never be rotated to is a typo.
+		if seenTargets[ladder[i].String()] {
+			return SessionPolicy{}, fmt.Errorf("%s %q is repeated", label, ladder[i].String())
+		}
+		seenTargets[ladder[i].String()] = true
 	}
 	if raw.MaxTurns <= 0 || raw.MaxTurns > session.MaxTurnsLimit {
 		return SessionPolicy{}, fmt.Errorf("max_turns must be between 1 and %d", session.MaxTurnsLimit)
@@ -311,11 +320,73 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 	return SessionPolicy{
 		Name: name, Repository: realRepo, Remote: raw.Remote, Branch: raw.Branch,
 		Companions: companions,
-		Target:     target.String(), MaxTurns: raw.MaxTurns,
+		Targets:    ladder, MaxTurns: raw.MaxTurns,
 		MaxQueuedTurns: raw.MaxQueuedTurns, MaxQueuedBytes: raw.MaxQueuedBytes,
 		TurnTimeout: timeout, WarmIdleTimeout: warmIdleTimeout,
 		MaxPatchBytes: raw.MaxPatchBytes,
 	}, nil
+}
+
+// sessionTargetLadder parses a policy's `target:` — one target, or an ordered fallback ladder
+// the turn runner rotates through when a rung is rate limited. The shape is a preset's `agent:`
+// (preset.leadLadder): a scalar is a single rung, a sequence is the ladder, and the ladder MAY
+// be cross-provider. Credential resolution stays with the caller, which holds the config.
+func sessionTargetLadder(node *yaml.Node) ([]agents.Target, error) {
+	var raw []string
+	switch node.Kind {
+	case yaml.ScalarNode:
+		raw = []string{node.Value}
+	case yaml.SequenceNode:
+		if len(node.Content) == 0 {
+			return nil, errors.New("target is an empty list — name at least one target, or write a single one")
+		}
+		for i, item := range node.Content {
+			if item.Kind != yaml.ScalarNode {
+				return nil, fmt.Errorf("target[%d] must be a target (%s), not a map or list", i, sessionTargetGrammar)
+			}
+			raw = append(raw, item.Value)
+		}
+	case 0:
+		return nil, fmt.Errorf("target is required — a target (%s), or a list of them", sessionTargetGrammar)
+	default:
+		return nil, fmt.Errorf("target must be a target (%s) or a list of targets, not a map", sessionTargetGrammar)
+	}
+	if len(raw) > sessionPolicyMaxTargets {
+		return nil, fmt.Errorf("target ladder is limited to %d rungs", sessionPolicyMaxTargets)
+	}
+	ladder := make([]agents.Target, 0, len(raw))
+	for i, value := range raw {
+		target, err := agents.ParseTarget(value)
+		if err != nil {
+			return nil, fmt.Errorf("%s %w", sessionTargetLabel(node, i), err)
+		}
+		// One rung is one credential: a rung IS the concrete thing a turn runs on, and the
+		// ladder — not a comma list — is how a policy names an alternative.
+		if len(target.Accounts) > 1 {
+			return nil, fmt.Errorf("%s must name zero or one credential", sessionTargetLabel(node, i))
+		}
+		ladder = append(ladder, target)
+	}
+	return ladder, nil
+}
+
+// sessionTargetLabel names the rung a diagnostic is about: bare `target` for a single scalar,
+// indexed `target[i]` for a ladder, so the operator can find it in the file.
+func sessionTargetLabel(node *yaml.Node, index int) string {
+	if node.Kind == yaml.SequenceNode {
+		return fmt.Sprintf("target[%d]", index)
+	}
+	return "target"
+}
+
+// sessionTargetList renders a ladder back to the target grammar. A one-rung ladder renders
+// exactly as the pre-ladder `target:` string, which keeps existing policy digests stable.
+func sessionTargetList(targets []agents.Target) string {
+	parts := make([]string, len(targets))
+	for i, target := range targets {
+		parts[i] = target.String()
+	}
+	return strings.Join(parts, " ")
 }
 
 func validateSessionRepositorySource(remote, branch string) error {
@@ -566,7 +637,7 @@ func resolvedSessionPolicyDigest(policy SessionPolicy) string {
 	}{
 		Name: policy.Name, Repository: policy.Repository,
 		Remote: policy.Remote, Branch: policy.Branch, Companions: policy.Companions,
-		Target:   policy.Target,
+		Target:   sessionTargetList(policy.Targets),
 		MaxTurns: policy.MaxTurns, MaxQueuedTurns: policy.MaxQueuedTurns,
 		MaxQueuedBytes: policy.MaxQueuedBytes, TurnTimeout: int64(policy.TurnTimeout),
 		WarmIdleTimeout: int64(policy.WarmIdleTimeout),
@@ -775,8 +846,15 @@ func (s *SessionService) runBoundSessionTurn(ctx context.Context, bound session.
 	unlock := s.lockSessionRuntime(bound.ID)
 	defer unlock()
 	if policy, ok := s.policies[bound.Policy]; ok &&
-		resolvedSessionPolicyDigest(policy) == bound.PolicyDigest && policy.WarmIdleTimeout > 0 {
-		ctx = context.WithValue(ctx, sessionWarmIdleTimeoutContextKey{}, policy.WarmIdleTimeout)
+		resolvedSessionPolicyDigest(policy) == bound.PolicyDigest {
+		if policy.WarmIdleTimeout > 0 {
+			ctx = context.WithValue(ctx, sessionWarmIdleTimeoutContextKey{}, policy.WarmIdleTimeout)
+		}
+		// Only a policy that still matches the session may steer its rotation. A drifted one
+		// leaves the ladder unset, so the turn runs the single rung the session is bound to.
+		if len(policy.Targets) > 1 {
+			ctx = context.WithValue(ctx, sessionTargetLadderContextKey{}, policy.Targets)
+		}
 	}
 	return s.runner.Run(ctx, bound, leased)
 }
@@ -1143,7 +1221,8 @@ func (s *SessionService) executeCreateIntent(ctx context.Context, op session.Ope
 		companions = append(companions, resolved)
 	}
 	createReq := session.CreateSessionRequest{
-		ID: intent.SessionID, ExternalRef: intent.Task, Target: intent.Policy.Target, Policy: intent.Policy.Name,
+		// A session starts on the ladder's first rung; a rate limit rotates it to the next.
+		ID: intent.SessionID, ExternalRef: intent.Task, Target: intent.Policy.Targets[0].String(), Policy: intent.Policy.Name,
 		PolicyDigest: resolvedSessionPolicyDigest(intent.Policy),
 		Repository:   intent.Policy.Repository, Workspace: workspace.Path, ForkName: intent.ForkName,
 		BaseCommit: intent.BaseCommit, Companions: companions,

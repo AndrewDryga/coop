@@ -90,6 +90,92 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	}
 }
 
+func TestSessionTurnRunnerRotatesToTheNextRungOnARateLimit(t *testing.T) {
+	fixture := newSessionACPFixture(t, "rate-limited-once")
+	fixture.signIn(t, "codex", "backup")
+	t.Setenv("COOP_TEST_SESSION_LIMIT_MARKER", filepath.Join(t.TempDir(), "limited"))
+	leased := fixture.submit(t, "investigate")
+	ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
+	result, err := fixture.runner.Run(ctx, fixture.session, leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != session.TurnCompleted || result.AssistantMessage != "rotated answer" {
+		t.Fatalf("rotated turn = %+v", result)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Target != "codex@backup" {
+		t.Fatalf("session target = %q, want codex@backup", bound.Target)
+	}
+	// Same provider, so the transcript the limited rung opened still resolves and is reloaded
+	// rather than restarted.
+	if bound.NativeSessionID != "native-1" {
+		t.Fatalf("native session = %q, want the retained native-1", bound.NativeSessionID)
+	}
+	methods := readSessionACPLog(t, fixture.childLog)
+	want := []string{"initialize", "session/new", "session/prompt", "initialize", "session/load", "session/prompt"}
+	if fmt.Sprint(methods) != fmt.Sprint(want) {
+		t.Fatalf("ACP methods = %v, want %v", methods, want)
+	}
+	events, err := fixture.store.ListEvents(context.Background(), fixture.session.ID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated := ""
+	for _, event := range events {
+		if event.Type == session.EventSessionTargetRotated {
+			rotated = string(event.Payload)
+		}
+	}
+	if rotated != `{"from":"codex@work","native_session_reset":false,"to":"codex@backup"}` {
+		t.Fatalf("rotation event = %s", rotated)
+	}
+}
+
+func TestSessionTurnRunnerFailsTheTurnWhenEveryRungIsRateLimited(t *testing.T) {
+	fixture := newSessionACPFixture(t, "rate-limited")
+	fixture.signIn(t, "codex", "backup")
+	leased := fixture.submit(t, "investigate")
+	ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
+	result, err := fixture.runner.Run(ctx, fixture.session, leased)
+	if err == nil {
+		t.Fatal("an exhausted ladder completed the turn")
+	}
+	// A queued turn does not wait out the reset — it fails on a code the client retries against.
+	if result.ErrorCode != sessionACPRateLimited ||
+		!strings.Contains(result.ErrorDetail, "every target in the policy ladder is rate limited until") {
+		t.Fatalf("exhausted ladder turn = %+v", result)
+	}
+}
+
+func TestSessionTurnRunnerRotatesOnlyOnAProvenRateLimit(t *testing.T) {
+	for name, scenario := range map[string]string{
+		// The rules card is explicit that a false positive must not hand work to another
+		// provider: limit wording inside the model's own answer is not evidence of a limit.
+		"assistant prose": "limit-prose",
+		// A rejection that is not a limit surfaces, so a human fixes the real cause.
+		"rejected request": "initialize-fail",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newSessionACPFixture(t, scenario)
+			fixture.signIn(t, "codex", "backup")
+			leased := fixture.submit(t, "investigate")
+			ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
+			_, _ = fixture.runner.Run(ctx, fixture.session, leased)
+			bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bound.Target != "codex@work" {
+				t.Fatalf("%s rotated the ladder to %q", name, bound.Target)
+			}
+		})
+	}
+}
+
 func TestSessionTurnRunnerReusesWarmACPProcessAcrossTurns(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	warmContext := func() context.Context {
@@ -719,6 +805,26 @@ exit 0
 		private: private, childLog: childLog, envLog: envLog, runtimeLog: runtimeLog}
 }
 
+// signIn adds another signed-in credential to the shared source config, so a ladder has a rung
+// to rotate onto.
+func (f *sessionACPFixture) signIn(t *testing.T, agent, credential string) {
+	t.Helper()
+	dir := filepath.Join(f.source, agent, "profiles", credential)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	auth := codexTestCredential(time.Now().Add(2 * time.Hour))
+	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(auth), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ladderContext supplies the policy ladder the service would attach to a turn's context.
+func ladderContext(t *testing.T, parent context.Context, values ...string) context.Context {
+	t.Helper()
+	return context.WithValue(parent, sessionTargetLadderContextKey{}, mustTargets(values...))
+}
+
 func (f *sessionACPFixture) submit(t *testing.T, prompt string) session.Turn {
 	return f.submitArtifacts(t, prompt, nil)
 }
@@ -940,6 +1046,29 @@ func TestSessionACPChildHelper(t *testing.T) {
 					}}},
 				}}})
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": "chart attached"}}}})
+				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
+			case "rate-limited", "rate-limited-once":
+				// "rate-limited-once" limits only the first child, so the turn's retry lands on
+				// the next rung; the marker survives the process because each rung is a new one.
+				limited := true
+				if marker := os.Getenv("COOP_TEST_SESSION_LIMIT_MARKER"); scenario == "rate-limited-once" && marker != "" {
+					if _, err := os.Stat(marker); err == nil {
+						limited = false
+					} else {
+						_ = os.WriteFile(marker, []byte("1"), 0o600)
+					}
+				}
+				if limited {
+					send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "error": map[string]any{
+						"code":    -32000,
+						"message": fmt.Sprintf("Claude AI usage limit reached|%d", time.Now().Add(time.Hour).Unix()),
+					}})
+					continue
+				}
+				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": "rotated answer"}}}})
+				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
+			case "limit-prose":
+				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": "the runbook says: Claude AI usage limit reached|2000000000"}}}})
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
 			case "malformed":
 				_, _ = writer.WriteString("not-json\n")

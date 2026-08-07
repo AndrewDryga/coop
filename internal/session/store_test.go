@@ -1108,3 +1108,118 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 		t.Fatalf("%s mode = %o, want %o", path, got, want)
 	}
 }
+
+func TestRotateTurnTargetSwapsTheRungAndDropsAForeignTranscript(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, t.TempDir())
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "rotate-1", CreateSessionRequest{Target: "codex:sol@oncall"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SubmitTurn(ctx, "rotate-turn-1", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "investigate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	leased, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("lease turn = %v, %v", ok, err)
+	}
+	if _, err := store.BindNativeSession(ctx, sess.ID, "native-1"); err != nil {
+		t.Fatal(err)
+	}
+	// Drive the delivery ledger to where a rate limit actually lands: the prompt was handed to
+	// the provider, which then refused it.
+	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkTurnSent(ctx, sess.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another credential on the same provider still reads the same transcript store.
+	same, rewound, err := store.RotateTurnTarget(ctx, sess.ID, leased.ID, "codex:sol@oncall", "codex:sol@backup", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same.Target != "codex:sol@backup" || same.NativeSessionID != "native-1" ||
+		same.Revision <= sess.Revision || same.Activity != ActivityStarting {
+		t.Fatalf("same-provider rotation = %+v", same)
+	}
+	// The turn is deliverable again, in exactly the state a fresh lease leaves behind.
+	if rewound.State != TurnStarting || rewound.SendState != SendStateNone {
+		t.Fatalf("rewound turn = %+v", rewound)
+	}
+	stored, err := store.GetTurn(ctx, sess.ID, leased.ID)
+	if err != nil || stored.State != TurnStarting || stored.SendState != SendStateNone {
+		t.Fatalf("stored rewound turn = %+v, err=%v", stored, err)
+	}
+	// Proof the rewind is real and not just cosmetic: the next delivery is accepted.
+	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, leased.ID); err != nil {
+		t.Fatalf("rotated turn could not be delivered again: %v", err)
+	}
+
+	// A cross-provider hop cannot: the id would outlive the store that can resolve it.
+	hop, _, err := store.RotateTurnTarget(ctx, sess.ID, leased.ID, "codex:sol@backup", "claude@oncall", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hop.Target != "claude@oncall" || hop.NativeSessionID != "" || hop.Revision <= same.Revision {
+		t.Fatalf("cross-provider rotation = %+v", hop)
+	}
+
+	events, err := store.ListEvents(ctx, sess.ID, 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotations := make([]string, 0, 2)
+	for _, event := range events {
+		if event.Type == EventSessionTargetRotated {
+			rotations = append(rotations, string(event.Payload))
+		}
+	}
+	// A client re-seeds context only when the transcript actually went away, so the event has
+	// to carry that and not leave the client to re-derive it from the target grammar.
+	want := []string{
+		`{"from":"codex:sol@oncall","native_session_reset":false,"to":"codex:sol@backup"}`,
+		`{"from":"codex:sol@backup","native_session_reset":true,"to":"claude@oncall"}`,
+	}
+	if len(rotations) != len(want) || rotations[0] != want[0] || rotations[1] != want[1] {
+		t.Fatalf("rotation events = %q, want %q", rotations, want)
+	}
+
+	// Replaying a rotation someone else already applied must not advance the rung again.
+	if _, _, err := store.RotateTurnTarget(
+		ctx, sess.ID, leased.ID, "codex:sol@backup", "claude@oncall", true,
+	); CodeOf(err) != CodeRevisionConflict {
+		t.Fatalf("stale rotation error = %v", err)
+	}
+	if _, _, err := store.RotateTurnTarget(
+		ctx, sess.ID, leased.ID, "claude@oncall", "claude@oncall", false,
+	); CodeOf(err) != CodeInvalidRequest {
+		t.Fatalf("self rotation error = %v", err)
+	}
+	if _, _, err := store.RotateTurnTarget(
+		ctx, "missing-session", leased.ID, "codex@oncall", "claude@oncall", false,
+	); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("unknown session error = %v", err)
+	}
+	// Only the in-flight turn may be rewound; a settled one is not a rotation candidate.
+	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkTurnSent(ctx, sess.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteTurn(ctx, CompleteTurnRequest{
+		SessionID: sess.ID, TurnID: leased.ID, Message: "done",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.RotateTurnTarget(
+		ctx, sess.ID, leased.ID, "claude@oncall", "codex:sol@oncall", true,
+	); CodeOf(err) != CodeTurnNotRunnable {
+		t.Fatalf("settled turn rotation error = %v", err)
+	}
+}

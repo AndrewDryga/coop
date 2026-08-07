@@ -1176,6 +1176,86 @@ func (s *Store) BindNativeSession(ctx context.Context, sessionID, nativeID strin
 	return sess, nil
 }
 
+// RotateTurnTarget moves a session onto another rung of its policy's target ladder after the
+// active rung rate limited the in-flight turn, and rewinds that turn so it can be delivered
+// again. It compare-and-swaps on the active target, so a rotation can never double-advance past
+// a rung something else already moved off.
+//
+// The rewind is the reason this is one transaction rather than two. SendState is the delivery
+// ledger: `sent` means a prompt reached a provider and may have had effects, which is why
+// MarkTurnSendIntent refuses a second delivery. A rate-limited prompt is the one refusal that
+// provably did no work — no tools ran, no tokens were produced — so the rotation un-sends it
+// back to the state LeaseNextTurn leaves behind. Splitting the two would let a crash strand a
+// turn that is rotated but still marked delivered, or delivered but still on the limited rung.
+//
+// resetNativeSession drops the bound native session id. The caller decides, because only it knows
+// the target grammar: a rung on the same provider keeps its transcript, but a cross-provider hop
+// must clear it — the new provider's adapter cannot load the old one's session, so every later
+// session/load would fail against an id that outlived its store.
+func (s *Store) RotateTurnTarget(ctx context.Context, sessionID, turnID, from, to string, resetNativeSession bool) (Session, Turn, error) {
+	if sessionID == "" || turnID == "" ||
+		!validBoundedText(sessionID, MaxIDBytes) || !validBoundedText(turnID, MaxIDBytes) {
+		return Session{}, Turn{}, &Error{Code: CodeInvalidRequest, Detail: "session and turn are required"}
+	}
+	if from == to || !validBoundedText(from, MaxTargetBytes) || !validBoundedText(to, MaxTargetBytes) {
+		return Session{}, Turn{}, &Error{Code: CodeInvalidRequest, Detail: "rotation requires two different bounded targets"}
+	}
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Session{}, Turn{}, fmt.Errorf("begin target rotation: %w", err)
+	}
+	defer tx.Rollback()
+	sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", sessionID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, Turn{}, ErrSessionNotFound
+	}
+	if err != nil {
+		return Session{}, Turn{}, fmt.Errorf("read session for target rotation: %w", err)
+	}
+	if sess.Target != from {
+		return Session{}, Turn{}, &Error{Code: CodeRevisionConflict, Detail: "session is no longer on the rotating target"}
+	}
+	turn, err := scanTurn(tx.QueryRowContext(ctx, turnSelect+" WHERE session_id = ? AND id = ?", sessionID, turnID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, Turn{}, ErrTurnNotFound
+	}
+	if err != nil {
+		return Session{}, Turn{}, fmt.Errorf("read turn for target rotation: %w", err)
+	}
+	if sess.ActiveTurnID != turn.ID || (turn.State != TurnStarting && turn.State != TurnRunning) {
+		return Session{}, Turn{}, &Error{Code: CodeTurnNotRunnable, Detail: "turn is not the session's in-flight turn"}
+	}
+	now := s.now()
+	native := sess.NativeSessionID
+	if resetNativeSession {
+		native = ""
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE sessions SET target = ?, native_session_id = ?, activity = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
+		to, native, string(ActivityStarting), now.UnixNano(), sessionID); err != nil {
+		return Session{}, Turn{}, fmt.Errorf("rotate session target: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, send_state = ? WHERE id = ?`,
+		string(TurnStarting), string(SendStateNone), turn.ID); err != nil {
+		return Session{}, Turn{}, fmt.Errorf("rewind rotated turn: %w", err)
+	}
+	if _, err := s.appendEventTx(ctx, tx, sessionID, turn.ID, EventSessionTargetRotated, 1,
+		mustJSON(map[string]any{
+			"from": from, "to": to, "native_session_reset": resetNativeSession,
+		})); err != nil {
+		return Session{}, Turn{}, fmt.Errorf("append session.target_rotated: %w", err)
+	}
+	sess, err = scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", sessionID))
+	if err != nil {
+		return Session{}, Turn{}, fmt.Errorf("read rotated session: %w", err)
+	}
+	turn.State, turn.SendState = TurnStarting, SendStateNone
+	if err := tx.Commit(); err != nil {
+		return Session{}, Turn{}, fmt.Errorf("commit target rotation: %w", err)
+	}
+	return sess, turn, nil
+}
+
 func (s *Store) ReconcileInterruptedTurns(ctx context.Context) ([]Turn, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {

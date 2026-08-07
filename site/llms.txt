@@ -750,6 +750,11 @@ coop sessions — serve and inspect local remote sessions.
   socket. It never listens on TCP. 'doctor' checks only that Unix socket and exits
   nonzero when the service is unavailable or unready.
 
+  A policy's target: takes one target or a LIST of up to 4 — a fallback ladder, and
+  it may cross providers: [codex:gpt-5.6-sol/xhigh@oncall, claude@oncall]. A rate
+  limit moves the session to the next free rung and re-delivers the same turn; when
+  every rung is cooling the turn fails 'rate_limited' for the client to retry.
+
   Defaults:
     state    ~/.local/state/coop/sessions
     policies ~/.config/coop/session-policies.yaml

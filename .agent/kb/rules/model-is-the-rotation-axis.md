@@ -2,9 +2,9 @@
 name: model-is-the-rotation-axis
 description: "rotation walks an `agent:` ladder of targets; accounts are a suffix on the model, never their own axis"
 scope: cli-grammar
-sources: [internal/cli/target.go, internal/preset/preset.go]
+sources: [internal/cli/target.go, internal/preset/preset.go, internal/cli/session_service.go]
 check: "none"
-updated: 2026-07-11
+updated: 2026-08-07
 ---
 
 # Model is the one axis: rotation walks an `agent:` ladder of targets, not a pool
@@ -36,7 +36,12 @@ rotation, and a bare model is the old "rotate every account." The user drove thi
 effort, and account into the one target grammar.
 
 **How to apply:** any new rotation/fallback surface takes targets in an `agent:` key — never a
-separate credential list, never a bespoke model key. Resolution for a run, coarse to fine: the
+separate credential list, never a bespoke model key. The ONE exception is the session API's
+operator policy file, which spells the same thing `target:` because that key predates ladders and
+is deployed; it takes a scalar or a list with identical parsing to a preset's `agent:`. Widening
+the existing key was chosen over renaming it (every deployed policy file would break) and over
+adding a `models:` list (a bespoke model key, and a rung is a target, not a model). Do not
+"harmonize" it to `agent:`. Resolution for a run, coarse to fine: the
 explicit command-line target > the active ladder rung (loop.yaml step or preset lead) > the
 agent-wide default (`COOP_<AGENT>_MODEL`) > the agent CLI's own default. Fan-out order for a
 bare model is marked-default account first, then the rest alphabetically (`accountsFor`). See
@@ -47,3 +52,6 @@ bare model is marked-default account first, then the rest alphabetically (`accou
 - 2026-07-03 — created
 - 2026-07-11 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-07 — session policies gained ladders; recorded why that surface keeps `target:` instead
+  of `agent:`. Swept every rotation surface (preset lead, roles, loop.yaml steps, fleet forks,
+  session policies): 0 violations — no surface carries a separate credential list or model key.
