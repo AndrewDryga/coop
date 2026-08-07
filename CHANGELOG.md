@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop acp` builds the box image when it's missing, instead of dying.** A pruned `coop-box`
+  took ACP down with no usable explanation: each of the four warm-target children failed with
+  "image not built", the proxy burned its five-attempt rapid-fail cap in half a second, and the
+  editor showed `agent exited 5 times within 2s; giving up` — the actionable line was buried in
+  the editor's agent log. The supervisor now checks once, before any child spawns or the warm
+  pool fans out, and builds if there's nothing there. A present image costs one existence check;
+  this is a "can anything run" guard, not a freshness check. The build's output goes to **stderr
+  only** — on this path stdout is the JSON-RPC wire and stdin carries the editor's requests, so
+  the build must touch neither. Expect a slow first connect, narrated in the agent log; a build
+  that fails returns one actionable error rather than a respawn loop.
+
 - **BREAKING: the rules KB moved to `.agent/kb/rules/`.** Rules and the descriptive kb were
   siblings, so the same normative note lived at a different path in every repo — and a rule
   couldn't move between them without a rewrite. There is now ONE committed knowledge tree:

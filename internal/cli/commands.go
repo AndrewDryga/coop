@@ -756,6 +756,31 @@ func readResumeState(path string) (acpResumeState, error) {
 // child (COOP_ACP_INNER set so the child runs the box, not another supervisor). When
 // the child's container dies, acpproxy starts a new child and replays the ACP
 // handshake, so the editor never sees a disconnect (see internal/acpproxy).
+// ensureACPImage builds the box image when it is missing, so a pruned or never-built image is a
+// slow first connect instead of a dead adapter. A present image is a cheap existence check and no
+// build at all — this is not a freshness check, only a "can anything run" one.
+//
+// The build's own stdout/stdin are redirected: on this path os.Stdout is the JSON-RPC wire to the
+// editor and os.Stdin carries its requests, so docker chatter there would corrupt the protocol and
+// reading it would swallow the editor's initialize. ui.* already writes only to stderr, so the
+// narration lands in the editor's agent log where the user can see why the first connect is slow.
+func (a *app) ensureACPImage() error {
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return err
+	}
+	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
+	if box.ImageExists(a.rt, img) {
+		return nil
+	}
+	ui.Info("image %q is missing — building it now; the first connect will take a few minutes", img)
+	if err := box.BuildWith(a.rt, a.cfg, repo, false, resolveVersion(), strings.NewReader(""), os.Stderr); err != nil {
+		return fmt.Errorf("image %q is missing and building it failed: %w\n  build it by hand with 'coop build', then reconnect", img, err)
+	}
+	ui.Info("built %s — continuing", img)
+	return nil
+}
+
 func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 	self, err := os.Executable()
 	if err != nil {
@@ -795,6 +820,15 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpControl) (int, error) {
 		default:
 		}
 	}()
+
+	// The image is the one thing every child needs and no child can create. Build it HERE — once, in
+	// the supervisor, before the warm pool fans out and before Run's first factory call — or each
+	// spawn fails on a missing image and the proxy burns its rapid-fail cap on a condition that can
+	// never succeed by retrying, leaving the editor with "agent exited 5 times" and the real cause
+	// buried in its agent log. One supervisor spawns every child, so this is the single-flight point.
+	if err := a.ensureACPImage(); err != nil {
+		return 1, err
+	}
 
 	// Keep a box warm per OTHER signed-in provider so a provider switch swaps to a hot adapter
 	// (proxy replay only) instead of cold-booting one (~5s). Behind the factory: a miss cold-spawns,

@@ -392,6 +392,15 @@ func ImageExists(rt runtime.Runtime, image string) bool {
 // version is the building coop's version, stamped beside the image so a later
 // launch can flag binary/image skew (box can't resolve it itself — cli owns it).
 func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, version string) error {
+	return BuildWith(rt, cfg, repo, fresh, version, os.Stdin, os.Stdout)
+}
+
+// BuildWith is Build with the runtime's own stdin/stdout supplied by the caller. `coop acp` speaks
+// JSON-RPC over os.Stdout and reads the editor's requests from os.Stdin, so a build on that path
+// must NOT touch either: build chatter on stdout corrupts the wire, and reading stdin swallows the
+// editor's initialize. It passes an empty reader and os.Stderr instead (ui.* is already stderr-only,
+// so progress lands in the editor's agent log either way).
+func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, version string, stdin io.Reader, stdout io.Writer) error {
 	if err := rt.EnsureDaemon(); err != nil {
 		return err
 	}
@@ -403,7 +412,7 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, vers
 	dfRel := proj.DockerfileRel() // box.dockerfile, else .agent/Dockerfile
 	if !fileExists(filepath.Join(repo, dfRel)) {
 		ui.Info("building %s (shared base)", cfg.BaseImage)
-		err := buildErr(rt.Run(strings.NewReader(BaseDockerfile()), os.Stdout, os.Stderr, baseBuildArgs(cfg, fresh)...))
+		err := buildErr(rt.Run(strings.NewReader(BaseDockerfile()), stdout, os.Stderr, baseBuildArgs(cfg, fresh)...))
 		if err == nil {
 			StampImageMeta(cfg, cfg.BaseImage, version) // record builder + definition so a later run can flag skew/age
 		}
@@ -426,7 +435,7 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, vers
 	usesBase := strings.Contains(string(content), "COOP_BASE_IMAGE")
 	if usesBase && (fresh || !ImageExists(rt, cfg.BaseImage)) {
 		ui.Info("building %s (shared base) first — %s inherits it via COOP_BASE_IMAGE", cfg.BaseImage, dfRel)
-		if err := buildErr(rt.Run(strings.NewReader(BaseDockerfile()), os.Stdout, os.Stderr, baseBuildArgs(cfg, fresh)...)); err != nil {
+		if err := buildErr(rt.Run(strings.NewReader(BaseDockerfile()), stdout, os.Stderr, baseBuildArgs(cfg, fresh)...)); err != nil {
 			return err
 		}
 		StampImageMeta(cfg, cfg.BaseImage, version)
@@ -441,7 +450,7 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, vers
 		return fmt.Errorf("staging the build context: %w", err)
 	}
 	defer cleanup()
-	err = buildErr(rt.Run(os.Stdin, os.Stdout, os.Stderr, projectBuildArgs(ctx, dfRel, img, cfg.BaseImage, usesBase, fresh)...))
+	err = buildErr(rt.Run(stdin, stdout, os.Stderr, projectBuildArgs(ctx, dfRel, img, cfg.BaseImage, usesBase, fresh)...))
 	if err == nil {
 		StampImageInputs(cfg, repo, img) // record inputs so a later run can flag drift
 	}

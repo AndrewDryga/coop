@@ -2067,3 +2067,62 @@ func TestReceiptFailureTailMakesTheRejectionDiagnosable(t *testing.T) {
 		}
 	})
 }
+
+// ensureACPImage is the ACP path's guard against a pruned or never-built image. It must build
+// exactly when one is missing — and, just as importantly, must NOT build when one is present:
+// this is a "can anything run at all" check, not a freshness check, and four warm targets share
+// the one supervisor that calls it.
+func TestEnsureACPImageBuildsOnlyWhenMissing(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		exists    bool
+		wantBuild bool
+	}{
+		{"present image is left alone", true, false},
+		{"missing image is built once", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			recorder := filepath.Join(t.TempDir(), "calls")
+			shim := filepath.Join(t.TempDir(), "rt")
+			inspect := "exit 1"
+			if tc.exists {
+				inspect = "exit 0"
+			}
+			script := "#!/bin/sh\n" +
+				"echo \"$@\" >> " + strconv.Quote(recorder) + "\n" +
+				"case \"$1$2\" in\n" +
+				"  imageinspect) " + inspect + " ;;\n" +
+				"esac\n" +
+				"exit 0\n"
+			if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			a := &app{
+				cfg:   &config.Config{BaseImage: "coop-box", ConfigDir: t.TempDir(), BoxHome: t.TempDir(), RepoOverride: repo},
+				rt:    runtime.Runtime{Name: shim},
+				rtSet: true,
+			}
+			if err := a.ensureACPImage(); err != nil {
+				t.Fatalf("ensureACPImage = %v, want nil", err)
+			}
+			calls, _ := os.ReadFile(recorder)
+			// Count INVOCATIONS, not the substring: one build line carries several --build-arg.
+			builds := 0
+			for _, line := range strings.Split(string(calls), "\n") {
+				if strings.HasPrefix(line, "build ") {
+					builds++
+				}
+			}
+			if tc.wantBuild && builds == 0 {
+				t.Errorf("a missing image must be built — ACP has no other way to recover:\n%s", calls)
+			}
+			if !tc.wantBuild && builds != 0 {
+				t.Errorf("a present image must not trigger a build:\n%s", calls)
+			}
+			if builds > 1 {
+				t.Errorf("built %d times, want at most 1 (the supervisor is the single-flight point):\n%s", builds, calls)
+			}
+		})
+	}
+}

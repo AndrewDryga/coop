@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 // stageBuildContext must OMIT shadowed secrets (and .git) from the Docker build context — so a
@@ -236,5 +239,38 @@ func TestBaseDockerfileSupervisesDetachedDescendantsPortably(t *testing.T) {
 	}
 	if strings.Contains(df, "echo \"$20\"") || strings.Contains(df, "current=$20") {
 		t.Errorf("base Dockerfile must brace positional field 20:\n%s", df)
+	}
+}
+
+// BuildWith must send the runtime's build output to the writer it was GIVEN, never os.Stdout.
+// `coop acp` speaks JSON-RPC over os.Stdout and reads the editor's requests from os.Stdin, so a
+// build that grabbed either would corrupt the wire and swallow the editor's initialize — the
+// reason the ACP path passes an empty reader and os.Stderr.
+func TestBuildWithHonorsCallerStreams(t *testing.T) {
+	repo := t.TempDir() // no .agent/Dockerfile → the shared-base path, which is what `coop acp` hits
+	shim := filepath.Join(t.TempDir(), "rt")
+	// Echo a marker on stdout and copy stdin through, so the test can prove where each landed.
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"  build) echo BUILD-STDOUT; cat; exit 0 ;;\n" +
+		"esac\n" +
+		"exit 0\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := runtime.Runtime{Name: shim}
+	cfg := &config.Config{BaseImage: "coop-box", ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
+
+	var out strings.Builder
+	if err := BuildWith(rt, cfg, repo, false, "vTest", strings.NewReader(""), &out); err != nil {
+		t.Fatalf("BuildWith = %v, want nil", err)
+	}
+	if got := out.String(); !strings.Contains(got, "BUILD-STDOUT") {
+		t.Errorf("build stdout did not reach the caller's writer (an ACP build would have gone to the JSON-RPC wire):\n%s", got)
+	}
+	// The base path feeds the Dockerfile in on stdin; the point is that it came from BuildWith,
+	// not from the process's own os.Stdin.
+	if got := out.String(); !strings.Contains(got, "FROM ${NODE_IMAGE}") {
+		t.Errorf("base Dockerfile was not piped to the runtime:\n%s", got)
 	}
 }
