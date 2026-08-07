@@ -1417,3 +1417,212 @@ func waitForSessionTest(t *testing.T, condition func() bool) {
 	}
 	t.Fatal("session condition did not become true")
 }
+
+// Editing a policy must not orphan the sessions created under its previous
+// shape. The digest guard stops a drifted policy from steering a running
+// session; teardown steers nothing, and refusing it leaves workspaces nobody
+// can ever reclaim — cleanup retried into permanent failure while forks leaked.
+func TestSessionServiceDiscardsSessionsWhosePolicyDrifted(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateRoot := filepath.Join(t.TempDir(), "state")
+
+	before := newTestSessionService(t, stateRoot, testSessionPolicies(repo), nil)
+	clean, err := before.CreateRemoteSession(
+		context.Background(), "drift-create-clean",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "clean drift"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unmerged, err := before.CreateRemoteSession(
+		context.Background(), "drift-create-unmerged",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "unmerged drift"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Committed-but-unpublished work in the second fork: the safety the drift
+	// fallback must not weaken.
+	if err := os.WriteFile(filepath.Join(unmerged.Workspace, "wip.txt"), []byte("kept\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, unmerged.Workspace, "add", "wip.txt")
+	runGitTest(t, unmerged.Workspace, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "wip")
+	before.Stop()
+
+	// The operator edited the policy target; every stored digest is now stale.
+	edited := testSessionPolicies(repo)
+	policy := edited["responder"]
+	policy.Targets = mustTargets("codex:another-model@work")
+	edited["responder"] = policy
+	service := newTestSessionService(t, stateRoot, edited, nil)
+	defer service.Stop()
+
+	closed, err := service.Close(
+		context.Background(), "drift-close-clean",
+		session.CloseSessionRequest{SessionID: clean.ID, ExpectedRevision: clean.Revision},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.PlanDiscard(
+		context.Background(), "drift-plan-clean",
+		PlanDiscardRequest{SessionID: clean.ID, ExpectedRevision: closed.Revision},
+	)
+	if err != nil {
+		t.Fatalf("drifted session could not be planned for discard: %v", err)
+	}
+	discarded, err := service.Discard(
+		context.Background(), "drift-discard-clean",
+		DiscardRequest{PlanOperationID: plan.OperationID},
+	)
+	if err != nil || discarded.State != session.SessionDiscarded || pathExists(clean.Workspace) {
+		t.Fatalf("drifted discard = %+v, %v (workspace present=%t)", discarded, err, pathExists(clean.Workspace))
+	}
+
+	closedUnmerged, err := service.Close(
+		context.Background(), "drift-close-unmerged",
+		session.CloseSessionRequest{SessionID: unmerged.ID, ExpectedRevision: unmerged.Revision},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guarded, err := service.PlanDiscard(
+		context.Background(), "drift-plan-unmerged",
+		PlanDiscardRequest{SessionID: unmerged.ID, ExpectedRevision: closedUnmerged.Revision},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !guarded.Plan.Workspace.Unmerged {
+		t.Fatal("drift fallback lost the unmerged guard; committed work would be destroyed silently")
+	}
+}
+
+// The ladder has to reach the runner through the real turn path, for the real
+// sessions a deployment holds — including ones that survived a policy edit.
+// The rotation logic had unit tests; what production hit was the wiring above
+// it: a digest-strict guard that silently withheld the ladder from every
+// surviving session, leaving them pinned to a rate-limited rung.
+func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	withLadder := func(policies map[string]SessionPolicy, targets ...string) map[string]SessionPolicy {
+		policy := policies["responder"]
+		policy.Targets = mustTargets(targets...)
+		policies["responder"] = policy
+		return policies
+	}
+	var mu sync.Mutex
+	ladders := map[string]int{} // prompt -> rungs seen by the runner
+	factory := func(store *session.Store) SessionRunner {
+		return SessionRunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
+			ladder, _ := ctx.Value(sessionTargetLadderContextKey{}).([]agents.Target)
+			mu.Lock()
+			ladders[turn.Prompt] = len(ladder)
+			mu.Unlock()
+			if _, err := store.MarkTurnSendIntent(context.Background(), bound.ID, turn.ID); err != nil {
+				return turn, err
+			}
+			if _, err := store.MarkTurnSent(context.Background(), bound.ID, turn.ID); err != nil {
+				return turn, err
+			}
+			return store.CompleteTurn(context.Background(), session.CompleteTurnRequest{
+				SessionID: bound.ID, TurnID: turn.ID, Message: turn.Prompt,
+			})
+		})
+	}
+	runTurn := func(service *SessionService, sess session.Session, key, prompt string) {
+		t.Helper()
+		turn, err := service.SubmitTurn(context.Background(), key, session.SubmitTurnRequest{
+			SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: prompt,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForSessionTest(t, func() bool {
+			got, err := service.GetTurn(context.Background(), sess.ID, turn.ID)
+			return err == nil && got.State == session.TurnCompleted
+		})
+	}
+
+	first, err := NewSessionService(SessionServiceConfig{
+		StateRoot:     stateRoot,
+		Policies:      withLadder(testSessionPolicies(repo), "codex@work", "codex:fallback-model@work"),
+		RunnerFactory: factory,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := first.CreateRemoteSession(
+		context.Background(), "ladder-create",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "ladder plumbing"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runTurn(first, sess, "ladder-turn-1", "current policy")
+	first.Stop()
+
+	// The operator raises max_turns: digest drifts, but the session's target is
+	// still rung 0 of the current ladder — the blitz outage shape.
+	drifted := withLadder(testSessionPolicies(repo), "codex@work", "codex:fallback-model@work")
+	policy := drifted["responder"]
+	policy.MaxTurns = policy.MaxTurns + 1
+	drifted["responder"] = policy
+	second, err := NewSessionService(SessionServiceConfig{StateRoot: stateRoot, Policies: drifted, RunnerFactory: factory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sess, err = second.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runTurn(second, sess, "ladder-turn-2", "drifted digest, target still a rung")
+	second.Stop()
+
+	// The operator replaces the ladder entirely: the session's target is on no
+	// current rung, so rotation has nowhere legitimate to move it.
+	replaced := withLadder(testSessionPolicies(repo), "codex:new-primary@work", "codex:new-fallback@work")
+	third, err := NewSessionService(SessionServiceConfig{StateRoot: stateRoot, Policies: replaced, RunnerFactory: factory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := third.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sess, err = third.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runTurn(third, sess, "ladder-turn-3", "target removed from the ladder")
+	third.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if ladders["current policy"] != 2 {
+		t.Fatalf("current-policy turn saw %d rungs, want 2", ladders["current policy"])
+	}
+	if ladders["drifted digest, target still a rung"] != 2 {
+		t.Fatalf("drifted-digest turn saw %d rungs, want 2 — surviving sessions lost their fallback", ladders["drifted digest, target still a rung"])
+	}
+	if ladders["target removed from the ladder"] != 0 {
+		t.Fatalf("off-ladder turn saw %d rungs, want 0 — rotation could steer onto rungs the session never held", ladders["target removed from the ladder"])
+	}
+}

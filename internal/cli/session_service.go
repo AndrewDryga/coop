@@ -845,18 +845,36 @@ func (s *SessionService) cleanupParkedSessions(ctx context.Context) {
 func (s *SessionService) runBoundSessionTurn(ctx context.Context, bound session.Session, leased session.Turn) (session.Turn, error) {
 	unlock := s.lockSessionRuntime(bound.ID)
 	defer unlock()
-	if policy, ok := s.policies[bound.Policy]; ok &&
-		resolvedSessionPolicyDigest(policy) == bound.PolicyDigest {
-		if policy.WarmIdleTimeout > 0 {
-			ctx = context.WithValue(ctx, sessionWarmIdleTimeoutContextKey{}, policy.WarmIdleTimeout)
-		}
-		// Only a policy that still matches the session may steer its rotation. A drifted one
-		// leaves the ladder unset, so the turn runs the single rung the session is bound to.
-		if len(policy.Targets) > 1 {
-			ctx = context.WithValue(ctx, sessionTargetLadderContextKey{}, policy.Targets)
+	return s.runner.Run(s.sessionTurnContext(ctx, bound), bound, leased)
+}
+
+// sessionTurnContext decorates a turn's context with what the operator policy still authorizes
+// for this session: the warm idle lease and the rotation ladder.
+//
+// The warm lease stays digest-strict — keeping an authenticated process alive is a standing
+// grant, and a drifted policy must not extend it. The ladder deliberately is NOT: it applies
+// whenever the session's current target is one of the CURRENT policy's rungs. Rotation can only
+// ever move a session between rungs the operator has just named, and only if the session already
+// sits on one, so no stale policy steers anything. Requiring the digest instead left every
+// session that survived a policy edit without a fallback — pinned to a rate-limited rung,
+// failing the exact turns the ladder in the file existed to save. A session on a rung the
+// operator has since REMOVED keeps its pinned target and does not rotate.
+func (s *SessionService) sessionTurnContext(ctx context.Context, bound session.Session) context.Context {
+	policy, ok := s.policies[bound.Policy]
+	if !ok {
+		return ctx
+	}
+	if policy.WarmIdleTimeout > 0 && resolvedSessionPolicyDigest(policy) == bound.PolicyDigest {
+		ctx = context.WithValue(ctx, sessionWarmIdleTimeoutContextKey{}, policy.WarmIdleTimeout)
+	}
+	if len(policy.Targets) > 1 {
+		for _, rung := range policy.Targets {
+			if rung.String() == bound.Target {
+				return context.WithValue(ctx, sessionTargetLadderContextKey{}, policy.Targets)
+			}
 		}
 	}
-	return s.runner.Run(ctx, bound, leased)
+	return ctx
 }
 
 // ensureRunner keeps host-local construction (and runtime detection) out of service creation.
@@ -1497,7 +1515,7 @@ func (s *SessionService) executePlanDiscard(ctx context.Context, op session.Oper
 	if sess.Revision != req.ExpectedRevision || sess.State != session.SessionClosed || sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidSessionState, Detail: "discard planning requires a closed idle session"})
 	}
-	parentHead, err := s.pinCurrentSessionParent(ctx, sess)
+	parentHead, err := s.pinDiscardSessionParent(ctx, sess)
 	if err != nil {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}

@@ -99,6 +99,14 @@ so a usage limit costs a retry rather than the turn. Only a proven rate limit ro
 expired credential, a protocol error, or limit wording inside the model's own answer all surface
 as the failure they are.
 
+Sessions that survive a policy edit keep their fallback: the ladder applies whenever the
+session's current target is one of the current policy's rungs, even when the rest of the policy
+(and so its digest) has changed. Rotation only ever moves a session between rungs the operator
+currently names, and only when the session already sits on one; a session whose rung was removed
+keeps its pinned target and does not rotate. Teardown never requires the digest to match at all —
+closing and discarding a drifted session works, with the dirty and unmerged guards intact, so a
+policy edit cannot orphan the workspaces its old sessions own.
+
 A rotation is durable. `target` on the session becomes the rung now in use, and a
 `session.target_rotated` event carries `from`, `to`, and `native_session_reset`. The last is what a
 client needs to know: a rung on the same provider keeps the conversation, but a cross-provider hop

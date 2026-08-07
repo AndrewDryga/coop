@@ -131,6 +131,34 @@ func (s *SessionService) pinCurrentSessionParent(
 	})
 }
 
+// pinDiscardSessionParent pins the parent commit a discard plan is judged against.
+//
+// Unlike pinCurrentSessionParent it does not require the operator policy to still describe the
+// session. The digest guard exists to stop a drifted policy from steering a RUNNING session;
+// teardown steers nothing, and refusing it leaves the one outcome worse than either policy: a
+// workspace nobody can ever reclaim. An operator editing a policy target orphaned every in-flight
+// session exactly that way — cleanup retried into a permanent failure while the forks leaked.
+//
+// When the policy still matches, the plan keeps full fidelity (remote-pinned parent). When it has
+// drifted, the parent falls back to the session's own durable repository binding at its local
+// HEAD — the legacy pre-remote behavior. The dirty and unmerged safety checks still run against
+// that parent, so committed-but-unpublished work still blocks an unforced discard.
+func (s *SessionService) pinDiscardSessionParent(
+	ctx context.Context,
+	sess session.Session,
+) (string, error) {
+	if policy, ok := s.policies[sess.Policy]; ok &&
+		resolvedSessionPolicyDigest(policy) == sess.PolicyDigest {
+		return pinSessionRepository(ctx, sessionRepositorySource{
+			label: "primary", repository: policy.Repository,
+			remote: policy.Remote, branch: policy.Branch,
+		})
+	}
+	return pinSessionRepository(ctx, sessionRepositorySource{
+		label: "primary", repository: sess.Repository,
+	})
+}
+
 func runSessionSourceGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	stdout := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceGitOutputLimit}
 	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
