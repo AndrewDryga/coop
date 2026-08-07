@@ -501,12 +501,13 @@ func baseBuildArgs(cfg *config.Config, fresh bool) []string {
 }
 
 // stageBuildContext copies repo into a throwaway dir, OMITTING every shadowed path (NewShadowDecider
-// — the same denylist that hides secrets from a run) and .git, so a .agent/Dockerfile build can't bake
-// an in-repo secret into an image layer. Returns the staged dir and a cleanup func. A non-secret
-// COPY still works (the file is present); a COPY of a shadowed file fails (it's absent), which is the
-// intended loud failure rather than a silent leak.
+// — the same denylist that hides secrets from a run), gitignored build output, and .git. This keeps
+// generated firmware, tool caches, and other disposable artifacts from exhausting host storage
+// before Docker can apply its own ignore rules. Tracked files remain available even when a later
+// ignore rule matches them, as do ordinary untracked inputs an agent is still authoring.
 func stageBuildContext(repo string) (string, func(), error) {
 	shadowed := NewShadowDecider(repo)
+	ignored := ignoredBuildPaths(repo)
 	ctx, err := os.MkdirTemp("", "coop-buildctx-")
 	if err != nil {
 		return "", func() {}, err
@@ -525,13 +526,13 @@ func stageBuildContext(repo string) (string, func(), error) {
 		}
 		slash := filepath.ToSlash(rel)
 		if d.IsDir() {
-			if d.Name() == ".git" || shadowed(slash) {
-				return fs.SkipDir // .git isn't needed in a build context; a shadowed dir must not leak
+			if d.Name() == ".git" || shadowed(slash) || ignored(slash) {
+				return fs.SkipDir // source control, secrets, and generated output never enter the context
 			}
 			return os.MkdirAll(filepath.Join(ctx, rel), 0o755)
 		}
-		if shadowed(slash) {
-			return nil // omit the secret — a COPY of it then fails the build instead of baking it
+		if shadowed(slash) || ignored(slash) {
+			return nil // a COPY fails loudly instead of baking a secret or depending on generated output
 		}
 		return copyForBuild(p, filepath.Join(ctx, rel))
 	})
@@ -540,6 +541,47 @@ func stageBuildContext(repo string) (string, func(), error) {
 		return "", func() {}, err
 	}
 	return ctx, cleanup, nil
+}
+
+// ignoredBuildPaths returns a predicate over Git's ignored, untracked paths. A single
+// ls-files call avoids invoking Git once per entry while preserving tracked files that happen to
+// match an ignore rule. Non-Git repositories retain the previous copy-all-non-secret behavior.
+func ignoredBuildPaths(repo string) func(string) bool {
+	cmd := exec.Command("git", "-C", repo,
+		"-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null",
+		"ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z", "--")
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	out, err := cmd.Output()
+	if err != nil {
+		return func(string) bool { return false }
+	}
+
+	files := make(map[string]struct{})
+	var dirs []string
+	for _, raw := range strings.Split(string(out), "\x00") {
+		path := filepath.ToSlash(strings.TrimPrefix(raw, "./"))
+		if path == "" {
+			continue
+		}
+		if strings.HasSuffix(path, "/") {
+			dirs = append(dirs, path)
+			continue
+		}
+		files[path] = struct{}{}
+	}
+	return func(path string) bool {
+		path = filepath.ToSlash(strings.TrimPrefix(path, "./"))
+		if _, ok := files[path]; ok {
+			return true
+		}
+		path += "/"
+		for _, dir := range dirs {
+			if strings.HasPrefix(path, dir) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // copyForBuild copies one entry into the staged context, preserving symlinks (as links, so a link

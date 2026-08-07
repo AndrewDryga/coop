@@ -52,6 +52,63 @@ func TestStageBuildContext(t *testing.T) {
 	}
 }
 
+func TestStageBuildContextOmitsIgnoredOutputButKeepsAuthoredInputs(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	gitc := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	gitc("init", "-q")
+	write(".gitignore", ".build/\n*.generated\ntracked-but-ignored.txt\n")
+	write(".agent/Dockerfile", "FROM x\n")
+	write("tracked-but-ignored.txt", "required input\n")
+	gitc("add", ".gitignore", ".agent/Dockerfile")
+	gitc("add", "-f", "tracked-but-ignored.txt")
+	gitc("commit", "-qm", "fixture")
+	write(".build/firmware/large.bin", "generated\n")
+	write("cache.generated", "generated\n")
+	write("work-in-progress.txt", "authored input\n")
+
+	ctx, cleanup, err := stageBuildContext(repo)
+	if err != nil {
+		t.Fatalf("stageBuildContext: %v", err)
+	}
+	defer cleanup()
+	exists := func(rel string) bool {
+		_, err := os.Lstat(filepath.Join(ctx, filepath.FromSlash(rel)))
+		return err == nil
+	}
+	for _, keep := range []string{".agent/Dockerfile", "tracked-but-ignored.txt", "work-in-progress.txt"} {
+		if !exists(keep) {
+			t.Errorf("staged context should keep tracked or intentionally authored input %q", keep)
+		}
+	}
+	for _, omit := range []string{".build", ".build/firmware/large.bin", "cache.generated"} {
+		if exists(omit) {
+			t.Errorf("staged context must omit ignored output %q", omit)
+		}
+	}
+}
+
 // The base Dockerfile installs every agent's npm packages, assembled from the registry
 // (not a hard-coded list), with the template fully resolved.
 func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
