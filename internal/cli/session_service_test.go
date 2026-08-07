@@ -1626,3 +1626,99 @@ func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
 		t.Fatalf("off-ladder turn saw %d rungs, want 0 — rotation could steer onto rungs the session never held", ladders["target removed from the ladder"])
 	}
 }
+
+// A session whose workspace has already vanished — crashed teardown, manual
+// removal — must still be discardable through the normal plan/confirm flow.
+// Refusing to plan was the gap that made such records permanent: cleanup
+// retried into internal_error forever while nothing existed to reclaim.
+func TestSessionServiceDiscardsASessionWhoseWorkspaceVanished(t *testing.T) {
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	companion, companionGit := gitRepo(t)
+	companionGit("commit", "-q", "--allow-empty", "-m", "companion base")
+	companion, err = filepath.EvalSymlinks(companion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := testSessionPolicies(repo)
+	policy := policies["responder"]
+	policy.Companions = []SessionCompanionPolicy{{Name: "sidecar", Repository: companion}}
+	policies["responder"] = policy
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+
+	ghost, err := service.CreateRemoteSession(
+		context.Background(), "vanish-create",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "vanish"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := service.Close(
+		context.Background(), "vanish-close",
+		session.CloseSessionRequest{SessionID: ghost.ID, ExpectedRevision: ghost.Revision},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The whole point: fork and companion snapshot removed out of band.
+	if err := os.RemoveAll(ghost.Workspace); err != nil {
+		t.Fatal(err)
+	}
+	if len(ghost.Companions) != 1 {
+		t.Fatalf("companions = %+v, want one", ghost.Companions)
+	}
+	if err := os.RemoveAll(ghost.Companions[0].Workspace); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.PlanDiscard(
+		context.Background(), "vanish-plan",
+		PlanDiscardRequest{SessionID: ghost.ID, ExpectedRevision: closed.Revision},
+	)
+	if err != nil {
+		t.Fatalf("vanished workspace could not be planned: %v", err)
+	}
+	if plan.Plan.Workspace.Dirty || plan.Plan.Workspace.Unmerged {
+		t.Fatalf("vanished workspace plan invented work to protect: %+v", plan.Plan.Workspace)
+	}
+	discarded, err := service.Discard(
+		context.Background(), "vanish-discard",
+		DiscardRequest{PlanOperationID: plan.OperationID},
+	)
+	if err != nil || discarded.State != session.SessionDiscarded {
+		t.Fatalf("vanished discard = %+v, %v", discarded, err)
+	}
+
+	// Absence is the ONLY shortcut. A workspace that exists but fails
+	// inspection may hold work, so it must keep failing loudly.
+	broken, err := service.CreateRemoteSession(
+		context.Background(), "broken-create",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "broken"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedBroken, err := service.Close(
+		context.Background(), "broken-close",
+		session.CloseSessionRequest{SessionID: broken.ID, ExpectedRevision: broken.Revision},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(broken.Workspace); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(broken.Workspace, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.PlanDiscard(
+		context.Background(), "broken-plan",
+		PlanDiscardRequest{SessionID: broken.ID, ExpectedRevision: closedBroken.Revision},
+	); err == nil {
+		t.Fatal("a corrupted-but-present workspace planned as if absent")
+	}
+}

@@ -702,6 +702,20 @@ func planSessionWorkspaceDiscardAtParent(
 		return sessionWorkspaceDiscardPlan{}, err
 	}
 	handle, info, err := pinForkWorkspace(workspace)
+	if errors.Is(err, os.ErrNotExist) {
+		// The workspace is already gone — crashed teardown, manual removal, a
+		// reinstalled machine. There is nothing to inspect and nothing the dirty
+		// or unmerged guards could protect, and discardSessionWorkspace already
+		// treats a missing workspace as removed. Refusing to PLAN here was the
+		// gap that made such sessions unremovable: the record could never reach
+		// discarded, and cleanup retried into a permanent internal_error. Only
+		// absence takes this path; a workspace that exists but fails inspection
+		// still fails loudly, because that one may hold work.
+		return sessionWorkspaceDiscardPlan{
+			Repo: repo, Name: name, Workspace: workspace,
+			StatusDigest: sessionWorkspaceStatusDigest(nil),
+		}, nil
+	}
 	if err != nil {
 		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("pin session workspace for discard: %w", err)
 	}

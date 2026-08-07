@@ -142,6 +142,15 @@ func sessionGitCommonDir(workspace string) (string, error) {
 func planSessionCompanionDiscard(
 	binding session.CompanionRepository,
 ) (sessionCompanionDiscardPlan, error) {
+	// A companion snapshot that is already gone plans as absent, mirroring the
+	// primary workspace: discardSessionCompanion treats a missing workspace as
+	// removed, and a snapshot holds no unpublished work by construction.
+	if _, err := os.Lstat(binding.Workspace); errors.Is(err, os.ErrNotExist) {
+		return sessionCompanionDiscardPlan{
+			Name: binding.Name, Repo: binding.Repository, Workspace: binding.Workspace,
+			Head: binding.BaseCommit, StatusDigest: sessionWorkspaceStatusDigest(nil),
+		}, nil
+	}
 	if err := verifySessionCompanion(binding); err != nil {
 		return sessionCompanionDiscardPlan{}, err
 	}
