@@ -666,20 +666,43 @@ func TestSessionTurnRunnerDoesNotReapBeforeChildStarts(t *testing.T) {
 	}
 }
 
-func TestSessionTurnRunnerFailsIfServiceCleanupCannotBeProved(t *testing.T) {
+// A completed turn outranks its janitorial proof. This test used to assert the
+// opposite — that an unprovable service cleanup FAILS the turn — and production
+// showed what that costs: every session_cleanup_error turn on 2026-08-07 was a
+// finished multi-minute investigation destroyed over a slow `docker rm`, while
+// the per-minute janitor stood ready to retry the same teardown anyway.
+func TestSessionTurnRunnerCompletesTheTurnWhenCleanupFails(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	t.Setenv("COOP_TEST_SESSION_SERVICE_CLEANUP_FAIL", "1")
 	turn := fixture.submit(t, "cleanup failure")
-	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn); err == nil ||
-		!strings.Contains(err.Error(), "session services cleanup failed") {
-		t.Fatalf("service cleanup failure = %v", err)
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	if err != nil {
+		t.Fatalf("a finished answer was destroyed by its own cleanup: %v", err)
+	}
+	if result.State != session.TurnCompleted || result.AssistantMessage != "hello world" {
+		t.Fatalf("turn after cleanup failure = %+v", result)
 	}
 	got, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || got.State != session.TurnCompleted || got.AssistantMessage != "hello world" {
+		t.Fatalf("stored turn after cleanup failure = state %q message %q, err=%v", got.State, got.AssistantMessage, err)
 	}
-	if got.State != session.TurnFailed || got.ErrorCode != sessionACPCleanupError {
-		t.Fatalf("turn after cleanup failure = state %q code %q", got.State, got.ErrorCode)
+}
+
+// A turn that actually failed still reports the cleanup failure — with its
+// cause, not the bare constant that made a slow daemon and a broken compose
+// project read identically.
+func TestSessionTurnRunnerFailedTurnCarriesTheCleanupCause(t *testing.T) {
+	fixture := newSessionACPFixture(t, "hang")
+	t.Setenv("COOP_TEST_SESSION_SERVICE_CLEANUP_FAIL", "1")
+	turn := fixture.submit(t, "hang then fail cleanup")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := fixture.runner.Run(ctx, fixture.session, turn)
+	if err == nil {
+		t.Fatal("hung turn unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "session services cleanup failed:") {
+		t.Fatalf("cleanup failure lost its cause: %v", err)
 	}
 }
 

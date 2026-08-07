@@ -550,3 +550,8 @@ their project and working-directory labels. Volumes remain so the next turn can 
 with durable development data. Daemon startup repeats this cleanup for historical sessions after a
 crash or upgrade, and a parked-session sweep retries cleanup every minute without racing an active
 turn. Explicit session discard remains responsible for deleting the workspace volumes and network.
+
+A completed turn is completed even when that teardown fails: the janitor's retry is the guarantee,
+and a slow container runtime must not convert a finished answer into an error. Cleanup failure is
+logged with its bounded cause; a turn that itself failed carries the cleanup cause joined with its
+own error.

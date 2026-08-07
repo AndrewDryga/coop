@@ -26,6 +26,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 const (
@@ -36,6 +37,11 @@ const (
 	sessionACPTermGrace       = 250 * time.Millisecond
 	sessionACPKillGrace       = 750 * time.Millisecond
 	sessionACPCleanupTimeout  = 2 * time.Second
+	// sessionRuntimeReapTimeout bounds the docker-facing teardown (box removal, sidecar stop).
+	// Separate from the store-call timeout above because `docker rm -f` of a just-killed box on a
+	// contended daemon routinely needs more than two seconds — and a slow reap is retried by the
+	// per-minute janitor anyway, so the budget only has to be generous enough not to cry wolf.
+	sessionRuntimeReapTimeout = 10 * time.Second
 	sessionACPWarmLimit       = 20
 	sessionACPStderrLimit     = 4 << 10
 	sessionACPRejectionLimit  = 300
@@ -205,13 +211,34 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			cleanup = append(cleanup, execution.projection.remove())
 		}
 
+		var cleanupCause error
 		for _, err := range cleanup {
 			if err != nil {
 				cleanupFailed = true
+				cleanupCause = errors.Join(cleanupCause, err)
+			}
+		}
+		if cleanupFailed {
+			if protocolComplete && baseErr == nil {
+				// The answer outranks the janitorial proof. Failing here converted
+				// finished multi-minute investigations into errors over a slow
+				// `docker rm`, and bought nothing: the per-minute parked-session
+				// sweep retries exactly this teardown, and the projection sits in
+				// the owner-private state root either way until it does. The
+				// failure still surfaces — loudly, with its cause — where an
+				// operator reads, instead of destroying what the model produced.
+				ui.Warn(
+					"turn %s completed but its runtime cleanup failed; the janitor retries it: %s",
+					leased.ID, sessionACPBoundedDetail("cause", cleanupCause.Error()),
+				)
+			} else {
 				if baseErr == nil {
-					baseErr = acpFailure(sessionACPCleanupError, "turn cleanup failed")
+					baseErr = acpFailure(
+						sessionACPCleanupError,
+						sessionACPBoundedDetail("turn cleanup failed", cleanupCause.Error()),
+					)
 				}
-				baseErr = errors.Join(baseErr, err)
+				baseErr = errors.Join(baseErr, cleanupCause)
 			}
 		}
 		if protocolComplete && baseErr == nil {
@@ -406,11 +433,14 @@ func (r *sessionTurnRunner) removeTurnBox(runID string) error {
 	if !validSessionRunID(runID) {
 		return acpFailure(sessionACPCleanupError, "runtime cleanup is unavailable")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), sessionRuntimeReapTimeout)
 	defer cancel()
 	_, err := r.rt.RemoveByLabel(ctx, box.LabelRun, runID)
 	if err != nil {
-		return acpFailure(sessionACPCleanupError, "runtime cleanup failed")
+		return acpFailure(
+			sessionACPCleanupError,
+			sessionACPBoundedDetail("runtime cleanup failed", err.Error()),
+		)
 	}
 	return nil
 }
@@ -934,10 +964,15 @@ func (r *sessionTurnRunner) stopSessionServices(parent context.Context, bound se
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(parent, sessionACPCleanupTimeout)
+	ctx, cancel := context.WithTimeout(parent, sessionRuntimeReapTimeout)
 	defer cancel()
 	if err := box.StopSessionServices(ctx, r.rt, bound.Workspace, bound.Repository); err != nil {
-		return acpFailure(sessionACPCleanupError, "session services cleanup failed")
+		// Carry the cause: "session services cleanup failed" alone cannot tell a
+		// slow daemon from a broken compose project, and the difference is the fix.
+		return acpFailure(
+			sessionACPCleanupError,
+			sessionACPBoundedDetail("session services cleanup failed", err.Error()),
+		)
 	}
 	return nil
 }
@@ -1282,20 +1317,27 @@ func sessionACPRejectionDetail(raw json.RawMessage) string {
 	if json.Unmarshal(raw, &payload) != nil {
 		return rejected
 	}
+	return sessionACPBoundedDetail(rejected, payload.Message)
+}
+
+// sessionACPBoundedDetail appends a cause to a fixed prefix as one bounded, control-free line —
+// the shape a turn's error detail and an operator's log line both need. An empty or
+// whitespace-only cause yields just the prefix, never a dangling colon.
+func sessionACPBoundedDetail(prefix, cause string) string {
 	message := strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return ' '
 		}
 		return r
-	}, payload.Message)
+	}, cause)
 	message = strings.Join(strings.Fields(message), " ")
 	if message == "" {
-		return rejected
+		return prefix
 	}
 	if len(message) > sessionACPRejectionLimit {
 		message = strings.TrimSpace(message[:sessionACPRejectionLimit]) + "…"
 	}
-	return rejected + ": " + message
+	return prefix + ": " + message
 }
 
 func safeSessionACPExitDetail(stderr string) string {
