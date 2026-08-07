@@ -5,11 +5,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -817,7 +821,14 @@ func TestCredentialArtifactProjectionUsesExactAccessOnlySchemas(t *testing.T) {
 
 	codex, _ := Get("codex")
 	codexProject := mustLiveCredentials(t, codex).Artifacts[0].Project
-	got, err := codexProject([]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"api-access","tokens":{"id_token":"INACTIVE_CANARY","access_token":"INACTIVE_CANARY","refresh_token":"REFRESH_CANARY"},"last_refresh":"INACTIVE_CANARY"}`))
+	got, err := codexProject([]byte(`{"tokens":{"id_token":"identity","access_token":"access","refresh_token":"REFRESH_CANARY","account_id":"account"},"last_refresh":"2026-07-15T00:00:00Z","future_field":"drop"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"auth_mode":"chatgpt","tokens":{"id_token":"identity","access_token":"access","refresh_token":"","account_id":"account"},"last_refresh":"2026-07-15T00:00:00Z"}` + "\n"; string(got) != want {
+		t.Fatalf("modern Codex projection = %s, want %s", got, want)
+	}
+	got, err = codexProject([]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"api-access","tokens":{"id_token":"INACTIVE_CANARY","access_token":"INACTIVE_CANARY","refresh_token":"REFRESH_CANARY"},"last_refresh":"INACTIVE_CANARY"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -902,6 +913,143 @@ func TestCredentialArtifactProjectionUsesExactAccessOnlySchemas(t *testing.T) {
 		if got, err := artifact.Project([]byte(`{"secret":"HOST_BOUND_CANARY"}`)); err != nil || got != nil {
 			t.Errorf("host-bound Gemini artifact %s projection = %q, %v; want nil", artifact.Name, got, err)
 		}
+	}
+}
+
+func TestCodexCredentialRenewalIsHostSideAtomicAndSerialized(t *testing.T) {
+	now := time.Now()
+	jwt := func(expires time.Time) string {
+		payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, expires.Unix())))
+		return "x." + payload + ".x"
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		var request codexRefreshRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode refresh request: %v", err)
+		}
+		if request.GrantType != "refresh_token" || request.RefreshToken != "source-refresh" || request.ClientID != codexOAuthClientID {
+			t.Errorf("refresh request = %+v", request)
+		}
+		_ = json.NewEncoder(w).Encode(codexRefreshResponse{
+			IDToken: "new-identity", AccessToken: jwt(now.Add(4 * time.Hour)), RefreshToken: "rotated-refresh",
+		})
+	}))
+	defer server.Close()
+	t.Setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+	profile := t.TempDir()
+	path := filepath.Join(profile, "auth.json")
+	mustWrite(t, path, fmt.Sprintf(
+		`{"tokens":{"id_token":"old-identity","access_token":%q,"refresh_token":"source-refresh","account_id":"account","future_token_field":"preserved"},"last_refresh":"2026-07-15T00:00:00Z","future_top_field":"preserved"}`,
+		jwt(now.Add(-time.Hour)),
+	))
+	prepare := mustLiveCredentials(t, codexAgent{}).Prepare
+	deadline := now.Add(2 * time.Hour)
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- prepare(profile, deadline)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("renew credential: %v", err)
+		}
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("refresh requests = %d, want 1", got)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"new-identity", "rotated-refresh", "future_token_field", "future_top_field"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("refreshed credential omitted %q: %s", want, data)
+		}
+	}
+	projected, err := mustLiveCredentials(t, codexAgent{}).Artifacts[0].Project(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(projected), "rotated-refresh") || strings.Contains(string(projected), "source-refresh") {
+		t.Fatalf("refresh authority reached projection: %s", projected)
+	}
+}
+
+func TestCodexCredentialRenewalFailurePreservesSource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	t.Setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+	profile := t.TempDir()
+	path := filepath.Join(profile, "auth.json")
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, time.Now().Add(-time.Hour).Unix())))
+	body := `{"auth_mode":"chatgpt","tokens":{"id_token":"identity","access_token":"x.` + payload + `.x","refresh_token":"source-refresh"},"last_refresh":"2026-07-15T00:00:00Z"}`
+	mustWrite(t, path, body)
+	if err := renewCodexCredential(profile, time.Now().Add(time.Hour)); err == nil || !strings.Contains(err.Error(), "needs sign-in") {
+		t.Fatalf("renewal error = %v, want sign-in", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != body {
+		t.Fatalf("failed refresh changed source credential: %s", data)
+	}
+}
+
+func TestCodexCredentialRenewalDoesNotFollowRedirects(t *testing.T) {
+	var redirectedRequests atomic.Int32
+	sink := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		redirectedRequests.Add(1)
+	}))
+	defer sink.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, sink.URL, http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	t.Setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+	if _, err := requestCodexCredentialRefresh("source-refresh", time.Now().Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "HTTP 307") {
+		t.Fatalf("redirect error = %v, want HTTP 307", err)
+	}
+	if got := redirectedRequests.Load(); got != 0 {
+		t.Fatalf("redirect target requests = %d, want 0", got)
+	}
+}
+
+func TestCodexCredentialRenewalRejectsSymlinkedSource(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+	t.Setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+	profile := t.TempDir()
+	target := filepath.Join(t.TempDir(), "auth.json")
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, time.Now().Add(-time.Hour).Unix())))
+	mustWrite(t, target, `{"auth_mode":"chatgpt","tokens":{"id_token":"identity","access_token":"x.`+payload+`.x","refresh_token":"do-not-read"},"last_refresh":"2026-07-15T00:00:00Z"}`)
+	if err := os.Symlink(target, filepath.Join(profile, "auth.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := mustLiveCredentials(t, codexAgent{}).Prepare(profile, time.Now().Add(time.Hour))
+	if err == nil {
+		t.Fatal("renewal accepted a symlinked source credential")
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("refresh requests = %d, want 0", got)
 	}
 }
 
@@ -1046,11 +1194,20 @@ func TestStoredCredentialStatus(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"codex", "gemini"} {
-		ag, _ := Get(name)
-		if got := ag.StoredCredentialStatus(filepath.Join(root, name), now); got != StoredCredentialUnknown {
-			t.Errorf("%s stored credential status = %v, want unknown", name, got)
-		}
+	codex, _ := Get("codex")
+	codexDir := filepath.Join(root, "codex")
+	mustWrite(t, filepath.Join(codexDir, "auth.json"), `{"tokens":{"id_token":"identity","access_token":"expired","refresh_token":"refresh"},"last_refresh":"2026-07-15T00:00:00Z"}`)
+	if got := codex.StoredCredentialStatus(codexDir, now); got != StoredCredentialReady {
+		t.Errorf("refreshable Codex stored credential status = %v, want ready", got)
+	}
+	mustWrite(t, filepath.Join(codexDir, "auth.json"), `{"tokens":{"id_token":"identity","access_token":"expired","refresh_token":""},"last_refresh":"2026-07-15T00:00:00Z"}`)
+	if got := codex.StoredCredentialStatus(codexDir, now); got != StoredCredentialReauthRequired {
+		t.Errorf("expired Codex stored credential status = %v, want reauth", got)
+	}
+
+	gemini, _ := Get("gemini")
+	if got := gemini.StoredCredentialStatus(filepath.Join(root, "gemini"), now); got != StoredCredentialUnknown {
+		t.Errorf("gemini stored credential status = %v, want unknown", got)
 	}
 }
 

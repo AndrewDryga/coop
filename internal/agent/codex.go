@@ -2,15 +2,20 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -161,10 +166,19 @@ func (codexAgent) LiveCredentials() LiveCredentialSpec {
 		Artifacts: []CredentialArtifact{{
 			Name: "auth.json", Primary: true, Project: projectCodexCredential,
 		}},
+		Prepare:     renewCodexCredential,
 		Portability: codexCredentialPortability,
 		AuthSignals: []string{"not logged in", "authentication required", "401 unauthorized", "invalid api key"},
 	}
 }
+
+const (
+	codexRefreshTokenURL = "https://auth.openai.com/oauth/token"
+	codexOAuthClientID   = "app_EMoamEEZ73f0CkXaXp7hrann"
+	codexCredentialLimit = 1 << 20
+)
+
+var errCodexCredentialChanged = fmt.Errorf("codex credential changed during refresh")
 
 type codexSourceCredential struct {
 	AuthMode     string             `json:"auth_mode"`
@@ -174,9 +188,10 @@ type codexSourceCredential struct {
 }
 
 type codexSourceTokens struct {
-	IDToken     string `json:"id_token"`
-	AccessToken string `json:"access_token"`
-	AccountID   string `json:"account_id"`
+	IDToken      string `json:"id_token"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	AccountID    string `json:"account_id"`
 }
 
 type codexAccessTokens struct {
@@ -198,18 +213,27 @@ func decodeCodexAccessCredential(data []byte) (codexAccessCredential, error) {
 	if err := json.Unmarshal(data, &source); err != nil {
 		return codexAccessCredential{}, fmt.Errorf("decode Codex credential: %w", err)
 	}
-	switch source.AuthMode {
+	mode := source.AuthMode
+	if mode == "" {
+		switch {
+		case source.Tokens != nil:
+			mode = "chatgpt"
+		case source.OpenAIAPIKey != "":
+			mode = "apikey"
+		}
+	}
+	switch mode {
 	case "apikey":
 		if source.OpenAIAPIKey == "" {
 			return codexAccessCredential{}, fmt.Errorf("codex credential has no API-key auth shape")
 		}
-		return codexAccessCredential{AuthMode: source.AuthMode, OpenAIAPIKey: source.OpenAIAPIKey}, nil
+		return codexAccessCredential{AuthMode: mode, OpenAIAPIKey: source.OpenAIAPIKey}, nil
 	case "chatgpt":
 		if source.Tokens == nil || source.Tokens.IDToken == "" || source.Tokens.AccessToken == "" || source.LastRefresh == "" {
 			return codexAccessCredential{}, fmt.Errorf("codex credential has no access-only ChatGPT shape")
 		}
 		return codexAccessCredential{
-			AuthMode: source.AuthMode,
+			AuthMode: mode,
 			Tokens: &codexAccessTokens{
 				IDToken: source.Tokens.IDToken, AccessToken: source.Tokens.AccessToken,
 				RefreshToken: "", AccountID: source.Tokens.AccountID,
@@ -219,6 +243,219 @@ func decodeCodexAccessCredential(data []byte) (codexAccessCredential, error) {
 	default:
 		return codexAccessCredential{}, fmt.Errorf("codex credential has unsupported auth mode")
 	}
+}
+
+type codexRefreshRequest struct {
+	ClientID     string `json:"client_id"`
+	GrantType    string `json:"grant_type"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+type codexRefreshResponse struct {
+	IDToken      string `json:"id_token"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+// renewCodexCredential keeps refresh authority in the trusted source profile. The sandbox only
+// receives projectCodexCredential's access-only representation after this function returns.
+func renewCodexCredential(profileDir string, deadline time.Time) error {
+	path := filepath.Join(profileDir, "auth.json")
+	lock, err := os.OpenFile(path+".refresh.lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return fmt.Errorf("open Codex credential refresh lock: %w", err)
+	}
+	defer lock.Close()
+	lockInfo, err := lock.Stat()
+	if err != nil || !lockInfo.Mode().IsRegular() {
+		return fmt.Errorf("codex credential refresh lock is unsafe")
+	}
+	if err := lock.Chmod(0o600); err != nil {
+		return fmt.Errorf("protect Codex credential refresh lock: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("lock Codex credential refresh: %w", err)
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+
+	for range 3 {
+		err := renewCodexCredentialLocked(path, deadline)
+		if err != errCodexCredentialChanged {
+			return err
+		}
+	}
+	return fmt.Errorf("codex credential changed repeatedly during refresh")
+}
+
+func renewCodexCredentialLocked(path string, deadline time.Time) error {
+	data, err := readCodexCredential(path)
+	if err != nil {
+		return fmt.Errorf("read Codex credential for refresh: %w", err)
+	}
+	var source codexSourceCredential
+	if err := json.Unmarshal(data, &source); err != nil {
+		return fmt.Errorf("decode Codex credential for refresh: %w", err)
+	}
+	mode := source.AuthMode
+	if mode == "" && source.Tokens != nil {
+		mode = "chatgpt"
+	}
+	if mode == "apikey" {
+		return nil
+	}
+	if mode != "chatgpt" || source.Tokens == nil {
+		return fmt.Errorf("codex credential needs sign-in")
+	}
+	if jwtExpiresAfter(source.Tokens.AccessToken, deadline) {
+		return nil
+	}
+	if source.Tokens.RefreshToken == "" {
+		return fmt.Errorf("codex credential needs sign-in")
+	}
+
+	response, err := requestCodexCredentialRefresh(source.Tokens.RefreshToken, deadline)
+	if err != nil {
+		return err
+	}
+	if response.AccessToken == "" || !jwtExpiresAfter(response.AccessToken, deadline) {
+		return fmt.Errorf("codex credential refresh returned an unusable access token")
+	}
+
+	var document map[string]json.RawMessage
+	var tokens map[string]json.RawMessage
+	if err := json.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("decode Codex credential document: %w", err)
+	}
+	if err := json.Unmarshal(document["tokens"], &tokens); err != nil {
+		return fmt.Errorf("decode Codex token document: %w", err)
+	}
+	setJSON := func(target map[string]json.RawMessage, key string, value any) error {
+		encoded, err := json.Marshal(value)
+		if err == nil {
+			target[key] = encoded
+		}
+		return err
+	}
+	if response.IDToken != "" {
+		if err := setJSON(tokens, "id_token", response.IDToken); err != nil {
+			return err
+		}
+	}
+	if err := setJSON(tokens, "access_token", response.AccessToken); err != nil {
+		return err
+	}
+	if response.RefreshToken != "" {
+		if err := setJSON(tokens, "refresh_token", response.RefreshToken); err != nil {
+			return err
+		}
+	}
+	encodedTokens, err := json.Marshal(tokens)
+	if err != nil {
+		return fmt.Errorf("encode refreshed Codex tokens: %w", err)
+	}
+	document["tokens"] = encodedTokens
+	if source.AuthMode != "" {
+		if err := setJSON(document, "auth_mode", "chatgpt"); err != nil {
+			return err
+		}
+	}
+	if err := setJSON(document, "last_refresh", time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return fmt.Errorf("encode refreshed Codex credential: %w", err)
+	}
+	current, err := readCodexCredential(path)
+	if err != nil {
+		return fmt.Errorf("re-read Codex credential before refresh persistence: %w", err)
+	}
+	if !bytes.Equal(current, data) {
+		return errCodexCredentialChanged
+	}
+	if err := config.WriteFileAtomic(path, append(encoded, '\n')); err != nil {
+		return fmt.Errorf("persist refreshed Codex credential: %w", err)
+	}
+	return nil
+}
+
+func readCodexCredential(path string) ([]byte, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("credential is not a regular file")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, codexCredentialLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > codexCredentialLimit {
+		return nil, fmt.Errorf("credential is too large")
+	}
+	return data, nil
+}
+
+func requestCodexCredentialRefresh(refreshToken string, deadline time.Time) (codexRefreshResponse, error) {
+	endpoint := strings.TrimSpace(os.Getenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE"))
+	if endpoint == "" {
+		endpoint = codexRefreshTokenURL
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !isLoopbackHost(parsed.Hostname())) {
+		return codexRefreshResponse{}, fmt.Errorf("codex credential refresh endpoint is unsafe")
+	}
+	clientID := strings.TrimSpace(os.Getenv("CODEX_APP_SERVER_LOGIN_CLIENT_ID"))
+	if clientID == "" {
+		clientID = codexOAuthClientID
+	}
+	body, err := json.Marshal(codexRefreshRequest{
+		ClientID: clientID, GrantType: "refresh_token", RefreshToken: refreshToken,
+	})
+	if err != nil {
+		return codexRefreshResponse{}, fmt.Errorf("encode Codex credential refresh: %w", err)
+	}
+	requestDeadline := time.Now().Add(30 * time.Second)
+	if deadline.Before(requestDeadline) {
+		requestDeadline = deadline
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), requestDeadline)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return codexRefreshResponse{}, fmt.Errorf("create Codex credential refresh: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return codexRefreshResponse{}, fmt.Errorf("refresh Codex credential: %w", err)
+	}
+	defer resp.Body.Close()
+	limited := io.LimitReader(resp.Body, 64<<10)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, limited)
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusBadRequest {
+			return codexRefreshResponse{}, fmt.Errorf("codex credential needs sign-in")
+		}
+		return codexRefreshResponse{}, fmt.Errorf("codex credential refresh failed with HTTP %d", resp.StatusCode)
+	}
+	var result codexRefreshResponse
+	if err := json.NewDecoder(limited).Decode(&result); err != nil {
+		return codexRefreshResponse{}, fmt.Errorf("decode Codex credential refresh: %w", err)
+	}
+	return result, nil
+}
+
+func isLoopbackHost(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func projectCodexCredential(data []byte) ([]byte, error) {
@@ -240,12 +477,29 @@ func (a codexAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []stri
 	return a.CredentialEnvKeys()
 }
 
-func (codexAgent) StoredCredentialStatus(string, time.Time) StoredCredentialStatus {
-	return StoredCredentialUnknown
+func (codexAgent) StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus {
+	data, err := readCodexCredential(filepath.Join(profileDir, "auth.json"))
+	if err != nil {
+		return StoredCredentialReauthRequired
+	}
+	var source codexSourceCredential
+	if json.Unmarshal(data, &source) != nil {
+		return StoredCredentialReauthRequired
+	}
+	if source.AuthMode == "apikey" || (source.AuthMode == "" && source.OpenAIAPIKey != "") {
+		if source.OpenAIAPIKey != "" {
+			return StoredCredentialReady
+		}
+		return StoredCredentialReauthRequired
+	}
+	if source.Tokens != nil && (source.Tokens.RefreshToken != "" || jwtExpiresAfter(source.Tokens.AccessToken, now)) {
+		return StoredCredentialReady
+	}
+	return StoredCredentialReauthRequired
 }
 
 func codexCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
-	data, err := os.ReadFile(filepath.Join(profileDir, "auth.json"))
+	data, err := readCodexCredential(filepath.Join(profileDir, "auth.json"))
 	if err != nil {
 		return CredentialRefreshRequired
 	}

@@ -130,6 +130,8 @@ func credentialMatrixMarker(provider string) []byte {
 	switch provider {
 	case "claude":
 		return []byte(`{"claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference"]}}`)
+	case "codex":
+		return []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"identity","access_token":"access","refresh_token":"refresh"},"last_refresh":"2026-08-06T00:00:00Z"}`)
 	case "grok":
 		return []byte(grokProfileCredential("2099-01-01T00:00:00Z", ""))
 	default:

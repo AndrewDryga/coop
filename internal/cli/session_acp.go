@@ -631,6 +631,11 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	if len(live.Artifacts) == 0 || live.Portability == nil {
 		return projection, acpFailure(sessionACPCredentialError, "provider has no credential projection")
 	}
+	if live.Prepare != nil {
+		if err := live.Prepare(sourceProfile, deadline); err != nil {
+			return projection, acpFailure(sessionACPCredentialError, "provider credential needs sign-in or renewal")
+		}
+	}
 	seen := make(map[string]bool, len(live.Artifacts))
 	primaryProjected := false
 	for _, artifact := range live.Artifacts {

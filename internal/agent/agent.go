@@ -170,7 +170,10 @@ type CredentialArtifact struct {
 // LiveCredentialSpec is the complete adapter-owned boundary for opt-in live compatibility tests.
 // Portability inspects only the isolated projected profile, never the source credential.
 type LiveCredentialSpec struct {
-	Artifacts   []CredentialArtifact
+	Artifacts []CredentialArtifact
+	// Prepare runs against the trusted source profile before projection. It may renew an
+	// expiring access credential, but refresh authority must remain in the source profile.
+	Prepare     func(profileDir string, deadline time.Time) error
 	Portability func(profileDir string, deadline time.Time) CredentialPortability
 	AuthSignals []string
 }

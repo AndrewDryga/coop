@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -406,15 +408,26 @@ func TestSessionTurnRunnerRejectsSourceSymlinkAndRefreshRequired(t *testing.T) {
 			t.Fatalf("symlink failure left a projected credential: %v", err)
 		}
 	})
-	t.Run("refresh required", func(t *testing.T) {
+	t.Run("refresh required is renewed before projection", func(t *testing.T) {
 		fixture := newSessionACPFixture(t, "normal")
 		credential := filepath.Join(fixture.source, "codex", "profiles", "work", "auth.json")
 		if err := os.WriteFile(credential, []byte(codexTestCredential(time.Now().Add(-time.Minute))), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, time.Now().Add(2*time.Hour).Unix())))
+			_, _ = fmt.Fprintf(w, `{"id_token":"identity","access_token":"x.%s.x","refresh_token":"rotated"}`, payload)
+		}))
+		defer server.Close()
+		t.Setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
 		turn := fixture.submit(t, "expired")
-		if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn); err == nil {
-			t.Fatal("refresh-required credential unexpectedly projected")
+		result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+		if err != nil || result.State != session.TurnCompleted {
+			t.Fatalf("renewed turn = %+v, err=%v", result, err)
+		}
+		projectedLog := readFile(t, fixture.childLog)
+		if strings.Contains(projectedLog, "rotated") || strings.Contains(projectedLog, "refresh") {
+			t.Fatalf("refresh authority reached ACP child: %s", projectedLog)
 		}
 	})
 }
