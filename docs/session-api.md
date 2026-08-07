@@ -105,6 +105,10 @@ client needs to know: a rung on the same provider keeps the conversation, but a 
 drops the native transcript, because the new provider cannot load the previous one's session. A
 client that wants continuity across a hop re-seeds it from its own durable context.
 
+A rejection that is not a rate limit still fails the turn as `acp_protocol_error`, but its detail
+now carries the adapter's own message — normalised to one bounded line — instead of a fixed
+"ACP request was rejected" that named neither the cause nor the fix.
+
 When every rung is cooling the turn fails with `rate_limited`, whose detail names the soonest
 reset. Coop does not hold a queued turn waiting for one: the client owns retry and its own backoff.
 Cooldowns live only in the running controller — a restart resumes on the session's stored rung and

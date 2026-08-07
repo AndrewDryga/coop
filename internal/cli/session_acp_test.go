@@ -90,6 +90,35 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	}
 }
 
+func TestSessionACPRejectionDetailIsUsefulAndBounded(t *testing.T) {
+	for name, expect := range map[string]struct {
+		raw  string
+		want string
+	}{
+		"carries the reason": {
+			`{"code":-32000,"message":"You have hit your usage limit. Try again Aug 11."}`,
+			"ACP request was rejected: You have hit your usage limit. Try again Aug 11.",
+		},
+		// An adapter is not a trusted formatter: a turn detail is one line.
+		"collapses whitespace": {
+			`{"code":-32000,"message":"first line\n\tsecond line"}`,
+			"ACP request was rejected: first line second line",
+		},
+		"no message":    {`{"code":-32000}`, "ACP request was rejected"},
+		"not an object": {`"boom"`, "ACP request was rejected"},
+		"empty message": {`{"message":"   "}`, "ACP request was rejected"},
+	} {
+		if got := sessionACPRejectionDetail(json.RawMessage(expect.raw)); got != expect.want {
+			t.Fatalf("%s = %q, want %q", name, got, expect.want)
+		}
+	}
+	long := `{"message":"` + strings.Repeat("x", 5000) + `"}`
+	got := sessionACPRejectionDetail(json.RawMessage(long))
+	if len(got) > sessionACPRejectionLimit+64 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("oversized rejection was not bounded: %d bytes", len(got))
+	}
+}
+
 func TestSessionTurnRunnerRotatesToTheNextRungOnARateLimit(t *testing.T) {
 	fixture := newSessionACPFixture(t, "rate-limited-once")
 	fixture.signIn(t, "codex", "backup")
@@ -371,6 +400,12 @@ func TestSessionTurnRunnerRejectsLoadFailureAndBindsConflicts(t *testing.T) {
 	}
 	if got.State != session.TurnFailed || got.ErrorCode != sessionACPProtocolError {
 		t.Fatalf("failed load turn = %+v", got)
+	}
+	// The adapter's own reason has to survive to the turn. Without it every
+	// rejection reads the same, and an operator cannot tell a spent quota from a
+	// retired model from a revoked login.
+	if got.ErrorDetail != "ACP request was rejected: load failed" {
+		t.Fatalf("rejection lost the adapter's reason: %q", got.ErrorDetail)
 	}
 	if _, err := fixture.store.BindNativeSession(context.Background(), fixture.session.ID, "another"); session.CodeOf(err) != session.CodeNativeSessionConflict {
 		t.Fatalf("native binding conflict = %v", err)

@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -37,6 +38,7 @@ const (
 	sessionACPCleanupTimeout  = 2 * time.Second
 	sessionACPWarmLimit       = 20
 	sessionACPStderrLimit     = 4 << 10
+	sessionACPRejectionLimit  = 300
 )
 
 const (
@@ -1261,6 +1263,41 @@ func (w *sessionACPStderr) String() string {
 	return string(w.tail)
 }
 
+// sessionACPRejectionDetail renders an adapter's JSON-RPC error as a bounded single line.
+//
+// Every rejection used to collapse to a fixed "ACP request was rejected", which named neither
+// the cause nor the fix: a spent quota, a retired model id, and a revoked login were the same
+// four words, and the payload was discarded before the turn failed, so no log downstream could
+// recover it. The adapter's own `message` is the diagnostic, so it is carried instead of thrown
+// away — unlike box stderr, which stays allowlisted in safeSessionACPExitDetail because a
+// crashing process can print anything it had in memory.
+//
+// It is normalised to one line, stripped of control characters, and truncated: it reaches an
+// operator through a turn's error detail, and an adapter is not a trusted formatter.
+func sessionACPRejectionDetail(raw json.RawMessage) string {
+	const rejected = "ACP request was rejected"
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return rejected
+	}
+	message := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, payload.Message)
+	message = strings.Join(strings.Fields(message), " ")
+	if message == "" {
+		return rejected
+	}
+	if len(message) > sessionACPRejectionLimit {
+		message = strings.TrimSpace(message[:sessionACPRejectionLimit]) + "…"
+	}
+	return rejected + ": " + message
+}
+
 func safeSessionACPExitDetail(stderr string) string {
 	text := strings.ToLower(stderr)
 	switch {
@@ -1535,7 +1572,9 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 								resetAt: hint.resetAt,
 							}
 						}
-						return nil, acpFailure(sessionACPProtocolError, "ACP request was rejected")
+						return nil, acpFailure(
+							sessionACPProtocolError, sessionACPRejectionDetail(envelope.Error),
+						)
 					}
 					return json.RawMessage(result), nil
 				}
