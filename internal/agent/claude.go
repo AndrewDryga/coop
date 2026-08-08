@@ -1,12 +1,18 @@
 package agent
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -164,6 +170,7 @@ func (claudeAgent) LiveCredentials() LiveCredentialSpec {
 		Artifacts: []CredentialArtifact{{
 			Name: ".credentials.json", Primary: true, Project: projectClaudeCredential,
 		}},
+		Prepare:     renewClaudeCredential,
 		Portability: claudeCredentialPortability,
 		// "failed to authenticate" / "oauth session expired" are what the CLI actually prints when a
 		// stored refresh token is dead ("Failed to authenticate: OAuth session expired and could not
@@ -269,6 +276,270 @@ func claudeCredentialPortability(profileDir string, deadline time.Time) Credenti
 		return CredentialPortable
 	}
 	return CredentialRefreshRequired
+}
+
+const (
+	// Claude Code's own token endpoint and public client. Read out of the shipped CLI
+	// rather than recalled: the credential coop stores is the one that CLI wrote, so the
+	// grant has to be the one that CLI sends.
+	claudeRefreshTokenURL  = "https://platform.claude.com/v1/oauth/token"
+	claudeOAuthClientID    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+	claudeCredentialScopes = "user:profile user:inference user:sessions:claude_code " +
+		"user:mcp_servers user:file_upload"
+	claudeCredentialLimit = 1 << 20
+)
+
+var errClaudeCredentialChanged = fmt.Errorf("claude credential changed during refresh")
+
+type claudeRefreshRequest struct {
+	GrantType    string `json:"grant_type"`
+	RefreshToken string `json:"refresh_token"`
+	ClientID     string `json:"client_id"`
+	Scope        string `json:"scope"`
+}
+
+type claudeRefreshResponse struct {
+	AccessToken           string `json:"access_token"`
+	RefreshToken          string `json:"refresh_token"`
+	ExpiresIn             int64  `json:"expires_in"`
+	RefreshTokenExpiresIn int64  `json:"refresh_token_expires_in"`
+	Scope                 string `json:"scope"`
+}
+
+// renewClaudeCredential keeps refresh authority in the trusted source profile. The sandbox only
+// receives projectClaudeCredential's access-only representation after this function returns.
+func renewClaudeCredential(profileDir string, deadline time.Time) error {
+	path := filepath.Join(profileDir, ".credentials.json")
+	lock, err := os.OpenFile(path+".refresh.lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return fmt.Errorf("open Claude credential refresh lock: %w", err)
+	}
+	defer lock.Close()
+	lockInfo, err := lock.Stat()
+	if err != nil || !lockInfo.Mode().IsRegular() {
+		return fmt.Errorf("claude credential refresh lock is unsafe")
+	}
+	if err := lock.Chmod(0o600); err != nil {
+		return fmt.Errorf("protect Claude credential refresh lock: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("lock Claude credential refresh: %w", err)
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+
+	for range 3 {
+		err := renewClaudeCredentialLocked(path, deadline)
+		if err != errClaudeCredentialChanged {
+			return err
+		}
+	}
+	return fmt.Errorf("claude credential changed repeatedly during refresh")
+}
+
+func renewClaudeCredentialLocked(path string, deadline time.Time) error {
+	data, err := readClaudeCredential(path)
+	if err != nil {
+		return fmt.Errorf("read Claude credential for refresh: %w", err)
+	}
+	source, err := parseClaudeSourceCredential(data)
+	if err != nil {
+		return fmt.Errorf("decode Claude credential for refresh: %w", err)
+	}
+	// Already good for the whole turn: leave it alone. Refreshing rotates the refresh
+	// token, so a needless renewal is a needless chance to lose a working login.
+	if source.AccessToken != "" && time.UnixMilli(source.ExpiresAt).After(deadline) {
+		return nil
+	}
+	if source.RefreshToken == "" {
+		return fmt.Errorf("claude credential needs sign-in")
+	}
+
+	response, err := requestClaudeCredentialRefresh(source.RefreshToken, source.Scopes, deadline)
+	if err != nil {
+		return err
+	}
+	renewed, granted, err := mergeClaudeCredentialRefresh(data, source, response)
+	if err != nil {
+		// Nothing usable came back, so there is nothing to keep and the stored credential
+		// is still the best one we have.
+		return err
+	}
+	current, err := readClaudeCredential(path)
+	if err != nil {
+		return fmt.Errorf("re-read Claude credential before refresh persistence: %w", err)
+	}
+	if !bytes.Equal(current, data) {
+		return errClaudeCredentialChanged
+	}
+	if err := config.WriteFileAtomic(path, renewed); err != nil {
+		return fmt.Errorf("persist refreshed Claude credential: %w", err)
+	}
+
+	// Persist first, judge second. The grant already rotated the token upstream, so the
+	// credential we just received is the only working one that exists — the stored one is
+	// dead whether or not we like what came back. Rejecting it before writing would leave a
+	// file that still looks valid and is refused by the provider, which is the one failure
+	// an operator cannot diagnose from disk.
+	if !slices.Contains(granted.Scopes, "user:inference") {
+		return fmt.Errorf("claude credential refresh returned no inference scope")
+	}
+	if !time.UnixMilli(granted.ExpiresAt).After(deadline) {
+		return fmt.Errorf("renewed Claude credential expires before the turn deadline")
+	}
+	return nil
+}
+
+// mergeClaudeCredentialRefresh edits the renewed fields into the stored document instead of
+// rebuilding it, so account facts coop does not model — subscriptionType, rateLimitTier, and
+// whatever Claude Code adds next — survive a refresh coop performed.
+// Validation here is structural only — whether there is a credential worth keeping at all.
+// Whether it is good enough for this turn is the caller's decision, made after the write.
+func mergeClaudeCredentialRefresh(
+	data []byte, source claudeSourceCredential, response claudeRefreshResponse,
+) ([]byte, claudeAccessCredential, error) {
+	var granted claudeAccessCredential
+	if response.AccessToken == "" || response.ExpiresIn <= 0 {
+		return nil, granted, fmt.Errorf("claude credential refresh returned an unusable access token")
+	}
+	expiresAt := time.Now().Add(time.Duration(response.ExpiresIn) * time.Second)
+	scopes := source.Scopes
+	if issued := strings.Fields(response.Scope); len(issued) > 0 {
+		scopes = issued
+	}
+	granted = claudeAccessCredential{
+		AccessToken: response.AccessToken, ExpiresAt: expiresAt.UnixMilli(), Scopes: scopes,
+	}
+	refreshToken := response.RefreshToken
+	if refreshToken == "" {
+		refreshToken = source.RefreshToken
+	}
+
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, granted, fmt.Errorf("decode Claude credential document: %w", err)
+	}
+	var oauth map[string]json.RawMessage
+	if err := json.Unmarshal(document["claudeAiOauth"], &oauth); err != nil {
+		return nil, granted, fmt.Errorf("decode Claude OAuth document: %w", err)
+	}
+	setJSON := func(key string, value any) error {
+		encoded, err := json.Marshal(value)
+		if err == nil {
+			oauth[key] = encoded
+		}
+		return err
+	}
+	if err := setJSON("accessToken", response.AccessToken); err != nil {
+		return nil, granted, err
+	}
+	if err := setJSON("refreshToken", refreshToken); err != nil {
+		return nil, granted, err
+	}
+	if err := setJSON("expiresAt", expiresAt.UnixMilli()); err != nil {
+		return nil, granted, err
+	}
+	if err := setJSON("scopes", scopes); err != nil {
+		return nil, granted, err
+	}
+	if response.RefreshTokenExpiresIn > 0 {
+		refreshExpiry := time.Now().Add(time.Duration(response.RefreshTokenExpiresIn) * time.Second)
+		if err := setJSON("refreshTokenExpiresAt", refreshExpiry.UnixMilli()); err != nil {
+			return nil, granted, err
+		}
+	}
+	encodedOAuth, err := json.Marshal(oauth)
+	if err != nil {
+		return nil, granted, fmt.Errorf("encode refreshed Claude OAuth document: %w", err)
+	}
+	document["claudeAiOauth"] = encodedOAuth
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return nil, granted, fmt.Errorf("encode refreshed Claude credential: %w", err)
+	}
+	return append(encoded, '\n'), granted, nil
+}
+
+func readClaudeCredential(path string) ([]byte, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("credential is not a regular file")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, claudeCredentialLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > claudeCredentialLimit {
+		return nil, fmt.Errorf("credential is too large")
+	}
+	return data, nil
+}
+
+func requestClaudeCredentialRefresh(
+	refreshToken string, scopes []string, deadline time.Time,
+) (claudeRefreshResponse, error) {
+	endpoint := strings.TrimSpace(os.Getenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE"))
+	if endpoint == "" {
+		endpoint = claudeRefreshTokenURL
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !isLoopbackHost(parsed.Hostname())) {
+		return claudeRefreshResponse{}, fmt.Errorf("claude credential refresh endpoint is unsafe")
+	}
+	clientID := strings.TrimSpace(os.Getenv("CLAUDE_OAUTH_CLIENT_ID"))
+	if clientID == "" {
+		clientID = claudeOAuthClientID
+	}
+	// Ask for exactly what this login already holds; a stored credential narrower than the
+	// CLI's default must not be widened by a coop refresh.
+	scope := strings.Join(scopes, " ")
+	if strings.TrimSpace(scope) == "" {
+		scope = claudeCredentialScopes
+	}
+	body, err := json.Marshal(claudeRefreshRequest{
+		GrantType: "refresh_token", RefreshToken: refreshToken, ClientID: clientID, Scope: scope,
+	})
+	if err != nil {
+		return claudeRefreshResponse{}, fmt.Errorf("encode Claude credential refresh: %w", err)
+	}
+	requestDeadline := time.Now().Add(30 * time.Second)
+	if deadline.Before(requestDeadline) {
+		requestDeadline = deadline
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), requestDeadline)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return claudeRefreshResponse{}, fmt.Errorf("create Claude credential refresh: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return claudeRefreshResponse{}, fmt.Errorf("refresh Claude credential: %w", err)
+	}
+	defer resp.Body.Close()
+	limited := io.LimitReader(resp.Body, 64<<10)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, limited)
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusBadRequest {
+			return claudeRefreshResponse{}, fmt.Errorf("claude credential needs sign-in")
+		}
+		return claudeRefreshResponse{}, fmt.Errorf("claude credential refresh failed with HTTP %d", resp.StatusCode)
+	}
+	var result claudeRefreshResponse
+	if err := json.NewDecoder(limited).Decode(&result); err != nil {
+		return claudeRefreshResponse{}, fmt.Errorf("decode Claude credential refresh: %w", err)
+	}
+	return result, nil
 }
 
 // MCP is nil: claude reads the shared mcp.json directly via --mcp-config (see base).

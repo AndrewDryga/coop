@@ -1053,6 +1053,356 @@ func TestCodexCredentialRenewalRejectsSymlinkedSource(t *testing.T) {
 	}
 }
 
+// claudeCredentialJSON is a stored subscription login, including fields coop does not model.
+func claudeCredentialJSON(accessToken string, expiresAt time.Time, refreshToken string) string {
+	return fmt.Sprintf(
+		`{"claudeAiOauth":{"accessToken":%q,"refreshToken":%q,"expiresAt":%d,`+
+			`"refreshTokenExpiresAt":%d,"scopes":["user:inference","user:profile"],`+
+			`"subscriptionType":"max","futureField":"preserved"},"futureTopField":"preserved"}`,
+		accessToken, refreshToken, expiresAt.UnixMilli(), expiresAt.Add(720*time.Hour).UnixMilli(),
+	)
+}
+
+func TestClaudeCredentialRenewalIsHostSideAtomicAndSerialized(t *testing.T) {
+	now := time.Now()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		var request claudeRefreshRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode refresh request: %v", err)
+		}
+		if request.GrantType != "refresh_token" || request.RefreshToken != "source-refresh" ||
+			request.ClientID != claudeOAuthClientID {
+			t.Errorf("refresh request = %+v", request)
+		}
+		// The scopes this login already holds — a coop refresh must not widen them.
+		if request.Scope != "user:inference user:profile" {
+			t.Errorf("refresh scope = %q, want the stored scopes", request.Scope)
+		}
+		_ = json.NewEncoder(w).Encode(claudeRefreshResponse{
+			AccessToken: "renewed-access", RefreshToken: "rotated-refresh",
+			ExpiresIn:             int64(8 * time.Hour / time.Second),
+			RefreshTokenExpiresIn: int64(720 * time.Hour / time.Second),
+			Scope:                 "user:inference user:profile",
+		})
+	}))
+	defer server.Close()
+	t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+	profile := t.TempDir()
+	path := filepath.Join(profile, ".credentials.json")
+	mustWrite(t, path, claudeCredentialJSON("expired-access", now.Add(-time.Hour), "source-refresh"))
+
+	prepare := mustLiveCredentials(t, claudeAgent{}).Prepare
+	if prepare == nil {
+		t.Fatal("claude declares no credential preparation")
+	}
+	deadline := now.Add(time.Hour)
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- prepare(profile, deadline)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("renew credential: %v", err)
+		}
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("refresh requests = %d, want 1", got)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"renewed-access", "rotated-refresh", "subscriptionType", "futureField", "futureTopField",
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("refreshed credential omitted %q: %s", want, data)
+		}
+	}
+
+	// The point of the renewal: what reaches the box now outlives the turn, so readiness and
+	// execution finally agree instead of failing as "not portable through the turn deadline".
+	projected, err := mustLiveCredentials(t, claudeAgent{}).Artifacts[0].Project(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(projected), "rotated-refresh") ||
+		strings.Contains(string(projected), "source-refresh") {
+		t.Fatalf("refresh authority reached projection: %s", projected)
+	}
+	box := t.TempDir()
+	mustWrite(t, filepath.Join(box, ".credentials.json"), string(projected))
+	if got := claudeCredentialPortability(box, deadline); got != CredentialPortable {
+		t.Fatalf("projected portability = %v, want portable", got)
+	}
+}
+
+func TestClaudeCredentialRenewalLeavesAFreshCredentialAlone(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+	t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+	profile := t.TempDir()
+	path := filepath.Join(profile, ".credentials.json")
+	body := claudeCredentialJSON("live-access", time.Now().Add(8*time.Hour), "source-refresh")
+	mustWrite(t, path, body)
+	if err := renewClaudeCredential(profile, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("renew credential: %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("refresh requests = %d, want 0", got)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != body {
+		t.Fatalf("rotated a credential that already outlived the deadline: %s", data)
+	}
+}
+
+func TestClaudeCredentialRenewalKeepsAnUnrotatedRefreshToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// A response that omits refresh_token means the stored one still stands.
+		_ = json.NewEncoder(w).Encode(claudeRefreshResponse{
+			AccessToken: "renewed-access", ExpiresIn: int64(8 * time.Hour / time.Second),
+		})
+	}))
+	defer server.Close()
+	t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+	profile := t.TempDir()
+	path := filepath.Join(profile, ".credentials.json")
+	mustWrite(t, path, claudeCredentialJSON("expired-access", time.Now().Add(-time.Hour), "source-refresh"))
+	if err := renewClaudeCredential(profile, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("renew credential: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := parseClaudeSourceCredential(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.RefreshToken != "source-refresh" {
+		t.Fatalf("refresh token = %q, want the stored one preserved", source.RefreshToken)
+	}
+	if source.AccessToken != "renewed-access" {
+		t.Fatalf("access token = %q, want renewed", source.AccessToken)
+	}
+}
+
+// Nothing usable came back, so there is nothing to keep: the stored credential stays.
+func TestClaudeCredentialRenewalFailurePreservesSource(t *testing.T) {
+	for name, handler := range map[string]http.HandlerFunc{
+		// A revoked refresh token must read as one authentication failure, not a crash the
+		// caller retries: nothing about it improves by trying again.
+		"revoked": func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		},
+		// A 2xx carrying no token at all rotated nothing worth keeping.
+		"empty": func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(claudeRefreshResponse{ExpiresIn: 3600})
+		},
+		"no-expiry": func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(claudeRefreshResponse{AccessToken: "renewed-access"})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+			profile := t.TempDir()
+			path := filepath.Join(profile, ".credentials.json")
+			body := claudeCredentialJSON("expired-access", time.Now().Add(-time.Hour), "source-refresh")
+			mustWrite(t, path, body)
+			if err := renewClaudeCredential(profile, time.Now().Add(time.Hour)); err == nil {
+				t.Fatal("renewal accepted an unusable refresh")
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != body {
+				t.Fatalf("failed refresh changed source credential: %s", data)
+			}
+		})
+	}
+}
+
+// The grant rotates the refresh token upstream, so a credential coop cannot use for THIS
+// turn is still the only working one that exists. Discarding it would leave a stored
+// credential that looks valid on disk and is refused by the provider — the one failure an
+// operator cannot diagnose locally. Persist first, judge second.
+func TestClaudeCredentialRenewalKeepsARotationItCannotUse(t *testing.T) {
+	for name, response := range map[string]claudeRefreshResponse{
+		// Renewed, but not far enough to cover the turn.
+		"short-lived": {
+			AccessToken: "renewed-access", RefreshToken: "rotated-refresh", ExpiresIn: 60,
+		},
+		// Renewed, but the grant came back without the scope projection requires.
+		"no-inference": {
+			AccessToken: "renewed-access", RefreshToken: "rotated-refresh",
+			ExpiresIn: int64(8 * time.Hour / time.Second), Scope: "user:profile",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(response)
+			}))
+			defer server.Close()
+			t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+			profile := t.TempDir()
+			path := filepath.Join(profile, ".credentials.json")
+			mustWrite(t, path, claudeCredentialJSON("expired-access", time.Now().Add(-time.Hour), "source-refresh"))
+			if err := renewClaudeCredential(profile, time.Now().Add(time.Hour)); err == nil {
+				t.Fatal("renewal reported success for a credential it cannot use")
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source, err := parseClaudeSourceCredential(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if source.RefreshToken != "rotated-refresh" {
+				t.Fatalf("discarded the rotated refresh token, stranding the login: %s", data)
+			}
+			if source.AccessToken != "renewed-access" {
+				t.Fatalf("discarded the renewed access token: %s", data)
+			}
+		})
+	}
+}
+
+func TestClaudeCredentialRenewalWithoutRefreshAuthorityNeedsSignIn(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+	t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+	profile := t.TempDir()
+	mustWrite(t, filepath.Join(profile, ".credentials.json"),
+		claudeCredentialJSON("expired-access", time.Now().Add(-time.Hour), ""))
+	err := renewClaudeCredential(profile, time.Now().Add(time.Hour))
+	if err == nil || !strings.Contains(err.Error(), "needs sign-in") {
+		t.Fatalf("renewal error = %v, want sign-in", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("refresh requests = %d, want 0", got)
+	}
+}
+
+func TestClaudeCredentialRenewalDoesNotFollowRedirects(t *testing.T) {
+	var redirectedRequests atomic.Int32
+	sink := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		redirectedRequests.Add(1)
+	}))
+	defer sink.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, sink.URL, http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+	_, err := requestClaudeCredentialRefresh("source-refresh", nil, time.Now().Add(time.Minute))
+	if err == nil || !strings.Contains(err.Error(), "HTTP 307") {
+		t.Fatalf("redirect error = %v, want HTTP 307", err)
+	}
+	if got := redirectedRequests.Load(); got != 0 {
+		t.Fatalf("redirect target requests = %d, want 0", got)
+	}
+}
+
+func TestClaudeCredentialRenewalRejectsUnsafeEndpoint(t *testing.T) {
+	t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", "http://credentials.example.com/v1/oauth/token")
+	_, err := requestClaudeCredentialRefresh("source-refresh", nil, time.Now().Add(time.Minute))
+	if err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("plaintext endpoint error = %v, want unsafe", err)
+	}
+}
+
+func TestClaudeCredentialRenewalRejectsSymlinkedSource(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+	t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+	profile := t.TempDir()
+	target := filepath.Join(t.TempDir(), ".credentials.json")
+	mustWrite(t, target, claudeCredentialJSON("expired-access", time.Now().Add(-time.Hour), "do-not-read"))
+	if err := os.Symlink(target, filepath.Join(profile, ".credentials.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mustLiveCredentials(t, claudeAgent{}).Prepare(profile, time.Now().Add(time.Hour)); err == nil {
+		t.Fatal("renewal accepted a symlinked source credential")
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("refresh requests = %d, want 0", got)
+	}
+}
+
+// A concurrent writer between read and persist must not be clobbered: the retry re-reads and
+// renews against what is actually on disk.
+func TestClaudeCredentialRenewalRetriesATornWrite(t *testing.T) {
+	profile := t.TempDir()
+	path := filepath.Join(profile, ".credentials.json")
+	mustWrite(t, path, claudeCredentialJSON("expired-access", time.Now().Add(-time.Hour), "source-refresh"))
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			// Land a competing write while this refresh is still in flight.
+			mustWrite(t, path, claudeCredentialJSON("other-access", time.Now().Add(-time.Hour), "other-refresh"))
+		}
+		_ = json.NewEncoder(w).Encode(claudeRefreshResponse{
+			AccessToken: "renewed-access", RefreshToken: "rotated-refresh",
+			ExpiresIn: int64(8 * time.Hour / time.Second),
+		})
+	}))
+	defer server.Close()
+	t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
+
+	if err := renewClaudeCredential(profile, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("renew credential: %v", err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("refresh requests = %d, want 2 (one discarded, one persisted)", got)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := parseClaudeSourceCredential(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.AccessToken != "renewed-access" || source.RefreshToken != "rotated-refresh" {
+		t.Fatalf("torn write was not retried cleanly: %s", data)
+	}
+}
+
 func TestGeminiCredentialEnvPrecedence(t *testing.T) {
 	gemini, _ := Get("gemini")
 	dir := t.TempDir()
