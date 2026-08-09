@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // The provider-attempt watchdog bounds SILENCE, not work: a built-in loop/review/preflight
@@ -15,7 +17,8 @@ import (
 // open foreground tool within the tool deadline. Only semantic stream events (streamActivity)
 // feed it — never process names, CPU, lease heartbeats, redraws, or raw bytes — so a wedged
 // provider is killed while long reasoning and a slow foreground gate survive.
-// No deadline by default: 0 disables that phase's clock entirely.
+// No deadline by default: 0 disables that phase's clock entirely — and with every phase disabled,
+// the attempt ceiling below is disabled with them.
 //
 // These clocks cannot tell LONG from WEDGED — they only measure silence — and killing a provider
 // that is genuinely working is expensive twice over: the answer is lost, and the loop then restarts
@@ -36,10 +39,45 @@ const (
 // loop's dedicated timeout policy: rotate to the next usable rung without cooling, capped at
 // maxProviderTimeouts consecutive timeouts per stage.
 const (
-	outcomeStartTimeout = "provider_start_timeout"
-	outcomeIdleTimeout  = "provider_idle_timeout"
-	outcomeToolTimeout  = "provider_tool_timeout"
+	outcomeStartTimeout   = "provider_start_timeout"
+	outcomeIdleTimeout    = "provider_idle_timeout"
+	outcomeToolTimeout    = "provider_tool_timeout"
+	outcomeAttemptTimeout = "provider_attempt_timeout"
 )
+
+// THE TRUST BOUNDARY: every phase deadline above is re-armed by events the BOX writes to its own
+// stdout — the box that holds the credential and runs the agent. Semantic validation (streamjson.go)
+// raises the bar to well-formed, content-bearing events, but it cannot make the stream honest: a
+// compromised or buggy box can print one valid-looking event per second forever and hold its
+// attempt — and the loop slot, the task lease, and the credential — indefinitely.
+//
+// The attempt ceiling is the one clock no event can touch: armed once at the runtime launch,
+// never re-armed, never derived from event math. 24× the LONGEST phase budget the operator chose,
+// because an attempt that has burned two dozen of its own worst-case silences without finishing is
+// not doing legitimate work, while a real iteration never comes close (they run in minutes; the
+// shipped-but-disabled phase values would put the ceiling at 48 hours).
+//
+// It is DERIVED, not configured, for two reasons: nothing — no env var, no conf file, no event —
+// can lengthen it, and it stays INERT while the phase deadlines are disabled (their default). With
+// no phase clock running there is no supervision to bypass, so coop's promise not to interrupt a
+// working provider stands exactly as before.
+const providerAttemptCeilingMultiple = 24
+
+// attemptCeiling is the absolute wall-clock bound for one provider attempt, or 0 when every phase
+// deadline is disabled.
+func attemptCeiling(d watchdogDeadlines) time.Duration {
+	longest := max(d.start, d.idle, d.tool)
+	if longest <= 0 {
+		return 0
+	}
+	return longest * providerAttemptCeilingMultiple
+}
+
+// maxOpenTools caps the foreground tools one attempt may hold open. Tool IDs come off the box's
+// stdout, so unique ones are free to forge and an uncapped map is host memory the box controls.
+// Far beyond any real provider's concurrency (a parallel Claude turn calls a handful of tools), so
+// a genuine run never reaches it.
+const maxOpenTools = 64
 
 // maxProviderTimeouts caps CONSECUTIVE provider-attempt timeouts. Timeouts keep their own
 // counter so they never consume the ordinary failure, stall, output, or rate-limit budgets.
@@ -47,7 +85,7 @@ const maxProviderTimeouts = 3
 
 func isProviderTimeout(outcome string) bool {
 	switch outcome {
-	case outcomeStartTimeout, outcomeIdleTimeout, outcomeToolTimeout:
+	case outcomeStartTimeout, outcomeIdleTimeout, outcomeToolTimeout, outcomeAttemptTimeout:
 		return true
 	}
 	return false
@@ -57,29 +95,70 @@ type watchdogDeadlines struct {
 	start, idle, tool time.Duration
 }
 
-// watchdogDeadlinesFor resolves the fixed conservative defaults, honoring the internal
-// COOP_PROVIDER_TIMEOUTS override ("start=2s,idle=3s,tool=6s"). The override exists so
-// deterministic fixture tests can shorten the deadlines — it is not a user knob, and any
-// malformed field keeps every default rather than half-applying.
+// minWatchdogDeadline floors every overridden deadline. Under a second a deadline stops being
+// supervision and becomes a coin flip — one slow container read, a GC pause, or the CLI's own
+// startup outruns it and a healthy provider dies at launch. The override is an internal knob, so a
+// value that small is a mistake rather than a preference: it is raised, and said out loud.
+const minWatchdogDeadline = time.Second
+
+// watchdogOverrideAnnounced keeps the override's diagnostics to one telling per process. The knob
+// is per-config, not per-attempt, so repeating it on every iteration would be noise — but saying
+// it zero times is how a run ends up supervised by numbers nobody chose.
+var watchdogOverrideAnnounced sync.Once
+
+// watchdogDeadlinesFor resolves the deadlines one attempt is supervised by: the fixed conservative
+// defaults, narrowed by the internal COOP_PROVIDER_TIMEOUTS override, and announced on stderr when
+// the override changes anything.
 func watchdogDeadlinesFor(cfg *config.Config) watchdogDeadlines {
 	defaults := watchdogDeadlines{
 		start: providerStartDeadline, idle: providerIdleDeadline, tool: providerToolDeadline,
 	}
-	raw := strings.TrimSpace(cfg.ProviderTimeouts)
+	deadlines, diagnostics := resolveWatchdogDeadlines(defaults, cfg.ProviderTimeouts)
+	if len(diagnostics) > 0 {
+		watchdogOverrideAnnounced.Do(func() {
+			for _, diagnostic := range diagnostics {
+				ui.Warn("%s", diagnostic)
+			}
+		})
+	}
+	return deadlines
+}
+
+// resolveWatchdogDeadlines applies the internal COOP_PROVIDER_TIMEOUTS override
+// ("start=2s,idle=3s,tool=6s") to the given defaults and returns the deadlines to supervise with
+// plus the diagnostics the caller must print. It takes its defaults as an argument so the policy is
+// testable against ARMED production values while the shipped ones are still disabled.
+//
+// The override exists so deterministic fixture tests can supervise in seconds where production
+// wants minutes. It is therefore allowed to SHORTEN supervision and nothing else: an override that
+// could lengthen a deadline would be a supported way to disable the bound coop advertises,
+// reachable by anything that can set an environment variable or write the conf file — including the
+// box, if it ever reached one. A disabled default (0) counts as infinite, so any finite value
+// shortens it. A malformed field keeps every default rather than half-applying, and every
+// deviation — clamp or rejection — is named on stderr, because a supervision bound the operator
+// did not choose and cannot see is worse than none.
+func resolveWatchdogDeadlines(defaults watchdogDeadlines, raw string) (watchdogDeadlines, []string) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return defaults
+		return defaults, nil
 	}
 	parsed := defaults
+	named := map[string]bool{}
 	for _, field := range strings.Split(raw, ",") {
-		key, value, ok := strings.Cut(strings.TrimSpace(field), "=")
+		field = strings.TrimSpace(field)
+		key, value, ok := strings.Cut(field, "=")
 		if !ok {
-			return defaults
+			return defaults, []string{rejectedOverride(field, "expected <phase>=<duration>")}
 		}
 		dur, err := time.ParseDuration(strings.TrimSpace(value))
-		if err != nil || dur <= 0 {
-			return defaults
+		if err != nil {
+			return defaults, []string{rejectedOverride(field, "unparsable duration")}
 		}
-		switch strings.TrimSpace(key) {
+		if dur <= 0 {
+			return defaults, []string{rejectedOverride(field, "a deadline must be positive")}
+		}
+		key = strings.TrimSpace(key)
+		switch key {
 		case "start":
 			parsed.start = dur
 		case "idle":
@@ -87,21 +166,67 @@ func watchdogDeadlinesFor(cfg *config.Config) watchdogDeadlines {
 		case "tool":
 			parsed.tool = dur
 		default:
-			return defaults
+			return defaults, []string{rejectedOverride(field, "unknown phase")}
 		}
+		named[key] = true
 	}
-	return parsed
+	// Only a phase the override actually named is clamped. An untouched default is coop's own
+	// value and stays exactly as shipped — including the disabled 0 that the floor would otherwise
+	// "raise" into a live deadline nobody asked for.
+	var diagnostics []string
+	clamp := func(phase string, value, def time.Duration) time.Duration {
+		if !named[phase] {
+			return value
+		}
+		value, diagnostics = clampOverriddenDeadline(phase, value, def, diagnostics)
+		return value
+	}
+	parsed.start = clamp("start", parsed.start, defaults.start)
+	parsed.idle = clamp("idle", parsed.idle, defaults.idle)
+	parsed.tool = clamp("tool", parsed.tool, defaults.tool)
+	announced := fmt.Sprintf("provider watchdog deadlines overridden by COOP_PROVIDER_TIMEOUTS (internal knob; it may only shorten supervision): start=%s idle=%s tool=%s attempt ceiling=%s",
+		overrideDuration(parsed.start), overrideDuration(parsed.idle), overrideDuration(parsed.tool), overrideDuration(attemptCeiling(parsed)))
+	return parsed, append([]string{announced}, diagnostics...)
 }
 
-// watchdogTimer is the one armable deadline the watchdog holds — time.AfterFunc in
-// production, a hand-fired fake in tests.
+// clampOverriddenDeadline enforces the two bounds an override may not cross, floor first so the
+// "never longer than the default" half always wins the tie.
+func clampOverriddenDeadline(phase string, value, def time.Duration, diagnostics []string) (time.Duration, []string) {
+	if value < minWatchdogDeadline {
+		diagnostics = append(diagnostics, fmt.Sprintf("COOP_PROVIDER_TIMEOUTS %s=%s raised to %s — a shorter deadline kills healthy providers instead of supervising them",
+			phase, value, minWatchdogDeadline))
+		value = minWatchdogDeadline
+	}
+	if def > 0 && value > def {
+		diagnostics = append(diagnostics, fmt.Sprintf("COOP_PROVIDER_TIMEOUTS %s=%s cut to the built-in %s — the override may only shorten supervision",
+			phase, value, def))
+		value = def
+	}
+	return value, diagnostics
+}
+
+func rejectedOverride(field, why string) string {
+	return fmt.Sprintf("COOP_PROVIDER_TIMEOUTS ignored (%q: %s) — supervising with the built-in deadlines", field, why)
+}
+
+// overrideDuration renders a deadline for the announcement, naming 0 as what it means.
+func overrideDuration(d time.Duration) string {
+	if d <= 0 {
+		return "disabled"
+	}
+	return d.String()
+}
+
+// watchdogTimer is an armed deadline the watchdog holds — the current phase's, or the attempt
+// ceiling's. time.AfterFunc in production, a hand-fired fake in tests.
 type watchdogTimer interface{ Stop() bool }
 
 // providerWatchdog supervises one provider attempt. It is the decoder's streamActivity sink:
 // each recognized event re-arms the single deadline for the current phase (start → idle, with
 // idle suspended while foreground tools are open and the oldest open tool absolutely capped).
-// When a deadline fires it records the timeout outcome once and cancels the child box context;
-// stop() ends supervision the moment box.Run returns, so nothing can fire afterwards.
+// Alongside it runs the one deadline events cannot reach, the attempt ceiling. When either fires
+// it records the timeout outcome once and cancels the child box context; stop() ends supervision
+// the moment box.Run returns, so nothing can fire afterwards.
 //
 // It is born UNARMED: no clock runs until armStart, which box.Run fires at the runtime-launch
 // boundary. Host setup before that boundary is coop's own work, not provider silence.
@@ -113,6 +238,7 @@ type providerWatchdog struct {
 	after    func(time.Duration, func()) watchdogTimer
 
 	timer      watchdogTimer
+	ceiling    watchdogTimer
 	gen        uint64
 	openTools  map[string]time.Time
 	toolOrder  []string
@@ -120,6 +246,11 @@ type providerWatchdog struct {
 	stopped    bool
 	fired      string
 }
+
+// ceilingGen is the generation the attempt ceiling fires under. arm increments gen before every
+// phase timer, so a phase deadline is never generation 0 — which makes 0 the one generation no
+// re-arm can retire, exactly what a non-resettable ceiling needs.
+const ceilingGen uint64 = 0
 
 func newProviderWatchdog(deadline watchdogDeadlines, cancel func()) *providerWatchdog {
 	return newProviderWatchdogWith(deadline, cancel, time.Now, func(d time.Duration, fn func()) watchdogTimer {
@@ -144,14 +275,21 @@ func newProviderWatchdogWith(deadline watchdogDeadlines, cancel func(), now func
 func (w *providerWatchdog) armStart() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.startArmed {
+	if w.startArmed || w.stopped || w.fired != "" {
 		return
 	}
 	w.startArmed = true
+	// The launch boundary is also where the attempt ceiling starts, and the only place it is ever
+	// touched: it is deliberately NOT routed through arm, so no event, phase change, or re-arm can
+	// replace or extend it. Only stop() — box.Run returning — retires it.
+	if ceiling := attemptCeiling(w.deadline); ceiling > 0 {
+		w.ceiling = w.after(ceiling, func() { w.fire(ceilingGen, outcomeAttemptTimeout) })
+	}
 	w.arm(w.deadline.start, outcomeStartTimeout)
 }
 
-// arm replaces the active deadline. The caller holds mu; the generation guard makes a
+// arm replaces the active PHASE deadline — never the attempt ceiling, which is armed once by
+// armStart and routed nowhere near here. The caller holds mu; the generation guard makes a
 // concurrently-firing stale timer a no-op.
 func (w *providerWatchdog) arm(d time.Duration, outcome string) {
 	if w.stopped || w.fired != "" {
@@ -177,7 +315,10 @@ func (w *providerWatchdog) arm(d time.Duration, outcome string) {
 
 func (w *providerWatchdog) fire(gen uint64, outcome string) {
 	w.mu.Lock()
-	if w.stopped || w.fired != "" || gen != w.gen {
+	// The ceiling (gen 0) belongs to no phase, so it skips the generation guard: every other timer
+	// is stale the moment activity re-arms its phase, and the ceiling is stale only when the
+	// attempt is over.
+	if w.stopped || w.fired != "" || (gen != ceilingGen && gen != w.gen) {
 		w.mu.Unlock()
 		return
 	}
@@ -199,6 +340,10 @@ func (w *providerWatchdog) stop() {
 	if w.timer != nil {
 		w.timer.Stop()
 		w.timer = nil
+	}
+	if w.ceiling != nil {
+		w.ceiling.Stop()
+		w.ceiling = nil
 	}
 }
 
@@ -225,17 +370,25 @@ func (w *providerWatchdog) progress() {
 
 // toolStart opens a foreground tool: the ordinary idle deadline is suspended while any tool is
 // open, and the OLDEST open tool is capped absolutely so a wedged child cannot hold the
-// attempt forever. An ID-less start is indistinguishable from plain progress.
+// attempt forever.
+//
+// Two things fail closed here. An ID-less start proves nothing this watchdog can act on — it can
+// never be paired with an end, so it would suspend idle with no way to resume — and the decoders
+// already reject it, so it is dropped rather than counted as progress. Past maxOpenTools the
+// overflow is dropped too, and deliberately NOT by evicting the oldest: evicting re-anchors the
+// absolute cap to a younger tool, which would sell the box an endless extension for one forged
+// start per interval. Dropping costs nothing — idle stays suspended while any tool is open, and
+// the oldest survivor keeps carrying the cap.
 func (w *providerWatchdog) toolStart(id string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if id == "" {
-		if len(w.openTools) == 0 {
-			w.arm(w.deadline.idle, outcomeIdleTimeout)
-		}
 		return
 	}
 	if _, open := w.openTools[id]; open {
+		return
+	}
+	if len(w.openTools) >= maxOpenTools {
 		return
 	}
 	w.openTools[id] = w.now()
@@ -246,11 +399,15 @@ func (w *providerWatchdog) toolStart(id string) {
 }
 
 // toolEnd closes an open tool. When the last tool closes the idle deadline resumes from now;
-// when the oldest closes the cap re-anchors to the next-oldest survivor. A result for a tool
-// that was never seen still proves the provider is alive, so it counts as progress.
+// when the oldest closes the cap re-anchors to the next-oldest survivor. A result for a tool that
+// was never seen — a start we dropped at the cap, or one from before this stream — still proves
+// the provider is alive, so it counts as progress; with other tools still open it changes nothing.
 func (w *providerWatchdog) toolEnd(id string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if id == "" {
+		return
+	}
 	if _, open := w.openTools[id]; !open {
 		if len(w.openTools) == 0 {
 			w.arm(w.deadline.idle, outcomeIdleTimeout)
@@ -266,8 +423,22 @@ func (w *providerWatchdog) toolEnd(id string) {
 		return
 	}
 	if wasOldest {
-		w.arm(w.openTools[w.toolOrder[0]].Add(w.deadline.tool).Sub(w.now()), outcomeToolTimeout)
+		w.armToolCap()
 	}
+}
+
+// armToolCap re-anchors the absolute cap on the oldest surviving open tool, for whatever is left
+// of its budget. A survivor whose budget is already spent gets the smallest positive deadline
+// rather than none: arm reads a non-positive duration as "this phase is disabled", which is right
+// for a deadline the operator set to 0 and exactly wrong for a budget that ran out. The caller
+// holds mu.
+func (w *providerWatchdog) armToolCap() {
+	if w.deadline.tool <= 0 {
+		w.arm(0, outcomeToolTimeout) // disabled phase: no clock at all
+		return
+	}
+	remaining := w.openTools[w.toolOrder[0]].Add(w.deadline.tool).Sub(w.now())
+	w.arm(max(remaining, time.Nanosecond), outcomeToolTimeout)
 }
 
 // terminal is the provider's closing event (result / turn.completed / end). It counts as

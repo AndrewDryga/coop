@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -101,6 +102,131 @@ func TestGrokStreamActivity(t *testing.T) {
 	want := []string{"progress", "progress", "terminal"}
 	if !slices.Equal(rec.events, want) {
 		t.Errorf("grok activity = %v, want %v", rec.events, want)
+	}
+}
+
+// Every provider's EMPTY-but-recognized envelopes. Each one parses, carries a type the adapter
+// knows, and proves nothing: no content, no ID, nothing that can be paired or shown. Coming off
+// the box's own stdout they are the cheapest possible deadline reset, so none of them may produce
+// activity. (Bootstrap and terminal events are absent on purpose: bootstrap arms no clock at all,
+// and a terminal event ends the attempt rather than extending it.)
+func TestEmptyRecognizedEnvelopesNeverResetActivity(t *testing.T) {
+	var out, tail bytes.Buffer
+	cases := []struct {
+		name    string
+		decoder iterationStreamDecoder
+		lines   []string
+	}{
+		{"claude", newStreamDecoder(&out, &tail, "claude", "", ""), []string{
+			`{"type":"assistant"}`,
+			`{"type":"assistant","message":{}}`,
+			`{"type":"assistant","message":{"content":[]}}`,
+			`{"type":"assistant","message":{"content":[{}]}}`,
+			`{"type":"assistant","message":{"content":[{"type":"text","text":""}]}}`,
+			`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":""}]}}`,
+			`{"type":"assistant","message":{"content":[{"type":"tool_use"}]}}`,
+			`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1"}]}}`,
+			`{"type":"user","message":{"content":[{"type":"tool_result"}]}}`,
+			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":true}]}}`,
+		}},
+		{"codex", newCodexStreamDecoder(&out, &tail, "codex", "", "", "m"), []string{
+			`{"type":"item.started","item":{}}`,
+			`{"type":"item.started","item":{"type":"reasoning"}}`,
+			`{"type":"item.started","item":{"type":"command_execution","command":"make check"}}`,
+			`{"type":"item.updated","item":{"type":"agent_message"}}`,
+			`{"type":"item.completed","item":{"type":"agent_message","text":"done"}}`,
+			`{"type":"item.completed","item":{"type":"mcp_tool_call"}}`,
+		}},
+		{"gemini", newGeminiStreamDecoder(&out, &tail, "gemini", "", "", "m"), []string{
+			`{"type":"message","role":"assistant"}`,
+			`{"type":"message","role":"assistant","content":""}`,
+			`{"type":"tool_use"}`,
+			`{"type":"tool_use","tool_name":"run_shell_command","parameters":{"command":"make check"}}`,
+			`{"type":"tool_result"}`,
+			`{"type":"tool_result","status":"success"}`,
+		}},
+		{"grok", newGrokStreamDecoder(&out, &tail, "grok", "", "", "m"), []string{
+			`{"type":"thought"}`,
+			`{"type":"thought","data":""}`,
+			`{"type":"text"}`,
+			`{"type":"text","data":""}`,
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := &activityRecorder{}
+			feedActivityLines(t, c.decoder, rec, c.lines)
+			if len(rec.events) != 0 {
+				t.Errorf("empty %s envelopes produced activity: %v", c.name, rec.events)
+			}
+		})
+	}
+}
+
+// IDs come off the box's stdout, so unique ones are free to invent. A forged flood IS accepted as
+// activity — content-bearing events are indistinguishable from honest ones, which is exactly why
+// the watchdog carries a non-resettable attempt ceiling — but it may not grow the host's
+// per-attempt state past the cap while doing it.
+func TestForgedStreamIDsCannotGrowDecoderState(t *testing.T) {
+	const forged = 5_000
+	var out, tail bytes.Buffer
+	claude := newStreamDecoder(&out, &tail, "claude", "", "")
+	codexTools := newCodexStreamDecoder(&out, &tail, "codex", "", "", "m")
+	codexShown := newCodexStreamDecoder(&out, &tail, "codex", "", "", "m")
+	gemini := newGeminiStreamDecoder(&out, &tail, "gemini", "", "", "m")
+	cases := []struct {
+		name    string
+		decoder iterationStreamDecoder
+		line    func(i int) string
+		tracked func() int
+	}{
+		{"claude tool_use", claude, func(i int) string {
+			return fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"forged-%d","name":"Bash","input":{"command":"make check"}}]}}`, i)
+		}, func() int { return len(claude.tool.byID) }},
+		{"codex command_execution", codexTools, func(i int) string {
+			return fmt.Sprintf(`{"type":"item.started","item":{"id":"forged-%d","type":"command_execution","command":"make check"}}`, i)
+		}, func() int { return len(codexTools.tool.byID) }},
+		{"codex web_search", codexShown, func(i int) string {
+			return fmt.Sprintf(`{"type":"item.started","item":{"id":"forged-%d","type":"web_search","query":"q"}}`, i)
+		}, func() int { return len(codexShown.shown.byID) }},
+		{"gemini tool_use", gemini, func(i int) string {
+			return fmt.Sprintf(`{"type":"tool_use","tool_name":"run_shell_command","tool_id":"forged-%d","parameters":{"command":"make check"}}`, i)
+		}, func() int { return len(gemini.tool.byID) }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := &activityRecorder{}
+			c.decoder.setActivity(rec)
+			for i := range forged {
+				_, _ = c.decoder.Write([]byte(c.line(i) + "\n"))
+			}
+			c.decoder.flush()
+			if got := c.tracked(); got > maxStreamTrackedIDs {
+				t.Errorf("%d forged IDs grew tracked state to %d, want at most %d", forged, got, maxStreamTrackedIDs)
+			}
+			if len(rec.events) < forged {
+				t.Errorf("forged flood produced %d activity events, want at least %d — this test's whole point is that validation does NOT stop forgery", len(rec.events), forged)
+			}
+		})
+	}
+}
+
+// A well-formed stream must not leak either: every tool that reports its result is forgotten, so
+// a long attempt's tracked state tracks OPEN tools, not the tools it has ever run.
+func TestCompletedToolsLeaveNoDecoderState(t *testing.T) {
+	var out, tail bytes.Buffer
+	claude := newStreamDecoder(&out, &tail, "claude", "", "")
+	rec := &activityRecorder{}
+	claude.setActivity(rec)
+	var lines []string
+	for i := range 1_000 {
+		lines = append(lines,
+			fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t%d","name":"Bash","input":{"command":"make check"}}]}}`, i),
+			fmt.Sprintf(`{"type":"user","message":{"content":[{"tool_use_id":"t%d","type":"tool_result","content":"ok"}]}}`, i))
+	}
+	feedActivityLines(t, claude, rec, lines)
+	if len(claude.tool.byID) != 0 {
+		t.Errorf("1000 completed tools left %d labels behind", len(claude.tool.byID))
 	}
 }
 

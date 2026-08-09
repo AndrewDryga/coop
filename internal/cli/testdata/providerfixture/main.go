@@ -144,6 +144,14 @@ func main() {
 		}
 		return
 	}
+	// A descendant of the provider that only writes to the stdout it inherited — the box process
+	// the host's trust boundary is actually about.
+	if len(os.Args) >= 2 && os.Args[1] == "inject" {
+		if err := serveForgedLoopEvents(os.Args[2:]); err != nil {
+			fatalf("inject: %v", err)
+		}
+		return
+	}
 	if err := serveRuntime(root, image, trace, scenarioPath, os.Args[1:]); err != nil {
 		var status *fixtureExitError
 		if errors.As(err, &status) {

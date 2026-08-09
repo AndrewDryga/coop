@@ -4,6 +4,29 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The provider watchdog now treats the stream it supervises as what it is: untrusted input from
+  the box.** Those bytes arrive on the stdout of the container that holds the credential and runs
+  the agent, and any process in there that reaches that descriptor can write provider-shaped
+  events — so "the adapter recognized this event type" was never the same thing as "the model did
+  something". Three things changed. **Empty envelopes stopped counting:** an assistant turn with no
+  content, a Codex item with no id, a Gemini delta with no text, a Grok event with no data — each
+  parsed, each named a type coop knows, and each bought a free deadline reset. An event now has to
+  carry the fields that make it mean something, and a tool only suspends the idle deadline when it
+  names both the tool and the id its result will arrive under. **Per-attempt state stopped growing
+  with invented ids:** open tools are capped at 64 and decoder labels at 256, with the overflow
+  dropped rather than evicted — evicting the oldest open tool would re-anchor the absolute tool cap
+  to a younger one, which is exactly the endless extension the cap exists to prevent. **And the
+  honest part:** none of that makes a stream truthful, because a forged event that carries content
+  is indistinguishable from a real one. So the watchdog now also runs one clock no event can touch
+  — a non-resettable attempt ceiling, armed once at the runtime launch, 24× the longest deadline
+  the operator armed, reported as `provider_attempt_timeout` and retried under the same
+  three-in-a-row cap as the rest. It is derived rather than configured, so nothing can lengthen it;
+  the deadlines still default to disabled, so it does not run at all today. Separately, the
+  internal `COOP_PROVIDER_TIMEOUTS` override may now only SHORTEN supervision, never lengthen it
+  past what coop ships, never set a sub-second deadline that kills healthy providers at launch —
+  and it says on stderr exactly what it clamped and why, because a bound nobody chose and nobody
+  can see is worse than none.
+
 - **A slow box startup is no longer charged to the provider as silence.** The provider-attempt
   watchdog armed its start deadline before `box.Run` — but `box.Run` does substantial host work
   first: projecting the repo and every generated mount, bringing sibling services up, inspecting

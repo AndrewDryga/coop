@@ -283,17 +283,14 @@ type codexStreamDecoder struct {
 	profile string
 	root    string
 	model   string
-	tool    map[string]string
-	shown   map[string]struct{}
+	tool    boundedLabels
+	shown   boundedLabels
 	last    *iterResult
 	failed  bool
 }
 
 func newCodexStreamDecoder(out, tail io.Writer, agent, profile, root, model string) *codexStreamDecoder {
-	d := &codexStreamDecoder{
-		agent: agent, profile: profile, root: root, model: model,
-		tool: map[string]string{}, shown: map[string]struct{}{},
-	}
+	d := &codexStreamDecoder{agent: agent, profile: profile, root: root, model: model}
 	d.ndjsonDecoder = newNDJSONDecoder(out, tail, d.event)
 	return d
 }
@@ -314,7 +311,7 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 		d.noteItemActivity(ev.Item, true)
 		d.itemStarted(ev.Item)
 	case "item.updated":
-		if codexRecognizedItem(ev.Item.Type) {
+		if codexActivityItem(ev.Item) {
 			d.noteProgress()
 		}
 	case "item.completed":
@@ -371,8 +368,17 @@ func codexBlockingItem(kind string) bool {
 	return false
 }
 
+// codexActivityItem reports whether one item is semantic activity: a recognized kind AND the id
+// the codex schema keys every lifecycle event on. An id-less item is not a half-event to be
+// generous about — `{"item":{"type":"reasoning"}}` is the empty envelope an untrusted stream would
+// use for a free deadline reset, and an id-less start could never be paired with the completion
+// that resumes the idle deadline it suspended.
+func codexActivityItem(item codexStreamItem) bool {
+	return codexRecognizedItem(item.Type) && item.ID != ""
+}
+
 func (d *codexStreamDecoder) noteItemActivity(item codexStreamItem, started bool) {
-	if !codexRecognizedItem(item.Type) {
+	if !codexActivityItem(item) {
 		return
 	}
 	if codexBlockingItem(item.Type) {
@@ -391,7 +397,7 @@ func (d *codexStreamDecoder) itemStarted(item codexStreamItem) {
 	case "command_execution":
 		label := streamCommandLabel(item.Command)
 		d.emit(d.streamToolLine("⚙", label, false))
-		d.tool[item.ID] = label
+		d.tool.set(item.ID, label)
 	case "web_search":
 		d.showItem(item, "⌕", codexWebSearchLabel(item.Query))
 	case "collab_tool_call":
@@ -408,11 +414,10 @@ func (d *codexStreamDecoder) itemCompleted(item codexStreamItem) {
 			d.toTail(text)
 		}
 	case "command_execution":
-		defer delete(d.tool, item.ID)
+		label := d.tool.take(item.ID)
 		if item.ExitCode == nil || *item.ExitCode == 0 {
 			return
 		}
-		label := d.tool[item.ID]
 		if label == "" {
 			label = streamCommandLabel(item.Command)
 		}
@@ -446,11 +451,9 @@ func (d *codexStreamDecoder) fileChange(item codexStreamItem) {
 }
 
 func (d *codexStreamDecoder) showItem(item codexStreamItem, glyph, label string) {
-	key := item.Type + "\x00" + item.ID
-	if _, ok := d.shown[key]; ok {
+	if !d.shown.mark(item.Type + "\x00" + item.ID) {
 		return
 	}
-	d.shown[key] = struct{}{}
 	d.emit(d.streamToolLine(glyph, label, false))
 }
 
@@ -547,16 +550,13 @@ type geminiStreamDecoder struct {
 	root      string
 	model     string
 	assistant boundedNarration
-	tool      map[string]string
+	tool      boundedLabels
 	last      *iterResult
 	failed    bool
 }
 
 func newGeminiStreamDecoder(out, tail io.Writer, agent, profile, root, model string) *geminiStreamDecoder {
-	d := &geminiStreamDecoder{
-		agent: agent, profile: profile, root: root, model: model,
-		tool: map[string]string{},
-	}
+	d := &geminiStreamDecoder{agent: agent, profile: profile, root: root, model: model}
 	d.ndjsonDecoder = newNDJSONDecoder(out, tail, d.event)
 	d.ndjsonDecoder.beforeRaw = d.flushAssistant
 	return d
@@ -578,7 +578,11 @@ func (d *geminiStreamDecoder) event(raw json.RawMessage) {
 	case "message":
 		switch ev.Role {
 		case "assistant":
-			d.noteProgress()
+			// Gemini streams narration as deltas, so the delta's own text is the whole proof of
+			// model action: a contentless assistant message is an empty envelope, not a turn.
+			if ev.Content != "" {
+				d.noteProgress()
+			}
 			d.assistant.WriteString(ev.Content)
 		case "user":
 			// Gemini echoes the whole prompt as a user message; it is intentionally suppressed —
@@ -588,10 +592,16 @@ func (d *geminiStreamDecoder) event(raw json.RawMessage) {
 			d.emit(ui.Dim("· " + role))
 		}
 	case "tool_use":
-		d.noteToolStart(ev.ToolID)
+		// tool_id is the handle the matching tool_result arrives under; without it the pair cannot
+		// be closed, so the event is shown but suspends no deadline.
+		if ev.ToolID != "" {
+			d.noteToolStart(ev.ToolID)
+		}
 		d.toolUse(&ev)
 	case "tool_result":
-		d.noteToolEnd(ev.ToolID)
+		if ev.ToolID != "" {
+			d.noteToolEnd(ev.ToolID)
+		}
 		d.toolResult(&ev)
 	case "result":
 		d.noteTerminal()
@@ -645,7 +655,7 @@ func (d *geminiStreamDecoder) toolUse(ev *geminiStreamEvent) {
 		line = ui.Dim("· " + strings.TrimSpace(name+" "+label))
 	}
 	d.emit(line)
-	d.tool[ev.ToolID] = strings.TrimSpace(name + " " + label)
+	d.tool.set(ev.ToolID, strings.TrimSpace(name+" "+label))
 }
 
 func (d *geminiStreamDecoder) fileToolLine(glyph, path string) (label, line string) {
@@ -654,7 +664,7 @@ func (d *geminiStreamDecoder) fileToolLine(glyph, path string) (label, line stri
 }
 
 func (d *geminiStreamDecoder) toolResult(ev *geminiStreamEvent) {
-	defer delete(d.tool, ev.ToolID)
+	label := d.tool.take(ev.ToolID)
 	if ev.Status == "success" {
 		return
 	}
@@ -662,7 +672,7 @@ func (d *geminiStreamDecoder) toolResult(ev *geminiStreamEvent) {
 	if output == "" {
 		output = jsonEventMessage(ev.Error)
 	}
-	d.emit(d.streamFailureLine(d.tool[ev.ToolID], "", firstLine(output), 0))
+	d.emit(d.streamFailureLine(label, "", firstLine(output), 0))
 }
 
 func (d *geminiStreamDecoder) result(ev *geminiStreamEvent) {
@@ -764,9 +774,15 @@ func (d *grokStreamDecoder) event(raw json.RawMessage) {
 	}
 	switch ev.Type {
 	case "thought":
-		d.noteProgress() // hidden reasoning is still model action
+		// Grok streams both narration and reasoning as deltas carried in `data`, so an empty delta
+		// is an empty envelope: hidden reasoning is still model action, but only if there is any.
+		if ev.Data != "" {
+			d.noteProgress()
+		}
 	case "text":
-		d.noteProgress()
+		if ev.Data != "" {
+			d.noteProgress()
+		}
 		d.text.WriteString(ev.Data)
 	case "end":
 		d.noteTerminal()

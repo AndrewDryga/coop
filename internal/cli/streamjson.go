@@ -29,20 +29,20 @@ const llmIcon = "✦"
 // reach neither tail because they are the agent's own work and may contain misleading markers.
 type streamDecoder struct {
 	*ndjsonDecoder
-	agent      string            // the agent whose stream this is (e.g. claude), for the model line
-	profile    string            // the credential profile in play, for the model line
-	root       string            // the repo's in-box mount; tool paths show relative to it (empty = off)
-	tool       map[string]string // tool_use id → label, to name a failed tool_result
-	last       *iterResult       // the last result event's cost/turns/tokens, for the loop's telemetry
-	failed     bool              // a valid terminal error event landed
-	limitShown bool              // a blocking structured limit already owns the visible notice
+	agent      string        // the agent whose stream this is (e.g. claude), for the model line
+	profile    string        // the credential profile in play, for the model line
+	root       string        // the repo's in-box mount; tool paths show relative to it (empty = off)
+	tool       boundedLabels // tool_use id → label, to name a failed tool_result
+	last       *iterResult   // the last result event's cost/turns/tokens, for the loop's telemetry
+	failed     bool          // a valid terminal error event landed
+	limitShown bool          // a blocking structured limit already owns the visible notice
 	// Claude can end an exhausted model-credit run with only this exact assistant notice and a
 	// nonzero exit. Keep it provisional until runIteration proves the stream ended incomplete.
 	terminalLimitNotice string
 }
 
 func newStreamDecoder(out, tail io.Writer, agent, profile, root string) *streamDecoder {
-	d := &streamDecoder{agent: agent, profile: profile, root: root, tool: map[string]string{}}
+	d := &streamDecoder{agent: agent, profile: profile, root: root}
 	d.ndjsonDecoder = newNDJSONDecoder(out, tail, d.event)
 	return d
 }
@@ -58,11 +58,20 @@ type iterationStreamDecoder interface {
 	setDisplayWidth(func() int)
 }
 
-// streamActivity receives the host-trusted semantic activity one provider attempt proves. Only
-// valid adapter-recognized events reach it: CLI bootstrap, model progress (assistant text,
-// reasoning, or a recognized stream item), foreground tool lifecycle under the provider's own
-// IDs, and the terminal event. Malformed, unknown, raw, or repaint-only output never lands
-// here, so the provider watchdog can trust every callback.
+// streamActivity receives the semantic activity one provider attempt proves. Only valid
+// adapter-recognized events reach it: CLI bootstrap, model progress (assistant text, reasoning, or
+// a recognized stream item), foreground tool lifecycle under the provider's own IDs, and the
+// terminal event. Malformed, unknown, raw, or repaint-only output never lands here.
+//
+// Recognition is not enough on its own: every event must also carry the fields that make it MEAN
+// something — nonempty content for a content event, the provider's own id for a lifecycle event.
+// A schema-valid but empty envelope is precisely what a hostile stream would send for a free
+// deadline reset, so each decoder rejects its own provider's version of one.
+//
+// What this cannot do is make the stream honest. These bytes are the box's stdout — the box that
+// holds the credential and runs the agent — so anything in it that reaches that descriptor can
+// forge content-bearing events all day. Validation raises the price of a reset; the watchdog's
+// non-resettable attempt ceiling is what actually bounds a lying stream.
 type streamActivity interface {
 	bootstrap()
 	progress()
@@ -143,9 +152,57 @@ type ndjsonDecoder struct {
 const (
 	maxStreamEventBytes     = 1 << 20
 	maxStreamNarrationBytes = 64 << 10
-	streamToolTextWidth     = 60
-	streamErrorTextWidth    = 80
+	// maxStreamTrackedIDs bounds every per-attempt map keyed by a PROVIDER-SUPPLIED id — tool
+	// labels, shown-once markers. Those ids arrive on the box's own stdout, so unique ones are free
+	// to forge, and an uncapped map is host memory the box decides the size of. Past the cap a new
+	// id is simply not tracked: a failing tool can lose its label, a show-once line can print
+	// twice. That costs display fidelity in a stream that is already lying, and nothing else.
+	maxStreamTrackedIDs  = 256
+	streamToolTextWidth  = 60
+	streamErrorTextWidth = 80
 )
+
+// boundedLabels maps a provider-supplied id to its display label under a hard entry cap. Every
+// decoder holds one instead of a bare map, so no stream can grow host memory by inventing ids.
+type boundedLabels struct{ byID map[string]string }
+
+func (b *boundedLabels) set(id, label string) {
+	if id == "" {
+		return
+	}
+	if _, tracked := b.byID[id]; !tracked && len(b.byID) >= maxStreamTrackedIDs {
+		return
+	}
+	if b.byID == nil {
+		b.byID = map[string]string{}
+	}
+	b.byID[id] = label
+}
+
+// take returns id's label and forgets it. A tool that reported its result is over; the entry that
+// outlives it is the leak, and every caller reads a label exactly once — at the result.
+func (b *boundedLabels) take(id string) string {
+	label := b.byID[id]
+	delete(b.byID, id)
+	return label
+}
+
+// mark records id and reports whether it was new — the "show this item exactly once" seam for
+// streams that describe the same item at start and at completion. At the cap every id reads as
+// new, so the display repeats instead of the host growing.
+func (b *boundedLabels) mark(id string) bool {
+	if _, seen := b.byID[id]; seen {
+		return false
+	}
+	if len(b.byID) >= maxStreamTrackedIDs {
+		return true
+	}
+	if b.byID == nil {
+		b.byID = map[string]string{}
+	}
+	b.byID[id] = ""
+	return true
+}
 
 func newNDJSONDecoder(out, tail io.Writer, event func(json.RawMessage)) *ndjsonDecoder {
 	return &ndjsonDecoder{out: out, tail: tail, event: event}
@@ -478,7 +535,9 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 	if json.Unmarshal(msg, &m) != nil {
 		return
 	}
-	d.noteProgress() // a decoded assistant turn — text, thinking, or tool calls — is model action
+	if streamTurnHasContent(m) {
+		d.noteProgress() // a decoded assistant turn — text, thinking, or tool calls — is model action
+	}
 	d.terminalLimitNotice = ""
 	for _, b := range m.Content {
 		switch b.Type {
@@ -498,10 +557,32 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 			glyph, displayName, label, outside := toolDisplay(d.root, b.Name, b.Input)
 			// An outside path keeps its warning and yellow treatment; ordinary detail is dim.
 			d.emit(d.streamNamedToolLine(glyph, displayName, label, outside))
-			d.tool[b.ID] = strings.TrimSpace(displayName + " " + label)
-			d.noteToolStart(b.ID)
+			d.tool.set(b.ID, strings.TrimSpace(displayName+" "+label))
+			// A tool the watchdog can supervise needs both halves: the name it is calling, and the
+			// id its result will arrive under. Missing either, the block is shown but suspends no
+			// deadline — an unpairable start would suspend idle with nothing able to resume it.
+			if b.ID != "" && b.Name != "" {
+				d.noteToolStart(b.ID)
+			}
 		}
 	}
+}
+
+// streamTurnHasContent reports whether an assistant turn carries anything the model actually
+// produced. The stream is the box's own stdout, so a schema-valid but EMPTY turn — no message, no
+// content array, or blocks with no payload — proves nothing and must not reset a deadline. Claude
+// carries a block's payload in exactly one of these fields: visible text, thinking, the opaque blob
+// of redacted thinking, or the name of the tool being called.
+func streamTurnHasContent(m streamMessage) bool {
+	for _, b := range m.Content {
+		if b.Type == "" {
+			continue
+		}
+		if b.Text != "" || b.Thinking != "" || b.Data != "" || b.Name != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // promoteTerminalLimitDiagnostic resolves Claude's one ambiguous stream shape after the process
@@ -546,11 +627,16 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 		if b.Type != "tool_result" {
 			continue
 		}
-		d.noteToolEnd(b.ToolUseID) // every result closes its tool; only failures earn a line
+		if b.ToolUseID != "" {
+			// Every ID-bearing result closes its tool; an anonymous one cannot be paired with the
+			// start it ends, so it stays display and never touches a deadline.
+			d.noteToolEnd(b.ToolUseID)
+		}
+		label := d.tool.take(b.ToolUseID) // the tool is over either way: only failures earn a line
 		if !b.IsError {
 			continue
 		}
-		d.emit(d.streamFailureLine(d.tool[b.ToolUseID], "", firstLine(rawText(b.Content)), 0))
+		d.emit(d.streamFailureLine(label, "", firstLine(rawText(b.Content)), 0))
 	}
 }
 
@@ -1193,6 +1279,8 @@ type streamMessage struct {
 type streamBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
+	Data      string          `json:"data"` // redacted thinking's opaque payload
 	Name      string          `json:"name"`
 	ID        string          `json:"id"`
 	Input     json.RawMessage `json:"input"`

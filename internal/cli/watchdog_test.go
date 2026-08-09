@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"fmt"
 	"regexp"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,7 +33,8 @@ func (t *fakeWatchdogTimer) Stop() bool { t.stopped = true; return true }
 
 type watchdogHarness struct {
 	wd       *providerWatchdog
-	timers   []*fakeWatchdogTimer
+	timers   []*fakeWatchdogTimer // phase deadlines only; the attempt ceiling is held apart
+	ceiling  *fakeWatchdogTimer
 	now      time.Time
 	canceled int
 }
@@ -40,7 +44,7 @@ type watchdogHarness struct {
 // window open instead.
 func newWatchdogHarness(d watchdogDeadlines) *watchdogHarness {
 	h := newUnarmedWatchdogHarness(d)
-	h.wd.armStart()
+	h.armLaunch()
 	return h
 }
 
@@ -57,6 +61,16 @@ func newUnarmedWatchdogHarness(d watchdogDeadlines) *watchdogHarness {
 
 func (h *watchdogHarness) active() *fakeWatchdogTimer { return h.timers[len(h.timers)-1] }
 
+// armLaunch crosses the runtime-launch boundary. armStart arms the attempt ceiling first and the
+// start deadline second, so the harness lifts the ceiling out of h.timers: every count below is
+// then about PHASE deadlines, and the ceiling is asserted on its own where it belongs.
+func (h *watchdogHarness) armLaunch() {
+	h.wd.armStart()
+	if h.ceiling == nil && len(h.timers) > 0 {
+		h.ceiling, h.timers = h.timers[0], h.timers[1:]
+	}
+}
+
 func testDeadlines() watchdogDeadlines {
 	return watchdogDeadlines{start: 10 * time.Minute, idle: 30 * time.Minute, tool: 2 * time.Hour}
 }
@@ -69,9 +83,13 @@ func TestWatchdogRunsNoClockBeforeTheRuntimeLaunch(t *testing.T) {
 	if len(h.timers) != 0 {
 		t.Fatalf("host setup armed %d deadline(s), want none", len(h.timers))
 	}
-	h.wd.armStart()
+	h.armLaunch()
 	if len(h.timers) != 1 || h.active().d != 10*time.Minute {
-		t.Fatalf("launch armed %d timer(s), active deadline %s; want one 10m start deadline", len(h.timers), h.active().d)
+		t.Fatalf("launch armed %d phase timer(s), active deadline %s; want one 10m start deadline", len(h.timers), h.active().d)
+	}
+	// The launch also starts the one clock no event can touch.
+	if h.ceiling == nil || h.ceiling.d != attemptCeiling(testDeadlines()) {
+		t.Fatalf("launch armed ceiling %v, want %s", h.ceiling, attemptCeiling(testDeadlines()))
 	}
 	// The boundary is crossed once: a second signal must not restart a clock the provider is
 	// already running against.
@@ -94,9 +112,9 @@ func TestWatchdogUnlaunchedAttemptReportsNoTimeout(t *testing.T) {
 		t.Fatalf("unlaunched attempt: outcome=%q cancels=%d", h.wd.timedOut(), h.canceled)
 	}
 	// Even a late signal from a torn-down launch path cannot start a clock afterwards.
-	h.wd.armStart()
-	if len(h.timers) != 0 {
-		t.Fatalf("launch signal after stop armed %d deadline(s), want none", len(h.timers))
+	h.armLaunch()
+	if len(h.timers) != 0 || h.ceiling != nil {
+		t.Fatalf("launch signal after stop armed %d deadline(s) and ceiling %v, want none", len(h.timers), h.ceiling)
 	}
 }
 
@@ -188,17 +206,21 @@ func TestWatchdogToolCapKillsWedgedTool(t *testing.T) {
 	}
 }
 
-func TestWatchdogLooseEventsCountAsProgress(t *testing.T) {
+func TestWatchdogLooseEventsAreJudgedByTheirID(t *testing.T) {
 	h := newWatchdogHarness(testDeadlines())
-	// A result for a never-seen tool and an ID-less tool start both prove the provider is
-	// alive: each arms the idle deadline in place of the start deadline.
+	// A result for a never-seen tool still proves the provider is alive — its start may have been
+	// dropped at the open-tool cap — so it arms the idle deadline in place of the start deadline.
 	h.wd.toolEnd("unseen")
 	if h.active().d != 30*time.Minute {
 		t.Fatalf("unseen tool result: deadline %s, want idle 30m", h.active().d)
 	}
+	// An ID-less lifecycle event is unpairable: counting it as progress would let a stream suspend
+	// and resume supervision with events that name nothing. It arms nothing at all.
+	armed := len(h.timers)
 	h.wd.toolStart("")
-	if h.active().d != 30*time.Minute {
-		t.Fatalf("id-less tool start: deadline %s, want idle 30m", h.active().d)
+	h.wd.toolEnd("")
+	if len(h.timers) != armed {
+		t.Fatalf("ID-less tool events armed %d deadline(s), want none", len(h.timers)-armed)
 	}
 	// A duplicate open of a live tool must not reset its cap.
 	h.wd.toolStart("x")
@@ -206,6 +228,113 @@ func TestWatchdogLooseEventsCountAsProgress(t *testing.T) {
 	h.wd.toolStart("x")
 	if h.active() != capX {
 		t.Fatal("duplicate tool start replaced the standing cap")
+	}
+}
+
+// The stream is the box's stdout, so tool IDs are free to invent. The map they land in is capped,
+// the overflow is dropped rather than evicting the tool that carries the absolute cap, and closing
+// tools gives the slots back — a bound, not a one-way wedge.
+func TestWatchdogCapsForgedOpenTools(t *testing.T) {
+	h := newWatchdogHarness(testDeadlines())
+	h.wd.progress()
+	h.wd.toolStart("real")
+	anchor := h.active()
+	for i := range 10_000 {
+		h.now = h.now.Add(time.Second) // each forged start is "younger" than the real tool
+		h.wd.toolStart(fmt.Sprintf("forged-%d", i))
+	}
+	if len(h.wd.openTools) != maxOpenTools || len(h.wd.toolOrder) != maxOpenTools {
+		t.Fatalf("10k forged tool IDs grew state to %d tools / %d ordered, want %d",
+			len(h.wd.openTools), len(h.wd.toolOrder), maxOpenTools)
+	}
+	if h.active() != anchor {
+		t.Fatal("a forged flood re-armed the absolute tool cap")
+	}
+	if h.wd.toolOrder[0] != "real" {
+		t.Fatalf("the flood displaced the oldest open tool with %q", h.wd.toolOrder[0])
+	}
+	// Cleanup: every tracked tool closes, the state empties, and the idle deadline resumes.
+	for _, id := range slices.Clone(h.wd.toolOrder) {
+		h.wd.toolEnd(id)
+	}
+	if len(h.wd.openTools) != 0 || len(h.wd.toolOrder) != 0 {
+		t.Fatalf("closed tools left %d tools / %d ordered behind", len(h.wd.openTools), len(h.wd.toolOrder))
+	}
+	if h.active().d != 30*time.Minute {
+		t.Fatalf("deadline after the flood closed = %s, want idle 30m", h.active().d)
+	}
+	// The freed slots are usable again, and a survivor whose budget is already spent fires
+	// instead of silently disabling the cap.
+	h.wd.toolStart("after")
+	if h.active().d != 2*time.Hour {
+		t.Fatalf("post-flood tool cap = %s, want 2h", h.active().d)
+	}
+}
+
+// No sequence of events — the whole vocabulary of a stream that only wants to stay alive — may
+// replace, retire, or extend the attempt ceiling.
+func TestWatchdogAttemptCeilingIsNotResettable(t *testing.T) {
+	h := newWatchdogHarness(testDeadlines())
+	if h.ceiling == nil || h.ceiling.d != 48*time.Hour {
+		t.Fatalf("armed ceiling = %v, want 48h (24 × the 2h tool budget)", h.ceiling)
+	}
+	for i := range 500 {
+		id := fmt.Sprintf("t%d", i)
+		h.wd.bootstrap()
+		h.wd.progress()
+		h.wd.toolStart(id)
+		h.wd.toolEnd(id)
+		h.wd.terminal()
+		h.now = h.now.Add(time.Hour)
+	}
+	if h.ceiling.stopped {
+		t.Fatal("a stream event stopped the attempt ceiling")
+	}
+	if h.wd.ceiling != h.ceiling {
+		t.Fatal("a stream event replaced the attempt ceiling")
+	}
+	if h.wd.timedOut() != "" {
+		t.Fatalf("phase deadline fired during the event flood: %q", h.wd.timedOut())
+	}
+	// It fires under its own generation, which no re-arm can retire, and it is a provider timeout
+	// so the loop's timeout policy — rotate, capped at three in a row — owns the outcome.
+	h.ceiling.fn()
+	if h.wd.timedOut() != outcomeAttemptTimeout || h.canceled != 1 {
+		t.Fatalf("ceiling fire: outcome=%q cancels=%d", h.wd.timedOut(), h.canceled)
+	}
+	if !isProviderTimeout(outcomeAttemptTimeout) {
+		t.Fatalf("%q is not classified as a provider timeout", outcomeAttemptTimeout)
+	}
+	// Sticky, like every other fired deadline: later events and a later phase fire change nothing.
+	h.wd.progress()
+	h.active().fn()
+	if h.canceled != 1 || h.wd.timedOut() != outcomeAttemptTimeout {
+		t.Fatalf("ceiling outcome not sticky: cancels=%d outcome=%q", h.canceled, h.wd.timedOut())
+	}
+}
+
+// The ceiling is derived from the phases it bounds — never configured, and never running when the
+// phases it is proportional to are disabled.
+func TestAttemptCeilingFollowsTheArmedPhases(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		in   watchdogDeadlines
+		want time.Duration
+	}{
+		{"every phase disabled", watchdogDeadlines{}, 0},
+		{"the longest phase drives it", testDeadlines(), 48 * time.Hour},
+		{"one armed phase is enough", watchdogDeadlines{start: time.Hour}, 24 * time.Hour},
+		{"fixture-short phases stay short", watchdogDeadlines{start: 20 * time.Second, idle: time.Second, tool: 4 * time.Second}, 8 * time.Minute},
+	} {
+		if got := attemptCeiling(c.in); got != c.want {
+			t.Errorf("attemptCeiling(%s) = %s, want %s", c.name, got, c.want)
+		}
+	}
+	// Disabled phases arm no ceiling timer at all, so nothing can fire against a run coop
+	// promised not to interrupt.
+	h := newWatchdogHarness(watchdogDeadlines{})
+	if h.ceiling != nil || len(h.timers) != 0 {
+		t.Fatalf("disabled deadlines armed ceiling %v and %d phase timer(s)", h.ceiling, len(h.timers))
 	}
 }
 
@@ -252,6 +381,84 @@ func TestWatchdogDeadlinesOverride(t *testing.T) {
 			cfg := &config.Config{ProviderTimeouts: c.raw}
 			if got := watchdogDeadlinesFor(cfg); got != c.want {
 				t.Errorf("watchdogDeadlinesFor(%q) = %+v, want %+v", c.raw, got, c.want)
+			}
+		})
+	}
+}
+
+// The override is an internal knob on a security bound, so its policy is tested against the ARMED
+// defaults a later task will ship — the disabled zeros in production would make every case pass by
+// accident. It may only shorten supervision, it may not set a value too small to be supervision at
+// all, and it may never do either quietly.
+func TestWatchdogDeadlineOverridePolicy(t *testing.T) {
+	armed := watchdogDeadlines{start: 10 * time.Minute, idle: 30 * time.Minute, tool: 2 * time.Hour}
+	cases := []struct {
+		name  string
+		def   watchdogDeadlines
+		raw   string
+		want  watchdogDeadlines
+		says  []string
+		quiet bool
+	}{
+		{
+			name: "shortening an armed default is honored",
+			def:  armed, raw: "start=30s,idle=45s,tool=90s",
+			want: watchdogDeadlines{start: 30 * time.Second, idle: 45 * time.Second, tool: 90 * time.Second},
+			says: []string{"overridden by COOP_PROVIDER_TIMEOUTS", "start=30s idle=45s tool=1m30s"},
+		},
+		{
+			name: "lengthening an armed default is cut back to it",
+			def:  armed, raw: "idle=72h,tool=72h",
+			want: armed,
+			says: []string{"idle=72h0m0s cut to the built-in 30m0s", "may only shorten", "tool=72h0m0s cut to the built-in 2h0m0s"},
+		},
+		{
+			name: "an unsafely tiny value is raised, not honored",
+			def:  armed, raw: "start=5ms",
+			want: watchdogDeadlines{start: time.Second, idle: 30 * time.Minute, tool: 2 * time.Hour},
+			says: []string{"start=5ms raised to 1s", "kills healthy providers"},
+		},
+		{
+			name: "a phase the override never named keeps its disabled default",
+			def:  watchdogDeadlines{}, raw: "idle=90s",
+			want: watchdogDeadlines{idle: 90 * time.Second},
+			says: []string{"start=disabled idle=1m30s tool=disabled"},
+		},
+		{
+			name: "the ceiling is not a phase anyone may set",
+			def:  armed, raw: "ceiling=99h",
+			want: armed,
+			says: []string{"ignored", "unknown phase"},
+		},
+		{
+			name: "an unparsable field keeps every default and says so",
+			def:  armed, raw: "start=30s,idle=soon",
+			want: armed,
+			says: []string{"ignored", "unparsable duration", "idle=soon"},
+		},
+		{name: "no override says nothing", def: armed, raw: "", want: armed, quiet: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, diagnostics := resolveWatchdogDeadlines(c.def, c.raw)
+			if got != c.want {
+				t.Errorf("resolveWatchdogDeadlines(%q) = %+v, want %+v", c.raw, got, c.want)
+			}
+			// The ceiling follows the phases that survived the clamp; it is never parsed.
+			if ceiling := attemptCeiling(got); ceiling != attemptCeiling(c.want) {
+				t.Errorf("ceiling = %s, want %s", ceiling, attemptCeiling(c.want))
+			}
+			said := strings.Join(diagnostics, "\n")
+			if c.quiet {
+				if said != "" {
+					t.Errorf("an unset override still said %q", said)
+				}
+				return
+			}
+			for _, want := range c.says {
+				if !strings.Contains(said, want) {
+					t.Errorf("diagnostics %q missing %q", said, want)
+				}
 			}
 		})
 	}

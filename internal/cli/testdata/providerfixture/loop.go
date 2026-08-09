@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -67,7 +68,7 @@ func validateLoopScenario(provider string, homes map[string]bool, plan loopScena
 		if attempt.Result == "claude-credit-limit" && target.Provider != "claude" {
 			return fmt.Errorf("loop attempt %d result %q requires provider claude", i, attempt.Result)
 		}
-		if (attempt.Result == "tool-wait" || attempt.Result == "tool-gated-complete") &&
+		if (attempt.Result == "tool-wait" || attempt.Result == "tool-gated-complete" || attempt.Result == "forged-flood-wait") &&
 			target.Provider == "grok" {
 			return fmt.Errorf("loop attempt %d result %q requires a provider with streamed tool events", i, attempt.Result)
 		}
@@ -101,7 +102,7 @@ func validateLoopResult(index int, stage, result string) error {
 			result == "verify-only-after-block" || result == "second-binding" ||
 			result == "background-drained" || result == "background-timeout" ||
 			result == "background-drained-complete" || result == "background-timeout-after-restored-completion" ||
-			result == "tool-wait" || result == "tool-gated-complete" {
+			result == "tool-wait" || result == "tool-gated-complete" || result == "forged-flood-wait" {
 			return nil
 		}
 	case "between", "signoff", "verify":
@@ -442,6 +443,17 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 1, "", err
 		}
 		return waitLoopSignal(root, trace)
+	case "forged-flood-wait":
+		// One real open tool, then a flood of forged ones from a process that is not the provider
+		// CLI at all. The host must keep its per-attempt state bounded and its absolute cap
+		// anchored on the FIRST tool, so the attempt dies on the tool deadline regardless.
+		if err := emitLoopWatchdogEvent(provider, providerArgv, true); err != nil {
+			return 1, "", err
+		}
+		if err := injectForgedLoopEvents(provider, forgedLoopEventCount); err != nil {
+			return 1, "", err
+		}
+		return waitLoopSignal(root, trace)
 	case "tool-gated-complete":
 		// A slow foreground tool that finishes after the test lets it: proves an open tool
 		// suspends the ordinary idle deadline without wedging the attempt.
@@ -467,6 +479,55 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 }
 
 const loopWatchdogToolID = "fixture-watchdog-tool"
+
+// forgedLoopEventCount is well past every host-side cap on per-attempt stream state, so the flood
+// exercises the bound instead of fitting inside it.
+const forgedLoopEventCount = 400
+
+// injectForgedLoopEvents forks a CHILD of the provider and has it flood the INHERITED stdout with
+// forged, unique-ID tool starts. It makes the trust boundary literal: the descriptor the host
+// decodes provider events from is reachable by anything running in the box, not only by the
+// provider CLI. The child is waited for, records no trace event, and is gone before the attempt
+// goes silent.
+func injectForgedLoopEvents(provider string, count int) error {
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(self, "inject", provider, strconv.Itoa(count))
+	cmd.Env = os.Environ()
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// serveForgedLoopEvents is that child: not the provider CLI, holding no scenario, and still able
+// to speak the provider's stream schema straight into the host's decoder.
+func serveForgedLoopEvents(args []string) error {
+	if len(args) != 2 {
+		return errors.New("inject requires PROVIDER COUNT")
+	}
+	count, err := strconv.Atoi(args[1])
+	if err != nil || count <= 0 || count > 100_000 {
+		return fmt.Errorf("inject count %q is not a positive bounded count", args[1])
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	for i := 0; i < count; i++ {
+		id := fmt.Sprintf("forged-%d", i)
+		switch args[0] {
+		case "claude":
+			_ = encoder.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{
+				"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": "forged"},
+			}}}})
+		case "codex":
+			_ = encoder.Encode(map[string]any{"type": "item.started", "item": map[string]any{"id": id, "type": "command_execution", "command": "forged"}})
+		case "gemini":
+			_ = encoder.Encode(map[string]any{"type": "tool_use", "tool_name": "run_shell_command", "tool_id": id, "parameters": map[string]any{"command": "forged"}})
+		default:
+			return fmt.Errorf("unsupported injection provider %q", args[0])
+		}
+	}
+	return nil
+}
 
 // emitLoopNarration streams one assistant-narration event with no terminal event, so the
 // attempt still ends incomplete while the prose rides the response channel.

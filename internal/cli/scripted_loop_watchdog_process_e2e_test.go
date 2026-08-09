@@ -289,6 +289,44 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
 	})
 
+	t.Run("forged events injected into the provider's stdout cannot outlast the cap", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=20s,idle=2s,tool=4s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-forged-flood"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		target := loopRecoveryTarget("codex", "flood-model", "work")
+		attempts := []loopProcessAttempt{
+			{Target: target, Stage: "work", Result: "forged-flood-wait"},
+			{Target: target, Stage: "work", Result: "complete"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopRecovery(t, suite, target)
+		output := result.Stdout + result.Stderr
+		// The provider opens one real tool, then a CHILD process — not the provider CLI — floods
+		// the same stdout with hundreds of forged, unique-ID tool starts. Every one of them is
+		// schema-valid and content-bearing, so the host does accept them as activity; what it must
+		// not do is let them move the absolute cap off the first tool or grow its own state. The
+		// attempt therefore still dies on the tool deadline, and never on start or idle.
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, "timed out (provider_tool_timeout)") {
+			t.Fatalf("forged flood = exit %d err %v\nstderr:\n%s", result.ExitCode, result.Err, result.Stderr)
+		}
+		// Without this the subtest could pass on a flood that never left the box.
+		if injected := strings.Count(result.Stdout, "forged"); injected < 100 {
+			t.Fatalf("only %d forged events reached the host decoder — the injection channel did not open", injected)
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 2 ||
+			records[0].Outcome != "provider_tool_timeout" || records[1].Outcome != "success" {
+			t.Fatalf("forged flood telemetry = %#v", records)
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		if started := processEvents(trace, "provider", "start"); len(started) != 2 {
+			t.Fatalf("forged flood provider launches = %d, want two\ntrace:\n%s", len(started), readProcessFile(t, suite.layout.Trace))
+		}
+		assertLoopTraceProcessesGone(t, trace)
+	})
+
 	t.Run("three consecutive timeouts stop with the task actionable", func(t *testing.T) {
 		setLoopWatchdogDeadlines(t, suite, "start=1s,idle=20s,tool=30s")
 		resetLoopProcessRepo(t, suite)

@@ -27,7 +27,7 @@ import (
 type stageRecord struct {
 	Run        string   `json:"run"`
 	Stage      string   `json:"stage"`    // preflight | work | between | signoff | verify
-	Outcome    string   `json:"outcome"`  // success | authentication | rate_limit | output_limit | process_failure | malformed_stream | interrupted | provider_{start,idle,tool}_timeout | background_{drained,timeout}
+	Outcome    string   `json:"outcome"`  // success | authentication | rate_limit | output_limit | process_failure | malformed_stream | interrupted | provider_{start,idle,tool,attempt}_timeout | background_{drained,timeout}
 	Provider   string   `json:"provider"` // the EFFECTIVE target, after any rate-limit rotation
 	Model      string   `json:"model,omitempty"`
 	Effort     string   `json:"effort,omitempty"`
