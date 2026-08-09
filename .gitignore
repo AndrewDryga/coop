@@ -21,6 +21,10 @@ __pycache__/
 !**/.agent/loop.yaml
 !**/.agent/compose.yml
 !.agent/project.yaml
+# the queue is local state, but its layout doc is a BOOT entry point — commit just that
+!**/.agent/tasks/
+**/.agent/tasks/*
+!**/.agent/tasks/README.md
 
 # preset native subagents coop generates in the box (coop-<role>) — never committed
 .claude/agents/coop-*.md
