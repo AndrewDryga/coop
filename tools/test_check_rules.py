@@ -29,6 +29,16 @@ INDEX = """# .agent/kb/rules
 """
 
 
+def go_pkg(raw):
+    """A root holding ./internal/agent with two real test functions."""
+    root = Path(raw)
+    pkg = root / "internal" / "agent"
+    pkg.mkdir(parents=True)
+    (pkg / "x_test.go").write_text("package agent\n\nfunc TestOneRenewal(t *testing.T) {}\n"
+                                   "\nfunc TestTwoRenewal(t *testing.T) {}\n")
+    return root
+
+
 def scaffold(root, card=GOOD_CARD, index=INDEX):
     rules = root / ".agent" / "kb" / "rules"
     rules.mkdir(parents=True)
@@ -74,6 +84,27 @@ class CheckCommandTest(unittest.TestCase):
             self.assertEqual(check_command("go test ./internal/cli -run TestReal", "r", root), [])
             self.assertTrue(check_command("go test ./internal/cli -run TestGhost", "r", root))
             self.assertTrue(check_command("go test ./internal/nope -run TestRealThing", "r", root))
+
+    def test_go_test_accepts_a_quoted_alternation(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = go_pkg(raw)
+            self.assertEqual(
+                check_command("go test ./internal/agent -run 'TestOneRenewal|TestTwoRenewal'", "r", root), [])
+            # a single name may be quoted too — the command runs either way
+            self.assertEqual(check_command("go test ./internal/agent -run 'TestOneRenewal'", "r", root), [])
+            # every alternative is validated, not just the first
+            self.assertTrue(check_command("go test ./internal/agent -run 'TestOneRenewal|TestGhost'", "r", root))
+            self.assertTrue(check_command("go test ./internal/agent -run 'TestGhost|TestOneRenewal'", "r", root))
+
+    def test_go_test_rejects_looser_run_patterns(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = go_pkg(raw)
+            # unquoted, the shell eats the bar and runs something else than the card claims
+            self.assertTrue(check_command("go test ./internal/agent -run TestOneRenewal|TestTwoRenewal", "r", root))
+            self.assertTrue(check_command("go test ./internal/agent -run 'TestOne.*'", "r", root))
+            self.assertTrue(check_command("go test ./internal/agent -run 'TestOneRenewal|'", "r", root))
+            self.assertTrue(check_command("go test ./internal/agent -run '|TestOneRenewal'", "r", root))
+            self.assertTrue(check_command("go test ./internal/agent -run ''", "r", root))
 
     def test_unrunnable_shape_is_rejected(self):
         with tempfile.TemporaryDirectory() as raw:

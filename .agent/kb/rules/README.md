@@ -26,6 +26,12 @@ target, put its command in `check:`, and say so in the changelog. Never name a c
 doesn't exist or doesn't actually fail on a violation — a `check:` you can't run is worse than
 `none`, because it claims a gate that isn't there.
 
+`make rules-check` holds you to that, so the field takes one of three shapes: `none`, `make
+<target>`, or `go test <pkg> -run <Test>` — the last also as a quoted alternation,
+`go test ./internal/agent -run 'TestCodexCredentialRenewal|TestClaudeCredentialRenewal'`, when two
+test families gate one rule. Quote the alternation (the shell would eat a bare bar) and expect every
+alternative to be checked against real test functions.
+
 ## Validate a rule when you write it
 A new rule is a claim about the whole tree, not just the diff that provoked it. Before committing it:
 

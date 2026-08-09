@@ -12,6 +12,8 @@ What this enforces:
   - every path in sources: exists
   - check: is `none`, a real `make <target>`, or a `go test <pkg> -run <Test>`
     whose package dir exists and which matches at least one real test function
+    — also as a quoted alternation, `-run 'TestA|TestB'`, for a rule two test
+    families gate; every alternative has to resolve
   - a `## Changelog` section exists
   - README.md indexes every rule exactly once, and every indexed link resolves
 
@@ -30,7 +32,11 @@ REQUIRED = ["name", "description", "scope", "sources", "check", "updated"]
 SCOPES = {"cli-grammar", "cli-output", "docs", "box", "loop", "scaffold",
           "security", "architecture", "agent-workflow"}
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-GO_TEST = re.compile(r"^go test (\./\S+) -run (\w+)$")
+# A bare test name, or the shell-quoted alternation a rule gated by two test families needs.
+# The quotes are load-bearing, so an unquoted bar is rejected: the shell would eat it and run
+# something other than what the card claims. Nothing else — a free-form regex here would be a
+# check nobody can confirm resolves to real tests.
+GO_TEST = re.compile(r"^go test (\./\S+) -run (\w+|'\w+(?:\|\w+)*')$")
 MAKE = re.compile(r"^make ([\w-]+)$")
 INDEX_LINK = re.compile(r"^- \[([^\]]+)\]\(([^)]+\.md)\)", re.M)
 
@@ -67,15 +73,16 @@ def check_command(cmd, slug, root):
             return [f"{slug}: check names 'make {m.group(1)}' but the Makefile has no such target"]
         return []
     if m := GO_TEST.match(cmd):
-        pkg, test = m.group(1), m.group(2)
+        pkg, tests = m.group(1), m.group(2).strip("'").split("|")
         pkgdir = root / pkg[2:]
         if not pkgdir.is_dir():
             return [f"{slug}: check runs '{pkg}' but that package dir does not exist"]
-        if not any(re.search(rf"^func {test}\w*\(", f.read_text(), re.M)
-                   for f in pkgdir.glob("*_test.go")):
-            return [f"{slug}: check runs -run {test} but no test function matches it in {pkg}"]
-        return []
-    return [f"{slug}: check {cmd!r} is not `none`, `make <target>`, or `go test <pkg> -run <Test>` "
+        bodies = [f.read_text() for f in pkgdir.glob("*_test.go")]
+        return [f"{slug}: check runs -run {test} but no test function matches it in {pkg}"
+                for test in tests
+                if not any(re.search(rf"^func {test}\w*\(", body, re.M) for body in bodies)]
+    return [f"{slug}: check {cmd!r} is not `none`, `make <target>`, `go test <pkg> -run <Test>`, "
+            f"or `go test <pkg> -run '<TestA>|<TestB>'` "
             f"— an unrunnable check claims a gate that isn't there"]
 
 
