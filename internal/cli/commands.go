@@ -4179,9 +4179,12 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	}
 	// A structured stream gives the watchdog trustworthy activity, so only then does the
 	// attempt get a child context it may cancel on proven silence. The parent ctx stays
-	// untouched: a user interrupt keeps winning over any watchdog fire.
+	// untouched: a user interrupt keeps winning over any watchdog fire. box.Run arms the
+	// watchdog at its runtime-launch boundary, so the host setup it does first — projection,
+	// services, network — is never clocked as a silent provider.
 	boxCtx := ctx
 	var watchdog *providerWatchdog
+	var armWatchdog func()
 	if dec != nil {
 		parent := ctx
 		if parent == nil {
@@ -4191,6 +4194,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		defer cancelChild()
 		watchdog = newProviderWatchdog(watchdogDeadlinesFor(a.cfg), cancelChild)
 		dec.setActivity(watchdog)
+		armWatchdog = watchdog.armStart
 		boxCtx = childCtx
 	}
 	code, err = box.Run(a.cfg, a.rt, box.RunSpec{
@@ -4199,9 +4203,10 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		RepoReadOnly:         repoReadOnly,
 		RepoReadOnlyPaths:    reviewReadOnlyPaths(windowMode, repoReadOnly, hosts),
 		Homes:                a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
-		Stdout: stdoutW,
-		Stderr: stderrW,
-		Ctx:    boxCtx,
+		Stdout:          stdoutW,
+		Stderr:          stderrW,
+		Ctx:             boxCtx,
+		OnRuntimeLaunch: armWatchdog,
 	})
 	if watchdog != nil {
 		watchdog.stop() // nothing may fire once the box run returned

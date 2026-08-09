@@ -4,6 +4,23 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A slow box startup is no longer charged to the provider as silence.** The provider-attempt
+  watchdog armed its start deadline before `box.Run` — but `box.Run` does substantial host work
+  first: projecting the repo and every generated mount, bringing sibling services up, inspecting
+  the services network, assembling the container's arguments. A host that took longer than the
+  start deadline to get through that produced a `provider_start_timeout` against a box which had
+  launched nothing. The loop then rotated a healthy target away, spent one of its three
+  consecutive-timeout retries, and re-read the whole task on the next rung — all for coop's own
+  slowness. The mislabel also could not act on itself: a fired deadline's only lever is cancelling
+  the box context, and synchronous host setup never reaches the cancelable launch, so the timeout
+  waited out the very work it had already blamed. The clock now starts at the runtime-launch
+  boundary: `box.Run` signals its caller once, after all host setup and immediately before the
+  container starts, and the watchdog arms there — exactly once per attempt, never before, and not
+  at all for a run that fails before it launches anything (which now reports its real error).
+  Silence is measured from the launch, and a deadline can only ever cancel a launch it can reach.
+  All three deadlines still default to disabled, so nothing changes today; this is the correctness
+  they need before they can be armed by default.
+
 - **The registry that decides whether a task is really finished no longer lives in a cache
   directory.** Coop keeps host-global completion trust outside any repo: the lock files whose
   kernel flocks make one controller the single writer for a task, the completion receipts that

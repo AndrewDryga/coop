@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/fusion"
@@ -30,6 +31,10 @@ const (
 	consultOverflowBytes   = (1 << 20) + 1
 	largeConsultReplyBytes = 270000
 	consultCursorFileName  = "consult-cursor.json"
+	// hostSetupHoldFile, while it exists, blocks the host-side setup of every box run (see
+	// holdHostSetup). The test that creates it owns removing it.
+	hostSetupHoldFile  = "runtime-setup-hold"
+	hostSetupHoldLimit = 30 * time.Second
 )
 
 type runtimeCommand struct {
@@ -220,7 +225,11 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 	case "version":
 		fmt.Println("coop-provider-fixture 1")
 		return nil
-	case "info", "inspect":
+	case "info":
+		// The daemon probe opens every box run, so it is the harness's handle on HOST-side box
+		// setup — the work a test holds to prove no provider clock is running during it.
+		return holdHostSetup(root, trace)
+	case "inspect":
 		return nil
 	case "ps":
 		ids, err := matchingRuntimeContainers(root, parsed.Filters)
@@ -292,6 +301,37 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		return nil
 	default:
 		return fmt.Errorf("unsupported parsed command %q", parsed.Kind)
+	}
+}
+
+// holdHostSetup blocks the box run's host-side setup while the test holds it — a brake the test
+// releases by removing the file. It records the hold once so the test can wait for the brake to
+// bite instead of sleeping blind, and gives up rather than wedging the suite when nobody releases.
+func holdHostSetup(root, trace string) error {
+	path := filepath.Join(root, "state", hostSetupHoldFile)
+	held := false
+	deadline := time.Now().Add(hostSetupHoldLimit)
+	for {
+		info, err := os.Stat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("host setup hold %q is not a regular file", path)
+		}
+		if !held {
+			held = true
+			if err := record(root, trace, traceRecord{Source: "runtime", Event: "hold", PID: os.Getpid()}); err != nil {
+				return err
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return errors.New("host setup hold was never released")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

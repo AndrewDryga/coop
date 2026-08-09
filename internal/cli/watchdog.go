@@ -10,11 +10,11 @@ import (
 )
 
 // The provider-attempt watchdog bounds SILENCE, not work: a built-in loop/review/preflight
-// attempt must show its first model action within the start deadline, keep producing
-// adapter-recognized activity within the idle deadline, and finish its oldest open foreground
-// tool within the tool deadline. Only semantic stream events (streamActivity) feed it — never
-// process names, CPU, lease heartbeats, redraws, or raw bytes — so a wedged provider is killed
-// while long reasoning and a slow foreground gate survive.
+// attempt must show its first model action within the start deadline OF THE RUNTIME LAUNCH,
+// keep producing adapter-recognized activity within the idle deadline, and finish its oldest
+// open foreground tool within the tool deadline. Only semantic stream events (streamActivity)
+// feed it — never process names, CPU, lease heartbeats, redraws, or raw bytes — so a wedged
+// provider is killed while long reasoning and a slow foreground gate survive.
 // No deadline by default: 0 disables that phase's clock entirely.
 //
 // These clocks cannot tell LONG from WEDGED — they only measure silence — and killing a provider
@@ -102,6 +102,9 @@ type watchdogTimer interface{ Stop() bool }
 // idle suspended while foreground tools are open and the oldest open tool absolutely capped).
 // When a deadline fires it records the timeout outcome once and cancels the child box context;
 // stop() ends supervision the moment box.Run returns, so nothing can fire afterwards.
+//
+// It is born UNARMED: no clock runs until armStart, which box.Run fires at the runtime-launch
+// boundary. Host setup before that boundary is coop's own work, not provider silence.
 type providerWatchdog struct {
 	mu       sync.Mutex
 	deadline watchdogDeadlines
@@ -109,31 +112,43 @@ type providerWatchdog struct {
 	now      func() time.Time
 	after    func(time.Duration, func()) watchdogTimer
 
-	timer     watchdogTimer
-	gen       uint64
-	openTools map[string]time.Time
-	toolOrder []string
-	stopped   bool
-	fired     string
+	timer      watchdogTimer
+	gen        uint64
+	openTools  map[string]time.Time
+	toolOrder  []string
+	startArmed bool
+	stopped    bool
+	fired      string
 }
 
 func newProviderWatchdog(deadline watchdogDeadlines, cancel func()) *providerWatchdog {
-	return startProviderWatchdog(deadline, cancel, time.Now, func(d time.Duration, fn func()) watchdogTimer {
+	return newProviderWatchdogWith(deadline, cancel, time.Now, func(d time.Duration, fn func()) watchdogTimer {
 		return time.AfterFunc(d, fn)
 	})
 }
 
-// startProviderWatchdog arms the start deadline immediately; the clock and timer factory are
-// injected so unit tests drive every transition deterministically.
-func startProviderWatchdog(deadline watchdogDeadlines, cancel func(), now func() time.Time, after func(time.Duration, func()) watchdogTimer) *providerWatchdog {
-	w := &providerWatchdog{
+// newProviderWatchdogWith builds the watchdog with no deadline running; the clock and timer
+// factory are injected so unit tests drive every transition deterministically.
+func newProviderWatchdogWith(deadline watchdogDeadlines, cancel func(), now func() time.Time, after func(time.Duration, func()) watchdogTimer) *providerWatchdog {
+	return &providerWatchdog{
 		deadline: deadline, cancel: cancel, now: now, after: after,
 		openTools: map[string]time.Time{},
 	}
+}
+
+// armStart starts the start deadline at the runtime-launch boundary (box.Run's OnRuntimeLaunch),
+// so filesystem projection, sibling services, or a slow network probe can never be reported as
+// provider_start_timeout — and the deadline only ever cancels a context the launch is watching.
+// Exactly one arming per attempt: a second call would restart a clock the provider is already
+// running against, and the launch boundary is crossed once.
+func (w *providerWatchdog) armStart() {
 	w.mu.Lock()
-	w.arm(deadline.start, outcomeStartTimeout)
-	w.mu.Unlock()
-	return w
+	defer w.mu.Unlock()
+	if w.startArmed {
+		return
+	}
+	w.startArmed = true
+	w.arm(w.deadline.start, outcomeStartTimeout)
 }
 
 // arm replaces the active deadline. The caller holds mu; the generation guard makes a

@@ -35,9 +35,18 @@ type watchdogHarness struct {
 	canceled int
 }
 
+// newWatchdogHarness builds a watchdog already past the runtime-launch boundary — the state
+// every supervision test below starts from. newUnarmedWatchdogHarness keeps the host-setup
+// window open instead.
 func newWatchdogHarness(d watchdogDeadlines) *watchdogHarness {
+	h := newUnarmedWatchdogHarness(d)
+	h.wd.armStart()
+	return h
+}
+
+func newUnarmedWatchdogHarness(d watchdogDeadlines) *watchdogHarness {
 	h := &watchdogHarness{now: time.Date(2026, 7, 26, 8, 0, 0, 0, time.UTC)}
-	h.wd = startProviderWatchdog(d, func() { h.canceled++ }, func() time.Time { return h.now },
+	h.wd = newProviderWatchdogWith(d, func() { h.canceled++ }, func() time.Time { return h.now },
 		func(d time.Duration, fn func()) watchdogTimer {
 			t := &fakeWatchdogTimer{d: d, fn: fn}
 			h.timers = append(h.timers, t)
@@ -50,6 +59,45 @@ func (h *watchdogHarness) active() *fakeWatchdogTimer { return h.timers[len(h.ti
 
 func testDeadlines() watchdogDeadlines {
 	return watchdogDeadlines{start: 10 * time.Minute, idle: 30 * time.Minute, tool: 2 * time.Hour}
+}
+
+// Host setup — filesystem projection, sibling services, a slow network probe — runs before
+// box.Run reaches the runtime-launch boundary. No clock may run during it, or coop's own slow
+// setup gets reported as provider_start_timeout and the loop rotates a healthy target away.
+func TestWatchdogRunsNoClockBeforeTheRuntimeLaunch(t *testing.T) {
+	h := newUnarmedWatchdogHarness(testDeadlines())
+	if len(h.timers) != 0 {
+		t.Fatalf("host setup armed %d deadline(s), want none", len(h.timers))
+	}
+	h.wd.armStart()
+	if len(h.timers) != 1 || h.active().d != 10*time.Minute {
+		t.Fatalf("launch armed %d timer(s), active deadline %s; want one 10m start deadline", len(h.timers), h.active().d)
+	}
+	// The boundary is crossed once: a second signal must not restart a clock the provider is
+	// already running against.
+	h.wd.armStart()
+	if len(h.timers) != 1 {
+		t.Fatalf("a second launch signal armed %d deadlines, want one", len(h.timers))
+	}
+	h.active().fn()
+	if h.wd.timedOut() != outcomeStartTimeout || h.canceled != 1 {
+		t.Fatalf("armed start deadline: outcome=%q cancels=%d", h.wd.timedOut(), h.canceled)
+	}
+}
+
+// A box run that fails before it launches anything (an unreachable daemon, a refused compose
+// file) never reaches the boundary, so the attempt ends with no timeout to report.
+func TestWatchdogUnlaunchedAttemptReportsNoTimeout(t *testing.T) {
+	h := newUnarmedWatchdogHarness(testDeadlines())
+	h.wd.stop()
+	if h.wd.timedOut() != "" || h.canceled != 0 {
+		t.Fatalf("unlaunched attempt: outcome=%q cancels=%d", h.wd.timedOut(), h.canceled)
+	}
+	// Even a late signal from a torn-down launch path cannot start a clock afterwards.
+	h.wd.armStart()
+	if len(h.timers) != 0 {
+		t.Fatalf("launch signal after stop armed %d deadline(s), want none", len(h.timers))
+	}
 }
 
 func TestWatchdogStartTimeoutOnBootstrapOnlySilence(t *testing.T) {
@@ -250,8 +298,9 @@ func TestNoDefaultDeadlineInterruptsAWorkingProvider(t *testing.T) {
 	}
 	// A disabled deadline must create no timer at all, or a stale one could still fire.
 	var armed int
-	w := startProviderWatchdog(watchdogDeadlines{}, func() { t.Error("cancelled with no deadline set") },
+	w := newProviderWatchdogWith(watchdogDeadlines{}, func() { t.Error("cancelled with no deadline set") },
 		time.Now, func(time.Duration, func()) watchdogTimer { armed++; return &fakeWatchdogTimer{} })
+	w.armStart()
 	w.progress()
 	w.toolStart("t1")
 	w.toolEnd("t1")

@@ -36,6 +36,29 @@ func setLoopWatchdogDeadlines(t *testing.T, suite *directProcessSuite, value str
 	}
 }
 
+// holdLoopHostSetup blocks the host-side setup of every box run until the returned release is
+// called — the fixture runtime holds its daemon probe while the file exists. Idempotent, and
+// released on cleanup so a failed assertion cannot leave the next subtest wedged.
+func holdLoopHostSetup(t *testing.T, suite *directProcessSuite) func() {
+	t.Helper()
+	path := filepath.Join(suite.layout.State, "runtime-setup-hold")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	released := false
+	release := func() {
+		if released {
+			return
+		}
+		released = true
+		if err := os.Remove(path); err != nil {
+			t.Errorf("release host setup hold: %v", err)
+		}
+	}
+	t.Cleanup(release)
+	return release
+}
+
 func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 	suite := newDirectProcessSuite(t)
 
@@ -72,6 +95,59 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			t.Fatalf("silent start telemetry = %#v", records)
 		}
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	t.Run("held host setup is not provider silence", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=2s,idle=20s,tool=30s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-held-setup"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		targets := []string{
+			loopRecoveryTarget("claude", "held-setup-model", "work"),
+			loopRecoveryTarget("codex", "rescue-model", "work"),
+		}
+		writeLoopRecoveryPreset(t, suite.layout.Repo, "watchdog-setup", targets)
+		attempts := []loopProcessAttempt{
+			{Target: targets[0], Stage: "work", Result: "wait"},
+			{Target: targets[1], Stage: "work", Result: "complete"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		release := holdLoopHostSetup(t, suite)
+		process := startLoopRecovery(t, suite, "watchdog-setup")
+		defer process.Cleanup()
+		awaitProcessEvent(t, suite.layout.Trace, "runtime", "hold", 10*time.Second)
+		// Hold the box's host setup well past the 2s start deadline. A clock armed before
+		// box.Run would fire right here — against a box that has launched nothing, and that
+		// cancellation cannot reach while its setup runs synchronously.
+		time.Sleep(3 * time.Second)
+		if started := processEvents(readProcessTrace(t, suite.layout.Trace), "provider", "start"); len(started) != 0 {
+			t.Fatalf("held host setup launched %d provider(s), want none", len(started))
+		}
+		release()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		result := process.Wait(ctx)
+		cancel()
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, "timed out (provider_start_timeout)") ||
+			!strings.Contains(output, "switching to") {
+			t.Fatalf("held setup = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		// BOTH attempts launched a provider: the delayed first attempt was clocked from its own
+		// launch and then killed for real silence, not written off while setup was still running.
+		if started := processEvents(trace, "provider", "start"); len(started) != 2 {
+			t.Fatalf("provider launches = %d, want two\ntrace:\n%s", len(started), readProcessFile(t, suite.layout.Trace))
+		}
+		parsed, _ := agents.ParseTarget(targets[1])
+		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 2, false)
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 2 ||
+			records[0].Stage != "work" || records[0].Outcome != "provider_start_timeout" || records[0].Provider != "claude" ||
+			records[1].Stage != "work" || records[1].Outcome != "success" || records[1].Provider != "codex" {
+			t.Fatalf("held setup telemetry = %#v", records)
+		}
+		assertLoopTraceProcessesGone(t, trace)
 	})
 
 	t.Run("post-progress silence retries the sole rung", func(t *testing.T) {

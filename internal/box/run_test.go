@@ -250,6 +250,60 @@ func TestRunRepoReadOnlyHasNoWritableDescendants(t *testing.T) {
 	}
 }
 
+// The loop clocks its provider from this signal, so it must land after ALL host setup and before
+// the container — not at Run's entry, where the projection and network work below would be timed
+// as provider silence.
+func TestRunSignalsTheRuntimeLaunchAfterHostSetup(t *testing.T) {
+	repo := t.TempDir()
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
+	signals := 0
+	atLaunch := ""
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		Batch: true, Quiet: true, Network: true,
+		OnRuntimeLaunch: func() {
+			signals++
+			data, err := os.ReadFile(recorder)
+			if err != nil {
+				t.Errorf("read runtime recorder at launch: %v", err)
+			}
+			atLaunch = string(data)
+		},
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	if signals != 1 {
+		t.Fatalf("runtime launch signaled %d times, want exactly one", signals)
+	}
+	if !strings.Contains(atLaunch, "network inspect ") {
+		t.Fatalf("launch was signaled before host network setup:\n%s", atLaunch)
+	}
+	if runInvocations(atLaunch) != 0 {
+		t.Fatalf("launch was signaled after the container started:\n%s", atLaunch)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runInvocations(string(args)) != 1 {
+		t.Fatalf("run invocations = %d, want one:\n%s", runInvocations(string(args)), args)
+	}
+}
+
+// runInvocations counts container launches in the recorder shim's log — one line per runtime
+// invocation, so a `run ...` line is a started container and every probe line is not.
+func runInvocations(recorded string) int {
+	n := 0
+	for _, line := range strings.Split(recorded, "\n") {
+		if strings.HasPrefix(line, "run ") {
+			n++
+		}
+	}
+	return n
+}
+
 func TestRunUsesTrustedPolicyRepo(t *testing.T) {
 	repo, policyRepo := t.TempDir(), t.TempDir()
 	for dir, egress := range map[string]string{repo: "open", policyRepo: "none"} {

@@ -100,6 +100,14 @@ type RunSpec struct {
 	// stops the current iteration now; every other caller leaves it nil — the plain, today's run.
 	Ctx context.Context
 
+	// OnRuntimeLaunch, when set, is called exactly once at the runtime-launch boundary: after
+	// every host-side step (filesystem projection, sibling services, network inspection, argument
+	// assembly) and immediately before the container starts. The loop arms its provider-attempt
+	// watchdog here, so a slow host setup is never charged to the provider as silence — and a
+	// deadline can only cancel work Ctx can actually reach. It must return promptly: the launch
+	// waits on it. A nil hook is the ordinary run, signaling nothing.
+	OnRuntimeLaunch func()
+
 	// FusionGovernor, when set, marks this run as fusion mode: the named agent
 	// governs (fronts the session) and gets the fusion instruction merged into its
 	// instruction file; its peers are consulted read-only. Empty = not fusion.
@@ -605,6 +613,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			runErr = errors.Join(runErr, cleanupErr)
 		}
 		return code, runErr
+	}
+	// The launch boundary: everything above is host work, everything below is the provider's.
+	// A caller that clocks the provider starts counting HERE, never from Run's entry — an early
+	// return above launched nothing, so it signals nothing.
+	if spec.OnRuntimeLaunch != nil {
+		spec.OnRuntimeLaunch()
 	}
 	if spec.Ctx != nil {
 		code, runErr := rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
