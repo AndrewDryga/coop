@@ -164,7 +164,20 @@ func iterationAuthentication(provider, output string) bool {
 
 type iterationClassification struct {
 	outcome string
-	limit   limitHint
+	// detail is the explanation the outcome NAME cannot carry — today, the watchdog's account of
+	// which deadline fired and the silence it observed. Telemetry keeps recording the bare outcome;
+	// this is for the human reading the warning. Empty for outcomes that speak for themselves.
+	detail string
+	limit  limitHint
+}
+
+// timeoutDetail renders a provider timeout's observed silence as a trailing clause for the
+// operator-facing warnings, or "" when the classification carries none.
+func (c iterationClassification) timeoutDetail() string {
+	if c.detail == "" {
+		return ""
+	}
+	return " after " + c.detail
 }
 
 func classifyIteration(provider string, code int, err error, diagnostic string, stream providerStreamOutcome, now time.Time) iterationClassification {

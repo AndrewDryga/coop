@@ -62,6 +62,92 @@ func holdLoopHostSetup(t *testing.T, suite *directProcessSuite) func() {
 func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 	suite := newDirectProcessSuite(t)
 
+	// Default-on, end to end: nobody armed this run. The override names ONE phase — the only
+	// sanctioned way to watch a 10-minute deadline in a test, since it may shorten and nothing may
+	// lengthen — and the phases it does not name keep coop's own values, which the announcement
+	// prints. So a wedged provider CLI that would once have held the loop, the task lease, and the
+	// credential until a human noticed is killed, retried, and the drain finishes on its own.
+	t.Run("armed by default a silent provider cannot hold the loop", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "start=2s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-default-armed"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		target := loopRecoveryTarget("codex", "wedged-model", "work")
+		attempts := []loopProcessAttempt{
+			{Target: target, Stage: "work", Result: "wait"},
+			{Target: target, Stage: "work", Result: "complete"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		// runLoopRecovery's own 20s ceiling is what "terminates within its budgets" means here:
+		// nothing else stops an attempt that waits for a signal nobody sends, so a watchdog that
+		// failed to fire would end this run as a harness kill instead of a finished drain.
+		result := runLoopRecovery(t, suite, target)
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, "timed out (provider_start_timeout)") ||
+			!strings.Contains(output, "starting a fresh attempt") {
+			t.Fatalf("default-armed silence = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		// The kill names its clock AND the silence it observed, so the warning is actionable
+		// without reading coop's source for what the outcome means.
+		if !strings.Contains(output, "after no first model action for 2s (start deadline 2s)") {
+			t.Fatalf("timeout warning does not report the observed silence\nstdout:\n%s\nstderr:\n%s", result.Stdout, result.Stderr)
+		}
+		// The phases the override never named ran at the SHIPPED values — this is the default-on
+		// proof: with the old disabled defaults they would be announced as "disabled".
+		if !strings.Contains(output, "start=2s idle=30m0s tool=2h0m0s attempt ceiling=48h0m0s") {
+			t.Fatalf("unnamed phases did not keep the shipped armed defaults\nstdout:\n%s\nstderr:\n%s", result.Stdout, result.Stderr)
+		}
+		parsed, _ := agents.ParseTarget(target)
+		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 2, false)
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 2 ||
+			records[0].Outcome != "provider_start_timeout" || records[1].Outcome != "success" {
+			t.Fatalf("default-armed telemetry = %#v", records)
+		}
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
+	// The dangerous shape of a kill: the attempt had already moved the task to done and committed,
+	// then went silent before the host could observe a trustworthy finish. A completion from an
+	// attempt that had to be killed is not evidence, so it is restored — task actionable again, with
+	// the informed-resume contract for the commit it left behind — and the retry closes it properly.
+	t.Run("a killed attempt's completion is restored and reworked", func(t *testing.T) {
+		setLoopWatchdogDeadlines(t, suite, "idle=2s")
+		resetLoopProcessRepo(t, suite)
+		taskID := "watchdog-restored-completion"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		target := loopRecoveryTarget("codex", "restore-model", "work")
+		attempts := []loopProcessAttempt{
+			{Target: target, Stage: "work", Result: "complete-wait"},
+			{Target: target, Stage: "work", Result: "repair-binding"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		result := runLoopRecovery(t, suite, target)
+		output := result.Stdout + result.Stderr
+		if result.Err != nil || result.ExitCode != 0 ||
+			!strings.Contains(output, "timed out (provider_idle_timeout)") ||
+			!strings.Contains(output, "starting a fresh attempt") {
+			t.Fatalf("restored completion = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		log, err := os.ReadFile(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID, "log.md"))
+		if err != nil || !strings.Contains(string(log), "the host watchdog killed this provider attempt after it stopped producing observable progress") {
+			t.Fatalf("timed-out completion left no restore record in the task log: %q, %v", log, err)
+		}
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 2 ||
+			records[0].Outcome != "provider_idle_timeout" || records[1].Outcome != "success" ||
+			records[1].HeadBefore != records[0].HeadAfter {
+			t.Fatalf("restored completion telemetry = %#v", records)
+		}
+		// The killed attempt's COMMIT survives its restored completion — only the completion was
+		// untrustworthy — so the retry starts from it and amends it under the recovery contract:
+		// the task ends done with exactly one binding whose parent is still the run's baseline.
+		parsed, _ := agents.ParseTarget(target)
+		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), records[0].HeadAfter, 2, true)
+		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
+	})
+
 	t.Run("no first output rotates without cooling then completes", func(t *testing.T) {
 		setLoopWatchdogDeadlines(t, suite, "start=2s,idle=20s,tool=30s")
 		resetLoopProcessRepo(t, suite)

@@ -21,22 +21,37 @@ import (
 // WHICH of those phases a provider actually runs follows the capability its adapter DECLARES about
 // its own stream (watchdogPolicy below): a schema with no tool lifecycle can never suspend the idle
 // deadline for a gate, so it is supervised by one conservative post-progress fallback instead.
-// No deadline by default: 0 disables that phase's clock entirely — and with every phase disabled,
-// the attempt ceiling below is disabled with them.
+// A phase set to 0 is disabled — no timer at all — and with every phase disabled the attempt
+// ceiling below goes with them; the shipped values are all armed.
 //
 // These clocks cannot tell LONG from WEDGED — they only measure silence — and killing a provider
 // that is genuinely working is expensive twice over: the answer is lost, and the loop then restarts
 // the task, re-reads its whole context and re-pays for it. Measured: a bounded consult died with
 // "exceeded the wrapper cap and terminated without a usable answer" on a security review the lead
 // had asked for, and a delegate was killed ten minutes in, after which the lead wrote the diff
-// itself. A run that wants a bound sets COOP_PROVIDER_TIMEOUTS explicitly.
+// itself. That cost is why these are SILENCE budgets no honest attempt reaches rather than
+// service-level targets — ten minutes to the first model action, half an hour between two of them,
+// two hours on one foreground tool — and why what re-arms them had to become semantic, launch-
+// anchored, and per-adapter first.
+//
+// They are armed anyway, because the alternative is unbounded: every retry budget in the loop
+// (maxLoopFailures, maxStalls, maxProviderTimeouts) counts outcomes that already HAPPENED, so an
+// attempt that never finishes is bounded by nothing at all — one wedged provider CLI holds its
+// iteration, its task lease, and its credential until a human notices the overnight drain stopped.
+// A false kill costs one restarted task; no kill at all costs the whole unattended run.
+//
+// providerIdleDeadline must stay comfortably ABOVE the box's descendant-drain wait
+// (COOP_DESCENDANT_TIMEOUT in internal/box/image.go, 15m). A draining box emits no stream events,
+// so the two clocks run from the same instant: if the drain could reach this deadline, every box
+// held open by a leaked descendant would be killed as a wedged provider instead of surfacing as a
+// descendant handoff, and the drain's own exit codes would never be observed.
 //
 // The retry CAPS (maxLoopFailures, maxProviderTimeouts) are untouched: they count outcomes that
 // already happened rather than interrupting work in flight.
 const (
-	providerStartDeadline = 0
-	providerIdleDeadline  = 0
-	providerToolDeadline  = 0
+	providerStartDeadline = 10 * time.Minute
+	providerIdleDeadline  = 30 * time.Minute
+	providerToolDeadline  = 2 * time.Hour
 )
 
 // providerSilenceFallbackMultiple supervises a provider whose stream declares NO tool lifecycle
@@ -51,7 +66,7 @@ const (
 // It is DERIVED from the idle budget rather than a 2h constant for the same reason the ceiling is:
 // the override may only shorten supervision, and shortening idle has to shorten this with it (a
 // fixture supervising in seconds keeps the ratio, so the policy is testable). A disabled idle
-// deadline multiplies to a disabled fallback — inert by default, like every other phase.
+// deadline multiplies to a disabled fallback, so a phase turned off stays off.
 const providerSilenceFallbackMultiple = 4
 
 // Provider-attempt timeout outcomes, recorded verbatim in stage telemetry and handled by the
@@ -71,15 +86,14 @@ const (
 // attempt — and the loop slot, the task lease, and the credential — indefinitely.
 //
 // The attempt ceiling is the one clock no event can touch: armed once at the runtime launch,
-// never re-armed, never derived from event math. 24× the LONGEST phase budget the operator chose,
-// because an attempt that has burned two dozen of its own worst-case silences without finishing is
-// not doing legitimate work, while a real iteration never comes close (they run in minutes; the
-// shipped-but-disabled phase values would put the ceiling at 48 hours).
+// never re-armed, never derived from event math. 24× the LONGEST phase budget in force, because an
+// attempt that has burned two dozen of its own worst-case silences without finishing is not doing
+// legitimate work, while a real iteration never comes close (they run in minutes; the shipped phase
+// values put the ceiling at 48 hours).
 //
-// It is DERIVED, not configured, for two reasons: nothing — no env var, no conf file, no event —
-// can lengthen it, and it stays INERT while the phase deadlines are disabled (their default). With
-// no phase clock running there is no supervision to bypass, so coop's promise not to interrupt a
-// working provider stands exactly as before.
+// It is DERIVED, not configured: nothing — no env var, no conf file, no event — can lengthen it,
+// and being proportional it follows whatever supervision the phases actually run, shortening with a
+// clamped override and disappearing entirely if every phase is turned off.
 const providerAttemptCeilingMultiple = 24
 
 // attemptCeiling is the absolute wall-clock bound for one provider attempt, or 0 when every phase
@@ -187,8 +201,8 @@ func watchdogDeadlinesFor(cfg *config.Config) watchdogDeadlines {
 
 // resolveWatchdogDeadlines applies the internal COOP_PROVIDER_TIMEOUTS override
 // ("start=2s,idle=3s,tool=6s") to the given defaults and returns the deadlines to supervise with
-// plus the diagnostics the caller must print. It takes its defaults as an argument so the policy is
-// testable against ARMED production values while the shipped ones are still disabled.
+// plus the diagnostics the caller must print. It takes its defaults as an argument so the clamp
+// policy is tested against fixed values instead of whatever the shipped constants happen to be.
 //
 // The override exists so deterministic fixture tests can supervise in seconds where production
 // wants minutes. It is therefore allowed to SHORTEN supervision and nothing else: an override that
@@ -313,6 +327,12 @@ type providerWatchdog struct {
 	startArmed bool
 	stopped    bool
 	fired      string
+	// armedAt/launchedAt are what the fired clock was measuring FROM: the instant the active phase
+	// deadline started running, and the runtime-launch boundary the ceiling runs from. Kept so a
+	// kill can report the silence it observed and not just the name of the deadline that ran out.
+	armedAt    time.Time
+	launchedAt time.Time
+	firedAfter time.Duration
 }
 
 // ceilingGen is the generation the attempt ceiling fires under. arm increments gen before every
@@ -347,6 +367,7 @@ func (w *providerWatchdog) armStart() {
 		return
 	}
 	w.startArmed = true
+	w.launchedAt = w.now()
 	// The launch boundary is also where the attempt ceiling starts, and the only place it is ever
 	// touched: it is deliberately NOT routed through arm, so no event, phase change, or re-arm can
 	// replace or extend it. Only stop() — box.Run returning — retires it.
@@ -363,8 +384,9 @@ func (w *providerWatchdog) arm(d time.Duration, outcome string) {
 	if w.stopped || w.fired != "" {
 		return
 	}
-	// A non-positive deadline is disabled: create no timer at all, so a working provider is never
-	// interrupted. This is the default (see the deadline constants above).
+	// A non-positive deadline is disabled: create no timer at all, so nothing can fire against a
+	// phase nobody is supervising. The shipped deadlines are all armed, so this is the tool cap of a
+	// provider that declares no tool lifecycle rather than a default.
 	if d <= 0 {
 		if w.timer != nil {
 			w.timer.Stop()
@@ -378,6 +400,7 @@ func (w *providerWatchdog) arm(d time.Duration, outcome string) {
 	}
 	w.gen++
 	gen := w.gen
+	w.armedAt = w.now()
 	w.timer = w.after(d, func() { w.fire(gen, outcome) })
 }
 
@@ -391,6 +414,7 @@ func (w *providerWatchdog) fire(gen uint64, outcome string) {
 		return
 	}
 	w.fired = outcome
+	w.firedAfter = w.observed(outcome)
 	cancel := w.cancel
 	w.mu.Unlock()
 	// Cancel outside the lock: the context teardown may run arbitrary callbacks.
@@ -420,6 +444,45 @@ func (w *providerWatchdog) timedOut() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.fired
+}
+
+// observed is how long the clock that just fired had actually been watching: the silence since the
+// phase deadline was armed, the age of the oldest open tool for the absolute cap, and the whole
+// attempt for the ceiling. The caller holds mu.
+func (w *providerWatchdog) observed(outcome string) time.Duration {
+	switch {
+	case outcome == outcomeAttemptTimeout:
+		return w.now().Sub(w.launchedAt)
+	case outcome == outcomeToolTimeout && len(w.toolOrder) > 0:
+		// Not since the cap was armed: a re-anchored cap runs for the SURVIVOR's remaining budget,
+		// and what an operator needs is how long that tool has been open.
+		return w.now().Sub(w.openTools[w.toolOrder[0]])
+	default:
+		return w.now().Sub(w.armedAt)
+	}
+}
+
+// timeoutDiagnostic explains the kill in one clause: which clock ran out, what it was watching, for
+// how long, and the budget it crossed. The outcome name alone names the phase but never the number,
+// and "the provider timed out" is not something an operator can act on — the observed silence is
+// what tells them whether the provider wedged or the deadline is too tight for this repo. "" when
+// no deadline fired. Durations are rounded to the second: the floor on any deadline is 1s, so
+// sub-second precision here is noise.
+func (w *providerWatchdog) timeoutDiagnostic() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	observed := w.firedAfter.Round(time.Second)
+	switch w.fired {
+	case outcomeStartTimeout:
+		return fmt.Sprintf("no first model action for %s (start deadline %s)", observed, w.policy.start)
+	case outcomeIdleTimeout:
+		return fmt.Sprintf("no recognized provider activity for %s (idle deadline %s)", observed, w.policy.idle)
+	case outcomeToolTimeout:
+		return fmt.Sprintf("its oldest foreground tool held %s (tool cap %s)", observed, w.policy.tool)
+	case outcomeAttemptTimeout:
+		return fmt.Sprintf("the attempt ran %s without finishing (ceiling %s)", observed, attemptCeiling(w.policy.watchdogDeadlines))
+	}
+	return ""
 }
 
 // bootstrap proves the provider CLI launched, not that the model acted — the start deadline

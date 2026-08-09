@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fusion"
 )
@@ -611,25 +613,49 @@ func TestIsProviderTimeout(t *testing.T) {
 	}
 }
 
-// No coop clock may interrupt a provider that is producing work. These are the defaults; a run that
-// wants a bound sets COOP_CONSULT_TIMEOUT or COOP_PROVIDER_TIMEOUTS explicitly.
-//
-// This replaced an ordering test (consult < drain < idle) whose whole premise was that all three
-// were finite. They are not any more: a clock cannot tell a long review from a wedged one, and
-// killing a working peer loses its answer AND costs the task restart that follows.
-func TestNoDefaultDeadlineInterruptsAWorkingProvider(t *testing.T) {
-	for _, d := range []struct {
-		name string
-		got  time.Duration
-	}{
-		{"start", providerStartDeadline},
-		{"idle", providerIdleDeadline},
-		{"tool", providerToolDeadline},
-	} {
-		if d.got != 0 {
-			t.Errorf("provider %s deadline defaults to %s, want 0 (disabled)", d.name, d.got)
-		}
+// The shipped deadlines are ARMED, because nothing else bounds an attempt that never finishes:
+// every retry budget in the loop counts outcomes that already happened, so an unattended drain
+// meeting one wedged provider CLI waits for a human. They are also SILENCE budgets rather than
+// service-level targets — 73d2634 zeroed them after measured false kills, and what makes them safe
+// to run again is the launch-anchored arming boundary, semantically validated activity, the
+// per-adapter policy, and the non-resettable ceiling. Tightening a number here re-opens that trade;
+// it is not a tuning knob.
+func TestShippedProviderDeadlinesAreArmed(t *testing.T) {
+	shipped := watchdogDeadlines{start: providerStartDeadline, idle: providerIdleDeadline, tool: providerToolDeadline}
+	want := watchdogDeadlines{start: 10 * time.Minute, idle: 30 * time.Minute, tool: 2 * time.Hour}
+	if shipped != want {
+		t.Fatalf("shipped provider deadlines = %+v, want %+v", shipped, want)
 	}
+	// A draining box emits no stream events, so the descendant drain and the idle deadline run from
+	// the same instant. Were the drain able to reach the deadline, a box held open by a leaked
+	// descendant would die as a wedged provider — losing the handoff AND the drain's own exit codes
+	// — so the two budgets are checked against each other rather than kept in step by a comment.
+	dm := regexp.MustCompile(`COOP_DESCENDANT_TIMEOUT:-(\d+)`).FindStringSubmatch(box.BaseDockerfile())
+	if dm == nil {
+		t.Fatal("could not find the descendant drain default in the generated box definition")
+	}
+	seconds, err := strconv.Atoi(dm[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if drain := time.Duration(seconds) * time.Second; shipped.idle < 2*drain {
+		t.Errorf("idle deadline %s does not comfortably outlast the %s descendant drain", shipped.idle, drain)
+	}
+	// Armed phases mean an armed ceiling, and the fallback a no-tool-lifecycle provider runs under
+	// stays well inside it.
+	if got, want := attemptCeiling(shipped), 48*time.Hour; got != want {
+		t.Errorf("shipped attempt ceiling = %s, want %s", got, want)
+	}
+	if got, want := providerWatchdogPolicy(shipped, false).idle, 2*time.Hour; got != want {
+		t.Errorf("shipped no-tool-lifecycle silence fallback = %s, want %s", got, want)
+	}
+}
+
+// The consult wrapper is a DIFFERENT clock and stays unlimited: a peer's answer is the whole point
+// of the call, and the false kills that zeroed every bound in 73d2634 were consults. A consult also
+// runs as a child of a supervised attempt, so the attempt's tool cap and ceiling already bound it
+// from outside — it needs no guess of its own.
+func TestConsultWrapperDoesNotBoundAWorkingPeer(t *testing.T) {
 	cm := regexp.MustCompile(`COOP_CONSULT_TIMEOUT:-(\d+)`).FindStringSubmatch(fusion.ConsultWrapper())
 	if cm == nil {
 		t.Fatal("could not find the consult timeout default in the generated wrapper")
@@ -637,7 +663,12 @@ func TestNoDefaultDeadlineInterruptsAWorkingProvider(t *testing.T) {
 	if cm[1] != "0" {
 		t.Errorf("consult timeout defaults to %ss, want 0 (unlimited)", cm[1])
 	}
-	// A disabled deadline must create no timer at all, or a stale one could still fire.
+}
+
+// 0 still means "no timer at all" — the mechanism the derived fallback (which turns the tool phase
+// off) and the ceiling both rest on. No longer reachable from the shipped defaults, still
+// load-bearing wherever a policy disables a phase, and a stale timer left running would fire.
+func TestDisabledDeadlineArmsNoTimer(t *testing.T) {
 	var armed int
 	w := newProviderWatchdogWith(toolLifecyclePolicy(watchdogDeadlines{}), func() { t.Error("cancelled with no deadline set") },
 		time.Now, func(time.Duration, func()) watchdogTimer { armed++; return &fakeWatchdogTimer{} })
@@ -651,5 +682,70 @@ func TestNoDefaultDeadlineInterruptsAWorkingProvider(t *testing.T) {
 	}
 	if fired := w.timedOut(); fired != "" {
 		t.Errorf("watchdog fired %q with deadlines disabled", fired)
+	}
+}
+
+// A kill has to report what it SAW: which clock ran out, what that clock was watching, and for how
+// long. The outcome name carries the phase but never the number, and the number is what tells an
+// operator whether the provider wedged or the budget is too tight for this repo.
+func TestWatchdogTimeoutDiagnosticNamesTheClockAndTheSilence(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		fire func(*watchdogHarness)
+		want string
+	}{
+		{
+			name: "start",
+			fire: func(h *watchdogHarness) {
+				h.now = h.now.Add(10*time.Minute + 400*time.Millisecond)
+				h.active().fn()
+			},
+			want: "no first model action for 10m0s (start deadline 10m0s)",
+		},
+		{
+			name: "idle",
+			fire: func(h *watchdogHarness) {
+				h.wd.progress()
+				h.now = h.now.Add(30*time.Minute + time.Second)
+				h.active().fn()
+			},
+			want: "no recognized provider activity for 30m1s (idle deadline 30m0s)",
+		},
+		{
+			// The clause measures the surviving TOOL's age, not the time since its cap was
+			// re-anchored: anchoring on the re-arm would report 1h50m for the same fire.
+			name: "tool",
+			fire: func(h *watchdogHarness) {
+				h.wd.progress()
+				h.wd.toolStart("a")
+				h.now = h.now.Add(30 * time.Minute)
+				h.wd.toolStart("b")
+				h.now = h.now.Add(10 * time.Minute)
+				h.wd.toolEnd("a")
+				h.now = h.now.Add(time.Hour + 50*time.Minute)
+				h.active().fn()
+			},
+			want: "its oldest foreground tool held 2h0m0s (tool cap 2h0m0s)",
+		},
+		{
+			name: "ceiling",
+			fire: func(h *watchdogHarness) {
+				h.wd.progress()
+				h.now = h.now.Add(48 * time.Hour)
+				h.ceiling.fn()
+			},
+			want: "the attempt ran 48h0m0s without finishing (ceiling 48h0m0s)",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newWatchdogHarness(testDeadlines())
+			if said := h.wd.timeoutDiagnostic(); said != "" {
+				t.Fatalf("a live attempt already reported %q", said)
+			}
+			c.fire(h)
+			if said := h.wd.timeoutDiagnostic(); said != c.want {
+				t.Errorf("timeoutDiagnostic() = %q, want %q", said, c.want)
+			}
+		})
 	}
 }

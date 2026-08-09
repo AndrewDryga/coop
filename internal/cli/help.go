@@ -785,6 +785,18 @@ var commandHelp = map[string]string{
   Set COOP_SPINNER=0 to freeze live spinners and suppress the fast repaint ticker while
   debugging or recording the terminal.
 
+  Every attempt is supervised for SILENCE, not slowness: 10m to its first model action,
+  30m between recognized actions, 2h on any one foreground tool. Only the provider's own
+  structured stream feeds those clocks — never CPU or process names — and an open tool
+  suspends the idle one, so long reasoning and a slow gate finish untouched (a provider
+  whose stream reports no tool calls gets a single conservative 2h post-progress budget
+  instead). Silence past a deadline kills that attempt alone: any completion it wrote is
+  restored, the task stays actionable, and a fresh attempt starts — on the next rung when
+  the ladder has one — while three in a row on one stage stops the run instead of
+  churning. The warning names the deadline that fired and the silence it observed. There
+  is no off switch: it is what stops one wedged provider CLI from holding an overnight
+  drain, its task lease, and its credential until you notice.
+
   Ctrl-C is a soft interrupt: the current iteration finishes its completion binding,
   host signing, and mandatory between/protected audit, then exits 130 before final
   signoff or another claim. Press Ctrl-C again to stop now (tearing the running box

@@ -1,8 +1,8 @@
 ---
 name: loop-provider-watchdog
-description: built-in attempts always stream; the watchdog trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
+description: built-in attempts always stream; the watchdog is ARMED by default (10m/30m/2h) and trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
 subsystem: loop
-sources: [internal/cli/watchdog.go, internal/cli/streamjson.go, internal/cli/streamjson_providers.go, internal/cli/commands.go, internal/agent/agent.go, internal/agent/grok.go, internal/box/run.go, internal/runtime/runtime.go]
+sources: [internal/cli/watchdog.go, internal/cli/streamjson.go, internal/cli/streamjson_providers.go, internal/cli/commands.go, internal/cli/ratelimit.go, internal/agent/agent.go, internal/agent/grok.go, internal/box/run.go, internal/runtime/runtime.go]
 updated: 2026-08-09
 ---
 
@@ -11,17 +11,29 @@ TTY or redirected — because the stream feeds the provider-attempt watchdog
 (`internal/cli/watchdog.go`). Only valid adapter-recognized events reset it (the
 `streamActivity` sink in streamjson.go): assistant/reasoning progress, tool start/end by
 provider ID, terminal events. Raw bytes, malformed events, unknown types, redraws, `/proc`,
-CPU, and lease heartbeats are deliberately NOT activity. All three deadlines DEFAULT TO 0 —
-disabled, no timer at all (73d2634, "stop killing models that are still working"): a clock
-cannot tell a long attempt from a wedged one, and killing a working provider loses its answer
-and re-pays for the whole task. When set they are start (to the first model action; bootstrap
-doesn't count), idle (post-progress silence, suspended while a foreground tool is open), and
-tool (an absolute cap on the OLDEST open tool) — and WHICH of them a provider runs is selected from
-its adapter's declared stream capability, not from anything measured at runtime (trap below). Above
-them runs the non-resettable attempt ceiling. Timeouts classify as `provider_{start,idle,tool,attempt}_timeout`, retry under their
-own consecutive cap of 3, and rotate without cooling the abandoned rung.
+CPU, and lease heartbeats are deliberately NOT activity. All three deadlines are ARMED BY
+DEFAULT — start 10m (to the first model action; bootstrap doesn't count), idle 30m
+(post-progress silence, suspended while a foreground tool is open), tool 2h (an absolute cap on
+the OLDEST open tool) — and WHICH of them a provider runs is selected from its adapter's declared
+stream capability, not from anything measured at runtime (trap below). Above them runs the
+non-resettable attempt ceiling (48h at these values). Timeouts classify as
+`provider_{start,idle,tool,attempt}_timeout`, retry under their own consecutive cap of 3, and
+rotate without cooling the abandoned rung; the warning names the deadline AND the silence
+observed (`providerWatchdog.timeoutDiagnostic`, carried to the retry sites in
+`iterationClassification.detail` — telemetry still records the bare outcome).
 `COOP_PROVIDER_TIMEOUTS` ("start=2s,idle=3s,tool=6s") is the internal test-only override, and
 it may only shorten.
+
+The zeroes those constants held between 73d2634 (2026-08-02) and 2026-08-09 were a real
+correction, not an accident: a clock cannot tell a long attempt from a wedged one, and killing a
+working provider loses its answer and re-pays for the whole task. They are armed again because the
+opposite failure is unbounded — every retry budget in the loop counts outcomes that already
+HAPPENED, so an attempt that never finishes is bounded by nothing, and one wedged provider CLI
+holds an overnight drain, its task lease, and its credential until a human notices. What makes
+arming safe is the three tasks that landed first: arming at the runtime-launch boundary, semantic
+activity with bounded state and the non-resettable ceiling, and per-adapter policy for a stream
+with no tool lifecycle. The values are silence budgets no honest attempt reaches, NOT
+service-level targets — tighten one and the false-kill cost above comes straight back.
 
 **The stream is the box's stdout, which makes this a trust boundary, not a protocol.** The bytes
 come from the box that holds the credential and runs the agent — and any descendant in it that
@@ -67,19 +79,27 @@ Traps the code doesn't obviously carry:
   events is quarantined narration. Fixtures simulating ambiguous prose must emit it as
   streamed narration.
 - **The attempt ceiling is DERIVED (24 × the longest armed phase), never configured.** No env
-  var, conf file, or event can lengthen it, and it is 0 — no timer at all — while the phases are
-  disabled, so today it changes nothing. That inertness is the point: with no phase clock running
-  there is no supervision to bypass, and coop's promise not to interrupt a working provider
-  stands. It is also the one bound that is deliberately NOT `transport-bounds-do-not-abort-valid-work`
-  material: it bounds a hostile stream's wall clock at a multiple no legitimate iteration reaches,
-  not the volume of valid work.
+  var, conf file, or event can lengthen it; a clamped override shortens it, and a policy that turns
+  every phase off takes the ceiling with it. At the shipped values that is 48h. It is the one bound
+  deliberately NOT `transport-bounds-do-not-abort-valid-work` material: it bounds a hostile stream's
+  wall clock at a multiple no legitimate iteration reaches, not the volume of valid work.
+- **The idle deadline and the box's descendant drain are one coupled pair.** A draining box emits
+  no stream events, so `COOP_DESCENDANT_TIMEOUT` (900s in `internal/box/image.go`) and the 30m idle
+  deadline run from the same instant; if the drain could reach the deadline, a box held open by a
+  leaked descendant would die as a wedged provider and the drain's own exit codes would never be
+  observed. `TestShippedProviderDeadlinesAreArmed` reads the drain default out of
+  `box.BaseDockerfile()` and fails if idle drops below 2× it — check the test, not the prose, before
+  moving either. (image.go's own comment still says the deadline is disabled by default: its text is
+  sha256-stamped into the box image, so editing a comment there marks every built image stale.)
 - **`COOP_PROVIDER_TIMEOUTS` is clamped, not obeyed.** It may only SHORTEN (a disabled 0 default
   counts as infinite, so any finite value shortens it), it may not set anything under
   `minWatchdogDeadline` (1s — below that a deadline kills healthy providers at launch rather than
   supervising them), a phase it never names keeps its default untouched (including a disabled 0
   the floor would otherwise "raise"), a malformed field keeps every default, and every clamp or
-  rejection is named on stderr once per process. `resolveWatchdogDeadlines` takes its defaults as
-  an argument so the policy is tested against ARMED values while the shipped ones are still 0.
+  rejection is named on stderr once per process — that announcement is also how the e2e proves the
+  UNNAMED phases still carry the shipped defaults, which is the only way to see a 10m deadline in a
+  test that finishes in seconds. `resolveWatchdogDeadlines` takes its defaults as an argument so the
+  clamp policy is tested against fixed values, not whatever the shipped constants currently are.
 - **Policy comes from the adapter's DECLARED stream capability, never from measurement.**
   `agents.StreamSpec.ToolLifecycle` is `ToolLifecycleIDs` for claude/codex/gemini and
   `ToolLifecycleAbsent` for grok, whose streaming-json emits only thought/text/end (probed at
@@ -88,7 +108,7 @@ Traps the code doesn't obviously carry:
   (4) × idle — 30m idle → a 2h fallback — with no tool cap, because a gate that never appears in
   the stream is indistinguishable from silence and the ordinary idle deadline would kill it. It is
   derived from idle rather than a 2h constant, so the shorten-only override shortens it too (and a
-  fixture can exercise it in seconds), and it is inert while idle is disabled. The ceiling stays
+  fixture can exercise it in seconds), and a disabled idle turns it off too. The ceiling stays
   outermost: 24 × the longest phase, which is now the fallback. The watchdog also REFUSES tool
   events from a stream that declared none — nothing may suspend a deadline whose resuming event
   does not exist. `ToolLifecycleUndeclared` (the zero value) reads as absent and fails
@@ -98,6 +118,10 @@ Traps the code doesn't obviously carry:
   an interrupted run stays `interrupted`, never a provider timeout.
 
 ## Changelog
+- 2026-08-09 — the deadlines are ARMED by default again (10m/30m/2h, ceiling 48h): rewrote the
+  opening paragraph, the ceiling and override traps, and added the idle-vs-descendant-drain
+  coupling trap plus the observed-silence diagnostic. The e2e proof of default-on is an override
+  naming ONE phase and asserting the announcement's UNNAMED phases.
 - 2026-08-09 — supervision is now selected from the adapter's declared stream capability
   (`internal/agent/agent.go` + `grok.go` added to sources); the admitted contradiction — "a grok
   foreground gate longer than the idle deadline gets killed" while the docs promised long gates

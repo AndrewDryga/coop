@@ -4,6 +4,35 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **BEHAVIOR CHANGE: the provider-attempt watchdog is armed by default, so one wedged provider can
+  no longer hold an unattended run forever.** Every deadline has shipped at 0 — disabled — since
+  "stop killing models that are still working", and that correction was right: a clock cannot tell a
+  LONG attempt from a WEDGED one, and coop had killed real work with one (a bounded consult died
+  mid-security-review; a delegate was killed ten minutes in). What it left behind was the opposite
+  hole. Every retry budget in the loop counts outcomes that already HAPPENED, so nothing at all
+  bounded an attempt that never finished: a hung container start or a silently wedged provider CLI
+  turned an overnight drain — or a detached fork nobody was watching — into an indefinite stall that
+  only Ctrl-C or `coop fork stop` could end, with the loop slot, the task lease, and the credential
+  held for as long as it lasted. A built-in loop/review/preflight attempt is supervised again: **10
+  minutes** to its first model action, **30 minutes** between recognized model actions, **2 hours**
+  on any one foreground tool, under a non-resettable **48-hour** attempt ceiling. There is no new
+  knob and no off switch — the shorten-only internal override is the only escape hatch, by design.
+
+  Those are SILENCE budgets, not service-level targets, and they only supervise now because the
+  three fixes before them landed first: the start deadline is armed at the runtime-launch boundary
+  (coop's own host setup is never charged to the provider), only semantically valid stream events
+  re-arm anything (an empty envelope is not activity, per-attempt state is bounded, and the ceiling
+  is reachable by no event at all), and a provider whose stream cannot report tool calls gets one
+  conservative 2-hour post-progress budget instead of an idle deadline it could never suspend. An
+  open foreground tool still suspends the idle clock, so the 40-minute `make check` coop promises to
+  let finish still finishes. A fire kills that attempt and nothing else: any completion it wrote is
+  restored, the task stays actionable, the rotation advances without cooling the abandoned rung, and
+  three consecutive timeouts on one stage stop the run rather than looping. The warning now also
+  names the deadline that fired and the silence it observed — "timed out (provider_idle_timeout)
+  after no recognized provider activity for 30m1s (idle deadline 30m0s)" — so a deadline that is too
+  tight for your repo is visible rather than inferred. The trade is deliberate and it is not free: a
+  false kill costs one restarted task, while no kill at all costs the whole unattended run.
+
 - **A provider whose stream cannot report tool calls is no longer supervised as if it could.** The
   attempt watchdog suspends its idle deadline while a foreground tool is open — that is how a
   40-minute `make check` survives a 30-minute silence budget — but it only works for a stream that
@@ -24,8 +53,8 @@
   watchdog also refuses tool events from a stream that declared none, because nothing may suspend a
   deadline whose resuming event does not exist; a stream nobody has probed reads as "no tool
   lifecycle" — the conservative side — and the registry's own test fails rather than let it ship
-  undeclared. Every deadline still defaults to disabled, so this changes no behavior today; it is
-  the per-provider correctness they need before they can be armed.
+  undeclared. Every deadline was still disabled when this landed; it is the per-provider correctness
+  they needed before they could be armed by default, which the entry above does.
 
 - **The provider watchdog now treats the stream it supervises as what it is: untrusted input from
   the box.** Those bytes arrive on the stdout of the container that holds the credential and runs
@@ -43,8 +72,8 @@
   is indistinguishable from a real one. So the watchdog now also runs one clock no event can touch
   — a non-resettable attempt ceiling, armed once at the runtime launch, 24× the longest deadline
   the operator armed, reported as `provider_attempt_timeout` and retried under the same
-  three-in-a-row cap as the rest. It is derived rather than configured, so nothing can lengthen it;
-  the deadlines still default to disabled, so it does not run at all today. Separately, the
+  three-in-a-row cap as the rest. It is derived rather than configured, so nothing can lengthen it —
+  48 hours at the deadlines the entry above arms. Separately, the
   internal `COOP_PROVIDER_TIMEOUTS` override may now only SHORTEN supervision, never lengthen it
   past what coop ships, never set a sub-second deadline that kills healthy providers at launch —
   and it says on stderr exactly what it clamped and why, because a bound nobody chose and nobody

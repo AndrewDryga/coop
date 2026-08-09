@@ -1963,14 +1963,14 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 			last.output = ""
 			timeouts++
 			if timeouts >= maxProviderTimeouts {
-				return last, fmt.Errorf("review provider attempt timed out %d times in a row (%s) — stopping (a review that can't run is never an accept)", timeouts, classification.outcome)
+				return last, fmt.Errorf("review provider attempt timed out %d times in a row (%s)%s — stopping (a review that can't run is never an accept)", timeouts, classification.outcome, classification.timeoutDetail())
 			}
 			if observeHandoff != nil {
 				observeHandoff(last, start, headBefore)
 			}
 			totalRetries++
 			rev.advanceOnTimeout(time.Now())
-			ui.Warn("review provider attempt timed out (%s) — discarding its partial output and retrying (%d/%d)", classification.outcome, timeouts, maxProviderTimeouts)
+			ui.Warn("review provider attempt timed out (%s)%s — discarding its partial output and retrying (%d/%d)", classification.outcome, classification.timeoutDetail(), timeouts, maxProviderTimeouts)
 			continue
 		}
 		handoffs, timeouts = 0, 0
@@ -3362,14 +3362,14 @@ reviewAgain:
 				timeouts++
 				a.recordStage(repo, runid, "work", classification.outcome, rot.active(), iterStart, code, retries, 0, iterHead, hosts, nil, nil, res)
 				if timeouts >= maxProviderTimeouts {
-					return code, fmt.Errorf("provider attempt timed out %d times in a row on task %s (%s) — stopped; the task remains actionable, inspect the provider and re-run `coop loop`", timeouts, assigned.Item.ID, classification.outcome)
+					return code, fmt.Errorf("provider attempt timed out %d times in a row on task %s (%s)%s — stopped; the task remains actionable, inspect the provider and re-run `coop loop`", timeouts, assigned.Item.ID, classification.outcome, classification.timeoutDetail())
 				}
 				prev := rot.active()
 				rot.advanceOnTimeout(time.Now())
 				if next := rot.active(); next.String() != prev.String() {
-					ui.Warn("provider attempt for %s timed out (%s) — switching to %q for a fresh attempt (%d/%d)", assigned.Item.ID, classification.outcome, next, timeouts, maxProviderTimeouts)
+					ui.Warn("provider attempt for %s timed out (%s)%s — switching to %q for a fresh attempt (%d/%d)", assigned.Item.ID, classification.outcome, classification.timeoutDetail(), next, timeouts, maxProviderTimeouts)
 				} else {
-					ui.Warn("provider attempt for %s timed out (%s) — starting a fresh attempt (%d/%d)", assigned.Item.ID, classification.outcome, timeouts, maxProviderTimeouts)
+					ui.Warn("provider attempt for %s timed out (%s)%s — starting a fresh attempt (%d/%d)", assigned.Item.ID, classification.outcome, classification.timeoutDetail(), timeouts, maxProviderTimeouts)
 				}
 				continue
 			}
@@ -4255,7 +4255,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	// provider that finished before a racing fire keeps its real outcome.
 	if watchdog != nil && err != nil && (ctx == nil || ctx.Err() == nil) {
 		if timeout := watchdog.timedOut(); timeout != "" {
-			classification = iterationClassification{outcome: timeout}
+			classification = iterationClassification{outcome: timeout, detail: watchdog.timeoutDiagnostic()}
 		}
 	}
 	return code, output, res, classification, windows, err
