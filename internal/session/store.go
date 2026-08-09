@@ -1340,7 +1340,8 @@ func (s *Store) ReconcileInterruptedTurns(ctx context.Context) ([]Turn, error) {
 }
 
 const turnSelect = `SELECT id, session_id, ordinal, idempotency_key, request_hash, state, send_state,
-	   prompt, queued_at, started_at, finished_at, stop_reason, assistant_message, error_code, error_detail
+	   prompt, queued_at, started_at, finished_at, stop_reason, assistant_message, error_code, error_detail,
+	   usage_input_tokens, usage_cached_input_tokens, usage_output_tokens, usage_reasoning_tokens
 FROM turns`
 
 func (s *Store) GetTurn(ctx context.Context, sessionID, turnID string) (Turn, error) {
@@ -1451,7 +1452,9 @@ func scanTurn(row rowScanner) (Turn, error) {
 	var queuedAt, startedAt, finishedAt sql.NullInt64
 	if err := row.Scan(&turn.ID, &turn.SessionID, &turn.Ordinal, &turn.IdempotencyKey,
 		&turn.RequestHash, &state, &sendState, &turn.Prompt, &queuedAt, &startedAt, &finishedAt,
-		&stopReason, &turn.AssistantMessage, &errorCode, &turn.ErrorDetail); err != nil {
+		&stopReason, &turn.AssistantMessage, &errorCode, &turn.ErrorDetail,
+		&turn.Usage.InputTokens, &turn.Usage.CachedInputTokens,
+		&turn.Usage.OutputTokens, &turn.Usage.ReasoningTokens); err != nil {
 		return Turn{}, err
 	}
 	turn.State = TurnState(state)
@@ -1627,7 +1630,13 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	turn.FinishedAt = now
 	turn.StopReason = StopEndTurn
 	turn.AssistantMessage = req.Message
-	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?, assistant_message = ? WHERE id = ?`, string(turn.State), now.UnixNano(), string(turn.StopReason), turn.AssistantMessage, turn.ID); err != nil {
+	turn.Usage = req.Usage
+	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?,
+	    assistant_message = ?, usage_input_tokens = ?, usage_cached_input_tokens = ?,
+	    usage_output_tokens = ?, usage_reasoning_tokens = ? WHERE id = ?`,
+		string(turn.State), now.UnixNano(), string(turn.StopReason), turn.AssistantMessage,
+		turn.Usage.InputTokens, turn.Usage.CachedInputTokens,
+		turn.Usage.OutputTokens, turn.Usage.ReasoningTokens, turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("complete turn: %w", err)
 	}
 	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {

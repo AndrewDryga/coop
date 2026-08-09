@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 4
+	SchemaVersion = 5
 
 	MaxIDBytes              = 256
 	MaxMethodBytes          = 128
@@ -253,6 +253,32 @@ type Turn struct {
 	AssistantMessage string           `json:"assistant_message"`
 	ErrorCode        ErrorCode        `json:"error_code"`
 	ErrorDetail      string           `json:"error_detail"`
+	Usage            Usage            `json:"usage,omitzero"`
+}
+
+// Usage is what one turn cost the provider.
+//
+// The stream decoders have always parsed these — codex reports input, cached
+// input, output and reasoning tokens — but only the `coop run` telemetry path
+// kept them, written to .agent/runs/<run>.jsonl. A caller driving sessions
+// through this API had no way to learn what a turn spent, so a host could show
+// a hundred completed turns and not one number about any of them.
+//
+// Cached input is reported separately rather than folded into the input total:
+// it is priced differently by every provider, and a caller computing cost from
+// a merged figure would overcharge itself.
+type Usage struct {
+	InputTokens       int `json:"input_tokens,omitempty"`
+	CachedInputTokens int `json:"cached_input_tokens,omitempty"`
+	OutputTokens      int `json:"output_tokens,omitempty"`
+	ReasoningTokens   int `json:"reasoning_tokens,omitempty"`
+}
+
+// Recorded reports whether the provider gave us anything. Zero is a real
+// answer for a trivial turn, so absence has to be distinguishable from free.
+func (u Usage) Recorded() bool {
+	return u.InputTokens > 0 || u.CachedInputTokens > 0 ||
+		u.OutputTokens > 0 || u.ReasoningTokens > 0
 }
 
 // OutputArtifact is a bounded generated file produced by one completed turn. Public turn
@@ -327,6 +353,7 @@ type CompleteTurnRequest struct {
 	TurnID    string
 	Message   string
 	Artifacts []OutputArtifact
+	Usage     Usage
 }
 
 type FailTurnRequest struct {

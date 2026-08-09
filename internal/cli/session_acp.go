@@ -1721,8 +1721,27 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 	if err != nil {
 		return "", nil, err
 	}
+	// Usage, when the adapter reports it. ACP does not require it, and which
+	// adapters populate it is not something this code can assume — so it is
+	// read from both the documented _meta bag and a top-level field, and left
+	// at zero otherwise. A caller distinguishes "nothing reported" from "free"
+	// through Usage.Recorded rather than by reading a zero as a measurement.
 	var promptResult struct {
 		StopReason string `json:"stopReason"`
+		Usage      *struct {
+			InputTokens       int `json:"input_tokens"`
+			CachedInputTokens int `json:"cached_input_tokens"`
+			OutputTokens      int `json:"output_tokens"`
+			ReasoningTokens   int `json:"reasoning_output_tokens"`
+		} `json:"usage"`
+		Meta *struct {
+			Usage *struct {
+				InputTokens       int `json:"input_tokens"`
+				CachedInputTokens int `json:"cached_input_tokens"`
+				OutputTokens      int `json:"output_tokens"`
+				ReasoningTokens   int `json:"reasoning_output_tokens"`
+			} `json:"usage"`
+		} `json:"_meta"`
 	}
 	if json.Unmarshal(result, &promptResult) != nil || !validACPStopReason(promptResult.StopReason) {
 		return "", nil, acpFailure(sessionACPProtocolError, "session/prompt returned an invalid stop reason")

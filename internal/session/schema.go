@@ -118,6 +118,16 @@ CREATE TABLE IF NOT EXISTS turn_output_artifacts (
 CREATE INDEX IF NOT EXISTS turn_output_artifacts_turn ON turn_output_artifacts(turn_id, ordinal);
 `
 
+// Usage columns, added rather than a table: exactly one row of usage exists per
+// turn, so a join would buy nothing and a nullable set of columns says
+// "provider reported nothing" as naturally as a missing row would.
+const schemaV5 = `
+ALTER TABLE turns ADD COLUMN usage_input_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE turns ADD COLUMN usage_cached_input_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE turns ADD COLUMN usage_output_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE turns ADD COLUMN usage_reasoning_tokens INTEGER NOT NULL DEFAULT 0;
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -158,6 +168,12 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v4: %w", err)
 		}
 		version = 4
+	}
+	if version < 5 {
+		if _, err := tx.Exec(schemaV5); err != nil {
+			return fmt.Errorf("migrate schema v5: %w", err)
+		}
+		version = 5
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
