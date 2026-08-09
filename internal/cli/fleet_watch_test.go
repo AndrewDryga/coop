@@ -279,7 +279,7 @@ func TestLastLogLine(t *testing.T) {
 }
 
 func TestFleetOrphans(t *testing.T) {
-	// Forks not named in the fleet are the prune candidates, in forkNames order.
+	// Forks not named in the fleet are the prune candidates, in forkspace.Names order.
 	if got := fleetOrphans([]string{"api", "deps"}, []string{"api", "deps", "old1", "old2"}); len(got) != 2 || got[0] != "old1" || got[1] != "old2" {
 		t.Errorf("orphans = %v, want [old1 old2]", got)
 	}

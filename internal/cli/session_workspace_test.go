@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 func sessionWorkspaceGit(t *testing.T, dir string, args ...string) string {
@@ -56,7 +58,7 @@ func TestSessionWorkspaceCreateCapturesExactParentHead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Repo != repo || created.Name != "remote-1" || created.Path != forkWorkspace(repo, "remote-1") {
+	if created.Repo != repo || created.Name != "remote-1" || created.Path != forkspace.Workspace(repo, "remote-1") {
 		t.Fatalf("created workspace identity = %+v", created)
 	}
 	if created.BaseCommit != base || created.ForkHead != base {
@@ -76,7 +78,7 @@ func TestSessionWorkspaceCreateCapturesExactParentHead(t *testing.T) {
 func TestSessionWorkspaceCreateRefusesExistingAndInvalidPartialWorkspace(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	partial := forkWorkspace(repo, "partial")
+	partial := forkspace.Workspace(repo, "partial")
 	if err := os.MkdirAll(partial, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +93,7 @@ func TestSessionWorkspaceCreateRefusesExistingAndInvalidPartialWorkspace(t *test
 	if _, err := createSessionWorkspace(repo, "bad..name"); err == nil {
 		t.Fatal("invalid workspace name was accepted")
 	}
-	if pathExists(forkWorkspace(repo, "bad..name")) {
+	if pathExists(forkspace.Workspace(repo, "bad..name")) {
 		t.Fatal("invalid workspace name left a partial workspace")
 	}
 }
@@ -299,7 +301,7 @@ func TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(forkPid(repo, created.Name), []byte(forkReapPending), 0o644); err != nil {
+	if err := os.WriteFile(forkspace.PidPath(repo, created.Name), []byte(forkspace.ReapPending), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := discardSessionWorkspace(plan); err == nil {
@@ -308,7 +310,7 @@ func TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning(t *t
 	if !pathExists(created.Path) {
 		t.Fatal("running workspace discard removed the workspace")
 	}
-	if err := os.Remove(forkPid(repo, created.Name)); err != nil {
+	if err := os.Remove(forkspace.PidPath(repo, created.Name)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -397,7 +399,7 @@ func TestSessionWorkspaceDiscardRequiresExactDirtyAndUnmergedAcknowledgement(t *
 func TestSessionWorkspaceDiscardPlansAMissingWorkspaceAsAbsent(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	missing := forkWorkspace(repo, "vanished")
+	missing := forkspace.Workspace(repo, "vanished")
 	plan, err := planSessionWorkspaceDiscard(repo, missing, false, false)
 	if err != nil {
 		t.Fatalf("missing workspace plan = %v", err)
@@ -418,10 +420,10 @@ func TestSessionWorkspaceDiscardPlansAMissingWorkspaceAsAbsent(t *testing.T) {
 
 	// Absence is the only shortcut: a workspace that exists but cannot be
 	// inspected may hold work, so planning it must keep failing loudly.
-	if err := os.MkdirAll(forkHome(repo), 0o755); err != nil {
+	if err := os.MkdirAll(forkspace.Home(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	broken := forkWorkspace(repo, "broken")
+	broken := forkspace.Workspace(repo, "broken")
 	sessionWorkspaceWrite(t, broken, "not a directory\n")
 	if _, err := planSessionWorkspaceDiscard(repo, broken, false, false); err == nil ||
 		!strings.Contains(err.Error(), "pin session workspace") {

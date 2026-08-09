@@ -10,6 +10,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 	"gopkg.in/yaml.v3"
 )
@@ -76,7 +77,7 @@ func parseFleetYAML(data string) ([]fleetEntry, error) {
 			return nil, fmt.Errorf(".agent/fleet.yaml: fork %q: %v", name, err)
 		}
 		e := fleetEntry{name: name, agent: f.Agent, tasks: f.Tasks}
-		if !validForkName(e.name) {
+		if !forkspace.ValidName(e.name) {
 			return nil, fmt.Errorf(".agent/fleet.yaml: invalid fork name %q", e.name)
 		}
 		if seen[e.name] {
@@ -269,7 +270,7 @@ func (a *app) fleetUp(args []string) (int, error) {
 	a.sweepOrphanBoxes(repo)
 	started := 0
 	for _, e := range fleet {
-		if pid := forkRunningPid(repo, e.name); pid != 0 {
+		if pid := forkspace.RunningPid(repo, e.name); pid != 0 {
 			ui.Note("fork %s already running (pid %d) — skipping", e.name, pid)
 			continue // idempotent: re-running `fleet up` leaves live loops alone
 		}
@@ -337,10 +338,10 @@ func (a *app) fleetDown(args []string) (int, error) {
 		names[i] = e.name
 		// A pidfile may be a live worker OR a cleanup marker left by a failed exact-label reap.
 		// Retry either state; silently skipping the marker would strand the fork's box forever.
-		if pathExists(forkPid(repo, e.name)) {
+		if pathExists(forkspace.PidPath(repo, e.name)) {
 			if _, err := a.forkStop([]string{e.name}); err == nil {
 				stopped++
-			} else if !pathExists(forkPid(repo, e.name)) {
+			} else if !pathExists(forkspace.PidPath(repo, e.name)) {
 				// The worker exited and cleared its pidfile between our check and forkStop's lock.
 				continue
 			} else {
@@ -354,8 +355,8 @@ func (a *app) fleetDown(args []string) (int, error) {
 	ui.OK("stopped %s", ui.Count(stopped, "fork"))
 	// `down` only stops forks listed in .agent/fleet — surface a running fork that isn't (removed
 	// from the file, or started by hand) rather than leave it silently running.
-	for _, n := range fleetOrphans(names, forkLifecycleNames(repo)) {
-		if forkNeedsStop(repo, n) {
+	for _, n := range fleetOrphans(names, forkspace.LifecycleNames(repo)) {
+		if forkspace.NeedsStop(repo, n) {
 			ui.Info("note: fork %s is running or awaiting cleanup but not in .agent/fleet.yaml — stop it with: coop fork stop %s", n, n)
 		}
 	}
@@ -437,7 +438,7 @@ func (a *app) pruneFleet(repo string, force, yes bool) (int, error) {
 	for i, e := range fleet {
 		names[i] = e.name
 	}
-	orphans := fleetOrphans(names, forkLifecycleNames(repo))
+	orphans := fleetOrphans(names, forkspace.LifecycleNames(repo))
 	if len(orphans) == 0 {
 		ui.Note("nothing to prune — every fork is in .agent/fleet.yaml")
 		return 0, nil
@@ -455,13 +456,13 @@ func (a *app) pruneFleet(repo string, force, yes bool) (int, error) {
 		}
 	}()
 	for _, n := range orphans {
-		if forkNeedsStop(repo, n) {
+		if forkspace.NeedsStop(repo, n) {
 			ui.Warn("kept %s — still running or awaiting cleanup (coop fork stop %s first)", n, n)
 			kept++
 			continue
 		}
-		ws := forkWorkspace(repo, n)
-		handle, info, err := pinForkWorkspace(ws)
+		ws := forkspace.Workspace(repo, n)
+		handle, info, err := forkspace.Pin(ws)
 		if err != nil {
 			ui.Warn("kept %s — workspace changed while selecting it for prune", n)
 			kept++
@@ -489,14 +490,14 @@ func (a *app) pruneFleet(repo string, force, yes bool) (int, error) {
 	removed := 0
 	for _, candidate := range candidates {
 		n := candidate.name
-		unlock, err := lockForkState(repo, n)
+		unlock, err := forkspace.LockState(repo, n)
 		if err != nil {
 			ui.Error("prune %s: lock state: %v", n, err)
 			kept++
 			continue
 		}
-		ws := forkWorkspace(repo, n)
-		if !samePinnedForkWorkspace(ws, candidate.info) || forkNeedsStop(repo, n) {
+		ws := forkspace.Workspace(repo, n)
+		if !forkspace.SamePinned(ws, candidate.info) || forkspace.NeedsStop(repo, n) {
 			ui.Warn("kept %s — changed while awaiting confirmation", n)
 			kept++
 			unlock()

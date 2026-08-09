@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 // `coop fleet ls`/`list` has no fleet-level listing — it must point at the real views (fork ls / the
@@ -48,9 +49,9 @@ func TestPolicyScan(t *testing.T) {
 		t.Skip("git not available")
 	}
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "x")
+	ws, err := forkspace.Setup(repo, "x")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	// .env (classic) plus files the old hand-rolled regex MISSED but SecretGlobs covers — the gate
 	// now shares the shadow decider, so these must be flagged. safe.txt must not be.
@@ -85,9 +86,9 @@ func TestPolicyScanContent(t *testing.T) {
 		t.Skip("git not available")
 	}
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "leak")
+	ws, err := forkspace.Setup(repo, "leak")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(ws, "config"), 0o755); err != nil {
 		t.Fatal(err)
@@ -257,13 +258,13 @@ func TestFleetDownWarnsRunningOrphan(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A running fork "b" that isn't in the fleet (its workspace exists + a live pidfile).
-	if err := os.MkdirAll(forkWorkspace(repo, "b"), 0o755); err != nil {
+	if err := os.MkdirAll(forkspace.Workspace(repo, "b"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeForkPid(repo, "b", os.Getpid()); err != nil {
+	if err := forkspace.WritePid(repo, "b", os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
@@ -289,7 +290,7 @@ func TestFleetDownPropagatesForkStopFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet.yaml"), []byte("forks:\n  perf: {agent: claude, tasks: .agent/T.md}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(forkWorkspace(repo, "perf"), 0o755); err != nil {
+	if err := os.MkdirAll(forkspace.Workspace(repo, "perf"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	worker := exec.Command("sleep", "30")
@@ -300,7 +301,7 @@ func TestFleetDownPropagatesForkStopFailure(t *testing.T) {
 		_ = worker.Process.Kill()
 		_ = worker.Wait()
 	})
-	if err := writeForkPid(repo, "perf", worker.Process.Pid); err != nil {
+	if err := forkspace.WritePid(repo, "perf", worker.Process.Pid); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo, RuntimeName: "coop-test-runtime-that-does-not-exist"}}
@@ -369,7 +370,7 @@ func TestFleetPruneSeparatesConfirmationFromForce(t *testing.T) {
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
 
-	clean, err := setupFork(repo, "clean")
+	clean, err := forkspace.Setup(repo, "clean")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +381,7 @@ func TestFleetPruneSeparatesConfirmationFromForce(t *testing.T) {
 		t.Fatalf("confirmed clean prune = (%d, %v), exists %v", code, err, pathExists(clean))
 	}
 
-	dirty, err := setupFork(repo, "dirty")
+	dirty, err := forkspace.Setup(repo, "dirty")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,10 +407,10 @@ func TestFleetPruneReportsStateOnlyOrphan(t *testing.T) {
 	if err := os.WriteFile(fleetYAMLFile(repo), []byte("forks: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeForkWorkerState(repo, "crashed", forkWorkerState{pending: true}); err != nil {
+	if err := forkspace.WriteWorkerState(repo, "crashed", forkspace.WorkerState{Pending: true}); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
@@ -431,12 +432,12 @@ func TestFleetPruneRefusesReplacementAfterConfirmation(t *testing.T) {
 	if err := os.WriteFile(fleetYAMLFile(repo), []byte("forks: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ws, err := setupFork(repo, "replacement")
+	ws, err := forkspace.Setup(repo, "replacement")
 	if err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	unlock, err := lockForkState(repo, "replacement")
+	unlock, err := forkspace.LockState(repo, "replacement")
 	if err != nil {
 		t.Fatal(err)
 	}

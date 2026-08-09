@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -22,14 +23,14 @@ type forkStatus struct {
 // gatherForkStatus reads one fork's state. Git runs through the hardened fork helpers
 // because the tree is agent-controlled (see forkBranch/forkUpdated for why).
 func gatherForkStatus(repo, name string) forkStatus {
-	ws := forkWorkspace(repo, name)
+	ws := forkspace.Workspace(repo, name)
 	agent := readForkAgent(ws)
 	if agent == "" {
 		agent = "?" // a fork made before agents were remembered
 	}
 	ins, del := parseShortstat(gitOut(ws, "diff", "--shortstat", "origin/HEAD"))
 	counts, active := queueCounts(wsTaskSource(ws))
-	running := forkRunningPid(repo, name) != 0
+	running := forkspace.RunningPid(repo, name) != 0
 	return forkStatus{
 		Name:    name,
 		Agent:   agent,
@@ -37,7 +38,7 @@ func gatherForkStatus(repo, name string) forkStatus {
 		Updated: forkUpdated(repo, ws),
 		Active:  active,
 		Running: running,
-		Cleanup: !running && pathExists(forkPid(repo, name)),
+		Cleanup: !running && pathExists(forkspace.PidPath(repo, name)),
 		Ins:     ins,
 		Del:     del,
 		Dirty:   gitDirty(ws),
@@ -105,7 +106,7 @@ func (s forkStatus) activeCell() string {
 // tailing N logs. It's the one-shot fallback for the live `coop fleet watch` board — printed when
 // there's no TTY to animate, or no forks to watch.
 func (a *app) fleetSnapshot(repo string) (int, error) {
-	names := forkLifecycleNames(repo)
+	names := forkspace.LifecycleNames(repo)
 	if len(names) == 0 {
 		// No forks — but in the single-loop workflow there's still a local queue to report.
 		// Show its progress instead of a bare "no forks", so the snapshot is useful either way.

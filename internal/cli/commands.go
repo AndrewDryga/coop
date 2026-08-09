@@ -25,6 +25,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
@@ -3852,10 +3853,10 @@ func (a *app) cmdPrompt(args []string) (int, error) {
 		c, _ = queueProgress(hosts)
 	}
 	// Fork activity from a dir listing + pidfiles — no git, so it stays prompt-cheap.
-	names := forkNames(repo)
+	names := forkspace.Names(repo)
 	looping := 0
 	for _, n := range names {
-		if forkRunningPid(repo, n) > 0 {
+		if forkspace.RunningPid(repo, n) > 0 {
 			looping++
 		}
 	}

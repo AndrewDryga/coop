@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -334,21 +335,12 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// gitClone clones src→dst carrying gitHardening like every other repo-touching git call:
-// inert for a plain local clone, but defense in depth if the source's config was poisoned.
-func gitClone(src, dst string) error {
-	args := append(append([]string{}, gitHardening...), "clone", "--quiet", src, dst)
-	return exec.Command("git", args...).Run()
-}
-
-func gitCheckoutNewBranch(repo, branch string) error {
-	return exec.Command("git", "-C", repo, "checkout", "--quiet", "-b", branch).Run()
-}
-
 // gitArgs builds `git -C dir <hardening> <args>`. The hardening goes first so a caller's own
 // trailing -c flags (e.g. trustedSignArgs) still win — git's last -c for a key takes effect.
+// The list itself lives in internal/forkspace, next to the clone that creates a fork, so the whole
+// repo has exactly one hardening set to audit.
 func gitArgs(dir string, args []string) []string {
-	return append(append([]string{"-C", dir}, gitHardening...), args...)
+	return append(append([]string{"-C", dir}, forkspace.GitHardening...), args...)
 }
 
 // gitOut runs `git -C dir <args>` hardened and returns trimmed stdout, or "" on error. Every repo
@@ -426,54 +418,18 @@ func gitGlobalOut(args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// gitHardening are -c overrides applied to EVERY git command coop runs for effect on a working
-// tree, because every repo coop touches is agent-writable: the box binds the repo (its .git
-// included) read-write on a normal run, so an agent can plant hooks, replacement objects, or local
-// config that changes what the host executes or considers to be Git history. We ignore replacement
-// objects, turn hooks off, and blank every config knob that shells out. Verified host-exec vectors:
-// .git/hooks/* (and core.hooksPath), core.fsmonitor, core.pager, diff.external, and a forced
-// commit.gpgsign with a planted gpg.program; the rest are defense in depth. Signing on land is
-// re-enabled with trusted values appended after these (git's last -c for a key wins; see
-// trustedSignArgs).
-//
-// A value coop reads then EXECUTES (or reads a host file from) — your editor, signing program,
-// global excludesfile — must not come from the agent-writable repo at all: those use gitGlobalOut
-// to read your trusted global config, never these helpers.
-//
-// The one residual gitHardening alone can't blank (the driver names are arbitrary) — an in-tree
-// .gitattributes plus a fork-local filter/merge/diff driver that runs on the land rebase's
-// checkout — is closed by forkDriverNeutralizer, which enumerates the fork's driver names and
-// blanks each before that rebase. policyScan stays the human-facing backstop for the .gitattributes.
-var gitHardening = []string{
-	"--no-replace-objects",
-	"-c", "core.hooksPath=/dev/null",
-	"-c", "core.fsmonitor=",
-	"-c", "core.sshCommand=",
-	"-c", "core.pager=cat",
-	"-c", "core.editor=true",
-	"-c", "sequence.editor=true",
-	"-c", "diff.external=",
-	"-c", "uploadpack.packObjectsHook=",
-	"-c", "protocol.ext.allow=never",
-	"-c", "rebase.updateRefs=false",
-	"-c", "commit.gpgsign=false",
-	"-c", "gpg.program=false",
-	"-c", "gpg.ssh.program=false",
-	"-c", "gpg.x509.program=false",
-}
-
 func gitBranch(dir string) string { return gitOut(dir, "rev-parse", "--abbrev-ref", "HEAD") }
 
 func gitDirty(dir string) bool { return gitOut(dir, "status", "--porcelain") != "" }
 
 // forkDriverNeutralizer returns -c flags that blank every filter/merge/diff driver defined in the
-// fork's OWN (local) git config, by name. gitHardening can't cover these — the driver names are
-// arbitrary — but they're enumerable: an in-tree .gitattributes assigning `filter=x` (or merge/diff)
-// to a path plus a fork-local filter.x.smudge / merge.x.driver / diff.x.command runs host code on the
-// checkout/merge/diff of the land rebase. We read the fork's local driver names and blank each
-// (filter.required=false so a blanked smudge doesn't hard-fail the checkout). A legit clone has no
-// local filter/merge/diff config — those live in your global — so this blanks only what the agent
-// planted; policyScan stays the human-facing backstop for the committed .gitattributes itself.
+// fork's OWN (local) git config, by name. forkspace.GitHardening can't cover these — the driver
+// names are arbitrary — but they're enumerable: an in-tree .gitattributes assigning `filter=x` (or
+// merge/diff) to a path plus a fork-local filter.x.smudge / merge.x.driver / diff.x.command runs
+// host code on the checkout/merge/diff of the land rebase. We read the fork's local driver names and
+// blank each (filter.required=false so a blanked smudge doesn't hard-fail the checkout). A legit
+// clone has no local filter/merge/diff config — those live in your global — so this blanks only what
+// the agent planted; policyScan stays the human-facing backstop for the committed .gitattributes.
 func forkDriverNeutralizer(ws string) []string {
 	keys := gitOut(ws, "config", "--local", "--name-only", "--get-regexp", `^(filter|merge|diff)\.`)
 	if keys == "" {

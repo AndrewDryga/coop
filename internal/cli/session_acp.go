@@ -24,6 +24,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -1158,8 +1159,8 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		}
 	}
 	if !filepath.IsAbs(bound.Repository) || !filepath.IsAbs(bound.Workspace) ||
-		bound.Workspace != forkWorkspace(bound.Repository, bound.ForkName) ||
-		!validExistingForkName(bound.ForkName) || bound.Target == "" {
+		bound.Workspace != forkspace.Workspace(bound.Repository, bound.ForkName) ||
+		!forkspace.ValidExistingName(bound.ForkName) || bound.Target == "" {
 		return nil, acpFailure(sessionACPProcessError, "bound fork identity is invalid")
 	}
 	if !validSessionRunID(runID) {

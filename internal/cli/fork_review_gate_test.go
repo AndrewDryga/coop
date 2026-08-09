@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -30,7 +31,7 @@ func setupReviewGateFork(t *testing.T, conflict bool) (string, string) {
 		git(t, repo, "add", "-A")
 		git(t, repo, "commit", "-qm", "shared base")
 	}
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestPrepareForkReviewCandidate(t *testing.T) {
 
 	t.Run("rebases in scratch without changing either source", func(t *testing.T) {
 		repo := initRepo(t)
-		ws, err := setupFork(repo, "perf")
+		ws, err := forkspace.Setup(repo, "perf")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,7 +121,7 @@ func TestPrepareForkReviewCandidate(t *testing.T) {
 		}
 		git(t, repo, "add", "-A")
 		git(t, repo, "commit", "-qm", "conflict base")
-		ws, err := setupFork(repo, "perf")
+		ws, err := forkspace.Setup(repo, "perf")
 		if err != nil {
 			t.Fatal(err)
 		}

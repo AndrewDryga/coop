@@ -16,6 +16,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 )
 
@@ -686,7 +687,7 @@ func TestSessionServiceCreateRollsBackPartialMultiRepositoryWorkspace(t *testing
 	if err == nil || !strings.Contains(err.Error(), `ensure companion "blocked"`) {
 		t.Fatalf("create error = %v", err)
 	}
-	primaryPath := forkWorkspace(primary, deterministicForkName(op.ID))
+	primaryPath := forkspace.Workspace(primary, deterministicForkName(op.ID))
 	firstPath, err := sessionCompanionWorkspace(
 		service.Store().Root(), sessionID, "first",
 	)

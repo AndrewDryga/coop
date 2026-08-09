@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- _Internal restructuring, no user-visible change._ The fork **on-disk contract** — where a fork's
+  workspace lives, what a fork may be named, the `<repo>-forks/.coop` state directory, the lifecycle
+  flock, the pidfile wire format and its identity doctrine, and clone/destroy/pin — moved out of
+  `internal/cli` into a new leaf package, `internal/forkspace`. Worker supervision (signalling,
+  killing, reaping, detach orchestration, container teardown) stayed in the CLI, which is why the
+  leaf prints nothing and imports only `internal/processidentity`. The pidfile format is
+  byte-identical.
+
 - **The internal dependency graph is frozen in the gate, so an import can no longer become
   architecture by accident.** The graph was already a clean DAG — nothing importing the CLI,
   presentation at the edges — and nothing enforced it, which is how `internal/agent` had picked up a

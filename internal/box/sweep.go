@@ -35,7 +35,7 @@ type OrphanSurvey struct {
 
 // SurveyOrphanBoxes classifies every coop box for workspace without touching any of them.
 //
-// The judgment is the fork lifecycle's (internal/cli.ownerProvablyDead), applied to an identity
+// The judgment is the fork lifecycle's (internal/forkspace.OwnerProvablyDead), applied to an identity
 // carried by the container instead of a pidfile: a box is an orphan only when its recorded
 // supervisor's pid is gone, or that pid has been reused by a different process. Everything else is
 // left alone — a live supervisor, an identity the kernel won't confirm, a box from another

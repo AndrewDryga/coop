@@ -11,19 +11,10 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
-
-func TestForkWorkspace(t *testing.T) {
-	repo := "/home/me/proj"
-	if got, want := forkHome(repo), "/home/me/proj-forks"; got != want {
-		t.Errorf("forkHome = %q, want %q", got, want)
-	}
-	if got, want := forkWorkspace(repo, "perf"), "/home/me/proj-forks/perf"; got != want {
-		t.Errorf("forkWorkspace = %q, want %q", got, want)
-	}
-}
 
 // A mistyped fork subcommand must be a usage error with a suggestion — never silently turned into
 // a new fork (clone + branch + agent). An explicit agent (a real create) bypasses the guard.
@@ -33,25 +24,8 @@ func TestForkTypoSuggestsSubcommand(t *testing.T) {
 	if code, err := a.cmdFork([]string{"reviw"}); code != 2 || err == nil || !strings.Contains(err.Error(), "review") {
 		t.Errorf("coop fork reviw = (%d, %v), want (2, did-you-mean review)", code, err)
 	}
-	if pathExists(forkWorkspace(repo, "reviw")) {
+	if pathExists(forkspace.Workspace(repo, "reviw")) {
 		t.Error("a typo must not create a fork")
-	}
-	if got := forkVerbList(); !slices.Equal(got, []string{"acp", "logs", "ls", "merge", "open", "path", "review", "rm", "stop"}) {
-		t.Errorf("forkVerbList = %v", got)
-	}
-}
-
-func TestValidForkName(t *testing.T) {
-	for _, n := range []string{"perf", "deps", "fix-1", "fix_2", "a.b"} {
-		if !validForkName(n) {
-			t.Errorf("validForkName(%q) = false, want true", n)
-		}
-	}
-	for _, n := range []string{"", "ls", "review", "merge", "rm", "open", "path", "acp", "a/b", `a\b`, "..", ".", ".hidden", "a..b", "a.", "a.lock", "-x",
-		"my fork", "a\tb", "a\nb", "a=b", "a;b", "a$(id)", "a`id`", "a|b", "a&b", `a'b`, `a"b`} {
-		if validForkName(n) {
-			t.Errorf("validForkName(%q) = true, want false", n)
-		}
 	}
 }
 
@@ -117,28 +91,6 @@ func TestCmdForkRefusesVerbTypo(t *testing.T) {
 	}
 }
 
-// Every fork subcommand + accepted alias + `watch` is a reserved name (can't be a fork), so no fork
-// shadows a subcommand; a real fork name is not reserved.
-func TestForkReserved(t *testing.T) {
-	for _, r := range []string{"ls", "review", "merge", "rm", "open", "logs", "stop", "path", "acp", "watch"} {
-		if !forkReserved(r) {
-			t.Errorf("forkReserved(%q) = false, want true", r)
-		}
-		if validForkName(r) {
-			t.Errorf("validForkName(%q) = true, want false (a fork can't be named a reserved verb)", r)
-		}
-	}
-	// v3 dropped the list/remove aliases, so they are ordinary (allowed) fork names now.
-	for _, ok := range []string{"api", "web", "feature-x", "wip2", "list", "remove"} {
-		if forkReserved(ok) {
-			t.Errorf("forkReserved(%q) = true, want false", ok)
-		}
-		if !validForkName(ok) {
-			t.Errorf("validForkName(%q) = false, want true", ok)
-		}
-	}
-}
-
 // v3 dropped the `list` alias: `coop fork list` (no agent) is refused as a near-miss of `ls`, not
 // treated as a lister. (A fork literally named "list" still works with an explicit agent.)
 func TestCmdForkListRetired(t *testing.T) {
@@ -174,7 +126,7 @@ func TestForkCreateAcceptsEnvOnlyDefaultProfileBeforeImage(t *testing.T) {
 	if code == 2 && strings.Contains(err.Error(), "no account") {
 		t.Fatalf("env-only default was rejected before image lookup: (%d, %v)", code, err)
 	}
-	if pathExists(forkWorkspace(cfg.RepoOverride, "scratchfork")) {
+	if pathExists(forkspace.Workspace(cfg.RepoOverride, "scratchfork")) {
 		t.Error("failed image lookup must not create a fork")
 	}
 }
@@ -184,7 +136,7 @@ func TestForkAgentMemory(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(ws, ".git", "info"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	excludeFork(ws, ".coop/") // setupFork establishes this before the first provider run
+	forkspace.Exclude(ws, ".coop/") // forkspace.Setup establishes this before the first provider run
 	// A fork with no memory yet.
 	if got := readForkAgent(ws); got != "" {
 		t.Errorf("readForkAgent(fresh) = %q, want empty", got)
@@ -373,15 +325,15 @@ func TestForkRmSafe(t *testing.T) {
 func TestForkRmRefusesRunning(t *testing.T) {
 	repo := t.TempDir()
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	ws := forkWorkspace(repo, "busy")
+	ws := forkspace.Workspace(repo, "busy")
 	if err := os.MkdirAll(ws, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// Mark it running by claiming the pidfile for THIS (live) process.
-	if err := writeForkPid(repo, "busy", os.Getpid()); err != nil {
+	if err := forkspace.WritePid(repo, "busy", os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
 	code, err := a.forkRm([]string{"busy"})
@@ -448,9 +400,9 @@ func TestForkRmGate(t *testing.T) {
 	}
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	code, err := a.forkRm([]string{"perf"}) // no --yes, no TTY → refuse
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
@@ -469,11 +421,11 @@ func TestForkRmGate(t *testing.T) {
 
 func TestForkRmConfirmsBeforeForcedStop(t *testing.T) {
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeForkPid(repo, "perf", os.Getpid()); err != nil {
+	if err := forkspace.WritePid(repo, "perf", os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
@@ -481,7 +433,7 @@ func TestForkRmConfirmsBeforeForcedStop(t *testing.T) {
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("forced fork rm without confirmation = (%d, %v), want refusal naming --yes", code, err)
 	}
-	if !pathExists(ws) || forkRunningPid(repo, "perf") != os.Getpid() {
+	if !pathExists(ws) || forkspace.RunningPid(repo, "perf") != os.Getpid() {
 		t.Fatal("unconfirmed forced fork rm stopped its worker or deleted the workspace")
 	}
 }
@@ -493,7 +445,7 @@ type forkCommandResult struct {
 
 func runForkCommandAcrossLockedMutation(t *testing.T, repo, name string, command func() (int, error), mutate func()) forkCommandResult {
 	t.Helper()
-	unlock, err := lockForkState(repo, name)
+	unlock, err := forkspace.LockState(repo, name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +480,7 @@ func runForkCommandAcrossLockedMutation(t *testing.T, repo, name string, command
 
 func TestForkRmRechecksLifecycleAfterConfirmation(t *testing.T) {
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "race")
+	ws, err := forkspace.Setup(repo, "race")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +488,7 @@ func TestForkRmRechecksLifecycleAfterConfirmation(t *testing.T) {
 	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
 		return a.forkRm([]string{"race", "--yes"})
 	}, func() {
-		if err := os.WriteFile(forkPid(repo, "race"), []byte(forkReapPending), 0o644); err != nil {
+		if err := os.WriteFile(forkspace.PidPath(repo, "race"), []byte(forkspace.ReapPending), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -550,7 +502,7 @@ func TestForkRmRechecksLifecycleAfterConfirmation(t *testing.T) {
 
 func TestForkRmRefusesReplacementAfterConfirmation(t *testing.T) {
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "replacement")
+	ws, err := forkspace.Setup(repo, "replacement")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -579,7 +531,7 @@ func TestForkRmRefusesReplacementAfterConfirmation(t *testing.T) {
 
 func TestForkRmRefusesSymlinkReplacementAfterConfirmation(t *testing.T) {
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "replacement")
+	ws, err := forkspace.Setup(repo, "replacement")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,9 +568,9 @@ func TestForkFreshGuardsDirtyWork(t *testing.T) {
 	}
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ws, "wip.txt"), []byte("uncommitted\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -635,7 +587,7 @@ func TestForkFreshGuardsDirtyWork(t *testing.T) {
 
 func TestForkFreshConfirmsBeforeRuntimeWork(t *testing.T) {
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -651,11 +603,11 @@ func TestForkFreshConfirmsBeforeRuntimeWork(t *testing.T) {
 
 func TestForkFreshConfirmsBeforeForcedStop(t *testing.T) {
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeForkPid(repo, "perf", os.Getpid()); err != nil {
+	if err := forkspace.WritePid(repo, "perf", os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
@@ -663,17 +615,17 @@ func TestForkFreshConfirmsBeforeForcedStop(t *testing.T) {
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("forced --fresh without confirmation = (%d, %v), want refusal naming --yes", code, err)
 	}
-	if !pathExists(ws) || forkRunningPid(repo, "perf") != os.Getpid() {
+	if !pathExists(ws) || forkspace.RunningPid(repo, "perf") != os.Getpid() {
 		t.Fatal("unconfirmed forced --fresh stopped its worker or deleted the workspace")
 	}
 }
 
 func TestForkFreshRefusesStateOnlyCleanup(t *testing.T) {
 	repo := initRepo(t)
-	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeForkWorkerState(repo, "perf", forkWorkerState{pending: true}); err != nil {
+	if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pending: true}); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
@@ -681,7 +633,7 @@ func TestForkFreshRefusesStateOnlyCleanup(t *testing.T) {
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "awaiting cleanup") || !strings.Contains(err.Error(), "coop fork stop perf") {
 		t.Fatalf("fork --fresh with state-only cleanup = (%d, %v), want cleanup refusal", code, err)
 	}
-	if !pathExists(forkPid(repo, "perf")) || pathExists(forkWorkspace(repo, "perf")) {
+	if !pathExists(forkspace.PidPath(repo, "perf")) || pathExists(forkspace.Workspace(repo, "perf")) {
 		t.Fatal("refused state-only --fresh changed lifecycle state")
 	}
 }
@@ -689,7 +641,7 @@ func TestForkFreshRefusesStateOnlyCleanup(t *testing.T) {
 func TestForkFreshRechecksLifecycleUnderLock(t *testing.T) {
 	dir := t.TempDir()
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "race")
+	ws, err := forkspace.Setup(repo, "race")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -701,7 +653,7 @@ func TestForkFreshRechecksLifecycleUnderLock(t *testing.T) {
 	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
 		return a.forkCreate([]string{"race", "claude", "--fresh", "--yes"})
 	}, func() {
-		if err := writeForkWorkerState(repo, "race", forkWorkerState{pending: true}); err != nil {
+		if err := forkspace.WriteWorkerState(repo, "race", forkspace.WorkerState{Pending: true}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -716,7 +668,7 @@ func TestForkFreshRechecksLifecycleUnderLock(t *testing.T) {
 func TestForkFreshRefusesReplacementAfterConfirmation(t *testing.T) {
 	dir := t.TempDir()
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "replacement")
+	ws, err := forkspace.Setup(repo, "replacement")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -762,9 +714,9 @@ func TestForkUpdatedShowsOwnActivityNotInheritedBase(t *testing.T) {
 	if out, err := old.CombinedOutput(); err != nil {
 		t.Fatalf("backdate base: %v\n%s", err, out)
 	}
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if got := forkUpdated(repo, ws); strings.Contains(got, "year") {
 		t.Errorf("fresh fork UPDATED = %q, want ~creation time, not the inherited 2020 base commit", got)
@@ -875,10 +827,10 @@ func TestForkLifecycle(t *testing.T) {
 	}
 	repo := initRepo(t)
 
-	// setupFork clones + branches.
-	ws, err := setupFork(repo, "perf")
+	// forkspace.Setup clones + branches.
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if !pathExists(ws) {
 		t.Fatalf("workspace %s not created", ws)
@@ -951,9 +903,9 @@ func TestForkCarriesGlobalIgnore(t *testing.T) {
 	}
 	git(t, repo, "config", "core.excludesfile", secret) // repo-local poison: must NOT be read
 
-	ws, err := setupFork(repo, "ig")
+	ws, err := forkspace.Setup(repo, "ig")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	excl, err := os.ReadFile(filepath.Join(ws, ".git", "info", "exclude"))
 	if err != nil {
@@ -976,9 +928,9 @@ func TestForkCarriesSigningMaterials(t *testing.T) {
 	git(t, repo, "config", "user.signingkey", "/home/me/.ssh/id_ed25519.pub")
 	git(t, repo, "config", "commit.gpgsign", "true")
 
-	ws, err := setupFork(repo, "s")
+	ws, err := forkspace.Setup(repo, "s")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	// The key + format travel so the rebase-on-land can sign.
 	if got := gitOut(ws, "config", "--get", "gpg.format"); got != "ssh" {
@@ -1313,9 +1265,9 @@ func TestDestroyForkStopsServicesBeforeRemovingTheWorktree(t *testing.T) {
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "svc")
+	ws, err := forkspace.Setup(repo, "svc")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	compose := filepath.Join(ws, filepath.FromSlash(project.DefaultCompose))
 	if err := os.MkdirAll(filepath.Dir(compose), 0o755); err != nil {

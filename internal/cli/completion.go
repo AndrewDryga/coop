@@ -7,6 +7,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
 
@@ -99,13 +100,13 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 	case "fork":
 		if len(prev) == 1 { // a verb, or a fork to re-enter
 			repo, _ := box.ResolveRepo(a.cfg.RepoOverride)
-			return append(forkVerbList(), forkNames(repo)...)
+			return append(forkspace.VerbList(), forkspace.Names(repo)...)
 		}
 		if len(prev) == 2 && forkVerbList2(prev[1]) { // coop fork <verb> <name> — an existing fork
 			repo, _ := box.ResolveRepo(a.cfg.RepoOverride)
-			return forkNames(repo)
+			return forkspace.Names(repo)
 		}
-		if len(prev) == 2 && forkReserved(prev[1]) {
+		if len(prev) == 2 && forkspace.Reserved(prev[1]) {
 			return nil
 		}
 		if len(prev) == 2 { // coop fork <name> <target|preset>

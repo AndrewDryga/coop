@@ -10,13 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -32,92 +32,8 @@ import (
 //	coop fork merge perf   merge it back into your working tree
 //	coop fork rm perf      discard the fork
 //
-// Forks live in a sibling directory <repo>-forks/, one subdirectory per fork.
-
-const forkSuffix = "-forks"
-
-// forkVerbs are the canonical `coop fork` subcommands — the source for did-you-mean suggestions and
-// the help Usage line, so those name only real, canonically-spelled commands. "acp" is here too:
-// `coop fork <name> acp` fronts a fork over ACP, so a fork literally named "acp" would shadow it.
-var forkVerbs = map[string]bool{
-	"ls": true, "review": true, "merge": true, "rm": true, "open": true,
-	"logs": true, "stop": true, "path": true, "acp": true,
-}
-
-// forkReserved reports whether name is off-limits for a fork (validForkName refuses it), so no fork
-// can shadow a subcommand. It's forkVerbs plus "watch" (reserved so a fork can't be confused with the
-// fleet-level `coop fleet watch`). Kept separate from forkVerbs so "watch" never leaks into a
-// did-you-mean suggestion for a command that doesn't exist on `coop fork`.
-func forkReserved(name string) bool {
-	if name == "watch" {
-		return true
-	}
-	return forkVerbs[name]
-}
-
-// forkHome is the sibling directory that holds every fork of repo.
-func forkHome(repo string) string {
-	return filepath.Join(filepath.Dir(repo), filepath.Base(repo)+forkSuffix)
-}
-
-// forkWorkspace is the clone directory for one named fork.
-func forkWorkspace(repo, name string) string {
-	return filepath.Join(forkHome(repo), name)
-}
-
-// pinForkWorkspace keeps the confirmed directory inode open through a destructive operation.
-// Lstat rejects a swapped symlink, while the open handle prevents unlink/recreate inode reuse.
-func pinForkWorkspace(path string) (*os.File, os.FileInfo, error) {
-	entry, err := os.Lstat(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !entry.IsDir() || entry.Mode()&os.ModeSymlink != 0 {
-		return nil, nil, errors.New("workspace is not a directory")
-	}
-	handle, err := os.Open(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	info, err := handle.Stat()
-	if err != nil || !os.SameFile(entry, info) {
-		_ = handle.Close()
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, nil, errors.New("workspace changed while opening")
-	}
-	return handle, info, nil
-}
-
-func samePinnedForkWorkspace(path string, original os.FileInfo) bool {
-	current, err := os.Lstat(path)
-	return err == nil && current.IsDir() && current.Mode()&os.ModeSymlink == 0 && os.SameFile(original, current)
-}
-
-// validExistingForkName accepts path-safe references to existing forks, including names that became
-// reserved after creation. validForkName adds the creation-time reserved-word policy.
-func validExistingForkName(name string) bool {
-	if name == "" {
-		return false
-	}
-	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") ||
-		strings.HasSuffix(name, ".lock") || strings.Contains(name, "..") {
-		return false
-	}
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
-			r == '.' || r == '_' || r == '-' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-func validForkName(name string) bool {
-	return !forkReserved(name) && validExistingForkName(name)
-}
+// Forks live in a sibling directory <repo>-forks/, one subdirectory per fork — that layout, its
+// names, and its lifecycle state file are internal/forkspace's contract; this file is the commands.
 
 // forkHelp prints the fork family usage (shown for `coop fork [...] -h|--help`).
 func forkHelp() (int, error) {
@@ -207,7 +123,7 @@ func (a *app) cmdFork(args []string) (int, error) {
 		// A typo'd subcommand would otherwise become a NEW fork name and silently clone + branch +
 		// launch an agent. Catch a near-miss of a real subcommand and suggest it instead of creating.
 		if repo, err := box.ResolveRepo(a.cfg.RepoOverride); err == nil {
-			if verb, ok := forkVerbNearMiss(args, pathExists(forkWorkspace(repo, args[0]))); ok {
+			if verb, ok := forkVerbNearMiss(args, pathExists(forkspace.Workspace(repo, args[0]))); ok {
 				return 2, fmt.Errorf("unknown fork command %q — did you mean 'coop fork %s'? (give an agent, e.g. 'coop fork %s claude', to make a fork by that name)", args[0], verb, args[0])
 			}
 		}
@@ -223,18 +139,7 @@ func forkVerbNearMiss(args []string, forkExists bool) (string, bool) {
 	if forkExists || (len(args) >= 2 && agents.Valid(args[1])) {
 		return "", false
 	}
-	return nearestCommand(args[0], forkVerbList())
-}
-
-// forkVerbList is the reserved fork subcommands as a sorted slice, for did-you-mean matching on a
-// mistyped subcommand (so it isn't silently turned into a new fork name).
-func forkVerbList() []string {
-	v := make([]string, 0, len(forkVerbs))
-	for k := range forkVerbs {
-		v = append(v, k)
-	}
-	sort.Strings(v)
-	return v
+	return nearestCommand(args[0], forkspace.VerbList())
 }
 
 // forkArgs is the parsed form of `coop fork <name> [agent] [flags]`.
@@ -332,7 +237,7 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			return fa, fmt.Errorf("coop fork: unexpected argument %q", x)
 		}
 	}
-	if !validForkName(fa.name) {
+	if !forkspace.ValidName(fa.name) {
 		return fa, fmt.Errorf("invalid fork name %q (use letters, digits, '.', '_', or '-'; not a reserved verb)", fa.name)
 	}
 	if !fa.loop && fa.tasks != "" {
@@ -374,7 +279,8 @@ func (a *app) forkCreate(args []string) (int, error) {
 		a.applyPreset(p, fa.agent)
 	}
 	// Validate a pinned @account before any image/clone work, so a typo'd account fails
-	// fast and never leaves a stray fork behind (setupFork would otherwise clone first, then fail).
+	// fast and never leaves a stray fork behind (forkspace.Setup would otherwise clone first, then
+	// fail).
 	if fa.credential != "" && !slices.Contains(box.EffectiveProfiles(a.cfg, fa.agent), fa.credential) {
 		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", fa.agent, fa.credential, fa.agent, fa.credential)
 	}
@@ -382,7 +288,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	ws := forkWorkspace(repo, fa.name)
+	ws := forkspace.Workspace(repo, fa.name)
 	existed := pathExists(ws)
 	// Read provider memory before --fresh destroys it, and reject a brand-new provider-less fork
 	// before clone/image work. An explicit target or preset already set agentSet and always wins.
@@ -430,14 +336,14 @@ func (a *app) forkCreate(args []string) (int, error) {
 	}()
 	if fa.fresh {
 		if existed {
-			handle, info, openErr := pinForkWorkspace(ws)
+			handle, info, openErr := forkspace.Pin(ws)
 			if openErr != nil {
 				return -1, fmt.Errorf("open fork %s before recreation: %w", fa.name, openErr)
 			}
 			originalHandle = handle
 			originalWS = info
 		}
-		needsStop := forkNeedsStop(repo, fa.name)
+		needsStop := forkspace.NeedsStop(repo, fa.name)
 		if needsStop && !fa.force {
 			return 1, fmt.Errorf("--fresh: fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or add --force to stop it automatically)", fa.name, fa.name)
 		}
@@ -472,7 +378,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 		a.sweepOrphanBoxes(repo)
 	}
 	if fa.fresh {
-		unlock, err := lockForkState(repo, fa.name)
+		unlock, err := forkspace.LockState(repo, fa.name)
 		if err != nil {
 			return -1, fmt.Errorf("lock fork %s state: %w", fa.name, err)
 		}
@@ -482,12 +388,12 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return 1, fmt.Errorf("--fresh: fork %q changed while awaiting recreation", fa.name)
 		}
 		if existed {
-			if !samePinnedForkWorkspace(ws, originalWS) {
+			if !forkspace.SamePinned(ws, originalWS) {
 				unlock()
 				return 1, fmt.Errorf("--fresh: fork %q was replaced while awaiting recreation", fa.name)
 			}
 		}
-		if forkNeedsStop(repo, fa.name) {
+		if forkspace.NeedsStop(repo, fa.name) {
 			unlock()
 			return 1, fmt.Errorf("--fresh: fork %q started or entered cleanup while awaiting recreation — stop it first: coop fork stop %s", fa.name, fa.name)
 		}
@@ -509,7 +415,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	}
 	if !pathExists(ws) {
 		ui.Info("forking %s → %s (secrets are gitignored, so they don't come along)", filepath.Base(repo), ws)
-		if _, err := setupFork(repo, fa.name); err != nil {
+		if _, err := forkspace.Setup(repo, fa.name); err != nil {
 			return -1, err
 		}
 	} else if !fa.worker {
@@ -678,64 +584,6 @@ func forkNextSteps(name string) {
 	)
 }
 
-// setupFork creates the clone and its branch (the git half of forkCreate, with no
-// agent run — so the lifecycle is testable without a container).
-func setupFork(repo, name string) (string, error) {
-	ws := forkWorkspace(repo, name)
-	if err := os.MkdirAll(forkHome(repo), 0o755); err != nil {
-		return ws, err
-	}
-	if err := gitClone(repo, ws); err != nil {
-		return ws, fmt.Errorf("couldn't clone the repo into the fork workspace: %w", err)
-	}
-	_ = gitCheckoutNewBranch(ws, name) // branch may already exist in origin; fine
-	propagateGitEnv(repo, ws)
-	excludeFork(ws, ".coop/") // trusted setup only; never re-open agent-writable .git metadata later
-	return ws, nil
-}
-
-// propagateGitEnv carries the parent's git environment into a fresh fork. A clone
-// keeps no local identity and the box has no ambient ~/.gitconfig, so without this an
-// agent couldn't commit and the user's global ignores wouldn't apply:
-//   - user.name / user.email — so the agent's commits have an author;
-//   - the global gitignore (core.excludesfile) content into .git/info/exclude — git's
-//     local, uncommitted ignore file, so no host config path dangles inside the box.
-func propagateGitEnv(repo, ws string) {
-	propagateGitIdentity(repo, ws)
-	// Signing materials (key + format) travel to the fork so commits can be signed
-	// with your key when they're rebased on land — on the host, where the key lives.
-	// commit.gpgsign is deliberately NOT copied: the keyless box must commit unsigned.
-	for _, k := range []string{"user.signingkey", "gpg.format"} {
-		if v := gitOut(repo, "config", "--get", k); v != "" {
-			_ = gitRun(ws, "config", k, v)
-		}
-	}
-	// Read core.excludesfile from your GLOBAL config, never the agent-writable repo: a poisoned
-	// repo could otherwise point it at a host secret (e.g. ~/.ssh/id_rsa) and we'd copy that file's
-	// content into the fork the agent reads. `--path` expands a leading ~ in the configured path.
-	if gi := gitGlobalOut("--path", "core.excludesfile"); gi != "" {
-		if data, err := os.ReadFile(gi); err == nil && len(data) > 0 {
-			excl := filepath.Join(ws, ".git", "info", "exclude")
-			if f, err := os.OpenFile(excl, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-				_, _ = f.WriteString("\n# carried from your global core.excludesfile\n")
-				_, _ = f.Write(data)
-				_ = f.Close()
-			}
-		}
-	}
-}
-
-// propagateGitIdentity gives a clone the trusted parent's resolved commit identity. Git clone does
-// not copy local config, and a preview rebase must work even when the host has no global identity.
-func propagateGitIdentity(repo, ws string) {
-	if email := gitOut(repo, "config", "user.email"); email != "" {
-		_ = gitRun(ws, "config", "user.email", email)
-	}
-	if name := gitOut(repo, "config", "user.name"); name != "" {
-		_ = gitRun(ws, "config", "user.name", name)
-	}
-}
-
 // forkAgentFile records which agent a fork was created/last run with — inside the fork,
 // but git-excluded so it never lands. Re-entry without an explicit agent reads it back.
 func forkAgentFile(ws string) string { return filepath.Join(ws, ".coop", "agent") }
@@ -839,85 +687,22 @@ func newSessionID() (string, error) {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
-// excludeFork appends a pattern to the fork's local .git/info/exclude (git's uncommitted
-// ignore file) if absent, so coop's per-fork bookkeeping never shows in a review diff or
-// lands on merge.
-func excludeFork(ws, pattern string) {
-	excl := filepath.Join(ws, ".git", "info", "exclude")
-	if data, err := os.ReadFile(excl); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.TrimSpace(line) == pattern {
-				return
-			}
-		}
-	}
-	if f, err := os.OpenFile(excl, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-		_, _ = f.WriteString("\n# coop: per-fork state, never committed\n" + pattern + "\n")
-		_ = f.Close()
-	}
-}
-
-// destroyFork removes a fork's workspace and its review/<name> ref, then prunes an
-// empty forks home. Best-effort on the ref so it works for partially-built forks.
+// destroyFork stops the fork's sibling services, then removes the fork itself. Teardown is driven
+// by the fork's own compose file, so it must run BEFORE the workspace goes: DownServices otherwise
+// finds no file and silently no-ops, which is how removed forks left containers running for days
+// (measured: a fork's keycloak + postgres still up five days after `fork rm`, holding disk the whole
+// time). Volumes go with them — a fork is disposable by definition.
+//
+// Best effort: a service that refuses to stop must not block the removal the operator asked
+// for, but it must not vanish silently either.
 func destroyFork(rt runtime.Runtime, repo, name string) error {
-	ws := forkWorkspace(repo, name)
-	// Stop the fork's sibling services BEFORE its worktree goes. Teardown is driven by the fork's
-	// own compose file, so once the workspace is deleted there is nothing left to drive it:
-	// DownServices finds no file and silently no-ops, which is how removed forks left containers
-	// running for days (measured: a fork's keycloak + postgres still up five days after `fork rm`,
-	// holding disk the whole time). Volumes go with them — a fork is disposable by definition.
-	//
-	// Best effort: a service that refuses to stop must not block the removal the operator asked
-	// for, but it must not vanish silently either.
 	if rt.Name != "" {
+		ws := forkspace.Workspace(repo, name)
 		if err := box.DownServices(rt, ws, repo, true, io.Discard, io.Discard); err != nil {
 			ui.Info("fork %s: sibling services did not stop cleanly (%v) — check 'coop ps'", name, err)
 		}
 	}
-	_ = gitRun(repo, "branch", "-q", "-D", "review/"+name)
-	if err := os.RemoveAll(ws); err != nil {
-		return err
-	}
-	if entries, _ := os.ReadDir(forkHome(repo)); len(entries) == 0 {
-		_ = os.Remove(forkHome(repo))
-	}
-	return nil
-}
-
-// forkNames lists the forks of repo (subdirectories of the forks home, skipping
-// the hidden state dir).
-func forkNames(repo string) []string {
-	entries, _ := os.ReadDir(forkHome(repo))
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	return names
-}
-
-// forkLifecycleNames includes pidfile-only forks whose workspace was removed after a worker crash.
-// They remain visible until `coop fork stop` can finish exact-owner runtime cleanup.
-func forkLifecycleNames(repo string) []string {
-	seen := map[string]bool{}
-	for _, name := range forkNames(repo) {
-		seen[name] = true
-	}
-	entries, _ := os.ReadDir(forkStateDir(repo))
-	for _, entry := range entries {
-		name, ok := strings.CutSuffix(entry.Name(), ".pid")
-		if ok && !entry.IsDir() && validExistingForkName(name) {
-			seen[name] = true
-		}
-	}
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return forkspace.Destroy(repo, name)
 }
 
 func (a *app) forkLs(args []string) (int, error) {
@@ -940,7 +725,7 @@ func (a *app) forkLs(args []string) (int, error) {
 	if asJSON {
 		return a.forkLsJSON(repo)
 	}
-	names := forkLifecycleNames(repo)
+	names := forkspace.LifecycleNames(repo)
 	if len(names) == 0 {
 		ui.Note("no forks yet — open one with 'coop fork <name>'")
 		return 0, nil
@@ -958,10 +743,11 @@ func (a *app) forkLs(args []string) (int, error) {
 		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), padRight(s.Agent, 8), padRight(s.Branch, 12), padRight(s.stateCell(), 9), padRight(s.tasksCell(), 8), padRight(s.changesCell(), 15), padRight(s.costCell(), 8), s.Updated)
 	}
 	// A fork whose name is (or became) a reserved verb is unreachable by `coop fork <name>` — that
-	// spelling runs the subcommand. validForkName now refuses such names, so this only catches forks
-	// made before that guard; point at the escape hatch (path/rm still take it as an explicit arg).
+	// spelling runs the subcommand. forkspace.ValidName now refuses such names, so this only catches
+	// forks made before that guard; point at the escape hatch (path/rm still take it as an explicit
+	// arg).
 	for _, n := range names {
-		if forkReserved(n) {
+		if forkspace.Reserved(n) {
 			ui.Warn("fork %q shadows the '%s' subcommand — reach it via 'coop fork path %s' or 'coop fork rm %s'", n, n, n, n)
 		}
 	}
@@ -1010,8 +796,8 @@ func (a *app) forkLsJSON(repo string) (int, error) {
 		Services map[string]string `json:"services,omitempty"`
 	}
 	out := []workspace{{Name: "root", Path: repo, Serve: serveURLs(repo), Services: svcURLs(repo)}}
-	for _, n := range forkLifecycleNames(repo) {
-		ws := forkWorkspace(repo, n)
+	for _, n := range forkspace.LifecycleNames(repo) {
+		ws := forkspace.Workspace(repo, n)
 		out = append(out, workspace{Name: n, Path: ws, Serve: serveURLs(ws), Services: svcURLs(ws)})
 	}
 	b, err := json.MarshalIndent(map[string]any{"workspaces": out}, "", "  ")
@@ -1105,7 +891,7 @@ func newForkReviewScratch(repo string) (forkReviewCandidate, error) {
 		return forkReviewCandidate{}, err
 	}
 	c := forkReviewCandidate{dir: dir}
-	if err := gitClone(repo, dir); err != nil {
+	if err := forkspace.GitClone(repo, dir); err != nil {
 		c.cleanup()
 		return forkReviewCandidate{}, fmt.Errorf("clone parent into review scratch: %w", err)
 	}
@@ -1128,10 +914,10 @@ func prepareForkReviewCandidate(repo, ws, name string) (c forkReviewCandidate, e
 			c = forkReviewCandidate{}
 		}
 	}()
-	if err = gitClone(repo, c.dir); err != nil {
+	if err = forkspace.GitClone(repo, c.dir); err != nil {
 		return c, fmt.Errorf("clone parent into review scratch: %w", err)
 	}
-	propagateGitIdentity(repo, c.dir)
+	forkspace.PropagateGitIdentity(repo, c.dir)
 	c.base = gitOut(c.dir, "rev-parse", "HEAD")
 	if c.base == "" {
 		return c, errors.New("review scratch has no parent HEAD")
@@ -1177,7 +963,7 @@ func (a *app) forkReview(args []string) (int, error) {
 	if name == "" {
 		return 2, errors.New("usage: coop fork review <name> [--stat | --tool | --open] [--gate]")
 	}
-	if !validExistingForkName(name) {
+	if !forkspace.ValidExistingName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	if gate && open {
@@ -1187,7 +973,7 @@ func (a *app) forkReview(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	ws := forkWorkspace(repo, name)
+	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
@@ -1327,7 +1113,7 @@ func (a *app) openInEditor(ws string) (int, error) {
 // session/load, which Zed drives); coop just exposes the fork, so its session history
 // is right there to load.
 func (a *app) forkACP(name string, rest []string) (int, error) {
-	if !validExistingForkName(name) {
+	if !forkspace.ValidExistingName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	peerVals, rest, err := extractPeer(rest)
@@ -1367,7 +1153,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	ws := forkWorkspace(repo, name)
+	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
 	}
@@ -1539,18 +1325,18 @@ func (a *app) forkRm(args []string) (int, error) {
 	if name == "" {
 		return 2, errors.New("usage: coop fork rm <name> [--force] [--yes]")
 	}
-	if !validExistingForkName(name) {
+	if !forkspace.ValidExistingName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	ws := forkWorkspace(repo, name)
+	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
-	handle, originalWS, err := pinForkWorkspace(ws)
+	handle, originalWS, err := forkspace.Pin(ws)
 	if err != nil {
 		return -1, fmt.Errorf("open fork %s before removal: %w", name, err)
 	}
@@ -1558,7 +1344,7 @@ func (a *app) forkRm(args []string) (int, error) {
 	// A running loop has the worktree bind-mounted RW; deleting it would orphan the worker +
 	// container and strand the pidfile. Refuse (like merge/prune do) — or with --force, stop the
 	// loop first so its container is reaped before the worktree goes.
-	needsStop := forkNeedsStop(repo, name)
+	needsStop := forkspace.NeedsStop(repo, name)
 	if needsStop && !force {
 		return 1, fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or use --force)", name, name)
 	}
@@ -1575,7 +1361,7 @@ func (a *app) forkRm(args []string) (int, error) {
 			return code, err
 		}
 	}
-	unlock, err := lockForkState(repo, name)
+	unlock, err := forkspace.LockState(repo, name)
 	if err != nil {
 		return -1, fmt.Errorf("lock fork %s state: %w", name, err)
 	}
@@ -1585,10 +1371,10 @@ func (a *app) forkRm(args []string) (int, error) {
 	if !pathExists(ws) {
 		return 1, fmt.Errorf("fork %q changed while awaiting confirmation — it no longer exists", name)
 	}
-	if !samePinnedForkWorkspace(ws, originalWS) {
+	if !forkspace.SamePinned(ws, originalWS) {
 		return 1, fmt.Errorf("fork %q was replaced while awaiting confirmation", name)
 	}
-	if forkNeedsStop(repo, name) {
+	if forkspace.NeedsStop(repo, name) {
 		return 1, fmt.Errorf("fork %q started while awaiting confirmation — stop it first: coop fork stop %s", name, name)
 	}
 	if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), force); err != nil {
@@ -1609,14 +1395,14 @@ func (a *app) forkPath(args []string) (int, error) {
 		return 2, errors.New("usage: coop fork path <name>")
 	}
 	name := args[0]
-	if !validExistingForkName(name) {
+	if !forkspace.ValidExistingName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	ws := forkWorkspace(repo, name)
+	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
@@ -1632,14 +1418,14 @@ func (a *app) forkOpenEditor(args []string) (int, error) {
 		return 2, errors.New("usage: coop fork open <name>")
 	}
 	name := args[0]
-	if !validExistingForkName(name) {
+	if !forkspace.ValidExistingName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	ws := forkWorkspace(repo, name)
+	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}

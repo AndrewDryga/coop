@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -60,14 +61,14 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 				add(rel, items, "")
 			}
 		}
-		names := forkNames(repo)
+		names := forkspace.Names(repo)
 		running := 0
 		for _, name := range names {
-			pid := forkRunningPid(repo, name)
+			pid := forkspace.RunningPid(repo, name)
 			if pid != 0 {
 				running++
 			}
-			items := readTaskTree(filepath.Join(forkWorkspace(repo, name), tasksRoot))
+			items := readTaskTree(filepath.Join(forkspace.Workspace(repo, name), tasksRoot))
 			if len(items) == 0 && pid == 0 {
 				continue // a dead, empty fork isn't part of the picture
 			}

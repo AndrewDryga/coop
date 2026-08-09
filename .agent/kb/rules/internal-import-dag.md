@@ -46,6 +46,15 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-09 — **+1 package, +2 edges: `internal/forkspace`** (`{"processidentity"}`) and `cli →
+  forkspace`. The fork ON-DISK CONTRACT — workspace paths and names, the `<repo>-forks/.coop` state
+  dir, the lifecycle flock, the pidfile wire format and its identity doctrine, clone/destroy/pin —
+  came out of `internal/cli/fork.go` + `fork_loop.go` so the sessions service can share it by
+  IMPORT instead of a 12-method injected interface (the prerequisite Plan A of the sessions
+  extraction). Worker supervision stayed in cli, which is why forkspace takes NO `ui` edge:
+  everything that printed (the reclaim warning, `fork ls`, the service teardown) is supervision and
+  did not move. `git`'s hardening list moved with the clone that needs it, so cli's `gitArgs` now
+  reads `forkspace.GitHardening` — one list in the tree, not two.
 - 2026-08-09 — created, with the sweep that froze it: 20 internal packages, **40 edges**, 0
   violations — the allowlist IS today's graph, taken straight off the tree the commit before it
   (`1702d68`, which cut the last two edges that didn't belong: agent→ui and scaffold→box). Both

@@ -11,6 +11,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -203,7 +204,7 @@ func (a *app) reviewGatePasses(gateRepo, treeDir, img string) (bool, error) {
 // did NOT happen, while landed=true WITH an error means the commits are in the parent but the queue
 // reconciliation below couldn't be done — the caller reports it and stops, never rolls the land back.
 func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
-	ws := forkWorkspace(repo, name)
+	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
 		return false, fmt.Errorf("no such fork: %s", name)
 	}
@@ -264,9 +265,9 @@ func wantsSigning() bool {
 
 // trustedSignArgs returns the -c flags to sign the rebased commits with the host's key, every
 // value read from your GLOBAL git config so neither the fork NOR the agent-writable parent repo can
-// point gpg.program at a planted binary. They are appended after gitHardening — which turns signing
-// off by default — so these re-enable it with vetted values. The program key tracks gpg.format
-// (openpgp/ssh/x509).
+// point gpg.program at a planted binary. They are appended after forkspace.GitHardening — which
+// turns signing off by default — so these re-enable it with vetted values. The program key tracks
+// gpg.format (openpgp/ssh/x509).
 func trustedSignArgs() []string {
 	// Blank identity selection first so an agent-writable local config cannot choose a key or
 	// execute gpg.ssh.defaultKeyCommand. Trusted global values, when present, are appended last.
@@ -324,14 +325,15 @@ func (a *app) rebaseForkOntoParent(repo, ws, name string) error {
 		return fmt.Errorf("%s: the parent repo has no commits yet — make an initial commit before landing a fork", name)
 	}
 	// Every git command here runs on an agent-controlled tree (the fork ws AND the parent repo,
-	// whose .git the agent could have poisoned), so all go through the hardened helpers — a
-	// planted .git/hooks/* or malicious .git/config must not execute on the host (see gitHardening).
+	// whose .git the agent could have poisoned), so all go through the hardened helpers — a planted
+	// .git/hooks/* or malicious .git/config must not execute on the host (forkspace.GitHardening).
 	if err := gitRun(ws, "fetch", "--quiet", repo); err != nil {
 		return fmt.Errorf("%s: fetching parent into the fork: %w", name, err)
 	}
 	// Blank any filter/merge/diff driver the fork's .git/config defines before the rebase checks
 	// the tree out — an in-tree .gitattributes + a fork-local driver would otherwise run host code
-	// on checkout/merge/diff (the residual gitHardening can't close, since the names are arbitrary).
+	// on checkout/merge/diff (the residual forkspace.GitHardening can't close, since the names are
+	// arbitrary).
 	neut := forkDriverNeutralizer(ws)
 	withNeut := func(args ...string) []string { return append(append([]string{}, neut...), args...) }
 	// Rebase the fork's branch by NAME, not whatever the agent left checked out — `git rebase
@@ -373,14 +375,14 @@ func leftoverRebaseState(ws string) string {
 // recoverInterruptedRebase clears rebase state a CRASHED land left in the fork's clone, so the next
 // merge recovers instead of failing on it forever. Recovery is destructive — `rebase --abort` resets
 // that worktree — so it runs only when the fork's lifecycle state names nobody who could still be
-// running (same pid + start-token test the stop path signals by; see forkStateOwner). Both outcomes
-// are loud: what was found and what was done, or who owns it and how to stop them.
+// running (same pid + start-token test the stop path signals by; see forkspace.StateOwner). Both
+// outcomes are loud: what was found and what was done, or who owns it and how to stop them.
 func recoverInterruptedRebase(repo, ws, name string) error {
 	dir := leftoverRebaseState(ws)
 	if dir == "" {
 		return nil
 	}
-	if pid, held := forkStateOwner(repo, name); held {
+	if pid, held := forkspace.StateOwner(repo, name); held {
 		owner := "an owner coop cannot verify"
 		if pid > 0 {
 			owner = fmt.Sprintf("pid %d", pid)
@@ -437,7 +439,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 	if !all && name == "" {
 		return 2, errors.New("usage: coop fork merge <name> [--all] [--yes]")
 	}
-	if !all && !validForkName(name) {
+	if !all && !forkspace.ValidName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -460,7 +462,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 	if all {
 		return a.forkMergeAll(repo, img, force, yes)
 	}
-	ws := forkWorkspace(repo, name) // name is non-empty here (the !all && name=="" check above returned)
+	ws := forkspace.Workspace(repo, name) // name is non-empty here (the !all && name=="" check above returned)
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
@@ -517,7 +519,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 // against a base that an earlier landing already changed. It stops at the first
 // conflict or gate failure, leaving the remaining forks untouched.
 func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
-	names := forkNames(repo)
+	names := forkspace.Names(repo)
 	if len(names) == 0 {
 		ui.Info("no forks to merge")
 		return 0, nil
@@ -546,7 +548,7 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 		if skip[n] {
 			continue
 		}
-		ws := forkWorkspace(repo, n)
+		ws := forkspace.Workspace(repo, n)
 		if err := gitFetchInto(repo, ws, n); err != nil {
 			continue
 		}

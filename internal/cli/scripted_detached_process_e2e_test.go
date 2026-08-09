@@ -16,6 +16,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -39,12 +40,12 @@ func TestProviderScriptedDetachedForkLifecycle(t *testing.T) {
 			t.Fatalf("start detached fork = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", started.ExitCode, started.Err, started.Stdout, started.Stderr, readProcessFile(t, suite.layout.Trace))
 		}
 		t.Cleanup(func() {
-			if pathExists(forkPid(suite.layout.Repo, name)) {
+			if pathExists(forkspace.PidPath(suite.layout.Repo, name)) {
 				_ = runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "stop", name)
 			}
 		})
 		ready := awaitProcessEventCount(t, suite.layout.Trace, "provider", "ready", 1, 10*time.Second)
-		awaitPathState(t, forkPid(suite.layout.Repo, name), true)
+		awaitPathState(t, forkspace.PidPath(suite.layout.Repo, name), true)
 
 		duplicate := runDetachedCLI(t, suite, suite.layout.Repo, suite.env,
 			"fork", name, target, "--loop", "--detach", "--tasks", filepath.Join(suite.layout.Repo, tasksRoot))
@@ -77,7 +78,7 @@ func TestProviderScriptedDetachedForkLifecycle(t *testing.T) {
 		if stopped.Err != nil || stopped.ExitCode != 0 {
 			t.Fatalf("stop detached fork = exit %d err %v\nstdout:\n%s\nstderr:\n%s", stopped.ExitCode, stopped.Err, stopped.Stdout, stopped.Stderr)
 		}
-		awaitPathState(t, forkPid(suite.layout.Repo, name), false)
+		awaitPathState(t, forkspace.PidPath(suite.layout.Repo, name), false)
 		awaitProcessGone(t, ready.PID)
 		if entries, err := os.ReadDir(filepath.Join(suite.layout.State, "runtime-containers")); err == nil && len(entries) != 0 {
 			t.Fatalf("runtime records survived stop: %v", entries)
@@ -88,12 +89,12 @@ func TestProviderScriptedDetachedForkLifecycle(t *testing.T) {
 		}
 
 		unconfirmed := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "rm", name, "--force")
-		if unconfirmed.ExitCode != 2 || !pathExists(forkWorkspace(suite.layout.Repo, name)) || !strings.Contains(unconfirmed.Stderr, "--yes") {
-			t.Fatalf("unconfirmed rm = exit %d err %v exists %v\nstderr:\n%s", unconfirmed.ExitCode, unconfirmed.Err, pathExists(forkWorkspace(suite.layout.Repo, name)), unconfirmed.Stderr)
+		if unconfirmed.ExitCode != 2 || !pathExists(forkspace.Workspace(suite.layout.Repo, name)) || !strings.Contains(unconfirmed.Stderr, "--yes") {
+			t.Fatalf("unconfirmed rm = exit %d err %v exists %v\nstderr:\n%s", unconfirmed.ExitCode, unconfirmed.Err, pathExists(forkspace.Workspace(suite.layout.Repo, name)), unconfirmed.Stderr)
 		}
 		confirmed := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "rm", name, "--force", "--yes")
-		if confirmed.Err != nil || confirmed.ExitCode != 0 || pathExists(forkWorkspace(suite.layout.Repo, name)) {
-			t.Fatalf("confirmed rm = exit %d err %v exists %v\nstdout:\n%s\nstderr:\n%s", confirmed.ExitCode, confirmed.Err, pathExists(forkWorkspace(suite.layout.Repo, name)), confirmed.Stdout, confirmed.Stderr)
+		if confirmed.Err != nil || confirmed.ExitCode != 0 || pathExists(forkspace.Workspace(suite.layout.Repo, name)) {
+			t.Fatalf("confirmed rm = exit %d err %v exists %v\nstdout:\n%s\nstderr:\n%s", confirmed.ExitCode, confirmed.Err, pathExists(forkspace.Workspace(suite.layout.Repo, name)), confirmed.Stdout, confirmed.Stderr)
 		}
 	})
 }
@@ -129,12 +130,12 @@ func TestProviderScriptedFleetPresetLifecycle(t *testing.T) {
 		t.Fatalf("fleet up = exit %d err %v\nstdout:\n%s\nstderr:\n%s", up.ExitCode, up.Err, up.Stdout, up.Stderr)
 	}
 	t.Cleanup(func() {
-		if pathExists(forkPid(suite.layout.Repo, name)) {
+		if pathExists(forkspace.PidPath(suite.layout.Repo, name)) {
 			_ = runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fleet", "down")
 		}
 	})
 	ready := awaitProcessEventCount(t, suite.layout.Trace, "provider", "ready", 1, 10*time.Second)
-	awaitPathState(t, forkPid(suite.layout.Repo, name), true)
+	awaitPathState(t, forkspace.PidPath(suite.layout.Repo, name), true)
 
 	trace := readProcessTrace(t, suite.layout.Trace)
 	var gotProviders []string
@@ -162,7 +163,7 @@ func TestProviderScriptedFleetPresetLifecycle(t *testing.T) {
 	if down.Err != nil || down.ExitCode != 0 || !strings.Contains(down.Stderr, "stopped 1 fork") {
 		t.Fatalf("fleet down = exit %d err %v\nstdout:\n%s\nstderr:\n%s", down.ExitCode, down.Err, down.Stdout, down.Stderr)
 	}
-	awaitPathState(t, forkPid(suite.layout.Repo, name), false)
+	awaitPathState(t, forkspace.PidPath(suite.layout.Repo, name), false)
 	awaitProcessGone(t, ready.PID)
 	assertRuntimeRegistryEmpty(t, suite)
 	again := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fleet", "down")
@@ -171,7 +172,7 @@ func TestProviderScriptedFleetPresetLifecycle(t *testing.T) {
 	}
 	assertRuntimeRegistryEmpty(t, suite)
 
-	orphan, err := setupFork(suite.layout.Repo, "prune-orphan")
+	orphan, err := forkspace.Setup(suite.layout.Repo, "prune-orphan")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +232,7 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 			repo string
 			env  []string
 		}{{suite.layout.Repo, suite.env}, {secondRepo, secondEnv}} {
-			if pathExists(forkPid(row.repo, name)) {
+			if pathExists(forkspace.PidPath(row.repo, name)) {
 				_ = runDetachedCLI(t, suite, row.repo, row.env, "fork", "stop", name)
 			}
 		}
@@ -258,18 +259,18 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 		t.Fatalf("repo-scoped labels = %#v / %#v, want readable %q and owners %q / %q", runs[0].Labels, runs[1].Labels, readable, firstOwner, secondOwner)
 	}
 
-	stateData, err := os.ReadFile(forkPid(suite.layout.Repo, name))
+	stateData, err := os.ReadFile(forkspace.PidPath(suite.layout.Repo, name))
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerState, err := parseForkWorkerState(string(stateData))
-	if err != nil || workerState.pid <= 1 || workerState.token == "" {
+	workerState, err := forkspace.ParseWorkerState(string(stateData))
+	if err != nil || workerState.Pid <= 1 || workerState.Token == "" {
 		t.Fatalf("first worker state = %+v, %v", workerState, err)
 	}
-	if err := syscall.Kill(workerState.pid, syscall.SIGKILL); err != nil {
+	if err := syscall.Kill(workerState.Pid, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
-	awaitProcessGone(t, workerState.pid)
+	awaitProcessGone(t, workerState.Pid)
 
 	unrelated := exec.Command("sleep", "30")
 	if err := unrelated.Start(); err != nil {
@@ -279,14 +280,14 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 		_ = unrelated.Process.Kill()
 		_ = unrelated.Wait()
 	})
-	reused, err := (forkWorkerState{pid: unrelated.Process.Pid, token: workerState.token}).marshal()
+	reused, err := (forkspace.WorkerState{Pid: unrelated.Process.Pid, Token: workerState.Token}).Marshal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(forkPid(suite.layout.Repo, name), reused, 0o600); err != nil {
+	if err := os.WriteFile(forkspace.PidPath(suite.layout.Repo, name), reused, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.RemoveAll(forkWorkspace(suite.layout.Repo, name)); err != nil {
+	if err := os.RemoveAll(forkspace.Workspace(suite.layout.Repo, name)); err != nil {
 		t.Fatal(err)
 	}
 	status := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "ls")
@@ -301,7 +302,7 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 	if !procharness.ProcessAlive(unrelated.Process.Pid) || !procharness.ProcessAlive(secondReady.PID) {
 		t.Fatalf("cleanup signaled unrelated pid %d or namesake provider %d", unrelated.Process.Pid, secondReady.PID)
 	}
-	if pathExists(forkPid(suite.layout.Repo, name)) {
+	if pathExists(forkspace.PidPath(suite.layout.Repo, name)) {
 		t.Fatal("repo-scoped crash cleanup retained pidfile")
 	}
 	awaitProcessGone(t, firstReady.PID)

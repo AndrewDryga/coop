@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -259,7 +260,7 @@ func createSessionWorkspace(repo, generatedName string) (sessionWorkspace, error
 	if repo == "" {
 		return sessionWorkspace{}, errors.New("repository is required")
 	}
-	if !validForkName(generatedName) {
+	if !forkspace.ValidName(generatedName) {
 		return sessionWorkspace{}, fmt.Errorf("invalid session workspace name %q", generatedName)
 	}
 	base, err := sessionWorkspaceCommit(repo, "HEAD")
@@ -273,11 +274,11 @@ func createSessionWorkspace(repo, generatedName string) (sessionWorkspace, error
 // already-persisted base. An existing path is read-only inspected: a crash-recovery retry must
 // never reset, clean, or replace an ambiguous workspace it did not create.
 func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace, error) {
-	if repo == "" || !filepath.IsAbs(repo) || !validForkName(generatedName) || !validSessionWorkspaceCommit(base) {
+	if repo == "" || !filepath.IsAbs(repo) || !forkspace.ValidName(generatedName) || !validSessionWorkspaceCommit(base) {
 		return sessionWorkspace{}, errors.New("invalid session workspace binding")
 	}
-	ws := forkWorkspace(repo, generatedName)
-	unlock, err := lockForkState(repo, generatedName)
+	ws := forkspace.Workspace(repo, generatedName)
+	unlock, err := forkspace.LockState(repo, generatedName)
 	if err != nil {
 		return sessionWorkspace{}, fmt.Errorf("lock session workspace %s: %w", generatedName, err)
 	}
@@ -289,7 +290,7 @@ func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace,
 		return sessionWorkspace{}, fmt.Errorf("inspect session workspace %q: %w", generatedName, statErr)
 	}
 	if created {
-		createdPath, createErr := setupFork(repo, generatedName)
+		createdPath, createErr := forkspace.Setup(repo, generatedName)
 		if createErr != nil {
 			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, fmt.Errorf("create session workspace: %w", createErr))
 		}
@@ -297,7 +298,7 @@ func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace,
 			return sessionWorkspace{}, fmt.Errorf("setup fork returned unexpected workspace %q", createdPath)
 		}
 		cleanupPartial := func(cause error) error {
-			handle, info, pinErr := pinForkWorkspace(ws)
+			handle, info, pinErr := forkspace.Pin(ws)
 			if errors.Is(pinErr, os.ErrNotExist) {
 				return cause
 			}
@@ -305,7 +306,7 @@ func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace,
 				return errors.Join(cause, fmt.Errorf("cannot prove ownership of partial workspace %q: %w", ws, pinErr))
 			}
 			defer handle.Close()
-			if !samePinnedForkWorkspace(ws, info) {
+			if !forkspace.SamePinned(ws, info) {
 				return errors.Join(cause, fmt.Errorf("partial workspace %q changed before cleanup", ws))
 			}
 			if removeErr := os.RemoveAll(ws); removeErr != nil {
@@ -333,7 +334,7 @@ func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace,
 }
 
 func removeCreatedSessionWorkspace(path string, cause error) error {
-	handle, info, pinErr := pinForkWorkspace(path)
+	handle, info, pinErr := forkspace.Pin(path)
 	if errors.Is(pinErr, os.ErrNotExist) {
 		return cause
 	}
@@ -341,7 +342,7 @@ func removeCreatedSessionWorkspace(path string, cause error) error {
 		return errors.Join(cause, fmt.Errorf("cannot prove ownership of new workspace %q: %w", path, pinErr))
 	}
 	defer handle.Close()
-	if !samePinnedForkWorkspace(path, info) {
+	if !forkspace.SamePinned(path, info) {
 		return errors.Join(cause, fmt.Errorf("new workspace %q changed before cleanup", path))
 	}
 	if err := os.RemoveAll(path); err != nil {
@@ -662,10 +663,10 @@ func sessionWorkspaceName(repo, workspace string) (string, error) {
 		return "", fmt.Errorf("resolve workspace path: %w", err)
 	}
 	name := filepath.Base(absWorkspace)
-	if !validExistingForkName(name) {
+	if !forkspace.ValidExistingName(name) {
 		return "", fmt.Errorf("invalid session workspace path %q", workspace)
 	}
-	expected, err := filepath.Abs(forkWorkspace(repo, name))
+	expected, err := filepath.Abs(forkspace.Workspace(repo, name))
 	if err != nil || filepath.Clean(expected) != filepath.Clean(absWorkspace) {
 		return "", fmt.Errorf("workspace %q is not a fork of repository %q", workspace, repo)
 	}
@@ -701,7 +702,7 @@ func planSessionWorkspaceDiscardAtParent(
 	if err != nil {
 		return sessionWorkspaceDiscardPlan{}, err
 	}
-	handle, info, err := pinForkWorkspace(workspace)
+	handle, info, err := forkspace.Pin(workspace)
 	if errors.Is(err, os.ErrNotExist) {
 		// The workspace is already gone — crashed teardown, manual removal, a
 		// reinstalled machine. There is nothing to inspect and nothing the dirty
@@ -743,7 +744,7 @@ func planSessionWorkspaceDiscardAtParent(
 	if _, err := parseSessionWorkspaceStatus(statusRaw); err != nil {
 		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("parse discard status: %w", err)
 	}
-	if !samePinnedForkWorkspace(workspace, info) {
+	if !forkspace.SamePinned(workspace, info) {
 		return sessionWorkspaceDiscardPlan{}, errors.New("workspace changed while planning discard")
 	}
 	dirty := len(statusRaw) > 0
@@ -768,7 +769,7 @@ func planSessionWorkspaceDiscardAtParent(
 		StatusDigest:      sessionWorkspaceStatusDigest(statusRaw),
 		Dirty:             dirty,
 		Unmerged:          unmerged,
-		Running:           forkNeedsStop(repo, name),
+		Running:           forkspace.NeedsStop(repo, name),
 		AcceptedDirty:     dirty && acceptDirty,
 		AcceptedUnmerged:  unmerged && acceptUnmerged,
 	}, nil
@@ -782,18 +783,18 @@ func discardSessionWorkspace(plan sessionWorkspaceDiscardPlan) error {
 		}
 		return errors.New("invalid discard plan: workspace name changed")
 	}
-	unlock, err := lockForkState(plan.Repo, plan.Name)
+	unlock, err := forkspace.LockState(plan.Repo, plan.Name)
 	if err != nil {
 		return fmt.Errorf("lock session workspace discard: %w", err)
 	}
 	defer unlock()
-	if plan.Running || forkNeedsStop(plan.Repo, plan.Name) {
+	if plan.Running || forkspace.NeedsStop(plan.Repo, plan.Name) {
 		return errors.New("refusing to discard a running or cleanup-pending workspace")
 	}
-	handle, info, err := pinForkWorkspace(plan.Workspace)
+	handle, info, err := forkspace.Pin(plan.Workspace)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			if plan.Running || forkNeedsStop(plan.Repo, plan.Name) {
+			if plan.Running || forkspace.NeedsStop(plan.Repo, plan.Name) {
 				return errors.New("refusing to discard a missing workspace with active or pending work")
 			}
 			return nil
@@ -805,7 +806,7 @@ func discardSessionWorkspace(plan sessionWorkspaceDiscardPlan) error {
 	if err != nil {
 		return fmt.Errorf("discard plan is stale: %w", err)
 	}
-	if identity != plan.WorkspaceIdentity || !samePinnedForkWorkspace(plan.Workspace, info) {
+	if identity != plan.WorkspaceIdentity || !forkspace.SamePinned(plan.Workspace, info) {
 		return errors.New("discard plan is stale: workspace was replaced")
 	}
 	branch, err := sessionWorkspaceBranch(plan.Workspace)
@@ -841,10 +842,10 @@ func discardSessionWorkspace(plan sessionWorkspaceDiscardPlan) error {
 	if unmerged && !plan.AcceptedUnmerged {
 		return errors.New("refusing to discard unmerged workspace without exact unmerged-loss acknowledgement")
 	}
-	if plan.Running || forkNeedsStop(plan.Repo, plan.Name) {
+	if plan.Running || forkspace.NeedsStop(plan.Repo, plan.Name) {
 		return errors.New("refusing to discard a workspace that started running")
 	}
-	if !samePinnedForkWorkspace(plan.Workspace, info) {
+	if !forkspace.SamePinned(plan.Workspace, info) {
 		return errors.New("discard plan is stale: workspace was replaced before removal")
 	}
 	// Zero runtime on purpose: the session service already brought this workspace's services

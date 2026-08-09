@@ -9,6 +9,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -40,18 +41,18 @@ type fleetRow struct {
 }
 
 func gatherFleetRow(repo, name string) fleetRow {
-	ws := forkWorkspace(repo, name)
+	ws := forkspace.Workspace(repo, name)
 	counts, active := queueCounts(wsTaskSource(ws))
-	running := forkRunningPid(repo, name) != 0
+	running := forkspace.RunningPid(repo, name) != 0
 	return fleetRow{
 		name:    name,
 		agent:   readForkAgent(ws),
 		running: running,
-		cleanup: !running && pathExists(forkPid(repo, name)),
+		cleanup: !running && pathExists(forkspace.PidPath(repo, name)),
 		ran:     forkRan(repo, name),
 		counts:  counts,
 		active:  active,
-		lastLog: lastLogLine(forkLog(repo, name)),
+		lastLog: lastLogLine(forkspace.LogPath(repo, name)),
 		cost:    costForRepo(ws).total.usd,
 	}
 }
@@ -60,7 +61,7 @@ func gatherFleetRow(repo, name string) fleetRow {
 // fork that started and then stopped with work left (a "stopped" fork, worth surfacing) from one
 // that's merely idle and never started (which recedes).
 func forkRan(repo, name string) bool {
-	fi, err := os.Stat(forkLog(repo, name))
+	fi, err := os.Stat(forkspace.LogPath(repo, name))
 	return err == nil && fi.Size() > 0
 }
 
@@ -88,7 +89,7 @@ func (a *app) fleetWatch() (int, error) {
 	}
 	// No TTY to animate, or no forks to watch (a lone local loop) → the one-shot roll-up, which
 	// still reports the local queue. Keeps `coop fleet watch` pipe-safe and useful before a fleet.
-	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) || len(forkLifecycleNames(repo)) == 0 {
+	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) || len(forkspace.LifecycleNames(repo)) == 0 {
 		return a.fleetSnapshot(repo)
 	}
 
@@ -102,7 +103,7 @@ func (a *app) fleetWatch() (int, error) {
 	prev := map[string]fleetRow{} // last good row per fork, to ride out a torn task-tree read
 	sawRunning := false           // seen any fork running? — so we don't auto-exit during the startup window
 	tick := func(spin int) ([]string, bool) {
-		names := forkLifecycleNames(repo) // re-read so a fork added/removed mid-watch shows up
+		names := forkspace.LifecycleNames(repo) // re-read so a fork added/removed mid-watch shows up
 		rows := make([]fleetRow, len(names))
 		next := make(map[string]fleetRow, len(names)) // rebuilt each tick so a removed fork's row drops out
 		running := 0

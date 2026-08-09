@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 // A missing <name> (without --all) is a usage error (exit 2), reported before the dirty-tree /
@@ -93,9 +94,9 @@ func TestMergeOneNoGate(t *testing.T) {
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{}} // no COOP_GATE → no box needed
 
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("work\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -122,9 +123,9 @@ func TestMergeOneSurfacesReconcileFailure(t *testing.T) {
 	repo := initRepo(t)
 	// A tasks path outside the repo: coop cannot work out which queues the land should reconcile.
 	a := &app{cfg: &config.Config{TasksFiles: []string{filepath.Join(t.TempDir(), "elsewhere")}}}
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("work\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -155,9 +156,9 @@ func TestMergeOneRebasesNamedBranch(t *testing.T) {
 	}
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{}}
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	// The fork's real work, committed on its branch "perf".
 	if err := os.WriteFile(filepath.Join(ws, "wanted.txt"), []byte("real work\n"), 0o644); err != nil {
@@ -198,9 +199,9 @@ func TestMergeOneConflictRollsBack(t *testing.T) {
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{}}
 
-	ws, err := setupFork(repo, "a")
+	ws, err := forkspace.Setup(repo, "a")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	// Fork and parent edit the same line → a merge conflict.
 	if err := os.WriteFile(filepath.Join(ws, "README.md"), []byte("fork-version\n"), 0o644); err != nil {
@@ -250,10 +251,10 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 	t.Run("provably dead owner recovers", func(t *testing.T) {
 		repo, ws := forkWithInterruptedRebase(t)
 		// A worker state whose pid the kernel answers ESRCH for: nothing can be running.
-		if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeForkWorkerState(repo, "perf", forkWorkerState{pid: 2147483646, token: "linux-proc-v1:1:2"}); err != nil {
+		if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: 2147483646, Token: "linux-proc-v1:1:2"}); err != nil {
 			t.Fatal(err)
 		}
 		a := &app{cfg: &config.Config{}}
@@ -273,7 +274,7 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 		repo, ws := forkWithInterruptedRebase(t)
 		// mergeOne refuses any fork with lifecycle state well before this, so drive the rebase
 		// directly: the recovery must guard its own destructive abort, not lean on that check.
-		if err := writeForkPid(repo, "perf", os.Getpid()); err != nil {
+		if err := forkspace.WritePid(repo, "perf", os.Getpid()); err != nil {
 			t.Fatal(err)
 		}
 		a := &app{cfg: &config.Config{}}
@@ -288,12 +289,12 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 
 	t.Run("unverifiable owner refuses", func(t *testing.T) {
 		repo, ws := forkWithInterruptedRebase(t)
-		if err := writeForkPid(repo, "perf", os.Getpid()); err != nil {
+		if err := forkspace.WritePid(repo, "perf", os.Getpid()); err != nil {
 			t.Fatal(err)
 		}
-		oldRead := readProcStartToken
-		readProcStartToken = func(int) string { return "" } // liveness undecidable, so nothing is provable
-		t.Cleanup(func() { readProcStartToken = oldRead })
+		oldRead := forkspace.ReadProcStartToken
+		forkspace.ReadProcStartToken = func(int) string { return "" } // liveness undecidable, so nothing is provable
+		t.Cleanup(func() { forkspace.ReadProcStartToken = oldRead })
 		a := &app{cfg: &config.Config{}}
 		err := a.rebaseForkOntoParent(repo, ws, "perf")
 		if err == nil || !strings.Contains(err.Error(), "coop fork stop perf") {
@@ -309,9 +310,9 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 			t.Skip("git not available")
 		}
 		repo := initRepo(t)
-		ws, err := setupFork(repo, "perf")
+		ws, err := forkspace.Setup(repo, "perf")
 		if err != nil {
-			t.Fatalf("setupFork: %v", err)
+			t.Fatalf("forkspace.Setup: %v", err)
 		}
 		// State git itself cannot abort: an am-backend directory with no rebase behind it.
 		if err := os.Mkdir(filepath.Join(ws, ".git", "rebase-apply"), 0o755); err != nil {
@@ -333,9 +334,9 @@ func forkWithInterruptedRebase(t *testing.T) (string, string) {
 		t.Skip("git not available")
 	}
 	repo := initRepo(t)
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("work\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -375,9 +376,9 @@ func TestMergeOneAbortsWhenParentMovesDuringGate(t *testing.T) {
 	}
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{}}
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("fork work\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -415,9 +416,9 @@ func TestMergeOneGateFailLeavesParentUntouched(t *testing.T) {
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{}}
 	pre := gitOut(repo, "rev-parse", "HEAD")
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("fork work\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -447,9 +448,9 @@ func TestMergeOneGatePassLands(t *testing.T) {
 	}
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{}}
-	ws, err := setupFork(repo, "perf")
+	ws, err := forkspace.Setup(repo, "perf")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("fork work\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -472,9 +473,9 @@ func TestMergeOnePolicyForce(t *testing.T) {
 	}
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{}}
-	ws, err := setupFork(repo, "leak")
+	ws, err := forkspace.Setup(repo, "leak")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ws, ".env"), []byte("S=1\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -535,9 +536,9 @@ func TestMergeOneIgnoresForkBooby(t *testing.T) {
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{}}
 
-	ws, err := setupFork(repo, "evil")
+	ws, err := forkspace.Setup(repo, "evil")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("work\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -593,9 +594,9 @@ func TestForkMergeNonTTYRequiresYes(t *testing.T) {
 
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{RepoOverride: repo}} // no gate → no box
-	ws, err := setupFork(repo, "a")
+	ws, err := forkspace.Setup(repo, "a")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ws, "a.txt"), []byte("work\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -634,9 +635,9 @@ func TestForkMergeQueue(t *testing.T) {
 	a := &app{cfg: &config.Config{}}
 	// Two independent forks, each adding a distinct file.
 	for _, n := range []string{"a", "b"} {
-		ws, err := setupFork(repo, n)
+		ws, err := forkspace.Setup(repo, n)
 		if err != nil {
-			t.Fatalf("setupFork %s: %v", n, err)
+			t.Fatalf("forkspace.Setup %s: %v", n, err)
 		}
 		if err := os.WriteFile(filepath.Join(ws, n+".txt"), []byte(n+"\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -650,7 +651,7 @@ func TestForkMergeQueue(t *testing.T) {
 	if !pathExists(filepath.Join(repo, "a.txt")) || !pathExists(filepath.Join(repo, "b.txt")) {
 		t.Error("merge queue did not land both forks")
 	}
-	if got := forkNames(repo); len(got) != 0 {
+	if got := forkspace.Names(repo); len(got) != 0 {
 		t.Errorf("forks remain after the queue closed them: %v", got)
 	}
 	// Rebasing must keep history linear — no merge commits.
@@ -769,10 +770,10 @@ func TestHostGitHardeningOnPoisonedParent(t *testing.T) {
 
 func TestForkMergeAllRefusesWithoutApproval(t *testing.T) {
 	repo := initRepo(t)
-	// Stage two fork workspaces so forkNames lists them; their mere existence is enough — the
+	// Stage two fork workspaces so forkspace.Names lists them; their mere existence is enough — the
 	// approval gate fires before any fetch/land/destroy.
 	for _, n := range []string{"a", "b"} {
-		if err := os.MkdirAll(forkWorkspace(repo, n), 0o755); err != nil {
+		if err := os.MkdirAll(forkspace.Workspace(repo, n), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -784,7 +785,7 @@ func TestForkMergeAllRefusesWithoutApproval(t *testing.T) {
 		t.Fatalf("forkMergeAll = (%d, %v), want (0, nil)", code, err)
 	}
 	for _, n := range []string{"a", "b"} {
-		if !pathExists(forkWorkspace(repo, n)) {
+		if !pathExists(forkspace.Workspace(repo, n)) {
 			t.Errorf("fork %s was destroyed without approval", n)
 		}
 	}
@@ -899,9 +900,9 @@ func TestMergeNeutralizesForkDrivers(t *testing.T) {
 	}
 	repo := initRepo(t)
 	a := &app{cfg: &config.Config{}}
-	ws, err := setupFork(repo, "drv")
+	ws, err := forkspace.Setup(repo, "drv")
 	if err != nil {
-		t.Fatalf("setupFork: %v", err)
+		t.Fatalf("forkspace.Setup: %v", err)
 	}
 	marker := filepath.Join(t.TempDir(), "PWNED")
 	smudge := "sh -c 'echo pwned >> " + marker + "; cat'"

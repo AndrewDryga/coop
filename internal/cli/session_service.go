@@ -21,6 +21,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -1209,7 +1210,7 @@ func deterministicForkName(operationID string) string {
 
 func (s *SessionService) executeCreateIntent(ctx context.Context, op session.Operation, intent sessionCreateIntent) (session.Session, error) {
 	if intent.OperationID != op.ID || intent.SessionID == "" ||
-		!validForkName(intent.ForkName) ||
+		!forkspace.ValidName(intent.ForkName) ||
 		!validSessionWorkspaceCommit(intent.BaseCommit) {
 		return session.Session{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "create operation intent is invalid"}
 	}

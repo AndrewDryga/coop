@@ -19,6 +19,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -28,7 +29,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 	t.Run("fresh resume new and remembered provider", func(t *testing.T) {
 		resetForkProcessRepo(t, suite)
 		name, provider, account := "session-life", "claude", "personal"
-		ws := forkWorkspace(suite.layout.Repo, name)
+		ws := forkspace.Workspace(suite.layout.Repo, name)
 		model, effort := "fork-model-claude", "high"
 		target := forkProcessTarget(provider, model, effort, account)
 
@@ -71,15 +72,15 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		}
 
 		result, trace = suite.run(t, []string{"fork", "providerless"}, processScenario("claude", nil, 0, ""))
-		if result.ExitCode != 2 || result.Err != nil || len(trace) != 0 || pathExists(forkWorkspace(suite.layout.Repo, "providerless")) {
-			t.Fatalf("providerless fork = exit %d err %v trace %d exists %v\n%s", result.ExitCode, result.Err, len(trace), pathExists(forkWorkspace(suite.layout.Repo, "providerless")), result.Stderr)
+		if result.ExitCode != 2 || result.Err != nil || len(trace) != 0 || pathExists(forkspace.Workspace(suite.layout.Repo, "providerless")) {
+			t.Fatalf("providerless fork = exit %d err %v trace %d exists %v\n%s", result.ExitCode, result.Err, len(trace), pathExists(forkspace.Workspace(suite.layout.Repo, "providerless")), result.Stderr)
 		}
 	})
 
 	t.Run("provider account cwd and id isolation", func(t *testing.T) {
 		resetForkProcessRepo(t, suite)
 		name, account := "switchboard", "work"
-		ws := forkWorkspace(suite.layout.Repo, name)
+		ws := forkspace.Workspace(suite.layout.Repo, name)
 		ids := map[string]string{}
 		for _, provider := range suite.providers {
 			model := "fork-model-" + provider
@@ -181,7 +182,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		noSessionName := "workdir-no-session"
 		result, trace := runForkProcess(t, &override, []string{noSessionName, target}, provider)
 		assertForkProcessSuccess(t, result, provider)
-		noSessionWS := forkWorkspace(suite.layout.Repo, noSessionName)
+		noSessionWS := forkspace.Workspace(suite.layout.Repo, noSessionName)
 		assertForkProcessContractWorkdir(t, &override, trace, noSessionWS, "/workspace/fork", provider, account, forkStartArgv(provider, model, effort, ""), model, effort)
 		if got := readForkSession(noSessionWS, provider, account); got != "" {
 			t.Fatalf("fresh run with no new native session captured old id %q", got)
@@ -204,7 +205,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			{"workdir-b", "11111111-2222-4333-8444-000000000002"},
 		}
 		for _, row := range rows {
-			ws := forkWorkspace(suite.layout.Repo, row.name)
+			ws := forkspace.Workspace(suite.layout.Repo, row.name)
 			scenario := processScenario(provider, nil, 0, "")
 			scenario["native_session"] = map[string]string{"account": account, "cwd": "/workspace/fork", "id": row.id}
 			result, trace := runForkProcessScenario(t, &override, []string{row.name, target}, scenario)
@@ -215,7 +216,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			}
 		}
 		for _, row := range rows {
-			ws := forkWorkspace(suite.layout.Repo, row.name)
+			ws := forkspace.Workspace(suite.layout.Repo, row.name)
 			result, trace := runForkProcess(t, &override, []string{row.name, target}, provider)
 			assertForkProcessSuccess(t, result, provider)
 			assertForkProcessContractWorkdir(t, &override, trace, ws, "/workspace/fork", provider, account, forkResumeArgv(provider, model, effort, row.id), model, effort)
@@ -226,7 +227,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		// A Codex --new run that exits before creating history must still abandon the old hint;
 		// the next entry starts fresh instead of silently returning to the discarded conversation.
 		emptyNew := rows[0]
-		emptyWS := forkWorkspace(suite.layout.Repo, emptyNew.name)
+		emptyWS := forkspace.Workspace(suite.layout.Repo, emptyNew.name)
 		result, trace = runForkProcess(t, &override, []string{emptyNew.name, target, "--new"}, provider)
 		assertForkProcessSuccess(t, result, provider)
 		assertForkProcessContractWorkdir(t, &override, trace, emptyWS, "/workspace/fork", provider, account, forkStartArgv(provider, model, effort, ""), model, effort)
@@ -362,8 +363,8 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		if secondResult.Err != nil || secondResult.ExitCode != 0 {
 			t.Fatalf("serialized second fork = exit %d err %v\nstdout:\n%s\nstderr:\n%s", secondResult.ExitCode, secondResult.Err, secondResult.Stdout, secondResult.Stderr)
 		}
-		firstWS := forkWorkspace(override.layout.Repo, "overlap-a")
-		secondWS := forkWorkspace(secondRepo, "overlap-b")
+		firstWS := forkspace.Workspace(override.layout.Repo, "overlap-a")
+		secondWS := forkspace.Workspace(secondRepo, "overlap-b")
 		if got := readForkSession(firstWS, provider, account); got != "" {
 			t.Fatalf("sessionless first run claimed contender session %q", got)
 		}
@@ -407,7 +408,7 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 		Loop: loopProcessPlan{TaskID: taskID, Attempts: attempts},
 	}
 	result, trace := suite.run(t, []string{"fork", name, target, "--loop", "--tasks", filepath.Join(suite.layout.Repo, tasksRoot)}, scenario)
-	ws := forkWorkspace(suite.layout.Repo, name)
+	ws := forkspace.Workspace(suite.layout.Repo, name)
 	if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "fixture-loop-complete-"+provider) {
 		t.Fatalf("fork loop = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
 	}
@@ -463,7 +464,7 @@ func firstForkRunTrace(trace []*processTrace) []*processTrace {
 func resetForkProcessRepo(t *testing.T, suite *directProcessSuite) {
 	t.Helper()
 	resetLoopProcessRepo(t, suite)
-	if err := os.RemoveAll(forkHome(suite.layout.Repo)); err != nil {
+	if err := os.RemoveAll(forkspace.Home(suite.layout.Repo)); err != nil {
 		t.Fatal(err)
 	}
 }

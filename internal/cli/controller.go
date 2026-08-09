@@ -1480,8 +1480,8 @@ func semanticCommitAndParent(repo, sha, taskID string) (auditReopenCommit, strin
 
 // auditCommitParent returns the raw object's sole parent, or "" for a root commit. Reading the
 // commit object directly keeps grafts and shallow boundaries from rewriting parent identity;
-// gitHardening separately disables agent-writable replacement objects. Missing objects, malformed
-// parents, and merges fail closed.
+// forkspace.GitHardening separately disables agent-writable replacement objects. Missing objects,
+// malformed parents, and merges fail closed.
 func auditCommitParent(repo, sha string) (parent string, err error) {
 	resolved := gitOut(repo, "rev-parse", "--verify", sha+"^{commit}")
 	if !validAuditReopenHead(resolved) {

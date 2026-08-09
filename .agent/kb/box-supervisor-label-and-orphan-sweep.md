@@ -32,7 +32,7 @@ The decision table (`box.SurveyOrphanBoxes`), applied per container:
 | another workspace's scope                       | untouched                  |
 | no label (pre-upgrade), or a value this version can't parse | REPORTED, never reaped |
 
-This is the fork lifecycle's `ownerProvablyDead` doctrine (`internal/cli/fork_loop.go`) applied to an
+This is the fork lifecycle's `OwnerProvablyDead` doctrine (`internal/forkspace/state.go`) applied to an
 identity carried by the container instead of a pidfile. **Never** container age, image, or name — the
 sweep has no such input, and adding one would resurrect the bug the label exists to kill.
 

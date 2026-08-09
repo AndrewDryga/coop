@@ -21,6 +21,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 )
@@ -806,7 +807,7 @@ func newSessionACPFixture(t *testing.T, scenario string) *sessionACPFixture {
 	if err := os.Mkdir(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	workspace := forkWorkspace(repo, "fork")
+	workspace := forkspace.Workspace(repo, "fork")
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 )
 
@@ -58,7 +59,7 @@ func ensureSessionCompanion(
 		return session.CompanionRepository{}, fmt.Errorf("prepare companion workspace: %w", err)
 	}
 	lockName := deterministicForkName("companion\x00" + sessionID + "\x00" + binding.Name)
-	unlock, err := lockForkState(binding.Repository, lockName)
+	unlock, err := forkspace.LockState(binding.Repository, lockName)
 	if err != nil {
 		return session.CompanionRepository{}, fmt.Errorf("lock companion workspace: %w", err)
 	}

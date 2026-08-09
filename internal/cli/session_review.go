@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 )
@@ -251,10 +252,10 @@ func (s *SessionService) captureReviewIntent(ctx context.Context, operationID st
 	if sess.Activity != session.ActivityParked || sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 || sess.QueuedPromptBytes != 0 {
 		return sessionReviewIntent{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: "review requires a parked session with no active or queued turns"}
 	}
-	if !validExistingForkName(sess.ForkName) || sess.Repository == "" || sess.Workspace == "" || sess.Workspace != forkWorkspace(sess.Repository, sess.ForkName) {
+	if !forkspace.ValidExistingName(sess.ForkName) || sess.Repository == "" || sess.Workspace == "" || sess.Workspace != forkspace.Workspace(sess.Repository, sess.ForkName) {
 		return sessionReviewIntent{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "session workspace is not its exact bound fork"}
 	}
-	if forkNeedsStop(sess.Repository, sess.ForkName) {
+	if forkspace.NeedsStop(sess.Repository, sess.ForkName) {
 		return sessionReviewIntent{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: "fork is running or cleanup-pending"}
 	}
 	base, err := sessionWorkspaceCommit(sess.Repository, sess.BaseCommit)
@@ -479,7 +480,7 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 	if current, err := captureSessionReviewSource(intent.Repository, intent.Workspace, intent.SourceBranch); err != nil || current.Head != intent.SourceHead || current.Tree != intent.SourceTree || current.Branch != intent.SourceBranch || current.StatusDigest != intent.SourceStatusDigest {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "source_moved")
 	}
-	if forkNeedsStop(intent.Repository, intent.SourceBranch) {
+	if forkspace.NeedsStop(intent.Repository, intent.SourceBranch) {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "fork_owner_active")
 	}
 	dossier.NotPublishableReasons = stableSessionReviewReasons(dossier.NotPublishableReasons)
@@ -510,10 +511,10 @@ func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (forkRevie
 			c.cleanup()
 		}
 	}()
-	if !validExistingForkName(intent.SourceBranch) {
+	if !forkspace.ValidExistingName(intent.SourceBranch) {
 		return c, errors.New("review intent has an invalid source branch")
 	}
-	propagateGitIdentity(intent.Repository, c.dir)
+	forkspace.PropagateGitIdentity(intent.Repository, c.dir)
 	const capturedParentRef = "refs/coop/session-parent"
 	if err := gitRun(c.dir, "fetch", "--quiet", intent.Repository, "+"+intent.ParentHead+":"+capturedParentRef); err != nil {
 		return c, fmt.Errorf("fetch captured review parent: %w", err)

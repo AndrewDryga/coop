@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 // TestCLIConformance graduates the committed .agent/kb/rules into the gate: it walks the CLI surface as
@@ -55,7 +56,7 @@ func TestCLIConformance(t *testing.T) {
 	// dispatch without a help row is drift this catches.
 	t.Run("verbs_documented_in_help", func(t *testing.T) {
 		forkHelpTxt := captureStdout(t, func() { _, _ = forkHelp() })
-		for _, v := range forkVerbList() {
+		for _, v := range forkspace.VerbList() {
 			if !strings.Contains(forkHelpTxt, v) {
 				t.Errorf("fork verb %q has no row in forkHelp", v)
 			}
