@@ -4,6 +4,21 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The internal dependency graph is frozen in the gate, so an import can no longer become
+  architecture by accident.** The graph was already a clean DAG — nothing importing the CLI,
+  presentation at the edges — and nothing enforced it, which is how `internal/agent` had picked up a
+  `ui` dependency for one badge color and `internal/scaffold` an entire `box` dependency for one
+  path. `internal/importdag_test.go` now freezes the exact edge set (20 packages, 40 edges) as a
+  table you can read as the architecture diagram, and diffs the tree against it BOTH ways: an
+  unplanned edge fails, and so does an edge the table still expects but the code has dropped, so the
+  table can't rot into a description of a graph that used to exist. Two invariants sit above the
+  table and hold however it's edited — nothing imports `internal/cli`, and `internal/ui` is imported
+  only by the granted presentation owners (cli, box, scaffold) — so the fix for a violation is never
+  "add a row". Every failure names the offending edge and both files a deliberate change has to
+  touch: the table and the rule card (`.agent/kb/rules/internal-import-dag.md`) that explains why.
+  Stdlib only (`go/parser`), build-tag and GOOS agnostic, and it runs in the normal `go test ./...`
+  the gate already does.
+
 - **A box whose coop was killed is reaped by the next run in that checkout, instead of burning
   tokens until somebody notices it.** `--rm` never fires when the host coop is SIGKILLed (or the
   machine reboots mid-run), and nothing watches a box from the outside, so an orphan kept its

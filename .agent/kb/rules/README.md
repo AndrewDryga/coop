@@ -123,6 +123,7 @@ updated: <YYYY-MM-DD>                # last edit
 
 **Architecture**
 - [agents-are-one-file](agents-are-one-file.md) — a coding agent is one self-registering file in `internal/agent`, never a switch elsewhere
+- [internal-import-dag](internal-import-dag.md) — a new internal import edge is an architecture decision — the allowlist test and this card move in the same commit
 - [transport-bounds-do-not-abort-valid-work](transport-bounds-do-not-abort-valid-work.md) — bound retained state and single payloads, never the cumulative volume of valid work
 
 **Agent workflow** — how an agent works here, not what it ships
