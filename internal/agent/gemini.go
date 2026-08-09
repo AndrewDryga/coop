@@ -12,7 +12,6 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type geminiAgent struct{}
@@ -21,7 +20,7 @@ func init() { register(geminiAgent{}) }
 
 func (geminiAgent) Name() string        { return "gemini" }
 func (geminiAgent) DisplayName() string { return "Gemini CLI" }
-func (geminiAgent) Badge() string       { return ui.Yellow("g") }
+func (geminiAgent) Badge() string       { return "g" }
 
 // Stream: gemini pairs tool_use with tool_result under `tool_id`, so its foreground tools are
 // supervisable.

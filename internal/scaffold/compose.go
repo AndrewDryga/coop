@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 // ComposeServices is the menu of sibling services `coop init` can scaffold into
@@ -93,13 +93,14 @@ func composeFor(services []string) string {
 
 // WriteCompose scaffolds .agent/compose.yml for the chosen sibling services (a subset of
 // ComposeServices), never clobbering an existing file. It is a no-op when no service is chosen
-// — coop never adds a db/redis a project didn't ask for.
+// — coop never adds a db/redis a project didn't ask for. It writes the DEFAULT location
+// (project.DefaultCompose); a repo that later moves the file says so via box.compose.
 func WriteCompose(repo string, services []string) error {
 	content := composeFor(services)
 	if content == "" {
 		return nil
 	}
-	dest := filepath.Join(repo, filepath.FromSlash(box.ComposeFileRel))
+	dest := filepath.Join(repo, filepath.FromSlash(project.DefaultCompose))
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}

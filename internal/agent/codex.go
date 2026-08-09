@@ -20,7 +20,6 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type codexAgent struct{}
@@ -37,7 +36,7 @@ func init() { register(codexAgent{}) }
 
 func (codexAgent) Name() string        { return "codex" }
 func (codexAgent) DisplayName() string { return "Codex" }
-func (codexAgent) Badge() string       { return ui.Green("x") }
+func (codexAgent) Badge() string       { return "x" }
 
 // Stream: codex keys every item lifecycle event on the item id, so command_execution, MCP, and
 // collab calls report their own start and completion — a tool lifecycle the watchdog can pair.

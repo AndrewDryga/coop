@@ -4,7 +4,7 @@ description: "a coding agent is one self-registering file in `internal/agent`, n
 scope: architecture
 sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go]
 check: "go test ./internal/agent -run TestRegistry"
-updated: 2026-07-16
+updated: 2026-08-09
 ---
 
 # A coding agent is one file in internal/agent — never a switch elsewhere
@@ -26,6 +26,11 @@ adding an agent a single new file.
 - Adding an agent → add `internal/agent/<name>.go` implementing `Agent` + `init(){ register(...) }`. Touch nothing else.
 - Need a new per-agent behavior → add a method to the `Agent` interface (the compiler then forces every adapter to implement it) and have the caller use `agents.Get(name).Method()`.
 - Never hard-code the provider set outside `internal/agent`. Validation is `agents.Valid`; the default agent is `agents.Default()`.
+- PRESENTATION stays OUT of the adapter: an agent answers in plain data (`Badge()` returns the bare
+  letter), and the terminal half — which color paints it — is a per-agent table beside its renderer
+  (`agentBadgeColors` in `internal/cli/fleet_watch.go`), so `internal/ui` isn't a dependency of
+  every package that touches agents. `TestAgentBadgeColors` fails when a new adapter has no entry;
+  don't move color back into an adapter to "obey" the bullet above.
 - The narrow exceptions are the `testdata` process-test oracles — `internal/cli/testdata/providerfixture` (native provider argv/output) and `internal/acpproxy/testdata/acpfixture` (per-provider ACP scripts): each is an independent oracle that must enumerate provider shapes instead of reusing production adapter code. Their registry-completeness tests must fail when a new adapter has no oracle arm.
 - Guard production code only: `rg '\"(claude|codex|gemini|grok)\"' internal -g '!**/*_test.go' -g '!internal/agent/**' -g '!internal/cli/testdata/providerfixture/**' -g '!internal/acpproxy/testdata/acpfixture/**'` should return nothing.
 
@@ -33,3 +38,6 @@ adding an agent a single new file.
 - 2026-06-16 — created
 - 2026-07-16 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — re-verified against `sources` while cutting the agent→ui import edge: badge COLOR
+  moved to the presentation layer, recorded as an explicit exception (the adapters stay one file
+  each and still answer `Badge()`)

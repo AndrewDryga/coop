@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 func TestComposeFor(t *testing.T) {
@@ -43,15 +44,16 @@ func TestComposeFor(t *testing.T) {
 }
 
 // The real scaffolded postgres+redis file — coop's own output — must pass box.ValidateComposeFile,
-// and it must land at .agent/compose.yml (the committed location).
+// and it must land at .agent/compose.yml (the committed location). Production scaffold code never
+// reaches for box; this cross-layer check is the test's alone.
 func TestScaffoldedComposeValidates(t *testing.T) {
 	repo := t.TempDir()
 	if err := WriteCompose(repo, []string{"postgres", "redis"}); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(repo, filepath.FromSlash(box.ComposeFileRel))
+	path := filepath.Join(repo, filepath.FromSlash(project.DefaultCompose))
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("WriteCompose must write %s: %v", box.ComposeFileRel, err)
+		t.Fatalf("WriteCompose must write %s: %v", project.DefaultCompose, err)
 	}
 	if err := box.ValidateComposeFile(path, repo); err != nil {
 		t.Fatalf("coop's own scaffolded compose file must pass validation: %v", err)

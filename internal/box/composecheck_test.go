@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 // writeCompose writes body to a compose file in a fresh temp repo and returns the repo + path.
@@ -11,7 +13,7 @@ import (
 func writeCompose(t *testing.T, body string) (repo, path string) {
 	t.Helper()
 	repo = t.TempDir()
-	path = filepath.Join(repo, filepath.FromSlash(ComposeFileRel))
+	path = filepath.Join(repo, filepath.FromSlash(project.DefaultCompose))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +132,7 @@ func TestValidateComposeRejects(t *testing.T) {
 func TestValidateComposeSymlinkEscape(t *testing.T) {
 	repo := t.TempDir()
 	outside := t.TempDir() // a sibling temp dir, not under repo
-	path := filepath.Join(repo, filepath.FromSlash(ComposeFileRel))
+	path := filepath.Join(repo, filepath.FromSlash(project.DefaultCompose))
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	// The symlink sits beside the compose file (relative binds resolve against the compose dir).
 	link := filepath.Join(filepath.Dir(path), "escape")

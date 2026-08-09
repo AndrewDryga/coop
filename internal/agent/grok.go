@@ -12,7 +12,6 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type grokAgent struct{}
@@ -21,7 +20,7 @@ func init() { register(grokAgent{}) }
 
 func (grokAgent) Name() string        { return "grok" }
 func (grokAgent) DisplayName() string { return "Grok" }
-func (grokAgent) Badge() string       { return ui.Cyan("G") }
+func (grokAgent) Badge() string       { return "G" }
 
 // Stream: grok's streaming-json carries NO tool lifecycle. Probed against the installed CLI at
 // v0.2.101, a run that shelled out emitted only `thought`, `text`, and `end` — no tool start, no

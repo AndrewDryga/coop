@@ -3,10 +3,13 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -303,6 +306,27 @@ func TestAgentBadge(t *testing.T) {
 	// A wide (e.g. CJK) initial would render 2 cells and break the row's alignment → fall back to "?".
 	if got := agentBadge("日本語"); got != "?" {
 		t.Errorf("agentBadge(wide) = %q, want %q (a 2-cell glyph must not land in the 1-cell column)", got, "?")
+	}
+}
+
+// TestAgentBadgeColors pins the badge palette — which color paints each agent's letter on a real
+// terminal. Colors are off under `go test`, so the painted string can't tell magenta from green;
+// compare the wrapper itself instead. Every registered agent must claim one, or a new adapter's
+// badge would quietly come out dim.
+func TestAgentBadgeColors(t *testing.T) {
+	want := map[string]string{"claude": "Magenta", "codex": "Green", "gemini": "Yellow", "grok": "Cyan"}
+	got := map[string]string{}
+	for name, paint := range agentBadgeColors {
+		full := runtime.FuncForPC(reflect.ValueOf(paint).Pointer()).Name() // …/internal/ui.Magenta
+		got[name] = full[strings.LastIndex(full, ".")+1:]
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("badge colors = %v, want %v", got, want)
+	}
+	for _, name := range agents.Names() {
+		if _, ok := agentBadgeColors[name]; !ok {
+			t.Errorf("agent %q has no entry in agentBadgeColors — pick its badge color", name)
+		}
 	}
 }
 

@@ -61,11 +61,6 @@ func canonicalWorkspace(path string) string {
 	return filepath.Clean(path)
 }
 
-// ComposeFileRel is the DEFAULT repo-relative compose path (project.DefaultCompose) — the scaffold
-// write location under .agent/. At runtime ComposeFile honors box.compose from project.yaml,
-// falling back here.
-const ComposeFileRel = project.DefaultCompose
-
 // ComposeFile returns the sibling-services compose file, or "" if it's absent or empty (a zero-byte
 // file declares no services). It completes the config-source/runtime-identity split: the relative
 // PATH (box.compose, else .agent/compose.yml) is trusted config, read from policyRepo, while the

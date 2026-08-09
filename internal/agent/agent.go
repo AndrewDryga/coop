@@ -236,9 +236,9 @@ type Agent interface {
 	// DisplayName is the human product name for UX surfaces (the ACP toolbar dropdowns):
 	// "Claude Code", "Codex", … Name() stays the grammar token everywhere a value is parsed.
 	DisplayName() string
-	// Badge is the 1-cell colored letter identifying this agent in dense dashboards (the
-	// fleet/watch grids), so a row names who runs it without spending a name column. Colored
-	// via ui; renders as the bare letter when color is off (e.g. under `go test`).
+	// Badge is the 1-cell letter identifying this agent in dense dashboards (the fleet/watch
+	// grids), so a row names who runs it without spending a name column. Plain data — the
+	// presentation layer paints it (internal/cli's agentBadgeColors).
 	Badge() string
 	// Interactive is the autonomous default command — what `coop <agent>` runs.
 	Interactive(cfg *config.Config) []string

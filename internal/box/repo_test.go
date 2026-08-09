@@ -69,7 +69,7 @@ func TestComposeFile(t *testing.T) {
 	if ComposeFile(dir, dir) != "" {
 		t.Error("no compose file should yield empty string")
 	}
-	f := filepath.Join(dir, filepath.FromSlash(ComposeFileRel))
+	f := filepath.Join(dir, filepath.FromSlash(project.DefaultCompose))
 	os.MkdirAll(filepath.Dir(f), 0o755)
 	os.WriteFile(f, []byte("services: {}"), 0o644)
 	if ComposeFile(dir, dir) != f {

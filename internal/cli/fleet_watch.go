@@ -313,12 +313,27 @@ func fleetRowLine(r fleetRow, spin, countW, nameW, width int) string {
 	return line
 }
 
+// agentBadgeColors is the presentation half of Agent.Badge: the color each registered agent's
+// badge letter wears. It lives here, beside the only renderer, so the agent registry stays plain
+// domain data and internal/ui is not a dependency of everything that touches agents.
+// TestAgentBadgeColors keeps it complete — a new agent must claim a color.
+var agentBadgeColors = map[string]func(string) string{
+	"claude": ui.Magenta,
+	"codex":  ui.Green,
+	"gemini": ui.Yellow,
+	"grok":   ui.Cyan,
+}
+
 // agentBadge is a 1-cell colored letter naming a fork's agent, so the dashboard shows who runs
 // each fork without spending the name column on it. Each registered agent owns its own badge
-// (Agent.Badge); an empty or unknown agent falls back to a dim initial here.
+// letter (Agent.Badge); an empty or unknown agent falls back to a dim initial here.
 func agentBadge(agent string) string {
 	if ag, ok := agents.Get(agent); ok {
-		return ag.Badge()
+		paint, ok := agentBadgeColors[agent]
+		if !ok {
+			paint = ui.Dim // registered but uncolored — only reachable if the table falls behind
+		}
+		return paint(ag.Badge())
 	}
 	if agent == "" {
 		return ui.Dim("?")
