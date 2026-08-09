@@ -1620,7 +1620,7 @@ root-in-container (a repo `.agent/Dockerfile` that does `USER root`) from holdin
 | `NO_COLOR` | — | present at any value (even empty) disables ANSI color everywhere ([no-color.org](https://no-color.org)) |
 | `COOP_<AGENT>_CMD` (e.g. `COOP_CLAUDE_CMD`) | autonomous default | override an agent's base command |
 | `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL`) | (CLI default) | agent-wide default model, everywhere that agent runs (see [Picking models](#picking-models)) |
-| `COOP_CONSULT_TIMEOUT` | `1800` | per-peer `coop-consult` timeout in seconds; a peer that doesn't answer in time is skipped so the lead synthesizes from whoever did |
+| `COOP_CONSULT_TIMEOUT` | `0` (unlimited) | per-peer `coop-consult` bound in seconds; unbounded by default because a clock can't tell a long answer from a wedged one, and killing a working peer loses its answer and costs the retry that follows — the parent attempt's own tool cap and ceiling already bound it from outside. Set a whole-second value (max `86400`) to opt back into a bound; a peer that then doesn't answer in time is skipped so the lead synthesizes from whoever did |
 | `COOP_MCP_FILE` | `<config>/mcp.json` | the one MCP source of truth |
 | `COOP_SHELL` | `bash` | the shell `coop shell` opens |
 | `COOP_NO_UPDATE_CHECK` | (off) | set to opt out of the once-a-day "a newer coop/box is available" check |
