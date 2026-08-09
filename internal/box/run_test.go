@@ -1,12 +1,15 @@
 package box
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -302,6 +305,220 @@ func runInvocations(recorded string) int {
 		}
 	}
 	return n
+}
+
+// TestCtxStep: a nil or live Ctx never fails a step (the ordinary run, and every caller but the
+// loop, since only the loop ever sets RunSpec.Ctx); a canceled one fails naming the step, wrapping
+// the underlying ctx.Err() so errors.Is(err, context.Canceled) still holds through the wrapper.
+func TestCtxStep(t *testing.T) {
+	var unset context.Context // the ordinary run's RunSpec.Ctx: a typed nil, not a bare literal (SA1012)
+	if err := ctxStep(unset, "anything"); err != nil {
+		t.Errorf("nil Ctx must never fail a step, got %v", err)
+	}
+	if err := ctxStep(context.Background(), "anything"); err != nil {
+		t.Errorf("a live Ctx must never fail a step, got %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := ctxStep(ctx, "sibling services")
+	if err == nil || !strings.Contains(err.Error(), "sibling services") {
+		t.Fatalf("canceled Ctx = %v, want an error naming the step", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("canceled Ctx error must still satisfy errors.Is(context.Canceled): %v", err)
+	}
+}
+
+// TestRunAbortsBeforeFirstPhaseWhenCtxAlreadyCanceled: a Ctx canceled before Run is even called
+// (the loop's second Ctrl-C landing between iterations) must abort before any host work starts —
+// same error shape as a mid-setup cancellation, never signaling OnRuntimeLaunch or touching the
+// runtime at all.
+func TestRunAbortsBeforeFirstPhaseWhenCtxAlreadyCanceled(t *testing.T) {
+	repo := t.TempDir()
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	launches := 0
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		Batch: true, Quiet: true, Ctx: ctx,
+		OnRuntimeLaunch: func() { launches++ },
+	}
+	code, err := Run(cfg, recorderRuntime(t, recorder), spec)
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "filesystem projection") {
+		t.Fatalf("Run = (%d, %v), want -1 naming the first phase (filesystem projection)", code, err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("abort error must still satisfy errors.Is(context.Canceled): %v", err)
+	}
+	if launches != 0 {
+		t.Errorf("an aborted setup must never signal OnRuntimeLaunch, got %d signal(s)", launches)
+	}
+	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("an already-canceled Ctx must abort before any runtime call; recorder error = %v", statErr)
+	}
+}
+
+// TestRunAbortsAtNextBoundaryOnMidSetupCancelAndCleansUpArtifacts: a Ctx canceled WHILE the
+// filesystem-projection phase is still writing composition artifacts (a Ctrl-C racing that work)
+// is not caught mid-phase — the phase runs to completion, exactly like every declared-artifact
+// failure already stops before the provider (TestRunDeclaredCompositionArtifactFailuresStopBefore
+// Provider) — and the abort lands at the NEXT boundary (sibling services), naming it. Every
+// composition artifact the phase created is still removed: the accumulated defer cleanup
+// (tmpFiles/tmpDirs at the top of runWithCompositionArtifacts) runs on this early return exactly
+// as it does on any other, since it closes over the slices by reference, not their value at
+// registration time.
+func TestRunAbortsAtNextBoundaryOnMidSetupCancelAndCleansUpArtifacts(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	ctx, cancel := context.WithCancel(context.Background())
+	launches := 0
+	spec := RunSpec{
+		Image: "i", Cmd: []string{"true"}, Agent: "claude", Homes: true, Batch: true, Quiet: true,
+		ConsultLead: "claude", Repo: t.TempDir(), Ctx: ctx,
+		OnRuntimeLaunch: func() { launches++ },
+	}
+	artifacts := defaultCompositionArtifactOps()
+	var created []string
+	canceled := false
+	artifacts.writeFile = func(content string) (string, error) {
+		if !canceled {
+			canceled = true
+			cancel() // a Ctrl-C racing in mid-phase — the write below still completes normally
+		}
+		path, err := writeTempFile(content)
+		if err == nil {
+			created = append(created, path)
+		}
+		return path, err
+	}
+
+	code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), spec, artifacts)
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "sibling services") {
+		t.Fatalf("Run = (%d, %v), want -1 naming the NEXT boundary (sibling services), not the phase already in flight", code, err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("abort error must still satisfy errors.Is(context.Canceled): %v", err)
+	}
+	if launches != 0 {
+		t.Errorf("an aborted setup must never signal OnRuntimeLaunch, got %d signal(s)", launches)
+	}
+	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("a mid-projection cancellation must abort before any runtime call; recorder error = %v", statErr)
+	}
+	if len(created) == 0 {
+		t.Fatal("test setup did not exercise any artifacts.writeFile call")
+	}
+	for _, path := range created {
+		if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Errorf("temporary composition artifact %s was not removed after the aborted setup; stat error = %v", path, statErr)
+		}
+	}
+}
+
+// TestRunCanceledAfterServicesUpTearsDownAttemptedReviewCompose: cleanup obligations that are NOT
+// plain temp files — here, a review run's disposable Compose project — must also be released on
+// the abort path. The fake `compose ... up` marks that it started and then sleeps, so the test can
+// cancel Ctx WHILE that call is in flight (proving it is never interrupted mid-syscall — there is
+// no context to interrupt it with) and still land on the very next boundary once `up` returns.
+// `finish` — which the normal completion path already uses to tear down an attempted review
+// project — runs the same way from the cancellation checkpoint, so the fake's `down` call fires
+// here too.
+func TestRunCanceledAfterServicesUpTearsDownAttemptedReviewCompose(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(repo, ".agent", "project.yaml"),
+		[]byte("review:\n  compose: review-compose.yml\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(repo, "review-compose.yml"),
+		[]byte("services:\n  db:\n    image: postgres:18\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	recorder := filepath.Join(dir, "runtime-args")
+	marker := filepath.Join(dir, "up-started")
+	shim := filepath.Join(dir, "rt")
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + strconv.Quote(recorder) + "\n" +
+		"case \"$*\" in\n" +
+		"  *\"config --services\"*) printf '%s\\n' db ;;\n" +
+		"  *\" up -d --wait --remove-orphans\") touch " + strconv.Quote(marker) + "; sleep 0.15 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		ConfigDir: t.TempDir(), HomeInBox: "/home/node",
+		Egress: "open", AutoUp: true, ServicesNet: "ordinary-shared-network",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	launches := 0
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		Review: true, Network: true, Batch: true, Quiet: true, Ctx: ctx,
+		OnRuntimeLaunch: func() { launches++ },
+	}
+
+	done := make(chan struct{})
+	var code int
+	var runErr error
+	go func() {
+		code, runErr = Run(cfg, runtime.Runtime{Name: shim}, spec)
+		close(done)
+	}()
+
+	for i := 0; i < 300; i++ {
+		if _, statErr := os.Stat(marker); statErr == nil {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, statErr := os.Stat(marker); statErr != nil {
+		t.Fatal("compose up never started — test setup didn't reach the sibling-services step")
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after the compose step finished and Ctx was canceled")
+	}
+
+	if code != -1 || runErr == nil || !strings.Contains(runErr.Error(), "network inspection") {
+		t.Fatalf("Run = (%d, %v), want -1 naming the network-inspection boundary", code, runErr)
+	}
+	if !errors.Is(runErr, context.Canceled) {
+		t.Errorf("abort error must still satisfy errors.Is(context.Canceled): %v", runErr)
+	}
+	if launches != 0 {
+		t.Errorf("an aborted setup must never signal OnRuntimeLaunch, got %d signal(s)", launches)
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	if !strings.Contains(args, "up -d --wait --remove-orphans") {
+		t.Fatalf("review service startup missing from:\n%s", args)
+	}
+	if !strings.Contains(args, "down --remove-orphans --volumes") {
+		t.Fatalf("a canceled run must still tear down the review compose project it started:\n%s", args)
+	}
+	if runInvocations(args) != 0 {
+		t.Fatalf("an aborted setup must never launch the container:\n%s", args)
+	}
 }
 
 func TestRunUsesTrustedPolicyRepo(t *testing.T) {

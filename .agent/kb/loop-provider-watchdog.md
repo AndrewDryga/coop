@@ -66,9 +66,14 @@ Traps the code doesn't obviously carry:
   argument assembly — so the watchdog is built UNARMED and armed from `RunSpec.OnRuntimeLaunch`,
   box.Run's one callback at the runtime-launch boundary: after all host setup, immediately before
   the container starts, exactly once (`internal/box/run.go`). Arming any earlier both mislabels
-  coop's own slow setup as `provider_start_timeout` AND cannot act on it, because cancelling the
-  box context does nothing to synchronous setup that has not reached `RunInterruptible`. A run
-  that fails before the boundary never arms, so it reports its real error instead of a timeout.
+  coop's own slow setup as `provider_start_timeout` AND cannot act on it in time. Canceling the box
+  context now aborts pre-launch setup too, but only at the NEXT step boundary: `ctxStep` checks
+  between each of the four named phases above, never inside one — a wedged `compose up` or
+  `network inspect` runs via plain `exec.Command` with no context of its own, so the cancellation
+  lands once that ONE call returns, not before. A run canceled before the boundary — at entry or
+  mid-setup — never arms the watchdog and never launches the container; a run that fails before the
+  boundary for any other reason never arms either, so it reports its real error instead of a
+  timeout.
 - **The box runs in its own process group for every built-in attempt** (non-nil Ctx →
   `RunInterruptible`, runtime.go). A signal delivered to coop's group no longer reaches the
   box. The loop therefore watches SIGINT/SIGTERM even without a TTY and cancels the box
@@ -118,6 +123,11 @@ Traps the code doesn't obviously carry:
   an interrupted run stays `interrupted`, never a provider timeout.
 
 ## Changelog
+- 2026-08-09 — pre-launch setup is now itself step-boundary cancelable (`ctxStep` in
+  `internal/box/run.go`, one check between each of the four named phases, plus one at entry).
+  Corrected the arming trap above, which had claimed canceling the box context does nothing until
+  `RunInterruptible` — true when it was written, and the gap this same trap flagged; a canceled
+  setup now aborts promptly at the next boundary and still never arms the watchdog.
 - 2026-08-09 — the deadlines are ARMED by default again (10m/30m/2h, ceiling 48h): rewrote the
   opening paragraph, the ceiling and override traps, and added the idle-vs-descendant-drain
   coupling trap plus the observed-silence diagnostic. The e2e proof of default-on is an override

@@ -4,6 +4,22 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Ctrl-C during box setup now aborts promptly, instead of waiting out whatever host step it
+  landed on.** The loop's second Ctrl-C cancels the run's context, but `box.Run`'s host-side setup
+  — projecting the repo and every generated mount, bringing sibling services up, inspecting the
+  services network, assembling the container's arguments — never checked it: a wedged `compose up`
+  or `network inspect` (both plain, uncancelable subprocess calls) held the whole run hostage until
+  the syscall itself returned, however long that took. A cancellation is now checked at a boundary
+  between each of those phases — including before the first one, so a Ctx already canceled when
+  `box.Run` is entered aborts immediately — and the error names the step it aborted before. It
+  still can't reach inside a call already in flight (there is no lever to pull mid-syscall without
+  heroics this fix deliberately avoids), so the wait is now bounded by the SLOWEST single host step
+  instead of the whole setup — and an aborted setup releases exactly what a normal completion would
+  have: temp files and mounts through the same deferred cleanup, and a review run's disposable
+  Compose project through the same teardown its success path already runs. It also never signals
+  the runtime-launch boundary, so the provider watchdog armed there never arms for a launch that
+  didn't happen. Every other caller leaves `Ctx` nil, so nothing changes for them.
+
 - **A turn's token usage now actually reaches the session API.** Coop has recorded what every turn
   cost since per-turn usage shipped — four columns on `turns`, filled from the ACP prompt result —
   but the public `TurnDTO` had no field for them and `publicTurn` copied none, so

@@ -200,6 +200,23 @@ func defaultCompositionArtifactOps() compositionArtifactOps {
 	}
 }
 
+// ctxStep is the step-boundary Ctx check threaded between runWithCompositionArtifacts' discrete
+// setup phases (filesystem projection, sibling services, network inspection, argument assembly —
+// see the OnRuntimeLaunch boundary these same names describe). A canceled Ctx aborts HERE, at the
+// next boundary, naming the phase it would have started — never mid-syscall: a wedged `compose up`
+// or `network inspect` runs via plain exec with no context of its own, so there is no lever to pull
+// inside one. A nil Ctx (every caller but the loop) or a live, uncanceled one always returns nil:
+// zero behavior change unless a caller both sets Ctx AND cancels it.
+func ctxStep(ctx context.Context, step string) error {
+	if ctx == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("box setup canceled before %s: %w", step, err)
+	}
+	return nil
+}
+
 // Run assembles and executes one container run, shadowing secrets and wiring up
 // agent homes + MCP. It returns the container's exit code (with a nil error when
 // the container merely exited non-zero); a non-nil error means it never started.
@@ -211,6 +228,12 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 // orchestration files are part of the requested program, so any assembly error must surface before
 // the box and provider start.
 func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifacts compositionArtifactOps) (int, error) {
+	// Checked before any host work, not just between later phases: an already-canceled Ctx (the
+	// loop's second Ctrl-C landing between iterations) must never begin projecting a box it would
+	// only have to tear down.
+	if err := ctxStep(spec.Ctx, "filesystem projection"); err != nil {
+		return -1, err
+	}
 	if !spec.Homes && spec.FusionGovernor == "" {
 		if spec.Preset != nil {
 			return -1, fmt.Errorf("preset %q requires agent homes so its instructions, wrappers, and roles can mount", spec.Preset.Name)
@@ -546,6 +569,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 
+	if err := ctxStep(spec.Ctx, "sibling services"); err != nil {
+		return -1, err
+	}
 	// Bring sibling services up first, so the box can reach them by name. Every launch path —
 	// agent, fusion governor, acp, loop, fork — funnels through box.Run, so this one call covers
 	// them all. Gated like the network join below (on the services net, online, compose-capable
@@ -576,6 +602,21 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				ui.Info("services: %v — continuing without them (run 'coop up' to retry)", err)
 			}
 		}
+	}
+
+	// finish releases the review-only Compose project's disposable state on every return from here
+	// on — success, a runtime error, or a step-boundary cancellation below — so an aborted setup
+	// leaves nothing running that a normal completion wouldn't also have torn down. Defined here,
+	// right after reviewServicesAttempted's last write, so the cancellation checks below can use it.
+	finish := func(code int, runErr error) (int, error) {
+		if reviewServicesAttempted {
+			cleanupErr := DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard)
+			runErr = errors.Join(runErr, cleanupErr)
+		}
+		return code, runErr
+	}
+	if err := ctxStep(spec.Ctx, "network inspection"); err != nil {
+		return finish(-1, err)
 	}
 
 	// Sidecar discovery + same-URL forwarders: whenever the box will join the services network,
@@ -612,15 +653,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 
+	if err := ctxStep(spec.Ctx, "argument assembly"); err != nil {
+		return finish(-1, err)
+	}
 	limits := boxLimits(cfg, rt)
 	args := assembleArgs(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
-	finish := func(code int, runErr error) (int, error) {
-		if reviewServicesAttempted {
-			cleanupErr := DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard)
-			runErr = errors.Join(runErr, cleanupErr)
-		}
-		return code, runErr
-	}
 	// The launch boundary: everything above is host work, everything below is the provider's.
 	// A caller that clocks the provider starts counting HERE, never from Run's entry — an early
 	// return above launched nothing, so it signals nothing.
