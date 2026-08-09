@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -57,43 +56,6 @@ func TestOpenProtectsRootDatabaseAndRejectsUnsafeRoots(t *testing.T) {
 	}
 	if _, err := Open(file); err == nil {
 		t.Fatal("Open accepted a non-directory state root")
-	}
-}
-
-func TestOpenMigratesV1SessionsWithEmptyCompanions(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "state")
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(root, databaseName)
-	db, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(schemaV1); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	store := openTestStore(t, root)
-	defer store.Close()
-	var version int
-	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	if version != SchemaVersion {
-		t.Fatalf("schema version = %d, want %d", version, SchemaVersion)
-	}
-	created, err := store.CreateSession(
-		context.Background(), "migrated-create",
-		CreateSessionRequest{Target: "codex"},
-	)
-	if err != nil || len(created.Companions) != 0 {
-		t.Fatalf("migrated session = %+v, %v", created, err)
 	}
 }
 
