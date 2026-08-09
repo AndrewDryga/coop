@@ -394,11 +394,37 @@ func TestSessionWorkspaceDiscardRequiresExactDirtyAndUnmergedAcknowledgement(t *
 	}
 }
 
-func TestSessionWorkspaceDiscardPlanRejectsMissingWorkspace(t *testing.T) {
+func TestSessionWorkspaceDiscardPlansAMissingWorkspaceAsAbsent(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	_, err := planSessionWorkspaceDiscard(repo, filepath.Join(forkHome(repo), "missing"), false, false)
-	if err == nil || !strings.Contains(err.Error(), "pin session workspace") {
+	missing := forkWorkspace(repo, "vanished")
+	plan, err := planSessionWorkspaceDiscard(repo, missing, false, false)
+	if err != nil {
 		t.Fatalf("missing workspace plan = %v", err)
+	}
+	if plan.Repo != repo || plan.Name != "vanished" || plan.Workspace != missing {
+		t.Fatalf("missing workspace plan identity = %+v", plan)
+	}
+	// Nothing exists, so nothing may be claimed as work worth protecting.
+	if plan.Dirty || plan.Unmerged || plan.Running || plan.Branch != "" || plan.Head != "" {
+		t.Fatalf("missing workspace plan invented work to protect: %+v", plan)
+	}
+	if plan.StatusDigest != sessionWorkspaceStatusDigest(nil) {
+		t.Fatalf("missing workspace status digest = %q, want the empty-status digest", plan.StatusDigest)
+	}
+	if err := discardSessionWorkspace(plan); err != nil {
+		t.Fatalf("missing workspace discard = %v", err)
+	}
+
+	// Absence is the only shortcut: a workspace that exists but cannot be
+	// inspected may hold work, so planning it must keep failing loudly.
+	if err := os.MkdirAll(forkHome(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	broken := forkWorkspace(repo, "broken")
+	sessionWorkspaceWrite(t, broken, "not a directory\n")
+	if _, err := planSessionWorkspaceDiscard(repo, broken, false, false); err == nil ||
+		!strings.Contains(err.Error(), "pin session workspace") {
+		t.Fatalf("uninspectable workspace plan = %v", err)
 	}
 }
