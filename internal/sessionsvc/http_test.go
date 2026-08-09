@@ -343,6 +343,94 @@ func TestSessionHTTPGeneratedArtifactIsSeparateFromTurnJSON(t *testing.T) {
 	}
 }
 
+// The store has recorded per-turn usage since schema v5, but TurnDTO had no field for it and
+// publicTurn copied none, so every caller of the session API read a completed turn and got no
+// numbers at all — the store was measuring turns nobody could see. Every commit this feature has
+// had landed without touching this seam, because nothing in this file ever looked at it.
+func TestSessionHTTPTurnPublishesRecordedUsage(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	handler := NewHTTPHandler(service)
+	createdResponse := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"usage"}`,
+		"usage-create", "application/json",
+	)
+	var created sessionMutationSessionResponse
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	turnResponse := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
+		`{"expected_revision":1,"prompt":"measure me"}`, "usage-turn", "application/json",
+	)
+	var submitted sessionMutationTurnResponse
+	if err := json.Unmarshal(turnResponse.Body.Bytes(), &submitted); err != nil {
+		t.Fatal(err)
+	}
+	leased, found, err := service.store.LeaseNextTurn(context.Background(), created.Session.ID)
+	if err != nil || !found {
+		t.Fatalf("lease measured turn = %+v, %v, %v", leased, found, err)
+	}
+	if _, err := service.store.MarkTurnSendIntent(context.Background(), created.Session.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.store.MarkTurnSent(context.Background(), created.Session.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	want := session.Usage{InputTokens: 8, CachedInputTokens: 979866, OutputTokens: 10939, ReasoningTokens: 512}
+	completed, err := service.store.CompleteTurn(context.Background(), session.CompleteTurnRequest{
+		SessionID: created.Session.ID, TurnID: submitted.Turn.ID, Message: "Measured.", Usage: want,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Usage != want {
+		t.Fatalf("stored usage = %+v, want %+v", completed.Usage, want)
+	}
+
+	// Decoded off the wire rather than through TurnDTO, because what broke was the wire: a
+	// client reading these tags found nothing while the database held the numbers.
+	var fetched struct {
+		Usage session.Usage `json:"usage"`
+	}
+	turnGet := sessionHTTPTestRequest(
+		t, handler, http.MethodGet,
+		"/v1/sessions/"+created.Session.ID+"/turns/"+completed.ID, "", "", "",
+	)
+	if turnGet.Code != http.StatusOK {
+		t.Fatalf("get turn status = %d body=%s", turnGet.Code, turnGet.Body.String())
+	}
+	if err := json.Unmarshal(turnGet.Body.Bytes(), &fetched); err != nil {
+		t.Fatal(err)
+	}
+	if fetched.Usage != want {
+		t.Fatalf("turn usage on the wire = %+v, want %+v\nbody=%s", fetched.Usage, want, turnGet.Body.String())
+	}
+
+	// The list is the same projection, and a caller totalling what a session spent reads it
+	// instead of fetching every turn one at a time.
+	var listed []struct {
+		Usage session.Usage `json:"usage"`
+	}
+	listGet := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+created.Session.ID+"/turns", "", "", "")
+	if err := json.Unmarshal(listGet.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Usage != want {
+		t.Fatalf("listed turn usage = %+v, want one turn with %+v\nbody=%s", listed, want, listGet.Body.String())
+	}
+
+	// A turn nobody measured publishes no usage object at all. Zero is a real answer for a
+	// trivial turn, so a caller pricing spend has to keep absence distinct from free.
+	unmeasured, err := json.Marshal(publicTurn(session.Turn{ID: "turn_unmeasured"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(unmeasured), "usage") {
+		t.Fatalf("unmeasured turn published a usage object: %s", unmeasured)
+	}
+}
+
 type preparingHTTPRunner struct{ calls atomic.Int32 }
 
 func (*preparingHTTPRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {

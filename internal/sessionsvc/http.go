@@ -72,6 +72,7 @@ type TurnDTO struct {
 	StartedAt        time.Time          `json:"started_at,omitempty"`
 	FinishedAt       time.Time          `json:"finished_at,omitempty"`
 	OutputArtifacts  []TurnArtifactDTO  `json:"output_artifacts,omitempty"`
+	Usage            session.Usage      `json:"usage,omitzero"`
 }
 
 type TurnArtifactDTO struct {
@@ -991,6 +992,7 @@ func publicTurn(value session.Turn) TurnDTO {
 		SendState: value.SendState, AssistantMessage: value.AssistantMessage, StopReason: value.StopReason,
 		ErrorCode: value.ErrorCode, ErrorDetail: publicSessionErrorDetail(value.ErrorCode, value.ErrorDetail), QueuedAt: value.QueuedAt,
 		StartedAt: value.StartedAt, FinishedAt: value.FinishedAt, OutputArtifacts: artifacts,
+		Usage: value.Usage,
 	}
 }
 

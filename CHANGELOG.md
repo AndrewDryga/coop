@@ -4,6 +4,19 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A turn's token usage now actually reaches the session API.** Coop has recorded what every turn
+  cost since per-turn usage shipped — four columns on `turns`, filled from the ACP prompt result —
+  but the public `TurnDTO` had no field for them and `publicTurn` copied none, so
+  `GET /v1/sessions/{id}/turns/{turn_id}` answered with no `usage` object at all while the database
+  held real numbers, and the caller that asked what a turn spent got a blank where the spend belongs.
+  The durable record and the public wire type are two hand-maintained projections with nothing tying
+  them together, which is how a field can be correct in the store, the schema, the scanner and the
+  ingest path and still be invisible to every client. `usage` — `input_tokens`,
+  `cached_input_tokens`, `output_tokens`, `reasoning_tokens` — is now published on the single turn,
+  the turn list, and both turn mutation responses. It stays `omitzero`, exactly as the record carries
+  it, so a turn no provider measured publishes no `usage` object at all rather than four zeros a
+  caller would price as a free turn.
+
 - _Internal restructuring, no user-visible change._ The **remote-sessions service** — policy
   authority, the HTTP v1 API and its socket, one-turn ACP execution, workspaces, review, companions,
   sources, outputs, and artifacts — moved out of `internal/cli` into its own package,
