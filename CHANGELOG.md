@@ -4,6 +4,25 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A Claude session credential that expires no longer takes the whole deployment down with it.**
+  Every turn on a `coop sessions serve` target running Claude failed permanently once the host's
+  ~8h Claude OAuth access token expired — two production deployments went dark this way on
+  2026-08-08, each still holding a perfectly good refresh token nothing ever used. Codex's
+  `LiveCredentialSpec` already renewed an expiring access token in trusted host storage before
+  projecting the access-only copy a session box receives; Claude's declared `Portability` and no
+  `Prepare`, so nothing renewed it — the in-box CLI has no refresh token by design, and the host
+  never ran the refresh either, so `credential is not portable through the turn deadline` repeated
+  on every turn until a human re-logged in. Claude now renews the same way: a host-side `Prepare`,
+  serialized on the profile's own refresh flock, atomically persists the rotated token before
+  projection. It talks to Claude Code's own OAuth endpoint directly rather than shelling out to the
+  CLI to do the refresh — on macOS that CLI migrates a renewed credential out of
+  `.credentials.json` into the login Keychain and deletes the file, confirmed by hitting exactly
+  that while triaging this outage and recovering the credential from the Keychain by hand. Endpoint
+  and client id are carried as verified constants with env overrides, the same shape Codex's
+  refresh already uses; the request asks for exactly the scopes the stored login already holds. A
+  credential whose refresh token is itself dead still fails with a sign-in diagnostic, not the
+  portability one, and the refresh token itself still never crosses into the box.
+
 - **Ctrl-C during box setup now aborts promptly, instead of waiting out whatever host step it
   landed on.** The loop's second Ctrl-C cancels the run's context, but `box.Run`'s host-side setup
   — projecting the repo and every generated mount, bringing sibling services up, inspecting the

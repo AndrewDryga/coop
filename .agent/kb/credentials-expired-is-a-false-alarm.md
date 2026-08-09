@@ -14,14 +14,15 @@ trying a provider request first.
 The provider adapter owns this distinction through `StoredCredentialStatus`. Claude, Codex, and
 Grok validate their native OAuth records; Gemini retains opaque presence behavior. Env-only
 credentials also remain presence-based because there is no native marker to inspect. Before an ACP
-turn, Codex renews an expiring access token while the complete credential is still in trusted host
-storage, persists any token rotation atomically, and only then creates the access-only box
-projection. Refresh authority never crosses into the box.
+turn, Codex and Claude each renew an expiring access token while the complete credential is still
+in trusted host storage, persist any token rotation atomically, and only then let the access-only
+box projection proceed. Refresh authority never crosses into the box.
 
 The `rotated <age>` column still reads the marker mtime through `box.ProfileTokenMtime`; a login or
 refresh rewrite advances it. See [[box-time-is-utc]] for the wall clock behind provider expiries.
 
 ## Changelog
+- 2026-08-09 — this card still singled out Codex for pre-ACP renewal after Claude joined it (`renewClaudeCredential`, 2026-08-08); reworded the paragraph to name both, no behavior change.
 - 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).
 - 2026-08-06 — added serialized host-side Codex renewal before access-only ACP projection; swept the credential preparation and projection paths with focused concurrency and failure tests
 - 2026-07-16 — replaced the stale "try a run" advice with adapter-owned readiness and an authoritative re-login remedy
