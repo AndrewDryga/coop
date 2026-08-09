@@ -163,7 +163,7 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	}{
 		Operation: publicOperation(session.Operation{ErrorCode: session.CodeInternal, ErrorDetail: "/secret/host/path"}),
 		Turn:      publicTurn(session.Turn{ErrorCode: session.CodeInternal, ErrorDetail: "/secret/host/path"}),
-		Review:    publicReview(SessionReviewDossier{GateError: "/secret/host/path"}),
+		Review:    publicReview(ReviewDossier{GateError: "/secret/host/path"}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -450,7 +450,7 @@ func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
 	policy.WarmIdleTimeout = 15 * time.Minute
 	policies["responder"] = policy
 	runner := &preparingHTTPRunner{}
-	service, err := NewSessionService(SessionServiceConfig{
+	service, err := NewService(Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies, Runner: runner,
 	})
 	if err != nil {
@@ -476,17 +476,17 @@ func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
 	}
 }
 
-func newHTTPTestSessionService(t *testing.T) (*SessionService, string) {
+func newHTTPTestSessionService(t *testing.T) (*Service, string) {
 	t.Helper()
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	service, err := NewSessionService(SessionServiceConfig{
+	service, err := NewService(Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo),
-		Runner: SessionRunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
 			return turn, nil
 		}),
-		ReviewGate: SessionReviewGateFunc(func(context.Context, string, string) (SessionReviewGateResult, error) {
-			return SessionReviewGateResult{Configured: true, Passed: true}, nil
+		ReviewGate: ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+			return ReviewGateResult{Configured: true, Passed: true}, nil
 		}),
 	})
 	if err != nil {

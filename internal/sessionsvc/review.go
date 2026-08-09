@@ -27,21 +27,21 @@ const (
 	sessionReviewArtifactMaxBytes  = 64 << 20
 )
 
-type SessionReviewGateStatus string
+type ReviewGateStatus string
 
 const (
-	SessionReviewGateNone         SessionReviewGateStatus = "none"
-	SessionReviewGatePassed       SessionReviewGateStatus = "passed"
-	SessionReviewGateFailed       SessionReviewGateStatus = "failed"
-	SessionReviewGateStartupError SessionReviewGateStatus = "startup_error"
-	SessionReviewGateNotRun       SessionReviewGateStatus = "not_run"
+	ReviewGateNone         ReviewGateStatus = "none"
+	ReviewGatePassed       ReviewGateStatus = "passed"
+	ReviewGateFailed       ReviewGateStatus = "failed"
+	ReviewGateStartupError ReviewGateStatus = "startup_error"
+	ReviewGateNotRun       ReviewGateStatus = "not_run"
 )
 
-type SessionReviewRebaseStatus string
+type ReviewRebaseStatus string
 
 const (
-	SessionReviewRebaseClean    SessionReviewRebaseStatus = "clean"
-	SessionReviewRebaseConflict SessionReviewRebaseStatus = "conflict"
+	ReviewRebaseClean    ReviewRebaseStatus = "clean"
+	ReviewRebaseConflict ReviewRebaseStatus = "conflict"
 )
 
 type RunReviewRequest struct {
@@ -49,54 +49,54 @@ type RunReviewRequest struct {
 	ExpectedRevision int64  `json:"expected_revision"`
 }
 
-type SessionReviewDossier struct {
-	OperationID           string                    `json:"operation_id"`
-	SessionID             string                    `json:"session_id"`
-	SessionRevision       int64                     `json:"session_revision"`
-	PolicyDigest          string                    `json:"policy_digest"`
-	CreationBase          string                    `json:"creation_base"`
-	SourceHead            string                    `json:"source_head"`
-	SourceTree            string                    `json:"source_tree"`
-	ParentHead            string                    `json:"parent_head"`
-	ParentTree            string                    `json:"parent_tree"`
-	CandidateHead         string                    `json:"candidate_head"`
-	CandidateTree         string                    `json:"candidate_tree"`
-	Rebase                SessionReviewRebaseStatus `json:"rebase"`
-	Gate                  SessionReviewGateStatus   `json:"gate"`
-	GateError             string                    `json:"gate_error,omitempty"`
-	PolicyFindings        []string                  `json:"policy_findings,omitempty"`
-	Patch                 []byte                    `json:"patch,omitempty"`
-	PatchTruncated        bool                      `json:"patch_truncated"`
-	PatchArtifactID       string                    `json:"patch_artifact_id,omitempty"`
-	PatchDigest           string                    `json:"patch_digest,omitempty"`
-	PatchBytes            int64                     `json:"patch_bytes"`
-	Publishable           bool                      `json:"publishable"`
-	NotPublishableReasons []string                  `json:"not_publishable_reasons,omitempty"`
+type ReviewDossier struct {
+	OperationID           string             `json:"operation_id"`
+	SessionID             string             `json:"session_id"`
+	SessionRevision       int64              `json:"session_revision"`
+	PolicyDigest          string             `json:"policy_digest"`
+	CreationBase          string             `json:"creation_base"`
+	SourceHead            string             `json:"source_head"`
+	SourceTree            string             `json:"source_tree"`
+	ParentHead            string             `json:"parent_head"`
+	ParentTree            string             `json:"parent_tree"`
+	CandidateHead         string             `json:"candidate_head"`
+	CandidateTree         string             `json:"candidate_tree"`
+	Rebase                ReviewRebaseStatus `json:"rebase"`
+	Gate                  ReviewGateStatus   `json:"gate"`
+	GateError             string             `json:"gate_error,omitempty"`
+	PolicyFindings        []string           `json:"policy_findings,omitempty"`
+	Patch                 []byte             `json:"patch,omitempty"`
+	PatchTruncated        bool               `json:"patch_truncated"`
+	PatchArtifactID       string             `json:"patch_artifact_id,omitempty"`
+	PatchDigest           string             `json:"patch_digest,omitempty"`
+	PatchBytes            int64              `json:"patch_bytes"`
+	Publishable           bool               `json:"publishable"`
+	NotPublishableReasons []string           `json:"not_publishable_reasons,omitempty"`
 }
 
-// SessionReviewGateResult is the complete outcome of the trusted parent gate.
+// ReviewGateResult is the complete outcome of the trusted parent gate.
 // StartupError is a successful review outcome, not a failed operation.
-type SessionReviewGateResult struct {
+type ReviewGateResult struct {
 	Configured   bool
 	Passed       bool
 	StartupError string
 }
 
-// SessionReviewGate is the narrow gate seam used by RunReview. Implementations must not mutate
+// ReviewGate is the narrow gate seam used by RunReview. Implementations must not mutate
 // gateRepo. A gate may create ignored build output in the disposable candidate; RunReview rejects
 // any change to its pinned commit, tree, branch, tracked files, or non-ignored untracked files.
-type SessionReviewGate interface {
-	Run(context.Context, string, string) (SessionReviewGateResult, error)
+type ReviewGate interface {
+	Run(context.Context, string, string) (ReviewGateResult, error)
 }
 
-type SessionReviewGateFunc func(context.Context, string, string) (SessionReviewGateResult, error)
+type ReviewGateFunc func(context.Context, string, string) (ReviewGateResult, error)
 
-func (f SessionReviewGateFunc) Run(ctx context.Context, gateRepo, treeDir string) (SessionReviewGateResult, error) {
+func (f ReviewGateFunc) Run(ctx context.Context, gateRepo, treeDir string) (ReviewGateResult, error) {
 	return f(ctx, gateRepo, treeDir)
 }
 
 // MaxReviewErrorBytes bounds a gate's startup-error prose, so a host implementing
-// SessionReviewGate truncates the same way the service's own paths do.
+// ReviewGate truncates the same way the service's own paths do.
 const MaxReviewErrorBytes = session.MaxErrorDetailBytes
 
 type sessionReviewIntent struct {
@@ -128,23 +128,23 @@ type sessionReviewParentIdentity struct {
 	Tree string
 }
 
-func (s *SessionService) RunReview(ctx context.Context, key string, req RunReviewRequest) (SessionReviewDossier, error) {
+func (s *Service) RunReview(ctx context.Context, key string, req RunReviewRequest) (ReviewDossier, error) {
 	unlock := s.lockOperation(key)
 	defer unlock()
 
 	if req.SessionID == "" || len(req.SessionID) > session.MaxIDBytes || !utf8SessionText(req.SessionID) || req.ExpectedRevision <= 0 {
-		return SessionReviewDossier{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "session id and positive expected revision are required"}
+		return ReviewDossier{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "session id and positive expected revision are required"}
 	}
 	op, replay, err := s.store.ReserveOperation(ctx, "RunReview", key, req)
 	if err != nil {
-		return SessionReviewDossier{}, err
+		return ReviewDossier{}, err
 	}
 	if replay {
 		switch op.State {
 		case session.OperationSucceeded:
 			return decodeSessionReviewDossier(op.Result)
 		case session.OperationFailed:
-			return SessionReviewDossier{}, &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail}
+			return ReviewDossier{}, &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail}
 		case session.OperationRunning, session.OperationUncertain:
 			return s.resumeReview(ctx, op)
 		default:
@@ -154,27 +154,27 @@ func (s *SessionService) RunReview(ctx context.Context, key string, req RunRevie
 	return s.executeReview(ctx, op, req)
 }
 
-func decodeSessionReviewDossier(data []byte) (SessionReviewDossier, error) {
-	var dossier SessionReviewDossier
+func decodeSessionReviewDossier(data []byte) (ReviewDossier, error) {
+	var dossier ReviewDossier
 	if err := json.Unmarshal(data, &dossier); err != nil {
-		return SessionReviewDossier{}, fmt.Errorf("decode review operation result: %w", err)
+		return ReviewDossier{}, fmt.Errorf("decode review operation result: %w", err)
 	}
 	if dossier.OperationID == "" || dossier.SessionID == "" {
-		return SessionReviewDossier{}, errors.New("decode review operation result: missing identity")
+		return ReviewDossier{}, errors.New("decode review operation result: missing identity")
 	}
 	return dossier, nil
 }
 
-func (s *SessionService) resumeReview(
+func (s *Service) resumeReview(
 	ctx context.Context,
 	op session.Operation,
-) (SessionReviewDossier, error) {
+) (ReviewDossier, error) {
 	var intent sessionReviewIntent
 	if err := json.Unmarshal(op.Result, &intent); err != nil {
 		if op.State == session.OperationRunning {
 			_ = s.store.MarkOperationUncertain(ctx, op.ID)
 		}
-		return SessionReviewDossier{}, &session.Error{
+		return ReviewDossier{}, &session.Error{
 			Code: session.CodeOperationUncertain, Detail: "review operation intent is unreadable",
 		}
 	}
@@ -186,17 +186,17 @@ func (s *SessionService) resumeReview(
 	return dossier, err
 }
 
-func (s *SessionService) executeReview(ctx context.Context, op session.Operation, req RunReviewRequest) (SessionReviewDossier, error) {
+func (s *Service) executeReview(ctx context.Context, op session.Operation, req RunReviewRequest) (ReviewDossier, error) {
 	intent, err := s.captureReviewIntent(ctx, op.ID, req)
 	if err != nil {
-		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	data, err := json.Marshal(intent)
 	if err != nil {
-		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	if err := s.store.MarkOperationRunning(ctx, op.ID, data); err != nil {
-		return SessionReviewDossier{}, err
+		return ReviewDossier{}, err
 	}
 	return s.executeReviewIntent(s.reviewExecutionContext(), op, intent)
 }
@@ -204,7 +204,7 @@ func (s *SessionService) executeReview(ctx context.Context, op session.Operation
 // Reviews run from a frozen intent and may outlive an HTTP request. Use the service context for
 // durable writes and cancellable review implementations so a client timeout cannot discard the
 // result. Tests and direct local callers that do not Start the service retain synchronous behavior.
-func (s *SessionService) reviewExecutionContext() context.Context {
+func (s *Service) reviewExecutionContext() context.Context {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ctx != nil {
@@ -213,7 +213,7 @@ func (s *SessionService) reviewExecutionContext() context.Context {
 	return context.Background()
 }
 
-func (s *SessionService) captureReviewIntent(ctx context.Context, operationID string, req RunReviewRequest) (sessionReviewIntent, error) {
+func (s *Service) captureReviewIntent(ctx context.Context, operationID string, req RunReviewRequest) (sessionReviewIntent, error) {
 	sess, err := s.store.GetSession(ctx, req.SessionID)
 	if err != nil {
 		return sessionReviewIntent{}, err
@@ -361,34 +361,34 @@ func sessionReviewIsAncestor(dir, base, head string) (bool, error) {
 	return false, fmt.Errorf("git merge-base --is-ancestor: %w", err)
 }
 
-func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Operation, intent sessionReviewIntent) (SessionReviewDossier, error) {
+func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation, intent sessionReviewIntent) (ReviewDossier, error) {
 	if intent.OperationID != op.ID || intent.SessionID == "" || intent.Repository == "" || intent.Workspace == "" || intent.SessionRevision <= 0 || !validSessionReviewObject(intent.CreationBase) || !validSessionReviewObject(intent.SourceHead) || !validSessionReviewObject(intent.SourceTree) || !validSessionReviewObject(intent.ParentHead) || !validSessionReviewObject(intent.ParentTree) || intent.MaxPatchBytes <= 0 || intent.MaxPatchBytes > session.MaxPatchBytesLimit {
-		return SessionReviewDossier{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "review operation intent is invalid"}
+		return ReviewDossier{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "review operation intent is invalid"}
 	}
 	candidate, err := prepareForkReviewCandidateFromIntent(intent)
 	if err != nil {
-		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	defer candidate.cleanup()
-	dossier := SessionReviewDossier{
+	dossier := ReviewDossier{
 		OperationID: op.ID, SessionID: intent.SessionID, SessionRevision: intent.SessionRevision,
 		PolicyDigest: intent.PolicyDigest, CreationBase: intent.CreationBase,
 		SourceHead: intent.SourceHead, SourceTree: intent.SourceTree,
 		ParentHead: intent.ParentHead, ParentTree: intent.ParentTree,
-		Rebase: SessionReviewRebaseClean, Gate: SessionReviewGateNotRun,
+		Rebase: ReviewRebaseClean, Gate: ReviewGateNotRun,
 	}
 	if candidate.conflict {
-		dossier.Rebase = SessionReviewRebaseConflict
+		dossier.Rebase = ReviewRebaseConflict
 		dossier.NotPublishableReasons = []string{"rebase_conflict"}
 		return s.completeReview(ctx, dossier)
 	}
 	candidateHead, candidateTree, err := ReviewGitIdentity(candidate.dir, candidate.name)
 	if err != nil {
-		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("pin review candidate: %w", err))
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("pin review candidate: %w", err))
 	}
 	candidateParentHead, candidateParentTree, err := ReviewGitIdentity(candidate.dir, candidate.base)
 	if err != nil {
-		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("pin review candidate parent: %w", err))
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("pin review candidate parent: %w", err))
 	}
 	dossier.ParentHead, dossier.ParentTree = candidateParentHead, candidateParentTree
 	dossier.CandidateHead, dossier.CandidateTree = candidateHead, candidateTree
@@ -397,23 +397,23 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 	}
 	gateResult, err := s.reviewGate.Run(ctx, intent.Repository, candidate.dir)
 	if err != nil {
-		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("run review gate: %w", err))
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("run review gate: %w", err))
 	}
 	if !ReviewCandidateUnchanged(candidate.dir, candidate.name, candidateHead, candidateTree) {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "gate_modified_candidate")
 	}
 	switch {
 	case gateResult.StartupError != "":
-		dossier.Gate = SessionReviewGateStartupError
+		dossier.Gate = ReviewGateStartupError
 		dossier.GateError = SanitizeReviewText(gateResult.StartupError, session.MaxErrorDetailBytes)
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "gate_startup_error")
 	case !gateResult.Configured:
-		dossier.Gate = SessionReviewGateNone
+		dossier.Gate = ReviewGateNone
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "gate_not_configured")
 	case gateResult.Passed:
-		dossier.Gate = SessionReviewGatePassed
+		dossier.Gate = ReviewGatePassed
 	default:
-		dossier.Gate = SessionReviewGateFailed
+		dossier.Gate = ReviewGateFailed
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "gate_failed")
 	}
 	dossier.PolicyFindings = boundedSessionReviewFindings(s.host.policyScan(candidate.dir, candidateHead))
@@ -422,7 +422,7 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 	}
 	patch, truncated, err := sessionReviewPatch(candidate.dir, candidateParentHead, candidateHead, intent.MaxPatchBytes)
 	if err != nil {
-		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("compute review candidate patch: %w", err))
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("compute review candidate patch: %w", err))
 	}
 	dossier.Patch, dossier.PatchTruncated = patch, truncated
 	artifact, err := s.writeReviewPatchArtifact(
@@ -459,8 +459,8 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "fork_owner_active")
 	}
 	dossier.NotPublishableReasons = stableSessionReviewReasons(dossier.NotPublishableReasons)
-	dossier.Publishable = dossier.Rebase == SessionReviewRebaseClean &&
-		dossier.Gate == SessionReviewGatePassed &&
+	dossier.Publishable = dossier.Rebase == ReviewRebaseClean &&
+		dossier.Gate == ReviewGatePassed &&
 		dossier.PatchArtifactID != "" &&
 		dossier.PatchDigest != "" &&
 		dossier.PatchBytes > 0 &&
@@ -610,7 +610,7 @@ func (w *sessionReviewArtifactWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (s *SessionService) writeReviewPatchArtifact(
+func (s *Service) writeReviewPatchArtifact(
 	dir string,
 	parentHead string,
 	candidateHead string,
@@ -680,11 +680,11 @@ func (s *SessionService) writeReviewPatchArtifact(
 	}, nil
 }
 
-func (s *SessionService) OpenReviewPatch(
+func (s *Service) OpenReviewPatch(
 	ctx context.Context,
 	operationID string,
-) (*os.File, SessionReviewDossier, error) {
-	var dossier SessionReviewDossier
+) (*os.File, ReviewDossier, error) {
+	var dossier ReviewDossier
 	if !validSessionPathComponent(operationID) {
 		return nil, dossier, &session.Error{
 			Code: session.CodeInvalidRequest, Detail: "invalid review operation id",
@@ -798,10 +798,10 @@ func stableSessionReviewReasons(reasons []string) []string {
 	return result
 }
 
-func (s *SessionService) completeReview(ctx context.Context, dossier SessionReviewDossier) (SessionReviewDossier, error) {
+func (s *Service) completeReview(ctx context.Context, dossier ReviewDossier) (ReviewDossier, error) {
 	dossier.NotPublishableReasons = stableSessionReviewReasons(dossier.NotPublishableReasons)
-	if dossier.Gate != SessionReviewGatePassed ||
-		dossier.Rebase != SessionReviewRebaseClean ||
+	if dossier.Gate != ReviewGatePassed ||
+		dossier.Rebase != ReviewRebaseClean ||
 		dossier.PatchArtifactID == "" ||
 		dossier.PatchDigest == "" ||
 		dossier.PatchBytes < 1 ||
@@ -811,15 +811,15 @@ func (s *SessionService) completeReview(ctx context.Context, dossier SessionRevi
 	}
 	data, err := json.Marshal(dossier)
 	if err != nil {
-		return SessionReviewDossier{}, s.failServiceOperation(ctx, dossier.OperationID, err)
+		return ReviewDossier{}, s.failServiceOperation(ctx, dossier.OperationID, err)
 	}
 	if len(data) > session.MaxOperationResultBytes {
-		return SessionReviewDossier{}, s.failServiceOperation(ctx, dossier.OperationID, errors.New("review dossier exceeds the bounded operation result"))
+		return ReviewDossier{}, s.failServiceOperation(ctx, dossier.OperationID, errors.New("review dossier exceeds the bounded operation result"))
 	}
 	if err := s.store.CompleteOperation(ctx, dossier.OperationID, "review", dossier.SessionID, data); err != nil {
-		return SessionReviewDossier{}, err
+		return ReviewDossier{}, err
 	}
 	return dossier, nil
 }
 
-var _ SessionReviewGate = SessionReviewGateFunc(nil)
+var _ ReviewGate = ReviewGateFunc(nil)

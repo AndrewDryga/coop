@@ -57,7 +57,7 @@ func TestParseSessionPoliciesIsStrictAndPinsOneCredentialPerTarget(t *testing.T)
 		got.TurnTimeout != time.Hour ||
 		got.WarmIdleTimeout != 15*time.Minute ||
 		len(got.Companions) != 1 ||
-		got.Companions[0] != (SessionCompanionPolicy{
+		got.Companions[0] != (CompanionPolicy{
 			Name: "application", Repository: companion,
 			Remote: "upstream", Branch: "master",
 		}) {
@@ -169,7 +169,7 @@ func TestParseSessionPoliciesAcceptsATargetLadder(t *testing.T) {
 }
 
 func TestWarmIdleTimeoutIsBoundIntoPolicyDigest(t *testing.T) {
-	policy := SessionPolicy{Name: "conversation", Repository: "/repo", Targets: mustTargets("codex@work"), TurnTimeout: time.Hour}
+	policy := Policy{Name: "conversation", Repository: "/repo", Targets: mustTargets("codex@work"), TurnTimeout: time.Hour}
 	cold := resolvedSessionPolicyDigest(policy)
 	if want := "0f7066c5d36ac4cfd709ce3908092be4f92f8ee2b93d4d6983cea527e8bc2ddb"; cold != want {
 		t.Fatalf("cold policy digest = %q, want backward-compatible %q", cold, want)
@@ -254,20 +254,20 @@ func TestLoadSessionPoliciesRejectsUnsafeFileAndAncestry(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadSessionPolicies(path, nil); err != nil {
+	if _, err := LoadPolicies(path, nil); err != nil {
 		t.Fatalf("normal policy file rejected: %v", err)
 	}
 	symlink := filepath.Join(root, "policy-link.yaml")
 	if err := os.Symlink(path, symlink); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadSessionPolicies(symlink, nil); err == nil {
+	if _, err := LoadPolicies(symlink, nil); err == nil {
 		t.Fatal("policy symlink was accepted")
 	}
 	if err := os.Chmod(path, 0o622); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadSessionPolicies(path, nil); err == nil {
+	if _, err := LoadPolicies(path, nil); err == nil {
 		t.Fatal("group/world-writable policy file was accepted")
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
@@ -284,7 +284,7 @@ func TestLoadSessionPoliciesRejectsUnsafeFileAndAncestry(t *testing.T) {
 	if err := os.Chmod(unsafeDir, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadSessionPolicies(unsafePath, nil); err == nil {
+	if _, err := LoadPolicies(unsafePath, nil); err == nil {
 		t.Fatal("group/world-writable policy ancestry was accepted")
 	}
 }
@@ -392,7 +392,7 @@ func TestSessionServicePinsConfiguredRemoteWithoutChangingLocalCheckout(t *testi
 	policies := testSessionPolicies(checkout)
 	policy := policies["responder"]
 	policy.Remote, policy.Branch = "origin", "main"
-	policy.Companions = []SessionCompanionPolicy{{
+	policy.Companions = []CompanionPolicy{{
 		Name: "topology", Repository: companionCheckout,
 		Remote: "origin", Branch: "master",
 	}}
@@ -562,7 +562,7 @@ func TestSessionServicePinsPersistsAndDiscardsCompanionRepositories(t *testing.T
 	companionBase := gitOut(companion, "rev-parse", "HEAD")
 	policies := testSessionPolicies(primary)
 	policy := policies["responder"]
-	policy.Companions = []SessionCompanionPolicy{{
+	policy.Companions = []CompanionPolicy{{
 		Name: "topology", Repository: companion,
 	}}
 	policies["responder"] = policy
@@ -652,7 +652,7 @@ func TestSessionServiceCreateRollsBackPartialMultiRepositoryWorkspace(t *testing
 	blockedGit("commit", "-q", "--allow-empty", "-m", "blocked base")
 	policies := testSessionPolicies(primary)
 	policy := policies["responder"]
-	policy.Companions = []SessionCompanionPolicy{
+	policy.Companions = []CompanionPolicy{
 		{Name: "first", Repository: first},
 		{Name: "blocked", Repository: blocked},
 	}
@@ -715,7 +715,7 @@ func TestSessionServiceFIFOOneWorkerAndCancel(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	var fakeStore *session.Store
-	runner := SessionRunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
+	runner := RunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
 		n := running.Add(1)
 		for {
 			old := maxRunning.Load()
@@ -745,7 +745,7 @@ func TestSessionServiceFIFOOneWorkerAndCancel(t *testing.T) {
 		}
 		return fakeStore.CompleteTurn(context.Background(), session.CompleteTurnRequest{SessionID: bound.ID, TurnID: turn.ID, Message: turn.Prompt})
 	})
-	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), func(store *session.Store) SessionRunner {
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), func(store *session.Store) Runner {
 		fakeStore = store
 		return runner
 	})
@@ -828,7 +828,7 @@ func TestSessionServiceCancelNaturalCompletionReplaysObservedTerminalTurn(t *tes
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var fakeStore *session.Store
-	runner := SessionRunnerFunc(func(_ context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
+	runner := RunnerFunc(func(_ context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
 		if _, err := fakeStore.MarkTurnSendIntent(context.Background(), bound.ID, turn.ID); err != nil {
 			return turn, err
 		}
@@ -839,7 +839,7 @@ func TestSessionServiceCancelNaturalCompletionReplaysObservedTerminalTurn(t *tes
 		<-release
 		return fakeStore.CompleteTurn(context.Background(), session.CompleteTurnRequest{SessionID: bound.ID, TurnID: turn.ID, Message: "natural"})
 	})
-	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), func(store *session.Store) SessionRunner {
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), func(store *session.Store) Runner {
 		fakeStore = store
 		return runner
 	})
@@ -890,13 +890,13 @@ func TestSessionServiceStopWaitsForWorkerBeforeClosingStore(t *testing.T) {
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	started := make(chan struct{})
 	release := make(chan struct{})
-	runner := SessionRunnerFunc(func(ctx context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+	runner := RunnerFunc(func(ctx context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
 		close(started)
 		<-ctx.Done()
 		<-release
 		return turn, ctx.Err()
 	})
-	service, err := NewSessionService(SessionServiceConfig{
+	service, err := NewService(Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo),
 		Runner: runner, StopTimeout: time.Millisecond,
 	})
@@ -957,7 +957,7 @@ func TestSessionServiceRunsStartupCleanupBeforeWorkers(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &startupCleaningRunner{}
-	service, err := NewSessionService(SessionServiceConfig{
+	service, err := NewService(Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"),
 		Policies:  testSessionPolicies(repo),
 		Runner:    runner,
@@ -986,7 +986,7 @@ func TestSessionServiceCleanupFailureDoesNotBrickStartup(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &startupCleaningRunner{err: errors.New("old provider is unavailable")}
-	service, err := NewSessionService(SessionServiceConfig{
+	service, err := NewService(Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"),
 		Policies:  testSessionPolicies(repo),
 		Runner:    runner,
@@ -1026,7 +1026,7 @@ func TestSessionServiceCloseUsesKnownRuntimeCleanupWithoutStartupScan(t *testing
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &closedCleaningRunner{}
-	service, err := NewSessionService(SessionServiceConfig{
+	service, err := NewService(Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"),
 		Policies:  testSessionPolicies(repo),
 		Runner:    runner,
@@ -1078,7 +1078,7 @@ func TestSessionServiceRetriesParkedCleanupWithoutRacingActiveTurn(t *testing.T)
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &periodicCleanupRunner{started: make(chan struct{}), release: make(chan struct{})}
-	service, err := NewSessionService(SessionServiceConfig{
+	service, err := NewService(Config{
 		StateRoot:       filepath.Join(t.TempDir(), "state"),
 		Policies:        testSessionPolicies(repo),
 		Runner:          runner,
@@ -1124,7 +1124,7 @@ func TestSessionServiceWorkerRetiresParkedSessionAndStartsAgain(t *testing.T) {
 	var calls atomic.Int32
 	secondStarted := make(chan struct{})
 	releaseSecond := make(chan struct{})
-	runner := SessionRunnerFunc(func(_ context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
+	runner := RunnerFunc(func(_ context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
 		calls.Add(1)
 		if _, err := fakeStore.MarkTurnSendIntent(context.Background(), bound.ID, turn.ID); err != nil {
 			return turn, err
@@ -1138,7 +1138,7 @@ func TestSessionServiceWorkerRetiresParkedSessionAndStartsAgain(t *testing.T) {
 		}
 		return fakeStore.CompleteTurn(context.Background(), session.CompleteTurnRequest{SessionID: bound.ID, TurnID: turn.ID, Message: turn.Prompt})
 	})
-	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), func(store *session.Store) SessionRunner {
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), func(store *session.Store) Runner {
 		fakeStore = store
 		return runner
 	})
@@ -1197,7 +1197,7 @@ func TestSessionServiceRecoveryCleanupFailureLeavesTurnActiveForRetry(t *testing
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &startupCleaningRunner{reapErr: errors.New("runtime unavailable")}
-	service, err := NewSessionService(SessionServiceConfig{
+	service, err := NewService(Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo), Runner: runner,
 	})
 	if err != nil {
@@ -1386,22 +1386,22 @@ func mustTargets(values ...string) []agents.Target {
 	return ladder
 }
 
-func testSessionPolicies(repo string) map[string]SessionPolicy {
-	return map[string]SessionPolicy{"responder": {
+func testSessionPolicies(repo string) map[string]Policy {
+	return map[string]Policy{"responder": {
 		Name: "responder", Repository: repo, Targets: mustTargets("codex@work"), MaxTurns: 10,
 		MaxQueuedTurns: 5, MaxQueuedBytes: 1 << 20, MaxPatchBytes: 1 << 20, TurnTimeout: time.Second,
 	}}
 }
 
-func newTestSessionService(t *testing.T, stateRoot string, policies map[string]SessionPolicy, factory SessionRunnerFactory) *SessionService {
+func newTestSessionService(t *testing.T, stateRoot string, policies map[string]Policy, factory RunnerFactory) *Service {
 	t.Helper()
-	cfg := SessionServiceConfig{StateRoot: stateRoot, Policies: policies, RunnerFactory: factory}
+	cfg := Config{StateRoot: stateRoot, Policies: policies, RunnerFactory: factory}
 	if factory == nil {
-		cfg.Runner = SessionRunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+		cfg.Runner = RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
 			return turn, nil
 		})
 	}
-	service, err := NewSessionService(cfg)
+	service, err := NewService(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1519,7 +1519,7 @@ func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateRoot := filepath.Join(t.TempDir(), "state")
-	withLadder := func(policies map[string]SessionPolicy, targets ...string) map[string]SessionPolicy {
+	withLadder := func(policies map[string]Policy, targets ...string) map[string]Policy {
 		policy := policies["responder"]
 		policy.Targets = mustTargets(targets...)
 		policies["responder"] = policy
@@ -1527,8 +1527,8 @@ func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
 	}
 	var mu sync.Mutex
 	ladders := map[string]int{} // prompt -> rungs seen by the runner
-	factory := func(store *session.Store) SessionRunner {
-		return SessionRunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
+	factory := func(store *session.Store) Runner {
+		return RunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
 			ladder, _ := ctx.Value(sessionTargetLadderContextKey{}).([]agents.Target)
 			mu.Lock()
 			ladders[turn.Prompt] = len(ladder)
@@ -1544,7 +1544,7 @@ func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
 			})
 		})
 	}
-	runTurn := func(service *SessionService, sess session.Session, key, prompt string) {
+	runTurn := func(service *Service, sess session.Session, key, prompt string) {
 		t.Helper()
 		turn, err := service.SubmitTurn(context.Background(), key, session.SubmitTurnRequest{
 			SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: prompt,
@@ -1558,7 +1558,7 @@ func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
 		})
 	}
 
-	first, err := NewSessionService(SessionServiceConfig{
+	first, err := NewService(Config{
 		StateRoot:     stateRoot,
 		Policies:      withLadder(testSessionPolicies(repo), "codex@work", "codex:fallback-model@work"),
 		RunnerFactory: factory,
@@ -1585,7 +1585,7 @@ func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
 	policy := drifted["responder"]
 	policy.MaxTurns = policy.MaxTurns + 1
 	drifted["responder"] = policy
-	second, err := NewSessionService(SessionServiceConfig{StateRoot: stateRoot, Policies: drifted, RunnerFactory: factory})
+	second, err := NewService(Config{StateRoot: stateRoot, Policies: drifted, RunnerFactory: factory})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1602,7 +1602,7 @@ func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
 	// The operator replaces the ladder entirely: the session's target is on no
 	// current rung, so rotation has nowhere legitimate to move it.
 	replaced := withLadder(testSessionPolicies(repo), "codex:new-primary@work", "codex:new-fallback@work")
-	third, err := NewSessionService(SessionServiceConfig{StateRoot: stateRoot, Policies: replaced, RunnerFactory: factory})
+	third, err := NewService(Config{StateRoot: stateRoot, Policies: replaced, RunnerFactory: factory})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1648,7 +1648,7 @@ func TestSessionServiceDiscardsASessionWhoseWorkspaceVanished(t *testing.T) {
 	}
 	policies := testSessionPolicies(repo)
 	policy := policies["responder"]
-	policy.Companions = []SessionCompanionPolicy{{Name: "sidecar", Repository: companion}}
+	policy.Companions = []CompanionPolicy{{Name: "sidecar", Repository: companion}}
 	policies["responder"] = policy
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
 	defer service.Stop()

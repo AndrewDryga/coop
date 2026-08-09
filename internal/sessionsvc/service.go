@@ -48,14 +48,14 @@ const (
 	sessionServiceCleanupInterval   = time.Minute
 )
 
-// SessionPolicy is operator-owned authority for one remote session. It is intentionally small:
+// Policy is operator-owned authority for one remote session. It is intentionally small:
 // repository, target, and resource bounds are not request fields.
-type SessionPolicy struct {
+type Policy struct {
 	Name            string
 	Repository      string
 	Remote          string
 	Branch          string
-	Companions      []SessionCompanionPolicy
+	Companions      []CompanionPolicy
 	Targets         []agents.Target
 	MaxTurns        int
 	MaxQueuedTurns  int
@@ -65,7 +65,7 @@ type SessionPolicy struct {
 	MaxPatchBytes   int
 }
 
-type SessionCompanionPolicy struct {
+type CompanionPolicy struct {
 	Name       string `json:"name"`
 	Repository string `json:"repository"`
 	Remote     string `json:"remote,omitempty"`
@@ -98,10 +98,10 @@ type rawSessionCompanionPolicy struct {
 	Branch     string `yaml:"branch"`
 }
 
-// LoadSessionPolicies parses the strict operator policy file. A config is required when the
+// LoadPolicies parses the strict operator policy file. A config is required when the
 // caller wants credential availability checked; passing nil performs syntax/target/repository
 // validation only and is useful for isolated parser tests.
-func LoadSessionPolicies(path string, cfg *config.Config) (map[string]SessionPolicy, error) {
+func LoadPolicies(path string, cfg *config.Config) (map[string]Policy, error) {
 	if path == "" {
 		return nil, errors.New("session policy path is required")
 	}
@@ -175,7 +175,7 @@ func validateSessionPolicyAncestry(path string) error {
 	}
 }
 
-func parseSessionPolicies(data []byte, cfg *config.Config) (map[string]SessionPolicy, error) {
+func parseSessionPolicies(data []byte, cfg *config.Config) (map[string]Policy, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	var raw rawSessionPolicyFile
@@ -195,7 +195,7 @@ func parseSessionPolicies(data []byte, cfg *config.Config) (map[string]SessionPo
 	if len(raw.Policies) == 0 {
 		return nil, errors.New("session policy file must define at least one policy")
 	}
-	policies := make(map[string]SessionPolicy, len(raw.Policies))
+	policies := make(map[string]Policy, len(raw.Policies))
 	for name, item := range raw.Policies {
 		if strings.TrimSpace(name) == "" {
 			return nil, errors.New("session policy names must be nonempty")
@@ -209,66 +209,66 @@ func parseSessionPolicies(data []byte, cfg *config.Config) (map[string]SessionPo
 	return policies, nil
 }
 
-func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config) (SessionPolicy, error) {
+func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config) (Policy, error) {
 	if raw.Repository == "" || !filepath.IsAbs(raw.Repository) || filepath.Clean(raw.Repository) != raw.Repository {
-		return SessionPolicy{}, errors.New("repository must be an absolute, clean path")
+		return Policy{}, errors.New("repository must be an absolute, clean path")
 	}
 	realRepo, err := realGitRepository(raw.Repository)
 	if err != nil {
-		return SessionPolicy{}, err
+		return Policy{}, err
 	}
 	if err := validateSessionRepositorySource(raw.Remote, raw.Branch); err != nil {
-		return SessionPolicy{}, err
+		return Policy{}, err
 	}
 	if len(raw.Companions) > sessionPolicyMaxCompanions {
-		return SessionPolicy{}, fmt.Errorf(
+		return Policy{}, fmt.Errorf(
 			"companions are limited to %d repositories",
 			sessionPolicyMaxCompanions,
 		)
 	}
-	companions := make([]SessionCompanionPolicy, 0, len(raw.Companions))
+	companions := make([]CompanionPolicy, 0, len(raw.Companions))
 	seenNames := make(map[string]bool, len(raw.Companions))
 	seenRepositories := map[string]bool{realRepo: true}
 	for _, companion := range raw.Companions {
 		if !validCompanionRepositoryName(companion.Name) {
-			return SessionPolicy{}, fmt.Errorf(
+			return Policy{}, fmt.Errorf(
 				"companion name %q must use 1-48 lowercase letters, numbers, hyphens, or underscores and cannot be primary",
 				companion.Name,
 			)
 		}
 		if seenNames[companion.Name] {
-			return SessionPolicy{}, fmt.Errorf("companion name %q is duplicated", companion.Name)
+			return Policy{}, fmt.Errorf("companion name %q is duplicated", companion.Name)
 		}
 		if companion.Repository == "" || !filepath.IsAbs(companion.Repository) ||
 			filepath.Clean(companion.Repository) != companion.Repository {
-			return SessionPolicy{}, fmt.Errorf(
+			return Policy{}, fmt.Errorf(
 				"companion %q repository must be an absolute, clean path",
 				companion.Name,
 			)
 		}
 		realCompanion, err := realGitRepository(companion.Repository)
 		if err != nil {
-			return SessionPolicy{}, fmt.Errorf("companion %q: %w", companion.Name, err)
+			return Policy{}, fmt.Errorf("companion %q: %w", companion.Name, err)
 		}
 		if err := validateSessionRepositorySource(companion.Remote, companion.Branch); err != nil {
-			return SessionPolicy{}, fmt.Errorf("companion %q: %w", companion.Name, err)
+			return Policy{}, fmt.Errorf("companion %q: %w", companion.Name, err)
 		}
 		if seenRepositories[realCompanion] {
-			return SessionPolicy{}, fmt.Errorf(
+			return Policy{}, fmt.Errorf(
 				"companion %q repeats the primary or another companion repository",
 				companion.Name,
 			)
 		}
 		seenNames[companion.Name] = true
 		seenRepositories[realCompanion] = true
-		companions = append(companions, SessionCompanionPolicy{
+		companions = append(companions, CompanionPolicy{
 			Name: companion.Name, Repository: realCompanion,
 			Remote: companion.Remote, Branch: companion.Branch,
 		})
 	}
 	ladder, err := sessionTargetLadder(&raw.Target)
 	if err != nil {
-		return SessionPolicy{}, err
+		return Policy{}, err
 	}
 	checkCfg := cfg
 	if checkCfg == nil {
@@ -279,7 +279,7 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 		label := sessionTargetLabel(&raw.Target, i)
 		agent, ok := agents.Get(ladder[i].Provider)
 		if !ok || len(agent.ACP(checkCfg)) == 0 {
-			return SessionPolicy{}, fmt.Errorf("%s provider has no ACP adapter", label)
+			return Policy{}, fmt.Errorf("%s provider has no ACP adapter", label)
 		}
 		if cfg != nil {
 			account := ladder[i].Account()
@@ -287,44 +287,44 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 				account = cfg.DefaultProfileOf(ladder[i].Provider)
 			}
 			if !box.ProfileAuthed(cfg, ladder[i].Provider, account) {
-				return SessionPolicy{}, fmt.Errorf("%s credential %q is not authenticated", label, account)
+				return Policy{}, fmt.Errorf("%s credential %q is not authenticated", label, account)
 			}
 			ladder[i].Accounts = []string{account}
 		}
 		// Duplicates are checked after credential resolution, so `codex` and `codex@default`
 		// are caught as the same rung — a rung that can never be rotated to is a typo.
 		if seenTargets[ladder[i].String()] {
-			return SessionPolicy{}, fmt.Errorf("%s %q is repeated", label, ladder[i].String())
+			return Policy{}, fmt.Errorf("%s %q is repeated", label, ladder[i].String())
 		}
 		seenTargets[ladder[i].String()] = true
 	}
 	if raw.MaxTurns <= 0 || raw.MaxTurns > session.MaxTurnsLimit {
-		return SessionPolicy{}, fmt.Errorf("max_turns must be between 1 and %d", session.MaxTurnsLimit)
+		return Policy{}, fmt.Errorf("max_turns must be between 1 and %d", session.MaxTurnsLimit)
 	}
 	if raw.MaxQueuedTurns <= 0 || raw.MaxQueuedTurns > session.MaxQueuedTurnsLimit {
-		return SessionPolicy{}, fmt.Errorf("max_queued_turns must be between 1 and %d", session.MaxQueuedTurnsLimit)
+		return Policy{}, fmt.Errorf("max_queued_turns must be between 1 and %d", session.MaxQueuedTurnsLimit)
 	}
 	if raw.MaxQueuedBytes <= 0 || raw.MaxQueuedBytes > session.MaxQueuedBytesLimit {
-		return SessionPolicy{}, fmt.Errorf("max_queued_bytes must be between 1 and %d", session.MaxQueuedBytesLimit)
+		return Policy{}, fmt.Errorf("max_queued_bytes must be between 1 and %d", session.MaxQueuedBytesLimit)
 	}
 	if raw.MaxPatchBytes <= 0 || raw.MaxPatchBytes > sessionWorkspacePatchLimit {
-		return SessionPolicy{}, fmt.Errorf("max_patch_bytes must be between 1 and %d", sessionWorkspacePatchLimit)
+		return Policy{}, fmt.Errorf("max_patch_bytes must be between 1 and %d", sessionWorkspacePatchLimit)
 	}
 	if raw.TurnTimeout == "" {
-		return SessionPolicy{}, errors.New("turn_timeout is required")
+		return Policy{}, errors.New("turn_timeout is required")
 	}
 	timeout, err := time.ParseDuration(raw.TurnTimeout)
 	if err != nil || timeout <= 0 || timeout > sessionPolicyMaxTurnTimeout {
-		return SessionPolicy{}, fmt.Errorf("turn_timeout must be positive and no longer than %s", sessionPolicyMaxTurnTimeout)
+		return Policy{}, fmt.Errorf("turn_timeout must be positive and no longer than %s", sessionPolicyMaxTurnTimeout)
 	}
 	var warmIdleTimeout time.Duration
 	if raw.WarmIdleTimeout != "" {
 		warmIdleTimeout, err = time.ParseDuration(raw.WarmIdleTimeout)
 		if err != nil || warmIdleTimeout <= 0 || warmIdleTimeout > sessionPolicyMaxWarmIdleTimeout {
-			return SessionPolicy{}, fmt.Errorf("warm_idle_timeout must be positive and no longer than %s", sessionPolicyMaxWarmIdleTimeout)
+			return Policy{}, fmt.Errorf("warm_idle_timeout must be positive and no longer than %s", sessionPolicyMaxWarmIdleTimeout)
 		}
 	}
-	return SessionPolicy{
+	return Policy{
 		Name: name, Repository: realRepo, Remote: raw.Remote, Branch: raw.Branch,
 		Companions: companions,
 		Targets:    ladder, MaxTurns: raw.MaxTurns,
@@ -466,7 +466,7 @@ type CreateRemoteSessionRequest struct {
 	Task   string `json:"task"`
 }
 
-type SessionRunner interface {
+type Runner interface {
 	Run(context.Context, session.Session, session.Turn) (session.Turn, error)
 }
 
@@ -498,26 +498,26 @@ type sessionRunnerStartupReaper interface {
 	ReapInterruptedTurn(context.Context, session.Session, session.Turn) error
 }
 
-type SessionRunnerFunc func(context.Context, session.Session, session.Turn) (session.Turn, error)
+type RunnerFunc func(context.Context, session.Session, session.Turn) (session.Turn, error)
 
-func (f SessionRunnerFunc) Run(ctx context.Context, sess session.Session, turn session.Turn) (session.Turn, error) {
+func (f RunnerFunc) Run(ctx context.Context, sess session.Session, turn session.Turn) (session.Turn, error) {
 	return f(ctx, sess, turn)
 }
 
-type SessionRunnerFactory func(*session.Store) SessionRunner
+type RunnerFactory func(*session.Store) Runner
 
-type SessionServiceConfig struct {
+type Config struct {
 	StateRoot       string
 	PolicyPath      string
-	Policies        map[string]SessionPolicy
+	Policies        map[string]Policy
 	SourceConfig    *config.Config
 	Config          *config.Config
 	Runtime         runtime.Runtime
 	Executable      string
 	Host            Host
-	Runner          SessionRunner
-	RunnerFactory   SessionRunnerFactory
-	ReviewGate      SessionReviewGate
+	Runner          Runner
+	RunnerFactory   RunnerFactory
+	ReviewGate      ReviewGate
 	StopTimeout     time.Duration
 	CleanupInterval time.Duration
 }
@@ -542,16 +542,16 @@ type sessionOperationLock struct {
 	refs int
 }
 
-type SessionService struct {
+type Service struct {
 	store           *session.Store
 	stateRoot       string
-	policies        map[string]SessionPolicy
+	policies        map[string]Policy
 	sourceCfg       *config.Config
 	rt              runtime.Runtime
 	executable      string
 	host            Host
-	runner          SessionRunner
-	reviewGate      SessionReviewGate
+	runner          Runner
+	reviewGate      ReviewGate
 	stopTimeout     time.Duration
 	cleanupInterval time.Duration
 
@@ -571,7 +571,7 @@ type SessionService struct {
 	runtimeLocks   map[string]*sessionOperationLock
 }
 
-func NewSessionService(cfg SessionServiceConfig) (*SessionService, error) {
+func NewService(cfg Config) (*Service, error) {
 	if cfg.StateRoot == "" {
 		return nil, errors.New("session state root is required")
 	}
@@ -585,7 +585,7 @@ func NewSessionService(cfg SessionServiceConfig) (*SessionService, error) {
 	policies := cfg.Policies
 	if len(policies) == 0 {
 		var err error
-		policies, err = LoadSessionPolicies(cfg.PolicyPath, sourceCfg)
+		policies, err = LoadPolicies(cfg.PolicyPath, sourceCfg)
 		if err != nil {
 			return nil, err
 		}
@@ -594,7 +594,7 @@ func NewSessionService(cfg SessionServiceConfig) (*SessionService, error) {
 	if err != nil {
 		return nil, err
 	}
-	service := &SessionService{
+	service := &Service{
 		store: store, stateRoot: cfg.StateRoot,
 		policies: cloneSessionPolicies(policies), sourceCfg: sourceCfg,
 		rt: cfg.Runtime, executable: cfg.Executable, host: cfg.Host, runner: cfg.Runner,
@@ -617,32 +617,32 @@ func NewSessionService(cfg SessionServiceConfig) (*SessionService, error) {
 	return service, nil
 }
 
-func cloneSessionPolicies(in map[string]SessionPolicy) map[string]SessionPolicy {
-	out := make(map[string]SessionPolicy, len(in))
+func cloneSessionPolicies(in map[string]Policy) map[string]Policy {
+	out := make(map[string]Policy, len(in))
 	for name, policy := range in {
 		if policy.Name == "" {
 			policy.Name = name
 		}
-		policy.Companions = append([]SessionCompanionPolicy(nil), policy.Companions...)
+		policy.Companions = append([]CompanionPolicy(nil), policy.Companions...)
 		out[name] = policy
 	}
 	return out
 }
 
-func resolvedSessionPolicyDigest(policy SessionPolicy) string {
+func resolvedSessionPolicyDigest(policy Policy) string {
 	canonical := struct {
-		Name            string                   `json:"name"`
-		Repository      string                   `json:"repository"`
-		Remote          string                   `json:"remote,omitempty"`
-		Branch          string                   `json:"branch,omitempty"`
-		Companions      []SessionCompanionPolicy `json:"companions,omitempty"`
-		Target          string                   `json:"target"`
-		MaxTurns        int                      `json:"max_turns"`
-		MaxQueuedTurns  int                      `json:"max_queued_turns"`
-		MaxQueuedBytes  int                      `json:"max_queued_bytes"`
-		TurnTimeout     int64                    `json:"turn_timeout_ns"`
-		WarmIdleTimeout int64                    `json:"warm_idle_timeout_ns,omitempty"`
-		MaxPatchBytes   int                      `json:"max_patch_bytes"`
+		Name            string            `json:"name"`
+		Repository      string            `json:"repository"`
+		Remote          string            `json:"remote,omitempty"`
+		Branch          string            `json:"branch,omitempty"`
+		Companions      []CompanionPolicy `json:"companions,omitempty"`
+		Target          string            `json:"target"`
+		MaxTurns        int               `json:"max_turns"`
+		MaxQueuedTurns  int               `json:"max_queued_turns"`
+		MaxQueuedBytes  int               `json:"max_queued_bytes"`
+		TurnTimeout     int64             `json:"turn_timeout_ns"`
+		WarmIdleTimeout int64             `json:"warm_idle_timeout_ns,omitempty"`
+		MaxPatchBytes   int               `json:"max_patch_bytes"`
 	}{
 		Name: policy.Name, Repository: policy.Repository,
 		Remote: policy.Remote, Branch: policy.Branch, Companions: policy.Companions,
@@ -657,9 +657,9 @@ func resolvedSessionPolicyDigest(policy SessionPolicy) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *SessionService) Store() *session.Store { return s.store }
+func (s *Service) Store() *session.Store { return s.store }
 
-func (s *SessionService) lockOperation(key string) func() {
+func (s *Service) lockOperation(key string) func() {
 	s.operationMu.Lock()
 	lock := s.operationLocks[key]
 	if lock == nil {
@@ -681,7 +681,7 @@ func (s *SessionService) lockOperation(key string) func() {
 	}
 }
 
-func (s *SessionService) lockSessionRuntime(sessionID string) func() {
+func (s *Service) lockSessionRuntime(sessionID string) func() {
 	s.runtimeMu.Lock()
 	lock := s.runtimeLocks[sessionID]
 	if lock == nil {
@@ -703,7 +703,7 @@ func (s *SessionService) lockSessionRuntime(sessionID string) func() {
 	}
 }
 
-func (s *SessionService) Start(parent context.Context) error {
+func (s *Service) Start(parent context.Context) error {
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -803,7 +803,7 @@ func (s *SessionService) Start(parent context.Context) error {
 	return nil
 }
 
-func (s *SessionService) runParkedSessionCleanup(ctx context.Context) {
+func (s *Service) runParkedSessionCleanup(ctx context.Context) {
 	defer s.wg.Done()
 	ticker := time.NewTicker(s.cleanupInterval)
 	defer ticker.Stop()
@@ -817,7 +817,7 @@ func (s *SessionService) runParkedSessionCleanup(ctx context.Context) {
 	}
 }
 
-func (s *SessionService) cleanupParkedSessions(ctx context.Context) {
+func (s *Service) cleanupParkedSessions(ctx context.Context) {
 	parkedCleaner, parkedOK := s.runner.(sessionRunnerParkedCleaner)
 	cleaner, cleanupOK := s.runner.(sessionRunnerStartupCleaner)
 	if !parkedOK && !cleanupOK {
@@ -851,7 +851,7 @@ func (s *SessionService) cleanupParkedSessions(ctx context.Context) {
 	}
 }
 
-func (s *SessionService) runBoundSessionTurn(ctx context.Context, bound session.Session, leased session.Turn) (session.Turn, error) {
+func (s *Service) runBoundSessionTurn(ctx context.Context, bound session.Session, leased session.Turn) (session.Turn, error) {
 	unlock := s.lockSessionRuntime(bound.ID)
 	defer unlock()
 	return s.runner.Run(s.sessionTurnContext(ctx, bound), bound, leased)
@@ -868,7 +868,7 @@ func (s *SessionService) runBoundSessionTurn(ctx context.Context, bound session.
 // session that survived a policy edit without a fallback — pinned to a rate-limited rung,
 // failing the exact turns the ladder in the file existed to save. A session on a rung the
 // operator has since REMOVED keeps its pinned target and does not rotate.
-func (s *SessionService) sessionTurnContext(ctx context.Context, bound session.Session) context.Context {
+func (s *Service) sessionTurnContext(ctx context.Context, bound session.Session) context.Context {
 	policy, ok := s.policies[bound.Policy]
 	if !ok {
 		return ctx
@@ -889,7 +889,7 @@ func (s *SessionService) sessionTurnContext(ctx context.Context, bound session.S
 // ensureRunner keeps host-local construction (and runtime detection) out of service creation.
 // Opening the service first lets callers acquire the durable state-root lock before doing any
 // runner-specific startup work, and lets pure local commands remain usable without a runtime.
-func (s *SessionService) ensureRunner() error {
+func (s *Service) ensureRunner() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.runner != nil {
@@ -912,13 +912,13 @@ func (s *SessionService) ensureRunner() error {
 
 // defaultReviewGateLocked fills in the host's gate for a caller that injected none, and only then
 // — the detected runtime is an input, so the gate cannot be built before this point.
-func (s *SessionService) defaultReviewGateLocked() {
+func (s *Service) defaultReviewGateLocked() {
 	if s.reviewGate == nil && s.host.ReviewGateFactory != nil {
 		s.reviewGate = s.host.ReviewGateFactory(s.sourceCfg, s.rt)
 	}
 }
 
-func (s *SessionService) Stop() error {
+func (s *Service) Stop() error {
 	s.stopMu.Lock()
 	defer s.stopMu.Unlock()
 
@@ -961,7 +961,7 @@ func (s *SessionService) Stop() error {
 	return nil
 }
 
-func (s *SessionService) ensureWorkerLocked(sessionID string) *sessionWorker {
+func (s *Service) ensureWorkerLocked(sessionID string) *sessionWorker {
 	if worker := s.workers[sessionID]; worker != nil {
 		return worker
 	}
@@ -977,7 +977,7 @@ func (s *SessionService) ensureWorkerLocked(sessionID string) *sessionWorker {
 	return worker
 }
 
-func (s *SessionService) triggerWorker(worker *sessionWorker) {
+func (s *Service) triggerWorker(worker *sessionWorker) {
 	if worker == nil {
 		return
 	}
@@ -987,7 +987,7 @@ func (s *SessionService) triggerWorker(worker *sessionWorker) {
 	}
 }
 
-func (s *SessionService) schedule(sessionID string) {
+func (s *Service) schedule(sessionID string) {
 	s.mu.Lock()
 	if !s.started {
 		s.mu.Unlock()
@@ -998,7 +998,7 @@ func (s *SessionService) schedule(sessionID string) {
 	s.mu.Unlock()
 }
 
-func (s *SessionService) runSessionWorker(ctx context.Context, worker *sessionWorker) {
+func (s *Service) runSessionWorker(ctx context.Context, worker *sessionWorker) {
 	defer s.wg.Done()
 	defer s.removeWorker(worker)
 	defer close(worker.done)
@@ -1028,7 +1028,7 @@ func (s *SessionService) runSessionWorker(ctx context.Context, worker *sessionWo
 	}
 }
 
-func (s *SessionService) removeWorker(worker *sessionWorker) {
+func (s *Service) removeWorker(worker *sessionWorker) {
 	if worker == nil {
 		return
 	}
@@ -1039,7 +1039,7 @@ func (s *SessionService) removeWorker(worker *sessionWorker) {
 	s.mu.Unlock()
 }
 
-func (s *SessionService) drainSession(ctx context.Context, sessionID string) {
+func (s *Service) drainSession(ctx context.Context, sessionID string) {
 	for ctx.Err() == nil {
 		bound, err := s.store.GetSession(ctx, sessionID)
 		if err != nil {
@@ -1109,18 +1109,18 @@ func boundedSessionServiceError(err error) string {
 	return detail
 }
 
-func (s *SessionService) policy(name string) (SessionPolicy, error) {
+func (s *Service) policy(name string) (Policy, error) {
 	if name == "" {
-		return SessionPolicy{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "policy name is required"}
+		return Policy{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "policy name is required"}
 	}
 	policy, ok := s.policies[name]
 	if !ok {
-		return SessionPolicy{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "unknown execution policy"}
+		return Policy{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "unknown execution policy"}
 	}
 	return policy, nil
 }
 
-func (s *SessionService) CreateRemoteSession(ctx context.Context, key string, req CreateRemoteSessionRequest) (session.Session, error) {
+func (s *Service) CreateRemoteSession(ctx context.Context, key string, req CreateRemoteSessionRequest) (session.Session, error) {
 	unlock := s.lockOperation(key)
 	defer unlock()
 
@@ -1140,7 +1140,7 @@ func (s *SessionService) CreateRemoteSession(ctx context.Context, key string, re
 	return s.executeCreate(ctx, op, req)
 }
 
-func (s *SessionService) replayCreateOperation(ctx context.Context, op session.Operation) (session.Session, error) {
+func (s *Service) replayCreateOperation(ctx context.Context, op session.Operation) (session.Session, error) {
 	switch op.State {
 	case session.OperationSucceeded:
 		var sess session.Session
@@ -1166,7 +1166,7 @@ func (s *SessionService) replayCreateOperation(ctx context.Context, op session.O
 
 type sessionCreateIntent struct {
 	OperationID string                        `json:"operation_id"`
-	Policy      SessionPolicy                 `json:"policy"`
+	Policy      Policy                        `json:"policy"`
 	Task        string                        `json:"task"`
 	SessionID   string                        `json:"session_id"`
 	ForkName    string                        `json:"fork_name"`
@@ -1174,7 +1174,7 @@ type sessionCreateIntent struct {
 	Companions  []session.CompanionRepository `json:"companions,omitempty"`
 }
 
-func (s *SessionService) executeCreate(ctx context.Context, op session.Operation, req CreateRemoteSessionRequest) (session.Session, error) {
+func (s *Service) executeCreate(ctx context.Context, op session.Operation, req CreateRemoteSessionRequest) (session.Session, error) {
 	policy, err := s.policy(req.Policy)
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
@@ -1222,7 +1222,7 @@ func deterministicForkName(operationID string) string {
 	return "remote-" + hex.EncodeToString(sum[:12])
 }
 
-func (s *SessionService) executeCreateIntent(ctx context.Context, op session.Operation, intent sessionCreateIntent) (session.Session, error) {
+func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation, intent sessionCreateIntent) (session.Session, error) {
 	if intent.OperationID != op.ID || intent.SessionID == "" ||
 		!forkspace.ValidName(intent.ForkName) ||
 		!validSessionWorkspaceCommit(intent.BaseCommit) {
@@ -1308,7 +1308,7 @@ func rollbackSessionCreate(
 	return errors.Join(cleanupErrors...)
 }
 
-func (s *SessionService) failServiceOperation(ctx context.Context, id string, err error) error {
+func (s *Service) failServiceOperation(ctx context.Context, id string, err error) error {
 	code := session.CodeOf(err)
 	if code == "" {
 		code = session.CodeInternal
@@ -1321,11 +1321,11 @@ func utf8SessionText(value string) bool {
 	return !strings.ContainsRune(value, '\x00') && utf8.ValidString(value)
 }
 
-func (s *SessionService) GetSession(ctx context.Context, id string) (session.Session, error) {
+func (s *Service) GetSession(ctx context.Context, id string) (session.Session, error) {
 	return s.store.GetSession(ctx, id)
 }
 
-func (s *SessionService) PrepareSession(ctx context.Context, id string, expectedRevision int64) (session.Session, error) {
+func (s *Service) PrepareSession(ctx context.Context, id string, expectedRevision int64) (session.Session, error) {
 	unlock := s.lockSessionRuntime(id)
 	defer unlock()
 	bound, err := s.store.GetSession(ctx, id)
@@ -1364,11 +1364,11 @@ func (s *SessionService) PrepareSession(ctx context.Context, id string, expected
 	return s.store.GetSession(ctx, id)
 }
 
-func (s *SessionService) ListSessions(ctx context.Context, limit int) ([]session.Session, error) {
+func (s *Service) ListSessions(ctx context.Context, limit int) ([]session.Session, error) {
 	return s.store.ListSessions(ctx, limit)
 }
 
-func (s *SessionService) SubmitTurn(ctx context.Context, key string, req session.SubmitTurnRequest) (session.Turn, error) {
+func (s *Service) SubmitTurn(ctx context.Context, key string, req session.SubmitTurnRequest) (session.Turn, error) {
 	turn, err := s.store.SubmitTurn(ctx, key, req)
 	if err == nil {
 		s.schedule(req.SessionID)
@@ -1376,27 +1376,27 @@ func (s *SessionService) SubmitTurn(ctx context.Context, key string, req session
 	return turn, err
 }
 
-func (s *SessionService) GetTurn(ctx context.Context, sessionID, turnID string) (session.Turn, error) {
+func (s *Service) GetTurn(ctx context.Context, sessionID, turnID string) (session.Turn, error) {
 	return s.store.GetTurn(ctx, sessionID, turnID)
 }
 
-func (s *SessionService) ListTurns(ctx context.Context, sessionID string, afterOrdinal int64, limit int) ([]session.Turn, error) {
+func (s *Service) ListTurns(ctx context.Context, sessionID string, afterOrdinal int64, limit int) ([]session.Turn, error) {
 	return s.store.ListTurns(ctx, sessionID, afterOrdinal, limit)
 }
 
-func (s *SessionService) GetOutputArtifact(ctx context.Context, sessionID, turnID, artifactID string) (session.OutputArtifact, error) {
+func (s *Service) GetOutputArtifact(ctx context.Context, sessionID, turnID, artifactID string) (session.OutputArtifact, error) {
 	return s.store.GetOutputArtifact(ctx, sessionID, turnID, artifactID)
 }
 
-func (s *SessionService) ListEvents(ctx context.Context, sessionID string, after int64, limit int) ([]session.Event, error) {
+func (s *Service) ListEvents(ctx context.Context, sessionID string, after int64, limit int) ([]session.Event, error) {
 	return s.store.ListEvents(ctx, sessionID, after, limit)
 }
 
-func (s *SessionService) ExtendBudget(ctx context.Context, key string, req session.ExtendBudgetRequest) (session.Session, error) {
+func (s *Service) ExtendBudget(ctx context.Context, key string, req session.ExtendBudgetRequest) (session.Session, error) {
 	return s.store.ExtendBudget(ctx, key, req)
 }
 
-func (s *SessionService) Close(ctx context.Context, key string, req session.CloseSessionRequest) (session.Session, error) {
+func (s *Service) Close(ctx context.Context, key string, req session.CloseSessionRequest) (session.Session, error) {
 	unlock := s.lockSessionRuntime(req.SessionID)
 	defer unlock()
 	current, err := s.store.GetSession(ctx, req.SessionID)
@@ -1421,36 +1421,36 @@ func (s *SessionService) Close(ctx context.Context, key string, req session.Clos
 	return s.store.CloseSession(ctx, key, req)
 }
 
-func (s *SessionService) CloseSession(ctx context.Context, key string, req session.CloseSessionRequest) (session.Session, error) {
+func (s *Service) CloseSession(ctx context.Context, key string, req session.CloseSessionRequest) (session.Session, error) {
 	return s.Close(ctx, key, req)
 }
 
-func (s *SessionService) GetChanges(ctx context.Context, sessionID string) (SessionWorkspaceChanges, error) {
+func (s *Service) GetChanges(ctx context.Context, sessionID string) (WorkspaceChanges, error) {
 	sess, err := s.store.GetSession(ctx, sessionID)
 	if err != nil {
-		return SessionWorkspaceChanges{}, err
+		return WorkspaceChanges{}, err
 	}
 	parentHead, err := s.pinCurrentSessionParent(ctx, sess)
 	if err != nil {
-		return SessionWorkspaceChanges{}, err
+		return WorkspaceChanges{}, err
 	}
 	return inspectSessionChangesPageAtParent(
 		sess.Repository, sess.Workspace, sess.BaseCommit, parentHead, 0, sess.MaxPatchBytes,
 	)
 }
 
-func (s *SessionService) GetChangesPage(
+func (s *Service) GetChangesPage(
 	ctx context.Context,
 	sessionID string,
 	patchOffset int64,
 	patchLimit int,
-) (SessionWorkspaceChanges, error) {
+) (WorkspaceChanges, error) {
 	sess, err := s.store.GetSession(ctx, sessionID)
 	if err != nil {
-		return SessionWorkspaceChanges{}, err
+		return WorkspaceChanges{}, err
 	}
 	if patchLimit < 1 || patchLimit > sess.MaxPatchBytes {
-		return SessionWorkspaceChanges{}, &session.Error{
+		return WorkspaceChanges{}, &session.Error{
 			Code: session.CodeInvalidRequest,
 			Detail: fmt.Sprintf(
 				"patch limit must be between 1 and %d bytes",
@@ -1460,7 +1460,7 @@ func (s *SessionService) GetChangesPage(
 	}
 	parentHead, err := s.pinCurrentSessionParent(ctx, sess)
 	if err != nil {
-		return SessionWorkspaceChanges{}, err
+		return WorkspaceChanges{}, err
 	}
 	return inspectSessionChangesPageAtParent(
 		sess.Repository,
@@ -1479,19 +1479,19 @@ type PlanDiscardRequest struct {
 	AcceptUnmerged   bool   `json:"accept_unmerged"`
 }
 
-type SessionDiscardPlan struct {
+type DiscardPlan struct {
 	SessionID  string                        `json:"session_id"`
 	Revision   int64                         `json:"revision"`
-	Workspace  SessionWorkspaceDiscardPlan   `json:"workspace"`
+	Workspace  WorkspaceDiscardPlan          `json:"workspace"`
 	Companions []sessionCompanionDiscardPlan `json:"companions,omitempty"`
 }
 
 type PlanDiscardResult struct {
-	OperationID string             `json:"operation_id"`
-	Plan        SessionDiscardPlan `json:"plan"`
+	OperationID string      `json:"operation_id"`
+	Plan        DiscardPlan `json:"plan"`
 }
 
-func (s *SessionService) PlanDiscard(ctx context.Context, key string, req PlanDiscardRequest) (PlanDiscardResult, error) {
+func (s *Service) PlanDiscard(ctx context.Context, key string, req PlanDiscardRequest) (PlanDiscardResult, error) {
 	unlock := s.lockOperation(key)
 	defer unlock()
 
@@ -1519,7 +1519,7 @@ func (s *SessionService) PlanDiscard(ctx context.Context, key string, req PlanDi
 	return s.executePlanDiscard(ctx, op, req)
 }
 
-func (s *SessionService) executePlanDiscard(ctx context.Context, op session.Operation, req PlanDiscardRequest) (PlanDiscardResult, error) {
+func (s *Service) executePlanDiscard(ctx context.Context, op session.Operation, req PlanDiscardRequest) (PlanDiscardResult, error) {
 	if req.SessionID == "" || req.ExpectedRevision <= 0 {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidRequest, Detail: "session and revision are required"})
 	}
@@ -1556,7 +1556,7 @@ func (s *SessionService) executePlanDiscard(ctx context.Context, op session.Oper
 	}
 	result := PlanDiscardResult{
 		OperationID: op.ID,
-		Plan: SessionDiscardPlan{
+		Plan: DiscardPlan{
 			SessionID: sess.ID, Revision: sess.Revision,
 			Workspace: plan, Companions: companions,
 		},
@@ -1592,7 +1592,7 @@ type DiscardRequest struct {
 	PlanOperationID string `json:"plan_operation_id"`
 }
 
-func (s *SessionService) Discard(ctx context.Context, key string, req DiscardRequest) (session.Session, error) {
+func (s *Service) Discard(ctx context.Context, key string, req DiscardRequest) (session.Session, error) {
 	unlock := s.lockOperation(key)
 	defer unlock()
 
@@ -1620,7 +1620,7 @@ type discardIntent struct {
 	Plan PlanDiscardResult `json:"plan"`
 }
 
-func (s *SessionService) executeDiscardRequest(ctx context.Context, op session.Operation, req DiscardRequest) (session.Session, error) {
+func (s *Service) executeDiscardRequest(ctx context.Context, op session.Operation, req DiscardRequest) (session.Session, error) {
 	if req.PlanOperationID == "" {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidRequest, Detail: "discard plan operation id is required"})
 	}
@@ -1638,7 +1638,7 @@ func (s *SessionService) executeDiscardRequest(ctx context.Context, op session.O
 	return s.executeDiscard(ctx, op, planned)
 }
 
-func (s *SessionService) executeDiscard(ctx context.Context, op session.Operation, planned PlanDiscardResult) (session.Session, error) {
+func (s *Service) executeDiscard(ctx context.Context, op session.Operation, planned PlanDiscardResult) (session.Session, error) {
 	intentData, err := json.Marshal(discardIntent{Plan: planned})
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
@@ -1702,7 +1702,7 @@ func (s *SessionService) executeDiscard(ctx context.Context, op session.Operatio
 	return completed, nil
 }
 
-func (s *SessionService) removeSessionReviewArtifacts(
+func (s *Service) removeSessionReviewArtifacts(
 	ctx context.Context,
 	sessionID string,
 ) error {
@@ -1745,7 +1745,7 @@ func replaySessionOperation(op session.Operation) (session.Session, error) {
 	return sess, nil
 }
 
-func (s *SessionService) completeDiscardOperation(ctx context.Context, operationID string, sess session.Session) (session.Session, error) {
+func (s *Service) completeDiscardOperation(ctx context.Context, operationID string, sess session.Session) (session.Session, error) {
 	data, err := json.Marshal(sess)
 	if err != nil {
 		return session.Session{}, err
@@ -1788,7 +1788,7 @@ func removePrivateSessionState(stateRoot, sessionID string) error {
 	return nil
 }
 
-func (s *SessionService) CancelTurn(ctx context.Context, key string, req session.CancelTurnRequest) (session.Turn, error) {
+func (s *Service) CancelTurn(ctx context.Context, key string, req session.CancelTurnRequest) (session.Turn, error) {
 	op, replay, err := s.store.ReserveOperation(ctx, "CancelTurn", key, req)
 	if err != nil {
 		return session.Turn{}, err
@@ -1878,14 +1878,14 @@ func sessionTurnTerminal(state session.TurnState) bool {
 	}
 }
 
-func (s *SessionService) failCancelOperation(ctx context.Context, op session.Operation, err error) error {
+func (s *Service) failCancelOperation(ctx context.Context, op session.Operation, err error) error {
 	if op.ID != "" {
 		_ = s.store.FailOperation(ctx, op.ID, session.CodeOf(err), boundedSessionServiceError(err))
 	}
 	return err
 }
 
-func (s *SessionService) completeObservedCancel(ctx context.Context, op session.Operation, turn session.Turn) (session.Turn, error) {
+func (s *Service) completeObservedCancel(ctx context.Context, op session.Operation, turn session.Turn) (session.Turn, error) {
 	data, err := json.Marshal(turn)
 	if err != nil {
 		return session.Turn{}, err
@@ -1917,10 +1917,10 @@ func replayCancelOperation(op session.Operation) (session.Turn, error) {
 	return turn, nil
 }
 
-func (s *SessionService) GetOperation(ctx context.Context, key string) (session.Operation, error) {
+func (s *Service) GetOperation(ctx context.Context, key string) (session.Operation, error) {
 	return s.store.GetOperation(ctx, key)
 }
 
-func (s *SessionService) GetOperationByID(ctx context.Context, id string) (session.Operation, error) {
+func (s *Service) GetOperationByID(ctx context.Context, id string) (session.Operation, error) {
 	return s.store.GetOperationByID(ctx, id)
 }

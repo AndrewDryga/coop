@@ -141,28 +141,28 @@ type SessionChangesDTO struct {
 }
 
 type SessionReviewDTO struct {
-	OperationID           string                    `json:"operation_id"`
-	SessionID             string                    `json:"session_id"`
-	SessionRevision       int64                     `json:"session_revision"`
-	PolicyDigest          string                    `json:"policy_digest"`
-	CreationBase          string                    `json:"creation_base"`
-	SourceHead            string                    `json:"source_head"`
-	SourceTree            string                    `json:"source_tree"`
-	ParentHead            string                    `json:"parent_head"`
-	ParentTree            string                    `json:"parent_tree"`
-	CandidateHead         string                    `json:"candidate_head"`
-	CandidateTree         string                    `json:"candidate_tree"`
-	Rebase                SessionReviewRebaseStatus `json:"rebase"`
-	Gate                  SessionReviewGateStatus   `json:"gate"`
-	GateError             string                    `json:"gate_error,omitempty"`
-	PolicyFindings        []string                  `json:"policy_findings,omitempty"`
-	Patch                 []byte                    `json:"patch,omitempty"`
-	PatchTruncated        bool                      `json:"patch_truncated"`
-	PatchArtifactID       string                    `json:"patch_artifact_id,omitempty"`
-	PatchDigest           string                    `json:"patch_digest,omitempty"`
-	PatchBytes            int64                     `json:"patch_bytes"`
-	Publishable           bool                      `json:"publishable"`
-	NotPublishableReasons []string                  `json:"not_publishable_reasons,omitempty"`
+	OperationID           string             `json:"operation_id"`
+	SessionID             string             `json:"session_id"`
+	SessionRevision       int64              `json:"session_revision"`
+	PolicyDigest          string             `json:"policy_digest"`
+	CreationBase          string             `json:"creation_base"`
+	SourceHead            string             `json:"source_head"`
+	SourceTree            string             `json:"source_tree"`
+	ParentHead            string             `json:"parent_head"`
+	ParentTree            string             `json:"parent_tree"`
+	CandidateHead         string             `json:"candidate_head"`
+	CandidateTree         string             `json:"candidate_tree"`
+	Rebase                ReviewRebaseStatus `json:"rebase"`
+	Gate                  ReviewGateStatus   `json:"gate"`
+	GateError             string             `json:"gate_error,omitempty"`
+	PolicyFindings        []string           `json:"policy_findings,omitempty"`
+	Patch                 []byte             `json:"patch,omitempty"`
+	PatchTruncated        bool               `json:"patch_truncated"`
+	PatchArtifactID       string             `json:"patch_artifact_id,omitempty"`
+	PatchDigest           string             `json:"patch_digest,omitempty"`
+	PatchBytes            int64              `json:"patch_bytes"`
+	Publishable           bool               `json:"publishable"`
+	NotPublishableReasons []string           `json:"not_publishable_reasons,omitempty"`
 }
 
 type SessionDiscardWorkspaceDTO struct {
@@ -225,11 +225,11 @@ type sessionHTTPErrorResponse struct {
 }
 
 type sessionHTTPHandler struct {
-	service *SessionService
+	service *Service
 	ready   bool
 }
 
-func NewHTTPHandler(service *SessionService) http.Handler {
+func NewHTTPHandler(service *Service) http.Handler {
 	return &sessionHTTPHandler{service: service, ready: service != nil}
 }
 
@@ -664,7 +664,7 @@ func (h *sessionHTTPHandler) getChanges(w http.ResponseWriter, r *http.Request, 
 		}
 		patchLimit = parsed
 	}
-	var changes SessionWorkspaceChanges
+	var changes WorkspaceChanges
 	var err error
 	if patchLimit == 0 && patchOffset == 0 {
 		changes, err = h.service.GetChanges(r.Context(), sessionID)
@@ -1012,7 +1012,7 @@ func publicChange(value sessionWorkspaceChange) SessionChangeDTO {
 	return SessionChangeDTO{Path: value.Path, PathBytes: append([]byte(nil), value.PathBytes...), OldPath: value.OldPath, OldPathBytes: append([]byte(nil), value.OldPathBytes...), Status: value.Status}
 }
 
-func publicChanges(value SessionWorkspaceChanges) SessionChangesDTO {
+func publicChanges(value WorkspaceChanges) SessionChangesDTO {
 	convert := func(values []sessionWorkspaceChange) []SessionChangeDTO {
 		out := make([]SessionChangeDTO, 0, len(values))
 		for _, item := range values {
@@ -1032,7 +1032,7 @@ func publicChanges(value SessionWorkspaceChanges) SessionChangesDTO {
 	}
 }
 
-func publicReview(value SessionReviewDossier) SessionReviewDTO {
+func publicReview(value ReviewDossier) SessionReviewDTO {
 	result := SessionReviewDTO{
 		OperationID: value.OperationID, SessionID: value.SessionID, SessionRevision: value.SessionRevision,
 		PolicyDigest: value.PolicyDigest, CreationBase: value.CreationBase, SourceHead: value.SourceHead,

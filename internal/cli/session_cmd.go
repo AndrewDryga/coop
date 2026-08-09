@@ -142,7 +142,7 @@ func runSessionServe(state, policy, socket string) (int, error) {
 	if err := sessionsvc.EnsureAncestors(filepath.Dir(state)); err != nil {
 		return 1, err
 	}
-	service, err := sessionsvc.NewSessionService(sessionsvc.SessionServiceConfig{
+	service, err := sessionsvc.NewService(sessionsvc.Config{
 		StateRoot: state, PolicyPath: policy, SourceConfig: config.Load(), Executable: os.Args[0],
 		Host: sessionHost(),
 	})
@@ -199,27 +199,27 @@ func sessionHost() sessionsvc.Host {
 // and the same pass/fail rule `coop fork merge` uses, so a session's verdict can't drift from the
 // one a human gets. It builds a throwaway app because the gate is an app method; the config and
 // runtime are the service's, resolved by the time it asks.
-func defaultSessionReviewGate(cfg *config.Config, rt runtime.Runtime) sessionsvc.SessionReviewGate {
-	return sessionsvc.SessionReviewGateFunc(func(ctx context.Context, gateRepo, treeDir string) (sessionsvc.SessionReviewGateResult, error) {
+func defaultSessionReviewGate(cfg *config.Config, rt runtime.Runtime) sessionsvc.ReviewGate {
+	return sessionsvc.ReviewGateFunc(func(ctx context.Context, gateRepo, treeDir string) (sessionsvc.ReviewGateResult, error) {
 		if err := ctx.Err(); err != nil {
-			return sessionsvc.SessionReviewGateResult{}, err
+			return sessionsvc.ReviewGateResult{}, err
 		}
 		a := &app{cfg: cfg, rt: rt, rtSet: rt.Name != ""}
 		image, err := a.mergeGate(gateRepo)
 		if err != nil {
-			return sessionsvc.SessionReviewGateResult{Configured: true, StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes)}, nil
+			return sessionsvc.ReviewGateResult{Configured: true, StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes)}, nil
 		}
 		if image == "" {
-			return sessionsvc.SessionReviewGateResult{}, nil
+			return sessionsvc.ReviewGateResult{}, nil
 		}
 		if err := ctx.Err(); err != nil {
-			return sessionsvc.SessionReviewGateResult{}, err
+			return sessionsvc.ReviewGateResult{}, err
 		}
 		passed, err := a.reviewGatePasses(gateRepo, treeDir, image)
 		if err != nil {
-			return sessionsvc.SessionReviewGateResult{Configured: true, StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes)}, nil
+			return sessionsvc.ReviewGateResult{Configured: true, StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes)}, nil
 		}
-		return sessionsvc.SessionReviewGateResult{Configured: true, Passed: passed}, nil
+		return sessionsvc.ReviewGateResult{Configured: true, Passed: passed}, nil
 	})
 }
 

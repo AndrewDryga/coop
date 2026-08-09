@@ -15,10 +15,10 @@ func TestSessionServiceRunReviewCompletesAfterClientCancellation(t *testing.T) {
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	started := make(chan context.Context, 1)
 	release := make(chan struct{})
-	service := newReviewTestService(t, repo, 1<<20, SessionReviewGateFunc(func(ctx context.Context, _ string, _ string) (SessionReviewGateResult, error) {
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(ctx context.Context, _ string, _ string) (ReviewGateResult, error) {
 		started <- ctx
 		<-release
-		return SessionReviewGateResult{Configured: true, Passed: true}, nil
+		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestSessionServiceRunReviewCompletesAfterClientCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	type result struct {
-		dossier SessionReviewDossier
+		dossier ReviewDossier
 		err     error
 	}
 	resultCh := make(chan result, 1)

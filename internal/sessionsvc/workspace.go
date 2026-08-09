@@ -50,7 +50,7 @@ type sessionWorkspaceParentDivergence struct {
 	Diverged     bool `json:"diverged"`
 }
 
-type sessionWorkspaceChanges struct {
+type WorkspaceChanges struct {
 	BaseCommit       string                           `json:"base_commit"`
 	ForkHead         string                           `json:"fork_head"`
 	ParentHead       string                           `json:"parent_head"`
@@ -69,14 +69,12 @@ type sessionWorkspaceChanges struct {
 	PatchHasMore     bool                             `json:"patch_has_more"`
 }
 
-type SessionWorkspaceChanges = sessionWorkspaceChanges
-
 type sessionWorkspaceIdentity struct {
 	Device uint64 `json:"device"`
 	Inode  uint64 `json:"inode"`
 }
 
-type sessionWorkspaceDiscardPlan struct {
+type WorkspaceDiscardPlan struct {
 	Repo              string                   `json:"repo"`
 	Name              string                   `json:"name"`
 	Workspace         string                   `json:"workspace"`
@@ -91,8 +89,6 @@ type sessionWorkspaceDiscardPlan struct {
 	AcceptedDirty     bool                     `json:"accepted_dirty,omitempty"`
 	AcceptedUnmerged  bool                     `json:"accepted_unmerged,omitempty"`
 }
-
-type SessionWorkspaceDiscardPlan = sessionWorkspaceDiscardPlan
 
 type sessionWorkspaceLimitedWriter struct {
 	buf       bytes.Buffer
@@ -433,8 +429,8 @@ func appendSessionWorkspaceXY(staged, unstaged, conflicts *[]sessionWorkspaceCha
 	return nil
 }
 
-func parseSessionWorkspaceStatus(raw []byte) (sessionWorkspaceChanges, error) {
-	var changes sessionWorkspaceChanges
+func parseSessionWorkspaceStatus(raw []byte) (WorkspaceChanges, error) {
+	var changes WorkspaceChanges
 	records := bytes.Split(raw, []byte{0})
 	for i := 0; i < len(records); i++ {
 		record := records[i]
@@ -445,37 +441,37 @@ func parseSessionWorkspaceStatus(raw []byte) (sessionWorkspaceChanges, error) {
 		switch record[0] {
 		case '1':
 			if len(fields) != 9 {
-				return sessionWorkspaceChanges{}, fmt.Errorf("malformed ordinary Git status record")
+				return WorkspaceChanges{}, fmt.Errorf("malformed ordinary Git status record")
 			}
 			if err := appendSessionWorkspaceXY(&changes.Staged, &changes.Unstaged, &changes.Conflicts, fields[1], []byte(fields[8]), nil); err != nil {
-				return sessionWorkspaceChanges{}, err
+				return WorkspaceChanges{}, err
 			}
 		case '2':
 			if len(strings.SplitN(string(record), " ", 10)) != 10 || i+1 >= len(records) || len(records[i+1]) == 0 {
-				return sessionWorkspaceChanges{}, fmt.Errorf("malformed rename Git status record")
+				return WorkspaceChanges{}, fmt.Errorf("malformed rename Git status record")
 			}
 			fields = strings.SplitN(string(record), " ", 10)
 			i++
 			if err := appendSessionWorkspaceXY(&changes.Staged, &changes.Unstaged, &changes.Conflicts, fields[1], []byte(fields[9]), records[i]); err != nil {
-				return sessionWorkspaceChanges{}, err
+				return WorkspaceChanges{}, err
 			}
 		case 'u':
 			fields = strings.SplitN(string(record), " ", 11)
 			if len(fields) != 11 {
-				return sessionWorkspaceChanges{}, fmt.Errorf("malformed unmerged Git status record")
+				return WorkspaceChanges{}, fmt.Errorf("malformed unmerged Git status record")
 			}
 			changes.Conflicts = append(changes.Conflicts, sessionWorkspaceChangeFor(fields[1], []byte(fields[10]), nil))
 		case '?':
 			if len(record) < 3 || record[1] != ' ' {
-				return sessionWorkspaceChanges{}, fmt.Errorf("malformed untracked Git status record")
+				return WorkspaceChanges{}, fmt.Errorf("malformed untracked Git status record")
 			}
 			changes.Untracked = append(changes.Untracked, sessionWorkspaceChangeFor("??", record[2:], nil))
 		case '!':
 			// Ignored entries are not requested by this inspection and are not emitted by the
 			// command below. Keep a fail-closed parser if that command is changed later.
-			return sessionWorkspaceChanges{}, errors.New("unexpected ignored Git status record")
+			return WorkspaceChanges{}, errors.New("unexpected ignored Git status record")
 		default:
-			return sessionWorkspaceChanges{}, fmt.Errorf("unknown Git status record %q", record[0])
+			return WorkspaceChanges{}, fmt.Errorf("unknown Git status record %q", record[0])
 		}
 	}
 	return changes, nil
@@ -529,10 +525,10 @@ func sessionWorkspaceCount(dir string, args ...string) (int, error) {
 	return count, nil
 }
 
-func inspectSessionChanges(repo, workspace, base string, maxPatchBytes int) (sessionWorkspaceChanges, error) {
+func inspectSessionChanges(repo, workspace, base string, maxPatchBytes int) (WorkspaceChanges, error) {
 	parentHead, err := sessionWorkspaceCommit(repo, "HEAD")
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("resolve current parent HEAD: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("resolve current parent HEAD: %w", err)
 	}
 	return inspectSessionChangesPageAtParent(repo, workspace, base, parentHead, 0, maxPatchBytes)
 }
@@ -543,10 +539,10 @@ func inspectSessionChangesPage(
 	base string,
 	patchOffset int64,
 	patchLimit int,
-) (sessionWorkspaceChanges, error) {
+) (WorkspaceChanges, error) {
 	parentHead, err := sessionWorkspaceCommit(repo, "HEAD")
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("resolve current parent HEAD: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("resolve current parent HEAD: %w", err)
 	}
 	return inspectSessionChangesPageAtParent(repo, workspace, base, parentHead, patchOffset, patchLimit)
 }
@@ -558,52 +554,52 @@ func inspectSessionChangesPageAtParent(
 	parent string,
 	patchOffset int64,
 	patchLimit int,
-) (sessionWorkspaceChanges, error) {
+) (WorkspaceChanges, error) {
 	if repo == "" || workspace == "" {
-		return sessionWorkspaceChanges{}, errors.New("repository and workspace are required")
+		return WorkspaceChanges{}, errors.New("repository and workspace are required")
 	}
 	if patchOffset < 0 {
-		return sessionWorkspaceChanges{}, errors.New("patch offset must not be negative")
+		return WorkspaceChanges{}, errors.New("patch offset must not be negative")
 	}
 	if patchLimit < 1 || patchLimit > sessionWorkspacePatchLimit {
-		return sessionWorkspaceChanges{}, fmt.Errorf("patch limit must be between 1 and %d bytes", sessionWorkspacePatchLimit)
+		return WorkspaceChanges{}, fmt.Errorf("patch limit must be between 1 and %d bytes", sessionWorkspacePatchLimit)
 	}
 	baseCommit, err := sessionWorkspaceCommit(repo, base)
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("resolve inspection base: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("resolve inspection base: %w", err)
 	}
 	forkHead, err := sessionWorkspaceCommit(workspace, "HEAD")
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("resolve workspace HEAD: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("resolve workspace HEAD: %w", err)
 	}
 	parentHead, err := sessionWorkspaceCommit(repo, parent)
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("resolve current parent: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("resolve current parent: %w", err)
 	}
 
 	statusRaw, statusTruncated, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
 		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z")
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("inspect workspace status: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("inspect workspace status: %w", err)
 	}
 	if statusTruncated {
-		return sessionWorkspaceChanges{}, fmt.Errorf("workspace status exceeds %d bytes", sessionWorkspaceGitOutputLimit)
+		return WorkspaceChanges{}, fmt.Errorf("workspace status exceeds %d bytes", sessionWorkspaceGitOutputLimit)
 	}
 	changes, err := parseSessionWorkspaceStatus(statusRaw)
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("parse workspace status: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("parse workspace status: %w", err)
 	}
 	committedRaw, committedTruncated, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
 		"diff", "--name-status", "--no-renames", "--no-ext-diff", "--no-textconv", "-z", baseCommit, forkHead, "--")
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("inspect committed workspace changes: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("inspect committed workspace changes: %w", err)
 	}
 	if committedTruncated {
-		return sessionWorkspaceChanges{}, fmt.Errorf("committed workspace changes exceed %d bytes", sessionWorkspaceGitOutputLimit)
+		return WorkspaceChanges{}, fmt.Errorf("committed workspace changes exceed %d bytes", sessionWorkspaceGitOutputLimit)
 	}
 	changes.Committed, err = parseSessionWorkspaceNameStatus(committedRaw)
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("parse committed workspace changes: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("parse committed workspace changes: %w", err)
 	}
 
 	patch, patchBytes, patchDigest, patchHasMore, err := runSessionWorkspaceGitWindow(
@@ -612,26 +608,26 @@ func inspectSessionChangesPageAtParent(
 		patchLimit,
 		"diff", "--no-ext-diff", "--no-textconv", "--binary", baseCommit, "--")
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("inspect tracked workspace patch: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("inspect tracked workspace patch: %w", err)
 	}
 	// The parent may have advanced since this fork was cloned. Import only the exact trusted
 	// parent commit into the fork object database, without updating FETCH_HEAD or any ref, so the
 	// cross-repository divergence calculation does not turn a normal parent advance into "bad object".
 	if _, _, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
 		"fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--", repo, parentHead); err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("read current parent for comparison: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("read current parent for comparison: %w", err)
 	}
 	ahead, behind, err := sessionWorkspaceCounts(workspace, "rev-list", "--left-right", "--count", parentHead+"..."+forkHead)
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("compare workspace with current parent: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("compare workspace with current parent: %w", err)
 	}
 	baseToFork, err := sessionWorkspaceCount(workspace, "rev-list", "--count", baseCommit+".."+forkHead)
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("count workspace commits from base: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("count workspace commits from base: %w", err)
 	}
 	baseToParent, err := sessionWorkspaceCount(repo, "rev-list", "--count", baseCommit+".."+parentHead)
 	if err != nil {
-		return sessionWorkspaceChanges{}, fmt.Errorf("count parent commits from base: %w", err)
+		return WorkspaceChanges{}, fmt.Errorf("count parent commits from base: %w", err)
 	}
 	changes.BaseCommit = baseCommit
 	changes.ForkHead = forkHead
@@ -685,10 +681,10 @@ func sessionWorkspaceStatusDigest(raw []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func planSessionWorkspaceDiscard(repo, workspace string, acceptDirty, acceptUnmerged bool) (sessionWorkspaceDiscardPlan, error) {
+func planSessionWorkspaceDiscard(repo, workspace string, acceptDirty, acceptUnmerged bool) (WorkspaceDiscardPlan, error) {
 	parentHead, err := sessionWorkspaceCommit(repo, "HEAD")
 	if err != nil {
-		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("resolve discard parent: %w", err)
+		return WorkspaceDiscardPlan{}, fmt.Errorf("resolve discard parent: %w", err)
 	}
 	return planSessionWorkspaceDiscardAtParent(repo, workspace, parentHead, acceptDirty, acceptUnmerged)
 }
@@ -696,10 +692,10 @@ func planSessionWorkspaceDiscard(repo, workspace string, acceptDirty, acceptUnme
 func planSessionWorkspaceDiscardAtParent(
 	repo, workspace, parent string,
 	acceptDirty, acceptUnmerged bool,
-) (sessionWorkspaceDiscardPlan, error) {
+) (WorkspaceDiscardPlan, error) {
 	name, err := sessionWorkspaceName(repo, workspace)
 	if err != nil {
-		return sessionWorkspaceDiscardPlan{}, err
+		return WorkspaceDiscardPlan{}, err
 	}
 	handle, info, err := forkspace.Pin(workspace)
 	if errors.Is(err, os.ErrNotExist) {
@@ -711,53 +707,53 @@ func planSessionWorkspaceDiscardAtParent(
 		// discarded, and cleanup retried into a permanent internal_error. Only
 		// absence takes this path; a workspace that exists but fails inspection
 		// still fails loudly, because that one may hold work.
-		return sessionWorkspaceDiscardPlan{
+		return WorkspaceDiscardPlan{
 			Repo: repo, Name: name, Workspace: workspace,
 			StatusDigest: sessionWorkspaceStatusDigest(nil),
 		}, nil
 	}
 	if err != nil {
-		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("pin session workspace for discard: %w", err)
+		return WorkspaceDiscardPlan{}, fmt.Errorf("pin session workspace for discard: %w", err)
 	}
 	defer handle.Close()
 	identity, err := sessionWorkspaceIdentityFor(info)
 	if err != nil {
-		return sessionWorkspaceDiscardPlan{}, err
+		return WorkspaceDiscardPlan{}, err
 	}
 	branch, err := sessionWorkspaceBranch(workspace)
 	if err != nil {
-		return sessionWorkspaceDiscardPlan{}, err
+		return WorkspaceDiscardPlan{}, err
 	}
 	head, err := sessionWorkspaceCommit(workspace, "HEAD")
 	if err != nil {
-		return sessionWorkspaceDiscardPlan{}, err
+		return WorkspaceDiscardPlan{}, err
 	}
 	statusRaw, truncated, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
 		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z")
 	if err != nil {
-		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("inspect discard status: %w", err)
+		return WorkspaceDiscardPlan{}, fmt.Errorf("inspect discard status: %w", err)
 	}
 	if truncated {
-		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("discard status exceeds %d bytes", sessionWorkspaceGitOutputLimit)
+		return WorkspaceDiscardPlan{}, fmt.Errorf("discard status exceeds %d bytes", sessionWorkspaceGitOutputLimit)
 	}
 	if _, err := parseSessionWorkspaceStatus(statusRaw); err != nil {
-		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("parse discard status: %w", err)
+		return WorkspaceDiscardPlan{}, fmt.Errorf("parse discard status: %w", err)
 	}
 	if !forkspace.SamePinned(workspace, info) {
-		return sessionWorkspaceDiscardPlan{}, errors.New("workspace changed while planning discard")
+		return WorkspaceDiscardPlan{}, errors.New("workspace changed while planning discard")
 	}
 	dirty := len(statusRaw) > 0
 	// "Unmerged" means committed work that is not already contained by the parent, matching
 	// `coop fork rm`; a clean fork with valuable commits still requires explicit loss consent.
 	parentHead, err := sessionWorkspaceCommit(repo, parent)
 	if err != nil {
-		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("resolve discard parent: %w", err)
+		return WorkspaceDiscardPlan{}, fmt.Errorf("resolve discard parent: %w", err)
 	}
 	unmerged, err := sessionWorkspaceUnmergedFromParent(repo, workspace, parentHead)
 	if err != nil {
-		return sessionWorkspaceDiscardPlan{}, fmt.Errorf("compare workspace with discard parent: %w", err)
+		return WorkspaceDiscardPlan{}, fmt.Errorf("compare workspace with discard parent: %w", err)
 	}
-	return sessionWorkspaceDiscardPlan{
+	return WorkspaceDiscardPlan{
 		Repo:              repo,
 		Name:              name,
 		Workspace:         workspace,
@@ -774,7 +770,7 @@ func planSessionWorkspaceDiscardAtParent(
 	}, nil
 }
 
-func discardSessionWorkspace(plan sessionWorkspaceDiscardPlan) error {
+func discardSessionWorkspace(plan WorkspaceDiscardPlan) error {
 	name, err := sessionWorkspaceName(plan.Repo, plan.Workspace)
 	if err != nil || name != plan.Name {
 		if err != nil {

@@ -21,7 +21,7 @@ type Host struct {
 	// ReviewGateFactory builds the gate a review runs when the caller injected none. It is a
 	// factory, not a gate, because the runtime is detected lazily: the service opens (and takes
 	// the state-root lock) before any runtime-specific startup work happens.
-	ReviewGateFactory func(*config.Config, runtime.Runtime) SessionReviewGate
+	ReviewGateFactory func(*config.Config, runtime.Runtime) ReviewGate
 
 	// Warnf reports a non-fatal condition to the operator — a failed janitorial cleanup that
 	// something else will retry. Rendering belongs to the CLI, so this package never imports

@@ -19,7 +19,7 @@ type sessionRepositorySource struct {
 	branch     string
 }
 
-func pinSessionPolicyRepositories(ctx context.Context, policy SessionPolicy) (string, []string, error) {
+func pinSessionPolicyRepositories(ctx context.Context, policy Policy) (string, []string, error) {
 	sources := make([]sessionRepositorySource, 1+len(policy.Companions))
 	sources[0] = sessionRepositorySource{
 		label: "primary", repository: policy.Repository,
@@ -114,7 +114,7 @@ func pinSessionRepository(ctx context.Context, source sessionRepositorySource) (
 	return resolved, nil
 }
 
-func (s *SessionService) pinCurrentSessionParent(
+func (s *Service) pinCurrentSessionParent(
 	ctx context.Context,
 	sess session.Session,
 ) (string, error) {
@@ -143,7 +143,7 @@ func (s *SessionService) pinCurrentSessionParent(
 // drifted, the parent falls back to the session's own durable repository binding at its local
 // HEAD — the legacy pre-remote behavior. The dirty and unmerged safety checks still run against
 // that parent, so committed-but-unpublished work still blocks an unforced discard.
-func (s *SessionService) pinDiscardSessionParent(
+func (s *Service) pinDiscardSessionParent(
 	ctx context.Context,
 	sess session.Session,
 ) (string, error) {
