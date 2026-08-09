@@ -372,10 +372,16 @@ func (r Runtime) CountByLabel(key, value string) int {
 	return len(r.psIDs("label=" + key + "=" + value))
 }
 
-// LabelsByLabel returns the label maps for every running or stopped container matching key=value.
-// Compose migration cleanup uses this to prove workspace ownership before addressing a legacy
-// basename-only project. Query and inspect failures are errors, never an empty result.
-func (r Runtime) LabelsByLabel(ctx context.Context, key, value string) ([]map[string]string, error) {
+// Container is one container's id together with the labels coop stamped on it.
+type Container struct {
+	ID     string
+	Labels map[string]string
+}
+
+// ContainersByLabel returns every running or stopped container matching key=value, each with its
+// labels. A decision made PER CONTAINER — which host process supervises this box, and is it still
+// alive — needs the id next to the labels that answer it, which LabelsByLabel drops.
+func (r Runtime) ContainersByLabel(ctx context.Context, key, value string) ([]Container, error) {
 	if r.kind() == runtimeAppleContainer {
 		return nil, errors.New("label inspection is unsupported by Apple container")
 	}
@@ -383,7 +389,7 @@ func (r Runtime) LabelsByLabel(ctx context.Context, key, value string) ([]map[st
 	if err != nil {
 		return nil, fmt.Errorf("list matching containers: %w", err)
 	}
-	labels := make([]map[string]string, 0, len(ids))
+	containers := make([]Container, 0, len(ids))
 	for _, id := range ids {
 		args := []string{"inspect", "--format", "{{json .Config.Labels}}", id}
 		out, err := contextCommand(ctx, r.Name, args...).CombinedOutput()
@@ -393,11 +399,26 @@ func (r Runtime) LabelsByLabel(ctx context.Context, key, value string) ([]map[st
 			}
 			return nil, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, out))
 		}
-		var item map[string]string
-		if err := json.Unmarshal(bytes.TrimSpace(out), &item); err != nil {
+		var labels map[string]string
+		if err := json.Unmarshal(bytes.TrimSpace(out), &labels); err != nil {
 			return nil, fmt.Errorf("decode labels for container %s: %w", id, err)
 		}
-		labels = append(labels, item)
+		containers = append(containers, Container{ID: id, Labels: labels})
+	}
+	return containers, nil
+}
+
+// LabelsByLabel returns the label maps for every running or stopped container matching key=value.
+// Compose migration cleanup uses this to prove workspace ownership before addressing a legacy
+// basename-only project. Query and inspect failures are errors, never an empty result.
+func (r Runtime) LabelsByLabel(ctx context.Context, key, value string) ([]map[string]string, error) {
+	containers, err := r.ContainersByLabel(ctx, key, value)
+	if err != nil {
+		return nil, err
+	}
+	labels := make([]map[string]string, 0, len(containers))
+	for _, container := range containers {
+		labels = append(labels, container.Labels)
 	}
 	return labels, nil
 }

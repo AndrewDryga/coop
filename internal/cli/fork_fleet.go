@@ -264,6 +264,9 @@ func (a *app) fleetUp(args []string) (int, error) {
 	if len(unsigned) > 0 {
 		return 2, fmt.Errorf("fleet up: these accounts aren't signed in: %s — run: coop login <provider>@<account>", strings.Join(unsigned, ", "))
 	}
+	// Bringing the fleet up is a natural reap point: clear this repo's boxes left behind by a coop
+	// that was killed, once, before any fork starts (each fork's own start finds the sweep done).
+	a.sweepOrphanBoxes(repo)
 	started := 0
 	for _, e := range fleet {
 		if pid := forkRunningPid(repo, e.name); pid != 0 {

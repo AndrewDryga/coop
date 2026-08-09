@@ -239,6 +239,13 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		return holdHostSetup(root, trace)
 	case "inspect":
 		return nil
+	case "labels":
+		labels, err := runtimeContainerLabels(root, parsed.IDs[0])
+		if err != nil {
+			return err
+		}
+		fmt.Println(labels)
+		return nil
 	case "ps":
 		ids, err := matchingRuntimeContainers(root, parsed.Filters)
 		if err != nil {
@@ -356,6 +363,11 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 	}
 	if len(args) == 3 && args[0] == "image" && args[1] == "inspect" && args[2] == image {
 		return runtimeCommand{Kind: "inspect"}, nil
+	}
+	// The orphan-box sweep reads one container's labels back (box.SurveyOrphanBoxes), so the fixture
+	// answers the same `inspect --format` docker does rather than rejecting the call.
+	if len(args) == 4 && args[0] == "inspect" && args[1] == "--format" && args[2] == containerLabelsFormat {
+		return runtimeCommand{Kind: "labels", IDs: []string{args[3]}}, nil
 	}
 	if len(args) > 0 && args[0] == "ps" {
 		filters, err := parsePS(args[1:])

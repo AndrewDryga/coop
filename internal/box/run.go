@@ -37,6 +37,13 @@ const (
 	LabelFork       = "coop.fork"       // readable value=<fork name> for runtime diagnostics
 	LabelForkOwner  = "coop.fork-owner" // repo-scoped value, so stop never reaps another repo's namesake
 	LabelRun        = "coop.run"        // value=<loop run id>, so cancellation reaps the daemon-owned box
+	// LabelHost records the HOST PROCESS supervising this box, as
+	// v1:<workspace-scope>:<pid>:<start-token> — the versioned form parseSupervisorLabel reads
+	// back. Every other label above names a LOGICAL owner (a run, a supervisor id, a fork); none of
+	// them says which process would have removed the box, so nothing could decide whether a box left
+	// behind by a SIGKILLed coop is an orphan. Cleanup is pull-only (--rm never fires on SIGKILL),
+	// and this is what a later invocation in the SAME workspace pulls on: see SurveyOrphanBoxes.
+	LabelHost = "coop.host"
 	// DescendantsDrainedExit and DescendantsTimedOutExit are emitted only by coop-entry in an
 	// opted-in supervised run. Keep them outside ordinary provider conventions and remap raw
 	// provider use in the entrypoint before the host sees it.
@@ -1481,6 +1488,14 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 		args = append(args, "--init")
 	}
 	args = append(args, "--label", LabelKey+"="+LabelBox)
+	// Who supervises this box: THIS process, scoped to the workspace it runs for. A host coop killed
+	// by SIGKILL never fires --rm and leaves nobody watching, so a later invocation in the same
+	// workspace reaps the box by proving this identity dead. Omitted when the host cannot produce a
+	// stable identity — an unverifiable label is worse than none, and an unlabeled box is reported,
+	// never reaped.
+	if host := supervisorLabelValue(supervisorScope(spec), os.Getpid()); host != "" {
+		args = append(args, "--label", LabelHost+"="+host)
+	}
 	if spec.RunID != "" {
 		args = append(args, "--label", LabelRun+"="+spec.RunID)
 	}

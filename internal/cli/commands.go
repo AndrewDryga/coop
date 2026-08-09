@@ -1169,7 +1169,7 @@ func (a *app) cmdBuild(args []string) (int, error) {
 	if err := box.Build(a.rt, a.cfg, repo, false, resolveVersion()); err != nil {
 		return -1, err
 	}
-	a.recycleBoxes()
+	a.recycleBoxes(repo)
 	return 0, nil
 }
 
@@ -1178,7 +1178,10 @@ func (a *app) cmdBuild(args []string) (int, error) {
 // notice. New runs use the fresh image anyway (containers are anonymous). Other
 // running boxes (loops, forks, an un-supervised session) are left alone; SIGKILLing
 // them would lose work, and they pick up the new image when they next start.
-func (a *app) recycleBoxes() {
+// It reaps repo's orphans first, so a box nobody supervises is never counted (or reported to the
+// user) as work still running on the old image.
+func (a *app) recycleBoxes(repo string) {
+	a.sweepOrphanBoxes(repo)
 	total := a.rt.CountByLabel(box.LabelKey, box.LabelBox)
 	supervised := a.rt.CountByLabel(box.LabelSupervised, box.LabelOn)
 	if n := a.rt.KillByLabel(box.LabelSupervised, box.LabelOn); n > 0 {
@@ -1237,7 +1240,7 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	if err := box.Build(a.rt, a.cfg, repo, true, resolveVersion()); err != nil {
 		return -1, err
 	}
-	a.recycleBoxes()
+	a.recycleBoxes(repo)
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	ui.Info("installed versions:")
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{
@@ -2992,6 +2995,10 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	if !box.ImageExists(a.rt, img) {
 		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
 	}
+	// A previous run of THIS checkout may have been killed with its box still up (--rm never fires
+	// on SIGKILL). Reap those before adding another box, so an overnight drain doesn't stack an
+	// orphaned provider session per crash. Fork loops run this too, each for its own workspace.
+	a.sweepOrphanBoxes(repo)
 	// Iterations run Batch (box.Run stays quiet), so surface image staleness once here —
 	// an overnight drain on a month-old box is exactly where a stale nudge earns its line.
 	for _, nudge := range box.StalenessNudges(a.cfg, repo, img) {

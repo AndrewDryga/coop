@@ -70,7 +70,7 @@ func TestProviderScriptedDirectMatrix(t *testing.T) {
 			t.Run("marked default and configured precedence", func(t *testing.T) {
 				result, trace := suite.run(t, []string{provider}, processScenario(provider, nil, 0, ""))
 				assertDirectSuccess(t, result, provider, "fixture-ok-"+provider)
-				assertDirectRunContract(t, suite, trace, provider, "personal", directExpectedArgv(contract, "env-"+provider, directDefaultEffort(contract), nil), "env-"+provider, directDefaultEffort(contract))
+				assertDirectRunContract(t, suite, trace, provider, "personal", directExpectedArgv(contract, "env-"+provider, directDefaultEffort(contract), nil), "env-"+provider, directDefaultEffort(contract), noOrphanBoxSweep)
 			})
 
 			t.Run("explicit target account and forwarding", func(t *testing.T) {
@@ -82,14 +82,14 @@ func TestProviderScriptedDirectMatrix(t *testing.T) {
 				extra := []string{"--fixture-flag", "fixture-value"}
 				result, trace := suite.run(t, append([]string{target, "--"}, extra...), processScenario(provider, nil, 0, ""))
 				assertDirectSuccess(t, result, provider, "fixture-ok-"+provider)
-				assertDirectRunContract(t, suite, trace, provider, "work", directExpectedArgv(contract, "target-"+provider, directTargetEffort(contract), extra), "target-"+provider, directTargetEffort(contract))
+				assertDirectRunContract(t, suite, trace, provider, "work", directExpectedArgv(contract, "target-"+provider, directTargetEffort(contract), extra), "target-"+provider, directTargetEffort(contract), noOrphanBoxSweep)
 			})
 
 			if contract.supportsEffort {
 				t.Run("effort only target", func(t *testing.T) {
 					result, trace := suite.run(t, []string{provider + "/high@work"}, processScenario(provider, nil, 0, ""))
 					assertDirectSuccess(t, result, provider, "fixture-ok-"+provider)
-					assertDirectRunContract(t, suite, trace, provider, "work", directExpectedArgv(contract, "env-"+provider, "high", nil), "env-"+provider, "high")
+					assertDirectRunContract(t, suite, trace, provider, "work", directExpectedArgv(contract, "env-"+provider, "high", nil), "env-"+provider, "high", noOrphanBoxSweep)
 				})
 			}
 
@@ -396,10 +396,17 @@ func assertDirectSuccess(t *testing.T, result procharness.Result, provider, mark
 	}
 }
 
-func assertDirectRunContract(t *testing.T, suite *directProcessSuite, trace []*processTrace, provider, account string, argv []string, model, effort string) {
+// assertDirectRunContract pins one box run end to end. sweep says whether the command reaps orphaned
+// boxes on its way in (a loop start does; a direct provider run does not) — the only legitimate
+// difference in the runtime calls these commands make, so any OTHER extra call still fails here.
+func assertDirectRunContract(t *testing.T, suite *directProcessSuite, trace []*processTrace, provider, account string, argv []string, model, effort string, sweep bool) {
 	t.Helper()
-	assertSequentialTrace(t, trace)
-	assertDirectRuntimeInvocations(t, trace)
+	events := directTraceEvents
+	if sweep {
+		events = sweptTraceEvents
+	}
+	assertSequentialTrace(t, trace, events)
+	assertDirectRuntimeInvocations(t, trace, sweep)
 	run := oneProcessEvent(t, trace, "runtime", "run")
 	wantArgv := processTraceArgv(argv)
 	if run.Run == nil || run.Run.Provider != provider || !run.Run.Init || !reflect.DeepEqual(run.Run.ProviderArgv, wantArgv) {

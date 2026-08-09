@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -167,6 +168,10 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 		}
 	}
 
+	// --- on the host: boxes nobody supervises ---
+	fmt.Printf("\n%s\n", ui.Bold("on the host (orphaned boxes)"))
+	a.doctorReportOrphanBoxes()
+
 	fmt.Println()
 	if rep.fail == 0 {
 		fmt.Printf("%s — the box contains the agent.\n", ui.Bold(ui.Green(fmt.Sprintf("✓ all %d checks passed", rep.pass))))
@@ -174,6 +179,37 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	}
 	fmt.Printf("%s\n", ui.Bold(ui.Red(fmt.Sprintf("✗ %d passed, %d failed", rep.pass, rep.fail))))
 	return 1, nil
+}
+
+// doctorReportOrphanBoxes reports this repo's boxes whose supervising coop process is provably gone
+// — the count, the ids, and the label each finding rests on. It only ever LOOKS: doctor diagnoses,
+// and removing a container is the sweep's job at the entry points that start work. It stays OUT of
+// the pass/fail tally too — an orphan is host hygiene, not a hole in the isolation doctor attacks.
+func (a *app) doctorReportOrphanBoxes() {
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		fmt.Printf("  %s %s\n", ui.Dim("·"), ui.Dim(fmt.Sprintf("skipped: %v", err)))
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
+	defer cancel()
+	survey, err := box.SurveyOrphanBoxes(ctx, a.rt, repo)
+	if err != nil {
+		// Fail closed and say so: an unanswerable runtime is not evidence that nothing is orphaned.
+		fmt.Printf("  %s %s\n", ui.Yellow("!"), ui.Yellow(fmt.Sprintf("could not inspect the running boxes: %v", err)))
+		return
+	}
+	if len(survey.Orphans) == 0 {
+		fmt.Printf("  %s no orphaned boxes for this repo (%s checked)\n", ui.Dim("·"), ui.Count(survey.Checked, "coop box", "coop boxes"))
+	} else {
+		fmt.Printf("  %s %s\n", ui.Yellow("!"), ui.Yellow(fmt.Sprintf("%s — the coop that launched them is gone; they are reaped at the next loop, fork, fleet up, or build", ui.Count(len(survey.Orphans), "orphaned box", "orphaned boxes"))))
+		for _, orphan := range survey.Orphans {
+			fmt.Printf("      %s\n", ui.Dim(fmt.Sprintf("%s  supervisor pid %d (%s=%s)", orphan.ID, orphan.PID, box.LabelHost, orphan.Evidence)))
+		}
+	}
+	if n := len(survey.Unattributed); n > 0 {
+		fmt.Printf("  %s %s\n", ui.Dim("·"), ui.Dim(fmt.Sprintf("%s with no readable supervisor label (started before coop recorded one) — never swept; remove by hand once you know it is stale: %s", ui.Count(n, "box", "boxes"), strings.Join(survey.Unattributed, " "))))
+	}
 }
 
 // doctorCheckUID interprets the box's uid. Only the real box image carries coop's non-root USER

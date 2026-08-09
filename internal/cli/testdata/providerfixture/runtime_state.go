@@ -18,6 +18,9 @@ import (
 const (
 	runtimeContainerVersion = 1
 	runtimeRecordMaxBytes   = 8 << 10
+	// containerLabelsFormat is the exact `inspect --format` template coop asks a real runtime for
+	// when it reads one container's labels back.
+	containerLabelsFormat = "{{json .Config.Labels}}"
 )
 
 type runtimeContainerRecord struct {
@@ -133,6 +136,20 @@ func matchingRuntimeContainers(root string, filters map[string]string) ([]string
 	}
 	sort.Strings(ids)
 	return ids, nil
+}
+
+// runtimeContainerLabels renders one registered container's labels as the runtime's inspect format
+// prints them. A record that is gone is an error, exactly as inspecting a removed container is.
+func runtimeContainerLabels(root, id string) (string, error) {
+	record, err := readRuntimeContainer(root, id)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(record.Labels)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func removeRuntimeContainer(root, id string) error {

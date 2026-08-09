@@ -39,6 +39,7 @@ type app struct {
 	cfg                 *config.Config
 	rt                  runtime.Runtime
 	rtSet               bool                                     // whether rt has been detected yet (ensureRuntime is lazy — see below)
+	sweptRepos          map[string]bool                          // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
 	preset              *preset.Preset                           // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
 	runID               string                                   // the active loop run's id, passed to boxes as COOP_RUN_ID so consult peers log usage; empty outside a loop
 	forkOwner           string                                   // repo-scoped runtime owner for the active fork loop; empty for local loops

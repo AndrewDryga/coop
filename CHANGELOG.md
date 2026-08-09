@@ -4,6 +4,21 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A box whose coop was killed is reaped by the next run in that checkout, instead of burning
+  tokens until somebody notices it.** `--rm` never fires when the host coop is SIGKILLed (or the
+  machine reboots mid-run), and nothing watches a box from the outside, so an orphan kept its
+  provider session alive with no host-side observer at all — and the six orphan fixes before this
+  one each patched a single pull point instead of making an orphan *identifiable*. Every box now
+  carries `coop.host=v1:<workspace>:<pid>:<start-token>`: the identity of the host process that
+  would have removed it. Loop start, `coop fork <name>`, `coop fleet up`, and `coop build`'s recycle
+  read that label for the repo they run in and remove exactly the boxes whose recorded supervisor is
+  provably dead — the kernel says that pid is gone, or it now belongs to a different process. It is
+  the same evidence `coop fork stop` already demands before it signals anything, and nothing else
+  counts: a live supervisor, an identity coop cannot verify, and another checkout's box are all left
+  alone, and no box is ever judged by its age, image, or name. A box started by an older coop carries
+  no such label, so coop cannot tell whose it is — `coop doctor` REPORTS those (with the ids and the
+  label evidence behind every finding) and the sweep never touches them.
+
 - **A coop killed mid-start or mid-land no longer wedges its fork until a human runs `coop fork
   stop`.** Two crash windows left state only a person could clear. Starting a detached loop reserves
   the fork's pidfile with O_EXCL BEFORE the worker exists — that reservation is what stops two loops

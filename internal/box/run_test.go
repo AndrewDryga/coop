@@ -504,6 +504,8 @@ func TestAssembleArgsMinimal(t *testing.T) {
 	got := assembleArgs(cfg, true, spec, mounts, "/tmp/decoy", "/tmp/decoydir", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	want := []string{
 		"run", "--rm", "--init", "--label", "coop=box",
+		// Every box records the host process supervising it (see TestAssembleArgsSupervisorLabel).
+		"--label", "coop.host=" + supervisorLabelValue(workspaceScope("/repo"), os.Getpid()),
 		"-e", "TZ=America/Merida",
 		"-v", "/repo:/workspace",
 		"-v", cfg.AgentDir("claude") + ":/home/node/.claude", // active-profile dir (profiles/default)

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -188,8 +189,8 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 			}
 
 			trace := readProcessTrace(t, layout.Trace)
-			assertSequentialTrace(t, trace)
-			assertDirectRuntimeInvocations(t, trace)
+			assertSequentialTrace(t, trace, directTraceEvents)
+			assertDirectRuntimeInvocations(t, trace, noOrphanBoxSweep)
 			run := oneProcessEvent(t, trace, "runtime", "run")
 			if run.Run == nil {
 				t.Fatal("runtime run event has no parsed contract")
@@ -202,7 +203,7 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 			if !reflect.DeepEqual(run.Run.ProviderArgv, traceArgv) {
 				t.Fatalf("provider argv = %q, want %q", run.Run.ProviderArgv, traceArgv)
 			}
-			if run.Run.Network != "none" || !reflect.DeepEqual(run.Run.Labels, []string{"coop=box"}) || !run.Run.Init || run.Run.Interactive || run.Run.TTY {
+			if run.Run.Network != "none" || !reflect.DeepEqual(boxLabelsWithoutSupervisor(t, run.Run.Labels), []string{"coop=box"}) || !run.Run.Init || run.Run.Interactive || run.Run.TTY {
 				t.Fatalf("runtime boundary = network %q labels %q init %v interactive/tty %v/%v", run.Run.Network, run.Run.Labels, run.Run.Init, run.Run.Interactive, run.Run.TTY)
 			}
 			assertProcessMounts(t, layout, provider, "default", run.Run.Mounts)
@@ -319,10 +320,20 @@ func readProcessTrace(t *testing.T, path string) []*processTrace {
 	return trace
 }
 
-func assertSequentialTrace(t *testing.T, trace []*processTrace) {
+// One box run's whole trace: three runtime invocations (image probe, daemon probe, run), the parsed
+// run contract, provider start and exit, and the runtime's exit. A command that reaps orphaned boxes
+// on its way in (loop, fork, fleet up, build) adds exactly one runtime `ps` — and nothing else.
+const (
+	directTraceEvents = 7
+	sweptTraceEvents  = directTraceEvents + 1
+	sweepsOrphanBoxes = true  // this command reaps boxes whose coop process is gone before it starts
+	noOrphanBoxSweep  = false // a direct provider run makes no runtime call of its own before `run`
+)
+
+func assertSequentialTrace(t *testing.T, trace []*processTrace, want int) {
 	t.Helper()
-	if len(trace) != 7 {
-		t.Fatalf("process trace has %d events, want 7: %#v", len(trace), trace)
+	if len(trace) != want {
+		t.Fatalf("process trace has %d events, want %d: %#v", len(trace), want, trace)
 	}
 	for i, event := range trace {
 		if event.Version != 1 || event.Sequence != i+1 {
@@ -334,7 +345,7 @@ func assertSequentialTrace(t *testing.T, trace []*processTrace) {
 	}
 }
 
-func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace) {
+func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, sweep bool) {
 	t.Helper()
 	var got [][]string
 	for _, event := range trace {
@@ -342,10 +353,36 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace) {
 			got = append(got, event.Argv)
 		}
 	}
-	wantPrefix := [][]string{{"image", "inspect", "fixture-image"}, {"info"}}
-	if len(got) != 3 || !reflect.DeepEqual(got[:2], wantPrefix) || len(got[2]) == 0 || got[2][0] != "run" {
-		t.Fatalf("runtime invocations = %q, want inspect, info, run", got)
+	wantPrefix := [][]string{{"image", "inspect", "fixture-image"}}
+	if sweep {
+		// The orphan-box sweep: one label-filtered listing, taken before the box work begins.
+		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"})
 	}
+	wantPrefix = append(wantPrefix, []string{"info"})
+	last := len(wantPrefix)
+	if len(got) != last+1 || !reflect.DeepEqual(got[:last], wantPrefix) || len(got[last]) == 0 || got[last][0] != "run" {
+		t.Fatalf("runtime invocations = %q, want %q then run", got, wantPrefix)
+	}
+}
+
+// boxLabelsWithoutSupervisor drops the supervisor-identity label — its value is the launching coop's
+// own pid and start token, which a test cannot predict — after proving every box carries one. A box
+// without it could never be shown orphaned, so its absence is a failure, not a detail.
+func boxLabelsWithoutSupervisor(t *testing.T, labels []string) []string {
+	t.Helper()
+	var kept []string
+	supervised := false
+	for _, label := range labels {
+		if strings.HasPrefix(label, box.LabelHost+"=") {
+			supervised = true
+			continue
+		}
+		kept = append(kept, label)
+	}
+	if !supervised {
+		t.Fatalf("box labels %q carry no %s — nothing could ever prove the box orphaned", labels, box.LabelHost)
+	}
+	return kept
 }
 
 func oneProcessEvent(t *testing.T, trace []*processTrace, source, event string) *processTrace {

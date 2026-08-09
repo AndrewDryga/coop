@@ -34,5 +34,11 @@ Do not "fix" this by adding `chromedp.ModifyCmdFunc` to set `Pdeathsig`: chromed
 and `ModifyCmdFunc` REPLACES that default rather than adding to it, so it would remove the (partial)
 protection that exists.
 
+The same "no signal saves you" limit applies one level up — a SIGKILLed host coop never fires
+`--rm`, so the BOX itself orphans. That one is not fixable by a death signal either; it is fixed by
+making the orphan identifiable and reaping it on the next run, see
+[[box-supervisor-label-and-orphan-sweep]].
+
 ## Changelog
 - 2026-08-01 — created: measured that a chromedp isolated session survives its owner's SIGKILL, and traced it to Pdeathsig not being inherited across fork.
+- 2026-08-09 — re-verified against `sources` (unchanged); linked the host-side counterpart, [[box-supervisor-label-and-orphan-sweep]].

@@ -75,7 +75,8 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				if !streaming {
 					t.Fatalf("provider %s has no streaming loop command", provider)
 				}
-				assertDirectRunContract(t, suite, trace, provider, "work", argv, model, effort)
+				// A loop start reaps boxes an earlier, killed coop left behind before adding its own.
+				assertDirectRunContract(t, suite, trace, provider, "work", argv, model, effort, sweepsOrphanBoxes)
 				assertLoopProcessResult(t, suite, provider, taskID, model, effort, "work", suite.repoHead, 1, false)
 				for _, event := range trace {
 					awaitProcessGone(t, event.PID)

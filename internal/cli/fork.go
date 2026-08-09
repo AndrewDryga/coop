@@ -465,6 +465,12 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	// Starting a fork is one of the points that already reaps, so reap this repo's boxes whose coop
+	// died holding them. The detached worker skips it: the start that launched it just swept this
+	// repo, and the worker's own loop start sweeps the fork's workspace.
+	if !fa.worker {
+		a.sweepOrphanBoxes(repo)
+	}
 	if fa.fresh {
 		unlock, err := lockForkState(repo, fa.name)
 		if err != nil {
