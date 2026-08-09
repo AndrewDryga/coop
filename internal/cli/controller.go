@@ -61,8 +61,9 @@ type taskTrailerCommit struct {
 // taskTrailerCommits uses one NUL-delimited Git stream, so a trailer value can never be confused
 // with the next commit record without paying one process launch per commit. Git's trailer parser
 // identifies the final trailer block; the explicit inner separator preserves empty and duplicate
-// Coop-Task occurrences so callers can fail closed.
-func taskTrailerCommits(repo, rangeExpr string, reverse bool) ([]taskTrailerCommit, bool) {
+// Coop-Task occurrences so callers can fail closed. It returns an error rather than an ok-bool so a
+// caller that REPORTS the failure (rather than just failing closed) has a cause to hand the human.
+func taskTrailerCommits(repo, rangeExpr string, reverse bool) ([]taskTrailerCommit, error) {
 	args := []string{"log"}
 	if reverse {
 		args = append(args, "--reverse")
@@ -75,11 +76,11 @@ func taskTrailerCommits(repo, rangeExpr string, reverse bool) ([]taskTrailerComm
 	cmd := exec.Command("git", gitArgs(repo, args)...)
 	raw, err := auditCommandOutput(cmd, auditHistoryOutputLimit)
 	if err != nil {
-		return nil, false
+		return nil, fmt.Errorf("git log: %w", err) // git's own diagnostic went to stderr as it ran
 	}
 	fields := strings.Split(string(raw), "\x00")
 	if len(fields) == 0 || fields[len(fields)-1] != "" || (len(fields)-1)%3 != 0 {
-		return nil, false
+		return nil, errors.New("git log returned a truncated commit stream")
 	}
 	commits := make([]taskTrailerCommit, 0, (len(fields)-1)/3)
 	for i := 0; i < len(fields)-1; i += 3 {
@@ -96,7 +97,7 @@ func taskTrailerCommits(repo, rangeExpr string, reverse bool) ([]taskTrailerComm
 		}
 		commits = append(commits, record)
 	}
-	return commits, true
+	return commits, nil
 }
 
 func auditHistoryCommitsLimited(repo, rangeExpr string, limit int) ([]taskTrailerCommit, bool) {
@@ -166,8 +167,8 @@ func auditCommandOutput(cmd *exec.Cmd, limit int64) ([]byte, error) {
 // the search (e.g. "base..HEAD"); empty scans all of HEAD's reachable history.
 func commitsForTask(repo, rangeExpr, id string) []string {
 	var shas []string
-	commits, ok := taskTrailerCommits(repo, rangeExpr, false)
-	if !ok {
+	commits, err := taskTrailerCommits(repo, rangeExpr, false)
+	if err != nil {
 		return nil
 	}
 	for _, commit := range commits {
@@ -3349,32 +3350,49 @@ func reconcileMerged(states map[string]string, landed map[string]bool) []reconci
 	return acts
 }
 
-// landedTasks is the set of task ids whose Coop-Task trailer appears in the exact landed range.
-func landedTasks(repo, revRange string) map[string]bool {
-	set := map[string]bool{}
-	commits, ok := taskTrailerCommits(repo, revRange, false)
-	if !ok {
-		return set
+// landedTasks is the set of task ids whose Coop-Task trailer appears in the exact landed range. A
+// failed history read is an ERROR, never an empty set: reconciling nothing is indistinguishable from
+// "this fork landed no tasks", and that silence is what makes the loop redo landed work.
+func landedTasks(repo, revRange string) (map[string]bool, error) {
+	commits, err := taskTrailerCommits(repo, revRange, false)
+	if err != nil {
+		return nil, err
 	}
+	set := map[string]bool{}
 	for _, commit := range commits {
 		if !commit.malformed && len(commit.values) == 1 && commit.values[0] != "" {
 			set[commit.values[0]] = true
 		}
 	}
-	return set
+	return set, nil
+}
+
+// unreconciledQueueRecovery is the recovery a land leaves behind when coop could not work out what
+// it landed: the exact commands to list the ids and close them, so the human — not the next loop
+// iteration — decides what happens to work that already sits in parent history.
+func unreconciledQueueRecovery(repo, revRange string) string {
+	return fmt.Sprintf("the parent queue was NOT reconciled, so `coop loop` may redo work this fork already landed; list what landed with `git -C %s log --format=%%b %s | grep %s`, then close each id with `coop tasks done <id>`", repo, revRange, coopTaskTrailer)
 }
 
 // reconcileQueueAfterMerge moves any parent-queue task whose Coop-Task trailer now sits in parent
 // history (landed by the just-merged fork) from todo/ or in_progress/ to done/, with a reconcile
-// note; a blocked task with a landed trailer is flagged for a human, never moved. Best-effort — the
-// merge already succeeded, so a reconcile hiccup must not fail it. Prevents the parent loop from
-// redoing work a fork already landed.
-func (a *app) reconcileQueueAfterMerge(repo, forkName, revRange string) {
+// note; a blocked task with a landed trailer is flagged for a human, never moved. Prevents the parent
+// loop from redoing work a fork already landed.
+//
+// A per-task obstruction stays best-effort (warn and skip) — the merge already succeeded, so one
+// stuck folder must not fail it. Failing to work out WHAT landed is different: an unreadable queue
+// set or landed range reconciles nothing while looking exactly like a fork that landed no tasks, so
+// it comes back as an error for the caller to surface. The merge is never rolled back for it — it
+// already stuck; only the bookkeeping is missing.
+func (a *app) reconcileQueueAfterMerge(repo, forkName, revRange string) error {
 	queues, err := taskQueues(a.cfg, repo, nil)
 	if err != nil {
-		return
+		return fmt.Errorf("fork %s landed, but its parent task queues could not be resolved: %w — %s", forkName, err, unreconciledQueueRecovery(repo, revRange))
 	}
-	landed := landedTasks(repo, revRange)
+	landed, err := landedTasks(repo, revRange)
+	if err != nil {
+		return fmt.Errorf("fork %s landed, but reading the task ids it landed in %s failed: %w — %s", forkName, revRange, err, unreconciledQueueRecovery(repo, revRange))
+	}
 	hosts := make([]string, len(queues))
 	for i, queue := range queues {
 		hosts[i] = filepath.Join(repo, queue)
@@ -3404,6 +3422,7 @@ func (a *app) reconcileQueueAfterMerge(repo, forkName, revRange string) {
 			appendTaskLog(doneDir, "reconciled: landed by fork "+forkName)
 		}
 	}
+	return nil
 }
 
 // unblockResolved is the loop's built-in preflight, run host-side (no box, no model): every

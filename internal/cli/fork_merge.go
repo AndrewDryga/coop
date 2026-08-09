@@ -199,7 +199,9 @@ func (a *app) reviewGatePasses(gateRepo, treeDir, img string) (bool, error) {
 // mergeOne fetches a fork's branch, merges it into the parent's HEAD, and — when a
 // gate is configured — revalidates the merged result, rolling back on failure.
 // "green" thus means green against the tree as it stands now, not the stale base the
-// fork was cut from. Reports whether the merge landed.
+// fork was cut from. Reports whether the merge landed: landed=false with an error is a merge that
+// did NOT happen, while landed=true WITH an error means the commits are in the parent but the queue
+// reconciliation below couldn't be done — the caller reports it and stops, never rolls the land back.
 func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	ws := forkWorkspace(repo, name)
 	if !pathExists(ws) {
@@ -244,8 +246,11 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 		return false, err
 	}
 	// Reconcile the parent queue: a task whose Coop-Task trailer just landed moves to done/, so the
-	// parent loop doesn't redo work this fork already completed. Best-effort — the land already stuck.
-	a.reconcileQueueAfterMerge(repo, name, parentBeforeLand+"..HEAD")
+	// parent loop doesn't redo work this fork already completed. The land already stuck, so a
+	// reconcile that couldn't run comes back as landed-with-an-error, never as a rollback.
+	if err := a.reconcileQueueAfterMerge(repo, name, parentBeforeLand+"..HEAD"); err != nil {
+		return true, err
+	}
 	return true, nil
 }
 
@@ -427,14 +432,18 @@ func (a *app) forkMerge(args []string) (int, error) {
 		return 0, nil
 	}
 	landed, err := a.mergeOne(repo, img, name, force)
+	if landed {
+		ui.OK("landed %s", name) // say it BEFORE any error: the commits are in the parent either way
+	}
 	if err != nil {
+		// A landed fork whose queue reconciliation failed keeps its workspace and its exit code: the
+		// human is being asked to check the queue, so this is no moment to delete anything.
 		ui.Error("%v", err)
 		return 1, nil
 	}
 	if !landed {
 		return 1, nil
 	}
-	ui.OK("landed %s", name)
 	// The merge landed the committed work (via review/<name>); an interrupted iteration can still leave
 	// uncommitted changes in the fork's worktree, so keep a dirty fork with a note rather than discard it.
 	if gitDirty(ws) {
@@ -494,19 +503,22 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 			continue // nothing to land
 		}
 		ok, err := a.mergeOne(repo, img, n, force)
+		if ok {
+			ui.OK("landed %s", n)
+			// Keep the fork when its worktree still holds uncommitted work (an interrupted iteration),
+			// and when its queue reconciliation failed — deleting a workspace right after an
+			// unexplained bookkeeping failure removes the one thing left to inspect.
+			if gitDirty(ws) {
+				ui.Warn("keeping fork %s — uncommitted changes; 'coop fork rm %s --force' after review", n, n)
+			} else if err == nil {
+				_ = destroyFork(a.rt, repo, n)
+			}
+			landed = append(landed, n)
+		}
 		if err != nil {
 			ui.Error("%v", err)
 			ui.Info("rebase queue stopped at %s — %d landed, the rest left untouched", n, len(landed))
 			return 1, nil
-		}
-		if ok {
-			ui.OK("landed %s", n)
-			if gitDirty(ws) { // interrupted iteration — don't discard uncommitted work in the batch cleanup
-				ui.Warn("keeping fork %s — uncommitted changes; 'coop fork rm %s --force' after review", n, n)
-			} else {
-				_ = destroyFork(a.rt, repo, n)
-			}
-			landed = append(landed, n)
 		}
 	}
 	ui.OK("%s landed", ui.Count(len(landed), "fork"))

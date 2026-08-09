@@ -340,13 +340,13 @@ func loopChanges(repo, base, head string) loopChangeSet {
 		return loopChangeSet{}
 	}
 	rng := base + ".." + head
-	records, ok := taskTrailerCommits(repo, rng, true)
+	records, err := taskTrailerCommits(repo, rng, true)
 	order, byTask, misc, invalid := parseLoopCommits(records)
 	cs := loopChangeSet{
 		misc:                misc,
 		subsystems:          subsystemsOf(rangeFiles(repo, rng)),
 		stat:                strings.TrimSpace(gitOut(repo, "diff", "--stat", rng)),
-		invalidTaskBindings: !ok || invalid,
+		invalidTaskBindings: err != nil || invalid,
 	}
 	for _, id := range order {
 		commits := byTask[id]

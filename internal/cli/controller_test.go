@@ -2844,12 +2844,13 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 		t.Errorf("multiple matching commits must fail closed, got %v", m)
 	}
 	// landedTasks sees the trailer in the explicitly requested history.
-	if !landedTasks(repo, "HEAD")["task-42"] {
-		t.Error("landedTasks should include task-42")
+	landed, landedErr := landedTasks(repo, "HEAD")
+	if landedErr != nil || !landed["task-42"] {
+		t.Errorf("landedTasks = (%v, %v), want task-42 present", landed, landedErr)
 	}
 	git("commit", "-q", "--allow-empty", "-m", "ambiguous landed\n\nCoop-Task: duplicate-landed\nCoop-Task: duplicate-landed")
-	if landedTasks(repo, "HEAD")["duplicate-landed"] {
-		t.Error("landedTasks accepted a commit with duplicate Coop-Task trailers")
+	if landed, landedErr = landedTasks(repo, "HEAD"); landedErr != nil || landed["duplicate-landed"] {
+		t.Errorf("landedTasks = (%v, %v), want a commit with duplicate Coop-Task trailers ignored", landed, landedErr)
 	}
 
 	// Rewriting the existing binding makes the old commit unreachable and creates exactly one
@@ -5101,7 +5102,9 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 	git("commit", "-q", "--allow-empty", "-m", "ambiguous work\n\nCoop-Task: same-id")
 
 	a := &app{cfg: &config.Config{TasksFiles: []string{tasksRoot, q2Rel}}}
-	a.reconcileQueueAfterMerge(repo, "fork1", beforeLand+"..HEAD")
+	if err := a.reconcileQueueAfterMerge(repo, "fork1", beforeLand+"..HEAD"); err != nil {
+		t.Fatalf("reconcileQueueAfterMerge = %v, want nil on a readable range", err)
+	}
 
 	if !pathExists(filepath.Join(q, stateDone, "todo1")) || pathExists(filepath.Join(q, stateTodo, "todo1")) {
 		t.Error("a landed todo task should have moved to done")
@@ -5144,9 +5147,48 @@ func TestReconcileQueueAfterMerge(t *testing.T) {
 	unrelatedBase := gitOut(repo, "rev-parse", "HEAD")
 	writeTaskFile(t, filepath.Join(q, stateTodo, "reused", "task.md"), "# reused\n")
 	git("commit", "-q", "--allow-empty", "-m", "unrelated fork work")
-	a.reconcileQueueAfterMerge(repo, "unrelated", unrelatedBase+"..HEAD")
+	if err := a.reconcileQueueAfterMerge(repo, "unrelated", unrelatedBase+"..HEAD"); err != nil {
+		t.Fatalf("reconcileQueueAfterMerge = %v, want nil on a readable range", err)
+	}
 	if !pathExists(filepath.Join(q, stateTodo, "reused")) || pathExists(filepath.Join(q, stateDone, "reused")) {
 		t.Error("an old historical trailer completed a reused task during an unrelated merge")
+	}
+
+	// An UNREADABLE range must not read as "this fork landed nothing": it reconciles nothing, so it
+	// has to come back as an error that names the fork, the range, and the manual recovery — the
+	// silent version is what lets the next loop iteration redo work the fork already landed.
+	badRange := "no-such-ref..HEAD"
+	err := a.reconcileQueueAfterMerge(repo, "fork1", badRange)
+	if err == nil {
+		t.Fatal("reconcileQueueAfterMerge on an unreadable range = nil, want a loud error")
+	}
+	for _, want := range []string{"fork1", badRange, "coop tasks done"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("reconcile failure %q does not name %q", err, want)
+		}
+	}
+	if !pathExists(filepath.Join(q, stateTodo, "reused")) {
+		t.Error("a failed reconcile must leave the queue exactly as it found it")
+	}
+}
+
+// TestLandedTasksSeparatesFailureFromEmpty: "no task landed" and "the history read failed" produce
+// the same empty answer if you only look at the set — so landedTasks reports the second as an error.
+func TestLandedTasksSeparatesFailureFromEmpty(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t) // one trailerless commit: a genuinely empty landed set
+	landed, err := landedTasks(repo, "HEAD")
+	if err != nil || len(landed) != 0 {
+		t.Fatalf("landedTasks on trailerless history = (%v, %v), want an empty set and no error", landed, err)
+	}
+	landed, err = landedTasks(filepath.Join(t.TempDir(), "not-a-repo"), "HEAD")
+	if err == nil {
+		t.Fatalf("landedTasks outside a repo = (%v, nil), want an error", landed)
+	}
+	if landed != nil {
+		t.Errorf("landedTasks returned the set %v alongside an error — a caller could reconcile against it", landed)
 	}
 }
 

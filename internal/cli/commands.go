@@ -3169,9 +3169,15 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	}
 	fails, waits, retries, handoffs, timeouts, completed, stalls := 0, 0, 0, 0, 0, 0, 0
 	completedThisRun := map[string]bool{}
-	settledBaseline := c0.Done + c0.Blocked       // "settled" = tasks out of the actionable set (done OR blocked)
-	prevHead := gitOut(repo, "rev-parse", "HEAD") // a commit between iterations is progress too (see below)
-	loopStartHead := prevHead                     // for the end-of-run signing sweep (catches any straggler cycle)
+	settledBaseline := c0.Done + c0.Blocked // "settled" = tasks out of the actionable set (done OR blocked)
+	// A commit between iterations is progress too (see below), and every completion is validated
+	// against a commit range — so an unreadable HEAD isn't a head value the loop can carry, it's a
+	// repo the loop cannot bookkeep against. Stop before the first box starts.
+	prevHead, headErr := gitOutErr(repo, "rev-parse", "HEAD")
+	if headErr != nil {
+		return 1, fmt.Errorf("read HEAD of %s: %w — the loop tracks progress by commit and binds each completion to a commit range, so it needs a repo with a readable HEAD (at least one commit); fix the repo, then re-run `coop loop`", repo, headErr)
+	}
+	loopStartHead := prevHead // for the end-of-run signing sweep (catches any straggler cycle)
 	// The signoff reviews only what THIS RUN completed: anchoring to the pre-run done set keeps
 	// 99_done/'s history (pruned only by a human) out of every round's subject list.
 	reviewBaseline := reviewBaselineAfterVerdict(doneTaskDirs(hosts), nil, nil, recoveredReviewCompletions)
@@ -3892,11 +3898,17 @@ func promptLine(c taskCounts, forks, looping int, signWarn bool) string {
 // continuing an in_progress task it can't finish AND commits nothing, so after maxStalls such
 // iterations it returns a stop error rather than looping forever. It returns the updated
 // (prevHead, settledBaseline, stalls); a new commit resets the stall count and rebaselines.
+// An unreadable HEAD stops the loop instead of counting as "no new commit": a git failure would
+// otherwise masquerade as a stalled iteration, spending the stall budget on a broken repo — and the
+// next iteration would work a task it can't bind a commit range to anyway.
 func (a *app) advanceStall(repo string, hosts []string, prevHead string, settledBaseline, stalls int, active string) (string, int, int, error) {
 	after, _ := queueProgress(hosts)
 	settled := after.Done + after.Blocked
-	head := gitOut(repo, "rev-parse", "HEAD")
-	if head != "" && head != prevHead {
+	head, err := gitOutErr(repo, "rev-parse", "HEAD")
+	if err != nil {
+		return prevHead, settledBaseline, stalls, fmt.Errorf("read HEAD of %s after the iteration: %w — the loop cannot tell a committing iteration from a stalled one without it; fix the repo, then re-run `coop loop` (in-progress work is resumed, nothing is lost)", repo, err)
+	}
+	if head != prevHead {
 		return head, settled, 0, nil
 	}
 	newBase, newStalls, stop := progressStall(settled, settledBaseline, stalls)

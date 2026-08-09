@@ -111,6 +111,40 @@ func TestMergeOneNoGate(t *testing.T) {
 	}
 }
 
+// TestMergeOneSurfacesReconcileFailure: when the parent queue can't be reconciled after a land, the
+// merge is NOT rolled back — the fork's commits are in the parent — but the failure travels back with
+// it, so `coop fork merge` reports it and exits nonzero instead of leaving the loop to redo the work.
+func TestMergeOneSurfacesReconcileFailure(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	// A tasks path outside the repo: coop cannot work out which queues the land should reconcile.
+	a := &app{cfg: &config.Config{TasksFiles: []string{filepath.Join(t.TempDir(), "elsewhere")}}}
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "work\n\nCoop-Task: t1")
+
+	landed, err := a.mergeOne(repo, "", "perf", false)
+	if !landed || err == nil {
+		t.Fatalf("mergeOne = (%v, %v), want (true, a surfaced reconcile failure)", landed, err)
+	}
+	if !pathExists(filepath.Join(repo, "feature.txt")) {
+		t.Error("a reconcile failure rolled the landed merge back — the land already stuck, only bookkeeping failed")
+	}
+	for _, want := range []string{"perf", "coop tasks done"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("reconcile failure %q does not name %q", err, want)
+		}
+	}
+}
+
 // TestMergeOneRebasesNamedBranch (M3): landing rebases the fork's OWN branch by name, even if the
 // agent left a different branch checked out in the ws. With the parent moved forward, a non-rebased
 // branch wouldn't fast-forward — so a clean land here proves `name` (not the stray branch) was rebased.

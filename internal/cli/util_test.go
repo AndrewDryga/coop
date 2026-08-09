@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -61,6 +62,43 @@ func TestGitSignOutput(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "git diagnostic") {
 		t.Errorf("traced gitSignTo did not replay output: %q", stderr.String())
+	}
+}
+
+// TestGitOutErr: the erroring read tells a FAILED git call apart from one that legitimately printed
+// nothing, and carries git's own stderr so a caller can hand a human the cause. gitOut, which every
+// display-only site still uses, keeps conflating the two.
+func TestGitOutErr(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	if head, err := gitOutErr(repo, "rev-parse", "HEAD"); err != nil || head == "" {
+		t.Fatalf("gitOutErr(rev-parse HEAD) = (%q, %v), want a sha and no error", head, err)
+	}
+	// Empty output from a command that SUCCEEDED (a clean tree) is not a failure.
+	if out, err := gitOutErr(repo, "status", "--porcelain"); err != nil || out != "" {
+		t.Fatalf("gitOutErr(status --porcelain) on a clean tree = (%q, %v), want empty and no error", out, err)
+	}
+	out, err := gitOutErr(repo, "rev-parse", "no-such-ref")
+	if err == nil || out != "" {
+		t.Fatalf("gitOutErr(rev-parse no-such-ref) = (%q, %v), want empty and an error", out, err)
+	}
+	if !strings.Contains(err.Error(), "rev-parse no-such-ref") {
+		t.Errorf("gitOutErr error %q does not name the command that failed", err)
+	}
+	if gitOut(repo, "rev-parse", "no-such-ref") != "" {
+		t.Error("gitOut must keep swallowing a failure as empty — display sites depend on it")
+	}
+	// git's stderr is the whole reason the error is actionable; a stub git proves it survives
+	// without depending on the locale of the real git's messages.
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nprintf 'fatal: bad revision\\n' >&2\nexit 128\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if _, err := gitOutErr(repo, "log", "bogus..HEAD"); err == nil || !strings.Contains(err.Error(), "fatal: bad revision") {
+		t.Errorf("gitOutErr = %v, want git's own stderr carried into the error", err)
 	}
 }
 

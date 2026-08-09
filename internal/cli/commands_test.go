@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -77,6 +78,43 @@ func TestLoopExitCode(t *testing.T) {
 		if got := loopExitCode(c.cf); got != c.want {
 			t.Errorf("loopExitCode(%+v) = %d, want %d", c.cf, got, c.want)
 		}
+	}
+}
+
+// TestAdvanceStallHeadRead: the stall bookkeeping reads HEAD to tell a committing iteration from a
+// stalled one, so a HEAD that cannot be read stops the loop — it must never be counted as "no new
+// commit", which would spend the stall budget on a broken repo and hide the real failure.
+func TestAdvanceStallHeadRead(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{}}
+	hosts := []string{filepath.Join(t.TempDir(), "queue")} // empty queue: nothing settles on its own
+	base := gitOut(repo, "rev-parse", "HEAD")
+
+	// No new commit and nothing settled → one stall, prevHead held.
+	head, baseline, stalls, err := a.advanceStall(repo, hosts, base, 0, 0, "task-x")
+	if err != nil || head != base || baseline != 0 || stalls != 1 {
+		t.Fatalf("stalled iteration = (%s, %d, %d, %v), want (%s, 0, 1, nil)", head, baseline, stalls, err, base)
+	}
+	// A new commit is progress: it rebaselines and clears the stall count.
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "work")
+	committed := gitOut(repo, "rev-parse", "HEAD")
+	head, baseline, stalls, err = a.advanceStall(repo, hosts, base, 0, 2, "task-x")
+	if err != nil || head != committed || baseline != 0 || stalls != 0 {
+		t.Fatalf("committing iteration = (%s, %d, %d, %v), want (%s, 0, 0, nil)", head, baseline, stalls, err, committed)
+	}
+	// An unreadable HEAD fails the iteration and leaves the bookkeeping untouched.
+	head, baseline, stalls, err = a.advanceStall(filepath.Join(t.TempDir(), "gone"), hosts, committed, 4, 2, "task-x")
+	if err == nil {
+		t.Fatal("advanceStall with an unreadable HEAD = nil error, want a loud stop")
+	}
+	if head != committed || baseline != 4 || stalls != 2 {
+		t.Errorf("failed head read perturbed stall state: got (%s, %d, %d), want (%s, 4, 2)", head, baseline, stalls, committed)
+	}
+	if !strings.Contains(err.Error(), "HEAD") || !strings.Contains(err.Error(), "coop loop") {
+		t.Errorf("head-read failure %q should name what failed and how to recover", err)
 	}
 }
 

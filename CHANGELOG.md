@@ -4,6 +4,27 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A fork that lands but can't be reconciled now says so, instead of costing you the work twice.**
+  `coop fork merge` moves every parent-queue task whose `Coop-Task` trailer just landed to done, so
+  the parent loop doesn't redo it — but it read that trailer list through a helper that returns an
+  empty string on ANY git failure. An unreadable range and a fork that landed no tasks were therefore
+  the same answer: reconcile nothing, report a clean land. The landed tasks stayed in `00_todo/`, and
+  the next loop iteration redid work already sitting in history. That read now fails loudly. The
+  merge is never rolled back for it — the commits stuck, only the bookkeeping is missing — so the
+  command prints its `landed <fork>` line, then an error naming the fork, the range, and the two
+  commands that reconcile it by hand, and exits nonzero. A land whose reconciliation failed also
+  keeps its fork workspace instead of deleting it: nothing gets destroyed right after an unexplained
+  failure.
+
+- **`coop loop` stops on an unreadable HEAD instead of mis-counting progress.** The loop treats a new
+  commit between iterations as progress, and validates every task completion against a commit range —
+  both off `git rev-parse HEAD`, whose failure read as an empty string. A broken repo looked exactly
+  like an iteration that committed nothing, quietly spending the stall budget on iterations that
+  could never bind a completion anyway. The loop now refuses to start when it can't read HEAD, and an
+  iteration whose HEAD read fails stops the run with git's own message plus the recovery — in-progress
+  work is resumed on the next run, nothing is lost. Display-only git reads are untouched: an empty
+  answer is still fine when nothing depends on it.
+
 - **`coop acp` builds the box image when it's missing, instead of dying.** A pruned `coop-box`
   took ACP down with no usable explanation: each of the four warm-target children failed with
   "image not built", the proxy burned its five-attempt rapid-fail cap in half a second, and the
