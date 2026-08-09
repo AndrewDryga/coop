@@ -21,34 +21,17 @@ jobs:
         with:
           go-version-file: go.mod # pin the toolchain to the repo, not a floating "stable"
           cache: false # no Actions cache → no cache-poisoning surface (the build is zero-dep)
-      - name: gofmt
-        run: |
-          gofmt -l . | (! grep .) || { echo "needs gofmt -w ."; exit 1; }
-      - name: vet
-        run: go vet ./...
-      - name: staticcheck
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0 # pinned, not @latest
-          staticcheck ./...
-      - name: test
-        run: go test ./...
-      - name: scripted provider process e2e
-        # Drives the built Coop binary through CLI -> box args -> a strict fake runtime -> all four
-        # provider fixtures. No container daemon, network, or provider credentials are involved.
-        run: make provider-scripted-e2e
-      - name: race
-        # internal/acpproxy is concurrent (the editor-reader goroutine vs the main loop share
-        # p.mu-guarded state) — a data race there wouldn't fail the plain test run. Its own step
-        # so a race failure is legible; -race is ~2-3× slower but this repo's suite is small.
-        run: go test -race ./...
-      - name: docs-fresh
-        # help.go is the single source for docs/cli.md, docs/man/coop.1, and site/llms.txt; fail if
-        # a help change wasn't regenerated (make docs). In `make check` locally, but was CI-blind.
-        run: go run ./tools/gendocs -check
-      - name: build
-        run: go build ./...
-      - name: shellcheck
-        run: shellcheck install.sh
+      - name: install staticcheck at the repo's pin
+        # The Makefile owns the version (STATICCHECK_VERSION) and `make lint` rejects any other
+        # build, so CI and a laptop can never lint with two different Staticchecks. The gate's
+        # other required tools, shellcheck and python3, are preinstalled on the runner image.
+        run: go install honnef.co/go/tools/cmd/staticcheck@"$(make -s staticcheck-version)"
+      - name: gate
+        # ONE recipe: everything this job checks is `make check` — the same target a laptop and a
+        # box run — so the two can never drift again. A new check goes in the Makefile, never as a
+        # step here. (The container-boundary jobs below are the deliberate exception: they need a
+        # real runtime, which `make check` deliberately does not.)
+        run: make check
 
   # Exercise the real container boundary per runtime, so a change that breaks isolation,
   # process reaping, signal forwarding, or a runtime's run-args fails CI. (The fork-merge

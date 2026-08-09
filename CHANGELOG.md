@@ -4,6 +4,25 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **One gate: `make check` and CI's check job are now the same recipe.** They were two step lists
+  maintained by hand, and they had drifted in BOTH directions. Only CI ran the race detector,
+  `go build ./...`, ShellCheck, and a version-pinned Staticcheck; only a laptop ran the cast
+  hygiene scan, the rules-card validator, the maintenance-tool tests, and the tagged
+  process-control race tests. So a data race or a build break in code no test imports could not
+  fail locally, a malformed rules card could not fail CI, and main once rotted red with no local
+  gate able to see it. CI's check job now installs the pinned tools and calls `make check`, and
+  `make check` runs the union — a new check goes in the Makefile, never into the workflow.
+  Missing tools no longer soft-skip themselves out of the gate: Staticcheck, ShellCheck, and
+  python3 each fail with the one-line command that installs them, and a Staticcheck that isn't
+  the pinned version fails the same way instead of quietly linting by different rules. That pin
+  (`STATICCHECK_VERSION` in the Makefile) is the single place — CI reads the version from there
+  rather than repeating it. **The box image now ships ShellCheck**, since the in-box gate runs the
+  same recipe; run `coop build` once to pick it up. The two container-boundary jobs (the doctor
+  runtime matrix and review-writes) stay separate CI jobs and `make check` stays
+  runtime-independent — a comment on the target says so, instead of the old claim to be "what CI
+  runs". Expect a slower local gate: the race suite is what a race detector that actually gates
+  costs, and it runs last so cheaper failures still surface first.
+
 - **A crash can no longer blank the file that says which account to use.** The default-credential
   pointers under `~/.config/coop` decide which subscription a run — including an overnight `coop
   loop` — signs in with, and writing one was best-effort in two ways. The lock around the

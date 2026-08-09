@@ -127,6 +127,7 @@ updated: <YYYY-MM-DD>                # last edit
 
 **Agent workflow** — how an agent works here, not what it ships
 - [fix-the-bug-not-the-feature](fix-the-bug-not-the-feature.md) — root-cause the misbehavior; deleting the feature is never the fix without the human
+- [gate-is-one-recipe](gate-is-one-recipe.md) — a new check goes in `make check`; CI installs the tools and calls that target, never its own step list
 - [small-work-to-the-queue](small-work-to-the-queue.md) — ready work goes to `00_todo/`; only the genuinely large or unscoped goes to the backlog
 - [static-bounded-supervision](static-bounded-supervision.md) — supervised long commands keep output static and only a bounded excerpt in context
 - [agent-instructions-use-in-box-capabilities](agent-instructions-use-in-box-capabilities.md) — agent-facing instructions name in-box capabilities, never host-side `coop fork`/`fleet`

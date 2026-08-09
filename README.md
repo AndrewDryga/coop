@@ -1703,10 +1703,16 @@ install.sh          the curl one-liner: download the prebuilt binary onto PATH
 
 | Layer | Targets | What they prove |
 |---|---|---|
-| Blocking | `make check` | formatting, vet, unit tests, deterministic provider process E2E, tagged process-control races, generated docs, casts, and maintenance tools; no runtime or credentials |
+| Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, unit tests plain and under `-race`, deterministic provider process E2E, tagged process-control races, generated docs, casts, rules cards, and maintenance tools; no runtime or credentials |
 | Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork/fleet policy, ACP switching/recovery, and live-harness ownership denials with fixtures |
 | Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` | real box isolation, process reaping/signal forwarding, and report-only review mounts; requires Docker/Podman (or Apple `container` for doctor) |
 | Upstream compatibility | `make provider-live-e2e[-all]` · `make provider-resume-live-e2e[-all]` · `make provider-loop-live-e2e[-all]` · `make provider-consult-live-e2e[-all]` · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
+
+`make check` IS the CI gate: the workflow's check job installs the pinned tools and runs this
+target, so the two can't drift (the doctor and review-writes jobs stay CI-only — they need a
+container runtime). It needs `staticcheck` (pinned by `STATICCHECK_VERSION` in the Makefile,
+which CI reads), `shellcheck`, and `python3`; a missing or wrong-version tool fails the gate with
+the command that installs it, never a silent skip.
 
 `.tool-versions` pins the Go toolchain (`golang 1.26.4`), so an asdf user — and coop's
 own box — gets the right `go`/`gofmt` automatically.

@@ -4,6 +4,12 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/AndrewDryga/coop/internal/cli.Version=$(VERSION)
 
+# The ONE Staticcheck pin. CI installs exactly this version (it reads it from here, via
+# 'make -s staticcheck-version') and 'make lint' refuses any other build, so a laptop, a box,
+# and CI can never lint with three different rule sets. Bump it here AND in internal/box/image.go
+# (the box ships the same binary for the in-box gate); a test in internal/box holds the two together.
+STATICCHECK_VERSION := v0.7.0
+
 build: ## Build the coop binary to ./coop
 	@go build -trimpath -ldflags "$(LDFLAGS)" -o coop .
 
@@ -17,10 +23,25 @@ test: ## Run unit tests (no container runtime needed)
 cover: ## Run unit tests with a coverage summary
 	@go test -cover ./...
 
-lint: ## gofmt check + go vet (+ staticcheck if installed)
+lint: ## gofmt check + go vet + Staticcheck at the pinned version
 	@gofmt -l . | (! grep .) || { echo "gofmt: files need formatting (run: gofmt -w .)"; exit 1; }
 	@go vet ./...
-	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; else echo "(staticcheck not installed — skipping)"; fi
+	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck is not installed — run: go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)"; exit 1; }
+	@staticcheck -version | grep -qF "($(STATICCHECK_VERSION))" || { echo "$$(staticcheck -version) is not the pinned $(STATICCHECK_VERSION) — run: go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)"; exit 1; }
+	@staticcheck ./...
+
+# Plumbing for CI's install step, which reads the pin from here instead of repeating it.
+staticcheck-version:
+	@echo $(STATICCHECK_VERSION)
+
+shellcheck: ## ShellCheck install.sh (the curl one-liner every new user runs)
+	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck is not installed — run: brew install shellcheck (macOS) or apt-get install -y shellcheck (Debian)"; exit 1; }
+	@shellcheck install.sh
+
+# Guard for the python-backed targets: name the fix instead of leaving make to print a bare
+# "python3: No such file or directory". No ## — it's a prerequisite, not something you run.
+require-python3:
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 is not installed — run: brew install python3 (macOS) or apt-get install -y python3 (Debian)"; exit 1; }
 
 # Signing is intentionally skipped: release signatures are keyless (Sigstore via GitHub
 # OIDC), which only exists in the release workflow — a local snapshot validates packaging.
@@ -36,23 +57,42 @@ docs: ## Regenerate docs/cli.md + site/llms.txt from internal/cli (help.go is th
 docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make docs' to fix)
 	@go run ./tools/gendocs -check
 
-align: ## Check trailing-# comment alignment in README + site + CLI docs (--write to fix)
+align: require-python3 ## Check trailing-# comment alignment in README + site + CLI docs (--write to fix)
 	@python3 tools/align-comments.py --check
 
-casts: build ## Regenerate + safety-check site terminal casts (refuses a dirty/untagged ./coop; needs python3)
+casts: build require-python3 ## Regenerate + safety-check site terminal casts (refuses a dirty/untagged ./coop; needs python3)
 	@python3 tools/gen_casts.py
 	@python3 tools/cast_hygiene.py site/casts
 
-casts-check: ## Validate published casts for private paths, credentials, and secret-shaped values
+casts-check: require-python3 ## Validate published casts for private paths, credentials, and secret-shaped values
 	@python3 tools/cast_hygiene.py site/casts
 
-tools-test: ## Run standard-library tests for repository maintenance tools
+tools-test: require-python3 ## Run standard-library tests for repository maintenance tools
 	@python3 -m unittest discover -s tools -p 'test_*.py'
 
-rules-check: ## Fail if a .agent/rules card is malformed, unindexed, or names a source/check that doesn't exist
+rules-check: require-python3 ## Fail if a .agent/rules card is malformed, unindexed, or names a source/check that doesn't exist
 	@python3 tools/check_rules.py
 
-check: lint test provider-scripted-e2e live-process-control docs-check casts-check tools-test rules-check ## What CI runs: lint + tests + deterministic provider process E2E + docs/cast/rules freshness
+build-all: ## Compile every package (a package no test imports can still break the build)
+	@go build ./...
+
+# internal/acpproxy is concurrent (the editor-reader goroutine and the main loop share
+# p.mu-guarded state) — a data race there does not fail the plain `make test` run. Its own
+# target so a race failure is legible; -race is ~2-3× slower, which is why it runs last.
+race: ## Full unit suite under the race detector (the slowest gate step)
+	@go test -race ./...
+
+# THE GATE. One recipe, run identically on a laptop, in a box, and by CI's check job — which
+# installs the pinned tools and then calls this target. A new check belongs HERE, never in the
+# workflow's step list: the two were maintained separately, drifted in both directions (race and
+# build were CI-only; cast/rules/tools checks were local-only), and main rotted red with no local
+# gate able to see it. Ordered so the cheap and most common failures surface first and the race
+# suite runs last. Required tools hard-fail with their install line — a soft skip is how a check
+# silently stops running.
+# CI-only by necessity: the doctor runtime matrix and the review-writes job need a real container
+# runtime, so they stay separate CI jobs and this target stays runtime-independent. Run them by
+# hand with 'make doctor', 'make box-runtime-e2e', and 'make review-writes-e2e'.
+check: lint shellcheck build-all docs-check casts-check tools-test rules-check test provider-scripted-e2e live-process-control race ## The gate, identical to CI's check job: lint + freshness + tests (plain, e2e, race) + build
 
 provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
 	@go test ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
@@ -115,4 +155,4 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint snapshot doctor docs docs-check casts casts-check tools-test check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e box-runtime-e2e clean help
+.PHONY: build install test cover lint staticcheck-version shellcheck require-python3 snapshot doctor docs docs-check align casts casts-check tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e box-runtime-e2e clean help

@@ -72,7 +72,9 @@ ARG AGENT_PACKAGES="%s"
 # compile toolchains a repo pins in .tool-versions at runtime. A Postgres client,
 # procps, and inotify-tools come along so the runtime path matches a baked image.
 # ripgrep/fd/jq/tree are the search + inspect tools agents reach for constantly
-# (Debian ships fd as "fdfind", so it's symlinked to "fd"). python3 + pip with a bare
+# (Debian ships fd as "fdfind", so it's symlinked to "fd"). ShellCheck rides along for the
+# same reason Staticcheck is copied in above: a repo's gate runs IN the box, and a non-root
+# agent can't apt-get a missing linter at gate time. python3 + pip with a bare
 # "python"/"pip" (python-is-python3 plus a pip symlink) so an agent that reaches for
 # python or pip just runs, instead of burning a turn self-debugging, when a repo hasn't
 # pinned python in .tool-versions (an asdf-pinned python still shims ahead of these on
@@ -91,7 +93,7 @@ RUN apt-get update \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git ca-certificates \
       postgresql-client procps inotify-tools util-linux socat \
       python3 python-is-python3 python3-pip \
-      ripgrep fd-find jq tree \
+      ripgrep fd-find jq tree shellcheck \
  && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
  && command -v flock >/dev/null \
  && ln -s "$(command -v fdfind)" /usr/local/bin/fd \

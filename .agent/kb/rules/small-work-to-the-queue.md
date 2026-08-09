@@ -2,9 +2,9 @@
 name: small-work-to-the-queue
 description: "ready work goes to `00_todo/`; only the genuinely large or unscoped goes to the backlog"
 scope: agent-workflow
-sources: [AGENTS.md, .agent/tasks/README.md]
+sources: [AGENTS.md, internal/scaffold/templates/agent/tasks/README.md]
 check: "none"
-updated: 2026-07-13
+updated: 2026-08-09
 ---
 
 # Small discovered work goes to the queue, not the backlog
@@ -35,3 +35,7 @@ Related: [[fix-the-bug-not-the-feature]].
 ## Changelog
 - 2026-07-13 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — sources: the live `.agent/tasks/README.md` is gitignored working state, so
+  `make rules-check` passed on a laptop and would have failed the moment CI ran it; point at the
+  committed template it's scaffolded from instead. Swept all 32 cards: it was the only untracked
+  source. Body unchanged.

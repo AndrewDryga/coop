@@ -129,14 +129,14 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 	for _, want := range []string{
 		"ARG NODE_IMAGE=node:24-slim", "FROM ${NODE_IMAGE}",
 		"ARG GO_IMAGE=golang:1.26.5-bookworm", "FROM ${GO_IMAGE} AS staticcheck-builder",
-		"ARG STATICCHECK_VERSION=v0.7.0",
 		"go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}",
 		"COPY --from=staticcheck-builder /out/staticcheck /usr/local/bin/staticcheck",
 		`ARG AGENT_PACKAGES="@`, "npm install -g ${AGENT_PACKAGES}",
 		// ~/.cache pre-created node-owned so the coop-cache volume isn't root-owned.
 		"chown node:node /home/node/.asdf /home/node/.cache",
-		// agent search/inspect tools, with fd symlinked from Debian's fdfind.
-		"ripgrep fd-find jq tree", `ln -s "$(command -v fdfind)" /usr/local/bin/fd`,
+		// agent search/inspect tools, with fd symlinked from Debian's fdfind; shellcheck is a
+		// gate tool (coop's own `make check` lints install.sh) a non-root agent can't apt-get.
+		"ripgrep fd-find jq tree shellcheck", `ln -s "$(command -v fdfind)" /usr/local/bin/fd`,
 		// coop-consult uses a kernel-held lock that must be present in the built image.
 		"inotify-tools util-linux", "command -v flock >/dev/null",
 		// bare python + pip so an agent reaching for them doesn't self-debug a missing tool.
@@ -161,6 +161,29 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 	repairNode := strings.Index(df, "if ! node --version >/dev/null 2>&1; then")
 	if skipProvisioning < 0 || repairNode < 0 || repairNode < skipProvisioning {
 		t.Errorf("node repair should run after the COOP_NO_ASDF provisioning branch")
+	}
+}
+
+// The box ships Staticcheck because a repo's gate runs inside it — coop's own `make check` does,
+// and that gate now refuses any build but the pinned one. So the image's pin must equal the
+// Makefile's STATICCHECK_VERSION: a mismatch fails the gate in a box where an offline agent
+// can't `go install` its way out. Bump both together.
+func TestBaseDockerfileStaticcheckMatchesGatePin(t *testing.T) {
+	b, err := os.ReadFile("../../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := ""
+	for _, line := range strings.Split(string(b), "\n") {
+		if rest, ok := strings.CutPrefix(line, "STATICCHECK_VERSION := "); ok {
+			pin = strings.TrimSpace(rest)
+		}
+	}
+	if pin == "" {
+		t.Fatal("Makefile no longer pins STATICCHECK_VERSION — the gate's single Staticcheck pin")
+	}
+	if want := "ARG STATICCHECK_VERSION=" + pin; !strings.Contains(BaseDockerfile(), want) {
+		t.Errorf("box ships a different Staticcheck than the gate pins — image.go needs %q", want)
 	}
 }
 
