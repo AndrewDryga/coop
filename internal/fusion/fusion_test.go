@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1258,6 +1259,70 @@ exec "$@"`
 		stateDir := filepath.Join(dir, "coop-consult-state")
 		if _, err := os.Stat(filepath.Join(stateDir, key+".state")); !os.IsNotExist(err) {
 			t.Errorf("context overflow retained continuation state: %v", err)
+		}
+	})
+}
+
+// TestConsultWrapperBoundsDefaultToUnlimited is the transport-bounds-do-not-abort-valid-work
+// rule's check: (.agent/kb/rules/transport-bounds-do-not-abort-valid-work.md). It was created
+// after two same-day violations of a consult that was still working: 6c89f91 reintroduced a
+// timing contract that abandoned a live consult, and a085b29 discarded a consult that RAN TO
+// COMPLETION for exceeding a 1 MiB cap. Both bounds must default to 0 (unlimited), and each is
+// checked two ways because either check alone can miss a real regression:
+//   - VALUE: the rendered wrapper's own `:-N` fallback is 0 — catches a reintroduced default
+//     number even before anything runs.
+//   - BEHAVIOR: the wrapper is actually run with no override — catches the fallback staying "0"
+//     in text while the branch meant to skip the bound got rewired to enforce it anyway.
+//
+// COOP_CONSULT_STREAM_LIMIT bounds bounded_capture, the CAPTURE path that spools a reply or
+// diagnostics stream to disk. COOP_CONSULT_TIMEOUT bounds how long the peer's own process may
+// keep the STREAM open before run() cuts it off. Neither subtest touches the provider watchdog's
+// attempt ceiling (internal/cli/watchdog.go) — that ceiling is a documented, separate exception
+// (.agent/kb/loop-provider-watchdog.md: "the one bound deliberately NOT
+// transport-bounds-do-not-abort-valid-work material") bounding a hostile stream's wall clock at a
+// multiple no legitimate consult reaches, not the volume of valid work.
+func TestConsultWrapperBoundsDefaultToUnlimited(t *testing.T) {
+	t.Run("stream limit value (capture path)", func(t *testing.T) {
+		m := regexp.MustCompile(`COOP_CONSULT_STREAM_LIMIT:-(\d+)`).FindStringSubmatch(ConsultWrapper())
+		if m == nil {
+			t.Fatal("could not find the consult stream limit default in the generated wrapper")
+		}
+		if m[1] != "0" {
+			t.Errorf("consult stream limit defaults to %s bytes, want 0 (unlimited)", m[1])
+		}
+	})
+
+	t.Run("timeout value (stream path)", func(t *testing.T) {
+		m := regexp.MustCompile(`COOP_CONSULT_TIMEOUT:-(\d+)`).FindStringSubmatch(ConsultWrapper())
+		if m == nil {
+			t.Fatal("could not find the consult timeout default in the generated wrapper")
+		}
+		if m[1] != "0" {
+			t.Errorf("consult timeout defaults to %ss, want 0 (unlimited)", m[1])
+		}
+	})
+
+	t.Run("stream limit behavior (capture path)", func(t *testing.T) {
+		const passTimeout = `shift 3
+exec "$@"`
+		const size = 1<<20 + 1 // one byte past the retired 1 MiB cap
+		body := fmt.Sprintf(`dd if=/dev/zero bs=%d count=1 2>/dev/null | tr '\000' X`, size)
+		out, code, _, _ := runConsultWrapperStub(t, "defaults-capture", "claude", body, passTimeout, "")
+		if code != 0 || strings.Contains(out, "reply exceeded") {
+			t.Fatalf("a default-env consult capped the reply capture: exit %d:\n%s", code, truncateForTest(out))
+		}
+		if strings.Count(out, "X") < size {
+			t.Errorf("a default-env consult truncated the reply capture: got %d X bytes, want %d", strings.Count(out, "X"), size)
+		}
+	})
+
+	t.Run("timeout behavior (stream path)", func(t *testing.T) {
+		// A "timeout" stub that fires proves the wrapper routed the run through it; the default
+		// must skip that branch entirely so the peer runs directly, and this stub is never invoked.
+		const timeoutFires = `echo TIMEOUT_WAS_INVOKED >&2; exit 99`
+		out, code, _, _ := runConsultWrapperStub(t, "defaults-stream", "claude", "echo VALID_REPLY", timeoutFires, "")
+		if code != 0 || strings.Contains(out, "TIMEOUT_WAS_INVOKED") {
+			t.Fatalf("a default-env consult routed the peer's run through the timeout command: exit %d:\n%s", code, out)
 		}
 	})
 }

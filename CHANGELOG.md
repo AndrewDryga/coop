@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- _Internal restructuring, no user-visible change._ The `transport-bounds-do-not-abort-valid-work`
+  rule (`.agent/kb/rules/`) is now gated instead of riding on review alone. It was created
+  2026-08-02 after two same-day violations that killed working consults — a reintroduced timing
+  contract, and a 1 MiB reply cap that discarded a consult which had already run to completion —
+  but carried `check: none`, so nothing caught a third. `TestConsultWrapperBoundsDefaultToUnlimited`
+  (`internal/fusion`) now asserts `COOP_CONSULT_STREAM_LIMIT` and `COOP_CONSULT_TIMEOUT` both
+  default to unlimited, checked against the rendered consult wrapper's own fallback value and
+  against its actual behavior with no override set; `make rules-check` runs it as part of the gate.
+
 - **A Claude session credential that expires no longer takes the whole deployment down with it.**
   Every turn on a `coop sessions serve` target running Claude failed permanently once the host's
   ~8h Claude OAuth access token expired — two production deployments went dark this way on
