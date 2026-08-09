@@ -4,7 +4,7 @@ description: "when shared state breaks concurrency, isolate the state; never loc
 scope: box
 sources: [internal/box/mounts.go, internal/agent/codex.go]
 check: "none"
-updated: 2026-07-12
+updated: 2026-08-09
 ---
 
 # Isolate the state, don't serialize the users of it
@@ -44,3 +44,18 @@ collision entirely — nothing left to lock.
 ## Changelog
 - 2026-07-12 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: confirmed `CODEX_SQLITE_HOME` still wired exactly as
+  described (internal/agent/codex.go:671). Checked the `syscall.Flock` at codex.go:281-284: it
+  serializes concurrent WRITES to one credential's own `.refresh.lock` in trusted host storage
+  (renewCodexCredential) — not the rejected per-account session lock; matches the rule's own
+  exception ("share only what must be common — the credential"), not a violation. 2 findings on
+  the card itself (not the code): (1) `sources: internal/box/mounts.go` is stale/wrong —
+  mounts.go handles repo-content `.coopignore` shadowing; the per-profile isolation this rule
+  describes lives in internal/box/profiles.go (`EffectiveProfiles`/`ProfileAuthed`) and the mount
+  wiring in internal/box/run.go:1574 (`cfg.AgentDir(agent)`, one active-profile dir per box —
+  `make rules-check` only verifies the path exists, not its relevance, so it can't catch this).
+  (2) The "Why" section's `Agent.SharedHomePaths` no longer exists anywhere in the tree (0 hits)
+  — it named the FIRST fix's mechanism (a private per-box home), which the card's own "How to
+  apply" section already says was superseded by the simpler `CODEX_SQLITE_HOME` env var. Both
+  flagged for the lead as a card correction (re-point sources, refresh the Why); the rule's actual
+  guidance still holds in the current code.

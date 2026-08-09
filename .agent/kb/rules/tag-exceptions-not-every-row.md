@@ -4,7 +4,7 @@ description: "tag only the exceptional row; explain the scheme once in a dim cap
 scope: cli-output
 sources: [internal/cli/models.go]
 check: "none"
-updated: 2026-07-10
+updated: 2026-08-09
 ---
 
 # Tag the exception row, not every row
@@ -38,3 +38,8 @@ See also [[no-color-in-width-fields]], [[command-output-tiers]], [[help-output-s
 ## Changelog
 - 2026-07-10 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: read internal/cli/models.go in full (its only source).
+  0 violations — the old per-row "(examples)" tag this rule was written against no longer exists;
+  `coop models` fully migrated to the entity-block form (see [[entity-blocks-with-labeled-fields]]),
+  with one dim caption ("any model id the agent's CLI accepts works — an unrefreshed list shows
+  examples") and a single shared `colWidth` computation for the how-to block's columns.

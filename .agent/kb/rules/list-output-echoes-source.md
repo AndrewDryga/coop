@@ -4,7 +4,7 @@ description: "list output echoes the on-disk form, and grouped sections breathe"
 scope: cli-output
 sources: [internal/cli/tasks.go]
 check: "none"
-updated: 2026-07-09
+updated: 2026-08-09
 ---
 
 # List output echoes the source's own format, and groups breathe
@@ -37,3 +37,9 @@ between task files and some - or * before [ ]."
 - 2026-06-17 — created
 - 2026-07-09 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: read internal/cli/tasks.go's `tasksListAll` (3 blank
+  lines between queues) and internal/cli/taskcmd.go's `tasksFolderList` (2 blank lines between
+  state sections, 1 between tasks within a section) — both carry explicit "see rule" comments.
+  Also checked the card's "give `coop credentials` the same inter-section blank line if it's ever
+  touched" note: already done (profiles.go:58-60, a blank line between agent blocks). 0
+  violations.

@@ -38,3 +38,9 @@ Related: [[static-bounded-supervision]].
   CI's check job is `make check`). Swept both sides: 4 CI-only steps and 4 local-only targets were
   merged; the tracked-checkout sweep also caught `small-work-to-the-queue` naming a gitignored
   source, which would have turned CI red the moment `rules-check` ran there.
+- 2026-08-09 — validate-on-write backfill: independently re-verified. .github/workflows/ci.yml's
+  `check` job is setup (checkout, setup-go, install the pinned staticcheck) then `run: make check`
+  (line 34) — no separate step list. The two other jobs (`doctor` → `make box-runtime-e2e`,
+  `review-writes` → `make review-writes-e2e`) are the rule's one documented exception
+  (container-runtime-dependent), and Makefile:94 names both by hand right next to `check:`. 0
+  violations.

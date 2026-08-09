@@ -4,7 +4,7 @@ description: "a bare group prints help or its default view, never an empty-token
 scope: cli-grammar
 sources: [internal/cli/help.go, internal/cli/fork.go, internal/cli/tasks.go]
 check: "none"
-updated: 2026-07-02
+updated: 2026-08-09
 ---
 
 # A bare subcommand group shows help, never an "unknown command \"\"" error
@@ -33,3 +33,14 @@ Bare `coop` prints help; a bare group should match that.
 - 2026-06-26 — created
 - 2026-07-02 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: swept every top-level group dispatcher's empty-token
+  handling — fork (cmdFork → forkHelp, fork.go:99), fleet (cmdFleet → groupHelp("fleet"),
+  fork_fleet.go:154), tasks (cmdTasks/tasksInQueue → list, tasks.go:306+330), backlog
+  (cmdBacklog/cmdBacklogFolder → list, backlog.go:88), credentials (cmdCredentials → list,
+  profiles.go:27), presets (cmdPresets → list, presetcmd.go:17), sessions (cmdSessions →
+  groupHelp("sessions"), session_cmd.go:116). 0 code violations — every group avoids the
+  empty-token error. 1 finding: the card's own "Current sweep" bullet is stale — it names "pool"
+  (fully retired; not a case in cli.go's dispatch switch at all, confirmed by
+  `TestV3RetiredForms`) and "profiles" (renamed to "credentials"), and never mentions backlog,
+  sessions, or presets, which already correctly hold the invariant. Card documentation drift, not
+  a code bug — flagged for the lead, not fixed here.

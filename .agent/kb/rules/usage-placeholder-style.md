@@ -4,7 +4,7 @@ description: "one frozen `<angle>` lexicon for every usage string and error hint
 scope: cli-grammar
 sources: [internal/cli/help.go]
 check: "none"
-updated: 2026-08-06
+updated: 2026-08-09
 ---
 
 # One frozen lexicon for usage placeholders
@@ -40,3 +40,13 @@ See also [[help-output-style]].
 - 2026-07-02 — created
 - 2026-07-11 — revised
 - 2026-08-06 — card metadata added; corrected the stale conformance claim — TestCLIConformance landed, but it covers ls/rm/help rows, NOT the placeholder lexicon
+- 2026-08-09 — validate-on-write backfill: swept every `Usage:`/`usage:` string and error hint in
+  internal/cli/*.go (non-test), including help.go's full `commandHelp` text blocks. 2 violation
+  clusters found: (1) Unicode ellipsis `…` instead of the required ASCII `...` in the `--peer`
+  repeatable-flag documentation and its runtime error hint — help.go:98,258,437,470,709,777 and
+  commands.go:319,1676; help.go:709's own `coop loop` Usage: line mixes both forms
+  (`[--tasks <path>]...` ASCII, correct, vs `[--peer <peer>…]` Unicode, wrong) in one string. (2)
+  Single-letter placeholders in taskcmd.go:368's add-task usage error — ``usage: coop %s "<title>"
+  [--context <c> --acceptance <a> --approach <p> --subtask <s>...]`` — the exact `p`/`m`-style
+  abbreviation the rule's own "Why" section names. Both queued for the lead as violations, not
+  fixed here.

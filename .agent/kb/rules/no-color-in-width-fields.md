@@ -4,7 +4,7 @@ description: "pad plain text to the column width, then style; never style inside
 scope: cli-output
 sources: [internal/ui/ui.go]
 check: "none"
-updated: 2026-06-17
+updated: 2026-08-09
 ---
 
 # Never style a string inside a width-padded format field
@@ -44,3 +44,12 @@ when output.
 ## Changelog
 - 2026-06-17 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: ran the card's own guard
+  (`grep -rnE 'ui\.(Bold|Dim|Green|Red)\(' internal/ | grep -v _test`, ~80 hits) and manually
+  checked every native width verb (`%-Ns`/`%-Nd`) across internal/ (3 hits, all unrelated numeric
+  time formats — no styled column data) plus every `padRight`/`padLeft` caller (models.go,
+  presetcmd.go, util.go, fork.go, context.go, taskwatch.go, fleet_watch.go, profiles.go,
+  status.go) for a styled value passed into padding. 0 violations — the codebase uniformly pads
+  plain text first (via the rune-safe `padRight` helper — confirmed `utf8.RuneCountInString`,
+  util.go:306-311) and wraps the finished line/cell in color after; no native Go width verb is
+  ever applied to styled data.

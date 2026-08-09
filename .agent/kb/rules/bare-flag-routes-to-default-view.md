@@ -4,7 +4,7 @@ description: "a leading flag where a subcommand goes routes to the group's defau
 scope: cli-grammar
 sources: [internal/cli/tasks.go, internal/cli/taskcmd.go]
 check: "none"
-updated: 2026-07-17
+updated: 2026-08-09
 ---
 
 # A bare leading flag routes to the group's default view
@@ -32,3 +32,13 @@ text is longest and least relevant to what they asked.
 ## Changelog
 - 2026-07-17 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: swept internal/cli/tasks.go's `cmdTasks` (confirmed the
+  leading-flag-to-`ls` normalization at tasks.go:229) and checked every other group with a listing
+  default for the same treatment. 1 violation found: internal/cli/backlog.go's
+  `cmdBacklog`/`cmdBacklogFolder` — backlog gained a listing default after this rule was written
+  ("A bare `coop backlog` lists the drawer... like bare `coop tasks`", backlog.go:76) but never
+  got the matching normalization; a leading flag (e.g. `coop backlog -x`) falls through to
+  `unknownErr("backlog command", ...)` instead of routing to the listing. `backlogArgSpecs["ls"]`
+  takes zero flags today, so nothing currently demonstrates user-visible breakage, but the
+  structural gap is real and the card's own "today: tasks" framing is now inaccurate. Queued for
+  the lead, not fixed here.

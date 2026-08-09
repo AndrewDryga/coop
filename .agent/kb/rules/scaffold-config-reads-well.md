@@ -4,7 +4,7 @@ description: "scaffolded config leads every field with its comment and works as-
 scope: scaffold
 sources: [internal/preset/template.go, .agent/presets/frontier/preset.yaml]
 check: "none"
-updated: 2026-07-03
+updated: 2026-08-09
 ---
 
 # Scaffolded, editable config reads top-down and works as-is
@@ -60,3 +60,21 @@ See [[scaffold-fits-the-repo]] (a scaffold suits the target repo) and
 ## Changelog
 - 2026-07-03 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: read internal/preset/template.go's `Template` const
+  and .agent/presets/frontier/preset.yaml in full, plus a rune-length script over both. Confirmed
+  clean: comments always LEAD their field in both files (0 trailing-comment hits), and every
+  field in both is individually documented (no bare fields). 2 violations found: (1) line length
+  — 22 lines in template.go's `Template` (up to 107 runes, e.g. line 13) and 13 lines in
+  preset.yaml (up to 90 runes, e.g. line 17) exceed the stated 80-rune cap, in both of the rule's
+  own cited sources. (2) the dogfood-regeneration claim doesn't match reality: no Makefile target
+  or test regenerates .agent/presets/frontier/preset.yaml from the template (confirmed — no
+  "regenerate"/frontier-scaffold hits anywhere in tools/ or a Makefile target), and the two have
+  structurally diverged — every role's `agent:` differs (thinker: template's generic
+  `claude:claude-opus-4-8/xhigh` @ `mode: native` vs frontier's actual
+  `codex:gpt-5.6-terra/xhigh` @ `mode: consult`; critic: `codex:gpt-5.6-sol/xhigh` vs
+  `grok:grok-4.5/high`; fast: `gemini:gemini-3.5-flash` vs `codex:gpt-5.6-luna/xhigh`), with
+  frontier-specific rationale prose in its comments that no template regeneration could produce.
+  frontier/preset.yaml reads as a deliberately hand-curated production config, not a
+  regenerate-never-hand-edit copy — flagged possibly-wrong for the lead to reconcile (either
+  build the missing regeneration tooling, or correct the card to describe frontier as
+  hand-curated-but-format-matching instead). Neither violation fixed here.

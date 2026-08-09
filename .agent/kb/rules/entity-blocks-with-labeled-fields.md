@@ -4,7 +4,7 @@ description: "multi-fact listings get one labeled block per entity, not one dens
 scope: cli-output
 sources: [internal/cli/models.go, internal/ui/ui.go]
 check: "none"
-updated: 2026-07-10
+updated: 2026-08-09
 ---
 
 # Multi-fact listings: one labeled block per entity, not one dense row
@@ -39,3 +39,8 @@ See also [[command-output-tiers]], [[list-output-echoes-source]].
 ## Changelog
 - 2026-07-10 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: read internal/cli/models.go in full (`cmdModels`, its
+  only source). 0 violations — exact match: bold-cyan header via
+  `p.Bold(p.Cyan(titleName(agent)))`, dim `Label:` + plain-value lines (Models/Last
+  refreshed/Default-when-set), a blank line between blocks, and a `--refresh` outcome folded into
+  the block's own "Last refreshed" line rather than a separate status log.

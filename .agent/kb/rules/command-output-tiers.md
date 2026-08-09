@@ -4,7 +4,7 @@ description: "dim progress log, one `coop:` anchor, a bright next-steps block; s
 scope: cli-output
 sources: [internal/ui/ui.go, internal/cli/commands.go]
 check: "none"
-updated: 2026-07-04
+updated: 2026-08-09
 ---
 
 # Command output: dim log, one `coop:` anchor, a bright "next steps" block
@@ -61,3 +61,16 @@ See also [[help-output-style]] and [[no-color-in-width-fields]].
 - 2026-06-19 — created
 - 2026-07-04 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: swept `cmdInit` (the rule's own canonical example,
+  commands.go) and catalogued every `ui.Info` call site across internal/cli (~80 hits) by
+  containing command. 2 violations found: (1) internal/cli/sign.go:213 — `coop sign` (a
+  standalone, non-interleaved result command) uses `ui.Info("nothing to sign...")`; its own
+  sibling success path at sign.go:216 correctly uses `ui.OK(...)` — the null-result line should be
+  `ui.Note` per the "standalone result" tier, not the `coop:`-anchored voice. (2)
+  commands.go's `cmdInit` (~1506-1534) fires 2 (3 for a monorepo) sequential `coop:`-prefixed
+  `ui.Info` lines back to back ("monorepo: ...", "scaffolded into ...", "per-agent dirs:
+  .../no agents signed in...") instead of the rule's prescribed single closing anchor. Both
+  queued for the lead. Not flagged: the once-daily update-notice (updatecheck.go:150, deferred
+  after every command in cli.go:75) also fires `ui.Info` after standalone commands — judged
+  defensible, since it's a cross-cutting aside orthogonal to the invoked command's own tiering,
+  not a violation of this rule.

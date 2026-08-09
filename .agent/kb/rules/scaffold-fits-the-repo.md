@@ -4,7 +4,7 @@ description: "`coop init` generates for the detected stack and stays neutral whe
 scope: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go]
 check: "none"
-updated: 2026-07-16
+updated: 2026-08-09
 ---
 
 # coop init scaffolds what the repo uses — it never imposes a stack
@@ -54,3 +54,16 @@ blocks. Guessing wrong is worse than doing nothing.
 - 2026-06-19 — created
 - 2026-07-16 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: read internal/scaffold/gates.go and scaffold.go in
+  full. Confirmed clean: `DetectStacks`/`knownStacks` marker files (go.mod/mix.exs/Cargo.toml) +
+  `.tool-versions` + `*.tf` glob all current; `writeContentIfAbsent` (scaffold.go:249) guards
+  every gate write (pre-commit :355, prepare-commit-msg chain :378, Claude gate :388); the
+  interactive prompt lives in `cmdInit` gated on `ui.IsTerminal(os.Stdin)` (commands.go:1459-1465)
+  and `internal/scaffold/*.go` never touches stdin. 1 violation found: `gateSnippets`' own comment
+  (gates.go:85-86) says "Go and Terraform are list-based so a tool error fails open" — true for
+  those two (`gofmt -l`/`terraform fmt -list` build a `bad` list; a tool error yields an empty
+  list, not a block) — but elixir (:107-115) and rust (:116-123) gate directly on
+  `mix format --check-formatted`/`cargo fmt --check`'s exit code, so an unrelated tool failure
+  (broken toolchain, missing deps) blocks the commit exactly like a real formatting diff would,
+  contradicting the rule's "only a real diff blocks the commit." Queued for the lead, not fixed
+  here.

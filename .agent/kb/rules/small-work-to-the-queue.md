@@ -39,3 +39,8 @@ Related: [[fix-the-bug-not-the-feature]].
   `make rules-check` passed on a laptop and would have failed the moment CI ran it; point at the
   committed template it's scaffolded from instead. Swept all 32 cards: it was the only untracked
   source. Body unchanged.
+- 2026-08-09 — validate-on-write backfill: read both current sources. AGENTS.md's "Boy-scout rule"
+  bullet and its `.agent/ working state` section both state the queue-vs-backlog split by size,
+  matching the card; internal/scaffold/templates/agent/tasks/README.md carries the same principle
+  in its own (independently worded, expected to drift as a generic starting point) form. 0
+  violations.

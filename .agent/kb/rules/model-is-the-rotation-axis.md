@@ -56,3 +56,10 @@ bare model is marked-default account first, then the rest alphabetically (`accou
 - 2026-08-07 — session policies gained ladders; recorded why that surface keeps `target:` instead
   of `agent:`. Swept every rotation surface (preset lead, roles, loop.yaml steps, fleet forks,
   session policies): 0 violations — no surface carries a separate credential list or model key.
+- 2026-08-09 — validate-on-write backfill: re-verified against internal/preset/preset.go (lead
+  ladder via `leadLadder`; a role's `Agent` takes only `first.Provider` — one target, no ladder),
+  internal/cli/fork_fleet.go (`fleetEntry.agent` is a single string; parseFleetYAML explicitly
+  rejects an account ladder — "a fork takes one account"), internal/loopcfg/loopcfg.go (every
+  step's `Agent` field is a `[]string` ladder), and internal/sessionsvc/service.go (`Target
+  yaml.Node` — the one `target:`-spelled exception). Also re-ran the `--model`/`--credential`/
+  `pools.json` greps from the 2026-08-07 sweep. 0 new violations; every claim still holds.

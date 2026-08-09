@@ -4,7 +4,7 @@ description: "supervised long commands keep output static and only a bounded exc
 scope: agent-workflow
 sources: [AGENTS.md]
 check: "none"
-updated: 2026-07-26
+updated: 2026-08-09
 ---
 
 # Agent-supervised long commands use static, bounded output
@@ -30,3 +30,8 @@ See also [[command-output-tiers]] and [[fix-the-bug-not-the-feature]].
 ## Changelog
 - 2026-07-26 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: read AGENTS.md (its only source) in full. 0 violations
+  — AGENTS.md:18 states this rule nearly verbatim and explicitly names this card by path ("follow
+  `.agent/kb/rules/static-bounded-supervision.md`: disable repainting where supported, redirect
+  the full log, preserve the exit status, and inspect only bounded tails or targeted filters"), a
+  direct, current, word-for-word match.

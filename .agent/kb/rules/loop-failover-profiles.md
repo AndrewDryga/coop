@@ -72,3 +72,11 @@ memory, as below.
   (`ladder.DetectLimit`), so the loop, the ACP control, and the session API now classify a limit
   through one shared function. The rule itself is unchanged: `decideIteration`'s non-zero-exit gate
   and the rotate-only-on-a-limit policy stayed in `internal/cli`.
+- 2026-08-09 — validate-on-write backfill: grepped for a hand-built `filepath.Join(cfg.ConfigDir,
+  agent, ...)` that bypasses `cfg.AgentDir`. Every hit is legitimate: config.go:567
+  (`AgentProfileDir`, the primitive `AgentDir` itself calls) and :573 (`Profiles`, a read-only
+  name-listing helper) aren't bypasses, and box/run.go:1517 (`acpSharedDir`, the ACP
+  session-transcript store) is deliberately credential-independent BY DESIGN so a transcript
+  survives a mid-session account switch — the rule's own "share only what must be common"
+  pattern, not a violation. Also reconfirmed `ladder.DetectLimit`'s three callers and
+  `decideIteration`'s non-zero-exit gate (ratelimit.go:276). 0 violations.

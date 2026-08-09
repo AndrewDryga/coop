@@ -4,7 +4,7 @@ description: "agent-facing instructions name in-box capabilities, never host-sid
 scope: agent-workflow
 sources: [AGENTS.md, internal/scaffold/scaffold.go]
 check: "none"
-updated: 2026-07-11
+updated: 2026-08-09
 ---
 
 # Agent-facing instructions use in-box capabilities only
@@ -33,3 +33,14 @@ human/operator layer; the boxed agent should use only its runtime's native tools
 - 2026-06-26 — created
 - 2026-07-11 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: grepped every agent-facing scaffolded template
+  (internal/scaffold/templates/AGENTS.md, templates/agent/tasks/README.md, templates/agent/
+  loop.yaml, every templates/skills/*/SKILL.md) for `coop fork`/`coop fleet` — 0 hits, all clean.
+  1 nuanced finding, not a clear violation: this repo's own dogfooded AGENTS.md:57 ("Hands-off
+  destroyers") names `coop fleet down`, `coop fork rm`/`coop fork merge --force`, `coop tasks rm`,
+  and `coop update` inside an agent-facing file — but to PROHIBIT them ("human-only, never run
+  unattended... must never invoke"), the opposite of recommending them as a capability, so it
+  doesn't trip the rule's actual "Why" (wasted turns from planning unavailable work). The card's
+  "How to apply" reads as an absolute no-mention rule and doesn't clearly carve out this
+  prohibit-by-naming exception, which looks like a deliberate, sensible safety guardrail already
+  in practice. Flagged for the lead to consider clarifying, not fixed here.

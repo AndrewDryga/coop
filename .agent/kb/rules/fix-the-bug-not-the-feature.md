@@ -4,7 +4,7 @@ description: "root-cause the misbehavior; deleting the feature is never the fix 
 scope: agent-workflow
 sources: [AGENTS.md]
 check: "none"
-updated: 2026-07-10
+updated: 2026-08-09
 ---
 
 # Never fix a bug by deleting the feature
@@ -35,3 +35,11 @@ code, too).
 ## Changelog
 - 2026-07-10 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-08-09 — validate-on-write backfill: read AGENTS.md (its only source) in full. 1 finding:
+  AGENTS.md never actually states "never fix a bug by deleting the feature" or an equivalent
+  principle — the closest text is "root-cause hypotheses" (delegation bullet, line 19) and a
+  one-line pointer to the `/investigate` skill (line 114); the concrete claim this card makes
+  lives only in the card's own body, not in the always-read boot file it cites as its source. Not
+  a code violation (nothing in AGENTS.md contradicts the rule), but a sources mismatch — flagged
+  for the lead: either add an explicit line to AGENTS.md, or point `sources:` at wherever this is
+  actually enforced (today: nowhere but review).
