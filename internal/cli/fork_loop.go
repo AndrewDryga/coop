@@ -28,6 +28,8 @@ const (
 	forkStopReapTimeout = 3 * time.Second
 	forkReapPending     = "reap-pending\n"
 	forkOwnerStateV1    = "owner-v1\n"
+	forkStartClaim      = "start-claim\n"    // a start reservation: its owner has launched no worker yet
+	forkStartLaunched   = "start-launched\n" // that reservation forked a worker whose identity isn't recorded
 )
 
 var signalPID = syscall.Kill
@@ -234,17 +236,48 @@ func forkProcessAlive(pid int, token string) bool {
 	return forkProcessIdentity(pid, token) == processIdentityMatch
 }
 
+// ownerProvablyDead is the ONE test the fork lifecycle shares for "the process this state names is
+// not running any more": the kernel says its pid is gone, or that pid now belongs to a different
+// process than the one recorded. A live match and — deliberately — an identity coop could not read
+// are both unproven, so every caller (stop, the start reclaim, the merge's rebase recovery) fails
+// closed on them. Identity is pid + start token or nothing: no file age, no elapsed time.
+func ownerProvablyDead(identity processIdentity) bool {
+	return identity == processGone || identity == processIdentityMismatch
+}
+
+// forkStateOwner reports the process a fork's lifecycle state still names as possibly running, so a
+// recovery that would disturb the fork can keep its hands off one somebody else owns. held is false
+// ONLY when there is no state at all, or its recorded owner is provably dead; everything coop cannot
+// read or disprove — an unreadable or malformed file, an ownerless cleanup tombstone, an
+// unverifiable identity, a worker launched but never recorded — holds the fork. pid is the recorded
+// owner when the state names one (0 when it names none).
+func forkStateOwner(repo, name string) (pid int, held bool) {
+	state, err := readForkWorkerState(repo, name)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false
+	}
+	if err != nil {
+		return 0, true
+	}
+	if state.pid <= 1 {
+		return 0, true // a cleanup tombstone names no identity, so there is none to disprove
+	}
+	if state.launched {
+		return state.pid, true // its worker exists but was never recorded: nothing here can rule it out
+	}
+	return state.pid, !ownerProvablyDead(forkProcessIdentity(state.pid, state.token))
+}
+
 // forkRunningPid returns the live pid of a detached loop for name, or 0. It deliberately preserves
 // dead/reused state: a crashed worker may have orphaned its box, and only a successful forkStop may
 // discard the exact-label reap handle.
 func forkRunningPid(repo, name string) int {
-	data, err := os.ReadFile(forkPid(repo, name))
-	if err != nil {
-		return 0
-	}
-	state, err := parseForkWorkerState(string(data))
+	state, err := readForkWorkerState(repo, name)
 	if err != nil || state.pid <= 0 {
 		return 0
+	}
+	if state.claim {
+		return 0 // a reservation names the coop process starting the fork, never a running loop
 	}
 	if !forkProcessAlive(state.pid, state.token) {
 		return 0
@@ -278,11 +311,15 @@ func parsePidfile(s string) (int, string) {
 
 // forkWorkerState is the one parse/validate/marshal boundary for durable loop lifecycle state.
 // pending with pid=0 is the bare dead-worker cleanup tombstone; every retained identity has pid>1.
+// A claim is the start reservation, and its identity is the coop process that MADE it, not a worker:
+// nothing may ever signal it, and only its owner's death makes it reclaimable.
 type forkWorkerState struct {
-	pid     int
-	token   string
-	pending bool
-	legacy  bool
+	pid      int
+	token    string
+	pending  bool
+	claim    bool // a start reservation held by the coop process at pid
+	launched bool // that reservation already forked a worker whose identity it never recorded
+	legacy   bool
 }
 
 func parseForkWorkerState(raw string) (forkWorkerState, error) {
@@ -293,7 +330,14 @@ func parseForkWorkerState(raw string) (forkWorkerState, error) {
 	} else {
 		state.legacy = true
 	}
-	if strings.HasPrefix(body, forkReapPending) {
+	switch {
+	case strings.HasPrefix(body, forkStartClaim):
+		state.claim = true
+		body = strings.TrimPrefix(body, forkStartClaim)
+	case strings.HasPrefix(body, forkStartLaunched):
+		state.claim, state.launched = true, true
+		body = strings.TrimPrefix(body, forkStartLaunched)
+	case strings.HasPrefix(body, forkReapPending):
 		state.pending = true
 		body = strings.TrimPrefix(body, forkReapPending)
 		if strings.TrimSpace(body) == "" {
@@ -312,16 +356,32 @@ func (state forkWorkerState) marshal() ([]byte, error) {
 	if !state.legacy {
 		prefix = forkOwnerStateV1
 	}
+	if state.claim && state.pending {
+		return nil, errors.New("invalid fork state: a start reservation is never cleanup-pending")
+	}
 	if state.pending && state.pid == 0 {
 		return []byte(prefix + forkReapPending), nil
 	}
 	if state.pid <= 1 {
 		return nil, fmt.Errorf("invalid detached worker pid %d", state.pid)
 	}
-	if state.pending {
+	switch {
+	case state.launched:
+		prefix += forkStartLaunched
+	case state.claim:
+		prefix += forkStartClaim
+	case state.pending:
 		prefix += forkReapPending
 	}
 	return []byte(fmt.Sprintf("%s%d\n%s\n", prefix, state.pid, state.token)), nil
+}
+
+func readForkWorkerState(repo, name string) (forkWorkerState, error) {
+	data, err := os.ReadFile(forkPid(repo, name))
+	if err != nil {
+		return forkWorkerState{}, err
+	}
+	return parseForkWorkerState(string(data))
 }
 
 // writeForkState atomically replaces a pid/cleanup record, so an interrupted stop sees either the
@@ -392,7 +452,7 @@ func writeForkPidUnlocked(repo, name string, pid int) error {
 // detach attempts (a hand-run `fork -d` racing `fleet up`, or two of either) can't both pass a
 // check-then-write and leave two loops racing one worktree/branch. O_EXCL fails if the file exists;
 // a live loop is refused, while dead/reused/pending state requires forkStop to reap labels before a
-// new start. On success the file holds an owner-scoped cleanup tombstone until the worker replaces it.
+// new start. On success the file holds this process's own reservation until the worker replaces it.
 func claimForkPid(repo, name string) error {
 	unlock, err := lockForkState(repo, name)
 	if err != nil {
@@ -406,9 +466,9 @@ func claimForkPidUnlocked(repo, name string) error {
 	path := forkPid(repo, name)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err == nil {
-		// A reservation owns no signalable worker yet. If the parent crashes here, stop can safely
-		// reap the scoped runtime label and clear this tombstone without guessing at a pid.
-		data, marshalErr := (forkWorkerState{pending: true}).marshal()
+		// A reservation owns no signalable worker yet. If this process crashes here, stop can safely
+		// reap the scoped runtime label and clear the reservation without guessing at a pid.
+		data, marshalErr := forkClaimState(false).marshal()
 		if marshalErr != nil {
 			_ = f.Close()
 			_ = os.Remove(path)
@@ -431,18 +491,46 @@ func claimForkPidUnlocked(repo, name string) error {
 	if pid := forkRunningPid(repo, name); pid != 0 {
 		return fmt.Errorf("fork %s already has a loop running (pid %d) — stop it first: coop fork stop %s", name, pid, name)
 	}
+	// A reservation names the coop process that made it, so a start crashed between the claim and its
+	// worker is recoverable: the owner is provably gone AND it never forked a worker, which together
+	// prove nothing is running and no box was ever started. Reclaim that; refuse everything else,
+	// because a live owner is mid-start and an unverifiable one could be either.
+	if state, err := readForkWorkerState(repo, name); err == nil && state.claim && !state.legacy {
+		switch identity := forkProcessIdentity(state.pid, state.token); {
+		case identity == processIdentityMatch:
+			return fmt.Errorf("fork %s is already being started by coop pid %d — wait for it, or stop it first: coop fork stop %s", name, state.pid, name)
+		case !ownerProvablyDead(identity):
+			return fmt.Errorf("fork %s holds a start reservation from pid %d whose identity coop cannot verify — finish it with: coop fork stop %s", name, state.pid, name)
+		case state.launched:
+			return fmt.Errorf("fork %s: a start by coop pid %d was interrupted after launching its worker, which may still be looping unrecorded — finish it with: coop fork stop %s", name, state.pid, name)
+		}
+		if err := writeForkWorkerState(repo, name, forkClaimState(false)); err != nil {
+			return fmt.Errorf("fork %s: reclaim the start reservation abandoned by coop pid %d: %w — check permissions on %s, then retry the original coop fork command", name, state.pid, err, forkStateDir(repo))
+		}
+		ui.Warn("fork %s: reclaimed a start reservation from coop pid %d, which is no longer running and never launched a worker", name, state.pid)
+		return nil
+	}
 	return fmt.Errorf("fork %s is stopped or stopping but still needs box cleanup — finish it with: coop fork stop %s", name, name)
 }
 
-// clearForkClaimUnlocked releases only the owner-scoped, pid-less reservation written by this
-// detach attempt. It is called while the lifecycle lock is held, so it cannot erase worker state.
+// forkClaimState is the reservation a detaching coop writes over the fork's pidfile: its OWN
+// identity, so a later start can tell a claim a live coop is still working through from one whose
+// owner died holding it. launched marks the instant a worker has been forked but not yet recorded —
+// the one window where a dead owner does NOT prove that nothing is running.
+func forkClaimState(launched bool) forkWorkerState {
+	pid := os.Getpid()
+	return forkWorkerState{claim: true, launched: launched, pid: pid, token: procStartToken(pid)}
+}
+
+// clearForkClaimUnlocked releases only the reservation written by this detach attempt: it verifies
+// the state still names THIS process before removing it, so a failed startup can never erase a
+// worker — or another coop's claim — that replaced it. Called under the lifecycle lock.
 func clearForkClaimUnlocked(repo, name string) error {
-	data, err := os.ReadFile(forkPid(repo, name))
+	state, err := readForkWorkerState(repo, name)
 	if err != nil {
 		return err
 	}
-	state, err := parseForkWorkerState(string(data))
-	if err != nil || state.legacy || !state.pending || state.pid != 0 {
+	if !state.claim || state.legacy || state.pid != os.Getpid() {
 		return errors.New("fork reservation changed before startup failed")
 	}
 	return os.Remove(forkPid(repo, name))
@@ -465,7 +553,7 @@ func clearForkPidIfMineUnlocked(repo, name string) {
 		return
 	}
 	state, err := parseForkWorkerState(string(data))
-	if err == nil && !state.pending && state.pid == os.Getpid() {
+	if err == nil && !state.pending && !state.claim && state.pid == os.Getpid() {
 		_ = os.Remove(forkPid(repo, name))
 	}
 }
@@ -686,6 +774,13 @@ func (a *app) detachForkLoop(repo, name, agent, tasks, credential, model, effort
 	cmd.Dir = repo // ResolveRepo finds the parent repo, then the worker resumes the fork
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = logf, logf, nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Say a worker is about to exist BEFORE forking it. If this coop dies in the gap between Start
+	// and recordStartedFork, the reservation alone cannot tell "nothing was started" from "a loop is
+	// out there unrecorded" — and a later start reclaiming the second case would put two loops on one
+	// worktree, exactly what the claim exists to prevent. Marked, that start refuses and asks for stop.
+	if err := writeForkWorkerState(repo, name, forkClaimState(true)); err != nil {
+		return failStart(fmt.Errorf("record fork %s worker launch: %w", name, err))
+	}
 	if err := cmd.Start(); err != nil {
 		return failStart(err)
 	}
@@ -827,6 +922,11 @@ func (a *app) forkStop(args []string) (int, error) {
 		return 1, fmt.Errorf("fork %s state is malformed — inspect it with: sed -n '1,3p' %q; restore a complete pid record or reap-pending marker, then retry: coop fork stop %s", name, forkPid(repo, name), name)
 	}
 	pid, token := state.pid, state.token
+	if state.claim {
+		// A reservation names the coop process that was starting this fork, never a worker: clear it
+		// (and reap whatever its interrupted start left behind) instead of signalling an innocent pid.
+		pid, token = 0, ""
+	}
 	identity := forkProcessIdentity(pid, token)
 	if pid > 0 && token != "" && !stableProcToken(token) && identity != processGone {
 		return 1, fmt.Errorf("fork %s has legacy state for live pid %d, so coop will not signal an unverified process — %s", name, pid, forkWorkerRecovery(name, pid))
@@ -834,7 +934,7 @@ func (a *app) forkStop(args []string) (int, error) {
 	if identity == processIdentityUnknown {
 		return 1, fmt.Errorf("fork %s worker identity for pid %d could not be verified — %s", name, pid, forkWorkerRecovery(name, pid))
 	}
-	if identity == processGone || identity == processIdentityMismatch {
+	if ownerProvablyDead(identity) {
 		pid = 0 // stale worker state or a retryable reap marker: the exact-label reap still must run
 	}
 	// Preserve a live worker's identity if runtime detection fails; stale/retry state becomes a
@@ -861,10 +961,10 @@ func (a *app) forkStop(args []string) (int, error) {
 		if pid <= 1 {
 			return fmt.Errorf("refuse invalid detached worker pid %d", pid)
 		}
-		switch forkProcessIdentity(pid, token) {
-		case processGone, processIdentityMismatch:
+		switch identity := forkProcessIdentity(pid, token); {
+		case ownerProvablyDead(identity):
 			return nil
-		case processIdentityUnknown:
+		case identity == processIdentityUnknown:
 			return errors.New("worker identity became unreadable")
 		}
 		if signalPID(-pid, sig) != nil {
@@ -920,10 +1020,10 @@ func (a *app) forkStop(args []string) (int, error) {
 func waitForExit(pid int, token string, timeout time.Duration) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		switch forkProcessIdentity(pid, token) {
-		case processGone, processIdentityMismatch:
+		switch identity := forkProcessIdentity(pid, token); {
+		case ownerProvablyDead(identity):
 			return true, nil
-		case processIdentityUnknown:
+		case identity == processIdentityUnknown:
 			return false, errors.New("worker identity became unreadable")
 		}
 		if time.Now().After(deadline) {

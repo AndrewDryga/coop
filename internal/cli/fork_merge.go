@@ -311,6 +311,12 @@ func trustedSignArgs() []string {
 // your host key (-f forces the rewrite so even a fast-forward land gets signed), the signing config
 // coming from the parent via trustedSignArgs, never the fork.
 func (a *app) rebaseForkOntoParent(repo, ws, name string) error {
+	// A rebase that FAILS is aborted below, but a coop killed mid-rebase (a host crash, a SIGKILL)
+	// leaves git's state dir behind, and every later merge then dies on the leftover state instead of
+	// recovering it. Clear it first — under the same ownership rule as every other destructive path.
+	if err := recoverInterruptedRebase(repo, ws, name); err != nil {
+		return err
+	}
 	head := gitOut(repo, "rev-parse", "HEAD")
 	if head == "" {
 		// A parent with no commits yet → `git rebase ""` fails with a cryptic "invalid upstream";
@@ -342,6 +348,51 @@ func (a *app) rebaseForkOntoParent(repo, ws, name string) error {
 		_ = gitRun(ws, withNeut("rebase", "--abort")...)
 		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (cd %q && git rebase %s %s), then re-run", name, gitBranch(repo), ws, head, name)
 	}
+	return nil
+}
+
+// leftoverRebaseState returns the state directory of an unfinished rebase in ws, or "". Git keeps it
+// in the worktree's own git dir — rebase-merge for the default backend, rebase-apply for the am one —
+// and --git-path resolves either, in a plain clone as in a linked worktree.
+func leftoverRebaseState(ws string) string {
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		path := gitOut(ws, "rev-parse", "--git-path", dir)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(ws, path)
+		}
+		if pathExists(path) {
+			return path
+		}
+	}
+	return ""
+}
+
+// recoverInterruptedRebase clears rebase state a CRASHED land left in the fork's clone, so the next
+// merge recovers instead of failing on it forever. Recovery is destructive — `rebase --abort` resets
+// that worktree — so it runs only when the fork's lifecycle state names nobody who could still be
+// running (same pid + start-token test the stop path signals by; see forkStateOwner). Both outcomes
+// are loud: what was found and what was done, or who owns it and how to stop them.
+func recoverInterruptedRebase(repo, ws, name string) error {
+	dir := leftoverRebaseState(ws)
+	if dir == "" {
+		return nil
+	}
+	if pid, held := forkStateOwner(repo, name); held {
+		owner := "an owner coop cannot verify"
+		if pid > 0 {
+			owner = fmt.Sprintf("pid %d", pid)
+		}
+		return fmt.Errorf("%s: the fork worktree has an unfinished rebase (%s) from an interrupted land, but its lifecycle state is still held by %s — stop it first: coop fork stop %s", name, filepath.Base(dir), owner, name)
+	}
+	ui.Warn("fork %s has an unfinished rebase (%s) from an interrupted land — aborting it to recover the worktree", name, filepath.Base(dir))
+	// gitOutErr, not gitRun: git's own stderr is the only explanation a human gets for a failed abort.
+	if _, err := gitOutErr(ws, append(forkDriverNeutralizer(ws), "rebase", "--abort")...); err != nil {
+		return fmt.Errorf("%s: could not abort the unfinished rebase in %s: %w — finish it by hand (cd %q && git status; git rebase --abort), then re-run the merge", name, filepath.Base(dir), err, ws)
+	}
+	ui.Detail("aborted the unfinished rebase; %s is back on its branch", name)
 	return nil
 }
 

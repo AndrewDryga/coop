@@ -61,10 +61,11 @@ updated: <YYYY-MM-DD>                # last edit
 - [provider-session-history](provider-session-history.md) — native session layouts, lookup bounds, and the large-history regression contract
 - [provider-consult-e2e](provider-consult-e2e.md) — verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 - [model-tiers-and-role-vs-lead](model-tiers-and-role-vs-lead.md) — ModelFor is one model per provider (active>target>fallback>env); a preset role's model rides its wrapper target, never global state, or it shadows a rotated lead
-- [loop-provider-watchdog](loop-provider-watchdog.md) — built-in attempts always stream; the watchdog trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
+- [loop-provider-watchdog](loop-provider-watchdog.md) — built-in attempts always stream; the watchdog is ARMED by default (10m/30m/2h) and trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
 - [loop-rotation-advance-triggers](loop-rotation-advance-triggers.md) — rate limits cool and come back, auth failures are sticky for the run; rungs are built from credential presence, not validity
 - [loop-resume-never-rewrites-history](loop-resume-never-rewrites-history.md) — a leaked box descendant un-completes committed work; resuming it must never amend a non-HEAD commit
 - [loop-range-rejects-outside-commits](loop-range-rejects-outside-commits.md) — an iteration's commit range is a time window: a host commit made mid-iteration rejects that iteration's completion
+- [fork-lifecycle-state-file](fork-lifecycle-state-file.md) — one pidfile holds four fork lifecycle states; only pid+start-token (never file age) may declare its owner gone, and only a pre-fork reservation is reclaimable
 - [acp-preset-owns-toolbar](acp-preset-owns-toolbar.md) — active ACP presets own the whole lead target and refuse stale Provider/Account editor replays
 - [acp-auth-is-provider-account-scoped](acp-auth-is-provider-account-scoped.md) — initialize capability truth and successful authentication belong to one provider account
 - [acp-scripted-e2e](acp-scripted-e2e.md) — test the real ACP supervisor/control/proxy path with a scripted runtime and isolated state

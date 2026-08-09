@@ -118,6 +118,35 @@ func TestDetachStartFailureReleasesReservation(t *testing.T) {
 	}
 }
 
+// The start path itself must clear an abandoned reservation, not just claimForkPid: a fork whose
+// last start died before its worker existed has to be startable again with no `coop fork stop`.
+func TestDetachReclaimsAbandonedReservation(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	name := "perf"
+	if err := os.MkdirAll(forkWorkspace(repo, name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeForkWorkerState(repo, name, forkWorkerState{claim: true, pid: 2147483646, token: "linux-proc-v1:1:2"}); err != nil {
+		t.Fatal(err)
+	}
+	// A log path that can't be created stops this start right after the claim, so the failure names
+	// the log — proving the reservation was reclaimed rather than refused — and is then released.
+	if err := os.Mkdir(forkLog(repo, name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.detachForkLoop(repo, name, "codex", "", "", "", "", "", nil)
+	if code != -1 || err == nil || strings.Contains(err.Error(), "coop fork stop") {
+		t.Fatalf("detach over an abandoned reservation = (%d, %v), want the reclaim to proceed to startup", code, err)
+	}
+	if pathExists(forkPid(repo, name)) {
+		t.Fatal("the reclaimed reservation outlived its failed start")
+	}
+}
+
 func TestForkStopKeepsLegacyContainerCleanupVisible(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
@@ -635,6 +664,9 @@ func TestForkWorkerStateWireFormat(t *testing.T) {
 		{name: "owner scoped running", raw: forkOwnerStateV1 + "42\nlinux-proc-v1:boot:123\n", want: forkWorkerState{pid: 42, token: "linux-proc-v1:boot:123"}},
 		{name: "legacy running", raw: "42\nlinux-proc-v1:boot:123\n", want: forkWorkerState{pid: 42, token: "linux-proc-v1:boot:123", legacy: true}},
 		{name: "legacy token", raw: "42\nWed Jun 18 10:00:00 2026\n", want: forkWorkerState{pid: 42, token: "Wed Jun 18 10:00:00 2026", legacy: true}},
+		{name: "start reservation", raw: forkOwnerStateV1 + forkStartClaim + "42\nlinux-proc-v1:boot:123\n", want: forkWorkerState{claim: true, pid: 42, token: "linux-proc-v1:boot:123"}},
+		{name: "start reservation with a launched worker", raw: forkOwnerStateV1 + forkStartLaunched + "42\nlinux-proc-v1:boot:123\n", want: forkWorkerState{claim: true, launched: true, pid: 42, token: "linux-proc-v1:boot:123"}},
+		{name: "reservation without an owner", raw: forkOwnerStateV1 + forkStartClaim, wantErr: true},
 		{name: "owner scoped pending", raw: forkOwnerStateV1 + forkReapPending, want: forkWorkerState{pending: true}},
 		{name: "legacy bare pending", raw: forkReapPending, want: forkWorkerState{pending: true, legacy: true}},
 		{name: "identified pending", raw: forkOwnerStateV1 + forkReapPending + "42\ndarwin-kinfo-v1:1:2\n", want: forkWorkerState{pid: 42, token: "darwin-kinfo-v1:1:2", pending: true}},
@@ -829,6 +861,106 @@ func TestClaimForkPid(t *testing.T) {
 	if err := claimForkPid(repo, "stale"); err == nil || !strings.Contains(err.Error(), "coop fork stop stale") {
 		t.Errorf("dead worker claim should require cleanup, got %v", err)
 	}
+}
+
+// A reservation records the coop process that made it, so a start killed BEFORE its worker existed
+// leaves a tombstone that can be proved abandoned and reclaimed — instead of wedging every later
+// start behind a manual `coop fork stop`. Anything coop cannot disprove still refuses: a live owner,
+// an owner whose identity is unreadable, and an owner that died after launching a worker.
+func TestClaimForkPidReclaimsAbandonedReservation(t *testing.T) {
+	// An out-of-range pid the kernel answers ESRCH for: provably gone, with a stable token shape.
+	abandoned := forkWorkerState{claim: true, pid: 2147483646, token: "linux-proc-v1:1:2"}
+	stateRepo := func(t *testing.T) string {
+		t.Helper()
+		repo := filepath.Join(t.TempDir(), "proj")
+		if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return repo
+	}
+
+	t.Run("dead owner is reclaimed", func(t *testing.T) {
+		repo := stateRepo(t)
+		if err := writeForkWorkerState(repo, "perf", abandoned); err != nil {
+			t.Fatal(err)
+		}
+		if err := claimForkPid(repo, "perf"); err != nil {
+			t.Fatalf("claim over an abandoned reservation = %v, want it reclaimed", err)
+		}
+		state, err := readForkWorkerState(repo, "perf")
+		if err != nil || !state.claim || state.launched || state.pid != os.Getpid() {
+			t.Fatalf("reclaimed state = %+v (%v), want this process's own reservation", state, err)
+		}
+	})
+
+	t.Run("dead owner that launched a worker is refused", func(t *testing.T) {
+		repo := stateRepo(t)
+		launched := abandoned
+		launched.launched = true
+		if err := writeForkWorkerState(repo, "perf", launched); err != nil {
+			t.Fatal(err)
+		}
+		err := claimForkPid(repo, "perf")
+		if err == nil || !strings.Contains(err.Error(), "may still be looping") || !strings.Contains(err.Error(), "coop fork stop perf") {
+			t.Fatalf("claim over an interrupted launch = %v, want a refusal: that worker may be running unrecorded", err)
+		}
+		if state, _ := readForkWorkerState(repo, "perf"); state.pid != abandoned.pid {
+			t.Fatalf("refused claim rewrote the reservation: %+v", state)
+		}
+	})
+
+	t.Run("live owner is refused", func(t *testing.T) {
+		repo := stateRepo(t)
+		pid, token := liveProcess(t)
+		if err := writeForkWorkerState(repo, "perf", forkWorkerState{claim: true, pid: pid, token: token}); err != nil {
+			t.Fatal(err)
+		}
+		err := claimForkPid(repo, "perf")
+		if err == nil || !strings.Contains(err.Error(), strconv.Itoa(pid)) || !strings.Contains(err.Error(), "coop fork stop perf") {
+			t.Fatalf("claim over a live reservation = %v, want a refusal naming pid %d", err, pid)
+		}
+		if state, _ := readForkWorkerState(repo, "perf"); state.pid != pid {
+			t.Fatalf("refused claim stole a live owner's reservation: %+v", state)
+		}
+	})
+
+	t.Run("unverifiable owner is refused", func(t *testing.T) {
+		repo := stateRepo(t)
+		pid, token := liveProcess(t)
+		if err := writeForkWorkerState(repo, "perf", forkWorkerState{claim: true, pid: pid, token: token}); err != nil {
+			t.Fatal(err)
+		}
+		// The pid answers signals but its identity can no longer be read: liveness is undecidable,
+		// which is not permission to reclaim.
+		oldRead := readProcStartToken
+		readProcStartToken = func(int) string { return "" }
+		t.Cleanup(func() { readProcStartToken = oldRead })
+		err := claimForkPid(repo, "perf")
+		if err == nil || !strings.Contains(err.Error(), "cannot verify") || !strings.Contains(err.Error(), "coop fork stop perf") {
+			t.Fatalf("claim over an unverifiable reservation = %v, want a fail-closed refusal", err)
+		}
+		if state, _ := readForkWorkerState(repo, "perf"); state.pid != pid {
+			t.Fatalf("refused claim rewrote an unverifiable reservation: %+v", state)
+		}
+	})
+}
+
+// liveProcess starts a throwaway process and returns the identity a fork state would record for it.
+func liveProcess(t *testing.T) (int, string) {
+	t.Helper()
+	proc := exec.Command("sleep", "30")
+	if err := proc.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = proc.Process.Kill()
+		_ = proc.Wait()
+	})
+	token := procStartToken(proc.Process.Pid)
+	if !stableProcToken(token) {
+		t.Skip("stable process identity unavailable")
+	}
+	return proc.Process.Pid, token
 }
 
 // The lifecycle lock closes the same-fork stop/start window: a new detach cannot reserve the

@@ -4,6 +4,26 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A coop killed mid-start or mid-land no longer wedges its fork until a human runs `coop fork
+  stop`.** Two crash windows left state only a person could clear. Starting a detached loop reserves
+  the fork's pidfile with O_EXCL BEFORE the worker exists — that reservation is what stops two loops
+  racing one worktree — but a coop killed in that gap (Ctrl-C during `coop fleet up`, a host crash)
+  left it behind, and every later start of that fork refused with "still needs box cleanup" over a
+  tombstone that owned nothing at all. Separately, `coop fork merge` rebases the fork inside its own
+  clone and aborts a rebase that FAILS — not one interrupted by coop's own death — so a crash
+  mid-land left `.git/rebase-merge/` in the fork, and every later merge died on the leftover state
+  instead of recovering it.
+
+  Both recover now, on exactly the evidence coop already demands before it will signal a worker: a
+  recorded pid plus its kernel start token. A reservation carries the identity of the coop process
+  that made it, so a later start can PROVE that owner is gone — the pid is dead, or now belongs to a
+  different process — reclaim the fork, and say so. A merge that finds leftover rebase state runs
+  `git rebase --abort` and continues, naming what it found and what it did. Nothing is inferred from
+  file age or mtime: an owner that is alive, one whose identity can't be read, and — for a
+  reservation — one that died in the instant AFTER forking its worker (which may still be looping
+  unrecorded) all still refuse, naming the owner and `coop fork stop <name>`. An abort that fails
+  carries git's own reason plus the commands to finish it by hand.
+
 - **BEHAVIOR CHANGE: the provider-attempt watchdog is armed by default, so one wedged provider can
   no longer hold an unattended run forever.** Every deadline has shipped at 0 — disabled — since
   "stop killing models that are still working", and that correction was right: a clock cannot tell a

@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -222,6 +223,146 @@ func TestMergeOneConflictRollsBack(t *testing.T) {
 	if data, _ := os.ReadFile(filepath.Join(repo, "README.md")); string(data) != "parent-version\n" {
 		t.Errorf("README.md = %q, want %q", data, "parent-version\n")
 	}
+}
+
+// A coop killed mid-land (host crash, SIGKILL) leaves git's rebase state in the fork's clone, and
+// every later merge used to die on it. The next merge recovers it — but only when nobody could still
+// own that worktree, because `rebase --abort` resets it.
+func TestMergeRecoversInterruptedRebase(t *testing.T) {
+	t.Run("abandoned worktree recovers and the fork lands", func(t *testing.T) {
+		repo, ws := forkWithInterruptedRebase(t)
+		a := &app{cfg: &config.Config{}}
+		landed, err := a.mergeOne(repo, "", "perf", false)
+		if !landed || err != nil {
+			t.Fatalf("mergeOne over leftover rebase state = (%v, %v), want the merge to recover and land", landed, err)
+		}
+		if data, _ := os.ReadFile(filepath.Join(repo, "feature.txt")); string(data) != "work\n" {
+			t.Errorf("landed feature.txt = %q, want the fork's own work", data)
+		}
+		if left := leftoverRebaseState(ws); left != "" {
+			t.Errorf("rebase state %q survived the merge", left)
+		}
+		if branch := gitBranch(ws); branch != "perf" {
+			t.Errorf("fork left on branch %q, want perf restored by the abort", branch)
+		}
+	})
+
+	t.Run("provably dead owner recovers", func(t *testing.T) {
+		repo, ws := forkWithInterruptedRebase(t)
+		// A worker state whose pid the kernel answers ESRCH for: nothing can be running.
+		if err := os.MkdirAll(forkStateDir(repo), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeForkWorkerState(repo, "perf", forkWorkerState{pid: 2147483646, token: "linux-proc-v1:1:2"}); err != nil {
+			t.Fatal(err)
+		}
+		a := &app{cfg: &config.Config{}}
+		if err := a.rebaseForkOntoParent(repo, ws, "perf"); err != nil {
+			t.Fatalf("rebase over a dead owner's leftover state = %v, want recovery", err)
+		}
+		if left := leftoverRebaseState(ws); left != "" {
+			t.Errorf("rebase state %q survived the recovery", left)
+		}
+		// The recovery let the real rebase run: the fork's commit now sits on the parent's HEAD.
+		if base, head := gitOut(ws, "rev-parse", "perf~1"), gitOut(repo, "rev-parse", "HEAD"); base != head {
+			t.Errorf("perf~1 = %q, want the parent HEAD %q", base, head)
+		}
+	})
+
+	t.Run("live owner refuses", func(t *testing.T) {
+		repo, ws := forkWithInterruptedRebase(t)
+		// mergeOne refuses any fork with lifecycle state well before this, so drive the rebase
+		// directly: the recovery must guard its own destructive abort, not lean on that check.
+		if err := writeForkPid(repo, "perf", os.Getpid()); err != nil {
+			t.Fatal(err)
+		}
+		a := &app{cfg: &config.Config{}}
+		err := a.rebaseForkOntoParent(repo, ws, "perf")
+		if err == nil || !strings.Contains(err.Error(), strconv.Itoa(os.Getpid())) || !strings.Contains(err.Error(), "coop fork stop perf") {
+			t.Fatalf("rebase over a live owner's leftover state = %v, want a refusal naming pid %d", err, os.Getpid())
+		}
+		if leftoverRebaseState(ws) == "" {
+			t.Error("a refused recovery still aborted the live owner's rebase")
+		}
+	})
+
+	t.Run("unverifiable owner refuses", func(t *testing.T) {
+		repo, ws := forkWithInterruptedRebase(t)
+		if err := writeForkPid(repo, "perf", os.Getpid()); err != nil {
+			t.Fatal(err)
+		}
+		oldRead := readProcStartToken
+		readProcStartToken = func(int) string { return "" } // liveness undecidable, so nothing is provable
+		t.Cleanup(func() { readProcStartToken = oldRead })
+		a := &app{cfg: &config.Config{}}
+		err := a.rebaseForkOntoParent(repo, ws, "perf")
+		if err == nil || !strings.Contains(err.Error(), "coop fork stop perf") {
+			t.Fatalf("rebase over an unverifiable owner = %v, want a fail-closed refusal", err)
+		}
+		if leftoverRebaseState(ws) == "" {
+			t.Error("a refused recovery still aborted an unverifiable owner's rebase")
+		}
+	})
+
+	t.Run("an abort that fails surfaces the manual recovery", func(t *testing.T) {
+		if _, err := exec.LookPath("git"); err != nil {
+			t.Skip("git not available")
+		}
+		repo := initRepo(t)
+		ws, err := setupFork(repo, "perf")
+		if err != nil {
+			t.Fatalf("setupFork: %v", err)
+		}
+		// State git itself cannot abort: an am-backend directory with no rebase behind it.
+		if err := os.Mkdir(filepath.Join(ws, ".git", "rebase-apply"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		a := &app{cfg: &config.Config{}}
+		if err := a.rebaseForkOntoParent(repo, ws, "perf"); err == nil ||
+			!strings.Contains(err.Error(), "could not abort") || !strings.Contains(err.Error(), ws) {
+			t.Fatalf("failed abort = %v, want a loud error carrying git's reason and the manual recovery", err)
+		}
+	})
+}
+
+// forkWithInterruptedRebase builds a parent and a fork whose clone was left mid-rebase, exactly as a
+// coop killed during a land leaves it: git's state directory present, the fork's commit unlanded.
+func forkWithInterruptedRebase(t *testing.T) (string, string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	ws, err := setupFork(repo, "perf")
+	if err != nil {
+		t.Fatalf("setupFork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "fork work")
+	// The parent moves on, so a land can only succeed if the fork was really rebased onto it.
+	if err := os.WriteFile(filepath.Join(repo, "parent.txt"), []byte("moved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "parent moves on")
+	// Strand a real rebase: replaying the fork's commit onto a sibling that touched the same file
+	// conflicts, so git stops and leaves its state directory behind — no synthetic dir.
+	git(t, ws, "checkout", "-q", "-b", "sibling", "perf~1")
+	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("sibling\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "sibling work")
+	if out, err := exec.Command("git", "-C", ws, "rebase", "sibling", "perf").CombinedOutput(); err == nil {
+		t.Fatalf("fixture: the rebase was meant to conflict:\n%s", out)
+	}
+	if leftoverRebaseState(ws) == "" {
+		t.Fatal("fixture: git left no rebase state behind")
+	}
+	return repo, ws
 }
 
 // TestMergeOneAbortsWhenParentMovesDuringGate is the core of the CAS fix: if a commit lands on the
