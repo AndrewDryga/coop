@@ -2,19 +2,22 @@
 name: box-time-is-utc
 description: boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local
 subsystem: box
-sources: [internal/box/run.go, internal/cli/ratelimit.go]
-updated: 2026-07-12
+sources: [internal/box/run.go, internal/ladder/limit.go]
+updated: 2026-08-09
 ---
 The box image's clock is UTC. coop forwards the HOST's timezone into every box as `-e TZ=...`
 (`internal/box/run.go`, via `hostTimezone()`), so agents render clock times on your wall clock.
 
 Why it matters: a rate-limit message often carries its reset time as PROSE ("try again at 4:28 PM"),
-and coop parses that back with `time.ParseInLocation(layout, s, time.Local)`
-(`internal/cli/ratelimit.go`) to schedule how long to wait. If a box rendered that time in UTC
+and coop parses that back with `time.ParseInLocation(layout, s, time.Local)` (`ladder.ParseResetTime`,
+`internal/ladder/limit.go`) to schedule how long to wait. If a box rendered that time in UTC
 instead of the host zone, the parsed wait would land HOURS off. So the box TZ and the host
 `time.Local` must agree — if you touch either the TZ forwarding or the reset-time parser, keep them
 on the same clock. See [[credentials-expired-is-a-false-alarm]] for the OAuth `expiresAt` clock that
 rides the same wall time.
 
 ## Changelog
+- 2026-08-09 — re-verified against the sources; the parser moved verbatim from
+  `internal/cli/ratelimit.go` to `internal/ladder/limit.go` (`ParseResetTime`) with the ladder
+  extraction. Same `time.Local` anchor, same trap.
 - 2026-07-12 — created: box clock is UTC, host TZ forwarded as `-e TZ`; must stay on the same clock as ratelimit.go's `time.Local` reset-time parser.

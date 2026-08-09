@@ -25,6 +25,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -100,7 +101,7 @@ type sessionTurnRunner struct {
 // rebuilds it instead of rotating against rungs that no longer exist.
 type sessionLadder struct {
 	rendered string
-	rotation *rotation
+	rotation *ladder.Rotation
 }
 
 func newSessionTurnRunner(sourceCfg *config.Config, stateRoot string, store *session.Store, rt runtime.Runtime, executable string, command ...sessionACPCommand) *sessionTurnRunner {
@@ -119,24 +120,19 @@ func newSessionTurnRunner(sourceCfg *config.Config, stateRoot string, store *ses
 // sessionRotation returns the session's ladder rotation, pointed at the rung the session is
 // actually on. Session.Target is the durable truth across a restart; the cooldown marks are not,
 // so they are carried in memory for as long as the controller lives.
-func (r *sessionTurnRunner) sessionRotation(sessionID string, ladder []agents.Target, active string) *rotation {
-	if len(ladder) < 2 {
+func (r *sessionTurnRunner) sessionRotation(sessionID string, rungs []agents.Target, active string) *ladder.Rotation {
+	if len(rungs) < 2 {
 		return nil
 	}
-	rendered := sessionTargetList(ladder)
+	rendered := sessionTargetList(rungs)
 	r.rotateMu.Lock()
 	defer r.rotateMu.Unlock()
 	entry := r.rotations[sessionID]
 	if entry == nil || entry.rendered != rendered {
-		entry = &sessionLadder{rendered: rendered, rotation: newRotation(ladder)}
+		entry = &sessionLadder{rendered: rendered, rotation: ladder.NewRotation(rungs)}
 		r.rotations[sessionID] = entry
 	}
-	for i := range entry.rotation.targets {
-		if entry.rotation.targets[i].String() == active {
-			entry.rotation.idx = i
-			break
-		}
-	}
+	entry.rotation.Focus(active)
 	return entry.rotation
 }
 
@@ -155,13 +151,13 @@ func (r *sessionTurnRunner) forgetRotation(sessionID string) {
 // rotation marks a rung cooling, so the caller's loop turns over at most once per rung before
 // this reports that none is free.
 func (r *sessionTurnRunner) rotateOnLimit(
-	ctx context.Context, bound *session.Session, leased *session.Turn, rot *rotation, cause error,
+	ctx context.Context, bound *session.Session, leased *session.Turn, rot *ladder.Rotation, cause error,
 ) (bool, error) {
 	var failure *sessionACPFailure
 	if rot == nil || !errors.As(cause, &failure) || failure.code != sessionACPRateLimited {
 		return false, nil
 	}
-	sleep, until := rot.onLimit(failure.resetAt, 0, time.Now())
+	sleep, until := rot.OnLimit(failure.resetAt, 0, time.Now())
 	if sleep > 0 {
 		// Every rung is cooling. Unlike an editor session, a queued turn does not wait it out:
 		// the client owns retry and its own backoff, and holding the turn only burns its
@@ -169,7 +165,7 @@ func (r *sessionTurnRunner) rotateOnLimit(
 		return false, acpFailure(sessionACPRateLimited,
 			"every target in the policy ladder is rate limited until "+until.UTC().Format(time.RFC3339))
 	}
-	next := rot.active()
+	next := rot.Active()
 	current, err := agents.ParseTarget(bound.Target)
 	if err != nil {
 		return false, acpFailure(sessionACPInvalidTarget, "session target is unparseable")
@@ -294,8 +290,8 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		return result, runErr
 	}
 
-	ladder, _ := ctx.Value(sessionTargetLadderContextKey{}).([]agents.Target)
-	rot := r.sessionRotation(bound.ID, ladder, bound.Target)
+	rungs, _ := ctx.Value(sessionTargetLadderContextKey{}).([]agents.Target)
+	rot := r.sessionRotation(bound.ID, rungs, bound.Target)
 
 	for {
 		target, err := agents.ParseTarget(bound.Target)
@@ -1646,13 +1642,13 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 						// A rate limit is the one rejection a target ladder can act on, so it is
 						// classified here instead of being flattened into the generic rejection.
 						// Output exhaustion is excluded: the same rung can continue that turn.
-						if hint := acpErrorLimitHint(
-							envelope.Error, time.Now(), acpRateSignals(limitProvider),
-						); hint.limited && !hint.outputLimited {
+						if hint := ladder.ACPErrorLimitHint(
+							envelope.Error, time.Now(), ladder.ACPRateSignals(limitProvider),
+						); hint.Limited && !hint.OutputLimited {
 							return nil, &sessionACPFailure{
 								code:    sessionACPRateLimited,
 								detail:  "provider rate limited the turn",
-								resetAt: hint.resetAt,
+								resetAt: hint.ResetAt,
 							}
 						}
 						return nil, acpFailure(

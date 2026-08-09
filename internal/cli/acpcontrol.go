@@ -14,6 +14,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
 
@@ -121,7 +122,7 @@ type acpControl struct {
 	// unlike a credential session (which rotates accounts on one model). rot is the active preset's
 	// rotation (nil for a plain session); rotFor records the preset it was built from, so a preset
 	// change rebuilds it.
-	rot    *rotation
+	rot    *ladder.Rotation
 	rotFor acpSelection
 
 	// Transparent rate-limit resend: correlate a rate-limit error (which carries only a request id)
@@ -353,7 +354,7 @@ func (c *acpControl) currentModel() string {
 // preset's lead ladder (expandLadder — the SAME targets `coop loop` cycles). Returns nil for a plain
 // session or when the ladder can't be expanded. The preset owns the full target, including any
 // cross-provider and account fan-out. Its cursor and per-target limits persist across respawns.
-func (c *acpControl) presetRotation() *rotation {
+func (c *acpControl) presetRotation() *ladder.Rotation {
 	sel := c.selection()
 	if sel.Preset == "" {
 		return nil
@@ -368,16 +369,16 @@ func (c *acpControl) presetRotation() *rotation {
 	if err != nil {
 		return nil
 	}
-	ladder := slices.Clone(p.LeadLadder)
+	rungs := slices.Clone(p.LeadLadder)
 	// The whole ladder, cross-provider rungs included: the respawn env carries a full target,
 	// so a rung on another provider swaps the lead (the proxy re-creates the session there and
 	// the conversation is carried best-effort as a text preamble). Account fan-out is part of
 	// expandLadder, so the preset remains authoritative for every rung.
-	targets, err := expandLadder(c.cfg, p.LeadAgent, ladder)
+	targets, err := expandLadder(c.cfg, p.LeadAgent, rungs)
 	if err != nil || len(targets) == 0 {
 		return nil
 	}
-	c.rot = newRotation(targets)
+	c.rot = ladder.NewRotation(targets)
 	return c.rot
 }
 
@@ -391,7 +392,7 @@ func (c *acpControl) spawnTarget() (t agents.Target, presetName string, ok bool)
 	var rung *agents.Target
 	if sel.Preset != "" {
 		if rot := c.presetRotation(); rot != nil { // locks internally — resolve before taking c.mu
-			r := rot.active()
+			r := rot.Active()
 			rung = &r
 		}
 	}
@@ -497,15 +498,15 @@ func (c *acpControl) waitForPresetRung(ctx context.Context) {
 	var until time.Time
 	label := "preset rung"
 	if c.rot != nil {
-		t := c.rot.active()
-		until, label = c.rot.limited[t.String()], "preset rung "+t.String()
+		t := c.rot.Active()
+		until, label = c.rot.LimitedUntil(t.String()), "preset rung "+t.String()
 	}
 	c.mu.Unlock()
 	sleepUntilReset(ctx, until, label)
 }
 
-// sleepUntilReset blocks until `until` passes (capped at limitMaxWait) or ctx is done; a no-op when
-// until is zero or already past. Shared by the credential and preset wait-for-reset paths, so a respawn
+// sleepUntilReset blocks until `until` passes (capped at ladder.LimitMaxWait) or ctx is done; a
+// no-op when until is zero or already past. Shared by the credential and preset wait-for-reset paths, so a respawn
 // pointed at a still-cooling target only starts once it's usable.
 func sleepUntilReset(ctx context.Context, until time.Time, label string) {
 	now := time.Now()
@@ -514,8 +515,8 @@ func sleepUntilReset(ctx context.Context, until time.Time, label string) {
 		return
 	}
 	deadline := until
-	if d > limitMaxWait { // bound a far-future reset so a bad value can't strand the respawn
-		deadline, d = now.Add(limitMaxWait), limitMaxWait
+	if d > ladder.LimitMaxWait { // bound a far-future reset so a bad value can't strand the respawn
+		deadline, d = now.Add(ladder.LimitMaxWait), ladder.LimitMaxWait
 	}
 	acpproxy.Trace("waiting %s for %s to reset before spawning", d.Round(time.Second), label)
 	// Re-check against the wall clock on short ticks (shared with the loop's sleepForLimit): a
@@ -999,8 +1000,8 @@ func (c *acpControl) rewriteUpdateConfigOptions(update json.RawMessage, sid stri
 	return nb
 }
 
-// maybeRotate handles a rate-limit error transparently, reusing the loop's detectLimit. A credential
-// session rotates ACCOUNTS on the fixed model; a preset session rotates the lead's MODEL LADDER
+// maybeRotate handles a rate-limit error transparently, reusing the shared ladder.DetectLimit. A
+// credential session rotates ACCOUNTS on the fixed model; a preset session rotates the lead's MODEL LADDER
 // (fable→opus→…, via rotatePreset) — the step a persistent ACP session otherwise never takes, so a
 // per-model limit isn't a dead end. Either way it correlates the error back to the prompt that
 // triggered it and, if a free target exists, swaps to it and flags the prompt for an automatic re-send
@@ -1031,11 +1032,11 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 		}
 	}
 	c.mu.Unlock()
-	hint := acpErrorLimitHint(h.Error, now, acpRateSignals(provider))
-	if !hint.limited || hint.outputLimited {
+	hint := ladder.ACPErrorLimitHint(h.Error, now, ladder.ACPRateSignals(provider))
+	if !hint.Limited || hint.OutputLimited {
 		return nil, false
 	}
-	until := hint.resetAt
+	until := hint.ResetAt
 	if until.IsZero() {
 		until = now.Add(defaultLimitCooldown)
 	}
@@ -1114,13 +1115,13 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 // config_option_update, while the Preset selector stays unchanged.
 func (c *acpControl) rotatePreset(session string, canResend bool, until, now time.Time) (out []byte, rotated bool) {
 	rot := c.presetRotation()
-	if rot == nil || !rot.rotates() || !canResend {
+	if rot == nil || !rot.Rotates() || !canResend {
 		return nil, false
 	}
 	c.mu.Lock()
-	prev := rot.active()
-	sleep, resetAt := rot.onLimit(until, 0, now)
-	next := rot.active()
+	prev := rot.Active()
+	sleep, resetAt := rot.OnLimit(until, 0, now)
+	next := rot.Active()
 	c.mu.Unlock()
 	if sleep <= 0 {
 		c.clearWait(session) // a free rung breaks the consecutive-wait chain
@@ -1234,7 +1235,7 @@ func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 	if sel.Preset == "" && (sel.Account != "" || hasAccounts) {
 		gated = true
 	} else if sel.Preset != "" {
-		if rot := c.presetRotation(); rot != nil && rot.rotates() {
+		if rot := c.presetRotation(); rot != nil && rot.Rotates() {
 			gated = true
 		}
 	}
@@ -1253,7 +1254,7 @@ func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 		if !gated {
 			return false, nil
 		}
-		if hint := detectLimit(text, time.Now()); hint.limited && !hint.outputLimited {
+		if hint := ladder.DetectLimit(text, time.Now()); hint.Limited && !hint.OutputLimited {
 			c.mu.Lock()
 			active := c.turnActive[s]
 			if active {
@@ -1290,7 +1291,7 @@ func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
 }
 
 func authenticationRequired(text string) bool {
-	compact := compactJSONName(text)
+	compact := ladder.CompactJSONName(text)
 	return compact == "authrequired" ||
 		strings.Contains(compact, "authenticationrequired") ||
 		strings.Contains(compact, "notauthenticated") ||
@@ -1305,8 +1306,8 @@ func authenticationError(line []byte) bool {
 		return false
 	}
 	foundExact, foundMessage := false, false
-	walkJSONStrings(h.Error, "", func(key, value string) {
-		compactKey, compactValue := compactJSONName(key), compactJSONName(value)
+	ladder.WalkJSONStrings(h.Error, "", func(key, value string) {
+		compactKey, compactValue := ladder.CompactJSONName(key), ladder.CompactJSONName(value)
 		switch compactKey {
 		case "reason", "errorkind", "type", "code":
 			foundExact = foundExact || compactValue == "authrequired" || compactValue == "authenticationrequired" || compactValue == "notauthenticated"
@@ -1856,99 +1857,6 @@ func terminalResponseID(line []byte) string {
 	return string(m.ID)
 }
 
-// acpRateSignals returns the structured limit markers to match for a session led by
-// lead: the adapter's own (each owns its wire format — see Agent.ACPRateLimitSignals),
-// or, for a lead that isn't a registered agent (fusion fronts whichever agent leads the
-// council), the union of every adapter's so no provider's limit goes unrecognized.
-func acpRateSignals(lead string) []agents.ACPSignal {
-	if a, ok := agents.Get(lead); ok {
-		return a.ACPRateLimitSignals()
-	}
-	var all []agents.ACPSignal
-	for _, n := range agents.Names() {
-		if a, ok := agents.Get(n); ok {
-			all = append(all, a.ACPRateLimitSignals()...)
-		}
-	}
-	return all
-}
-
-// acpErrorLimitHint classifies a JSON-RPC error: prose detection (shared detectLimit)
-// plus the adapter-owned structured signals. It carries no provider constants itself —
-// a new agent brings its markers via ACPRateLimitSignals.
-func acpErrorLimitHint(raw json.RawMessage, now time.Time, signals []agents.ACPSignal) limitHint {
-	var msg struct {
-		Message string `json:"message"`
-	}
-	_ = json.Unmarshal(raw, &msg)
-	hint := detectLimit(msg.Message, now)
-
-	var v any
-	if json.Unmarshal(raw, &v) != nil {
-		return hint
-	}
-	structuredRate, structuredOutput := false, false
-	var proseReset time.Time
-	walkJSONStrings(v, "", func(key, value string) {
-		k := compactJSONName(key)
-		vc := compactJSONName(value)
-		for _, s := range signals {
-			if (s.Key == "" || compactJSONName(s.Key) == k) && compactJSONName(s.Value) == vc {
-				structuredRate = true
-			}
-		}
-		// The output-token axis is deliberately SHARED, not per-agent: stopReason is the
-		// ACP-protocol stop-reason field, finishReason the common upstream-API leak, and
-		// length/MAX_TOKENS spell "output budget exhausted" across providers.
-		if (k == "finishreason" || k == "stopreason") && (vc == "length" || vc == "maxtokens") {
-			structuredOutput = true
-		}
-		// The reset time often hides in a NESTED string: codex-acp's top-level message is a
-		// generic "Internal error" while the human notice — "You've hit your usage limit. …
-		// try again at 4:28 PM." — rides in data.message. Mine every string for a stated
-		// reset (earliest wins) so the wait targets it instead of the 5-minute default.
-		if h := detectLimit(value, now); h.limited && !h.outputLimited && !h.resetAt.IsZero() {
-			if proseReset.IsZero() || h.resetAt.Before(proseReset) {
-				proseReset = h.resetAt
-			}
-		}
-	})
-	if structuredRate {
-		hint.limited = true
-		hint.outputLimited = false
-	} else if structuredOutput {
-		hint.limited = true
-		hint.outputLimited = true
-	}
-	if hint.limited && !hint.outputLimited && hint.resetAt.IsZero() {
-		hint.resetAt = proseReset
-	}
-	return hint
-}
-
-func walkJSONStrings(v any, key string, visit func(string, string)) {
-	switch x := v.(type) {
-	case map[string]any:
-		for k, child := range x {
-			walkJSONStrings(child, k, visit)
-		}
-	case []any:
-		for _, child := range x {
-			walkJSONStrings(child, key, visit)
-		}
-	case string:
-		visit(key, x)
-	}
-}
-
-func compactJSONName(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	s = strings.ReplaceAll(s, "_", "")
-	s = strings.ReplaceAll(s, "-", "")
-	s = strings.ReplaceAll(s, " ", "")
-	return s
-}
-
 // accountLimitKey keeps equal profile names on different providers from sharing cooldown state.
 func accountLimitKey(provider, account string) string {
 	return loginTarget(provider, account)
@@ -2096,7 +2004,7 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 	if sel.Preset != "" {
 		if rot := c.presetRotation(); rot != nil {
 			c.mu.Lock()
-			presetTarget = rot.active()
+			presetTarget = rot.Active()
 			c.mu.Unlock()
 		}
 	}
@@ -2205,15 +2113,15 @@ func presetLeadDisplay(p *preset.Preset) string {
 func rolesRoster(p *preset.Preset) string {
 	lines := make([]string, 0, len(p.Roles))
 	for _, r := range p.Roles {
-		ladder := r.TargetLadder()
-		if len(ladder) == 0 {
+		rungs := r.TargetLadder()
+		if len(rungs) == 0 {
 			continue
 		}
 		line := "• " + r.Name
 		if label := roleModeLabel(r.Mode); label != "" {
 			line += " (" + label + ")"
 		}
-		line += " — " + ladder[0].String()
+		line += " — " + rungs[0].String()
 		if len(r.When) > 0 {
 			line += " — for " + strings.Join(r.When, ", ")
 		}
@@ -2404,7 +2312,7 @@ func (c *acpControl) snapshot() ctrlSnapshot {
 	defer c.mu.Unlock()
 	var rotationLimited map[string]time.Time
 	if c.rot != nil {
-		rotationLimited = cloneStringTimeMap(c.rot.limited)
+		rotationLimited = c.rot.Limits()
 	}
 	return ctrlSnapshot{
 		Selection: normalizeACPSelection(c.sel), AutoAccount: c.autoAccount, AuthFailed: cloneStringBoolMap(c.authFailed),
@@ -2461,16 +2369,8 @@ func (c *acpControl) restore(s ctrlSnapshot) {
 	if s.Selection.Preset != "" {
 		if rot := c.presetRotation(); rot != nil {
 			c.mu.Lock()
-			rot.limited = cloneStringTimeMap(s.RotationLimited)
-			if rot.limited == nil {
-				rot.limited = map[string]time.Time{}
-			}
-			for i, target := range rot.targets {
-				if target.String() == s.Target.String() {
-					rot.idx = i
-					break
-				}
-			}
+			rot.SetLimits(s.RotationLimited)
+			rot.Focus(s.Target.String())
 			c.mu.Unlock()
 		}
 	}
@@ -3004,12 +2904,12 @@ func modelRestartSuggested(raw json.RawMessage) bool {
 	if json.Unmarshal(raw, &value) != nil {
 		return false
 	}
-	walkJSONStrings(value, "", func(key, value string) {
-		switch compactJSONName(key) {
+	ladder.WalkJSONStrings(value, "", func(key, value string) {
+		switch ladder.CompactJSONName(key) {
 		case "code":
-			incompatible = incompatible || compactJSONName(value) == "modelswitchincompatibleagent"
+			incompatible = incompatible || ladder.CompactJSONName(value) == "modelswitchincompatibleagent"
 		case "suggestion":
-			restart = restart || compactJSONName(value) == "startnewsession"
+			restart = restart || ladder.CompactJSONName(value) == "startnewsession"
 		}
 	})
 	return incompatible && restart

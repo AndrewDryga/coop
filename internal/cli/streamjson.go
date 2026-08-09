@@ -12,6 +12,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -544,7 +545,7 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 		case "text":
 			if t := strings.TrimSpace(b.Text); t != "" {
 				d.terminalLimitNotice = ""
-				if !d.limitShown || !streamLimitNotice(t) {
+				if !d.limitShown || !ladder.LimitNotice(t) {
 					d.emit(ui.Magenta(llmIcon) + " " + t) // mark the agent's own voice
 				}
 				d.toTail(t) // the tail (limit detection) always gets the plain text
@@ -687,10 +688,6 @@ func (d *streamDecoder) rateLimit(rl *rateLimitInfo) {
 	d.toDiagnostic(message)
 }
 
-func streamLimitNotice(s string) bool {
-	return hitLimitRe.MatchString(s) || strings.Contains(strings.ToLower(s), "usage limit reached")
-}
-
 // result renders the iteration's closing summary, or its error.
 func (d *streamDecoder) result(ev *streamEvent) {
 	d.noteTerminal()
@@ -700,7 +697,7 @@ func (d *streamDecoder) result(ev *streamEvent) {
 		if msg == "" {
 			msg = "error"
 		}
-		if !d.limitShown || !streamLimitNotice(msg) {
+		if !d.limitShown || !ladder.LimitNotice(msg) {
 			d.emit(d.streamErrorLine(msg))
 		}
 		d.toTail(msg)

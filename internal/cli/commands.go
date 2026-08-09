@@ -27,6 +27,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/preset"
@@ -293,14 +294,14 @@ func (a *app) selectRunEffort(tool, effort string) {
 // credential) errors.
 func (a *app) applyOneOff(tool, model, credential, effort string) error {
 	a.selectRunEffort(tool, effort) // effort rides with the model but can be set even when model/account aren't
-	ladder, err := oneOffLadder(model, credential, effort)
+	rungs, err := oneOffLadder(model, credential, effort)
 	if err != nil {
 		return err
 	}
-	if ladder == nil {
+	if rungs == nil {
 		return nil
 	}
-	t := ladder[0]
+	t := rungs[0]
 	if err := a.selectRunProfile(tool, t.Account()); err != nil {
 		return err
 	}
@@ -1744,16 +1745,16 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	// The rotation ladder: the positional target (its model + account ladder) wins; else the
 	// loop.yaml work.agent ladder; else the preset lead's ladder; else the default (agent model
 	// across all signed-in accounts). expandLadder turns it into concrete one-account rungs.
-	var ladder []agents.Target
+	var rungs []agents.Target
 	switch {
 	case hasTarget:
-		ladder = []agents.Target{t}
+		rungs = []agents.Target{t}
 	case len(workLadder) > 0:
-		ladder = workLadder
+		rungs = workLadder
 	case p != nil && agent == p.LeadAgent:
-		ladder = p.LeadLadder
+		rungs = p.LeadLadder
 	}
-	rot, err := a.buildRotation(agent, ladder)
+	rot, err := a.buildRotation(agent, rungs)
 	if err != nil {
 		return -1, err
 	}
@@ -1765,7 +1766,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 // preset to apply (the FIRST preset rung — its roles wire the run), and the concrete target ladder
 // to rotate: each preset rung expands to its lead ladder (nested — exhausted before the next rung),
 // each target rung is itself. The first rung sets the lead agent. A bad preset name errors.
-func (a *app) resolveWorkAgent(rungs []string) (agent string, p *preset.Preset, ladder []agents.Target, err error) {
+func (a *app) resolveWorkAgent(rungs []string) (agent string, p *preset.Preset, targets []agents.Target, err error) {
 	rs, err := loopcfg.Rungs(rungs)
 	if err != nil {
 		return "", nil, nil, err
@@ -1782,15 +1783,15 @@ func (a *app) resolveWorkAgent(rungs []string) (agent string, p *preset.Preset, 
 			if p == nil {
 				p = pr // apply the first preset rung's roles for the run
 			}
-			ladder = append(ladder, pr.LeadLadder...)
+			targets = append(targets, pr.LeadLadder...)
 			continue
 		}
 		if agent == "" {
 			agent = r.Target.Provider
 		}
-		ladder = append(ladder, *r.Target)
+		targets = append(targets, *r.Target)
 	}
-	return agent, p, ladder, nil
+	return agent, p, targets, nil
 }
 
 // reviewLadder parses a review stage's raw .agent/loop.yaml agent: rungs into targets, PRESERVING
@@ -1804,28 +1805,28 @@ func reviewLadder(rungs []string) ([]agents.Target, error) {
 	if err != nil {
 		return nil, err
 	}
-	var ladder []agents.Target
+	var targets []agents.Target
 	for _, r := range rs {
 		if r.Target != nil {
-			ladder = append(ladder, *r.Target)
+			targets = append(targets, *r.Target)
 		}
 	}
-	return ladder, nil
+	return targets, nil
 }
 
 // reviewRotation builds a review stage's own rotation from its ladder, so the stage runs on the
 // configured provider/model/effort/account and rotates its OWN fallback rungs on a rate limit —
 // exactly like the work loop. An empty (or preset-only) ladder falls back to def: between → signoff
 // → the work rotation, so an unconfigured stage still reviews on the work target.
-func (a *app) reviewRotation(rungs []string, workAgent string, def *rotation) (*rotation, error) {
-	ladder, err := reviewLadder(rungs)
+func (a *app) reviewRotation(rungs []string, workAgent string, def *ladder.Rotation) (*ladder.Rotation, error) {
+	targets, err := reviewLadder(rungs)
 	if err != nil {
 		return nil, err
 	}
-	if len(ladder) == 0 {
+	if len(targets) == 0 {
 		return def, nil
 	}
-	return a.buildRotation(workAgent, ladder)
+	return a.buildRotation(workAgent, targets)
 }
 
 // runReview runs one review stage (signoff or between) on its OWN rotation — the configured
@@ -1893,8 +1894,8 @@ func loginCommand(t agents.Target) string {
 // rotationAuthenticationError reports a run that has no usable credential left. Once a rotation has
 // burned through several accounts, naming only the last one tried would send the human to restore
 // one login and hit the same wall on the next rung — so list every account that failed.
-func rotationAuthenticationError(r *rotation, target agents.Target) error {
-	failed := r.authFailedTargets()
+func rotationAuthenticationError(r *ladder.Rotation, target agents.Target) error {
+	failed := r.AuthFailedTargets()
 	if len(failed) < 2 {
 		return iterationAuthenticationError(target)
 	}
@@ -1915,16 +1916,16 @@ func reviewReadOnlyPaths(mode completionWindowMode, repoReadOnly bool, hosts []s
 	return hosts
 }
 
-func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observeHandoff reviewAttemptObserver) (reviewRunResult, error) {
+func (a *app) runReview(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observeHandoff reviewAttemptObserver) (reviewRunResult, error) {
 	var fails, waits, outputRetries, totalRetries, handoffs, timeouts int
 	var concurrent []string
-	last := reviewRunResult{target: rev.active()}
+	last := reviewRunResult{target: rev.Active()}
 	for {
 		if reviewStopRequested(ctx, wake) {
 			return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 		}
 		agent := a.applyTarget(rev)
-		target := rev.active()
+		target := rev.Active()
 		cmd, streaming := iterCmd(agent, prompt) // build after rotation so argv matches this provider
 		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 		code, out, usage, classification, windows, runErr := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowReview, subjects, reviewRepoReadOnly(writes), sink, peers, activity, "")
@@ -1973,7 +1974,7 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 				observeHandoff(last, start, headBefore)
 			}
 			totalRetries++
-			rev.advanceOnTimeout(time.Now())
+			rev.AdvanceOnTimeout(time.Now())
 			ui.Warn("review provider attempt timed out (%s)%s — discarding its partial output and retrying (%d/%d)", classification.outcome, classification.timeoutDetail(), timeouts, maxProviderTimeouts)
 			continue
 		}
@@ -1990,7 +1991,7 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 			return last, nil
 		case actWait:
 			totalRetries++
-			if rev.rotates() {
+			if rev.Rotates() {
 				a.rotateOnLimit(rev, resetAt, &waits, wake)
 			} else {
 				sleepForLimit(wait, resetAt, wake)
@@ -2010,10 +2011,10 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *rotation, fo
 		case actAuthStop:
 			// Same rotation as the work stage: without it a between-task audit would hard-stop the
 			// run on the very credential the work stage just routed around.
-			if rev.rotates() && rev.onAuthFailure() {
+			if rev.Rotates() && rev.OnAuthFailure() {
 				totalRetries++
 				ui.Warn("review target %q authentication failed — switching to %q (restore it with `%s`)",
-					target, rev.active(), loginCommand(target))
+					target, rev.Active(), loginCommand(target))
 				break
 			}
 			return last, rotationAuthenticationError(rev, target)
@@ -2076,12 +2077,12 @@ func validateReviewSubjects(hosts []string, snapshots []reviewSubjectSnapshot) e
 // verdict transaction. A successful process with malformed structured output gets one fresh full
 // review over cloned inputs; every other failure keeps runReview/applyReviewVerdict's existing
 // fail-closed behavior.
-func (a *app) runReviewVerdict(ctx context.Context, repo, img string, rev *rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
+func (a *app) runReviewVerdict(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, iterCmd iterationCmdBuilder, hosts, subjects []string, writes loopcfg.ReviewWrites, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
 	hosts = slices.Clone(hosts)
 	subjects = slices.Clone(subjects)
 	subjectSnapshots, err := snapshotReviewSubjects(hosts, subjects)
 	if err != nil {
-		return reviewRunResult{target: rev.active()}, fmt.Errorf("%w: snapshot review subjects: %v", errCompletionWindowSetup, err)
+		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: snapshot review subjects: %v", errCompletionWindowSetup, err)
 	}
 	var concurrent []string
 	var last reviewRunResult
@@ -2926,7 +2927,7 @@ func (l *loopTaskLimit) observe(snapshot map[string]string) (bool, error) {
 // peers' credentials and the coop-consult wrapper, so an unattended lead can ask registered peers
 // on hard calls — the orchestrator pattern running headless. Off by default: it widens the
 // credential scope, so mounting peers into every loop box stays a deliberate choice.
-func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []string, sink io.Writer, peers []agents.Target, debugOnFail, preflight bool, maxTasks int) (int, error) {
+func (a *app) loop(repo, img, agent, forkName string, rot *ladder.Rotation, queues []string, sink io.Writer, peers []agents.Target, debugOnFail, preflight bool, maxTasks int) (int, error) {
 	hosts := make([]string, len(queues)) // the queues' absolute host paths
 	for i, q := range queues {
 		hosts[i] = filepath.Join(repo, q)
@@ -3139,15 +3140,15 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 			if _, err := windows.finishReview(); err != nil {
 				return 1, fmt.Errorf("pre-flight changed task completion ownership: %w", err)
 			}
-			a.recordStage(repo, runid, "preflight", pfClassification.outcome, rot.active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil)
-			prev := rot.active()
+			a.recordStage(repo, runid, "preflight", pfClassification.outcome, rot.Active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil)
+			prev := rot.Active()
 			if wait, until, limited := rememberPreflightLimit(rot, pfClassification, time.Now()); limited {
 				if wait > 0 {
-					ui.Info("all %d targets are rate limited after pre-flight — waiting for the soonest reset", len(rot.targets))
+					ui.Info("all %d targets are rate limited after pre-flight — waiting for the soonest reset", rot.Len())
 					sleepForLimit(wait, until, wake)
-					rot.clearExpired(time.Now())
+					rot.ClearExpired(time.Now())
 				} else {
-					ui.Info("pre-flight target %q rate limited — starting work on %q", prev, rot.active())
+					ui.Info("pre-flight target %q rate limited — starting work on %q", prev, rot.Active())
 				}
 			}
 		}
@@ -3165,8 +3166,8 @@ func (a *app) loop(repo, img, agent, forkName string, rot *rotation, queues []st
 	} else {
 		ui.Info("starting unattended loop on %s — %d/%d done (%s)", label, c0.Done, c0.total(), stopHint)
 	}
-	if rot.rotates() {
-		ui.Info("rotating %d targets on rate limit: %s", len(rot.targets), strings.Join(rot.members(), ", "))
+	if rot.Rotates() {
+		ui.Info("rotating %d targets on rate limit: %s", rot.Len(), strings.Join(rot.Members(), ", "))
 	}
 	// An in_progress task whose commit is already in history means a previous run died between the
 	// commit and the folder move. Say so before working it: the resume recipe only stays safe while
@@ -3218,7 +3219,7 @@ reviewAgain:
 			// Point cfg at this iteration's target before leasing: the provider/target in metadata
 			// identifies the owning controller, while flock remains the actual authority.
 			agent = a.applyTarget(rot)
-			target := rot.active()
+			target := rot.Active()
 			// Select and host-claim one authoritative task before the box starts. The returned task
 			// drives both the banner and prompt, so the model cannot guess a different "next" task.
 			assignment, assignErr := assignLoopTaskOnly(hosts, taskLeaseOwner{
@@ -3320,7 +3321,7 @@ reviewAgain:
 					return 1, fmt.Errorf("release task lease %s after background handoff: %w", assigned.Item.ID, releaseErr)
 				}
 				handoffs++
-				a.recordStage(repo, runid, "work", classification.outcome, rot.active(), iterStart, code, retries, 0, iterHead, hosts, nil, nil, res)
+				a.recordStage(repo, runid, "work", classification.outcome, rot.Active(), iterStart, code, retries, 0, iterHead, hosts, nil, nil, res)
 				if handoffs >= 3 {
 					return code, fmt.Errorf("provider ended with live background work 3 times for task %s — stopped; inspect the task's restored state and run its gate, consult, and delegate work in the foreground", assigned.Item.ID)
 				}
@@ -3368,13 +3369,13 @@ reviewAgain:
 					return 1, fmt.Errorf("release task lease %s after provider timeout: %w", assigned.Item.ID, releaseErr)
 				}
 				timeouts++
-				a.recordStage(repo, runid, "work", classification.outcome, rot.active(), iterStart, code, retries, 0, iterHead, hosts, nil, nil, res)
+				a.recordStage(repo, runid, "work", classification.outcome, rot.Active(), iterStart, code, retries, 0, iterHead, hosts, nil, nil, res)
 				if timeouts >= maxProviderTimeouts {
 					return code, fmt.Errorf("provider attempt timed out %d times in a row on task %s (%s)%s — stopped; the task remains actionable, inspect the provider and re-run `coop loop`", timeouts, assigned.Item.ID, classification.outcome, classification.timeoutDetail())
 				}
-				prev := rot.active()
-				rot.advanceOnTimeout(time.Now())
-				if next := rot.active(); next.String() != prev.String() {
+				prev := rot.Active()
+				rot.AdvanceOnTimeout(time.Now())
+				if next := rot.Active(); next.String() != prev.String() {
 					ui.Warn("provider attempt for %s timed out (%s)%s — switching to %q for a fresh attempt (%d/%d)", assigned.Item.ID, classification.outcome, classification.timeoutDetail(), next, timeouts, maxProviderTimeouts)
 				} else {
 					ui.Warn("provider attempt for %s timed out (%s)%s — starting a fresh attempt (%d/%d)", assigned.Item.ID, classification.outcome, classification.timeoutDetail(), timeouts, maxProviderTimeouts)
@@ -3480,7 +3481,7 @@ reviewAgain:
 			// completion validation and finalization closed the crash boundary above. Record the actual
 			// attempt as interrupted rather than silently dropping it from telemetry.
 			if iterCtx.Err() != nil {
-				a.recordStage(repo, runid, "work", "interrupted", rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, gateHits, res)
+				a.recordStage(repo, runid, "work", "interrupted", rot.Active(), iterStart, code, retries, 0, iterHead, hosts, finished, gateHits, res)
 				break
 			}
 			action, wait, resetAt := decideIteration(classification, time.Now(), &fails, &waits, &retries)
@@ -3494,7 +3495,7 @@ reviewAgain:
 				}
 				headAfter = gitOut(repo, "rev-parse", "HEAD")
 			}
-			a.recordStage(repo, runid, "work", classification.outcome, rot.active(), iterStart, code, retries, 0, iterHead, hosts, finished, gateHits, res)
+			a.recordStage(repo, runid, "work", classification.outcome, rot.Active(), iterStart, code, retries, 0, iterHead, hosts, finished, gateHits, res)
 			// Review a just-completed task now when a successful iteration has ordinary between
 			// review configured OR its complete run-bound diff touched the gate. Protected completion
 			// is checked even when the worker exited nonzero, so a retry cannot hand a changed checker
@@ -3581,7 +3582,7 @@ reviewAgain:
 				// A rate/usage limit is expected on long runs. With more than one profile in
 				// the pool, switch to another subscription and retry immediately; otherwise wait
 				// for the reset. Either way the same iteration is retried, not burned.
-				if rot.rotates() {
+				if rot.Rotates() {
 					// Advancing the rotation is the point — the loop head re-derives the agent
 					// from rot (applyTarget), so the returned name would go unread here.
 					a.rotateOnLimit(rot, resetAt, &waits, wake)
@@ -3608,9 +3609,9 @@ reviewAgain:
 				// work: mark this rung unusable for the run and switch, exactly as a rate limit does.
 				// The mark is sticky, so this rotates at most once per rung and can't spin. Only when
 				// EVERY rung has failed authentication is there nothing left to try.
-				if rot.rotates() && rot.onAuthFailure() {
+				if rot.Rotates() && rot.OnAuthFailure() {
 					ui.Warn("target %q authentication failed — switching to %q (restore it with `%s`)",
-						target, rot.active(), loginCommand(target))
+						target, rot.Active(), loginCommand(target))
 					break
 				}
 				return code, rotationAuthenticationError(rot, target)
@@ -3803,15 +3804,15 @@ reviewAgain:
 // rememberPreflightLimit carries a failed custom pre-flight's provider limit into the work
 // rotation. A successful pre-flight may legitimately discuss limits, and output exhaustion is
 // resumable rather than a provider limit, so neither changes target selection.
-func rememberPreflightLimit(r *rotation, classification iterationClassification, now time.Time) (wait time.Duration, until time.Time, limited bool) {
+func rememberPreflightLimit(r *ladder.Rotation, classification iterationClassification, now time.Time) (wait time.Duration, until time.Time, limited bool) {
 	if classification.outcome == "success" {
 		return 0, time.Time{}, false
 	}
 	hint := classification.limit
-	if !hint.limited || hint.outputLimited {
+	if !hint.Limited || hint.OutputLimited {
 		return 0, time.Time{}, false
 	}
-	wait, until = r.onLimit(hint.resetAt, 1, now)
+	wait, until = r.OnLimit(hint.ResetAt, 1, now)
 	return wait, until, true
 }
 

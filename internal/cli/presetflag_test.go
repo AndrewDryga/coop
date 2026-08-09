@@ -8,6 +8,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
 
@@ -129,7 +130,7 @@ func TestRoleModelDoesNotShadowRotatedLead(t *testing.T) {
 
 	// The loop fails the claude rung over to the codex lead rung — applyTarget is THE choke point
 	// for a rotation. The executed codex command must now carry the LEAD's sol, not a role model.
-	a.applyTarget(newRotation([]agents.Target{
+	a.applyTarget(ladder.NewRotation([]agents.Target{
 		{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"personal"}},
 	}))
 	cmd := strings.Join(codex.Interactive(a.cfg), " ")

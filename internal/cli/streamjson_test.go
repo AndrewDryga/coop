@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/ladder"
 )
 
 func TestStreamDecoder(t *testing.T) {
@@ -180,7 +182,7 @@ func TestStreamDecoderModelLine(t *testing.T) {
 
 func TestStreamDecoderRateLimit(t *testing.T) {
 	now := time.Now()
-	// A blocking rate_limit_event is translated into the text detectLimit understands, with the
+	// A blocking rate_limit_event is translated into the text ladder.DetectLimit understands, with the
 	// reset epoch, so the loop waits until then instead of failing the run.
 	var out, tail, diagnostic bytes.Buffer
 	d := newStreamDecoder(&out, &tail, "", "", "")
@@ -189,8 +191,8 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 	if !strings.Contains(tail.String(), "usage limit reached|1781877000") {
 		t.Fatalf("blocking limit not written to tail: %q", tail.String())
 	}
-	if hint := detectLimit(tail.String(), now); !hint.limited || !hint.resetAt.Equal(time.Unix(1781877000, 0)) {
-		t.Errorf("detectLimit on translated notice = %+v, want limited at 1781877000", hint)
+	if hint := ladder.DetectLimit(tail.String(), now); !hint.Limited || !hint.ResetAt.Equal(time.Unix(1781877000, 0)) {
+		t.Errorf("ladder.DetectLimit on translated notice = %+v, want limited at 1781877000", hint)
 	}
 	if !strings.Contains(out.String(), "rate limited") {
 		t.Errorf("blocking limit should render to the user: %q", out.String())
@@ -249,7 +251,7 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 		var o, tl bytes.Buffer
 		nd := newStreamDecoder(&o, &tl, "", "", "")
 		_, _ = nd.Write([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"` + st + `","resetsAt":1781877000,"rateLimitType":"five_hour"}}` + "\n"))
-		if detectLimit(tl.String(), now).limited {
+		if ladder.DetectLimit(tl.String(), now).Limited {
 			t.Errorf("status %q should not trip the limit detector (tail=%q)", st, tl.String())
 		}
 	}
@@ -288,7 +290,7 @@ func TestClaudeTerminalCreditLimitPromotion(t *testing.T) {
 	}
 	d.promoteTerminalLimitDiagnostic(23, outcome)
 	classification := classifyIteration("claude", 23, nil, diagnostic.String(), outcome, time.Now())
-	if classification.outcome != "rate_limit" || !classification.limit.limited {
+	if classification.outcome != "rate_limit" || !classification.limit.Limited {
 		t.Fatalf("terminal credit-limit classification = %+v, diagnostic %q", classification, diagnostic.String())
 	}
 	if !strings.Contains(tail.String(), notice) || !strings.Contains(out.String(), notice) {
@@ -384,7 +386,7 @@ func TestClaudeStructuredAssistantRateLimit(t *testing.T) {
 	}
 	d.promoteTerminalLimitDiagnostic(1, outcome)
 	classification := classifyIteration("claude", 1, nil, diagnostic.String(), outcome, time.Now())
-	if classification.outcome != "rate_limit" || !classification.limit.limited {
+	if classification.outcome != "rate_limit" || !classification.limit.Limited {
 		t.Fatalf("structured rate-limit classification = %+v, diagnostic %q", classification, diagnostic.String())
 	}
 }

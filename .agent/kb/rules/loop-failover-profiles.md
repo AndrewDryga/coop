@@ -2,9 +2,9 @@
 name: loop-failover-profiles
 description: "in the loop, failover swaps the active credential and never a session; the session API is the one surface that rotates the session itself"
 scope: loop
-sources: [internal/cli/rotation.go, internal/cli/ratelimit.go, internal/config/config.go, internal/cli/session_acp.go]
+sources: [internal/ladder/limit.go, internal/cli/rotation.go, internal/cli/ratelimit.go, internal/config/config.go, internal/cli/session_acp.go]
 check: "none"
-updated: 2026-08-07
+updated: 2026-08-09
 ---
 
 # Loop failover swaps the active credential profile, never a session
@@ -52,7 +52,7 @@ memory, as below.
 - Rotation triggers only on a detected rate limit with a *non-zero exit* (`decideIteration`
   gates on `code != 0` by design, so a coding loop that prints "rate limit" in a diff
   doesn't falsely rotate). A new agent whose limit output isn't caught → add a marker to
-  `detectLimit` (ratelimit.go); don't loosen the exit gate.
+  `ladder.DetectLimit` (internal/ladder/limit.go); don't loosen the exit gate.
 - Keep rotation strictly rate-limit-driven. An expired/revoked credential looks like a
   failure, not a limit, so it surfaces instead of rotating — intended for v1.
 - A free rotation resets the wait counter; only consecutive *all-profiles-limited* waits
@@ -67,3 +67,7 @@ memory, as below.
 - 2026-08-07 — recorded the session API exception: it rotates the session's rung, not the active
   credential, and fails instead of waiting when the whole ladder is cooling. The old title claim
   ("never a session") was true only while the loop was the sole failover surface.
+- 2026-08-09 — re-verified; limit DETECTION moved to the `internal/ladder` leaf
+  (`ladder.DetectLimit`), so the loop, the ACP control, and the session API now classify a limit
+  through one shared function. The rule itself is unchanged: `decideIteration`'s non-zero-exit gate
+  and the rotate-only-on-a-limit policy stayed in `internal/cli`.

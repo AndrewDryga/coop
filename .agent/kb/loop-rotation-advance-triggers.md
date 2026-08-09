@@ -2,8 +2,8 @@
 name: loop-rotation-advance-triggers
 description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); rungs are built from credential presence, not validity
 subsystem: loop
-sources: [internal/cli/rotation.go, internal/cli/ratelimit.go, internal/cli/commands.go, internal/agent/claude.go, internal/box/auth.go]
-updated: 2026-07-31
+sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/cli/rotation.go, internal/cli/ratelimit.go, internal/cli/commands.go, internal/agent/claude.go, internal/box/auth.go]
+updated: 2026-08-09
 ---
 A loop's rotation is built from credential **presence**, never validity: `expandLadder` →
 `accountsFor` → `box.ProfileAuthed`, which `internal/box/auth.go:15` calls "a presence heuristic,
@@ -16,14 +16,14 @@ first). See [[credential-presence-is-adapter-declared]] and
 
 Two triggers advance the rotation, and their lifetimes differ — don't reach for one map to hold
 both:
-- **rate limit** → `limited map[string]time.Time`, time-keyed and self-healing. `clearExpired`
+- **rate limit** → `limited map[string]time.Time`, time-keyed and self-healing. `ClearExpired`
   drops the mark once the reset passes, so a cooled rung comes straight back around.
 - **auth failure** → `authFailed map[string]bool`, **sticky for the whole run**. Nothing revives a
   logged-out account but a human re-login, and the box mounts credentials at *launch*, so a
   re-login mid-run is not picked up until the loop restarts. Stickiness is also what bounds the
   policy: at most one rotation per rung, so it cannot spin.
 
-`selectTarget` and `advanceOnTimeout` both filter through `free`/`live`, so a rate-limit or timeout
+`selectTarget` and `AdvanceOnTimeout` both filter through `free`/`live`, so a rate-limit or timeout
 rotation can never wander back onto an auth-dead rung. When every rung has failed auth the loop
 stops and names all of them — restoring only the last one tried would hit the same wall on the next.
 A single-rung run still fails fast, exactly as before.
@@ -39,4 +39,9 @@ then-current signals) killed a 133-task overnight run while a signed-in second a
 the same rotation. When a provider's auth wording changes, the signal list is the thing to update.
 
 ## Changelog
+- 2026-08-09 — re-verified; the CURSOR (both maps, `free`/`live`, `selectTarget`,
+  `AdvanceOnTimeout`, `OnAuthFailure`) is now `internal/ladder` — a pure leaf the loop, the ACP
+  control, and the sessions API share. Rung MEMBERSHIP is unchanged and still cli's:
+  `expandLadder` → `accountsFor` → `box.ProfileAuthed`, as is `iterationAuthentication`, so both
+  traps below read exactly as before.
 - 2026-07-31 — created: auth failures now rotate instead of stopping the loop; documents the two trigger lifetimes, presence-vs-validity rung membership, and the AuthSignals wording trap.

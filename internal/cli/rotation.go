@@ -9,80 +9,22 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // A loop's rotation is the ordered set of targets it cycles through on rate limits —
 // expanded from the lead's `agent:` target ladder against the signed-in accounts. There is
 // no persisted pool anymore: the ladder lives in the preset (or the run's one positional
-// target), and "rotate all accounts" is just what a no-account target expands to. Pure
-// (clock injected), so the policy is unit-tested without sleeping.
+// target), and "rotate all accounts" is just what a no-account target expands to. The cursor
+// itself is internal/ladder (pure, clock injected); this file is the CLI half — what the
+// config says is signed in, and what a rotation does to cfg and the terminal.
 //
 // Both the ladder and its expansion are the ONE agents.Target type: a ladder entry may
 // carry an account list (or none = every signed-in account); expandLadder turns it into
 // concrete one-account rungs. A cross-provider ladder carries a different provider per
 // rung, so the loop swaps the agent as it rotates. The limit map is keyed by the rung's
 // wire form, so opus@work cooling leaves fable@work (or codex) free.
-
-// rotation is the loop's ordered rungs + which are rate-limited + a sticky cursor that
-// stays on one until it's limited, then advances. Rungs are concrete targets (exactly one
-// account each); limited is keyed by Target.String() — a Target holds a slice, so the
-// struct itself can't key a map.
-// authFailed marks rungs whose credential this run proved unusable. It is deliberately NOT a
-// time-keyed map like limited: a rate limit resets on its own, but only a human re-login revives a
-// logged-out account, and the box mounts credentials at launch — so the mark is sticky for the run.
-type rotation struct {
-	targets    []agents.Target
-	limited    map[string]time.Time
-	authFailed map[string]bool
-	idx        int
-}
-
-func newRotation(targets []agents.Target) *rotation {
-	return &rotation{targets: targets, limited: map[string]time.Time{}, authFailed: map[string]bool{}}
-}
-
-// live reports whether rung i's credential still works this run. A dead one is never a rotation
-// candidate again, so nothing can wander back onto it.
-func (r *rotation) live(i int) bool { return !r.authFailed[r.targets[i].String()] }
-
-// free reports whether rung i can run right now: credential still good AND not cooling.
-func (r *rotation) free(i int) bool {
-	if !r.live(i) {
-		return false
-	}
-	_, limited := r.limited[r.targets[i].String()]
-	return !limited
-}
-
-// onAuthFailure marks the active rung's credential unusable for the rest of the run and moves to
-// the first rung that still has one — a dead credential shouldn't abandon the queue while another
-// account can work. The sticky mark bounds this to one rotation per rung. It targets a rung that is
-// merely rate-limited (the loop will wait that out); it reports false only when EVERY rung has
-// failed authentication, and the caller must stop.
-func (r *rotation) onAuthFailure() bool {
-	r.authFailed[r.targets[r.idx].String()] = true
-	n := len(r.targets)
-	for i := 1; i < n; i++ {
-		if cand := (r.idx + i) % n; r.live(cand) {
-			r.idx = cand
-			return true
-		}
-	}
-	return false
-}
-
-// authFailedTargets returns the rungs that failed authentication this run, in rotation order —
-// the accounts a human has to restore.
-func (r *rotation) authFailedTargets() []agents.Target {
-	var out []agents.Target
-	for _, t := range r.targets {
-		if r.authFailed[t.String()] {
-			out = append(out, t)
-		}
-	}
-	return out
-}
 
 // accountsFor returns agent's signed-in accounts in rotation order: the marked-default
 // account first, then the rest as `coop credentials` lists them (alphabetical). Empty when
@@ -109,9 +51,9 @@ func accountsFor(cfg *config.Config, agent string) []string {
 // ladder rotates across agents. An empty ladder means defaultAgent's default model across all
 // accounts. Order preserved, deduped first-seen. Errors only when NOTHING in the ladder is
 // signed in.
-func expandLadder(cfg *config.Config, defaultAgent string, ladder []agents.Target) ([]agents.Target, error) {
-	if len(ladder) == 0 {
-		ladder = []agents.Target{{}} // defaultAgent, default model, all accounts
+func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target) ([]agents.Target, error) {
+	if len(rungs) == 0 {
+		rungs = []agents.Target{{}} // defaultAgent, default model, all accounts
 	}
 	var out []agents.Target
 	seen := map[string]bool{}
@@ -122,7 +64,7 @@ func expandLadder(cfg *config.Config, defaultAgent string, ladder []agents.Targe
 		}
 	}
 	var missing []string // ladder providers with no signed-in account (reported only if NOTHING resolves)
-	for _, e := range ladder {
+	for _, e := range rungs {
 		agent := e.Provider
 		if agent == "" {
 			agent = defaultAgent
@@ -156,12 +98,12 @@ func expandLadder(cfg *config.Config, defaultAgent string, ladder []agents.Targe
 // buildRotation resolves a loop's rotation for agent: the run's one-off ladder when the
 // positional target carried a model/account, else the preset lead's ladder, else the default. (A
 // custom work.command ignores the rotation — loop() runs the raw command — so it isn't special-cased.)
-func (a *app) buildRotation(agent string, ladder []agents.Target) (*rotation, error) {
-	targets, err := expandLadder(a.cfg, agent, ladder)
+func (a *app) buildRotation(agent string, rungs []agents.Target) (*ladder.Rotation, error) {
+	targets, err := expandLadder(a.cfg, agent, rungs)
 	if err != nil {
 		return nil, err
 	}
-	return newRotation(targets), nil
+	return ladder.NewRotation(targets), nil
 }
 
 // applyTarget points cfg at the rotation's active target: the agent+account the next iteration
@@ -169,8 +111,8 @@ func (a *app) buildRotation(agent string, ladder []agents.Target) (*rotation, er
 // account's mark / env / agent default). The one choke point for loop start + each rotation.
 // Returns the active target's provider — the loop runs THAT agent this iteration (a cross-
 // provider ladder swaps it).
-func (a *app) applyTarget(r *rotation) string {
-	t := r.active()
+func (a *app) applyTarget(r *ladder.Rotation) string {
+	t := r.Active()
 	a.cfg.SetActiveProfile(t.Provider, t.Account())
 	a.cfg.SetTargetModel(t.Provider, t.Model)
 	a.cfg.SetTargetEffort(t.Provider, t.Effort)
@@ -180,102 +122,19 @@ func (a *app) applyTarget(r *rotation) string {
 // rotateOnLimit handles a rate limit with more than one target: advance, point cfg at the
 // new active target, and either switch immediately (a free rotation is progress) or, when
 // every target is limited, sleep until the soonest reset. Returns the new active provider.
-func (a *app) rotateOnLimit(r *rotation, resetAt time.Time, waits *int, wake <-chan struct{}) string {
-	prev := r.active()
-	sleep, until := r.onLimit(resetAt, *waits, time.Now())
+func (a *app) rotateOnLimit(r *ladder.Rotation, resetAt time.Time, waits *int, wake <-chan struct{}) string {
+	prev := r.Active()
+	sleep, until := r.OnLimit(resetAt, *waits, time.Now())
 	agent := a.applyTarget(r)
 	if sleep > 0 {
-		ui.Info("all %d targets are rate limited — waiting for the soonest reset", len(r.targets))
+		ui.Info("all %d targets are rate limited — waiting for the soonest reset", r.Len())
 		sleepForLimit(sleep, until, wake)
-		r.clearExpired(time.Now())
+		r.ClearExpired(time.Now())
 		return agent
 	}
-	ui.Info("target %q rate limited — switching to %q", prev, r.active())
+	ui.Info("target %q rate limited — switching to %q", prev, r.Active())
 	*waits = 0 // only consecutive all-limited waits count toward the stop cap
 	return agent
-}
-
-func (r *rotation) active() agents.Target { return r.targets[r.idx] }
-
-// members renders the rotation in wire form (provider:model@account), for messages and tests.
-func (r *rotation) members() []string {
-	out := make([]string, len(r.targets))
-	for i, t := range r.targets {
-		out[i] = t.String()
-	}
-	return out
-}
-
-// rotates reports whether there's more than one target to switch between.
-func (r *rotation) rotates() bool { return len(r.targets) > 1 }
-
-// onLimit records that the active target is rate-limited until resetAt (a zero resetAt
-// means "unknown", so it backs off by attempt), then selects the next usable target.
-// Keyed per target, so opus@work cooling leaves fable@work free. Returns the sleep before
-// the next iteration — 0 when another target is free now — and, when sleeping, the time
-// it's waiting until.
-func (r *rotation) onLimit(resetAt time.Time, attempt int, now time.Time) (sleep time.Duration, until time.Time) {
-	if !resetAt.After(now) {
-		// A stale reset is no more informative than no reset. Drop it so repeated stale hints use
-		// the normal bounded backoff instead of pinning every attempt to the minimum wait.
-		resetAt = now.Add(limitWait(limitHint{limited: true}, attempt, now))
-	}
-	r.limited[r.targets[r.idx].String()] = resetAt
-	return r.selectTarget(attempt, now)
-}
-
-// selectTarget keeps the current rung when it is usable, otherwise advances to the first
-// usable rung in rotation order. If every rung is still cooling, it parks on the soonest
-// reset and returns the bounded wait. Expired marks are discarded as part of selection.
-func (r *rotation) selectTarget(attempt int, now time.Time) (sleep time.Duration, until time.Time) {
-	r.clearExpired(now)
-	n := len(r.targets)
-	for i := 0; i < n; i++ {
-		if cand := (r.idx + i) % n; r.free(cand) {
-			r.idx = cand
-			return 0, time.Time{}
-		}
-	}
-	// Every usable rung is cooling, so park on the soonest reset. Auth-dead rungs are skipped —
-	// they have no reset to wait for, and switching to one would just fail again immediately.
-	earliest := -1
-	for i := range r.targets {
-		if !r.live(i) {
-			continue
-		}
-		if earliest < 0 || r.limited[r.targets[i].String()].Before(r.limited[r.targets[earliest].String()]) {
-			earliest = i
-		}
-	}
-	if earliest < 0 {
-		earliest = r.idx // nothing left alive; the caller stops on that, so don't move
-	}
-	r.idx = earliest
-	until = r.limited[r.targets[earliest].String()]
-	return limitWait(limitHint{limited: true, resetAt: until}, attempt, now), until
-}
-
-// advanceOnTimeout moves to the next usable rung after a provider-attempt timeout. A timeout
-// is not a rate limit, so the abandoned rung is NOT marked cooling — it keeps its standing and
-// comes straight back around. With a single rung (or every other rung cooling) it stays put
-// and the caller retries the same rung under the dedicated timeout cap.
-func (r *rotation) advanceOnTimeout(now time.Time) {
-	r.clearExpired(now)
-	n := len(r.targets)
-	for i := 1; i < n; i++ {
-		if cand := (r.idx + i) % n; r.free(cand) {
-			r.idx = cand
-			return
-		}
-	}
-}
-
-func (r *rotation) clearExpired(now time.Time) {
-	for target, until := range r.limited {
-		if !until.After(now) {
-			delete(r.limited, target)
-		}
-	}
 }
 
 // oneOffLadder builds a single-entry ladder from a run's decomposed one-off selection — the

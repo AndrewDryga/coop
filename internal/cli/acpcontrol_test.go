@@ -15,6 +15,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ladder"
 )
 
 func newTestControl(t *testing.T) *acpControl {
@@ -1286,7 +1287,7 @@ func TestACPControlAuthenticationGivesPresetLoginRecovery(t *testing.T) {
 	if restart || !bytes.Contains(out, []byte("coop login claude@personal")) {
 		t.Fatalf("preset auth failure should stay exact and name its login, out=%s restart=%v", out, restart)
 	}
-	if got := c.rot.active(); got.Model != "claude-fable-5" {
+	if got := c.rot.Active(); got.Model != "claude-fable-5" {
 		t.Fatalf("preset auth failure changed the answering rung: %+v", got)
 	}
 	if c.resend["sess1"] {
@@ -1348,7 +1349,7 @@ func presetControl(t *testing.T) *acpControl {
 	c := newTestControl(t)
 	c.sel = acpSelection{Preset: "frontier"}
 	c.rotFor = c.sel
-	c.rot = newRotation([]agents.Target{
+	c.rot = ladder.NewRotation([]agents.Target{
 		{Provider: "claude", Model: "claude-fable-5", Accounts: []string{"personal"}},
 		{Provider: "claude", Model: "claude-opus-4-8", Accounts: []string{"personal"}},
 	})
@@ -1373,7 +1374,7 @@ func TestACPControlPresetLadderFailover(t *testing.T) {
 	if !restart {
 		t.Fatal("a preset rate limit should trigger a restart (rotate + resend)")
 	}
-	if got := c.rot.active(); got.Model != "claude-opus-4-8" {
+	if got := c.rot.Active(); got.Model != "claude-opus-4-8" {
 		t.Errorf("rung after the fable limit = %q, want claude-opus-4-8@personal", got)
 	}
 	if !c.resend["sess1"] {
@@ -1398,7 +1399,8 @@ func TestACPControlPresetLadderFailover(t *testing.T) {
 // than forwarding the error — same shape as the credential all-limited path.
 func TestACPControlPresetLadderAllLimited(t *testing.T) {
 	c := presetControl(t)
-	c.rot.limited[c.rot.targets[1].String()] = time.Now().Add(30 * time.Minute) // opus already cooling
+	// opus already cooling
+	c.rot.SetLimits(map[string]time.Time{c.rot.Members()[1]: time.Now().Add(30 * time.Minute)})
 	errLine := []byte(`{"jsonrpc":"2.0","id":"req1","error":{"message":"reached your Fable 5 limit","data":{"errorKind":"rate_limit"}}}` + "\n")
 	out, restart := c.toEditor(errLine)
 
@@ -1530,7 +1532,7 @@ func presetControlFor(t *testing.T, lead string) *acpControl {
 	c := newACPControl(&config.Config{ConfigDir: dir}, lead, "m", "", dir, acpSelection{}, []string{"frontier"}, nil, false)
 	c.sel = acpSelection{Preset: "frontier"}
 	c.rotFor = c.sel
-	c.rot = newRotation([]agents.Target{
+	c.rot = ladder.NewRotation([]agents.Target{
 		{Provider: lead, Model: "m1", Accounts: []string{"personal"}},
 		{Provider: lead, Model: "m2", Accounts: []string{"personal"}},
 	})
@@ -1597,55 +1599,6 @@ func TestACPControlStructuralLimits(t *testing.T) {
 				t.Fatalf("restart = %v, want %v", restart, tc.restart)
 			}
 		})
-	}
-}
-
-// TestACPErrorLimitHintSignalDriven pins the classifier's contract: it matches whatever
-// signals it is HANDED (compactly, key-pinned when a key is given) and carries no
-// provider constants of its own — plus the shared output-token axis that needs no
-// signals at all, and rate winning over output when both appear.
-func TestACPErrorLimitHintSignalDriven(t *testing.T) {
-	now := time.Now()
-	sig := []agents.ACPSignal{{Value: "quotaBlown"}, {Key: "reason", Value: "too_fast"}}
-	if h := acpErrorLimitHint(json.RawMessage(`{"message":"nope","data":{"x":"quotaBlown"}}`), now, sig); !h.limited || h.outputLimited {
-		t.Errorf("any-key signal should classify as a rate limit, got %+v", h)
-	}
-	if h := acpErrorLimitHint(json.RawMessage(`{"message":"nope","data":{"reason":"tooFast"}}`), now, sig); !h.limited {
-		t.Errorf("key-pinned signal should compact-match tooFast/too_fast, got %+v", h)
-	}
-	if h := acpErrorLimitHint(json.RawMessage(`{"message":"nope","data":{"other":"too_fast"}}`), now, sig); h.limited {
-		t.Errorf("a key-pinned value under the wrong key must not match, got %+v", h)
-	}
-	if h := acpErrorLimitHint(json.RawMessage(`{"message":"x","data":{"stopReason":"MAX_TOKENS"}}`), now, nil); !h.limited || !h.outputLimited {
-		t.Errorf("the shared output axis needs no signals, got %+v", h)
-	}
-	both := json.RawMessage(`{"message":"x","data":{"stopReason":"MAX_TOKENS","y":"quotaBlown"}}`)
-	if h := acpErrorLimitHint(both, now, sig); !h.limited || h.outputLimited {
-		t.Errorf("a structured rate signal outranks the output axis, got %+v", h)
-	}
-}
-
-// TestACPErrorLimitHintNestedProseReset pins the codex-acp wire shape captured live on
-// 2026-07-10: the JSON-RPC message is a generic "Internal error", and the human notice
-// carrying the reset clock time rides in data.message. The classifier must mine the
-// nested prose so the wait targets the stated reset, not the 5-minute default cooldown.
-func TestACPErrorLimitHintNestedProseReset(t *testing.T) {
-	now := time.Date(2026, 7, 10, 14, 27, 0, 0, time.Local)
-	raw := json.RawMessage(`{"code":-32603,"message":"Internal error","data":{"message":"You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:28 PM.","codexErrorInfo":"usageLimitExceeded"}}`)
-	h := acpErrorLimitHint(raw, now, []agents.ACPSignal{{Value: "usageLimitExceeded"}})
-	if !h.limited || h.outputLimited {
-		t.Fatalf("captured codex limit error must classify as a rate limit, got %+v", h)
-	}
-	want := time.Date(2026, 7, 10, 16, 28, 0, 0, time.Local)
-	if !h.resetAt.Equal(want) {
-		t.Errorf("resetAt = %v, want %v (mined from data.message prose)", h.resetAt, want)
-	}
-	// A nested reset never RE-classifies: without the structured signal or limit prose in
-	// the top-level message, an ordinary error stays ordinary even when a nested string
-	// parses as a full limit notice (echoed user content must not drive a rotation).
-	plain := json.RawMessage(`{"code":-32603,"message":"boom","data":{"note":"You've hit your usage limit. Try again at 4:28 PM."}}`)
-	if h := acpErrorLimitHint(plain, now, nil); h.limited || !h.resetAt.IsZero() {
-		t.Errorf("nested prose alone must not classify the error as limited, got %+v", h)
 	}
 }
 
@@ -1870,11 +1823,11 @@ func TestACPSpawnTargetCrossProviderRung(t *testing.T) {
 	signInCred(t, c.cfg, "gemini", "personal")
 	c.sel = acpSelection{Preset: "frontier"}
 	c.rotFor = c.sel
-	c.rot = newRotation([]agents.Target{
+	c.rot = ladder.NewRotation([]agents.Target{
 		{Provider: "claude", Model: "claude-fable-5", Accounts: []string{"personal"}},
 		{Provider: "gemini", Model: "gemini-3.5-pro", Accounts: []string{"personal"}},
 	})
-	c.rot.idx = 1 // the ladder rotated onto the gemini rung
+	c.rot.Focus(c.rot.Members()[1]) // the ladder rotated onto the gemini rung
 
 	tt, ps, ok := c.spawnTarget()
 	if !ok || ps != "frontier" || tt.String() != "gemini:gemini-3.5-pro@personal" {
@@ -1899,7 +1852,7 @@ roles:
 `)
 	c.sel = acpSelection{Preset: "frontier"}
 	c.rotFor = c.sel
-	c.rot = newRotation([]agents.Target{{Provider: "claude", Model: "claude-fable-5", Accounts: []string{"personal"}}})
+	c.rot = ladder.NewRotation([]agents.Target{{Provider: "claude", Model: "claude-fable-5", Accounts: []string{"personal"}}})
 
 	got := string(c.coopOptions()[0])
 	for _, want := range []string{
@@ -2789,9 +2742,9 @@ func TestACPControlSnapshotRestoreKeepsPresetRung(t *testing.T) {
 	c := newACPControl(cfg, "codex", "gpt-5.6-sol", "xhigh", repo, acpSelection{Preset: "frontier"}, []string{"frontier"}, nil, false)
 	c.target = agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"default"}}
 	rot := c.presetRotation()
-	rot.idx = 1
+	rot.Focus(rot.Members()[1])
 	limitedUntil := time.Now().Add(time.Hour).Round(time.Second)
-	rot.limited[rot.targets[0].String()] = limitedUntil
+	rot.SetLimits(map[string]time.Time{rot.Members()[0]: limitedUntil})
 	c.limited[accountLimitKey("claude", "default")] = limitedUntil
 	snapshot := c.snapshot()
 
@@ -2801,7 +2754,7 @@ func TestACPControlSnapshotRestoreKeepsPresetRung(t *testing.T) {
 	if !ok || presetName != "frontier" || target.String() != "codex:gpt-5.6-sol/xhigh@default" {
 		t.Fatalf("restored preset target = (%q, %q, %v), want Codex/Sol rung", target, presetName, ok)
 	}
-	if got := restored.rot.limited[rot.targets[0].String()]; !got.Equal(limitedUntil) {
+	if got := restored.rot.LimitedUntil(rot.Members()[0]); !got.Equal(limitedUntil) {
 		t.Fatalf("restored Frontier cooldown = %s, want %s", got, limitedUntil)
 	}
 	if got := restored.limited[accountLimitKey("claude", "default")]; !got.Equal(limitedUntil) {

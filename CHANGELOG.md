@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- _Internal restructuring, no user-visible change._ The **rotation ladder's mechanics** — the cursor
+  over a run's rungs (which is live, which is cooling, when to advance, and parking on the soonest
+  reset when every one is limited) and the **limit classification** that decides whether provider
+  output was a rate limit at all (the prose regexes, the reset-time parser, the backoff bounds, and
+  the ACP JSON-RPC signal matching) — moved out of `internal/cli` into a new leaf package,
+  `internal/ladder`. Building a ladder from a preset against the signed-in accounts, applying a rung
+  to the config, the loop's caps and narrated sleeps, and the ACP protocol handling all stayed in the
+  CLI, which is why the leaf imports only `internal/agent`. Every regex, bound, and decision is
+  byte-identical, and their tests moved with them.
+
 - _Internal restructuring, no user-visible change._ The fork **on-disk contract** — where a fork's
   workspace lives, what a fork may be named, the `<repo>-forks/.coop` state directory, the lifecycle
   flock, the pidfile wire format and its identity doctrine, and clone/destroy/pin — moved out of

@@ -46,6 +46,16 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-09 — **+1 package, +2 edges: `internal/ladder`** (`{"agent"}`) and `cli → ladder`. The
+  ROTATION LADDER's pure mechanics — the cursor over a run's rungs (live/cooling/advance/park on the
+  soonest reset) and the limit CLASSIFICATION that decides whether provider output was a rate limit
+  at all, prose regexes and ACP JSON-RPC signals alike — came out of `internal/cli/rotation.go`,
+  `ratelimit.go`, and `acpcontrol.go`, so the sessions service can drive a rotation by IMPORT rather
+  than by injected function (the second prerequisite of the sessions extraction, after `forkspace`).
+  App-bound policy stayed in cli and is why the leaf takes no `config`, `box`, or `ui` edge:
+  expanding a preset ladder against signed-in accounts, applying a rung to the config, the loop's
+  caps and narrated sleeps, and the ACP protocol handling all print or read state. Its one dependency
+  is `agent`, for `Target` (the rung) and the adapter-owned rate-limit signals.
 - 2026-08-09 — **+1 package, +2 edges: `internal/forkspace`** (`{"processidentity"}`) and `cli →
   forkspace`. The fork ON-DISK CONTRACT — workspace paths and names, the `<repo>-forks/.coop` state
   dir, the lifecycle flock, the pidfile wire format and its identity doctrine, clone/destroy/pin —
