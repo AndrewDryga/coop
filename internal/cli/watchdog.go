@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -17,6 +18,9 @@ import (
 // open foreground tool within the tool deadline. Only semantic stream events (streamActivity)
 // feed it — never process names, CPU, lease heartbeats, redraws, or raw bytes — so a wedged
 // provider is killed while long reasoning and a slow foreground gate survive.
+// WHICH of those phases a provider actually runs follows the capability its adapter DECLARES about
+// its own stream (watchdogPolicy below): a schema with no tool lifecycle can never suspend the idle
+// deadline for a gate, so it is supervised by one conservative post-progress fallback instead.
 // No deadline by default: 0 disables that phase's clock entirely — and with every phase disabled,
 // the attempt ceiling below is disabled with them.
 //
@@ -34,6 +38,21 @@ const (
 	providerIdleDeadline  = 0
 	providerToolDeadline  = 0
 )
+
+// providerSilenceFallbackMultiple supervises a provider whose stream declares NO tool lifecycle
+// (agents.ToolLifecycleAbsent — grok, probed at v0.2.101, which emits only thought/text/end).
+// Nothing in such a stream says "a foreground gate is running", so the idle deadline cannot be
+// suspended for one, and applying it as-is would kill a legitimate 40-minute `make check` at the
+// 30-minute mark — the exact thing coop promises not to do. That provider instead gets ONE
+// post-progress deadline at this multiple of the idle budget: 30m idle → a 2h fallback, long
+// enough that no honest foreground gate reaches it, short enough that a silent attempt is still
+// bounded well inside the ceiling above.
+//
+// It is DERIVED from the idle budget rather than a 2h constant for the same reason the ceiling is:
+// the override may only shorten supervision, and shortening idle has to shorten this with it (a
+// fixture supervising in seconds keeps the ratio, so the policy is testable). A disabled idle
+// deadline multiplies to a disabled fallback — inert by default, like every other phase.
+const providerSilenceFallbackMultiple = 4
 
 // Provider-attempt timeout outcomes, recorded verbatim in stage telemetry and handled by the
 // loop's dedicated timeout policy: rotate to the next usable rung without cooling, capped at
@@ -93,6 +112,48 @@ func isProviderTimeout(outcome string) bool {
 
 type watchdogDeadlines struct {
 	start, idle, tool time.Duration
+}
+
+// watchdogPolicy is the complete supervision one attempt runs under: the resolved phase deadlines,
+// plus whether the provider's stream is DECLARED to carry the foreground tool lifecycle two of
+// those phases assume. The capability is read off the adapter registry (agents.StreamSpec), never
+// inferred from process names, CPU, or the events seen so far — a stream that has not opened a tool
+// yet looks exactly like one whose schema has no tools at all.
+type watchdogPolicy struct {
+	watchdogDeadlines
+	toolLifecycle bool
+}
+
+// watchdogPolicyFor is the supervision one attempt against `agent` runs under: coop's defaults,
+// narrowed by the internal override, then adapted to that adapter's declared stream capability.
+func watchdogPolicyFor(cfg *config.Config, agent string) watchdogPolicy {
+	adapter, ok := agents.Get(agent)
+	return providerWatchdogPolicy(watchdogDeadlinesFor(cfg), ok && adapter.Stream().TracksTools())
+}
+
+// providerWatchdogPolicy adapts resolved deadlines to what the provider's stream can prove.
+//
+// WITH a tool lifecycle (claude, codex, gemini) nothing changes: post-progress silence is bounded
+// by the idle deadline, suspended while a tool is open, and the oldest open tool carries the
+// absolute tool cap.
+//
+// WITHOUT one (grok) those two phases have no events to run on. The idle deadline can never be
+// suspended for a foreground gate, so it would kill legitimate work; the tool cap can never be
+// armed at all, so keeping it would only inflate the attempt ceiling with a budget nothing can
+// reach. Post-progress silence is therefore bounded once, at providerSilenceFallbackMultiple ×
+// idle, and the tool phase is disabled — an honest description of a stream that reports no tools.
+func providerWatchdogPolicy(d watchdogDeadlines, toolLifecycle bool) watchdogPolicy {
+	if toolLifecycle {
+		return watchdogPolicy{watchdogDeadlines: d, toolLifecycle: true}
+	}
+	// A disabled idle deadline multiplies to a disabled fallback, which is the shipped default. The
+	// comparison also keeps an absurd (multi-decade) budget from overflowing into a negative
+	// duration that arm would read as "this phase is off".
+	if fallback := d.idle * providerSilenceFallbackMultiple; fallback > d.idle {
+		d.idle = fallback
+	}
+	d.tool = 0
+	return watchdogPolicy{watchdogDeadlines: d}
 }
 
 // minWatchdogDeadline floors every overridden deadline. Under a second a deadline stops being
@@ -184,8 +245,13 @@ func resolveWatchdogDeadlines(defaults watchdogDeadlines, raw string) (watchdogD
 	parsed.start = clamp("start", parsed.start, defaults.start)
 	parsed.idle = clamp("idle", parsed.idle, defaults.idle)
 	parsed.tool = clamp("tool", parsed.tool, defaults.tool)
-	announced := fmt.Sprintf("provider watchdog deadlines overridden by COOP_PROVIDER_TIMEOUTS (internal knob; it may only shorten supervision): start=%s idle=%s tool=%s attempt ceiling=%s",
-		overrideDuration(parsed.start), overrideDuration(parsed.idle), overrideDuration(parsed.tool), overrideDuration(attemptCeiling(parsed)))
+	// The overridden budgets are what a provider WITH tool lifecycle runs under; one without is
+	// supervised by the derived fallback instead, so its numbers are named here too rather than
+	// leaving an operator to reconcile a grok attempt that outlives the idle deadline they can see.
+	fallback := providerWatchdogPolicy(parsed, false)
+	announced := fmt.Sprintf("provider watchdog deadlines overridden by COOP_PROVIDER_TIMEOUTS (internal knob; it may only shorten supervision): start=%s idle=%s tool=%s attempt ceiling=%s (no tool lifecycle: silence %s, no tool cap, ceiling %s)",
+		overrideDuration(parsed.start), overrideDuration(parsed.idle), overrideDuration(parsed.tool), overrideDuration(attemptCeiling(parsed)),
+		overrideDuration(fallback.idle), overrideDuration(attemptCeiling(fallback.watchdogDeadlines)))
 	return parsed, append([]string{announced}, diagnostics...)
 }
 
@@ -221,9 +287,11 @@ func overrideDuration(d time.Duration) string {
 // ceiling's. time.AfterFunc in production, a hand-fired fake in tests.
 type watchdogTimer interface{ Stop() bool }
 
-// providerWatchdog supervises one provider attempt. It is the decoder's streamActivity sink:
-// each recognized event re-arms the single deadline for the current phase (start → idle, with
-// idle suspended while foreground tools are open and the oldest open tool absolutely capped).
+// providerWatchdog supervises one provider attempt under one watchdogPolicy. It is the decoder's
+// streamActivity sink: each recognized event re-arms the single deadline for the current phase
+// (start → idle, with idle suspended while foreground tools are open and the oldest open tool
+// absolutely capped — for a provider that declares no tool lifecycle, start → the silence fallback,
+// and nothing suspends it).
 // Alongside it runs the one deadline events cannot reach, the attempt ceiling. When either fires
 // it records the timeout outcome once and cancels the child box context; stop() ends supervision
 // the moment box.Run returns, so nothing can fire afterwards.
@@ -231,11 +299,11 @@ type watchdogTimer interface{ Stop() bool }
 // It is born UNARMED: no clock runs until armStart, which box.Run fires at the runtime-launch
 // boundary. Host setup before that boundary is coop's own work, not provider silence.
 type providerWatchdog struct {
-	mu       sync.Mutex
-	deadline watchdogDeadlines
-	cancel   func()
-	now      func() time.Time
-	after    func(time.Duration, func()) watchdogTimer
+	mu     sync.Mutex
+	policy watchdogPolicy
+	cancel func()
+	now    func() time.Time
+	after  func(time.Duration, func()) watchdogTimer
 
 	timer      watchdogTimer
 	ceiling    watchdogTimer
@@ -252,17 +320,17 @@ type providerWatchdog struct {
 // re-arm can retire, exactly what a non-resettable ceiling needs.
 const ceilingGen uint64 = 0
 
-func newProviderWatchdog(deadline watchdogDeadlines, cancel func()) *providerWatchdog {
-	return newProviderWatchdogWith(deadline, cancel, time.Now, func(d time.Duration, fn func()) watchdogTimer {
+func newProviderWatchdog(policy watchdogPolicy, cancel func()) *providerWatchdog {
+	return newProviderWatchdogWith(policy, cancel, time.Now, func(d time.Duration, fn func()) watchdogTimer {
 		return time.AfterFunc(d, fn)
 	})
 }
 
 // newProviderWatchdogWith builds the watchdog with no deadline running; the clock and timer
 // factory are injected so unit tests drive every transition deterministically.
-func newProviderWatchdogWith(deadline watchdogDeadlines, cancel func(), now func() time.Time, after func(time.Duration, func()) watchdogTimer) *providerWatchdog {
+func newProviderWatchdogWith(policy watchdogPolicy, cancel func(), now func() time.Time, after func(time.Duration, func()) watchdogTimer) *providerWatchdog {
 	return &providerWatchdog{
-		deadline: deadline, cancel: cancel, now: now, after: after,
+		policy: policy, cancel: cancel, now: now, after: after,
 		openTools: map[string]time.Time{},
 	}
 }
@@ -282,10 +350,10 @@ func (w *providerWatchdog) armStart() {
 	// The launch boundary is also where the attempt ceiling starts, and the only place it is ever
 	// touched: it is deliberately NOT routed through arm, so no event, phase change, or re-arm can
 	// replace or extend it. Only stop() — box.Run returning — retires it.
-	if ceiling := attemptCeiling(w.deadline); ceiling > 0 {
+	if ceiling := attemptCeiling(w.policy.watchdogDeadlines); ceiling > 0 {
 		w.ceiling = w.after(ceiling, func() { w.fire(ceilingGen, outcomeAttemptTimeout) })
 	}
-	w.arm(w.deadline.start, outcomeStartTimeout)
+	w.arm(w.policy.start, outcomeStartTimeout)
 }
 
 // arm replaces the active PHASE deadline — never the attempt ceiling, which is armed once by
@@ -359,12 +427,14 @@ func (w *providerWatchdog) timedOut() string {
 func (w *providerWatchdog) bootstrap() {}
 
 // progress is any adapter-recognized model action: assistant text, reasoning, or a recognized
-// stream item. It arms (or re-arms) the idle deadline unless a foreground tool suspends it.
+// stream item. It arms (or re-arms) the idle deadline unless a foreground tool suspends it — for a
+// provider with no declared tool lifecycle that deadline is the conservative silence fallback,
+// which is the only phase such a stream can ever run.
 func (w *providerWatchdog) progress() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if len(w.openTools) == 0 {
-		w.arm(w.deadline.idle, outcomeIdleTimeout)
+		w.arm(w.policy.idle, outcomeIdleTimeout)
 	}
 }
 
@@ -372,17 +442,20 @@ func (w *providerWatchdog) progress() {
 // open, and the OLDEST open tool is capped absolutely so a wedged child cannot hold the
 // attempt forever.
 //
-// Two things fail closed here. An ID-less start proves nothing this watchdog can act on — it can
-// never be paired with an end, so it would suspend idle with no way to resume — and the decoders
-// already reject it, so it is dropped rather than counted as progress. Past maxOpenTools the
-// overflow is dropped too, and deliberately NOT by evicting the oldest: evicting re-anchors the
+// Three things fail closed here. A tool from a provider that DECLARED no tool lifecycle is not a
+// tool: the declaration is the authority, so an event its schema does not have cannot suspend the
+// conservative fallback that provider is supervised by (nothing could then resume it — the
+// matching end does not exist either). An ID-less start proves nothing this watchdog can act on —
+// it can never be paired with an end, so it would suspend idle with no way to resume — and the
+// decoders already reject it, so it is dropped rather than counted as progress. Past maxOpenTools
+// the overflow is dropped too, and deliberately NOT by evicting the oldest: evicting re-anchors the
 // absolute cap to a younger tool, which would sell the box an endless extension for one forged
 // start per interval. Dropping costs nothing — idle stays suspended while any tool is open, and
 // the oldest survivor keeps carrying the cap.
 func (w *providerWatchdog) toolStart(id string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if id == "" {
+	if id == "" || !w.policy.toolLifecycle {
 		return
 	}
 	if _, open := w.openTools[id]; open {
@@ -394,7 +467,7 @@ func (w *providerWatchdog) toolStart(id string) {
 	w.openTools[id] = w.now()
 	w.toolOrder = append(w.toolOrder, id)
 	if len(w.openTools) == 1 {
-		w.arm(w.deadline.tool, outcomeToolTimeout)
+		w.arm(w.policy.tool, outcomeToolTimeout)
 	}
 }
 
@@ -402,15 +475,17 @@ func (w *providerWatchdog) toolStart(id string) {
 // when the oldest closes the cap re-anchors to the next-oldest survivor. A result for a tool that
 // was never seen — a start we dropped at the cap, or one from before this stream — still proves
 // the provider is alive, so it counts as progress; with other tools still open it changes nothing.
+// A stream that declared no tool lifecycle has no ends to close either, and its events are ignored
+// here for the same reason toolStart ignores them: the declaration is the authority.
 func (w *providerWatchdog) toolEnd(id string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if id == "" {
+	if id == "" || !w.policy.toolLifecycle {
 		return
 	}
 	if _, open := w.openTools[id]; !open {
 		if len(w.openTools) == 0 {
-			w.arm(w.deadline.idle, outcomeIdleTimeout)
+			w.arm(w.policy.idle, outcomeIdleTimeout)
 		}
 		return
 	}
@@ -419,7 +494,7 @@ func (w *providerWatchdog) toolEnd(id string) {
 	wasOldest := i == 0
 	w.toolOrder = slices.Delete(w.toolOrder, i, i+1)
 	if len(w.openTools) == 0 {
-		w.arm(w.deadline.idle, outcomeIdleTimeout)
+		w.arm(w.policy.idle, outcomeIdleTimeout)
 		return
 	}
 	if wasOldest {
@@ -433,11 +508,11 @@ func (w *providerWatchdog) toolEnd(id string) {
 // for a deadline the operator set to 0 and exactly wrong for a budget that ran out. The caller
 // holds mu.
 func (w *providerWatchdog) armToolCap() {
-	if w.deadline.tool <= 0 {
+	if w.policy.tool <= 0 {
 		w.arm(0, outcomeToolTimeout) // disabled phase: no clock at all
 		return
 	}
-	remaining := w.openTools[w.toolOrder[0]].Add(w.deadline.tool).Sub(w.now())
+	remaining := w.openTools[w.toolOrder[0]].Add(w.policy.tool).Sub(w.now())
 	w.arm(max(remaining, time.Nanosecond), outcomeToolTimeout)
 }
 
@@ -448,6 +523,6 @@ func (w *providerWatchdog) terminal() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if len(w.openTools) == 0 {
-		w.arm(w.deadline.idle, outcomeIdleTimeout)
+		w.arm(w.policy.idle, outcomeIdleTimeout)
 	}
 }

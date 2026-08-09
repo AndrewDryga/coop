@@ -2,7 +2,7 @@
 name: loop-provider-watchdog
 description: built-in attempts always stream; the watchdog trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
 subsystem: loop
-sources: [internal/cli/watchdog.go, internal/cli/streamjson.go, internal/cli/streamjson_providers.go, internal/cli/commands.go, internal/box/run.go, internal/runtime/runtime.go]
+sources: [internal/cli/watchdog.go, internal/cli/streamjson.go, internal/cli/streamjson_providers.go, internal/cli/commands.go, internal/agent/agent.go, internal/agent/grok.go, internal/box/run.go, internal/runtime/runtime.go]
 updated: 2026-08-09
 ---
 
@@ -16,8 +16,9 @@ disabled, no timer at all (73d2634, "stop killing models that are still working"
 cannot tell a long attempt from a wedged one, and killing a working provider loses its answer
 and re-pays for the whole task. When set they are start (to the first model action; bootstrap
 doesn't count), idle (post-progress silence, suspended while a foreground tool is open), and
-tool (an absolute cap on the OLDEST open tool). Above them runs the non-resettable attempt
-ceiling. Timeouts classify as `provider_{start,idle,tool,attempt}_timeout`, retry under their
+tool (an absolute cap on the OLDEST open tool) — and WHICH of them a provider runs is selected from
+its adapter's declared stream capability, not from anything measured at runtime (trap below). Above
+them runs the non-resettable attempt ceiling. Timeouts classify as `provider_{start,idle,tool,attempt}_timeout`, retry under their
 own consecutive cap of 3, and rotate without cooling the abandoned rung.
 `COOP_PROVIDER_TIMEOUTS` ("start=2s,idle=3s,tool=6s") is the internal test-only override, and
 it may only shorten.
@@ -79,12 +80,28 @@ Traps the code doesn't obviously carry:
   the floor would otherwise "raise"), a malformed field keeps every default, and every clamp or
   rejection is named on stderr once per process. `resolveWatchdogDeadlines` takes its defaults as
   an argument so the policy is tested against ARMED values while the shipped ones are still 0.
-- **Grok's stream carries no tool lifecycle**, so a grok foreground gate longer than the
-  idle deadline gets killed; the watchdog fixtures reject grok tool scenarios.
+- **Policy comes from the adapter's DECLARED stream capability, never from measurement.**
+  `agents.StreamSpec.ToolLifecycle` is `ToolLifecycleIDs` for claude/codex/gemini and
+  `ToolLifecycleAbsent` for grok, whose streaming-json emits only thought/text/end (probed at
+  v0.2.101). `providerWatchdogPolicy` turns that into supervision: IDs keep idle+tool exactly as
+  shipped; absent trades BOTH for one post-progress deadline at `providerSilenceFallbackMultiple`
+  (4) × idle — 30m idle → a 2h fallback — with no tool cap, because a gate that never appears in
+  the stream is indistinguishable from silence and the ordinary idle deadline would kill it. It is
+  derived from idle rather than a 2h constant, so the shorten-only override shortens it too (and a
+  fixture can exercise it in seconds), and it is inert while idle is disabled. The ceiling stays
+  outermost: 24 × the longest phase, which is now the fallback. The watchdog also REFUSES tool
+  events from a stream that declared none — nothing may suspend a deadline whose resuming event
+  does not exist. `ToolLifecycleUndeclared` (the zero value) reads as absent and fails
+  `TestEveryStreamDeclaresItsToolLifecycle`, so no stream ships unprobed. Fixtures still reject
+  grok TOOL scenarios; a grok long gate is scripted as `progress-gated-complete`.
 - Parent cancellation always wins over a watchdog fire (`ctx.Err()` guard in runIteration):
   an interrupted run stays `interrupted`, never a provider timeout.
 
 ## Changelog
+- 2026-08-09 — supervision is now selected from the adapter's declared stream capability
+  (`internal/agent/agent.go` + `grok.go` added to sources); the admitted contradiction — "a grok
+  foreground gate longer than the idle deadline gets killed" while the docs promised long gates
+  survive — is resolved by the derived no-tool-lifecycle fallback, not by documentation.
 - 2026-08-09 — the stream is documented as a TRUST BOUNDARY: semantic validity per provider,
   bounded per-attempt state, and the new non-resettable `provider_attempt_timeout` ceiling; plus
   the override's clamp policy. Verified against watchdog.go, streamjson.go, streamjson_providers.go.

@@ -139,19 +139,46 @@ func TestStreamSpecs(t *testing.T) {
 		name string
 		want StreamSpec
 	}{
-		{"claude", StreamSpec{Format: StreamClaudeJSON, Flags: []string{"--output-format", "stream-json", "--verbose"}}},
-		{"codex", StreamSpec{Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1}},
-		{"gemini", StreamSpec{Format: StreamGeminiJSON, Flags: []string{"-o", "stream-json"}, TrailingArgs: 2}},
-		{"grok", StreamSpec{Format: StreamGrokJSON, Flags: []string{"--output-format", "streaming-json"}, TrailingArgs: 2}},
+		{"claude", StreamSpec{Format: StreamClaudeJSON, Flags: []string{"--output-format", "stream-json", "--verbose"}, ToolLifecycle: ToolLifecycleIDs}},
+		{"codex", StreamSpec{Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1, ToolLifecycle: ToolLifecycleIDs}},
+		{"gemini", StreamSpec{Format: StreamGeminiJSON, Flags: []string{"-o", "stream-json"}, TrailingArgs: 2, ToolLifecycle: ToolLifecycleIDs}},
+		// Grok's streaming-json emits only thought/text/end — probed at v0.2.101. The absent
+		// declaration is what puts its attempts on the conservative silence fallback instead of a
+		// tool-suspended idle deadline it could never resume.
+		{"grok", StreamSpec{Format: StreamGrokJSON, Flags: []string{"--output-format", "streaming-json"}, TrailingArgs: 2, ToolLifecycle: ToolLifecycleAbsent}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			a, _ := Get(c.name)
 			got := a.Stream()
-			if got.Format != c.want.Format || got.TrailingArgs != c.want.TrailingArgs || !slices.Equal(got.Flags, c.want.Flags) {
+			if got.Format != c.want.Format || got.TrailingArgs != c.want.TrailingArgs || !slices.Equal(got.Flags, c.want.Flags) ||
+				got.ToolLifecycle != c.want.ToolLifecycle {
 				t.Errorf("Stream() = %#v, want %#v", got, c.want)
 			}
+			if got, want := got.TracksTools(), c.want.ToolLifecycle == ToolLifecycleIDs; got != want {
+				t.Errorf("TracksTools() = %v, want %v", got, want)
+			}
 		})
+	}
+}
+
+// The watchdog picks its supervision policy off this declaration, so leaving it at the zero value
+// is not a neutral omission — it is an unprobed stream silently supervised as if someone had looked.
+// Nothing in the registry may ship undeclared; a new adapter answers this question like every other.
+func TestEveryStreamDeclaresItsToolLifecycle(t *testing.T) {
+	// And whatever else is wrong, an undeclared stream never reads as supervisable.
+	if (StreamSpec{}).TracksTools() {
+		t.Fatal("an undeclared StreamSpec reports trustworthy tool lifecycle")
+	}
+	for _, name := range Names() {
+		a, _ := Get(name)
+		stream := a.Stream()
+		if stream.Format == StreamNone {
+			continue // no structured stream at all: nothing to declare about it
+		}
+		if stream.ToolLifecycle == ToolLifecycleUndeclared {
+			t.Errorf("%s has a structured stream but declares no ToolLifecycle — probe the schema and say which it is", name)
+		}
 	}
 }
 

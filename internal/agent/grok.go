@@ -22,9 +22,18 @@ func init() { register(grokAgent{}) }
 func (grokAgent) Name() string        { return "grok" }
 func (grokAgent) DisplayName() string { return "Grok" }
 func (grokAgent) Badge() string       { return ui.Cyan("G") }
+
+// Stream: grok's streaming-json carries NO tool lifecycle. Probed against the installed CLI at
+// v0.2.101, a run that shelled out emitted only `thought`, `text`, and `end` — no tool start, no
+// tool end, no id to pair them with. So a grok attempt sitting on a 40-minute gate looks exactly
+// like a grok attempt that died, and the watchdog supervises it by the conservative
+// no-tool-lifecycle fallback instead (internal/cli/watchdog.go). Re-probe before changing this:
+// the declaration is the authority, and the watchdog refuses tool events from a stream that
+// declares none.
 func (grokAgent) Stream() StreamSpec {
 	return StreamSpec{
 		Format: StreamGrokJSON, Flags: []string{"--output-format", "streaming-json"}, TrailingArgs: 2,
+		ToolLifecycle: ToolLifecycleAbsent,
 	}
 }
 

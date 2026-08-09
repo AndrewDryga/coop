@@ -102,7 +102,8 @@ func validateLoopResult(index int, stage, result string) error {
 			result == "verify-only-after-block" || result == "second-binding" ||
 			result == "background-drained" || result == "background-timeout" ||
 			result == "background-drained-complete" || result == "background-timeout-after-restored-completion" ||
-			result == "tool-wait" || result == "tool-gated-complete" || result == "forged-flood-wait" {
+			result == "tool-wait" || result == "tool-gated-complete" || result == "forged-flood-wait" ||
+			result == "progress-gated-complete" {
 			return nil
 		}
 	case "between", "signoff", "verify":
@@ -467,6 +468,26 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 1, "", err
 		}
 		if err := emitLoopWatchdogToolEnd(provider, providerArgv); err != nil {
+			return 1, "", err
+		}
+		if err := serveLoopWorker(root, provider, plan.TaskID, attempt.Target, ""); err != nil {
+			return 1, "", err
+		}
+		emitLoopReply(provider, providerArgv, "fixture-loop-complete-"+provider)
+		return 0, "", nil
+	case "progress-gated-complete":
+		// The same slow foreground tool as above, on a stream that CANNOT describe it: progress,
+		// then a long gate the schema has no events for, then completion. This is what legitimate
+		// work looks like on a provider with no tool lifecycle (grok) — identical, on the wire, to
+		// the post-progress silence of "progress-wait" — so only a deadline conservative enough to
+		// outlast the gate may bound it.
+		if err := emitLoopWatchdogEvent(provider, providerArgv, false); err != nil {
+			return 1, "", err
+		}
+		if err := record(root, trace, traceRecord{Source: "provider", Event: "ready", PID: os.Getpid()}); err != nil {
+			return 1, "", err
+		}
+		if err := waitLoopRelease(root, plan.TaskID); err != nil {
 			return 1, "", err
 		}
 		if err := serveLoopWorker(root, provider, plan.TaskID, attempt.Target, ""); err != nil {

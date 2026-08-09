@@ -4192,7 +4192,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 		}
 		childCtx, cancelChild := context.WithCancel(parent)
 		defer cancelChild()
-		watchdog = newProviderWatchdog(watchdogDeadlinesFor(a.cfg), cancelChild)
+		watchdog = newProviderWatchdog(watchdogPolicyFor(a.cfg, agent), cancelChild)
 		dec.setActivity(watchdog)
 		armWatchdog = watchdog.armStart
 		boxCtx = childCtx

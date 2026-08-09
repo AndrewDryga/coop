@@ -38,8 +38,14 @@ func init() { register(codexAgent{}) }
 func (codexAgent) Name() string        { return "codex" }
 func (codexAgent) DisplayName() string { return "Codex" }
 func (codexAgent) Badge() string       { return ui.Green("x") }
+
+// Stream: codex keys every item lifecycle event on the item id, so command_execution, MCP, and
+// collab calls report their own start and completion — a tool lifecycle the watchdog can pair.
 func (codexAgent) Stream() StreamSpec {
-	return StreamSpec{Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1}
+	return StreamSpec{
+		Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1,
+		ToolLifecycle: ToolLifecycleIDs,
+	}
 }
 
 // base guards against an empty COOP_CODEX_CMD override, since the exec/resume forms

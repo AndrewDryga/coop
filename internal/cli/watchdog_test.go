@@ -41,22 +41,38 @@ type watchdogHarness struct {
 
 // newWatchdogHarness builds a watchdog already past the runtime-launch boundary — the state
 // every supervision test below starts from. newUnarmedWatchdogHarness keeps the host-setup
-// window open instead.
+// window open instead; newPolicyWatchdogHarness supervises a provider whose declared capability
+// is not the default one.
 func newWatchdogHarness(d watchdogDeadlines) *watchdogHarness {
-	h := newUnarmedWatchdogHarness(d)
+	return newPolicyWatchdogHarness(toolLifecyclePolicy(d))
+}
+
+func newUnarmedWatchdogHarness(d watchdogDeadlines) *watchdogHarness {
+	return newUnarmedPolicyWatchdogHarness(toolLifecyclePolicy(d))
+}
+
+func newPolicyWatchdogHarness(p watchdogPolicy) *watchdogHarness {
+	h := newUnarmedPolicyWatchdogHarness(p)
 	h.armLaunch()
 	return h
 }
 
-func newUnarmedWatchdogHarness(d watchdogDeadlines) *watchdogHarness {
+func newUnarmedPolicyWatchdogHarness(p watchdogPolicy) *watchdogHarness {
 	h := &watchdogHarness{now: time.Date(2026, 7, 26, 8, 0, 0, 0, time.UTC)}
-	h.wd = newProviderWatchdogWith(d, func() { h.canceled++ }, func() time.Time { return h.now },
+	h.wd = newProviderWatchdogWith(p, func() { h.canceled++ }, func() time.Time { return h.now },
 		func(d time.Duration, fn func()) watchdogTimer {
 			t := &fakeWatchdogTimer{d: d, fn: fn}
 			h.timers = append(h.timers, t)
 			return t
 		})
 	return h
+}
+
+// toolLifecyclePolicy is the supervision claude, codex, and gemini run under — a stream that
+// reports foreground tool start and end under its own ids — which is what every test below means
+// unless it says otherwise.
+func toolLifecyclePolicy(d watchdogDeadlines) watchdogPolicy {
+	return watchdogPolicy{watchdogDeadlines: d, toolLifecycle: true}
 }
 
 func (h *watchdogHarness) active() *fakeWatchdogTimer { return h.timers[len(h.timers)-1] }
@@ -338,6 +354,121 @@ func TestAttemptCeilingFollowsTheArmedPhases(t *testing.T) {
 	}
 }
 
+// The phases a provider runs follow the capability its ADAPTER declares, not what its stream has
+// happened to emit so far. A stream with no tool lifecycle cannot suspend the idle deadline for a
+// foreground gate, so it trades that deadline for one conservative post-progress fallback and
+// keeps no tool cap it could never arm.
+func TestProviderWatchdogPolicyFollowsTheDeclaredCapability(t *testing.T) {
+	armed := testDeadlines() // 10m start / 30m idle / 2h tool
+	for _, c := range []struct {
+		name          string
+		in            watchdogDeadlines
+		toolLifecycle bool
+		want          watchdogPolicy
+		ceiling       time.Duration
+	}{
+		{
+			name: "a stream that reports tools is supervised exactly as shipped",
+			in:   armed, toolLifecycle: true,
+			want:    watchdogPolicy{watchdogDeadlines: armed, toolLifecycle: true},
+			ceiling: 48 * time.Hour,
+		},
+		{
+			name: "a stream that reports none trades idle for the fallback and drops the tool cap",
+			in:   armed,
+			want: watchdogPolicy{watchdogDeadlines: watchdogDeadlines{
+				start: 10 * time.Minute, idle: 2 * time.Hour,
+			}},
+			ceiling: 48 * time.Hour,
+		},
+		{
+			name: "disabled deadlines stay disabled — the fallback is inert by default",
+			in:   watchdogDeadlines{},
+			want: watchdogPolicy{}, ceiling: 0,
+		},
+		{
+			name: "a fixture's short deadlines keep the ratio, so the policy stays testable",
+			in:   watchdogDeadlines{start: 20 * time.Second, idle: time.Second, tool: 4 * time.Second},
+			want: watchdogPolicy{watchdogDeadlines: watchdogDeadlines{
+				start: 20 * time.Second, idle: 4 * time.Second,
+			}},
+			ceiling: 8 * time.Minute,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := providerWatchdogPolicy(c.in, c.toolLifecycle)
+			if got != c.want {
+				t.Errorf("providerWatchdogPolicy(%+v, %v) = %+v, want %+v", c.in, c.toolLifecycle, got, c.want)
+			}
+			// The ceiling stays the OUTERMOST bound whichever policy applies: the fallback is one of
+			// the phases it is derived from, never something that outruns it.
+			ceiling := attemptCeiling(got.watchdogDeadlines)
+			if ceiling != c.ceiling {
+				t.Errorf("ceiling = %s, want %s", ceiling, c.ceiling)
+			}
+			if got.idle > 0 && ceiling <= got.idle {
+				t.Errorf("ceiling %s does not outlast the post-progress deadline %s", ceiling, got.idle)
+			}
+		})
+	}
+}
+
+// The declaration reaches the watchdog through the registry, so the policy an attempt runs under is
+// decided by the provider it is running — never by anything coop measures about the process.
+func TestWatchdogPolicyForReadsTheAdapterDeclaration(t *testing.T) {
+	cfg := &config.Config{ProviderTimeouts: "start=10s,idle=20s,tool=30s"}
+	for _, agent := range []string{"claude", "codex", "gemini"} {
+		want := watchdogPolicy{watchdogDeadlines{start: 10 * time.Second, idle: 20 * time.Second, tool: 30 * time.Second}, true}
+		if got := watchdogPolicyFor(cfg, agent); got != want {
+			t.Errorf("%s policy = %+v, want %+v", agent, got, want)
+		}
+	}
+	// Grok's stream carries no tool lifecycle (probed at v0.2.101): 4 × idle, no tool cap.
+	want := watchdogPolicy{watchdogDeadlines: watchdogDeadlines{start: 10 * time.Second, idle: 80 * time.Second}}
+	if got := watchdogPolicyFor(cfg, "grok"); got != want {
+		t.Errorf("grok policy = %+v, want %+v", got, want)
+	}
+	// An agent no adapter answers for gets the conservative side, not the trusting one.
+	if got := watchdogPolicyFor(cfg, "not-a-registered-agent"); got.toolLifecycle {
+		t.Errorf("unknown agent policy = %+v, want no assumed tool lifecycle", got)
+	}
+}
+
+// A grok foreground gate is INVISIBLE in its stream — no start, no end, no id — so it is
+// indistinguishable from silence. Killing it at the ordinary idle deadline is exactly the thing
+// coop promises not to do, and letting it run forever is the thing the watchdog exists to prevent.
+// The fallback is the deliberate middle: nothing suspends it, but it is long enough that no honest
+// gate reaches it.
+func TestWatchdogWithoutToolLifecycleBoundsSilenceNotWork(t *testing.T) {
+	h := newPolicyWatchdogHarness(providerWatchdogPolicy(testDeadlines(), false))
+	if h.active().d != 10*time.Minute {
+		t.Fatalf("start deadline = %s, want 10m", h.active().d)
+	}
+	h.wd.progress()
+	if h.active().d != 2*time.Hour {
+		t.Fatalf("post-progress deadline = %s, want the 2h fallback (4 × the 30m idle budget)", h.active().d)
+	}
+	// Tool events are not in this stream's schema, so the declaration — not the event — decides:
+	// one forged start must not suspend the fallback, because no end could ever resume it.
+	armed := len(h.timers)
+	h.wd.toolStart("forged")
+	h.wd.toolEnd("forged")
+	if len(h.timers) != armed || len(h.wd.openTools) != 0 {
+		t.Fatalf("tool events on a no-lifecycle stream armed %d deadline(s) and opened %d tool(s)",
+			len(h.timers)-armed, len(h.wd.openTools))
+	}
+	// Progress keeps re-arming it, and silence past it still ends the attempt: bounded, just
+	// conservatively, and reported as the post-progress silence it is.
+	h.wd.progress()
+	h.active().fn()
+	if h.wd.timedOut() != outcomeIdleTimeout || h.canceled != 1 {
+		t.Fatalf("fallback silence: outcome=%q cancels=%d", h.wd.timedOut(), h.canceled)
+	}
+	if h.ceiling == nil || h.ceiling.d != 48*time.Hour {
+		t.Fatalf("ceiling = %v, want 48h (24 × the fallback it bounds)", h.ceiling)
+	}
+}
+
 func TestWatchdogTerminalAndStopEndSupervision(t *testing.T) {
 	h := newWatchdogHarness(testDeadlines())
 	h.wd.progress()
@@ -404,7 +535,10 @@ func TestWatchdogDeadlineOverridePolicy(t *testing.T) {
 			name: "shortening an armed default is honored",
 			def:  armed, raw: "start=30s,idle=45s,tool=90s",
 			want: watchdogDeadlines{start: 30 * time.Second, idle: 45 * time.Second, tool: 90 * time.Second},
-			says: []string{"overridden by COOP_PROVIDER_TIMEOUTS", "start=30s idle=45s tool=1m30s"},
+			// The announcement names the derived no-tool-lifecycle bound too: the visible idle
+			// deadline is not what every provider actually runs under.
+			says: []string{"overridden by COOP_PROVIDER_TIMEOUTS", "start=30s idle=45s tool=1m30s",
+				"no tool lifecycle: silence 3m0s, no tool cap, ceiling 1h12m0s"},
 		},
 		{
 			name: "lengthening an armed default is cut back to it",
@@ -505,7 +639,7 @@ func TestNoDefaultDeadlineInterruptsAWorkingProvider(t *testing.T) {
 	}
 	// A disabled deadline must create no timer at all, or a stale one could still fire.
 	var armed int
-	w := newProviderWatchdogWith(watchdogDeadlines{}, func() { t.Error("cancelled with no deadline set") },
+	w := newProviderWatchdogWith(toolLifecyclePolicy(watchdogDeadlines{}), func() { t.Error("cancelled with no deadline set") },
 		time.Now, func(time.Duration, func()) watchdogTimer { armed++; return &fakeWatchdogTimer{} })
 	w.armStart()
 	w.progress()

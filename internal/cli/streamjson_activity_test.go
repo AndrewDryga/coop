@@ -105,6 +105,25 @@ func TestGrokStreamActivity(t *testing.T) {
 	}
 }
 
+// The adapter declares grok's stream to carry NO tool lifecycle, and the decoder has to make that
+// declaration true: the conservative silence fallback grok attempts are supervised by is only safe
+// while nothing can suspend it. Every other provider's tool shape decoded from a grok stream is
+// therefore display, never activity — a box that wants to hold its attempt cannot borrow a schema.
+func TestGrokStreamProducesNoToolActivity(t *testing.T) {
+	var out, tail bytes.Buffer
+	rec := &activityRecorder{}
+	lines := []string{
+		`{"type":"tool_use","tool_name":"run_shell_command","tool_id":"g1","parameters":{"command":"make check"}}`,
+		`{"type":"tool_result","tool_id":"g1","status":"success"}`,
+		`{"type":"item.started","item":{"id":"c1","type":"command_execution","command":"make check"}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"make check"}}]}}`,
+	}
+	feedActivityLines(t, newGrokStreamDecoder(&out, &tail, "grok", "", "", "m"), rec, lines)
+	if len(rec.events) != 0 {
+		t.Errorf("foreign tool events in a grok stream produced activity: %v", rec.events)
+	}
+}
+
 // Every provider's EMPTY-but-recognized envelopes. Each one parses, carries a type the adapter
 // knows, and proves nothing: no content, no ID, nothing that can be paired or shown. Coming off
 // the box's own stdout they are the cheapest possible deadline reset, so none of them may produce

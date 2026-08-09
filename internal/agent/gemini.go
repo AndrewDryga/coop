@@ -22,8 +22,14 @@ func init() { register(geminiAgent{}) }
 func (geminiAgent) Name() string        { return "gemini" }
 func (geminiAgent) DisplayName() string { return "Gemini CLI" }
 func (geminiAgent) Badge() string       { return ui.Yellow("g") }
+
+// Stream: gemini pairs tool_use with tool_result under `tool_id`, so its foreground tools are
+// supervisable.
 func (geminiAgent) Stream() StreamSpec {
-	return StreamSpec{Format: StreamGeminiJSON, Flags: []string{"-o", "stream-json"}, TrailingArgs: 2}
+	return StreamSpec{
+		Format: StreamGeminiJSON, Flags: []string{"-o", "stream-json"}, TrailingArgs: 2,
+		ToolLifecycle: ToolLifecycleIDs,
+	}
 }
 
 func (geminiAgent) base(cfg *config.Config) []string {

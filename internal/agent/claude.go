@@ -26,10 +26,14 @@ func init() { register(claudeAgent{}) }
 func (claudeAgent) Name() string        { return "claude" }
 func (claudeAgent) DisplayName() string { return "Claude Code" }
 func (claudeAgent) Badge() string       { return ui.Magenta("c") }
+
+// Stream: claude's stream-json carries the full tool lifecycle — a `tool_use` block names both the
+// tool and the id its `tool_result` arrives under — so the watchdog can supervise foreground tools.
 func (claudeAgent) Stream() StreamSpec {
 	return StreamSpec{
-		Format: StreamClaudeJSON,
-		Flags:  []string{"--output-format", "stream-json", "--verbose"},
+		Format:        StreamClaudeJSON,
+		Flags:         []string{"--output-format", "stream-json", "--verbose"},
+		ToolLifecycle: ToolLifecycleIDs,
 	}
 }
 

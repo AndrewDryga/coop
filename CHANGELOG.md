@@ -4,6 +4,29 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A provider whose stream cannot report tool calls is no longer supervised as if it could.** The
+  attempt watchdog suspends its idle deadline while a foreground tool is open — that is how a
+  40-minute `make check` survives a 30-minute silence budget — but it only works for a stream that
+  says a tool started. Grok's does not. Probed against the installed CLI at v0.2.101, a run that
+  shelled out emitted `thought`, `text`, and `end` and nothing else: no tool start, no tool end, no
+  id to pair them with. A grok attempt sitting on a long gate was therefore indistinguishable from a
+  grok attempt that had died, and the idle deadline would have killed the gate coop promises to let
+  finish — while the docs claimed long tools survive. Adapters now **declare** what their stream
+  proves about tools, and the watchdog selects policy from that declaration rather than inferring it
+  from process names, CPU, or the bytes seen so far: claude, codex, and gemini pair every tool start
+  with an end under a provider id and keep the shipped idle-plus-tool-cap supervision unchanged;
+  grok declares none and gets one conservative post-progress deadline instead — 4× whatever idle
+  budget is armed, so a 2-hour fallback wherever the 30-minute idle deadline applies — and no tool
+  cap, since no event of its schema could ever arm one. Long enough that no honest gate reaches it,
+  short enough that a silent attempt is still bounded, and derived from the idle budget rather than
+  hardcoded, so the shorten-only override shortens it too and the non-resettable attempt ceiling
+  stays the outermost bound. The
+  watchdog also refuses tool events from a stream that declared none, because nothing may suspend a
+  deadline whose resuming event does not exist; a stream nobody has probed reads as "no tool
+  lifecycle" — the conservative side — and the registry's own test fails rather than let it ship
+  undeclared. Every deadline still defaults to disabled, so this changes no behavior today; it is
+  the per-provider correctness they need before they can be armed.
+
 - **The provider watchdog now treats the stream it supervises as what it is: untrusted input from
   the box.** Those bytes arrive on the stdout of the container that holds the credential and runs
   the agent, and any process in there that reaches that descriptor can write provider-shaped

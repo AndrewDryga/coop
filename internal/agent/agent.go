@@ -27,13 +27,41 @@ const (
 	StreamGrokJSON
 )
 
+// StreamToolLifecycle is what a provider's structured stream proves about the FOREGROUND TOOLS it
+// runs — the one capability the attempt watchdog changes policy on. It is a DECLARATION each
+// adapter makes about its own schema, never something coop infers at runtime from process names,
+// CPU, or the bytes seen so far: a stream that has simply not opened a tool yet is indistinguishable
+// from one that never will.
+type StreamToolLifecycle uint8
+
+const (
+	// ToolLifecycleUndeclared is the zero value — nobody probed this stream. It is not a third
+	// behavior: consumers read it as ToolLifecycleAbsent (the conservative side), and
+	// TestEveryStreamDeclaresItsToolLifecycle fails so it cannot ship.
+	ToolLifecycleUndeclared StreamToolLifecycle = iota
+	// ToolLifecycleAbsent: the stream reports no tool start or end at all, so silence during a
+	// long foreground gate is indistinguishable from a wedged attempt.
+	ToolLifecycleAbsent
+	// ToolLifecycleIDs: tool starts and ends arrive under a provider-supplied id the watchdog can
+	// pair, so an open tool can suspend the idle deadline and carry its own absolute cap.
+	ToolLifecycleIDs
+)
+
 // StreamSpec describes how a headless command opts into structured output. TrailingArgs
 // keeps positional prompts (or a flag/value prompt pair) after the inserted stream flags.
+// ToolLifecycle is the adapter's declaration about its own schema (see StreamToolLifecycle).
 type StreamSpec struct {
-	Format       StreamFormat
-	Flags        []string
-	TrailingArgs int
+	Format        StreamFormat
+	Flags         []string
+	TrailingArgs  int
+	ToolLifecycle StreamToolLifecycle
 }
+
+// TracksTools reports whether the watchdog may supervise this stream's foreground tools — suspend
+// its idle deadline on a tool start and cap the oldest open one. Only an explicit
+// ToolLifecycleIDs declaration qualifies: an undeclared stream reads as absent, so a provider
+// nobody probed gets the conservative policy rather than a deadline its schema cannot feed.
+func (s StreamSpec) TracksTools() bool { return s.ToolLifecycle == ToolLifecycleIDs }
 
 // EffortFlagStyle is how an agent's command expresses one reasoning-effort value.
 type EffortFlagStyle uint8
