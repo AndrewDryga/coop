@@ -4,6 +4,34 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The registry that decides whether a task is really finished no longer lives in a cache
+  directory.** Coop keeps host-global completion trust outside any repo: the lock files whose
+  kernel flocks make one controller the single writer for a task, the completion receipts that
+  prove a `99_done/` folder got there through host authority, the audit-reopen records that
+  authorize reopening shipped work, and the completion-window journal that crash recovery replays.
+  All of it sat under `~/Library/Caches/coop/task-leases` (`$XDG_CACHE_HOME` on Linux) — a
+  directory the OS is entitled to delete: macOS purges `~/Library/Caches` under disk pressure and
+  every "clean up my Mac" tool empties it on request. A purge **mid-run** unlinks a lock file whose
+  descriptor a controller still holds, so the next controller recreates that name as a fresh inode
+  and both hold an "exclusive" lock on a different one — the single-writer invariant dissolves with
+  nothing printed. A purge **between runs** erases the receipts, degrading crash recovery to
+  restore-and-redo and stranding audit-reopened tasks behind manual repair. The registry now lives
+  at `~/.local/state/coop/task-leases/v1`, alongside the session store's state root, on both macOS
+  and Linux. **The move happens once, automatically:** the first command run by the new binary
+  takes a lock and adopts a populated cache registry into the new location — a whole-directory
+  rename on the same volume, or a per-file fsync-then-rename copy across volumes — and the old
+  cache path is gone afterwards. Nothing ever reads it again; there is no permanent fallback,
+  because a fallback would keep the deletable path load-bearing forever. Receipts, reopen records,
+  departure records and the window journal survive byte-identical (their filenames are hashes of
+  repo plus task id, which the move does not touch). **One upgrade caveat:** a `coop` process that
+  was already running when you upgraded holds its locks on *file descriptors*, not paths, so it
+  keeps using the old inodes and is not mutually exclusive with a new-binary process for the rest
+  of its life. Let in-flight runs finish before upgrading, or stop them — the window closes when
+  the last pre-upgrade process exits. Separately, **every authority lock is now proved after it is
+  taken**: Coop re-stats the descriptor against the name it locked and, if they no longer match,
+  drops the lock and retakes it on the inode that currently answers the name (bounded retries, then
+  a clear error). A lock file deleted underfoot is now detectable instead of silently non-exclusive.
+
 - **One gate: `make check` and CI's check job are now the same recipe.** They were two step lists
   maintained by hand, and they had drifted in BOTH directions. Only CI ran the race detector,
   `go build ./...`, ShellCheck, and a version-pinned Staticcheck; only a laptop ran the cast

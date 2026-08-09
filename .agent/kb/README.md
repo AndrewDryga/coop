@@ -76,4 +76,5 @@ updated: <YYYY-MM-DD>                # last edit
 - [review-host-owned-verdicts](review-host-owned-verdicts.md) — review boxes report bounded evidence; Coop alone applies validated task lifecycle changes
 - [signoff-scope-is-run-anchored](signoff-scope-is-run-anchored.md) — signoff subjects are a run-anchored folder diff; re-anchor only on receipt-consistent rounds, from the post-review done set
 - [task-state-is-the-folder](task-state-is-the-folder.md) — a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
+- [task-authority-registry-is-durable-state](task-authority-registry-is-durable-state.md) — host-global completion trust lives in `~/.local/state/coop/task-leases`, never a cache dir; adoption off the old cache path is one-shot and every authority flock rechecks its inode
 - [task-tmp-lifetime](task-tmp-lifetime.md) — task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist

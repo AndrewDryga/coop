@@ -130,9 +130,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			!pathExists(filepath.Join(root, stateInProgress, archiveID)) {
 			t.Fatal("timeout ownership failure did not leave both tasks actionable")
 		}
-		t.Setenv(testLeaseAuthorityRootEnv, filepath.Join(
-			suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion,
-		))
+		t.Setenv(testLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
 		index, err := readCompletionWindowIndex(root)
 		if err != nil {
 			t.Fatal(err)

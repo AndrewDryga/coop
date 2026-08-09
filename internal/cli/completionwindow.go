@@ -373,12 +373,8 @@ func writeCompletionWindowIndex(root string, index completionWindowIndex) error 
 }
 
 func lockCompletionWindowIndex(root string) (*os.File, completionWindowIndex, error) {
-	file, err := openLeaseAuthority(root, completionWindowIndexID, true)
+	file, err := lockLeaseAuthority(root, completionWindowIndexID, true, syscall.LOCK_EX)
 	if err != nil {
-		return nil, completionWindowIndex{}, err
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		_ = file.Close()
 		return nil, completionWindowIndex{}, err
 	}
 	index, err := readCompletionWindowIndex(root)
@@ -459,14 +455,12 @@ func beginCompletionWindowsWithPolicy(hosts, allowedDoneDepartures, reviewSubjec
 		if err != nil {
 			return nil, errors.Join(err, unlockLeaseFile(indexFile), set.close())
 		}
-		live, err := openLeaseAuthority(root, completionWindowLockPrefix+id, true)
+		// The window's lock name embeds a freshly minted supervisor id, so nothing else can own it:
+		// on any failure to take it — including a failure to open it — the record is ours to remove.
+		live, err := lockLeaseAuthority(root, completionWindowLockPrefix+id, true, syscall.LOCK_EX|syscall.LOCK_NB)
 		if err != nil {
-			return nil, errors.Join(err, unlockLeaseFile(indexFile), set.close())
-		}
-		if err := syscall.Flock(int(live.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-			closeErr := live.Close()
 			removeErr := removeLeaseAuthorityLock(root, completionWindowLockPrefix+id)
-			return nil, errors.Join(err, closeErr, removeErr, unlockLeaseFile(indexFile), set.close())
+			return nil, errors.Join(err, removeErr, unlockLeaseFile(indexFile), set.close())
 		}
 		record := completionWindowRecord{
 			Baseline:              baseline,
@@ -933,13 +927,10 @@ func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 		var recoveries []completionWindowRecovery
 		var acquireErrs []error
 		for id, record := range index.Windows {
-			live, openErr := openLeaseAuthority(root, completionWindowLockPrefix+id, true)
-			if openErr != nil {
-				acquireErrs = append(acquireErrs, openErr)
-				continue
-			}
-			if lockErr := syscall.Flock(int(live.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); lockErr != nil {
-				_ = live.Close()
+			live, lockErr := lockLeaseAuthority(root, completionWindowLockPrefix+id, true, syscall.LOCK_EX|syscall.LOCK_NB)
+			if lockErr != nil {
+				// A held window lock means a live owner is still replaying it; anything else is a
+				// real failure to acquire and must be reported rather than silently skipped.
 				if !errors.Is(lockErr, syscall.EWOULDBLOCK) && !errors.Is(lockErr, syscall.EAGAIN) {
 					acquireErrs = append(acquireErrs, lockErr)
 				}

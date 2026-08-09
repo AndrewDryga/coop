@@ -236,6 +236,14 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 	}
 }
 
+// processLeaseAuthorityRoot is where a spawned coop resolves its task-authority registry: the
+// durable state root under the fixture's own HOME, never a cache directory. In-process helpers that
+// seed or inspect host records must point at exactly this path, or they write somewhere the child
+// will never read.
+func processLeaseAuthorityRoot(layout procharness.Layout) string {
+	return filepath.Join(layout.Home, ".local", "state", "coop", "task-leases", leaseAuthorityVersion)
+}
+
 func buildProcessBinary(t *testing.T, root, output, pkg string) {
 	t.Helper()
 	cmd := exec.Command("go", "build", "-trimpath", "-o", output, pkg)

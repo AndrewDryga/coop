@@ -21,6 +21,8 @@ const (
 	leaseLockName                   = "lease.lock"
 	leaseMetadataName               = "lease.json"
 	leaseAuthorityVersion           = "v1"
+	leaseAuthorityAdoptLockName     = ".adopt.lock"
+	leaseAuthorityIdentityAttempts  = 5
 	auditReopenLegacyVersion        = 1
 	auditReopenLegacyPendingVersion = 2
 	auditReopenVersion              = 3
@@ -30,9 +32,15 @@ const (
 	leaseMetadataVersion            = 1
 )
 
-const testLeaseAuthorityRootEnv = "COOP_TEST_LEASE_AUTHORITY_ROOT"
+const (
+	testLeaseAuthorityRootEnv       = "COOP_TEST_LEASE_AUTHORITY_ROOT"
+	testLeaseAuthorityLegacyRootEnv = "COOP_TEST_LEASE_AUTHORITY_LEGACY_ROOT"
+)
 
-var errLeaseCandidateGone = errors.New("lease candidate changed state")
+var (
+	errLeaseCandidateGone     = errors.New("lease candidate changed state")
+	errLeaseAuthorityIdentity = errors.New("task lease authority changed identity while locking")
+)
 
 type leaseCompletionReceipt struct {
 	Version               int    `json:"version"`
@@ -199,17 +207,42 @@ func leaseAuthorityKey(root, id string) (string, error) {
 	return fmt.Sprintf("%x", sum), nil
 }
 
-func openLeaseAuthorityRoot() (*os.Root, error) {
+// leaseAuthorityRoots resolves where the host-global completion-trust registry lives, plus the
+// cache location it supersedes. Everything in this registry — lock-authority inodes, completion
+// receipts, audit-reopen authority, departure records, the completion-window journal — is DURABLE
+// TRUST STATE, so it lives with the session store's state root (see defaultSessionStateRoot in
+// session_http.go) and NOT under os.UserCacheDir(). A cache is OS-deletable BY CONTRACT: macOS
+// purges ~/Library/Caches under pressure and cleaners empty it wholesale. A purge mid-run unlinks
+// lock files whose fds are still flocked, so the next open recreates the name as a new inode and
+// two controllers each hold an "exclusive" lock on a different one; a purge between runs erases the
+// receipts crash recovery reads, degrading it to restore-and-redo and stranding audit-reopened
+// tasks behind manual repair.
+func leaseAuthorityRoots() (dir, legacy string, err error) {
 	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
-		if dir := os.Getenv(testLeaseAuthorityRootEnv); dir != "" {
-			return os.OpenRoot(dir)
+		if root := os.Getenv(testLeaseAuthorityRootEnv); root != "" {
+			return root, os.Getenv(testLeaseAuthorityLegacyRootEnv), nil
 		}
 	}
-	cache, err := os.UserCacheDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", err
+	}
+	dir = filepath.Join(home, ".local", "state", "coop", "task-leases", leaseAuthorityVersion)
+	cache, cacheErr := os.UserCacheDir()
+	if cacheErr != nil {
+		return dir, "", nil // no cache dir means there is nothing to adopt, not a broken install
+	}
+	return dir, filepath.Join(cache, "coop", "task-leases", leaseAuthorityVersion), nil
+}
+
+func openLeaseAuthorityRoot() (*os.Root, error) {
+	dir, legacy, err := leaseAuthorityRoots()
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(cache, "coop", "task-leases", leaseAuthorityVersion)
+	if err := adoptLegacyLeaseAuthorityRoot(dir, legacy); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -223,17 +256,244 @@ func openLeaseAuthorityRoot() (*os.Root, error) {
 	return os.OpenRoot(dir)
 }
 
+// adoptLegacyLeaseAuthorityRoot is the ONE-SHOT move of the registry off the cache path. It runs
+// only when the durable root does not exist yet and the cache root does; when it returns, the cache
+// root is gone and nothing reads it again. There is deliberately no compat reader — a permanent
+// fallback would keep the purgeable path load-bearing forever, which is the bug.
+//
+// A process still running an OLD binary during the upgrade keeps its locks on the OLD inodes: flock
+// binds an open file description, and adoption moves directory entries, not fds. So for as long as
+// such a process lives, it and a new binary are not mutually exclusive. That window is why adoption
+// is a single loud move rather than a lazy dual-read that would extend it indefinitely; the fix is
+// to let in-flight runs finish before upgrading.
+func adoptLegacyLeaseAuthorityRoot(dir, legacy string) (err error) {
+	if legacy == "" || filepath.Clean(legacy) == filepath.Clean(dir) {
+		return nil
+	}
+	// The steady state must not pay for a lock: adoption happens once in the life of an install, so
+	// a stat is the gate and both conditions are re-proved under the lock before anything moves.
+	if adopted, statErr := leaseAuthorityRootAdopted(dir); adopted || statErr != nil {
+		return statErr
+	}
+	if info, statErr := os.Lstat(legacy); statErr != nil || !info.IsDir() {
+		return nil // a fresh install, or the cache was already purged: nothing to adopt
+	}
+	parent := filepath.Dir(dir)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(
+		filepath.Join(parent, leaseAuthorityAdoptLockName),
+		os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600,
+	)
+	if err != nil {
+		return err
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return errors.Join(err, lock.Close())
+	}
+	defer func() { err = errors.Join(err, unlockLeaseFile(lock)) }()
+	if adopted, statErr := leaseAuthorityRootAdopted(dir); adopted || statErr != nil {
+		return statErr // a concurrent adopter finished while we waited for the lock
+	}
+	if info, statErr := os.Lstat(legacy); statErr != nil || !info.IsDir() {
+		return nil
+	}
+	if renameErr := os.Rename(legacy, dir); renameErr == nil {
+		return errors.Join(syncLeaseAuthorityDir(parent), syncLeaseAuthorityDir(filepath.Dir(legacy)))
+	} else if !errors.Is(renameErr, syscall.EXDEV) {
+		return fmt.Errorf("adopt task lease authority %q: %w", legacy, renameErr)
+	}
+	return copyLegacyLeaseAuthorityRoot(dir, legacy)
+}
+
+func leaseAuthorityRootAdopted(dir string) (bool, error) {
+	if _, err := os.Lstat(dir); err == nil {
+		return true, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	return false, nil
+}
+
+// copyLegacyLeaseAuthorityRoot adopts across a volume boundary, where rename cannot help. Records
+// are copied fsync-then-rename into a staging directory that is itself renamed into place, so a
+// crash at any point leaves either the untouched cache root or a COMPLETE durable root — never a
+// half-populated registry, which would read back as "these receipts never existed" and reopen
+// finished work.
+func copyLegacyLeaseAuthorityRoot(dir, legacy string) error {
+	parent := filepath.Dir(dir)
+	staging := filepath.Join(parent, "."+filepath.Base(dir)+".adopting")
+	// The adoption lock is held, so anything at the staging name is debris from a crashed adoption;
+	// a resumed copy must start clean rather than inherit a half-written tree.
+	if err := os.RemoveAll(staging); err != nil {
+		return err
+	}
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(legacy)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		// Every record is written as a single-link regular file under a sha-keyed name. Anything
+		// else — a stray directory, an atomicWriteTaskFile temp left by a crash — is not trust
+		// state, so it stays behind; skipping dot names also keeps the staging temps unambiguous.
+		if !info.Mode().IsRegular() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		if err := copyLeaseAuthorityRecord(filepath.Join(legacy, entry.Name()), staging, entry.Name(), info.Mode().Perm()); err != nil {
+			return err
+		}
+	}
+	if err := syncLeaseAuthorityDir(staging); err != nil {
+		return err
+	}
+	if err := os.Rename(staging, dir); err != nil {
+		return err
+	}
+	if err := syncLeaseAuthorityDir(parent); err != nil {
+		return err
+	}
+	// The durable root is in place, so the cache copy is dead weight a purge is welcome to take.
+	// Removing it here is what makes the adoption one-shot instead of repeating every run.
+	return os.RemoveAll(legacy)
+}
+
+func copyLeaseAuthorityRecord(srcPath, dstDir, name string, perm os.FileMode) error {
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	tmp := filepath.Join(dstDir, "."+name+".partial")
+	dst, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		return errors.Join(err, dst.Close())
+	}
+	if err := dst.Chmod(perm); err != nil {
+		return errors.Join(err, dst.Close())
+	}
+	// fsync BEFORE the rename: a receipt that reaches its final name without its bytes on disk
+	// reads back as an invalid record, which is exactly the loss this fallback exists to prevent.
+	if err := dst.Sync(); err != nil {
+		return errors.Join(err, dst.Close())
+	}
+	if err := dst.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(dstDir, name))
+}
+
+// syncLeaseAuthorityDir fsyncs a directory so a rename into it survives a power loss: the renamed
+// file's contents are already durable, but the directory entry pointing at them may not be.
+func syncLeaseAuthorityDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	return errors.Join(d.Sync(), d.Close())
+}
+
+// leaseAuthorityIsCurrent proves, with the kernel lock already held, that the locked inode is still
+// the one the registry name resolves to. flock binds a process to an INODE, never to a name: if the
+// record is unlinked and recreated between open and flock, two controllers each hold an "exclusive"
+// lock on a different inode and the single-writer invariant dissolves in silence. Comparing
+// fstat(fd) against a fresh lstat(name) is the only evidence that the lock we hold is the lock every
+// other controller contends for.
+func leaseAuthorityIsCurrent(file *os.File, name string) (bool, error) {
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return false, err
+	}
+	defer registry.Close()
+	named, err := registry.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil // unlinked underfoot: the lock we hold now guards an orphan
+	}
+	if err != nil {
+		return false, err
+	}
+	locked, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(locked, named), nil
+}
+
+// lockLeaseAuthorityWith opens the registry record for id, takes the caller's kernel lock on it, and
+// only then proves the locked inode still answers the registry name. On a mismatch it drops the lock
+// and retries the whole open-and-lock, because the inode that answers the name NOW is the one every
+// other controller will contend for. Retries are bounded: a name whose identity keeps changing is a
+// purge or an attack, and the caller must see an error rather than silently hold an exclusive lock
+// on an inode nobody else can reach.
+func lockLeaseAuthorityWith(root, id string, create bool, lock func(*os.File) error) (*os.File, error) {
+	key, err := leaseAuthorityKey(root, id)
+	if err != nil {
+		return nil, err
+	}
+	name := key + ".lock"
+	for attempt := 0; ; attempt++ {
+		file, err := openLeaseAuthorityRecord(name, create)
+		if err != nil {
+			return nil, err
+		}
+		if err := lock(file); err != nil {
+			return nil, errors.Join(err, file.Close())
+		}
+		current, err := leaseAuthorityIsCurrent(file, name)
+		if err != nil {
+			return nil, errors.Join(err, unlockLeaseFile(file))
+		}
+		if current {
+			return file, nil
+		}
+		if err := unlockLeaseFile(file); err != nil {
+			return nil, err
+		}
+		if attempt+1 >= leaseAuthorityIdentityAttempts {
+			return nil, fmt.Errorf("%w: %s", errLeaseAuthorityIdentity, name)
+		}
+	}
+}
+
+func lockLeaseAuthority(root, id string, create bool, how int) (*os.File, error) {
+	return lockLeaseAuthorityWith(root, id, create, func(file *os.File) error {
+		return syscall.Flock(int(file.Fd()), how)
+	})
+}
+
+func lockLeaseAuthorityForAudit(root, id string, create bool, label string, owned func() bool) (*os.File, error) {
+	return lockLeaseAuthorityWith(root, id, create, func(file *os.File) error {
+		return lockExclusiveForCompletionAudit(file, label, owned)
+	})
+}
+
+// openLeaseAuthority opens a task's authority record WITHOUT locking it. Production code takes the
+// lock through lockLeaseAuthority instead, so that every held lock has been proved to be on the
+// inode the registry name still resolves to; an unlocked open carries no such guarantee.
 func openLeaseAuthority(root, id string, create bool) (*os.File, error) {
 	key, err := leaseAuthorityKey(root, id)
 	if err != nil {
 		return nil, err
 	}
+	return openLeaseAuthorityRecord(key+".lock", create)
+}
+
+func openLeaseAuthorityRecord(name string, create bool) (*os.File, error) {
 	registry, err := openLeaseAuthorityRoot()
 	if err != nil {
 		return nil, err
 	}
 	defer registry.Close()
-	name := key + ".lock"
 	file, err := registry.OpenFile(name, os.O_RDWR|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, os.ErrNotExist) && create {
 		file, err = registry.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
@@ -641,15 +901,11 @@ func leaseCompletionReceiptMatches(authority *os.File, taskDir string) bool {
 }
 
 func inspectTaskCompletionReceipt(root string, task taskItem) (leaseCompletionReceipt, bool, bool) {
-	authority, err := openLeaseAuthority(root, task.ID, false)
+	authority, err := lockLeaseAuthority(root, task.ID, false, syscall.LOCK_SH|syscall.LOCK_NB)
 	if errors.Is(err, os.ErrNotExist) {
 		return leaseCompletionReceipt{}, false, false
 	}
 	if err != nil {
-		return leaseCompletionReceipt{}, false, true
-	}
-	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
-		_ = authority.Close()
 		return leaseCompletionReceipt{}, false, true
 	}
 	receipt, ok := readLeaseCompletionReceipt(authority, task.Dir)
@@ -660,18 +916,14 @@ func inspectTaskCompletionReceipt(root string, task taskItem) (leaseCompletionRe
 }
 
 func clearTaskCompletionReceipt(root, id string) error {
-	authority, err := openLeaseAuthority(root, id, false)
+	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	if err != nil {
-		return err
+	if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+		return nil // a new owner cleared the old receipt while acquiring this same flock
 	}
-	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = authority.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return nil // a new owner cleared the old receipt while acquiring this same flock
-		}
+	if err != nil {
 		return err
 	}
 	return errors.Join(clearLeaseCompletionReceipt(authority), unlockLeaseFile(authority))
@@ -684,20 +936,13 @@ func clearTaskCompletionReceiptIfMatches(root string, task taskItem, nonce strin
 	if nonce == "" {
 		return false, nil
 	}
-	authority, err := openLeaseAuthority(root, task.ID, false)
-	if errors.Is(err, os.ErrNotExist) {
+	authority, err := lockLeaseAuthorityForAudit(root, task.ID, false, "task "+task.ID+" authority", func() bool {
+		return leaseAuthorityMetadataExists(root, task.ID)
+	})
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, errCompletionAuditLockOwned) {
 		return false, nil
 	}
 	if err != nil {
-		return false, err
-	}
-	if err := lockExclusiveForCompletionAudit(authority, "task "+task.ID+" authority", func() bool {
-		return leaseAuthorityMetadataExists(root, task.ID)
-	}); err != nil {
-		_ = authority.Close()
-		if errors.Is(err, errCompletionAuditLockOwned) {
-			return false, nil
-		}
 		return false, err
 	}
 	current, ok := currentTask(root, task.ID)
@@ -954,12 +1199,8 @@ func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease,
 	if statErr != nil && !legacy {
 		return nil, taskLeaseObservation{}, statErr
 	}
-	authority, err := openLeaseAuthority(root, item.ID, true)
+	authority, err := lockLeaseAuthority(root, item.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
-		return nil, taskLeaseObservation{}, err
-	}
-	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = authority.Close()
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
 			return nil, taskLeaseObservation{}, err
 		}
@@ -1094,18 +1335,14 @@ func observeTaskLease(item taskItem, now time.Time) taskLeaseObservation {
 // another controller owns the work.
 func observeHeldTaskLease(item taskItem, now time.Time) taskLeaseObservation {
 	root := filepath.Dir(filepath.Dir(item.Dir))
-	authority, err := openLeaseAuthority(root, item.ID, false)
-	if err == nil {
-		if lockErr := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); lockErr != nil {
-			_ = authority.Close()
-			if !errors.Is(lockErr, syscall.EWOULDBLOCK) && !errors.Is(lockErr, syscall.EAGAIN) {
-				return taskLeaseObservation{State: leaseBusy, Provider: "unknown"}
-			}
-			meta, ok := readLeaseAuthorityMetadata(root, item.ID)
-			return leaseObservationFromMetadata(meta, ok, now)
-		}
+	authority, err := lockLeaseAuthority(root, item.ID, false, syscall.LOCK_EX|syscall.LOCK_NB)
+	switch {
+	case err == nil:
 		_ = unlockLeaseFile(authority)
-	} else if !errors.Is(err, os.ErrNotExist) {
+	case errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN):
+		meta, ok := readLeaseAuthorityMetadata(root, item.ID)
+		return leaseObservationFromMetadata(meta, ok, now)
+	case !errors.Is(err, os.ErrNotExist):
 		return taskLeaseObservation{State: leaseBusy, Provider: "unknown"}
 	}
 	// A task-local lock is retained for compatibility with older controllers and lets the in-box

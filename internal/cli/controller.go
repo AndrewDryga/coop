@@ -303,12 +303,8 @@ func completeTrustedTask(root string, task taskItem) (retErr error) {
 			retErr = errors.Join(retErr, windows.abandon())
 		}
 	}()
-	authority, err := openLeaseAuthority(root, task.ID, true)
+	authority, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
-		return err
-	}
-	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = authority.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 			return fmt.Errorf("task %s is leased by another controller", task.ID)
 		}
@@ -484,18 +480,14 @@ func moveTrustedTasksFromDoneWith(moves []trustedTaskMove) (retErr error) {
 		return errors.Join(cause, unlockAll(), closeWindow(true))
 	}
 	for _, move := range moves {
-		authority, err := openLeaseAuthority(move.root, move.task.ID, true)
+		authority, err := lockLeaseAuthority(move.root, move.task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
 		if err != nil {
-			return failBeforeMutation(err)
-		}
-		state := trustedTaskMoveState{move: move, authority: authority}
-		states = append(states, state)
-		if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 				err = fmt.Errorf("task %s is leased by another controller", move.task.ID)
 			}
 			return failBeforeMutation(err)
 		}
+		states = append(states, trustedTaskMoveState{move: move, authority: authority})
 		current, ok := currentTask(move.root, move.task.ID)
 		if !ok {
 			return failBeforeMutation(errLeaseCandidateGone)
@@ -868,20 +860,16 @@ func lockInterruptedCompletion(root string, task taskItem) (crashCompletionLock,
 }
 
 func lockCompletionForAudit(root string, task taskItem, allowLegacyLocalOwner bool) (crashCompletionLock, taskItem, bool, error) {
-	authority, err := openLeaseAuthority(root, task.ID, true)
+	authority, err := lockLeaseAuthorityForAudit(root, task.ID, true, "task "+task.ID+" authority", func() bool {
+		return leaseAuthorityMetadataExists(root, task.ID)
+	})
+	if errors.Is(err, errCompletionAuditLockOwned) {
+		return crashCompletionLock{}, taskItem{}, false, nil
+	}
 	if err != nil {
 		return crashCompletionLock{}, taskItem{}, false, err
 	}
 	locks := crashCompletionLock{authority: authority, files: []*os.File{authority}}
-	if err := lockExclusiveForCompletionAudit(authority, "task "+task.ID+" authority", func() bool {
-		return leaseAuthorityMetadataExists(root, task.ID)
-	}); err != nil {
-		_ = authority.Close()
-		if errors.Is(err, errCompletionAuditLockOwned) {
-			return crashCompletionLock{}, taskItem{}, false, nil
-		}
-		return crashCompletionLock{}, taskItem{}, false, err
-	}
 	local, err := openLeaseLock(task.Dir, false)
 	if err == nil {
 		lockErr := syscall.Flock(int(local.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
@@ -2515,12 +2503,8 @@ func lockBlockedAuditReopenUnblockWithAdoption(
 	observed auditReopenRecord,
 	adoptionHead string,
 ) (*blockedAuditUnblock, error) {
-	authority, err := openLeaseAuthority(root, task.ID, false)
+	authority, err := lockLeaseAuthority(root, task.ID, false, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
-		return nil, fmt.Errorf("open blocked audit reopen authority for task %s: %w", task.ID, err)
-	}
-	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = authority.Close()
 		return nil, fmt.Errorf("lock blocked audit reopen authority for task %s: %w", task.ID, err)
 	}
 	upgrade := &blockedAuditUnblock{authority: authority, root: root}
@@ -2592,12 +2576,8 @@ func lockBlockedAuditReopenUnblockWithAdoption(
 // finishPendingAuditUnblock is the explicit host recovery for a crash after the authorized folder
 // move. Pending authority never self-activates from queue state or lease acquisition.
 func finishPendingAuditUnblock(root string, task taskItem, observed auditReopenRecord) (bool, error) {
-	authority, err := openLeaseAuthority(root, task.ID, false)
+	authority, err := lockLeaseAuthority(root, task.ID, false, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
-		return false, fmt.Errorf("open pending audit unblock authority for task %s: %w", task.ID, err)
-	}
-	if err := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = authority.Close()
 		return false, fmt.Errorf("lock pending audit unblock authority for task %s: %w", task.ID, err)
 	}
 	fail := func(err error) (bool, error) {

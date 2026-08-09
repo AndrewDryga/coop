@@ -1134,16 +1134,12 @@ func removeTaskFolderAndRecords(root string, task taskItem) (removed bool, err e
 		err = errors.Join(err, unlockLeaseFile(indexFile))
 	}()
 
-	authority, err := openLeaseAuthority(root, task.ID, true)
+	authority, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
-		return false, err
-	}
-	if lockErr := syscall.Flock(int(authority.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); lockErr != nil {
-		closeErr := authority.Close()
-		if errors.Is(lockErr, syscall.EWOULDBLOCK) || errors.Is(lockErr, syscall.EAGAIN) {
-			return false, errors.Join(errors.New("task is still leased by a live controller; stop it before deleting"), closeErr)
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return false, errors.New("task is still leased by a live controller; stop it before deleting")
 		}
-		return false, errors.Join(lockErr, closeErr)
+		return false, err
 	}
 	defer func() {
 		err = errors.Join(err, unlockLeaseFile(authority))

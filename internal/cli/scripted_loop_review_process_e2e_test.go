@@ -596,7 +596,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if pathExists(filepath.Join(suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion, key+".reopen.json")) {
+		if pathExists(filepath.Join(processLeaseAuthorityRoot(suite.layout), key+".reopen.json")) {
 			t.Fatal("accepted audit generation remained reusable")
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
@@ -616,9 +616,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				taskID := "blocked-older-audit-reopen"
 				if tc.preUpgrade {
 					taskID = "pre-upgrade-blocked-older-audit-reopen"
-					t.Setenv(testLeaseAuthorityRootEnv, filepath.Join(
-						suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion,
-					))
+					t.Setenv(testLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
 				}
 				descendantID := taskID + "-descendant"
 				seedLoopProcessTask(t, suite.layout.Repo, taskID)
@@ -768,7 +766,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if pathExists(filepath.Join(suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion, key+".reopen.json")) {
+				if pathExists(filepath.Join(processLeaseAuthorityRoot(suite.layout), key+".reopen.json")) {
 					t.Fatal("accepted audit generation remained reusable")
 				}
 				assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, recloseAttempts)
@@ -798,9 +796,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Setenv(testLeaseAuthorityRootEnv, filepath.Join(
-			suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion,
-		))
+		t.Setenv(testLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
 		if err := os.MkdirAll(os.Getenv(testLeaseAuthorityRootEnv), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -907,7 +903,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !pathExists(filepath.Join(suite.layout.XDGCache, "coop", "task-leases", leaseAuthorityVersion, key+".reopen.json")) {
+		if !pathExists(filepath.Join(processLeaseAuthorityRoot(suite.layout), key+".reopen.json")) {
 			t.Fatal("failed recovery consumed its host generation")
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
