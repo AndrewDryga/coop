@@ -43,7 +43,9 @@ func touchUpdateCheck(path string) {
 }
 
 // cacheLatest stores the fetched tag via temp+rename, so a process exiting mid-write
-// can't leave a torn tag for the next run to compare against.
+// can't leave a torn tag for the next run to compare against. No fsync (unlike
+// config.WriteFileAtomic): losing this to a power cut just means the next run re-checks
+// GitHub for the latest release — nothing depends on the cached tag being there.
 func cacheLatest(path, tag string) {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".update-check-*")
 	if err != nil {

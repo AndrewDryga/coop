@@ -6,6 +6,7 @@ package config
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -284,7 +285,8 @@ func (c *Config) activeProfile(agent string) string {
 func (c *Config) ActiveProfile(agent string) string { return c.activeProfile(agent) }
 
 // DefaultsFile marks each agent's default profile (KEY=VALUE, agent=profile): the profile
-// an interactive run uses when none is given on the CLI. Managed by `coop credentials default`.
+// an interactive run uses when none is given on the CLI. Managed by
+// `coop credentials <agent> <credential> default`.
 func (c *Config) DefaultsFile() string { return filepath.Join(c.ConfigDir, "defaults") }
 
 // DefaultProfileOf returns the profile marked default for agent, or the built-in
@@ -328,25 +330,31 @@ func (c *Config) SetDefaultProfile(agent, name string) error {
 }
 
 // WithLock runs fn while holding an exclusive advisory lock (flock) on a sibling <path>.lock, so a
-// load→modify→write of path can't lose a concurrent process's update. Best-effort: if the lock file
-// or flock can't be obtained, fn still runs (these are convenience configs, not a critical section,
-// and blocking the command would be worse). Linux/darwin only — coop's only targets.
+// load→modify→write of path can't lose a concurrent process's update. Fails CLOSED: when the lock
+// file can't be opened or flocked, fn does NOT run and the caller gets an error naming the lock —
+// these files pick which credential an unattended run uses, so a silently lost update is worse than
+// a refused command (on a healthy system flock on a local file effectively never fails, so this
+// costs nothing in normal operation). Linux/darwin only — coop's only targets.
 func WithLock(path string, fn func() error) error {
-	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	lock := path + ".lock"
+	f, err := os.OpenFile(lock, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return fn()
+		return fmt.Errorf("open config lock %s: %w", lock, err)
 	}
 	defer f.Close()
-	if syscall.Flock(int(f.Fd()), syscall.LOCK_EX) != nil {
-		return fn()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("lock config file %s: %w", lock, err)
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	return fn()
 }
 
-// WriteFileAtomic writes data to path via a uniquely-named temp file in the same dir, then renames
-// it into place. The rename is atomic (no truncated file on a crash) and a UNIQUE temp name means
-// concurrent writers don't clobber a shared "<path>.tmp" mid-write.
+// WriteFileAtomic writes data to path via a uniquely-named temp file in the same dir, fsyncs it,
+// then renames it into place and fsyncs the parent dir. The rename is atomic (no truncated file on
+// a crash) and a UNIQUE temp name means concurrent writers don't clobber a shared "<path>.tmp"
+// mid-write; the two fsyncs mean a power loss leaves either the old contents or the new ones —
+// never a live-but-empty file, which for a credential pointer reads back as "unset" and silently
+// changes which account the next run picks.
 func WriteFileAtomic(path string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
 	if err != nil {
@@ -354,6 +362,9 @@ func WriteFileAtomic(path string, data []byte) error {
 	}
 	name := tmp.Name()
 	_, werr := tmp.Write(data)
+	if werr == nil {
+		werr = tmp.Sync()
+	}
 	cerr := tmp.Close()
 	if werr != nil || cerr != nil {
 		os.Remove(name)
@@ -366,7 +377,23 @@ func WriteFileAtomic(path string, data []byte) error {
 		os.Remove(name)
 		return err
 	}
+	if err := syncDir(filepath.Dir(path)); err != nil {
+		// The new contents are already in place — only their survival of a crash is unconfirmed.
+		// Say that, so this doesn't read as "the write was lost" and get retried blind.
+		return fmt.Errorf("wrote %s but could not sync its directory: %w", path, err)
+	}
 	return nil
+}
+
+// syncDir fsyncs a directory so a rename into it survives a power loss: the renamed file's contents
+// are already durable, but without this the directory entry pointing at them may not be.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // SetActiveProfile selects which credential profile of agent AgentDir resolves to —

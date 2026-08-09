@@ -1,10 +1,13 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -311,6 +314,145 @@ func TestDefaultProfileMark(t *testing.T) {
 	if m := loadConfFile(c.DefaultsFile()); m["claude"] != "personal" {
 		t.Errorf("DefaultsFile not persisted: %v", m)
 	}
+}
+
+// TestWithLockFailsClosed: an unusable lock refuses the mutation instead of running it unlocked.
+// A directory sitting where <path>.lock belongs is the deterministic stand-in for "the lock file
+// can't be opened".
+func TestWithLockFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "defaults")
+	if err := os.Mkdir(path+".lock", 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	ran := false
+	err := WithLock(path, func() error { ran = true; return nil })
+	if err == nil {
+		t.Fatal("WithLock with an unopenable lock = nil, want an error")
+	}
+	if ran {
+		t.Error("WithLock ran the mutation without holding the lock")
+	}
+	if !strings.Contains(err.Error(), path+".lock") {
+		t.Errorf("error %q does not name the lock path %q", err, path+".lock")
+	}
+}
+
+// TestWithLockRuns: the healthy path still runs fn, releases the lock afterward, and hands the
+// caller fn's own error untouched.
+func TestWithLockRuns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "defaults")
+	ran := 0
+	if err := WithLock(path, func() error { ran++; return nil }); err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	// The lock was released, so a second call takes it again — and fn's error comes back as-is.
+	want := errors.New("mutation failed")
+	if err := WithLock(path, func() error { ran++; return want }); !errors.Is(err, want) {
+		t.Errorf("WithLock error = %v, want %v", err, want)
+	}
+	if ran != 2 {
+		t.Errorf("fn ran %d times, want 2", ran)
+	}
+}
+
+// TestSetDefaultProfileFailsClosed: the credential-pointer writer surfaces a lock failure and
+// changes nothing — a mark applied in memory but not on disk (or vice versa) would silently move
+// which account the next run signs in with.
+func TestSetDefaultProfileFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	c := &Config{ConfigDir: dir}
+	if err := os.Mkdir(c.DefaultsFile()+".lock", 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.SetDefaultProfile("claude", "personal"); err == nil {
+		t.Fatal("SetDefaultProfile with an unusable lock = nil, want an error")
+	}
+	if got := c.DefaultProfileOf("claude"); got != DefaultProfile {
+		t.Errorf("in-memory default = %q, want it left at %q", got, DefaultProfile)
+	}
+	if _, err := os.Stat(c.DefaultsFile()); !os.IsNotExist(err) {
+		t.Errorf("defaults file after a refused write: stat err = %v, want not-exist", err)
+	}
+}
+
+// TestWriteFileAtomic: the replacement lands whole and leaves no temp file behind for a reader
+// (or a later `ls` of the config dir) to trip over.
+func TestWriteFileAtomic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "defaults")
+
+	if err := WriteFileAtomic(path, []byte("claude=personal\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFileAtomic(path, []byte("claude=work\n")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "claude=work\n" {
+		t.Errorf("content = %q, want the last write", got)
+	}
+	if names := dirNames(t, dir); !slices.Equal(names, []string{"defaults"}) {
+		t.Errorf("dir = %v, want only the target file (no leftover temps)", names)
+	}
+}
+
+// TestWriteFileAtomicConcurrent: a UNIQUE temp name per writer means concurrent writers can't
+// clobber each other mid-write — every write succeeds, the survivor is one whole payload (never a
+// blend of two), and nothing is left over.
+func TestWriteFileAtomicConcurrent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "defaults")
+
+	const writers = 8
+	payloads := make([]string, writers)
+	errs := make([]error, writers)
+	var wg sync.WaitGroup
+	for i := range writers {
+		payloads[i] = fmt.Sprintf("claude=account-%d\n", i)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = WriteFileAtomic(path, []byte(payloads[i]))
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("writer %d: %v", i, err)
+		}
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(payloads, string(got)) {
+		t.Errorf("content = %q, want exactly one writer's payload", got)
+	}
+	if names := dirNames(t, dir); !slices.Equal(names, []string{"defaults"}) {
+		t.Errorf("dir = %v, want only the target file (no leftover temps)", names)
+	}
+}
+
+// dirNames is the sorted list of entries in dir — how the write tests assert that no temp file
+// survived.
+func dirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	slices.Sort(names)
+	return names
 }
 
 // TestModelResolution: ModelFor's precedence — a per-run selection (--model) beats the

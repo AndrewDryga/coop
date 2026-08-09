@@ -74,6 +74,8 @@ func loadModelsCache(cfg *config.Config, agent string) (modelsCache, bool) {
 // --refresh surfaces a returned error; the free opportunistic ACP path ignores it. An empty
 // list is a no-op — a failed fetch must never clobber a good cache. A unique temp file plus
 // rename keeps a concurrent writer (the ACP box→editor goroutine) from corrupting the file.
+// No fsync (unlike config.WriteFileAtomic): this is a TTL'd cache of a remote catalog, so a
+// crash losing the last write costs one refetch — paying for durability would be theater.
 func writeModelsCache(cfg *config.Config, agent string, models []modelInfo) error {
 	if len(models) == 0 {
 		return nil

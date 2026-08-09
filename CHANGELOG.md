@@ -4,6 +4,23 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A crash can no longer blank the file that says which account to use.** The default-credential
+  pointers under `~/.config/coop` decide which subscription a run — including an overnight `coop
+  loop` — signs in with, and writing one was best-effort in two ways. The lock around the
+  read-modify-write was advisory in the loosest sense: when the lock file couldn't be opened or
+  flocked, the write went ahead anyway, so two concurrent `coop credentials <agent> <credential>
+  default` runs could silently drop one of the two edits. And the write renamed a temp file into
+  place without ever fsyncing, so a power cut could leave the pointer file present but EMPTY — which
+  reads back as "no default set", quietly moving the next run onto a different account and spending
+  the loop's rotation budget on auth failures nobody ordered. Both are closed. An unobtainable lock
+  now refuses the write and returns an error naming the lock file, instead of proceeding unlocked
+  (flock on a local file effectively never fails on a healthy system, so nothing changes in normal
+  use). The atomic write fsyncs the file before the rename and its directory after, so a crash
+  leaves either the old pointer or the new one and never a blank — the same durability the
+  refreshed Claude and Codex credentials written through that path now inherit. True caches keep
+  the light path on purpose: losing the model catalog or the daily update check to a power cut
+  costs one refetch, and each now says so where it's written.
+
 - **A fork that lands but can't be reconciled now says so, instead of costing you the work twice.**
   `coop fork merge` moves every parent-queue task whose `Coop-Task` trailer just landed to done, so
   the parent loop doesn't redo it — but it read that trailer list through a helper that returns an
