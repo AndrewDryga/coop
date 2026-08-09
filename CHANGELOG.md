@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- _Internal restructuring, no user-visible change._ The **remote-sessions service** — policy
+  authority, the HTTP v1 API and its socket, one-turn ACP execution, workspaces, review, companions,
+  sources, outputs, and artifacts — moved out of `internal/cli` into its own package,
+  `internal/sessionsvc`. The CLI kept the `coop sessions` command wiring: flags, path defaults, the
+  serve loop that owns signal handling, and `sessions doctor`, which is the only part that prints.
+  What the library genuinely cannot own for itself is injected as three functions on a `Host` — the
+  merge-policy scan, the review gate built from this repo's merge image, and a warning line on the
+  terminal — because the fork on-disk contract and the rotation ladder had already become leaf
+  packages (`internal/forkspace`, `internal/ladder`) it can simply import. Every behavior, wire
+  format, and bound is unchanged, and the tests moved with the code.
+
 - _Internal restructuring, no user-visible change._ The **rotation ladder's mechanics** — the cursor
   over a run's rungs (which is live, which is cooling, when to advance, and parking on the soonest
   reset when every one is limited) and the **limit classification** that decides whether provider

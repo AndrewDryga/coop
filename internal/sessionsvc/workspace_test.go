@@ -1,4 +1,4 @@
-package cli
+package sessionsvc
 
 import (
 	"os"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 func sessionWorkspaceGit(t *testing.T, dir string, args ...string) string {
@@ -47,7 +48,7 @@ func sessionWorkspaceHasPath(changes []sessionWorkspaceChange, path, status stri
 }
 
 func TestSessionWorkspaceCreateCapturesExactParentHead(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	sessionWorkspaceWrite(t, filepath.Join(repo, "base.txt"), "base\n")
 	git("add", "base.txt")
 	git("commit", "-qm", "base")
@@ -76,7 +77,7 @@ func TestSessionWorkspaceCreateCapturesExactParentHead(t *testing.T) {
 }
 
 func TestSessionWorkspaceCreateRefusesExistingAndInvalidPartialWorkspace(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	partial := forkspace.Workspace(repo, "partial")
 	if err := os.MkdirAll(partial, 0o755); err != nil {
@@ -99,7 +100,7 @@ func TestSessionWorkspaceCreateRefusesExistingAndInvalidPartialWorkspace(t *test
 }
 
 func TestSessionWorkspaceInspectTypedChangesAndOddFilenames(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	for name, body := range map[string]string{
 		"committed.txt": "before committed\n",
 		"staged.txt":    "before staged\n",
@@ -191,7 +192,7 @@ func TestSessionWorkspaceInspectTypedChangesAndOddFilenames(t *testing.T) {
 }
 
 func TestSessionWorkspaceInspectTruncatesPatchAndSurfacesGitFailure(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	sessionWorkspaceWrite(t, filepath.Join(repo, "large.txt"), "base\n")
 	git("add", "large.txt")
 	git("commit", "-qm", "base")
@@ -214,7 +215,7 @@ func TestSessionWorkspaceInspectTruncatesPatchAndSurfacesGitFailure(t *testing.T
 }
 
 func TestSessionWorkspaceDiscardClean(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	created, err := createSessionWorkspace(repo, "discard-clean")
 	if err != nil {
@@ -240,7 +241,7 @@ func TestSessionWorkspaceDiscardClean(t *testing.T) {
 }
 
 func TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	sessionWorkspaceWrite(t, filepath.Join(repo, "file.txt"), "base\n")
 	git("add", "file.txt")
 	git("commit", "-qm", "base")
@@ -316,7 +317,7 @@ func TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning(t *t
 }
 
 func TestSessionWorkspaceDiscardRequiresExactDirtyAndUnmergedAcknowledgement(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	sessionWorkspaceWrite(t, filepath.Join(repo, "conflict.txt"), "base\n")
 	git("add", "conflict.txt")
 	git("commit", "-qm", "base")
@@ -397,7 +398,7 @@ func TestSessionWorkspaceDiscardRequiresExactDirtyAndUnmergedAcknowledgement(t *
 }
 
 func TestSessionWorkspaceDiscardPlansAMissingWorkspaceAsAbsent(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	missing := forkspace.Workspace(repo, "vanished")
 	plan, err := planSessionWorkspaceDiscard(repo, missing, false, false)

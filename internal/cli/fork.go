@@ -19,6 +19,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -885,19 +886,6 @@ func (c forkReviewCandidate) detachBase() error {
 	return gitRun(c.dir, "checkout", "--quiet", "--detach", c.base)
 }
 
-func newForkReviewScratch(repo string) (forkReviewCandidate, error) {
-	dir, err := os.MkdirTemp("", "coop-fork-review-")
-	if err != nil {
-		return forkReviewCandidate{}, err
-	}
-	c := forkReviewCandidate{dir: dir}
-	if err := forkspace.GitClone(repo, dir); err != nil {
-		c.cleanup()
-		return forkReviewCandidate{}, fmt.Errorf("clone parent into review scratch: %w", err)
-	}
-	return c, nil
-}
-
 // prepareForkReviewCandidate clones the parent's committed HEAD, fetches the fork's named branch,
 // and rebases that branch in the scratch clone. Neither source repo is modified: local clone/fetch
 // reads objects only, and every checkout/rebase occurs under c.dir. Preview rebases stay unsigned;
@@ -990,7 +978,7 @@ func (a *app) forkReview(args []string) (int, error) {
 		if candidate.conflict {
 			outcome = forkReviewGateConflict
 		} else {
-			candidateHead, candidateTree, identityErr := sessionReviewGitIdentity(candidate.dir, candidate.name)
+			candidateHead, candidateTree, identityErr := sessionsvc.ReviewGitIdentity(candidate.dir, candidate.name)
 			if identityErr != nil {
 				return -1, fmt.Errorf("pin review scratch: %w", identityErr)
 			}
@@ -1012,7 +1000,7 @@ func (a *app) forkReview(args []string) (int, error) {
 					outcome = forkReviewGateRed
 				}
 			}
-			if !sessionReviewCandidateUnchanged(candidate.dir, candidate.name, candidateHead, candidateTree) {
+			if !sessionsvc.ReviewCandidateUnchanged(candidate.dir, candidate.name, candidateHead, candidateTree) {
 				outcome = forkReviewGateRed
 				if err := gitRun(candidate.dir, "reset", "--hard", candidateHead); err != nil {
 					return -1, fmt.Errorf("restore review scratch after gate mutation: %w", err)
@@ -1169,7 +1157,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		Image: img, Repo: ws, Workdir: ws, Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		ForkName: name, ForkOwner: forkContainerOwner(repo, name),
-		RunID: sessionRunIDFromEnv(),
+		RunID: sessionsvc.RunIDFromEnv(),
 	})
 }
 

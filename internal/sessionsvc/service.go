@@ -1,4 +1,4 @@
-package cli
+package sessionsvc
 
 import (
 	"bytes"
@@ -24,22 +24,28 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
-	"github.com/AndrewDryga/coop/internal/ui"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	sessionPolicyVersion             = 1
-	sessionPolicyFileLimit           = 1 << 20
-	sessionPolicyMaxCompanions       = 32
-	sessionPolicyMaxTargets          = 4
-	sessionTargetGrammar             = "provider[:model][/effort][@credential]"
-	sessionPolicyRemoteTimeout       = 30 * time.Second
-	sessionPolicyRemoteConcurrency   = 4
-	sessionPolicyMaxTurnTimeout      = 24 * time.Hour
-	sessionPolicyMaxWarmIdleTimeout  = time.Hour
-	sessionServiceDefaultStopTimeout = 5 * time.Second
-	sessionServiceCleanupInterval    = time.Minute
+	// PolicyFileLimit bounds a session policy file, so a command that validates one before
+	// handing it over reads the same amount this package will.
+	PolicyFileLimit = 1 << 20
+	// DefaultStopTimeout is how long the service waits for in-flight work to wind down, and the
+	// budget a host's own HTTP shutdown should match.
+	DefaultStopTimeout = 5 * time.Second
+)
+
+const (
+	sessionPolicyVersion            = 1
+	sessionPolicyMaxCompanions      = 32
+	sessionPolicyMaxTargets         = 4
+	sessionTargetGrammar            = "provider[:model][/effort][@credential]"
+	sessionPolicyRemoteTimeout      = 30 * time.Second
+	sessionPolicyRemoteConcurrency  = 4
+	sessionPolicyMaxTurnTimeout     = 24 * time.Hour
+	sessionPolicyMaxWarmIdleTimeout = time.Hour
+	sessionServiceCleanupInterval   = time.Minute
 )
 
 // SessionPolicy is operator-owned authority for one remote session. It is intentionally small:
@@ -124,12 +130,12 @@ func LoadSessionPolicies(path string, cfg *config.Config) (map[string]SessionPol
 	if info.Mode().Perm()&0o022 != 0 {
 		return nil, errors.New("session policy file is group/world writable")
 	}
-	data, err := io.ReadAll(io.LimitReader(file, sessionPolicyFileLimit+1))
+	data, err := io.ReadAll(io.LimitReader(file, PolicyFileLimit+1))
 	if err != nil {
 		return nil, fmt.Errorf("read session policy file: %w", err)
 	}
-	if len(data) > sessionPolicyFileLimit {
-		return nil, fmt.Errorf("session policy file exceeds %d bytes", sessionPolicyFileLimit)
+	if len(data) > PolicyFileLimit {
+		return nil, fmt.Errorf("session policy file exceeds %d bytes", PolicyFileLimit)
 	}
 	return parseSessionPolicies(data, cfg)
 }
@@ -508,6 +514,7 @@ type SessionServiceConfig struct {
 	Config          *config.Config
 	Runtime         runtime.Runtime
 	Executable      string
+	Host            Host
 	Runner          SessionRunner
 	RunnerFactory   SessionRunnerFactory
 	ReviewGate      SessionReviewGate
@@ -542,6 +549,7 @@ type SessionService struct {
 	sourceCfg       *config.Config
 	rt              runtime.Runtime
 	executable      string
+	host            Host
 	runner          SessionRunner
 	reviewGate      SessionReviewGate
 	stopTimeout     time.Duration
@@ -589,7 +597,7 @@ func NewSessionService(cfg SessionServiceConfig) (*SessionService, error) {
 	service := &SessionService{
 		store: store, stateRoot: cfg.StateRoot,
 		policies: cloneSessionPolicies(policies), sourceCfg: sourceCfg,
-		rt: cfg.Runtime, executable: cfg.Executable, runner: cfg.Runner,
+		rt: cfg.Runtime, executable: cfg.Executable, host: cfg.Host, runner: cfg.Runner,
 		reviewGate:      cfg.ReviewGate,
 		stopTimeout:     cfg.StopTimeout,
 		cleanupInterval: cfg.CleanupInterval,
@@ -598,7 +606,7 @@ func NewSessionService(cfg SessionServiceConfig) (*SessionService, error) {
 		runtimeLocks:   make(map[string]*sessionOperationLock),
 	}
 	if service.stopTimeout <= 0 {
-		service.stopTimeout = sessionServiceDefaultStopTimeout
+		service.stopTimeout = DefaultStopTimeout
 	}
 	if service.cleanupInterval <= 0 {
 		service.cleanupInterval = sessionServiceCleanupInterval
@@ -755,7 +763,7 @@ func (s *SessionService) Start(parent context.Context) error {
 	if cleaner, ok := s.runner.(sessionRunnerStartupCleaner); ok {
 		for _, sess := range sessions {
 			if err := cleaner.CleanupSession(parent, sess); err != nil {
-				ui.Warn("could not clean historical session runtime state %s: %v", sess.ID, err)
+				s.host.warnf("could not clean historical session runtime state %s: %v", sess.ID, err)
 			}
 		}
 	}
@@ -818,7 +826,7 @@ func (s *SessionService) cleanupParkedSessions(ctx context.Context) {
 	sessions, err := s.store.ListSessionsForRecovery(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
-			ui.Warn("could not list parked sessions for runtime cleanup: %v", err)
+			s.host.warnf("could not list parked sessions for runtime cleanup: %v", err)
 		}
 		return
 	}
@@ -838,7 +846,7 @@ func (s *SessionService) cleanupParkedSessions(ctx context.Context) {
 		}
 		unlock()
 		if getErr != nil && ctx.Err() == nil {
-			ui.Warn("could not clean parked session runtime state %s: %v", candidate.ID, getErr)
+			s.host.warnf("could not clean parked session runtime state %s: %v", candidate.ID, getErr)
 		}
 	}
 }
@@ -885,9 +893,7 @@ func (s *SessionService) ensureRunner() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.runner != nil {
-		if s.reviewGate == nil {
-			s.reviewGate = defaultSessionReviewGate{cfg: s.sourceCfg, rt: s.rt}
-		}
+		s.defaultReviewGateLocked()
 		return nil
 	}
 	if s.rt.Name == "" {
@@ -897,11 +903,19 @@ func (s *SessionService) ensureRunner() error {
 		}
 		s.rt = rt
 	}
-	s.runner = newSessionTurnRunner(s.sourceCfg, s.store.Root(), s.store, s.rt, s.executable)
-	if s.reviewGate == nil {
-		s.reviewGate = defaultSessionReviewGate{cfg: s.sourceCfg, rt: s.rt}
-	}
+	runner := newSessionTurnRunner(s.sourceCfg, s.store.Root(), s.store, s.rt, s.executable)
+	runner.host = s.host
+	s.runner = runner
+	s.defaultReviewGateLocked()
 	return nil
+}
+
+// defaultReviewGateLocked fills in the host's gate for a caller that injected none, and only then
+// — the detected runtime is an input, so the gate cannot be built before this point.
+func (s *SessionService) defaultReviewGateLocked() {
+	if s.reviewGate == nil && s.host.ReviewGateFactory != nil {
+		s.reviewGate = s.host.ReviewGateFactory(s.sourceCfg, s.rt)
+	}
 }
 
 func (s *SessionService) Stop() error {

@@ -2,9 +2,9 @@
 name: model-is-the-rotation-axis
 description: "rotation walks an `agent:` ladder of targets; accounts are a suffix on the model, never their own axis"
 scope: cli-grammar
-sources: [internal/cli/target.go, internal/preset/preset.go, internal/cli/session_service.go]
+sources: [internal/cli/target.go, internal/preset/preset.go, internal/sessionsvc/service.go]
 check: "none"
-updated: 2026-08-07
+updated: 2026-08-09
 ---
 
 # Model is the one axis: rotation walks an `agent:` ladder of targets, not a pool
@@ -49,6 +49,7 @@ bare model is marked-default account first, then the rest alphabetically (`accou
 [[credentials-not-profiles]] for the user-facing naming.
 
 ## Changelog
+- 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).
 - 2026-07-03 — created
 - 2026-07-11 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged

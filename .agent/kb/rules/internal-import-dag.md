@@ -46,6 +46,18 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-09 — **+2 packages, +1 edge, −1 edge: `internal/sessionsvc`**
+  (`{"agent", "box", "config", "forkspace", "ladder", "runtime", "session"}`) and
+  `internal/testutil/gitrepo` (a leaf); `cli` GAINED `sessionsvc` and **DROPPED `session`**. The
+  whole remote-sessions service — ~7.5k lines of `internal/cli/session_*.go` — moved out; only the
+  `coop sessions` command wiring stayed. cli losing the store edge is the interesting half and was
+  deliberate: `internal/session` was imported by the moving files and nothing else, so the remainder
+  reaches the store's constants through `sessionsvc` (`MaxReviewErrorBytes`, `BoundedDetail`) rather
+  than around it. `sessionsvc` refuses the `ui` edge — its four `ui.Warn` calls became an injected
+  `Host.Warnf` that cli wires to `ui.Warn`, and the doctor command, the only thing that PRINTS a
+  verdict, stayed in cli with `ui.Error`/`ui.OK`. `uiPresentationOwners` is unchanged. The two
+  prerequisite leaves below are what kept the injected surface at three functions instead of the
+  sixteen-method interface the seam map first priced: fork and rotation are IMPORTS now.
 - 2026-08-09 — **+1 package, +2 edges: `internal/ladder`** (`{"agent"}`) and `cli → ladder`. The
   ROTATION LADDER's pure mechanics — the cursor over a run's rungs (live/cooling/advance/park on the
   soonest reset) and the limit CLASSIFICATION that decides whether provider output was a rate limit

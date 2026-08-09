@@ -1,4 +1,4 @@
-package cli
+package sessionsvc
 
 import (
 	"bufio"
@@ -28,7 +28,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 const (
@@ -86,6 +85,7 @@ type sessionTurnRunner struct {
 	store      *session.Store
 	rt         runtime.Runtime
 	executable string
+	host       Host
 	command    sessionACPCommand
 	warmMu     sync.Mutex
 	warm       map[string]*sessionWarmExecution
@@ -225,7 +225,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 				// the owner-private state root either way until it does. The
 				// failure still surfaces — loudly, with its cause — where an
 				// operator reads, instead of destroying what the model produced.
-				ui.Warn(
+				r.host.warnf(
 					"turn %s completed but its runtime cleanup failed; the janitor retries it: %s",
 					leased.ID, sessionACPBoundedDetail("cause", cleanupCause.Error()),
 				)
@@ -1034,7 +1034,7 @@ func ensurePrivateDirectory(path string) error {
 	if path == "" || !filepath.IsAbs(path) {
 		return errors.New("private directory must be absolute")
 	}
-	if err := ensureSessionAncestors(path); err != nil {
+	if err := EnsureAncestors(path); err != nil {
 		return err
 	}
 	return os.Chmod(path, 0o700)
@@ -1277,7 +1277,7 @@ func validSessionRunID(value string) bool {
 	return true
 }
 
-func sessionRunIDFromEnv() string {
+func RunIDFromEnv() string {
 	value := os.Getenv("COOP_SESSION_RUN_ID")
 	if validSessionRunID(value) {
 		return value
@@ -1924,6 +1924,15 @@ func validACPStopReason(reason string) bool {
 	default:
 		return false
 	}
+}
+
+// permOption is one choice in a session/request_permission request (ACP kinds: allow_once,
+// allow_always, reject_once, reject_always). A four-line view of an EXTERNAL wire message, not
+// shared logic: the ACP control plane decodes the same shape into its own struct and chooses with
+// its own rules, which do not carry the id validation below.
+type permOption struct {
+	OptionID string `json:"optionId"`
+	Kind     string `json:"kind"`
 }
 
 func chooseSessionACPAllow(options []permOption) string {

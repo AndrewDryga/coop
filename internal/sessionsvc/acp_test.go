@@ -1,4 +1,4 @@
-package cli
+package sessionsvc
 
 import (
 	"bufio"
@@ -709,12 +709,12 @@ func TestSessionTurnRunnerFailedTurnCarriesTheCleanupCause(t *testing.T) {
 
 func TestSessionRunIDFromEnv(t *testing.T) {
 	t.Setenv("COOP_SESSION_RUN_ID", "not-a-session-run")
-	if got := sessionRunIDFromEnv(); got != "" {
+	if got := RunIDFromEnv(); got != "" {
 		t.Fatalf("invalid session run id = %q", got)
 	}
 	want := sessionTurnRunID("session", "turn")
 	t.Setenv("COOP_SESSION_RUN_ID", want)
-	if got := sessionRunIDFromEnv(); got != want {
+	if got := RunIDFromEnv(); got != want {
 		t.Fatalf("session run id = %q, want %q", got, want)
 	}
 }

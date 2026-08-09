@@ -2,8 +2,8 @@
 name: acp-generated-output-boundary
 description: Discarded tool streams bypass transcript bytes while durable outputs remain bounded.
 subsystem: acp
-sources: [internal/cli/session_acp.go, internal/cli/session_output.go, internal/session/store.go, internal/cli/session_http.go]
-updated: 2026-08-02
+sources: [internal/sessionsvc/acp.go, internal/sessionsvc/output.go, internal/session/store.go, internal/sessionsvc/http.go]
+updated: 2026-08-09
 ---
 
 ACP image chunks can be several megabytes of base64. Counting those bytes as ordinary transcript
@@ -26,5 +26,6 @@ transcript and must not become a correctness limit. Assistant text, individual f
 deadlines, artifacts, and the native provider context remain independently governed.
 
 ## Changelog
+- 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).
 - 2026-08-02 — stopped cumulative discarded text tool updates from aborting long valid turns.
 - 2026-07-31 — created with the bounded generated-image turn contract.

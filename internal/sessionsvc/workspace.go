@@ -1,4 +1,4 @@
-package cli
+package sessionsvc
 
 import (
 	"bytes"
@@ -15,7 +15,6 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
-	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 const (
@@ -848,9 +847,10 @@ func discardSessionWorkspace(plan sessionWorkspaceDiscardPlan) error {
 	if !forkspace.SamePinned(plan.Workspace, info) {
 		return errors.New("discard plan is stale: workspace was replaced before removal")
 	}
-	// Zero runtime on purpose: the session service already brought this workspace's services
-	// down (with its volumes) before planning the discard, so destroyFork must not do it twice.
-	if err := destroyFork(runtime.Runtime{}, plan.Repo, plan.Name); err != nil {
+	// The on-disk removal only: the session service already brought this workspace's sibling
+	// services down (with their volumes) before planning the discard, so nothing here may do it
+	// a second time.
+	if err := forkspace.Destroy(plan.Repo, plan.Name); err != nil {
 		return fmt.Errorf("discard session workspace: %w", err)
 	}
 	return nil

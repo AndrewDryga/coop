@@ -1,4 +1,4 @@
-package cli
+package sessionsvc
 
 import (
 	"context"
@@ -18,12 +18,13 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 func TestParseSessionPoliciesIsStrictAndPinsOneCredentialPerTarget(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	companion, companionGit := gitRepo(t)
+	companion, companionGit := gitrepo.New(t)
 	companionGit("commit", "-q", "--allow-empty", "-m", "companion base")
 	repo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -92,7 +93,7 @@ func TestParseSessionPoliciesIsStrictAndPinsOneCredentialPerTarget(t *testing.T)
 }
 
 func TestParseSessionPoliciesAcceptsATargetLadder(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	repo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -185,7 +186,7 @@ func TestWarmIdleTimeoutIsBoundIntoPolicyDigest(t *testing.T) {
 }
 
 func TestParseSessionPoliciesRejectsUnsafeCompanions(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	repo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -208,7 +209,7 @@ func TestParseSessionPoliciesRejectsUnsafeCompanions(t *testing.T) {
 }
 
 func TestParseSessionPoliciesBoundsCompanionCount(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	repo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -216,7 +217,7 @@ func TestParseSessionPoliciesBoundsCompanionCount(t *testing.T) {
 	}
 	var companions string
 	for index := 0; index <= sessionPolicyMaxCompanions; index++ {
-		companion, companionGit := gitRepo(t)
+		companion, companionGit := gitrepo.New(t)
 		companionGit("commit", "-q", "--allow-empty", "-m", "base")
 		companion, err = filepath.EvalSymlinks(companion)
 		if err != nil {
@@ -238,7 +239,7 @@ func TestParseSessionPoliciesBoundsCompanionCount(t *testing.T) {
 }
 
 func TestLoadSessionPoliciesRejectsUnsafeFileAndAncestry(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	repo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -289,7 +290,7 @@ func TestLoadSessionPoliciesRejectsUnsafeFileAndAncestry(t *testing.T) {
 }
 
 func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	base := gitOut(repo, "rev-parse", "HEAD")
 	root := t.TempDir()
@@ -332,7 +333,7 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 }
 
 func TestSessionServicePinsConfiguredRemoteWithoutChangingLocalCheckout(t *testing.T) {
-	seed, seedGit := gitRepo(t)
+	seed, seedGit := gitrepo.New(t)
 	if err := os.WriteFile(filepath.Join(seed, "version.txt"), []byte("v1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +368,7 @@ func TestSessionServicePinsConfiguredRemoteWithoutChangingLocalCheckout(t *testi
 		t.Fatal("remote did not advance")
 	}
 
-	companionSeed, companionSeedGit := gitRepo(t)
+	companionSeed, companionSeedGit := gitrepo.New(t)
 	if err := os.WriteFile(filepath.Join(companionSeed, "topology.txt"), []byte("old\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +470,7 @@ func TestSessionServicePinsConfiguredRemoteWithoutChangingLocalCheckout(t *testi
 }
 
 func TestSessionServiceConfiguredRemoteFailureDoesNotFallBackToLocalHead(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "local base")
 	remote := filepath.Join(t.TempDir(), "remote.git")
 	runGitTest(t, "", "init", "-q", "--bare", remote)
@@ -494,7 +495,7 @@ func TestSessionServiceConfiguredRemoteFailureDoesNotFallBackToLocalHead(t *test
 }
 
 func TestSessionServiceConcurrentCreatesPinTheSameRemoteCommit(t *testing.T) {
-	seed, seedGit := gitRepo(t)
+	seed, seedGit := gitrepo.New(t)
 	seedGit("commit", "-q", "--allow-empty", "-m", "base")
 	seedGit("branch", "-M", "main")
 	checkout := filepath.Join(t.TempDir(), "checkout")
@@ -548,9 +549,9 @@ func runGitTest(t *testing.T, dir string, args ...string) {
 }
 
 func TestSessionServicePinsPersistsAndDiscardsCompanionRepositories(t *testing.T) {
-	primary, primaryGit := gitRepo(t)
+	primary, primaryGit := gitrepo.New(t)
 	primaryGit("commit", "-q", "--allow-empty", "-m", "primary base")
-	companion, companionGit := gitRepo(t)
+	companion, companionGit := gitrepo.New(t)
 	if err := os.WriteFile(
 		filepath.Join(companion, "topology.txt"), []byte("v1\n"), 0o644,
 	); err != nil {
@@ -643,11 +644,11 @@ func TestSessionServicePinsPersistsAndDiscardsCompanionRepositories(t *testing.T
 }
 
 func TestSessionServiceCreateRollsBackPartialMultiRepositoryWorkspace(t *testing.T) {
-	primary, primaryGit := gitRepo(t)
+	primary, primaryGit := gitrepo.New(t)
 	primaryGit("commit", "-q", "--allow-empty", "-m", "primary base")
-	first, firstGit := gitRepo(t)
+	first, firstGit := gitrepo.New(t)
 	firstGit("commit", "-q", "--allow-empty", "-m", "first base")
-	blocked, blockedGit := gitRepo(t)
+	blocked, blockedGit := gitrepo.New(t)
 	blockedGit("commit", "-q", "--allow-empty", "-m", "blocked base")
 	policies := testSessionPolicies(primary)
 	policy := policies["responder"]
@@ -706,7 +707,7 @@ func TestSessionServiceCreateRollsBackPartialMultiRepositoryWorkspace(t *testing
 }
 
 func TestSessionServiceFIFOOneWorkerAndCancel(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var mu sync.Mutex
 	var prompts []string
@@ -798,7 +799,7 @@ func TestSessionServiceFIFOOneWorkerAndCancel(t *testing.T) {
 }
 
 func TestSessionServiceQueuedCancelReplaysAfterRevisionChange(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
 	defer service.Stop()
@@ -822,7 +823,7 @@ func TestSessionServiceQueuedCancelReplaysAfterRevisionChange(t *testing.T) {
 }
 
 func TestSessionServiceCancelNaturalCompletionReplaysObservedTerminalTurn(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -885,7 +886,7 @@ func TestSessionServiceCancelNaturalCompletionReplaysObservedTerminalTurn(t *tes
 }
 
 func TestSessionServiceStopWaitsForWorkerBeforeClosingStore(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -953,7 +954,7 @@ func (r *startupCleaningRunner) ReapInterruptedTurn(_ context.Context, _ session
 }
 
 func TestSessionServiceRunsStartupCleanupBeforeWorkers(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &startupCleaningRunner{}
 	service, err := NewSessionService(SessionServiceConfig{
@@ -982,7 +983,7 @@ func TestSessionServiceRunsStartupCleanupBeforeWorkers(t *testing.T) {
 }
 
 func TestSessionServiceCleanupFailureDoesNotBrickStartup(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &startupCleaningRunner{err: errors.New("old provider is unavailable")}
 	service, err := NewSessionService(SessionServiceConfig{
@@ -1022,7 +1023,7 @@ func (r *closedCleaningRunner) CleanupClosedSession(_ context.Context, _ session
 }
 
 func TestSessionServiceCloseUsesKnownRuntimeCleanupWithoutStartupScan(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &closedCleaningRunner{}
 	service, err := NewSessionService(SessionServiceConfig{
@@ -1074,7 +1075,7 @@ func (r *periodicCleanupRunner) CleanupSession(_ context.Context, _ session.Sess
 }
 
 func TestSessionServiceRetriesParkedCleanupWithoutRacingActiveTurn(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &periodicCleanupRunner{started: make(chan struct{}), release: make(chan struct{})}
 	service, err := NewSessionService(SessionServiceConfig{
@@ -1117,7 +1118,7 @@ func TestSessionServiceRetriesParkedCleanupWithoutRacingActiveTurn(t *testing.T)
 }
 
 func TestSessionServiceWorkerRetiresParkedSessionAndStartsAgain(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var fakeStore *session.Store
 	var calls atomic.Int32
@@ -1193,7 +1194,7 @@ func TestSessionServiceWorkerRetiresParkedSessionAndStartsAgain(t *testing.T) {
 }
 
 func TestSessionServiceRecoveryCleanupFailureLeavesTurnActiveForRetry(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &startupCleaningRunner{reapErr: errors.New("runtime unavailable")}
 	service, err := NewSessionService(SessionServiceConfig{
@@ -1239,7 +1240,7 @@ func TestSessionServiceRecoveryCleanupFailureLeavesTurnActiveForRetry(t *testing
 }
 
 func TestSessionServiceDiscardPlanAndReplay(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
 	defer service.Stop()
@@ -1280,7 +1281,7 @@ func TestSessionServiceDiscardPlanAndReplay(t *testing.T) {
 }
 
 func TestSessionServiceDiscardReplayAfterWorkspaceRemovalBeforeTombstone(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
 	defer service.Stop()
@@ -1322,7 +1323,7 @@ func TestSessionServiceDiscardReplayAfterWorkspaceRemovalBeforeTombstone(t *test
 }
 
 func TestSessionServiceDiscardReplaysAfterPostDeleteCleanupFailure(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	service := newTestSessionService(t, stateRoot, testSessionPolicies(repo), nil)
@@ -1424,7 +1425,7 @@ func waitForSessionTest(t *testing.T, condition func() bool) {
 // session; teardown steers nothing, and refusing it leaves workspaces nobody
 // can ever reclaim — cleanup retried into permanent failure while forks leaked.
 func TestSessionServiceDiscardsSessionsWhosePolicyDrifted(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	repo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -1511,7 +1512,7 @@ func TestSessionServiceDiscardsSessionsWhosePolicyDrifted(t *testing.T) {
 // it: a digest-strict guard that silently withheld the ladder from every
 // surviving session, leaving them pinned to a rate-limited rung.
 func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	repo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -1633,13 +1634,13 @@ func TestSessionServiceHandsTheLadderToTurnsAcrossPolicyEdits(t *testing.T) {
 // Refusing to plan was the gap that made such records permanent: cleanup
 // retried into internal_error forever while nothing existed to reclaim.
 func TestSessionServiceDiscardsASessionWhoseWorkspaceVanished(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	repo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	companion, companionGit := gitRepo(t)
+	companion, companionGit := gitrepo.New(t)
 	companionGit("commit", "-q", "--allow-empty", "-m", "companion base")
 	companion, err = filepath.EvalSymlinks(companion)
 	if err != nil {

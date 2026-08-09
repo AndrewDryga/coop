@@ -1,4 +1,4 @@
-package cli
+package sessionsvc
 
 import (
 	"context"
@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 func TestSessionServiceRunReviewCompletesAfterClientCancellation(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	started := make(chan context.Context, 1)
 	release := make(chan struct{})

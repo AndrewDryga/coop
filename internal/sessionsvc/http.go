@@ -1,4 +1,4 @@
-package cli
+package sessionsvc
 
 import (
 	"context"
@@ -10,17 +10,13 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/session"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 const (
@@ -232,7 +228,7 @@ type sessionHTTPHandler struct {
 	ready   bool
 }
 
-func newSessionHTTPHandler(service *SessionService) http.Handler {
+func NewHTTPHandler(service *SessionService) http.Handler {
 	return &sessionHTTPHandler{service: service, ready: service != nil}
 }
 
@@ -1061,7 +1057,7 @@ func publicSessionErrorDetail(code session.ErrorCode, detail string) string {
 	case session.CodeDiscardPlanStale:
 		return "discard plan no longer matches workspace state"
 	default:
-		return boundedPublicDetail(detail)
+		return BoundedDetail(detail)
 	}
 }
 
@@ -1077,7 +1073,7 @@ func publicDiscardPlan(value PlanDiscardResult) SessionPlanDiscardDTO {
 	}
 }
 
-func boundedPublicDetail(value string) string {
+func BoundedDetail(value string) string {
 	if len(value) > session.MaxErrorDetailBytes {
 		return value[:session.MaxErrorDetailBytes]
 	}
@@ -1091,7 +1087,7 @@ func writeSessionJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func writeSessionHTTPError(w http.ResponseWriter, status int, code, detail string) {
-	writeSessionJSON(w, status, sessionHTTPErrorResponse{Error: sessionHTTPErrorBody{Code: code, Detail: boundedPublicDetail(detail)}})
+	writeSessionJSON(w, status, sessionHTTPErrorResponse{Error: sessionHTTPErrorBody{Code: code, Detail: BoundedDetail(detail)}})
 }
 
 func writeSessionServiceError(w http.ResponseWriter, err error) {
@@ -1129,165 +1125,9 @@ func sessionHTTPError(err error) (string, int, string) {
 	return string(code), status, "request failed"
 }
 
-func defaultSessionStateRoot() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user home: %w", err)
-	}
-	return filepath.Join(home, ".local", "state", "coop", "sessions"), nil
-}
-
-func defaultSessionPolicyPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user home: %w", err)
-	}
-	return filepath.Join(home, ".config", "coop", "session-policies.yaml"), nil
-}
-
-func sessionCLIPaths(state, policy, socket string) (string, string, string, error) {
-	if state == "" {
-		var err error
-		state, err = defaultSessionStateRoot()
-		if err != nil {
-			return "", "", "", err
-		}
-	}
-	if policy == "" {
-		var err error
-		policy, err = defaultSessionPolicyPath()
-		if err != nil {
-			return "", "", "", err
-		}
-	}
-	state, err := filepath.Abs(filepath.Clean(state))
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolve session state path: %w", err)
-	}
-	if socket == "" {
-		socket = filepath.Join(state, "control.sock")
-	} else {
-		socket, err = filepath.Abs(filepath.Clean(socket))
-		if err != nil {
-			return "", "", "", fmt.Errorf("resolve session socket path: %w", err)
-		}
-	}
-	policy, err = filepath.Abs(filepath.Clean(policy))
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolve session policy path: %w", err)
-	}
-	return state, policy, socket, nil
-}
-
-func parseSessionsFlags(args []string, command string) (state, policy, socket string, jsonOutput bool, err error) {
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--json" && command == "doctor" {
-			if jsonOutput {
-				return "", "", "", false, errors.New("sessions doctor: --json may be specified once")
-			}
-			jsonOutput = true
-			continue
-		}
-		var target *string
-		switch arg {
-		case "--state":
-			target = &state
-		case "--policies":
-			target = &policy
-		case "--socket":
-			target = &socket
-		default:
-			return "", "", "", false, fmt.Errorf("sessions %s: unknown flag %q", command, arg)
-		}
-		if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
-			return "", "", "", false, fmt.Errorf("sessions %s: flag %s requires a value", command, arg)
-		}
-		i++
-		if *target != "" {
-			return "", "", "", false, fmt.Errorf("sessions %s: flag %s may be specified once", command, arg)
-		}
-		*target = args[i]
-	}
-	if command == "doctor" && (state != "" || policy != "") {
-		return "", "", "", false, errors.New("sessions doctor: only --socket and --json are supported")
-	}
-	return state, policy, socket, jsonOutput, nil
-}
-
-func (a *app) cmdSessions(args []string) (int, error) {
-	if len(args) == 0 {
-		return groupHelp("sessions")
-	}
-	switch args[0] {
-	case "serve":
-		state, policy, socket, _, err := parseSessionsFlags(args[1:], "serve")
-		if err != nil {
-			return 2, err
-		}
-		return runSessionServe(state, policy, socket)
-	case "doctor":
-		_, _, socket, jsonOutput, err := parseSessionsFlags(args[1:], "doctor")
-		if err != nil {
-			return 2, err
-		}
-		return runSessionDoctor(socket, jsonOutput)
-	default:
-		return 2, fmt.Errorf("sessions: unknown command %q", args[0])
-	}
-}
-
-func runSessionServe(state, policy, socket string) (int, error) {
-	state, policy, socket, err := sessionCLIPaths(state, policy, socket)
-	if err != nil {
-		return 2, err
-	}
-	if err := ensureSessionAncestors(filepath.Dir(state)); err != nil {
-		return 1, err
-	}
-	service, err := NewSessionService(SessionServiceConfig{StateRoot: state, PolicyPath: policy, SourceConfig: config.Load(), Executable: os.Args[0]})
-	if err != nil {
-		return 1, err
-	}
-	defer service.Stop()
-	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
-	if err := service.Start(ctx); err != nil {
-		return 1, err
-	}
-	listener, cleanup, err := listenSessionSocket(state, socket)
-	if err != nil {
-		return 1, err
-	}
-	defer cleanup()
-	server := &http.Server{Handler: newSessionHTTPHandler(service)}
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- server.Serve(listener) }()
-	select {
-	case err := <-serveDone:
-		if errors.Is(err, http.ErrServerClosed) {
-			return 0, nil
-		}
-		return 1, err
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), sessionServiceDefaultStopTimeout)
-		shutdownErr := server.Shutdown(shutdownCtx)
-		cancel()
-		if shutdownErr != nil {
-			_ = server.Close()
-			<-serveDone
-			return 1, shutdownErr
-		}
-		if err := <-serveDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return 1, err
-		}
-		return 0, nil
-	}
-}
-
-// ensureSessionAncestors creates missing parents without weakening permissions on an existing
-// home/config directory. The state root itself is hardened by session.Open.
-func ensureSessionAncestors(target string) error {
+// EnsureAncestors creates missing parents of the state root without weakening permissions on an
+// existing home/config directory. The state root itself is hardened by session.Open.
+func EnsureAncestors(target string) error {
 	target, err := filepath.Abs(filepath.Clean(target))
 	if err != nil {
 		return err
@@ -1326,7 +1166,7 @@ type sessionSocketOwner struct {
 	once sync.Once
 }
 
-func listenSessionSocket(stateRoot, socketPath string) (net.Listener, func(), error) {
+func ListenSocket(stateRoot, socketPath string) (net.Listener, func(), error) {
 	root, err := filepath.Abs(filepath.Clean(stateRoot))
 	if err != nil {
 		return nil, nil, err
@@ -1428,85 +1268,6 @@ func ensureSessionPrivatePath(root, target string) error {
 		if err := os.Chmod(path, 0o700); err != nil {
 			return fmt.Errorf("protect session socket parent: %w", err)
 		}
-	}
-	return nil
-}
-
-type sessionDoctorResult struct {
-	Socket  string `json:"socket"`
-	Healthy bool   `json:"healthy"`
-	Ready   bool   `json:"ready"`
-	Error   string `json:"error,omitempty"`
-}
-
-func runSessionDoctor(socket string, jsonOutput bool) (int, error) {
-	_, _, socket, err := sessionCLIPaths("", "", socket)
-	if err != nil {
-		return 2, err
-	}
-	result := sessionDoctorResult{Socket: socket}
-	client := sessionUnixHTTPClient(socket)
-	healthErr := sessionDoctorGet(client, "/healthz", &result)
-	if healthErr == nil {
-		result.Healthy = true
-	}
-	var ready sessionReadyDTO
-	readyErr := sessionDoctorGet(client, "/readyz", &ready)
-	if readyErr == nil {
-		result.Ready = ready.Ready
-	}
-	if healthErr != nil {
-		result.Error = boundedPublicDetail(healthErr.Error())
-	}
-	if readyErr != nil {
-		if result.Error != "" {
-			result.Error += "; "
-		}
-		result.Error += boundedPublicDetail(readyErr.Error())
-	}
-	if result.Error == "" && !result.Ready {
-		result.Error = "session service is not ready"
-	}
-	if jsonOutput {
-		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
-			return 1, err
-		}
-	} else if result.Error != "" {
-		ui.Error("session service is unavailable or unready: %s", result.Error)
-	} else {
-		ui.OK("session service is healthy and ready at %s", result.Socket)
-	}
-	if result.Error != "" || !result.Healthy || !result.Ready {
-		return 1, nil
-	}
-	return 0, nil
-}
-
-func sessionUnixHTTPClient(socket string) *http.Client {
-	transport := &http.Transport{
-		Proxy: nil,
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-		},
-	}
-	return &http.Client{Transport: transport, Timeout: 5 * time.Second}
-}
-
-func sessionDoctorGet(client *http.Client, path string, value any) error {
-	request, err := http.NewRequest(http.MethodGet, "http://unix"+path, nil)
-	if err != nil {
-		return err
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("connect to session socket: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("session endpoint returned HTTP %d", response.StatusCode)
-	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<10)).Decode(value); err != nil {
-		return fmt.Errorf("decode session endpoint: %w", err)
 	}
 	return nil
 }

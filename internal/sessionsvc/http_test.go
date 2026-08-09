@@ -1,4 +1,4 @@
-package cli
+package sessionsvc
 
 import (
 	"bytes"
@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,11 +17,12 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 	root := shortSessionSocketRoot(t)
-	listener, cleanup, err := listenSessionSocket(root, filepath.Join(root, "nested", "control.sock"))
+	listener, cleanup, err := ListenSocket(root, filepath.Join(root, "nested", "control.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 		t.Fatalf("owned socket after cleanup: err=%v", err)
 	}
 
-	staleListener, staleCleanup, err := listenSessionSocket(root, filepath.Join(root, "stale.sock"))
+	staleListener, staleCleanup, err := ListenSocket(root, filepath.Join(root, "stale.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 	}
 	// Keep the exact stale socket in place; the next owner may unlink a socket only.
 	_ = staleCleanup
-	newListener, newCleanup, err := listenSessionSocket(root, filepath.Join(root, "stale.sock"))
+	newListener, newCleanup, err := ListenSocket(root, filepath.Join(root, "stale.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "missing.sock"), symlink); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := listenSessionSocket(root, symlink); err == nil || !strings.Contains(err.Error(), "symlink") {
+	if _, _, err := ListenSocket(root, symlink); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("symlink socket error = %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 	if err := os.WriteFile(nonSocket, []byte("not a socket"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := listenSessionSocket(root, nonSocket); err == nil || !strings.Contains(err.Error(), "not a socket") {
+	if _, _, err := ListenSocket(root, nonSocket); err == nil || !strings.Contains(err.Error(), "not a socket") {
 		t.Fatalf("non-socket error = %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 	if err := os.Symlink(realRoot, symlinkRoot); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := listenSessionSocket(symlinkRoot, filepath.Join(symlinkRoot, "control.sock")); err == nil || !strings.Contains(err.Error(), "state root") {
+	if _, _, err := ListenSocket(symlinkRoot, filepath.Join(symlinkRoot, "control.sock")); err == nil || !strings.Contains(err.Error(), "state root") {
 		t.Fatalf("symlink state root error = %v", err)
 	}
 }
@@ -106,7 +106,7 @@ func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	service, repo := newHTTPTestSessionService(t)
 	defer service.Stop()
-	handler := newSessionHTTPHandler(service)
+	handler := NewHTTPHandler(service)
 
 	response := sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"task"}`, "", "application/json")
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
@@ -202,7 +202,7 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 func TestSessionHTTPRouteWiring(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	handler := newSessionHTTPHandler(service)
+	handler := NewHTTPHandler(service)
 	post := func(path, body, key string) *httptest.ResponseRecorder {
 		return sessionHTTPTestRequest(t, handler, http.MethodPost, path, body, key, "application/json")
 	}
@@ -282,7 +282,7 @@ func TestSessionHTTPRouteWiring(t *testing.T) {
 func TestSessionHTTPGeneratedArtifactIsSeparateFromTurnJSON(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
-	handler := newSessionHTTPHandler(service)
+	handler := NewHTTPHandler(service)
 	createdResponse := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"image"}`,
 		"image-create", "application/json",
@@ -355,7 +355,7 @@ func (r *preparingHTTPRunner) PrepareSession(_ context.Context, _ session.Sessio
 }
 
 func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	policies := testSessionPolicies(repo)
 	policy := policies["responder"]
@@ -369,7 +369,7 @@ func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer service.Stop()
-	handler := newSessionHTTPHandler(service)
+	handler := NewHTTPHandler(service)
 	createdResponse := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions",
 		`{"policy":"responder","task":"warm route"}`, "warm-create", "application/json",
@@ -390,7 +390,7 @@ func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
 
 func newHTTPTestSessionService(t *testing.T) (*SessionService, string) {
 	t.Helper()
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service, err := NewSessionService(SessionServiceConfig{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo),
@@ -421,54 +421,6 @@ func sessionHTTPTestRequest(t *testing.T, handler http.Handler, method, path, bo
 	return response
 }
 
-func TestSessionHTTPDoctorDialerUsesUnixSocket(t *testing.T) {
-	root := shortSessionSocketRoot(t)
-	socket := filepath.Join(root, "control.sock")
-	listener, cleanup, err := listenSessionSocket(root, socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/healthz", "/readyz":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"healthy":true,"ready":true}`))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})}
-	go func() { _ = server.Serve(listener) }()
-	defer server.Close()
-	client := sessionUnixHTTPClient(socket)
-	var health sessionHealthDTO
-	if err := sessionDoctorGet(client, "/healthz", &health); err != nil || !health.Healthy {
-		t.Fatalf("Unix doctor health err=%v health=%+v", err, health)
-	}
-	var ready sessionReadyDTO
-	if err := sessionDoctorGet(client, "/readyz", &ready); err != nil || !ready.Ready {
-		t.Fatalf("Unix doctor ready err=%v ready=%+v", err, ready)
-	}
-	code, output := captureSessionDoctorJSON(t, socket)
-	if code != 0 {
-		t.Fatalf("doctor success code = %d output=%s", code, output)
-	}
-	var success sessionDoctorResult
-	if err := json.Unmarshal([]byte(output), &success); err != nil || !success.Healthy || !success.Ready || success.Error != "" {
-		t.Fatalf("doctor success = %+v err=%v output=%s", success, err, output)
-	}
-	_ = server.Close()
-	cleanup()
-	code, output = captureSessionDoctorJSON(t, socket)
-	if code == 0 {
-		t.Fatalf("doctor failure code = %d output=%s", code, output)
-	}
-	var failure sessionDoctorResult
-	if err := json.Unmarshal([]byte(output), &failure); err != nil || failure.Healthy || failure.Ready || failure.Error == "" {
-		t.Fatalf("doctor failure = %+v err=%v output=%s", failure, err, output)
-	}
-}
-
 func responseStatus(response *http.Response) any {
 	if response == nil {
 		return nil
@@ -484,40 +436,4 @@ func shortSessionSocketRoot(t *testing.T) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	return root
-}
-
-func captureSessionDoctorJSON(t *testing.T, socket string) (int, string) {
-	t.Helper()
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := os.Stdout
-	os.Stdout = writer
-	code, runErr := runSessionDoctor(socket, true)
-	_ = writer.Close()
-	os.Stdout = previous
-	data, readErr := io.ReadAll(reader)
-	_ = reader.Close()
-	if runErr != nil {
-		t.Fatal(runErr)
-	}
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	return code, string(data)
-}
-
-func TestSessionCLIPathsUseRealHomeDefaults(t *testing.T) {
-	state, policy, socket, err := sessionCLIPaths("", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(state, filepath.Join(home, ".local", "state", "coop", "sessions")) || policy != filepath.Join(home, ".config", "coop", "session-policies.yaml") || socket != filepath.Join(state, "control.sock") {
-		t.Fatalf("defaults = state %q policy %q socket %q", state, policy, socket)
-	}
 }

@@ -10,28 +10,13 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 // gitRepo runs git in a fresh temp repo with an isolated global/system config, returning the repo
-// path and a runner. Callers add signing config as needed.
-func gitRepo(t *testing.T) (string, func(...string)) {
-	t.Helper()
-	repo := t.TempDir()
-	env := append(os.Environ(),
-		"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "noglobal"),
-		"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "nosystem"))
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir, cmd.Env = repo, env
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	run("init", "-q")
-	run("config", "user.email", "t@t")
-	run("config", "user.name", "T")
-	return repo, run
-}
+// path and a runner. Callers add signing config as needed. The hermetic repo itself is shared with
+// internal/sessionsvc's tests, which drive the same fork workspaces this package creates.
+func gitRepo(t *testing.T) (string, func(...string)) { return gitrepo.New(t) }
 
 func TestSignBase(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

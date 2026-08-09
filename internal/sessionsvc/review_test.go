@@ -1,4 +1,4 @@
-package cli
+package sessionsvc
 
 import (
 	"bytes"
@@ -16,10 +16,11 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var gateCalls atomic.Int32
 	service := newReviewTestService(t, repo, 1<<20, SessionReviewGateFunc(func(_ context.Context, gateRepo, candidate string) (SessionReviewGateResult, error) {
@@ -74,7 +75,7 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 }
 
 func TestSessionServiceRunReviewUsesConfiguredRemoteParent(t *testing.T) {
-	seed, seedGit := gitRepo(t)
+	seed, seedGit := gitrepo.New(t)
 	if err := os.WriteFile(filepath.Join(seed, "version.txt"), []byte("v1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func TestSessionServiceRunReviewUsesConfiguredRemoteParent(t *testing.T) {
 }
 
 func TestSessionServiceRunReviewUsesCapturedBaseAfterParentHistoryRewrite(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "original base")
 	service := newReviewTestService(t, repo, 1<<20, SessionReviewGateFunc(func(_ context.Context, _, _ string) (SessionReviewGateResult, error) {
 		return SessionReviewGateResult{Configured: true, Passed: true}, nil
@@ -222,7 +223,7 @@ func TestSessionServiceRunReviewAllowsBuildOutputButRejectsSourceMutation(t *tes
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo, git := gitRepo(t)
+			repo, git := gitrepo.New(t)
 			if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("/build/\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -271,7 +272,7 @@ func TestSessionServiceRunReviewGateOutcomes(t *testing.T) {
 		{name: "green", gate: SessionReviewGateResult{Configured: true, Passed: true}, wantGate: SessionReviewGatePassed, wantPublish: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo, git := gitRepo(t)
+			repo, git := gitrepo.New(t)
 			git("commit", "-q", "--allow-empty", "-m", "base")
 			service := newReviewTestService(t, repo, 1<<20, SessionReviewGateFunc(func(context.Context, string, string) (SessionReviewGateResult, error) {
 				return tc.gate, nil
@@ -302,7 +303,7 @@ func TestSessionServiceRunReviewGateOutcomes(t *testing.T) {
 
 func TestSessionServiceRunReviewConflictAndDirtyReject(t *testing.T) {
 	t.Run("conflict", func(t *testing.T) {
-		repo, git := gitRepo(t)
+		repo, git := gitrepo.New(t)
 		if err := os.WriteFile(filepath.Join(repo, "shared.txt"), []byte("base\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -338,7 +339,7 @@ func TestSessionServiceRunReviewConflictAndDirtyReject(t *testing.T) {
 	})
 
 	t.Run("dirty", func(t *testing.T) {
-		repo, git := gitRepo(t)
+		repo, git := gitrepo.New(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
 		service := newReviewTestService(t, repo, 1<<20, SessionReviewGateFunc(func(context.Context, string, string) (SessionReviewGateResult, error) {
 			t.Fatal("gate ran for dirty source")
@@ -361,7 +362,7 @@ func TestSessionServiceRunReviewConflictAndDirtyReject(t *testing.T) {
 }
 
 func TestSessionServiceRunReviewMovementMakesDossierNonPublishable(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var moved atomic.Bool
 	service := newReviewTestService(t, repo, 1<<20, SessionReviewGateFunc(func(context.Context, string, string) (SessionReviewGateResult, error) {
@@ -404,7 +405,7 @@ func TestSessionServiceRunReviewMovementMakesDossierNonPublishable(t *testing.T)
 }
 
 func TestSessionReviewIntentUsesCapturedObjectsBeforePublishabilityCheck(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newReviewTestService(t, repo, 1<<20, SessionReviewGateFunc(func(context.Context, string, string) (SessionReviewGateResult, error) {
 		return SessionReviewGateResult{Configured: true, Passed: true}, nil
@@ -463,7 +464,7 @@ func TestSessionServiceRunReviewResumesFrozenRunningAndUncertainIntent(t *testin
 		session.OperationUncertain,
 	} {
 		t.Run(string(initialState), func(t *testing.T) {
-			repo, git := gitRepo(t)
+			repo, git := gitrepo.New(t)
 			git("commit", "-q", "--allow-empty", "-m", "base")
 			var gateCalls atomic.Int32
 			service := newReviewTestService(
@@ -543,7 +544,7 @@ func TestSessionServiceRunReviewResumesFrozenRunningAndUncertainIntent(t *testin
 }
 
 func TestSessionServiceRunReviewMalformedRunningIntentBecomesUncertain(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var gateCalls atomic.Int32
 	service := newReviewTestService(t, repo, 1<<20, SessionReviewGateFunc(func(context.Context, string, string) (SessionReviewGateResult, error) {
@@ -586,7 +587,7 @@ func TestSessionServiceRunReviewMalformedRunningIntentBecomesUncertain(t *testin
 }
 
 func TestSessionServiceRunReviewConcurrentReplayWaitsForFirst(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -647,7 +648,7 @@ func TestSessionServiceRunReviewConcurrentReplayWaitsForFirst(t *testing.T) {
 }
 
 func TestSessionServiceRunReviewKeepsBoundedPreviewAndCompleteArtifact(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newReviewTestService(t, repo, 48, SessionReviewGateFunc(func(context.Context, string, string) (SessionReviewGateResult, error) {
 		return SessionReviewGateResult{Configured: true, Passed: true}, nil
@@ -691,7 +692,7 @@ func TestSessionServiceRunReviewKeepsBoundedPreviewAndCompleteArtifact(t *testin
 }
 
 func TestSessionReviewArtifactIsRemovedWithDiscardedSession(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newReviewTestService(
 		t,

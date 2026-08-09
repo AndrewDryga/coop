@@ -34,7 +34,7 @@ box-aware wrapper that runs teardown first and then calls it. Anything that reac
 `forkspace.Destroy` directly skips the teardown and re-opens this bug.
 
 Two related seams behave correctly already and are worth copying rather than duplicating:
-- `session_service.go` downs services itself before planning a discard, so `discardSessionWorkspace`
+- `internal/sessionsvc/service.go` downs services itself before planning a discard, so `discardSessionWorkspace`
   passes a zero `runtime.Runtime{}` into `destroyFork` to avoid a second teardown.
 - `StopSessionServices` removes by immutable compose LABELS instead of the file, so an agent's
   interrupted edit to `compose.yml` cannot block cleanup. Prefer that shape when the file's
@@ -43,6 +43,7 @@ Two related seams behave correctly already and are worth copying rather than dup
 `runtime.Runtime` is a struct, not an interface: guard with `rt.Name != ""`, never `rt != nil`.
 
 ## Changelog
+- 2026-08-09 — re-verified after the sessions extraction: the discard path is now `internal/sessionsvc/workspace.go` calling `forkspace.Destroy` DIRECTLY (its `destroyFork` call always passed a zero runtime, so the wrapper was doing nothing for it), which makes the ordering rule above explicit — the service downs the services itself, first.
 - 2026-08-09 — re-verified after the `internal/forkspace` extraction: the workspace removal moved to
   the leaf (`forkspace.Destroy`), the service teardown deliberately did NOT, so cli's `destroyFork`
   is now the wrapper that keeps the order. `TestDestroyForkStopsServicesBeforeRemovingTheWorktree`

@@ -211,7 +211,7 @@ func leaseAuthorityKey(root, id string) (string, error) {
 // cache location it supersedes. Everything in this registry — lock-authority inodes, completion
 // receipts, audit-reopen authority, departure records, the completion-window journal — is DURABLE
 // TRUST STATE, so it lives with the session store's state root (see defaultSessionStateRoot in
-// session_http.go) and NOT under os.UserCacheDir(). A cache is OS-deletable BY CONTRACT: macOS
+// session_cmd.go) and NOT under os.UserCacheDir(). A cache is OS-deletable BY CONTRACT: macOS
 // purges ~/Library/Caches under pressure and cleaners empty it wholesale. A purge mid-run unlinks
 // lock files whose fds are still flocked, so the next open recreates the name as a new inode and
 // two controllers each hold an "exclusive" lock on a different one; a purge between runs erases the

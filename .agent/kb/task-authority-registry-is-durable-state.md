@@ -2,7 +2,7 @@
 name: task-authority-registry-is-durable-state
 description: host-global completion trust lives in ~/.local/state/coop/task-leases, never a cache dir; adoption off the old cache path is one-shot and every authority flock rechecks its inode
 subsystem: tasks
-sources: [internal/cli/tasklease.go, internal/cli/completionwindow.go, internal/cli/controller.go, internal/cli/session_http.go]
+sources: [internal/cli/tasklease.go, internal/cli/completionwindow.go, internal/cli/controller.go, internal/sessionsvc/http.go]
 updated: 2026-08-09
 ---
 Everything that decides whether a task is *really* finished lives OUTSIDE the repo, in one
@@ -21,7 +21,7 @@ an "exclusive" lock on a different one — silently; between runs it erases rece
 authority, degrading crash recovery to restore-and-redo. `leaseAuthorityRoots`
 (`internal/cli/tasklease.go`) now resolves `$HOME/.local/state/coop/task-leases/v1` on both darwin
 and linux, the same durable family as the session store's `defaultSessionStateRoot`
-(`internal/cli/session_http.go`) — NOT XDG-configurable, matching that precedent exactly.
+(`internal/sessionsvc/http.go`) — NOT XDG-configurable, matching that precedent exactly.
 
 **Adoption is one-shot, never a fallback reader.** `adoptLegacyLeaseAuthorityRoot` runs only when
 the durable root is absent and the cache root is present, under a blocking flock on
@@ -44,4 +44,5 @@ INODE, never to a name; without the recheck a deleted-underfoot lock is silently
 for the repo-local queue, which did NOT move.
 
 ## Changelog
+- 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).
 - 2026-08-09 — created: registry moved out of `os.UserCacheDir()` to the session store's state-root family, with one-shot locked adoption and a post-flock inode identity recheck at every authority lock site.

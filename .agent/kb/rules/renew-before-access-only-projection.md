@@ -2,9 +2,9 @@
 name: renew-before-access-only-projection
 description: refreshable credentials renew in trusted host storage before an access-only box projection
 scope: security
-sources: [internal/agent/agent.go, internal/agent/codex.go, internal/agent/claude.go, internal/cli/session_acp.go]
+sources: [internal/agent/agent.go, internal/agent/codex.go, internal/agent/claude.go, internal/sessionsvc/acp.go]
 check: "go test ./internal/agent -run 'TestCodexCredentialRenewal|TestClaudeCredentialRenewal'"
-updated: 2026-08-08
+updated: 2026-08-09
 ---
 
 # Renew a refreshable credential before projecting it into a box
@@ -25,5 +25,6 @@ Every adapter whose credential is refreshable owes a `Prepare`; declaring only `
 the defect, not a lighter variant of it.
 
 ## Changelog
+- 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).
 - 2026-08-08 — wired the Claude adapter to the boundary. It had shipped with `Portability` and no `Prepare`, so an ~8h OAuth token expired into a hard turn failure while the source profile still held valid refresh authority; two live Responder deployments were down on Claude rungs. Endpoint, client id, and grant shape were read out of the shipped Claude Code binary rather than recalled — the remembered endpoint was wrong
 - 2026-08-06 — created after sweeping the Codex readiness, renewal, projection, and ACP admission paths; focused tests cover rotation, eight concurrent callers, failure preservation, symlink rejection, and access-only child state

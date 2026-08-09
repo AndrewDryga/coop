@@ -1,4 +1,4 @@
-package cli
+package sessionsvc
 
 import (
 	"context"
@@ -16,9 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
-	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 )
 
@@ -97,32 +95,9 @@ func (f SessionReviewGateFunc) Run(ctx context.Context, gateRepo, treeDir string
 	return f(ctx, gateRepo, treeDir)
 }
 
-type defaultSessionReviewGate struct {
-	cfg *config.Config
-	rt  runtime.Runtime
-}
-
-func (g defaultSessionReviewGate) Run(ctx context.Context, gateRepo, treeDir string) (SessionReviewGateResult, error) {
-	if err := ctx.Err(); err != nil {
-		return SessionReviewGateResult{}, err
-	}
-	a := &app{cfg: g.cfg, rt: g.rt, rtSet: g.rt.Name != ""}
-	image, err := a.mergeGate(gateRepo)
-	if err != nil {
-		return SessionReviewGateResult{Configured: true, StartupError: sanitizeSessionReviewText(err.Error(), session.MaxErrorDetailBytes)}, nil
-	}
-	if image == "" {
-		return SessionReviewGateResult{}, nil
-	}
-	if err := ctx.Err(); err != nil {
-		return SessionReviewGateResult{}, err
-	}
-	passed, err := a.reviewGatePasses(gateRepo, treeDir, image)
-	if err != nil {
-		return SessionReviewGateResult{Configured: true, StartupError: sanitizeSessionReviewText(err.Error(), session.MaxErrorDetailBytes)}, nil
-	}
-	return SessionReviewGateResult{Configured: true, Passed: passed}, nil
-}
+// MaxReviewErrorBytes bounds a gate's startup-error prose, so a host implementing
+// SessionReviewGate truncates the same way the service's own paths do.
+const MaxReviewErrorBytes = session.MaxErrorDetailBytes
 
 type sessionReviewIntent struct {
 	OperationID        string `json:"operation_id"`
@@ -312,7 +287,7 @@ func captureSessionReviewSource(repo, workspace, branch string) (sessionReviewSo
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return sessionReviewSourceIdentity{}, errors.New("review source is not a real directory")
 	}
-	head, tree, err := sessionReviewGitIdentity(workspace, "HEAD")
+	head, tree, err := ReviewGitIdentity(workspace, "HEAD")
 	if err != nil {
 		return sessionReviewSourceIdentity{}, err
 	}
@@ -338,14 +313,14 @@ func captureSessionReviewSource(repo, workspace, branch string) (sessionReviewSo
 }
 
 func captureSessionReviewParent(repo, revision string) (sessionReviewParentIdentity, error) {
-	head, tree, err := sessionReviewGitIdentity(repo, revision)
+	head, tree, err := ReviewGitIdentity(repo, revision)
 	if err != nil {
 		return sessionReviewParentIdentity{}, err
 	}
 	return sessionReviewParentIdentity{Head: head, Tree: tree}, nil
 }
 
-func sessionReviewGitIdentity(dir, revision string) (string, string, error) {
+func ReviewGitIdentity(dir, revision string) (string, string, error) {
 	head, err := sessionWorkspaceCommit(dir, revision)
 	if err != nil {
 		return "", "", err
@@ -407,11 +382,11 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 		dossier.NotPublishableReasons = []string{"rebase_conflict"}
 		return s.completeReview(ctx, dossier)
 	}
-	candidateHead, candidateTree, err := sessionReviewGitIdentity(candidate.dir, candidate.name)
+	candidateHead, candidateTree, err := ReviewGitIdentity(candidate.dir, candidate.name)
 	if err != nil {
 		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("pin review candidate: %w", err))
 	}
-	candidateParentHead, candidateParentTree, err := sessionReviewGitIdentity(candidate.dir, candidate.base)
+	candidateParentHead, candidateParentTree, err := ReviewGitIdentity(candidate.dir, candidate.base)
 	if err != nil {
 		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("pin review candidate parent: %w", err))
 	}
@@ -424,13 +399,13 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 	if err != nil {
 		return SessionReviewDossier{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("run review gate: %w", err))
 	}
-	if !sessionReviewCandidateUnchanged(candidate.dir, candidate.name, candidateHead, candidateTree) {
+	if !ReviewCandidateUnchanged(candidate.dir, candidate.name, candidateHead, candidateTree) {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "gate_modified_candidate")
 	}
 	switch {
 	case gateResult.StartupError != "":
 		dossier.Gate = SessionReviewGateStartupError
-		dossier.GateError = sanitizeSessionReviewText(gateResult.StartupError, session.MaxErrorDetailBytes)
+		dossier.GateError = SanitizeReviewText(gateResult.StartupError, session.MaxErrorDetailBytes)
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "gate_startup_error")
 	case !gateResult.Configured:
 		dossier.Gate = SessionReviewGateNone
@@ -441,7 +416,7 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 		dossier.Gate = SessionReviewGateFailed
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "gate_failed")
 	}
-	dossier.PolicyFindings = boundedSessionReviewFindings(policyScan(candidate.dir, candidateHead))
+	dossier.PolicyFindings = boundedSessionReviewFindings(s.host.policyScan(candidate.dir, candidateHead))
 	if len(dossier.PolicyFindings) > 0 {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "policy_findings")
 	}
@@ -494,14 +469,44 @@ func (s *SessionService) executeReviewIntent(ctx context.Context, op session.Ope
 	return s.completeReview(ctx, dossier)
 }
 
-func sessionReviewCandidateUnchanged(dir, branch, head, tree string) bool {
+func ReviewCandidateUnchanged(dir, branch, head, tree string) bool {
 	current, err := captureSessionReviewSource("", dir, branch)
 	return err == nil && current.Head == head && current.Tree == tree &&
 		current.Branch == branch && current.StatusDigest == sessionWorkspaceStatusDigest(nil)
 }
 
-func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (forkReviewCandidate, error) {
-	c, err := newForkReviewScratch(intent.Repository)
+// reviewScratch is a disposable, rebased view of a session's workspace. base remains the parent
+// commit the clone captured; name is the candidate branch. The caller owns cleanup whenever dir is
+// non-empty. It is a value, not a seam: prepareForkReviewCandidateFromIntent mutates base, name,
+// and conflict as it builds the candidate.
+type reviewScratch struct {
+	dir      string
+	base     string
+	name     string
+	conflict bool
+}
+
+func (c reviewScratch) cleanup() { _ = os.RemoveAll(c.dir) }
+
+func (c reviewScratch) detachBase() error {
+	return gitRun(c.dir, "checkout", "--quiet", "--detach", c.base)
+}
+
+func newReviewScratch(repo string) (reviewScratch, error) {
+	dir, err := os.MkdirTemp("", "coop-fork-review-")
+	if err != nil {
+		return reviewScratch{}, err
+	}
+	c := reviewScratch{dir: dir}
+	if err := forkspace.GitClone(repo, dir); err != nil {
+		c.cleanup()
+		return reviewScratch{}, fmt.Errorf("clone parent into review scratch: %w", err)
+	}
+	return c, nil
+}
+
+func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (reviewScratch, error) {
+	c, err := newReviewScratch(intent.Repository)
 	if err != nil {
 		return c, err
 	}
@@ -519,7 +524,7 @@ func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (forkRevie
 	if err := gitRun(c.dir, "fetch", "--quiet", intent.Repository, "+"+intent.ParentHead+":"+capturedParentRef); err != nil {
 		return c, fmt.Errorf("fetch captured review parent: %w", err)
 	}
-	parentHead, parentTree, err := sessionReviewGitIdentity(c.dir, intent.ParentHead)
+	parentHead, parentTree, err := ReviewGitIdentity(c.dir, intent.ParentHead)
 	if err != nil {
 		return c, fmt.Errorf("resolve captured review parent: %w", err)
 	}
@@ -534,14 +539,14 @@ func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (forkRevie
 	if err := gitRun(c.dir, "fetch", "--quiet", intent.Workspace, "+"+intent.SourceHead+":refs/heads/"+intent.SourceBranch); err != nil {
 		return c, fmt.Errorf("fetch captured review source: %w", err)
 	}
-	sourceHead, sourceTree, err := sessionReviewGitIdentity(c.dir, intent.SourceHead)
+	sourceHead, sourceTree, err := ReviewGitIdentity(c.dir, intent.SourceHead)
 	if err != nil {
 		return c, fmt.Errorf("resolve captured review source: %w", err)
 	}
 	if sourceHead != intent.SourceHead || sourceTree != intent.SourceTree {
 		return c, errors.New("captured review source tree is unavailable")
 	}
-	creationBase, _, err := sessionReviewGitIdentity(c.dir, intent.CreationBase)
+	creationBase, _, err := ReviewGitIdentity(c.dir, intent.CreationBase)
 	if err != nil {
 		return c, fmt.Errorf("resolve captured creation base: %w", err)
 	}
@@ -745,7 +750,7 @@ func boundedSessionReviewFindings(findings []string) []string {
 	result := make([]string, 0, min(len(findings), sessionReviewFindingLimit))
 	total := 0
 	for _, finding := range findings {
-		finding = sanitizeSessionReviewText(finding, sessionReviewFindingBytes)
+		finding = SanitizeReviewText(finding, sessionReviewFindingBytes)
 		if finding == "" || len(result) == sessionReviewFindingLimit || total+len(finding) > sessionReviewFindingTotalBytes {
 			break
 		}
@@ -755,7 +760,7 @@ func boundedSessionReviewFindings(findings []string) []string {
 	return result
 }
 
-func sanitizeSessionReviewText(value string, maxBytes int) string {
+func SanitizeReviewText(value string, maxBytes int) string {
 	value = strings.Map(func(r rune) rune {
 		if unicode.IsPrint(r) {
 			return r

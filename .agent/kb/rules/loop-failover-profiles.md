@@ -2,7 +2,7 @@
 name: loop-failover-profiles
 description: "in the loop, failover swaps the active credential and never a session; the session API is the one surface that rotates the session itself"
 scope: loop
-sources: [internal/ladder/limit.go, internal/cli/rotation.go, internal/cli/ratelimit.go, internal/config/config.go, internal/cli/session_acp.go]
+sources: [internal/ladder/limit.go, internal/cli/rotation.go, internal/cli/ratelimit.go, internal/config/config.go, internal/sessionsvc/acp.go]
 check: "none"
 updated: 2026-08-09
 ---
@@ -61,6 +61,7 @@ memory, as below.
   (`model@account`), but the logins themselves stay in the vault, never committed.
 
 ## Changelog
+- 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).
 - 2026-06-17 — created
 - 2026-07-11 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged

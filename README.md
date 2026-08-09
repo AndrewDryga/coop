@@ -1686,19 +1686,20 @@ A single static Go binary plus a config folder. A repo you work on optionally ca
 `.agent/Dockerfile` (its toolchain) and `.agent/compose.yml` (its services):
 
 ```
-main.go             entrypoint
-internal/agent/     one file per coding agent (claude/codex/gemini/grok): commands, resume, MCP, defaults, packages
-internal/box/       the engine: secret-shadowing mounts, git env, image selection, container run
-internal/acpproxy/  the ACP session proxy: survives box restarts, replays the handshake, coop's editor hooks
-internal/fusion/    the council: peer commands + the governor instruction
-internal/preset/    orchestration presets (.agent/presets/<name>/preset.yaml): roles, ladders, routing
-internal/project/   .agent/project.yaml — a monorepo's subprojects + the serve ports
-internal/mcp/       one mcp.json → Claude / Codex / Gemini / Grok native configs (pure Go, no Python)
-internal/session/   durable local remote sessions: idempotent operations, FIFO turns, events, recovery
-internal/scaffold/  `coop init` templates + the workflow skills (embedded in the binary)
-internal/cli/       command dispatch, fork lifecycle, session controller/UDS API, doctor
+main.go               entrypoint
+internal/agent/       one file per coding agent (claude/codex/gemini/grok): commands, resume, MCP, defaults, packages
+internal/box/         the engine: secret-shadowing mounts, git env, image selection, container run
+internal/acpproxy/    the ACP session proxy: survives box restarts, replays the handshake, coop's editor hooks
+internal/fusion/      the council: peer commands + the governor instruction
+internal/preset/      orchestration presets (.agent/presets/<name>/preset.yaml): roles, ladders, routing
+internal/project/     .agent/project.yaml — a monorepo's subprojects + the serve ports
+internal/mcp/         one mcp.json → Claude / Codex / Gemini / Grok native configs (pure Go, no Python)
+internal/session/     durable local remote sessions: idempotent operations, FIFO turns, events, recovery
+internal/sessionsvc/  the remote-session service ON that store: policy, HTTP/UDS API, one-turn ACP, workspaces, review
+internal/scaffold/    `coop init` templates + the workflow skills (embedded in the binary)
+internal/cli/         command dispatch, fork lifecycle, the loop + ACP control planes, doctor
 internal/config·runtime·ui/   settings · runtime detection · terminal output
-install.sh          the curl one-liner: download the prebuilt binary onto PATH
+install.sh            the curl one-liner: download the prebuilt binary onto PATH
 ```
 
 | Layer | Targets | What they prove |
