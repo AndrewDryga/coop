@@ -18,20 +18,28 @@ const Template = `# coop preset — an orchestration recipe: which agent LEADS a
 #   Inspect:  coop presets %[1]s
 #   Format:   coop help presets
 # An explicit target on the command line (claude:opus@work) overrides the lead +
-# ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset names
-# models and accounts, never the secrets themselves.
+# ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset
+# names models and accounts, never the secrets themselves.
 
-# lead — REQUIRED: the agent that leads the session, as a TARGET or a fallback ladder.
+# lead — REQUIRED: the agent that leads the session,
+# as a TARGET or a fallback ladder.
 lead:
-  # agent — REQUIRED. A target: provider[:model][/effort][@account], or a LIST of them (a fallback ladder):
-  #   claude                          the agent's default model, on EVERY signed-in account
-  #   claude:claude-opus-4-8/xhigh    that model at xhigh effort, on every signed-in account
-  #   claude:claude-opus-4-8@work     that model pinned to the "work" account only
-  #   [claude:claude-fable-5/xhigh, claude:claude-opus-4-8@work]   a fallback LADDER
-  #   [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]   a CROSS-PROVIDER ladder
-  # A loop rotates the ladder top-to-bottom (all accounts of entry 1, then entry 2, …), running
-  # each rung's own agent, keying rate limits per (agent, model, account); a single run uses the
-  # first entry, and it's the default agent. Model ids: coop models. Accounts: coop credentials.
+  # agent — REQUIRED. A target: provider[:model][/effort][@account], or a LIST
+  # of them (a fallback ladder):
+  #   claude
+  #     the agent's default model, on EVERY signed-in account
+  #   claude:claude-opus-4-8/xhigh
+  #     that model at xhigh effort, on every signed-in account
+  #   claude:claude-opus-4-8@work
+  #     that model pinned to the "work" account only
+  #   [claude:claude-fable-5/xhigh, claude:claude-opus-4-8@work]
+  #     a fallback LADDER
+  #   [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
+  #     a CROSS-PROVIDER ladder
+  # A loop rotates the ladder top-to-bottom (all accounts of entry 1, then entry
+  # 2, …), running each rung's own agent, keying rate limits per (agent, model,
+  # account); a single run uses the first entry, and it's the default agent.
+  # Model ids: coop models. Accounts: coop credentials.
   agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
 
   # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
@@ -44,17 +52,19 @@ lead:
 roles:
 
   thinker:
-    # mode: native — coop generates a Claude subagent (coop-thinker) that runs in the
-    # lead's session, no separate box. It's Claude's own subagent file, so it needs a
-    # Claude LEAD; under a codex, gemini, or grok lead this role degrades to a read-only
-    # consult. With no subagent: below, coop generates it
-    # from this role's model, when, and prompt.
+    # mode: native — coop generates a Claude subagent (coop-thinker) that runs
+    # in the lead's session, no separate box. It's Claude's own subagent file,
+    # so it needs a Claude LEAD; under a codex, gemini, or grok lead this role
+    # degrades to a read-only consult. With no subagent: below, coop generates
+    # it from this role's model, when, and prompt.
     mode: native
-    # agent — a target: provider[:model][/effort]. The model (after the ':') is what the generated
-    # subagent runs on (coop models); a bare provider uses the agent's default. A role runs
-    # its agent's DEFAULT account — no @account (only the lead rotates accounts).
+    # agent — a target: provider[:model][/effort]. The model (after the ':') is
+    # what the generated subagent runs on (coop models); a bare provider uses
+    # the agent's default. A role runs its agent's DEFAULT account — no @account
+    # (only the lead rotates accounts).
     agent: claude:claude-opus-4-8/xhigh
-    # when — OPTIONAL routing hints; become the subagent's description and the lead's cue.
+    # when — OPTIONAL routing hints; become the subagent's description and the
+    # lead's cue.
     when: [architecture, debugging, code-review, before-commit]
     # prompt — the generated subagent's system prompt. To reference an existing
     # .claude/agents/ subagent instead of generating one, set: subagent: <name>.
@@ -64,8 +74,9 @@ roles:
     # mode: consult — a READ-ONLY peer for a second opinion (often another
     # vendor), asked as coop-consult critic; it cannot edit files.
     mode: consult
-    # agent — a target or fallback LIST: provider[:model][/effort]. A failed consult advances
-    # only on a proven rate limit; each provider uses its default account. Unsigned-in rungs skip.
+    # agent — a target or fallback LIST: provider[:model][/effort]. A failed
+    # consult advances only on a proven rate limit; each provider uses its
+    # default account. Unsigned-in rungs skip.
     # Example: [codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high]
     agent: codex:gpt-5.6-sol/xhigh
     # when — OPTIONAL routing hints.
@@ -77,8 +88,9 @@ roles:
     # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the
     # worktree but never commits; the lead reviews the diff, gates, and commits.
     mode: delegate
-    # agent — a target or fallback LIST: provider[:model][/effort]. Delegate fallback is
-    # allowed only while every file and Git history remain unchanged after the limited rung.
+    # agent — a target or fallback LIST: provider[:model][/effort]. Delegate
+    # fallback is allowed only while every file and Git history remain unchanged
+    # after the limited rung.
     # Example: [gemini:gemini-3.5-flash, codex:gpt-5.4-mini]
     agent: gemini:gemini-3.5-flash
     # when — OPTIONAL routing hints.
