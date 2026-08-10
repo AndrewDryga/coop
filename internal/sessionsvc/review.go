@@ -510,8 +510,8 @@ func newReviewScratch(repo string) (reviewScratch, error) {
 	return c, nil
 }
 
-func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (reviewScratch, error) {
-	c, err := newReviewScratch(intent.Repository)
+func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (c reviewScratch, err error) {
+	c, err = newReviewScratch(intent.Repository)
 	if err != nil {
 		return c, err
 	}
@@ -519,6 +519,7 @@ func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (reviewScr
 	defer func() {
 		if !keep {
 			c.cleanup()
+			c = reviewScratch{}
 		}
 	}()
 	if !forkspace.ValidExistingName(intent.SourceBranch) {

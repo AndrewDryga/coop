@@ -8,7 +8,7 @@ updated: 2026-08-10
 
 Two packages build a disposable rebased clone for a review gate, and they read like copy-paste:
 `forkctl.forkReviewCandidate` (`internal/forkctl/review.go:30-101`) and `sessionsvc.reviewScratch`
-(`internal/sessionsvc/review.go:487-574`). The duplication is DELIBERATE — flagged during the
+(`internal/sessionsvc/review.go:487-576`). The duplication is DELIBERATE — flagged during the
 sessionsvc extraction, ruled again in the fork Stage 1 (ruling 8), then assessed on its own. Do not
 "fix" it.
 
@@ -23,12 +23,12 @@ through a local `gitArgs`), as is the leak assertion each test suite carries
 
 | | forkctl — a preview | sessionsvc — an attested rebuild |
 |---|---|---|
-| base | the parent's CURRENT HEAD, read inside the scratch (`review.go:80-82`) | the CAPTURED `intent.ParentHead`, fetched by SHA into `refs/coop/session-parent` (`review.go:528-531`) |
-| source | the fork branch by NAME, whatever it points at now (`:90`) | `intent.SourceHead` by SHA (`:544`) |
-| verification | base is non-empty (`:80-82`) | parent head+tree, source head+tree, and `CreationBase` ancestry must all match the intent or it refuses (`:536-538,551-553,558-564`) |
-| replay | `rebase base name` (`:93`) | `rebase --onto base creationBase name` (`:567`) — exactly the commits captured at session creation |
+| base | the parent's CURRENT HEAD, read inside the scratch (`review.go:80-82`) | the CAPTURED `intent.ParentHead`, fetched by SHA into `refs/coop/session-parent` (`review.go:529-532`) |
+| source | the fork branch by NAME, whatever it points at now (`:90`) | `intent.SourceHead` by SHA (`:545`) |
+| verification | base is non-empty (`:80-82`) | parent head+tree, source head+tree, and `CreationBase` ancestry must all match the intent or it refuses (`:537-539,552-554,559-565`) |
+| replay | `rebase base name` (`:93`) | `rebase --onto base creationBase name` (`:568`) — exactly the commits captured at session creation |
 
-The last row is load-bearing, and the code says why (`review.go:565-566`): inferring the upstream
+The last row is load-bearing, and the code says why (`review.go:566-567`): inferring the upstream
 from the current parent would replay rewritten parent history after a force-push. One shared
 `prepare*` would have to pick one of these two contracts and silently impose it on the other caller.
 
@@ -47,17 +47,22 @@ cleanup's clothes.
 diverged, not copy-pasted and then rotted), and `9eff655` + `bb6c3e4` only moved each into its new
 package. There is no "fixed in one, missed in the other" history — the usual reason to consolidate.
 
-One difference IS accidental rather than semantic: forkctl zeroes its named result on a failed
-prepare (`review.go:69-75`), while sessionsvc returns the struct with `dir` still naming the
-directory its own defer just removed (`review.go:518-523`). It is inert today — the only caller
-discards the value on error (`review.go:368-371`) — and it is the one place the two could be
-aligned without touching either contract.
+The one difference that WAS accidental rather than semantic is now aligned: both zero their named
+result on a failed prepare (`forkctl/review.go:69-75`, `sessionsvc/review.go:518-524`), so neither
+hands back a struct whose `dir` names the directory its own defer just removed. It was inert — the
+only caller discards the value on error (`sessionsvc/review.go:368-371`) — but a future caller
+inspecting the failed value would have gotten a live-looking path to a deleted directory.
+`TestSessionReviewScratchIsZeroedOnFailedPrepare` pins the session side. Every remaining difference
+below the table is the contract itself; there is nothing left to "tidy".
 
 **Reconsider only if the contracts converge** — a session review that gates on the parent's live
 HEAD, or a fork preview that verifies a captured intent. Then one type would carry one meaning and
 this note is obsolete. See [[fork-lifecycle-state-file]] for the fork state this machinery reviews.
 
 ## Changelog
+- 2026-08-10 — the last accidental difference is gone: sessionsvc now zeroes its named result on a
+  failed prepare like forkctl, pinned by `TestSessionReviewScratchIsZeroedOnFailedPrepare`. Every
+  `internal/sessionsvc/review.go` line reference re-verified (the fix shifted them by one).
 - 2026-08-10 — created: the assess-then-act ruling queued by fork Stage 1 (ruling 8) and the
   sessionsvc extraction's RISK-4 note. Verified against both files and `git log -S`; decision is
   KEEP TWO, with a pointer comment now at each site.

@@ -458,6 +458,26 @@ func TestSessionReviewIntentUsesCapturedObjectsBeforePublishabilityCheck(t *test
 	}
 }
 
+// A failed prepare has already removed its scratch by the time it returns, so it must hand back the
+// ZERO value: a struct still naming that directory invites a caller to clean up or read a path that
+// no longer exists. forkctl.prepareForkReviewCandidate zeroes its named result the same way.
+func TestSessionReviewScratchIsZeroedOnFailedPrepare(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	// Fails after the scratch clone exists, which is the only case where the result could leak a path.
+	scratch, err := prepareForkReviewCandidateFromIntent(sessionReviewIntent{Repository: repo, SourceBranch: "not a branch"})
+	if err == nil {
+		t.Fatal("an invalid source branch should fail the prepare")
+	}
+	if scratch != (reviewScratch{}) {
+		t.Fatalf("failed prepare returned %+v, want the zero value", scratch)
+	}
+	assertReviewScratchEmpty(t, tmp)
+}
+
 func TestSessionServiceRunReviewResumesFrozenRunningAndUncertainIntent(t *testing.T) {
 	for _, initialState := range []session.OperationState{
 		session.OperationRunning,
