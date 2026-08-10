@@ -259,3 +259,37 @@ func TestCmdBacklogMonorepo(t *testing.T) {
 		t.Errorf("promote of an absent id = (%d, %v), want (1, error)", code, err)
 	}
 }
+
+// A bare leading flag on `coop backlog` must route to the default listing with that flag — `coop
+// backlog -x` means `coop backlog ls -x`, not an unknown subcommand — the same invariant
+// TestTasksBareLeadingFlagListsFiltered proves for `coop tasks`. ls takes no flags yet, so the
+// proof is routing itself, not a filtered list: single-queue now reaches ls's OWN flag validator
+// (a clear "unknown flag", not "unknown backlog command"); the umbrella roll-up reaches the
+// listing outright — ls has nothing to reject yet, so it just lists, where the unfixed dispatcher
+// used to error.
+func TestBacklogBareLeadingFlagRoutesToLs(t *testing.T) {
+	repo := t.TempDir()
+	if code, err := tasksFolderAdd(filepath.Join(repo, tasksRoot), []string{"an idea"}, stateBacklog, "backlog add"); code != 0 || err != nil {
+		t.Fatalf("seed add: code=%d err=%v", code, err)
+	}
+
+	_, err := appFor(repo).cmdBacklog([]string{"-x"})
+	if err == nil || !strings.Contains(err.Error(), "backlog ls") || !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("coop backlog -x = %v, want ls's own unknown-flag error (routed to ls, not the unknown-subcommand path)", err)
+	}
+
+	// Umbrella (several queues): the same shorthand routes the same way — ls has nothing to
+	// reject, so it reaches the roll-up listing (the unfixed dispatcher errored here instead).
+	if code, err := tasksFolderAdd(filepath.Join(repo, "sub", tasksRoot), []string{"a sub idea"}, stateBacklog, "backlog add"); code != 0 || err != nil {
+		t.Fatalf("seed sub add: code=%d err=%v", code, err)
+	}
+	multi := &app{cfg: &config.Config{RepoOverride: repo, TasksFiles: []string{tasksRoot, filepath.Join("sub", tasksRoot)}}}
+	out := captureStdout(t, func() {
+		if code, err := multi.cmdBacklog([]string{"-x"}); code != 0 || err != nil {
+			t.Errorf("umbrella coop backlog -x: got (%d, %v), want (0, nil) — routed to the roll-up listing", code, err)
+		}
+	})
+	if !strings.Contains(out, "an idea") || !strings.Contains(out, "a sub idea") {
+		t.Errorf("umbrella coop backlog -x should roll up both queues' backlog:\n%s", out)
+	}
+}

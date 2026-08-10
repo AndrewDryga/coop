@@ -2,7 +2,7 @@
 name: bare-flag-routes-to-default-view
 description: "a leading flag where a subcommand goes routes to the group's default listing"
 scope: cli-grammar
-sources: [internal/cli/tasks.go, internal/cli/taskcmd.go]
+sources: [internal/cli/tasks.go, internal/cli/taskcmd.go, internal/cli/backlog.go]
 check: "none"
 updated: 2026-08-09
 ---
@@ -23,8 +23,8 @@ text is longest and least relevant to what they asked.
 - Normalize in the group dispatcher BEFORE routing: after pulling value-flags like `--tasks`,
   if the first remaining token starts with `-` (and isn't the lone `-`), prepend the default
   verb (`ls`). The normal flag validator then names the supported flags on a typo.
-- Only for groups with a *listing* default (today: `tasks`). A group whose bare form shows
-  help has no listing flags to route — this is the flag-shaped sibling of
+- Only for groups with a *listing* default (today: `tasks`, `backlog`). A group whose bare form
+  shows help has no listing flags to route — this is the flag-shaped sibling of
   bare-subcommand-shows-help.md.
 - Not mechanically lintable (needs per-dispatcher flow analysis), so it stays a reviewed
   rule; check it whenever a list command grows flags.
@@ -42,3 +42,11 @@ text is longest and least relevant to what they asked.
   takes zero flags today, so nothing currently demonstrates user-visible breakage, but the
   structural gap is real and the card's own "today: tasks" framing is now inaccurate. Queued for
   the lead, not fixed here.
+- 2026-08-09 — fixed sweep: ported the tasks.go:229 normalization into BOTH backlog.go
+  dispatchers — `cmdBacklog` (before the multi-queue `switch sub`) and `cmdBacklogFolder` (before
+  its own `switch sub`), so the invariant holds independently at each, not just via the caller.
+  Added TestBacklogBareLeadingFlagRoutesToLs (internal/cli/backlog_test.go), mirroring
+  TestTasksBareLeadingFlagListsFiltered for single-queue and umbrella; confirmed it fails without
+  the fix (`unknown backlog command "-x"`) and passes with it (single-queue now surfaces ls's own
+  `unknown flag` error since ls still takes none; the umbrella roll-up now lists instead of
+  erroring). "today: tasks" is retired — both `tasks` and `backlog` now have the normalization.

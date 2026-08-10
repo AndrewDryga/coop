@@ -35,6 +35,13 @@ func (a *app) cmdBacklog(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	// A leading flag is the default listing with that flag: `coop backlog --foo` means `coop
+	// backlog ls --foo`, not a subcommand named "--foo". --tasks is already pulled out, so
+	// anything flag-shaped still at the front is an ls flag (validated as one downstream, once ls
+	// takes any). See rule bare-flag-routes-to-default-view.
+	if len(rest) > 0 && strings.HasPrefix(rest[0], "-") && rest[0] != "-" {
+		rest = append([]string{"ls"}, rest...)
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -73,6 +80,12 @@ func (a *app) cmdBacklog(args []string) (int, error) {
 // verbs. The queue need not exist yet — `add` creates xx_backlog on demand (tasksFolderAdd), the way a
 // secondary --tasks queue is bootstrapped.
 func cmdBacklogFolder(root string, rest []string) (int, error) {
+	// A leading flag is the default listing with that flag, same as cmdBacklog's own check —
+	// kept here too so this dispatcher is correct on its own, not just via that caller. See rule
+	// bare-flag-routes-to-default-view.
+	if len(rest) > 0 && strings.HasPrefix(rest[0], "-") && rest[0] != "-" {
+		rest = append([]string{"ls"}, rest...)
+	}
 	sub := ""
 	var args []string
 	if len(rest) > 0 {
