@@ -43,3 +43,4 @@ code, too).
   a code violation (nothing in AGENTS.md contradicts the rule), but a sources mismatch — flagged
   for the lead: either add an explicit line to AGENTS.md, or point `sources:` at wherever this is
   actually enforced (today: nowhere but review).
+- 2026-08-09 — drift repair from the backfill sweep's findings: the cited AGENTS.md now really states the rule — one creed line added there, so the source matches the claim.

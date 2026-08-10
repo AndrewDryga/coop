@@ -9,6 +9,7 @@
 - **Boring first.** Reach for the dull, proven shape; clever earns its place only when boring can't do the job — and you can say *why* in one sentence.
 - **Wear the hats** before coding: PM (the right, smallest thing?), UX (obvious path; empty/error states handled?), Security (what's the abuse case?), Maintainer (clear in six months?).
 - **Done means verified, not done-once** — formatted, gated green, tested including the failure path. Never "should work": show the gate, or say what you couldn't check.
+- **Fix the bug, not the feature.** Root-cause first (`/investigate`); removing or degrading the feature is never a bug fix without the human's explicit sign-off.
 - **Readable, no bloat.** Match the surrounding style; delete more than you add; no knobs nobody asked for; comments say *why*, not *what*.
 - **Boy-scout rule.** Fix a small, safe, on-topic mess as you pass through. A separate fix worth doing goes to the QUEUE (`coop tasks add`, so the loop takes it soon); the BACKLOG (`coop backlog add`) takes only the genuinely large — work one iteration couldn't finish, or a spec-sized idea a human must scope first. Close call? Queue it. Never smuggle an unrelated change into the commit.
 

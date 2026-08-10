@@ -2,7 +2,7 @@
 name: box-logins-device-code
 description: "boxed agent logins use device-code/paste flows; browser OAuth hangs in a container"
 scope: box
-sources: [internal/agent/codex.go, internal/agent/claude.go]
+sources: [internal/agent/codex.go, internal/agent/claude.go, internal/agent/gemini.go, internal/agent/grok.go]
 check: "none"
 updated: 2026-08-09
 ---
@@ -21,6 +21,7 @@ hangs.
   `claude` it re-authenticates even when you're already logged in.
 - **gemini** — logs in on first interactive use (Google OAuth). If that ever
   hangs in the box, switch it to a device / no-browser flow too.
+- **grok** — `coop login grok` runs `grok login --device-auth`, same shape as codex.
 
 **Why:** a container can't open a browser or receive a localhost OAuth redirect.
 
@@ -38,3 +39,4 @@ flow over browser OAuth. Not mechanically lint-checkable, so it lives here.
   also correctly implements `grok login --device-auth`, but grok isn't mentioned anywhere in the
   card's per-agent list — it was added after this card's last revision. Flagged for the lead as a
   card update (add the grok bullet), not fixed here.
+- 2026-08-09 — drift repair from the backfill sweep's findings: grok bullet added (grok login --device-auth, grok.go); sources widened to all four adapters.

@@ -23,9 +23,9 @@ Bare `coop` prints help; a bare group should match that.
   `case "": return groupHelp("<group>")` (helper in help.go). Keep `unknownErr` only
   for a non-empty, unrecognized token.
 - A group that has a *useful default view* may show that instead of help — the
-  invariant is "never the empty-token error," not "always help." Current sweep:
-  `fleet` → help; `pool` → shows the pool; `profiles` and `tasks` → list their queue;
-  `fork` → `forkHelp`. None emits the empty-token error.
+  invariant is "never the empty-token error," not "always help." Current sweep
+  (2026-08-09): `fleet` and `sessions` → group help; `fork` → `forkHelp`; `tasks`,
+  `backlog`, `credentials`, and `presets` → their list. None emits the empty-token error.
 - Not easily lintable (it needs flow analysis of each dispatcher), so this stays a
   reviewed rule; check it whenever you add or touch a subcommand group.
 
@@ -44,3 +44,4 @@ Bare `coop` prints help; a bare group should match that.
   `TestV3RetiredForms`) and "profiles" (renamed to "credentials"), and never mentions backlog,
   sessions, or presets, which already correctly hold the invariant. Card documentation drift, not
   a code bug — flagged for the lead, not fixed here.
+- 2026-08-09 — drift repair from the backfill sweep's findings: Current-sweep bullet refreshed to the real 2026-08-09 group list (pool retired, profiles renamed, backlog/sessions/presets added).

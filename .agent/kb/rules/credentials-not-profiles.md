@@ -11,8 +11,10 @@ updated: 2026-08-09
 
 **The rule:** Every user-facing surface — command names, flags, help, errors, hints, docs —
 says **credential(s)** for a stored account/login (a rate-limit slot). "Profile" is the
-pre-v3 name and is RETIRED, not aliased: `coop profiles` fails loudly with the rewrite to
-`coop credentials` (the v3 tombstone pattern — no working aliases, ever), and the
+pre-v3 name and is RETIRED, not aliased: `coop profiles` resolves as a plain unknown
+command — no alias, no did-you-mean (the edit distance is past the threshold), and no
+special retired-form note either (`TestV3RetiredForms`: v3 carries no legacy, not even a
+tombstone hint) — and the
 `--profile` FLAG is removed outright (no tombstone): coop doesn't recognize it at all, so
 on an agent launch it forwards to the agent like any other arg (codex has its own
 `--profile`) and elsewhere it's an unknown argument. The RECIPE concept (lead + roles +
@@ -46,3 +48,4 @@ the `coop profiles` tombstone line and internal identifiers.
   with no did-you-mean (levenshtein("profiles","credentials")=8, past the threshold) and no rewrite
   pointer, confirmed by internal/cli/cli_test.go's `TestV3RetiredForms` comment ("not a special
   'X is retired' note"). Card-vs-code drift, not a code bug — possibly-wrong, flagged for the lead.
+- 2026-08-09 — drift repair from the backfill sweep's findings: claim corrected — coop profiles is a plain unknown command, no tombstone hint (TestV3RetiredForms).

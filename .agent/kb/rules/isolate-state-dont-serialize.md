@@ -2,7 +2,7 @@
 name: isolate-state-dont-serialize
 description: "when shared state breaks concurrency, isolate the state; never lock the users of it"
 scope: box
-sources: [internal/box/mounts.go, internal/agent/codex.go]
+sources: [internal/box/profiles.go, internal/box/run.go, internal/agent/codex.go]
 check: "none"
 updated: 2026-08-09
 ---
@@ -20,8 +20,9 @@ wearing a safety vest.
 second box fail fast. The user rejected it flat ("lock is a stupid idea — I want multiple
 sessions working in parallel"), and it also compounded failures: a respawn racing its own
 half-dead predecessor burned the ACP proxy's rapid-fail cap and killed the whole server. The
-real fix (per-box private home, `Agent.SharedHomePaths`) kept every session and removed the
-collision entirely — nothing left to lock.
+real fix — first a per-box private home, ultimately the surgical `CODEX_SQLITE_HOME`
+redirect described below — kept every session and removed the collision entirely; nothing
+left to lock.
 
 **How to apply:**
 - Contention on a mounted dir/file → first ask "does anyone WANT this shared?" Split the
@@ -59,3 +60,4 @@ collision entirely — nothing left to lock.
   apply" section already says was superseded by the simpler `CODEX_SQLITE_HOME` env var. Both
   flagged for the lead as a card correction (re-point sources, refresh the Why); the rule's actual
   guidance still holds in the current code.
+- 2026-08-09 — drift repair from the backfill sweep's findings: sources repointed (mounts.go was unrelated; profiles.go + run.go are the real logic) and the dead Agent.SharedHomePaths reference replaced with the fix's actual history.

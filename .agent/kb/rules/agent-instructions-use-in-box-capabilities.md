@@ -26,6 +26,9 @@ human/operator layer; the boxed agent should use only its runtime's native tools
   parallel read-only tool calls, and the repo task/log files.
 - Do not recommend `coop fork`, `coop fleet`, or other host-side lifecycle commands to
   agents. Those can stay in user/operator docs such as README command references.
+- Naming a host-side command in order to PROHIBIT it is fine (AGENTS.md's hands-off
+  destroyers list does exactly this): the rule bars recommending host commands as
+  capabilities, not mentioning them as bans — a ban wastes no turns.
 - If a native capability may not exist, phrase it as "if your runtime has it" and require
   the closest safe fallback instead of inventing slash commands or APIs.
 
@@ -44,3 +47,4 @@ human/operator layer; the boxed agent should use only its runtime's native tools
   "How to apply" reads as an absolute no-mention rule and doesn't clearly carve out this
   prohibit-by-naming exception, which looks like a deliberate, sensible safety guardrail already
   in practice. Flagged for the lead to consider clarifying, not fixed here.
+- 2026-08-09 — drift repair from the backfill sweep's findings: prohibition carve-out recorded — naming a host command to BAN it is not a violation.
