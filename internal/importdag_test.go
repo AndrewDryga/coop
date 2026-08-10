@@ -45,7 +45,7 @@ var allowedEdges = map[string][]string{
 	"acpproxy":              nil,
 	"agent":                 {"config", "mcp"},
 	"box":                   {"agent", "config", "fusion", "preset", "processidentity", "project", "runtime", "ui"},
-	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "forkctl", "forkspace", "fusion", "ladder", "liveprocess", "loopcfg", "preset", "project", "runtime", "scaffold", "sessionsvc", "tasks", "ui"},
+	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "forkctl", "forkspace", "fusion", "ladder", "liveprocess", "loop", "loopcfg", "preset", "project", "runtime", "scaffold", "sessionsvc", "tasks", "ui"},
 	"config":                nil,
 	"contextc":              {"project"},
 	"forkctl":               {"agent", "box", "config", "forkspace", "project", "runtime", "sessionsvc", "tasks", "ui"},
@@ -53,6 +53,7 @@ var allowedEdges = map[string][]string{
 	"fusion":                {"agent"},
 	"ladder":                {"agent"},
 	"liveprocess":           nil,
+	"loop":                  {"agent", "box", "config", "forkspace", "ladder", "loopcfg", "preset", "runtime", "tasks", "ui"},
 	"loopcfg":               {"agent"},
 	"mcp":                   nil,
 	"preset":                {"agent"},
@@ -75,12 +76,15 @@ var allowedEdges = map[string][]string{
 // terminal outright; box narrates image builds and runs (ui.Info, ui.IsTerminal) and scaffold
 // narrates what it generated (ui.Bold, ui.Detail). tasks and forkctl are whole CLI verb families
 // extracted OUT of cli — they print their own tables, prompts, and live boards, so the terminal
-// came with them.
+// came with them. loop is the strongest case of all: its output IS a multi-hour streaming
+// interface — a sticky live bar (ui.Region/ui.SetLiveSink) with the agent's own stdout scrolling
+// above it — and "return data and let the caller print it" cannot express an incremental render
+// that runs for twelve hours.
 //
 // Deliberately a SECOND list, not derived from allowedEdges: granting a package the ui edge has to
 // cost two edits, so "just add it to the table" can't quietly move presentation back into a
 // library.
-var uiPresentationOwners = []string{"box", "cli", "forkctl", "scaffold", "tasks"}
+var uiPresentationOwners = []string{"box", "cli", "forkctl", "loop", "scaffold", "tasks"}
 
 // TestInternalImportDAG diffs the real tree against the frozen table in both directions: an
 // unexpected edge fails, and so does an edge the table still expects but the code has dropped, so

@@ -578,7 +578,7 @@ func (s *CompletionWindowSet) Departures() ([]string, error) {
 // baselineDoneIDs returns every task id that was already archived (in 99_done) when this window's
 // baseline snapshot was captured — for the work window (beginWorkCompletionWindows), that snapshot is
 // taken before the box is even launched, so it is queue state the box could not have influenced.
-// commands.go folds this into the foreign-binding touched set: a Coop-Task trailer naming an already
+// internal/loop folds this into the foreign-binding touched set: a Coop-Task trailer naming an already
 // archived task is always authority-touching, even when that task's folder never moves during the
 // iteration, because an archived task's history is meant to be closed — a forged extra commit
 // corrupts that closed record without needing to touch its folder at all. See unbindableTasks and

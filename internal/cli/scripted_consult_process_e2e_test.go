@@ -17,6 +17,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 )
@@ -479,7 +480,7 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 				t.Fatalf("fixture did not settle exactly the claimed task: %v", err)
 			}
 			peerPath := filepath.Join(suite.layout.Repo, ".agent", "runs", runID+".peers.jsonl")
-			rows := readPeerRecords(suite.layout.Repo, runID)
+			rows := loop.ReadPeerRecords(suite.layout.Repo, runID)
 			if tc.wantRow {
 				info, err := os.Lstat(peerPath)
 				if err != nil {
@@ -489,7 +490,7 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 				if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !ok || stat.Nlink != 1 {
 					t.Fatalf("peer telemetry target = mode %s stat %#v", info.Mode(), stat)
 				}
-				if len(rows) != 1 || rows[0] != (peerRecord{Run: runID, Role: "advisor", Provider: "codex", Model: codexTarget.Model, In: 7, Out: 3}) {
+				if len(rows) != 1 || rows[0] != (loop.PeerRecord{Run: runID, Role: "advisor", Provider: "codex", Model: codexTarget.Model, In: 7, Out: 3}) {
 					t.Fatalf("peer telemetry rows = %#v", rows)
 				}
 				data, err := os.ReadFile(peerPath)
@@ -499,7 +500,7 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 				if len(strings.Split(strings.TrimSpace(string(data)), "\n")) != 1 {
 					t.Fatalf("peer telemetry is not exactly one JSONL row: %q", data)
 				}
-				var decoded peerRecord
+				var decoded loop.PeerRecord
 				if err := json.Unmarshal(data, &decoded); err != nil {
 					t.Fatalf("peer telemetry is not valid JSON: %v", err)
 				}

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -764,10 +765,10 @@ func assertLoopAttemptContracts(t *testing.T, suite *directProcessSuite, trace [
 			t.Fatal(err)
 		}
 		provider := target.Provider
-		prompt := loopWorkPrompt(suite.layout.Repo, tasksRoot, taskID, provider, nil, nil, false)
+		prompt := loop.LoopWorkPrompt(suite.layout.Repo, tasksRoot, taskID, provider, nil, nil, false)
 		// Built-in loop attempts always request the adapter stream — redirected runs
 		// included — because it feeds the provider watchdog.
-		argv, ok := iterationCommand(provider, loopProcessArgv(provider, target.Model, target.Effort, prompt), nil)
+		argv, ok := loop.IterationCommand(provider, loopProcessArgv(provider, target.Model, target.Effort, prompt), nil)
 		if !ok {
 			t.Fatalf("provider %s has no streaming loop command", provider)
 		}
@@ -801,7 +802,7 @@ func assertLoopAttemptContracts(t *testing.T, suite *directProcessSuite, trace [
 	}
 }
 
-func readLoopStageRecords(t *testing.T, suite *directProcessSuite) []stageRecord {
+func readLoopStageRecords(t *testing.T, suite *directProcessSuite) []loop.StageRecord {
 	t.Helper()
 	paths, err := loopStageTelemetryPaths(suite.layout.Repo)
 	if err != nil || len(paths) != 1 {
@@ -811,9 +812,9 @@ func readLoopStageRecords(t *testing.T, suite *directProcessSuite) []stageRecord
 	if err != nil {
 		t.Fatal(err)
 	}
-	var records []stageRecord
+	var records []loop.StageRecord
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		var record stageRecord
+		var record loop.StageRecord
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			t.Fatal(err)
 		}

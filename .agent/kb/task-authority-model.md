@@ -2,7 +2,7 @@
 name: task-authority-model
 description: four separate authorities decide who may act on a task/checkout — claim (durable, human-released), lease (kernel flock, one iteration), checkout (kernel flock, one loop run), ref (kernel flock, one validate-then-consume window) — never merge them
 subsystem: tasks
-sources: [internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/cli/fork_loop.go]
+sources: [internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/loop/lock.go]
 updated: 2026-08-10
 ---
 Coop has FOUR separate authorities over a task and its checkout. Each answers a different question,
@@ -14,13 +14,13 @@ own top-of-file comment (`audit.go`) points back here rather than repeating it.
 |---|-----------|-----------|-------|----------|------|
 | 1 | **Claim** | durable record, `<key>.owner.json` | `internal/tasks/lease.go` (`ReadTaskOwnerRecord`/`writeTaskOwnerRecord`/`removeTaskOwnerRecord`, :743-802); written by `claimTaskOwnerRecord`, `internal/tasks/cmd.go:466` | until a HUMAN releases it — never | record |
 | 2 | **Lease** | kernel flock, `<key>.lock` | `internal/tasks/lease.go` (`lockLeaseAuthority`, `TryTaskLease`, :1309) | one loop iteration | process lock |
-| 3 | **Checkout** | kernel flock, `.locks/loop-<sha>.lock` | `lockLoopCheckout`, `internal/cli/fork_loop.go:40` | one whole `coop loop` run | process lock |
+| 3 | **Checkout** | kernel flock, `.locks/loop-<sha>.lock` | `lockLoopCheckout`, `internal/loop/lock.go:25` | one whole `coop loop` run | process lock |
 | 4 | **Ref** | kernel flock, `.locks/ref-<sha>.lock` | `LockRefAuthority`/`EnterRefAuthorityWindow`, `internal/tasks/refauthority.go:36,134` | validate→finalize→consume only (short) | process lock |
 
 The invariant all four protect: **exactly one writer acts on a task, and on the checkout, at a
 time — and when that can't be proven, refuse rather than act on unvalidated state.** Two more
-narrower locks exist beside these (the interactive session lock, `internal/cli/commands.go:92` /
-`lockSessionProducer`, `internal/cli/fork_loop.go:89`, which serializes only a session-discovering
+narrower locks exist beside these (the interactive session lock, `internal/cli/commands.go:82` /
+`lockSessionProducer`, `internal/cli/commands.go:94`, which serializes only a session-discovering
 adapter like codex; and the completion-window index lock, `internal/tasks/completion.go`, an internal
 integrity journal) — real, but scoped to one adapter or one bookkeeping structure rather than "who may
 act on this task," which is why they aren't in the headline four.
@@ -135,3 +135,7 @@ lifecycle STATE; these four decide who may act on it.
   Lease and checkout were already real; interactive-session and completion-window locks noted as
   real but out of the headline four (narrower scope: one adapter / one bookkeeping journal, not
   "who may act on this task").
+- 2026-08-10 — line citations refreshed for the loop-engine extraction: `lockLoopCheckout` moved to
+  `internal/loop/lock.go:25` and `lockSessionProducer` landed beside its one wrapper in
+  `internal/cli/commands.go:94` (`internal/cli/fork_loop.go` is retired). Both bodies are unchanged,
+  and the four-authority model is untouched.

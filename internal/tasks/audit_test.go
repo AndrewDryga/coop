@@ -447,7 +447,7 @@ func TestWorkCompletionWindowAcceptsHostReceiptedForeignArchivedDeparture(t *tes
 
 // TestWorkCompletionWindowBaselineDoneIDs pins baselineDoneIDs' contract: every task already
 // archived when the window's baseline is captured is named, and nothing else is — this is the
-// host-side "already closed" authority surface commands.go folds into unbindableTasks' touched set
+// host-side "already closed" authority surface internal/loop folds into unbindableTasks' touched set
 // (.agent/kb/loop-range-rejects-outside-commits.md), so a forged Coop-Task trailer for an already-done
 // task rejects even when that task's folder never moves during the iteration.
 func TestWorkCompletionWindowBaselineDoneIDs(t *testing.T) {
@@ -1275,9 +1275,9 @@ func TestCompletionWindowSetupFailureRemovesUnregisteredLivenessLock(t *testing.
 	}
 }
 
-// TestRunIterationStopsBeforeLaunchOnCompletionWindowSetupFailure moved to
-// internal/cli/commands_test.go: its subject, runIteration, is commands.go's own loop-engine
-// method, which this package must not import back (internal/importdag_test.go invariant 1).
+// TestRunIterationStopsBeforeLaunchOnCompletionWindowSetupFailure lives in
+// internal/loop/iteration_test.go: its subject, runIteration, is the loop engine's own method, which
+// this package must not import back (internal/importdag_test.go invariant 1).
 
 func TestCompletionWindowReplayRejectsCrashLeftUnownedCompletion(t *testing.T) {
 	root := t.TempDir()
@@ -2143,8 +2143,8 @@ func TestTrustedCompletionDoesNotStealActiveLease(t *testing.T) {
 	}
 }
 
-// TestLoopRejectsActionableDuplicateIDsAcrossQueues moved to internal/cli/commands_test.go: its
-// subject, loop, is commands.go's own loop-engine method, which this package must not import back
+// TestLoopRejectsActionableDuplicateIDsAcrossQueues lives in internal/loop/loop_test.go: its
+// subject, Run, is the loop engine's own method, which this package must not import back
 // (internal/importdag_test.go invariant 1).
 
 func TestFinalizeQueuedCompletion(t *testing.T) {
@@ -3172,7 +3172,7 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 // the whole completion when it names a task this iteration's authority consumption could touch.
 // Outside that set it is tolerated (returned in `tolerated`; the completion proceeds) instead of
 // destroying an otherwise-valid one — the fix for the KB card's 32-minute-loss incident. unbindableTasks
-// itself only ever sees the resulting `touched` map — commands.go is the one that builds it from the
+// itself only ever sees the resulting `touched` map — internal/loop is the one that builds it from the
 // finished set, the leased task id, the audit-reopen task, windows.candidates()/departures() (queue
 // state this window observed change), and windows.baselineDoneIDs() (every task already archived
 // before the box ran) — so each case below simulates exactly the touched membership the real caller
@@ -3246,7 +3246,7 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 	})
 
 	// adversarial: forged trailer for a SECOND task this same iteration also moved to done — the
-	// "smuggling a binding it does not own" the guard exists to stop. commands.go puts every id whose
+	// "smuggling a binding it does not own" the guard exists to stop. internal/loop puts every id whose
 	// queue state this completion window observed change into touched; simulated directly here.
 	t.Run("adversarial: forged trailer for a second queued task this iteration also completed still rejects", func(t *testing.T) {
 		repo, git := gitRepo(t)
@@ -3269,12 +3269,12 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 	})
 
 	// adversarial: forged trailer for an ARCHIVED task, matching the real threat — the box never
-	// touches that task's folder at all (it stays in 99_done throughout). commands.go's
+	// touches that task's folder at all (it stays in 99_done throughout). internal/loop's
 	// windows.baselineDoneIDs() puts every id already archived when the iteration's window baseline
 	// was captured into touched, regardless of folder movement: an archived task's history is meant
 	// to be closed, so a forged extra commit corrupts that closed record without needing to move its
 	// folder. (TestProviderScriptedLoopReviewProcess/worker_cannot_forge_review_authority_for_an_
-	// archived_task exercises this exact scenario end to end, through the real commands.go wiring.)
+	// archived_task exercises this exact scenario end to end, through the real internal/loop wiring.)
 	t.Run("adversarial: forged trailer for an archived task, never touched, still rejects", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
@@ -3390,7 +3390,7 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 
 // TestReportToleratedForeignBindings covers the report+journal shape for a harmless foreign binding:
 // one ui.Warn line naming every tolerated id, plus a best-effort log.md entry on each named task's
-// own folder (resolved by scanning every host, mirroring how the caller in commands.go can span
+// own folder (resolved by scanning every host, mirroring how the caller in internal/loop can span
 // several task queues). An id that resolves to no folder anywhere is skipped, never an error — the
 // binding is about a task this iteration never touched, so missing bookkeeping for it must never
 // surface as a failure.

@@ -2,8 +2,8 @@
 name: host-disk-exhaustion-stops-the-runtime
 description: a full host disk kills the container runtime mid-run and surfaces as unexplained "unexpected EOF" iteration failures, not as a disk error
 subsystem: loop
-sources: [internal/box/run.go, internal/cli/commands.go]
-updated: 2026-08-03
+sources: [internal/box/run.go, internal/loop/loop.go]
+updated: 2026-08-10
 ---
 A long loop can fill the host disk, and when it does the failure does NOT look like a disk problem.
 It looks like the loop breaking: `error waiting for container: unexpected EOF`, then
@@ -46,3 +46,5 @@ compose stack is now torn down with the fork — see [[services-teardown-needs-t
 
 ## Changelog
 - 2026-08-03 — created after a full host disk stopped the OrbStack VM mid-run and presented as five unexplained iteration failures; records the diagnosis path and why prune alone does not return space.
+- 2026-08-10 — sources repointed: the loop engine moved out of `internal/cli` into `internal/loop`; the `iteration failed (n/5) — retrying`
+  narration this card diagnoses from is now `internal/loop/loop.go`, byte-identical.

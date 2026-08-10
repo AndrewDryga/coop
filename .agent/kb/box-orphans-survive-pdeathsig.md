@@ -2,8 +2,8 @@
 name: box-orphans-survive-pdeathsig
 description: Pdeathsig is not inherited across fork, so a forking child (Chromium) orphans into a box and holds it open for the whole descendant drain
 subsystem: box
-sources: [internal/box/image.go, internal/cli/watchdog.go, internal/cli/commands.go]
-updated: 2026-08-01
+sources: [internal/box/image.go, internal/loop/watchdog.go, internal/loop/loop.go]
+updated: 2026-08-10
 ---
 When a box exits with descendants still alive, the drain names them (see
 [[loop-resume-never-rewrites-history]]). The usual reflex — "give the child `Pdeathsig` so the
@@ -42,3 +42,5 @@ making the orphan identifiable and reaping it on the next run, see
 ## Changelog
 - 2026-08-01 — created: measured that a chromedp isolated session survives its owner's SIGKILL, and traced it to Pdeathsig not being inherited across fork.
 - 2026-08-09 — re-verified against `sources` (unchanged); linked the host-side counterpart, [[box-supervisor-label-and-orphan-sweep]].
+- 2026-08-10 — sources repointed: the loop engine moved out of `internal/cli` into `internal/loop` — `watchdog.go` whole and
+  `commands.go`'s drain handling into `loop.go`; re-verified, both unchanged.

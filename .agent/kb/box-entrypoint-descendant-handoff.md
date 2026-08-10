@@ -2,8 +2,8 @@
 name: box-entrypoint-descendant-handoff
 description: Supervised loop/review boxes authenticate forwarder exemptions and hand off live detached jobs
 subsystem: box
-sources: [internal/box/image.go, internal/box/run.go, internal/cli/commands.go, internal/cli/ratelimit.go]
-updated: 2026-07-26
+sources: [internal/box/image.go, internal/box/run.go, internal/loop/loop.go, internal/loop/ratelimit.go]
+updated: 2026-08-10
 ---
 
 `RunSpec.SuperviseDescendants` is set only for loop and review iterations. In that mode
@@ -27,3 +27,6 @@ strikes. Interactive boxes retain the normal entrypoint `exec` path.
 ## Changelog
 
 - 2026-07-26 — created after adding supervised descendant handoff; verified against the listed sources.
+
+- 2026-08-10 — sources repointed: the loop engine moved out of `internal/cli` into `internal/loop` (`ratelimit.go` whole,
+  `commands.go`'s handoff retry into `loop.go`/`review.go`); re-verified, both unchanged.

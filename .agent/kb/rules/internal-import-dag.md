@@ -20,7 +20,7 @@ Two invariants sit ABOVE the table and hold no matter how it is edited:
   and the terminal. An edge back into it inverts the architecture and makes every engine below
   depend on the CLI's shape.
 - **`internal/ui` is imported only by the granted presentation owners** (`uiPresentationOwners`:
-  box, cli, forkctl, scaffold, tasks). Everything else returns data and lets its caller print it.
+  box, cli, forkctl, loop, scaffold, tasks). Everything else returns data and lets its caller print it.
 
 **Why:** the graph was already a clean DAG and nothing enforced it, so the next convenient import
 would silently have become architecture — the way `internal/agent` had grown a `ui` dependency for
@@ -46,6 +46,38 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-10 — **+1 package, +1 edge, +1 `uiPresentationOwners` grant: `internal/loop`**
+  (`{"agent", "box", "config", "forkspace", "ladder", "loopcfg", "preset", "runtime", "tasks", "ui"}`);
+  `cli` GAINED `loop` and **dropped nothing** — every edge on cli's line survives, `loopcfg` and
+  `ladder` specifically because the COMMAND stayed. The LOOP ENGINE, last and largest of the 2026-08
+  extractions: ~7.1k non-test lines (47% of what `internal/cli` had), the engine body plus its organs
+  (stream-JSON decoders, provider watchdog, rate-limit caps, telemetry, change detection, the live
+  bar). Its shape was neither of the two the earlier extractions had: the loop is a **SINK** — 18
+  outbound identifiers against 6 inbound, and only **7** production call sites reach into it — so
+  nothing in cli is built ON it, which is the cleanest possible seam and made the whole question the
+  outbound side. Three `app` fields (`runID`, `streamSeq`, `streamOff`) turned out to be loop-only
+  and left with it, plus `forkOwner`, which became a `RunSpec` field the caller sets instead of a
+  mutate-and-restore on the shared struct: **`app` went from 11 fields to 7.** The cut line is the
+  same one `forkctl` drew, one level up — `parseLoopArgs`/`cmdLoop`/`resolveWorkAgent` stay as
+  `cli/loop_cmd.go` (cli owns the COMMAND: argv → preset, target, peers, queues, rotation, image;
+  loop owns the RUN), which is what keeps the Host at **three** fields (`SweepOrphanBoxes`,
+  `SignUnpushed`, `BuildRotation`) instead of eleven, AND what keeps cli's `loopcfg`/`ladder` edges.
+  The running coop's VERSION is `-ldflags`-pinned to `internal/cli`, so it is a `New` parameter, not
+  a fourth Host field: Host carries behaviors, not immutable data. 6th member of
+  `uiPresentationOwners` — 140 `ui.*` sites including `ui.Region`/`ui.SetLiveSink`; the loop's output
+  IS a twelve-hour incremental render, which is the one shape "return data and let the caller print
+  it" cannot express. Three things worth reusing: (1) a smaller slice was measured and REJECTED — the
+  engine and its organs are welded by 103 unexported identifiers at 179 sites, so any sub-slice would
+  export them and un-export them again next commit; "smallest provable" was the whole engine here;
+  (2) `commands.go` was a 2,504-line hand split across two disjoint spans with `cmdPrompt`/`promptLine`
+  marooned between them, so every intra-cli split landed GREEN as pure reorganization BEFORE any
+  `git mv` (the forkctl discipline, now proven twice); (3) five tag-gated scripted-e2e files reach
+  into moving symbols but CANNOT move — they are welded to the shared process harness that also
+  serves the fork/consult/delegate/preset families — so the package exports exactly six extra names
+  for them (`StageRecord`, `PeerRecord`, `ReadPeerRecords`, `IterationCommand`, `LoopWorkPrompt`,
+  `LoopInterruptedExitCode`) and nothing more. `internal/cli/fork_loop.go` is retired: its loop locks
+  went to `internal/loop`, `lockSessionProducer` beside its wrapper in `commands.go`, `runForkLoop`
+  into `fork_cmd.go`.
 - 2026-08-10 — **+1 package, +1 edge, +1 `uiPresentationOwners` grant: `internal/forkctl`**
   (`{"agent", "box", "config", "forkspace", "project", "runtime", "sessionsvc", "tasks", "ui"}`);
   `cli` GAINED `forkctl` and **dropped nothing** — every package on cli's line survives in files that
@@ -122,10 +154,12 @@ this one has it.
   package on its line was already imported by the moving files today (`ladder`/`forkspace` from the
   two immediately-preceding extractions had already paid for what would otherwise have been
   injected). What DID need injecting (rotation.go's `accountsFor`/`expandLadder`,
-  fusion_council.go's `resolveACPFusionCouncil`, modelscache.go's `writeModelsCache`,
-  ratelimit.go's `waitUntilWall`) is POLICY that stays with cli, the same shape as the sessions
-  extraction's three `Host` functions — a `Host` struct of 5 function values `acpctl.New` takes, cli's
-  `acpHost()` the one real implementation. `acpctl` refuses the `ui` edge (zero `ui.` references in
+  fusion_council.go's `resolveACPFusionCouncil`, modelscache.go's `writeModelsCache`, and — until
+  2026-08-10 — ratelimit.go's `waitUntilWall`) is POLICY that stays with cli, the same shape as the
+  sessions extraction's three `Host` functions — a `Host` struct of 5 function values `acpctl.New`
+  takes (FOUR since `waitUntilWall`/`sleepOrWake`/the tick cap were promoted into `internal/ladder`,
+  where the loop and the ACP control now both call them directly), cli's `acpHost()` the one real
+  implementation. `acpctl` refuses the `ui` edge (zero `ui.` references in
   any mover file — this control narrates nothing on its own); `uiPresentationOwners` is unchanged.
 - 2026-08-09 — **+2 packages, +1 edge, −1 edge: `internal/sessionsvc`**
   (`{"agent", "box", "config", "forkspace", "ladder", "runtime", "session"}`) and

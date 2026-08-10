@@ -2,7 +2,7 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/commands.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/cli/fork_loop.go, internal/forkctl/supervise.go, internal/forkctl/fleet.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/cli/streamjson.go, internal/cli/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/supervise.go, internal/forkctl/fleet.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
 updated: 2026-08-10
 ---
 
@@ -133,3 +133,9 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 - 2026-07-15 - added the mounted-wrapper consult matrix and cross-linked its focused contract
 - 2026-07-15 - expanded to direct target/account/model/effort, failure, exit, and cancel behavior
 - 2026-07-15 - created with the strict all-provider direct-process harness
+- 2026-08-10 — sources repointed for the loop-engine extraction. The scripted loop/consult e2e files
+  STAY in `internal/cli` (they are welded to the shared `directProcessSuite` harness that also serves
+  the fork/consult/delegate/preset families), so the loop now exports six names for them and nothing
+  else: `StageRecord`, `PeerRecord`, `ReadPeerRecords`, `IterationCommand`, `LoopWorkPrompt`,
+  `LoopInterruptedExitCode`. Treat that set as the process-e2e contract — if a test needs a seventh,
+  the question is whether the test belongs in `internal/loop`, not whether to export one more.

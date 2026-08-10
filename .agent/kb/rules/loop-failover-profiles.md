@@ -2,9 +2,9 @@
 name: loop-failover-profiles
 description: "in the loop, failover swaps the active credential and never a session; the session API is the one surface that rotates the session itself"
 scope: loop
-sources: [internal/ladder/limit.go, internal/cli/rotation.go, internal/cli/ratelimit.go, internal/config/config.go, internal/sessionsvc/acp.go]
+sources: [internal/ladder/limit.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/config/config.go, internal/sessionsvc/acp.go]
 check: "none"
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 
 # Loop failover swaps the active credential profile, never a session
@@ -80,3 +80,8 @@ memory, as below.
   survives a mid-session account switch — the rule's own "share only what must be common"
   pattern, not a violation. Also reconfirmed `ladder.DetectLimit`'s three callers and
   `decideIteration`'s non-zero-exit gate (ratelimit.go:276). 0 violations.
+- 2026-08-10 — sources repointed for the loop-engine extraction: the rotate-on-a-limit policy this
+  rule is about (`rotateOnLimit`, `decideIteration`, `applyTarget`'s `SetActiveProfile`) is now
+  `internal/loop/`; `internal/cli/rotation.go` keeps ladder EXPANSION. The rule is unchanged — the
+  loop still swaps the active credential profile and never a session, and the session API is still
+  the one surface that rotates the session itself.

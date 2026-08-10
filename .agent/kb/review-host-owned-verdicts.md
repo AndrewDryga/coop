@@ -2,7 +2,7 @@
 name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
-sources: [internal/box/run.go, internal/cli/commands.go, internal/tasks/audit.go, internal/cli/loopchanges.go, internal/cli/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/cli/util.go, internal/loopcfg/loopcfg.go]
+sources: [internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/tasks/audit.go, internal/loop/changes.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
 updated: 2026-08-10
 ---
 
@@ -138,3 +138,8 @@ tasks this controller accepted as completed during the run and that remain archi
   the runtime-argument tests and the supported Docker nested-bind probe.
 - 2026-07-14 — reopened after an in-repo queue symlink could bypass a protected target; queue
   traversal rejects symlinks, and absent queue roots now fail before the runtime starts.
+- 2026-08-10 — sources repointed for the loop-engine extraction: the review pipeline moved out of
+  `internal/cli/commands.go` into `internal/loop/review.go` (running a stage) + `receipt.go` (parsing
+  the receipt and applying the verdict), `loopchanges.go` → `internal/loop/changes.go`,
+  `streamjson_providers.go` → `internal/loop/`; `internal/cli/util.go` dropped from sources — the new
+  package carries its own local copies of the trivial helpers. Host-owned verdict contract unchanged.

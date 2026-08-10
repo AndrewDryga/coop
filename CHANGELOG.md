@@ -139,6 +139,28 @@
   it, so a turn no provider measured publishes no `usage` object at all rather than four zeros a
   caller would price as a free turn.
 
+- _Internal restructuring, no user-visible change._ The **loop engine** — the unattended work engine
+  behind `coop loop` and every fork worker: the drain, the work/between/signoff stages, the review
+  pipeline and its host-owned verdicts, the provider watchdog, the stream-JSON decoders, the
+  rate-limit caps and rotation, the live bar, and the run telemetry — moved out of `internal/cli`
+  into a new `internal/loop` (~7.1k non-test lines, 47% of what `internal/cli` was carrying; ~13k
+  with tests). Last and largest of the 2026-08 extractions, and the one the whole sequence was
+  ordered around. Measured before it was moved, the loop turned out to be a **sink**: only seven
+  production call sites in `internal/cli` reach into it, so nothing else is built on top of it —
+  which made the whole question what it needs, not who needs it. It needs three functions
+  (`SweepOrphanBoxes`, `SignUnpushed`, `BuildRotation`) plus the version string `-ldflags` pins to
+  `internal/cli`. The seam is the same cut line the fork extraction drew, one level up: **cli owns
+  the COMMAND** (argv to preset, target, peers, queues, rotation, image — now
+  `internal/cli/loop_cmd.go`) and **loop owns the RUN**, which is what keeps the injected surface at
+  three functions instead of eleven. `coop loop`'s eleven-parameter internal call became a `RunSpec`
+  struct, and with it three fields on the CLI's shared `app` struct turned out to be loop-only and
+  left with the engine — a fourth, the fork's container owner, stopped being a field the fork
+  launcher set and restored with a `defer` and became a value it passes in. Every banner, prompt,
+  warning, receipt, telemetry row, exit code, and live-bar frame is byte-identical (verified by
+  extracting every string literal in both packages before and after: the only differences are the
+  private git/format helpers the new package redeclares locally, exactly as `internal/tasks`,
+  `internal/sessionsvc` and `internal/forkctl` already do).
+
 - _Internal restructuring, no user-visible change._ The **fork/fleet control plane** — supervision
   (claim, stop, reap, detach, logs), `fork ls`/`status`, the review dossier and its isolated gate, the
   fast-forward-only land, the declarative fleet, and the live `coop fleet watch` board — moved out of

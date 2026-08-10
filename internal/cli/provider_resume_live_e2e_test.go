@@ -19,6 +19,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
@@ -260,7 +261,7 @@ func providerResumeLiveCommand(ag agents.Agent, cfg *config.Config, stage, sessi
 	if ag.Stream().Format != agents.StreamCodexJSON {
 		return nil, false
 	}
-	command, streaming := iterationCommand(ag.Name(), ag.Headless(cfg, prompt), nil)
+	command, streaming := loop.IterationCommand(ag.Name(), ag.Headless(cfg, prompt), nil)
 	if !streaming || len(command) < 2 || command[1] != "exec" {
 		return nil, false
 	}

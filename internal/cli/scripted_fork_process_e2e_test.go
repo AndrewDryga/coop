@@ -21,6 +21,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -419,8 +420,8 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateTodo, taskID)) {
 		t.Fatal("fork loop changed the parent queue before merge")
 	}
-	forkLoopArgv, forkLoopStreaming := iterationCommand(provider,
-		loopProcessArgv(provider, model, effort, loopWorkPrompt(ws, tasksRoot, taskID, provider, nil, nil, false)), nil)
+	forkLoopArgv, forkLoopStreaming := loop.IterationCommand(provider,
+		loopProcessArgv(provider, model, effort, loop.LoopWorkPrompt(ws, tasksRoot, taskID, provider, nil, nil, false)), nil)
 	if !forkLoopStreaming {
 		t.Fatalf("provider %s has no streaming loop command", provider)
 	}

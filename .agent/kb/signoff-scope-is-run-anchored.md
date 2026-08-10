@@ -2,7 +2,7 @@
 name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
-sources: [internal/cli/commands.go, internal/tasks/completion.go, internal/cli/loopchanges.go, internal/tasks/cmd.go]
+sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/tasks/completion.go, internal/loop/changes.go, internal/tasks/cmd.go]
 updated: 2026-08-10
 ---
 
@@ -95,3 +95,7 @@ Related: [[task-state-is-the-folder]].
 - 2026-07-14 — updated the receipt contract from a count to an exact verdict + task-id delta and
   re-verified the baseline placement against `internal/cli/commands.go`.
 - 2026-07-13 — created with the run-scoped signoff change (verified against loop()'s round logic in internal/cli/commands.go).
+- 2026-08-10 — sources repointed for the loop-engine extraction: the round logic is now
+  `internal/loop/loop.go` and the baseline/subject bookkeeping (`newlyFinished`, `doneTaskDirs`,
+  `reviewBaselineAfterVerdict`) is `internal/loop/signoff.go`; `loopchanges.go` → `changes.go`.
+  Re-verified the baseline placement — it still re-anchors only on a receipt-consistent round.

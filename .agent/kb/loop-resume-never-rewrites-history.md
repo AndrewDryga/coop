@@ -2,7 +2,7 @@
 name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/cli/commands.go, internal/box/image.go, internal/box/run.go]
+sources: [internal/tasks/audit.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
 updated: 2026-08-10
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
@@ -66,3 +66,5 @@ and pointing a new task at it invites cross-task edits.
 - 2026-08-10 — sources repointed: `controller.go` moved to `internal/tasks/audit.go` whole (the
   2026-08 tasks/lease/completion-audit extraction, ~20.5k lines); `resumePrefixFor` and
   `restoreBackgroundHandoffCompletion` are now `tasks.ResumePrefixFor`/`tasks.RestoreBackgroundHandoffCompletion`. Facts unchanged.
+- 2026-08-10 — sources repointed: the loop engine moved out of `internal/cli` into `internal/loop` (`commands.go`'s loop half → `loop.go`, `classifyIteration` → `ratelimit.go`);
+  re-verified the chain — `resumeLine`/`boundTaskCommitIsHead` stayed in `internal/tasks/audit.go`, unchanged.

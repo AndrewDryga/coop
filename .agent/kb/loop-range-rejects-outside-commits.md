@@ -1,8 +1,8 @@
 ---
 name: loop-range-rejects-outside-commits
-description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock (fork_loop.go) closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
+description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/cli/commands.go, internal/cli/fork_loop.go, internal/cli/sign.go, internal/forkctl/merge.go]
+sources: [internal/tasks/audit.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/loop/loop.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go]
 updated: 2026-08-10
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the
@@ -63,7 +63,7 @@ each one's range then contains the other's `Coop-Task` binding, and **both** com
 rejected. Observed 2026-08-03: `7769ead7` (10:21:41) and `33cb8a41` (10:27:05), two different
 tasks, both rejected and reopened after they were finished.
 
-`lockLoopCheckout` (`internal/cli/fork_loop.go`) now makes this impossible: `a.loop` takes an
+`lockLoopCheckout` (`internal/loop/lock.go`) now makes this impossible: `loop.Control.Run` takes an
 exclusive flock per checkout before touching any queue state, so the second loop fails fast and
 names the holding pid. It is keyed on the **resolved worktree path**, never the repo name — a fork
 fleet hands each loop its own `ws`, so concurrent forks keep separate locks and stay parallel.
@@ -131,3 +131,7 @@ authority is acquired before lease authority, never the reverse) this ref-author
   stays in `internal/cli`, `lockLoopCheckout` unmoved) into `internal/tasks/refauthority.go` — the
   2026-08 tasks/lease/completion-audit extraction. Facts unchanged; added the [[task-authority-model]]
   cross-reference for the newly-documented lock-ordering invariant.
+- 2026-08-10 — sources repointed for the loop-engine extraction: `lockLoopCheckout` moved to
+  `internal/loop/lock.go` and the range validation it guards to `internal/loop/loop.go`;
+  `internal/cli/fork_loop.go` is retired. The lock is still keyed on the resolved worktree path and
+  still taken before any queue state is touched — re-verified against the moved file.

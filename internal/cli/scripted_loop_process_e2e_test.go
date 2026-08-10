@@ -15,6 +15,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -70,8 +71,8 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 					t.Fatalf("coop loop %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", target, result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
 				}
 
-				prompt := loopWorkPrompt(suite.layout.Repo, tasksRoot, taskID, provider, nil, nil, false)
-				argv, streaming := iterationCommand(provider, loopProcessArgv(provider, model, effort, prompt), nil)
+				prompt := loop.LoopWorkPrompt(suite.layout.Repo, tasksRoot, taskID, provider, nil, nil, false)
+				argv, streaming := loop.IterationCommand(provider, loopProcessArgv(provider, model, effort, prompt), nil)
 				if !streaming {
 					t.Fatalf("provider %s has no streaming loop command", provider)
 				}
@@ -537,9 +538,9 @@ func assertLoopProcessResult(t *testing.T, suite *directProcessSuite, provider, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var records []stageRecord
+	var records []loop.StageRecord
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		var record stageRecord
+		var record loop.StageRecord
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			t.Fatal(err)
 		}

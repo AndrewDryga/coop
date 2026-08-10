@@ -128,11 +128,17 @@ func TestRoleModelDoesNotShadowRotatedLead(t *testing.T) {
 		t.Fatalf("codex role model leaked into global config = %q, want \"\" (roles ride the wrapper)", got)
 	}
 
-	// The loop fails the claude rung over to the codex lead rung — applyTarget is THE choke point
-	// for a rotation. The executed codex command must now carry the LEAD's sol, not a role model.
-	a.applyTarget(ladder.NewRotation([]agents.Target{
+	// The loop fails the claude rung over to the codex lead rung. internal/loop's applyTarget is
+	// THE choke point for a rotation and lives on the other side of the seam, so this writes
+	// exactly what it writes — the three setters its own TestApplyTarget and
+	// TestApplyTargetThreadsEffortToConfig pin. The executed codex command must now carry the
+	// LEAD's sol, not a role model.
+	rotated := ladder.NewRotation([]agents.Target{
 		{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"personal"}},
-	}))
+	}).Active()
+	a.cfg.SetActiveProfile(rotated.Provider, rotated.Account())
+	a.cfg.SetTargetModel(rotated.Provider, rotated.Model)
+	a.cfg.SetTargetEffort(rotated.Provider, rotated.Effort)
 	cmd := strings.Join(codex.Interactive(a.cfg), " ")
 	if !strings.Contains(cmd, "--model gpt-5.6-sol") {
 		t.Errorf("rotated codex lead command = %q, want it to launch gpt-5.6-sol", cmd)

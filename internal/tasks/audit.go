@@ -2717,7 +2717,7 @@ func ordinaryBindingMatchesRaw(repo, head, id string) bool {
 // A commit in range that binds a task OUTSIDE finished is foreign. It still fails the WHOLE
 // completion closed — unchanged from before this split — when it names a task this iteration's
 // authority consumption could touch: touched is host-side knowledge the box cannot influence (built
-// by completionUnbindableTasks' caller in commands.go from the finished set, the leased task id, the
+// by completionUnbindableTasks' caller in internal/loop from the finished set, the leased task id, the
 // audit-reopen record's task, every id whose queue state this completion window observed change, and
 // every id windows.baselineDoneIDs() reports — every task already archived before the box ever ran).
 // That last member matters even when the archived task's folder never moves: its history is meant to

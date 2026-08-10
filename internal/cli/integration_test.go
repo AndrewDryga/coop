@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
@@ -39,23 +38,18 @@ const (
 
 var taskStates = tasks.TaskStates
 
-type taskItem = tasks.Item
-
 var (
-	readTaskTree          = tasks.ReadTaskTree
-	isTaskDir             = tasks.IsTaskDir
-	moveTaskDir           = tasks.MoveTaskDir
-	currentTask           = tasks.CurrentTask
-	queueProgress         = tasks.QueueProgress
-	stateLabel            = tasks.StateLabel
-	stateOrder            = tasks.StateOrder
-	findTask              = tasks.FindTask
-	tryTaskLease          = tasks.TryTaskLease
-	completeTrustedTask   = tasks.CompleteTrustedTask
-	taskTreeCounts        = tasks.TaskTreeCounts
-	cmdTasksFolder        = tasks.CmdTasksFolder
-	readAuditReopenRecord = tasks.ReadAuditReopenRecord
-	openLeaseAuthority    = tasks.OpenLeaseAuthority
+	readTaskTree   = tasks.ReadTaskTree
+	isTaskDir      = tasks.IsTaskDir
+	moveTaskDir    = tasks.MoveTaskDir
+	currentTask    = tasks.CurrentTask
+	queueProgress  = tasks.QueueProgress
+	stateLabel     = tasks.StateLabel
+	stateOrder     = tasks.StateOrder
+	findTask       = tasks.FindTask
+	tryTaskLease   = tasks.TryTaskLease
+	taskTreeCounts = tasks.TaskTreeCounts
+	cmdTasksFolder = tasks.CmdTasksFolder
 )
 
 var tasksVerbs = tasks.TasksVerbs
@@ -528,43 +522,9 @@ func TestTasksBareLeadingFlagListsFiltered(t *testing.T) {
 	}
 }
 
-// TestLoopAcceptsFolderQueue is the regression guard for the loop's queue-existence check:
-// it used fileExists, which is false for a directory, so it rejected every folder queue with
-// "no task file found" before running a single iteration. The guard must accept a real
-// .agent/tasks directory and proceed (here it then fails at the image check — runtime "false"
-// makes ImageExists report no image — which proves the guard passed).
-func TestLoopAcceptsFolderQueue(t *testing.T) {
-	repo := t.TempDir()
-	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
-	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: "false"}}
-
-	code, err := a.loop(repo, "no-such-image", "claude", "", nil, []string{tasksRoot}, io.Discard, nil, false, false, 0)
-	if err == nil {
-		t.Fatalf("expected loop to fail at the image check, got (%d, nil)", code)
-	}
-	if strings.Contains(err.Error(), "no task queue") || strings.Contains(err.Error(), "no task file") {
-		t.Fatalf("loop rejected a valid folder queue at the existence guard: %v", err)
-	}
-	if !strings.Contains(err.Error(), "not built") {
-		t.Fatalf("guard should pass and fail at the image check, got: %v", err)
-	}
-}
-
-func TestLoopTaskLimitWithNoActionableTaskNeedsNoImage(t *testing.T) {
-	repo := t.TempDir()
-	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateDone, "2026-01-01-done", "task.md"), "# Done\n")
-	writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), "preflight:\n  enabled: true\n  prompt: should not launch a box\n")
-	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: "false"}}
-
-	code, err := a.loop(repo, "no-such-image", "claude", "", nil, []string{tasksRoot}, io.Discard, nil, false, true, 3)
-	if err != nil || code != 0 {
-		t.Fatalf("idle task-limited loop = (%d, %v), want success without an image", code, err)
-	}
-}
-
 // TestIntegrationDoneTasksAreNotActionable is the loop-safety side of move-don't-delete:
 // 99_done/ grows without bound, but only todo/in_progress count as actionable, so the loop's
-// stop condition (commands.go: c.Todo+c.Doing == 0) still fires.
+// stop condition (internal/loop's Run: c.Todo+c.Doing == 0) still fires.
 func TestIntegrationDoneTasksAreNotActionable(t *testing.T) {
 	root := t.TempDir()
 	for i, st := range []string{stateDone, stateDone, stateDone, stateBlocked} {

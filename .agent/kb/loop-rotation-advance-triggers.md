@@ -2,8 +2,8 @@
 name: loop-rotation-advance-triggers
 description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); rungs are built from credential presence, not validity
 subsystem: loop
-sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/cli/rotation.go, internal/cli/ratelimit.go, internal/cli/commands.go, internal/agent/claude.go, internal/box/auth.go]
-updated: 2026-08-09
+sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/agent/claude.go, internal/box/auth.go]
+updated: 2026-08-10
 ---
 A loop's rotation is built from credential **presence**, never validity: `expandLadder` →
 `accountsFor` → `box.ProfileAuthed`, which `internal/box/auth.go:15` calls "a presence heuristic,
@@ -45,3 +45,7 @@ the same rotation. When a provider's auth wording changes, the signal list is th
   `expandLadder` → `accountsFor` → `box.ProfileAuthed`, as is `iterationAuthentication`, so both
   traps below read exactly as before.
 - 2026-07-31 — created: auth failures now rotate instead of stopping the loop; documents the two trigger lifetimes, presence-vs-validity rung membership, and the AuthSignals wording trap.
+- 2026-08-10 — sources repointed for the loop-engine extraction: rotation is now SPLIT — ladder
+  EXPANSION (`expandLadder`/`accountsFor`/`buildRotation`, the credential-presence half this card
+  opens with) stays in `internal/cli/rotation.go`, while APPLYING a target and rotating on a limit
+  (`applyTarget`/`rotateOnLimit`) moved to `internal/loop/rotation.go`. Advance triggers unchanged.

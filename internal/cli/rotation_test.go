@@ -1,27 +1,14 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/ladder"
 )
-
-// rts builds a claude rotation from bare account names (model empty), for the engine tests.
-// String() renders each as "claude@<acct>".
-func rts(creds ...string) *ladder.Rotation {
-	ts := make([]agents.Target, len(creds))
-	for i, c := range creds {
-		ts[i] = agents.Target{Provider: "claude", Accounts: []string{c}}
-	}
-	return ladder.NewRotation(ts)
-}
 
 // signInCred writes a fake credential for agent so box.ProfileAuthed sees it signed in — using
 // the agent's OWN auth marker (claude's .credentials.json, codex's auth.json, …), not a hardcoded
@@ -39,39 +26,6 @@ func signInCred(t *testing.T, cfg *config.Config, agent, name string) {
 	file, _ := ag.AuthMarker()
 	if err := os.WriteFile(filepath.Join(dir, file), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestRememberPreflightLimitAdvancesWorkRotation(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	reset := now.Add(time.Hour)
-	r := rts("personal", "backup", "third")
-	out := fmt.Sprintf("Claude AI usage limit reached|%d", reset.Unix())
-
-	sleep, until, limited := rememberPreflightLimit(r, classifyIteration("claude", 1, nil, out, streamNotUsed, now), now)
-	if !limited || sleep != 0 || !until.IsZero() || r.Active().String() != "claude@backup" {
-		t.Fatalf("preflight limit: limited=%v sleep=%v until=%v active=%q, want true, 0, zero, backup", limited, sleep, until, r.Active())
-	}
-	if got := r.LimitedUntil("claude@personal"); !got.Equal(reset) {
-		t.Errorf("personal limited until %v, want %v", got, reset)
-	}
-
-	// Successful prose and output exhaustion are not provider limits and must not rotate.
-	for _, tc := range []struct {
-		name string
-		code int
-		out  string
-	}{
-		{"successful prose", 0, out},
-		{"output exhaustion", 1, "maximum output length reached"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := rts("personal", "backup", "third")
-			classification := classifyIteration("claude", tc.code, nil, tc.out, streamNotUsed, now)
-			if _, _, limited := rememberPreflightLimit(r, classification, now); limited || r.Active().String() != "claude@personal" {
-				t.Errorf("limited=%v active=%q, want false + personal", limited, r.Active())
-			}
-		})
 	}
 }
 
@@ -114,14 +68,16 @@ func TestExpandLadder(t *testing.T) {
 	}
 }
 
-// Effort rides the ladder into each rotation target, and applyTarget/applyRunTarget land it in
-// cfg so EffortFor (and thus the agent command) sees it — the full CLI glue for a /effort target.
+// Effort rides the ladder into each rotation target, and applyRunTarget lands it in cfg so
+// EffortFor (and thus the agent command) sees it — the CLI glue for a /effort target. What the
+// loop then does with the rotation's active target is internal/loop's
+// TestApplyTargetThreadsEffortToConfig.
 func TestEffortThreadsToConfig(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	signInCred(t, cfg, "codex", "work")
 	a := &app{cfg: cfg}
 
-	// Loop path: the positional target IS the ladder; applyTarget sets the rotation-target tier.
+	// Loop path: the positional target IS the ladder, and expanding it preserves the effort.
 	rungs := []agents.Target{{Provider: "codex", Model: "gpt-5.6-sol", Effort: "high", Accounts: []string{"work"}}}
 	rot, err := a.buildRotation("codex", rungs)
 	if err != nil {
@@ -129,10 +85,6 @@ func TestEffortThreadsToConfig(t *testing.T) {
 	}
 	if got := rot.Members(); !slices.Contains(got, "codex:gpt-5.6-sol/high@work") {
 		t.Fatalf("rotation targets = %v, want one carrying /high", got)
-	}
-	a.applyTarget(rot)
-	if got := cfg.EffortFor("codex"); got != "high" {
-		t.Errorf("after applyTarget, EffortFor(codex) = %q, want high", got)
 	}
 
 	// Single-run path: applyRunTarget lands the effort in the top tier, alongside the model.
@@ -180,21 +132,6 @@ func members(ts []agents.Target) []string {
 		out[i] = t.String()
 	}
 	return out
-}
-
-// applyTarget points cfg at the target's account and model; a bare target clears the model tier.
-func TestApplyTarget(t *testing.T) {
-	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	r := ladder.NewRotation([]agents.Target{{Provider: "claude", Model: "sonnet", Accounts: []string{"work"}}, {Provider: "claude", Accounts: []string{"other"}}})
-	a.applyTarget(r)
-	if a.cfg.ActiveProfile("claude") != "work" || a.cfg.ModelFor("claude") != "sonnet" {
-		t.Errorf("first target: account=%q model=%q, want work/sonnet", a.cfg.ActiveProfile("claude"), a.cfg.ModelFor("claude"))
-	}
-	r.OnLimit(time.Now().Add(time.Hour), 1, time.Now())
-	a.applyTarget(r)
-	if a.cfg.ModelFor("claude") != "" {
-		t.Errorf("bare target: model = %q, want cleared", a.cfg.ModelFor("claude"))
-	}
 }
 
 // oneOffLadder parses a decomposed one-off (model, effort, account) into a single ladder entry,

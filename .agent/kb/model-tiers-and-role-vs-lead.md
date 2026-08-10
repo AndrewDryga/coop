@@ -2,8 +2,8 @@
 name: model-tiers-and-role-vs-lead
 description: ModelFor picks active>target>fallback>env per PROVIDER, so nothing but the lead's rotation may write a provider's active/target tier; a role's model rides its wrapper target
 subsystem: config
-sources: [internal/config/config.go, internal/cli/presetflag.go, internal/cli/rotation.go, internal/box/run.go]
-updated: 2026-07-14
+sources: [internal/config/config.go, internal/cli/presetflag.go, internal/loop/rotation.go, internal/box/run.go]
+updated: 2026-08-10
 ---
 
 `Config.ModelFor(agent)` resolves ONE model per PROVIDER through four tiers, most specific
@@ -12,7 +12,7 @@ first (config.go): active (`SetActiveModel` — an explicit `--model`) → targe
 (`SetFallbackModel` — a standing default) → `COOP_<AGENT>_MODEL` env. `EffortFor` mirrors it.
 The key consequence: **anything written to a provider's active tier shadows that provider's
 rotation target.** So during a `coop loop`, only the lead's rotation may own a provider's
-active/target tier — `applyTarget` (rotation.go) is the single choke point that sets it on every
+active/target tier — `applyTarget` (`internal/loop/rotation.go`) is the single choke point that sets it on every
 rung. The lead command reads it via each adapter's `base()` (`withModel(cfg.ModelFor(...))`), and
 so do the rendered model line and telemetry — they must all agree.
 
@@ -34,3 +34,6 @@ explicit model never depends on it.
 
 ## Changelog
 - 2026-07-14 — created after fixing preset role models shadowing a rotated cross-provider lead (task 2026-07-14-keep-preset-role-models-from-overriding-rotated); verified against ModelFor tiers, applyPreset, applyTarget, and the wrapper arms.
+- 2026-08-10 — sources repointed: the loop engine moved out of `internal/cli` into `internal/loop`: `applyTarget`/`rotateOnLimit` are now
+  `internal/loop/rotation.go` (`internal/cli/rotation.go` keeps ladder EXPANSION — `expandLadder`,
+  `buildRotation`); `applyPreset` stays in `internal/cli/presetflag.go`. Choke point unchanged.

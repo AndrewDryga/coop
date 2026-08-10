@@ -16,6 +16,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
@@ -1279,7 +1280,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		result := process.Wait(ctx)
 		cancel()
-		if result.ExitCode != loopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "interrupted") || strings.Contains(result.Stderr, "completion ownership") {
+		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "interrupted") || strings.Contains(result.Stderr, "completion ownership") {
 			t.Fatalf("hard stop after reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) ||
@@ -1287,7 +1288,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatal("interrupted review receipt changed task state")
 		}
 		records := readLoopStageRecords(t, suite)
-		if len(records) != 2 || records[1].Stage != "between" || records[1].Outcome != "interrupted" || records[1].Exit != loopInterruptedExitCode || records[1].Reopened != 0 {
+		if len(records) != 2 || records[1].Stage != "between" || records[1].Outcome != "interrupted" || records[1].Exit != loop.LoopInterruptedExitCode || records[1].Reopened != 0 {
 			t.Fatalf("hard stop after reopen telemetry = %#v", records)
 		}
 		assertLoopTraceProcessesGone(t, readProcessTrace(t, suite.layout.Trace))
@@ -1345,7 +1346,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		result := process.Wait(ctx)
 		cancel()
-		if result.ExitCode != loopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "between-tasks audit") || strings.Contains(result.Stdout+result.Stderr, "running signoff") {
+		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "between-tasks audit") || strings.Contains(result.Stdout+result.Stderr, "running signoff") {
 			t.Fatalf("soft-stop audit = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
@@ -1388,13 +1389,13 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		result := process.Wait(ctx)
 		cancel()
-		if result.ExitCode != loopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "interrupted") {
+		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "interrupted") {
 			t.Fatalf("hard-stop audit = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
 		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
 		records := readLoopStageRecords(t, suite)
-		if len(records) != 2 || records[1].Stage != "between" || records[1].Outcome != "interrupted" || records[1].Exit != loopInterruptedExitCode || records[1].Provider != "codex" || records[1].Retries != 1 || records[1].QueueDone != 1 || records[1].QueueDoing != 0 {
+		if len(records) != 2 || records[1].Stage != "between" || records[1].Outcome != "interrupted" || records[1].Exit != loop.LoopInterruptedExitCode || records[1].Provider != "codex" || records[1].Retries != 1 || records[1].QueueDone != 1 || records[1].QueueDoing != 0 {
 			t.Fatalf("hard-stop audit telemetry = %#v", records)
 		}
 		assertLoopTraceProcessesGone(t, trace)
@@ -1499,7 +1500,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 		}
 		// Built-in attempts always request the adapter stream, PTY or not — it feeds the
 		// provider watchdog.
-		argv, ok := iterationCommand(target.Provider, loopProcessArgv(target.Provider, target.Model, target.Effort, "fixture-prompt-sentinel"), nil)
+		argv, ok := loop.IterationCommand(target.Provider, loopProcessArgv(target.Provider, target.Model, target.Effort, "fixture-prompt-sentinel"), nil)
 		if !ok {
 			t.Fatalf("review attempt %d provider %q has no streaming command", i, target.Provider)
 		}

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -84,7 +85,7 @@ func prepareProviderLoopLiveRepository(layout procharness.Layout, target agents.
 }
 
 func providerLoopLivePrompt(repo, provider string) string {
-	return loopWorkPrompt(repo, tasksRoot, providerLoopLiveTaskID(provider), provider, nil, nil, false)
+	return loop.LoopWorkPrompt(repo, tasksRoot, providerLoopLiveTaskID(provider), provider, nil, nil, false)
 }
 
 func snapshotProviderLoopLiveBaseline(layout procharness.Layout, repository liveprovider.RepositorySnapshot) (providerLoopLiveBaseline, error) {

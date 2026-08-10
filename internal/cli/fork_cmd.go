@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
@@ -103,10 +105,7 @@ func (a *app) forkctl() *forkctl.Control {
 			return a.rt, nil
 		},
 		RunWatchLoop: runWatchLoop,
-		ForkCost: func(ws string) (float64, string) {
-			rc := costForRepo(ws)
-			return rc.total.usd, costSummary(rc)
-		},
+		ForkCost:     loop.WorkspaceCost,
 	})
 }
 
@@ -771,4 +770,75 @@ func (a *app) fleetUp(args []string) (int, error) {
 		}
 	}
 	return 0, nil
+}
+
+// runForkLoop seeds the fork's queue(s) from the tasks tree(s) — an explicit --tasks source or,
+// by default, every project.TaskDirs queue (only queues the fork doesn't yet have, so a resumed
+// loop keeps its own progress) — then runs the unattended loop with the chosen agent, capturing
+// output to the fork's log.
+// detached=true means this process IS the background worker (its stdio is already the
+// log, and it owns the pidfile). tasks is an absolute path resolved by the caller
+// (empty = the monorepo-aware default);
+// credential/model are the fork target's decomposed one-off (model@account allowed);
+// the fork's preset (already loaded into a.preset by forkCreate) supplies the rotation
+// ladder when neither flag is given; consult opts each iteration into peer consultation.
+func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model, effort string, peers []agents.Target, detached bool) (int, error) {
+	// Seed the fork's queue(s) from the source tree(s) into the worktree and get back the
+	// repo-relative queue list the in-fork loop works. An explicit --tasks seeds that one tree
+	// into .agent/tasks (the single-queue rule); the default (no --tasks) seeds every
+	// project.TaskDirs queue at its own relative path, so a monorepo fork carries all its
+	// subprojects' queues. A queue the fork already has is kept (a resumed loop keeps its progress).
+	forkQueue, err := forkctl.SeedForkQueues(repo, ws, tasks, func() {
+		ui.Info("%s already has a queue — keeping its progress; --tasks not re-applied (use --fresh to reseed)", name)
+	})
+	if err != nil {
+		return -1, err
+	}
+	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
+	var sink io.Writer
+	if detached {
+		// This process IS the worker: stamp our OWN pid + a start-token computed now (we're
+		// unambiguously alive, so pid-reuse detection is reliable — unlike the parent stamping us
+		// the instant after Start, when ps may not see us yet), and on a clean exit clear the
+		// pidfile only if it still names us.
+		if err := forkspace.WritePid(repo, name, os.Getpid()); err != nil {
+			return -1, fmt.Errorf("fork %s worker could not record its state: %w — run: coop fork stop %s; then restart the fork", name, err, name)
+		}
+		defer forkspace.ClearPidIfMine(repo, name)
+	} else {
+		// Foreground: tee to a log so `coop fork logs` works after the fact too.
+		if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err == nil {
+			if f, err := os.Create(forkspace.LogPath(repo, name)); err == nil {
+				defer f.Close()
+				sink = f
+			}
+		}
+	}
+	a.selectRunEffort(agent, effort) // the fork target's /effort (top tier, persists across rotations)
+	// The fork's rotation ladder: the fork target's one-off model/account wins; else its
+	// preset's ladder (a.preset, loaded by forkCreate); else the default (agent model across
+	// all accounts).
+	ladder, err := oneOffLadder(model, credential, effort)
+	if err != nil {
+		return -1, err
+	}
+	if ladder == nil && a.preset != nil && agent == a.preset.LeadAgent {
+		ladder = a.preset.LeadLadder
+	}
+	rot, err := a.buildRotation(agent, ladder)
+	if err != nil {
+		return -1, fmt.Errorf("fork %s: %w", name, err)
+	}
+	// A fork works its own seeded queue(s) in the worktree, and its boxes carry the fork's own
+	// runtime owner label so `coop fork stop` can find them.
+	code, err := a.loopctl().Run(loop.RunSpec{
+		Repo: ws, Image: img, Agent: agent,
+		ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name),
+		Rotation: rot, Queues: forkQueue, Preset: a.preset, Peers: peers, Sink: sink,
+		// Detached/fork loops aren't interactive: no debug shell, no pre-flight, no task limit.
+	})
+	if err == nil && !detached {
+		forkctl.ForkNextSteps(name)
+	}
+	return code, err
 }

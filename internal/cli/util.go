@@ -11,8 +11,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
-	"github.com/AndrewDryga/coop/internal/tasks"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func fileExists(path string) bool {
@@ -25,61 +23,8 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
-const progressActivityWidth = 48
-
-func progressState(c tasks.TaskCounts) string {
-	s := fmt.Sprintf("%s/%d done", paintCount(c.Done, ui.Green), c.Total())
-	if c.Blocked > 0 {
-		s += fmt.Sprintf(" · %s blocked", paintCount(c.Blocked, ui.Red))
-	}
-	return s
-}
-
-func progressStateWidth(c tasks.TaskCounts) int {
-	s := fmt.Sprintf("%d/%d done", c.Done, c.Total())
-	if c.Blocked > 0 {
-		s += fmt.Sprintf(" · %d blocked", c.Blocked)
-	}
-	return len([]rune(s))
-}
-
-// progressLine is the queue's at-a-glance state: done/total (done greened when nonzero), a
-// blocked tally only when there is one, and the task being worked. The loop prints it both
-// in the per-iteration banner and live, on its own, whenever a task changes state mid-run.
-func progressLine(c tasks.TaskCounts, activity string) string {
-	s := progressState(c)
-	if activity != "" {
-		s += " · now: " + truncate(activity, progressActivityWidth)
-	}
-	return s
-}
-
-// progressLineWidth fits the optional activity into a complete line budget. Structural queue
-// state is never abbreviated; on an impossibly narrow row Region remains the final clip guard.
-func progressLineWidth(c tasks.TaskCounts, activity string, width int) string {
-	s := progressState(c)
-	const separator = " · now: "
-	activityW := width - progressStateWidth(c) - len([]rune(separator))
-	if activity == "" || activityW <= 0 {
-		return s
-	}
-	return s + separator + truncate(activity, activityW)
-}
-
-// progressBanner is progressLine prefixed with the iteration number, printed at the top of
-// each loop iteration.
-func progressBanner(n int, c tasks.TaskCounts, active string) string {
-	return fmt.Sprintf("iteration %d · %s", n, progressLine(c, active))
-}
-
-func progressBannerWidth(n int, c tasks.TaskCounts, active string, width int) string {
-	prefix := fmt.Sprintf("iteration %d · ", n)
-	return prefix + progressLineWidth(c, active, width-len([]rune(prefix)))
-}
-
 // paintCount renders a count, applying paint only when it's nonzero so a zero stays
-// plain — a "0 blocked" shouldn't read as an alarm. Shared by the `coop tasks` summary
-// and the loop banner.
+// plain — a "0 blocked" shouldn't read as an alarm.
 func paintCount(v int, paint func(string) string) string {
 	if v > 0 {
 		return paint(strconv.Itoa(v))

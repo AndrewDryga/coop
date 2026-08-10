@@ -80,3 +80,8 @@ only `coop fork stop` reaps that by owner label.
   `internal/forkspace/state.go`; the wire format is byte-identical (`TestForkWorkerStateWireFormat`
   moved with it, to `internal/forkspace/state_test.go`).
 - 2026-08-09 — created while adding the two crash-window recoveries (reclaimable reservations, leftover-rebase abort); verified against fork_loop.go's state parser/claim path and fork_merge.go's rebase path.
+- 2026-08-10 — the loop-engine extraction finished that residue: `lockLoopCheckout` is now
+  `internal/loop/lock.go`, `lockSessionProducer` moved beside its wrapper in
+  `internal/cli/commands.go`, `runForkLoop` folded into `internal/cli/fork_cmd.go`, and
+  `internal/cli/fork_loop.go` is retired. The state-file contract in `internal/forkspace` is
+  unchanged; re-verified.

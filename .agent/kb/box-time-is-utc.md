@@ -3,7 +3,7 @@ name: box-time-is-utc
 description: boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local
 subsystem: box
 sources: [internal/box/run.go, internal/ladder/limit.go]
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 The box image's clock is UTC. coop forwards the HOST's timezone into every box as `-e TZ=...`
 (`internal/box/run.go`, via `hostTimezone()`), so agents render clock times on your wall clock.
@@ -21,3 +21,7 @@ rides the same wall time.
   `internal/cli/ratelimit.go` to `internal/ladder/limit.go` (`ParseResetTime`) with the ladder
   extraction. Same `time.Local` anchor, same trap.
 - 2026-07-12 — created: box clock is UTC, host TZ forwarded as `-e TZ`; must stay on the same clock as ratelimit.go's `time.Local` reset-time parser.
+- 2026-08-10 — the loop half this card's `time.Local` note points at moved again, from
+  `internal/cli/ratelimit.go` to `internal/loop/ratelimit.go` (`sleepForLimitAt`'s
+  `resetAt.Local().Format`) with the loop-engine extraction. The reset-prose parse itself is still
+  `internal/ladder/limit.go`; both re-verified, formatting unchanged.
