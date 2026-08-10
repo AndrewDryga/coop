@@ -226,20 +226,28 @@ func TestRunDeadlineKillsDescendantAfterLeaderExits(t *testing.T) {
 	pids := filepath.Join(layout.State, "leader-first-pids")
 	childScript := "trap '' TERM; while :; do sleep 1; done"
 	script := fmt.Sprintf("trap 'exit 0' TERM; /bin/sh -c %s & child=$!; printf '%%s %%s\\n' $$ $child > %s; while :; do sleep 1; done", shellQuote(childScript), shellQuote(pids))
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	result := Run(ctx, Command{
+	process, err := Start(Command{
 		Path: "/bin/sh", Args: []string{"-c", script}, Dir: layout.Root,
 		Env: []string{"PATH=/usr/bin:/bin"}, KillGrace: 50 * time.Millisecond, MaxOutput: 1024,
 	})
-	if result.Err == nil || ctx.Err() == nil {
-		t.Fatalf("Run deadline = %v (context %v), want cancellation", result.Err, ctx.Err())
-	}
-	data, err := os.ReadFile(pids)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range strings.Fields(string(data)) {
+	defer process.Cleanup()
+	// Wait for the leader's trap and its descendant to actually be set up before cancelling:
+	// a fixed wall-clock budget for shell startup itself can slip under host contention (the
+	// pids file silently never gets written) — the same flake TestRunDeadlineReapsTheProcessGroup
+	// and TestRunDeadlineCallsBeforeCancelBeforeFirstSignal hardened, just with a larger 200ms
+	// budget that makes it rarer, not immune. Key off the file the script writes once it's
+	// ready instead of a duration.
+	data := awaitFileContent(t, pids)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result := process.Wait(ctx)
+	if result.Err == nil || ctx.Err() == nil {
+		t.Fatalf("Run deadline = %v (context %v), want cancellation", result.Err, ctx.Err())
+	}
+	for _, field := range strings.Fields(data) {
 		pid, err := strconv.Atoi(field)
 		if err != nil {
 			t.Fatal(err)
