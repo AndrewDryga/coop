@@ -479,6 +479,11 @@ func ReviewCandidateUnchanged(dir, branch, head, tree string) bool {
 // commit the clone captured; name is the candidate branch. The caller owns cleanup whenever dir is
 // non-empty. It is a value, not a seam: prepareForkReviewCandidateFromIntent mutates base, name,
 // and conflict as it builds the candidate.
+//
+// forkctl.forkReviewCandidate is its deliberate near-twin — same scaffold, opposite anchor: that
+// one PREVIEWS against the parent's current HEAD, this one rebuilds a CAPTURED intent and refuses
+// unless every captured head/tree still resolves. Assessed and kept separate; read
+// .agent/kb/fork-review-scratch-two-copies.md before merging them.
 type reviewScratch struct {
 	dir      string
 	base     string

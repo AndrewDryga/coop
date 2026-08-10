@@ -23,6 +23,10 @@ func gitFetchInto(repo, ws, name string) error {
 
 // forkReviewCandidate is a disposable, rebased view of a fork. base remains the parent commit the
 // clone captured; name is the candidate branch. The caller owns cleanup whenever dir is non-empty.
+//
+// sessionsvc.reviewScratch is its deliberate near-twin — same scaffold, opposite anchor: this one
+// PREVIEWS against the parent's current HEAD, that one rebuilds a CAPTURED intent and verifies it.
+// Assessed and kept separate; read .agent/kb/fork-review-scratch-two-copies.md before merging them.
 type forkReviewCandidate struct {
 	dir      string
 	base     string
