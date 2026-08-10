@@ -18,8 +18,10 @@ __pycache__/
 !**/.agent/kb/
 !**/.agent/skills/
 !**/.agent/presets/
+!**/.agent/claude/
 !**/.agent/loop.yaml
 !**/.agent/compose.yml
+!**/.agent/Dockerfile
 !.agent/project.yaml
 # the queue is local state, but its layout doc is a BOOT entry point — commit just that
 !**/.agent/tasks/
