@@ -63,6 +63,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [provider-session-history](provider-session-history.md) — native session layouts, lookup bounds, and the large-history regression contract
 - [provider-consult-e2e](provider-consult-e2e.md) — verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 - [model-tiers-and-role-vs-lead](model-tiers-and-role-vs-lead.md) — ModelFor is one model per provider (active>target>fallback>env); a preset role's model rides its wrapper target, never global state, or it shadows a rotated lead
+- [loop-live-bar](loop-live-bar.md) — the loop's sticky bottom bar; every paint parks the cursor at column 0 so a kernel ^C echo can't wrap the line and desync the region's erase math — the subsystem once deleted instead of debugged
 - [loop-provider-watchdog](loop-provider-watchdog.md) — built-in attempts always stream; the watchdog is ARMED by default (10m/30m/2h) and trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
 - [loop-rotation-advance-triggers](loop-rotation-advance-triggers.md) — rate limits cool and come back, auth failures are sticky for the run; rungs are built from credential presence, not validity
 - [loop-resume-never-rewrites-history](loop-resume-never-rewrites-history.md) — a leaked box descendant un-completes committed work; resuming it must never amend a non-HEAD commit
