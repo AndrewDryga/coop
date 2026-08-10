@@ -1,4 +1,4 @@
-package cli
+package acpctl
 
 import (
 	"sync"
@@ -6,13 +6,13 @@ import (
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 )
 
-// warmPool keeps an already-initialized box warm per signed-in provider, so an ACP provider switch
+// WarmPool keeps an already-initialized box warm per signed-in provider, so an ACP provider switch
 // swaps to a hot adapter (paying only the proxy's replay) instead of cold-booting a container + node
 // adapter (~5s). It lives entirely behind cmdACPSupervise's factory: the factory checks it out for a
 // plain provider switch and cold-spawns otherwise, so the acpproxy contract is untouched and a miss
 // degrades to today's behavior. `spawn` is injected — the real one execs a `coop acp` inner for the
 // provider's default target; tests pass a fake.
-type warmPool struct {
+type WarmPool struct {
 	mu       sync.Mutex
 	spawn    func(provider string) (*acpproxy.Child, error)
 	boxes    map[string]*acpproxy.Child
@@ -20,13 +20,13 @@ type warmPool struct {
 	enabled  bool
 }
 
-func newWarmPool(enabled bool, spawn func(provider string) (*acpproxy.Child, error)) *warmPool {
-	return &warmPool{spawn: spawn, boxes: map[string]*acpproxy.Child{}, inflight: map[string]bool{}, enabled: enabled}
+func NewWarmPool(enabled bool, spawn func(provider string) (*acpproxy.Child, error)) *WarmPool {
+	return &WarmPool{spawn: spawn, boxes: map[string]*acpproxy.Child{}, inflight: map[string]bool{}, enabled: enabled}
 }
 
-// checkout pops and returns the warm box for provider (nil if none). The caller then OWNS it —
+// Checkout pops and returns the warm box for provider (nil if none). The caller then OWNS it —
 // the pool no longer tracks or reaps it.
-func (p *warmPool) checkout(provider string) *acpproxy.Child {
+func (p *WarmPool) Checkout(provider string) *acpproxy.Child {
 	if p == nil {
 		return nil
 	}
@@ -37,11 +37,11 @@ func (p *warmPool) checkout(provider string) *acpproxy.Child {
 	return c
 }
 
-// refill spawns a warm box for provider and stores it — unless the pool is disabled, one is already
+// Refill spawns a warm box for provider and stores it — unless the pool is disabled, one is already
 // held, or a spawn is already in flight. Synchronous (the spawn runs outside the lock); the caller
 // runs it in a goroutine so warming never adds startup latency. A box spawned after the pool was
 // reaped is Stopped rather than leaked.
-func (p *warmPool) refill(provider string) {
+func (p *WarmPool) Refill(provider string) {
 	if p == nil {
 		return
 	}
@@ -68,9 +68,9 @@ func (p *warmPool) refill(provider string) {
 	p.mu.Unlock()
 }
 
-// reap Stops every held box and disables the pool (called on supervisor exit). The container itself
+// Reap stops every held box and disables the pool (called on supervisor exit). The container itself
 // is also caught by the supervisor's final KillByLabel sweep; this closes the box's pipes/cidfile.
-func (p *warmPool) reap() {
+func (p *WarmPool) Reap() {
 	if p == nil {
 		return
 	}
@@ -83,7 +83,7 @@ func (p *warmPool) reap() {
 	p.boxes = map[string]*acpproxy.Child{}
 }
 
-func (p *warmPool) stop(c *acpproxy.Child) {
+func (p *WarmPool) stop(c *acpproxy.Child) {
 	if c != nil && c.Stop != nil {
 		c.Stop()
 	}

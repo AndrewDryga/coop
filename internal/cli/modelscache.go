@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/acpctl"
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -31,17 +32,13 @@ const modelsCacheTTL = 14 * 24 * time.Hour
 // `coop models --refresh` can never hang.
 const modelFetchTimeout = 15 * time.Second
 
-// modelInfo is one model in the cache: the id the agent's CLI accepts (what --model takes),
-// plus an optional friendly display name.
-type modelInfo struct {
-	ID   string `json:"id"`
-	Name string `json:"name,omitempty"`
-}
-
-// modelsCache is the per-agent live model list coop keeps under the agent's config dir.
+// modelsCache is the per-agent live model list coop keeps under the agent's config dir. Models is
+// acpctl.Model — the DTO moved to internal/acpctl (models.go) since it's a pure parser output the
+// ACP control also caches opportunistically; this file keeps the on-disk cache format and the
+// non-ACP fetch/parse paths (grok/codex native CLIs), which stay app-spine-bound.
 type modelsCache struct {
-	Models    []modelInfo `json:"models"`
-	FetchedAt time.Time   `json:"fetchedAt"`
+	Models    []acpctl.Model `json:"models"`
+	FetchedAt time.Time      `json:"fetchedAt"`
 }
 
 // modelsCachePath is <ConfigDir>/<agent>/models_cache.json — sibling to the agent's
@@ -76,7 +73,7 @@ func loadModelsCache(cfg *config.Config, agent string) (modelsCache, bool) {
 // rename keeps a concurrent writer (the ACP box→editor goroutine) from corrupting the file.
 // No fsync (unlike config.WriteFileAtomic): this is a TTL'd cache of a remote catalog, so a
 // crash losing the last write costs one refetch — paying for durability would be theater.
-func writeModelsCache(cfg *config.Config, agent string, models []modelInfo) error {
+func writeModelsCache(cfg *config.Config, agent string, models []acpctl.Model) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -107,7 +104,7 @@ func writeModelsCache(cfg *config.Config, agent string, models []modelInfo) erro
 
 // nativeModelFetchers maps an agent to its auth-free host-CLI model probe (grok/codex).
 // Claude/Gemini advertise models only through ACP and use fetchACPModelCatalog below.
-var nativeModelFetchers = map[string]func() ([]modelInfo, error){
+var nativeModelFetchers = map[string]func() ([]acpctl.Model, error){
 	"grok":  fetchGrokModels,
 	"codex": fetchCodexModels,
 }
@@ -126,7 +123,7 @@ func runModelCLI(name string, args ...string) ([]byte, error) {
 }
 
 // fetchGrokModels lists grok's models via `grok models`.
-func fetchGrokModels() ([]modelInfo, error) {
+func fetchGrokModels() ([]acpctl.Model, error) {
 	out, err := runModelCLI("grok", "models")
 	if err != nil {
 		return nil, err
@@ -135,7 +132,7 @@ func fetchGrokModels() ([]modelInfo, error) {
 }
 
 // fetchCodexModels lists codex's models via `codex debug models`.
-func fetchCodexModels() ([]modelInfo, error) {
+func fetchCodexModels() ([]acpctl.Model, error) {
 	out, err := runModelCLI("codex", "debug", "models")
 	if err != nil {
 		return nil, err
@@ -146,7 +143,7 @@ func fetchCodexModels() ([]modelInfo, error) {
 // fetchModelCatalog selects the cheapest real catalog source per provider. The ACP seam is
 // deliberately app-local: unit tests can prove refresh wiring without detecting a runtime, while
 // production always launches the real credential-scoped box.
-func (a *app) fetchModelCatalog(agent string) ([]modelInfo, error) {
+func (a *app) fetchModelCatalog(agent string) ([]acpctl.Model, error) {
 	if fetch := nativeModelFetchers[agent]; fetch != nil {
 		return fetch()
 	}
@@ -163,7 +160,7 @@ func (a *app) fetchModelCatalog(agent string) ([]modelInfo, error) {
 // then tears down both its process group and any container generation carrying this exact
 // supervisor id. It bypasses the public supervisor: a two-request probe needs no warm pool,
 // restart replay, or editor control layer.
-func (a *app) fetchACPModelCatalog(agent string) ([]modelInfo, error) {
+func (a *app) fetchACPModelCatalog(agent string) ([]acpctl.Model, error) {
 	if err := a.ensureRuntime(); err != nil {
 		return nil, err
 	}
@@ -296,24 +293,24 @@ func readACPLine(ctx context.Context, r *bufio.Reader) ([]byte, error) {
 	}
 }
 
-func parseACPModelResult(agent string, result json.RawMessage) []modelInfo {
+func parseACPModelResult(agent string, result json.RawMessage) []acpctl.Model {
 	var doc struct {
 		Models        json.RawMessage `json:"models"`
 		ConfigOptions []struct {
-			ID      string      `json:"id"`
-			Options []acpOption `json:"options"`
+			ID      string          `json:"id"`
+			Options []acpctl.Option `json:"options"`
 		} `json:"configOptions"`
 	}
 	if json.Unmarshal(result, &doc) != nil {
 		return nil
 	}
 	if agent == "gemini" {
-		return parseGeminiModels(doc.Models)
+		return acpctl.ParseGeminiModels(doc.Models)
 	}
 	if agent == "claude" {
 		for _, option := range doc.ConfigOptions {
 			if option.ID == "model" {
-				return parseClaudeModelOption(option.Options)
+				return acpctl.ParseClaudeModelOption(option.Options)
 			}
 		}
 	}
@@ -327,8 +324,8 @@ func parseACPModelResult(agent string, result json.RawMessage) []modelInfo {
 //
 // It returns ids in listed order (name = id; grok prints no separate display name), skipping
 // blanks and duplicates.
-func parseGrokModels(out []byte) []modelInfo {
-	var models []modelInfo
+func parseGrokModels(out []byte) []acpctl.Model {
+	var models []acpctl.Model
 	seen := map[string]bool{}
 	for _, raw := range strings.Split(string(out), "\n") {
 		line := strings.TrimSpace(raw)
@@ -344,14 +341,14 @@ func parseGrokModels(out []byte) []modelInfo {
 			continue
 		}
 		seen[fields[0]] = true
-		models = append(models, modelInfo{ID: fields[0], Name: fields[0]})
+		models = append(models, acpctl.Model{ID: fields[0], Name: fields[0]})
 	}
 	return models
 }
 
 // parseCodexModels reads `codex debug models` JSON, keeping only list-visible models
 // (visibility=="list", dropping bundled/internal ones) with their slug + display name.
-func parseCodexModels(out []byte) ([]modelInfo, error) {
+func parseCodexModels(out []byte) ([]acpctl.Model, error) {
 	var doc struct {
 		Models []struct {
 			Slug        string `json:"slug"`
@@ -362,7 +359,7 @@ func parseCodexModels(out []byte) ([]modelInfo, error) {
 	if err := json.Unmarshal(out, &doc); err != nil {
 		return nil, err
 	}
-	var models []modelInfo
+	var models []acpctl.Model
 	for _, m := range doc.Models {
 		if m.Visibility != "list" || m.Slug == "" {
 			continue
@@ -371,46 +368,7 @@ func parseCodexModels(out []byte) ([]modelInfo, error) {
 		if name == "" {
 			name = m.Slug
 		}
-		models = append(models, modelInfo{ID: m.Slug, Name: name})
+		models = append(models, acpctl.Model{ID: m.Slug, Name: name})
 	}
 	return models, nil
-}
-
-// parseGeminiModels reads a gemini ACP session/new `models` field
-// ({availableModels:[{modelId,name}], currentModelId}) into cache entries — the same shape
-// synthModelOption renders as the toolbar dropdown. Empty/absent → nil.
-func parseGeminiModels(models json.RawMessage) []modelInfo {
-	if len(models) == 0 {
-		return nil
-	}
-	var m struct {
-		AvailableModels []struct {
-			ModelID string `json:"modelId"`
-			Name    string `json:"name"`
-		} `json:"availableModels"`
-	}
-	if json.Unmarshal(models, &m) != nil {
-		return nil
-	}
-	out := make([]modelInfo, 0, len(m.AvailableModels))
-	for _, am := range m.AvailableModels {
-		if am.ModelID == "" {
-			continue
-		}
-		out = append(out, modelInfo{ID: am.ModelID, Name: am.Name})
-	}
-	return out
-}
-
-// parseClaudeModelOption reads a claude configOptions `model` select (options:[{value,name}])
-// into cache entries — the ids coop already offers in the ACP toolbar.
-func parseClaudeModelOption(options []acpOption) []modelInfo {
-	out := make([]modelInfo, 0, len(options))
-	for _, o := range options {
-		if o.Value == "" {
-			continue
-		}
-		out = append(out, modelInfo{ID: o.Value, Name: o.Name})
-	}
-	return out
 }

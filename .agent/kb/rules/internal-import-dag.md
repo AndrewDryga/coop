@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,23 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-10 — **+1 package, +1 edge, −1 edge: `internal/acpctl`**
+  (`{"acpproxy", "agent", "box", "config", "ladder", "liveprocess", "preset", "processidentity"}`);
+  `cli` GAINED `acpctl` and **DROPPED `processidentity`**. The ACP CONTROL PLANE — editor selector
+  injection, provider/account/preset live switching, box respawn with context carry, limit-wait
+  policy — came out of `internal/cli/acpcontrol.go` + its `acp_process_*.go`/`acp_reload_*.go`
+  siblings (~6,830 lines with tests). `cli` losing `processidentity` is the interesting half: only
+  the moving `acp_process_live.go` touched it (the live-tag process-identity gate for the ACP
+  supervisor's isolated binary), so nothing cli-resident needed the edge once that file moved.
+  `acpctl` needed **zero new transitive dependencies** — the first extraction where this held: every
+  package on its line was already imported by the moving files today (`ladder`/`forkspace` from the
+  two immediately-preceding extractions had already paid for what would otherwise have been
+  injected). What DID need injecting (rotation.go's `accountsFor`/`expandLadder`,
+  fusion_council.go's `resolveACPFusionCouncil`, modelscache.go's `writeModelsCache`,
+  ratelimit.go's `waitUntilWall`) is POLICY that stays with cli, the same shape as the sessions
+  extraction's three `Host` functions — a `Host` struct of 5 function values `acpctl.New` takes, cli's
+  `acpHost()` the one real implementation. `acpctl` refuses the `ui` edge (zero `ui.` references in
+  any mover file — this control narrates nothing on its own); `uiPresentationOwners` is unchanged.
 - 2026-08-09 — **+2 packages, +1 edge, −1 edge: `internal/sessionsvc`**
   (`{"agent", "box", "config", "forkspace", "ladder", "runtime", "session"}`) and
   `internal/testutil/gitrepo` (a leaf); `cli` GAINED `sessionsvc` and **DROPPED `session`**. The

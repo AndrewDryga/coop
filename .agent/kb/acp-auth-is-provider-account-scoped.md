@@ -2,8 +2,8 @@
 name: acp-auth-is-provider-account-scoped
 description: ACP initialize capability truth and successful authentication belong to one provider account
 subsystem: acp
-sources: [internal/acpproxy/proxy.go, internal/cli/acpcontrol.go, internal/cli/commands.go, internal/acpproxy/scripted_e2e_test.go]
-updated: 2026-07-14
+sources: [internal/acpproxy/proxy.go, internal/acpctl/control.go, internal/cli/commands.go, internal/acpproxy/scripted_e2e_test.go]
+updated: 2026-08-10
 ---
 
 An editor's `initialize` request can be reused when a child is replaced, but its response is fresh
@@ -28,4 +28,7 @@ the selected provider/model/account stays exact and the editor receives its `coo
 Pinned or exhausted plain accounts use the same explicit recovery instead of entering a restart loop.
 
 ## Changelog
+- 2026-08-10 - re-verified after the ACP control plane moved to internal/acpctl (acpcontrol.go →
+  control.go, mechanical rename only; commands.go's half — cmdLogin/loginTo — stayed in cli, source
+  unchanged); no line citations in prose to update
 - 2026-07-14 - created from provider-switch, preset, live prompt, and replay-time authentication fixes

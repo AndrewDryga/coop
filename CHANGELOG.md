@@ -139,6 +139,19 @@
   it, so a turn no provider measured publishes no `usage` object at all rather than four zeros a
   caller would price as a free turn.
 
+- _Internal restructuring, no user-visible change._ The **ACP control plane** — editor selector
+  injection, provider/account/preset live switching, box respawn with context carry, and the
+  limit-wait policy — moved out of `internal/cli` into a new package, `internal/acpctl`
+  (`acpcontrol.go` → `control.go`, `acpwarm.go` → `warm.go`, the process/reload build-tag pairs, and
+  their tests — ~6,830 lines). The CLI kept `coop acp`'s command wiring: argument/preset/governor
+  parsing, the supervisor's signal handling and image build, and the one spawn path (`spawnBox`) that
+  execs every inner box. What the control genuinely cannot own for itself — rotation's account/ladder
+  expansion, fusion council resolution, the opportunistic models-cache write, and the suspend-safe
+  rate-limit wait — is injected as five functions on a `Host`, the same shape the sessions extraction
+  used, needing zero new transitive dependencies: every package `internal/acpctl` imports was already
+  imported by the moving files today. Every wire behavior is unchanged, and the tests moved with the
+  code.
+
 - _Internal restructuring, no user-visible change._ The **remote-sessions service** — policy
   authority, the HTTP v1 API and its socket, one-turn ACP execution, workspaces, review, companions,
   sources, outputs, and artifacts — moved out of `internal/cli` into its own package,

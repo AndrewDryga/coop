@@ -1,6 +1,6 @@
 //go:build cooplivetest
 
-package cli
+package acpctl
 
 import (
 	"bytes"
@@ -211,7 +211,7 @@ func TestLiveACPProcessHelper(t *testing.T) {
 			t.Fatal(err)
 		}
 		<-hup
-		restore, err := prepareACPReload()
+		restore, err := PrepareACPReload()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -277,7 +277,7 @@ printf '%s' "$coop_pgid" > "$COOP_TEST_LIVE_ACP_MARKER"
 		inner.Stdin = os.Stdin
 	}
 	inner.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	err := startACPProcess(inner, "internal-supervisor")
+	err := StartACPProcess(inner, "internal-supervisor")
 	wantFailure := scenario == "missing_token" || scenario == "invalid_control" ||
 		scenario == "missing_cleanup_id" || scenario == "full_registry"
 	if wantFailure {

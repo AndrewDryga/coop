@@ -1,4 +1,4 @@
-package cli
+package acpctl
 
 import (
 	"encoding/json"
@@ -15,7 +15,7 @@ import (
 // removed after one read (the setup lines it carries are sensitive).
 func TestACPResumeStateRoundTrip(t *testing.T) {
 	limitedUntil := time.Now().Add(time.Hour).Round(time.Second)
-	st := acpResumeState{
+	st := ResumeState{
 		Proxy: acpproxy.Snapshot{
 			Setup: [][]byte{[]byte(`{"method":"initialize"}`)},
 			Authentication: []acpproxy.AuthenticationSnap{{
@@ -24,8 +24,8 @@ func TestACPResumeStateRoundTrip(t *testing.T) {
 			}},
 			Sessions: []acpproxy.SessionSnap{{EditorID: "S1", Turned: true}},
 		},
-		Ctrl: ctrlSnapshot{
-			Selection:        acpSelection{Provider: "codex"},
+		Ctrl: Snapshot{
+			Selection:        Selection{Provider: "codex"},
 			AutoAccount:      "work",
 			AuthFailed:       map[string]bool{"codex@default": true},
 			Limited:          map[string]time.Time{"codex@default": limitedUntil},
@@ -40,14 +40,14 @@ func TestACPResumeStateRoundTrip(t *testing.T) {
 			LeadUsesSetModel: true,
 		},
 	}
-	path, err := writeResumeState(st)
+	path, err := WriteResumeState(st)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fi, serr := os.Stat(path); serr != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("resume file perms = %v (err %v), want 0600", fi.Mode().Perm(), serr)
 	}
-	got, err := readResumeState(path)
+	got, err := ReadResumeState(path)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,16 +1,39 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 )
+
+// selectorSet drives one coop-owned dropdown set through the FromEditor hook — the same wire path
+// the proxy uses — and reports what the toolbar ack shows. It cannot call acpctl's unexported
+// fromEditor directly (a different package), so it goes through the exported Hooks().FromEditor,
+// same shape as production (internal/cli/acp_cmd.go's cmdACPSupervise wires the identical hook).
+func selectorSet(t *testing.T, c *acpctl.Control, configID, value string) (handled, restart bool, ids []string) {
+	t.Helper()
+	line := []byte(`{"jsonrpc":"2.0","id":"selector","method":"session/set_config_option","params":{"sessionId":"s","configId":"` + configID + `","value":"` + value + `"}}` + "\n")
+	handled, ack, _, restart := c.Hooks().FromEditor(line)
+	var m, res map[string]json.RawMessage
+	json.Unmarshal(ack, &m)
+	json.Unmarshal(m["result"], &res)
+	var opts []map[string]json.RawMessage
+	json.Unmarshal(res["configOptions"], &opts)
+	for _, o := range opts {
+		var id string
+		json.Unmarshal(o["id"], &id)
+		ids = append(ids, id)
+	}
+	return handled, restart, ids
+}
 
 func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 	for _, name := range agents.Names() {
@@ -96,14 +119,14 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 					t.Errorf("fleet rejected signed-in pinned account: %v", unsigned)
 				}
 
-				control := newACPControl(cfg, name, "", "", t.TempDir(), acpSelection{}, nil, nil, false)
-				if !slices.Contains(control.creds, profile) {
-					t.Errorf("ACP account selector omitted %s@%s via %s: %v", name, profile, source, control.creds)
+				control := acpctl.New(cfg, name, "", "", t.TempDir(), acpctl.Selection{}, nil, nil, false, nil, acpHost())
+				if creds := control.Creds(); !slices.Contains(creds, profile) {
+					t.Errorf("ACP account selector omitted %s@%s via %s: %v", name, profile, source, creds)
 				}
-				if next, recognized := control.selectorSelection(coopAccountID, profile); !recognized || next.Account != profile {
+				if next, recognized := control.SelectorSelection(acpctl.CoopAccountID, profile); !recognized || next.Account != profile {
 					t.Errorf("ACP account selection rejected %s@%s via %s: (%+v, %v)", name, profile, source, next, recognized)
 				}
-				if next, recognized := control.selectorSelection(coopAccountID, "ghost"); !recognized || next.Account != "" {
+				if next, recognized := control.SelectorSelection(acpctl.CoopAccountID, "ghost"); !recognized || next.Account != "" {
 					t.Errorf("ACP account selection accepted unknown %s@ghost: (%+v, %v)", name, next, recognized)
 				}
 				if cands := a.targetCandidates(name+"@", false, true); !slices.Contains(cands, name+"@"+profile) {
@@ -168,21 +191,19 @@ func TestACPCredentialSourcesFollowProviderSelection(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				c := newACPControl(cfg, base, "", "", t.TempDir(), acpSelection{}, nil, nil, false)
-				if got := c.spawnableProviders(base); !slices.Contains(got, name) {
+				c := acpctl.New(cfg, base, "", "", t.TempDir(), acpctl.Selection{}, nil, nil, false, nil, acpHost())
+				if got := c.SpawnableProviders(base); !slices.Contains(got, name) {
 					t.Fatalf("ACP provider options omitted %s via %s: %v", name, source, got)
 				}
-				handled, restart, ids := selectorSet(t, c, coopProviderID, name)
-				if !handled || !restart || !slices.Equal(ids, []string{coopPresetID, coopProviderID, coopAccountID}) {
+				handled, restart, ids := selectorSet(t, c, acpctl.CoopProviderID, name)
+				if !handled || !restart || !slices.Equal(ids, []string{acpctl.CoopPresetID, acpctl.CoopProviderID, acpctl.CoopAccountID}) {
 					t.Fatalf("ACP provider selection %s via %s = handled %v restart %v options %v", name, source, handled, restart, ids)
 				}
-				target, presetName, ok := c.spawnTarget()
+				target, presetName, ok := c.SpawnTarget()
 				if !ok || presetName != "" || target.Provider != name || target.Account() != "work" {
 					t.Errorf("ACP spawn target %s via %s = (%s, preset %q, %v), want %s@work", name, source, target.String(), presetName, ok, name)
 				}
-				c.mu.Lock()
-				creds, accounts := slices.Clone(c.creds), slices.Clone(c.accounts)
-				c.mu.Unlock()
+				creds, accounts := c.Creds(), c.Accounts()
 				if !slices.Equal(creds, []string{"work"}) || !slices.Equal(accounts, []string{"work"}) {
 					t.Errorf("ACP retarget %s via %s = creds %v, accounts %v; want [work] for both", name, source, creds, accounts)
 				}

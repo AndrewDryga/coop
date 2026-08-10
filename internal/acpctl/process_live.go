@@ -1,6 +1,6 @@
 //go:build cooplivetest
 
-package cli
+package acpctl
 
 import (
 	"crypto/rand"
@@ -41,10 +41,10 @@ var (
 	liveACPRegistryMu     sync.Mutex
 )
 
-// startACPProcess is compiled only into isolated live-test binaries. The resident shell wrapper is
+// StartACPProcess is compiled only into isolated live-test binaries. The resident shell wrapper is
 // the generation's stable PGID leader. It cannot exec the inner Coop until its authenticated record
 // is durably published; losing the outer process closes the gate and fails before exec.
-func startACPProcess(cmd *exec.Cmd, supervisor string) error {
+func StartACPProcess(cmd *exec.Cmd, supervisor string) error {
 	registry, cleanupID, enabled, err := openLiveACPRegistry()
 	if err != nil {
 		return err

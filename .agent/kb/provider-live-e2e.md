@@ -2,8 +2,8 @@
 name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
-sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/cli/acp_process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
-updated: 2026-07-16
+sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/run.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/runtime/process_group_live.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/acpctl/process_live.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go]
+updated: 2026-08-10
 ---
 
 `make provider-live-e2e COOP_LIVE_TARGETS='...'` is the permissive prerequisite probe;
@@ -127,6 +127,8 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-08-10 - source path only: `internal/cli/acp_process_live.go` → `internal/acpctl/process_live.go`
+  (the ACP control plane's move to `internal/acpctl`, mechanical rename, no behavior change)
 - 2026-07-16 - preserved ACP editor stdin through the live process-control wrapper
 - 2026-07-16 - added native-resume ownership and the shared live-result triage ledger
 - 2026-07-16 - separated supervision from ACP transcript sharing after live resume exposed the shadow mount

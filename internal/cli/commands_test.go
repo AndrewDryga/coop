@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/liveprocess"
@@ -1469,9 +1470,9 @@ roles:
 	signInCred(t, cfg, "codex", "work")
 
 	called := false
-	a := &app{cfg: cfg, acpSupervise: func(_ []string, ctrl *acpControl) (int, error) {
+	a := &app{cfg: cfg, acpSupervise: func(_ []string, ctrl *acpctl.Control) (int, error) {
 		called = true
-		target, presetName, ok := ctrl.spawnTarget()
+		target, presetName, ok := ctrl.SpawnTarget()
 		if !ok || presetName != "rotate" || target.String() != "codex@work" {
 			t.Errorf("supervisor target = (%s, %q, %v), want codex@work + rotate", target.String(), presetName, ok)
 		}
@@ -1494,7 +1495,7 @@ func TestSpawnBoxExportsEmptyPresetSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{ConfigDir: t.TempDir()}
-	ctrl := newACPControl(cfg, "claude", "", "", t.TempDir(), acpSelection{}, nil, nil, true)
+	ctrl := acpctl.New(cfg, "claude", "", "", t.TempDir(), acpctl.Selection{}, nil, nil, true, nil, acpHost())
 	a := &app{cfg: cfg}
 	child, err := a.spawnBox(context.Background(), shim, nil, "test-supervisor", ctrl,
 		agents.Target{Provider: "claude"}, "", true, io.Discard)

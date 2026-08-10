@@ -41,10 +41,11 @@ const (
 // process_group_live.go, behind the `cooplivetest` tag. The scan is tag-agnostic on purpose, so the
 // frozen graph never depends on which tags or GOOS the gate happens to run under.
 var allowedEdges = map[string][]string{
+	"acpctl":                {"acpproxy", "agent", "box", "config", "ladder", "liveprocess", "preset", "processidentity"},
 	"acpproxy":              nil,
 	"agent":                 {"config", "mcp"},
 	"box":                   {"agent", "config", "fusion", "preset", "processidentity", "project", "runtime", "ui"},
-	"cli":                   {"acpproxy", "agent", "box", "config", "contextc", "forkspace", "fusion", "ladder", "liveprocess", "loopcfg", "preset", "processidentity", "project", "runtime", "scaffold", "sessionsvc", "taskstate", "ui"},
+	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "forkspace", "fusion", "ladder", "liveprocess", "loopcfg", "preset", "project", "runtime", "scaffold", "sessionsvc", "taskstate", "ui"},
 	"config":                nil,
 	"contextc":              {"project"},
 	"forkspace":             {"processidentity"},

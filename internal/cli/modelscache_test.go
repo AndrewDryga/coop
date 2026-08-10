@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/acpctl"
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -24,7 +25,7 @@ func TestModelsCacheRoundTrip(t *testing.T) {
 	if _, ok := loadModelsCache(cfg, "claude"); ok {
 		t.Fatal("cold cache must not read as live")
 	}
-	want := []modelInfo{{ID: "opus", Name: "Opus"}, {ID: "sonnet", Name: "Sonnet"}}
+	want := []acpctl.Model{{ID: "opus", Name: "Opus"}, {ID: "sonnet", Name: "Sonnet"}}
 	if err := writeModelsCache(cfg, "claude", want); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func TestModelsCacheRoundTrip(t *testing.T) {
 func TestModelsCacheExpiry(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	stale := modelsCache{
-		Models:    []modelInfo{{ID: "opus"}},
+		Models:    []acpctl.Model{{ID: "opus"}},
 		FetchedAt: time.Now().Add(-modelsCacheTTL - time.Hour),
 	}
 	b, _ := json.Marshal(stale)
@@ -120,36 +121,6 @@ func TestParseCodexModels(t *testing.T) {
 	}
 	if _, err := parseCodexModels([]byte("not json")); err == nil {
 		t.Error("malformed JSON must error (→ caller keeps static)")
-	}
-}
-
-// TestParseGeminiModels: the ACP session/new `models` field → cache entries, blank ids skipped.
-func TestParseGeminiModels(t *testing.T) {
-	models := json.RawMessage(`{"currentModelId":"gemini-3.5-flash","availableModels":[
-	  {"modelId":"gemini-3.5-flash","name":"Flash"},
-	  {"modelId":"gemini-2.5-pro","name":"Pro"},
-	  {"modelId":"","name":"Blank"}
-	]}`)
-	got := parseGeminiModels(models)
-	if len(got) != 2 || got[0].ID != "gemini-3.5-flash" || got[0].Name != "Flash" || got[1].ID != "gemini-2.5-pro" {
-		t.Fatalf("parseGeminiModels = %v", got)
-	}
-	if parseGeminiModels(nil) != nil {
-		t.Error("absent models field → nil")
-	}
-}
-
-// TestParseClaudeModelOption: the claude configOptions `model` select → cache entries, blank
-// values skipped.
-func TestParseClaudeModelOption(t *testing.T) {
-	opts := []acpOption{
-		{Value: "opus[1m]", Name: "Opus"},
-		{Value: "sonnet", Name: "Sonnet"},
-		{Value: "", Name: "Blank"},
-	}
-	got := parseClaudeModelOption(opts)
-	if len(got) != 2 || got[0].ID != "opus[1m]" || got[0].Name != "Opus" || got[1].ID != "sonnet" {
-		t.Fatalf("parseClaudeModelOption = %v", got)
 	}
 }
 
@@ -291,12 +262,12 @@ func TestRefreshModelsUsesACPFetcher(t *testing.T) {
 		t.Run(agent+" success", func(t *testing.T) {
 			a := modelsApp(t)
 			calls := 0
-			a.acpModels = func(got string) ([]modelInfo, error) {
+			a.acpModels = func(got string) ([]acpctl.Model, error) {
 				calls++
 				if got != agent {
 					t.Fatalf("fetch agent = %q, want %q", got, agent)
 				}
-				return []modelInfo{{ID: agent + "-live", Name: "Live"}}, nil
+				return []acpctl.Model{{ID: agent + "-live", Name: "Live"}}, nil
 			}
 			if code, err := a.cmdModels([]string{agent, "--refresh"}); code != 0 || err != nil {
 				t.Fatalf("cmdModels = (%d, %v)", code, err)
@@ -313,10 +284,10 @@ func TestRefreshModelsUsesACPFetcher(t *testing.T) {
 
 	t.Run("failure preserves cache", func(t *testing.T) {
 		a := modelsApp(t)
-		if err := writeModelsCache(a.cfg, "claude", []modelInfo{{ID: "still-good"}}); err != nil {
+		if err := writeModelsCache(a.cfg, "claude", []acpctl.Model{{ID: "still-good"}}); err != nil {
 			t.Fatal(err)
 		}
-		a.acpModels = func(string) ([]modelInfo, error) { return nil, errors.New("box down") }
+		a.acpModels = func(string) ([]acpctl.Model, error) { return nil, errors.New("box down") }
 		out := captureStdout(t, func() { _, _ = a.cmdModels([]string{"claude", "--refresh"}) })
 		if !strings.Contains(out, "still-good") || !strings.Contains(out, "refresh failed") {
 			t.Fatalf("failed refresh did not preserve/describe the cache:\n%s", out)
@@ -325,7 +296,7 @@ func TestRefreshModelsUsesACPFetcher(t *testing.T) {
 
 	t.Run("plain stays local", func(t *testing.T) {
 		a := modelsApp(t)
-		a.acpModels = func(string) ([]modelInfo, error) { panic("plain models invoked ACP") }
+		a.acpModels = func(string) ([]acpctl.Model, error) { panic("plain models invoked ACP") }
 		if code, err := a.cmdModels([]string{"claude"}); code != 0 || err != nil {
 			t.Fatalf("plain cmdModels = (%d, %v)", code, err)
 		}
@@ -343,7 +314,7 @@ func TestModelsDisplayPrefersLiveCache(t *testing.T) {
 		t.Errorf("cold block should show the static list and a never-refreshed line:\n%s", cold)
 	}
 	// Warm: the claude block shows the cached id and when it was fetched.
-	if err := writeModelsCache(a.cfg, "claude", []modelInfo{{ID: "opus-live-xyz"}}); err != nil {
+	if err := writeModelsCache(a.cfg, "claude", []acpctl.Model{{ID: "opus-live-xyz"}}); err != nil {
 		t.Fatal(err)
 	}
 	warm := captureStdout(t, func() { a.cmdModels([]string{"claude"}) })

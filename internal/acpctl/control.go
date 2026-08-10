@@ -1,4 +1,4 @@
-package cli
+package acpctl
 
 import (
 	"bytes"
@@ -29,33 +29,19 @@ const defaultLimitCooldown = 5 * time.Minute
 // turn breaks the chain.
 const maxACPLimitWaits = 12
 
-// acpPresetNames lists the repo's loadable presets for the ACP selector — ANY lead: switching to
-// a different-provider preset is a provider switch, which the proxy now survives (the session is
-// re-created and the conversation carried best-effort as a text preamble; see spawnTarget).
-func (a *app) acpPresetNames(repo string) []string {
-	globalDir := a.cfg.GlobalPresetsDir()
-	var out []string
-	for _, name := range preset.List(repo, globalDir) {
-		if _, err := preset.Load(repo, globalDir, name); err == nil {
-			out = append(out, name)
-		}
-	}
-	return out
-}
-
 // coop's own configOptions — the FIRST dropdowns in the editor toolbar, mirroring the target
 // grammar: Preset (the orchestration recipe), Provider (who runs — switching re-creates the thread,
 // context carried best-effort), and Account (the lead's login — a transparent switch).
 // None is a native adapter option, so the proxy intercepts their session/set_config_option and
 // restarts the box on the selected identity.
 const (
-	coopProviderID = "coop_provider"
-	coopAccountID  = "coop_account"
-	coopPresetID   = "coop_preset"
+	CoopProviderID = "coop_provider"
+	CoopAccountID  = "coop_account"
+	CoopPresetID   = "coop_preset"
 )
 
 // coopOwnedIDs are the selector ids coop rebuilds on every refresh.
-var coopOwnedIDs = map[string]bool{coopProviderID: true, coopAccountID: true, coopPresetID: true}
+var coopOwnedIDs = map[string]bool{CoopProviderID: true, CoopAccountID: true, CoopPresetID: true}
 
 // stripConfigIDs are the native claude-agent-acp toolbar dropdowns coop removes: the permission-mode
 // picker (coop always runs yolo — the box is the sandbox) and the subagent picker (subagents still
@@ -63,17 +49,17 @@ var coopOwnedIDs = map[string]bool{coopProviderID: true, coopAccountID: true, co
 // session; a preset hides them too (rewriteConfigOptions — the preset owns them).
 var stripConfigIDs = map[string]bool{"mode": true, "agent": true}
 
-// acpSelection is the tagged launch intent behind coop's toolbar. A plain selection may choose a
+// Selection is the tagged launch intent behind coop's toolbar. A plain selection may choose a
 // provider and account; a preset selection owns both through its ladder, so Provider and Account are
 // always empty while Preset is set. The fields are strings so the state is comparable and can key the
 // preset rotation.
-type acpSelection struct {
+type Selection struct {
 	Provider string `json:"provider,omitempty"`
 	Account  string `json:"account,omitempty"`
 	Preset   string `json:"preset,omitempty"`
 }
 
-func normalizeACPSelection(sel acpSelection) acpSelection {
+func normalizeACPSelection(sel Selection) Selection {
 	if sel.Preset != "" {
 		sel.Provider = ""
 		sel.Account = ""
@@ -81,12 +67,13 @@ func normalizeACPSelection(sel acpSelection) acpSelection {
 	return sel
 }
 
-// acpControl is coop's control layer over one ACP editor session. It rewrites the toolbar the editor
+// Control is coop's control layer over one ACP editor session. It rewrites the toolbar the editor
 // sees (force yolo, default the model to coop's, drop mode/subagent, prepend coop's selectors) and
 // handles their changes by restarting the box on the selected identity. The conversation survives
 // because the transcript sits on a shared, credential-independent store.
-type acpControl struct {
+type Control struct {
 	cfg          *config.Config              // for expanding a selected preset's model ladder into rotation targets
+	host         Host                        // injected seams (rotation/fusion-council/models-cache/wait policy) — internal/cli owns the real implementations
 	repo         string                      // repo root, to load a preset selected from the toolbar
 	lead         string                      // the CURRENT lead agent — re-derived on a provider switch (see retarget)
 	model        string                      // coop's resolved model for the lead ("" → leave the adapter's default)
@@ -94,13 +81,13 @@ type acpControl struct {
 	plainTargets map[string]targetPreference // provider -> last accepted plain model/effort choice
 	creds        []string                    // the lead's credentials (accounts), in order
 	presets      []string                    // the repo's presets, in order
-	fusion       bool                        // a fusion governor session — the selector offers no provider switch
+	Fusion       bool                        // a fusion governor session — the selector offers no provider switch
 	fusionPeers  []string                    // original explicit peer providers; self is re-evaluated after each lead rotation
 
 	accounts []string // the lead's signed-in accounts, for rate-limit auto-rotation (default first)
 
 	mu          sync.Mutex
-	sel         acpSelection                 // tagged plain lead or preset-owned selection
+	sel         Selection                    // tagged plain lead or preset-owned selection
 	autoAccount string                       // concrete account behind Account=Auto after a recovery rotation
 	authFailed  map[string]bool              // provider@account failures already tried in automatic mode
 	cached      map[string]json.RawMessage   // sessionId -> the rewritten configOptions array (for set responses)
@@ -123,7 +110,7 @@ type acpControl struct {
 	// rotation (nil for a plain session); rotFor records the preset it was built from, so a preset
 	// change rebuilds it.
 	rot    *ladder.Rotation
-	rotFor acpSelection
+	rotFor Selection
 
 	// Transparent rate-limit resend: correlate a rate-limit error (which carries only a request id)
 	// back to its session, and re-send that prompt once the box is back on a fresh credential.
@@ -189,17 +176,17 @@ type targetPreference struct {
 // enough for a best-effort carry. The per-session budget is cfg-owned (COOP_ACP_CARRY_TOKENS).
 const historyEntryBytes = 16 << 10
 
-func newACPControl(cfg *config.Config, lead, model, effort, repo string, sel acpSelection, presets, serveURLs []string, fusion bool) *acpControl {
+func New(cfg *config.Config, lead, model, effort, repo string, sel Selection, presets, serveURLs []string, fusion bool, fusionPeers []string, host Host) *Control {
 	sel = normalizeACPSelection(sel)
 	if effort == "" {
 		effort = cfg.EffortFor(lead)
 	}
 	target := agents.Target{Provider: lead, Model: model, Effort: effort}
-	return &acpControl{
-		cfg: cfg, repo: repo, fusion: fusion,
+	return &Control{
+		cfg: cfg, host: host, repo: repo, Fusion: fusion, fusionPeers: fusionPeers,
 		lead: lead, model: model, target: target, creds: box.EffectiveProfiles(cfg, lead), presets: presets,
 		plainTargets:   map[string]targetPreference{lead: {Model: model, Effort: effort}},
-		accounts:       accountsFor(cfg, lead),
+		accounts:       host.AccountsFor(cfg, lead),
 		sel:            sel,
 		authFailed:     map[string]bool{},
 		cached:         map[string]json.RawMessage{},
@@ -228,7 +215,7 @@ func newACPControl(cfg *config.Config, lead, model, effort, repo string, sel acp
 }
 
 // hooks wires the controller into the acpproxy.
-func (c *acpControl) hooks() *acpproxy.Hooks {
+func (c *Control) Hooks() *acpproxy.Hooks {
 	return &acpproxy.Hooks{
 		ToEditor:              c.toEditor,
 		ReplayFailure:         c.maybeRecoverAuthentication,
@@ -246,7 +233,7 @@ func (c *acpControl) hooks() *acpproxy.Hooks {
 	}
 }
 
-func (c *acpControl) clearSessionActive(session string) {
+func (c *Control) clearSessionActive(session string) {
 	c.mu.Lock()
 	delete(c.cached, session)
 	delete(c.nativeCache, session)
@@ -269,11 +256,11 @@ func (c *acpControl) clearSessionActive(session string) {
 	c.mu.Unlock()
 }
 
-func (c *acpControl) sessionClosed(session string) {
+func (c *Control) sessionClosed(session string) {
 	c.clearSessionActive(session)
 }
 
-func (c *acpControl) sessionEnded(session string) {
+func (c *Control) sessionEnded(session string) {
 	c.clearSessionActive(session)
 	c.mu.Lock()
 	delete(c.history, session)
@@ -284,14 +271,14 @@ func (c *acpControl) sessionEnded(session string) {
 // sessionRecreated marks a session whose conversation did not carry across a restart (the proxy
 // re-created it fresh — a provider switch, or a lost transcript): the next outgoing prompt gets
 // the best-effort history preamble, whether that's a transparent resend or the editor's next message.
-func (c *acpControl) sessionRecreated(session string) {
+func (c *Control) sessionRecreated(session string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.recreate, session)
 	c.needPreamble[session] = true
 }
 
-func (c *acpControl) shouldRecreateSession(session string) bool {
+func (c *Control) shouldRecreateSession(session string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.recreate[session]
@@ -308,7 +295,7 @@ func (c *acpControl) shouldRecreateSession(session string) bool {
 // gain: the duplicate never renders in the editor (the resend reuses the editor's original request,
 // and replay drops the adapter's history re-stream — TestProxyReplayDropsHistoryRestream), and the
 // model treats an adjacent identical user message benignly, so multi-turn use is unaffected.
-func (c *acpControl) resumePrompt(session string) []byte {
+func (c *Control) resumePrompt(session string) []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.resend[session] {
@@ -334,7 +321,7 @@ func (c *acpControl) resumePrompt(session string) []byte {
 }
 
 // selection returns one consistent snapshot for resolver and toolbar reads.
-func (c *acpControl) selection() acpSelection {
+func (c *Control) selection() Selection {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sel = normalizeACPSelection(c.sel)
@@ -344,7 +331,7 @@ func (c *acpControl) selection() acpSelection {
 // currentModel is coop's chosen model for the lead. Read under the lock because a set of Coop's
 // synthesized models-field dropdown mutates it from the editor goroutine while the box→editor
 // goroutine reads it to render the toolbar.
-func (c *acpControl) currentModel() string {
+func (c *Control) currentModel() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.model
@@ -354,7 +341,7 @@ func (c *acpControl) currentModel() string {
 // preset's lead ladder (expandLadder — the SAME targets `coop loop` cycles). Returns nil for a plain
 // session or when the ladder can't be expanded. The preset owns the full target, including any
 // cross-provider and account fan-out. Its cursor and per-target limits persist across respawns.
-func (c *acpControl) presetRotation() *ladder.Rotation {
+func (c *Control) presetRotation() *ladder.Rotation {
 	sel := c.selection()
 	if sel.Preset == "" {
 		return nil
@@ -374,7 +361,7 @@ func (c *acpControl) presetRotation() *ladder.Rotation {
 	// so a rung on another provider swaps the lead (the proxy re-creates the session there and
 	// the conversation is carried best-effort as a text preamble). Account fan-out is part of
 	// expandLadder, so the preset remains authoritative for every rung.
-	targets, err := expandLadder(c.cfg, p.LeadAgent, rungs)
+	targets, err := c.host.ExpandLadder(c.cfg, p.LeadAgent, rungs)
 	if err != nil || len(targets) == 0 {
 		return nil
 	}
@@ -387,7 +374,7 @@ func (c *acpControl) presetRotation() *ladder.Rotation {
 // re-derives the control's per-lead state when the provider changes hands (a manual plain-provider
 // switch or a cross-provider preset rung). ok=false only when the
 // selection is unrecognizable (the factory then spawns on the launch args alone).
-func (c *acpControl) spawnTarget() (t agents.Target, presetName string, ok bool) {
+func (c *Control) SpawnTarget() (t agents.Target, presetName string, ok bool) {
 	sel := c.selection()
 	var rung *agents.Target
 	if sel.Preset != "" {
@@ -459,13 +446,13 @@ func (c *acpControl) spawnTarget() (t agents.Target, presetName string, ok bool)
 // latch all belong to the NEW lead. Provider-scoped target choices and cooldowns stay available so
 // switching away and back restores the user's last accepted model/effort without retrying a cooling
 // login. Called with c.mu held.
-func (c *acpControl) retargetLocked(provider string) {
+func (c *Control) retargetLocked(provider string) {
 	if provider == "" || provider == c.lead {
 		return
 	}
 	c.lead = provider
 	c.creds = box.EffectiveProfiles(c.cfg, provider)
-	c.accounts = accountsFor(c.cfg, provider)
+	c.accounts = c.host.AccountsFor(c.cfg, provider)
 	c.autoAccount = ""
 	if c.plainTargets == nil {
 		c.plainTargets = map[string]targetPreference{}
@@ -483,17 +470,17 @@ func (c *acpControl) retargetLocked(provider string) {
 // waitForReset blocks until a rate-limited credential's reset passes (or ctx is done), so a respawn the
 // wait-for-reset path pointed at a still-cooling account only starts once it's usable. A no-op for an
 // account that isn't limited — the common case, including a normal rotation to a free account.
-func (c *acpControl) waitForReset(ctx context.Context, provider, cred string) {
+func (c *Control) WaitForReset(ctx context.Context, provider, cred string) {
 	c.mu.Lock()
 	until := c.limited[accountLimitKey(provider, cred)]
 	c.mu.Unlock()
-	sleepUntilReset(ctx, until, "credential "+cred)
+	c.sleepUntilReset(ctx, until, "credential "+cred)
 }
 
 // waitForPresetRung blocks until the active preset rung's rate limit resets (the all-rungs-limited wait
 // path — rotatePreset advanced the cursor to the soonest-resetting rung), mirroring waitForReset for a
 // credential. A no-op when the rung is already free (a normal rotation to a fresh rung).
-func (c *acpControl) waitForPresetRung(ctx context.Context) {
+func (c *Control) WaitForPresetRung(ctx context.Context) {
 	c.mu.Lock()
 	var until time.Time
 	label := "preset rung"
@@ -502,13 +489,19 @@ func (c *acpControl) waitForPresetRung(ctx context.Context) {
 		until, label = c.rot.LimitedUntil(t.String()), "preset rung "+t.String()
 	}
 	c.mu.Unlock()
-	sleepUntilReset(ctx, until, label)
+	c.sleepUntilReset(ctx, until, label)
 }
+
+// limitTickCap bounds each sleep segment of a rate-limit wait — a local copy of the loop's own
+// constant (internal/cli/ratelimit.go): both wait on the same WALL-clock cadence via the injected
+// WaitUntilWall, but the const itself is too small to be worth a seam (same reasoning the sessions
+// extraction used for tiny test helpers).
+const limitTickCap = time.Minute
 
 // sleepUntilReset blocks until `until` passes (capped at ladder.LimitMaxWait) or ctx is done; a
 // no-op when until is zero or already past. Shared by the credential and preset wait-for-reset paths, so a respawn
 // pointed at a still-cooling target only starts once it's usable.
-func sleepUntilReset(ctx context.Context, until time.Time, label string) {
+func (c *Control) sleepUntilReset(ctx context.Context, until time.Time, label string) {
 	now := time.Now()
 	d := until.Sub(now)
 	if d <= 0 {
@@ -522,14 +515,14 @@ func sleepUntilReset(ctx context.Context, until time.Time, label string) {
 	// Re-check against the wall clock on short ticks (shared with the loop's sleepForLimit): a
 	// laptop suspend freezes the monotonic clock, so a single long timer would resume on wake still
 	// counting the closed time and over-wait past the reset.
-	waitUntilWall(deadline, limitTickCap, time.Now, ctx.Done(), nil)
+	c.host.WaitUntilWall(deadline, limitTickCap, time.Now, ctx.Done(), nil)
 }
 
 // toEditor rewrites an agent→editor line. On any object carrying configOptions/modes (a
 // session/new|load|resume result or a ConfigOptionUpdate notification), it drops the mode+subagent
 // dropdowns and the modes mirror, defaults the model to coop's, and prepends coop's selector. It also
 // watches for authentication/rate-limit errors and auto-rotates when possible (restart=true).
-func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
+func (c *Control) toEditor(line []byte) (out []byte, restart bool) {
 	targetResult := c.commitNativeTarget(line)
 	if targetResult.tracked && targetResult.change.translated {
 		return c.translatedModelResponse(line, targetResult), targetResult.restart
@@ -578,7 +571,7 @@ func (c *acpControl) toEditor(line []byte) (out []byte, restart bool) {
 // accounts stay on their exact target: preset ladders are rate-limit fallbacks, so auth must never
 // silently change the answering provider. A correlated Auto prompt is resent after restart; every
 // non-rotating path names the exact `coop login provider@account` recovery command.
-func (c *acpControl) maybeRecoverAuthentication(line []byte) (out []byte, restart, handled bool) {
+func (c *Control) maybeRecoverAuthentication(line []byte) (out []byte, restart, handled bool) {
 	if !bytes.Contains(line, []byte(`"error"`)) || !authenticationError(line) {
 		return nil, false, false
 	}
@@ -731,7 +724,7 @@ func nativeTargetKey(provider, field string) string { return provider + "\x00" +
 
 // armPromptResendsLocked keeps already-admitted turns alive across an intentional child replacement.
 // Called with c.mu held.
-func (c *acpControl) armPromptResendsLocked(reason string) {
+func (c *Control) armPromptResendsLocked(reason string) {
 	for id, sid := range c.promptSession {
 		if c.lastPrompt[sid] == nil {
 			continue
@@ -745,7 +738,7 @@ func (c *acpControl) armPromptResendsLocked(reason string) {
 	}
 }
 
-func (c *acpControl) registerNativeTarget(id, field, value, session string, translated bool) {
+func (c *Control) registerNativeTarget(id, field, value, session string, translated bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.nativeSequence++
@@ -757,7 +750,7 @@ func (c *acpControl) registerNativeTarget(id, field, value, session string, tran
 	c.nativeLatest[nativeTargetKey(change.provider, change.field)] = change.sequence
 }
 
-func (c *acpControl) commitNativeTarget(line []byte) nativeTargetResult {
+func (c *Control) commitNativeTarget(line []byte) nativeTargetResult {
 	var response struct {
 		ID    json.RawMessage `json:"id"`
 		Error json.RawMessage `json:"error"`
@@ -831,7 +824,7 @@ func (c *acpControl) commitNativeTarget(line []byte) nativeTargetResult {
 // hasNewerNativeTargetLocked reports whether an unresolved request for key must still get the last
 // word. Responses can arrive in either order, so the latest request may reject before an older valid
 // choice succeeds. Called with c.mu held after the current response was removed from nativePending.
-func (c *acpControl) hasNewerNativeTargetLocked(key string, sequence uint64) bool {
+func (c *Control) hasNewerNativeTargetLocked(key string, sequence uint64) bool {
 	for _, pending := range c.nativePending {
 		if pending.sequence > sequence && nativeTargetKey(pending.provider, pending.field) == key {
 			return true
@@ -840,7 +833,7 @@ func (c *acpControl) hasNewerNativeTargetLocked(key string, sequence uint64) boo
 	return false
 }
 
-func (c *acpControl) childReset() {
+func (c *Control) childReset() {
 	c.mu.Lock()
 	c.nativePending = map[string]nativeTargetChange{}
 	c.nativeLatest = map[string]uint64{}
@@ -867,7 +860,7 @@ func (c *acpControl) childReset() {
 // session/new result (which carries both a sessionId and configOptions), or nil. The URLs are stable,
 // so once per session is enough; a box restart's session/load result is swallowed by replay and never
 // reaches here, so it won't re-announce.
-func (c *acpControl) serveNoticeFor(line []byte) []byte {
+func (c *Control) serveNoticeFor(line []byte) []byte {
 	if len(c.serveURLs) == 0 {
 		return nil
 	}
@@ -912,7 +905,7 @@ func (c *acpControl) serveNoticeFor(line []byte) []byte {
 // modes mirror, defaults the model to coop's, and prepends coop's selector. On a session result that
 // carries NO configOptions (an adapter may expose only `models`, or neither) it still injects Coop's
 // selector, so the credential/preset switcher appears for every agent. Other lines pass through.
-func (c *acpControl) rewriteToEditor(line []byte) []byte {
+func (c *Control) rewriteToEditor(line []byte) []byte {
 	// Fast path: only session/new|load|resume results (a result WITH a sessionId) and config_option_update
 	// notifications carry a toolbar, so skip parsing the (often large) prompt/tool-call traffic entirely.
 	isSessionResult := bytes.Contains(line, []byte(`"sessionId"`)) && bytes.Contains(line, []byte(`"result"`))
@@ -976,7 +969,7 @@ func (c *acpControl) rewriteToEditor(line []byte) []byte {
 // rebuilds after a box swap. Returns the re-marshalled update object, or nil when there's no update or
 // it carries no configOptions (the caller then leaves the line untouched). Without this, a
 // config_option_update bypasses coop's toolbar rewrite and its selectors vanish after a switch.
-func (c *acpControl) rewriteUpdateConfigOptions(update json.RawMessage, sid string) json.RawMessage {
+func (c *Control) rewriteUpdateConfigOptions(update json.RawMessage, sid string) json.RawMessage {
 	if len(update) == 0 {
 		return nil
 	}
@@ -1009,7 +1002,7 @@ func (c *acpControl) rewriteUpdateConfigOptions(update json.RawMessage, sid stri
 // points at the one that resets soonest, returns a "waiting" status (true, the factory blocks until the
 // reset), and flags the same re-send. Falls back to the switch-and-ask-to-resend note (or forwarding the
 // error) when it can't identify the prompt. Returns (nil,false) to leave the line untouched.
-func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
+func (c *Control) maybeRotate(line []byte) (out []byte, rotated bool) {
 	if !bytes.Contains(line, []byte(`"error"`)) {
 		return nil, false
 	}
@@ -1113,7 +1106,7 @@ func (c *acpControl) maybeRotate(line []byte) (out []byte, rotated bool) {
 // — nothing to fail over to — or no prompt was captured to re-send. The box respawns on the new rung
 // because the factory reads the active rotation target; the toolbar catches up through the replay's
 // config_option_update, while the Preset selector stays unchanged.
-func (c *acpControl) rotatePreset(session string, canResend bool, until, now time.Time) (out []byte, rotated bool) {
+func (c *Control) rotatePreset(session string, canResend bool, until, now time.Time) (out []byte, rotated bool) {
 	rot := c.presetRotation()
 	if rot == nil || !rot.Rotates() || !canResend {
 		return nil, false
@@ -1147,7 +1140,7 @@ func (c *acpControl) rotatePreset(session string, canResend bool, until, now tim
 // configOptions) with coop's current selector state rebuilt — so the editor's toolbar reflects an
 // auto-switch coop made (a rate-limit rotation/wait), just as a manual switch's ack does. Falls back
 // to just coop's selectors if this session's options weren't cached.
-func (c *acpControl) configOptionUpdate(session string) []byte {
+func (c *Control) configOptionUpdate(session string) []byte {
 	upd := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "session/update",
@@ -1165,7 +1158,7 @@ func (c *acpControl) configOptionUpdate(session string) []byte {
 
 // nearestReset returns the signed-in account whose rate limit resets soonest (and when), or "" if none
 // are marked limited. Used when no account is free right now: coop waits for this one, then re-sends.
-func (c *acpControl) nearestReset(provider string) (account string, at time.Time) {
+func (c *Control) nearestReset(provider string) (account string, at time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, a := range c.accounts {
@@ -1183,7 +1176,7 @@ func (c *acpControl) nearestReset(provider string) (account string, at time.Time
 // waitStatus builds the one status line the editor shows while coop waits for a reset (no live
 // countdown — the absolute time says when it resumes). It carries the editor's session id so the
 // message lands in the right thread, and a coop messageId so the editor renders it.
-func (c *acpControl) waitStatus(session, account string, at, now time.Time) []byte {
+func (c *Control) waitStatus(session, account string, at, now time.Time) []byte {
 	c.mu.Lock()
 	c.nextID++
 	n := c.nextID
@@ -1223,7 +1216,7 @@ func formatWait(d time.Duration) string {
 // notice is dropped when its terminal auth error follows. Otherwise the notice is flushed when the turn
 // produces real content or completes — never on an intermediate bookkeeping notification. A single-rung
 // preset (no failover to hide a limit notice behind) still shows its limit message immediately.
-func (c *acpControl) chunkGate(line []byte) (hold bool, flush []byte) {
+func (c *Control) chunkGate(line []byte) (hold bool, flush []byte) {
 	// Holding applies only when a rotation could seamlessly resend (a credential session, or a
 	// preset with a rotating ladder). The TERMINAL bookkeeping below runs for every selection kind
 	// — a provider-only session must still forget completed prompts, or the map leaks.
@@ -1319,7 +1312,7 @@ func authenticationError(line []byte) bool {
 }
 
 // takeHeld returns and clears a session's buffered limit/auth notice (empty when none).
-func (c *acpControl) takeHeld(s string) []byte {
+func (c *Control) takeHeld(s string) []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	held := c.heldChunk[s]
@@ -1329,14 +1322,14 @@ func (c *acpControl) takeHeld(s string) []byte {
 
 // bumpWait counts one more consecutive all-limited wait for session and returns the total;
 // clearWait breaks the chain (a free rotation, a completed turn, or the give-up itself).
-func (c *acpControl) bumpWait(s string) int {
+func (c *Control) bumpWait(s string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.waits[s]++
 	return c.waits[s]
 }
 
-func (c *acpControl) clearWait(s string) {
+func (c *Control) clearWait(s string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.waits, s)
@@ -1372,7 +1365,7 @@ func agentChunk(line []byte) (session, text string, ok bool) {
 // so a suppressed rate-limit notice is never captured; a held warning that proved legitimate is
 // captured only when chunkGate releases it. A rate-limited turn's real partial narrative stays
 // buffered and completes when the transparent resend re-runs the turn.
-func (c *acpControl) captureTurn(line []byte) {
+func (c *Control) captureTurn(line []byte) {
 	if s, text, ok := agentChunk(line); ok {
 		c.appendTurn(s, text)
 		return
@@ -1404,7 +1397,7 @@ func (c *acpControl) captureTurn(line []byte) {
 // captureTurnFrames captures newline-delimited frames released by chunkGate. ACP uses one JSON object
 // per line; blank lines are ignored. Keeping this parser here ensures multiple held warning chunks are
 // all represented if the turn continues normally.
-func (c *acpControl) captureTurnFrames(lines []byte) {
+func (c *Control) captureTurnFrames(lines []byte) {
 	for _, line := range bytes.Split(lines, []byte{'\n'}) {
 		if len(bytes.TrimSpace(line)) > 0 {
 			c.captureTurn(line)
@@ -1414,7 +1407,7 @@ func (c *acpControl) captureTurnFrames(lines []byte) {
 
 // closeProviderTurnLocked preserves already-visible partial output when a replacement provider takes
 // over an in-flight turn. Called with c.mu held.
-func (c *acpControl) closeProviderTurnLocked(session, provider string) {
+func (c *Control) closeProviderTurnLocked(session, provider string) {
 	previous := c.turnProvider[session]
 	if previous != "" && previous != provider {
 		if len(c.turnText[session]) > 0 {
@@ -1426,7 +1419,7 @@ func (c *acpControl) closeProviderTurnLocked(session, provider string) {
 }
 
 // beginTurnLocked attributes subsequent assistant output to an admitted prompt's provider.
-func (c *acpControl) beginTurnLocked(session, provider string) {
+func (c *Control) beginTurnLocked(session, provider string) {
 	c.closeProviderTurnLocked(session, provider)
 	c.turnProvider[session] = provider
 }
@@ -1434,7 +1427,7 @@ func (c *acpControl) beginTurnLocked(session, provider string) {
 // promptForwarded runs at the proxy's post-gate admission boundary for both real editor prompts and
 // synthetic resends. FromEditor owns raw user/history mutation; this hook owns only in-flight request
 // correlation and assistant provenance, so a rejected target-setting chain cannot create phantom state.
-func (c *acpControl) promptForwarded(line []byte, synthetic bool) {
+func (c *Control) promptForwarded(line []byte, synthetic bool) {
 	var h struct {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
@@ -1466,7 +1459,7 @@ func (c *acpControl) promptForwarded(line []byte, synthetic bool) {
 // those makes the editor render Coop's synthetic context. Any real text and unknown fields around the
 // exact block survive. The filter stays armed until the turn ends because one adapter may emit more
 // than one echo form.
-func (c *acpControl) filterPreambleEcho(line []byte) ([]byte, bool) {
+func (c *Control) filterPreambleEcho(line []byte) ([]byte, bool) {
 	if !bytes.Contains(line, []byte("user_message_chunk")) && !bytes.Contains(line, []byte("session_info_update")) &&
 		!bytes.Contains(line, []byte("_x.ai/queue/changed")) {
 		return line, false
@@ -1594,7 +1587,7 @@ func (c *acpControl) filterPreambleEcho(line []byte) ([]byte, bool) {
 // clearPreambleOnTerminal runs before auth/rate-limit recovery can consume the prompt correlation
 // and return early. Normal turn capture clears the same entry later; deletion is intentionally
 // idempotent so every terminal path has one cleanup boundary.
-func (c *acpControl) clearPreambleOnTerminal(line []byte) {
+func (c *Control) clearPreambleOnTerminal(line []byte) {
 	id := terminalResponseID(line)
 	if id == "" {
 		return
@@ -1608,7 +1601,7 @@ func (c *acpControl) clearPreambleOnTerminal(line []byte) {
 
 // appendTurn adds text to a session's in-progress turn narrative, keeping the TAIL when it
 // overflows the entry cap — conclusions land last.
-func (c *acpControl) appendTurn(session, text string) {
+func (c *Control) appendTurn(session, text string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.turnActive[session] {
@@ -1626,7 +1619,7 @@ func (c *acpControl) appendTurn(session, text string) {
 // the initial tool_call and are remembered per id (a terminal update may not repeat them). Tool
 // PAYLOADS are deliberately excluded: results dominate transcripts, go stale across a provider
 // switch, and the narrative ("read X, edited Y, tests green") is what actually carries.
-func (c *acpControl) toolNarration(line []byte) (session, narration string, ok bool) {
+func (c *Control) toolNarration(line []byte) (session, narration string, ok bool) {
 	if !bytes.Contains(line, []byte("toolCallId")) {
 		return "", "", false
 	}
@@ -1685,7 +1678,7 @@ func (c *acpControl) toolNarration(line []byte) (session, narration string, ok b
 // appendHistoryLocked adds one carried-history entry (text already bounded by the caller for
 // assistant turns; user prompts are head-bounded here), retaining the provider that actually owned
 // the turn, and evicts the oldest entries past the session budget. Called with c.mu held.
-func (c *acpControl) appendHistoryLocked(session, provider, role, text string) {
+func (c *Control) appendHistoryLocked(session, provider, role, text string) {
 	if len(text) > historyEntryBytes {
 		text = text[:historyEntryBytes] // the HEAD — a long user prompt leads with the ask
 	}
@@ -1707,7 +1700,7 @@ func (c *acpControl) appendHistoryLocked(session, provider, role, text string) {
 // to the first prompt after a re-create — labeled and honest about its fidelity. When omitCurrentUser
 // is true, the latest USER entry is omitted wherever it sits: it is the message being (re)sent, and
 // a provider switch can append visible partial assistant output after it. Called with c.mu held.
-func (c *acpControl) preambleLocked(session string, omitCurrentUser bool) string {
+func (c *Control) preambleLocked(session string, omitCurrentUser bool) string {
 	h := c.history[session]
 	if h == nil {
 		return ""
@@ -1864,7 +1857,7 @@ func accountLimitKey(provider, account string) string {
 
 // nextAccount marks cur rate-limited until `until`, then returns the next signed-in account (cyclic
 // from cur) whose own limit has expired, or "" when there's no other free account right now.
-func (c *acpControl) nextAccount(provider, cur string, until, now time.Time) string {
+func (c *Control) nextAccount(provider, cur string, until, now time.Time) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.limited[accountLimitKey(provider, cur)] = until
@@ -1888,7 +1881,7 @@ func (c *acpControl) nextAccount(provider, cur string, until, now time.Time) str
 	return ""
 }
 
-type acpOption struct {
+type Option struct {
 	Value       string `json:"value"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
@@ -1907,12 +1900,12 @@ type permOption struct {
 // raw JSON so any fields coop doesn't model survive. When the adapter emits its models in a `models`
 // field instead of a native `model` configOption and no `model` option is present, Coop
 // synthesizes one from that field so the editor renders a coop-owned model dropdown.
-func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid string, replay bool) json.RawMessage {
+func (c *Control) rewriteConfigOptions(raw, models json.RawMessage, sid string, replay bool) json.RawMessage {
 	var arr []json.RawMessage
 	if json.Unmarshal(raw, &arr) != nil {
 		return raw
 	}
-	provider := c.leadProvider()
+	provider := c.LeadProvider()
 	if sid != "" {
 		c.mu.Lock()
 		native := c.nativeCache[sid]
@@ -1937,8 +1930,8 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 	hasModel := false
 	for _, item := range arr {
 		var head struct {
-			ID      string      `json:"id"`
-			Options []acpOption `json:"options"`
+			ID      string   `json:"id"`
+			Options []Option `json:"options"`
 		}
 		_ = json.Unmarshal(item, &head)
 		if stripConfigIDs[head.ID] || coopOwnedIDs[head.ID] {
@@ -1946,7 +1939,7 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 		}
 		if head.ID == "model" {
 			hasModel = true
-			c.cacheModels(parseClaudeModelOption(head.Options)) // free refresh of `coop models` for claude
+			c.cacheModels(ParseClaudeModelOption(head.Options)) // free refresh of `coop models` for claude
 			if sel.Preset == "" && model != "" && optionHasValue(head.Options, model) {
 				item = withField(item, "currentValue", model) // default to coop's model; still switchable
 			}
@@ -1964,7 +1957,7 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 	if !hasModel && sel.Preset == "" {
 		if synth := c.synthModelOption(models, sel.Preset, model); synth != nil {
 			out = append(out, synth)
-			c.cacheModels(parseGeminiModels(models)) // free refresh from the generic ACP `models` shape
+			c.cacheModels(ParseGeminiModels(models)) // free refresh from the generic ACP `models` shape
 			c.mu.Lock()
 			c.leadUsesSetModel = true
 			c.mu.Unlock()
@@ -1986,16 +1979,16 @@ func (c *acpControl) rewriteConfigOptions(raw, models json.RawMessage, sid strin
 // the free, opportunistic refresh that keeps `coop models` live from native options/models at zero
 // extra cost (the session/new models are already parsed here). Best-effort: an empty list or
 // a write error is ignored, so the plain `coop models` just falls back to the static list.
-func (c *acpControl) cacheModels(models []modelInfo) {
-	_ = writeModelsCache(c.cfg, c.lead, models)
+func (c *Control) cacheModels(models []Model) {
+	_ = c.host.WriteModelsCache(c.cfg, c.lead, models)
 }
 
 // coopOptions builds the toolbar: plain sessions show Preset, Provider (omitted for a fusion
 // governor), and Account; an active preset shows only Preset because its
 // ladder owns the full lead target.
-func (c *acpControl) coopOptions() []json.RawMessage {
+func (c *Control) coopOptions() []json.RawMessage {
 	c.mu.Lock()
-	sel, lead, creds, fusion, fusionPeers := c.sel, c.lead, c.creds, c.fusion, slices.Clone(c.fusionPeers)
+	sel, lead, creds, fusion, fusionPeers := c.sel, c.lead, c.creds, c.Fusion, slices.Clone(c.fusionPeers)
 	requiresPreset := fusionNeedsPreset(fusion, lead, fusionPeers)
 	sel = normalizeACPSelection(sel)
 	c.sel = sel
@@ -2013,12 +2006,12 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 	if sel.Preset != "" {
 		ps = sel.Preset
 	}
-	popts := make([]acpOption, 0, len(c.presets)+1)
+	popts := make([]Option, 0, len(c.presets)+1)
 	if !requiresPreset {
-		popts = append(popts, acpOption{Value: "none", Name: "None", Description: "No preset — the plain lead"})
+		popts = append(popts, Option{Value: "none", Name: "None", Description: "No preset — the plain lead"})
 	}
 	for _, p := range c.presets {
-		option := acpOption{Value: p, Name: p, Description: "Run under preset " + p + " (its lead ladder + roles)"}
+		option := Option{Value: p, Name: p, Description: "Run under preset " + p + " (its lead ladder + roles)"}
 		var unavailable []string
 		if fusion {
 			council, err := c.fusionPresetCouncil(p, fusionPeers)
@@ -2045,32 +2038,32 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 		}
 		popts = append(popts, option)
 	}
-	out = append(out, marshalSelect(coopPresetID, "Preset",
+	out = append(out, marshalSelect(CoopPresetID, "Preset",
 		"Orchestration recipe — its ladder owns provider, model, effort, account, and roles", ps, popts))
 	if sel.Preset != "" {
 		return out
 	}
 	if !fusion {
-		others := c.spawnableProviders(lead)
-		opts := make([]acpOption, 0, len(others)+1)
-		opts = append(opts, acpOption{Value: lead, Name: displayName(lead), Description: "The current provider"})
+		others := c.SpawnableProviders(lead)
+		opts := make([]Option, 0, len(others)+1)
+		opts = append(opts, Option{Value: lead, Name: displayName(lead), Description: "The current provider"})
 		for _, p := range others {
-			opts = append(opts, acpOption{Value: p, Name: displayName(p),
+			opts = append(opts, Option{Value: p, Name: displayName(p),
 				Description: "Switch the plain session to " + displayName(p) + " — context carried best-effort"})
 		}
-		out = append(out, marshalSelect(coopProviderID, "Provider",
+		out = append(out, marshalSelect(CoopProviderID, "Provider",
 			"Who runs a plain session — switching re-creates the thread and carries context best-effort", lead, opts))
 	}
 	acct := "auto"
 	if sel.Account != "" {
 		acct = sel.Account
 	}
-	aopts := make([]acpOption, 0, len(creds)+1)
-	aopts = append(aopts, acpOption{Value: "auto", Name: "Auto", Description: "Use the provider default or automatic account fan-out"})
+	aopts := make([]Option, 0, len(creds)+1)
+	aopts = append(aopts, Option{Value: "auto", Name: "Auto", Description: "Use the provider default or automatic account fan-out"})
 	for _, cr := range creds {
-		aopts = append(aopts, acpOption{Value: cr, Name: cr, Description: "Switch to account " + cr + " — the conversation is preserved"})
+		aopts = append(aopts, Option{Value: cr, Name: cr, Description: "Switch to account " + cr + " — the conversation is preserved"})
 	}
-	out = append(out, marshalSelect(coopAccountID, "Account",
+	out = append(out, marshalSelect(CoopAccountID, "Account",
 		"The plain lead's login — switching is transparent (shared session store)", acct, aopts))
 	return out
 }
@@ -2080,7 +2073,7 @@ func (c *acpControl) coopOptions() []json.RawMessage {
 // active preset passes its live rung as headline; for every other option (headline == "") the
 // preset's declared lead fills it. Returns headline unchanged if the preset can't load (so the
 // active option keeps its target line, and an unselected one falls back to the static blurb).
-func (c *acpControl) presetDescription(name, headline string) string {
+func (c *Control) presetDescription(name, headline string) string {
 	p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), name)
 	if err != nil {
 		return headline
@@ -2158,7 +2151,7 @@ func displayName(provider string) string {
 }
 
 // marshalSelect renders one select configOption as raw JSON.
-func marshalSelect(id, name, desc, current string, opts []acpOption) json.RawMessage {
+func marshalSelect(id, name, desc, current string, opts []Option) json.RawMessage {
 	co := map[string]any{
 		"id": id, "name": name, "description": desc,
 		"category": "coop", "type": "select", "currentValue": current, "options": opts,
@@ -2170,26 +2163,26 @@ func marshalSelect(id, name, desc, current string, opts []acpOption) json.RawMes
 // selectorSelection applies one dropdown value. Presets own the complete active selection, so
 // Provider and Account writes while one is active are acknowledged as refused no-ops. Invalid or
 // unspawnable plain values likewise return the unchanged selection.
-func (c *acpControl) selectorSelection(configID, value string) (next acpSelection, recognized bool) {
+func (c *Control) SelectorSelection(configID, value string) (next Selection, recognized bool) {
 	c.mu.Lock()
-	next, lead, creds, fusion, fusionPeers := c.sel, c.lead, slices.Clone(c.creds), c.fusion, slices.Clone(c.fusionPeers)
+	next, lead, creds, fusion, fusionPeers := c.sel, c.lead, slices.Clone(c.creds), c.Fusion, slices.Clone(c.fusionPeers)
 	requiresPreset := fusionNeedsPreset(fusion, lead, fusionPeers)
 	next = normalizeACPSelection(next)
 	c.mu.Unlock()
 	switch configID {
-	case coopProviderID:
+	case CoopProviderID:
 		if next.Preset != "" {
 			return next, true
 		}
-		if value == lead || fusion || !agents.Valid(value) || len(accountsFor(c.cfg, value)) == 0 {
+		if value == lead || fusion || !agents.Valid(value) || len(c.host.AccountsFor(c.cfg, value)) == 0 {
 			return next, true
 		}
 		next.Provider = value
-		if next.Account != "" && !slices.Contains(accountsFor(c.cfg, value), next.Account) {
+		if next.Account != "" && !slices.Contains(c.host.AccountsFor(c.cfg, value), next.Account) {
 			next.Account = ""
 		}
 		return next, true
-	case coopAccountID:
+	case CoopAccountID:
 		if next.Preset != "" {
 			return next, true
 		}
@@ -2202,13 +2195,13 @@ func (c *acpControl) selectorSelection(configID, value string) (next acpSelectio
 		}
 		next.Account = value
 		return next, true
-	case coopPresetID:
+	case CoopPresetID:
 		if value == "none" {
 			if requiresPreset {
 				return next, true
 			}
 			if next.Preset != "" {
-				next = acpSelection{Provider: lead}
+				next = Selection{Provider: lead}
 			} else {
 				next.Preset = ""
 			}
@@ -2222,7 +2215,7 @@ func (c *acpControl) selectorSelection(configID, value string) (next acpSelectio
 				return next, true
 			}
 		}
-		return acpSelection{Preset: value}, true
+		return Selection{Preset: value}, true
 	}
 	return next, false
 }
@@ -2242,25 +2235,25 @@ func fusionNeedsPreset(fusion bool, lead string, peers []string) bool {
 	return true
 }
 
-func (c *acpControl) fusionPresetCouncil(name string, peerNames []string) (fusionCouncil, error) {
+func (c *Control) fusionPresetCouncil(name string, peerNames []string) (FusionCouncil, error) {
 	p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), name)
 	if err != nil {
-		return fusionCouncil{}, err
+		return FusionCouncil{}, err
 	}
-	reachable, err := expandLadder(c.cfg, p.LeadAgent, p.LeadLadder)
+	reachable, err := c.host.ExpandLadder(c.cfg, p.LeadAgent, p.LeadLadder)
 	if err != nil {
-		return fusionCouncil{}, err
+		return FusionCouncil{}, err
 	}
 	peers := make([]agents.Target, len(peerNames))
 	for i, provider := range peerNames {
 		peers[i] = agents.Target{Provider: provider}
 	}
-	return resolveACPFusionCouncil(reachable[0].Provider, peers, p, box.AuthedAgents(c.cfg), reachable)
+	return c.host.ResolveFusionCouncil(reachable[0].Provider, peers, p, box.AuthedAgents(c.cfg), reachable)
 }
 
-func (c *acpControl) fusionPresetRefusal(value string) string {
+func (c *Control) fusionPresetRefusal(value string) string {
 	c.mu.Lock()
-	fusion, lead, peers := c.fusion, c.lead, slices.Clone(c.fusionPeers)
+	fusion, lead, peers := c.Fusion, c.lead, slices.Clone(c.fusionPeers)
 	c.mu.Unlock()
 	if !fusion {
 		return ""
@@ -2280,18 +2273,18 @@ func (c *acpControl) fusionPresetRefusal(value string) string {
 	return ""
 }
 
-func (c *acpControl) presetLead(name, fallback string) string {
+func (c *Control) presetLead(name, fallback string) string {
 	if p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), name); err == nil {
 		return p.LeadAgent
 	}
 	return fallback
 }
 
-// ctrlSnapshot captures the selection state a fresh controller can't re-derive across a supervisor
+// Snapshot captures the selection state a fresh controller can't re-derive across a supervisor
 // re-exec (creds/presets/accounts re-derive from cfg/repo at construction; retargetLocked recomputes
 // per-lead state). Carried through a SIGHUP reload so the toolbar/lead/model survive the binary swap.
-type ctrlSnapshot struct {
-	Selection        acpSelection                 `json:"selection"`
+type Snapshot struct {
+	Selection        Selection                    `json:"selection"`
 	AutoAccount      string                       `json:"auto_account,omitempty"`
 	AuthFailed       map[string]bool              `json:"auth_failed,omitempty"`
 	Limited          map[string]time.Time         `json:"limited,omitempty"`
@@ -2307,14 +2300,14 @@ type ctrlSnapshot struct {
 }
 
 // snapshot captures the selection state under the lock.
-func (c *acpControl) snapshot() ctrlSnapshot {
+func (c *Control) Snapshot() Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var rotationLimited map[string]time.Time
 	if c.rot != nil {
 		rotationLimited = c.rot.Limits()
 	}
-	return ctrlSnapshot{
+	return Snapshot{
 		Selection: normalizeACPSelection(c.sel), AutoAccount: c.autoAccount, AuthFailed: cloneStringBoolMap(c.authFailed),
 		Limited: cloneStringTimeMap(c.limited), RotationLimited: rotationLimited,
 		PlainTargets: cloneTargetPreferences(c.plainTargets), Cached: cloneRawMessageMap(c.cached), NativeCache: cloneNativeOptionCache(c.nativeCache),
@@ -2326,7 +2319,7 @@ func (c *acpControl) snapshot() ctrlSnapshot {
 // restore re-applies a snapshot into a fresh controller: retargetLocked re-derives the per-lead
 // state for the restored lead (and clears the model/set-model latch), then the normalized snapshot's
 // own sel/model/leadUsesSetModel are set on top.
-func (c *acpControl) restore(s ctrlSnapshot) {
+func (c *Control) Restore(s Snapshot) {
 	s.Selection = normalizeACPSelection(s.Selection)
 	c.mu.Lock()
 	c.retargetLocked(s.Lead)
@@ -2435,19 +2428,35 @@ func cloneNativeOptionCache(src map[string]nativeOptionCache) map[string]nativeO
 
 // leadProvider is the current lead's provider (the one the active box runs), read under the lock —
 // the warm pool warms the OTHER signed-in providers around it.
-func (c *acpControl) leadProvider() string {
+func (c *Control) LeadProvider() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.lead
 }
 
+// Creds is the lead's credentials (accounts), in order — race-safe copy for a caller outside the
+// package (e.g. the credential-matrix test) that needs to prove the selector offers them.
+func (c *Control) Creds() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.creds)
+}
+
+// Accounts is the lead's signed-in accounts in rate-limit auto-rotation order — race-safe copy,
+// same shape as Creds.
+func (c *Control) Accounts() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.accounts)
+}
+
 // spawnableProviders lists the OTHER registered providers with at least one signed-in account —
 // the ones a provider switch could actually spawn. The current lead is excluded (its accounts
 // are offered by the Account selector).
-func (c *acpControl) spawnableProviders(lead string) []string {
+func (c *Control) SpawnableProviders(lead string) []string {
 	var out []string
 	for _, p := range agents.Names() {
-		if p != lead && len(accountsFor(c.cfg, p)) > 0 {
+		if p != lead && len(c.host.AccountsFor(c.cfg, p)) > 0 {
 			out = append(out, p)
 		}
 	}
@@ -2459,7 +2468,7 @@ func (c *acpControl) spawnableProviders(lead string) []string {
 // is absent or carries no models. The current value shows coop's chosen model on a credential session
 // (so the pick survives a box swap once sessionReady re-applies it); on a preset the box's own current
 // model wins, since the preset ladder owns it.
-func (c *acpControl) synthModelOption(models json.RawMessage, preset, model string) json.RawMessage {
+func (c *Control) synthModelOption(models json.RawMessage, preset, model string) json.RawMessage {
 	if len(models) == 0 {
 		return nil
 	}
@@ -2474,9 +2483,9 @@ func (c *acpControl) synthModelOption(models json.RawMessage, preset, model stri
 	if json.Unmarshal(models, &m) != nil || len(m.AvailableModels) == 0 {
 		return nil
 	}
-	opts := make([]acpOption, 0, len(m.AvailableModels))
+	opts := make([]Option, 0, len(m.AvailableModels))
 	for _, am := range m.AvailableModels {
-		opts = append(opts, acpOption{Value: am.ModelID, Name: am.Name, Description: am.Description})
+		opts = append(opts, Option{Value: am.ModelID, Name: am.Name, Description: am.Description})
 	}
 	current := m.CurrentModelID
 	if preset == "" && model != "" && optionHasValue(opts, model) {
@@ -2532,7 +2541,7 @@ func withField(obj json.RawMessage, key, value string) json.RawMessage {
 
 // sessionReady returns the provider-owned ordered settings for the complete active target. They are
 // re-applied after every new/load/recreate because adapters reset session state at those boundaries.
-func (c *acpControl) sessionReady(sid string) [][]byte {
+func (c *Control) sessionReady(sid string) [][]byte {
 	c.mu.Lock()
 	target := c.target
 	c.mu.Unlock()
@@ -2559,7 +2568,7 @@ func (c *acpControl) sessionReady(sid string) [][]byte {
 // adapter's allow option, replying straight to the adapter so the editor never sees a prompt — for
 // every provider, whatever its own permission settings. Any other agent→editor request passes through
 // (forward=true) so the editor still services fs/terminal capabilities as normal.
-func (c *acpControl) autoReply(line []byte) (reply []byte, forward bool) {
+func (c *Control) autoReply(line []byte) (reply []byte, forward bool) {
 	var h struct {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
@@ -2584,7 +2593,7 @@ func (c *acpControl) autoReply(line []byte) (reply []byte, forward bool) {
 
 // setConfig builds a session/set_config_option request to the adapter, with an InjectPrefix id so the
 // proxy swallows its response.
-func (c *acpControl) setConfig(sid, id, value string) []byte {
+func (c *Control) setConfig(sid, id, value string) []byte {
 	c.mu.Lock()
 	c.nextID++
 	reqID := acpproxy.InjectPrefix + itoa(c.nextID)
@@ -2601,7 +2610,7 @@ func (c *acpControl) setConfig(sid, id, value string) []byte {
 
 // setModel builds the ACP session/set_model request ({sessionId, modelId}) used by adapters that
 // expose a `models` result instead of a native model config option. InjectPrefix hides forced replies.
-func (c *acpControl) setModel(sid, model string) []byte {
+func (c *Control) setModel(sid, model string) []byte {
 	c.mu.Lock()
 	c.nextID++
 	reqID := acpproxy.InjectPrefix + itoa(c.nextID)
@@ -2618,7 +2627,7 @@ func (c *acpControl) setModel(sid, model string) []byte {
 
 // injectedResponse surfaces a rejected provider setting in the affected editor session. Successful
 // force-sets stay invisible; a failure cannot silently leave the adapter on the wrong target.
-func (c *acpControl) injectedResponse(request, response []byte) []byte {
+func (c *Control) injectedResponse(request, response []byte) []byte {
 	var req struct {
 		Params struct {
 			SessionID string `json:"sessionId"`
@@ -2675,7 +2684,7 @@ func sessionMessage(sid, text string) []byte {
 // The translated request keeps the editor's request id and follows the normal proxy path, so success
 // is not acknowledged until the provider accepts it. Native option sets (a real adapter
 // model/effort/fast option) return handled=false so they pass through to the adapter unchanged.
-func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapter []byte, restart bool) {
+func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter []byte, restart bool) {
 	var h struct {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
@@ -2746,12 +2755,12 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 			c.registerNativeTarget(string(h.ID), field, h.Params.Value, h.Params.SessionID, false)
 		}
 	}
-	if h.Params.ConfigID == coopPresetID {
+	if h.Params.ConfigID == CoopPresetID {
 		if refusal := c.fusionPresetRefusal(h.Params.Value); refusal != "" {
 			return true, rpcErrorResponse(h.ID, -32602, refusal), nil, false
 		}
 	}
-	next, recognized := c.selectorSelection(h.Params.ConfigID, h.Params.Value)
+	next, recognized := c.SelectorSelection(h.Params.ConfigID, h.Params.Value)
 	if !recognized {
 		return false, nil, nil, false
 	}
@@ -2762,7 +2771,7 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	// conversation is lost before it begins. A no-op (or a refused value) just re-acks.
 	c.sel = normalizeACPSelection(c.sel)
 	changed := next != c.sel
-	if h.Params.ConfigID == coopAccountID && (h.Params.Value == "auto" || next.Account == h.Params.Value) {
+	if h.Params.ConfigID == CoopAccountID && (h.Params.Value == "auto" || next.Account == h.Params.Value) {
 		if h.Params.Value == "auto" && c.autoAccount != "" {
 			changed = true
 		}
@@ -2771,13 +2780,13 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	}
 	if changed {
 		c.sel = next
-		c.rot, c.rotFor = nil, acpSelection{}
+		c.rot, c.rotFor = nil, Selection{}
 	}
 	c.mu.Unlock()
 	if changed {
 		// Resolve now so the ack below renders the new effective provider and its account menu,
 		// rather than visibly flipping back until the respawn's config_option_update arrives.
-		_, _, _ = c.spawnTarget()
+		_, _, _ = c.SpawnTarget()
 		c.mu.Lock()
 		// The restart kills any in-flight turn mid-stream. Arm the same transparent resend a
 		// rate-limit rotation uses so the turn completes on the new selected target.
@@ -2790,7 +2799,7 @@ func (c *acpControl) fromEditor(line []byte) (handled bool, resp []byte, toAdapt
 	return true, c.ackOptions(h.ID, h.Params.SessionID), nil, changed
 }
 
-func (c *acpControl) authenticationTarget() (provider, account string) {
+func (c *Control) authenticationTarget() (provider, account string) {
 	c.mu.Lock()
 	provider = c.lead
 	sel := normalizeACPSelection(c.sel)
@@ -2826,7 +2835,7 @@ func rpcErrorResponse(id json.RawMessage, code int, message string) []byte {
 // ackOptions builds the reply to an editor set_config_option coop answers itself — the full
 // refreshed option set (fresh coop dropdowns, natives per the current selection), re-cached so
 // the next refresh starts from what the editor now shows.
-func (c *acpControl) ackOptions(id json.RawMessage, sid string) []byte {
+func (c *Control) ackOptions(id json.RawMessage, sid string) []byte {
 	refreshed := c.refreshSetup(sid)
 	result := map[string]json.RawMessage{}
 	if len(refreshed) > 0 {
@@ -2840,7 +2849,7 @@ func (c *acpControl) ackOptions(id json.RawMessage, sid string) []byte {
 // setModelFromEditor handles a set of coop's synthesized model dropdown: it rewrites the request to
 // session/set_model while retaining the editor's id. The normal proxy response path therefore records
 // and acknowledges the pick only after adapter success. No box restart — this is a live switch.
-func (c *acpControl) setModelFromEditor(id json.RawMessage, sid, value string) (bool, []byte, []byte, bool) {
+func (c *Control) setModelFromEditor(id json.RawMessage, sid, value string) (bool, []byte, []byte, bool) {
 	if len(id) == 0 || sid == "" || value == "" {
 		return true, rpcErrorResponse(id, -32602, "session/set_config_option requires a session and model"), nil, false
 	}
@@ -2858,7 +2867,7 @@ func (c *acpControl) setModelFromEditor(id json.RawMessage, sid, value string) (
 // translatedModelResponse converts a provider's session/set_model response back into the response
 // shape expected for the editor's original session/set_config_option request. Provider errors remain
 // errors; successful replies carry the full refreshed option set at the accepted model.
-func (c *acpControl) translatedModelResponse(line []byte, target nativeTargetResult) []byte {
+func (c *Control) translatedModelResponse(line []byte, target nativeTargetResult) []byte {
 	var response map[string]json.RawMessage
 	if json.Unmarshal(line, &response) != nil {
 		return line
@@ -2918,7 +2927,7 @@ func modelRestartSuggested(raw json.RawMessage) bool {
 // refreshModelAck rebuilds the cached option array with fresh coop dropdowns and the model
 // option's currentValue set to value — the ack a synthesized-model set echoes so the editor's
 // dropdown keeps the pick.
-func (c *acpControl) refreshModelAck(sid, value string) json.RawMessage {
+func (c *Control) refreshModelAck(sid, value string) json.RawMessage {
 	refreshed := c.refreshSetup(sid)
 	var arr []json.RawMessage
 	if json.Unmarshal(refreshed, &arr) != nil {
@@ -2947,7 +2956,7 @@ func (c *acpControl) refreshModelAck(sid, value string) json.RawMessage {
 // refreshSetup re-renders from provider-tagged native truth. The replay flag permits an adapter that
 // omits metadata on session/load to reuse only the same provider's prior controls; a cross-provider
 // switch therefore cannot echo the source provider's model menu.
-func (c *acpControl) refreshSetup(sid string) json.RawMessage {
+func (c *Control) refreshSetup(sid string) json.RawMessage {
 	return c.rewriteConfigOptions(json.RawMessage("[]"), nil, sid, true)
 }
 
@@ -2974,7 +2983,7 @@ func chooseAllow(opts []permOption) string {
 	return ""
 }
 
-func optionHasValue(opts []acpOption, v string) bool {
+func optionHasValue(opts []Option, v string) bool {
 	for _, o := range opts {
 		if o.Value == v {
 			return true

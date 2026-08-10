@@ -2,8 +2,8 @@
 name: acp-scripted-e2e
 description: ACP state machines are exhaustive in the scripted runtime; real adapters get an isolated conformance layer
 subsystem: acp
-sources: [Makefile, internal/acpproxy/scripted_matrix_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, internal/acpproxy/testdata/acpfixture/main.go, internal/cli/acp_process_live.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/cleanup.go]
-updated: 2026-07-15
+sources: [Makefile, internal/acpproxy/scripted_matrix_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, internal/acpproxy/testdata/acpfixture/main.go, internal/acpctl/process_live.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/cleanup.go]
+updated: 2026-08-10
 ---
 
 `COOP_RUNTIME` lets process tests drive the built outer supervisor, inner re-exec, controller,
@@ -52,6 +52,8 @@ denial tests; the installed-adapter prompts remain opt-in.
 Related: [[acp-replay-publication]], [[acp-target-commit]], [[acp-carry-echo]].
 
 ## Changelog
+- 2026-08-10 - source path only: `internal/cli/acp_process_live.go` → `internal/acpctl/process_live.go`
+  (the ACP control plane's move to `internal/acpctl`, mechanical rename, no behavior change)
 - 2026-07-15 - bound process records to the external cleanup nonce, kept control across authenticated SIGHUP reloads, and denied registry overflow or unverifiable quiescence
 - 2026-07-15 - made tagged ACP generation admission and process-first teardown authoritative before label cleanup
 - 2026-07-15 - made the Make target strict, staged exact target/preset accounts, bounded preset copies, and added authoritative post-process label cleanup

@@ -1,6 +1,6 @@
 //go:build cooplivetest
 
-package cli
+package acpctl
 
 import (
 	"errors"
@@ -12,9 +12,9 @@ import (
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 )
 
-// prepareACPReload preserves the authenticated outer-supervisor capability across its immediate
+// PrepareACPReload preserves the authenticated outer-supervisor capability across its immediate
 // self-exec. Child processes still inherit neither the activation environment nor an open fd 3.
-func prepareACPReload() (func(), error) {
+func PrepareACPReload() (func(), error) {
 	rawFD := os.Getenv(liveprocess.ControlFDEnv)
 	processDir := os.Getenv(liveprocess.ProcessDirEnv)
 	cleanupID := os.Getenv(liveprocess.CleanupIDEnv)
