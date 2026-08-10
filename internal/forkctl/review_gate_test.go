@@ -1,4 +1,4 @@
-package cli
+package forkctl
 
 import (
 	"os"
@@ -35,11 +35,11 @@ func setupReviewGateFork(t *testing.T, conflict bool) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	forkPath, parentPath := filepath.Join(ws, "fork.txt"), filepath.Join(repo, "parent.txt")
+	ForkPath, parentPath := filepath.Join(ws, "fork.txt"), filepath.Join(repo, "parent.txt")
 	if conflict {
-		forkPath, parentPath = filepath.Join(ws, "shared.txt"), filepath.Join(repo, "shared.txt")
+		ForkPath, parentPath = filepath.Join(ws, "shared.txt"), filepath.Join(repo, "shared.txt")
 	}
-	if err := os.WriteFile(forkPath, []byte("fork\n"), 0o644); err != nil {
+	if err := os.WriteFile(ForkPath, []byte("fork\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, ws, "add", "-A")
@@ -52,11 +52,11 @@ func setupReviewGateFork(t *testing.T, conflict bool) (string, string) {
 	return repo, ws
 }
 
-func reviewCommandOutput(t *testing.T, a *app, args ...string) (string, int, error) {
+func reviewCommandOutput(t *testing.T, c *Control, args ...string) (string, int, error) {
 	t.Helper()
 	var code int
 	var err error
-	out := captureStdout(t, func() { code, err = a.forkReview(args) })
+	out := captureStdout(t, func() { code, err = c.ForkReview(args) })
 	return out, code, err
 }
 
@@ -180,10 +180,10 @@ func TestForkReviewGateOutcomes(t *testing.T) {
 		tmp := t.TempDir()
 		t.Setenv("TMPDIR", tmp)
 		parentBefore, forkBefore := reviewSourceSnapshot(repo), reviewSourceSnapshot(ws)
-		a := &app{cfg: &config.Config{RepoOverride: repo}}
-		out, code, err := reviewCommandOutput(t, a, "perf", "--gate", "--stat")
+		c := &Control{cfg: &config.Config{RepoOverride: repo}}
+		out, code, err := reviewCommandOutput(t, c, "perf", "--gate", "--stat")
 		if err != nil || code != 0 {
-			t.Fatalf("forkReview = (%d, %v), want (0, nil)\n%s", code, err, out)
+			t.Fatalf("ForkReview = (%d, %v), want (0, nil)\n%s", code, err, out)
 		}
 		if !strings.Contains(out, "gate: none configured — rebase clean") {
 			t.Errorf("missing no-gate outcome:\n%s", out)
@@ -198,18 +198,17 @@ func TestForkReviewGateOutcomes(t *testing.T) {
 		t.Setenv("TMPDIR", tmp)
 		parentBefore, forkBefore := reviewSourceSnapshot(repo), reviewSourceSnapshot(ws)
 		called := false
-		a := &app{
-			cfg:   &config.Config{RepoOverride: repo, BaseImage: "gate-image", Gate: []string{"make", "check"}},
-			rt:    runtime.Runtime{Name: "definitely-not-a-runtime"},
-			rtSet: true,
+		c := &Control{
+			cfg: &config.Config{RepoOverride: repo, BaseImage: "gate-image", Gate: []string{"make", "check"}},
+			rt:  runtime.Runtime{Name: "definitely-not-a-runtime"},
 			gateOK: func(_, _, _ string) bool {
 				called = true
 				return true
 			},
 		}
-		out, code, err := reviewCommandOutput(t, a, "perf", "--gate", "--stat")
+		out, code, err := reviewCommandOutput(t, c, "perf", "--gate", "--stat")
 		if err != nil || code != 1 {
-			t.Fatalf("forkReview = (%d, %v), want (1, nil)\n%s", code, err, out)
+			t.Fatalf("ForkReview = (%d, %v), want (1, nil)\n%s", code, err, out)
 		}
 		if called {
 			t.Error("gate ran despite the rebase conflict")
@@ -230,14 +229,13 @@ func TestForkReviewGateOutcomes(t *testing.T) {
 		if err := os.WriteFile(runtimePath, []byte("#!/bin/sh\nrm -- \"$0\"\nexit 0\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		a := &app{
-			cfg:   &config.Config{RepoOverride: repo, BaseImage: "gate-image", Gate: []string{"true"}, Egress: "none"},
-			rt:    runtime.Runtime{Name: runtimePath},
-			rtSet: true,
+		c := &Control{
+			cfg: &config.Config{RepoOverride: repo, BaseImage: "gate-image", Gate: []string{"true"}, Egress: "none"},
+			rt:  runtime.Runtime{Name: runtimePath},
 		}
-		_, code, err := reviewCommandOutput(t, a, "perf", "--gate", "--stat")
+		_, code, err := reviewCommandOutput(t, c, "perf", "--gate", "--stat")
 		if err == nil || code != -1 || !strings.Contains(err.Error(), "run review gate") {
-			t.Fatalf("forkReview = (%d, %v), want operational gate error", code, err)
+			t.Fatalf("ForkReview = (%d, %v), want operational gate error", code, err)
 		}
 		assertReviewSourcesUnchanged(t, repo, ws, parentBefore, forkBefore)
 		assertReviewScratchEmpty(t, tmp)
@@ -258,10 +256,9 @@ func TestForkReviewGateOutcomes(t *testing.T) {
 			t.Setenv("TMPDIR", tmp)
 			parentBefore, forkBefore := reviewSourceSnapshot(repo), reviewSourceSnapshot(ws)
 			var scratch string
-			a := &app{
-				cfg:   &config.Config{RepoOverride: repo, BaseImage: "gate-image", Gate: []string{"make", "check"}},
-				rt:    runtime.Runtime{Name: "true"},
-				rtSet: true,
+			c := &Control{
+				cfg: &config.Config{RepoOverride: repo, BaseImage: "gate-image", Gate: []string{"make", "check"}},
+				rt:  runtime.Runtime{Name: "true"},
 				gateOK: func(gateRepo, treeDir, _ string) bool {
 					if gateRepo != repo {
 						t.Errorf("gate policy repo = %q, want parent %q", gateRepo, repo)
@@ -281,9 +278,9 @@ func TestForkReviewGateOutcomes(t *testing.T) {
 					return tc.green
 				},
 			}
-			out, code, err := reviewCommandOutput(t, a, "perf", "--gate", "--stat")
+			out, code, err := reviewCommandOutput(t, c, "perf", "--gate", "--stat")
 			if err != nil || code != tc.wantCode {
-				t.Fatalf("forkReview = (%d, %v), want (%d, nil)\n%s", code, err, tc.wantCode, out)
+				t.Fatalf("ForkReview = (%d, %v), want (%d, nil)\n%s", code, err, tc.wantCode, out)
 			}
 			if !strings.Contains(out, tc.wantLine) {
 				t.Errorf("missing %s outcome:\n%s", tc.name, out)
@@ -312,18 +309,17 @@ func TestForkReviewWithoutGateKeepsExistingPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TMPDIR", badTmp) // a scratch clone would fail immediately
-	a := &app{
-		cfg:   &config.Config{RepoOverride: repo, Gate: []string{"make", "check"}},
-		rt:    runtime.Runtime{Name: "definitely-not-a-runtime"},
-		rtSet: true,
+	c := &Control{
+		cfg: &config.Config{RepoOverride: repo, Gate: []string{"make", "check"}},
+		rt:  runtime.Runtime{Name: "definitely-not-a-runtime"},
 		gateOK: func(_, _, _ string) bool {
 			t.Fatal("flag-off review must not run the gate")
 			return false
 		},
 	}
-	out, code, err := reviewCommandOutput(t, a, "perf", "--stat")
+	out, code, err := reviewCommandOutput(t, c, "perf", "--stat")
 	if err != nil || code != 0 {
-		t.Fatalf("forkReview = (%d, %v), want (0, nil)\n%s", code, err, out)
+		t.Fatalf("ForkReview = (%d, %v), want (0, nil)\n%s", code, err, out)
 	}
 	if !strings.Contains(out, "runs at merge — rolled back on failure") {
 		t.Errorf("flag-off dossier changed:\n%s", out)
@@ -340,9 +336,9 @@ func TestForkReviewWithoutGateKeepsExistingPath(t *testing.T) {
 }
 
 func TestForkReviewGateRejectsOpen(t *testing.T) {
-	a := &app{cfg: &config.Config{}}
-	if code, err := a.forkReview([]string{"perf", "--gate", "--open"}); code != 2 || err == nil || !strings.Contains(err.Error(), "cannot be combined") {
-		t.Fatalf("forkReview(--gate --open) = (%d, %v), want usage rejection", code, err)
+	c := &Control{cfg: &config.Config{}}
+	if code, err := c.ForkReview([]string{"perf", "--gate", "--open"}); code != 2 || err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("ForkReview(--gate --open) = (%d, %v), want usage rejection", code, err)
 	}
 }
 

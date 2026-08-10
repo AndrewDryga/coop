@@ -139,6 +139,18 @@
   it, so a turn no provider measured publishes no `usage` object at all rather than four zeros a
   caller would price as a free turn.
 
+- _Internal restructuring, no user-visible change._ The **fork/fleet control plane** — supervision
+  (claim, stop, reap, detach, logs), `fork ls`/`status`, the review dossier and its isolated gate, the
+  fast-forward-only land, the declarative fleet, and the live `coop fleet watch` board — moved out of
+  `internal/cli` into a new `internal/forkctl` (~8.7k lines with tests). Unlike the four extractions
+  before it, this family is not an engine sitting under the CLI; it sits at the same altitude, so the
+  seam is a cut line rather than a lift: **cli keeps LAUNCH** (opening or resuming a fork — preset,
+  one-off target, image, peers, `box.Run` — plus the `coop fork`/`coop fleet` dispatchers, now
+  `internal/cli/fork_cmd.go`) and **forkctl owns LIFECYCLE** (everything a fork needs once it
+  exists). That line is what keeps the injected surface at three functions instead of twenty. The
+  fork's on-disk contract stays one level below in `internal/forkspace`, unchanged. Every command,
+  every message, and every exit code is byte-identical, the fleet board included.
+
 - _Internal restructuring, no user-visible change._ Two pieces of shared plumbing that had already
   drifted into duplicates moved to their one right home, ahead of the fork/fleet extraction that
   would have minted a third copy of each. The **git signing policy and driver neutralizer** —

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 func TestHasYes(t *testing.T) {
@@ -74,7 +75,8 @@ func TestGitOutErr(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	repo := initRepo(t)
+	repo, run := gitrepo.New(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
 	if head, err := gitOutErr(repo, "rev-parse", "HEAD"); err != nil || head == "" {
 		t.Fatalf("gitOutErr(rev-parse HEAD) = (%q, %v), want a sha and no error", head, err)
 	}

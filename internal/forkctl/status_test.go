@@ -1,4 +1,4 @@
-package cli
+package forkctl
 
 import (
 	"io"
@@ -65,10 +65,10 @@ func TestSnapshotShowsLocalQueueWhenNoForks(t *testing.T) {
 	root := filepath.Join(repo, tasksRoot)
 	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-a", "task.md"), "# Wire auth\n")
 	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-02-b", "task.md"), "# shipped\n")
-	a := &app{cfg: &config.Config{RepoOverride: repo, TasksFiles: []string{tasksRoot}}}
+	c := &Control{cfg: &config.Config{RepoOverride: repo, TasksFiles: []string{tasksRoot}}}
 
 	out := captureStderr(t, func() {
-		if code, err := a.fleetSnapshot(repo); code != 0 || err != nil {
+		if code, err := c.fleetSnapshot(repo); code != 0 || err != nil {
 			t.Fatalf("snapshot: code=%d err=%v", code, err)
 		}
 	})
@@ -78,7 +78,7 @@ func TestSnapshotShowsLocalQueueWhenNoForks(t *testing.T) {
 
 	// No forks AND no queue → the plain message stays.
 	empty := t.TempDir()
-	b := &app{cfg: &config.Config{RepoOverride: empty, TasksFiles: []string{tasksRoot}}}
+	b := &Control{cfg: &config.Config{RepoOverride: empty, TasksFiles: []string{tasksRoot}}}
 	out2 := captureStderr(t, func() { _, _ = b.fleetSnapshot(empty) })
 	if !strings.Contains(out2, "no forks yet") {
 		t.Errorf("an empty repo should still show 'no forks yet':\n%s", out2)

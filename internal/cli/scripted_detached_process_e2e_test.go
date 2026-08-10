@@ -16,6 +16,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -60,7 +61,7 @@ func TestProviderScriptedDetachedForkLifecycle(t *testing.T) {
 		run := oneProcessEvent(t, trace, "runtime", "run")
 		wantLabels := []string{
 			"coop.fork=" + processTraceValue(name),
-			"coop.fork-owner=" + processTraceValue(forkContainerOwner(suite.layout.Repo, name)),
+			"coop.fork-owner=" + processTraceValue(forkctl.ForkContainerOwner(suite.layout.Repo, name)),
 		}
 		for _, label := range wantLabels {
 			if run.Run == nil || !slices.Contains(run.Run.Labels, label) {
@@ -117,7 +118,7 @@ func TestProviderScriptedFleetPresetLifecycle(t *testing.T) {
 	}
 	writeLoopRecoveryPreset(t, suite.layout.Repo, "fleet-all", targets)
 	fleet := fmt.Sprintf("forks:\n  %s:\n    tasks: .agent/tasks\n    agent: fleet-all\n", name)
-	if err := os.WriteFile(fleetYAMLFile(suite.layout.Repo), []byte(fleet), 0o600); err != nil {
+	if err := os.WriteFile(forkctl.FleetYAMLFile(suite.layout.Repo), []byte(fleet), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	suite.reset(t, loopProcessScenario{
@@ -252,8 +253,8 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 		t.Fatalf("runtime runs = %d, want 2", len(runs))
 	}
 	readable := "coop.fork=" + processTraceValue(name)
-	firstOwner := "coop.fork-owner=" + processTraceValue(forkContainerOwner(suite.layout.Repo, name))
-	secondOwner := "coop.fork-owner=" + processTraceValue(forkContainerOwner(secondRepo, name))
+	firstOwner := "coop.fork-owner=" + processTraceValue(forkctl.ForkContainerOwner(suite.layout.Repo, name))
+	secondOwner := "coop.fork-owner=" + processTraceValue(forkctl.ForkContainerOwner(secondRepo, name))
 	if firstOwner == secondOwner || !slices.Contains(runs[0].Labels, readable) || !slices.Contains(runs[1].Labels, readable) ||
 		!slices.Contains(runs[0].Labels, firstOwner) || !slices.Contains(runs[1].Labels, secondOwner) {
 		t.Fatalf("repo-scoped labels = %#v / %#v, want readable %q and owners %q / %q", runs[0].Labels, runs[1].Labels, readable, firstOwner, secondOwner)

@@ -1,4 +1,4 @@
-package cli
+package forkctl
 
 import (
 	"fmt"
@@ -41,20 +41,21 @@ type fleetRow struct {
 	cost    float64 // the fork's total spend across its loop runs (from its COOP_RUN_ID telemetry), 0 if none
 }
 
-func gatherFleetRow(repo, name string) fleetRow {
+func (c *Control) gatherFleetRow(repo, name string) fleetRow {
 	ws := forkspace.Workspace(repo, name)
 	counts, active := tasks.QueueCounts(tasks.WsTaskSource(ws))
 	running := forkspace.RunningPid(repo, name) != 0
+	cost, _ := c.host.forkCost(ws)
 	return fleetRow{
 		name:    name,
-		agent:   readForkAgent(ws),
+		agent:   ReadForkAgent(ws),
 		running: running,
 		cleanup: !running && pathExists(forkspace.PidPath(repo, name)),
 		ran:     forkRan(repo, name),
 		counts:  counts,
 		active:  active,
 		lastLog: lastLogLine(forkspace.LogPath(repo, name)),
-		cost:    costForRepo(ws).total.usd,
+		cost:    cost,
 	}
 }
 
@@ -78,20 +79,20 @@ func keepLastGood(fresh, prev fleetRow) fleetRow {
 	return fresh
 }
 
-// fleetWatch renders the live `coop fleet watch` board — every fork's progress, refreshed by polling
+// FleetWatch renders the live `coop fleet watch` board — every fork's progress, refreshed by polling
 // the same per-fork queue/pidfiles the snapshot reads plus the tail of each fork's log. It is
 // read-only: it auto-exits with a final summary frame once the fleet is finished (nothing running,
 // nothing left to start), and Ctrl-C exits 0 anytime. Without a TTY to animate, or with no forks to
 // watch, it prints a single fleetSnapshot roll-up instead — so it stays pipe-safe and useful solo.
-func (a *app) fleetWatch() (int, error) {
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+func (c *Control) FleetWatch() (int, error) {
+	repo, err := box.ResolveRepo(c.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
 	// No TTY to animate, or no forks to watch (a lone local loop) → the one-shot roll-up, which
 	// still reports the local queue. Keeps `coop fleet watch` pipe-safe and useful before a fleet.
 	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) || len(forkspace.LifecycleNames(repo)) == 0 {
-		return a.fleetSnapshot(repo)
+		return c.fleetSnapshot(repo)
 	}
 
 	// Render on the alternate screen (like top/htop). A bottom-pinned region repaints by counting
@@ -109,7 +110,7 @@ func (a *app) fleetWatch() (int, error) {
 		next := make(map[string]fleetRow, len(names)) // rebuilt each tick so a removed fork's row drops out
 		running := 0
 		for i, n := range names {
-			row := keepLastGood(gatherFleetRow(repo, n), prev[n])
+			row := keepLastGood(c.gatherFleetRow(repo, n), prev[n])
 			next[n] = row
 			rows[i] = row
 			if row.running {
@@ -127,7 +128,7 @@ func (a *app) fleetWatch() (int, error) {
 		}
 		return frame, running == 0 && (sawRunning || fleetSettled(rows))
 	}
-	return runWatchLoop(screen, tick, func() {
+	return c.host.runWatchLoop(screen, tick, func() {
 		ui.Note("fleet idle — every fork is done, stopped, or blocked; watch exited")
 	})
 }

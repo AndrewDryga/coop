@@ -2,7 +2,7 @@
 name: bare-subcommand-shows-help
 description: "a bare group prints help or its default view, never an empty-token error"
 scope: cli-grammar
-sources: [internal/cli/help.go, internal/cli/fork.go, internal/tasks/queue.go]
+sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/tasks/queue.go]
 check: "none"
 updated: 2026-08-10
 ---
@@ -30,6 +30,10 @@ Bare `coop` prints help; a bare group should match that.
   reviewed rule; check it whenever you add or touch a subcommand group.
 
 ## Changelog
+- 2026-08-10 — path-only: the fork/fleet extraction moved both group dispatchers into
+  `internal/cli/fork_cmd.go` (`cmdFork` → `forkHelp`, `cmdFleet` → `groupHelp("fleet")`). Both
+  dispatchers deliberately STAYED in cli when the rest of the family left, so this rule's subject is
+  unchanged; only the file name in `sources:` moved.
 - 2026-06-26 — created
 - 2026-07-02 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged

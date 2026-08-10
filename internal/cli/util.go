@@ -206,7 +206,8 @@ func gitArgs(dir string, args []string) []string {
 
 // gitOut runs `git -C dir <args>` hardened and returns trimmed stdout, or "" on error. Every repo
 // coop runs git against is agent-writable, so hardening is the default; to read a value coop will
-// execute or read a host file from, use gitGlobalOut (the trusted global scope), never the repo.
+// execute or read a host file from, read the trusted GLOBAL scope (`git config --global`), never the
+// repo.
 // It CONFLATES a failed read with an empty one — fine for display, wrong for a decision: read those
 // with gitOutErr.
 func gitOut(dir string, args ...string) string {
@@ -238,14 +239,6 @@ func gitRun(dir string, args ...string) error {
 	return exec.Command("git", gitArgs(dir, args)...).Run()
 }
 
-// gitInteractive runs a hardened git command wired to the real stdio (a diff to the terminal, a
-// signing pinentry prompt, etc).
-func gitInteractive(dir string, args ...string) error {
-	cmd := exec.Command("git", gitArgs(dir, args)...)
-	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
-	return cmd.Run()
-}
-
 // gitSign runs a hardened git command (like a rebase with signing), wiring Stdin
 // so a TTY pinentry still works, but capturing CombinedOutput to silence benign chatter.
 // The captured output is replayed to Stderr only on failure, or if GIT_TRACE is set.
@@ -264,65 +257,7 @@ func gitSignTo(stderr io.Writer, dir string, args ...string) error {
 	return err
 }
 
-// gitGlobalOut reads from the host user's GLOBAL git config (`git config --global …`) — the
-// trusted scope an agent can't write — for any value coop reads then EXECUTES or reads a host file
-// from: your core.editor, your signing program, your global core.excludesfile. The repo's own
-// .git/config is agent-writable, so reading these from it would let a poisoned repo redirect coop
-// to run or exfiltrate whatever it names. They're all user-identity settings that live in your
-// global config anyway; a value only in repo config is treated as unset (fail closed). Returns ""
-// when unset or git is unavailable.
-func gitGlobalOut(args ...string) string {
-	out, err := exec.Command("git", append([]string{"config", "--global"}, args...)...).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-func gitBranch(dir string) string { return gitOut(dir, "rev-parse", "--abbrev-ref", "HEAD") }
-
 func gitDirty(dir string) bool { return gitOut(dir, "status", "--porcelain") != "" }
-
-// parseShortstat pulls insertion/deletion counts out of a `git diff --shortstat`
-// line ("N files changed, I insertions(+), D deletions(-)").
-func parseShortstat(s string) (ins, del int) {
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		n := 0
-		fmt.Sscanf(part, "%d", &n)
-		switch {
-		case strings.Contains(part, "insertion"):
-			ins = n
-		case strings.Contains(part, "deletion"):
-			del = n
-		}
-	}
-	return ins, del
-}
-
-// indent prefixes every line of s with two spaces.
-func indent(s string) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	for i, l := range lines {
-		lines[i] = "  " + l
-	}
-	return strings.Join(lines, "\n")
-}
-
-// approve reports whether a destructive step is approved. --yes approves without
-// asking; otherwise it prompts interactively. In a non-interactive run (no TTY)
-// without --yes it refuses rather than silently taking the default — so a pipe or CI
-// job can't land work and delete a fork on its own. Callers gate the whole command on
-// this up front (with a clear "pass --yes" error); this is also the safe fallback.
-func approve(prompt string, yes bool) bool {
-	if yes {
-		return true
-	}
-	if !ui.IsTerminal(os.Stdin) {
-		return false
-	}
-	return ui.Confirm(prompt, true)
-}
 
 // hasYes reports whether args carry the -y/--yes confirmation-skip flag that destructive commands
 // accept to run unattended (distinct from --force, which overrides a safety guard, not the prompt).

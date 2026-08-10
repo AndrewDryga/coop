@@ -2,8 +2,8 @@
 name: fork-lifecycle-state-file
 description: one file (<repo>-forks/.coop/<name>.pid) holds four fork lifecycle states, and only pid+start-token — never file age — may decide that its owner is gone
 subsystem: fork
-sources: [internal/forkspace/state.go, internal/cli/fork_loop.go, internal/cli/fork_merge.go, internal/processidentity/identity.go]
-updated: 2026-08-09
+sources: [internal/forkspace/state.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/processidentity/identity.go]
+updated: 2026-08-10
 ---
 Every fork's whole process lifecycle lives in ONE small file, `<repo>-forks/.coop/<name>.pid`, read
 and written through `forkspace.WorkerState` (`internal/forkspace/state.go`) — never by hand. Four
@@ -56,10 +56,10 @@ tombstone, and a launched-but-unrecorded worker all answer "held".
 
 ## Where recovery is allowed to act
 
-- `claimForkPidUnlocked` (`internal/cli/fork_loop.go`) — a provably dead pre-fork reservation is
+- `claimForkPidUnlocked` (`internal/forkctl/supervise.go`) — a provably dead pre-fork reservation is
   reclaimed loudly (`ui.Warn`), and a new reservation is written in its place. Everything else
-  refuses. It stays in cli precisely BECAUSE it warns: forkspace prints nothing.
-- `recoverInterruptedRebase` (`internal/cli/fork_merge.go`) — leftover `rebase-merge`/`rebase-apply`
+  refuses. It lives OUTSIDE forkspace precisely BECAUSE it warns: forkspace prints nothing.
+- `recoverInterruptedRebase` (`internal/forkctl/merge.go`) — leftover `rebase-merge`/`rebase-apply`
   in the fork's clone (a coop killed mid-land; `rebaseForkOntoParent` only aborts a rebase that
   FAILED) is `git rebase --abort`ed, but only when `forkspace.StateOwner` says nobody holds the fork,
   because the abort resets that worktree. In practice `mergeOne` already refuses a fork with ANY
@@ -69,6 +69,11 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-08-10 — supervision and the land moved OUT of `internal/cli` into the new
+  `internal/forkctl` control plane (`fork_loop.go` → `supervise.go`, `fork_merge.go` → `merge.go`);
+  the contract itself is unchanged and still lives in `internal/forkspace`. The one cli residue that
+  matters here: `lockLoopCheckout`/`lockSessionProducer` stayed in `internal/cli/fork_loop.go` — they
+  are LOOP locks, not fork lifecycle state, and the loop-engine extraction owns them next.
 - 2026-08-09 — the state file moved to the new `internal/forkspace` leaf (with the workspace paths,
   the name rule, and clone/destroy) so the sessions service can import the contract instead of
   taking a 12-method interface; supervision stayed in cli. Identifiers re-verified against

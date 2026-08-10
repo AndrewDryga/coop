@@ -2,7 +2,7 @@
 name: loop-range-rejects-outside-commits
 description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock (fork_loop.go) closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/cli/commands.go, internal/cli/fork_loop.go, internal/cli/sign.go, internal/cli/fork_merge.go]
+sources: [internal/tasks/audit.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/cli/commands.go, internal/cli/fork_loop.go, internal/cli/sign.go, internal/forkctl/merge.go]
 updated: 2026-08-10
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the

@@ -1,4 +1,4 @@
-package cli
+package forkctl
 
 import (
 	"bytes"
@@ -22,79 +22,19 @@ import (
 	containerruntime "github.com/AndrewDryga/coop/internal/runtime"
 )
 
-func TestParseForkCreateLoopFlags(t *testing.T) {
-	tests := []struct {
-		args                 []string
-		loop, detach, worker bool
-		agent, tasks         string
-	}{
-		{[]string{"perf", "codex", "--loop", "--tasks", "q.md"}, true, false, false, "codex", "q.md"},
-		{[]string{"perf", "-d", "--tasks", "q.md"}, true, true, false, "", "q.md"},                      // no positional agent → "" (required later)
-		{[]string{"perf", "--loop", "--detach", "--tasks", "q.md"}, true, true, false, "", "q.md"},      // long form of -d
-		{[]string{"perf", "gemini", "--loop", "-d", "-t", "q.md"}, true, true, false, "gemini", "q.md"}, // short -t
-		{[]string{"perf", "--loop", "--tasks=q.md"}, true, false, false, "", "q.md"},                    // --tasks=VALUE form
-		{[]string{"perf", "--_detached", "--tasks", "q.md"}, true, false, true, "", "q.md"},
-	}
-	for _, tc := range tests {
-		fa, err := parseForkCreate(tc.args)
-		if err != nil {
-			t.Errorf("parseForkCreate(%v) err = %v", tc.args, err)
-			continue
-		}
-		if fa.loop != tc.loop || fa.detach != tc.detach || fa.worker != tc.worker || fa.agent != tc.agent || fa.tasks != tc.tasks {
-			t.Errorf("parseForkCreate(%v) = {loop:%v detach:%v worker:%v agent:%q tasks:%q}, want {loop:%v detach:%v worker:%v agent:%q tasks:%q}",
-				tc.args, fa.loop, fa.detach, fa.worker, fa.agent, fa.tasks, tc.loop, tc.detach, tc.worker, tc.agent, tc.tasks)
-		}
-	}
-
-	// --loop / -d without --tasks is allowed now — runForkLoop defaults it to every
-	// project.TaskDirs queue (it knows the repo). --tasks without --loop is still an error.
-	if _, err := parseForkCreate([]string{"perf", "--loop"}); err != nil {
-		t.Errorf("parseForkCreate(--loop, no --tasks): want no error (defaults later), got %v", err)
-	}
-	if _, err := parseForkCreate([]string{"perf", "-d"}); err != nil {
-		t.Errorf("parseForkCreate(-d, no --tasks): want no error (defaults later), got %v", err)
-	}
-	if _, err := parseForkCreate([]string{"perf", "--tasks", "q.md"}); err == nil {
-		t.Error("parseForkCreate(--tasks without --loop): want error")
-	}
-}
-
-func TestParseForkCreateCredential(t *testing.T) {
-	// The target pins the account + model; it sits happily among the loop flags.
-	fa, err := parseForkCreate([]string{"perf", "claude:opus-4.8@work", "--loop", "--tasks", "q.md"})
-	if err != nil {
-		t.Fatalf("parseForkCreate err = %v", err)
-	}
-	if fa.credential != "work" || fa.model != "opus-4.8" {
-		t.Errorf("credential=%q model=%q, want work / opus-4.8", fa.credential, fa.model)
-	}
-	// --profile/--credential/--model are not fork flags — each errors as an unknown arg,
-	// in both space and = forms.
-	for _, args := range [][]string{
-		{"perf", "--profile", "work"}, {"perf", "--profile=work"},
-		{"perf", "--credential", "work"}, {"perf", "--credential=work"},
-		{"perf", "--model", "opus"},
-	} {
-		if _, err := parseForkCreate(args); err == nil {
-			t.Errorf("parseForkCreate(%v): an unknown flag must error, got nil", args)
-		}
-	}
-}
-
 func TestForkStopMessages(t *testing.T) {
 	repo := t.TempDir()
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
 	// A fork that doesn't exist → "no such fork" (matching ls/path/rm), not "not running".
-	if code, err := a.forkStop([]string{"ghost"}); code != 1 || err == nil || !strings.Contains(err.Error(), "no such fork") {
-		t.Errorf("forkStop(ghost) = (%d, %v), want (1, no such fork)", code, err)
+	if code, err := a.ForkStop([]string{"ghost"}); code != 1 || err == nil || !strings.Contains(err.Error(), "no such fork") {
+		t.Errorf("ForkStop(ghost) = (%d, %v), want (1, no such fork)", code, err)
 	}
 	// Stopping an already-idle fork is idempotent.
 	if err := os.MkdirAll(forkspace.Workspace(repo, "idle"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := a.forkStop([]string{"idle"}); code != 0 || err != nil {
-		t.Errorf("forkStop(idle) = (%d, %v), want (0, nil)", code, err)
+	if code, err := a.ForkStop([]string{"idle"}); code != 0 || err != nil {
+		t.Errorf("ForkStop(idle) = (%d, %v), want (0, nil)", code, err)
 	}
 }
 
@@ -110,8 +50,8 @@ func TestDetachStartFailureReleasesReservation(t *testing.T) {
 	if err := os.Mkdir(forkspace.LogPath(repo, name), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	if code, err := a.detachForkLoop(repo, name, "codex", "", "", "", "", "", nil); code != -1 || err == nil {
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
+	if code, err := a.DetachForkLoop(repo, name, "codex", "", "", "", "", "", nil); code != -1 || err == nil {
 		t.Fatalf("detach with unwritable log target = (%d, %v), want startup failure", code, err)
 	}
 	if pathExists(forkspace.PidPath(repo, name)) {
@@ -138,8 +78,8 @@ func TestDetachReclaimsAbandonedReservation(t *testing.T) {
 	if err := os.Mkdir(forkspace.LogPath(repo, name), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	code, err := a.detachForkLoop(repo, name, "codex", "", "", "", "", "", nil)
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.DetachForkLoop(repo, name, "codex", "", "", "", "", "", nil)
 	if code != -1 || err == nil || strings.Contains(err.Error(), "coop fork stop") {
 		t.Fatalf("detach over an abandoned reservation = (%d, %v), want the reclaim to proceed to startup", code, err)
 	}
@@ -156,8 +96,8 @@ func TestForkStopKeepsLegacyContainerCleanupVisible(t *testing.T) {
 	if err := os.WriteFile(forkspace.PidPath(repo, "perf"), []byte("2147483646\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	code, err := a.forkStop([]string{"perf"})
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.ForkStop([]string{"perf"})
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "predates repository-scoped") || !strings.Contains(err.Error(), "coop.fork=perf") {
 		t.Fatalf("legacy cleanup stop = (%d, %v), want explicit manual recovery", code, err)
 	}
@@ -224,8 +164,8 @@ while :; do sleep 10; done
 	if err := os.WriteFile(forkspace.PidPath(repo, "perf"), []byte(legacy), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}, rtSet: true}
-	code, err := a.forkStop([]string{"perf"})
+	a := &Control{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}}
+	code, err := a.ForkStop([]string{"perf"})
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "predates repository-scoped") {
 		t.Fatalf("stop live legacy worker = (%d, %v), want manual cleanup result", code, err)
 	}
@@ -261,8 +201,8 @@ func TestForkStopFindsReservedLegacyNameWithoutWorkspace(t *testing.T) {
 	if names := forkspace.LifecycleNames(repo); !slices.Contains(names, "stop") {
 		t.Fatalf("lifecycle names = %v, want reserved legacy name", names)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}, rtSet: true}
-	if code, err := a.forkStop([]string{"stop"}); code != 0 || err != nil {
+	a := &Control{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}}
+	if code, err := a.ForkStop([]string{"stop"}); code != 0 || err != nil {
 		t.Fatalf("stop reserved legacy fork = (%d, %v), want success", code, err)
 	}
 }
@@ -287,10 +227,10 @@ func TestForkStopRejectsMalformedStateWithoutSignaling(t *testing.T) {
 	if err := os.WriteFile(forkspace.PidPath(repo, "perf"), []byte(fmt.Sprintf("reap-pend\n%d\n", worker.Process.Pid)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	code, err := a.forkStop([]string{"perf"})
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.ForkStop([]string{"perf"})
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "malformed") || !strings.Contains(err.Error(), "coop fork stop perf") {
-		t.Fatalf("forkStop malformed state = (%d, %v), want actionable refusal", code, err)
+		t.Fatalf("ForkStop malformed state = (%d, %v), want actionable refusal", code, err)
 	}
 	if err := worker.Process.Signal(syscall.Signal(0)); err != nil {
 		t.Errorf("malformed state must not signal a possibly live worker: %v", err)
@@ -316,10 +256,10 @@ func TestForkStopRefusesUnverifiedLegacyLivePID(t *testing.T) {
 	if err := os.WriteFile(forkspace.PidPath(repo, "perf"), []byte(fmt.Sprintf("%d\nWed Jun 18 10:00:00 2026\n", worker.Process.Pid)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	code, err := a.forkStop([]string{"perf"})
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.ForkStop([]string{"perf"})
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "legacy state") || !strings.Contains(err.Error(), "kill -TERM") || !strings.Contains(err.Error(), "coop fork stop perf") {
-		t.Fatalf("forkStop legacy state = (%d, %v), want actionable refusal", code, err)
+		t.Fatalf("ForkStop legacy state = (%d, %v), want actionable refusal", code, err)
 	}
 	if err := worker.Process.Signal(syscall.Signal(0)); err != nil {
 		t.Errorf("legacy state must not signal an unverified live pid: %v", err)
@@ -344,10 +284,10 @@ func TestForkStopRejectsPIDOneWithoutSignaling(t *testing.T) {
 		return nil
 	}
 	t.Cleanup(func() { forkspace.SignalPID = oldSignal })
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	code, err := a.forkStop([]string{"perf"})
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.ForkStop([]string{"perf"})
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "malformed") {
-		t.Fatalf("forkStop(pid 1) = (%d, %v), want malformed-state refusal", code, err)
+		t.Fatalf("ForkStop(pid 1) = (%d, %v), want malformed-state refusal", code, err)
 	}
 	if called {
 		t.Fatal("pid 1 state must be rejected before any liveness probe or signal")
@@ -377,14 +317,13 @@ fi
 		t.Fatal(err)
 	}
 	t.Setenv("COOP_TEST_PID_PATH", forkspace.PidPath(repo, "perf"))
-	a := &app{
-		cfg:   &config.Config{RepoOverride: repo},
-		rt:    containerruntime.Runtime{Name: runtimeCLI},
-		rtSet: true,
+	a := &Control{
+		cfg: &config.Config{RepoOverride: repo},
+		rt:  containerruntime.Runtime{Name: runtimeCLI},
 	}
-	code, err := a.forkStop([]string{"perf"})
+	code, err := a.ForkStop([]string{"perf"})
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "cleanup state could not be cleared") || !strings.Contains(err.Error(), "coop fork stop perf") {
-		t.Fatalf("forkStop state removal failure = (%d, %v), want actionable error", code, err)
+		t.Fatalf("ForkStop state removal failure = (%d, %v), want actionable error", code, err)
 	}
 }
 
@@ -409,19 +348,18 @@ if [ "$1" = ps ]; then printf '%s\n' box-perf; fi
 		t.Fatal(err)
 	}
 	t.Setenv("COOP_TEST_EVENTS", events)
-	a := &app{
-		cfg:   &config.Config{RepoOverride: repo},
-		rt:    containerruntime.Runtime{Name: runtimeCLI},
-		rtSet: true,
+	a := &Control{
+		cfg: &config.Config{RepoOverride: repo},
+		rt:  containerruntime.Runtime{Name: runtimeCLI},
 	}
-	if code, err := a.forkStop([]string{"perf"}); code != 0 || err != nil {
-		t.Fatalf("forkStop after worker crash = (%d, %v), want success", code, err)
+	if code, err := a.ForkStop([]string{"perf"}); code != 0 || err != nil {
+		t.Fatalf("ForkStop after worker crash = (%d, %v), want success", code, err)
 	}
 	data, err := os.ReadFile(events)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "ps -q -a --filter label=coop.fork-owner=" + forkContainerOwner(repo, "perf") + "\nrm -f box-perf\n"
+	want := "ps -q -a --filter label=coop.fork-owner=" + ForkContainerOwner(repo, "perf") + "\nrm -f box-perf\n"
 	if got := string(data); got != want {
 		t.Errorf("crash cleanup calls = %q, want %q", got, want)
 	}
@@ -430,7 +368,7 @@ if [ "$1" = ps ]; then printf '%s\n' box-perf; fi
 	}
 }
 
-// forkStop signals the detached worker before reaping only that fork's labeled box. The runtime
+// ForkStop signals the detached worker before reaping only that fork's labeled box. The runtime
 // shim makes both the orphan-present and already-gone paths deterministic without a real daemon.
 func TestForkStopReapsBoxAfterWorkerExit(t *testing.T) {
 	for _, tc := range []struct {
@@ -522,19 +460,18 @@ while :; do sleep 10; done
 			if err := os.WriteFile(forkspace.PidPath(repo, "perf"), pidState, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			a := &app{
-				cfg:   &config.Config{RepoOverride: repo},
-				rt:    containerruntime.Runtime{Name: runtimeCLI},
-				rtSet: true,
+			a := &Control{
+				cfg: &config.Config{RepoOverride: repo},
+				rt:  containerruntime.Runtime{Name: runtimeCLI},
 			}
 
-			code, stopErr := a.forkStop([]string{"perf"})
+			code, stopErr := a.ForkStop([]string{"perf"})
 			if tc.failure == "" {
 				if code != 0 || stopErr != nil {
-					t.Fatalf("forkStop(perf) = (%d, %v), want (0, nil)", code, stopErr)
+					t.Fatalf("ForkStop(perf) = (%d, %v), want (0, nil)", code, stopErr)
 				}
 			} else if code != 1 || stopErr == nil || !strings.Contains(stopErr.Error(), "box reap failed") || !strings.Contains(stopErr.Error(), "coop fork stop perf") {
-				t.Fatalf("forkStop(perf) = (%d, %v), want (1, box reap failed)", code, stopErr)
+				t.Fatalf("ForkStop(perf) = (%d, %v), want (1, box reap failed)", code, stopErr)
 			}
 			data, err := os.ReadFile(events)
 			if err != nil {
@@ -542,7 +479,7 @@ while :; do sleep 10; done
 			}
 			got := string(data)
 			termAt := strings.Index(got, "worker:term\n")
-			psCall := "runtime:ps -q -a --filter label=coop.fork-owner=" + forkContainerOwner(repo, "perf") + "\n"
+			psCall := "runtime:ps -q -a --filter label=coop.fork-owner=" + ForkContainerOwner(repo, "perf") + "\n"
 			psAt := strings.Index(got, psCall)
 			if termAt < 0 || psAt < 0 || termAt >= psAt {
 				t.Errorf("worker TERM must precede the exact-fork reap:\n%s", got)
@@ -565,8 +502,8 @@ while :; do sleep 10; done
 					t.Fatalf("claim during pending cleanup = %v, want actionable refusal", err)
 				}
 				t.Setenv("COOP_TEST_RUNTIME_FAILURE", "")
-				if retryCode, retryErr := a.forkStop([]string{"perf"}); retryCode != 0 || retryErr != nil {
-					t.Fatalf("forkStop(perf) retry = (%d, %v), want (0, nil)", retryCode, retryErr)
+				if retryCode, retryErr := a.ForkStop([]string{"perf"}); retryCode != 0 || retryErr != nil {
+					t.Fatalf("ForkStop(perf) retry = (%d, %v), want (0, nil)", retryCode, retryErr)
 				}
 				wantRuntime += psCall
 				if tc.containerID != "" {
@@ -628,10 +565,10 @@ func TestDetachForkLoopRefusesDoubleStart(t *testing.T) {
 	if err := forkspace.WritePid(repo, "perf", os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{}}
-	code, err := a.detachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil)
+	a := &Control{cfg: &config.Config{}}
+	code, err := a.DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil)
 	if err == nil {
-		t.Fatal("detachForkLoop started a second worker for an already-running fork")
+		t.Fatal("DetachForkLoop started a second worker for an already-running fork")
 	}
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
@@ -826,7 +763,7 @@ func TestForkLifecycleLockBlocksClaim(t *testing.T) {
 }
 
 // waitForExit returns immediately-true for a dead pid and false (after the timeout) for a live one
-// — forkStop uses it to confirm death before clearing the pidfile.
+// — ForkStop uses it to confirm death before clearing the pidfile.
 func TestWaitForExit(t *testing.T) {
 	if exited, err := waitForExit(2147483646, "", 2*time.Second); !exited || err != nil { // a pid that isn't running
 		t.Errorf("waitForExit(dead) = (%v, %v), want (true, nil)", exited, err)
@@ -873,9 +810,9 @@ func TestSeedForkQueuesSingleRepo(t *testing.T) {
 	ws := t.TempDir()
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-a", "task.md"), "# a\n")
 
-	queues, err := seedForkQueues(repo, ws, "", nil)
+	queues, err := SeedForkQueues(repo, ws, "", nil)
 	if err != nil {
-		t.Fatalf("seedForkQueues: %v", err)
+		t.Fatalf("SeedForkQueues: %v", err)
 	}
 	if len(queues) != 1 || queues[0] != filepath.FromSlash(tasksRoot) {
 		t.Fatalf("queues = %v, want [%s]", queues, tasksRoot)
@@ -903,9 +840,9 @@ func TestSeedForkQueuesMonorepo(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, "api", tasksRoot, stateTodo, "2026-01-02-api", "task.md"), "# api\n")
 	writeTaskFile(t, filepath.Join(repo, "web", tasksRoot, stateTodo, "2026-01-03-web", "task.md"), "# web\n")
 
-	queues, err := seedForkQueues(repo, ws, "", nil)
+	queues, err := SeedForkQueues(repo, ws, "", nil)
 	if err != nil {
-		t.Fatalf("seedForkQueues: %v", err)
+		t.Fatalf("SeedForkQueues: %v", err)
 	}
 	want := []string{
 		filepath.FromSlash(tasksRoot),
@@ -935,7 +872,7 @@ func TestSeedForkQueuesExplicitKeepsProgress(t *testing.T) {
 	src := filepath.Join(repo, "src-queue")
 	writeTaskFile(t, filepath.Join(src, stateTodo, "2026-01-01-a", "task.md"), "# a\n")
 
-	if _, err := seedForkQueues(repo, ws, src, nil); err != nil {
+	if _, err := SeedForkQueues(repo, ws, src, nil); err != nil {
 		t.Fatalf("first seed: %v", err)
 	}
 	if !isTaskDir(filepath.Join(ws, tasksRoot, stateTodo, "2026-01-01-a")) {
@@ -943,7 +880,7 @@ func TestSeedForkQueuesExplicitKeepsProgress(t *testing.T) {
 	}
 	// Second call: the fork already has a queue → onKept fires, source not re-applied.
 	kept := false
-	if _, err := seedForkQueues(repo, ws, src, func() { kept = true }); err != nil {
+	if _, err := SeedForkQueues(repo, ws, src, func() { kept = true }); err != nil {
 		t.Fatalf("resumed seed: %v", err)
 	}
 	if !kept {
@@ -954,66 +891,4 @@ func TestSeedForkQueuesExplicitKeepsProgress(t *testing.T) {
 func isDirTest(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.IsDir()
-}
-
-// A default `coop fork <name> --loop` (no --tasks) in a repo with NO task queue fails fast
-// BEFORE any clone — no stray fork workspace is left behind — instead of cloning and only
-// erroring later in the worker's log.
-func TestForkLoopDefaultNoQueueFailsFast(t *testing.T) {
-	repo := t.TempDir()
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	code, err := a.forkCreate([]string{"x", "--loop"})
-	if err == nil || !strings.Contains(err.Error(), "no task queue found") {
-		t.Fatalf("forkCreate(x --loop, no queue) = (%d, %v), want a 'no task queue found' error", code, err)
-	}
-	if pathExists(forkspace.Workspace(repo, "x")) {
-		t.Error("a fork workspace was created despite the fast-fail")
-	}
-}
-
-// Two loops in ONE checkout is the failure this lock exists for: each commits its own task, and
-// each one's completion range then holds the other's task-bound commit, so both are rejected and
-// finished work reopens. The second loop must be refused, and the refusal must name the holder.
-func TestLoopCheckoutLockRefusesASecondLoopInTheSameTree(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir()}
-	repo := t.TempDir()
-
-	release, err := lockLoopCheckout(cfg, repo)
-	if err != nil {
-		t.Fatalf("first lockLoopCheckout(%q) = %v, want it to be granted", repo, err)
-	}
-
-	if _, err = lockLoopCheckout(cfg, repo); err == nil {
-		t.Fatal("a second loop acquired the same checkout's lock; two loops would commit over each other")
-	} else if !strings.Contains(err.Error(), "another coop loop is already working") {
-		t.Errorf("second lockLoopCheckout error = %q, want it to say another loop holds the checkout", err)
-	} else if !strings.Contains(err.Error(), fmt.Sprintf("pid %d", os.Getpid())) {
-		t.Errorf("second lockLoopCheckout error = %q, want it to name the holding pid", err)
-	}
-
-	// Releasing hands the checkout to the next loop — a finished run must not park it forever.
-	release()
-	release2, err := lockLoopCheckout(cfg, repo)
-	if err != nil {
-		t.Fatalf("lockLoopCheckout after release = %v, want the checkout to be free again", err)
-	}
-	release2()
-}
-
-// The fleet is the reason this is keyed on the WORKTREE, not the repo: forks each run their own
-// loop concurrently, and a lock that serialized them would defeat forks entirely.
-func TestLoopCheckoutLockKeepsSeparateWorktreesParallel(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir()}
-
-	releaseA, err := lockLoopCheckout(cfg, t.TempDir())
-	if err != nil {
-		t.Fatalf("lock on worktree A = %v, want it granted", err)
-	}
-	defer releaseA()
-
-	releaseB, err := lockLoopCheckout(cfg, t.TempDir())
-	if err != nil {
-		t.Fatalf("lock on worktree B = %v, want concurrent forks to stay parallel", err)
-	}
-	defer releaseB()
 }

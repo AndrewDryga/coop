@@ -4,7 +4,7 @@ description: "UPPERCASE headers, one command per line, no `·`, command cell und
 scope: cli-output
 sources: [internal/cli/help.go]
 check: "go test ./internal/cli -run TestHelpRowsAlign"
-updated: 2026-07-11
+updated: 2026-08-10
 ---
 
 # Help output: UPPERCASE section headers, one command per line, no "·"
@@ -43,9 +43,13 @@ services" hides the one thing that makes the row make sense.
   entry (synopsis + `Usage:` + flags). A test ties `commandHelp` to `topLevelCommands`.
 - Never put `·` in a help string. Guard (help text only — runtime status/stat lines may
   still use `·` as a separator): `grep -n '·' internal/cli/help.go` should be empty, and in
-  `internal/cli/fork.go` only the non-help paths (`forkBrief`, the merge prompt) may have it.
+  `internal/cli/fork_cmd.go` only the non-help paths may have it, and the `·`-bearing fork paths
+  (`forkBrief`, the merge prompt) now live in `internal/forkctl/{review,merge}.go`.
 
 ## Changelog
+- 2026-08-10 — path-only: `forkHelp`/`forkHelpText` stayed in cli as
+  `internal/cli/fork_cmd.go` while the `·`-bearing runtime paths (`forkBrief`, the merge prompt)
+  left for `internal/forkctl`. The guard is unchanged; its second half now points at two files.
 - 2026-06-17 — created
 - 2026-07-11 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged

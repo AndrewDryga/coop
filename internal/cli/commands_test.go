@@ -24,6 +24,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 // The loop's closing banner must not claim "verified done" when the signoff reopened work — which it
@@ -90,7 +91,8 @@ func TestAdvanceStallHeadRead(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	repo := initRepo(t)
+	repo, run := gitrepo.New(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
 	a := &app{cfg: &config.Config{}}
 	hosts := []string{filepath.Join(t.TempDir(), "queue")} // empty queue: nothing settles on its own
 	base := gitOut(repo, "rev-parse", "HEAD")
@@ -101,7 +103,7 @@ func TestAdvanceStallHeadRead(t *testing.T) {
 		t.Fatalf("stalled iteration = (%s, %d, %d, %v), want (%s, 0, 1, nil)", head, baseline, stalls, err, base)
 	}
 	// A new commit is progress: it rebaselines and clears the stall count.
-	git(t, repo, "commit", "-q", "--allow-empty", "-m", "work")
+	run("commit", "-q", "--allow-empty", "-m", "work")
 	committed := gitOut(repo, "rev-parse", "HEAD")
 	head, baseline, stalls, err = a.advanceStall(repo, hosts, base, 0, 2, "task-x")
 	if err != nil || head != committed || baseline != 0 || stalls != 0 {
@@ -573,15 +575,12 @@ func TestReviewReopenReceipt(t *testing.T) {
 
 func reviewVerdictFixture(t *testing.T, ids ...string) (string, string, map[string]taskItem) {
 	t.Helper()
-	repo := t.TempDir()
-	git(t, repo, "init", "-q")
-	git(t, repo, "config", "user.email", "t@t")
-	git(t, repo, "config", "user.name", "T")
-	git(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	repo, run := gitrepo.New(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
 	root := filepath.Join(repo, tasksRoot)
 	taskByID := make(map[string]taskItem, len(ids))
 	for _, id := range ids {
-		git(t, repo, "commit", "-q", "--allow-empty", "-m", id, "-m", "Coop-Task: "+id)
+		run("commit", "-q", "--allow-empty", "-m", id, "-m", "Coop-Task: "+id)
 		taskByID[id] = taskForLease(t, root, stateDone, id)
 	}
 	return repo, root, taskByID
@@ -763,20 +762,17 @@ func TestApplyReviewVerdictIsHostOwnedAndFailClosed(t *testing.T) {
 	})
 
 	t.Run("production reopen records host-only generation and descendants", func(t *testing.T) {
-		repo := t.TempDir()
-		git(t, repo, "init", "-q")
-		git(t, repo, "config", "user.email", "t@t")
-		git(t, repo, "config", "user.name", "T")
+		repo, run := gitrepo.New(t)
 		if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		git(t, repo, "add", "a.txt")
-		git(t, repo, "commit", "-q", "-m", "A\n\nCoop-Task: task-a")
+		run("add", "a.txt")
+		run("commit", "-q", "-m", "A\n\nCoop-Task: task-a")
 		if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("B\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		git(t, repo, "add", "b.txt")
-		git(t, repo, "commit", "-q", "-m", "B\n\nCoop-Task: task-b")
+		run("add", "b.txt")
+		run("commit", "-q", "-m", "B\n\nCoop-Task: task-b")
 		root := filepath.Join(repo, tasksRoot)
 		task := taskForLease(t, root, stateDone, "task-a")
 		output := "AUDIT EVIDENCE — task-a — gate: make check — findings: verified gap\n" +

@@ -1,4 +1,4 @@
-package cli
+package forkctl
 
 import (
 	"os"
@@ -118,8 +118,8 @@ func TestForkBriefDossier(t *testing.T) {
 	git(t, repo, "commit", "-qm", "risky change")
 	git(t, repo, "checkout", "-q", "main")
 
-	a := &app{cfg: &config.Config{}}
-	out := captureStdout(t, func() { a.forkBrief(repo, t.TempDir(), "risky", "risky", forkReviewGateUnchecked) })
+	c := &Control{cfg: &config.Config{}}
+	out := captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "risky", "risky", forkReviewGateUnchecked) })
 
 	for _, want := range []string{
 		"why:", // no completed task in the fixture ws
@@ -149,7 +149,7 @@ func TestForkBriefDossier(t *testing.T) {
 	git(t, repo, "commit", "-qm", "docs")
 	git(t, repo, "checkout", "-q", "main")
 
-	out = captureStdout(t, func() { a.forkBrief(repo, t.TempDir(), "benign", "benign", forkReviewGateUnchecked) })
+	out = captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "benign", "benign", forkReviewGateUnchecked) })
 	if !strings.Contains(out, "nothing flagged") {
 		t.Errorf("clean fork should show the policy ✓:\n%s", out)
 	}
@@ -161,14 +161,14 @@ func TestForkBriefDossier(t *testing.T) {
 	}
 
 	// Gate configured → the evidence line flips.
-	a.cfg.Gate = []string{"make", "check"}
-	out = captureStdout(t, func() { a.forkBrief(repo, t.TempDir(), "benign", "benign", forkReviewGateUnchecked) })
+	c.cfg.Gate = []string{"make", "check"}
+	out = captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "benign", "benign", forkReviewGateUnchecked) })
 	if !strings.Contains(out, "runs at merge — rolled back on failure") {
 		t.Errorf("configured gate line missing:\n%s", out)
 	}
 
 	// Empty diff → no diff-derived sections (no policy/files/gate), header + why + diff only.
-	out = captureStdout(t, func() { a.forkBrief(repo, t.TempDir(), "empty", "main", forkReviewGateUnchecked) })
+	out = captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "empty", "main", forkReviewGateUnchecked) })
 	for _, absent := range []string{"policy:", "files:", "gate:"} {
 		if strings.Contains(out, absent) {
 			t.Errorf("empty diff should omit %q:\n%s", absent, out)

@@ -1,4 +1,4 @@
-package cli
+package forkctl
 
 import (
 	"fmt"
@@ -23,15 +23,16 @@ type forkStatus struct {
 
 // gatherForkStatus reads one fork's state. Git runs through the hardened fork helpers
 // because the tree is agent-controlled (see forkBranch/forkUpdated for why).
-func gatherForkStatus(repo, name string) forkStatus {
+func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 	ws := forkspace.Workspace(repo, name)
-	agent := readForkAgent(ws)
+	agent := ReadForkAgent(ws)
 	if agent == "" {
 		agent = "?" // a fork made before agents were remembered
 	}
 	ins, del := parseShortstat(gitOut(ws, "diff", "--shortstat", "origin/HEAD"))
 	counts, active := tasks.QueueCounts(tasks.WsTaskSource(ws))
 	running := forkspace.RunningPid(repo, name) != 0
+	cost, _ := c.host.forkCost(ws)
 	return forkStatus{
 		Name:    name,
 		Agent:   agent,
@@ -44,7 +45,7 @@ func gatherForkStatus(repo, name string) forkStatus {
 		Del:     del,
 		Dirty:   gitDirty(ws),
 		Counts:  counts,
-		Cost:    costForRepo(ws).total.usd,
+		Cost:    cost,
 	}
 }
 
@@ -106,12 +107,12 @@ func (s forkStatus) activeCell() string {
 // local queue when there are no forks), so an overnight run can be checked at a glance without
 // tailing N logs. It's the one-shot fallback for the live `coop fleet watch` board — printed when
 // there's no TTY to animate, or no forks to watch.
-func (a *app) fleetSnapshot(repo string) (int, error) {
+func (c *Control) fleetSnapshot(repo string) (int, error) {
 	names := forkspace.LifecycleNames(repo)
 	if len(names) == 0 {
 		// No forks — but in the single-loop workflow there's still a local queue to report.
 		// Show its progress instead of a bare "no forks", so the snapshot is useful either way.
-		if rels, err := tasks.TaskQueues(a.cfg, repo, nil); err == nil && len(rels) > 0 {
+		if rels, err := tasks.TaskQueues(c.cfg, repo, nil); err == nil && len(rels) > 0 {
 			abs := make([]string, len(rels))
 			for i, r := range rels {
 				abs[i] = filepath.Join(repo, r)
@@ -129,7 +130,7 @@ func (a *app) fleetSnapshot(repo string) (int, error) {
 	statuses := make([]forkStatus, len(names))
 	var running, blocked, doneTasks, totalTasks int
 	for i, n := range names {
-		s := gatherForkStatus(repo, n)
+		s := c.gatherForkStatus(repo, n)
 		statuses[i] = s
 		if s.Running {
 			running++
@@ -142,12 +143,12 @@ func (a *app) fleetSnapshot(repo string) (int, error) {
 	fmt.Printf("%s — %s, %d running, %d blocked\n\n",
 		ui.Bold(filepath.Base(repo)+" fleet"), ui.Count(len(names), "fork"), running, blocked)
 	// Size the NAME column to the longest fork name (clamped + rune-padded) so a long name keeps
-	// every later column aligned under its header — see forkLs.
+	// every later column aligned under its header — see ForkLs.
 	nw := colWidth(names, len("NAME"), 24)
 	// Rune-pad every cell (padRight) instead of %-Ns: a glyph like ⚠/⚑ in TASKS/CHANGES is multi-byte,
 	// so %-Ns (which counts bytes) would short-pad and shove later columns out from under their headers.
 	format := "  %s %s %s %s %s\n"
-	// Bold the rendered line, not each cell (see forkLs): per-cell bold would count the
+	// Bold the rendered line, not each cell (see ForkLs): per-cell bold would count the
 	// ANSI bytes inside the widths and misalign the header against the rows.
 	fmt.Print(ui.Bold(fmt.Sprintf(format, padRight("NAME", nw), padRight("STATE", 8), padRight("TASKS", 10), padRight("CHANGES", 14), "ACTIVE")))
 	for _, s := range statuses {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
 
@@ -75,7 +76,7 @@ func TestTargetErrorsAgreeAcrossSurfaces(t *testing.T) {
 
 			// Fleet entry agent:.
 			fleet := fmt.Sprintf("forks:\n  a:\n    tasks: .agent/tasks\n    agent: %q\n", c.target)
-			if _, err := parseFleetYAML(fleet); err == nil || !strings.Contains(err.Error(), want) {
+			if _, err := forkctl.ParseFleetYAML(fleet); err == nil || !strings.Contains(err.Error(), want) {
 				t.Errorf("fleet agent: err = %v, want it to carry %q", err, want)
 			}
 		})

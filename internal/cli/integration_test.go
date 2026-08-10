@@ -55,28 +55,19 @@ var (
 	taskTreeCounts        = tasks.TaskTreeCounts
 	cmdTasksFolder        = tasks.CmdTasksFolder
 	readAuditReopenRecord = tasks.ReadAuditReopenRecord
-	latestTaskLog         = tasks.LatestTaskLog
 	openLeaseAuthority    = tasks.OpenLeaseAuthority
 )
 
 var tasksVerbs = tasks.TasksVerbs
 
-// readFileString and lastLines are trivial, self-contained leaf helpers — internal/tasks keeps its
-// own copy (see its git.go for why: the same "local-redeclare" shape as gitOut).
+// readFileString is a trivial, self-contained leaf helper — internal/tasks keeps its own copy (see
+// its git.go for why: the same "local-redeclare" shape as gitOut).
 func readFileString(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
 	return string(data)
-}
-
-func lastLines(s string, n int) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }
 
 // taskForLease and testLeaseOwner mirror internal/tasks's own (unexported, test-only) helpers of
@@ -149,6 +140,22 @@ func captureStdout(t *testing.T, fn func()) string {
 	fn()
 	_ = w.Close()
 	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
+
+// captureStderr returns whatever fn writes to os.Stderr (ui.Info/ui.Warn go there).
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	fn()
+	_ = w.Close()
+	os.Stderr = old
 	out, _ := io.ReadAll(r)
 	return string(out)
 }

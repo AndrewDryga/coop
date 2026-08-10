@@ -1,7 +1,6 @@
-package cli
+package forkctl
 
 import (
-	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -15,34 +14,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
-
-// `coop fleet ls`/`list` has no fleet-level listing — it must point at the real views (fork ls / the
-// live board), not error blankly (rule: `ls` is the list verb, it must lead somewhere useful).
-func TestFleetLsRedirect(t *testing.T) {
-	a := &app{cfg: &config.Config{}}
-	code, err := a.cmdFleet([]string{"ls"}) // v3: only `ls` redirects; `list` is a plain unknown verb
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "coop fork ls") {
-		t.Errorf("cmdFleet([ls]) = (%d, %v), want (2, pointing at `coop fork ls`)", code, err)
-	}
-}
-
-// fleet up fails fast, but when forks already started the error must be loud about the partial fleet
-// and name the cleanup, so a half-started fleet isn't discovered later.
-func TestFleetAbortErr(t *testing.T) {
-	none := fleetAbortErr("api", errors.New("boom"), 0).Error()
-	if !strings.Contains(none, "api") || !strings.Contains(none, "boom") {
-		t.Errorf("abort err (none started) should name the fork and cause: %q", none)
-	}
-	if strings.Contains(none, "fleet down") {
-		t.Errorf("abort err with nothing started shouldn't mention cleanup: %q", none)
-	}
-	some := fleetAbortErr("web", errors.New("boom"), 2).Error()
-	for _, want := range []string{"web", "2 fork", "coop fleet down"} {
-		if !strings.Contains(some, want) {
-			t.Errorf("abort err (2 started) missing %q: %q", want, some)
-		}
-	}
-}
 
 func TestPolicyScan(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
@@ -68,19 +39,19 @@ func TestPolicyScan(t *testing.T) {
 	if err := gitFetchInto(repo, ws, "x"); err != nil {
 		t.Fatal(err)
 	}
-	warns := strings.Join(policyScan(repo, "review/x"), "\n")
+	warns := strings.Join(PolicyScan(repo, "review/x"), "\n")
 	for _, want := range []string{".env", "kubeconfig", ".npmrc", "service_account.json"} {
 		if !strings.Contains(warns, want) {
-			t.Errorf("policyScan missed credential file %q: %q", want, warns)
+			t.Errorf("PolicyScan missed credential file %q: %q", want, warns)
 		}
 	}
 	if strings.Contains(warns, "safe.txt") {
-		t.Errorf("policyScan wrongly flagged safe.txt: %q", warns)
+		t.Errorf("PolicyScan wrongly flagged safe.txt: %q", warns)
 	}
 }
 
 // A real token in an ordinary (non-secret-named) file passes a filename check but must
-// be caught by policyScan's content scan.
+// be caught by PolicyScan's content scan.
 func TestPolicyScanContent(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -102,9 +73,9 @@ func TestPolicyScanContent(t *testing.T) {
 	if err := gitFetchInto(repo, ws, "leak"); err != nil {
 		t.Fatal(err)
 	}
-	warns := strings.Join(policyScan(repo, "review/leak"), "\n")
+	warns := strings.Join(PolicyScan(repo, "review/leak"), "\n")
 	if !strings.Contains(warns, "config/prod.yml") || !strings.Contains(warns, "GitHub token") {
-		t.Errorf("policyScan missed the token in config/prod.yml: %q", warns)
+		t.Errorf("PolicyScan missed the token in config/prod.yml: %q", warns)
 	}
 }
 
@@ -113,9 +84,9 @@ func TestFleetInit(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	if code, err := a.fleetInit(); err != nil || code != 0 {
-		t.Fatalf("fleetInit = (%d, %v), want (0, nil)", code, err)
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
+	if code, err := a.FleetInit(); err != nil || code != 0 {
+		t.Fatalf("FleetInit = (%d, %v), want (0, nil)", code, err)
 	}
 	body, err := os.ReadFile(filepath.Join(repo, ".agent", "fleet.yaml"))
 	if err != nil {
@@ -131,11 +102,11 @@ func TestFleetInit(t *testing.T) {
 		t.Errorf("fleet template should no longer show a preset: key (agent: absorbs presets):\n%s", body)
 	}
 	// The template's forks map is empty, so it parses to an empty fleet (nothing to start yet).
-	if entries, err := parseFleetYAML(string(body)); err != nil || len(entries) != 0 {
+	if entries, err := ParseFleetYAML(string(body)); err != nil || len(entries) != 0 {
 		t.Errorf("template should parse to 0 forks, got %d (%v)", len(entries), err)
 	}
 	// Re-init refuses to clobber.
-	if code, err := a.fleetInit(); err == nil || code == 0 {
+	if code, err := a.FleetInit(); err == nil || code == 0 {
 		t.Errorf("re-init should refuse to clobber, got (%d, %v)", code, err)
 	}
 }
@@ -144,7 +115,7 @@ func TestFleetInit(t *testing.T) {
 // who-runs — a target (provider[:model][/effort][@account]) OR a preset name (classified into the entry's
 // preset field), no implicit default — and every invalid shape errors with the fork named.
 func TestParseFleetYAML(t *testing.T) {
-	got, err := parseFleetYAML(`
+	got, err := ParseFleetYAML(`
 forks:
   core:
     tasks: .agent/tasks.core
@@ -159,14 +130,14 @@ forks:
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []fleetEntry{
+	want := []FleetEntry{
 		// agent: frontier is a preset name (not a target) → classified into preset, agent cleared.
-		{name: "core", agent: "", tasks: ".agent/tasks.core", preset: "frontier"},
-		{name: "chores", agent: "gemini:gemini-3.5-flash@work", tasks: ".agent/tasks.chores"},
-		{name: "plain", agent: "claude", tasks: ".agent/tasks.plain"},
+		{Name: "core", Agent: "", Tasks: ".agent/tasks.core", Preset: "frontier"},
+		{Name: "chores", Agent: "gemini:gemini-3.5-flash@work", Tasks: ".agent/tasks.chores"},
+		{Name: "plain", Agent: "claude", Tasks: ".agent/tasks.plain"},
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("parseFleetYAML =\n%+v\nwant\n%+v", got, want)
+		t.Errorf("ParseFleetYAML =\n%+v\nwant\n%+v", got, want)
 	}
 
 	for name, in := range map[string]string{
@@ -185,13 +156,13 @@ forks:
 		"bad name":            "forks:\n  ? \"a b\"\n  : {tasks: t}\n",
 		"duplicate":           "forks:\n  a: {tasks: t}\n  a: {tasks: u}\n",
 	} {
-		if _, err := parseFleetYAML(in); err == nil {
+		if _, err := ParseFleetYAML(in); err == nil {
 			t.Errorf("%s: want an error, got none", name)
 		}
 	}
 }
 
-// composeTarget rebuilds a target from the pieces a fork parsed out of one (detachForkLoop's
+// composeTarget rebuilds a target from the pieces a fork parsed out of one (DetachForkLoop's
 // re-exec): :model and @account fold in, model's own @account is honored, and a contradictory
 // pair (model @a + credential b) errors.
 func TestComposeTarget(t *testing.T) {
@@ -227,22 +198,22 @@ func TestLoadFleetIgnoresStrayFile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "coop fleet init") {
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
+	if _, err := a.LoadFleet(repo); err == nil || !strings.Contains(err.Error(), "coop fleet init") {
 		t.Errorf("no fleet: want the init pointer, got %v", err)
 	}
 	// A stray .agent/fleet is not a fleet — loading still points at init, not the file.
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet"), []byte("a claude t\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.loadFleet(repo); err == nil || !strings.Contains(err.Error(), "coop fleet init") {
+	if _, err := a.LoadFleet(repo); err == nil || !strings.Contains(err.Error(), "coop fleet init") {
 		t.Errorf("stray .agent/fleet should be ignored (init pointer), got %v", err)
 	}
 	// fleet.yaml loads regardless of the stray file sitting beside it.
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "fleet.yaml"), []byte("forks:\n  b: {agent: claude, tasks: t}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if entries, err := a.loadFleet(repo); err != nil || len(entries) != 1 || entries[0].name != "b" {
+	if entries, err := a.LoadFleet(repo); err != nil || len(entries) != 1 || entries[0].Name != "b" {
 		t.Errorf("yaml should load (stray file ignored): %v (%+v)", err, entries)
 	}
 }
@@ -267,11 +238,11 @@ func TestFleetDownWarnsRunningOrphan(t *testing.T) {
 	if err := forkspace.WritePid(repo, "b", os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
 	old := os.Stderr
 	r, w, _ := os.Pipe()
 	os.Stderr = w
-	_, _ = a.fleetDown(nil)
+	_, _ = a.FleetDown(nil)
 	_ = w.Close()
 	os.Stderr = old
 	out, _ := io.ReadAll(r)
@@ -304,14 +275,14 @@ func TestFleetDownPropagatesForkStopFailure(t *testing.T) {
 	if err := forkspace.WritePid(repo, "perf", worker.Process.Pid); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo, RuntimeName: "coop-test-runtime-that-does-not-exist"}}
-	code, err := a.fleetDown(nil)
+	a := &Control{cfg: &config.Config{RepoOverride: repo, RuntimeName: "coop-test-runtime-that-does-not-exist"}}
+	code, err := a.FleetDown(nil)
 	if code != 1 || err == nil {
-		t.Fatalf("fleetDown = (%d, %v), want (1, error)", code, err)
+		t.Fatalf("FleetDown = (%d, %v), want (1, error)", code, err)
 	}
 	for _, want := range []string{"perf", "coop fleet down", "coop fork stop perf"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Errorf("fleetDown error missing %q: %v", want, err)
+			t.Errorf("FleetDown error missing %q: %v", want, err)
 		}
 	}
 	if err := worker.Process.Signal(syscall.Signal(0)); err != nil {
@@ -334,7 +305,7 @@ func TestParseFleetActionFlags(t *testing.T) {
 		{[]string{"--bogus"}, false, false, false, true}, // unknown flag
 	}
 	for _, c := range cases {
-		prune, force, yes, err := parseFleetActionFlags("up", c.args)
+		prune, force, yes, err := ParseFleetActionFlags("up", c.args)
 		if (err != nil) != c.err {
 			t.Errorf("%v: err=%v, want err=%v", c.args, err, c.err)
 			continue
@@ -345,39 +316,24 @@ func TestParseFleetActionFlags(t *testing.T) {
 	}
 }
 
-func TestFleetPruneConfirmationFailsBeforeUpOrDownWork(t *testing.T) {
-	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
-	for _, tc := range []struct {
-		name string
-		fn   func([]string) (int, error)
-	}{{"up", a.fleetUp}, {"down", a.fleetDown}} {
-		t.Run(tc.name, func(t *testing.T) {
-			code, err := tc.fn([]string{"--prune"})
-			if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
-				t.Fatalf("fleet %s --prune = (%d, %v), want confirmation before fleet/config work", tc.name, code, err)
-			}
-		})
-	}
-}
-
 func TestFleetPruneSeparatesConfirmationFromForce(t *testing.T) {
 	repo := initRepo(t)
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(fleetYAMLFile(repo), []byte("forks: {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(FleetYAMLFile(repo), []byte("forks: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
 
 	clean, err := forkspace.Setup(repo, "clean")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code, err := a.fleetPrune(nil); code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") || !pathExists(clean) {
+	if code, err := a.FleetPrune(nil); code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") || !pathExists(clean) {
 		t.Fatalf("unconfirmed clean prune = (%d, %v), exists %v; want confirmation refusal", code, err, pathExists(clean))
 	}
-	if code, err := a.fleetPrune([]string{"--yes"}); code != 0 || err != nil || pathExists(clean) {
+	if code, err := a.FleetPrune([]string{"--yes"}); code != 0 || err != nil || pathExists(clean) {
 		t.Fatalf("confirmed clean prune = (%d, %v), exists %v", code, err, pathExists(clean))
 	}
 
@@ -388,13 +344,13 @@ func TestFleetPruneSeparatesConfirmationFromForce(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dirty, "uncommitted.txt"), []byte("keep\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := a.fleetPrune([]string{"--yes"}); code != 0 || err != nil || !pathExists(dirty) {
+	if code, err := a.FleetPrune([]string{"--yes"}); code != 0 || err != nil || !pathExists(dirty) {
 		t.Fatalf("guarded dirty prune = (%d, %v), exists %v; want kept", code, err, pathExists(dirty))
 	}
-	if code, err := a.fleetPrune([]string{"--force"}); code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") || !pathExists(dirty) {
+	if code, err := a.FleetPrune([]string{"--force"}); code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") || !pathExists(dirty) {
 		t.Fatalf("forced but unconfirmed prune = (%d, %v), exists %v", code, err, pathExists(dirty))
 	}
-	if code, err := a.fleetPrune([]string{"--force", "--yes"}); code != 0 || err != nil || pathExists(dirty) {
+	if code, err := a.FleetPrune([]string{"--force", "--yes"}); code != 0 || err != nil || pathExists(dirty) {
 		t.Fatalf("forced and confirmed prune = (%d, %v), exists %v", code, err, pathExists(dirty))
 	}
 }
@@ -404,7 +360,7 @@ func TestFleetPruneReportsStateOnlyOrphan(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(fleetYAMLFile(repo), []byte("forks: {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(FleetYAMLFile(repo), []byte("forks: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
@@ -413,9 +369,9 @@ func TestFleetPruneReportsStateOnlyOrphan(t *testing.T) {
 	if err := forkspace.WriteWorkerState(repo, "crashed", forkspace.WorkerState{Pending: true}); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
 	out := captureStderr(t, func() {
-		if code, err := a.fleetPrune([]string{"--yes"}); code != 0 || err != nil {
+		if code, err := a.FleetPrune([]string{"--yes"}); code != 0 || err != nil {
 			t.Fatalf("fleet prune state-only orphan = (%d, %v)", code, err)
 		}
 	})
@@ -429,14 +385,14 @@ func TestFleetPruneRefusesReplacementAfterConfirmation(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(fleetYAMLFile(repo), []byte("forks: {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(FleetYAMLFile(repo), []byte("forks: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := forkspace.Setup(repo, "replacement")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
 	unlock, err := forkspace.LockState(repo, "replacement")
 	if err != nil {
 		t.Fatal(err)
@@ -447,7 +403,7 @@ func TestFleetPruneRefusesReplacementAfterConfirmation(t *testing.T) {
 	}
 	result := make(chan pruneResult, 1)
 	go func() {
-		code, err := a.pruneFleet(repo, true, true)
+		code, err := a.PruneFleet(repo, true, true)
 		result <- pruneResult{code, err}
 	}()
 	select {

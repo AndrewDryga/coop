@@ -14,13 +14,13 @@ own top-of-file comment (`audit.go`) points back here rather than repeating it.
 |---|-----------|-----------|-------|----------|------|
 | 1 | **Claim** | durable record, `<key>.owner.json` | `internal/tasks/lease.go` (`ReadTaskOwnerRecord`/`writeTaskOwnerRecord`/`removeTaskOwnerRecord`, :743-802); written by `claimTaskOwnerRecord`, `internal/tasks/cmd.go:466` | until a HUMAN releases it — never | record |
 | 2 | **Lease** | kernel flock, `<key>.lock` | `internal/tasks/lease.go` (`lockLeaseAuthority`, `TryTaskLease`, :1309) | one loop iteration | process lock |
-| 3 | **Checkout** | kernel flock, `.locks/loop-<sha>.lock` | `lockLoopCheckout`, `internal/cli/fork_loop.go:61` | one whole `coop loop` run | process lock |
+| 3 | **Checkout** | kernel flock, `.locks/loop-<sha>.lock` | `lockLoopCheckout`, `internal/cli/fork_loop.go:40` | one whole `coop loop` run | process lock |
 | 4 | **Ref** | kernel flock, `.locks/ref-<sha>.lock` | `LockRefAuthority`/`EnterRefAuthorityWindow`, `internal/tasks/refauthority.go:36,134` | validate→finalize→consume only (short) | process lock |
 
 The invariant all four protect: **exactly one writer acts on a task, and on the checkout, at a
 time — and when that can't be proven, refuse rather than act on unvalidated state.** Two more
 narrower locks exist beside these (the interactive session lock, `internal/cli/commands.go:92` /
-`lockSessionProducer`, `internal/cli/fork_loop.go:110`, which serializes only a session-discovering
+`lockSessionProducer`, `internal/cli/fork_loop.go:89`, which serializes only a session-discovering
 adapter like codex; and the completion-window index lock, `internal/tasks/completion.go`, an internal
 integrity journal) — real, but scoped to one adapter or one bookkeeping structure rather than "who may
 act on this task," which is why they aren't in the headline four.

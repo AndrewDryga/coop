@@ -4,7 +4,7 @@ description: "rotation walks an `agent:` ladder of targets; accounts are a suffi
 scope: cli-grammar
 sources: [internal/cli/target.go, internal/preset/preset.go, internal/sessionsvc/service.go]
 check: "none"
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 
 # Model is the one axis: rotation walks an `agent:` ladder of targets, not a pool
@@ -63,3 +63,7 @@ bare model is marked-default account first, then the rest alphabetically (`accou
   step's `Agent` field is a `[]string` ladder), and internal/sessionsvc/service.go (`Target
   yaml.Node` — the one `target:`-spelled exception). Also re-ran the `--model`/`--credential`/
   `pools.json` greps from the 2026-08-07 sweep. 0 new violations; every claim still holds.
+- 2026-08-10 — path-only, no claim change: the fleet surface this card re-verified moved to
+  `internal/forkctl/fleet.go`, where the entry type and its parser are now exported
+  (`FleetEntry.Agent`, `ParseFleetYAML`). The one-target-one-account rule and its explicit
+  account-ladder rejection are byte-identical; only the names a grep would chase changed.

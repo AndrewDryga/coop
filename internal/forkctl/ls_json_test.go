@@ -1,4 +1,4 @@
-package cli
+package forkctl
 
 import (
 	"encoding/json"
@@ -22,9 +22,9 @@ func TestForkLsJSON(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("serve:\n  ports: [4000]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
 	out := captureStdout(t, func() {
-		if code, err := a.forkLs([]string{"--json"}); code != 0 || err != nil {
+		if code, err := c.ForkLs([]string{"--json"}); code != 0 || err != nil {
 			t.Fatalf("fork ls --json: (%d, %v)", code, err)
 		}
 	})

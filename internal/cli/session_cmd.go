@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -189,7 +190,7 @@ func runSessionServe(state, policy, socket string) (int, error) {
 // the merge policy. Each field is one existing cli function, forwarded.
 func sessionHost() sessionsvc.Host {
 	return sessionsvc.Host{
-		PolicyScan:        policyScan,
+		PolicyScan:        forkctl.PolicyScan,
 		ReviewGateFactory: defaultSessionReviewGate,
 		Warnf:             ui.Warn,
 	}
@@ -197,15 +198,20 @@ func sessionHost() sessionsvc.Host {
 
 // defaultSessionReviewGate runs a review candidate through THIS repo's merge gate — the same image
 // and the same pass/fail rule `coop fork merge` uses, so a session's verdict can't drift from the
-// one a human gets. It builds a throwaway app because the gate is an app method; the config and
-// runtime are the service's, resolved by the time it asks.
+// one a human gets. The config and runtime are the service's, resolved by the time it asks; a
+// runtime it hasn't detected yet is the zero value, which the control plane detects on demand.
 func defaultSessionReviewGate(cfg *config.Config, rt runtime.Runtime) sessionsvc.ReviewGate {
 	return sessionsvc.ReviewGateFunc(func(ctx context.Context, gateRepo, treeDir string) (sessionsvc.ReviewGateResult, error) {
 		if err := ctx.Err(); err != nil {
 			return sessionsvc.ReviewGateResult{}, err
 		}
-		a := &app{cfg: cfg, rt: rt, rtSet: rt.Name != ""}
-		image, err := a.mergeGate(gateRepo)
+		fc := forkctl.New(cfg, rt, forkctl.Host{EnsureRuntime: func() (runtime.Runtime, error) {
+			if rt.Name != "" {
+				return rt, nil
+			}
+			return runtime.Detect(cfg.RuntimeName)
+		}})
+		image, err := fc.MergeGate(gateRepo)
 		if err != nil {
 			return sessionsvc.ReviewGateResult{Configured: true, StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes)}, nil
 		}
@@ -215,7 +221,7 @@ func defaultSessionReviewGate(cfg *config.Config, rt runtime.Runtime) sessionsvc
 		if err := ctx.Err(); err != nil {
 			return sessionsvc.ReviewGateResult{}, err
 		}
-		passed, err := a.reviewGatePasses(gateRepo, treeDir, image)
+		passed, err := fc.ReviewGatePasses(gateRepo, treeDir, image)
 		if err != nil {
 			return sessionsvc.ReviewGateResult{Configured: true, StartupError: sessionsvc.SanitizeReviewText(err.Error(), sessionsvc.MaxReviewErrorBytes)}, nil
 		}

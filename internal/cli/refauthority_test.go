@@ -69,7 +69,7 @@ func TestFastForwardParentTakesRefAuthority(t *testing.T) {
 	}
 	defer release()
 
-	if err := a.fastForwardParent(repo, repo, "candidate"); err == nil || !strings.Contains(err.Error(), "ref authority") {
+	if err := a.forkctl().FastForwardParent(repo, repo, "candidate"); err == nil || !strings.Contains(err.Error(), "ref authority") {
 		t.Fatalf("fastForwardParent while ref authority is held = %v, want a ref-authority refusal", err)
 	}
 }

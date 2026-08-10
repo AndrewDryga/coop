@@ -43,6 +43,11 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
 
 ## Changelog
+- 2026-08-10 — path-only, no claim change: the fork/fleet extraction moved five of the ten
+  `ui.DestroyGate` call sites out of `internal/cli` into `internal/forkctl` (`rm.go`, `fleet.go`,
+  `merge.go`); `internal/cli/fork_cmd.go` keeps the `--fresh` one and `profiles.go` its own. Still
+  exactly ONE definition (`internal/ui/confirm.go`) — the extraction consumed the shared gate
+  instead of minting the third copy this card was rewritten to prevent. `check:` is still `none`.
 - 2026-07-02 — created
 - 2026-07-14 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged

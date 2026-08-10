@@ -20,7 +20,7 @@ Two invariants sit ABOVE the table and hold no matter how it is edited:
   and the terminal. An edge back into it inverts the architecture and makes every engine below
   depend on the CLI's shape.
 - **`internal/ui` is imported only by the granted presentation owners** (`uiPresentationOwners`:
-  box, cli, scaffold, tasks). Everything else returns data and lets its caller print it.
+  box, cli, forkctl, scaffold, tasks). Everything else returns data and lets its caller print it.
 
 **Why:** the graph was already a clean DAG and nothing enforced it, so the next convenient import
 would silently have become architecture — the way `internal/agent` had grown a `ui` dependency for
@@ -46,6 +46,30 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-10 — **+1 package, +1 edge, +1 `uiPresentationOwners` grant: `internal/forkctl`**
+  (`{"agent", "box", "config", "forkspace", "project", "runtime", "sessionsvc", "tasks", "ui"}`);
+  `cli` GAINED `forkctl` and **dropped nothing** — every package on cli's line survives in files that
+  stayed. The fork/fleet CONTROL PLANE (~8.7k lines with tests): supervision (claim/stop/reap/detach/
+  logs), listing + status, the review dossier and gate, the ff-only land, the declarative fleet, and
+  the live board. This seam pointed the OTHER WAY from the previous four extractions — 66 outbound
+  identifiers against 33 inbound (19:1) — so the naive whole-family move would have needed a ~20-field
+  `Host`. The fix was a cut line, not a veto: SIX launch-spine functions stay in `internal/cli`
+  (`forkCreate`, `forkACP`, `forkLaunchCmd`, `parseForkCreate`, `runForkLoop`, `fleetUp`, plus the
+  dispatchers `cmdFork`/`cmdFleet` beside them, as `fork_cmd.go`), which is what collapses the Host to
+  **three** fields (`EnsureRuntime`, `RunWatchLoop`, `ForkCost`) — cli owns LAUNCH, forkctl owns
+  LIFECYCLE. `forkctl` needed **zero new transitive dependencies**; the deliberate
+  `forkctl → sessionsvc` edge (the review-identity pair) is acyclic and adds nothing cli didn't reach.
+  It is the **5th member of `uiPresentationOwners`** — 135 `ui.*` call sites including a full
+  alt-screen TUI (`coop fleet watch`), the same first-class-verb-family reasoning `tasks` used. Three
+  files were HAND splits, not `git mv`s (`fork.go` 1,422 → 747 stay / 764 move across 47 interleaved
+  declarations; `fork_loop.go` and `fork_fleet.go` likewise), so they landed GREEN as pure intra-cli
+  reorganizations BEFORE any file moved — two verifiable states in one commit. Two risk shapes worth
+  reusing: (1) inbound was NOT tag-invariant — `scripted_fork_process_e2e_test.go` and
+  `scripted_detached_process_e2e_test.go` reach into mover symbols only under `providere2e`, so the
+  census ran under all five tag sets and the gate adds `go vet -tags providere2e ./...`; (2) `gitOut`/
+  `padRight`/`pathExists`-class helpers were local-redeclared (the `internal/tasks` precedent), which
+  left `internal/cli` holding several now-dead copies — deleted in the same commit rather than left
+  for staticcheck to find later.
 - 2026-08-10 — **no graph change**, recorded because two package CONTRACTS widened under a frozen
   table. `forkspace` absorbed the signing-policy and driver-neutralizer helpers
   (`WantsSigning`/`TrustedSignArgs`/`DriverNeutralizer`) beside `GitHardening` — pure `os/exec` +

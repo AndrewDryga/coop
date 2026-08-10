@@ -1,4 +1,4 @@
-package cli
+package forkctl
 
 import (
 	"encoding/json"
@@ -17,11 +17,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// policyScan returns human-readable concerns about a fork's added/changed files:
+// PolicyScan returns human-readable concerns about a fork's added/changed files:
 // secret-looking filenames, large blobs, and — by scanning each changed blob's
 // content — real tokens sitting in ordinary files (which a filename check can't see).
 // Empty means nothing flagged.
-func policyScan(repo, ref string) []string {
+func PolicyScan(repo, ref string) []string {
 	out := gitOut(repo, "diff", "--name-status", "HEAD..."+ref)
 	if out == "" {
 		return nil
@@ -118,29 +118,29 @@ func pkgScripts(content string) map[string]string {
 // gateFor resolves the fork-merge revalidation gate for repo: an explicit COOP_GATE (env/conf)
 // wins; otherwise the repo's committed .agent/project.yaml gate:. The gate runs IN THE BOX (see
 // runGate), so a repo-authored command executes sandboxed — same trust class as the code it merges.
-func (a *app) gateFor(repo string) []string {
-	if a.cfg.Explicit("COOP_GATE") {
-		return a.cfg.Gate
+func (c *Control) gateFor(repo string) []string {
+	if c.cfg.Explicit("COOP_GATE") {
+		return c.cfg.Gate
 	}
 	if p, err := project.Load(repo); err == nil {
 		if g := strings.TrimSpace(p.Gate); g != "" {
 			return config.ShellSplit(g)
 		}
 	}
-	return a.cfg.Gate
+	return c.cfg.Gate
 }
 
-// mergeGate resolves the box image when a merge gate is configured (so a merge can be revalidated
+// MergeGate resolves the box image when a merge gate is configured (so a merge can be revalidated
 // in the box), or returns "" when none is.
-func (a *app) mergeGate(repo string) (string, error) {
-	if len(a.gateFor(repo)) == 0 {
+func (c *Control) MergeGate(repo string) (string, error) {
+	if len(c.gateFor(repo)) == 0 {
 		return "", nil // no gate configured → the merge is pure-local, no runtime needed
 	}
-	if err := a.ensureRuntime(); err != nil {
+	if err := c.ensureRuntime(); err != nil {
 		return "", err
 	}
-	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	if !box.ImageExists(a.rt, img) {
+	img := box.ImageForRepo(repo, c.cfg.BaseImage, c.cfg.ImageOverride)
+	if !box.ImageExists(c.rt, img) {
 		return "", fmt.Errorf("a merge gate is set but image %q isn't built — run 'coop build'", img)
 	}
 	return img, nil
@@ -150,8 +150,8 @@ func (a *app) mergeGate(repo string) (string, error) {
 // gateRepo (the trusted parent), never treeDir — a fork can't weaken its own checker — but it RUNS
 // against treeDir (the rebased candidate), so a red gate never touches the parent. A non-zero gate
 // is a normal red result; an error means the box never started.
-func (a *app) runGateMode(gateRepo, treeDir, img string, review bool) (bool, error) {
-	gate := a.gateFor(gateRepo)
+func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool, error) {
+	gate := c.gateFor(gateRepo)
 	ui.Info("revalidating: %s", strings.Join(gate, " "))
 	reviewBase := strings.TrimSpace(gitOut(treeDir, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
 	if reviewBase == "" {
@@ -160,13 +160,13 @@ func (a *app) runGateMode(gateRepo, treeDir, img string, review bool) (bool, err
 	if reviewBase == "" {
 		return false, errors.New("resolve trusted review base commit")
 	}
-	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
+	code, err := box.Run(c.cfg, c.rt, box.RunSpec{
 		Image: img, Repo: treeDir, Cmd: gate, Batch: true,
 		PolicyRepo: gateRepo,
 		Review:     review,
 		Serve:      review,
 		ExtraArgs:  []string{"-e", "COOP_REVIEW_BASE=" + reviewBase},
-		Homes:      a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+		Homes:      c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
 	})
 	if err != nil {
 		return false, err
@@ -175,27 +175,27 @@ func (a *app) runGateMode(gateRepo, treeDir, img string, review bool) (bool, err
 }
 
 // runGate preserves merge's existing bool-only contract: a box startup failure is a failed gate.
-func (a *app) runGate(gateRepo, treeDir, img string) bool {
-	ok, _ := a.runGateMode(gateRepo, treeDir, img, false)
+func (c *Control) runGate(gateRepo, treeDir, img string) bool {
+	ok, _ := c.runGateMode(gateRepo, treeDir, img, false)
 	return ok
 }
 
 // gatePasses runs the merge gate (or the test seam, when set).
-func (a *app) gatePasses(gateRepo, treeDir, img string) bool {
-	if a.gateOK != nil {
-		return a.gateOK(gateRepo, treeDir, img)
+func (c *Control) gatePasses(gateRepo, treeDir, img string) bool {
+	if c.gateOK != nil {
+		return c.gateOK(gateRepo, treeDir, img)
 	}
-	return a.runGate(gateRepo, treeDir, img)
+	return c.runGate(gateRepo, treeDir, img)
 }
 
-// reviewGatePasses is the review-only gate path. The disposable candidate may write ignored build
+// ReviewGatePasses is the review-only gate path. The disposable candidate may write ignored build
 // output; its caller verifies the pinned source identity and cleanliness after the gate returns.
 // Startup errors remain distinguishable from an ordinary red gate.
-func (a *app) reviewGatePasses(gateRepo, treeDir, img string) (bool, error) {
-	if a.gateOK != nil {
-		return a.gateOK(gateRepo, treeDir, img), nil
+func (c *Control) ReviewGatePasses(gateRepo, treeDir, img string) (bool, error) {
+	if c.gateOK != nil {
+		return c.gateOK(gateRepo, treeDir, img), nil
 	}
-	return a.runGateMode(gateRepo, treeDir, img, true)
+	return c.runGateMode(gateRepo, treeDir, img, true)
 }
 
 // mergeOne fetches a fork's branch, merges it into the parent's HEAD, and — when a
@@ -204,7 +204,7 @@ func (a *app) reviewGatePasses(gateRepo, treeDir, img string) (bool, error) {
 // fork was cut from. Reports whether the merge landed: landed=false with an error is a merge that
 // did NOT happen, while landed=true WITH an error means the commits are in the parent but the queue
 // reconciliation below couldn't be done — the caller reports it and stops, never rolls the land back.
-func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
+func (c *Control) mergeOne(repo, img, name string, force bool) (bool, error) {
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
 		return false, fmt.Errorf("no such fork: %s", name)
@@ -220,7 +220,7 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 		return false, fmt.Errorf("%s: git fetch: %w", name, err)
 	}
 	ref := "review/" + name
-	if warns := policyScan(repo, ref); len(warns) > 0 && !force {
+	if warns := PolicyScan(repo, ref); len(warns) > 0 && !force {
 		return false, fmt.Errorf("%s: policy flagged risky changes:\n%s\n(use --force to merge anyway)", name, indent(strings.Join(warns, "\n")))
 	}
 	// Say which branch we're landing onto — merge rebases onto your *current* branch,
@@ -232,25 +232,25 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	ui.Info("landing %s onto %s", name, target)
 	// Rebase the fork onto the parent's HEAD inside the fork's OWN clone — an isolated candidate.
 	// The parent tree is NOT touched here, so a red gate below has nothing to roll back.
-	if err := a.rebaseForkOntoParent(repo, ws, name); err != nil {
+	if err := c.rebaseForkOntoParent(repo, ws, name); err != nil {
 		return false, err
 	}
 	parentBeforeLand := gitOut(repo, "rev-parse", "HEAD")
 	// Gate the CANDIDATE (the rebased fork), never the live parent — with the parent's own gate
 	// policy. A red gate leaves the parent exactly as it was: no reset --hard of a shared tree.
-	if img != "" && !a.gatePasses(repo, ws, img) {
+	if img != "" && !c.gatePasses(repo, ws, img) {
 		return false, fmt.Errorf("%s: gate failed on the rebased fork — parent untouched; fix it in the fork (%s), then re-run", name, ws)
 	}
 	// Advance the parent by a fast-forward-ONLY merge — an atomic compare-and-swap: it refuses if a
 	// concurrent commit moved the parent since the rebase, so a divergence lands nothing (re-run to
 	// rebase onto the new HEAD) instead of being erased by a rollback.
-	if err := a.fastForwardParent(repo, ws, name); err != nil {
+	if err := c.FastForwardParent(repo, ws, name); err != nil {
 		return false, err
 	}
 	// Reconcile the parent queue: a task whose Coop-Task trailer just landed moves to done/, so the
 	// parent loop doesn't redo work this fork already completed. The land already stuck, so a
 	// reconcile that couldn't run comes back as landed-with-an-error, never as a rollback.
-	if err := tasks.ReconcileQueueAfterMerge(a.cfg, repo, name, parentBeforeLand+"..HEAD"); err != nil {
+	if err := tasks.ReconcileQueueAfterMerge(c.cfg, repo, name, parentBeforeLand+"..HEAD"); err != nil {
 		return true, err
 	}
 	return true, nil
@@ -265,7 +265,7 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 // unsigned (the box holds no key); when you sign, the rebase re-signs the rewritten commits with
 // your host key (-f forces the rewrite so even a fast-forward land gets signed), the signing config
 // coming from the parent via forkspace.TrustedSignArgs, never the fork.
-func (a *app) rebaseForkOntoParent(repo, ws, name string) error {
+func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 	// A rebase that FAILS is aborted below, but a coop killed mid-rebase (a host crash, a SIGKILL)
 	// leaves git's state dir behind, and every later merge then dies on the leftover state instead of
 	// recovering it. Clear it first — under the same ownership rule as every other destructive path.
@@ -352,11 +352,11 @@ func recoverInterruptedRebase(repo, ws, name string) error {
 	return nil
 }
 
-// fastForwardParent fetches the rebased candidate back into the parent and advances the parent
+// FastForwardParent fetches the rebased candidate back into the parent and advances the parent
 // branch by a fast-forward-ONLY merge. --ff-only IS the compare-and-swap: it succeeds only while the
 // parent is still the commit the fork was rebased onto, so a concurrent commit during the gate makes
 // it refuse — nothing lands, the divergence is preserved — instead of a reset --hard erasing it.
-func (a *app) fastForwardParent(repo, ws, name string) error {
+func (c *Control) FastForwardParent(repo, ws, name string) error {
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return fmt.Errorf("%s: git fetch: %w", name, err)
 	}
@@ -364,7 +364,7 @@ func (a *app) fastForwardParent(repo, ws, name string) error {
 	// loop` there may be validating a completion against. The ref-authority lock keeps this
 	// fast-forward from landing inside that loop's validate→consume window (and vice versa), so
 	// landing a fork can never trip the loop's own compare-and-swap.
-	release, lockErr := tasks.LockRefAuthority(a.cfg, repo)
+	release, lockErr := tasks.LockRefAuthority(c.cfg, repo)
 	if lockErr != nil {
 		return fmt.Errorf("%s: acquire ref authority for %s: %w", name, repo, lockErr)
 	}
@@ -375,7 +375,7 @@ func (a *app) fastForwardParent(repo, ws, name string) error {
 	return nil
 }
 
-func (a *app) forkMerge(args []string) (int, error) {
+func (c *Control) ForkMerge(args []string) (int, error) {
 	all, force, yes := false, false, false
 	var pos []string
 	for _, x := range args {
@@ -405,7 +405,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 	if !all && !forkspace.ValidName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	repo, err := box.ResolveRepo(c.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
@@ -418,12 +418,12 @@ func (a *app) forkMerge(args []string) (int, error) {
 	if !yes && !ui.IsTerminal(os.Stdin) {
 		return 1, errors.New("coop fork merge: refusing to land in a non-interactive shell — pass --yes to confirm")
 	}
-	img, err := a.mergeGate(repo)
+	img, err := c.MergeGate(repo)
 	if err != nil {
 		return -1, err
 	}
 	if all {
-		return a.forkMergeAll(repo, img, force, yes)
+		return c.forkMergeAll(repo, img, force, yes)
 	}
 	ws := forkspace.Workspace(repo, name) // name is non-empty here (the !all && name=="" check above returned)
 	if !pathExists(ws) {
@@ -441,13 +441,13 @@ func (a *app) forkMerge(args []string) (int, error) {
 	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
 	ui.Info("rebase %s onto %s — %s commit(s), +%d -%d", ref, gitBranch(repo), ahead, ins, del)
-	if s := costSummary(costForRepo(ws)); s != "" {
+	if _, s := c.host.forkCost(ws); s != "" {
 		ui.Info("fork cost: %s", s)
 	}
 	if !approve("rebase and land?", yes) {
 		return 0, nil
 	}
-	landed, err := a.mergeOne(repo, img, name, force)
+	landed, err := c.mergeOne(repo, img, name, force)
 	if landed {
 		ui.OK("landed %s", name) // say it BEFORE any error: the commits are in the parent either way
 	}
@@ -469,7 +469,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 	// Default-No delete confirm (the land above was the default-Yes step); --yes is already required
 	// for a non-interactive run, so this only prompts at a TTY. Declining just keeps the landed fork.
 	if ui.DestroyGate("remove the landed fork "+name, yes) == nil {
-		if err := destroyFork(a.rt, repo, name); err != nil {
+		if err := DestroyFork(c.rt, repo, name); err != nil {
 			return -1, err
 		}
 		ui.OK("removed fork %s", name)
@@ -481,7 +481,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 // the result of the previous one and re-gated, so a later fork can't ride in green
 // against a base that an earlier landing already changed. It stops at the first
 // conflict or gate failure, leaving the remaining forks untouched.
-func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
+func (c *Control) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 	names := forkspace.Names(repo)
 	if len(names) == 0 {
 		ui.Info("no forks to merge")
@@ -518,7 +518,7 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 		if gitOut(repo, "rev-list", "--count", "HEAD..review/"+n) == "0" {
 			continue // nothing to land
 		}
-		ok, err := a.mergeOne(repo, img, n, force)
+		ok, err := c.mergeOne(repo, img, n, force)
 		if ok {
 			ui.OK("landed %s", n)
 			// Keep the fork when its worktree still holds uncommitted work (an interrupted iteration),
@@ -527,7 +527,7 @@ func (a *app) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 			if gitDirty(ws) {
 				ui.Warn("keeping fork %s — uncommitted changes; 'coop fork rm %s --force' after review", n, n)
 			} else if err == nil {
-				_ = destroyFork(a.rt, repo, n)
+				_ = DestroyFork(c.rt, repo, n)
 			}
 			landed = append(landed, n)
 		}

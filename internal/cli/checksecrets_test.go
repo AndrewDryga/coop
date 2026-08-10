@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 func TestScanVisibleTreeSkipsGitignored(t *testing.T) {
@@ -129,7 +131,8 @@ func TestUnscannedIgnoredCount(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	repo := initRepo(t)
+	repo, run := gitrepo.New(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
 	mk := func(rel, content string) {
 		t.Helper()
 		full := filepath.Join(repo, rel)
@@ -146,8 +149,8 @@ func TestUnscannedIgnoredCount(t *testing.T) {
 	mk(".agent/state.md", "x")        // coop's .agent/ state → scanned by default → not "unscanned"
 	mk(".agent/tasks/t/task.md", "x") // ditto, nested → scanned by default, not counted
 	mk("tracked.go", "x")             // committed → in the default scan → not counted
-	git(t, repo, "add", ".gitignore", "tracked.go")
-	git(t, repo, "commit", "-qm", "add")
+	run("add", ".gitignore", "tracked.go")
+	run("commit", "-qm", "add")
 
 	if n := unscannedIgnoredCount(repo); n != 1 {
 		t.Errorf("unscannedIgnoredCount = %d, want 1 (only secret.txt; .env shadowed, .agent/* now scanned by default, tracked.go committed)", n)
@@ -160,7 +163,8 @@ func TestScanVisibleTreeScansAgentByDefault(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	repo := initRepo(t)
+	repo, run := gitrepo.New(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
 	mk := func(rel, content string) {
 		t.Helper()
 		full := filepath.Join(repo, rel)
@@ -173,8 +177,8 @@ func TestScanVisibleTreeScansAgentByDefault(t *testing.T) {
 	}
 	mk(".gitignore", ".agent/*\n!.agent/kb/rules/\n")
 	mk(".agent/tasks/2026-01-01-x/log.md", "pasted token: ghp_abcdefghijklmnopqrstuvwxyz0123456789\n")
-	git(t, repo, "add", ".gitignore")
-	git(t, repo, "commit", "-qm", "init")
+	run("add", ".gitignore")
+	run("commit", "-qm", "init")
 
 	findings, err := scanVisibleTree(repo, false) // DEFAULT scan, no --include-ignored
 	if err != nil {
@@ -196,5 +200,34 @@ func TestReadScannable(t *testing.T) {
 	os.WriteFile(bin, []byte("PNG\x00\x01\x02binary"), 0o644)
 	if _, ok := readScannable(bin); ok {
 		t.Error("binary file (NUL byte) should be skipped")
+	}
+}
+
+// A poisoned core.fsmonitor must not fire when `coop check-secrets` enumerates files —
+// candidateFiles runs `git ls-files`, which refreshes the index and so executes fsmonitor. The
+// repo's .git is agent-writable, so this is a host-RCE vector if the call isn't hardened. The
+// positive control fires with genuinely raw git, so a green test means the hardening works rather
+// than that the trap is dead. (The fork/merge half of this guard lives in internal/forkctl.)
+func TestCheckSecretsLsFilesIsHardened(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo, run := gitrepo.New(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
+	marker := filepath.Join(t.TempDir(), "PWNED")
+	evil := filepath.Join(repo, ".git", "evil.sh")
+	if err := os.WriteFile(evil, []byte("#!/bin/sh\necho pwned >> "+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run("config", "core.fsmonitor", evil)
+	if _, err := candidateFiles(repo, false); err != nil { // hardened — must not run fsmonitor
+		t.Fatalf("candidateFiles: %v", err)
+	}
+	if pathExists(marker) {
+		t.Fatal("candidateFiles ran the parent's core.fsmonitor on the host")
+	}
+	_ = exec.Command("git", "-C", repo, "ls-files", "--cached", "--others", "--exclude-standard").Run() // raw control
+	if !pathExists(marker) {
+		t.Fatal("positive control failed: raw git ls-files did not fire the planted fsmonitor")
 	}
 }

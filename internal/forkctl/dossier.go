@@ -1,4 +1,4 @@
-package cli
+package forkctl
 
 // The review dossier's file classifier: parent-computed, deterministic risk ordering
 // for `coop fork review`. Everything is derived from git facts (--name-status +
@@ -26,7 +26,7 @@ const (
 // dossierFile is one changed file under a dossier section.
 type dossierFile struct {
 	status     string // the --name-status letter (R100 → R)
-	path       string // a rename keeps the NEW path (the last tab field, as policyScan does)
+	path       string // a rename keeps the NEW path (the last tab field, as PolicyScan does)
 	adds, dels int    // -1 when unknown (binary blob, or a rename the numstat lookup misses)
 }
 

@@ -47,7 +47,6 @@ type app struct {
 	forkOwner           string                                       // repo-scoped runtime owner for the active fork loop; empty for local loops
 	streamSeq           int                                          // streaming box attempt sequence within runID
 	streamOff           bool                                         // an open failure disables best-effort tracing for the rest of the run
-	gateOK              func(gateRepo, treeDir, img string) bool     // test seam for the merge gate; nil → the real box gate
 	beforeSignRefUpdate func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
 	acpModels           func(agent string) ([]acpctl.Model, error)   // test seam for Claude/Gemini model refresh; nil → a real ACP box
 	acpSupervise        func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor

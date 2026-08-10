@@ -19,6 +19,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -34,7 +35,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		target := forkProcessTarget(provider, model, effort, account)
 
 		result, trace := runForkProcess(t, suite, []string{name, target}, provider)
-		id := readForkSession(ws, provider, account)
+		id := forkctl.ReadForkSession(ws, provider, account)
 		assertForkProcessSuccess(t, result, provider)
 		assertForkProcessContract(t, suite, trace, ws, provider, account, forkStartArgv(provider, model, effort, id), model, effort)
 		if id == "" {
@@ -55,7 +56,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		}
 
 		result, trace = runForkProcess(t, suite, []string{name, "--new"}, provider)
-		newID := readForkSession(ws, provider, account)
+		newID := forkctl.ReadForkSession(ws, provider, account)
 		assertForkProcessSuccess(t, result, provider)
 		assertForkProcessContract(t, suite, trace, ws, provider, account, forkStartArgv(provider, "env-claude", "medium", newID), "env-claude", "medium")
 		if newID == "" || newID == id {
@@ -64,7 +65,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 
 		// --fresh still remembers the provider before destroying the old workspace.
 		result, trace = runForkProcess(t, suite, []string{name, "--fresh", "--force", "--yes"}, provider)
-		freshID := readForkSession(ws, provider, account)
+		freshID := forkctl.ReadForkSession(ws, provider, account)
 		assertForkProcessSuccess(t, result, provider)
 		assertForkProcessContract(t, suite, trace, ws, provider, account, forkStartArgv(provider, "env-claude", "medium", freshID), "env-claude", "medium")
 		if freshID == "" || freshID == newID {
@@ -88,7 +89,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			target := forkProcessTarget(provider, model, effort, account)
 			result, trace := runForkProcess(t, suite, []string{name, target}, provider)
 			assertForkProcessSuccess(t, result, provider)
-			id := readForkSession(ws, provider, account)
+			id := forkctl.ReadForkSession(ws, provider, account)
 			if provider == "codex" {
 				id = "11111111-2222-4333-8444-000000000001"
 			}
@@ -125,7 +126,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 				}
 			}
 			result, trace = runForkProcessScenario(t, suite, []string{name, target, "--new"}, newScenario)
-			newID := readForkSession(ws, provider, account)
+			newID := forkctl.ReadForkSession(ws, provider, account)
 			assertForkProcessSuccess(t, result, provider)
 			assertForkProcessContract(t, suite, trace, ws, provider, account, forkStartArgv(provider, model, effort, newID), model, effort)
 			if newID == "" || newID == id {
@@ -152,7 +153,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		writeForkProviderSession(t, suite, provider, "personal", ws, ids[provider], "cli", time.Now())
 		personalTarget := forkProcessTarget(provider, model, effort, "personal")
 		result, trace := runForkProcess(t, suite, []string{name, personalTarget}, provider)
-		personalID := readForkSession(ws, provider, "personal")
+		personalID := forkctl.ReadForkSession(ws, provider, "personal")
 		assertForkProcessSuccess(t, result, provider)
 		assertForkProcessContract(t, suite, trace, ws, provider, "personal", forkStartArgv(provider, model, effort, personalID), model, effort)
 		if personalID == "" || personalID == ids[provider] {
@@ -184,18 +185,18 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		assertForkProcessSuccess(t, result, provider)
 		noSessionWS := forkspace.Workspace(suite.layout.Repo, noSessionName)
 		assertForkProcessContractWorkdir(t, &override, trace, noSessionWS, "/workspace/fork", provider, account, forkStartArgv(provider, model, effort, ""), model, effort)
-		if got := readForkSession(noSessionWS, provider, account); got != "" {
+		if got := forkctl.ReadForkSession(noSessionWS, provider, account); got != "" {
 			t.Fatalf("fresh run with no new native session captured old id %q", got)
 		}
 		staleID := "11111111-2222-4333-8444-000000000099"
 		replacementID := "11111111-2222-4333-8444-000000000003"
-		saveForkSession(noSessionWS, provider, account, staleID)
+		forkctl.SaveForkSession(noSessionWS, provider, account, staleID)
 		replacementScenario := processScenario(provider, nil, 0, "")
 		replacementScenario["native_session"] = map[string]string{"account": account, "cwd": "/workspace/fork", "id": replacementID}
 		result, trace = runForkProcessScenario(t, &override, []string{noSessionName, target}, replacementScenario)
 		assertForkProcessSuccess(t, result, provider)
 		assertForkProcessContractWorkdir(t, &override, trace, noSessionWS, "/workspace/fork", provider, account, forkStartArgv(provider, model, effort, ""), model, effort)
-		if got := readForkSession(noSessionWS, provider, account); got != replacementID {
+		if got := forkctl.ReadForkSession(noSessionWS, provider, account); got != replacementID {
 			t.Fatalf("stale Codex hint was replaced with %q, want %q", got, replacementID)
 		}
 		rows := []struct {
@@ -211,7 +212,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			result, trace := runForkProcessScenario(t, &override, []string{row.name, target}, scenario)
 			assertForkProcessSuccess(t, result, provider)
 			assertForkProcessContractWorkdir(t, &override, trace, ws, "/workspace/fork", provider, account, forkStartArgv(provider, model, effort, row.id), model, effort)
-			if got := readForkSession(ws, provider, account); got != row.id {
+			if got := forkctl.ReadForkSession(ws, provider, account); got != row.id {
 				t.Fatalf("fork %s discovered id %q, want %q", row.name, got, row.id)
 			}
 		}
@@ -220,7 +221,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			result, trace := runForkProcess(t, &override, []string{row.name, target}, provider)
 			assertForkProcessSuccess(t, result, provider)
 			assertForkProcessContractWorkdir(t, &override, trace, ws, "/workspace/fork", provider, account, forkResumeArgv(provider, model, effort, row.id), model, effort)
-			if got := readForkSession(ws, provider, account); got != row.id {
+			if got := forkctl.ReadForkSession(ws, provider, account); got != row.id {
 				t.Fatalf("fork %s resume changed exact hint to %q, want %q", row.name, got, row.id)
 			}
 		}
@@ -231,7 +232,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		result, trace = runForkProcess(t, &override, []string{emptyNew.name, target, "--new"}, provider)
 		assertForkProcessSuccess(t, result, provider)
 		assertForkProcessContractWorkdir(t, &override, trace, emptyWS, "/workspace/fork", provider, account, forkStartArgv(provider, model, effort, ""), model, effort)
-		if got := readForkSession(emptyWS, provider, account); got != "" {
+		if got := forkctl.ReadForkSession(emptyWS, provider, account); got != "" {
 			t.Fatalf("sessionless Codex --new retained old hint %q", got)
 		}
 	})
@@ -365,10 +366,10 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		}
 		firstWS := forkspace.Workspace(override.layout.Repo, "overlap-a")
 		secondWS := forkspace.Workspace(secondRepo, "overlap-b")
-		if got := readForkSession(firstWS, provider, account); got != "" {
+		if got := forkctl.ReadForkSession(firstWS, provider, account); got != "" {
 			t.Fatalf("sessionless first run claimed contender session %q", got)
 		}
-		if got := readForkSession(secondWS, provider, account); got != secondID {
+		if got := forkctl.ReadForkSession(secondWS, provider, account); got != secondID {
 			t.Fatalf("contender captured %q, want %q", got, secondID)
 		}
 		trace := readProcessTrace(t, override.layout.Trace)
