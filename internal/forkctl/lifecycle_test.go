@@ -433,9 +433,7 @@ func TestForkCarriesGlobalIgnore(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "global"))
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	repo := initRepo(t)
+	repo := initRepo(t) // pins both config doors at empty files for this test
 	// Your real GLOBAL gitignore is carried into the fork; a repo-local core.excludesfile is
 	// IGNORED — it's agent-writable, so reading it would let a poisoned repo point us at a host
 	// secret (e.g. ~/.ssh/id_rsa) and copy its content into the fork. (`--global` ignores -C.)
@@ -511,10 +509,7 @@ func TestResolveEditor(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	// Isolate from the host's global/system git config so core.editor is only what we set.
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "global"))
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-	repo := initRepo(t)
+	repo := initRepo(t) // pins both config doors, so core.editor is only ever what we set below
 	// Your GLOBAL core.editor is honored; a repo-local one is IGNORED — the repo is agent-writable,
 	// so reading core.editor from it would let a poisoned repo point the editor at a planted binary
 	// that runs on `coop fork review --open`. (`git config --global` ignores -C, writing the env file.)

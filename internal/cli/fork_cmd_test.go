@@ -452,6 +452,12 @@ func git(t *testing.T, dir string, args ...string) {
 
 func initRepo(t *testing.T) string {
 	t.Helper()
+	// Both config doors shut in the PROCESS environment, so they reach the fork commands under
+	// test too — they shell out to git themselves, inheriting this environment
+	// (.agent/kb/rules/hermetic-git-tests.md). Pinning only the fixture commands' own env would
+	// leave the code under test reading the developer's config.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo := filepath.Join(t.TempDir(), "myrepo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)

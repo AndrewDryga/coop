@@ -38,7 +38,9 @@ func lastLines(s string, n int) string {
 
 // git runs a git command in dir with a fixed committer identity, failing the test on a non-zero
 // exit. It takes an explicit dir (unlike gitrepo.New's bound runner) because these tests drive the
-// parent repo AND its forks' worktrees.
+// parent repo AND its forks' worktrees. It inherits the process environment on purpose: initRepo
+// pins the config doors there, so a test's `git config --global` write lands in the same file the
+// fork helpers under test read back.
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
@@ -55,6 +57,12 @@ func git(t *testing.T, dir string, args ...string) {
 // <repo>-forks/, which must not collide with the temp root itself.
 func initRepo(t *testing.T) string {
 	t.Helper()
+	// Both config doors shut in the PROCESS environment, so they reach the fork helpers under test
+	// too — they shell out to git themselves, inheriting this environment
+	// (.agent/kb/rules/hermetic-git-tests.md) — and so a test that plants a `--global` setting
+	// writes into the same isolated file those helpers then read.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo := filepath.Join(t.TempDir(), "myrepo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)

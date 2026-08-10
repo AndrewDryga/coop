@@ -87,7 +87,7 @@ func runLiveACPTests(m *testing.M) int {
 		AgentPackages: coopE2ERealConfig.AgentPackages, ConnectionEnv: connectionEnv,
 	}
 	coopE2ERepo = coopE2ELayout.Repo
-	if err := prepareLiveRepo(root, coopE2ERepo); err != nil {
+	if err := prepareLiveRepo(root, coopE2ERepo, coopE2ELayout.GitConfig); err != nil {
 		fmt.Fprintln(os.Stderr, "ACP E2E setup failed: phase=repository error_class=harness")
 		return 1
 	}
@@ -103,13 +103,17 @@ func runLiveACPTests(m *testing.M) int {
 	return m.Run()
 }
 
-func prepareLiveRepo(sourceRoot, destination string) error {
+func prepareLiveRepo(sourceRoot, destination, gitConfig string) error {
 	source := filepath.Join(sourceRoot, ".agent", "presets", "frontier")
 	target := filepath.Join(destination, ".agent", "presets", "frontier")
 	if err := liveprovider.CopyRegularTree(sourceRoot, source, target, liveACPPresetLimit); err != nil {
 		return err
 	}
 	init := exec.Command("git", "init", "-q", destination)
+	// Both config doors closed, at the same empty file every other process child in this suite
+	// gets (procharness.Environment): the developer's init.templateDir, hooksPath, or default
+	// branch must not shape the repo the live agent then works in.
+	init.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+gitConfig, "GIT_CONFIG_NOSYSTEM=1")
 	if err := init.Run(); err != nil {
 		return errors.New("initialize disposable repository")
 	}

@@ -10,14 +10,23 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
+// pinGitConfig closes both git config doors in the PROCESS environment, which the fixture repo
+// (gitrepo.New pins its own runner) does not do for the code under test: candidateFiles shells out
+// to `git ls-files --exclude-standard` with the ambient environment, so a developer's
+// core.excludesFile would change which files these tests see as gitignored.
+// See .agent/kb/rules/hermetic-git-tests.md.
+func pinGitConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+}
+
 func TestScanVisibleTreeSkipsGitignored(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	repo := t.TempDir()
-	if out, err := exec.Command("git", "-C", repo, "init").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
+	pinGitConfig(t)
+	repo, _ := gitrepo.New(t) // no further fixture git commands; the files below are enough
 	token := `api_key = "aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sUvWx"`
 	mk := func(rel, content string) {
 		t.Helper()
@@ -131,6 +140,7 @@ func TestUnscannedIgnoredCount(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	pinGitConfig(t)
 	repo, run := gitrepo.New(t)
 	run("commit", "-q", "--allow-empty", "-m", "base")
 	mk := func(rel, content string) {
@@ -163,6 +173,7 @@ func TestScanVisibleTreeScansAgentByDefault(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	pinGitConfig(t)
 	repo, run := gitrepo.New(t)
 	run("commit", "-q", "--allow-empty", "-m", "base")
 	mk := func(rel, content string) {
@@ -212,6 +223,7 @@ func TestCheckSecretsLsFilesIsHardened(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	pinGitConfig(t)
 	repo, run := gitrepo.New(t)
 	run("commit", "-q", "--allow-empty", "-m", "base")
 	marker := filepath.Join(t.TempDir(), "PWNED")

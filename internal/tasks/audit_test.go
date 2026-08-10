@@ -2180,10 +2180,13 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 	newRepo := func(t *testing.T) (string, func(...string)) {
 		t.Helper()
 		repo := t.TempDir()
+		env := append(os.Environ(),
+			"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "g"),
+			"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "s"))
 		git := func(args ...string) {
 			t.Helper()
 			cmd := exec.Command("git", args...)
-			cmd.Dir = repo
+			cmd.Dir, cmd.Env = repo, env
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("git %v: %v\n%s", args, err, out)
 			}
@@ -4017,10 +4020,13 @@ func TestSemanticHistoryExactIgnoresGrafts(t *testing.T) {
 
 func TestSemanticHistoryExactSupportsSHA256Root(t *testing.T) {
 	repo := t.TempDir()
+	env := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "g"),
+		"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "s"))
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
-		cmd.Dir = repo
+		cmd.Dir, cmd.Env = repo, env
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}

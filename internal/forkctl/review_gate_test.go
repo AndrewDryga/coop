@@ -64,9 +64,6 @@ func TestPrepareForkReviewCandidate(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
-
 	t.Run("rebases in scratch without changing either source", func(t *testing.T) {
 		repo := initRepo(t)
 		ws, err := forkspace.Setup(repo, "perf")

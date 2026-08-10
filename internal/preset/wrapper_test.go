@@ -65,6 +65,12 @@ func newDelegateHarness(t *testing.T) *delegateHarness {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	// Both config doors shut before the first git command, and in the process environment: h.env
+	// below is built from it, so the wrapper under test — which runs `git status`, `git rev-parse`,
+	// and `git config` to decide whether the delegate committed — sees the same empty config as the
+	// fixture repo (.agent/kb/rules/hermetic-git-tests.md).
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	h := &delegateHarness{t: t, dir: t.TempDir(), repo: t.TempDir()}
 	h.argsLog = filepath.Join(h.dir, "argv")
 	h.lock = filepath.Join(h.dir, "lock")

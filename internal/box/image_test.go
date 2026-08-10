@@ -56,6 +56,11 @@ func TestStageBuildContextOmitsIgnoredOutputButKeepsAuthoredInputs(t *testing.T)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	// Process-wide (not just on the fixture commands) because ignoredBuildPaths — the code under
+	// test — shells out to `git ls-files --exclude-standard` with the ambient environment: a
+	// developer's core.excludesFile would change which files the staged context is asserted to keep.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	repo := t.TempDir()
 	gitc := func(args ...string) {
 		t.Helper()
@@ -193,6 +198,11 @@ func TestBoxDockerfileUntracked(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	// Process-wide, like the fixture above: fileUntracked — the code under test — runs
+	// `git ls-files` with the ambient environment, and the fixture commits below must not meet a
+	// developer's commit.gpgsign or core.hooksPath.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	gitc := func(dir string, args ...string) {
 		t.Helper()
 		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
