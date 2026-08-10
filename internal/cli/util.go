@@ -197,7 +197,7 @@ func unknownErr(noun, token string, valid []string) error {
 }
 
 // gitArgs builds `git -C dir <hardening> <args>`. The hardening goes first so a caller's own
-// trailing -c flags (e.g. trustedSignArgs) still win — git's last -c for a key takes effect.
+// trailing -c flags (e.g. forkspace.TrustedSignArgs) still win — git's last -c for a key takes effect.
 // The list itself lives in internal/forkspace, next to the clone that creates a fork, so the whole
 // repo has exactly one hardening set to audit.
 func gitArgs(dir string, args []string) []string {
@@ -283,54 +283,6 @@ func gitBranch(dir string) string { return gitOut(dir, "rev-parse", "--abbrev-re
 
 func gitDirty(dir string) bool { return gitOut(dir, "status", "--porcelain") != "" }
 
-// forkDriverNeutralizer returns -c flags that blank every filter/merge/diff driver defined in the
-// fork's OWN (local) git config, by name. forkspace.GitHardening can't cover these — the driver
-// names are arbitrary — but they're enumerable: an in-tree .gitattributes assigning `filter=x` (or
-// merge/diff) to a path plus a fork-local filter.x.smudge / merge.x.driver / diff.x.command runs
-// host code on the checkout/merge/diff of the land rebase. We read the fork's local driver names and
-// blank each (filter.required=false so a blanked smudge doesn't hard-fail the checkout). A legit
-// clone has no local filter/merge/diff config — those live in your global — so this blanks only what
-// the agent planted; policyScan stays the human-facing backstop for the committed .gitattributes.
-func forkDriverNeutralizer(ws string) []string {
-	keys := gitOut(ws, "config", "--local", "--name-only", "--get-regexp", `^(filter|merge|diff)\.`)
-	if keys == "" {
-		return nil
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, key := range strings.Split(keys, "\n") {
-		var typ string
-		for _, t := range []string{"filter", "merge", "diff"} {
-			if strings.HasPrefix(key, t+".") {
-				typ = t
-				break
-			}
-		}
-		if typ == "" {
-			continue
-		}
-		rest := key[len(typ)+1:] // "<name>.<leaf>"
-		dot := strings.LastIndex(rest, ".")
-		if dot <= 0 {
-			continue // a 2-part key (e.g. diff.external) has no <name> driver to neutralize
-		}
-		name := rest[:dot]
-		if id := typ + "\x00" + name; !seen[id] {
-			seen[id] = true
-			switch typ {
-			case "filter":
-				out = append(out, "-c", "filter."+name+".smudge=", "-c", "filter."+name+".clean=",
-					"-c", "filter."+name+".process=", "-c", "filter."+name+".required=false")
-			case "merge":
-				out = append(out, "-c", "merge."+name+".driver=")
-			case "diff":
-				out = append(out, "-c", "diff."+name+".command=", "-c", "diff."+name+".textconv=")
-			}
-		}
-	}
-	return out
-}
-
 // parseShortstat pulls insertion/deletion counts out of a `git diff --shortstat`
 // line ("N files changed, I insertions(+), D deletions(-)").
 func parseShortstat(s string) (ins, del int) {
@@ -369,7 +321,7 @@ func approve(prompt string, yes bool) bool {
 	if !ui.IsTerminal(os.Stdin) {
 		return false
 	}
-	return confirm(prompt, true)
+	return ui.Confirm(prompt, true)
 }
 
 // hasYes reports whether args carry the -y/--yes confirmation-skip flag that destructive commands
@@ -381,62 +333,4 @@ func hasYes(args []string) bool {
 		}
 	}
 	return false
-}
-
-// destroyGate guards an UNRECOVERABLE deletion, returning nil only when it may proceed. With yes (the
-// caller saw -y/--yes) it proceeds silently. Otherwise, piped (no TTY) it REFUSES — there's nothing
-// to confirm against, so a script must opt in with --yes; at a TTY it asks "<what>? …" defaulting to
-// No, so a stray Enter cancels. `what` names the blast radius, e.g. "delete task X (todo)". One gate
-// for every rm (tasks, profiles, forks) so they can't drift. See rule destructive-confirm-gate.
-//
-// An interactive flow that already owns its input scanner may provide one ask callback. That keeps
-// the destructive decision in this gate without making the flow compete with fmt.Scanln for stdin.
-func destroyGate(what string, yes bool, asks ...func(string) bool) error {
-	if yes {
-		return nil
-	}
-	if len(asks) > 1 {
-		return errors.New("destroy gate accepts at most one prompt callback")
-	}
-	if len(asks) == 1 {
-		if !asks[0](what + "? this can't be undone") {
-			return errors.New("cancelled")
-		}
-		return nil
-	}
-	if !ui.IsTerminal(os.Stdin) {
-		return fmt.Errorf("refusing to %s without confirmation — re-run with --yes (no terminal to prompt)", what)
-	}
-	if !confirm(what+"? this can't be undone", false) {
-		return errors.New("cancelled")
-	}
-	return nil
-}
-
-// confirm asks a yes/no question, returning def with no tty (batch runs) or on a
-// bare Enter.
-func confirm(prompt string, def bool) bool {
-	if !ui.IsTerminal(os.Stdin) {
-		return def
-	}
-	hint := "Y/n"
-	if !def {
-		hint = "y/N"
-	}
-	fmt.Fprintf(os.Stderr, "%s [%s] ", prompt, hint)
-	var resp string
-	fmt.Scanln(&resp)
-	return confirmationResponse(resp, def)
-}
-
-// confirmationResponse applies the shared y/N parsing after a caller has read a response.
-func confirmationResponse(resp string, def bool) bool {
-	switch strings.ToLower(strings.TrimSpace(resp)) {
-	case "":
-		return def
-	case "y", "yes":
-		return true
-	default:
-		return false
-	}
 }

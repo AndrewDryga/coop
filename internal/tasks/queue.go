@@ -409,7 +409,7 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 			ui.Note("no done tasks to remove in any of the %s", ui.Count(len(rels), "configured queue"))
 			return 0, nil
 		}
-		if err := destroyGate(fmt.Sprintf("remove %s across %s", ui.Count(total, "done task"), ui.Count(len(rels), "queue")), hasYes(args)); err != nil {
+		if err := ui.DestroyGate(fmt.Sprintf("remove %s across %s", ui.Count(total, "done task"), ui.Count(len(rels), "queue")), hasYes(args)); err != nil {
 			return 2, err
 		}
 		removed := 0

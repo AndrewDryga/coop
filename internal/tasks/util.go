@@ -3,15 +3,12 @@ package tasks
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // newSupervisorID mints a fresh random id to embed in a completion window's lock name, so nothing
@@ -128,65 +125,6 @@ func hasYes(args []string) bool {
 		}
 	}
 	return false
-}
-
-// destroyGate guards an UNRECOVERABLE deletion, returning nil only when it may proceed. With yes (the
-// caller saw -y/--yes) it proceeds silently. Otherwise, piped (no TTY) it REFUSES — there's nothing
-// to confirm against, so a script must opt in with --yes; at a TTY it asks "<what>? …" defaulting to
-// No, so a stray Enter cancels. `what` names the blast radius, e.g. "delete task X (todo)". One gate
-// for every rm (tasks, profiles, forks) so they can't drift — internal/cli/util.go keeps its own copy
-// (the fork/profile verbs stay there) for the same reason gitOut does; see git.go.
-//
-// An interactive flow that already owns its input scanner may provide one ask callback. That keeps
-// the destructive decision in this gate without making the flow compete with fmt.Scanln for stdin.
-func destroyGate(what string, yes bool, asks ...func(string) bool) error {
-	if yes {
-		return nil
-	}
-	if len(asks) > 1 {
-		return errors.New("destroy gate accepts at most one prompt callback")
-	}
-	if len(asks) == 1 {
-		if !asks[0](what + "? this can't be undone") {
-			return errors.New("cancelled")
-		}
-		return nil
-	}
-	if !ui.IsTerminal(os.Stdin) {
-		return fmt.Errorf("refusing to %s without confirmation — re-run with --yes (no terminal to prompt)", what)
-	}
-	if !confirm(what+"? this can't be undone", false) {
-		return errors.New("cancelled")
-	}
-	return nil
-}
-
-// confirm asks a yes/no question, returning def with no tty (batch runs) or on a
-// bare Enter.
-func confirm(prompt string, def bool) bool {
-	if !ui.IsTerminal(os.Stdin) {
-		return def
-	}
-	hint := "Y/n"
-	if !def {
-		hint = "y/N"
-	}
-	fmt.Fprintf(os.Stderr, "%s [%s] ", prompt, hint)
-	var resp string
-	fmt.Scanln(&resp)
-	return confirmationResponse(resp, def)
-}
-
-// confirmationResponse applies the shared y/N parsing after a caller has read a response.
-func confirmationResponse(resp string, def bool) bool {
-	switch strings.ToLower(strings.TrimSpace(resp)) {
-	case "":
-		return def
-	case "y", "yes":
-		return true
-	default:
-		return false
-	}
 }
 
 // copyFile copies src to dst, both regular files. Used to seed a fork worktree with a folder-mode

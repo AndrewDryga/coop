@@ -13,7 +13,7 @@ import (
 // .git/hooks/* (and core.hooksPath), core.fsmonitor, core.pager, diff.external, and a forced
 // commit.gpgsign with a planted gpg.program; the rest are defense in depth. Signing on land is
 // re-enabled with trusted values appended after these (git's last -c for a key wins; see
-// trustedSignArgs).
+// TrustedSignArgs).
 //
 // A value coop reads then EXECUTES (or reads a host file from) — your editor, signing program,
 // global excludesfile — must not come from the agent-writable repo at all: those use gitGlobalOut
@@ -21,7 +21,7 @@ import (
 //
 // The one residual GitHardening alone can't blank (the driver names are arbitrary) — an in-tree
 // .gitattributes plus a fork-local filter/merge/diff driver that runs on the land rebase's
-// checkout — is closed by forkDriverNeutralizer, which enumerates the fork's driver names and
+// checkout — is closed by DriverNeutralizer, which enumerates the fork's driver names and
 // blanks each before that rebase. policyScan stays the human-facing backstop for the .gitattributes.
 //
 // It lives here, with the clone that creates a fork, because this leaf is the lowest thing in the
@@ -86,4 +86,99 @@ func gitGlobalOut(args ...string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// WantsSigning reports whether you sign commits (commit.gpgsign=true in your git
+// config), so a fork's unsigned box commits can be signed with your key on land.
+func WantsSigning() bool {
+	// Read from your GLOBAL config, never the agent-writable repo: a poisoned repo could otherwise
+	// force signing on so its planted gpg.program runs — and your signing preference is global anyway.
+	return gitGlobalOut("--bool", "--get", "commit.gpgsign") == "true"
+}
+
+// TrustedSignArgs returns the -c flags to sign the rebased commits with the host's key, every
+// value read from your GLOBAL git config so neither the fork NOR the agent-writable parent repo can
+// point gpg.program at a planted binary. They are appended after GitHardening — which turns signing
+// off by default — so these re-enable it with vetted values. The program key tracks gpg.format
+// (openpgp/ssh/x509).
+func TrustedSignArgs() []string {
+	// Blank identity selection first so an agent-writable local config cannot choose a key or
+	// execute gpg.ssh.defaultKeyCommand. Trusted global values, when present, are appended last.
+	args := []string{
+		"-c", "commit.gpgsign=true",
+		"-c", "user.signingkey=",
+		"-c", "gpg.ssh.defaultKeyCommand=",
+	}
+	format := gitGlobalOut("--get", "gpg.format")
+	progKey, def := "gpg.program", "gpg"
+	switch format {
+	case "ssh":
+		progKey, def = "gpg.ssh.program", "ssh-keygen"
+	case "x509":
+		progKey, def = "gpg.x509.program", "gpgsm"
+	}
+	if format != "" {
+		args = append(args, "-c", "gpg.format="+format)
+	}
+	prog := gitGlobalOut("--get", progKey)
+	if prog == "" {
+		prog = def // git's built-in default — set explicitly so the hardening's "=false" loses
+	}
+	args = append(args, "-c", progKey+"="+prog)
+	if key := gitGlobalOut("--get", "user.signingkey"); key != "" {
+		args = append(args, "-c", "user.signingkey="+key)
+	} else if format == "ssh" {
+		if command := gitGlobalOut("--get", "gpg.ssh.defaultKeyCommand"); command != "" {
+			args = append(args, "-c", "gpg.ssh.defaultKeyCommand="+command)
+		}
+	}
+	return args
+}
+
+// DriverNeutralizer returns -c flags that blank every filter/merge/diff driver defined in dir's OWN
+// (local) git config, by name. GitHardening can't cover these — the driver names are arbitrary —
+// but they're enumerable: an in-tree .gitattributes assigning `filter=x` (or merge/diff) to a path
+// plus a repo-local filter.x.smudge / merge.x.driver / diff.x.command runs host code on the
+// checkout/merge/diff of the land rebase. We read the repo's local driver names and blank each
+// (filter.required=false so a blanked smudge doesn't hard-fail the checkout). A legit clone has no
+// local filter/merge/diff config — those live in your global — so this blanks only what the agent
+// planted; policyScan stays the human-facing backstop for the committed .gitattributes.
+func DriverNeutralizer(dir string) []string {
+	keys := gitOut(dir, "config", "--local", "--name-only", "--get-regexp", `^(filter|merge|diff)\.`)
+	if keys == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, key := range strings.Split(keys, "\n") {
+		var typ string
+		for _, t := range []string{"filter", "merge", "diff"} {
+			if strings.HasPrefix(key, t+".") {
+				typ = t
+				break
+			}
+		}
+		if typ == "" {
+			continue
+		}
+		rest := key[len(typ)+1:] // "<name>.<leaf>"
+		dot := strings.LastIndex(rest, ".")
+		if dot <= 0 {
+			continue // a 2-part key (e.g. diff.external) has no <name> driver to neutralize
+		}
+		name := rest[:dot]
+		if id := typ + "\x00" + name; !seen[id] {
+			seen[id] = true
+			switch typ {
+			case "filter":
+				out = append(out, "-c", "filter."+name+".smudge=", "-c", "filter."+name+".clean=",
+					"-c", "filter."+name+".process=", "-c", "filter."+name+".required=false")
+			case "merge":
+				out = append(out, "-c", "merge."+name+".driver=")
+			case "diff":
+				out = append(out, "-c", "diff."+name+".command=", "-c", "diff."+name+".textconv=")
+			}
+		}
+	}
+	return out
 }

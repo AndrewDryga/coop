@@ -256,53 +256,6 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	return true, nil
 }
 
-// wantsSigning reports whether you sign commits (commit.gpgsign=true in your git
-// config), so a fork's unsigned box commits can be signed with your key on land.
-func wantsSigning() bool {
-	// Read from your GLOBAL config, never the agent-writable repo: a poisoned repo could otherwise
-	// force signing on so its planted gpg.program runs — and your signing preference is global anyway.
-	return gitGlobalOut("--bool", "--get", "commit.gpgsign") == "true"
-}
-
-// trustedSignArgs returns the -c flags to sign the rebased commits with the host's key, every
-// value read from your GLOBAL git config so neither the fork NOR the agent-writable parent repo can
-// point gpg.program at a planted binary. They are appended after forkspace.GitHardening — which
-// turns signing off by default — so these re-enable it with vetted values. The program key tracks
-// gpg.format (openpgp/ssh/x509).
-func trustedSignArgs() []string {
-	// Blank identity selection first so an agent-writable local config cannot choose a key or
-	// execute gpg.ssh.defaultKeyCommand. Trusted global values, when present, are appended last.
-	args := []string{
-		"-c", "commit.gpgsign=true",
-		"-c", "user.signingkey=",
-		"-c", "gpg.ssh.defaultKeyCommand=",
-	}
-	format := gitGlobalOut("--get", "gpg.format")
-	progKey, def := "gpg.program", "gpg"
-	switch format {
-	case "ssh":
-		progKey, def = "gpg.ssh.program", "ssh-keygen"
-	case "x509":
-		progKey, def = "gpg.x509.program", "gpgsm"
-	}
-	if format != "" {
-		args = append(args, "-c", "gpg.format="+format)
-	}
-	prog := gitGlobalOut("--get", progKey)
-	if prog == "" {
-		prog = def // git's built-in default — set explicitly so the hardening's "=false" loses
-	}
-	args = append(args, "-c", progKey+"="+prog)
-	if key := gitGlobalOut("--get", "user.signingkey"); key != "" {
-		args = append(args, "-c", "user.signingkey="+key)
-	} else if format == "ssh" {
-		if command := gitGlobalOut("--get", "gpg.ssh.defaultKeyCommand"); command != "" {
-			args = append(args, "-c", "gpg.ssh.defaultKeyCommand="+command)
-		}
-	}
-	return args
-}
-
 // landFork rebases the fork's branch onto the parent's current HEAD — in the fork,
 // where that branch is checked out — then fast-forwards the parent onto the result.
 // Forks therefore land as a linear replay, never a merge commit. A rebase conflict
@@ -311,7 +264,7 @@ func trustedSignArgs() []string {
 // OWN clone (ws), producing the landing candidate WITHOUT touching the parent. Box commits are
 // unsigned (the box holds no key); when you sign, the rebase re-signs the rewritten commits with
 // your host key (-f forces the rewrite so even a fast-forward land gets signed), the signing config
-// coming from the parent via trustedSignArgs, never the fork.
+// coming from the parent via forkspace.TrustedSignArgs, never the fork.
 func (a *app) rebaseForkOntoParent(repo, ws, name string) error {
 	// A rebase that FAILS is aborted below, but a coop killed mid-rebase (a host crash, a SIGKILL)
 	// leaves git's state dir behind, and every later merge then dies on the leftover state instead of
@@ -335,15 +288,15 @@ func (a *app) rebaseForkOntoParent(repo, ws, name string) error {
 	// the tree out — an in-tree .gitattributes + a fork-local driver would otherwise run host code
 	// on checkout/merge/diff (the residual forkspace.GitHardening can't close, since the names are
 	// arbitrary).
-	neut := forkDriverNeutralizer(ws)
+	neut := forkspace.DriverNeutralizer(ws)
 	withNeut := func(args ...string) []string { return append(append([]string{}, neut...), args...) }
 	// Rebase the fork's branch by NAME, not whatever the agent left checked out — `git rebase
 	// <upstream> <branch>` checks out and rebases exactly `name`, so the branch we sign and rebase
 	// is provably the same one the parent fast-forwards to (an agent that `git checkout`ed a
 	// different branch in the ws can't make us land un-rebased, unsigned commits).
 	var rebaseErr error
-	if wantsSigning() {
-		rebaseErr = gitSign(ws, withNeut(append(trustedSignArgs(), "rebase", "-f", "--gpg-sign", head, name)...)...)
+	if forkspace.WantsSigning() {
+		rebaseErr = gitSign(ws, withNeut(append(forkspace.TrustedSignArgs(), "rebase", "-f", "--gpg-sign", head, name)...)...)
 	} else {
 		rebaseErr = gitRun(ws, withNeut("rebase", head, name)...)
 	}
@@ -392,7 +345,7 @@ func recoverInterruptedRebase(repo, ws, name string) error {
 	}
 	ui.Warn("fork %s has an unfinished rebase (%s) from an interrupted land — aborting it to recover the worktree", name, filepath.Base(dir))
 	// gitOutErr, not gitRun: git's own stderr is the only explanation a human gets for a failed abort.
-	if _, err := gitOutErr(ws, append(forkDriverNeutralizer(ws), "rebase", "--abort")...); err != nil {
+	if _, err := gitOutErr(ws, append(forkspace.DriverNeutralizer(ws), "rebase", "--abort")...); err != nil {
 		return fmt.Errorf("%s: could not abort the unfinished rebase in %s: %w — finish it by hand (cd %q && git status; git rebase --abort), then re-run the merge", name, filepath.Base(dir), err, ws)
 	}
 	ui.Detail("aborted the unfinished rebase; %s is back on its branch", name)
@@ -515,7 +468,7 @@ func (a *app) forkMerge(args []string) (int, error) {
 	}
 	// Default-No delete confirm (the land above was the default-Yes step); --yes is already required
 	// for a non-interactive run, so this only prompts at a TTY. Declining just keeps the landed fork.
-	if destroyGate("remove the landed fork "+name, yes) == nil {
+	if ui.DestroyGate("remove the landed fork "+name, yes) == nil {
 		if err := destroyFork(a.rt, repo, name); err != nil {
 			return -1, err
 		}

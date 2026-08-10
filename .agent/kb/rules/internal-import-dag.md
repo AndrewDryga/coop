@@ -20,7 +20,7 @@ Two invariants sit ABOVE the table and hold no matter how it is edited:
   and the terminal. An edge back into it inverts the architecture and makes every engine below
   depend on the CLI's shape.
 - **`internal/ui` is imported only by the granted presentation owners** (`uiPresentationOwners`:
-  cli, box, scaffold). Everything else returns data and lets its caller print it.
+  box, cli, scaffold, tasks). Everything else returns data and lets its caller print it.
 
 **Why:** the graph was already a clean DAG and nothing enforced it, so the next convenient import
 would silently have become architecture — the way `internal/agent` had grown a `ui` dependency for
@@ -46,6 +46,16 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-10 — **no graph change**, recorded because two package CONTRACTS widened under a frozen
+  table. `forkspace` absorbed the signing-policy and driver-neutralizer helpers
+  (`WantsSigning`/`TrustedSignArgs`/`DriverNeutralizer`) beside `GitHardening` — pure `os/exec` +
+  `strings`, so the leaf is still `{"processidentity"}` — and `ui` absorbed the one shared
+  destructive-confirmation gate (`DestroyGate`/`Confirm`), so `ui` now READS the terminal it
+  detects, not just writes it. Neither added an edge: both are leaves and every consumer already
+  held the edge. Consequence for the next extraction — a package that owns a destructive verb does
+  NOT earn the `ui` grant for the gate alone; it injects the decision through `DestroyGate`'s `asks`
+  callback ([[destructive-confirm-gate]]). Also corrected this card's stale invariant text, which
+  still listed three `uiPresentationOwners` after `tasks` became the fourth below.
 - 2026-08-10 — **+1 package, +1 edge, −1 edge, +1 `uiPresentationOwners` grant: `internal/tasks`**
   (`{"box", "config", "forkspace", "project", "taskstate", "ui"}`); `cli` GAINED `tasks` and
   **DROPPED `taskstate`**. The largest of the 2026-08 extractions (~20.5k lines): the folder-mode

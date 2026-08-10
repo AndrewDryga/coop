@@ -484,7 +484,7 @@ func (a *app) pruneFleet(repo string, force, yes bool) (int, error) {
 	for i, candidate := range candidates {
 		candidateNames[i] = candidate.name
 	}
-	if err := destroyGate("delete pruned forks: "+strings.Join(candidateNames, ", "), yes); err != nil {
+	if err := ui.DestroyGate("delete pruned forks: "+strings.Join(candidateNames, ", "), yes); err != nil {
 		return 2, err
 	}
 	removed := 0

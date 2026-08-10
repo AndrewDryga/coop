@@ -2973,7 +2973,7 @@ reviewAgain:
 			action, wait, resetAt := decideIteration(classification, time.Now(), &fails, &waits, &retries)
 			// Host signing rewrites commit SHAs. Do it before recording successful work so telemetry and
 			// every reviewer name the final commits rather than the unsigned pre-rebase heads.
-			if action == actContinue && wantsSigning() {
+			if action == actContinue && forkspace.WantsSigning() {
 				if signed, serr := a.signUnpushed(repo, iterHead); serr != nil {
 					ui.Warn("could not sign this cycle's commits: %v — left unsigned", serr)
 				} else if signed > 0 {
@@ -3261,7 +3261,7 @@ reviewAgain:
 	// End-of-run signing sweep: normally a no-op (per-cycle signing already covered each iteration),
 	// but it catches any straggler — a commit from a previously interrupted run, or a preflight
 	// commit — so the whole run's range is signed before you push. Best-effort.
-	if wantsSigning() && len(custom) == 0 {
+	if forkspace.WantsSigning() && len(custom) == 0 {
 		if signed, serr := a.signUnpushed(repo, loopStartHead); serr != nil {
 			ui.Warn("end-of-run signing sweep failed: %v — some commits may be unsigned (run `coop sign`)", serr)
 		} else if signed > 0 {
@@ -3350,7 +3350,7 @@ func (a *app) cmdPrompt(args []string) (int, error) {
 	// One extra bounded git call, and only when you sign by default: is HEAD unsigned (a box commit
 	// not yet signed)? A nudge to run `coop sign` before a protected remote rejects the push.
 	signWarn := false
-	if wantsSigning() {
+	if forkspace.WantsSigning() {
 		signWarn = headUnsigned(repo)
 	}
 	if line := promptLine(c, len(names), looping, signWarn); line != "" {

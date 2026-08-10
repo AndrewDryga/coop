@@ -105,7 +105,7 @@ func TestSignUnpushed(t *testing.T) {
 	if _, err := exec.LookPath("ssh-keygen"); err != nil {
 		t.Skip("ssh-keygen not available")
 	}
-	// A throwaway SSH signing key, wired via a GLOBAL config trustedSignArgs will read.
+	// A throwaway SSH signing key, wired via a GLOBAL config forkspace.TrustedSignArgs will read.
 	keyDir := t.TempDir()
 	key := filepath.Join(keyDir, "sk")
 	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-f", key, "-N", "", "-C", "coop-test").CombinedOutput(); err != nil {
@@ -115,7 +115,7 @@ func TestSignUnpushed(t *testing.T) {
 	if err := os.WriteFile(globalCfg, []byte("[commit]\n\tgpgsign = true\n[gpg]\n\tformat = ssh\n[user]\n\tsigningkey = "+key+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// t.Setenv so the app's OWN git calls (trustedSignArgs → git config --global, and the rebase)
+	// t.Setenv so the app's OWN git calls (forkspace.TrustedSignArgs → git config --global, and the rebase)
 	// read this signing config, not the developer's.
 	t.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))

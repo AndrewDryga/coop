@@ -266,7 +266,7 @@ func (a *app) removeProfile(args []string) (int, error) {
 	}
 	dir := a.cfg.AgentProfileDir(agent, name)
 	// Deleting a profile drops its login token AND all session history, with no undo — gate it.
-	if err := destroyGate(fmt.Sprintf("delete %s credential %q (login token + session history)", agent, name), yes); err != nil {
+	if err := ui.DestroyGate(fmt.Sprintf("delete %s credential %q (login token + session history)", agent, name), yes); err != nil {
 		return 2, err
 	}
 	if err := os.RemoveAll(dir); err != nil {

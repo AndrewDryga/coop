@@ -353,7 +353,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 			if err := forkRmSafe(forkUnmerged(repo, ws), gitDirty(ws), fa.force); err != nil {
 				return 1, fmt.Errorf("--fresh: %w (add --force to recreate anyway)", err)
 			}
-			if err := destroyGate("delete fork "+fa.name+" before recreating it", fa.yes); err != nil {
+			if err := ui.DestroyGate("delete fork "+fa.name+" before recreating it", fa.yes); err != nil {
 				return 2, err
 			}
 		}
@@ -1342,7 +1342,7 @@ func (a *app) forkRm(args []string) (int, error) {
 	}
 	// Confirm the (unrecoverable) delete — default-No at a TTY, refuse piped without --yes. Distinct
 	// from --force above, which overrides the unmerged/dirty guard, not this prompt.
-	if err := destroyGate("delete fork "+name, hasYes(args)); err != nil {
+	if err := ui.DestroyGate("delete fork "+name, hasYes(args)); err != nil {
 		return 2, err
 	}
 	if needsStop {

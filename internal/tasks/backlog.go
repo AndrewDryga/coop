@@ -138,7 +138,7 @@ func backlogFolderList(root string) (int, error) {
 	return 0, nil
 }
 
-// backlogFolderRemove deletes a backlog item (a discarded idea). Reuses the destroyGate confirmation, so
+// backlogFolderRemove deletes a backlog item (a discarded idea). Reuses the ui.DestroyGate confirmation, so
 // a fat-fingered id can't silently drop an idea and a piped run must opt in with --yes.
 func backlogFolderRemove(root string, args []string) (int, error) {
 	yes := hasYes(args)
@@ -155,7 +155,7 @@ func backlogFolderRemove(root string, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	if err := destroyGate(fmt.Sprintf("delete backlog item %s", t.ID), yes); err != nil {
+	if err := ui.DestroyGate(fmt.Sprintf("delete backlog item %s", t.ID), yes); err != nil {
 		return 2, err
 	}
 	if err := os.RemoveAll(t.Dir); err != nil {

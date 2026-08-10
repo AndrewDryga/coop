@@ -90,7 +90,7 @@ func TestBacklogIsolatedFromActiveCommands(t *testing.T) {
 	}
 }
 
-// rm drops an idea; the destroyGate refuses without --yes on a non-TTY (this test), and a bad id fails.
+// rm drops an idea; ui.DestroyGate refuses without --yes on a non-TTY (this test), and a bad id fails.
 func TestBacklogRemove(t *testing.T) {
 	root := t.TempDir()
 	if code, err := tasksFolderAdd(root, []string{"drop me"}, StateBacklog, "backlog add"); code != 0 || err != nil {

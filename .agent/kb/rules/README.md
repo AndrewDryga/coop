@@ -117,7 +117,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [scaffold-config-reads-well](scaffold-config-reads-well.md) — scaffolded config leads every field with its comment and works as-is
 
 **Security**
-- [destructive-confirm-gate](destructive-confirm-gate.md) — every unrecoverable delete routes through the one shared `destroyGate`
+- [destructive-confirm-gate](destructive-confirm-gate.md) — every unrecoverable delete routes through the one shared `ui.DestroyGate`
 - [renew-before-access-only-projection](renew-before-access-only-projection.md) — refreshable credentials renew in trusted host storage before an access-only box projection
 - [secret-scan-literals-not-refs](secret-scan-literals-not-refs.md) — the scanner flags literal credentials and never references to them; precision is the product
 

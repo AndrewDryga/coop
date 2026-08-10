@@ -1,6 +1,7 @@
-// Package ui handles human-facing terminal output: the dimmed "coop:" progress
-// lines, red errors, and the colored check/cross marks doctor prints. Colors
-// auto-disable when stderr is not a terminal, so logs and pipes stay clean.
+// Package ui owns the terminal: the dimmed "coop:" progress lines, red errors, the colored
+// check/cross marks doctor prints, the live region and alt screen, and — the one thing that reads
+// back — the y/N confirmation a destructive verb has to ask (see confirm.go). Colors auto-disable
+// when stderr is not a terminal, so logs and pipes stay clean.
 package ui
 
 import (

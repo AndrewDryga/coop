@@ -1199,7 +1199,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 			ui.Note("no done tasks to remove")
 			return 0, nil
 		}
-		if err := destroyGate("remove "+ui.Count(n, "done task")+" from the archive", yes); err != nil {
+		if err := ui.DestroyGate("remove "+ui.Count(n, "done task")+" from the archive", yes); err != nil {
 			return 2, err
 		}
 		removed, err := removeAllDone(root)
@@ -1219,7 +1219,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	if err := destroyGate(fmt.Sprintf("delete task %s (%s)", t.ID, StateLabel(t.State)), yes); err != nil {
+	if err := ui.DestroyGate(fmt.Sprintf("delete task %s (%s)", t.ID, StateLabel(t.State)), yes); err != nil {
 		return 2, err
 	}
 	removed, err := removeTaskFolderAndRecords(root, t)
@@ -1759,13 +1759,13 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 		// the folder also drops its ref, so :p/:n never revisit a gone task.
 		if line == ":d" {
 			readConfirmation := false
-			gateErr := destroyGate("delete task "+t.ID, false, func(prompt string) bool {
+			gateErr := ui.DestroyGate("delete task "+t.ID, false, func(prompt string) bool {
 				fmt.Fprintf(out, "%s [y/N]: ", p.Red(prompt))
 				if !sc.Scan() {
 					return false
 				}
 				readConfirmation = true
-				return confirmationResponse(sc.Text(), false)
+				return ui.ConfirmationResponse(sc.Text(), false)
 			})
 			if !readConfirmation {
 				break // EOF at the confirm ends the session — nothing deleted

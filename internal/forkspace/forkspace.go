@@ -1,12 +1,15 @@
 // Package forkspace is the fork ON-DISK CONTRACT: where a fork's workspace lives, what a fork may
 // be named, the sibling state directory that holds its log/pidfile/lock, the lifecycle lock itself,
 // the pidfile wire format that says who owns a fork right now, and the clone/destroy primitives
-// that create and remove a workspace.
+// that create and remove a workspace. With them lives the GIT POLICY every repo-touching command
+// shares, because this leaf is the lowest thing in the tree that runs git: the hardening list, the
+// driver neutralizer that closes its one residual, and the signing policy that re-enables signing
+// on top of it with values read only from your trusted global config (git.go).
 //
 // Forks live in a sibling directory <repo>-forks/, one subdirectory per fork, with coop's own
 // per-fork state under <repo>-forks/.coop/.
 //
-// It is deliberately a leaf: paths, names, files, flock, git clone, and process identity — no
+// It is deliberately a leaf: paths, names, files, flock, git, and process identity — no
 // container runtime, no terminal output, no command wiring. Worker SUPERVISION (signalling a
 // worker, killing it, reaping its box, orchestrating a detach) reads this contract but lives in
 // internal/cli, so the fork commands, the fleet, and the sessions service can share one layout

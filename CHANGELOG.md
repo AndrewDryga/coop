@@ -139,6 +139,20 @@
   it, so a turn no provider measured publishes no `usage` object at all rather than four zeros a
   caller would price as a free turn.
 
+- _Internal restructuring, no user-visible change._ Two pieces of shared plumbing that had already
+  drifted into duplicates moved to their one right home, ahead of the fork/fleet extraction that
+  would have minted a third copy of each. The **git signing policy and driver neutralizer** —
+  `WantsSigning` (do you sign commits?), `TrustedSignArgs` (the vetted `-c` flags that re-enable
+  signing after the hardening turns it off), and `DriverNeutralizer` (blanks every filter/merge/diff
+  driver an agent planted in a repo's local config, before a rebase checks the tree out) — moved from
+  `internal/cli` into `internal/forkspace`, beside the `GitHardening` list they are the documented
+  other half of. The leaf is still a leaf: they need only `os/exec` and `strings`. The
+  **destructive-confirmation gate** — the one prompt every unrecoverable delete routes through — had
+  TWO identical copies (`internal/cli` and `internal/tasks`) and is now one, `ui.DestroyGate`, in the
+  package that owns the terminal: a confirmation is the one thing a command cannot return as data for
+  its caller to print, because the answer has to come back from the same tty. Same prompt text, same
+  default (No), same refusal when there is no terminal to ask; both helpers' tests moved with them.
+
 - _Internal restructuring, no user-visible change._ The **task-authority engine** — the folder-mode
   task/backlog queue (`taskcmd.go`, `tasks.go`, `taskwatch.go`, `backlog.go`, `taskdir.go`), the
   claim/lease/ref authority registry (`tasklease.go`), the completion-window journal

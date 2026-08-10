@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -109,13 +110,13 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 		_ = os.RemoveAll(tempRoot)
 	}()
 
-	neutral := forkDriverNeutralizer(repo)
+	neutral := forkspace.DriverNeutralizer(repo)
 	addArgs := append(append([]string{}, neutral...), "worktree", "add", "--detach", "--quiet", worktree, oldHead)
 	if err := gitRun(repo, addArgs...); err != nil {
 		return 0, fmt.Errorf("create clean signing worktree: %w", err)
 	}
 	added = true
-	args := append(append(append([]string{}, trustedSignArgs()...), neutral...), "rebase", "-f", "--gpg-sign", base)
+	args := append(append(append([]string{}, forkspace.TrustedSignArgs()...), neutral...), "rebase", "-f", "--gpg-sign", base)
 	if err := gitSign(worktree, args...); err != nil {
 		return 0, fmt.Errorf("re-signing %s..HEAD failed (a signing key/agent issue?): %w", base, err)
 	}
@@ -167,7 +168,7 @@ func (a *app) signOnBoxExit(repo, preHead string, isFork bool) {
 	if repo == "" || preHead == "" || preHead == gitOut(repo, "rev-parse", "HEAD") {
 		return // no repo, or the session made no commit → nothing to sign
 	}
-	if !shouldSignOnExit(isFork, wantsSigning()) {
+	if !shouldSignOnExit(isFork, forkspace.WantsSigning()) {
 		return
 	}
 	if n, err := a.signUnpushed(repo, preHead); err != nil {
