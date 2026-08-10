@@ -286,45 +286,6 @@ func (c *fakeClock) now() time.Time {
 	return t
 }
 
-func TestWaitUntilWall(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0)
-
-	// A suspend that jumps the wall clock PAST the deadline mid-wait ends the wait within one tick
-	// — it must NOT keep counting the (frozen-monotonic) leftover. tickCap is tiny so the single
-	// real sleep is negligible; the clock jump does the rest.
-	t.Run("suspend jump ends promptly", func(t *testing.T) {
-		clk := &fakeClock{times: []time.Time{base, base.Add(2 * time.Hour)}}
-		start := time.Now()
-		if !waitUntilWall(base.Add(time.Hour), 20*time.Millisecond, clk.now, nil, nil) {
-			t.Fatal("want true (reached deadline)")
-		}
-		if el := time.Since(start); el > 2*time.Second {
-			t.Errorf("took %s — should return within a tick of the jump, not wait leftover time", el)
-		}
-	})
-
-	// stop fires → returns false without waiting out the deadline.
-	t.Run("stop bails", func(t *testing.T) {
-		stop := make(chan struct{})
-		close(stop)
-		if waitUntilWall(time.Now().Add(time.Hour), time.Minute, nil, stop, nil) {
-			t.Error("want false when stop fires")
-		}
-	})
-
-	// A deadline already in the past returns immediately without sleeping.
-	t.Run("past deadline is a no-op", func(t *testing.T) {
-		clk := &fakeClock{times: []time.Time{base}}
-		start := time.Now()
-		if !waitUntilWall(base.Add(-time.Hour), time.Minute, clk.now, nil, nil) {
-			t.Fatal("want true")
-		}
-		if el := time.Since(start); el > 500*time.Millisecond {
-			t.Errorf("past deadline slept %s, want ~0", el)
-		}
-	})
-}
-
 // sleepForLimitAt sleeps in short segments and re-derives the remaining against the injected wall
 // clock, so a suspend gap can't inflate it. Here the clock lands just short of the reset, sleeps a
 // tiny real segment, then reads past it — the wait ends instead of counting the full hour.

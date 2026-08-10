@@ -492,12 +492,6 @@ func (c *Control) WaitForPresetRung(ctx context.Context) {
 	c.sleepUntilReset(ctx, until, label)
 }
 
-// limitTickCap bounds each sleep segment of a rate-limit wait — a local copy of the loop's own
-// constant (internal/cli/ratelimit.go): both wait on the same WALL-clock cadence via the injected
-// WaitUntilWall, but the const itself is too small to be worth a seam (same reasoning the sessions
-// extraction used for tiny test helpers).
-const limitTickCap = time.Minute
-
 // sleepUntilReset blocks until `until` passes (capped at ladder.LimitMaxWait) or ctx is done; a
 // no-op when until is zero or already past. Shared by the credential and preset wait-for-reset paths, so a respawn
 // pointed at a still-cooling target only starts once it's usable.
@@ -515,7 +509,7 @@ func (c *Control) sleepUntilReset(ctx context.Context, until time.Time, label st
 	// Re-check against the wall clock on short ticks (shared with the loop's sleepForLimit): a
 	// laptop suspend freezes the monotonic clock, so a single long timer would resume on wake still
 	// counting the closed time and over-wait past the reset.
-	c.host.WaitUntilWall(deadline, limitTickCap, time.Now, ctx.Done(), nil)
+	ladder.WaitUntilWall(deadline, ladder.LimitTickCap, time.Now, ctx.Done(), nil)
 }
 
 // toEditor rewrites an agent→editor line. On any object carrying configOptions/modes (a

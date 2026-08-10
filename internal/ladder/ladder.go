@@ -3,11 +3,12 @@
 // the classification that decides whether a provider's output was a rate/usage limit at all.
 //
 // A rung is one concrete agents.Target (exactly one account), so the limit map keyed by its wire
-// form leaves opus@work cooling while fable@work (or codex) stays free. Everything here is pure:
-// the clock is injected and nothing reads a config, prints, or starts a container. Building the
-// ladder from a preset against the signed-in accounts, applying a rung to the config, and the
-// actual sleeping are POLICY and stay with their caller — the loop, the ACP control, and the
-// sessions service each hold their own, and share this.
+// form leaves opus@work cooling while fable@work (or codex) stays free. Nothing here reads a
+// config, prints, or starts a container, and every clock is injected. Building the ladder from a
+// preset against the signed-in accounts, applying a rung to the config, and DECIDING to sleep are
+// POLICY and stay with their caller — the loop, the ACP control, and the sessions service each hold
+// their own, and share this. The wall-clock wait mechanics of that sleep are the one thing here
+// that blocks (wait.go): surviving a laptop suspend is the same problem for all of them.
 package ladder
 
 import (

@@ -59,7 +59,6 @@ func acpHost() acpctl.Host {
 			return acpctl.FusionCouncil{Peers: fc.Peers, Members: fc.Members, UnavailableRoles: fc.UnavailableRoles}, nil
 		},
 		WriteModelsCache: writeModelsCache,
-		WaitUntilWall:    waitUntilWall,
 	}
 }
 

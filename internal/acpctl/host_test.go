@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -36,13 +35,13 @@ func signInCred(t *testing.T, cfg *config.Config, agent, name string) {
 	}
 }
 
-// testHost returns a Host with real (duplicated, not injected) rotation/fusion-council/wait policy
-// for this package's OWN tests — acpctl must not import internal/cli (see
+// testHost returns a Host with real (duplicated, not injected) rotation/fusion-council policy for
+// this package's OWN tests — acpctl must not import internal/cli (see
 // .agent/kb/rules/internal-import-dag.md), so the functions below mirror, byte-for-byte, internal/cli's
-// rotation.go (accountsFor/expandLadder), fusion_council.go (resolveFusionCouncil/
-// resolveACPFusionCouncil), and ratelimit.go (waitUntilWall). Production wires the REAL cli functions
-// through this same Host shape (see internal/cli's acpHost()); keep these test copies in sync if that
-// policy changes — same duplication the sessions extraction used for its own test-only signInCred.
+// rotation.go (accountsFor/expandLadder) and fusion_council.go (resolveFusionCouncil/
+// resolveACPFusionCouncil). Production wires the REAL cli functions through this same Host shape
+// (see internal/cli's acpHost()); keep these test copies in sync if that policy changes — same
+// duplication the sessions extraction used for its own test-only signInCred.
 // WriteModelsCache defaults to a no-op: the on-disk cache format is cli-owned
 // (internal/cli/modelscache.go) and unreachable here, so a test that cares about a cache write uses
 // testHostCapturingModels instead (see control_test.go's two opportunistic-cache tests).
@@ -52,7 +51,6 @@ func testHost() Host {
 		AccountsFor:          testAccountsFor,
 		ResolveFusionCouncil: testResolveACPFusionCouncil,
 		WriteModelsCache:     func(*config.Config, string, []Model) error { return nil },
-		WaitUntilWall:        testWaitUntilWall,
 	}
 }
 
@@ -236,44 +234,4 @@ func testResolveACPFusionCouncil(governor string, peers []agents.Target, p *pres
 	}
 	current.UnavailableRoles = unavailable
 	return current, nil
-}
-
-// testWaitUntilWall mirrors internal/cli/ratelimit.go's waitUntilWall — the function production
-// wires as Host.WaitUntilWall.
-func testWaitUntilWall(deadline time.Time, tickCap time.Duration, nowFn func() time.Time, stop <-chan struct{}, onSegment func(time.Duration)) bool {
-	if nowFn == nil {
-		nowFn = time.Now
-	}
-	deadline = deadline.Round(0) // drop the monotonic reading so Sub uses the wall clock
-	for {
-		remaining := deadline.Sub(nowFn())
-		if remaining <= 0 {
-			return true
-		}
-		seg, capped := remaining, false
-		if seg > tickCap {
-			seg, capped = tickCap, true
-		}
-		if !testSleepOrWake(seg, stop) {
-			return false // stop requested — bail out of the wait
-		}
-		if capped && onSegment != nil {
-			onSegment(deadline.Sub(nowFn()))
-		}
-	}
-}
-
-// testSleepOrWake mirrors internal/cli/ratelimit.go's sleepOrWake.
-func testSleepOrWake(d time.Duration, wake <-chan struct{}) bool {
-	if d <= 0 {
-		return true
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return true
-	case <-wake:
-		return false
-	}
 }

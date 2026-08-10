@@ -1422,12 +1422,12 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *ladder.Rotat
 			}
 		case actRetryNow:
 			totalRetries++
-			if !sleepOrWake(wait, wake) {
+			if !ladder.SleepOrWake(wait, wake) {
 				return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 			}
 		case actRetry:
 			totalRetries++
-			if !sleepOrWake(10*time.Second, wake) {
+			if !ladder.SleepOrWake(10*time.Second, wake) {
 				return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 			}
 		case actStop:
@@ -3078,13 +3078,13 @@ reviewAgain:
 			case actRetryNow:
 				if wait > 0 {
 					ui.Info("iteration reached model output limit (%d/%d) — resuming in %s", retries, maxOutputRetries, wait)
-					sleepOrWake(wait, wake)
+					ladder.SleepOrWake(wait, wake)
 				} else {
 					ui.Info("iteration reached model output limit — resuming immediately")
 				}
 			case actRetry:
 				ui.Info("iteration failed (%d/%d) — retrying in 10s", fails, maxLoopFailures)
-				sleepOrWake(10*time.Second, wake)
+				ladder.SleepOrWake(10*time.Second, wake)
 			case actStop:
 				if waits > maxLimitWaits {
 					return code, fmt.Errorf("still rate limited after %d waits — stopping", maxLimitWaits)
