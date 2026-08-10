@@ -102,7 +102,8 @@ local (git-ignored) so it never creates commit noise or merge churn.
   as it grows (group into per-subsystem subfolders, keep the index current). Every card carries an
   `updated` date, its `subsystem`, the `sources` it maps, and a small changelog, so staleness shows;
   on pass-through, re-verify a card against its `sources` and bump it — or delete it if it's drifted
-  (a card that contradicts the code is worse than none). See `kb/README.md` for the card format.
+  (a card that contradicts the code is worse than none). See `kb/README.md` for the card format;
+  `make rules-check` gates these cards too (frontmatter, index pairing, `sources:` still existing).
 - `project.yaml` — the committed per-project config: a monorepo's `subprojects:` (each
   member keeps its own `tasks/`, backlog drawer included; every coop task command aggregates them,
   and the root queue holds work that spans members) and the `serve:` ports coop

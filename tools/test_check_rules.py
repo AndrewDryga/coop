@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from check_rules import audit, check_command, parse_frontmatter
+from check_rules import audit, audit_kb, check_command, parse_frontmatter
 
 
 GOOD_CARD = """---
@@ -28,6 +28,28 @@ INDEX = """# .agent/kb/rules
 - [sample-rule](sample-rule.md) — a sample rule
 """
 
+# A descriptive card: subsystem instead of scope, and no check: at all — it describes,
+# it doesn't rule, so there is no command that can fail on a violation of it.
+GOOD_KB_CARD = """---
+name: sample-card
+description: "how X actually works, and the trap"
+subsystem: box
+sources: [internal/cli/help.go]
+updated: 2026-08-10
+---
+
+The fact, citing internal/cli/help.go:1.
+
+## Changelog
+- 2026-08-10 — created
+"""
+
+KB_INDEX = """# .agent/kb
+
+## Index
+- [sample-card](sample-card.md) — how X actually works
+"""
+
 
 def go_pkg(raw):
     """A root holding ./internal/agent with two real test functions."""
@@ -41,12 +63,22 @@ def go_pkg(raw):
 
 def scaffold(root, card=GOOD_CARD, index=INDEX):
     rules = root / ".agent" / "kb" / "rules"
-    rules.mkdir(parents=True)
+    rules.mkdir(parents=True, exist_ok=True)
     (rules / "sample-rule.md").write_text(card)
     (rules / "README.md").write_text(index)
-    (root / "internal" / "cli").mkdir(parents=True)
+    (root / "internal" / "cli").mkdir(parents=True, exist_ok=True)
     (root / "internal" / "cli" / "help.go").write_text("package cli\n")
     return rules
+
+
+def scaffold_kb(root, card=GOOD_KB_CARD, index=KB_INDEX):
+    kb = root / ".agent" / "kb"
+    kb.mkdir(parents=True, exist_ok=True)
+    (kb / "sample-card.md").write_text(card)
+    (kb / "README.md").write_text(index)
+    (root / "internal" / "cli").mkdir(parents=True, exist_ok=True)
+    (root / "internal" / "cli" / "help.go").write_text("package cli\n")
+    return kb
 
 
 class ParseFrontmatterTest(unittest.TestCase):
@@ -173,6 +205,79 @@ class AuditTest(unittest.TestCase):
             problems, _, gated = audit(root)
             self.assertEqual(problems, [])
             self.assertEqual(gated, 1)
+
+
+class AuditKbTest(unittest.TestCase):
+    def test_good_tree_is_clean(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            scaffold_kb(root)
+            problems, cards = audit_kb(root)
+            self.assertEqual(problems, [])  # no check: field, and none demanded
+            self.assertEqual(len(cards), 1)
+
+    def test_missing_subsystem_is_caught(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            scaffold_kb(root, card=GOOD_KB_CARD.replace("subsystem: box\n", ""))
+            problems, _ = audit_kb(root)
+            self.assertTrue(any("missing 'subsystem:'" in p for p in problems))
+
+    def test_empty_required_value_is_caught(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            scaffold_kb(root, card=GOOD_KB_CARD.replace("subsystem: box", "subsystem:"))
+            problems, _ = audit_kb(root)
+            self.assertTrue(any("'subsystem:' is empty" in p for p in problems))
+
+    def test_missing_source_is_caught(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            scaffold_kb(root, card=GOOD_KB_CARD.replace("internal/cli/help.go]", "internal/cli/moved.go]"))
+            problems, _ = audit_kb(root)
+            self.assertTrue(any("does not exist" in p for p in problems))
+
+    def test_unindexed_card_is_caught(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            scaffold_kb(root, index="# .agent/kb\n\n## Index\n")
+            problems, _ = audit_kb(root)
+            self.assertTrue(any("not in the README index" in p for p in problems))
+
+    def test_index_link_to_missing_file_is_caught(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            scaffold_kb(root, index=KB_INDEX + "- [ghost](ghost.md) — gone\n")
+            problems, _ = audit_kb(root)
+            self.assertTrue(any("ghost.md" in p for p in problems))
+
+    def test_name_date_and_changelog_are_caught(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            scaffold_kb(root, card=GOOD_KB_CARD.replace("name: sample-card", "name: other-card")
+                                               .replace("updated: 2026-08-10", "updated: yesterday")
+                                               .replace("## Changelog", "## History"))
+            problems, _ = audit_kb(root)
+            self.assertTrue(any("must match the filename" in p for p in problems))
+            self.assertTrue(any("not YYYY-MM-DD" in p for p in problems))
+            self.assertTrue(any("no '## Changelog' section" in p for p in problems))
+
+    def test_missing_frontmatter_is_caught(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            scaffold_kb(root, card="# Bare card\n\nno metadata at all\n")
+            problems, _ = audit_kb(root)
+            self.assertTrue(any("no frontmatter" in p for p in problems))
+
+    def test_the_rules_register_is_not_swept_as_kb(self):
+        """rules/ is the other register: its cards belong to its own index, not this one."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            scaffold_kb(root)
+            scaffold(root)
+            problems, cards = audit_kb(root)
+            self.assertEqual(problems, [])
+            self.assertEqual([p.stem for p in cards], ["sample-card"])
 
 
 if __name__ == "__main__":

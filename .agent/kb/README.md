@@ -47,6 +47,12 @@ updated: <YYYY-MM-DD>                # last edit
 - <YYYY-MM-DD> — created / what changed (and what you verified it against)
 ```
 
+`make rules-check` holds you to the mechanical half of that — every field present and non-empty,
+`name` matching the filename, `updated` a real date, every `sources:` path still existing, a
+changelog section, and Index pairing BOTH ways (every card indexed exactly once, every indexed link
+resolving). What it can't tell you is whether a card is still TRUE; only reading it against its
+`sources` does that.
+
 ## Index
 - [box-time-is-utc](box-time-is-utc.md) — boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local
 - [box-home-nested-mounts](box-home-nested-mounts.md) — avoid bind targets that make Docker create missing application-owned home parents as root

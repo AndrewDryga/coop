@@ -73,7 +73,7 @@ casts-check: require-python3 ## Validate published casts for private paths, cred
 tools-test: require-python3 ## Run standard-library tests for repository maintenance tools
 	@python3 -m unittest discover -s tools -p 'test_*.py'
 
-rules-check: require-python3 ## Fail if a .agent/rules card is malformed, unindexed, or names a source/check that doesn't exist
+rules-check: require-python3 ## Fail if a .agent/kb card or rule is malformed, unindexed, or names a source/check that doesn't exist
 	@python3 tools/check_rules.py
 
 build-all: ## Compile every package (a package no test imports can still break the build)
