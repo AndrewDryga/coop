@@ -2655,15 +2655,22 @@ func (l *taskLease) rebaseTimedOutAuditReopen(repo, base, head string) error {
 	return nil
 }
 
-func completionUnbindableTasks(repo, base, head string, finished []string, reopen *auditReopenRecord) []string {
+// completionUnbindableTasks is unbindableTasks' entry point from the work loop. Under ordinary
+// authority it defers straight to unbindableTasks, threading touched through unchanged. A lease
+// carrying host audit-reopen authority for exactly the finished task instead validates by semantic
+// replay (auditReopenCompletionValid): that authority already proves the descendant history is a
+// faithful reproduction, which trailer counting would otherwise reject as the very foreign-binding
+// shape reopened work necessarily has. touched is unused on that branch — replay validation subsumes
+// the foreign-binding question for it — so it always returns a nil tolerated set.
+func completionUnbindableTasks(repo, base, head string, finished []string, reopen *auditReopenRecord, touched map[string]bool) (missing, tolerated []string) {
 	if reopen == nil || len(finished) != 1 || finished[0] != reopen.TaskID {
-		return unbindableTasks(repo, base, head, finished)
+		return unbindableTasks(repo, base, head, finished, touched)
 	}
 	if auditReopenCompletionValid(repo, base, head, finished[0], *reopen) &&
 		ordinaryBindingMatchesRaw(repo, head, finished[0]) {
-		return nil
+		return nil, nil
 	}
-	return slices.Clone(finished)
+	return slices.Clone(finished), nil
 }
 
 func ordinaryBindingMatchesRaw(repo, head, id string) bool {
@@ -2682,18 +2689,54 @@ func ordinaryBindingMatchesRaw(repo, head, id string) bool {
 // completion always fails closed — a zero-commit close is valid ONLY under fresh host audit
 // authority, so task prose claiming a reopen can never buy one; crash recovery restores it for a
 // fresh range.
-func unbindableTasks(repo, base, head string, finished []string) []string {
+//
+// A commit in range that binds a task OUTSIDE finished is foreign. It still fails the WHOLE
+// completion closed — unchanged from before this split — when it names a task this iteration's
+// authority consumption could touch: touched is host-side knowledge the box cannot influence (built
+// by completionUnbindableTasks' caller in commands.go from the finished set, the leased task id, the
+// audit-reopen record's task, every id whose queue state this completion window observed change, and
+// every id windows.baselineDoneIDs() reports — every task already archived before the box ever ran).
+// That last member matters even when the archived task's folder never moves: its history is meant to
+// be closed, so a forged extra commit corrupts that closed record without needing to touch its
+// folder at all — unbindableTasks alone cannot tell "genuinely untracked" from "already closed" by
+// git content alone, so the caller must supply both. That is the guard's actual job
+// (.agent/kb/loop-range-rejects-outside-commits.md): stop an iteration from smuggling in authority
+// over a task it could touch, not censor every unrelated trailer that happens to share the range by
+// timing. A foreign binding for an id never seen reachable before base is the genuinely unrelated
+// case — a human's own commit landing mid-iteration, for a task this queue never tracked at all or
+// that is still live and untouched — so outside touched it is tolerated: named in the returned
+// tolerated slice for the caller to report and journal, while the completion proceeds unrejected. A
+// foreign binding that instead REPLACES one already reachable from base (its old commit no longer
+// reachable from head) is never tolerated regardless of touched: that can only happen if an ancestor
+// was rewritten, which means some OTHER task's already-bound commit was reparented — silently
+// altering another task's committed content without ever moving its queue folder is exactly the
+// smuggling this guard exists to stop.
+func unbindableTasks(repo, base, head string, finished []string, touched map[string]bool) (missing, tolerated []string) {
 	if base == "" || head == "" || base == head {
-		return slices.Clone(finished)
+		return slices.Clone(finished), nil
 	}
 	headCommits, headErr := rawReachableAuditCommits(repo, head)
 	baseCommits, baseErr := rawReachableAuditCommits(repo, base)
 	if headErr != nil || baseErr != nil {
-		return slices.Clone(finished)
+		return slices.Clone(finished), nil
 	}
 	baseReachable := make(map[string]bool, len(baseCommits))
 	for _, commit := range baseCommits {
 		baseReachable[commit.sha] = true
+	}
+	headReachable := make(map[string]bool, len(headCommits))
+	for _, commit := range headCommits {
+		headReachable[commit.sha] = true
+	}
+	// rewritten[id] means id already had a valid single-trailer binding reachable from base whose
+	// commit fell out of head's reachable set — only possible if something rebased or amended an
+	// ancestor. A fast-forward (the ordinary case) never drops a base-reachable commit.
+	rewritten := make(map[string]bool)
+	for _, commit := range baseCommits {
+		if commit.taskBindingInvalid || len(commit.taskValues) != 1 || headReachable[commit.sha] {
+			continue
+		}
+		rewritten[commit.taskValues[0]] = true
 	}
 	allowed := make(map[string]bool, len(finished))
 	for _, id := range finished {
@@ -2702,15 +2745,22 @@ func unbindableTasks(repo, base, head string, finished []string) []string {
 	rangeBindings := make(map[string]int, len(finished))
 	reachableBindings := make(map[string]int, len(finished))
 	reachableInvalid := make(map[string]bool, len(finished))
+	toleratedSeen := map[string]bool{}
 	for _, commit := range headCommits {
 		inRange := !baseReachable[commit.sha]
 		if inRange && (commit.taskBindingInvalid || len(commit.taskValues) > 1) {
-			return slices.Clone(finished)
+			return slices.Clone(finished), nil
 		}
 		for _, id := range commit.taskValues {
 			if !allowed[id] {
 				if inRange {
-					return slices.Clone(finished)
+					if touched[id] || rewritten[id] {
+						return slices.Clone(finished), nil
+					}
+					if !toleratedSeen[id] {
+						toleratedSeen[id] = true
+						tolerated = append(tolerated, id)
+					}
 				}
 				continue
 			}
@@ -2724,13 +2774,47 @@ func unbindableTasks(repo, base, head string, finished []string) []string {
 			}
 		}
 	}
-	var missing []string
 	for _, id := range finished {
 		if rangeBindings[id] != 1 || reachableBindings[id] != 1 || reachableInvalid[id] {
 			missing = append(missing, id)
 		}
 	}
-	return missing
+	slices.Sort(tolerated)
+	return missing, tolerated
+}
+
+// reportToleratedForeignBindings surfaces every foreign Coop-Task trailer unbindableTasks tolerated
+// instead of rejecting (see its doc comment and .agent/kb/loop-range-rejects-outside-commits.md). It
+// never fails the iteration: a task id that no longer resolves to a folder on any host is skipped,
+// not treated as an error, since bookkeeping about a task this iteration never touched must never
+// block a legitimate completion. The operator sees one line naming all of them; each named task also
+// gets its own best-effort log.md entry, so a human who later resumes that task is pointed at the
+// truth by resumeLine's existing "read log.md" instruction — commitsForTask's unconditional history
+// scan will already surface the stray commit and trigger that instruction once the task is picked up
+// — instead of mistaking it for that task's own completion. The mark is deliberately informational,
+// not mechanical: unbindableTasks' own reachable-binding count already refuses to let that task's
+// real next completion silently ride on a binding it did not itself just create.
+func reportToleratedForeignBindings(repo string, hosts []string, base, head, leasedID string, tolerated []string) {
+	if len(tolerated) == 0 {
+		return
+	}
+	ui.Warn("task %s's commit range also carries Coop-Task trailer(s) for %s, which this iteration's authority never touched — tolerated, not rejected; see each task's log.md", leasedID, strings.Join(tolerated, ", "))
+	for _, id := range tolerated {
+		sha := ""
+		if commits := commitsForTask(repo, base+".."+head, id); len(commits) == 1 {
+			sha = " (" + commits[0] + ")"
+		}
+		note := fmt.Sprintf(
+			"a commit in task %s's completion range carries this task's Coop-Task trailer%s, without this task's queue state changing during that iteration — tolerated as harmless rather than rejecting %s's completion (see .agent/kb/loop-range-rejects-outside-commits.md); this is NOT a valid completion for this task, and this task's own next completion still needs exactly one fresh reachable Coop-Task binding of its own",
+			leasedID, sha, leasedID,
+		)
+		for _, host := range hosts {
+			if t, ok := currentTask(host, id); ok {
+				appendTaskLog(t.Dir, note)
+				break
+			}
+		}
+	}
 }
 
 func restoreQueuedCompletion(task queuedTask, audit bool) error {

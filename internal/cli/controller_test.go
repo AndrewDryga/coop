@@ -447,6 +447,45 @@ func TestWorkCompletionWindowAcceptsHostReceiptedForeignArchivedDeparture(t *tes
 	}
 }
 
+// TestWorkCompletionWindowBaselineDoneIDs pins baselineDoneIDs' contract: every task already
+// archived when the window's baseline is captured is named, and nothing else is — this is the
+// host-side "already closed" authority surface commands.go folds into unbindableTasks' touched set
+// (.agent/kb/loop-range-rejects-outside-commits.md), so a forged Coop-Task trailer for an already-done
+// task rejects even when that task's folder never moves during the iteration.
+func TestWorkCompletionWindowBaselineDoneIDs(t *testing.T) {
+	root := t.TempDir()
+	assigned := taskForLease(t, root, stateInProgress, "work-subject")
+	archived := taskForLease(t, root, stateDone, "already-archived")
+	windows, err := beginWorkCompletionWindows([]string{root}, assigned.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := windows.close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	ids := windows.baselineDoneIDs()
+	if !ids[archived.ID] {
+		t.Fatalf("baselineDoneIDs = %v, want %q present", ids, archived.ID)
+	}
+	if ids[assigned.ID] {
+		t.Fatalf("baselineDoneIDs = %v, the in-progress leased task must not appear", ids)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("baselineDoneIDs = %v, want exactly one id", ids)
+	}
+}
+
+// A nil set's baselineDoneIDs is empty, not a nil-pointer panic — every other completionWindowSet
+// method (departures, candidates, close) is nil-safe the same way.
+func TestNilCompletionWindowSetBaselineDoneIDs(t *testing.T) {
+	var windows *completionWindowSet
+	if ids := windows.baselineDoneIDs(); len(ids) != 0 {
+		t.Fatalf("nil windows baselineDoneIDs = %v, want empty", ids)
+	}
+}
+
 func TestWorkCompletionWindowRejectsSubjectAndWrongDepartureRecord(t *testing.T) {
 	t.Run("subject", func(t *testing.T) {
 		root := t.TempDir()
@@ -2741,7 +2780,10 @@ func TestAssignLoopTaskOnlyNeverSwitchesTasks(t *testing.T) {
 
 // TestCommitsForTaskAndUnbindableTasks drives the real git trailer parser. Fresh work binds only
 // when the iteration range and reachable history each contain exactly one binding; unchanged HEAD,
-// malformed, duplicate, different-id, substring, and historical duplicate values fail closed.
+// malformed, duplicate, different-id, substring, and historical duplicate values fail closed. Every
+// call here passes a nil touched set except the two foreign-binding cases below, which mark
+// "archived-task" touched so they keep proving this counting logic rather than the touched/tolerated
+// split — that split has its own dedicated test, TestUnbindableTasksTouchedSetNarrowsForeignBindings.
 func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -2774,50 +2816,51 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 		t.Errorf("commitsForTask(task-99) = %v, want none", c)
 	}
 	// A finished task WITH a trailer commit in range is bindable (not untrailered); one WITHOUT is.
-	if m := unbindableTasks(repo, base, head, []string{"task-42"}); len(m) != 0 {
-		t.Errorf("task-42 is trailered in range, should not be flagged: %v", m)
+	if m, tol := unbindableTasks(repo, base, head, []string{"task-42"}, nil); len(m) != 0 || len(tol) != 0 {
+		t.Errorf("task-42 is trailered in range, should not be flagged: missing=%v tolerated=%v", m, tol)
 	}
-	if m := unbindableTasks(repo, base, head, []string{"task-42", "task-99"}); len(m) != 1 || m[0] != "task-99" {
-		t.Errorf("unbindable = %v, want [task-99]", m)
+	if m, tol := unbindableTasks(repo, base, head, []string{"task-42", "task-99"}, nil); len(m) != 1 || m[0] != "task-99" || len(tol) != 0 {
+		t.Errorf("unbindable = %v, tolerated = %v, want [task-99] and none", m, tol)
 	}
 	git("commit", "-q", "--allow-empty", "-m", "forge another task\n\nCoop-Task: archived-task")
 	forgedHead := gitOut(repo, "rev-parse", "HEAD")
-	if m := unbindableTasks(repo, base, forgedHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
-		t.Errorf("foreign task binding in assigned range = %v, want [task-42]", m)
+	touchedArchived := map[string]bool{"archived-task": true}
+	if m, tol := unbindableTasks(repo, base, forgedHead, []string{"task-42"}, touchedArchived); !slices.Equal(m, []string{"task-42"}) || len(tol) != 0 {
+		t.Errorf("foreign task binding in assigned range = %v, tolerated = %v, want [task-42] and none", m, tol)
 	}
 	git("commit", "-q", "--allow-empty", "-m", "hide foreign task\n\nCoop-Task:\nCoop-Task: archived-task")
 	hiddenForeignHead := gitOut(repo, "rev-parse", "HEAD")
-	if m := unbindableTasks(repo, forgedHead, hiddenForeignHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
-		t.Errorf("empty then foreign task binding = %v, want [task-42]", m)
+	if m, tol := unbindableTasks(repo, forgedHead, hiddenForeignHead, []string{"task-42"}, touchedArchived); !slices.Equal(m, []string{"task-42"}) || len(tol) != 0 {
+		t.Errorf("empty then foreign task binding = %v, tolerated = %v, want [task-42] and none", m, tol)
 	}
 	git("reset", "--hard", "-q", head)
 	// No-HEAD-change work must fail closed even if an old exact trailer is reachable: a zero-commit
 	// close is valid ONLY under fresh host audit authority, so a resumed task cannot buy one by
 	// pointing at history. Crash recovery restores it for a fresh range instead.
-	if m := unbindableTasks(repo, head, head, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m, _ := unbindableTasks(repo, head, head, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("unchanged HEAD used historical task binding: %v", m)
 	}
-	if m := unbindableTasks(repo, head, head, []string{"task-4", "task"}); len(m) != 2 || m[0] != "task-4" || m[1] != "task" {
+	if m, _ := unbindableTasks(repo, head, head, []string{"task-4", "task"}, nil); len(m) != 2 || m[0] != "task-4" || m[1] != "task" {
 		t.Errorf("different ids and substrings must remain unbindable, got %v", m)
 	}
-	if m := unbindableTasks(repo, "", head, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m, _ := unbindableTasks(repo, "", head, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("unknown iteration base must fail closed, got %v", m)
 	}
-	if m := unbindableTasks(repo, head, "", []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m, _ := unbindableTasks(repo, head, "", []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("unknown iteration head must fail closed, got %v", m)
 	}
 
 	// Once HEAD changes, an older valid trailer cannot bless fresh unbound work.
 	git("commit", "-q", "--allow-empty", "-m", "fresh rework without a trailer")
 	unboundHead := gitOut(repo, "rev-parse", "HEAD")
-	if m := unbindableTasks(repo, head, unboundHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m, _ := unbindableTasks(repo, head, unboundHead, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("historical-only binding after fresh work = %v, want [task-42]", m)
 	}
 
 	// A trailer-like line outside Git's final contiguous trailer block is not a trailer.
 	git("commit", "-q", "--allow-empty", "-m", "malformed\n\nCoop-Task: task-42\n\nCo-authored-by: T <t@t>")
 	malformedHead := gitOut(repo, "rev-parse", "HEAD")
-	if m := unbindableTasks(repo, unboundHead, malformedHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m, _ := unbindableTasks(repo, unboundHead, malformedHead, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("malformed trailer binding = %v, want [task-42]", m)
 	}
 
@@ -2827,20 +2870,20 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 	if c := commitsForTask(repo, malformedHead+".."+duplicateHead, "task-42"); len(c) != 0 {
 		t.Errorf("duplicate trailers must not bind, got commits %v", c)
 	}
-	if m := unbindableTasks(repo, malformedHead, duplicateHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m, _ := unbindableTasks(repo, malformedHead, duplicateHead, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("duplicate trailer binding = %v, want [task-42]", m)
 	}
 
 	git("commit", "-q", "--allow-empty", "-m", "valid again\n\nCoop-Task: task-42")
 	validHead := gitOut(repo, "rev-parse", "HEAD")
-	if m := unbindableTasks(repo, duplicateHead, validHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m, _ := unbindableTasks(repo, duplicateHead, validHead, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("a second reachable binding outside the fresh range must fail closed: %v", m)
 	}
 	// Two individually valid commits for one task are still ambiguous: one task must bind to one
 	// commit in the iteration range, not merely find at least one matching trailer somewhere in it.
 	git("commit", "-q", "--allow-empty", "-m", "second valid binding\n\nCoop-Task: task-42")
 	twoBindingsHead := gitOut(repo, "rev-parse", "HEAD")
-	if m := unbindableTasks(repo, duplicateHead, twoBindingsHead, []string{"task-42"}); !slices.Equal(m, []string{"task-42"}) {
+	if m, _ := unbindableTasks(repo, duplicateHead, twoBindingsHead, []string{"task-42"}, nil); !slices.Equal(m, []string{"task-42"}) {
 		t.Errorf("multiple matching commits must fail closed, got %v", m)
 	}
 	// landedTasks sees the trailer in the explicitly requested history.
@@ -2858,7 +2901,7 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 	git("reset", "--hard", "-q", head)
 	git("commit", "--amend", "-q", "--allow-empty", "-m", "reworked\n\nCoop-Task: task-42\nCoop-Recovery: fixture")
 	rewrittenHead := gitOut(repo, "rev-parse", "HEAD")
-	if m := unbindableTasks(repo, base, rewrittenHead, []string{"task-42"}); len(m) != 0 {
+	if m, _ := unbindableTasks(repo, base, rewrittenHead, []string{"task-42"}, nil); len(m) != 0 {
 		t.Errorf("rewritten sole binding should be accepted: %v", m)
 	}
 	if commits := commitsForTask(repo, rewrittenHead, "task-42"); len(commits) != 1 || commits[0] != rewrittenHead[:7] {
@@ -2891,7 +2934,7 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 			if got := commitsForTask(repo, head, "task-a"); len(got) != 1 {
 				t.Fatalf("fixture did not hide the older binding from Git traversal: %v", got)
 			}
-			if got := unbindableTasks(repo, base, head, []string{"task-a"}); !slices.Equal(got, []string{"task-a"}) {
+			if got, _ := unbindableTasks(repo, base, head, []string{"task-a"}, nil); !slices.Equal(got, []string{"task-a"}) {
 				t.Fatalf("hidden older duplicate = %v, want [task-a]", got)
 			}
 		})
@@ -2908,11 +2951,15 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 			if got := commitsForTask(repo, base+".."+head, "task-a"); len(got) != 0 {
 				t.Fatalf("fixture did not hide the in-range binding from Git traversal: %v", got)
 			}
-			if got := unbindableTasks(repo, base, head, []string{"task-a"}); len(got) != 0 {
+			if got, _ := unbindableTasks(repo, base, head, []string{"task-a"}, nil); len(got) != 0 {
 				t.Fatalf("raw in-range binding was hidden: %v", got)
 			}
 		})
 
+		// task-b is marked touched here so this sub-case keeps proving grafts/shallow cannot help a
+		// box widen its own authority (the security property the guard exists for) rather than
+		// switching to the untouched/tolerated split, which TestUnbindableTasksTouchedSetNarrowsForeignBindings
+		// covers with its own graft-hiding case.
 		t.Run(metadata+" cannot conceal foreign in-range binding", func(t *testing.T) {
 			repo, git := gitRepo(t)
 			git("commit", "-q", "--allow-empty", "-m", "base")
@@ -2926,11 +2973,300 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 			if changes.invalidTaskBindings || !slices.Equal(changes.taskIDs(), []string{"task-a"}) {
 				t.Fatalf("fixture did not hide the foreign binding from Git traversal: %#v", changes)
 			}
-			if got := unbindableTasks(repo, base, head, []string{"task-a"}); !slices.Equal(got, []string{"task-a"}) {
-				t.Fatalf("hidden foreign binding = %v, want [task-a]", got)
+			if got, tol := unbindableTasks(repo, base, head, []string{"task-a"}, map[string]bool{"task-b": true}); !slices.Equal(got, []string{"task-a"}) || len(tol) != 0 {
+				t.Fatalf("hidden foreign binding = %v, tolerated = %v, want [task-a] and none", got, tol)
 			}
 		})
 	}
+}
+
+// TestUnbindableTasksTouchedSetNarrowsForeignBindings pins the narrowed guard from
+// .agent/kb/loop-range-rejects-outside-commits.md: a foreign in-range Coop-Task trailer only rejects
+// the whole completion when it names a task this iteration's authority consumption could touch.
+// Outside that set it is tolerated (returned in `tolerated`; the completion proceeds) instead of
+// destroying an otherwise-valid one — the fix for the KB card's 32-minute-loss incident. unbindableTasks
+// itself only ever sees the resulting `touched` map — commands.go is the one that builds it from the
+// finished set, the leased task id, the audit-reopen task, windows.candidates()/departures() (queue
+// state this window observed change), and windows.baselineDoneIDs() (every task already archived
+// before the box ran) — so each case below simulates exactly the touched membership the real caller
+// would produce for that scenario. The adversarial cases prove a boxed agent still cannot widen its
+// own authority by forging trailers: touching a foreign id (however that touch happened — the box's
+// own second completion, reopening an archived task, or a content-altering rewrite) still refuses
+// exactly as before this split existed, and a task that was ALREADY archived stays protected even
+// when the box never moves its folder at all.
+func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
+	// regression: an untouched foreign binding for a task this queue never tracked at all — the exact
+	// 2026-08-01 incident shape (a host commit landing mid-iteration for a task this iteration never
+	// touched, never leased, and never archived) — no longer destroys the finished task's completion.
+	// This cannot pass against the pre-narrowing signature: `touched` and the tolerated return value
+	// did not exist before this change, so main both lacks the mechanism this test exercises and had
+	// no way to express "tolerate, don't reject" at all (confirmed by hand against the pre-fix
+	// unbindableTasks(repo, base, head, finished) before this change landed: it returned
+	// missing=[task-42], wrongly rejecting the clean completion).
+	t.Run("regression: untouched foreign binding is tolerated, not rejected (the 32-minute incident)", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := gitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
+		git("commit", "-q", "--allow-empty", "-m", "unrelated host work mid-iteration\n\nCoop-Task: task-99")
+		head := gitOut(repo, "rev-parse", "HEAD")
+
+		touched := map[string]bool{"task-42": true} // task-99 is untracked: not leased, not archived, not moved
+		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
+		if len(missing) != 0 {
+			t.Fatalf("finished task wrongly rejected by an untouched foreign binding: missing=%v", missing)
+		}
+		if !slices.Equal(tolerated, []string{"task-99"}) {
+			t.Fatalf("tolerated = %v, want [task-99]", tolerated)
+		}
+	})
+
+	t.Run("multiple untouched foreign bindings are all tolerated", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := gitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
+		git("commit", "-q", "--allow-empty", "-m", "human commit 1\n\nCoop-Task: task-99")
+		git("commit", "-q", "--allow-empty", "-m", "human commit 2\n\nCoop-Task: task-100")
+		head := gitOut(repo, "rev-parse", "HEAD")
+
+		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, map[string]bool{"task-42": true})
+		if len(missing) != 0 {
+			t.Fatalf("finished task wrongly rejected: missing=%v", missing)
+		}
+		if !slices.Equal(tolerated, []string{"task-100", "task-99"}) {
+			t.Fatalf("tolerated = %v, want [task-100 task-99] (sorted)", tolerated)
+		}
+	})
+
+	// adversarial: forged duplicate trailer for the box's own task still rejects — caught by the
+	// pre-existing range/reachable counting, not the touched set, so it is unaffected by narrowing.
+	t.Run("adversarial: forged duplicate trailer for the box's own task still rejects", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := gitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
+		git("commit", "-q", "--allow-empty", "-m", "forged extra\n\nCoop-Task: task-42")
+		head := gitOut(repo, "rev-parse", "HEAD")
+
+		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, map[string]bool{"task-42": true})
+		if !slices.Equal(missing, []string{"task-42"}) {
+			t.Fatalf("duplicate self-binding was not rejected: missing=%v", missing)
+		}
+		if len(tolerated) != 0 {
+			t.Fatalf("a rejected completion must not also report tolerated ids: %v", tolerated)
+		}
+	})
+
+	// adversarial: forged trailer for a SECOND task this same iteration also moved to done — the
+	// "smuggling a binding it does not own" the guard exists to stop. commands.go puts every id whose
+	// queue state this completion window observed change into touched; simulated directly here.
+	t.Run("adversarial: forged trailer for a second queued task this iteration also completed still rejects", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := gitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
+		git("commit", "-q", "--allow-empty", "-m", "also claim a second task\n\nCoop-Task: task-99")
+		head := gitOut(repo, "rev-parse", "HEAD")
+
+		// task-99's folder ALSO moved this iteration (the box widened its own authority), so the
+		// caller's touched set names it too.
+		touched := map[string]bool{"task-42": true, "task-99": true}
+		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
+		if !slices.Equal(missing, []string{"task-42"}) {
+			t.Fatalf("widened authority over task-99 was not rejected: missing=%v", missing)
+		}
+		if len(tolerated) != 0 {
+			t.Fatalf("a rejected completion must not also report tolerated ids: %v", tolerated)
+		}
+	})
+
+	// adversarial: forged trailer for an ARCHIVED task, matching the real threat — the box never
+	// touches that task's folder at all (it stays in 99_done throughout). commands.go's
+	// windows.baselineDoneIDs() puts every id already archived when the iteration's window baseline
+	// was captured into touched, regardless of folder movement: an archived task's history is meant
+	// to be closed, so a forged extra commit corrupts that closed record without needing to move its
+	// folder. (TestProviderScriptedLoopReviewProcess/worker_cannot_forge_review_authority_for_an_
+	// archived_task exercises this exact scenario end to end, through the real commands.go wiring.)
+	t.Run("adversarial: forged trailer for an archived task, never touched, still rejects", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := gitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
+		git("commit", "-q", "--allow-empty", "-m", "forge a trailer for an untouched archived task\n\nCoop-Task: archived-task")
+		head := gitOut(repo, "rev-parse", "HEAD")
+
+		touched := map[string]bool{"task-42": true, "archived-task": true} // baselineDoneIDs' doing, not a folder move
+		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
+		if !slices.Equal(missing, []string{"task-42"}) {
+			t.Fatalf("forged archived-task binding was not rejected: missing=%v", missing)
+		}
+		if len(tolerated) != 0 {
+			t.Fatalf("a rejected completion must not also report tolerated ids: %v", tolerated)
+		}
+	})
+
+	// adversarial: forged trailer for an archived task the box ALSO reopens (moves out of 99_done)
+	// this iteration — an independent, second reason the same id ends up touched
+	// (windows.departures()), on top of baselineDoneIDs above.
+	t.Run("adversarial: forged trailer for an archived task this iteration also reopened still rejects", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := gitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
+		git("commit", "-q", "--allow-empty", "-m", "touch the archived task too\n\nCoop-Task: archived-task")
+		head := gitOut(repo, "rev-parse", "HEAD")
+
+		touched := map[string]bool{"task-42": true, "archived-task": true}
+		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
+		if !slices.Equal(missing, []string{"task-42"}) {
+			t.Fatalf("widened authority over archived-task was not rejected: missing=%v", missing)
+		}
+		if len(tolerated) != 0 {
+			t.Fatalf("a rejected completion must not also report tolerated ids: %v", tolerated)
+		}
+	})
+
+	// adversarial: a forged trailer that REWRITES another task's already-bound commit still rejects
+	// even though that task was never in touched — content-tampering protection independent of the
+	// touched set. Only possible via a rebase/amend that reparents an ancestor, which the ordinary
+	// work path has no legitimate reason to do; see unbindableTasks' rewritten tracking.
+	t.Run("adversarial: forged trailer that rewrites another task's existing binding still rejects", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("B\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "b.txt")
+		git("commit", "-q", "-m", "task-99's own earlier work\n\nCoop-Task: task-99")
+		oldHead := gitOut(repo, "rev-parse", "HEAD")
+		if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "a.txt")
+		git("commit", "-q", "-m", "did the work\n\nCoop-Task: task-42")
+		unrewritten := gitOut(repo, "rev-parse", "HEAD")
+
+		// Rebase task-42's commit onto task-99's parent, then replay task-99's own commit forward:
+		// same content, but a new sha, so task-99's ORIGINAL commit falls out of head's reachable set.
+		git("reset", "--hard", "-q", oldHead+"^")
+		git("cherry-pick", unrewritten)
+		git("cherry-pick", oldHead)
+		head := gitOut(repo, "rev-parse", "HEAD")
+
+		missing, tolerated := unbindableTasks(repo, oldHead, head, []string{"task-42"}, map[string]bool{"task-42": true})
+		if !slices.Equal(missing, []string{"task-42"}) {
+			t.Fatalf("a rewritten foreign binding was not rejected even though task-99 was never in touched: missing=%v", missing)
+		}
+		if len(tolerated) != 0 {
+			t.Fatalf("a rejected completion must not also report tolerated ids: %v", tolerated)
+		}
+	})
+
+	// adversarial: multiple Coop-Task values on one in-range commit still reject unconditionally,
+	// regardless of touched — the structural-invalidity guard this split never touched.
+	t.Run("adversarial: multi-value Coop-Task commit in range still rejects regardless of touched", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := gitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
+		git("commit", "-q", "--allow-empty", "-m", "ambiguous\n\nCoop-Task: task-99\nCoop-Task: task-100")
+		head := gitOut(repo, "rev-parse", "HEAD")
+
+		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, nil)
+		if !slices.Equal(missing, []string{"task-42"}) {
+			t.Fatalf("multi-value in-range trailer was not rejected: missing=%v", missing)
+		}
+		if len(tolerated) != 0 {
+			t.Fatalf("a rejected completion must not also report tolerated ids: %v", tolerated)
+		}
+	})
+
+	// adversarial: an invalid (empty-value) binding in range still rejects unconditionally too.
+	t.Run("adversarial: invalid binding in range still rejects regardless of touched", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := gitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
+		git("commit", "-q", "--allow-empty", "-m", "invalid\n\nCoop-Task:\nCoop-Task: task-99")
+		head := gitOut(repo, "rev-parse", "HEAD")
+
+		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, nil)
+		if !slices.Equal(missing, []string{"task-42"}) {
+			t.Fatalf("invalid in-range trailer was not rejected: missing=%v", missing)
+		}
+		if len(tolerated) != 0 {
+			t.Fatalf("a rejected completion must not also report tolerated ids: %v", tolerated)
+		}
+	})
+}
+
+// TestReportToleratedForeignBindings covers the report+journal shape for a harmless foreign binding:
+// one ui.Warn line naming every tolerated id, plus a best-effort log.md entry on each named task's
+// own folder (resolved by scanning every host, mirroring how the caller in commands.go can span
+// several task queues). An id that resolves to no folder anywhere is skipped, never an error — the
+// binding is about a task this iteration never touched, so missing bookkeeping for it must never
+// surface as a failure.
+func TestReportToleratedForeignBindings(t *testing.T) {
+	t.Run("warns once and journals each named task with its commit", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := gitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
+		git("commit", "-q", "--allow-empty", "-m", "unrelated host work\n\nCoop-Task: task-99")
+		head := gitOut(repo, "rev-parse", "HEAD")
+		foreignSHA := commitsForTask(repo, base+".."+head, "task-99")
+		if len(foreignSHA) != 1 {
+			t.Fatalf("fixture setup: commitsForTask(task-99) = %v, want exactly one", foreignSHA)
+		}
+
+		root := filepath.Join(repo, tasksRoot)
+		dir := filepath.Join(root, stateTodo, "task-99")
+		writeTaskFile(t, filepath.Join(dir, "task.md"), "# task-99\n")
+		writeTaskFile(t, filepath.Join(dir, "log.md"), "# Log\n")
+
+		out := captureStderr(t, func() {
+			reportToleratedForeignBindings(repo, []string{root}, base, head, "task-42", []string{"task-99"})
+		})
+		for _, want := range []string{"task-42", "task-99", "tolerated"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("warning missing %q:\n%s", want, out)
+			}
+		}
+		log := readFileString(filepath.Join(dir, "log.md"))
+		for _, want := range []string{"task-42", "Coop-Task", "tolerated", "NOT a valid completion", foreignSHA[0]} {
+			if !strings.Contains(log, want) {
+				t.Errorf("journal entry missing %q:\n%s", want, log)
+			}
+		}
+	})
+
+	t.Run("skips journaling an id that resolves to no task folder on any host", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		base := gitOut(repo, "rev-parse", "HEAD")
+		git("commit", "-q", "--allow-empty", "-m", "did the work\n\nCoop-Task: task-42")
+		head := gitOut(repo, "rev-parse", "HEAD")
+		root := filepath.Join(repo, tasksRoot) // empty queue: "task-99" resolves nowhere
+
+		out := captureStderr(t, func() {
+			reportToleratedForeignBindings(repo, []string{root}, base, head, "task-42", []string{"task-99"})
+		})
+		if !strings.Contains(out, "task-99") {
+			t.Errorf("warning must still fire for an unresolvable id:\n%s", out)
+		}
+	})
+
+	t.Run("no-op for an empty tolerated set", func(t *testing.T) {
+		repo, _ := gitRepo(t)
+		root := filepath.Join(repo, tasksRoot)
+		out := captureStderr(t, func() {
+			reportToleratedForeignBindings(repo, []string{root}, "", "", "task-42", nil)
+		})
+		if out != "" {
+			t.Errorf("expected no output for an empty tolerated set, got:\n%s", out)
+		}
+	})
 }
 
 // Rewriting A makes the old B tip a sibling; replaying B puts its task binding in the proposed
@@ -2971,7 +3307,7 @@ func TestAuditReopenCompletionAcceptsSemanticDescendantReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := completionUnbindableTasks(repo, oldHead, oldHead, []string{"task-a"}, &reopen); len(got) != 0 {
+	if got, _ := completionUnbindableTasks(repo, oldHead, oldHead, []string{"task-a"}, &reopen, nil); len(got) != 0 {
 		t.Fatalf("verification-only audit re-close rejected: %v", got)
 	}
 	git("branch", "old-head")
@@ -2984,10 +3320,13 @@ func TestAuditReopenCompletionAcceptsSemanticDescendantReplay(t *testing.T) {
 	git("commit", "--amend", "-q", "-m", "A reworked\n\nCoop-Task: task-a\nCoop-Recovery: fixture")
 	git("cherry-pick", git("rev-list", "--reverse", a+"..old-head"))
 	newHead := git("rev-parse", "HEAD")
-	if got := unbindableTasks(repo, oldHead, newHead, []string{"task-a"}); !slices.Equal(got, []string{"task-a"}) {
-		t.Fatalf("clean-tree reproduction unexpectedly changed: got %v", got)
+	// task-b's original commit (reachable from oldHead) is superseded here by the cherry-picked
+	// replay: it is a rewrite, not a fresh/unrelated binding, so it stays authority-touching and
+	// rejects even with a nil touched set — see unbindableTasks' rewritten tracking.
+	if got, tol := unbindableTasks(repo, oldHead, newHead, []string{"task-a"}, nil); !slices.Equal(got, []string{"task-a"}) || len(tol) != 0 {
+		t.Fatalf("clean-tree reproduction unexpectedly changed: missing=%v tolerated=%v", got, tol)
 	}
-	if got := completionUnbindableTasks(repo, oldHead, newHead, []string{"task-a"}, &reopen); len(got) != 0 {
+	if got, _ := completionUnbindableTasks(repo, oldHead, newHead, []string{"task-a"}, &reopen, nil); len(got) != 0 {
 		replayed, err := semanticHistoryCommits(repo, oldHead+".."+newHead)
 		t.Fatalf("authorized semantic descendant replay rejected: %v; recorded=%#v replayed=%#v err=%v", got, reopen, replayed, err)
 	}
@@ -3886,7 +4225,7 @@ func TestAuditReopenCompletionRejectsChangedOrInventedHistory(t *testing.T) {
 	rejected := func(t *testing.T, f fixture) {
 		t.Helper()
 		head := f.git("rev-parse", "HEAD")
-		if got := completionUnbindableTasks(f.repo, f.oldHead, head, []string{"task-a"}, &f.reopen); !slices.Equal(got, []string{"task-a"}) {
+		if got, _ := completionUnbindableTasks(f.repo, f.oldHead, head, []string{"task-a"}, &f.reopen, nil); !slices.Equal(got, []string{"task-a"}) {
 			t.Fatalf("unsafe audit recovery accepted: %v", got)
 		}
 	}
@@ -3928,7 +4267,7 @@ func TestAuditReopenCompletionRejectsChangedOrInventedHistory(t *testing.T) {
 	})
 	t.Run("record cannot authorize another task", func(t *testing.T) {
 		f := newFixture(t)
-		if got := completionUnbindableTasks(f.repo, f.oldHead, f.oldHead, []string{"task-b"}, &f.reopen); !slices.Equal(got, []string{"task-b"}) {
+		if got, _ := completionUnbindableTasks(f.repo, f.oldHead, f.oldHead, []string{"task-b"}, &f.reopen, nil); !slices.Equal(got, []string{"task-b"}) {
 			t.Fatalf("task A recovery authorized task B: %v", got)
 		}
 	})

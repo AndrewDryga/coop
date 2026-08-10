@@ -4,6 +4,34 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A stray commit landing mid-iteration no longer destroys a finished task's completion.** `coop
+  loop` validates a completion over its iteration's commit range, which is a time window on one
+  branch — anything committed to the same checkout while a box is running joins that range,
+  including unrelated work a human commits on the host. `unbindableTasks` rejected the WHOLE
+  completion whenever any in-range commit carried a `Coop-Task` trailer for a task outside the
+  finished set, so a human's own commit for their own, untouched task landing in that window could
+  cost a finished, gated, 32-minute task (recorded in
+  `.agent/kb/loop-range-rejects-outside-commits.md`). The guard is load-bearing — it stops a boxed
+  agent from smuggling in a binding for a task it doesn't own — but was broader than its purpose. It
+  now rejects only when a foreign binding names a task this iteration's authority consumption could
+  actually touch: the finished set, the leased task id, the audit-reopen record's task, any task whose
+  queue state this completion window observed change, or any task already archived before the box
+  ever ran (the completion window's baseline snapshot, captured before launch) — a comparison set
+  built entirely from host-side knowledge the box cannot influence. That last member matters even when
+  the archived task's folder never moves: an already-closed task's history is meant to stay closed, so
+  a forged extra commit for it is still rejected — a first cut of this fix missed that surface and
+  wrongly tolerated it, caught by the existing `TestProviderScriptedLoopReviewProcess` e2e suite.
+  Independent of the whole set, a foreign binding that REWRITES a task's already-landed commit (rather
+  than adding a new one alongside it) still always rejects too, since that can only happen via a
+  rebase or amend that reparents another task's history — silently altering its committed content
+  without ever moving its queue folder. Anything else is tolerated: reported live (`ui.Warn`) and
+  journaled to the named task's own `log.md` instead of destroying the completion, and that task's own
+  reachable-binding count already refuses to let its real next completion silently ride on a binding
+  it did not itself just create. The adversarial matrix — a forged trailer for the box's own task, for
+  a second task it also completed or reopened this iteration, for an already-archived task it never
+  touches, one that rewrites another task's binding, a multi-value commit, and an invalid binding — is
+  still refused exactly as before.
+
 - **A completion can no longer be trusted against history nobody validated.** The work loop reads
   `headAfter` once an iteration's box exits, validates the completion over `iterHead..headAfter`,
   then — many filesystem operations later — consumes task authority: finalizes the completion, writes

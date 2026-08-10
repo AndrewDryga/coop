@@ -3404,10 +3404,9 @@ reviewAgain:
 				releaseErr := errors.Join(lease.release(), windows.abandon())
 				return 1, errors.Join(refAuthorityFailureError(assigned.Item.ID, reason, restoreErr), releaseErr)
 			}
-			var missing []string
-			if assignedCompletion != nil {
-				missing = completionUnbindableTasks(repo, iterHead, headAfter, finished, lease.reopen)
-			}
+			// departures runs before the binding check so its ids are already known: the touched set
+			// below needs them, and this restore/reject sequence stays in the exact order it ran in
+			// before (departure churn still wins over a binding rejection).
 			departed, departureErr := windows.departures()
 			var restoreErr error
 			if departureErr != nil {
@@ -3433,6 +3432,40 @@ reviewAgain:
 				departureErr = fmt.Errorf("work stage reopened unowned archived task(s) %s", strings.Join(departed, ", "))
 				return 1, errors.Join(departureErr, restoreErr, releaseErr)
 			}
+			// The touched set is host-side knowledge the box cannot influence — everything this
+			// iteration's authority consumption could affect: the finished set, the leased task id,
+			// the audit-reopen record's task, every id whose queue state this completion window
+			// observed change (auditDoneCandidates' full candidate list, plus any departure), and
+			// every id already archived when the window's baseline was captured — before the box ever
+			// ran, so an already-closed task stays protected even when its folder never moves; an
+			// archived task's history is meant to be closed, and a forged extra commit corrupts that
+			// closed record without needing to touch its folder at all. A foreign Coop-Task trailer in
+			// range for anything outside this set is tolerated rather than rejecting this completion —
+			// see unbindableTasks, completionWindowSet.baselineDoneIDs, and
+			// .agent/kb/loop-range-rejects-outside-commits.md. All of it is built and used inside the
+			// ref authority window already entered above, so nothing can move HEAD or a queue folder
+			// out from under the comparison.
+			touched := map[string]bool{assigned.Item.ID: true}
+			for _, id := range finished {
+				touched[id] = true
+			}
+			if lease.reopen != nil {
+				touched[lease.reopen.TaskID] = true
+			}
+			for _, t := range completedTasks {
+				touched[t.Item.ID] = true
+			}
+			for _, id := range departed {
+				touched[id] = true
+			}
+			for id := range windows.baselineDoneIDs() {
+				touched[id] = true
+			}
+			var missing, tolerated []string
+			if assignedCompletion != nil {
+				missing, tolerated = completionUnbindableTasks(repo, iterHead, headAfter, finished, lease.reopen, touched)
+			}
+			reportToleratedForeignBindings(repo, hosts, iterHead, headAfter, assigned.Item.ID, tolerated)
 			if len(missing) > 0 {
 				restoreErr = errors.Join(restoreErr, restoreQueuedCompletion(*assignedCompletion, lease.reopen != nil))
 				var windowErr error

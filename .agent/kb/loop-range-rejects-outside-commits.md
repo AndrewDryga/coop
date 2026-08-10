@@ -1,6 +1,6 @@
 ---
 name: loop-range-rejects-outside-commits
-description: any commit landing while an iteration runs joins its range and can reject that iteration's completion; the per-worktree ref-authority lock (fork_loop.go) closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
+description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock (fork_loop.go) closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
 sources: [internal/cli/controller.go, internal/cli/commands.go, internal/cli/fork_loop.go, internal/cli/sign.go, internal/cli/fork_merge.go, internal/cli/tasks.go]
 updated: 2026-08-09
@@ -11,19 +11,48 @@ proposed HEAD. That range is a *time* window on one branch, not a set of commits
 by a human or another agent on the host.
 
 `unbindableTasks` rejects the whole completion when an in-range commit carries a `Coop-Task` trailer
-for a task that is not in the finished set (the `!allowed[id] && inRange` guard). That is deliberate:
-it stops an iteration from smuggling in a binding it does not own. But it also means an unrelated,
-perfectly good commit made on the host mid-iteration **destroys that iteration's completion**.
+for a task outside the finished set (the `!allowed[id] && inRange` guard) — but only when that foreign
+id names a task this iteration's authority consumption could actually touch: the finished set itself,
+the leased task id, the audit-reopen record's task, any task whose queue state this same completion
+window observed change (`windows.auditDoneCandidates`/`windows.departures()`), or any task ALREADY
+archived before the box ever ran (`windows.baselineDoneIDs()`, the completion window's baseline
+snapshot — captured at the very start of `runIteration`, so it is queue state the box could not have
+influenced either). All of it is host-side knowledge the box cannot influence — never anything the box
+itself could write, like a commit author or timestamp. That is deliberate: it stops an iteration from
+smuggling in a binding it does not own — completing a second task, reopening an archived one while
+leased for only one, or forging an EXTRA commit for a task that's already done and was never touched
+at all. That last case is easy to miss: an archived task's history is meant to be *closed*, so it stays
+protected even when its folder never moves during the iteration — corrupting a closed record needs no
+folder move, only a trailer. A foreign binding that instead REWRITES a task's already-landed commit
+(its old sha falls out of the reachable set between base and head) rejects too, unconditionally,
+regardless of touched: that can only happen via a rebase or amend that reparents another task's
+history, i.e. altering content it doesn't own without ever moving that task's queue folder. Anything
+else — a binding for a task this iteration never leased, finished, reopened, moved, or that was ever
+archived — is tolerated: `reportToleratedForeignBindings` warns live (`ui.Warn`) and journals a note to
+the named task's own `log.md` instead of rejecting, and that task's own reachable-binding count already
+refuses to let its real next completion silently ride on a binding it did not itself just create.
 
-Observed 2026-08-01: a host-side commit landed during a running iteration, and the agent's finished,
-committed, 32-minute task was rejected with "the new commit range and reachable HEAD each need
-exactly one commit with one parseable `Coop-Task: <id>` trailer per task". The task's own commit was
-HEAD and its trailer parsed correctly — the rejection came entirely from the foreign binding.
+Observed 2026-08-01: a host-side commit landed during a running iteration for a task that iteration
+never touched, and the agent's finished, committed, 32-minute task was rejected with "the new commit
+range and reachable HEAD each need exactly one commit with one parseable `Coop-Task: <id>` trailer per
+task". The task's own commit was HEAD and its trailer parsed correctly — the rejection came entirely
+from the foreign, untouched binding. That exact shape — a binding for a task this queue never tracked,
+or a live task nobody leased or moved — is now tolerated instead of destroying the completion (fixed
+2026-08-09; the regression is pinned by `TestUnbindableTasksTouchedSetNarrowsForeignBindings` in
+`controller_test.go`, which cannot pass against the pre-narrowing signature). An ALREADY-ARCHIVED
+task's binding is a narrower exception that still rejects — proven end to end by
+`TestProviderScriptedLoopReviewProcess/worker_cannot_forge_review_authority_for_an_archived_task`
+(`scripted_loop_review_process_e2e_test.go`), which caught a first cut of this fix that forgot
+`baselineDoneIDs` and tolerated a forged archived-task binding it should have rejected.
 
-So the single-writer rule for a loop's checkout covers **commits**, not just file edits. While a loop
-is running against a repo, do not commit to it from the host. If work is unavoidable, stop the loop
-first — and stop it at an iteration boundary, because a hard kill between the agent's commit and its
-folder move leaves the task in the state [[loop-resume-never-rewrites-history]] describes.
+The single-writer rule for a loop's checkout still covers **commits**, not just file edits — for two
+narrower reasons now instead of one. A commit that touches a task this iteration also leases,
+finishes, reopens, or moves still destroys that iteration's completion exactly as before. And even a
+genuinely unrelated commit lands in a shared, possibly-dirty tree the running box did not expect, so
+it is still worth avoiding. While a loop is running against a repo, do not commit to it from the host.
+If work is unavoidable, stop the loop first — and stop it at an iteration boundary, because a hard
+kill between the agent's commit and its folder move leaves the task in the state
+[[loop-resume-never-rewrites-history]] describes.
 
 ## The worst source of a foreign commit is a second loop
 
@@ -92,3 +121,4 @@ future change gives it a land-onto-parent step, that step needs this same lock; 
 - 2026-08-01 — created: a host commit made during an iteration rejected that iteration's completed task; documents that the range is a time window and that single-writer covers commits.
 - 2026-08-03 — two concurrent loops in one checkout were observed rejecting each other's completions (the per-task lease cannot catch it); added `lockLoopCheckout` and recorded why the lock is keyed per worktree so fork fleets stay parallel.
 - 2026-08-09 — closed a separate race `lockLoopCheckout` doesn't cover: HEAD could move between an iteration's own validated `headAfter` and its much-later authority consumption. Added the per-worktree `lockRefAuthority` (short validate→finalize→consume window only) and made every host-side ref mutator — `signUnpushed`, fork-merge's parent fast-forward, and the audit-reopen completion path — take it too, documented the parallel-controller contract above.
+- 2026-08-09 — narrowed the rejection itself: `unbindableTasks` used to reject on ANY foreign in-range binding; it now rejects only when that binding names a task this iteration's authority could touch (the finished/leased/reopened/queue-changed set, a rewritten binding, or an already-archived task via the new `completionWindowSet.baselineDoneIDs()`), and tolerates + journals the rest. Fixes the exact 2026-08-01 incident this card was created for — an untouched, never-archived foreign binding no longer costs a finished task — while the adversarial matrix (own task, a second completed/reopened task, an archived-but-untouched task, a rewritten binding, multi-value, invalid) still refuses exactly as before. First landed without `baselineDoneIDs`; `TestProviderScriptedLoopReviewProcess/worker_cannot_forge_review_authority_for_an_archived_task` caught the gap at the e2e level (a forged binding for an untouched archived task was wrongly tolerated) before this card's own unit matrix would have, since the unit tests pass `touched` directly and so never exercised how commands.go actually builds it. Rewrote the rejection-semantics paragraphs above to match; the parallel-controller contract section is unchanged.
