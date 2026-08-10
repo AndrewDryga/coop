@@ -8,9 +8,11 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 // End-to-end tests for the folder task system: they drive the real `coop tasks` dispatcher
@@ -18,6 +20,83 @@ import (
 // multiple queues, splitting) and assert the cross-cutting invariants the unit tests don't:
 // the on-disk dirs are the numeric-prefixed ones, they sort in lifecycle order, and a finished
 // task is MOVED (never deleted) by any automated path.
+
+// tasksRoot is cli's own alias for tasks.TasksRoot (".agent/tasks") — kept short since cli's own
+// tests reach for it constantly; internal/tasks keeps the canonical, exported constant.
+const tasksRoot = tasks.TasksRoot
+
+// Test-only compatibility aliases: before the extraction, every cli test in this package could
+// reach the folder-task/lease/audit primitives directly (same package). These pure re-exports (a
+// type alias, a handful of package-level func values) let that huge existing test surface keep
+// calling the pre-move short names instead of hand-qualifying hundreds of call sites across a
+// dozen files — production code always uses the tasks.X qualified form; only tests use these.
+const (
+	stateTodo       = tasks.StateTodo
+	stateInProgress = tasks.StateInProgress
+	stateBlocked    = tasks.StateBlocked
+	stateDone       = tasks.StateDone
+)
+
+var taskStates = tasks.TaskStates
+
+type taskItem = tasks.Item
+
+var (
+	readTaskTree          = tasks.ReadTaskTree
+	isTaskDir             = tasks.IsTaskDir
+	moveTaskDir           = tasks.MoveTaskDir
+	currentTask           = tasks.CurrentTask
+	queueProgress         = tasks.QueueProgress
+	stateLabel            = tasks.StateLabel
+	stateOrder            = tasks.StateOrder
+	findTask              = tasks.FindTask
+	tryTaskLease          = tasks.TryTaskLease
+	completeTrustedTask   = tasks.CompleteTrustedTask
+	taskTreeCounts        = tasks.TaskTreeCounts
+	cmdTasksFolder        = tasks.CmdTasksFolder
+	readAuditReopenRecord = tasks.ReadAuditReopenRecord
+	latestTaskLog         = tasks.LatestTaskLog
+	openLeaseAuthority    = tasks.OpenLeaseAuthority
+)
+
+var tasksVerbs = tasks.TasksVerbs
+
+// readFileString and lastLines are trivial, self-contained leaf helpers — internal/tasks keeps its
+// own copy (see its git.go for why: the same "local-redeclare" shape as gitOut).
+func readFileString(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// taskForLease and testLeaseOwner mirror internal/tasks's own (unexported, test-only) helpers of
+// the same name — a fresh task folder and a fixed test lease owner, respectively.
+func taskForLease(t *testing.T, root, state, id string) tasks.Item {
+	t.Helper()
+	writeTaskFile(t, filepath.Join(root, state, id, "task.md"), "# "+id+"\n")
+	item, ok := currentTask(root, id)
+	if !ok {
+		t.Fatalf("could not read task %s", id)
+	}
+	return item
+}
+
+func testLeaseOwner() tasks.TaskLeaseOwner {
+	return tasks.TaskLeaseOwner{
+		RunID: "test-run", PID: 4242, Provider: "codex", Target: "codex:gpt-test@work",
+		Now: func() time.Time { return time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC) },
+	}
+}
 
 // appFor builds an app rooted at repo with the default single .agent/tasks queue. A
 // RepoOverride short-circuits git detection, so a plain temp dir works.
@@ -27,6 +106,19 @@ func appFor(repo string) *app {
 
 func appForDerivedQueues(repo string) *app {
 	return &app{cfg: &config.Config{RepoOverride: repo}}
+}
+
+// writeTaskFile creates path (making its parent dirs) with content — the cli-side equivalent of
+// internal/tasks's own (unexported, test-only) writeTaskFile, used to seed a task folder as a
+// fixture without going through the real `coop tasks add` dispatcher.
+func writeTaskFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func writeUmbrellaProject(t *testing.T, repo string, subs ...string) {
@@ -341,7 +433,7 @@ func TestIntegrationMultiQueueClearReportsPartialRemoval(t *testing.T) {
 	if !ok {
 		t.Fatal("busy completed task disappeared")
 	}
-	if err := lease.markCompleted(done.Dir); err != nil {
+	if err := lease.MarkCompleted(done.Dir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -372,7 +464,7 @@ func TestIntegrationMultiQueueClearReportsPartialRemoval(t *testing.T) {
 		t.Fatal("multi-queue bulk failure removed or moved the busy task")
 	}
 
-	if err := lease.release(); err != nil {
+	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
 	if code, err := appFor(repo).cmdTasks(args); code != 0 || err != nil {

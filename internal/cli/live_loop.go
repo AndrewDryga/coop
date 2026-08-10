@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -27,12 +28,12 @@ type loopBar struct {
 	width    func() int
 	start    time.Time
 	mu       sync.Mutex
-	c        taskCounts
+	c        tasks.TaskCounts
 	activity string
 	spin     int
 }
 
-func newLoopBar(region *ui.Region, width func() int, start time.Time, c taskCounts, activity string) *loopBar {
+func newLoopBar(region *ui.Region, width func() int, start time.Time, c tasks.TaskCounts, activity string) *loopBar {
 	return &loopBar{region: region, width: width, start: start, c: c, activity: activity}
 }
 
@@ -48,7 +49,7 @@ func (b *loopBar) line() string {
 	progressW := width - 1 - ui.SpinnerWidth - (20 + 2) - len([]rune(elapsedText)) - 3
 	return fmt.Sprintf("%s %s %s %s",
 		ui.SpinFrame(b.spin),
-		ui.ProgressBarStates(b.c.Done, b.c.Doing, b.c.Blocked, b.c.total(), 20),
+		ui.ProgressBarStates(b.c.Done, b.c.Doing, b.c.Blocked, b.c.Total(), 20),
 		progressLineWidth(b.c, b.activity, progressW),
 		ui.Dim(elapsedText))
 }
@@ -62,7 +63,7 @@ func (b *loopBar) render(history string) {
 
 func (b *loopBar) history(s string) { b.render(s) }
 
-func (b *loopBar) setCounts(c taskCounts) {
+func (b *loopBar) setCounts(c tasks.TaskCounts) {
 	b.mu.Lock()
 	b.c = c
 	b.mu.Unlock()

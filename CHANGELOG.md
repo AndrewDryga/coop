@@ -139,6 +139,24 @@
   it, so a turn no provider measured publishes no `usage` object at all rather than four zeros a
   caller would price as a free turn.
 
+- _Internal restructuring, no user-visible change._ The **task-authority engine** — the folder-mode
+  task/backlog queue (`taskcmd.go`, `tasks.go`, `taskwatch.go`, `backlog.go`, `taskdir.go`), the
+  claim/lease/ref authority registry (`tasklease.go`), the completion-window journal
+  (`completionwindow.go`), and the trusted completion audit (`controller.go`, moved WHOLE — it turned
+  out to hold no loop-engine content at all, only audit/lease vocabulary) — moved out of
+  `internal/cli` into a new package, `internal/tasks` (~20.5k lines with tests, the largest of the
+  2026-08 extractions). The ref-authority window (`lockRefAuthority`/`enterRefAuthorityWindow`) moved
+  with it, sliced out of `fork_loop.go`, because a mover file (`tasks.go`'s `done` verb) calls it
+  directly; `lockLoopCheckout`, `lockSessionProducer`, and the rest of the fork-lifecycle machinery
+  stayed. The CLI kept the loop engine's own box-spawn/provider-rotation orchestration and every
+  command's thin dispatch. `internal/tasks` is the fourth (and a deliberately reviewed exception to
+  the normally three-member) `uiPresentationOwners` grant — the task/backlog verb family is a complete
+  CLI surface, live board included, not a handful of narration call sites. The on-disk registry
+  formats (lease/claim/audit-reopen/departure records, the completion-window journal) and every
+  `coop tasks`/`coop backlog` verb's output are byte-identical. `.agent/kb/task-authority-model.md` is
+  now also `internal/tasks`'s package doc, and gained the lock-ordering invariant it implied but never
+  stated: ref authority is acquired before lease authority, never the reverse.
+
 - _Internal restructuring, no user-visible change._ The **ACP control plane** — editor selector
   injection, provider/account/preset live switching, box respawn with context carry, and the
   limit-wait policy — moved out of `internal/cli` into a new package, `internal/acpctl`

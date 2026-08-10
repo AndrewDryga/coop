@@ -1,4 +1,4 @@
-package cli
+package tasks
 
 import (
 	"errors"
@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -20,7 +21,7 @@ import (
 
 // backlogVerbs are the canonical `coop backlog` subcommands — the source for the unknown-subcommand
 // suggester (a bare `coop backlog` lists the drawer, so it isn't a verb).
-var backlogVerbs = []string{"ls", "add", "rm", "promote"}
+var BacklogVerbs = []string{"ls", "add", "rm", "promote"}
 
 // backlogArgSpecs validates the structured backlog subcommands (like taskArgSpecs for tasks); add takes
 // a free-form title, so it's intentionally absent and validates its own args in tasksFolderAdd.
@@ -30,8 +31,9 @@ var backlogArgSpecs = map[string]taskArgSpec{
 	"promote": {nil, 1},
 }
 
-func (a *app) cmdBacklog(args []string) (int, error) {
-	flags, rest, err := extractTasksFlags(args)
+// CmdBacklog drives `coop backlog` — the staging drawer for unscheduled ideas.
+func CmdBacklog(cfg *config.Config, args []string) (int, error) {
+	flags, rest, err := ExtractTasksFlags(args)
 	if err != nil {
 		return 2, err
 	}
@@ -42,11 +44,11 @@ func (a *app) cmdBacklog(args []string) (int, error) {
 	if len(rest) > 0 && strings.HasPrefix(rest[0], "-") && rest[0] != "-" {
 		rest = append([]string{"ls"}, rest...)
 	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	repo, err := box.ResolveRepo(cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	rels, err := taskQueues(a.cfg, repo, flags)
+	rels, err := TaskQueues(cfg, repo, flags)
 	if err != nil {
 		return 2, err
 	}
@@ -66,7 +68,7 @@ func (a *app) cmdBacklog(args []string) (int, error) {
 		case "add":
 			return 2, fmt.Errorf("coop backlog add works one queue at a time — pass a single --tasks <path> (ls, rm, and promote span all %d configured queues)", len(rels))
 		default:
-			return 2, unknownErr("backlog command", sub, backlogVerbs)
+			return 2, unknownErr("backlog command", sub, BacklogVerbs)
 		}
 	}
 	if len(rels) == 0 {
@@ -101,13 +103,13 @@ func cmdBacklogFolder(root string, rest []string) (int, error) {
 	case "", "ls":
 		return backlogFolderList(root)
 	case "add":
-		return tasksFolderAdd(root, args, stateBacklog, "backlog add")
+		return tasksFolderAdd(root, args, StateBacklog, "backlog add")
 	case "rm":
 		return backlogFolderRemove(root, args)
 	case "promote":
 		return backlogFolderPromote(root, args)
 	default:
-		return 2, unknownErr("backlog command", sub, backlogVerbs)
+		return 2, unknownErr("backlog command", sub, BacklogVerbs)
 	}
 }
 
@@ -115,7 +117,7 @@ func cmdBacklogFolder(root string, rest []string) (int, error) {
 // shape, but without state grouping (everything here is one state) and without the subtask/blocked
 // markers (a parked idea's placeholder subtask is noise, and nothing here is blocked). Empty is a note.
 func backlogFolderList(root string) (int, error) {
-	items := readBacklog(root)
+	items := ReadBacklog(root)
 	if len(items) == 0 {
 		ui.Note("backlog is empty — capture an idea with 'coop backlog add \"<title>\"'")
 		return 0, nil
@@ -174,7 +176,7 @@ func backlogFolderPromote(root string, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	if err := moveTaskDir(root, t, stateTodo); err != nil {
+	if err := MoveTaskDir(root, t, StateTodo); err != nil {
 		return -1, err
 	}
 	ui.OK("promoted %s → todo — flesh out its task.md, then 'coop tasks claim %s' to start", t.ID, t.ID)
@@ -191,7 +193,7 @@ func backlogListAll(repo string, rels []string) (int, error) {
 		}
 		fmt.Println(banner(p, rel))
 		root := filepath.Join(repo, rel)
-		if len(readBacklog(root)) == 0 {
+		if len(ReadBacklog(root)) == 0 {
 			fmt.Println(p.Gray("  (backlog empty)"))
 			continue
 		}
@@ -227,5 +229,5 @@ func backlogAcrossQueues(repo string, rels []string, rest []string) (int, error)
 // queueOfBacklogTask finds which configured queue's xx_backlog holds the id — the backlog analog of
 // queueOfTask, sharing its exact/substring precedence and duplicate-across-queues handling.
 func queueOfBacklogTask(repo string, rels []string, id string) (string, error) {
-	return queueOfTaskWith(repo, rels, id, readBacklog)
+	return queueOfTaskWith(repo, rels, id, ReadBacklog)
 }

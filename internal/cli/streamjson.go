@@ -13,6 +13,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/ladder"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -872,7 +873,7 @@ func streamedTaskPaths(text string) []streamedTaskPath {
 }
 
 func streamedTaskState(state string) bool {
-	for _, known := range taskStates {
+	for _, known := range tasks.TaskStates {
 		if state == known {
 			return true
 		}
@@ -897,17 +898,17 @@ func taskTransitionDisplay(command string) (glyph, displayName, label string, ok
 		return "", "", "", false
 	}
 	src, dst := refs[0], refs[1]
-	if src.state == stateBlocked && (dst.state == stateTodo || dst.state == stateInProgress) {
+	if src.state == tasks.StateBlocked && (dst.state == tasks.StateTodo || dst.state == tasks.StateInProgress) {
 		return "↺", "unblock", readableTaskID(dst.id), true
 	}
 	switch dst.state {
-	case stateInProgress:
+	case tasks.StateInProgress:
 		return "⇢", "claim", readableTaskID(dst.id), true
-	case stateDone:
+	case tasks.StateDone:
 		return "✓", "done", readableTaskID(dst.id), true
-	case stateBlocked:
+	case tasks.StateBlocked:
 		return "⏸", "block", readableTaskID(dst.id), true
-	case stateTodo:
+	case tasks.StateTodo:
 		return "＋", "queue", readableTaskID(dst.id), true
 	}
 	return "", "", "", false
@@ -939,7 +940,7 @@ func taskFileDisplay(toolName, path string) (glyph, displayName, label string, o
 		return "", "", "", false
 	}
 	ref := refs[0]
-	if toolName == "Write" && ref.state == stateTodo && ref.file == "task" {
+	if toolName == "Write" && ref.state == tasks.StateTodo && ref.file == "task" {
 		return "＋", "queue", readableTaskID(ref.id), true
 	}
 	return "✎", ref.file, readableTaskID(ref.id), true

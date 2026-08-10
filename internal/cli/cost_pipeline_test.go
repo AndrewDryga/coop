@@ -10,6 +10,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 // TestCostPipelineE2E exercises the whole cost/token pipeline end to end — a real-shaped claude
@@ -31,7 +32,7 @@ func TestCostPipelineE2E(t *testing.T) {
 		t.Fatal("decoder captured no tally from the result event")
 	}
 	work := buildStageRecord(run, "work", "success", "test", agents.Target{Provider: "claude", Model: "claude-fable-5"},
-		time.Now(), time.Now(), 0, 0, 0, "h0", "h1", taskCounts{}, []string{"my-task"}, nil)
+		time.Now(), time.Now(), 0, 0, 0, "h0", "h1", tasks.TaskCounts{}, []string{"my-task"}, nil)
 	work.CostUSD, work.InTok, work.OutTok = dec.last.CostUSD, dec.last.InTok, dec.last.OutTok
 	if err := appendStageRecord(repo, run, work); err != nil {
 		t.Fatal(err)
@@ -39,7 +40,7 @@ func TestCostPipelineE2E(t *testing.T) {
 
 	// 2. A codex signoff stage on a different model, with its own cost.
 	sign := buildStageRecord(run, "signoff", "success", "test", agents.Target{Provider: "codex", Model: "gpt-5.6-terra"},
-		time.Now(), time.Now(), 0, 0, 0, "h1", "h1", taskCounts{}, nil, nil)
+		time.Now(), time.Now(), 0, 0, 0, "h1", "h1", tasks.TaskCounts{}, nil, nil)
 	sign.CostUSD, sign.InTok, sign.OutTok = 4.20, 90000, 3000
 	if err := appendStageRecord(repo, run, sign); err != nil {
 		t.Fatal(err)

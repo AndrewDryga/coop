@@ -1,4 +1,4 @@
-package cli
+package tasks
 
 import (
 	"crypto/rand"
@@ -20,10 +20,10 @@ import (
 const (
 	leaseLockName                   = "lease.lock"
 	leaseMetadataName               = "lease.json"
-	leaseAuthorityVersion           = "v1"
+	LeaseAuthorityVersion           = "v1"
 	leaseAuthorityAdoptLockName     = ".adopt.lock"
 	leaseAuthorityIdentityAttempts  = 5
-	auditReopenLegacyVersion        = 1
+	AuditReopenLegacyVersion        = 1
 	auditReopenLegacyPendingVersion = 2
 	auditReopenVersion              = 3
 	auditReopenPendingVersion       = 4
@@ -33,7 +33,7 @@ const (
 )
 
 const (
-	testLeaseAuthorityRootEnv       = "COOP_TEST_LEASE_AUTHORITY_ROOT"
+	TestLeaseAuthorityRootEnv       = "COOP_TEST_LEASE_AUTHORITY_ROOT"
 	testLeaseAuthorityLegacyRootEnv = "COOP_TEST_LEASE_AUTHORITY_LEGACY_ROOT"
 )
 
@@ -50,7 +50,7 @@ type leaseCompletionReceipt struct {
 	AuditReopenGeneration string `json:"audit_reopen_generation,omitempty"`
 }
 
-type auditReopenCommit struct {
+type AuditReopenCommit struct {
 	TaskID        string `json:"task_id"`
 	ChangeTree    string `json:"change_tree"`
 	AuthorName    string `json:"author_name"`
@@ -59,20 +59,20 @@ type auditReopenCommit struct {
 	CommitMessage string `json:"commit_message"`
 }
 
-type auditReopenRecord struct {
+type AuditReopenRecord struct {
 	Version        int                 `json:"version"`
 	Generation     string              `json:"generation"`
 	TaskID         string              `json:"task_id"`
 	BaselineHead   string              `json:"baseline_head,omitempty"`
-	Subject        auditReopenCommit   `json:"subject"`
-	History        []auditReopenCommit `json:"history"`
-	Descendants    []auditReopenCommit `json:"descendants,omitempty"`
+	Subject        AuditReopenCommit   `json:"subject"`
+	History        []AuditReopenCommit `json:"history"`
+	Descendants    []AuditReopenCommit `json:"descendants,omitempty"`
 	UnblockPending bool                `json:"unblock_pending,omitempty"`
 }
 
 // taskLeaseOwner identifies the controller in lease metadata. The kernel lock, rather than any
 // one of these fields, is the authority: run ids and PIDs exist for recovery evidence and UI only.
-type taskLeaseOwner struct {
+type TaskLeaseOwner struct {
 	RunID    string
 	PID      int
 	Provider string
@@ -81,7 +81,7 @@ type taskLeaseOwner struct {
 	Ticker   func(time.Duration) (<-chan time.Time, func())
 }
 
-func (o taskLeaseOwner) now() time.Time {
+func (o TaskLeaseOwner) now() time.Time {
 	if o.Now != nil {
 		return o.Now()
 	}
@@ -101,7 +101,7 @@ type taskLeaseMetadata struct {
 // taskLease holds the host-only authoritative flock and a task-local compatibility flock for one
 // agent iteration. Metadata is resolved by id on every heartbeat because the worker can move its
 // folder while both descriptors remain valid across that rename.
-type taskLease struct {
+type TaskLease struct {
 	root      string
 	id        string
 	local     *os.File
@@ -109,8 +109,8 @@ type taskLease struct {
 	meta      taskLeaseMetadata
 	now       func() time.Time
 	ticker    func(time.Duration) (<-chan time.Time, func())
-	legacy    bool
-	reopen    *auditReopenRecord
+	Legacy    bool
+	Reopen    *AuditReopenRecord
 
 	releaseOnce sync.Once
 	quiesceOnce sync.Once
@@ -119,7 +119,7 @@ type taskLease struct {
 	done        chan struct{}
 }
 
-func (l *taskLease) startHeartbeat() {
+func (l *TaskLease) startHeartbeat() {
 	ticks, stopTicker := l.ticker(leaseHeartbeatInterval)
 	go func() {
 		defer stopTicker()
@@ -142,7 +142,7 @@ func realLeaseTicker(interval time.Duration) (<-chan time.Time, func()) {
 	return ticker.C, ticker.Stop
 }
 
-func (l *taskLease) refresh() error {
+func (l *TaskLease) refresh() error {
 	l.meta.HeartbeatAt = l.now()
 	return errors.Join(
 		writeLeaseAuthorityMetadata(l.root, l.id, l.meta),
@@ -152,7 +152,7 @@ func (l *taskLease) refresh() error {
 
 // quiesce stops heartbeat writes while retaining the authoritative flock. Completion validation
 // and cleanup call it before mutating the task directory, so metadata cannot race those changes.
-func (l *taskLease) quiesce() {
+func (l *TaskLease) Quiesce() {
 	l.quiesceOnce.Do(func() { close(l.stop) })
 	<-l.done
 }
@@ -160,30 +160,30 @@ func (l *taskLease) quiesce() {
 // markCompleted records host-only evidence on the already-persistent authority inode while its
 // flock is held. Task-local state is provider-writable and cannot distinguish a foreign controller
 // from an agent that moved an unleased folder.
-func (l *taskLease) markCompleted(taskDir string) error {
+func (l *TaskLease) MarkCompleted(taskDir string) error {
 	generation := ""
-	if l.reopen != nil {
-		generation = l.reopen.Generation
+	if l.Reopen != nil {
+		generation = l.Reopen.Generation
 	}
 	return writeLeaseCompletionReceipt(l.authority, taskDir, generation)
 }
 
-func (l *taskLease) clearCompleted() error {
+func (l *TaskLease) ClearCompleted() error {
 	return clearLeaseCompletionReceipt(l.authority)
 }
 
-func (l *taskLease) consumeAuditReopen() error {
-	if l.reopen == nil {
+func (l *TaskLease) ConsumeAuditReopen() error {
+	if l.Reopen == nil {
 		return nil
 	}
-	return removeAuditReopenRecordIfMatches(l.root, l.id, l.reopen.Generation)
+	return removeAuditReopenRecordIfMatches(l.root, l.id, l.Reopen.Generation)
 }
 
 // release stops metadata mutation before removing the evidence while still holding both flocks.
 // Authority lock files persist in the host-only registry so every controller opens the same inode.
-func (l *taskLease) release() error {
+func (l *TaskLease) Release() error {
 	l.releaseOnce.Do(func() {
-		l.quiesce()
+		l.Quiesce()
 		l.releaseErr = errors.Join(
 			removeLeaseAuthorityMetadata(l.root, l.id),
 			removeLeaseMetadata(l.root, l.id),
@@ -194,7 +194,7 @@ func (l *taskLease) release() error {
 	return l.releaseErr
 }
 
-func leaseAuthorityKey(root, id string) (string, error) {
+func LeaseAuthorityKey(root, id string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return "", err
@@ -219,7 +219,7 @@ func leaseAuthorityKey(root, id string) (string, error) {
 // tasks behind manual repair.
 func leaseAuthorityRoots() (dir, legacy string, err error) {
 	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
-		if root := os.Getenv(testLeaseAuthorityRootEnv); root != "" {
+		if root := os.Getenv(TestLeaseAuthorityRootEnv); root != "" {
 			return root, os.Getenv(testLeaseAuthorityLegacyRootEnv), nil
 		}
 	}
@@ -227,15 +227,15 @@ func leaseAuthorityRoots() (dir, legacy string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	dir = filepath.Join(home, ".local", "state", "coop", "task-leases", leaseAuthorityVersion)
+	dir = filepath.Join(home, ".local", "state", "coop", "task-leases", LeaseAuthorityVersion)
 	cache, cacheErr := os.UserCacheDir()
 	if cacheErr != nil {
 		return dir, "", nil // no cache dir means there is nothing to adopt, not a broken install
 	}
-	return dir, filepath.Join(cache, "coop", "task-leases", leaseAuthorityVersion), nil
+	return dir, filepath.Join(cache, "coop", "task-leases", LeaseAuthorityVersion), nil
 }
 
-func openLeaseAuthorityRoot() (*os.Root, error) {
+func OpenLeaseAuthorityRoot() (*os.Root, error) {
 	dir, legacy, err := leaseAuthorityRoots()
 	if err != nil {
 		return nil, err
@@ -410,7 +410,7 @@ func syncLeaseAuthorityDir(dir string) error {
 // fstat(fd) against a fresh lstat(name) is the only evidence that the lock we hold is the lock every
 // other controller contends for.
 func leaseAuthorityIsCurrent(file *os.File, name string) (bool, error) {
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return false, err
 	}
@@ -436,7 +436,7 @@ func leaseAuthorityIsCurrent(file *os.File, name string) (bool, error) {
 // purge or an attack, and the caller must see an error rather than silently hold an exclusive lock
 // on an inode nobody else can reach.
 func lockLeaseAuthorityWith(root, id string, create bool, lock func(*os.File) error) (*os.File, error) {
-	key, err := leaseAuthorityKey(root, id)
+	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return nil, err
 	}
@@ -480,8 +480,8 @@ func lockLeaseAuthorityForAudit(root, id string, create bool, label string, owne
 // openLeaseAuthority opens a task's authority record WITHOUT locking it. Production code takes the
 // lock through lockLeaseAuthority instead, so that every held lock has been proved to be on the
 // inode the registry name still resolves to; an unlocked open carries no such guarantee.
-func openLeaseAuthority(root, id string, create bool) (*os.File, error) {
-	key, err := leaseAuthorityKey(root, id)
+func OpenLeaseAuthority(root, id string, create bool) (*os.File, error) {
+	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return nil, err
 	}
@@ -489,7 +489,7 @@ func openLeaseAuthority(root, id string, create bool) (*os.File, error) {
 }
 
 func openLeaseAuthorityRecord(name string, create bool) (*os.File, error) {
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return nil, err
 	}
@@ -587,7 +587,7 @@ type trustedDoneDeparture struct {
 }
 
 func trustedDoneDepartureName(root, id string) (string, error) {
-	key, err := leaseAuthorityKey(root, id)
+	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return "", err
 	}
@@ -616,12 +616,12 @@ func readTrustedDoneDeparture(root, id string) (trustedDoneDeparture, bool, erro
 	if err != nil {
 		return trustedDoneDeparture{}, false, err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return trustedDoneDeparture{}, false, err
 	}
 	defer registry.Close()
-	data, err := readTaskMetadataFile(registry, name)
+	data, err := ReadTaskMetadataFile(registry, name)
 	if errors.Is(err, os.ErrNotExist) {
 		return trustedDoneDeparture{}, false, nil
 	}
@@ -646,7 +646,7 @@ func writeTrustedDoneDeparture(root string, record trustedDoneDeparture) error {
 	if err != nil {
 		return err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return err
 	}
@@ -655,7 +655,7 @@ func writeTrustedDoneDeparture(root string, record trustedDoneDeparture) error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteTaskFile(registry, name, append(data, '\n'))
+	return AtomicWriteTaskFile(registry, name, append(data, '\n'))
 }
 
 func removeTrustedDoneDeparture(root, id string) error {
@@ -663,7 +663,7 @@ func removeTrustedDoneDeparture(root, id string) error {
 	if err != nil {
 		return err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return err
 	}
@@ -706,7 +706,7 @@ const taskOwnerSourceInteractiveClaim = "interactive-claim"
 // from "abandoned," and guessing wrong is the exact incident this record exists to prevent. See
 // .agent/kb/task-authority-model.md for how this sits alongside the lease, checkout, and ref
 // authorities.
-type taskOwnerRecord struct {
+type TaskOwnerRecord struct {
 	Version   int       `json:"version"`
 	TaskID    string    `json:"task_id"`
 	Source    string    `json:"source"`
@@ -716,7 +716,7 @@ type taskOwnerRecord struct {
 }
 
 func taskOwnerRecordName(root, id string) (string, error) {
-	key, err := leaseAuthorityKey(root, id)
+	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return "", err
 	}
@@ -727,7 +727,7 @@ func taskOwnerRecordName(root, id string) (string, error) {
 // whose TaskID doesn't match the id being read (or that's otherwise malformed) is rejected outright
 // rather than silently treated as absent — a corrupt or mismatched record must fail closed, not
 // quietly stop protecting the task it claims to own.
-func validateTaskOwnerRecord(record taskOwnerRecord, id string) error {
+func validateTaskOwnerRecord(record TaskOwnerRecord, id string) error {
 	if record.Version != taskOwnerRecordVersion || record.TaskID != id || record.Source == "" ||
 		strings.TrimSpace(record.User) == "" || strings.TrimSpace(record.Host) == "" || record.ClaimedAt.IsZero() {
 		return errors.New("invalid task owner record")
@@ -740,34 +740,34 @@ func validateTaskOwnerRecord(record taskOwnerRecord, id string) error {
 // invalid record (corrupt JSON, mismatched id) surfaces as an error rather than "no owner": the
 // caller (assignLoopTaskOnly) must fail closed rather than adopt work it could not actually verify
 // is unowned.
-func readTaskOwnerRecord(root, id string) (taskOwnerRecord, bool, error) {
+func ReadTaskOwnerRecord(root, id string) (TaskOwnerRecord, bool, error) {
 	name, err := taskOwnerRecordName(root, id)
 	if err != nil {
-		return taskOwnerRecord{}, false, err
+		return TaskOwnerRecord{}, false, err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
-		return taskOwnerRecord{}, false, err
+		return TaskOwnerRecord{}, false, err
 	}
 	defer registry.Close()
-	data, err := readTaskMetadataFile(registry, name)
+	data, err := ReadTaskMetadataFile(registry, name)
 	if errors.Is(err, os.ErrNotExist) {
-		return taskOwnerRecord{}, false, nil
+		return TaskOwnerRecord{}, false, nil
 	}
 	if err != nil {
-		return taskOwnerRecord{}, false, err
+		return TaskOwnerRecord{}, false, err
 	}
-	var record taskOwnerRecord
+	var record TaskOwnerRecord
 	if err := json.Unmarshal(data, &record); err != nil {
-		return taskOwnerRecord{}, false, err
+		return TaskOwnerRecord{}, false, err
 	}
 	if err := validateTaskOwnerRecord(record, id); err != nil {
-		return taskOwnerRecord{}, false, err
+		return TaskOwnerRecord{}, false, err
 	}
 	return record, true, nil
 }
 
-func writeTaskOwnerRecord(root string, record taskOwnerRecord) error {
+func writeTaskOwnerRecord(root string, record TaskOwnerRecord) error {
 	if err := validateTaskOwnerRecord(record, record.TaskID); err != nil {
 		return err
 	}
@@ -775,7 +775,7 @@ func writeTaskOwnerRecord(root string, record taskOwnerRecord) error {
 	if err != nil {
 		return err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return err
 	}
@@ -784,7 +784,7 @@ func writeTaskOwnerRecord(root string, record taskOwnerRecord) error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteTaskFile(registry, name, append(data, '\n'))
+	return AtomicWriteTaskFile(registry, name, append(data, '\n'))
 }
 
 // removeTaskOwnerRecord is idempotent — a missing record is not an error — because most lifecycle
@@ -794,7 +794,7 @@ func removeTaskOwnerRecord(root, id string) error {
 	if err != nil {
 		return err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return err
 	}
@@ -806,15 +806,15 @@ func removeTaskOwnerRecord(root, id string) error {
 }
 
 func auditReopenRecordName(root, id string) (string, error) {
-	key, err := leaseAuthorityKey(root, id)
+	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return "", err
 	}
 	return key + ".reopen.json", nil
 }
 
-func validateAuditReopenRecord(record auditReopenRecord, id string) error {
-	legacy := record.Version == auditReopenLegacyVersion && !record.UnblockPending ||
+func validateAuditReopenRecord(record AuditReopenRecord, id string) error {
+	legacy := record.Version == AuditReopenLegacyVersion && !record.UnblockPending ||
 		record.Version == auditReopenLegacyPendingVersion && record.UnblockPending
 	current := record.Version == auditReopenVersion && !record.UnblockPending ||
 		record.Version == auditReopenPendingVersion && record.UnblockPending
@@ -859,50 +859,50 @@ func validAuditReopenHead(head string) bool {
 	return err == nil
 }
 
-func auditReopenRecordLegacy(record auditReopenRecord) bool {
-	return record.Version == auditReopenLegacyVersion ||
+func auditReopenRecordLegacy(record AuditReopenRecord) bool {
+	return record.Version == AuditReopenLegacyVersion ||
 		record.Version == auditReopenLegacyPendingVersion
 }
 
-func auditReopenRecordActive(record auditReopenRecord) bool {
+func auditReopenRecordActive(record AuditReopenRecord) bool {
 	return record.Version == auditReopenVersion && !record.UnblockPending
 }
 
-func auditReopenRecordsEqual(a, b auditReopenRecord) bool {
+func AuditReopenRecordsEqual(a, b AuditReopenRecord) bool {
 	return a.Version == b.Version && a.Generation == b.Generation && a.TaskID == b.TaskID &&
 		a.BaselineHead == b.BaselineHead && a.Subject == b.Subject &&
 		slices.Equal(a.History, b.History) && slices.Equal(a.Descendants, b.Descendants) &&
 		a.UnblockPending == b.UnblockPending
 }
 
-func readAuditReopenRecord(root, id string) (auditReopenRecord, bool, error) {
+func ReadAuditReopenRecord(root, id string) (AuditReopenRecord, bool, error) {
 	name, err := auditReopenRecordName(root, id)
 	if err != nil {
-		return auditReopenRecord{}, false, err
+		return AuditReopenRecord{}, false, err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
-		return auditReopenRecord{}, false, err
+		return AuditReopenRecord{}, false, err
 	}
 	defer registry.Close()
-	data, err := readTaskMetadataFile(registry, name)
+	data, err := ReadTaskMetadataFile(registry, name)
 	if errors.Is(err, os.ErrNotExist) {
-		return auditReopenRecord{}, false, nil
+		return AuditReopenRecord{}, false, nil
 	}
 	if err != nil {
-		return auditReopenRecord{}, false, err
+		return AuditReopenRecord{}, false, err
 	}
-	var record auditReopenRecord
+	var record AuditReopenRecord
 	if err := json.Unmarshal(data, &record); err != nil {
-		return auditReopenRecord{}, false, err
+		return AuditReopenRecord{}, false, err
 	}
 	if err := validateAuditReopenRecord(record, id); err != nil {
-		return auditReopenRecord{}, false, err
+		return AuditReopenRecord{}, false, err
 	}
 	return record, true, nil
 }
 
-func writeAuditReopenRecord(root string, record auditReopenRecord) error {
+func WriteAuditReopenRecord(root string, record AuditReopenRecord) error {
 	if err := validateAuditReopenRecord(record, record.TaskID); err != nil {
 		return err
 	}
@@ -910,7 +910,7 @@ func writeAuditReopenRecord(root string, record auditReopenRecord) error {
 	if err != nil {
 		return err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return err
 	}
@@ -919,21 +919,21 @@ func writeAuditReopenRecord(root string, record auditReopenRecord) error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteTaskFile(registry, name, append(data, '\n'))
+	return AtomicWriteTaskFile(registry, name, append(data, '\n'))
 }
 
-func replaceAuditReopenRecordIfMatches(root string, previous, replacement auditReopenRecord) error {
-	current, ok, err := readAuditReopenRecord(root, previous.TaskID)
+func replaceAuditReopenRecordIfMatches(root string, previous, replacement AuditReopenRecord) error {
+	current, ok, err := ReadAuditReopenRecord(root, previous.TaskID)
 	if err != nil {
 		return err
 	}
-	if !ok || !auditReopenRecordsEqual(current, previous) {
+	if !ok || !AuditReopenRecordsEqual(current, previous) {
 		return fmt.Errorf("audit reopen authority changed for task %s", previous.TaskID)
 	}
 	if replacement.Generation != previous.Generation || replacement.TaskID != previous.TaskID {
 		return fmt.Errorf("audit reopen replacement changed authority for task %s", previous.TaskID)
 	}
-	return writeAuditReopenRecord(root, replacement)
+	return WriteAuditReopenRecord(root, replacement)
 }
 
 func removeAuditReopenRecord(root, id string) error {
@@ -941,7 +941,7 @@ func removeAuditReopenRecord(root, id string) error {
 	if err != nil {
 		return err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return err
 	}
@@ -957,7 +957,7 @@ func auditReopenRecordExists(root, id string) bool {
 	if err != nil {
 		return false
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return false
 	}
@@ -971,7 +971,7 @@ func auditReopenRecordExists(root, id string) bool {
 }
 
 func removeAuditReopenRecordIfMatches(root, id, generation string) error {
-	record, ok, err := readAuditReopenRecord(root, id)
+	record, ok, err := ReadAuditReopenRecord(root, id)
 	if err != nil || !ok {
 		return err
 	}
@@ -1014,7 +1014,7 @@ func leaseCompletionReceiptMatches(authority *os.File, taskDir string) bool {
 	return ok
 }
 
-func inspectTaskCompletionReceipt(root string, task taskItem) (leaseCompletionReceipt, bool, bool) {
+func inspectTaskCompletionReceipt(root string, task Item) (leaseCompletionReceipt, bool, bool) {
 	authority, err := lockLeaseAuthority(root, task.ID, false, syscall.LOCK_SH|syscall.LOCK_NB)
 	if errors.Is(err, os.ErrNotExist) {
 		return leaseCompletionReceipt{}, false, false
@@ -1046,7 +1046,7 @@ func clearTaskCompletionReceipt(root, id string) error {
 // clearTaskCompletionReceiptIfMatches invalidates only the generation the caller observed. The
 // exclusive authority lock closes the gap between comparing a stale receipt and clearing it, so a
 // concurrent trusted completion cannot publish a fresh nonce that this audit then erases.
-func clearTaskCompletionReceiptIfMatches(root string, task taskItem, nonce string) (bool, error) {
+func clearTaskCompletionReceiptIfMatches(root string, task Item, nonce string) (bool, error) {
 	if nonce == "" {
 		return false, nil
 	}
@@ -1059,8 +1059,8 @@ func clearTaskCompletionReceiptIfMatches(root string, task taskItem, nonce strin
 	if err != nil {
 		return false, err
 	}
-	current, ok := currentTask(root, task.ID)
-	if !ok || current.State != stateDone || current.Dir != task.Dir {
+	current, ok := CurrentTask(root, task.ID)
+	if !ok || current.State != StateDone || current.Dir != task.Dir {
 		return false, unlockLeaseFile(authority)
 	}
 	receipt, ok := readLeaseCompletionReceipt(authority, current.Dir)
@@ -1071,11 +1071,11 @@ func clearTaskCompletionReceiptIfMatches(root string, task taskItem, nonce strin
 }
 
 func writeLeaseAuthorityMetadata(root, id string, meta taskLeaseMetadata) error {
-	key, err := leaseAuthorityKey(root, id)
+	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return err
 	}
@@ -1084,20 +1084,20 @@ func writeLeaseAuthorityMetadata(root, id string, meta taskLeaseMetadata) error 
 	if err != nil {
 		return err
 	}
-	return atomicWriteTaskFile(registry, key+".json", append(data, '\n'))
+	return AtomicWriteTaskFile(registry, key+".json", append(data, '\n'))
 }
 
 func readLeaseAuthorityMetadata(root, id string) (taskLeaseMetadata, bool) {
-	key, err := leaseAuthorityKey(root, id)
+	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return taskLeaseMetadata{}, false
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return taskLeaseMetadata{}, false
 	}
 	defer registry.Close()
-	data, err := readTaskMetadataFile(registry, key+".json")
+	data, err := ReadTaskMetadataFile(registry, key+".json")
 	if err != nil {
 		return taskLeaseMetadata{}, false
 	}
@@ -1109,11 +1109,11 @@ func readLeaseAuthorityMetadata(root, id string) (taskLeaseMetadata, bool) {
 }
 
 func leaseAuthorityMetadataExists(root, id string) bool {
-	key, err := leaseAuthorityKey(root, id)
+	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return false
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return false
 	}
@@ -1127,11 +1127,11 @@ func leaseAuthorityMetadataExists(root, id string) bool {
 }
 
 func removeLeaseAuthorityMetadata(root, id string) error {
-	key, err := leaseAuthorityKey(root, id)
+	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return err
 	}
@@ -1143,11 +1143,11 @@ func removeLeaseAuthorityMetadata(root, id string) error {
 }
 
 func removeLeaseAuthorityLock(root, id string) error {
-	key, err := leaseAuthorityKey(root, id)
+	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return err
 	}
@@ -1166,12 +1166,12 @@ const (
 	leaseStalled
 )
 
-type taskLeaseObservation struct {
+type TaskLeaseObservation struct {
 	State    taskLeaseState
 	Provider string
 }
 
-func (o taskLeaseObservation) label() string {
+func (o TaskLeaseObservation) label() string {
 	switch o.State {
 	case leaseStalled:
 		return "stalled " + o.Provider
@@ -1182,13 +1182,13 @@ func (o taskLeaseObservation) label() string {
 	}
 }
 
-type taskLeaseSummary struct {
+type TaskLeaseSummary struct {
 	Owned   int // a durable human claim (taskOwnerRecord) — never a lease state, so add() can't set it
 	Busy    int
 	Stalled int
 }
 
-func (s *taskLeaseSummary) add(o taskLeaseObservation) {
+func (s *TaskLeaseSummary) add(o TaskLeaseObservation) {
 	switch o.State {
 	case leaseBusy:
 		s.Busy++
@@ -1197,7 +1197,7 @@ func (s *taskLeaseSummary) add(o taskLeaseObservation) {
 	}
 }
 
-func (s taskLeaseSummary) String() string {
+func (s TaskLeaseSummary) String() string {
 	parts := make([]string, 0, 3)
 	if s.Owned > 0 {
 		parts = append(parts, fmt.Sprintf("%d owned", s.Owned))
@@ -1217,7 +1217,7 @@ func (s taskLeaseSummary) String() string {
 // taskLeaseDir creates only the literal task tmp child. In particular it never uses MkdirAll: a
 // contender that sees a task move must fail and rescan, not recreate an obsolete state directory.
 func taskLeaseDir(taskDir string) (string, error) {
-	root, err := openTaskMetadataRoot(taskDir)
+	root, err := OpenTaskMetadataRoot(taskDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", errLeaseCandidateGone
 	}
@@ -1240,17 +1240,17 @@ func taskLeaseDir(taskDir string) (string, error) {
 	return filepath.Join(taskDir, "tmp"), nil
 }
 
-func currentTask(root, id string) (taskItem, bool) {
-	for _, t := range readTaskTree(root) {
+func CurrentTask(root, id string) (Item, bool) {
+	for _, t := range ReadTaskTree(root) {
 		if t.ID == id {
 			return t, true
 		}
 	}
-	return taskItem{}, false
+	return Item{}, false
 }
 
 func openTaskTmpRoot(taskDir string) (*os.Root, error) {
-	taskRoot, err := openTaskMetadataRoot(taskDir)
+	taskRoot, err := OpenTaskMetadataRoot(taskDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1306,53 +1306,53 @@ func openLeaseLock(taskDir string, create bool) (*os.File, error) {
 
 // tryTaskLease locks a candidate without waiting. It records whether this was a legacy adoption
 // before creating lease.lock, then writes metadata only after the authoritative flock succeeds.
-func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease, taskLeaseObservation, error) {
+func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, TaskLeaseObservation, error) {
 	dir, err := taskLeaseDir(item.Dir)
 	if err != nil {
-		return nil, taskLeaseObservation{}, err
+		return nil, TaskLeaseObservation{}, err
 	}
 	lockPath := filepath.Join(dir, leaseLockName)
 	_, statErr := os.Lstat(lockPath)
 	legacy := errors.Is(statErr, os.ErrNotExist)
 	if statErr != nil && !legacy {
-		return nil, taskLeaseObservation{}, statErr
+		return nil, TaskLeaseObservation{}, statErr
 	}
 	authority, err := lockLeaseAuthority(root, item.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
-			return nil, taskLeaseObservation{}, err
+			return nil, TaskLeaseObservation{}, err
 		}
 		observed := observeHeldTaskLease(item, owner.now())
 		if observed.State == leaseUnleased {
-			return nil, taskLeaseObservation{}, errLeaseCandidateGone
+			return nil, TaskLeaseObservation{}, errLeaseCandidateGone
 		}
 		return nil, observed, nil
 	}
 	f, err := openLeaseLock(item.Dir, true)
 	if errors.Is(err, os.ErrNotExist) {
 		_ = unlockLeaseFile(authority)
-		return nil, taskLeaseObservation{}, errLeaseCandidateGone
+		return nil, TaskLeaseObservation{}, errLeaseCandidateGone
 	}
 	if err != nil {
 		_ = unlockLeaseFile(authority)
-		return nil, taskLeaseObservation{}, err
+		return nil, TaskLeaseObservation{}, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
 		_ = unlockLeaseFile(authority)
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
-			return nil, taskLeaseObservation{}, err
+			return nil, TaskLeaseObservation{}, err
 		}
 		observed := observeHeldTaskLease(item, owner.now())
 		if observed.State == leaseUnleased {
 			// The owner released between our failed flock and the status read. Rescan so this
 			// now-available task is adopted instead of reporting a false all-busy queue.
-			return nil, taskLeaseObservation{}, errLeaseCandidateGone
+			return nil, TaskLeaseObservation{}, errLeaseCandidateGone
 		}
 		return nil, observed, nil
 	}
 	now := owner.now()
-	l := &taskLease{
+	l := &TaskLease{
 		root:      root,
 		id:        item.ID,
 		local:     f,
@@ -1368,7 +1368,7 @@ func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease,
 		},
 		now:    owner.now,
 		ticker: owner.Ticker,
-		legacy: legacy && item.State == stateInProgress,
+		Legacy: legacy && item.State == StateInProgress,
 		stop:   make(chan struct{}),
 		done:   make(chan struct{}),
 	}
@@ -1379,9 +1379,9 @@ func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease,
 		_ = removeLeaseAuthorityMetadata(root, item.ID)
 		_ = unlockLeaseFile(f)
 		_ = unlockLeaseFile(authority)
-		return nil, taskLeaseObservation{}, err
+		return nil, TaskLeaseObservation{}, err
 	}
-	current, ok := currentTask(root, item.ID)
+	current, ok := CurrentTask(root, item.ID)
 	if !ok || current.State != item.State {
 		// Metadata follows the id across legitimate moves once an iteration owns the task, but a
 		// move DURING acquisition means this stale candidate must be rescanned, not launched.
@@ -1389,7 +1389,7 @@ func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease,
 		_ = removeLeaseAuthorityMetadata(root, item.ID)
 		_ = unlockLeaseFile(f)
 		_ = unlockLeaseFile(authority)
-		return nil, taskLeaseObservation{}, errLeaseCandidateGone
+		return nil, TaskLeaseObservation{}, errLeaseCandidateGone
 	}
 	// A new owned attempt invalidates any receipt from an earlier accepted completion. The same
 	// authority flock serializes this with concurrent completion scans.
@@ -1398,14 +1398,14 @@ func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease,
 		_ = removeLeaseAuthorityMetadata(root, item.ID)
 		_ = unlockLeaseFile(f)
 		_ = unlockLeaseFile(authority)
-		return nil, taskLeaseObservation{}, err
+		return nil, TaskLeaseObservation{}, err
 	}
-	if record, ok, err := readAuditReopenRecord(root, item.ID); err != nil {
+	if record, ok, err := ReadAuditReopenRecord(root, item.ID); err != nil {
 		_ = removeLeaseMetadata(root, item.ID)
 		_ = removeLeaseAuthorityMetadata(root, item.ID)
 		_ = unlockLeaseFile(f)
 		_ = unlockLeaseFile(authority)
-		return nil, taskLeaseObservation{}, fmt.Errorf("read audit reopen authority for task %s: %w", item.ID, err)
+		return nil, TaskLeaseObservation{}, fmt.Errorf("read audit reopen authority for task %s: %w", item.ID, err)
 	} else if ok {
 		if auditReopenRecordLegacy(record) {
 			_ = removeLeaseMetadata(root, item.ID)
@@ -1416,10 +1416,10 @@ func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease,
 				"restore the audited pre-attempt HEAD, then run coop tasks unblock %s --adopt-audit-head <full-sha> \"<answer>\"",
 				item.ID,
 			)
-			if item.State != stateBlocked {
+			if item.State != StateBlocked {
 				recovery = "block the task without changing Git history, " + recovery
 			}
-			return nil, taskLeaseObservation{}, fmt.Errorf(
+			return nil, TaskLeaseObservation{}, fmt.Errorf(
 				"task %s has legacy audit-reopen authority that protects only task-bound descendants — no lease started; %s",
 				item.ID, recovery,
 			)
@@ -1430,28 +1430,28 @@ func tryTaskLease(root string, item taskItem, owner taskLeaseOwner) (*taskLease,
 			_ = unlockLeaseFile(f)
 			_ = unlockLeaseFile(authority)
 			recovery := "coop tasks unblock " + item.ID
-			if item.State != stateTodo {
+			if item.State != StateTodo {
 				recovery = "coop tasks block " + item.ID + " && " + recovery
 			}
-			return nil, taskLeaseObservation{}, fmt.Errorf(
+			return nil, TaskLeaseObservation{}, fmt.Errorf(
 				"task %s has a non-authorizing pending audit unblock — no lease started; recover explicitly: %s",
 				item.ID, recovery,
 			)
 		}
-		l.reopen = &record
+		l.Reopen = &record
 	}
 	l.startHeartbeat()
-	return l, taskLeaseObservation{}, nil
+	return l, TaskLeaseObservation{}, nil
 }
 
-func observeTaskLease(item taskItem, now time.Time) taskLeaseObservation {
+func observeTaskLease(item Item, now time.Time) TaskLeaseObservation {
 	return observeHeldTaskLease(item, now)
 }
 
 // observeHeldTaskLease never creates lease state: task/watch is read-only. An unlocked or missing
 // lock is unleased even if a crashed controller left stale metadata behind; only a HELD lock means
 // another controller owns the work.
-func observeHeldTaskLease(item taskItem, now time.Time) taskLeaseObservation {
+func observeHeldTaskLease(item Item, now time.Time) TaskLeaseObservation {
 	root := filepath.Dir(filepath.Dir(item.Dir))
 	authority, err := lockLeaseAuthority(root, item.ID, false, syscall.LOCK_EX|syscall.LOCK_NB)
 	switch {
@@ -1461,36 +1461,36 @@ func observeHeldTaskLease(item taskItem, now time.Time) taskLeaseObservation {
 		meta, ok := readLeaseAuthorityMetadata(root, item.ID)
 		return leaseObservationFromMetadata(meta, ok, now)
 	case !errors.Is(err, os.ErrNotExist):
-		return taskLeaseObservation{State: leaseBusy, Provider: "unknown"}
+		return TaskLeaseObservation{State: leaseBusy, Provider: "unknown"}
 	}
 	// A task-local lock is retained for compatibility with older controllers and lets the in-box
 	// fixture verify that the host claimed the task. New controllers additionally require authority.
 	f, err := openLeaseLock(item.Dir, false)
 	if errors.Is(err, os.ErrNotExist) {
-		return taskLeaseObservation{State: leaseUnleased}
+		return TaskLeaseObservation{State: leaseUnleased}
 	}
 	if err != nil {
-		return taskLeaseObservation{State: leaseBusy, Provider: "unknown"}
+		return TaskLeaseObservation{State: leaseBusy, Provider: "unknown"}
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
-		return taskLeaseObservation{State: leaseUnleased}
+		return TaskLeaseObservation{State: leaseUnleased}
 	}
 	_ = f.Close()
 	meta, ok := readLeaseMetadata(item.Dir)
 	return leaseObservationFromMetadata(meta, ok, now)
 }
 
-func leaseObservationFromMetadata(meta taskLeaseMetadata, ok bool, now time.Time) taskLeaseObservation {
+func leaseObservationFromMetadata(meta taskLeaseMetadata, ok bool, now time.Time) TaskLeaseObservation {
 	provider := "unknown"
 	if ok {
 		provider = leaseProvider(meta.Provider)
 		if now.Sub(meta.HeartbeatAt) > leaseStaleAfter {
-			return taskLeaseObservation{State: leaseStalled, Provider: provider}
+			return TaskLeaseObservation{State: leaseStalled, Provider: provider}
 		}
 	}
-	return taskLeaseObservation{State: leaseBusy, Provider: provider}
+	return TaskLeaseObservation{State: leaseBusy, Provider: provider}
 }
 
 func leaseProvider(provider string) string {
@@ -1512,7 +1512,7 @@ func readLeaseMetadata(taskDir string) (taskLeaseMetadata, bool) {
 		return taskLeaseMetadata{}, false
 	}
 	defer root.Close()
-	data, err := readTaskMetadataFile(root, leaseMetadataName)
+	data, err := ReadTaskMetadataFile(root, leaseMetadataName)
 	if err != nil {
 		return taskLeaseMetadata{}, false
 	}
@@ -1524,7 +1524,7 @@ func readLeaseMetadata(taskDir string) (taskLeaseMetadata, bool) {
 }
 
 func writeLeaseMetadata(root, id string, meta taskLeaseMetadata) error {
-	task, ok := currentTask(root, id)
+	task, ok := CurrentTask(root, id)
 	if !ok {
 		return nil // the task was removed after completion; never recreate its previous path
 	}
@@ -1540,11 +1540,11 @@ func writeLeaseMetadata(root, id string, meta taskLeaseMetadata) error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteTaskFile(tmpRoot, leaseMetadataName, append(data, '\n'))
+	return AtomicWriteTaskFile(tmpRoot, leaseMetadataName, append(data, '\n'))
 }
 
 func removeLeaseMetadata(root, id string) error {
-	task, ok := currentTask(root, id)
+	task, ok := CurrentTask(root, id)
 	if !ok {
 		return nil
 	}

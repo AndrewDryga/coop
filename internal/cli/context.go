@@ -12,6 +12,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/contextc"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -153,15 +154,15 @@ func gitChangedPaths(repo string) []string {
 // taskScopePaths reads a task's declared scope: a `paths:` frontmatter field in its task.md, split
 // on commas/whitespace. A task without one contributes nothing.
 func (a *app) taskScopePaths(repo, id string) ([]string, error) {
-	rels, err := taskQueues(a.cfg, repo, nil)
+	rels, err := tasks.TaskQueues(a.cfg, repo, nil)
 	if err != nil {
 		return nil, err
 	}
-	var items []taskItem
+	var items []tasks.Item
 	for _, rel := range rels {
-		items = append(items, readTaskTree(filepath.Join(repo, rel))...)
+		items = append(items, tasks.ReadTaskTree(filepath.Join(repo, rel))...)
 	}
-	t, err := matchTask(items, id, "coop tasks")
+	t, err := tasks.MatchTask(items, id, "coop tasks")
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +170,7 @@ func (a *app) taskScopePaths(repo, id string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("coop context: reading task %s: %w", t.ID, err)
 	}
-	fields, _ := splitFrontmatter(string(data))
+	fields, _ := tasks.SplitFrontmatter(string(data))
 	return strings.FieldsFunc(fields["paths"], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }), nil
 }
 

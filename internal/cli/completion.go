@@ -9,6 +9,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 // coop completion bash|zsh prints a static script that defers every dynamic value to `coop __complete`
@@ -123,14 +124,14 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		}
 	case "tasks":
 		if len(prev) == 1 {
-			return tasksVerbs
+			return tasks.TasksVerbs
 		}
 		if len(prev) == 2 && taskIDVerb(prev[1]) {
 			return a.taskIDs()
 		}
 	case "backlog":
 		if len(prev) == 1 {
-			return backlogVerbs
+			return tasks.BacklogVerbs
 		}
 		if len(prev) == 2 && (prev[1] == "rm" || prev[1] == "promote") {
 			return a.backlogIDs()
@@ -303,13 +304,13 @@ func (a *app) taskIDs() []string {
 	if err != nil {
 		return nil
 	}
-	rels, err := taskQueues(a.cfg, repo, nil)
+	rels, err := tasks.TaskQueues(a.cfg, repo, nil)
 	if err != nil {
 		return nil
 	}
 	var ids []string
 	for _, rel := range rels {
-		for _, it := range readTaskTree(filepath.Join(repo, rel)) {
+		for _, it := range tasks.ReadTaskTree(filepath.Join(repo, rel)) {
 			ids = append(ids, it.ID)
 		}
 	}
@@ -323,13 +324,13 @@ func (a *app) backlogIDs() []string {
 	if err != nil {
 		return nil
 	}
-	rels, err := taskQueues(a.cfg, repo, nil)
+	rels, err := tasks.TaskQueues(a.cfg, repo, nil)
 	if err != nil {
 		return nil
 	}
 	var ids []string
 	for _, rel := range rels {
-		for _, it := range readBacklog(filepath.Join(repo, rel)) {
+		for _, it := range tasks.ReadBacklog(filepath.Join(repo, rel)) {
 			ids = append(ids, it.ID)
 		}
 	}

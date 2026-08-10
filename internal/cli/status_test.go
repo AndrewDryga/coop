@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 // Task tallying/active-task logic is tested in taskdir_test.go (taskTreeCounts); here we cover
@@ -19,10 +20,10 @@ func TestActiveCell(t *testing.T) {
 		want string
 	}{
 		{"no queue", forkStatus{}, "(no queue)"},
-		{"all done", forkStatus{Counts: taskCounts{Done: 3}}, "✓ done"},
-		{"in flight", forkStatus{Active: "fix the bug", Counts: taskCounts{Doing: 1}}, "fix the bug"},
+		{"all done", forkStatus{Counts: tasks.TaskCounts{Done: 3}}, "✓ done"},
+		{"in flight", forkStatus{Active: "fix the bug", Counts: tasks.TaskCounts{Doing: 1}}, "fix the bug"},
 		// blocked-only (nothing actionable, but parked on a decision) must NOT read as done.
-		{"blocked only", forkStatus{Counts: taskCounts{Done: 1, Blocked: 2}}, "blocked"},
+		{"blocked only", forkStatus{Counts: tasks.TaskCounts{Done: 1, Blocked: 2}}, "blocked"},
 	}
 	for _, c := range cases {
 		if got := c.s.activeCell(); got != c.want {

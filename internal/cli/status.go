@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -16,7 +17,7 @@ type forkStatus struct {
 	Cleanup                              bool
 	Ins, Del                             int
 	Dirty                                bool
-	Counts                               taskCounts
+	Counts                               tasks.TaskCounts
 	Cost                                 float64 // total loop spend across the fork's runs, 0 if it never ran
 }
 
@@ -29,7 +30,7 @@ func gatherForkStatus(repo, name string) forkStatus {
 		agent = "?" // a fork made before agents were remembered
 	}
 	ins, del := parseShortstat(gitOut(ws, "diff", "--shortstat", "origin/HEAD"))
-	counts, active := queueCounts(wsTaskSource(ws))
+	counts, active := tasks.QueueCounts(tasks.WsTaskSource(ws))
 	running := forkspace.RunningPid(repo, name) != 0
 	return forkStatus{
 		Name:    name,
@@ -59,10 +60,10 @@ func (s forkStatus) stateCell() string {
 
 // tasksCell renders task progress compactly: done/total, plus a blocked flag.
 func (s forkStatus) tasksCell() string {
-	if s.Counts.total() == 0 {
+	if s.Counts.Total() == 0 {
 		return "—"
 	}
-	cell := fmt.Sprintf("%d/%d", s.Counts.Done, s.Counts.total())
+	cell := fmt.Sprintf("%d/%d", s.Counts.Done, s.Counts.Total())
 	if s.Counts.Blocked > 0 {
 		cell += fmt.Sprintf(" ⚠%d", s.Counts.Blocked)
 	}
@@ -90,7 +91,7 @@ func (s forkStatus) costCell() string {
 // the queue is drained / absent.
 func (s forkStatus) activeCell() string {
 	switch {
-	case s.Counts.total() == 0:
+	case s.Counts.Total() == 0:
 		return "(no queue)"
 	case s.Active != "":
 		return truncate(s.Active, 44)
@@ -110,12 +111,12 @@ func (a *app) fleetSnapshot(repo string) (int, error) {
 	if len(names) == 0 {
 		// No forks — but in the single-loop workflow there's still a local queue to report.
 		// Show its progress instead of a bare "no forks", so the snapshot is useful either way.
-		if rels, err := taskQueues(a.cfg, repo, nil); err == nil && len(rels) > 0 {
+		if rels, err := tasks.TaskQueues(a.cfg, repo, nil); err == nil && len(rels) > 0 {
 			abs := make([]string, len(rels))
 			for i, r := range rels {
 				abs[i] = filepath.Join(repo, r)
 			}
-			if c, active := queueProgress(abs); c.total() > 0 {
+			if c, active := tasks.QueueProgress(abs); c.Total() > 0 {
 				ui.Note("%s — local queue: %s", ui.Bold(filepath.Base(repo)), progressLine(c, active))
 				ui.Note("  no forks yet — 'coop fork <name>' or 'coop fleet up' to run several in parallel")
 				return 0, nil
@@ -135,7 +136,7 @@ func (a *app) fleetSnapshot(repo string) (int, error) {
 		}
 		blocked += s.Counts.Blocked
 		doneTasks += s.Counts.Done
-		totalTasks += s.Counts.total()
+		totalTasks += s.Counts.Total()
 	}
 
 	fmt.Printf("%s — %s, %d running, %d blocked\n\n",

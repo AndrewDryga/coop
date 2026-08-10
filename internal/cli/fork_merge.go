@@ -13,6 +13,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -249,7 +250,7 @@ func (a *app) mergeOne(repo, img, name string, force bool) (bool, error) {
 	// Reconcile the parent queue: a task whose Coop-Task trailer just landed moves to done/, so the
 	// parent loop doesn't redo work this fork already completed. The land already stuck, so a
 	// reconcile that couldn't run comes back as landed-with-an-error, never as a rollback.
-	if err := a.reconcileQueueAfterMerge(repo, name, parentBeforeLand+"..HEAD"); err != nil {
+	if err := tasks.ReconcileQueueAfterMerge(a.cfg, repo, name, parentBeforeLand+"..HEAD"); err != nil {
 		return true, err
 	}
 	return true, nil
@@ -410,7 +411,7 @@ func (a *app) fastForwardParent(repo, ws, name string) error {
 	// loop` there may be validating a completion against. The ref-authority lock keeps this
 	// fast-forward from landing inside that loop's validate→consume window (and vice versa), so
 	// landing a fork can never trip the loop's own compare-and-swap.
-	release, lockErr := lockRefAuthority(a.cfg, repo)
+	release, lockErr := tasks.LockRefAuthority(a.cfg, repo)
 	if lockErr != nil {
 		return fmt.Errorf("%s: acquire ref authority for %s: %w", name, repo, lockErr)
 	}

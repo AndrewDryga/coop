@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -17,11 +18,11 @@ const fleetTestWidth = 160
 
 func TestFleetDashboard(t *testing.T) {
 	rows := []fleetRow{
-		{name: "api", agent: "claude", running: true, counts: taskCounts{Done: 4, Todo: 6}, active: "refresh-token rotation", lastLog: "⚙ Bash go test"},
-		{name: "deps", agent: "codex", running: false, counts: taskCounts{Done: 6, Todo: 3, Blocked: 1}, active: "bump axios"},
-		{name: "web", agent: "gemini", running: false, counts: taskCounts{Done: 1, Todo: 11}, active: "fix hydration"},
-		{name: "infra", agent: "claude", running: false, counts: taskCounts{Done: 8}, active: ""}, // all done
-		{name: "fresh", running: false, counts: taskCounts{}, active: ""},                         // no queue
+		{name: "api", agent: "claude", running: true, counts: tasks.TaskCounts{Done: 4, Todo: 6}, active: "refresh-token rotation", lastLog: "⚙ Bash go test"},
+		{name: "deps", agent: "codex", running: false, counts: tasks.TaskCounts{Done: 6, Todo: 3, Blocked: 1}, active: "bump axios"},
+		{name: "web", agent: "gemini", running: false, counts: tasks.TaskCounts{Done: 1, Todo: 11}, active: "fix hydration"},
+		{name: "infra", agent: "claude", running: false, counts: tasks.TaskCounts{Done: 8}, active: ""}, // all done
+		{name: "fresh", running: false, counts: tasks.TaskCounts{}, active: ""},                         // no queue
 	}
 	out := fleetDashboard("myrepo", rows, 0, fleetTestWidth)
 	joined := strings.Join(out, "\n")
@@ -93,7 +94,7 @@ func TestFleetDashboardUsesAvailableTerminalWidth(t *testing.T) {
 		name:    "production-migration-worker",
 		agent:   "codex",
 		running: true,
-		counts:  taskCounts{Done: 1, Doing: 1},
+		counts:  tasks.TaskCounts{Done: 1, Doing: 1},
 		active:  "Finish reconciling every provider credential rotation before the deployment cutover",
 		lastLog: "provider recovery completed after validating the final credential and session handoff",
 		cost:    12.34,
@@ -127,7 +128,7 @@ func TestFleetDashboardUsesAvailableTerminalWidth(t *testing.T) {
 
 func TestFleetBarsUseTaskDoingNotRunningProcesses(t *testing.T) {
 	t.Run("task remains active without a running process", func(t *testing.T) {
-		rows := []fleetRow{{name: "active", counts: taskCounts{Todo: 99, Doing: 1}, active: "work"}}
+		rows := []fleetRow{{name: "active", counts: tasks.TaskCounts{Todo: 99, Doing: 1}, active: "work"}}
 		out := fleetDashboard("repo", rows, 0, fleetTestWidth)
 		for _, line := range []string{out[2], out[len(out)-1]} {
 			if !strings.Contains(line, "█") {
@@ -137,7 +138,7 @@ func TestFleetBarsUseTaskDoingNotRunningProcesses(t *testing.T) {
 	})
 
 	t.Run("running process has not claimed a task", func(t *testing.T) {
-		out := fleetDashboard("repo", []fleetRow{{name: "starting", running: true, counts: taskCounts{Todo: 100}}}, 0, fleetTestWidth)
+		out := fleetDashboard("repo", []fleetRow{{name: "starting", running: true, counts: tasks.TaskCounts{Todo: 100}}}, 0, fleetTestWidth)
 		if line := out[len(out)-1]; strings.Contains(line, "█") {
 			t.Errorf("running process count must not create an active task segment: %q", line)
 		}
@@ -150,9 +151,9 @@ func TestFleetBarsUseTaskDoingNotRunningProcesses(t *testing.T) {
 // shows no dollar cell.
 func TestFleetDashboardCost(t *testing.T) {
 	rows := []fleetRow{
-		{name: "api", agent: "claude", running: true, counts: taskCounts{Done: 2, Todo: 1}, cost: 12.50},
-		{name: "deps", agent: "codex", running: false, counts: taskCounts{Done: 3}, cost: 4.00},
-		{name: "web", agent: "gemini", running: false, counts: taskCounts{Todo: 5}}, // no cost → no $ cell
+		{name: "api", agent: "claude", running: true, counts: tasks.TaskCounts{Done: 2, Todo: 1}, cost: 12.50},
+		{name: "deps", agent: "codex", running: false, counts: tasks.TaskCounts{Done: 3}, cost: 4.00},
+		{name: "web", agent: "gemini", running: false, counts: tasks.TaskCounts{Todo: 5}}, // no cost → no $ cell
 	}
 	joined := strings.Join(fleetDashboard("r", rows, 0, fleetTestWidth), "\n")
 	for _, want := range []string{"$12.50", "$4.00", "$16.50"} { // two per-fork rows + the fleet total
@@ -171,21 +172,21 @@ func TestFleetDashboardIdleBarNoSpinner(t *testing.T) {
 
 	// Idle with work left → ‖, no spinner (the reported case: 0 running, tasks remaining).
 	idle := bar([]fleetRow{
-		{name: "a", agent: "claude", running: false, counts: taskCounts{Done: 1, Todo: 1}},
-		{name: "b", agent: "gemini", running: false, counts: taskCounts{Todo: 5}},
+		{name: "a", agent: "claude", running: false, counts: tasks.TaskCounts{Done: 1, Todo: 1}},
+		{name: "b", agent: "gemini", running: false, counts: tasks.TaskCounts{Todo: 5}},
 	})
 	if strings.Contains(idle, spin0) || !strings.HasPrefix(idle, "‖") {
 		t.Errorf("idle fleet bar should lead with ‖ and never spin:\n%q", idle)
 	}
 
 	// Everything done → ✓, still no spinner.
-	allDone := bar([]fleetRow{{name: "a", running: false, counts: taskCounts{Done: 3}}})
+	allDone := bar([]fleetRow{{name: "a", running: false, counts: tasks.TaskCounts{Done: 3}}})
 	if strings.Contains(allDone, spin0) || !strings.HasPrefix(allDone, "✓") {
 		t.Errorf("all-done fleet bar should lead with ✓ and never spin:\n%q", allDone)
 	}
 
 	// At least one running → the spinner is back; suppression is only for a still fleet.
-	if busy := bar([]fleetRow{{name: "a", running: true, counts: taskCounts{Todo: 2}}}); !strings.Contains(busy, spin0) {
+	if busy := bar([]fleetRow{{name: "a", running: true, counts: tasks.TaskCounts{Todo: 2}}}); !strings.Contains(busy, spin0) {
 		t.Errorf("a running fleet bar should spin:\n%q", busy)
 	}
 }
@@ -206,7 +207,7 @@ func TestFleetStateGlyphsKeepBarColumnFixed(t *testing.T) {
 // A fork whose loop exited with work left (ran, not running, not done) reads as "stopped" — not as
 // if it's still on its next task — so a fork that quit at 0/20 isn't mistaken for paused/working.
 func TestFleetRowStopped(t *testing.T) {
-	stopped := fleetRowLine(fleetRow{name: "codex3", agent: "codex", running: false, ran: true, counts: taskCounts{Todo: 20}, active: "Task 1"}, 0, 5, fleetNameW, fleetTestWidth)
+	stopped := fleetRowLine(fleetRow{name: "codex3", agent: "codex", running: false, ran: true, counts: tasks.TaskCounts{Todo: 20}, active: "Task 1"}, 0, 5, fleetNameW, fleetTestWidth)
 	if !strings.Contains(stopped, "stopped") {
 		t.Errorf("a stopped fork should say stopped:\n%q", stopped)
 	}
@@ -214,12 +215,12 @@ func TestFleetRowStopped(t *testing.T) {
 		t.Errorf("a stopped fork should not show its next task as if active:\n%q", stopped)
 	}
 	// A fork that never started (no log → ran=false) still shows its pending task, as before.
-	idle := fleetRowLine(fleetRow{name: "pending", agent: "gemini", running: false, ran: false, counts: taskCounts{Todo: 20}, active: "Task 1"}, 0, 5, fleetNameW, fleetTestWidth)
+	idle := fleetRowLine(fleetRow{name: "pending", agent: "gemini", running: false, ran: false, counts: tasks.TaskCounts{Todo: 20}, active: "Task 1"}, 0, 5, fleetNameW, fleetTestWidth)
 	if strings.Contains(idle, "stopped") || !strings.Contains(idle, "Task 1") {
 		t.Errorf("an idle, never-started fork should show its pending task, not 'stopped':\n%q", idle)
 	}
 	// A done fork is still ✓ done, never "stopped", even though it isn't running.
-	doneRow := fleetRowLine(fleetRow{name: "claude1", agent: "claude", running: false, ran: true, counts: taskCounts{Done: 20}, active: ""}, 0, 5, fleetNameW, fleetTestWidth)
+	doneRow := fleetRowLine(fleetRow{name: "claude1", agent: "claude", running: false, ran: true, counts: tasks.TaskCounts{Done: 20}, active: ""}, 0, 5, fleetNameW, fleetTestWidth)
 	if strings.Contains(doneRow, "stopped") || !strings.Contains(doneRow, "✓ done") {
 		t.Errorf("a finished fork should be ✓ done, not stopped:\n%q", doneRow)
 	}
@@ -234,21 +235,21 @@ func TestFleetRowBlockedNotDone(t *testing.T) {
 		desc string
 		row  fleetRow
 	}{
-		{"running, only blocked left", fleetRow{name: "a", agent: "claude", running: true, counts: taskCounts{Done: 2, Blocked: 3}, active: ""}},
-		{"stopped with blocked left", fleetRow{name: "b", agent: "codex", running: false, ran: true, counts: taskCounts{Done: 2, Blocked: 3}, active: ""}},
-		{"never-ran, all blocked", fleetRow{name: "c", agent: "gemini", running: false, ran: false, counts: taskCounts{Blocked: 5}, active: ""}},
+		{"running, only blocked left", fleetRow{name: "a", agent: "claude", running: true, counts: tasks.TaskCounts{Done: 2, Blocked: 3}, active: ""}},
+		{"stopped with blocked left", fleetRow{name: "b", agent: "codex", running: false, ran: true, counts: tasks.TaskCounts{Done: 2, Blocked: 3}, active: ""}},
+		{"never-ran, all blocked", fleetRow{name: "c", agent: "gemini", running: false, ran: false, counts: tasks.TaskCounts{Blocked: 5}, active: ""}},
 	}
 	for _, c := range cases {
 		got := fleetRowLine(c.row, 0, 5, fleetNameW, fleetTestWidth)
 		if strings.Contains(got, "✓ done") {
-			t.Errorf("%s: a fork at %d/%d must not show ✓ done:\n%q", c.desc, c.row.counts.Done, c.row.counts.total(), got)
+			t.Errorf("%s: a fork at %d/%d must not show ✓ done:\n%q", c.desc, c.row.counts.Done, c.row.counts.Total(), got)
 		}
 		if !strings.Contains(got, "blocked") && !strings.Contains(got, "stopped") {
 			t.Errorf("%s: an unfinished, non-actionable fork should read blocked/stopped:\n%q", c.desc, got)
 		}
 	}
 	// Only a fork where every task is [x] is "done".
-	if got := fleetRowLine(fleetRow{name: "d", running: false, ran: true, counts: taskCounts{Done: 5}}, 0, 5, fleetNameW, fleetTestWidth); !strings.Contains(got, "✓ done") {
+	if got := fleetRowLine(fleetRow{name: "d", running: false, ran: true, counts: tasks.TaskCounts{Done: 5}}, 0, 5, fleetNameW, fleetTestWidth); !strings.Contains(got, "✓ done") {
 		t.Errorf("a fully-done fork should show ✓ done:\n%q", got)
 	}
 }
@@ -334,9 +335,9 @@ func TestAgentBadgeColors(t *testing.T) {
 // counts (a queue doesn't vanish), but a real read — even a fresh fork going to zero from nothing —
 // passes through, and non-tree fields (running/lastLog) always stay fresh.
 func TestKeepLastGood(t *testing.T) {
-	prev := fleetRow{name: "a", counts: taskCounts{Done: 4, Todo: 6}, active: "task X", running: true}
+	prev := fleetRow{name: "a", counts: tasks.TaskCounts{Done: 4, Todo: 6}, active: "task X", running: true}
 	// Torn read: fresh has no tasks but prev did → keep prev's counts/active, take fresh running.
-	torn := keepLastGood(fleetRow{name: "a", counts: taskCounts{}, active: "", running: false, lastLog: "new"}, prev)
+	torn := keepLastGood(fleetRow{name: "a", counts: tasks.TaskCounts{}, active: "", running: false, lastLog: "new"}, prev)
 	if torn.counts != prev.counts || torn.active != prev.active {
 		t.Errorf("torn read should keep last-good counts/active: got %+v", torn)
 	}
@@ -344,12 +345,12 @@ func TestKeepLastGood(t *testing.T) {
 		t.Errorf("torn read should still take fresh running/lastLog: got running=%v lastLog=%q", torn.running, torn.lastLog)
 	}
 	// Real update: fresh has tasks → it wins.
-	upd := keepLastGood(fleetRow{name: "a", counts: taskCounts{Done: 5, Todo: 5}, active: "task Y"}, prev)
+	upd := keepLastGood(fleetRow{name: "a", counts: tasks.TaskCounts{Done: 5, Todo: 5}, active: "task Y"}, prev)
 	if upd.counts.Done != 5 || upd.active != "task Y" {
 		t.Errorf("a real read should win: got %+v", upd)
 	}
 	// No prior (first tick) and an empty fork → stays empty, no panic.
-	if first := keepLastGood(fleetRow{name: "b"}, fleetRow{}); first.counts.total() != 0 {
+	if first := keepLastGood(fleetRow{name: "b"}, fleetRow{}); first.counts.Total() != 0 {
 		t.Errorf("first-tick empty fork should stay empty: got %+v", first)
 	}
 }
@@ -358,14 +359,14 @@ func TestKeepLastGood(t *testing.T) {
 // reads as "starting", not "(no queue)" — that empty state is transient seeding, not a real absence
 // of work. A non-running fork with no queue is still "(no queue)".
 func TestFleetRowStarting(t *testing.T) {
-	starting := fleetRowLine(fleetRow{name: "api", agent: "claude", running: true, counts: taskCounts{}}, 0, 5, fleetNameW, fleetTestWidth)
+	starting := fleetRowLine(fleetRow{name: "api", agent: "claude", running: true, counts: tasks.TaskCounts{}}, 0, 5, fleetNameW, fleetTestWidth)
 	if !strings.Contains(starting, "starting") {
 		t.Errorf("a running fork still seeding its queue should read 'starting':\n%q", starting)
 	}
 	if strings.Contains(starting, "(no queue)") {
 		t.Errorf("a seeding fork must not read '(no queue)':\n%q", starting)
 	}
-	noQueue := fleetRowLine(fleetRow{name: "shell", agent: "codex", running: false, counts: taskCounts{}}, 0, 5, fleetNameW, fleetTestWidth)
+	noQueue := fleetRowLine(fleetRow{name: "shell", agent: "codex", running: false, counts: tasks.TaskCounts{}}, 0, 5, fleetNameW, fleetTestWidth)
 	if !strings.Contains(noQueue, "(no queue)") {
 		t.Errorf("a non-running fork with no queue should read '(no queue)':\n%q", noQueue)
 	}
@@ -376,27 +377,27 @@ func TestFleetRowStarting(t *testing.T) {
 func TestFleetSettled(t *testing.T) {
 	// Every fork seeded a queue and none is running → finished.
 	if !fleetSettled([]fleetRow{
-		{name: "a", running: false, ran: true, counts: taskCounts{Done: 5}},
-		{name: "b", running: false, ran: true, counts: taskCounts{Done: 2, Blocked: 1}},
+		{name: "a", running: false, ran: true, counts: tasks.TaskCounts{Done: 5}},
+		{name: "b", running: false, ran: true, counts: tasks.TaskCounts{Done: 2, Blocked: 1}},
 	}) {
 		t.Error("all forks done/blocked and idle → settled")
 	}
 	// One still running → not settled.
-	if fleetSettled([]fleetRow{{name: "a", running: true, counts: taskCounts{Todo: 3}}}) {
+	if fleetSettled([]fleetRow{{name: "a", running: true, counts: tasks.TaskCounts{Todo: 3}}}) {
 		t.Error("a running fork → not settled")
 	}
-	if fleetSettled([]fleetRow{{name: "a", cleanup: true, ran: true, counts: taskCounts{Done: 3}}}) {
+	if fleetSettled([]fleetRow{{name: "a", cleanup: true, ran: true, counts: tasks.TaskCounts{Done: 3}}}) {
 		t.Error("a fork awaiting cleanup → not settled")
 	}
 	// A fork that hasn't seeded a queue and never ran (could be starting) → not settled.
 	if fleetSettled([]fleetRow{
-		{name: "a", running: false, ran: true, counts: taskCounts{Done: 5}},
-		{name: "b", running: false, ran: false, counts: taskCounts{}},
+		{name: "a", running: false, ran: true, counts: tasks.TaskCounts{Done: 5}},
+		{name: "b", running: false, ran: false, counts: tasks.TaskCounts{}},
 	}) {
 		t.Error("an unseeded, never-ran fork blocks the 'finished' conclusion")
 	}
 	// A seeded-empty fork that ran and exited (0 tasks, ran) is finished, not blocking.
-	if !fleetSettled([]fleetRow{{name: "a", running: false, ran: true, counts: taskCounts{}}}) {
+	if !fleetSettled([]fleetRow{{name: "a", running: false, ran: true, counts: tasks.TaskCounts{}}}) {
 		t.Error("a fork that ran an empty queue and exited → settled")
 	}
 	// No forks → not settled (nothing to conclude).

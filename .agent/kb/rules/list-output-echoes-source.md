@@ -2,9 +2,9 @@
 name: list-output-echoes-source
 description: "list output echoes the on-disk form, and grouped sections breathe"
 scope: cli-output
-sources: [internal/cli/tasks.go]
+sources: [internal/tasks/queue.go]
 check: "none"
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 
 # List output echoes the source's own format, and groups breathe
@@ -43,3 +43,5 @@ between task files and some - or * before [ ]."
   Also checked the card's "give `coop credentials` the same inter-section blank line if it's ever
   touched" note: already done (profiles.go:58-60, a blank line between agent blocks). 0
   violations.
+- 2026-08-10 — sources repointed: `tasks.go`/`taskcmd.go` moved to `internal/tasks/queue.go`/
+  `internal/tasks/cmd.go` (the 2026-08 tasks/lease/completion-audit extraction). Facts unchanged.

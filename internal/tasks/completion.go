@@ -1,4 +1,4 @@
-package cli
+package tasks
 
 import (
 	"crypto/sha256"
@@ -23,11 +23,11 @@ const (
 )
 
 var (
-	errCompletionWindowSetup = errors.New("completion window setup failed")
-	errCompletionWindowAudit = errors.New("completion window audit failed")
+	ErrCompletionWindowSetup = errors.New("completion window setup failed")
+	ErrCompletionWindowAudit = errors.New("completion window audit failed")
 )
 
-type completionFingerprint struct {
+type CompletionFingerprint struct {
 	Device      uint64 `json:"device"`
 	Inode       uint64 `json:"inode"`
 	ChangeSec   int64  `json:"change_sec"`
@@ -37,8 +37,8 @@ type completionFingerprint struct {
 	Tree        string `json:"tree"`
 }
 
-type completionWindowRecord struct {
-	Baseline              map[string]completionFingerprint `json:"baseline"`
+type CompletionWindowRecord struct {
+	Baseline              map[string]CompletionFingerprint `json:"baseline"`
 	AllowedDoneDeparture  string                           `json:"allowed_done_departure,omitempty"`
 	AllowedDoneDepartures []string                         `json:"allowed_done_departures,omitempty"`
 	ReviewWindow          bool                             `json:"review_window,omitempty"`
@@ -52,28 +52,28 @@ type completionWindowRecord struct {
 
 type completionWindowIndex struct {
 	Version int                               `json:"version"`
-	Windows map[string]completionWindowRecord `json:"windows"`
+	Windows map[string]CompletionWindowRecord `json:"windows"`
 }
 
 type completionWindow struct {
 	root   string
 	id     string
-	record completionWindowRecord
+	record CompletionWindowRecord
 	live   *os.File
 }
 
-type completionWindowSet struct {
+type CompletionWindowSet struct {
 	windows []completionWindow
-	scan    func(string, map[string]completionFingerprint) ([]queuedTask, error)
+	scan    func(string, map[string]CompletionFingerprint) ([]QueuedTask, error)
 }
 
-func snapshotDoneCompletions(root string) (map[string]completionFingerprint, error) {
-	snapshot := map[string]completionFingerprint{}
-	for _, task := range readTaskTree(root) {
-		if task.State != stateDone {
+func snapshotDoneCompletions(root string) (map[string]CompletionFingerprint, error) {
+	snapshot := map[string]CompletionFingerprint{}
+	for _, task := range ReadTaskTree(root) {
+		if task.State != StateDone {
 			continue
 		}
-		fingerprint, err := completionFingerprintFor(root, task)
+		fingerprint, err := CompletionFingerprintFor(root, task)
 		if err != nil {
 			return nil, err
 		}
@@ -82,7 +82,7 @@ func snapshotDoneCompletions(root string) (map[string]completionFingerprint, err
 	return snapshot, nil
 }
 
-func completionFingerprintFor(root string, task taskItem) (completionFingerprint, error) {
+func CompletionFingerprintFor(root string, task Item) (CompletionFingerprint, error) {
 	accepted, valid, busy := inspectTaskCompletionReceipt(root, task)
 	if !valid {
 		accepted.Nonce = ""
@@ -90,27 +90,27 @@ func completionFingerprintFor(root string, task taskItem) (completionFingerprint
 	return completionFingerprintWithReceipt(task, accepted.Nonce, busy)
 }
 
-func completionFingerprintWithReceipt(task taskItem, receipt string, receiptBusy bool) (completionFingerprint, error) {
+func completionFingerprintWithReceipt(task Item, receipt string, receiptBusy bool) (CompletionFingerprint, error) {
 	info, err := os.Lstat(task.Dir)
 	if err != nil {
-		return completionFingerprint{}, err
+		return CompletionFingerprint{}, err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ok {
-		return completionFingerprint{}, fmt.Errorf("task completion path %q is not a real directory", task.Dir)
+		return CompletionFingerprint{}, fmt.Errorf("task completion path %q is not a real directory", task.Dir)
 	}
 	sec, nsec := statChangeTime(stat)
 	tree, err := completionTreeMetadataDigest(task.Dir)
 	if err != nil {
-		return completionFingerprint{}, err
+		return CompletionFingerprint{}, err
 	}
-	return completionFingerprint{
+	return CompletionFingerprint{
 		Device: uint64(stat.Dev), Inode: uint64(stat.Ino), ChangeSec: sec, ChangeNsec: nsec,
 		Receipt: receipt, ReceiptBusy: receiptBusy, Tree: tree,
 	}, nil
 }
 
-func completionFingerprintLocked(task taskItem, lock crashCompletionLock) (completionFingerprint, error) {
+func completionFingerprintLocked(task Item, lock crashCompletionLock) (CompletionFingerprint, error) {
 	receipt, valid := lock.completionReceipt(task.Dir)
 	if !valid {
 		receipt.Nonce = ""
@@ -152,13 +152,13 @@ func completionTreeMetadataDigest(taskDir string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func changedDoneCompletions(root string, baseline map[string]completionFingerprint) ([]queuedTask, error) {
-	var changed []queuedTask
-	for _, task := range readTaskTree(root) {
-		if task.State != stateDone {
+func changedDoneCompletions(root string, baseline map[string]CompletionFingerprint) ([]QueuedTask, error) {
+	var changed []QueuedTask
+	for _, task := range ReadTaskTree(root) {
+		if task.State != StateDone {
 			continue
 		}
-		current, err := completionFingerprintFor(root, task)
+		current, err := CompletionFingerprintFor(root, task)
 		if err != nil {
 			return nil, err
 		}
@@ -166,10 +166,10 @@ func changedDoneCompletions(root string, baseline map[string]completionFingerpri
 		if !existed || before.Device != current.Device || before.Inode != current.Inode ||
 			before.ChangeSec != current.ChangeSec || before.ChangeNsec != current.ChangeNsec ||
 			before.Tree != current.Tree || before.Receipt != current.Receipt || before.ReceiptBusy || current.ReceiptBusy {
-			changed = append(changed, queuedTask{Root: root, Item: task})
+			changed = append(changed, QueuedTask{Root: root, Item: task})
 		}
 	}
-	slices.SortFunc(changed, func(a, b queuedTask) int {
+	slices.SortFunc(changed, func(a, b QueuedTask) int {
 		if byID := strings.Compare(a.Item.ID, b.Item.ID); byID != 0 {
 			return byID
 		}
@@ -186,7 +186,7 @@ const (
 	completionCandidateMutation
 )
 
-func completionFingerprintChanged(before, current completionFingerprint) bool {
+func completionFingerprintChanged(before, current CompletionFingerprint) bool {
 	return before.Device != current.Device || before.Inode != current.Inode ||
 		before.ChangeSec != current.ChangeSec || before.ChangeNsec != current.ChangeNsec ||
 		before.Tree != current.Tree || before.Receipt != current.Receipt ||
@@ -194,9 +194,9 @@ func completionFingerprintChanged(before, current completionFingerprint) bool {
 }
 
 func classifyCompletionCandidate(
-	record completionWindowRecord,
+	record CompletionWindowRecord,
 	id string,
-	current completionFingerprint,
+	current CompletionFingerprint,
 ) completionCandidateKind {
 	before, existed := record.Baseline[id]
 	if !existed {
@@ -224,11 +224,11 @@ func classifyCompletionCandidate(
 // authority-locked fingerprints before it writes markers or mutates lifecycle state.
 func completionReplayCandidates(
 	root string,
-	record completionWindowRecord,
-	candidates []queuedTask,
-) (replay []queuedTask, baselineMutations []queuedTask, err error) {
+	record CompletionWindowRecord,
+	candidates []QueuedTask,
+) (replay []QueuedTask, baselineMutations []QueuedTask, err error) {
 	for _, candidate := range candidates {
-		current, fingerprintErr := completionFingerprintFor(root, candidate.Item)
+		current, fingerprintErr := CompletionFingerprintFor(root, candidate.Item)
 		if fingerprintErr != nil {
 			return nil, nil, fingerprintErr
 		}
@@ -245,7 +245,7 @@ func completionReplayCandidates(
 	return replay, baselineMutations, nil
 }
 
-func baselineCompletionMutationError(tasks []queuedTask) error {
+func baselineCompletionMutationError(tasks []QueuedTask) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -261,7 +261,7 @@ func baselineCompletionMutationError(tasks []queuedTask) error {
 	)
 }
 
-func invalidateStaleCandidateReceipts(root string, baseline map[string]completionFingerprint, candidates []queuedTask) error {
+func invalidateStaleCandidateReceipts(root string, baseline map[string]CompletionFingerprint, candidates []QueuedTask) error {
 	var errs []error
 	for _, candidate := range candidates {
 		if candidate.Root != root {
@@ -271,7 +271,7 @@ func invalidateStaleCandidateReceipts(root string, baseline map[string]completio
 		if !existed || before.Receipt == "" {
 			continue
 		}
-		current, err := completionFingerprintFor(root, candidate.Item)
+		current, err := CompletionFingerprintFor(root, candidate.Item)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -286,28 +286,28 @@ func invalidateStaleCandidateReceipts(root string, baseline map[string]completio
 	return errors.Join(errs...)
 }
 
-func completionWindowAllowsDoneDeparture(record completionWindowRecord, id string) bool {
+func completionWindowAllowsDoneDeparture(record CompletionWindowRecord, id string) bool {
 	return id == record.AllowedDoneDeparture || slices.Contains(record.AllowedDoneDepartures, id)
 }
 
-func completionWindowIndexName(root string) (string, error) {
-	key, err := leaseAuthorityKey(root, completionWindowIndexID)
+func CompletionWindowIndexName(root string) (string, error) {
+	key, err := LeaseAuthorityKey(root, completionWindowIndexID)
 	return key + ".windows.json", err
 }
 
-func readCompletionWindowIndex(root string) (completionWindowIndex, error) {
-	name, err := completionWindowIndexName(root)
+func ReadCompletionWindowIndex(root string) (completionWindowIndex, error) {
+	name, err := CompletionWindowIndexName(root)
 	if err != nil {
 		return completionWindowIndex{}, err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return completionWindowIndex{}, err
 	}
 	defer registry.Close()
 	before, err := registry.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
-		return completionWindowIndex{Version: completionWindowVersion, Windows: map[string]completionWindowRecord{}}, nil
+		return completionWindowIndex{Version: completionWindowVersion, Windows: map[string]CompletionWindowRecord{}}, nil
 	}
 	if err != nil {
 		return completionWindowIndex{}, err
@@ -360,16 +360,16 @@ func writeCompletionWindowIndex(root string, index completionWindowIndex) error 
 	if len(data)+1 > completionWindowIndexLimit {
 		return fmt.Errorf("completion window index exceeds %d bytes", completionWindowIndexLimit)
 	}
-	name, err := completionWindowIndexName(root)
+	name, err := CompletionWindowIndexName(root)
 	if err != nil {
 		return err
 	}
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		return err
 	}
 	defer registry.Close()
-	return atomicWriteTaskFile(registry, name, append(data, '\n'))
+	return AtomicWriteTaskFile(registry, name, append(data, '\n'))
 }
 
 func lockCompletionWindowIndex(root string) (*os.File, completionWindowIndex, error) {
@@ -377,7 +377,7 @@ func lockCompletionWindowIndex(root string) (*os.File, completionWindowIndex, er
 	if err != nil {
 		return nil, completionWindowIndex{}, err
 	}
-	index, err := readCompletionWindowIndex(root)
+	index, err := ReadCompletionWindowIndex(root)
 	if err != nil {
 		_ = unlockLeaseFile(file)
 		return nil, completionWindowIndex{}, err
@@ -385,7 +385,7 @@ func lockCompletionWindowIndex(root string) (*os.File, completionWindowIndex, er
 	return file, index, nil
 }
 
-func beginCompletionWindows(hosts []string) (*completionWindowSet, error) {
+func BeginCompletionWindows(hosts []string) (*CompletionWindowSet, error) {
 	return beginCompletionWindowsWithPolicy(hosts, nil, nil, false)
 }
 
@@ -406,7 +406,7 @@ func duplicateReviewTaskIDs(hosts, ids []string) []string {
 // ReviewWindow stays explicit because an empty unscoped subject list is strict for preflight/verify,
 // while ReviewSubjectScoped preserves concurrent-host semantics if authoritative deletion later
 // removes the last id from a subject-scoped review.
-func beginReviewCompletionWindows(hosts, subjects []string) (*completionWindowSet, error) {
+func BeginReviewCompletionWindows(hosts, subjects []string) (*CompletionWindowSet, error) {
 	if duplicates := duplicateReviewTaskIDs(hosts, subjects); len(duplicates) > 0 {
 		return nil, fmt.Errorf("review subject id(s) %s exist in multiple task queues", strings.Join(duplicates, ", "))
 	}
@@ -416,7 +416,7 @@ func beginReviewCompletionWindows(hosts, subjects []string) (*completionWindowSe
 // beginWorkCompletionWindows journals the exact leased task. A work box cannot change its own
 // subject's completion state outside the normal finalization path, but a host-receipted move of a
 // different archived task is concurrent queue activity rather than box ownership churn.
-func beginWorkCompletionWindows(hosts []string, subject string) (*completionWindowSet, error) {
+func BeginWorkCompletionWindows(hosts []string, subject string) (*CompletionWindowSet, error) {
 	if subject == "" {
 		return nil, errors.New("work completion window is missing its assigned subject")
 	}
@@ -426,43 +426,43 @@ func beginWorkCompletionWindows(hosts []string, subject string) (*completionWind
 	return beginCompletionWindowsWithPolicy(hosts, nil, nil, false, subject)
 }
 
-func beginCompletionWindowsAllowing(hosts []string, taskID string) (*completionWindowSet, error) {
+func beginCompletionWindowsAllowing(hosts []string, taskID string) (*CompletionWindowSet, error) {
 	return beginCompletionWindowsAllowingTasks(hosts, []string{taskID})
 }
 
-func beginCompletionWindowsAllowingTasks(hosts, taskIDs []string) (*completionWindowSet, error) {
+func beginCompletionWindowsAllowingTasks(hosts, taskIDs []string) (*CompletionWindowSet, error) {
 	return beginCompletionWindowsWithPolicy(hosts, taskIDs, nil, false)
 }
 
-func beginCompletionWindowsWithPolicy(hosts, allowedDoneDepartures, reviewSubjects []string, reviewWindow bool, workSubjects ...string) (*completionWindowSet, error) {
+func beginCompletionWindowsWithPolicy(hosts, allowedDoneDepartures, reviewSubjects []string, reviewWindow bool, workSubjects ...string) (*CompletionWindowSet, error) {
 	if len(hosts) == 0 {
-		return &completionWindowSet{}, nil
+		return &CompletionWindowSet{}, nil
 	}
 	id, err := newSupervisorID()
 	if err != nil {
 		return nil, err
 	}
-	set := &completionWindowSet{}
+	set := &CompletionWindowSet{}
 	for _, root := range hosts {
 		// Snapshot and register under one index critical section. Task deletion uses the same
 		// boundary, so a window cannot capture a task before deletion and register that stale
 		// baseline after deletion has purged the index.
 		indexFile, index, err := lockCompletionWindowIndex(root)
 		if err != nil {
-			return nil, errors.Join(err, set.close())
+			return nil, errors.Join(err, set.Close())
 		}
 		baseline, err := snapshotDoneCompletions(root)
 		if err != nil {
-			return nil, errors.Join(err, unlockLeaseFile(indexFile), set.close())
+			return nil, errors.Join(err, unlockLeaseFile(indexFile), set.Close())
 		}
 		// The window's lock name embeds a freshly minted supervisor id, so nothing else can own it:
 		// on any failure to take it — including a failure to open it — the record is ours to remove.
 		live, err := lockLeaseAuthority(root, completionWindowLockPrefix+id, true, syscall.LOCK_EX|syscall.LOCK_NB)
 		if err != nil {
 			removeErr := removeLeaseAuthorityLock(root, completionWindowLockPrefix+id)
-			return nil, errors.Join(err, removeErr, unlockLeaseFile(indexFile), set.close())
+			return nil, errors.Join(err, removeErr, unlockLeaseFile(indexFile), set.Close())
 		}
-		record := completionWindowRecord{
+		record := CompletionWindowRecord{
 			Baseline:              baseline,
 			AllowedDoneDepartures: slices.Compact(slices.Sorted(slices.Values(allowedDoneDepartures))),
 			ReviewWindow:          reviewWindow,
@@ -481,17 +481,17 @@ func beginCompletionWindowsWithPolicy(hosts, allowedDoneDepartures, reviewSubjec
 			if liveUnlockErr == nil {
 				removeErr = removeLeaseAuthorityLock(root, completionWindowLockPrefix+id)
 			}
-			return nil, errors.Join(writeErr, unlockErr, liveUnlockErr, removeErr, set.close())
+			return nil, errors.Join(writeErr, unlockErr, liveUnlockErr, removeErr, set.Close())
 		}
 		if unlockErr != nil {
-			return nil, errors.Join(unlockErr, unlockLeaseFile(live), set.close())
+			return nil, errors.Join(unlockErr, unlockLeaseFile(live), set.Close())
 		}
 		set.windows = append(set.windows, completionWindow{root: root, id: id, record: record, live: live})
 	}
 	return set, nil
 }
 
-func (s *completionWindowSet) auditDoneCandidates(assigned queuedTask) ([]queuedTask, []string, error) {
+func (s *CompletionWindowSet) AuditDoneCandidates(assigned QueuedTask) ([]QueuedTask, []string, error) {
 	candidates, err := s.candidates()
 	if err != nil {
 		return nil, nil, err
@@ -505,12 +505,12 @@ func (s *completionWindowSet) auditDoneCandidates(assigned queuedTask) ([]queued
 	return candidates, rejected, err
 }
 
-func completionWindowBaselineChanges(root string, record completionWindowRecord) ([]taskItem, []string) {
-	currentByID := map[string]taskItem{}
-	for _, task := range readTaskTree(root) {
+func completionWindowBaselineChanges(root string, record CompletionWindowRecord) ([]Item, []string) {
+	currentByID := map[string]Item{}
+	for _, task := range ReadTaskTree(root) {
 		currentByID[task.ID] = task
 	}
-	var departed []taskItem
+	var departed []Item
 	var missing []string
 	for id := range record.Baseline {
 		current, ok := currentByID[id]
@@ -518,16 +518,16 @@ func completionWindowBaselineChanges(root string, record completionWindowRecord)
 			missing = append(missing, id)
 			continue
 		}
-		if current.State != stateDone {
+		if current.State != StateDone {
 			departed = append(departed, current)
 		}
 	}
-	slices.SortFunc(departed, func(a, b taskItem) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(departed, func(a, b Item) int { return strings.Compare(a.ID, b.ID) })
 	slices.Sort(missing)
 	return departed, missing
 }
 
-func completionWindowDepartures(root string, record completionWindowRecord) ([]string, error) {
+func completionWindowDepartures(root string, record CompletionWindowRecord) ([]string, error) {
 	departed, missing := completionWindowBaselineChanges(root, record)
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("task(s) %s left the queue during this completion window; restore the missing task folder to a lifecycle state, then re-run `coop loop`", strings.Join(missing, ", "))
@@ -559,7 +559,7 @@ func completionWindowDepartures(root string, record completionWindowRecord) ([]s
 	return disallowed, nil
 }
 
-func (s *completionWindowSet) departures() ([]string, error) {
+func (s *CompletionWindowSet) Departures() ([]string, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -583,7 +583,7 @@ func (s *completionWindowSet) departures() ([]string, error) {
 // iteration, because an archived task's history is meant to be closed — a forged extra commit
 // corrupts that closed record without needing to touch its folder at all. See unbindableTasks and
 // .agent/kb/loop-range-rejects-outside-commits.md.
-func (s *completionWindowSet) baselineDoneIDs() map[string]bool {
+func (s *CompletionWindowSet) BaselineDoneIDs() map[string]bool {
 	ids := map[string]bool{}
 	if s == nil {
 		return ids
@@ -596,11 +596,11 @@ func (s *completionWindowSet) baselineDoneIDs() map[string]bool {
 	return ids
 }
 
-func (s *completionWindowSet) candidates() ([]queuedTask, error) {
+func (s *CompletionWindowSet) candidates() ([]QueuedTask, error) {
 	if s == nil {
 		return nil, nil
 	}
-	var candidates []queuedTask
+	var candidates []QueuedTask
 	scan := s.scan
 	if scan == nil {
 		scan = changedDoneCompletions
@@ -612,7 +612,7 @@ func (s *completionWindowSet) candidates() ([]queuedTask, error) {
 		}
 		candidates = append(candidates, changed...)
 	}
-	slices.SortFunc(candidates, func(a, b queuedTask) int {
+	slices.SortFunc(candidates, func(a, b QueuedTask) int {
 		if byID := strings.Compare(a.Item.ID, b.Item.ID); byID != 0 {
 			return byID
 		}
@@ -621,7 +621,7 @@ func (s *completionWindowSet) candidates() ([]queuedTask, error) {
 	return candidates, nil
 }
 
-func (s *completionWindowSet) close() error {
+func (s *CompletionWindowSet) Close() error {
 	if s == nil {
 		return nil
 	}
@@ -654,7 +654,7 @@ func (s *completionWindowSet) close() error {
 
 // abandon releases liveness while retaining the durable record. Startup can then replay the same
 // window; close is reserved for an audit whose every candidate was accepted or restored.
-func (s *completionWindowSet) abandon() error {
+func (s *CompletionWindowSet) Abandon() error {
 	if s == nil {
 		return nil
 	}
@@ -669,27 +669,27 @@ func (s *completionWindowSet) abandon() error {
 	return errors.Join(errs...)
 }
 
-func (s *completionWindowSet) rejectAndClose(assigned queuedTask) error {
-	_, rejected, err := s.auditDoneCandidates(assigned)
+func (s *CompletionWindowSet) rejectAndClose(assigned QueuedTask) error {
+	_, rejected, err := s.AuditDoneCandidates(assigned)
 	if err != nil {
-		return errors.Join(err, s.abandon())
+		return errors.Join(err, s.Abandon())
 	}
-	departed, err := s.departures()
+	departed, err := s.Departures()
 	if err != nil {
-		return errors.Join(err, s.abandon())
+		return errors.Join(err, s.Abandon())
 	}
 	var ownershipErr error
 	if len(rejected) > 0 {
-		ownershipErr = unownedCompletionError(rejected, nil)
+		ownershipErr = UnownedCompletionError(rejected, nil)
 	}
 	var departureErr error
 	if len(departed) > 0 {
 		departureErr = fmt.Errorf("completion ownership changed: archived task(s) %s left done during a stage that may not reopen them", strings.Join(departed, ", "))
 	}
-	return errors.Join(ownershipErr, departureErr, s.close())
+	return errors.Join(ownershipErr, departureErr, s.Close())
 }
 
-func classifyReviewCompletionCandidates(candidates []queuedTask, rejected, subjectIDs []string, subjectScoped bool) (changed, concurrent []string) {
+func classifyReviewCompletionCandidates(candidates []QueuedTask, rejected, subjectIDs []string, subjectScoped bool) (changed, concurrent []string) {
 	subjects := make(map[string]bool, len(subjectIDs))
 	for _, id := range subjectIDs {
 		subjects[id] = true
@@ -709,7 +709,7 @@ func classifyReviewCompletionCandidates(candidates []queuedTask, rejected, subje
 	return slices.Compact(changed), slices.Compact(concurrent) // candidates are sorted by id
 }
 
-func (s *completionWindowSet) reviewScope() (hosts, subjectIDs []string, subjectScoped bool) {
+func (s *CompletionWindowSet) reviewScope() (hosts, subjectIDs []string, subjectScoped bool) {
 	for _, window := range s.windows {
 		hosts = append(hosts, window.root)
 		subjectIDs = append(subjectIDs, window.record.ReviewSubjects...)
@@ -723,8 +723,8 @@ func (s *completionWindowSet) reviewScope() (hosts, subjectIDs []string, subject
 // auditReview applies one snapshot comparison without closing the journal. scanErr means the
 // comparison itself could not be trusted and the live window must be abandoned for replay;
 // reviewErr is a completed comparison that found lifecycle or ownership churn.
-func (s *completionWindowSet) auditReview(hosts, subjectIDs []string, subjectScoped bool) (concurrent []string, scanErr, reviewErr error) {
-	candidates, rejected, err := s.auditDoneCandidates(queuedTask{})
+func (s *CompletionWindowSet) auditReview(hosts, subjectIDs []string, subjectScoped bool) (concurrent []string, scanErr, reviewErr error) {
+	candidates, rejected, err := s.AuditDoneCandidates(QueuedTask{})
 	if err != nil {
 		return nil, err, nil
 	}
@@ -735,7 +735,7 @@ func (s *completionWindowSet) auditReview(hosts, subjectIDs []string, subjectSco
 	}
 	var ownershipErr error
 	if len(rejected) > 0 {
-		ownershipErr = unownedCompletionError(rejected, nil)
+		ownershipErr = UnownedCompletionError(rejected, nil)
 	}
 	relevant := slices.Clone(subjectIDs)
 	for _, candidate := range candidates {
@@ -745,7 +745,7 @@ func (s *completionWindowSet) auditReview(hosts, subjectIDs []string, subjectSco
 	if duplicates := duplicateReviewTaskIDs(hosts, relevant); len(duplicates) > 0 {
 		duplicateErr = fmt.Errorf("review task id(s) %s became ambiguous across task queues", strings.Join(duplicates, ", "))
 	}
-	departed, departureErr := s.departures()
+	departed, departureErr := s.Departures()
 	if departureErr == nil && len(departed) > 0 {
 		departureErr = fmt.Errorf("review task lifecycle changed for %s; reviews must report verdicts for host application", strings.Join(departed, ", "))
 	}
@@ -761,17 +761,17 @@ func (s *completionWindowSet) auditReview(hosts, subjectIDs []string, subjectSco
 // the saved snapshot is audited once more so activity in the scan-to-close handoff cannot escape.
 // Tolerance exists ONLY under an explicit subject contract: a window with no recorded subjects
 // and no persisted subject-scoped marker (preflight, a subject-free verify) stays fully strict.
-func (s *completionWindowSet) finishReview() ([]string, error) {
+func (s *CompletionWindowSet) FinishReview() ([]string, error) {
 	hosts, subjectIDs, subjectScoped := s.reviewScope()
-	closed := &completionWindowSet{windows: slices.Clone(s.windows), scan: s.scan}
+	closed := &CompletionWindowSet{windows: slices.Clone(s.windows), scan: s.scan}
 	for i := range closed.windows {
 		closed.windows[i].live = nil
 	}
 	concurrent, scanErr, reviewErr := s.auditReview(hosts, subjectIDs, subjectScoped)
 	if scanErr != nil {
-		return nil, errors.Join(scanErr, s.abandon())
+		return nil, errors.Join(scanErr, s.Abandon())
 	}
-	if err := errors.Join(reviewErr, s.close()); err != nil {
+	if err := errors.Join(reviewErr, s.Close()); err != nil {
 		return nil, err
 	}
 	afterClose, scanErr, reviewErr := closed.auditReview(hosts, subjectIDs, subjectScoped)
@@ -783,17 +783,17 @@ func (s *completionWindowSet) finishReview() ([]string, error) {
 
 type completionWindowRecovery struct {
 	id         string
-	record     completionWindowRecord
+	record     CompletionWindowRecord
 	live       *os.File
-	candidates []queuedTask
-	replay     []queuedTask
+	candidates []QueuedTask
+	replay     []QueuedTask
 }
 
 func markedCompletionCandidates(
 	root string,
-	candidates []queuedTask,
+	candidates []QueuedTask,
 	marked []string,
-) []queuedTask {
+) []QueuedTask {
 	seen := make(map[string]bool, len(candidates))
 	for _, candidate := range candidates {
 		seen[candidate.Item.ID] = true
@@ -802,19 +802,19 @@ func markedCompletionCandidates(
 		if seen[id] {
 			continue
 		}
-		task, ok := currentTask(root, id)
-		if ok && task.State == stateDone {
-			candidates = append(candidates, queuedTask{Root: root, Item: task})
+		task, ok := CurrentTask(root, id)
+		if ok && task.State == StateDone {
+			candidates = append(candidates, QueuedTask{Root: root, Item: task})
 			seen[id] = true
 		}
 	}
-	slices.SortFunc(candidates, func(a, b queuedTask) int {
+	slices.SortFunc(candidates, func(a, b QueuedTask) int {
 		return strings.Compare(a.Item.ID, b.Item.ID)
 	})
 	return candidates
 }
 
-func setRecordBaselineMutations(record *completionWindowRecord, protected map[string]bool) bool {
+func setRecordBaselineMutations(record *CompletionWindowRecord, protected map[string]bool) bool {
 	var marked []string
 	for id := range record.Baseline {
 		if protected[id] {
@@ -829,7 +829,7 @@ func setRecordBaselineMutations(record *completionWindowRecord, protected map[st
 	return true
 }
 
-func recordRecoveredDepartures(record *completionWindowRecord, restored map[string]bool) bool {
+func recordRecoveredDepartures(record *CompletionWindowRecord, restored map[string]bool) bool {
 	recovered := slices.Clone(record.RecoveredDepartures)
 	for id := range record.Baseline {
 		if restored[id] {
@@ -845,9 +845,9 @@ func recordRecoveredDepartures(record *completionWindowRecord, restored map[stri
 }
 
 type lockedCompletionCandidate struct {
-	task        queuedTask
-	current     taskItem
-	fingerprint completionFingerprint
+	task        QueuedTask
+	current     Item
+	fingerprint CompletionFingerprint
 	lock        crashCompletionLock
 }
 
@@ -856,7 +856,7 @@ type lockedCompletionCandidate struct {
 // every lock until task mutation and journal retirement are durable.
 func lockCompletionCandidates(
 	root string,
-	tasks map[string]queuedTask,
+	tasks map[string]QueuedTask,
 ) (map[string]lockedCompletionCandidate, error) {
 	ids := slices.Sorted(maps.Keys(tasks))
 	locked := make(map[string]lockedCompletionCandidate, len(ids))
@@ -920,7 +920,7 @@ func verifyLockedCompletionCandidates(locked map[string]lockedCompletionCandidat
 	return errors.Join(errs...)
 }
 
-func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
+func ReconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 	var concurrent []string
 	var errs []error
 	for _, root := range hosts {
@@ -944,7 +944,7 @@ func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 			return errors.Join(releaseErrs...)
 		}
 
-		candidateTasks := map[string]queuedTask{}
+		candidateTasks := map[string]QueuedTask{}
 		var recoveries []completionWindowRecovery
 		var acquireErrs []error
 		for id, record := range index.Windows {
@@ -1089,7 +1089,7 @@ func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 			candidate := locked[id]
 			actionErrs = append(
 				actionErrs,
-				restoreUnownedCompletion(queuedTask{Root: root, Item: candidate.current}),
+				restoreUnownedCompletion(QueuedTask{Root: root, Item: candidate.current}),
 				candidate.lock.clearCompleted(),
 			)
 		}
@@ -1109,7 +1109,7 @@ func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 		var recoveredConcurrent []string
 		for _, recovery := range recoveries {
 			id, record := recovery.id, recovery.record
-			reviewCandidates := slices.DeleteFunc(slices.Clone(recovery.replay), func(candidate queuedTask) bool {
+			reviewCandidates := slices.DeleteFunc(slices.Clone(recovery.replay), func(candidate QueuedTask) bool {
 				return protectedMutations[candidate.Item.ID]
 			})
 			var reviewErr error
@@ -1162,11 +1162,11 @@ func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 			}
 			concurrent = append(concurrent, recoveredConcurrent...)
 		}
-		mutations := make([]queuedTask, 0, len(protectedMutations))
+		mutations := make([]QueuedTask, 0, len(protectedMutations))
 		for _, id := range slices.Sorted(maps.Keys(protectedMutations)) {
 			mutations = append(mutations, locked[id].task)
 		}
-		slices.SortFunc(mutations, func(a, b queuedTask) int {
+		slices.SortFunc(mutations, func(a, b QueuedTask) int {
 			return strings.Compare(a.Item.ID, b.Item.ID)
 		})
 		errs = append(errs, baselineCompletionMutationError(mutations))
@@ -1177,7 +1177,7 @@ func reconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 	return slices.Compact(slices.Sorted(slices.Values(concurrent))), errors.Join(errs...)
 }
 
-func reconcileCompletionWindows(hosts []string) error {
-	_, err := reconcileCompletionWindowsWithActivity(hosts)
+func ReconcileCompletionWindows(hosts []string) error {
+	_, err := ReconcileCompletionWindowsWithActivity(hosts)
 	return err
 }

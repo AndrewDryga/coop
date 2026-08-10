@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -24,80 +25,18 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
-// fenceMarker reports whether a line opens or closes a Markdown fenced code block (``` or ~~~ —
-// three or more, ignoring leading whitespace and any info string). Task-body scanners toggle on
-// it so a "- [ ]" documented INSIDE a fence (e.g. an example in a task body) isn't read as a real
-// subtask.
-func fenceMarker(line string) bool {
-	t := strings.TrimLeft(line, " \t")
-	return strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")
-}
-
-// taskCounts tallies a task queue by state (todo/in_progress/blocked/done).
-type taskCounts struct{ Todo, Doing, Done, Blocked int }
-
-func (c taskCounts) total() int { return c.Todo + c.Doing + c.Done + c.Blocked }
-
-type queuedTask struct {
-	Root string
-	Item taskItem
-}
-
-// queueState reads the queue union once, tallying it and selecting the authoritative next task.
-// An interrupted task wins globally, even when an earlier subproject queue still has todo work;
-// ties preserve queue order and readTaskTree's stable ID order.
-func queueState(hosts []string) (taskCounts, queuedTask, bool) {
-	var total taskCounts
-	var firstTodo, firstDoing queuedTask
-	haveTodo, haveDoing := false, false
-	for _, h := range hosts {
-		for _, t := range readTaskTree(h) {
-			switch t.State {
-			case stateTodo:
-				total.Todo++
-				if !haveTodo {
-					firstTodo, haveTodo = queuedTask{Root: h, Item: t}, true
-				}
-			case stateInProgress:
-				total.Doing++
-				if !haveDoing {
-					firstDoing, haveDoing = queuedTask{Root: h, Item: t}, true
-				}
-			case stateBlocked:
-				total.Blocked++
-			case stateDone:
-				total.Done++
-			}
-		}
-	}
-	if haveDoing {
-		return total, firstDoing, true
-	}
-	return total, firstTodo, haveTodo
-}
-
-// queueProgress sums task counts across the queue(s) and returns the authoritative next task's
-// title, sharing queueState with the loop assignment so its banner cannot disagree with the box.
-func queueProgress(hosts []string) (taskCounts, string) {
-	total, next, ok := queueState(hosts)
-	if !ok {
-		return total, ""
-	}
-	return total, next.Item.Title
-}
-
 const progressActivityWidth = 48
 
-func progressState(c taskCounts) string {
-	s := fmt.Sprintf("%s/%d done", paintCount(c.Done, ui.Green), c.total())
+func progressState(c tasks.TaskCounts) string {
+	s := fmt.Sprintf("%s/%d done", paintCount(c.Done, ui.Green), c.Total())
 	if c.Blocked > 0 {
 		s += fmt.Sprintf(" · %s blocked", paintCount(c.Blocked, ui.Red))
 	}
 	return s
 }
 
-func progressStateWidth(c taskCounts) int {
-	s := fmt.Sprintf("%d/%d done", c.Done, c.total())
+func progressStateWidth(c tasks.TaskCounts) int {
+	s := fmt.Sprintf("%d/%d done", c.Done, c.Total())
 	if c.Blocked > 0 {
 		s += fmt.Sprintf(" · %d blocked", c.Blocked)
 	}
@@ -107,7 +46,7 @@ func progressStateWidth(c taskCounts) int {
 // progressLine is the queue's at-a-glance state: done/total (done greened when nonzero), a
 // blocked tally only when there is one, and the task being worked. The loop prints it both
 // in the per-iteration banner and live, on its own, whenever a task changes state mid-run.
-func progressLine(c taskCounts, activity string) string {
+func progressLine(c tasks.TaskCounts, activity string) string {
 	s := progressState(c)
 	if activity != "" {
 		s += " · now: " + truncate(activity, progressActivityWidth)
@@ -117,7 +56,7 @@ func progressLine(c taskCounts, activity string) string {
 
 // progressLineWidth fits the optional activity into a complete line budget. Structural queue
 // state is never abbreviated; on an impossibly narrow row Region remains the final clip guard.
-func progressLineWidth(c taskCounts, activity string, width int) string {
+func progressLineWidth(c tasks.TaskCounts, activity string, width int) string {
 	s := progressState(c)
 	const separator = " · now: "
 	activityW := width - progressStateWidth(c) - len([]rune(separator))
@@ -129,11 +68,11 @@ func progressLineWidth(c taskCounts, activity string, width int) string {
 
 // progressBanner is progressLine prefixed with the iteration number, printed at the top of
 // each loop iteration.
-func progressBanner(n int, c taskCounts, active string) string {
+func progressBanner(n int, c tasks.TaskCounts, active string) string {
 	return fmt.Sprintf("iteration %d · %s", n, progressLine(c, active))
 }
 
-func progressBannerWidth(n int, c taskCounts, active string, width int) string {
+func progressBannerWidth(n int, c tasks.TaskCounts, active string, width int) string {
 	prefix := fmt.Sprintf("iteration %d · ", n)
 	return prefix + progressLineWidth(c, active, width-len([]rune(prefix)))
 }
@@ -146,15 +85,6 @@ func paintCount(v int, paint func(string) string) string {
 		return paint(strconv.Itoa(v))
 	}
 	return strconv.Itoa(v)
-}
-
-// readFileString returns a file's contents, or "" if it can't be read.
-func readFileString(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return string(data)
 }
 
 // truncate shortens s to n runes, marking elision with an ellipsis.
@@ -170,60 +100,6 @@ func truncate(s string, n int) string {
 		return string(r[:n])
 	}
 	return string(r[:n-1]) + "…"
-}
-
-// wrapWords greedily word-wraps s into lines no wider than w runes, breaking on whitespace; a
-// single word longer than w is hard-split so a line can never overflow. Always returns at least
-// one line (possibly ""). Like truncate it counts runes, not display cells — fine for the common
-// ASCII title; a wide-script title may wrap a column early.
-func wrapWords(s string, w int) []string {
-	if w < 1 {
-		w = 1
-	}
-	words := strings.Fields(s)
-	if len(words) == 0 {
-		return []string{""}
-	}
-	var lines []string
-	cur, curLen := "", 0
-	for _, word := range words {
-		wr := []rune(word)
-		for len(wr) > w { // hard-split a word longer than the whole budget
-			if curLen > 0 {
-				lines = append(lines, cur)
-				cur, curLen = "", 0
-			}
-			lines = append(lines, string(wr[:w]))
-			wr = wr[w:]
-		}
-		word = string(wr)
-		switch {
-		case curLen == 0:
-			cur, curLen = word, len(wr)
-		case curLen+1+len(wr) <= w:
-			cur, curLen = cur+" "+word, curLen+1+len(wr)
-		default:
-			lines = append(lines, cur)
-			cur, curLen = word, len(wr)
-		}
-	}
-	if curLen > 0 || len(lines) == 0 {
-		lines = append(lines, cur)
-	}
-	return lines
-}
-
-// sanitizeCell strips control characters (notably ESC, 0x1b) from a one-line display string so a
-// task title or decision text — which can come from an untrusted agent's task.md — can't inject
-// ANSI escapes into coop's output: corrupting a redirect/pipe, or spoofing the colored UI on a
-// terminal. Single-line cells carry no legitimate control chars, so all of them are dropped.
-func sanitizeCell(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, s)
 }
 
 // levenshtein returns the edit distance between a and b, for "did you mean" suggestions.
@@ -318,21 +194,6 @@ func unknownErr(noun, token string, valid []string) error {
 		return fmt.Errorf("unknown %s %q — use: %s (did you mean %q?)", noun, token, strings.Join(valid, ", "), guess)
 	}
 	return fmt.Errorf("unknown %s %q — use: %s", noun, token, strings.Join(valid, ", "))
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
 }
 
 // gitArgs builds `git -C dir <hardening> <args>`. The hardening goes first so a caller's own
@@ -492,15 +353,6 @@ func indent(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	for i, l := range lines {
 		lines[i] = "  " + l
-	}
-	return strings.Join(lines, "\n")
-}
-
-// lastLines returns the last n lines of s (trailing blank lines trimmed first).
-func lastLines(s string, n int) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
 }

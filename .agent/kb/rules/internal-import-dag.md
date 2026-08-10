@@ -46,6 +46,36 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-10 — **+1 package, +1 edge, −1 edge, +1 `uiPresentationOwners` grant: `internal/tasks`**
+  (`{"box", "config", "forkspace", "project", "taskstate", "ui"}`); `cli` GAINED `tasks` and
+  **DROPPED `taskstate`**. The largest of the 2026-08 extractions (~20.5k lines): the folder-mode
+  task/backlog queue (`taskcmd.go`, `tasks.go`, `taskwatch.go`, `backlog.go`, `taskdir.go`), the
+  claim/lease/ref authority registry (`tasklease.go`), the completion-window journal
+  (`completionwindow.go`), the trusted completion audit (`controller.go`, moved WHOLE — census found
+  no internal loop-engine content in it at all, only audit/lease vocabulary), and the ref-authority
+  window sliced out of `fork_loop.go` (`lockRefAuthority`/`enterRefAuthorityWindow`, NOT the whole
+  file — `lockLoopCheckout`/`lockSessionProducer`/the fork-lifecycle bulk stay in `cli`). `cli`
+  losing `taskstate` is the interesting half: `taskdir.go` was the only cli file importing it.
+  `internal/tasks` needed **zero new transitive dependencies** (same shape acpctl found). It is the
+  **4th member of `uiPresentationOwners`** (alongside `box`, `cli`, `scaffold`) — a deliberate,
+  reviewed exception to the normally-3-member list: `taskcmd.go`/`tasks.go`/`taskwatch.go`/
+  `backlog.go` are a complete first-class CLI verb family (a live TUI board included), not a handful
+  of narration call sites the way sessionsvc/acpctl's injected `Warnf` sufficed for. Two genuinely
+  new risk shapes this extraction had that sessionsvc/acpctl/ladder/forkspace didn't: (1) two
+  `providere2e` tests (`scripted_process_e2e_test.go`, `scripted_loop_watchdog_process_e2e_test.go`)
+  reached directly into unexported mover symbols to compute/assert a spawned binary's on-disk state
+  — caught only by an all-tags-union census, not a default-tag scan, and fixed by exporting the
+  handful of symbols they needed; a third file (`scripted_loop_review_process_e2e_test.go`) turned
+  up the same way once `go test -tags providere2e -c` (not `go build`, which never compiles
+  `_test.go` files regardless of tags) was run. (2) `internal/tasks` had no `TestMain` of its own —
+  `internal/cli`'s `TestMain` gave every test in the merged package a hermetic
+  `COOP_TEST_LEASE_AUTHORITY_ROOT`; without an equivalent in the new package's own test binary, its
+  tests would have silently read/written the real `~/.local/state/coop/task-leases`. Identifier
+  exports were MOSTLY mechanical caps (`TaskLease`, `TaskCounts`, `TaskAssignment`,
+  `TaskLeaseOwner`) despite the Stage 1 ruling asking for de-stuttering — only `taskItem` → `Item`
+  (the highest-traffic one) was actually de-stuttered; this inconsistency is flagged for the lead
+  as a deviation, not silently resolved. Full report in the task's own `log.md`/`state.md`
+  (`2026-08-09-extract-tasks-lease-and-completion-audit-into-a`).
 - 2026-08-10 — **+1 package, +1 edge, −1 edge: `internal/acpctl`**
   (`{"acpproxy", "agent", "box", "config", "ladder", "liveprocess", "preset", "processidentity"}`);
   `cli` GAINED `acpctl` and **DROPPED `processidentity`**. The ACP CONTROL PLANE — editor selector

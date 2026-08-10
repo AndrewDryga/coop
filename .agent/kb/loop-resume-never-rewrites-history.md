@@ -2,8 +2,8 @@
 name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
-sources: [internal/cli/controller.go, internal/cli/commands.go, internal/box/image.go, internal/box/run.go]
-updated: 2026-08-03
+sources: [internal/tasks/audit.go, internal/cli/commands.go, internal/box/image.go, internal/box/run.go]
+updated: 2026-08-10
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
 observed twice in emisar on 2026-08-01:
@@ -14,8 +14,8 @@ observed twice in emisar on 2026-08-01:
    and exits `DescendantsTimedOutExit` (191). It now announces that wait once with the process names
    holding the box open, and names them again on termination — before that it was silent for the
    whole window, which reads as a hung loop.
-3. `classifyIteration` returns `background_timeout`, and `restoreBackgroundHandoffCompletion`
-   **moves the finished task back to `in_progress`** (`internal/cli/commands.go:3152`) — the commit
+3. `classifyIteration` returns `background_timeout`, and `RestoreBackgroundHandoffCompletion`
+   **moves the finished task back to `in_progress`** (`internal/tasks/audit.go:2871`) — the commit
    stays, the completion does not.
 4. A later run resumes it and `resumeLine` offers the case-(a) recipe: amend the bound commit with a
    `Coop-Recovery` trailer.
@@ -63,3 +63,6 @@ and pointing a new task at it invites cross-task edits.
 ## Changelog
 - 2026-08-01 — created: traced the leaked-descendant → un-complete → deep-amend chain after it rewrote 283 and nearly 286 commits of emisar's main; gated the amend recipe on boundTaskCommitIsHead.
 - 2026-08-03 — added the uncommitted-interruption case: a hard-killed task left ~13h of work in the tree with a state.md still reading "not started"; resumePrefixFor now points a resumed agent at the stranded diff instead of letting it start over.
+- 2026-08-10 — sources repointed: `controller.go` moved to `internal/tasks/audit.go` whole (the
+  2026-08 tasks/lease/completion-audit extraction, ~20.5k lines); `resumePrefixFor` and
+  `restoreBackgroundHandoffCompletion` are now `tasks.ResumePrefixFor`/`tasks.RestoreBackgroundHandoffCompletion`. Facts unchanged.

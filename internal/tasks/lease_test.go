@@ -1,4 +1,4 @@
-package cli
+package tasks
 
 import (
 	"bufio"
@@ -18,19 +18,19 @@ import (
 	"time"
 )
 
-func testLeaseOwner() taskLeaseOwner {
-	return taskLeaseOwner{
+func testLeaseOwner() TaskLeaseOwner {
+	return TaskLeaseOwner{
 		RunID: "test-run", PID: 4242, Provider: "codex", Target: "codex:gpt-test@work",
 		Now: func() time.Time { return time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC) },
 	}
 }
 
-func taskCompletionReceipt(root string, task taskItem) (leaseCompletionReceipt, bool) {
+func taskCompletionReceipt(root string, task Item) (leaseCompletionReceipt, bool) {
 	receipt, ok, _ := inspectTaskCompletionReceipt(root, task)
 	return receipt, ok
 }
 
-func taskCompletionRecorded(root string, task taskItem) bool {
+func taskCompletionRecorded(root string, task Item) bool {
 	_, ok := taskCompletionReceipt(root, task)
 	return ok
 }
@@ -38,45 +38,45 @@ func taskCompletionRecorded(root string, task taskItem) bool {
 // taskOwned reads a task's durable claim record for a test assertion, failing the test outright on
 // a read error (a corrupt/mismatched record must never be silently treated as "no owner" — see
 // readTaskOwnerRecord) rather than being mistaken for the common "never claimed" case.
-func taskOwned(t *testing.T, root, id string) (taskOwnerRecord, bool) {
+func taskOwned(t *testing.T, root, id string) (TaskOwnerRecord, bool) {
 	t.Helper()
-	rec, ok, err := readTaskOwnerRecord(root, id)
+	rec, ok, err := ReadTaskOwnerRecord(root, id)
 	if err != nil {
 		t.Fatalf("readTaskOwnerRecord(%s): %v", id, err)
 	}
 	return rec, ok
 }
 
-func taskForLease(t *testing.T, root, state, id string) taskItem {
+func taskForLease(t *testing.T, root, state, id string) Item {
 	t.Helper()
 	writeTaskFile(t, filepath.Join(root, state, id, "task.md"), "# "+id+"\n")
-	item, ok := currentTask(root, id)
+	item, ok := CurrentTask(root, id)
 	if !ok {
 		t.Fatalf("could not read task %s", id)
 	}
 	return item
 }
 
-func testAuditReopenRecord(id, generation string) auditReopenRecord {
-	return auditReopenRecord{
+func testAuditReopenRecord(id, generation string) AuditReopenRecord {
+	return AuditReopenRecord{
 		Version: auditReopenVersion, Generation: generation, TaskID: id,
 		BaselineHead: strings.Repeat("a", 40),
-		Subject:      auditReopenCommit{TaskID: id, ChangeTree: "subject-tree"},
-		History: []auditReopenCommit{{
+		Subject:      AuditReopenCommit{TaskID: id, ChangeTree: "subject-tree"},
+		History: []AuditReopenCommit{{
 			TaskID: "descendant", ChangeTree: "descendant-tree",
 		}},
 	}
 }
 
-func testLegacyAuditReopenRecord(id, generation string, pending bool) auditReopenRecord {
-	version := auditReopenLegacyVersion
+func testLegacyAuditReopenRecord(id, generation string, pending bool) AuditReopenRecord {
+	version := AuditReopenLegacyVersion
 	if pending {
 		version = auditReopenLegacyPendingVersion
 	}
-	return auditReopenRecord{
+	return AuditReopenRecord{
 		Version: version, Generation: generation, TaskID: id, UnblockPending: pending,
-		Subject: auditReopenCommit{TaskID: id, ChangeTree: "legacy-subject-tree"},
-		Descendants: []auditReopenCommit{{
+		Subject: AuditReopenCommit{TaskID: id, ChangeTree: "legacy-subject-tree"},
+		Descendants: []AuditReopenCommit{{
 			TaskID: "legacy-descendant", ChangeTree: "legacy-descendant-tree",
 		}},
 	}
@@ -89,7 +89,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 		if validateAuditReopenRecord(record, record.TaskID) == nil {
 			t.Fatal("new record with nil history was accepted")
 		}
-		record.History = []auditReopenCommit{}
+		record.History = []AuditReopenCommit{}
 		record.BaselineHead = ""
 		if validateAuditReopenRecord(record, record.TaskID) == nil {
 			t.Fatal("new record without baseline HEAD was accepted")
@@ -99,16 +99,16 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 		for _, pending := range []bool{false, true} {
 			t.Run(fmt.Sprintf("pending=%v", pending), func(t *testing.T) {
 				root := t.TempDir()
-				task := taskForLease(t, root, stateInProgress, "legacy")
+				task := taskForLease(t, root, StateInProgress, "legacy")
 				record := testLegacyAuditReopenRecord(task.ID, "legacy-generation", pending)
-				if err := writeAuditReopenRecord(root, record); err != nil {
+				if err := WriteAuditReopenRecord(root, record); err != nil {
 					t.Fatal(err)
 				}
-				got, ok, err := readAuditReopenRecord(root, task.ID)
+				got, ok, err := ReadAuditReopenRecord(root, task.ID)
 				if err != nil || !ok || !reflect.DeepEqual(got, record) {
 					t.Fatalf("legacy decode = %#v, ok=%v err=%v", got, ok, err)
 				}
-				lease, _, err := tryTaskLease(root, task, testLeaseOwner())
+				lease, _, err := TryTaskLease(root, task, testLeaseOwner())
 				if lease != nil || err == nil ||
 					!strings.Contains(err.Error(), "legacy audit-reopen authority") ||
 					!strings.Contains(err.Error(), "--adopt-audit-head <full-sha>") {
@@ -119,57 +119,57 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 	})
 	t.Run("legacy authority cannot complete", func(t *testing.T) {
 		root := t.TempDir()
-		task := taskForLease(t, root, stateInProgress, "legacy-complete")
+		task := taskForLease(t, root, StateInProgress, "legacy-complete")
 		record := testLegacyAuditReopenRecord(task.ID, "legacy-generation", false)
-		if err := writeAuditReopenRecord(root, record); err != nil {
+		if err := WriteAuditReopenRecord(root, record); err != nil {
 			t.Fatal(err)
 		}
-		if err := completeTrustedTask(root, task); err == nil ||
+		if err := CompleteTrustedTask(root, task); err == nil ||
 			!strings.Contains(err.Error(), "legacy") {
 			t.Fatalf("legacy completion error = %v", err)
 		}
-		code, err := tasksFolderMove(root, []string{task.ID}, stateDone, "done", "completed")
+		code, err := tasksFolderMove(root, []string{task.ID}, StateDone, "done", "completed")
 		if code != -1 || err == nil ||
 			!strings.Contains(err.Error(), "coop tasks block "+task.ID) ||
 			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID+" --adopt-audit-head <full-sha>") ||
 			strings.Contains(err.Error(), "retry: coop tasks done") {
 			t.Fatalf("legacy tasks done recovery = code %d err %v", code, err)
 		}
-		current, ok := currentTask(root, task.ID)
-		if !ok || current.State != stateInProgress {
+		current, ok := CurrentTask(root, task.ID)
+		if !ok || current.State != StateInProgress {
 			t.Fatalf("legacy completion moved task: %#v, ok=%v", current, ok)
 		}
 	})
 	t.Run("pending authority names activation before completion", func(t *testing.T) {
 		repo, git := gitRepo(t)
-		t.Setenv(testLeaseAuthorityRootEnv, t.TempDir())
+		t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
 		git("commit", "-q", "--allow-empty", "-m", "base")
 		git("commit", "-q", "--allow-empty", "-m", "pending implementation\n\nCoop-Task: pending")
-		root := filepath.Join(repo, tasksRoot)
-		task := taskForLease(t, root, stateTodo, "pending")
-		record, err := captureAuditReopen(repo, task.ID)
+		root := filepath.Join(repo, TasksRoot)
+		task := taskForLease(t, root, StateTodo, "pending")
+		record, err := CaptureAuditReopen(repo, task.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		record.Version = auditReopenPendingVersion
 		record.UnblockPending = true
-		if err := writeAuditReopenRecord(root, record); err != nil {
+		if err := WriteAuditReopenRecord(root, record); err != nil {
 			t.Fatal(err)
 		}
-		err = completeTrustedTask(root, task)
+		err = CompleteTrustedTask(root, task)
 		if err == nil || !strings.Contains(err.Error(), "pending audit authority") ||
 			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID) ||
 			strings.Contains(err.Error(), "legacy adoption") {
 			t.Fatalf("pending completion error = %v", err)
 		}
-		code, err := tasksFolderMove(root, []string{task.ID}, stateDone, "done", "completed")
+		code, err := tasksFolderMove(root, []string{task.ID}, StateDone, "done", "completed")
 		if code != -1 || err == nil ||
 			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID) ||
 			strings.Contains(err.Error(), "retry: coop tasks done") {
 			t.Fatalf("pending tasks done recovery = code %d err %v", code, err)
 		}
-		current, ok := currentTask(root, task.ID)
-		if !ok || current.State != stateTodo {
+		current, ok := CurrentTask(root, task.ID)
+		if !ok || current.State != StateTodo {
 			t.Fatalf("pending completion moved task: %#v, ok=%v", current, ok)
 		}
 	})
@@ -177,54 +177,54 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 
 func TestTaskLeaseAuditReopenAuthorityIsScopedConsumedAndNotReusable(t *testing.T) {
 	root := t.TempDir()
-	first := taskForLease(t, root, stateInProgress, "first")
-	second := taskForLease(t, root, stateInProgress, "second")
+	first := taskForLease(t, root, StateInProgress, "first")
+	second := taskForLease(t, root, StateInProgress, "second")
 	record := testAuditReopenRecord(first.ID, "generation-one")
-	if err := writeAuditReopenRecord(root, record); err != nil {
+	if err := WriteAuditReopenRecord(root, record); err != nil {
 		t.Fatal(err)
 	}
 	// Provider-writable task prose cannot redirect the host record to another task.
 	writeTaskFile(t, filepath.Join(second.Dir, "audit-reopen.json"), `{"generation":"generation-one"}`)
 
-	firstLease, _, err := tryTaskLease(root, first, testLeaseOwner())
+	firstLease, _, err := TryTaskLease(root, first, testLeaseOwner())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if firstLease.reopen == nil || firstLease.reopen.Generation != record.Generation {
-		t.Fatalf("first lease reopen = %#v, want %q", firstLease.reopen, record.Generation)
+	if firstLease.Reopen == nil || firstLease.Reopen.Generation != record.Generation {
+		t.Fatalf("first lease reopen = %#v, want %q", firstLease.Reopen, record.Generation)
 	}
-	if err := moveTaskDir(root, first, stateDone); err != nil {
+	if err := MoveTaskDir(root, first, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	done, _ := currentTask(root, first.ID)
-	if err := finalizeQueuedCompletion(queuedTask{Root: root, Item: done}); err != nil {
+	done, _ := CurrentTask(root, first.ID)
+	if err := FinalizeQueuedCompletion(QueuedTask{Root: root, Item: done}); err != nil {
 		t.Fatal(err)
 	}
-	if err := firstLease.markCompleted(done.Dir); err != nil {
+	if err := firstLease.MarkCompleted(done.Dir); err != nil {
 		t.Fatal(err)
 	}
 	receipt, ok := readLeaseCompletionReceipt(firstLease.authority, done.Dir)
 	if !ok || receipt.AuditReopenGeneration != record.Generation {
 		t.Fatalf("completion receipt = %#v, ok=%v", receipt, ok)
 	}
-	if err := firstLease.consumeAuditReopen(); err != nil {
+	if err := firstLease.ConsumeAuditReopen(); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := readAuditReopenRecord(root, first.ID); err != nil || ok {
+	if _, ok, err := ReadAuditReopenRecord(root, first.ID); err != nil || ok {
 		t.Fatalf("accepted generation remained reusable: ok=%v err=%v", ok, err)
 	}
-	if err := firstLease.release(); err != nil {
+	if err := firstLease.Release(); err != nil {
 		t.Fatal(err)
 	}
 
-	secondLease, _, err := tryTaskLease(root, second, testLeaseOwner())
+	secondLease, _, err := TryTaskLease(root, second, testLeaseOwner())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if secondLease.reopen != nil {
-		t.Fatalf("task-local forgery redirected authority: %#v", secondLease.reopen)
+	if secondLease.Reopen != nil {
+		t.Fatalf("task-local forgery redirected authority: %#v", secondLease.Reopen)
 	}
-	if err := secondLease.release(); err != nil {
+	if err := secondLease.Release(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -233,7 +233,7 @@ func TestAuditReopenRecordReplacementPreservesHostGeneration(t *testing.T) {
 	root := t.TempDir()
 	id := "replace-audit-baseline"
 	original := testAuditReopenRecord(id, "generation-original")
-	if err := writeAuditReopenRecord(root, original); err != nil {
+	if err := WriteAuditReopenRecord(root, original); err != nil {
 		t.Fatal(err)
 	}
 	rebased := original
@@ -241,13 +241,13 @@ func TestAuditReopenRecordReplacementPreservesHostGeneration(t *testing.T) {
 	if err := replaceAuditReopenRecordIfMatches(root, original, rebased); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok, err := readAuditReopenRecord(root, id); err != nil || !ok || !reflect.DeepEqual(got, rebased) {
+	if got, ok, err := ReadAuditReopenRecord(root, id); err != nil || !ok || !reflect.DeepEqual(got, rebased) {
 		t.Fatalf("rebased record = %#v, ok=%v err=%v", got, ok, err)
 	}
 
 	replacement := rebased
 	replacement.Generation = "generation-replaced"
-	if err := writeAuditReopenRecord(root, replacement); err != nil {
+	if err := WriteAuditReopenRecord(root, replacement); err != nil {
 		t.Fatal(err)
 	}
 	secondRebase := rebased
@@ -255,44 +255,44 @@ func TestAuditReopenRecordReplacementPreservesHostGeneration(t *testing.T) {
 	if err := replaceAuditReopenRecordIfMatches(root, rebased, secondRebase); err == nil {
 		t.Fatal("authority replacement was accepted")
 	}
-	if got, ok, err := readAuditReopenRecord(root, id); err != nil || !ok || !reflect.DeepEqual(got, replacement) {
+	if got, ok, err := ReadAuditReopenRecord(root, id); err != nil || !ok || !reflect.DeepEqual(got, replacement) {
 		t.Fatalf("rejected replacement changed host authority: got=%#v ok=%v err=%v", got, ok, err)
 	}
 }
 
 func TestInterruptedAcceptedCompletionConsumesAuditReopenGeneration(t *testing.T) {
 	root := t.TempDir()
-	task := taskForLease(t, root, stateInProgress, "interrupted")
+	task := taskForLease(t, root, StateInProgress, "interrupted")
 	record := testAuditReopenRecord(task.ID, "generation-crash")
-	if err := writeAuditReopenRecord(root, record); err != nil {
+	if err := WriteAuditReopenRecord(root, record); err != nil {
 		t.Fatal(err)
 	}
-	lease, _, err := tryTaskLease(root, task, testLeaseOwner())
+	lease, _, err := TryTaskLease(root, task, testLeaseOwner())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := moveTaskDir(root, task, stateDone); err != nil {
+	if err := MoveTaskDir(root, task, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	done, _ := currentTask(root, task.ID)
-	if err := finalizeQueuedCompletion(queuedTask{Root: root, Item: done}); err != nil {
+	done, _ := CurrentTask(root, task.ID)
+	if err := FinalizeQueuedCompletion(QueuedTask{Root: root, Item: done}); err != nil {
 		t.Fatal(err)
 	}
-	if err := lease.markCompleted(done.Dir); err != nil {
+	if err := lease.MarkCompleted(done.Dir); err != nil {
 		t.Fatal(err)
 	}
 	// Simulate process death after the receipt is durable but before generation consumption and
 	// ordinary lease cleanup: release the kernel descriptors while retaining crash metadata.
-	lease.quiesce()
+	lease.Quiesce()
 	if err := errors.Join(unlockLeaseFile(lease.local), unlockLeaseFile(lease.authority)); err != nil {
 		t.Fatal(err)
 	}
 	lease.local, lease.authority = nil, nil
 
-	if err := reconcileInterruptedCompletions([]string{root}); err != nil {
+	if err := ReconcileInterruptedCompletions([]string{root}); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := readAuditReopenRecord(root, task.ID); err != nil || ok {
+	if _, ok, err := ReadAuditReopenRecord(root, task.ID); err != nil || ok {
 		t.Fatalf("crash replay retained accepted generation: ok=%v err=%v", ok, err)
 	}
 	if !pathExists(done.Dir) {
@@ -304,24 +304,24 @@ func TestTrustedManualCompletionConsumesAuditReopenGeneration(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	git("commit", "-q", "--allow-empty", "-m", "manual implementation\n\nCoop-Task: manual")
-	root := filepath.Join(repo, tasksRoot)
-	task := taskForLease(t, root, stateInProgress, "manual")
-	record, err := captureAuditReopen(repo, task.ID)
+	root := filepath.Join(repo, TasksRoot)
+	task := taskForLease(t, root, StateInProgress, "manual")
+	record, err := CaptureAuditReopen(repo, task.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeAuditReopenRecord(root, record); err != nil {
+	if err := WriteAuditReopenRecord(root, record); err != nil {
 		t.Fatal(err)
 	}
-	if err := completeTrustedTask(root, task); err != nil {
+	if err := CompleteTrustedTask(root, task); err != nil {
 		t.Fatal(err)
 	}
-	done, _ := currentTask(root, task.ID)
+	done, _ := CurrentTask(root, task.ID)
 	receipt, ok := taskCompletionReceipt(root, done)
 	if !ok || receipt.AuditReopenGeneration != record.Generation {
 		t.Fatalf("manual completion receipt = %#v, ok=%v", receipt, ok)
 	}
-	if _, ok, err := readAuditReopenRecord(root, task.ID); err != nil || ok {
+	if _, ok, err := ReadAuditReopenRecord(root, task.ID); err != nil || ok {
 		t.Fatalf("manual completion retained generation: ok=%v err=%v", ok, err)
 	}
 }
@@ -333,14 +333,14 @@ func TestTrustedManualCompletionConsumesAuditReopenGeneration(t *testing.T) {
 func TestTaskOwnerRecordRoundTripsMismatchAndCorruption(t *testing.T) {
 	t.Run("round trip", func(t *testing.T) {
 		root := t.TempDir()
-		want := taskOwnerRecord{
+		want := TaskOwnerRecord{
 			Version: taskOwnerRecordVersion, TaskID: "round-trip", Source: taskOwnerSourceInteractiveClaim,
 			User: "ada", Host: "workstation", ClaimedAt: time.Now().Truncate(time.Second),
 		}
 		if err := writeTaskOwnerRecord(root, want); err != nil {
 			t.Fatal(err)
 		}
-		got, ok, err := readTaskOwnerRecord(root, "round-trip")
+		got, ok, err := ReadTaskOwnerRecord(root, "round-trip")
 		if err != nil || !ok || !got.ClaimedAt.Equal(want.ClaimedAt) ||
 			got.Version != want.Version || got.TaskID != want.TaskID || got.Source != want.Source ||
 			got.User != want.User || got.Host != want.Host {
@@ -349,7 +349,7 @@ func TestTaskOwnerRecordRoundTripsMismatchAndCorruption(t *testing.T) {
 		if err := removeTaskOwnerRecord(root, "round-trip"); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok, err := readTaskOwnerRecord(root, "round-trip"); err != nil || ok {
+		if _, ok, err := ReadTaskOwnerRecord(root, "round-trip"); err != nil || ok {
 			t.Fatalf("after remove: ok=%v err=%v, want absent", ok, err)
 		}
 		// Removing an already-absent record is a no-op, not an error — most lifecycle transitions
@@ -361,14 +361,14 @@ func TestTaskOwnerRecordRoundTripsMismatchAndCorruption(t *testing.T) {
 
 	t.Run("missing record reads as absent, not an error", func(t *testing.T) {
 		root := t.TempDir()
-		if _, ok, err := readTaskOwnerRecord(root, "never-claimed"); err != nil || ok {
+		if _, ok, err := ReadTaskOwnerRecord(root, "never-claimed"); err != nil || ok {
 			t.Fatalf("never-written record = ok=%v err=%v, want (false, nil)", ok, err)
 		}
 	})
 
 	t.Run("mismatched task id is rejected, not silently absent", func(t *testing.T) {
 		root := t.TempDir()
-		record := taskOwnerRecord{
+		record := TaskOwnerRecord{
 			Version: taskOwnerRecordVersion, TaskID: "task-a", Source: taskOwnerSourceInteractiveClaim,
 			User: "ada", Host: "workstation", ClaimedAt: time.Now(),
 		}
@@ -383,16 +383,16 @@ func TestTaskOwnerRecordRoundTripsMismatchAndCorruption(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		registry, err := openLeaseAuthorityRoot()
+		registry, err := OpenLeaseAuthorityRoot()
 		if err != nil {
 			t.Fatal(err)
 		}
 		data, _ := json.Marshal(record)
-		if err := atomicWriteTaskFile(registry, name, append(data, '\n')); err != nil {
+		if err := AtomicWriteTaskFile(registry, name, append(data, '\n')); err != nil {
 			t.Fatal(err)
 		}
 		_ = registry.Close()
-		if _, ok, err := readTaskOwnerRecord(root, "task-b"); err == nil || ok {
+		if _, ok, err := ReadTaskOwnerRecord(root, "task-b"); err == nil || ok {
 			t.Fatalf("mismatched-id record = ok=%v err=%v, want a validation error", ok, err)
 		}
 	})
@@ -403,26 +403,26 @@ func TestTaskOwnerRecordRoundTripsMismatchAndCorruption(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		registry, err := openLeaseAuthorityRoot()
+		registry, err := OpenLeaseAuthorityRoot()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := atomicWriteTaskFile(registry, name, []byte("not json\n")); err != nil {
+		if err := AtomicWriteTaskFile(registry, name, []byte("not json\n")); err != nil {
 			t.Fatal(err)
 		}
 		_ = registry.Close()
-		if _, ok, err := readTaskOwnerRecord(root, "corrupt"); err == nil || ok {
+		if _, ok, err := ReadTaskOwnerRecord(root, "corrupt"); err == nil || ok {
 			t.Fatalf("corrupt record = ok=%v err=%v, want an error", ok, err)
 		}
 	})
 
 	t.Run("write validates before touching disk", func(t *testing.T) {
 		root := t.TempDir()
-		bad := taskOwnerRecord{Version: taskOwnerRecordVersion, TaskID: "bad", Source: ""} // no source/user/host/time
+		bad := TaskOwnerRecord{Version: taskOwnerRecordVersion, TaskID: "bad", Source: ""} // no source/user/host/time
 		if err := writeTaskOwnerRecord(root, bad); err == nil {
 			t.Fatal("write accepted an incomplete owner record")
 		}
-		if _, ok, err := readTaskOwnerRecord(root, "bad"); err != nil || ok {
+		if _, ok, err := ReadTaskOwnerRecord(root, "bad"); err != nil || ok {
 			t.Fatalf("rejected write still landed: ok=%v err=%v", ok, err)
 		}
 	})
@@ -430,11 +430,11 @@ func TestTaskOwnerRecordRoundTripsMismatchAndCorruption(t *testing.T) {
 
 func TestTaskLeaseWritesRenameSafeHeartbeatAndReleases(t *testing.T) {
 	root, id := t.TempDir(), "resume-me"
-	item := taskForLease(t, root, stateInProgress, id)
+	item := taskForLease(t, root, StateInProgress, id)
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	owner := testLeaseOwner()
 	owner.Now = func() time.Time { return now }
-	lease, _, err := tryTaskLease(root, item, owner)
+	lease, _, err := TryTaskLease(root, item, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,30 +449,30 @@ func TestTaskLeaseWritesRenameSafeHeartbeatAndReleases(t *testing.T) {
 	}
 
 	now = now.Add(10 * time.Second)
-	if err := moveTaskDir(root, item, stateBlocked); err != nil {
+	if err := MoveTaskDir(root, item, StateBlocked); err != nil {
 		t.Fatal(err)
 	}
 	if err := lease.refresh(); err != nil {
 		t.Fatal(err)
 	}
-	blockedDir := filepath.Join(root, stateBlocked, id)
+	blockedDir := filepath.Join(root, StateBlocked, id)
 	if got, ok := readLeaseMetadata(blockedDir); !ok || !got.HeartbeatAt.Equal(now) {
 		t.Fatalf("rename-safe heartbeat = %+v, ok=%v", got, ok)
 	}
 	if pathExists(metaPath) {
 		t.Fatal("heartbeat recreated metadata under the old state path")
 	}
-	doneItem, ok := currentTask(root, id)
+	doneItem, ok := CurrentTask(root, id)
 	if !ok {
 		t.Fatal("moved task disappeared before completion")
 	}
-	if err := moveTaskDir(root, doneItem, stateDone); err != nil {
+	if err := MoveTaskDir(root, doneItem, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	if err := lease.release(); err != nil {
+	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	doneDir := filepath.Join(root, stateDone, id)
+	doneDir := filepath.Join(root, StateDone, id)
 	if pathExists(filepath.Join(doneDir, "tmp", leaseMetadataName)) {
 		t.Fatal("normal release left lease metadata behind")
 	}
@@ -489,7 +489,7 @@ func TestTaskLeaseWritesRenameSafeHeartbeatAndReleases(t *testing.T) {
 
 func TestTaskLeaseHeartbeatTickerRefreshesMetadata(t *testing.T) {
 	root, id := t.TempDir(), "heartbeat"
-	item := taskForLease(t, root, stateInProgress, id)
+	item := taskForLease(t, root, StateInProgress, id)
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	ticks := make(chan time.Time, 1)
 	owner := testLeaseOwner()
@@ -500,11 +500,11 @@ func TestTaskLeaseHeartbeatTickerRefreshesMetadata(t *testing.T) {
 		}
 		return ticks, func() {}
 	}
-	lease, _, err := tryTaskLease(root, item, owner)
+	lease, _, err := TryTaskLease(root, item, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = lease.release() })
+	t.Cleanup(func() { _ = lease.Release() })
 
 	now = now.Add(leaseHeartbeatInterval)
 	ticks <- now
@@ -523,22 +523,22 @@ func TestTaskLeaseHeartbeatTickerRefreshesMetadata(t *testing.T) {
 
 func TestTaskLeaseQuiesceStopsHeartbeatAndRetainsLock(t *testing.T) {
 	root, id := t.TempDir(), "quiesced"
-	item := taskForLease(t, root, stateInProgress, id)
+	item := taskForLease(t, root, StateInProgress, id)
 	ticks := make(chan time.Time, 1)
 	owner := testLeaseOwner()
 	owner.Ticker = func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }
-	lease, _, err := tryTaskLease(root, item, owner)
+	lease, _, err := TryTaskLease(root, item, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease.quiesce()
+	lease.Quiesce()
 	if got := observeTaskLease(item, owner.now()); got.State == leaseUnleased {
 		t.Fatal("quiesce released the authoritative task lock")
 	}
-	if err := moveTaskDir(root, item, stateDone); err != nil {
+	if err := MoveTaskDir(root, item, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	doneDir := filepath.Join(root, stateDone, id)
+	doneDir := filepath.Join(root, StateDone, id)
 	if err := removeTaskTmp(doneDir); err != nil {
 		t.Fatal(err)
 	}
@@ -546,15 +546,15 @@ func TestTaskLeaseQuiesceStopsHeartbeatAndRetainsLock(t *testing.T) {
 	if pathExists(filepath.Join(doneDir, "tmp")) {
 		t.Fatal("heartbeat recreated task metadata after quiesce")
 	}
-	if err := lease.release(); err != nil {
+	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestTaskLeaseMetadataRejectsProviderControlledTmp(t *testing.T) {
 	root, id := t.TempDir(), "swapped-tmp"
-	item := taskForLease(t, root, stateInProgress, id)
-	lease, _, err := tryTaskLease(root, item, testLeaseOwner())
+	item := taskForLease(t, root, StateInProgress, id)
+	lease, _, err := TryTaskLease(root, item, testLeaseOwner())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,7 +577,7 @@ func TestTaskLeaseMetadataRejectsProviderControlledTmp(t *testing.T) {
 	if _, ok := readLeaseMetadata(item.Dir); ok {
 		t.Fatal("metadata reader followed a provider-swapped tmp symlink")
 	}
-	if err := lease.release(); err == nil {
+	if err := lease.Release(); err == nil {
 		t.Fatal("lease release silently accepted a provider-swapped tmp symlink")
 	}
 	if got, err := os.ReadFile(sentinel); err != nil || string(got) != want {
@@ -587,8 +587,8 @@ func TestTaskLeaseMetadataRejectsProviderControlledTmp(t *testing.T) {
 
 func TestTaskLeaseAuthorityRejectsProviderReplacedRealTmp(t *testing.T) {
 	root, id := t.TempDir(), "replaced-real-tmp"
-	item := taskForLease(t, root, stateInProgress, id)
-	first, _, err := tryTaskLease(root, item, testLeaseOwner())
+	item := taskForLease(t, root, StateInProgress, id)
+	first, _, err := TryTaskLease(root, item, testLeaseOwner())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,24 +602,24 @@ func TestTaskLeaseAuthorityRejectsProviderReplacedRealTmp(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, leaseLockName), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	current, ok := currentTask(root, id)
+	current, ok := CurrentTask(root, id)
 	if !ok {
 		t.Fatal("task disappeared after tmp replacement")
 	}
-	second, observed, err := tryTaskLease(root, current, taskLeaseOwner{
+	second, observed, err := TryTaskLease(root, current, TaskLeaseOwner{
 		RunID: "second", PID: 4343, Provider: "claude", Target: "claude:test",
 	})
 	if err != nil || second != nil || observed.State == leaseUnleased {
 		t.Fatalf("replacement inode acquired a second lease: lease=%v observed=%+v err=%v", second, observed, err)
 	}
-	if err := first.release(); err != nil {
+	if err := first.Release(); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestReadLeaseMetadataRejectsSpecialFiles(t *testing.T) {
 	root, id := t.TempDir(), "special-metadata"
-	item := taskForLease(t, root, stateInProgress, id)
+	item := taskForLease(t, root, StateInProgress, id)
 	if _, err := taskLeaseDir(item.Dir); err != nil {
 		t.Fatal(err)
 	}
@@ -634,15 +634,15 @@ func TestReadLeaseMetadataRejectsSpecialFiles(t *testing.T) {
 
 func TestTaskLeaseObservationUsesLockNotHeartbeat(t *testing.T) {
 	root, id := t.TempDir(), "locked"
-	item := taskForLease(t, root, stateInProgress, id)
+	item := taskForLease(t, root, StateInProgress, id)
 	now := time.Date(2026, 7, 14, 12, 1, 0, 0, time.UTC)
 	owner := testLeaseOwner()
 	owner.Now = func() time.Time { return now }
-	lease, _, err := tryTaskLease(root, item, owner)
+	lease, _, err := TryTaskLease(root, item, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = lease.release() })
+	t.Cleanup(func() { _ = lease.Release() })
 
 	if got := observeTaskLease(item, now); got.State != leaseBusy || got.Provider != "codex" {
 		t.Errorf("fresh held lease = %+v, want busy codex", got)
@@ -654,7 +654,7 @@ func TestTaskLeaseObservationUsesLockNotHeartbeat(t *testing.T) {
 	if got := observeTaskLease(item, now); got.State != leaseStalled || got.Provider != "codex" {
 		t.Errorf("stale held lease = %+v, want stalled codex", got)
 	}
-	if err := lease.release(); err != nil {
+	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
 	if got := observeTaskLease(item, now); got.State != leaseUnleased {
@@ -664,7 +664,7 @@ func TestTaskLeaseObservationUsesLockNotHeartbeat(t *testing.T) {
 
 func TestTaskLeaseAdoptionIgnoresMetadataPIDWhenLockIsFree(t *testing.T) {
 	root, id := t.TempDir(), "pid-reused"
-	item := taskForLease(t, root, stateInProgress, id)
+	item := taskForLease(t, root, StateInProgress, id)
 	now := time.Now()
 	stale := taskLeaseMetadata{
 		Version:       leaseMetadataVersion,
@@ -696,20 +696,20 @@ func TestTaskLeaseAdoptionIgnoresMetadataPIDWhenLockIsFree(t *testing.T) {
 	if err != nil || assignment.Outcome != assignmentReady || assignment.Task.Item.ID != id {
 		t.Fatalf("PID-reuse adoption = %+v, err=%v", assignment, err)
 	}
-	if err := assignment.Lease.release(); err != nil {
+	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestAssignLoopTaskSkipsForeignLeaseAndFallsBackToTodo(t *testing.T) {
 	root := t.TempDir()
-	busy := taskForLease(t, root, stateInProgress, "a-busy")
-	taskForLease(t, root, stateTodo, "b-todo")
-	foreign, _, err := tryTaskLease(root, busy, testLeaseOwner())
+	busy := taskForLease(t, root, StateInProgress, "a-busy")
+	taskForLease(t, root, StateTodo, "b-todo")
+	foreign, _, err := TryTaskLease(root, busy, testLeaseOwner())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = foreign.release() })
+	t.Cleanup(func() { _ = foreign.Release() })
 
 	owner := testLeaseOwner()
 	owner.RunID = "other-run"
@@ -723,19 +723,19 @@ func TestAssignLoopTaskSkipsForeignLeaseAndFallsBackToTodo(t *testing.T) {
 	if assignment.Busy.Busy != 1 || assignment.Busy.Stalled != 0 {
 		t.Errorf("busy summary = %+v, want one busy", assignment.Busy)
 	}
-	if err := assignment.Lease.release(); err != nil {
+	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
 
 	onlyBusy := t.TempDir()
-	item := taskForLease(t, onlyBusy, stateInProgress, "busy")
-	foreignOnly, _, err := tryTaskLease(onlyBusy, item, testLeaseOwner())
+	item := taskForLease(t, onlyBusy, StateInProgress, "busy")
+	foreignOnly, _, err := TryTaskLease(onlyBusy, item, testLeaseOwner())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer foreignOnly.release()
+	defer foreignOnly.Release()
 	assignment, err = assignLoopTask([]string{onlyBusy}, owner)
-	if err != nil || assignment.Outcome != assignmentUnavailable || assignment.Busy.Busy != 1 {
+	if err != nil || assignment.Outcome != AssignmentUnavailable || assignment.Busy.Busy != 1 {
 		t.Fatalf("all-foreign assignment = %+v, err=%v", assignment, err)
 	}
 }
@@ -770,8 +770,8 @@ func TestTaskLeaseProcess(t *testing.T) {
 	case assignmentReady:
 		fmt.Printf("READY %s\n", assignment.Task.Item.ID)
 		_, _ = io.Copy(io.Discard, os.Stdin)
-		_ = assignment.Lease.release()
-	case assignmentUnavailable:
+		_ = assignment.Lease.Release()
+	case AssignmentUnavailable:
 		fmt.Println("UNAVAILABLE")
 	default:
 		fmt.Println("DRAINED")
@@ -844,22 +844,22 @@ func TestTaskLeaseProcessRaces(t *testing.T) {
 		if got := []string{one, two}; !(strings.HasPrefix(got[0], "READY ") && got[1] == "UNAVAILABLE") && !(strings.HasPrefix(got[1], "READY ") && got[0] == "UNAVAILABLE") {
 			t.Fatalf("simultaneous %s claim = %v, want one ready and one unavailable", state, got)
 		}
-		if state == stateTodo && pathExists(filepath.Join(root, stateTodo, id)) {
+		if state == StateTodo && pathExists(filepath.Join(root, StateTodo, id)) {
 			t.Fatal("losing todo contender recreated the task's old state path")
 		}
-		items := readTaskTree(root)
-		if len(items) != 1 || items[0].ID != id || items[0].State != stateInProgress {
+		items := ReadTaskTree(root)
+		if len(items) != 1 || items[0].ID != id || items[0].State != StateInProgress {
 			t.Fatalf("simultaneous %s claim left queue %+v, want one in-progress task", state, items)
 		}
 		first.release(t)
 		second.release(t)
 	}
-	t.Run("simultaneous todo claim", func(t *testing.T) { runRace(t, stateTodo) })
-	t.Run("simultaneous in-progress adoption", func(t *testing.T) { runRace(t, stateInProgress) })
+	t.Run("simultaneous todo claim", func(t *testing.T) { runRace(t, StateTodo) })
+	t.Run("simultaneous in-progress adoption", func(t *testing.T) { runRace(t, StateInProgress) })
 
 	t.Run("dead owner is adopted immediately", func(t *testing.T) {
 		root, id := t.TempDir(), "recover"
-		taskForLease(t, root, stateInProgress, id)
+		taskForLease(t, root, StateInProgress, id)
 		owner := startLeaseProcess(t, root, "assign", "")
 		if got := owner.result(t); got != "READY "+id {
 			t.Fatalf("owner = %q", got)
@@ -874,14 +874,14 @@ func TestTaskLeaseProcessRaces(t *testing.T) {
 		if err != nil || assignment.Outcome != assignmentReady || assignment.Task.Item.ID != id {
 			t.Fatalf("immediate adoption = %+v, err=%v", assignment, err)
 		}
-		if err := assignment.Lease.release(); err != nil {
+		if err := assignment.Lease.Release(); err != nil {
 			t.Fatal(err)
 		}
 	})
 
 	t.Run("stale heartbeat with a live lock stays stalled", func(t *testing.T) {
 		root, id := t.TempDir(), "stalled"
-		item := taskForLease(t, root, stateInProgress, id)
+		item := taskForLease(t, root, StateInProgress, id)
 		holder := startLeaseProcess(t, root, "stale", "")
 		if got := holder.result(t); got != "READY "+id {
 			t.Fatalf("holder = %q", got)
@@ -892,7 +892,7 @@ func TestTaskLeaseProcessRaces(t *testing.T) {
 		owner := testLeaseOwner()
 		owner.Now = time.Now
 		assignment, err := assignLoopTask([]string{root}, owner)
-		if err != nil || assignment.Outcome != assignmentUnavailable || assignment.Busy.Stalled != 1 {
+		if err != nil || assignment.Outcome != AssignmentUnavailable || assignment.Busy.Stalled != 1 {
 			t.Fatalf("stalled lock assignment = %+v, err=%v", assignment, err)
 		}
 		holder.release(t)
@@ -900,8 +900,8 @@ func TestTaskLeaseProcessRaces(t *testing.T) {
 
 	t.Run("two tasks let two controllers win", func(t *testing.T) {
 		root := t.TempDir()
-		taskForLease(t, root, stateTodo, "a")
-		taskForLease(t, root, stateTodo, "b")
+		taskForLease(t, root, StateTodo, "a")
+		taskForLease(t, root, StateTodo, "b")
 		gate := filepath.Join(root, "start")
 		first := startLeaseProcess(t, root, "assign", gate)
 		second := startLeaseProcess(t, root, "assign", gate)
@@ -922,16 +922,16 @@ func TestTaskLeaseProcessRaces(t *testing.T) {
 func TestLeaseAuthorityRootIsDurableStateNotCache(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv(testLeaseAuthorityRootEnv, "")
+	t.Setenv(TestLeaseAuthorityRootEnv, "")
 	dir, legacy, err := leaseAuthorityRoots()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(home, ".local", "state", "coop", "task-leases", leaseAuthorityVersion)
+	want := filepath.Join(home, ".local", "state", "coop", "task-leases", LeaseAuthorityVersion)
 	if dir != want {
 		t.Fatalf("authority root = %q, want %q", dir, want)
 	}
-	sessions, err := defaultSessionStateRoot()
+	sessions, err := defaultSessionStateRootForTest()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -942,7 +942,7 @@ func TestLeaseAuthorityRootIsDurableStateNotCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if legacy != filepath.Join(cache, "coop", "task-leases", leaseAuthorityVersion) {
+	if legacy != filepath.Join(cache, "coop", "task-leases", LeaseAuthorityVersion) {
 		t.Fatalf("legacy root = %q, want the old cache path under %q", legacy, cache)
 	}
 	if dir == legacy || strings.HasPrefix(dir, cache+string(filepath.Separator)) {
@@ -972,7 +972,7 @@ func snapshotLeaseAuthorityRegistry(t *testing.T, dir string) map[string]string 
 
 // seedLeaseAuthorityRegistry writes one of every record kind through the real writers, so adoption
 // is tested against sha-keyed names the production code produced rather than hand-built fixtures.
-func seedLeaseAuthorityRegistry(t *testing.T, root string, task taskItem) (nonce string) {
+func seedLeaseAuthorityRegistry(t *testing.T, root string, task Item) (nonce string) {
 	t.Helper()
 	authority, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
@@ -992,7 +992,7 @@ func seedLeaseAuthorityRegistry(t *testing.T, root string, task taskItem) (nonce
 	if err := writeLeaseAuthorityMetadata(root, task.ID, meta); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeAuditReopenRecord(root, testAuditReopenRecord(task.ID, "seed-generation")); err != nil {
+	if err := WriteAuditReopenRecord(root, testAuditReopenRecord(task.ID, "seed-generation")); err != nil {
 		t.Fatal(err)
 	}
 	if err := appendTrustedDoneDeparture(root, task.ID, strings.Repeat("ab", 16)); err != nil {
@@ -1000,8 +1000,8 @@ func seedLeaseAuthorityRegistry(t *testing.T, root string, task taskItem) (nonce
 	}
 	index := completionWindowIndex{
 		Version: completionWindowVersion,
-		Windows: map[string]completionWindowRecord{
-			"seed-window": {Baseline: map[string]completionFingerprint{}},
+		Windows: map[string]CompletionWindowRecord{
+			"seed-window": {Baseline: map[string]CompletionFingerprint{}},
 		},
 	}
 	if err := writeCompletionWindowIndex(root, index); err != nil {
@@ -1012,21 +1012,21 @@ func seedLeaseAuthorityRegistry(t *testing.T, root string, task taskItem) (nonce
 
 func TestLeaseAuthorityAdoptsPopulatedLegacyCacheRootOnce(t *testing.T) {
 	base := t.TempDir()
-	newRoot := filepath.Join(base, "state", "coop", "task-leases", leaseAuthorityVersion)
-	legacyRoot := filepath.Join(base, "cache", "coop", "task-leases", leaseAuthorityVersion)
+	newRoot := filepath.Join(base, "state", "coop", "task-leases", LeaseAuthorityVersion)
+	legacyRoot := filepath.Join(base, "cache", "coop", "task-leases", LeaseAuthorityVersion)
 
 	// Write the registry exactly as the pre-upgrade binary left it, in the cache location.
-	t.Setenv(testLeaseAuthorityRootEnv, legacyRoot)
+	t.Setenv(TestLeaseAuthorityRootEnv, legacyRoot)
 	if err := os.MkdirAll(legacyRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	task := taskForLease(t, root, stateDone, "adopted")
+	task := taskForLease(t, root, StateDone, "adopted")
 	nonce := seedLeaseAuthorityRegistry(t, root, task)
 	before := snapshotLeaseAuthorityRegistry(t, legacyRoot)
 
 	// Upgrade: the durable root is absent and the cache root is populated.
-	t.Setenv(testLeaseAuthorityRootEnv, newRoot)
+	t.Setenv(TestLeaseAuthorityRootEnv, newRoot)
 	t.Setenv(testLeaseAuthorityLegacyRootEnv, legacyRoot)
 
 	receipt, ok := taskCompletionReceipt(root, task)
@@ -1039,7 +1039,7 @@ func TestLeaseAuthorityAdoptsPopulatedLegacyCacheRootOnce(t *testing.T) {
 	if got := snapshotLeaseAuthorityRegistry(t, newRoot); !reflect.DeepEqual(got, before) {
 		t.Fatalf("adopted registry = %v, want byte-identical %v", got, before)
 	}
-	if record, ok, err := readAuditReopenRecord(root, task.ID); err != nil || !ok ||
+	if record, ok, err := ReadAuditReopenRecord(root, task.ID); err != nil || !ok ||
 		record.Generation != "seed-generation" {
 		t.Fatalf("audit reopen after adoption = %#v, ok=%v, err=%v", record, ok, err)
 	}
@@ -1050,7 +1050,7 @@ func TestLeaseAuthorityAdoptsPopulatedLegacyCacheRootOnce(t *testing.T) {
 	if meta, ok := readLeaseAuthorityMetadata(root, task.ID); !ok || meta.RunID != "seed-run" {
 		t.Fatalf("authority metadata after adoption = %#v, ok=%v", meta, ok)
 	}
-	index, err := readCompletionWindowIndex(root)
+	index, err := ReadCompletionWindowIndex(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1068,12 +1068,12 @@ func TestLeaseAuthorityAdoptsPopulatedLegacyCacheRootOnce(t *testing.T) {
 
 func TestLeaseAuthorityFreshInstallSkipsAdoption(t *testing.T) {
 	base := t.TempDir()
-	newRoot := filepath.Join(base, "state", "coop", "task-leases", leaseAuthorityVersion)
-	legacyRoot := filepath.Join(base, "cache", "coop", "task-leases", leaseAuthorityVersion)
-	t.Setenv(testLeaseAuthorityRootEnv, newRoot)
+	newRoot := filepath.Join(base, "state", "coop", "task-leases", LeaseAuthorityVersion)
+	legacyRoot := filepath.Join(base, "cache", "coop", "task-leases", LeaseAuthorityVersion)
+	t.Setenv(TestLeaseAuthorityRootEnv, newRoot)
 	t.Setenv(testLeaseAuthorityLegacyRootEnv, legacyRoot)
 
-	registry, err := openLeaseAuthorityRoot()
+	registry, err := OpenLeaseAuthorityRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1101,8 +1101,8 @@ func TestLeaseAuthorityFreshInstallSkipsAdoption(t *testing.T) {
 // the path that must not lose or truncate a receipt, including when it resumes over crash debris.
 func TestLeaseAuthorityCrossVolumeAdoptionCopiesEveryRecord(t *testing.T) {
 	base := t.TempDir()
-	newRoot := filepath.Join(base, "state", "task-leases", leaseAuthorityVersion)
-	legacyRoot := filepath.Join(base, "cache", "task-leases", leaseAuthorityVersion)
+	newRoot := filepath.Join(base, "state", "task-leases", LeaseAuthorityVersion)
+	legacyRoot := filepath.Join(base, "cache", "task-leases", LeaseAuthorityVersion)
 	if err := os.MkdirAll(filepath.Join(legacyRoot, "subdir"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1145,8 +1145,8 @@ func TestLeaseAuthorityCrossVolumeAdoptionCopiesEveryRecord(t *testing.T) {
 
 func TestLeaseAuthorityAdoptionIsSerializedAcrossAdopters(t *testing.T) {
 	base := t.TempDir()
-	newRoot := filepath.Join(base, "state", "task-leases", leaseAuthorityVersion)
-	legacyRoot := filepath.Join(base, "cache", "task-leases", leaseAuthorityVersion)
+	newRoot := filepath.Join(base, "state", "task-leases", LeaseAuthorityVersion)
+	legacyRoot := filepath.Join(base, "cache", "task-leases", LeaseAuthorityVersion)
 	if err := os.MkdirAll(legacyRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1184,7 +1184,7 @@ func TestLeaseAuthorityAdoptionIsSerializedAcrossAdopters(t *testing.T) {
 // produce a different identity, which is exactly the purge-underfoot race the recheck must catch.
 func replaceLeaseAuthorityRecord(t *testing.T, name string) {
 	t.Helper()
-	path := filepath.Join(os.Getenv(testLeaseAuthorityRootEnv), name)
+	path := filepath.Join(os.Getenv(TestLeaseAuthorityRootEnv), name)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
@@ -1199,8 +1199,8 @@ func replaceLeaseAuthorityRecord(t *testing.T, name string) {
 
 func TestLeaseAuthorityLockRechecksInodeIdentity(t *testing.T) {
 	root := t.TempDir()
-	task := taskForLease(t, root, stateTodo, "identity")
-	key, err := leaseAuthorityKey(root, task.ID)
+	task := taskForLease(t, root, StateTodo, "identity")
+	key, err := LeaseAuthorityKey(root, task.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1231,7 +1231,7 @@ func TestLeaseAuthorityLockRechecksInodeIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		named, err := os.Lstat(filepath.Join(os.Getenv(testLeaseAuthorityRootEnv), name))
+		named, err := os.Lstat(filepath.Join(os.Getenv(TestLeaseAuthorityRootEnv), name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1266,7 +1266,7 @@ func TestLeaseAuthorityLockRechecksInodeIdentity(t *testing.T) {
 			if err := flock(f); err != nil {
 				return err
 			}
-			return os.Remove(filepath.Join(os.Getenv(testLeaseAuthorityRootEnv), name))
+			return os.Remove(filepath.Join(os.Getenv(TestLeaseAuthorityRootEnv), name))
 		})
 		if file != nil || !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("removed record = %v, %v; want os.ErrNotExist", file, err)

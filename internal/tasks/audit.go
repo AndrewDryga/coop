@@ -1,4 +1,15 @@
-package cli
+// Package tasks is coop's task-authority engine: the folder-mode task/backlog queue (a task's
+// lifecycle state IS the directory it sits in), the durable claim + kernel-flock lease + ref
+// authorities that decide who may act on a task and its checkout right now, and the trusted
+// completion audit that a host applies to a box's finished work before trusting it. Command-line
+// wiring (argv parsing, the terminal) and the loop engine's own box-spawn/provider-rotation
+// machinery stay in internal/cli, which is this package's only production caller.
+//
+// The full four-authority map — claim, lease, checkout (stays in internal/cli), ref — with their
+// mechanisms, hold times, and the lock-ordering invariant (ref authority is acquired before lease
+// authority, never the reverse) lives in .agent/kb/task-authority-model.md; read that first, this
+// comment does not repeat it.
+package tasks
 
 import (
 	"bufio"
@@ -19,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -29,7 +41,7 @@ import (
 // (git log --grep <id> was 0 repo-wide), so "one task = one commit" was unobservable and a crash
 // between commit and folder-move was ambiguous.
 const (
-	coopTaskTrailer             = "Coop-Task"
+	CoopTaskTrailer             = "Coop-Task"
 	auditReopenHistoryLimit     = 4096
 	auditReachableHistoryLimit  = 100000
 	auditReachableEdgeLimit     = 200000
@@ -46,16 +58,21 @@ const (
 	auditMetadataOutputLimit    = 2 << 20
 )
 
-type taskTrailerCommit struct {
-	info          commitInfo
+// CommitInfo is a commit's short sha and subject line — the same shape internal/cli's own
+// commitInfo (loopchanges.go) mirrors rather than shares; see ParseLoopCommits' caller for the
+// one-site conversion between the two.
+type CommitInfo struct{ SHA, Subject string }
+
+type TaskTrailerCommit struct {
+	Info          CommitInfo
 	fullSHA       string
 	parents       string
 	authorName    string
 	authorEmail   string
 	authorDate    string
 	commitMessage string
-	values        []string
-	malformed     bool
+	Values        []string
+	Malformed     bool
 }
 
 // taskTrailerCommits uses one NUL-delimited Git stream, so a trailer value can never be confused
@@ -63,12 +80,12 @@ type taskTrailerCommit struct {
 // identifies the final trailer block; the explicit inner separator preserves empty and duplicate
 // Coop-Task occurrences so callers can fail closed. It returns an error rather than an ok-bool so a
 // caller that REPORTS the failure (rather than just failing closed) has a cause to hand the human.
-func taskTrailerCommits(repo, rangeExpr string, reverse bool) ([]taskTrailerCommit, error) {
+func TaskTrailerCommits(repo, rangeExpr string, reverse bool) ([]TaskTrailerCommit, error) {
 	args := []string{"log"}
 	if reverse {
 		args = append(args, "--reverse")
 	}
-	format := "%h%x00%s%x00%(trailers:key=" + coopTaskTrailer + ",only,unfold,separator=%x1f)"
+	format := "%h%x00%s%x00%(trailers:key=" + CoopTaskTrailer + ",only,unfold,separator=%x1f)"
 	args = append(args, "-z", "--format="+format)
 	if rangeExpr != "" {
 		args = append(args, rangeExpr)
@@ -82,17 +99,17 @@ func taskTrailerCommits(repo, rangeExpr string, reverse bool) ([]taskTrailerComm
 	if len(fields) == 0 || fields[len(fields)-1] != "" || (len(fields)-1)%3 != 0 {
 		return nil, errors.New("git log returned a truncated commit stream")
 	}
-	commits := make([]taskTrailerCommit, 0, (len(fields)-1)/3)
+	commits := make([]TaskTrailerCommit, 0, (len(fields)-1)/3)
 	for i := 0; i < len(fields)-1; i += 3 {
-		record := taskTrailerCommit{info: commitInfo{sha: fields[i], subject: fields[i+1]}}
+		record := TaskTrailerCommit{Info: CommitInfo{SHA: fields[i], Subject: fields[i+1]}}
 		if fields[i+2] != "" {
 			for _, trailer := range strings.Split(fields[i+2], "\x1f") {
 				key, value, ok := strings.Cut(trailer, ":")
-				if !ok || !strings.EqualFold(strings.TrimSpace(key), coopTaskTrailer) {
-					record.malformed = true
+				if !ok || !strings.EqualFold(strings.TrimSpace(key), CoopTaskTrailer) {
+					record.Malformed = true
 					continue
 				}
-				record.values = append(record.values, strings.TrimSpace(value))
+				record.Values = append(record.Values, strings.TrimSpace(value))
 			}
 		}
 		commits = append(commits, record)
@@ -100,12 +117,12 @@ func taskTrailerCommits(repo, rangeExpr string, reverse bool) ([]taskTrailerComm
 	return commits, nil
 }
 
-func auditHistoryCommitsLimited(repo, rangeExpr string, limit int) ([]taskTrailerCommit, bool) {
+func auditHistoryCommitsLimited(repo, rangeExpr string, limit int) ([]TaskTrailerCommit, bool) {
 	args := []string{"log", "--reverse", fmt.Sprintf("--max-count=%d", limit)}
 	return auditHistoryCommits(repo, args, []string{rangeExpr})
 }
 
-func auditHistoryCommits(repo string, args, revisions []string) ([]taskTrailerCommit, bool) {
+func auditHistoryCommits(repo string, args, revisions []string) ([]TaskTrailerCommit, bool) {
 	format := "%h%x00%H%x00%s%x00%P%x00%an%x00%ae%x00%aI%x00%B"
 	args = append(args, "-z", "--format="+format)
 	args = append(args, revisions...)
@@ -118,10 +135,10 @@ func auditHistoryCommits(repo string, args, revisions []string) ([]taskTrailerCo
 	if len(fields) == 0 || fields[len(fields)-1] != "" || (len(fields)-1)%8 != 0 {
 		return nil, false
 	}
-	commits := make([]taskTrailerCommit, 0, (len(fields)-1)/8)
+	commits := make([]TaskTrailerCommit, 0, (len(fields)-1)/8)
 	for i := 0; i < len(fields)-1; i += 8 {
-		record := taskTrailerCommit{
-			info:          commitInfo{sha: fields[i], subject: fields[i+2]},
+		record := TaskTrailerCommit{
+			Info:          CommitInfo{SHA: fields[i], Subject: fields[i+2]},
 			fullSHA:       fields[i+1],
 			parents:       fields[i+3],
 			authorName:    fields[i+4],
@@ -129,7 +146,7 @@ func auditHistoryCommits(repo string, args, revisions []string) ([]taskTrailerCo
 			authorDate:    fields[i+6],
 			commitMessage: fields[i+7],
 		}
-		record.values, record.malformed = auditTaskTrailersFromMessage([]byte(record.commitMessage))
+		record.Values, record.Malformed = auditTaskTrailersFromMessage([]byte(record.commitMessage))
 		commits = append(commits, record)
 	}
 	return commits, true
@@ -165,15 +182,15 @@ func auditCommandOutput(cmd *exec.Cmd, limit int64) ([]byte, error) {
 
 // commitsForTask returns the short shas whose sole Coop-Task trailer equals id. rangeExpr limits
 // the search (e.g. "base..HEAD"); empty scans all of HEAD's reachable history.
-func commitsForTask(repo, rangeExpr, id string) []string {
+func CommitsForTask(repo, rangeExpr, id string) []string {
 	var shas []string
-	commits, err := taskTrailerCommits(repo, rangeExpr, false)
+	commits, err := TaskTrailerCommits(repo, rangeExpr, false)
 	if err != nil {
 		return nil
 	}
 	for _, commit := range commits {
-		if !commit.malformed && len(commit.values) == 1 && commit.values[0] == id {
-			shas = append(shas, commit.info.sha)
+		if !commit.Malformed && len(commit.Values) == 1 && commit.Values[0] == id {
+			shas = append(shas, commit.Info.SHA)
 		}
 	}
 	return shas
@@ -220,7 +237,7 @@ func isGateGuardPath(f string) bool {
 // protectedGateFiles filters an arbitrary file list down to the deterministic, deduplicated set
 // that defines the gate. It is shared by iteration detection and commit-bound review context, so
 // the warning and both reviewers use the same trust boundary.
-func protectedGateFiles(files []string) []string {
+func ProtectedGateFiles(files []string) []string {
 	seen := map[string]bool{}
 	for _, f := range files {
 		if f = strings.TrimSpace(f); f != "" && isGateGuardPath(f) {
@@ -239,18 +256,18 @@ func protectedGateFiles(files []string) []string {
 // boring first step of the verifier trust boundary: detect (host-side, deterministic) when a task
 // edited its own checker, so the review can be told to scrutinize it rather than trust it blind.
 // Empty when the range is empty or touched none.
-func protectedGateChanges(repo, base, head string) []string {
+func ProtectedGateChanges(repo, base, head string) []string {
 	if base == "" || head == "" || base == head {
 		return nil
 	}
-	return protectedGateFiles(strings.Split(gitOut(repo, "diff", "--no-renames", "--name-only", "-z", base+".."+head), "\x00"))
+	return ProtectedGateFiles(strings.Split(gitOut(repo, "diff", "--no-renames", "--name-only", "-z", base+".."+head), "\x00"))
 }
 
 // queueSnapshot maps task id → state across the hosts for UI and audit bookkeeping.
-func queueSnapshot(hosts []string) map[string]string {
+func QueueSnapshot(hosts []string) map[string]string {
 	m := map[string]string{}
 	for _, h := range hosts {
-		for _, t := range readTaskTree(h) {
+		for _, t := range ReadTaskTree(h) {
 			m[t.ID] = t.State
 		}
 	}
@@ -261,7 +278,7 @@ func aggregateDuplicateTaskIDs(hosts []string) []string {
 	return taskIDDuplicates(hosts, false)
 }
 
-func nonArchivedDuplicateTaskIDs(hosts []string) []string {
+func NonArchivedDuplicateTaskIDs(hosts []string) []string {
 	return taskIDDuplicates(hosts, true)
 }
 
@@ -269,9 +286,9 @@ func taskIDDuplicates(hosts []string, requireLive bool) []string {
 	counts := map[string]int{}
 	live := map[string]bool{}
 	for _, host := range hosts {
-		for _, task := range readTaskTree(host) {
+		for _, task := range ReadTaskTree(host) {
 			counts[task.ID]++
-			if task.State != stateDone {
+			if task.State != StateDone {
 				live[task.ID] = true
 			}
 		}
@@ -289,18 +306,18 @@ func taskIDDuplicates(hosts []string, requireLive bool) []string {
 // completeTrustedTask is the host equivalent of the provider completion boundary. It holds the
 // task authority lock across move, finalization, and receipt creation so a concurrent loop can
 // observe either the old state or an accepted done inode, never a transient.
-func completeTrustedTask(root string, task taskItem) (retErr error) {
-	windows, err := beginCompletionWindows([]string{root})
+func CompleteTrustedTask(root string, task Item) (retErr error) {
+	windows, err := BeginCompletionWindows([]string{root})
 	if err != nil {
-		return fmt.Errorf("%w: %v", errCompletionWindowSetup, err)
+		return fmt.Errorf("%w: %v", ErrCompletionWindowSetup, err)
 	}
 	accepted := false
-	var acceptedTask queuedTask
+	var acceptedTask QueuedTask
 	defer func() {
 		if accepted {
 			retErr = errors.Join(retErr, windows.rejectAndClose(acceptedTask))
 		} else {
-			retErr = errors.Join(retErr, windows.abandon())
+			retErr = errors.Join(retErr, windows.Abandon())
 		}
 	}()
 	authority, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
@@ -311,11 +328,11 @@ func completeTrustedTask(root string, task taskItem) (retErr error) {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, unlockLeaseFile(authority)) }()
-	current, ok := currentTask(root, task.ID)
+	current, ok := CurrentTask(root, task.ID)
 	if !ok || current.Dir != task.Dir || current.State != task.State {
 		return errLeaseCandidateGone
 	}
-	reopen, reopened, err := readAuditReopenRecord(root, task.ID)
+	reopen, reopened, err := ReadAuditReopenRecord(root, task.ID)
 	if err != nil {
 		return err
 	}
@@ -338,7 +355,7 @@ func completeTrustedTask(root string, task taskItem) (retErr error) {
 				"run `coop tasks unblock %s \"restored or validated audited baseline\"`",
 				task.ID,
 			)
-			if current.State != stateBlocked {
+			if current.State != StateBlocked {
 				recovery = fmt.Sprintf(
 					"run `coop tasks block %s` without changing Git history, then %s",
 					task.ID, recovery,
@@ -354,12 +371,12 @@ func completeTrustedTask(root string, task taskItem) (retErr error) {
 	if err := clearLeaseCompletionReceipt(authority); err != nil {
 		return err
 	}
-	if current.State != stateDone {
-		if err := moveTaskDir(root, current, stateDone); err != nil {
+	if current.State != StateDone {
+		if err := MoveTaskDir(root, current, StateDone); err != nil {
 			return err
 		}
-		current.State = stateDone
-		current.Dir = filepath.Join(root, stateDone, current.ID)
+		current.State = StateDone
+		current.Dir = filepath.Join(root, StateDone, current.ID)
 	}
 	if err := finalizeCompletedTask(current.ID, current.Dir); err != nil {
 		return err
@@ -383,7 +400,7 @@ func completeTrustedTask(root string, task taskItem) (retErr error) {
 	if err := removeTaskOwnerRecord(root, task.ID); err != nil {
 		return err
 	}
-	acceptedTask = queuedTask{Root: root, Item: current}
+	acceptedTask = QueuedTask{Root: root, Item: current}
 	accepted = true
 	return nil
 }
@@ -391,28 +408,28 @@ func completeTrustedTask(root string, task taskItem) (retErr error) {
 // moveTrustedTaskFromDone invalidates completion evidence under the same task authority lock before
 // a host command reopens or blocks an archived task. On a failed move it restores the old receipt,
 // so concurrent supervised windows never see a false unowned completion.
-func moveTrustedTaskFromDone(root string, task taskItem, newState string) error {
+func moveTrustedTaskFromDone(root string, task Item, newState string) error {
 	return moveTrustedTaskFromDoneWith(root, task, newState, nil)
 }
 
-type trustedTaskMove struct {
-	root          string
-	task          taskItem
-	newState      string
-	sourceStates  []string
-	metadataNames []string
-	reopen        *auditReopenRecord
-	afterMove     func(string) error
+type TrustedTaskMove struct {
+	Root          string
+	Task          Item
+	NewState      string
+	SourceStates  []string
+	MetadataNames []string
+	Reopen        *AuditReopenRecord
+	AfterMove     func(string) error
 }
 
 type trustedTaskMoveState struct {
-	move                trustedTaskMove
-	current             taskItem
+	move                TrustedTaskMove
+	current             Item
 	authority           *os.File
 	metadata            map[string]taskMetadataSnapshot
 	previous            leaseCompletionReceipt
 	previousOK          bool
-	previousReopen      auditReopenRecord
+	previousReopen      AuditReopenRecord
 	previousReopenOK    bool
 	previousDeparture   trustedDoneDeparture
 	previousDepartureOK bool
@@ -424,9 +441,9 @@ type trustedTaskMoveState struct {
 
 // moveTrustedTaskFromDoneWith is the one-task form of the atomic host move used for review
 // verdicts. The callback may update only log.md and state.md.
-func moveTrustedTaskFromDoneWith(root string, task taskItem, newState string, afterMove func(string) error) error {
-	return moveTrustedTasksFromDoneWith([]trustedTaskMove{{
-		root: root, task: task, newState: newState, afterMove: afterMove,
+func moveTrustedTaskFromDoneWith(root string, task Item, newState string, afterMove func(string) error) error {
+	return MoveTrustedTasksFromDoneWith([]TrustedTaskMove{{
+		Root: root, Task: task, NewState: newState, AfterMove: afterMove,
 	}})
 }
 
@@ -434,43 +451,43 @@ func moveTrustedTaskFromDoneWith(root string, task taskItem, newState string, af
 // verdicts use this all-or-nothing boundary so a later lease or metadata failure cannot leave an
 // earlier subject reopened. Every declared metadata file and completion receipt is restored if any
 // callback or move fails.
-func moveTrustedTasksFromDoneWith(moves []trustedTaskMove) (retErr error) {
+func MoveTrustedTasksFromDoneWith(moves []TrustedTaskMove) (retErr error) {
 	if len(moves) == 0 {
 		return nil
 	}
 	moves = slices.Clone(moves)
-	slices.SortFunc(moves, func(a, b trustedTaskMove) int {
-		if byRoot := strings.Compare(a.root, b.root); byRoot != 0 {
+	slices.SortFunc(moves, func(a, b TrustedTaskMove) int {
+		if byRoot := strings.Compare(a.Root, b.Root); byRoot != 0 {
 			return byRoot
 		}
-		return strings.Compare(a.task.ID, b.task.ID)
+		return strings.Compare(a.Task.ID, b.Task.ID)
 	})
 	var roots, taskIDs []string
 	for i, move := range moves {
-		if i > 0 && move.root == moves[i-1].root && move.task.ID == moves[i-1].task.ID {
-			return fmt.Errorf("duplicate trusted task move for %s", move.task.ID)
+		if i > 0 && move.Root == moves[i-1].Root && move.Task.ID == moves[i-1].Task.ID {
+			return fmt.Errorf("duplicate trusted task move for %s", move.Task.ID)
 		}
-		if i == 0 || move.root != moves[i-1].root {
-			roots = append(roots, move.root)
+		if i == 0 || move.Root != moves[i-1].Root {
+			roots = append(roots, move.Root)
 		}
-		taskIDs = append(taskIDs, move.task.ID)
+		taskIDs = append(taskIDs, move.Task.ID)
 	}
 	windows, err := beginCompletionWindowsAllowingTasks(roots, taskIDs)
 	if err != nil {
-		return fmt.Errorf("%w: %v", errCompletionWindowSetup, err)
+		return fmt.Errorf("%w: %v", ErrCompletionWindowSetup, err)
 	}
 	windowOpen := true
 	defer func() {
 		if windowOpen {
-			retErr = errors.Join(retErr, windows.abandon())
+			retErr = errors.Join(retErr, windows.Abandon())
 		}
 	}()
 	closeWindow := func(audit bool) error {
 		windowOpen = false
 		if audit {
-			return windows.rejectAndClose(queuedTask{})
+			return windows.rejectAndClose(QueuedTask{})
 		}
-		return windows.close()
+		return windows.Close()
 	}
 	var states []trustedTaskMoveState
 	unlockAll := func() error {
@@ -487,33 +504,33 @@ func moveTrustedTasksFromDoneWith(moves []trustedTaskMove) (retErr error) {
 		return errors.Join(cause, unlockAll(), closeWindow(true))
 	}
 	for _, move := range moves {
-		authority, err := lockLeaseAuthority(move.root, move.task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
+		authority, err := lockLeaseAuthority(move.Root, move.Task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
 		if err != nil {
 			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-				err = fmt.Errorf("task %s is leased by another controller", move.task.ID)
+				err = fmt.Errorf("task %s is leased by another controller", move.Task.ID)
 			}
 			return failBeforeMutation(err)
 		}
 		states = append(states, trustedTaskMoveState{move: move, authority: authority})
-		current, ok := currentTask(move.root, move.task.ID)
+		current, ok := CurrentTask(move.Root, move.Task.ID)
 		if !ok {
 			return failBeforeMutation(errLeaseCandidateGone)
 		}
-		if len(move.sourceStates) == 0 {
-			if current.Dir != move.task.Dir || current.State != stateDone {
+		if len(move.SourceStates) == 0 {
+			if current.Dir != move.Task.Dir || current.State != StateDone {
 				return failBeforeMutation(errLeaseCandidateGone)
 			}
-		} else if !slices.Contains(move.sourceStates, current.State) {
+		} else if !slices.Contains(move.SourceStates, current.State) {
 			return failBeforeMutation(fmt.Errorf(
 				"task %s is %s, want one of %s",
-				move.task.ID,
-				stateLabel(current.State),
-				strings.Join(move.sourceStates, ", "),
+				move.Task.ID,
+				StateLabel(current.State),
+				strings.Join(move.SourceStates, ", "),
 			))
 		}
 		states[len(states)-1].current = current
-		if move.afterMove != nil {
-			names := move.metadataNames
+		if move.AfterMove != nil {
+			names := move.MetadataNames
 			if len(names) == 0 {
 				names = []string{"log.md", "state.md"}
 			}
@@ -525,13 +542,13 @@ func moveTrustedTasksFromDoneWith(moves []trustedTaskMove) (retErr error) {
 		}
 		states[len(states)-1].previous, states[len(states)-1].previousOK =
 			readLeaseCompletionReceipt(authority, current.Dir)
-		previousReopen, previousReopenOK, err := readAuditReopenRecord(move.root, move.task.ID)
+		previousReopen, previousReopenOK, err := ReadAuditReopenRecord(move.Root, move.Task.ID)
 		if err != nil {
 			return failBeforeMutation(err)
 		}
 		states[len(states)-1].previousReopen = previousReopen
 		states[len(states)-1].previousReopenOK = previousReopenOK
-		previousDeparture, previousDepartureOK, err := readTrustedDoneDeparture(move.root, move.task.ID)
+		previousDeparture, previousDepartureOK, err := readTrustedDoneDeparture(move.Root, move.Task.ID)
 		if err != nil {
 			return failBeforeMutation(err)
 		}
@@ -547,9 +564,9 @@ func moveTrustedTasksFromDoneWith(moves []trustedTaskMove) (retErr error) {
 		return errors.Join(cause, unlockErr, closeWindow(false))
 	}
 	for i := range states {
-		if states[i].current.State == stateDone && states[i].move.newState != stateDone && states[i].previousOK {
+		if states[i].current.State == StateDone && states[i].move.NewState != StateDone && states[i].previousOK {
 			states[i].departureTouched = true
-			if err := appendTrustedDoneDeparture(states[i].move.root, states[i].current.ID, states[i].previous.Nonce); err != nil {
+			if err := appendTrustedDoneDeparture(states[i].move.Root, states[i].current.ID, states[i].previous.Nonce); err != nil {
 				return rollback(err)
 			}
 		}
@@ -557,24 +574,24 @@ func moveTrustedTasksFromDoneWith(moves []trustedTaskMove) (retErr error) {
 		if err := clearLeaseCompletionReceipt(states[i].authority); err != nil {
 			return rollback(err)
 		}
-		if states[i].move.reopen != nil {
+		if states[i].move.Reopen != nil {
 			states[i].reopenTouched = true
-			if err := writeAuditReopenRecord(states[i].move.root, *states[i].move.reopen); err != nil {
+			if err := WriteAuditReopenRecord(states[i].move.Root, *states[i].move.Reopen); err != nil {
 				return rollback(err)
 			}
 		}
 	}
 	for i := range states {
 		state := &states[i]
-		if state.current.State != state.move.newState {
-			if err := moveTaskDir(state.move.root, state.current, state.move.newState); err != nil {
+		if state.current.State != state.move.NewState {
+			if err := MoveTaskDir(state.move.Root, state.current, state.move.NewState); err != nil {
 				return rollback(err)
 			}
 			state.moved = true
 		}
-		if state.move.afterMove != nil {
-			dir := filepath.Join(state.move.root, state.move.newState, state.current.ID)
-			if err := state.move.afterMove(dir); err != nil {
+		if state.move.AfterMove != nil {
+			dir := filepath.Join(state.move.Root, state.move.NewState, state.current.ID)
+			if err := state.move.AfterMove(dir); err != nil {
 				return rollback(err)
 			}
 		}
@@ -588,17 +605,17 @@ func rollbackTrustedTaskMoves(states []trustedTaskMoveState) error {
 	for i := len(states) - 1; i >= 0; i-- {
 		state := &states[i]
 		restored[i] = true
-		dir := filepath.Join(state.move.root, state.move.newState, state.current.ID)
+		dir := filepath.Join(state.move.Root, state.move.NewState, state.current.ID)
 		var metadataErr error
-		if state.move.afterMove != nil {
+		if state.move.AfterMove != nil {
 			metadataErr = restoreTaskMetadata(dir, state.metadata)
 		}
 		var moveErr error
 		if state.moved {
 			moved := state.current
-			moved.State = state.move.newState
+			moved.State = state.move.NewState
 			moved.Dir = dir
-			moveErr = moveTaskDir(state.move.root, moved, state.current.State)
+			moveErr = MoveTaskDir(state.move.Root, moved, state.current.State)
 		}
 		restored[i] = metadataErr == nil && moveErr == nil
 		if err := errors.Join(metadataErr, moveErr); err != nil {
@@ -610,9 +627,9 @@ func rollbackTrustedTaskMoves(states []trustedTaskMoveState) error {
 		if state.departureTouched {
 			var err error
 			if state.previousDepartureOK {
-				err = writeTrustedDoneDeparture(state.move.root, state.previousDeparture)
+				err = writeTrustedDoneDeparture(state.move.Root, state.previousDeparture)
 			} else {
-				err = removeTrustedDoneDeparture(state.move.root, state.current.ID)
+				err = removeTrustedDoneDeparture(state.move.Root, state.current.ID)
 			}
 			if err != nil {
 				errs = append(errs, fmt.Errorf("restore task %s trusted done departure: %w", state.current.ID, err))
@@ -622,9 +639,9 @@ func rollbackTrustedTaskMoves(states []trustedTaskMoveState) error {
 		if state.reopenTouched {
 			var err error
 			if state.previousReopenOK {
-				err = writeAuditReopenRecord(state.move.root, state.previousReopen)
+				err = WriteAuditReopenRecord(state.move.Root, state.previousReopen)
 			} else {
-				err = removeAuditReopenRecord(state.move.root, state.current.ID)
+				err = removeAuditReopenRecord(state.move.Root, state.current.ID)
 			}
 			if err != nil {
 				errs = append(errs, fmt.Errorf("restore task %s audit reopen authority: %w", state.current.ID, err))
@@ -647,14 +664,14 @@ type taskMetadataSnapshot struct {
 }
 
 func snapshotTaskMetadata(taskDir string, names ...string) (map[string]taskMetadataSnapshot, error) {
-	root, err := openTaskMetadataRoot(taskDir)
+	root, err := OpenTaskMetadataRoot(taskDir)
 	if err != nil {
 		return nil, err
 	}
 	defer root.Close()
 	snapshots := make(map[string]taskMetadataSnapshot, len(names))
 	for _, name := range names {
-		body, err := readTaskMetadataFile(root, name)
+		body, err := ReadTaskMetadataFile(root, name)
 		if errors.Is(err, os.ErrNotExist) {
 			snapshots[name] = taskMetadataSnapshot{}
 			continue
@@ -668,7 +685,7 @@ func snapshotTaskMetadata(taskDir string, names ...string) (map[string]taskMetad
 }
 
 func restoreTaskMetadata(taskDir string, snapshots map[string]taskMetadataSnapshot) error {
-	root, err := openTaskMetadataRoot(taskDir)
+	root, err := OpenTaskMetadataRoot(taskDir)
 	if err != nil {
 		return err
 	}
@@ -682,7 +699,7 @@ func restoreTaskMetadata(taskDir string, snapshots map[string]taskMetadataSnapsh
 	for _, name := range names {
 		snapshot := snapshots[name]
 		if snapshot.exists {
-			errs = append(errs, atomicWriteTaskFile(root, name, snapshot.body))
+			errs = append(errs, AtomicWriteTaskFile(root, name, snapshot.body))
 			continue
 		}
 		if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -696,7 +713,7 @@ func restoreTaskMetadata(taskDir string, snapshots map[string]taskMetadataSnapsh
 // foreign-held folder belongs to another live controller and is ignored. After both locks are
 // acquired, only a matching host-only completion receipt proves a released foreign controller
 // finalized the folder; provider-writable task metadata is never ownership evidence.
-func rejectUnownedCompletions(tasks []queuedTask, assigned queuedTask) ([]string, error) {
+func rejectUnownedCompletions(tasks []QueuedTask, assigned QueuedTask) ([]string, error) {
 	var rejected []string
 	var errs []error
 	for _, task := range tasks {
@@ -716,19 +733,19 @@ func rejectUnownedCompletions(tasks []queuedTask, assigned queuedTask) ([]string
 			continue
 		}
 		rejected = append(rejected, task.Item.ID)
-		errs = append(errs, restoreUnownedCompletion(queuedTask{Root: task.Root, Item: current}), lock.clearCompleted(), lock.release())
+		errs = append(errs, restoreUnownedCompletion(QueuedTask{Root: task.Root, Item: current}), lock.clearCompleted(), lock.release())
 	}
 	slices.Sort(rejected)
 	return rejected, errors.Join(errs...)
 }
 
-func finalizeQueuedCompletion(task queuedTask) error {
+func FinalizeQueuedCompletion(task QueuedTask) error {
 	if err := finalizeCompletedTask(task.Item.ID, task.Item.Dir); err != nil {
-		if restoreErr := moveTaskDir(task.Root, task.Item, stateInProgress); restoreErr != nil {
+		if restoreErr := MoveTaskDir(task.Root, task.Item, StateInProgress); restoreErr != nil {
 			return errors.Join(err, fmt.Errorf("restore task %s after finalization failure: %w", task.Item.ID, restoreErr))
 		}
-		restored := filepath.Join(task.Root, stateInProgress, task.Item.ID)
-		recoveryErr := normalizeTaskState(
+		restored := filepath.Join(task.Root, StateInProgress, task.Item.ID)
+		recoveryErr := NormalizeTaskState(
 			task.Item.ID,
 			restored,
 			"in progress — finalization failed",
@@ -748,11 +765,11 @@ func finalizeQueuedCompletion(task queuedTask) error {
 // host receipt means finalization finished and only stale lease metadata needs removal. Without a
 // receipt, the lease does not retain the iteration base, so the task is restored for a new
 // range-bound attempt; an older matching commit must never validate new unbound work.
-func reconcileInterruptedCompletions(hosts []string) error {
+func ReconcileInterruptedCompletions(hosts []string) error {
 	var restoreErrs []error
 	for _, host := range hosts {
-		for _, task := range readTaskTree(host) {
-			if task.State != stateDone {
+		for _, task := range ReadTaskTree(host) {
+			if task.State != StateDone {
 				restoreErrs = append(restoreErrs, clearTaskCompletionReceipt(host, task.ID))
 				continue
 			}
@@ -768,7 +785,7 @@ func reconcileInterruptedCompletions(hosts []string) error {
 				continue
 			}
 			if receipt, ok := lock.completionReceipt(current.Dir); ok {
-				record, hasAuditAuthority, authorityErr := readAuditReopenRecord(host, current.ID)
+				record, hasAuditAuthority, authorityErr := ReadAuditReopenRecord(host, current.ID)
 				if authorityErr != nil {
 					restoreErrs = append(restoreErrs, errors.Join(
 						fmt.Errorf("inspect interrupted task %s audit authority: %w", current.ID, authorityErr),
@@ -779,8 +796,8 @@ func reconcileInterruptedCompletions(hosts []string) error {
 				if receipt.AuditReopenGeneration != "" && hasAuditAuthority &&
 					(!auditReopenRecordActive(record) ||
 						record.Generation != receipt.AuditReopenGeneration) {
-					restoreErr := restoreQueuedCompletion(
-						queuedTask{Root: host, Item: current},
+					restoreErr := RestoreQueuedCompletion(
+						QueuedTask{Root: host, Item: current},
 						hasAuditAuthority,
 					)
 					clearErr := lock.clearCompleted()
@@ -801,7 +818,7 @@ func reconcileInterruptedCompletions(hosts []string) error {
 				}
 				continue
 			}
-			record, hasAuditAuthority, authorityErr := readAuditReopenRecord(host, current.ID)
+			record, hasAuditAuthority, authorityErr := ReadAuditReopenRecord(host, current.ID)
 			if authorityErr != nil {
 				restoreErrs = append(restoreErrs, errors.Join(
 					fmt.Errorf("inspect interrupted task %s audit authority: %w", current.ID, authorityErr),
@@ -809,8 +826,8 @@ func reconcileInterruptedCompletions(hosts []string) error {
 				))
 				continue
 			}
-			restoreErr := restoreQueuedCompletion(
-				queuedTask{Root: host, Item: current},
+			restoreErr := RestoreQueuedCompletion(
+				QueuedTask{Root: host, Item: current},
 				hasAuditAuthority && !record.UnblockPending,
 			)
 			clearErr := lock.clearCompleted()
@@ -855,26 +872,26 @@ func (l crashCompletionLock) release() error {
 	return errors.Join(errs...)
 }
 
-func lockCrashCompletion(root string, task taskItem) (crashCompletionLock, taskItem, bool, error) {
+func lockCrashCompletion(root string, task Item) (crashCompletionLock, Item, bool, error) {
 	return lockCompletionForAudit(root, task, false)
 }
 
 // lockInterruptedCompletion preserves compatibility with a pre-authority controller whose held
 // task-local lock is still authoritative. Completion-window audits use lockCrashCompletion instead:
 // their journal must not be retired merely because a non-authoritative local reader was transient.
-func lockInterruptedCompletion(root string, task taskItem) (crashCompletionLock, taskItem, bool, error) {
+func lockInterruptedCompletion(root string, task Item) (crashCompletionLock, Item, bool, error) {
 	return lockCompletionForAudit(root, task, true)
 }
 
-func lockCompletionForAudit(root string, task taskItem, allowLegacyLocalOwner bool) (crashCompletionLock, taskItem, bool, error) {
+func lockCompletionForAudit(root string, task Item, allowLegacyLocalOwner bool) (crashCompletionLock, Item, bool, error) {
 	authority, err := lockLeaseAuthorityForAudit(root, task.ID, true, "task "+task.ID+" authority", func() bool {
 		return leaseAuthorityMetadataExists(root, task.ID)
 	})
 	if errors.Is(err, errCompletionAuditLockOwned) {
-		return crashCompletionLock{}, taskItem{}, false, nil
+		return crashCompletionLock{}, Item{}, false, nil
 	}
 	if err != nil {
-		return crashCompletionLock{}, taskItem{}, false, err
+		return crashCompletionLock{}, Item{}, false, err
 	}
 	locks := crashCompletionLock{authority: authority, files: []*os.File{authority}}
 	local, err := openLeaseLock(task.Dir, false)
@@ -883,7 +900,7 @@ func lockCompletionForAudit(root string, task taskItem, allowLegacyLocalOwner bo
 		if allowLegacyLocalOwner && (errors.Is(lockErr, syscall.EWOULDBLOCK) || errors.Is(lockErr, syscall.EAGAIN)) {
 			_ = local.Close()
 			_ = locks.release()
-			return crashCompletionLock{}, taskItem{}, false, nil
+			return crashCompletionLock{}, Item{}, false, nil
 		}
 		if lockErr != nil {
 			lockErr = lockExclusiveForCompletionAudit(local, "task "+task.ID+" local lease", nil)
@@ -891,16 +908,16 @@ func lockCompletionForAudit(root string, task taskItem, allowLegacyLocalOwner bo
 		if lockErr != nil {
 			_ = local.Close()
 			_ = locks.release()
-			return crashCompletionLock{}, taskItem{}, false, lockErr
+			return crashCompletionLock{}, Item{}, false, lockErr
 		}
 		locks.files = append(locks.files, local)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		_ = locks.release()
-		return crashCompletionLock{}, taskItem{}, false, err
+		return crashCompletionLock{}, Item{}, false, err
 	}
-	current, ok := currentTask(root, task.ID)
-	if !ok || current.State != stateDone || current.Dir != task.Dir {
-		return crashCompletionLock{}, taskItem{}, false, locks.release()
+	current, ok := CurrentTask(root, task.ID)
+	if !ok || current.State != StateDone || current.Dir != task.Dir {
+		return crashCompletionLock{}, Item{}, false, locks.release()
 	}
 	return locks, current, true, nil
 }
@@ -938,7 +955,7 @@ func unlockLeaseFile(file *os.File) error {
 	return errors.Join(syscall.Flock(int(file.Fd()), syscall.LOCK_UN), file.Close())
 }
 
-func crashCompletionCandidate(root string, task taskItem) bool {
+func crashCompletionCandidate(root string, task Item) bool {
 	if leaseAuthorityMetadataExists(root, task.ID) {
 		return true
 	}
@@ -959,10 +976,10 @@ func crashCompletionCandidate(root string, task taskItem) bool {
 
 // blockedTaskIDs returns the ids currently parked in 50_blocked/ across the hosts — what needs a
 // human decision, for the closing digest. Sorted.
-func blockedTaskIDs(hosts []string) []string {
+func BlockedTaskIDs(hosts []string) []string {
 	var ids []string
-	for id, st := range queueSnapshot(hosts) {
-		if st == stateBlocked {
+	for id, st := range QueueSnapshot(hosts) {
+		if st == StateBlocked {
 			ids = append(ids, id)
 		}
 	}
@@ -976,7 +993,7 @@ func blockedTaskIDs(hosts []string) []string {
 // handoff un-completing finished work — and nothing else surfaces it: the loop just re-picks the
 // task, and the resume recipe is only safe while the commit is still HEAD. Reporting it at startup
 // turns a silent trap into something a human can confirm or close. Sorted; read-only.
-func alreadyCommittedInProgress(repo string, hosts []string) []struct {
+func AlreadyCommittedInProgress(repo string, hosts []string) []struct {
 	ID, Commit string
 	Depth      int
 } {
@@ -984,11 +1001,11 @@ func alreadyCommittedInProgress(repo string, hosts []string) []struct {
 		ID, Commit string
 		Depth      int
 	}
-	for id, st := range queueSnapshot(hosts) {
-		if st != stateInProgress {
+	for id, st := range QueueSnapshot(hosts) {
+		if st != StateInProgress {
 			continue
 		}
-		commits := commitsForTask(repo, "", id)
+		commits := CommitsForTask(repo, "", id)
 		if len(commits) == 0 {
 			continue
 		}
@@ -1012,7 +1029,7 @@ func alreadyCommittedInProgress(repo string, hosts []string) []struct {
 
 type semanticHistoryCommit struct {
 	sha      string
-	semantic auditReopenCommit
+	semantic AuditReopenCommit
 }
 
 // semanticHistoryCommits identifies every commit by its exact introduced content and author
@@ -1033,16 +1050,16 @@ func semanticHistoryCommitsLimit(repo, rangeExpr string, limit int) ([]semanticH
 }
 
 func semanticHistoryCommitsExact(repo string, rawHistory []rawAuditCommit) ([]semanticHistoryCommit, error) {
-	commits := make([]taskTrailerCommit, len(rawHistory))
+	commits := make([]TaskTrailerCommit, len(rawHistory))
 	for i := range rawHistory {
 		raw := rawHistory[i]
 		if raw.sha == "" || raw.authorDate == "" {
 			return nil, errors.New("exact raw audit history metadata is incomplete")
 		}
-		commits[i] = taskTrailerCommit{
+		commits[i] = TaskTrailerCommit{
 			fullSHA: raw.sha, authorName: raw.authorName, authorEmail: raw.authorEmail,
 			authorDate: raw.authorDate, commitMessage: raw.commitMessage,
-			values: slices.Clone(raw.taskValues), malformed: raw.taskBindingInvalid,
+			Values: slices.Clone(raw.taskValues), Malformed: raw.taskBindingInvalid,
 		}
 	}
 	changeTrees, err := semanticRawHistoryChangeTrees(repo, rawHistory)
@@ -1054,7 +1071,7 @@ func semanticHistoryCommitsExact(repo string, rawHistory []rawAuditCommit) ([]se
 
 func semanticHistoryCommitsFromRecords(
 	repo string,
-	commits []taskTrailerCommit,
+	commits []TaskTrailerCommit,
 	limit int,
 ) ([]semanticHistoryCommit, error) {
 	changeTrees, err := semanticHistoryChangeTrees(repo, commits)
@@ -1065,7 +1082,7 @@ func semanticHistoryCommitsFromRecords(
 }
 
 func semanticHistoryCommitsFromChangeTrees(
-	commits []taskTrailerCommit,
+	commits []TaskTrailerCommit,
 	changeTrees []string,
 	limit int,
 	rejectTraversalMerges bool,
@@ -1079,7 +1096,7 @@ func semanticHistoryCommitsFromChangeTrees(
 	taskIDs := make([]string, len(commits))
 	seen := map[string]bool{}
 	for i, commit := range commits {
-		if commit.malformed || len(commit.values) > 1 || (len(commit.values) == 1 && commit.values[0] == "") {
+		if commit.Malformed || len(commit.Values) > 1 || (len(commit.Values) == 1 && commit.Values[0] == "") {
 			return nil, errors.New("history contains an invalid task binding")
 		}
 		if !validAuditReopenHead(commit.fullSHA) {
@@ -1088,8 +1105,8 @@ func semanticHistoryCommitsFromChangeTrees(
 		if rejectTraversalMerges && len(strings.Fields(commit.parents)) > 1 {
 			return nil, fmt.Errorf("audit history merge commit %s cannot be replayed safely", commit.fullSHA)
 		}
-		if len(commit.values) == 1 {
-			taskIDs[i] = commit.values[0]
+		if len(commit.Values) == 1 {
+			taskIDs[i] = commit.Values[0]
 			if seen[taskIDs[i]] {
 				return nil, fmt.Errorf("history contains duplicate task binding %s", taskIDs[i])
 			}
@@ -1100,7 +1117,7 @@ func semanticHistoryCommitsFromChangeTrees(
 	for i, commit := range commits {
 		result[i] = semanticHistoryCommit{
 			sha: commit.fullSHA,
-			semantic: auditReopenCommit{
+			semantic: AuditReopenCommit{
 				TaskID:        taskIDs[i],
 				ChangeTree:    changeTrees[i],
 				AuthorName:    commit.authorName,
@@ -1373,7 +1390,7 @@ func auditEmptyTree(repo string) (string, error) {
 // each --stdin result with its full commit id; raw entries then carry exactly one NUL-delimited
 // path because rename detection is disabled. Parsing that structure avoids spawning one Git
 // process per commit while hashing the exact same bytes as semanticCommit.
-func semanticHistoryChangeTrees(repo string, commits []taskTrailerCommit) ([]string, error) {
+func semanticHistoryChangeTrees(repo string, commits []TaskTrailerCommit) ([]string, error) {
 	if len(commits) == 0 {
 		return []string{}, nil
 	}
@@ -1440,42 +1457,42 @@ func parseSemanticHistoryChangeTrees(raw []byte, expected []string) ([]string, e
 	return trees, nil
 }
 
-func semanticCommit(repo, sha, taskID string) (auditReopenCommit, error) {
+func semanticCommit(repo, sha, taskID string) (AuditReopenCommit, error) {
 	semantic, _, err := semanticCommitAndParent(repo, sha, taskID)
 	return semantic, err
 }
 
-func semanticCommitAndParent(repo, sha, taskID string) (auditReopenCommit, string, error) {
+func semanticCommitAndParent(repo, sha, taskID string) (AuditReopenCommit, string, error) {
 	rawParent, err := auditCommitParent(repo, sha)
 	if err != nil {
-		return auditReopenCommit{}, "", err
+		return AuditReopenCommit{}, "", err
 	}
 	parents := strings.Fields(gitOut(repo, "rev-list", "--parents", "-n", "1", sha))
 	if len(parents) == 0 {
-		return auditReopenCommit{}, "", fmt.Errorf("resolve audit history commit %s", sha)
+		return AuditReopenCommit{}, "", fmt.Errorf("resolve audit history commit %s", sha)
 	}
 	if (rawParent == "" && len(parents) != 1) ||
 		(rawParent != "" && (len(parents) != 2 || parents[1] != rawParent)) {
-		return auditReopenCommit{}, "", fmt.Errorf("audit history commit %s traversal parent differs from its raw object", sha)
+		return AuditReopenCommit{}, "", fmt.Errorf("audit history commit %s traversal parent differs from its raw object", sha)
 	}
 	diffCmd := exec.Command("git", gitArgs(repo,
 		[]string{"diff-tree", "--root", "--no-commit-id", "--raw", "-z", "-r", "--no-renames", sha})...)
 	diff, err := auditCommandOutput(diffCmd, auditDiffOutputLimit)
 	if err != nil {
-		return auditReopenCommit{}, "", fmt.Errorf("read audit history commit %s changes: %w", sha, err)
+		return AuditReopenCommit{}, "", fmt.Errorf("read audit history commit %s changes: %w", sha, err)
 	}
 	sum := sha256.Sum256(diff)
 	metaCmd := exec.Command("git", gitArgs(repo,
 		[]string{"show", "-s", "--format=format:%an%x00%ae%x00%aI%x00%B", sha})...)
 	meta, err := auditCommandOutput(metaCmd, auditMetadataOutputLimit)
 	if err != nil {
-		return auditReopenCommit{}, "", fmt.Errorf("read audit history commit %s metadata: %w", sha, err)
+		return AuditReopenCommit{}, "", fmt.Errorf("read audit history commit %s metadata: %w", sha, err)
 	}
 	fields := strings.SplitN(string(meta), "\x00", 4)
 	if len(fields) != 4 {
-		return auditReopenCommit{}, "", fmt.Errorf("parse audit history commit %s metadata", sha)
+		return AuditReopenCommit{}, "", fmt.Errorf("parse audit history commit %s metadata", sha)
 	}
-	return auditReopenCommit{
+	return AuditReopenCommit{
 		TaskID:        taskID,
 		ChangeTree:    fmt.Sprintf("%x", sum),
 		AuthorName:    fields[0],
@@ -1617,14 +1634,14 @@ func auditTaskTrailersFromMessage(raw []byte) ([]string, bool) {
 		key, value, ok := strings.Cut(line, ":")
 		if !ok {
 			invalidBlock = true
-			if strings.EqualFold(strings.TrimSpace(line), coopTaskTrailer) {
+			if strings.EqualFold(strings.TrimSpace(line), CoopTaskTrailer) {
 				invalid = true
 			}
 			currentCoop = false
 			continue
 		}
 		sawTrailer = true
-		currentCoop = strings.EqualFold(strings.TrimSpace(key), coopTaskTrailer)
+		currentCoop = strings.EqualFold(strings.TrimSpace(key), CoopTaskTrailer)
 		if !currentCoop {
 			continue
 		}
@@ -2032,7 +2049,7 @@ func addAuditLinearHistoryBytes(total *int64, raw []byte) error {
 	return nil
 }
 
-func auditReviewedSubject(repo, id string, record auditReopenRecord) (rawAuditCommit, error) {
+func auditReviewedSubject(repo, id string, record AuditReopenRecord) (rawAuditCommit, error) {
 	rawHistory, err := rawAuditHistoryCount(repo, record.BaselineHead, len(record.History)+1)
 	if err != nil {
 		return rawAuditCommit{}, err
@@ -2052,7 +2069,7 @@ func auditReviewedSubject(repo, id string, record auditReopenRecord) (rawAuditCo
 	return rawHistory[0], nil
 }
 
-func auditReviewedSubjectParent(repo, id string, record auditReopenRecord) (string, error) {
+func auditReviewedSubjectParent(repo, id string, record AuditReopenRecord) (string, error) {
 	subject, err := auditReviewedSubject(repo, id, record)
 	if err != nil {
 		return "", err
@@ -2094,19 +2111,19 @@ func rawAuditRewriteHistory(repo, head, reviewedParent string, limit int) ([]raw
 	)
 }
 
-func captureAuditReopen(repo, id string) (auditReopenRecord, error) {
+func CaptureAuditReopen(repo, id string) (AuditReopenRecord, error) {
 	head := gitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
 	if !validAuditReopenHead(head) {
-		return auditReopenRecord{}, errors.New("resolve audit reopen baseline HEAD")
+		return AuditReopenRecord{}, errors.New("resolve audit reopen baseline HEAD")
 	}
 	bindings, ok := rawTaskBindings(repo, head)
 	if !ok {
-		return auditReopenRecord{}, errors.New("read raw reachable task bindings for audit reopen")
+		return AuditReopenRecord{}, errors.New("read raw reachable task bindings for audit reopen")
 	}
 	subjects := bindings[id]
 	if len(subjects) != 1 {
-		return auditReopenRecord{}, fmt.Errorf(
-			"review subject %s needs exactly one reachable %s binding before reopen", id, coopTaskTrailer,
+		return AuditReopenRecord{}, fmt.Errorf(
+			"review subject %s needs exactly one reachable %s binding before reopen", id, CoopTaskTrailer,
 		)
 	}
 	rawHistory, err := rawAuditHistoryUntil(
@@ -2116,23 +2133,23 @@ func captureAuditReopen(repo, id string) (auditReopenRecord, error) {
 		func(commit rawAuditCommit) bool { return commit.sha == subjects[0] },
 	)
 	if err != nil {
-		return auditReopenRecord{}, err
+		return AuditReopenRecord{}, err
 	}
 	commits, err := semanticHistoryCommitsExact(repo, rawHistory)
 	if err != nil {
-		return auditReopenRecord{}, err
+		return AuditReopenRecord{}, err
 	}
 	if len(commits) == 0 || commits[0].semantic.TaskID != id {
-		return auditReopenRecord{}, fmt.Errorf("resolve raw review subject %s", id)
+		return AuditReopenRecord{}, fmt.Errorf("resolve raw review subject %s", id)
 	}
 	seen := map[string]bool{id: true}
-	history := make([]auditReopenCommit, 0, len(commits)-1)
+	history := make([]AuditReopenCommit, 0, len(commits)-1)
 	for _, commit := range commits[1:] {
 		taskID := commit.semantic.TaskID
 		if taskID != "" && (seen[taskID] || len(bindings[taskID]) != 1) {
-			return auditReopenRecord{}, fmt.Errorf(
+			return AuditReopenRecord{}, fmt.Errorf(
 				"descendant task %s needs exactly one reachable %s binding before review reopens %s",
-				taskID, coopTaskTrailer, id,
+				taskID, CoopTaskTrailer, id,
 			)
 		}
 		if taskID != "" {
@@ -2142,15 +2159,15 @@ func captureAuditReopen(repo, id string) (auditReopenRecord, error) {
 	}
 	generation, err := newAuditReopenGeneration()
 	if err != nil {
-		return auditReopenRecord{}, err
+		return AuditReopenRecord{}, err
 	}
-	return auditReopenRecord{
+	return AuditReopenRecord{
 		Version: auditReopenVersion, Generation: generation, TaskID: id, BaselineHead: head,
 		Subject: commits[0].semantic, History: history,
 	}, nil
 }
 
-func auditReopenCurrentHistory(repo, head, id string, record auditReopenRecord) ([]semanticHistoryCommit, error) {
+func auditReopenCurrentHistory(repo, head, id string, record AuditReopenRecord) ([]semanticHistoryCommit, error) {
 	if err := validateAuditReopenRecord(record, id); err != nil {
 		return nil, fmt.Errorf("validate persisted audit authority: %w", err)
 	}
@@ -2208,14 +2225,14 @@ func auditReopenCurrentHistory(repo, head, id string, record auditReopenRecord) 
 	return complete[1:], nil
 }
 
-func auditReopenCurrentValid(repo, head, id string, record auditReopenRecord) bool {
+func AuditReopenCurrentValid(repo, head, id string, record AuditReopenRecord) bool {
 	_, err := auditReopenCurrentHistory(repo, head, id, record)
 	return err == nil
 }
 
-func auditReopenCompletionValid(repo, base, head, id string, record auditReopenRecord) bool {
+func auditReopenCompletionValid(repo, base, head, id string, record AuditReopenRecord) bool {
 	if base == head {
-		return auditReopenCurrentValid(repo, head, id, record)
+		return AuditReopenCurrentValid(repo, head, id, record)
 	}
 	// A rewrite generation authorizes a transition only from the exact semantic state the host
 	// reviewed. Without this baseline check, a raw-moved stale record could authorize a second
@@ -2254,28 +2271,28 @@ func auditReopenCompletionValid(repo, base, head, id string, record auditReopenR
 	return true
 }
 
-func rebasedAuditReopenRecord(repo, base, head, id string, record auditReopenRecord) (auditReopenRecord, error) {
+func rebasedAuditReopenRecord(repo, base, head, id string, record AuditReopenRecord) (AuditReopenRecord, error) {
 	if !auditReopenCompletionValid(repo, base, head, id, record) {
-		return auditReopenRecord{}, fmt.Errorf("audit rewrite for task %s changed its reviewed subject or descendants outside the host authority", id)
+		return AuditReopenRecord{}, fmt.Errorf("audit rewrite for task %s changed its reviewed subject or descendants outside the host authority", id)
 	}
 	baseHistory, err := auditReopenCurrentHistory(repo, base, id, record)
 	if err != nil {
-		return auditReopenRecord{}, err
+		return AuditReopenRecord{}, err
 	}
 	replacement, _, err := rawAuditHistory(repo, head, len(baseHistory)+1)
 	if err != nil {
-		return auditReopenRecord{}, err
+		return AuditReopenRecord{}, err
 	}
 	if len(replacement) != len(baseHistory)+1 {
-		return auditReopenRecord{}, fmt.Errorf("resolve complete audit rewrite for task %s", id)
+		return AuditReopenRecord{}, fmt.Errorf("resolve complete audit rewrite for task %s", id)
 	}
-	history := make([]auditReopenCommit, len(replacement)-1)
+	history := make([]AuditReopenCommit, len(replacement)-1)
 	for i := range history {
 		history[i] = replacement[i+1].semantic
 	}
 	baselineHead := gitOut(repo, "rev-parse", "--verify", head+"^{commit}")
 	if !validAuditReopenHead(baselineHead) {
-		return auditReopenRecord{}, fmt.Errorf("resolve rebased audit HEAD for task %s", id)
+		return AuditReopenRecord{}, fmt.Errorf("resolve rebased audit HEAD for task %s", id)
 	}
 	rebased := record
 	rebased.Version = auditReopenVersion
@@ -2287,7 +2304,7 @@ func rebasedAuditReopenRecord(repo, base, head, id string, record auditReopenRec
 	return rebased, nil
 }
 
-func auditReopenLegacyBaselineMatches(repo, head, id string, record auditReopenRecord) bool {
+func auditReopenLegacyBaselineMatches(repo, head, id string, record AuditReopenRecord) bool {
 	if validateAuditReopenRecord(record, id) != nil || !auditReopenRecordLegacy(record) {
 		return false
 	}
@@ -2299,7 +2316,7 @@ func auditReopenLegacyBaselineMatches(repo, head, id string, record auditReopenR
 	if err != nil || len(history) == 0 || history[0].semantic != record.Subject {
 		return false
 	}
-	var descendants []auditReopenCommit
+	var descendants []AuditReopenCommit
 	for _, commit := range history[1:] {
 		if commit.semantic.TaskID != "" {
 			descendants = append(descendants, commit.semantic)
@@ -2343,11 +2360,11 @@ func (*auditCompletionStateError) auditCompletionRecovery() {}
 
 func adoptLegacyAuditReopen(
 	repo, head, id string,
-	record auditReopenRecord,
+	record AuditReopenRecord,
 	adoptionHead string,
-) (auditReopenRecord, error) {
+) (AuditReopenRecord, error) {
 	if !validAuditReopenHead(adoptionHead) || adoptionHead != head {
-		return auditReopenRecord{}, fmt.Errorf(
+		return AuditReopenRecord{}, fmt.Errorf(
 			"legacy audit adoption for task %s was authorized for %s, but current HEAD is %s; "+
 				"preserve wanted work, restore %s exactly, verify `git rev-parse HEAD` prints %s, "+
 				"then retry with the same --adopt-audit-head value",
@@ -2355,36 +2372,36 @@ func adoptLegacyAuditReopen(
 		)
 	}
 	if !auditReopenLegacyBaselineMatches(repo, head, id, record) {
-		return auditReopenRecord{}, fmt.Errorf(
+		return AuditReopenRecord{}, fmt.Errorf(
 			"current HEAD %s does not match task %s's legacy subject and task-bound descendant projection",
 			head, id,
 		)
 	}
 	bindings, ok := rawTaskBindings(repo, head)
 	if !ok || len(bindings[id]) != 1 {
-		return auditReopenRecord{}, fmt.Errorf("read reachable task bindings before legacy adoption of %s", id)
+		return AuditReopenRecord{}, fmt.Errorf("read reachable task bindings before legacy adoption of %s", id)
 	}
 	complete, err := rawAuditHistoryFromSubject(repo, head, bindings[id][0])
 	if err != nil || len(complete) == 0 {
-		return auditReopenRecord{}, fmt.Errorf("read complete legacy audit history for %s", id)
+		return AuditReopenRecord{}, fmt.Errorf("read complete legacy audit history for %s", id)
 	}
-	history := make([]auditReopenCommit, len(complete)-1)
+	history := make([]AuditReopenCommit, len(complete)-1)
 	for i := range history {
 		history[i] = complete[i+1].semantic
 		if history[i].TaskID != "" && len(bindings[history[i].TaskID]) != 1 {
-			return auditReopenRecord{}, fmt.Errorf(
+			return AuditReopenRecord{}, fmt.Errorf(
 				"descendant task %s needs exactly one reachable %s binding before legacy adoption of %s",
-				history[i].TaskID, coopTaskTrailer, id,
+				history[i].TaskID, CoopTaskTrailer, id,
 			)
 		}
 	}
-	replacement := auditReopenRecord{
+	replacement := AuditReopenRecord{
 		Version: auditReopenVersion, Generation: record.Generation, TaskID: id,
 		BaselineHead: head, Subject: record.Subject, History: history,
 	}
 	if validateAuditReopenRecord(replacement, id) != nil ||
-		!auditReopenCurrentValid(repo, head, id, replacement) {
-		return auditReopenRecord{}, fmt.Errorf("capture complete legacy audit history for task %s", id)
+		!AuditReopenCurrentValid(repo, head, id, replacement) {
+		return AuditReopenRecord{}, fmt.Errorf("capture complete legacy audit history for task %s", id)
 	}
 	return replacement, nil
 }
@@ -2392,19 +2409,19 @@ func adoptLegacyAuditReopen(
 // upgradeBlockedAuditReopen recovers a rewrite from the exact baseline recorded by the host.
 // The complete replay must be the first sequence after the rewritten subject; unrelated work that
 // landed later may remain as a suffix, but no reflog guess or task-only projection can authorize it.
-func upgradeBlockedAuditReopen(repo, head, id string, record auditReopenRecord) (auditReopenRecord, error) {
+func upgradeBlockedAuditReopen(repo, head, id string, record AuditReopenRecord) (AuditReopenRecord, error) {
 	if validateAuditReopenRecord(record, id) != nil || !auditReopenRecordActive(record) {
-		return auditReopenRecord{}, fmt.Errorf("invalid audit reopen authority for task %s", id)
+		return AuditReopenRecord{}, fmt.Errorf("invalid audit reopen authority for task %s", id)
 	}
-	if !auditReopenCurrentValid(repo, record.BaselineHead, id, record) {
-		return auditReopenRecord{}, fmt.Errorf(
+	if !AuditReopenCurrentValid(repo, record.BaselineHead, id, record) {
+		return AuditReopenRecord{}, fmt.Errorf(
 			"blocked audit task %s recorded baseline %s is unavailable or no longer matches its host authority",
 			id, record.BaselineHead,
 		)
 	}
 	reviewedParent, err := auditReviewedSubjectParent(repo, id, record)
 	if err != nil {
-		return auditReopenRecord{}, fmt.Errorf("resolve blocked audit subject parent for task %s: %w", id, err)
+		return AuditReopenRecord{}, fmt.Errorf("resolve blocked audit subject parent for task %s: %w", id, err)
 	}
 	current, err := rawAuditRewriteHistory(
 		repo,
@@ -2413,19 +2430,19 @@ func upgradeBlockedAuditReopen(repo, head, id string, record auditReopenRecord) 
 		auditReopenHistoryLimit+1,
 	)
 	if err != nil {
-		return auditReopenRecord{}, fmt.Errorf("read blocked audit rewrite for task %s: %w", id, err)
+		return AuditReopenRecord{}, fmt.Errorf("read blocked audit rewrite for task %s: %w", id, err)
 	}
 	rewriteLen := len(record.History) + 1
 	if len(current) < rewriteLen {
-		return auditReopenRecord{}, fmt.Errorf("blocked audit task %s has no complete replay after its recorded baseline", id)
+		return AuditReopenRecord{}, fmt.Errorf("blocked audit task %s has no complete replay after its recorded baseline", id)
 	}
 	rewriteHead := current[rewriteLen-1].sha
 	if rewriteHead == "" {
-		return auditReopenRecord{}, fmt.Errorf("resolve blocked audit rewrite terminal for task %s", id)
+		return AuditReopenRecord{}, fmt.Errorf("resolve blocked audit rewrite terminal for task %s", id)
 	}
 	replacement, err := rebasedAuditReopenRecord(repo, record.BaselineHead, rewriteHead, id, record)
-	if err != nil || !auditReopenCurrentValid(repo, head, id, replacement) {
-		return auditReopenRecord{}, fmt.Errorf("blocked audit task %s changed its subject or complete descendant history", id)
+	if err != nil || !AuditReopenCurrentValid(repo, head, id, replacement) {
+		return AuditReopenRecord{}, fmt.Errorf("blocked audit task %s changed its subject or complete descendant history", id)
 	}
 	return replacement, nil
 }
@@ -2433,7 +2450,7 @@ func upgradeBlockedAuditReopen(repo, head, id string, record auditReopenRecord) 
 type blockedAuditUnblock struct {
 	authority                      *os.File
 	root                           string
-	previous, pending, replacement *auditReopenRecord
+	previous, pending, replacement *AuditReopenRecord
 	pendingPersisted               bool
 }
 
@@ -2482,12 +2499,12 @@ func (u *blockedAuditUnblock) finish(operationErr error) error {
 // prepareBlockedAuditReopenUnblock validates and, for a pre-upgrade blocked task, computes a rebase
 // of the same host generation. The returned transaction holds the authority flock; before moving,
 // it persists a non-authorizing pending form that makes a crash safe and recoverable.
-func prepareBlockedAuditReopenUnblock(root string, task taskItem) (*blockedAuditUnblock, error) {
+func prepareBlockedAuditReopenUnblock(root string, task Item) (*blockedAuditUnblock, error) {
 	return prepareBlockedAuditReopenUnblockWithAdoption(root, task, "")
 }
 
-func prepareBlockedAuditReopenUnblockWithAdoption(root string, task taskItem, adoptionHead string) (*blockedAuditUnblock, error) {
-	observed, ok, err := readAuditReopenRecord(root, task.ID)
+func prepareBlockedAuditReopenUnblockWithAdoption(root string, task Item, adoptionHead string) (*blockedAuditUnblock, error) {
+	observed, ok, err := ReadAuditReopenRecord(root, task.ID)
 	if err != nil {
 		return nil, fmt.Errorf("read blocked audit reopen authority for task %s: %w", task.ID, err)
 	}
@@ -2500,14 +2517,14 @@ func prepareBlockedAuditReopenUnblockWithAdoption(root string, task taskItem, ad
 	return lockBlockedAuditReopenUnblockWithAdoption(root, task, observed, adoptionHead)
 }
 
-func lockBlockedAuditReopenUnblock(root string, task taskItem, observed auditReopenRecord) (*blockedAuditUnblock, error) {
+func lockBlockedAuditReopenUnblock(root string, task Item, observed AuditReopenRecord) (*blockedAuditUnblock, error) {
 	return lockBlockedAuditReopenUnblockWithAdoption(root, task, observed, "")
 }
 
 func lockBlockedAuditReopenUnblockWithAdoption(
 	root string,
-	task taskItem,
-	observed auditReopenRecord,
+	task Item,
+	observed AuditReopenRecord,
 	adoptionHead string,
 ) (*blockedAuditUnblock, error) {
 	authority, err := lockLeaseAuthority(root, task.ID, false, syscall.LOCK_EX|syscall.LOCK_NB)
@@ -2518,15 +2535,15 @@ func lockBlockedAuditReopenUnblockWithAdoption(
 	fail := func(err error) (*blockedAuditUnblock, error) {
 		return nil, upgrade.finish(err)
 	}
-	record, ok, err := readAuditReopenRecord(root, task.ID)
+	record, ok, err := ReadAuditReopenRecord(root, task.ID)
 	if err != nil {
 		return fail(fmt.Errorf("re-read blocked audit reopen authority for task %s: %w", task.ID, err))
 	}
-	if !ok || !auditReopenRecordsEqual(record, observed) {
+	if !ok || !AuditReopenRecordsEqual(record, observed) {
 		return fail(fmt.Errorf("audit reopen authority changed while unblocking task %s", task.ID))
 	}
-	current, ok := currentTask(root, task.ID)
-	if !ok || current.State != stateBlocked || current.Dir != task.Dir {
+	current, ok := CurrentTask(root, task.ID)
+	if !ok || current.State != StateBlocked || current.Dir != task.Dir {
 		return fail(fmt.Errorf("task %s changed state while its blocked audit authority was locked", task.ID))
 	}
 	repo := gitOut(root, "rev-parse", "--show-toplevel")
@@ -2557,7 +2574,7 @@ func lockBlockedAuditReopenUnblockWithAdoption(
 		replacement := record
 		replacement.Version = auditReopenVersion
 		replacement.UnblockPending = false
-		if !auditReopenCurrentValid(repo, head, task.ID, replacement) {
+		if !AuditReopenCurrentValid(repo, head, task.ID, replacement) {
 			return fail(fmt.Errorf("pending audit unblock for task %s no longer matches repository history", task.ID))
 		}
 		upgrade.previous = &record
@@ -2582,7 +2599,7 @@ func lockBlockedAuditReopenUnblockWithAdoption(
 
 // finishPendingAuditUnblock is the explicit host recovery for a crash after the authorized folder
 // move. Pending authority never self-activates from queue state or lease acquisition.
-func finishPendingAuditUnblock(root string, task taskItem, observed auditReopenRecord) (bool, error) {
+func finishPendingAuditUnblock(root string, task Item, observed AuditReopenRecord) (bool, error) {
 	authority, err := lockLeaseAuthority(root, task.ID, false, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
 		return false, fmt.Errorf("lock pending audit unblock authority for task %s: %w", task.ID, err)
@@ -2590,15 +2607,15 @@ func finishPendingAuditUnblock(root string, task taskItem, observed auditReopenR
 	fail := func(err error) (bool, error) {
 		return false, errors.Join(err, unlockLeaseFile(authority))
 	}
-	record, ok, err := readAuditReopenRecord(root, task.ID)
+	record, ok, err := ReadAuditReopenRecord(root, task.ID)
 	if err != nil {
 		return fail(fmt.Errorf("re-read pending audit unblock authority for task %s: %w", task.ID, err))
 	}
-	if !ok || !record.UnblockPending || !auditReopenRecordsEqual(record, observed) {
+	if !ok || !record.UnblockPending || !AuditReopenRecordsEqual(record, observed) {
 		return fail(fmt.Errorf("pending audit unblock authority changed for task %s", task.ID))
 	}
-	current, ok := currentTask(root, task.ID)
-	if !ok || current.State != stateTodo || current.Dir != task.Dir {
+	current, ok := CurrentTask(root, task.ID)
+	if !ok || current.State != StateTodo || current.Dir != task.Dir {
 		return fail(fmt.Errorf("task %s is no longer the todo task from its pending audit unblock", task.ID))
 	}
 	repo := gitOut(root, "rev-parse", "--show-toplevel")
@@ -2606,7 +2623,7 @@ func finishPendingAuditUnblock(root string, task taskItem, observed auditReopenR
 	replacement := record
 	replacement.Version = auditReopenVersion
 	replacement.UnblockPending = false
-	if repo == "" || head == "" || !auditReopenCurrentValid(repo, head, task.ID, replacement) {
+	if repo == "" || head == "" || !AuditReopenCurrentValid(repo, head, task.ID, replacement) {
 		return fail(fmt.Errorf("pending audit unblock for task %s no longer matches repository history", task.ID))
 	}
 	if err := replaceAuditReopenRecordIfMatches(root, record, replacement); err != nil {
@@ -2622,22 +2639,22 @@ func finishPendingAuditUnblock(root string, task taskItem, observed auditReopenR
 // generation when the worker parks the task for external acceptance. The same semantic replay
 // validation as completion prevents the provider from changing descendants, and the still-held
 // authority lock makes replacement of the host record fail closed.
-func (l *taskLease) preserveBlockedAuditReopen(repo, base, head string) error {
-	if l.reopen == nil || base == head {
+func (l *TaskLease) PreserveBlockedAuditReopen(repo, base, head string) error {
+	if l.Reopen == nil || base == head {
 		return nil
 	}
-	current, ok := currentTask(l.root, l.id)
-	if !ok || current.State != stateBlocked {
+	current, ok := CurrentTask(l.root, l.id)
+	if !ok || current.State != StateBlocked {
 		return nil
 	}
-	replacement, err := rebasedAuditReopenRecord(repo, base, head, l.id, *l.reopen)
+	replacement, err := rebasedAuditReopenRecord(repo, base, head, l.id, *l.Reopen)
 	if err != nil {
 		return err
 	}
-	if err := replaceAuditReopenRecordIfMatches(l.root, *l.reopen, replacement); err != nil {
+	if err := replaceAuditReopenRecordIfMatches(l.root, *l.Reopen, replacement); err != nil {
 		return err
 	}
-	l.reopen = &replacement
+	l.Reopen = &replacement
 	return nil
 }
 
@@ -2647,18 +2664,18 @@ func (l *taskLease) preserveBlockedAuditReopen(repo, base, head string) error {
 // authority rebases onto the new head without consuming its single-use generation. Anything
 // else errors so the caller can park the task fail-closed instead of retrying on a tree the
 // audit never authorized.
-func (l *taskLease) rebaseTimedOutAuditReopen(repo, base, head string) error {
-	if l.reopen == nil || base == head {
+func (l *TaskLease) RebaseTimedOutAuditReopen(repo, base, head string) error {
+	if l.Reopen == nil || base == head {
 		return nil
 	}
-	replacement, err := rebasedAuditReopenRecord(repo, base, head, l.id, *l.reopen)
+	replacement, err := rebasedAuditReopenRecord(repo, base, head, l.id, *l.Reopen)
 	if err != nil {
 		return err
 	}
-	if err := replaceAuditReopenRecordIfMatches(l.root, *l.reopen, replacement); err != nil {
+	if err := replaceAuditReopenRecordIfMatches(l.root, *l.Reopen, replacement); err != nil {
 		return err
 	}
-	l.reopen = &replacement
+	l.Reopen = &replacement
 	return nil
 }
 
@@ -2669,7 +2686,7 @@ func (l *taskLease) rebaseTimedOutAuditReopen(repo, base, head string) error {
 // faithful reproduction, which trailer counting would otherwise reject as the very foreign-binding
 // shape reopened work necessarily has. touched is unused on that branch — replay validation subsumes
 // the foreign-binding question for it — so it always returns a nil tolerated set.
-func completionUnbindableTasks(repo, base, head string, finished []string, reopen *auditReopenRecord, touched map[string]bool) (missing, tolerated []string) {
+func CompletionUnbindableTasks(repo, base, head string, finished []string, reopen *AuditReopenRecord, touched map[string]bool) (missing, tolerated []string) {
 	if reopen == nil || len(finished) != 1 || finished[0] != reopen.TaskID {
 		return unbindableTasks(repo, base, head, finished, touched)
 	}
@@ -2681,7 +2698,7 @@ func completionUnbindableTasks(repo, base, head string, finished []string, reope
 }
 
 func ordinaryBindingMatchesRaw(repo, head, id string) bool {
-	ordinary := commitsForTask(repo, head, id)
+	ordinary := CommitsForTask(repo, head, id)
 	raw, ok := rawTaskBindings(repo, head)
 	if !ok || len(ordinary) != 1 || len(raw[id]) != 1 {
 		return false
@@ -2801,14 +2818,14 @@ func unbindableTasks(repo, base, head string, finished []string, touched map[str
 // — instead of mistaking it for that task's own completion. The mark is deliberately informational,
 // not mechanical: unbindableTasks' own reachable-binding count already refuses to let that task's
 // real next completion silently ride on a binding it did not itself just create.
-func reportToleratedForeignBindings(repo string, hosts []string, base, head, leasedID string, tolerated []string) {
+func ReportToleratedForeignBindings(repo string, hosts []string, base, head, leasedID string, tolerated []string) {
 	if len(tolerated) == 0 {
 		return
 	}
 	ui.Warn("task %s's commit range also carries Coop-Task trailer(s) for %s, which this iteration's authority never touched — tolerated, not rejected; see each task's log.md", leasedID, strings.Join(tolerated, ", "))
 	for _, id := range tolerated {
 		sha := ""
-		if commits := commitsForTask(repo, base+".."+head, id); len(commits) == 1 {
+		if commits := CommitsForTask(repo, base+".."+head, id); len(commits) == 1 {
 			sha = " (" + commits[0] + ")"
 		}
 		note := fmt.Sprintf(
@@ -2816,7 +2833,7 @@ func reportToleratedForeignBindings(repo string, hosts []string, base, head, lea
 			leasedID, sha, leasedID,
 		)
 		for _, host := range hosts {
-			if t, ok := currentTask(host, id); ok {
+			if t, ok := CurrentTask(host, id); ok {
 				appendTaskLog(t.Dir, note)
 				break
 			}
@@ -2824,22 +2841,22 @@ func reportToleratedForeignBindings(repo string, hosts []string, base, head, lea
 	}
 }
 
-func restoreQueuedCompletion(task queuedTask, audit bool) error {
+func RestoreQueuedCompletion(task QueuedTask, audit bool) error {
 	id := task.Item.ID
-	if task.Item.State == stateDone {
-		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+	if task.Item.State == StateDone {
+		if err := MoveTaskDir(task.Root, task.Item, StateInProgress); err != nil {
 			return fmt.Errorf("restore task %s: %w", id, err)
 		}
 	}
-	dir := filepath.Join(task.Root, stateInProgress, id)
-	note := fmt.Sprintf("completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range and exactly one reachable binding overall; %s; rewrite or squash duplicate bindings down to one, then re-run `coop loop`", coopTaskTrailer, taskBindingRecovery(id))
+	dir := filepath.Join(task.Root, StateInProgress, id)
+	note := fmt.Sprintf("completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range and exactly one reachable binding overall; %s; rewrite or squash duplicate bindings down to one, then re-run `coop loop`", CoopTaskTrailer, taskBindingRecovery(id))
 	normalize := normalizeRejectedTaskState
 	if audit {
 		note = fmt.Sprintf("completion rejected: %s; then re-run `coop loop`", auditBindingRecovery(id))
 		normalize = normalizeAuditRejectedTaskState
 	}
 	var errs []error
-	if err := appendTaskLogStrict(dir, note); err != nil {
+	if err := AppendTaskLogStrict(dir, note); err != nil {
 		errs = append(errs, fmt.Errorf("record rejection for task %s: %w", id, err))
 	}
 	if err := normalize(id, dir); err != nil {
@@ -2851,17 +2868,17 @@ func restoreQueuedCompletion(task queuedTask, audit bool) error {
 // restoreBackgroundHandoffCompletion rejects a completion produced before the provider observed
 // its background gate/consult result. The next fresh provider gets a precise resume note instead
 // of treating an incomplete asynchronous attempt as success.
-func restoreBackgroundHandoffCompletion(task queuedTask) error {
+func RestoreBackgroundHandoffCompletion(task QueuedTask) error {
 	id := task.Item.ID
-	if task.Item.State == stateDone {
-		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+	if task.Item.State == StateDone {
+		if err := MoveTaskDir(task.Root, task.Item, StateInProgress); err != nil {
 			return fmt.Errorf("restore background handoff task %s: %w", id, err)
 		}
 	}
-	dir := filepath.Join(task.Root, stateInProgress, id)
+	dir := filepath.Join(task.Root, StateInProgress, id)
 	return errors.Join(
-		appendTaskLogStrict(dir, "provider exited while an agent-owned background job remained live; host drained or terminated it, so this completion is restored for a fresh observed attempt"),
-		normalizeTaskState(id, dir, "in progress — background handoff", "inspect the background result and rerun any ambiguous gate in the foreground", "the provider ended before its background work settled", "do not mark complete until every started gate, consult, or delegate has finished"),
+		AppendTaskLogStrict(dir, "provider exited while an agent-owned background job remained live; host drained or terminated it, so this completion is restored for a fresh observed attempt"),
+		NormalizeTaskState(id, dir, "in progress — background handoff", "inspect the background result and rerun any ambiguous gate in the foreground", "the provider ended before its background work settled", "do not mark complete until every started gate, consult, or delegate has finished"),
 	)
 }
 
@@ -2869,47 +2886,47 @@ func restoreBackgroundHandoffCompletion(task queuedTask) error {
 // killed for proven silence. The provider may have moved the folder and then wedged before the
 // host could observe a trustworthy finish, so the completion is restored for a fresh observed
 // attempt with the standard recovery contract for any commit it already landed.
-func restoreProviderTimeoutCompletion(task queuedTask, audit bool) error {
+func RestoreProviderTimeoutCompletion(task QueuedTask, audit bool) error {
 	id := task.Item.ID
-	if task.Item.State == stateDone {
-		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+	if task.Item.State == StateDone {
+		if err := MoveTaskDir(task.Root, task.Item, StateInProgress); err != nil {
 			return fmt.Errorf("restore timed-out task %s: %w", id, err)
 		}
 	}
-	dir := filepath.Join(task.Root, stateInProgress, id)
+	dir := filepath.Join(task.Root, StateInProgress, id)
 	trap := "if the prior attempt already committed, follow the informed-resume recovery: verify the work, then amend with a unique Coop-Recovery trailer while preserving exactly one Coop-Task binding"
 	if audit {
 		trap = "the next completion stays under the host audit authority: zero new commits or a real tree change, never a Coop-Recovery receipt"
 	}
 	return errors.Join(
-		appendTaskLogStrict(dir, "the host watchdog killed this provider attempt after it stopped producing observable progress; its completion was restored for a fresh observed attempt"),
-		normalizeTaskState(id, dir, "in progress — provider timeout", "resume the task and complete it under a live provider attempt", "the provider went silent and was killed before its completion could be trusted", trap),
+		AppendTaskLogStrict(dir, "the host watchdog killed this provider attempt after it stopped producing observable progress; its completion was restored for a fresh observed attempt"),
+		NormalizeTaskState(id, dir, "in progress — provider timeout", "resume the task and complete it under a live provider attempt", "the provider went silent and was killed before its completion could be trusted", trap),
 	)
 }
 
-func restoreUnownedCompletion(task queuedTask) error {
+func restoreUnownedCompletion(task QueuedTask) error {
 	id := task.Item.ID
-	if task.Item.State == stateDone {
-		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+	if task.Item.State == StateDone {
+		if err := MoveTaskDir(task.Root, task.Item, StateInProgress); err != nil {
 			return fmt.Errorf("restore unowned task %s: %w", id, err)
 		}
 	}
-	dir := filepath.Join(task.Root, stateInProgress, id)
+	dir := filepath.Join(task.Root, StateInProgress, id)
 	note := "completion rejected: this provider iteration moved a task it did not lease; work exactly the assigned task, then re-run `coop loop`"
 	return errors.Join(
-		appendTaskLogStrict(dir, note),
-		normalizeTaskState(id, dir, "in progress — completion rejected", "work this task only when it is assigned", "completion was rejected as unowned", "another iteration moved this task without its lease"),
+		AppendTaskLogStrict(dir, note),
+		NormalizeTaskState(id, dir, "in progress — completion rejected", "work this task only when it is assigned", "completion was rejected as unowned", "another iteration moved this task without its lease"),
 	)
 }
 
-func restoreCompromisedCompletion(task queuedTask, audit bool) error {
+func RestoreCompromisedCompletion(task QueuedTask, audit bool) error {
 	id := task.Item.ID
-	if task.Item.State == stateDone {
-		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+	if task.Item.State == StateDone {
+		if err := MoveTaskDir(task.Root, task.Item, StateInProgress); err != nil {
 			return fmt.Errorf("restore assigned task %s: %w", id, err)
 		}
 	}
-	dir := filepath.Join(task.Root, stateInProgress, id)
+	dir := filepath.Join(task.Root, StateInProgress, id)
 	// The restored task's next completion is validated by its lease authority: a Coop-Recovery
 	// receipt closes an ordinary rejected range, but under audit authority that same receipt is the
 	// message-only rewrite audit validation rejects.
@@ -2919,8 +2936,8 @@ func restoreCompromisedCompletion(task queuedTask, audit bool) error {
 	}
 	note := "completion rejected: this iteration also moved an unleased task, so its assigned completion was restored for a clean reviewed attempt"
 	return errors.Join(
-		appendTaskLogStrict(dir, note),
-		normalizeTaskState(id, dir, "in progress — completion rejected", "resume the assigned task and complete it without touching another task", "the assigned work committed but its iteration violated task ownership", trap),
+		AppendTaskLogStrict(dir, note),
+		NormalizeTaskState(id, dir, "in progress — completion rejected", "resume the assigned task and complete it without touching another task", "the assigned work committed but its iteration violated task ownership", trap),
 	)
 }
 
@@ -2931,38 +2948,38 @@ func restoreCompromisedCompletion(task queuedTask, audit bool) error {
 // The tree the provider committed is untouched: only the folder move and its state notes are undone,
 // so the same commit is still there for the next iteration to resume, exactly as
 // .agent/kb/loop-range-rejects-outside-commits.md describes for a foreign in-range commit.
-func restoreRefAuthorityFailure(task queuedTask, reason string) error {
+func RestoreRefAuthorityFailure(task QueuedTask, reason string) error {
 	id := task.Item.ID
-	if task.Item.State == stateDone {
-		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+	if task.Item.State == StateDone {
+		if err := MoveTaskDir(task.Root, task.Item, StateInProgress); err != nil {
 			return fmt.Errorf("restore task %s: %w", id, err)
 		}
 	}
-	dir := filepath.Join(task.Root, stateInProgress, id)
+	dir := filepath.Join(task.Root, StateInProgress, id)
 	note := fmt.Sprintf("completion rejected: %s; the commit is still in history, so re-running `coop loop` resumes it", reason)
 	return errors.Join(
-		appendTaskLogStrict(dir, note),
-		normalizeTaskState(id, dir, "in progress — completion rejected", "re-run `coop loop`; it resumes this task", "completion was rejected: ref authority could not be confirmed", reason),
+		AppendTaskLogStrict(dir, note),
+		NormalizeTaskState(id, dir, "in progress — completion rejected", "re-run `coop loop`; it resumes this task", "completion was rejected: ref authority could not be confirmed", reason),
 	)
 }
 
-func restoreUnrecordedCompletion(task queuedTask) error {
+func RestoreUnrecordedCompletion(task QueuedTask) error {
 	id := task.Item.ID
-	if task.Item.State == stateDone {
-		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+	if task.Item.State == StateDone {
+		if err := MoveTaskDir(task.Root, task.Item, StateInProgress); err != nil {
 			return fmt.Errorf("restore unrecorded task %s: %w", id, err)
 		}
 	}
-	dir := filepath.Join(task.Root, stateInProgress, id)
+	dir := filepath.Join(task.Root, StateInProgress, id)
 	note := "completion rejected: host-only completion evidence could not be recorded before releasing the task lease"
 	return errors.Join(
-		appendTaskLogStrict(dir, note),
-		normalizeTaskState(id, dir, "in progress — finalization failed", "fix the host completion-receipt error, then re-run `coop loop`", "the implementation committed but host finalization did not finish", "completion evidence must be recorded under the task authority lock"),
+		AppendTaskLogStrict(dir, note),
+		NormalizeTaskState(id, dir, "in progress — finalization failed", "fix the host completion-receipt error, then re-run `coop loop`", "the implementation committed but host finalization did not finish", "completion evidence must be recorded under the task authority lock"),
 	)
 }
 
 func normalizeRejectedTaskState(id, taskDir string) error {
-	return normalizeTaskState(
+	return NormalizeTaskState(
 		id,
 		taskDir,
 		"in progress — completion rejected",
@@ -2973,7 +2990,7 @@ func normalizeRejectedTaskState(id, taskDir string) error {
 }
 
 func normalizeAuditRejectedTaskState(id, taskDir string) error {
-	return normalizeTaskState(
+	return NormalizeTaskState(
 		id,
 		taskDir,
 		"in progress — completion rejected",
@@ -2983,12 +3000,12 @@ func normalizeAuditRejectedTaskState(id, taskDir string) error {
 	)
 }
 
-func unbindableCompletionError(ids []string, restoreErr error) error {
+func UnbindableCompletionError(ids []string, restoreErr error) error {
 	recoveries := make([]string, 0, len(ids))
 	for _, id := range ids {
 		recoveries = append(recoveries, fmt.Sprintf("%s: %s", id, taskBindingRecovery(id)))
 	}
-	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range and reachable HEAD each need exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — %s; rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), coopTaskTrailer, strings.Join(recoveries, "; "))
+	msg := fmt.Sprintf("completion rejected for task(s) %s: the new commit range and reachable HEAD each need exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — %s; rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), CoopTaskTrailer, strings.Join(recoveries, "; "))
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
 	}
@@ -3007,7 +3024,7 @@ func taskBindingRecovery(id string) string {
 			"reachable but is NOT HEAD, do not rewrite it — that reparents every commit after it — and never add a "+
 			"second task-bound commit: verify the work and park the task in 50_blocked/, its decision.md naming "+
 			"what you verified, so a human can finish it",
-		coopTaskTrailer+": "+id,
+		CoopTaskTrailer+": "+id,
 	)
 }
 
@@ -3023,11 +3040,11 @@ func auditBindingRecovery(id string) string {
 			"commit so its tree actually changes, keeping exactly one reachable %s binding and semantically "+
 			"unchanged later commits, including commits with no task binding; a Coop-Recovery trailer, a message-only commit, or a recovery-only "+
 			"replay of unchanged descendants will be rejected again",
-		id, coopTaskTrailer,
+		id, CoopTaskTrailer,
 	)
 }
 
-func auditCompletionError(id string, restoreErr error) error {
+func AuditCompletionError(id string, restoreErr error) error {
 	msg := fmt.Sprintf("completion rejected for audit-reopened task %s: the host audit authority accepts only a zero-commit verification-only re-close or a rewrite whose subject tree actually changes with semantically unchanged descendants; task restored to in_progress — %s; then re-run `coop loop`", id, auditBindingRecovery(id))
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
@@ -3039,7 +3056,7 @@ func auditCompletionError(id string, restoreErr error) error {
 // for id — either the lock itself could not be acquired (a stuck holder, named in reason) or the
 // compare-and-swap proved HEAD moved since validation (reason names the observed and expected SHAs).
 // Either way the task is restored, actionable, and nothing was consumed.
-func refAuthorityFailureError(id, reason string, restoreErr error) error {
+func RefAuthorityFailureError(id, reason string, restoreErr error) error {
 	msg := fmt.Sprintf("completion rejected for task %s: %s; task restored to in_progress with its commit intact — re-run `coop loop` to resume it", id, reason)
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
@@ -3047,7 +3064,7 @@ func refAuthorityFailureError(id, reason string, restoreErr error) error {
 	return errors.New(msg)
 }
 
-func unownedCompletionError(ids []string, restoreErr error) error {
+func UnownedCompletionError(ids []string, restoreErr error) error {
 	msg := "could not validate a completion outside this iteration's lease"
 	if len(ids) > 0 {
 		msg = fmt.Sprintf("completion rejected for unleased task(s) %s: this iteration may complete only its assigned task; task(s) restored to in_progress", strings.Join(ids, ", "))
@@ -3115,21 +3132,21 @@ func auditResumeLine(id string) string {
 		"rewrite without a real tree change will be rejected."
 }
 
-// resumePrefixFor builds the informed-resume preamble for the assigned task. A lease carrying the
+// ResumePrefixFor builds the informed-resume preamble for the assigned task. A lease carrying the
 // host's audit-reopen authority selects the audit-rework preamble regardless of commit presence;
 // otherwise the Coop-Task trailer already in history selects the crash/reopen disambiguation line.
 // With neither, an interrupted attempt may still have left UNCOMMITTED work behind, so that case
 // gets its own line. Empty only for a genuinely untouched resume.
-func (a *app) resumePrefixFor(repo, id, state string, reopen *auditReopenRecord) string {
+func ResumePrefixFor(repo, id, state string, reopen *AuditReopenRecord) string {
 	if reopen != nil {
 		return auditResumeLine(id)
 	}
-	commits := commitsForTask(repo, "", id)
+	commits := CommitsForTask(repo, "", id)
 	if len(commits) == 0 {
 		// Only for a RESUMED task. A fresh claim in a dirty checkout means someone else's work is
 		// in the tree, and telling a new task to go read it would be noise at best and an
 		// invitation to touch another task's files at worst.
-		if state != stateInProgress {
+		if state != StateInProgress {
 			return ""
 		}
 		return uncommittedResumeLine(id, interruptedWorkFiles(repo))
@@ -3192,7 +3209,7 @@ func interruptedWorkFiles(repo string) []string {
 	return files
 }
 
-func validateLeasedAuditReopen(repo, head, id string, reopen *auditReopenRecord) error {
+func ValidateLeasedAuditReopen(repo, head, id string, reopen *AuditReopenRecord) error {
 	if reopen == nil {
 		return nil
 	}
@@ -3207,7 +3224,7 @@ func validateLeasedAuditReopen(repo, head, id string, reopen *auditReopenRecord)
 	}
 }
 
-func staleAuditReopenRecovery(id, baseline string) string {
+func StaleAuditReopenRecovery(id, baseline string) string {
 	return fmt.Sprintf(
 		"task parked in blocked: preserve any wanted work separately, restore the exact audited "+
 			"pre-attempt baseline %s from reflog or backup, verify `git rev-parse HEAD` prints %s, "+
@@ -3221,10 +3238,10 @@ func staleAuditReopenRecovery(id, baseline string) string {
 // discarding the rejected Git rewrite. The operator must restore the exact audited baseline before
 // explicit unblock can reactivate that generation. Metadata and the folder move roll back together
 // so a failed decision/state write never leaves a malformed blocked task.
-func parkStaleAuditReopen(task queuedTask, baseline string) error {
+func ParkStaleAuditReopen(task QueuedTask, baseline string) error {
 	id := task.Item.ID
-	if task.Item.State != stateInProgress {
-		return fmt.Errorf("park stale audit task %s from %s: want in progress", id, stateLabel(task.Item.State))
+	if task.Item.State != StateInProgress {
+		return fmt.Errorf("park stale audit task %s from %s: want in progress", id, StateLabel(task.Item.State))
 	}
 	if !validAuditReopenHead(baseline) {
 		return fmt.Errorf("park stale audit task %s without a valid recorded baseline", id)
@@ -3233,22 +3250,22 @@ func parkStaleAuditReopen(task queuedTask, baseline string) error {
 	if err != nil {
 		return fmt.Errorf("snapshot stale audit task %s: %w", id, err)
 	}
-	if err := moveTaskDir(task.Root, task.Item, stateBlocked); err != nil {
+	if err := MoveTaskDir(task.Root, task.Item, StateBlocked); err != nil {
 		return fmt.Errorf("move stale audit task %s to blocked: %w", id, err)
 	}
-	blockedDir := filepath.Join(task.Root, stateBlocked, id)
+	blockedDir := filepath.Join(task.Root, StateBlocked, id)
 	rollback := func(cause error) error {
 		metadataErr := restoreTaskMetadata(blockedDir, metadata)
 		current := task.Item
-		current.State = stateBlocked
+		current.State = StateBlocked
 		current.Dir = blockedDir
-		moveErr := moveTaskDir(task.Root, current, stateInProgress)
+		moveErr := MoveTaskDir(task.Root, current, StateInProgress)
 		return errors.Join(cause, metadataErr, moveErr)
 	}
 	if err := writeStaleAuditReopenDecision(blockedDir, id, task.Item.Title, baseline, metadata["decision.md"]); err != nil {
 		return rollback(fmt.Errorf("write stale audit decision for task %s: %w", id, err))
 	}
-	if err := appendTaskLogStrict(blockedDir, fmt.Sprintf(
+	if err := AppendTaskLogStrict(blockedDir, fmt.Sprintf(
 		"host preflight parked this task because current HEAD no longer matches its audit-reopen authority; "+
 			"restore exact baseline %s and verify `git rev-parse HEAD` before explicit unblock — "+
 			"blocking and unblocking alone cannot repair Git history",
@@ -3256,7 +3273,7 @@ func parkStaleAuditReopen(task queuedTask, baseline string) error {
 	)); err != nil {
 		return rollback(fmt.Errorf("record stale audit park for task %s: %w", id, err))
 	}
-	if err := normalizeTaskState(
+	if err := NormalizeTaskState(
 		id,
 		blockedDir,
 		"blocked — stale audit authority",
@@ -3297,28 +3314,28 @@ func writeStaleAuditReopenDecision(taskDir, id, title, baseline string, previous
 		}
 		body += "\n## Previous decision record\n\n" + quoted.String()
 	}
-	root, err := openTaskMetadataRoot(taskDir)
+	root, err := OpenTaskMetadataRoot(taskDir)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	return atomicWriteTaskFile(root, "decision.md", []byte(body))
+	return AtomicWriteTaskFile(root, "decision.md", []byte(body))
 }
 
-type taskAssignmentOutcome uint8
+type TaskAssignmentOutcome uint8
 
 const (
-	assignmentDrained taskAssignmentOutcome = iota
-	assignmentUnavailable
+	AssignmentDrained TaskAssignmentOutcome = iota
+	AssignmentUnavailable
 	assignmentReady
 )
 
-type taskAssignment struct {
-	Counts  taskCounts
-	Task    queuedTask
-	Lease   *taskLease
-	Outcome taskAssignmentOutcome
-	Busy    taskLeaseSummary
+type TaskAssignment struct {
+	Counts  TaskCounts
+	Task    QueuedTask
+	Lease   *TaskLease
+	Outcome TaskAssignmentOutcome
+	Busy    TaskLeaseSummary
 }
 
 const maxLeaseRescans = 3
@@ -3327,8 +3344,8 @@ const maxLeaseRescans = 3
 // box starts. An available in-progress task remains preferred, but a foreign-held one is skipped so
 // another controller can take independent todo work. The flock is obtained while a todo folder is
 // still in todo, then rides its atomic rename to in_progress by inode.
-func assignLoopTask(hosts []string, owner taskLeaseOwner) (taskAssignment, error) {
-	return assignLoopTaskOnly(hosts, owner, "")
+func assignLoopTask(hosts []string, owner TaskLeaseOwner) (TaskAssignment, error) {
+	return AssignLoopTaskOnly(hosts, owner, "")
 }
 
 // skipOwnedCandidate reports whether id carries a durable human-claim record (taskOwnerRecord) — if
@@ -3341,7 +3358,7 @@ func assignLoopTask(hosts []string, owner taskLeaseOwner) (taskAssignment, error
 // human-facing notice per assignLoopTaskOnly call, so a candidate seen again on an internal rescan
 // (maxLeaseRescans) is skipped again silently rather than re-announced.
 func skipOwnedCandidate(root, id string, noted map[string]bool) (bool, error) {
-	rec, ok, err := readTaskOwnerRecord(root, id)
+	rec, ok, err := ReadTaskOwnerRecord(root, id)
 	if err != nil {
 		return false, fmt.Errorf("read owner record for task %s: %w", id, err)
 	}
@@ -3359,54 +3376,54 @@ func skipOwnedCandidate(root, id string, noted map[string]bool) (bool, error) {
 // assignLoopTaskOnly scopes assignment to the current task in a limited run. Counts still cover the
 // whole queue for truthful banners, but another actionable task can never be claimed while the
 // selected task is retrying or has been reopened by its between-task audit.
-func assignLoopTaskOnly(hosts []string, owner taskLeaseOwner, onlyID string) (taskAssignment, error) {
+func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (TaskAssignment, error) {
 	noted := map[string]bool{} // spans every rescan attempt below, so an owned skip is reported once
 	for attempt := 0; attempt < maxLeaseRescans; attempt++ {
-		var counts taskCounts
-		var inProgress, todo []queuedTask
+		var counts TaskCounts
+		var inProgress, todo []QueuedTask
 		for _, root := range hosts {
-			for _, item := range readTaskTree(root) {
+			for _, item := range ReadTaskTree(root) {
 				switch item.State {
-				case stateTodo:
+				case StateTodo:
 					counts.Todo++
 					if onlyID == "" || item.ID == onlyID {
-						todo = append(todo, queuedTask{Root: root, Item: item})
+						todo = append(todo, QueuedTask{Root: root, Item: item})
 					}
-				case stateInProgress:
+				case StateInProgress:
 					counts.Doing++
 					if onlyID == "" || item.ID == onlyID {
-						inProgress = append(inProgress, queuedTask{Root: root, Item: item})
+						inProgress = append(inProgress, QueuedTask{Root: root, Item: item})
 					}
-				case stateBlocked:
+				case StateBlocked:
 					counts.Blocked++
-				case stateDone:
+				case StateDone:
 					counts.Done++
 				}
 			}
 		}
 
-		var busy taskLeaseSummary
+		var busy TaskLeaseSummary
 		changed := false
 		for _, candidate := range inProgress {
 			if owned, err := skipOwnedCandidate(candidate.Root, candidate.Item.ID, noted); err != nil {
-				return taskAssignment{}, err
+				return TaskAssignment{}, err
 			} else if owned {
 				busy.Owned++
 				continue
 			}
-			lease, observed, err := tryTaskLease(candidate.Root, candidate.Item, owner)
+			lease, observed, err := TryTaskLease(candidate.Root, candidate.Item, owner)
 			if errors.Is(err, errLeaseCandidateGone) {
 				changed = true
 				break
 			}
 			if err != nil {
-				return taskAssignment{}, fmt.Errorf("lease task %s: %w", candidate.Item.ID, err)
+				return TaskAssignment{}, fmt.Errorf("lease task %s: %w", candidate.Item.ID, err)
 			}
 			if lease == nil {
 				busy.add(observed)
 				continue
 			}
-			return taskAssignment{
+			return TaskAssignment{
 				Counts: counts, Task: candidate, Lease: lease, Outcome: assignmentReady, Busy: busy,
 			}, nil
 		}
@@ -3416,36 +3433,36 @@ func assignLoopTaskOnly(hosts []string, owner taskLeaseOwner, onlyID string) (ta
 
 		for _, candidate := range todo {
 			if owned, err := skipOwnedCandidate(candidate.Root, candidate.Item.ID, noted); err != nil {
-				return taskAssignment{}, err
+				return TaskAssignment{}, err
 			} else if owned {
 				busy.Owned++
 				continue
 			}
-			lease, observed, err := tryTaskLease(candidate.Root, candidate.Item, owner)
+			lease, observed, err := TryTaskLease(candidate.Root, candidate.Item, owner)
 			if errors.Is(err, errLeaseCandidateGone) {
 				changed = true
 				break
 			}
 			if err != nil {
-				return taskAssignment{}, fmt.Errorf("lease task %s: %w", candidate.Item.ID, err)
+				return TaskAssignment{}, fmt.Errorf("lease task %s: %w", candidate.Item.ID, err)
 			}
 			if lease == nil {
 				busy.add(observed)
 				continue
 			}
-			if err := moveTaskDir(candidate.Root, candidate.Item, stateInProgress); err != nil {
-				_ = lease.release()
+			if err := MoveTaskDir(candidate.Root, candidate.Item, StateInProgress); err != nil {
+				_ = lease.Release()
 				if strings.Contains(err.Error(), "changed state under us") {
 					changed = true
 					break
 				}
-				return taskAssignment{}, fmt.Errorf("claim task %s: %w", candidate.Item.ID, err)
+				return TaskAssignment{}, fmt.Errorf("claim task %s: %w", candidate.Item.ID, err)
 			}
-			candidate.Item.State = stateInProgress
-			candidate.Item.Dir = filepath.Join(candidate.Root, stateInProgress, candidate.Item.ID)
+			candidate.Item.State = StateInProgress
+			candidate.Item.Dir = filepath.Join(candidate.Root, StateInProgress, candidate.Item.ID)
 			counts.Todo--
 			counts.Doing++
-			return taskAssignment{
+			return TaskAssignment{
 				Counts: counts, Task: candidate, Lease: lease, Outcome: assignmentReady, Busy: busy,
 			}, nil
 		}
@@ -3453,14 +3470,14 @@ func assignLoopTaskOnly(hosts []string, owner taskLeaseOwner, onlyID string) (ta
 			continue
 		}
 		if onlyID != "" && len(inProgress)+len(todo) == 0 {
-			return taskAssignment{Counts: counts, Outcome: assignmentDrained}, nil
+			return TaskAssignment{Counts: counts, Outcome: AssignmentDrained}, nil
 		}
 		if counts.Todo+counts.Doing == 0 {
-			return taskAssignment{Counts: counts, Outcome: assignmentDrained}, nil
+			return TaskAssignment{Counts: counts, Outcome: AssignmentDrained}, nil
 		}
-		return taskAssignment{Counts: counts, Outcome: assignmentUnavailable, Busy: busy}, nil
+		return TaskAssignment{Counts: counts, Outcome: AssignmentUnavailable, Busy: busy}, nil
 	}
-	return taskAssignment{}, fmt.Errorf("task queue kept changing while leasing — retry the loop")
+	return TaskAssignment{}, fmt.Errorf("task queue kept changing while leasing — retry the loop")
 }
 
 // reconcileAction is what post-merge reconciliation should do with one parent-queue task after a
@@ -3483,9 +3500,9 @@ func reconcileMerged(states map[string]string, landed map[string]bool) []reconci
 			continue
 		}
 		switch st {
-		case stateTodo, stateInProgress:
+		case StateTodo, StateInProgress:
 			acts = append(acts, reconcileAction{ID: id, Move: true})
-		case stateBlocked:
+		case StateBlocked:
 			acts = append(acts, reconcileAction{ID: id, Move: false})
 		}
 	}
@@ -3497,14 +3514,14 @@ func reconcileMerged(states map[string]string, landed map[string]bool) []reconci
 // failed history read is an ERROR, never an empty set: reconciling nothing is indistinguishable from
 // "this fork landed no tasks", and that silence is what makes the loop redo landed work.
 func landedTasks(repo, revRange string) (map[string]bool, error) {
-	commits, err := taskTrailerCommits(repo, revRange, false)
+	commits, err := TaskTrailerCommits(repo, revRange, false)
 	if err != nil {
 		return nil, err
 	}
 	set := map[string]bool{}
 	for _, commit := range commits {
-		if !commit.malformed && len(commit.values) == 1 && commit.values[0] != "" {
-			set[commit.values[0]] = true
+		if !commit.Malformed && len(commit.Values) == 1 && commit.Values[0] != "" {
+			set[commit.Values[0]] = true
 		}
 	}
 	return set, nil
@@ -3514,10 +3531,10 @@ func landedTasks(repo, revRange string) (map[string]bool, error) {
 // it landed: the exact commands to list the ids and close them, so the human — not the next loop
 // iteration — decides what happens to work that already sits in parent history.
 func unreconciledQueueRecovery(repo, revRange string) string {
-	return fmt.Sprintf("the parent queue was NOT reconciled, so `coop loop` may redo work this fork already landed; list what landed with `git -C %s log --format=%%b %s | grep %s`, then close each id with `coop tasks done <id>`", repo, revRange, coopTaskTrailer)
+	return fmt.Sprintf("the parent queue was NOT reconciled, so `coop loop` may redo work this fork already landed; list what landed with `git -C %s log --format=%%b %s | grep %s`, then close each id with `coop tasks done <id>`", repo, revRange, CoopTaskTrailer)
 }
 
-// reconcileQueueAfterMerge moves any parent-queue task whose Coop-Task trailer now sits in parent
+// ReconcileQueueAfterMerge moves any parent-queue task whose Coop-Task trailer now sits in parent
 // history (landed by the just-merged fork) from todo/ or in_progress/ to done/, with a reconcile
 // note; a blocked task with a landed trailer is flagged for a human, never moved. Prevents the parent
 // loop from redoing work a fork already landed.
@@ -3527,8 +3544,8 @@ func unreconciledQueueRecovery(repo, revRange string) string {
 // set or landed range reconciles nothing while looking exactly like a fork that landed no tasks, so
 // it comes back as an error for the caller to surface. The merge is never rolled back for it — it
 // already stuck; only the bookkeeping is missing.
-func (a *app) reconcileQueueAfterMerge(repo, forkName, revRange string) error {
-	queues, err := taskQueues(a.cfg, repo, nil)
+func ReconcileQueueAfterMerge(cfg *config.Config, repo, forkName, revRange string) error {
+	queues, err := TaskQueues(cfg, repo, nil)
 	if err != nil {
 		return fmt.Errorf("fork %s landed, but its parent task queues could not be resolved: %w — %s", forkName, err, unreconciledQueueRecovery(repo, revRange))
 	}
@@ -3548,7 +3565,7 @@ func (a *app) reconcileQueueAfterMerge(repo, forkName, revRange string) error {
 	// several operations later — the same validate-then-consume shape the work loop closes for its
 	// own completion path. The ref-authority lock covers that window here too, so a concurrent
 	// process (a loop, a signing rewrite, another land) can never move HEAD in the gap.
-	release, lockErr := lockRefAuthority(a.cfg, repo)
+	release, lockErr := LockRefAuthority(cfg, repo)
 	if lockErr != nil {
 		return fmt.Errorf("fork %s landed, but reconciling the parent queue could not acquire ref authority: %w — %s", forkName, lockErr, unreconciledQueueRecovery(repo, revRange))
 	}
@@ -3556,8 +3573,8 @@ func (a *app) reconcileQueueAfterMerge(repo, forkName, revRange string) error {
 	for _, q := range queues {
 		host := filepath.Join(repo, q)
 		states := map[string]string{}
-		items := map[string]taskItem{}
-		for _, t := range readTaskTree(host) {
+		items := map[string]Item{}
+		for _, t := range ReadTaskTree(host) {
 			states[t.ID] = t.State
 			items[t.ID] = t
 		}
@@ -3566,8 +3583,8 @@ func (a *app) reconcileQueueAfterMerge(repo, forkName, revRange string) error {
 				ui.Warn("task %s is blocked but its work landed via fork %s — a human should reconcile it", act.ID, forkName)
 				continue
 			}
-			doneDir := filepath.Join(host, stateDone, act.ID)
-			if err := completeTrustedTask(host, items[act.ID]); err != nil {
+			doneDir := filepath.Join(host, StateDone, act.ID)
+			if err := CompleteTrustedTask(host, items[act.ID]); err != nil {
 				ui.Warn("reconcile: %v — fix the obstruction, then retry: coop tasks done %s", err, act.ID)
 				continue
 			}
@@ -3585,14 +3602,14 @@ func (a *app) reconcileQueueAfterMerge(repo, forkName, revRange string) error {
 // A task with no decision.md, or one whose format decisionResolved can't read, stays parked:
 // never act on a file we can't parse confidently. Best-effort; a move failure warns and skips.
 // Returns the unblocked ids in readTaskTree order.
-func unblockResolved(hosts []string) []string {
+func UnblockResolved(hosts []string) []string {
 	var ids []string
 	for _, host := range hosts {
-		for _, t := range readTaskTree(host) {
-			if t.State != stateBlocked || !decisionResolved(filepath.Join(t.Dir, "decision.md")) {
+		for _, t := range ReadTaskTree(host) {
+			if t.State != StateBlocked || !decisionResolved(filepath.Join(t.Dir, "decision.md")) {
 				continue
 			}
-			_, hasAuthority, err := readAuditReopenRecord(host, t.ID)
+			_, hasAuthority, err := ReadAuditReopenRecord(host, t.ID)
 			if err != nil {
 				ui.Warn("pre-flight: could not inspect host audit authority for %s: %v — task remains blocked; repair the host authority registry, then retry: coop tasks unblock %s", t.ID, err, t.ID)
 				continue
@@ -3601,19 +3618,19 @@ func unblockResolved(hosts []string) []string {
 				ui.Warn("pre-flight: %s has host audit-reopen authority — unblock it explicitly: coop tasks unblock %s", t.ID, t.ID)
 				continue
 			}
-			if err := moveTaskDir(host, t, stateTodo); err != nil {
+			if err := MoveTaskDir(host, t, StateTodo); err != nil {
 				ui.Warn("pre-flight: could not unblock %s: %v", t.ID, err)
 				continue
 			}
-			appendTaskLog(filepath.Join(host, stateTodo, t.ID), "preflight: resolution filled in — unblocked")
+			appendTaskLog(filepath.Join(host, StateTodo, t.ID), "preflight: resolution filled in — unblocked")
 			ids = append(ids, t.ID)
 		}
 	}
 	return ids
 }
 
-func appendTaskLogStrict(taskDir, note string) error {
-	root, err := openTaskMetadataRoot(taskDir)
+func AppendTaskLogStrict(taskDir, note string) error {
+	root, err := OpenTaskMetadataRoot(taskDir)
 	if err != nil {
 		return err
 	}
@@ -3657,5 +3674,5 @@ func appendTaskLogStrict(taskDir, note string) error {
 
 // appendTaskLog appends a one-line note to a task folder's log.md, best-effort.
 func appendTaskLog(taskDir, note string) {
-	_ = appendTaskLogStrict(taskDir, note)
+	_ = AppendTaskLogStrict(taskDir, note)
 }

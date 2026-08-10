@@ -45,7 +45,7 @@ var allowedEdges = map[string][]string{
 	"acpproxy":              nil,
 	"agent":                 {"config", "mcp"},
 	"box":                   {"agent", "config", "fusion", "preset", "processidentity", "project", "runtime", "ui"},
-	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "forkspace", "fusion", "ladder", "liveprocess", "loopcfg", "preset", "project", "runtime", "scaffold", "sessionsvc", "taskstate", "ui"},
+	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "forkspace", "fusion", "ladder", "liveprocess", "loopcfg", "preset", "project", "runtime", "scaffold", "sessionsvc", "tasks", "ui"},
 	"config":                nil,
 	"contextc":              {"project"},
 	"forkspace":             {"processidentity"},
@@ -61,6 +61,7 @@ var allowedEdges = map[string][]string{
 	"scaffold":              {"agent", "project", "taskstate", "ui"},
 	"session":               nil,
 	"sessionsvc":            {"agent", "box", "config", "forkspace", "ladder", "runtime", "session"},
+	"tasks":                 {"box", "config", "forkspace", "project", "taskstate", "ui"},
 	"taskstate":             nil,
 	"testutil/gitrepo":      nil,
 	"testutil/liveprovider": {"agent", "config", "liveprocess", "processidentity", "testutil/procharness"},
@@ -76,7 +77,7 @@ var allowedEdges = map[string][]string{
 // Deliberately a SECOND list, not derived from allowedEdges: granting a package the ui edge has to
 // cost two edits, so "just add it to the table" can't quietly move presentation back into a
 // library.
-var uiPresentationOwners = []string{"box", "cli", "scaffold"}
+var uiPresentationOwners = []string{"box", "cli", "scaffold", "tasks"}
 
 // TestInternalImportDAG diffs the real tree against the frozen table in both directions: an
 // unexpected edge fails, and so does an edge the table still expects but the code has dropped, so

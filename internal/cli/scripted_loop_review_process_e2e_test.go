@@ -17,6 +17,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -585,14 +586,14 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		for _, id := range []string{taskID, descendantID} {
-			if got := commitsForTask(suite.layout.Repo, "HEAD", id); len(got) != 1 {
+			if got := tasks.CommitsForTask(suite.layout.Repo, "HEAD", id); len(got) != 1 {
 				t.Fatalf("reachable %s bindings = %v, want exactly one", id, got)
 			}
 			if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) {
 				t.Fatalf("task %s did not remain done", id)
 			}
 		}
-		key, err := leaseAuthorityKey(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
+		key, err := tasks.LeaseAuthorityKey(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -616,7 +617,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				taskID := "blocked-older-audit-reopen"
 				if tc.preUpgrade {
 					taskID = "pre-upgrade-blocked-older-audit-reopen"
-					t.Setenv(testLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
+					t.Setenv(tasks.TestLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
 				}
 				descendantID := taskID + "-descendant"
 				seedLoopProcessTask(t, suite.layout.Repo, taskID)
@@ -638,7 +639,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				process := startLoopRecovery(t, suite, work)
 				defer process.Cleanup()
 				awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
-				var staleRecord, legacyRecord auditReopenRecord
+				var staleRecord, legacyRecord tasks.AuditReopenRecord
 
 				commitUnbound(t, taskID, "intervening")
 				descendantFile := filepath.Join(suite.layout.Repo, "descendant.txt")
@@ -665,12 +666,12 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 					awaitLoopTraceEventCount(t, suite.layout.Trace, "provider", "ready", 2, 10*time.Second)
 					var ok bool
 					var err error
-					staleRecord, ok, err = readAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
+					staleRecord, ok, err = tasks.ReadAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
 					if err != nil || !ok {
 						t.Fatalf("read pre-upgrade audit authority: ok=%v err=%v", ok, err)
 					}
-					legacyRecord = auditReopenRecord{
-						Version: auditReopenLegacyVersion, Generation: staleRecord.Generation,
+					legacyRecord = tasks.AuditReopenRecord{
+						Version: tasks.AuditReopenLegacyVersion, Generation: staleRecord.Generation,
 						TaskID: staleRecord.TaskID, Subject: staleRecord.Subject,
 					}
 					for _, commit := range staleRecord.History {
@@ -694,14 +695,14 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 				}
 				assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, blockAttempts)
 				if tc.preUpgrade {
-					current, ok, err := readAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
+					current, ok, err := tasks.ReadAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
 					if err != nil || !ok {
 						t.Fatalf("read current blocked audit authority: ok=%v err=%v", ok, err)
 					}
 					if current.Generation != staleRecord.Generation || current.Subject == staleRecord.Subject {
 						t.Fatalf("blocked fixture did not produce one rebased generation: stale=%#v current=%#v", staleRecord, current)
 					}
-					if err := writeAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), legacyRecord); err != nil {
+					if err := tasks.WriteAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), legacyRecord); err != nil {
 						t.Fatalf("restore legacy blocked audit authority: %v", err)
 					}
 					commitUnbound(t, taskID, "post-block")
@@ -755,14 +756,14 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 					t.Fatalf("verification-only re-close changed HEAD from %s to %s", recloseHead, got)
 				}
 				for _, id := range []string{taskID, descendantID} {
-					if got := commitsForTask(suite.layout.Repo, "HEAD", id); len(got) != 1 {
+					if got := tasks.CommitsForTask(suite.layout.Repo, "HEAD", id); len(got) != 1 {
 						t.Fatalf("reachable %s bindings = %v, want exactly one", id, got)
 					}
 					if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) {
 						t.Fatalf("task %s did not remain done", id)
 					}
 				}
-				key, err := leaseAuthorityKey(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
+				key, err := tasks.LeaseAuthorityKey(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -792,15 +793,15 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		loopProcessGit(t, suite, "add", "loop-claude.txt")
 		loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: stale audit subject", "-m", "Coop-Task: "+taskID)
-		record, err := captureAuditReopen(suite.layout.Repo, taskID)
+		record, err := tasks.CaptureAuditReopen(suite.layout.Repo, taskID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Setenv(testLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
-		if err := os.MkdirAll(os.Getenv(testLeaseAuthorityRootEnv), 0o700); err != nil {
+		t.Setenv(tasks.TestLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
+		if err := os.MkdirAll(os.Getenv(tasks.TestLeaseAuthorityRootEnv), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeAuditReopenRecord(root, record); err != nil {
+		if err := tasks.WriteAuditReopenRecord(root, record); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(change, []byte("changed outside host authority\n"), 0o600); err != nil {
@@ -809,7 +810,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		loopProcessGit(t, suite, "add", "loop-claude.txt")
 		loopProcessGit(t, suite, "commit", "--amend", "-q", "--no-edit")
 		head := loopProcessGit(t, suite, "rev-parse", "HEAD")
-		if auditReopenCurrentValid(suite.layout.Repo, head, taskID, record) {
+		if tasks.AuditReopenCurrentValid(suite.layout.Repo, head, taskID, record) {
 			t.Fatal("stale-authority fixture unexpectedly remained current-valid")
 		}
 
@@ -847,7 +848,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			!strings.Contains(string(decision), "Blocking and unblocking alone cannot repair Git history") {
 			t.Fatalf("stale audit decision = %q, %v", decision, err)
 		}
-		if got, ok, err := readAuditReopenRecord(root, taskID); err != nil || !ok || !sameAuditReopenRecord(got, record) {
+		if got, ok, err := tasks.ReadAuditReopenRecord(root, taskID); err != nil || !ok || !tasks.AuditReopenRecordsEqual(got, record) {
 			t.Fatalf("stale audit authority changed the host record: got=%#v ok=%v err=%v", got, ok, err)
 		}
 	})
@@ -899,7 +900,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			!pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, descendantID)) {
 			t.Fatal("changed descendant rejection did not preserve task ownership")
 		}
-		key, err := leaseAuthorityKey(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
+		key, err := tasks.LeaseAuthorityKey(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -930,7 +931,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("verification-only re-close = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
 				result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
-		if got := commitsForTask(suite.layout.Repo, "HEAD", taskID); len(got) != 1 {
+		if got := tasks.CommitsForTask(suite.layout.Repo, "HEAD", taskID); len(got) != 1 {
 			t.Fatalf("verification-only re-close bindings = %v, want one unchanged binding", got)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
@@ -1054,7 +1055,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
 			t.Fatal("second binding rejection did not restore the task")
 		}
-		if commits := commitsForTask(suite.layout.Repo, "", taskID); len(commits) != 2 {
+		if commits := tasks.CommitsForTask(suite.layout.Repo, "", taskID); len(commits) != 2 {
 			t.Fatalf("fixture produced %d reachable bindings, want 2: %v", len(commits), commits)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
@@ -1117,7 +1118,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, archiveID)) {
 			t.Fatal("forged binding rejection disturbed the archived task")
 		}
-		if commits := commitsForTask(suite.layout.Repo, "", archiveID); len(commits) != 1 {
+		if commits := tasks.CommitsForTask(suite.layout.Repo, "", archiveID); len(commits) != 1 {
 			t.Fatalf("fixture produced %d forged archived bindings, want 1: %v", len(commits), commits)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)

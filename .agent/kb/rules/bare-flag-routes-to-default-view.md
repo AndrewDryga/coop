@@ -2,9 +2,9 @@
 name: bare-flag-routes-to-default-view
 description: "a leading flag where a subcommand goes routes to the group's default listing"
 scope: cli-grammar
-sources: [internal/cli/tasks.go, internal/cli/taskcmd.go, internal/cli/backlog.go]
+sources: [internal/tasks/queue.go, internal/tasks/cmd.go, internal/tasks/backlog.go]
 check: "none"
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 
 # A bare leading flag routes to the group's default view
@@ -50,3 +50,6 @@ text is longest and least relevant to what they asked.
   the fix (`unknown backlog command "-x"`) and passes with it (single-queue now surfaces ls's own
   `unknown flag` error since ls still takes none; the umbrella roll-up now lists instead of
   erroring). "today: tasks" is retired — both `tasks` and `backlog` now have the normalization.
+- 2026-08-10 — sources repointed: `tasks.go`/`taskcmd.go`/`backlog.go` moved to
+  `internal/tasks/queue.go`/`internal/tasks/cmd.go`/`internal/tasks/backlog.go` (the 2026-08
+  tasks/lease/completion-audit extraction). Facts unchanged.

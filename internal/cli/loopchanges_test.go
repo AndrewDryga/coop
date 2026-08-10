@@ -8,14 +8,16 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 func TestParseLoopCommits(t *testing.T) {
-	records := []taskTrailerCommit{
-		{info: commitInfo{sha: "a1", subject: "add json"}, values: []string{"task-json"}},
-		{info: commitInfo{sha: "b2", subject: "fix egress"}, values: []string{"task-egress"}},
-		{info: commitInfo{sha: "c3", subject: "more json"}, values: []string{"task-json"}},
-		{info: commitInfo{sha: "d4", subject: "manual fixup"}},
+	records := []tasks.TaskTrailerCommit{
+		{Info: tasks.CommitInfo{SHA: "a1", Subject: "add json"}, Values: []string{"task-json"}},
+		{Info: tasks.CommitInfo{SHA: "b2", Subject: "fix egress"}, Values: []string{"task-egress"}},
+		{Info: tasks.CommitInfo{SHA: "c3", Subject: "more json"}, Values: []string{"task-json"}},
+		{Info: tasks.CommitInfo{SHA: "d4", Subject: "manual fixup"}},
 	}
 	order, byTask, misc, invalid := parseLoopCommits(records)
 	if invalid {
@@ -30,9 +32,9 @@ func TestParseLoopCommits(t *testing.T) {
 	if len(misc) != 1 || misc[0].subject != "manual fixup" {
 		t.Errorf("misc = %+v, want the one untrailered commit", misc)
 	}
-	_, _, misc, invalid = parseLoopCommits([]taskTrailerCommit{
-		{info: commitInfo{sha: "e5", subject: "empty"}, values: []string{""}},
-		{info: commitInfo{sha: "f6", subject: "duplicate"}, values: []string{"task-json", "foreign"}},
+	_, _, misc, invalid = parseLoopCommits([]tasks.TaskTrailerCommit{
+		{Info: tasks.CommitInfo{SHA: "e5", Subject: "empty"}, Values: []string{""}},
+		{Info: tasks.CommitInfo{SHA: "f6", Subject: "duplicate"}, Values: []string{"task-json", "foreign"}},
 	})
 	if !invalid || len(misc) != 2 {
 		t.Fatalf("ambiguous records = invalid %v misc %+v, want fail-closed", invalid, misc)
@@ -308,7 +310,7 @@ func TestCommitFilesPreservesUnicodeProtectedPath(t *testing.T) {
 	if !slices.Equal(files, []string{guard}) {
 		t.Fatalf("commitFiles = %q, want exact Git path %q", files, guard)
 	}
-	if got := protectedGateFiles(files); !slices.Equal(got, []string{guard}) {
+	if got := tasks.ProtectedGateFiles(files); !slices.Equal(got, []string{guard}) {
 		t.Fatalf("protected attribution = %q, want %q", got, guard)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -40,7 +41,7 @@ func TestLoopBarReceivesUILines(t *testing.T) {
 	var buf bytes.Buffer
 	width := loopWidth(80)
 	region := ui.NewRegion(&buf, width)
-	bar := newLoopBar(region, width, time.Now(), taskCounts{Todo: 1}, "demo")
+	bar := newLoopBar(region, width, time.Now(), tasks.TaskCounts{Todo: 1}, "demo")
 	ui.SetLiveSink(bar.history)
 	defer ui.SetLiveSink(nil)
 
@@ -58,7 +59,7 @@ func TestLoopBarSpinnerCanFreezeWithoutColor(t *testing.T) {
 
 	var buf bytes.Buffer
 	width := loopWidth(80)
-	bar := newLoopBar(ui.NewRegion(&buf, width), width, time.Now(), taskCounts{Todo: 1}, "demo")
+	bar := newLoopBar(ui.NewRegion(&buf, width), width, time.Now(), tasks.TaskCounts{Todo: 1}, "demo")
 	bar.render("")
 	bar.tick()
 	out := buf.String()
@@ -71,7 +72,7 @@ func TestLoopBarSpinnerCanFreezeWithoutColor(t *testing.T) {
 }
 
 func TestLoopBarShowsTinyActiveShare(t *testing.T) {
-	bar := newLoopBar(nil, loopWidth(80), time.Now(), taskCounts{Todo: 99, Doing: 1}, "demo")
+	bar := newLoopBar(nil, loopWidth(80), time.Now(), tasks.TaskCounts{Todo: 99, Doing: 1}, "demo")
 	if line := bar.line(); !strings.Contains(line, "█") {
 		t.Errorf("loop bar should keep a visible active cell: %q", line)
 	}
@@ -80,7 +81,7 @@ func TestLoopBarShowsTinyActiveShare(t *testing.T) {
 func TestLoopBarActivityUsesAvailableTerminalWidth(t *testing.T) {
 	activity := "Reconcile every provider credential rotation before the deployment cutover"
 	width := 160
-	bar := newLoopBar(nil, func() int { return width }, time.Now(), taskCounts{Doing: 1}, activity)
+	bar := newLoopBar(nil, func() int { return width }, time.Now(), tasks.TaskCounts{Doing: 1}, activity)
 
 	wide := bar.line()
 	if !strings.Contains(wide, activity) {

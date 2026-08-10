@@ -1,4 +1,4 @@
-package cli
+package tasks
 
 import (
 	"os"
@@ -14,12 +14,12 @@ import (
 // must never surface it — that's the whole point of keeping Backlog out of taskstate.All.
 func TestBacklogAddIsolatedFromQueue(t *testing.T) {
 	root := t.TempDir()
-	if code, err := tasksFolderAdd(root, []string{"a shiny idea"}, stateBacklog, "backlog add"); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root, []string{"a shiny idea"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("backlog add: code=%d err=%v", code, err)
 	}
 	// It's really in xx_backlog, with a task.md.
-	bl := readBacklog(root)
-	if len(bl) != 1 || bl[0].State != stateBacklog {
+	bl := ReadBacklog(root)
+	if len(bl) != 1 || bl[0].State != StateBacklog {
 		t.Fatalf("readBacklog = %+v, want one xx_backlog item", bl)
 	}
 	if !strings.HasSuffix(bl[0].ID, "-a-shiny-idea") {
@@ -29,10 +29,10 @@ func TestBacklogAddIsolatedFromQueue(t *testing.T) {
 		t.Errorf("backlog item has no task.md at %s", bl[0].Dir)
 	}
 	// The lifecycle tree, and therefore every counter/lister/loop check, ignores it entirely.
-	if items := readTaskTree(root); len(items) != 0 {
+	if items := ReadTaskTree(root); len(items) != 0 {
 		t.Fatalf("readTaskTree sees %d items, want 0 — backlog must be invisible to the queue", len(items))
 	}
-	if c, _ := taskTreeCounts(readTaskTree(root)); c.Todo+c.Doing+c.Blocked+c.Done != 0 {
+	if c, _ := TaskTreeCounts(ReadTaskTree(root)); c.Todo+c.Doing+c.Blocked+c.Done != 0 {
 		t.Errorf("counts should be all-zero with only a backlog item, got %+v", c)
 	}
 }
@@ -41,23 +41,23 @@ func TestBacklogAddIsolatedFromQueue(t *testing.T) {
 // (id and files intact), after which it's a normal, claimable task. And a bad id fails loudly.
 func TestBacklogPromote(t *testing.T) {
 	root := t.TempDir()
-	if code, err := tasksFolderAdd(root, []string{"promote me"}, stateBacklog, "backlog add"); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root, []string{"promote me"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("backlog add: code=%d err=%v", code, err)
 	}
-	id := readBacklog(root)[0].ID
+	id := ReadBacklog(root)[0].ID
 
 	if code, err := backlogFolderPromote(root, []string{"promote"}); code != 0 || err != nil { // substring match
 		t.Fatalf("promote: code=%d err=%v", code, err)
 	}
-	if len(readBacklog(root)) != 0 {
+	if len(ReadBacklog(root)) != 0 {
 		t.Error("after promote, backlog should be empty")
 	}
-	items := readTaskTree(root)
-	if len(items) != 1 || items[0].State != stateTodo || items[0].ID != id {
+	items := ReadTaskTree(root)
+	if len(items) != 1 || items[0].State != StateTodo || items[0].ID != id {
 		t.Fatalf("after promote: %+v, want the same id in todo", items)
 	}
 	// The promoted task is now a normal task — claimable.
-	if code, err := tasksFolderMove(root, []string{id}, stateInProgress, "claim", "claimed"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
 		t.Fatalf("claim after promote: code=%d err=%v", code, err)
 	}
 
@@ -74,15 +74,15 @@ func TestBacklogPromote(t *testing.T) {
 // (so an un-promoted idea can't be accidentally worked), yet resolvable via findBacklogTask.
 func TestBacklogIsolatedFromActiveCommands(t *testing.T) {
 	root := t.TempDir()
-	if code, err := tasksFolderAdd(root, []string{"parked"}, stateBacklog, "backlog add"); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root, []string{"parked"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("backlog add: code=%d err=%v", code, err)
 	}
-	id := readBacklog(root)[0].ID
+	id := ReadBacklog(root)[0].ID
 
-	if _, err := findTask(root, id); err == nil {
+	if _, err := FindTask(root, id); err == nil {
 		t.Error("findTask must NOT resolve a backlog id (the active tree excludes xx_backlog)")
 	}
-	if code, err := tasksFolderMove(root, []string{id}, stateInProgress, "claim", "claimed"); code == 0 && err == nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code == 0 && err == nil {
 		t.Error("claim must refuse a backlog id — it isn't live work until promoted")
 	}
 	if _, err := findBacklogTask(root, id); err != nil {
@@ -93,23 +93,23 @@ func TestBacklogIsolatedFromActiveCommands(t *testing.T) {
 // rm drops an idea; the destroyGate refuses without --yes on a non-TTY (this test), and a bad id fails.
 func TestBacklogRemove(t *testing.T) {
 	root := t.TempDir()
-	if code, err := tasksFolderAdd(root, []string{"drop me"}, stateBacklog, "backlog add"); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root, []string{"drop me"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("backlog add: code=%d err=%v", code, err)
 	}
-	id := readBacklog(root)[0].ID
+	id := ReadBacklog(root)[0].ID
 
 	// No --yes and no TTY → refused, item survives.
 	if code, err := backlogFolderRemove(root, []string{id}); code != 2 || err == nil {
 		t.Errorf("rm without --yes = (%d, %v), want a refusal (2)", code, err)
 	}
-	if len(readBacklog(root)) != 1 {
+	if len(ReadBacklog(root)) != 1 {
 		t.Fatal("a refused rm must not delete the item")
 	}
 	// With --yes → gone.
 	if code, err := backlogFolderRemove(root, []string{id, "--yes"}); code != 0 || err != nil {
 		t.Fatalf("rm --yes: code=%d err=%v", code, err)
 	}
-	if len(readBacklog(root)) != 0 {
+	if len(ReadBacklog(root)) != 0 {
 		t.Error("after rm --yes, backlog should be empty")
 	}
 	// No id → usage.
@@ -123,18 +123,18 @@ func TestBacklogRemove(t *testing.T) {
 func TestBacklogAddIDCollision(t *testing.T) {
 	root := t.TempDir()
 	// Pre-place a todo task, then try to backlog the same id (same day + slug ⇒ same id).
-	if code, err := tasksFolderAdd(root, []string{"same title"}, stateTodo, "tasks add"); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root, []string{"same title"}, StateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("todo add: code=%d err=%v", code, err)
 	}
-	if code, err := tasksFolderAdd(root, []string{"same title"}, stateBacklog, "backlog add"); code == 0 || err == nil {
+	if code, err := tasksFolderAdd(root, []string{"same title"}, StateBacklog, "backlog add"); code == 0 || err == nil {
 		t.Errorf("backlog add of an id already in todo should collide, got (%d, %v)", code, err)
 	}
 	// And the reverse: an id already in the backlog can't be re-added to todo.
 	root2 := t.TempDir()
-	if code, err := tasksFolderAdd(root2, []string{"idea"}, stateBacklog, "backlog add"); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root2, []string{"idea"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("backlog add: code=%d err=%v", code, err)
 	}
-	if code, err := tasksFolderAdd(root2, []string{"idea"}, stateTodo, "tasks add"); code == 0 || err == nil {
+	if code, err := tasksFolderAdd(root2, []string{"idea"}, StateTodo, "tasks add"); code == 0 || err == nil {
 		t.Errorf("todo add of an id already in the backlog should collide, got (%d, %v)", code, err)
 	}
 }
@@ -145,10 +145,10 @@ func TestQueueOfBacklogTask(t *testing.T) {
 	repo := t.TempDir()
 	a := filepath.Join(repo, "svc-a", ".agent", "tasks")
 	b := filepath.Join(repo, "svc-b", ".agent", "tasks")
-	writeTaskFile(t, filepath.Join(a, stateBacklog, "2026-01-01-only-a", "task.md"), "# a\n")
-	writeTaskFile(t, filepath.Join(b, stateBacklog, "2026-01-01-only-b", "task.md"), "# b\n")
-	writeTaskFile(t, filepath.Join(a, stateBacklog, "2026-01-01-dup", "task.md"), "# dupa\n")
-	writeTaskFile(t, filepath.Join(b, stateBacklog, "2026-01-01-dup", "task.md"), "# dupb\n")
+	writeTaskFile(t, filepath.Join(a, StateBacklog, "2026-01-01-only-a", "task.md"), "# a\n")
+	writeTaskFile(t, filepath.Join(b, StateBacklog, "2026-01-01-only-b", "task.md"), "# b\n")
+	writeTaskFile(t, filepath.Join(a, StateBacklog, "2026-01-01-dup", "task.md"), "# dupa\n")
+	writeTaskFile(t, filepath.Join(b, StateBacklog, "2026-01-01-dup", "task.md"), "# dupb\n")
 	rels := []string{"svc-a/.agent/tasks", "svc-b/.agent/tasks"}
 
 	if rel, err := queueOfBacklogTask(repo, rels, "only-b"); err != nil || rel != "svc-b/.agent/tasks" {
@@ -167,20 +167,20 @@ func TestQueueOfBacklogTask(t *testing.T) {
 // failure paths exit 2 with a usage/unknown error — the CLI surface, not just the helpers.
 func TestCmdBacklogDispatch(t *testing.T) {
 	repo := t.TempDir()
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	cfg := &config.Config{RepoOverride: repo}
 
-	if code, err := a.cmdBacklog([]string{"add", "a shiny idea"}); code != 0 || err != nil {
+	if code, err := CmdBacklog(cfg, []string{"add", "a shiny idea"}); code != 0 || err != nil {
 		t.Fatalf("cmdBacklog add: code=%d err=%v", code, err)
 	}
 	root := filepath.Join(repo, ".agent", "tasks")
-	items := readBacklog(root)
+	items := ReadBacklog(root)
 	if len(items) != 1 {
 		t.Fatalf("after add, backlog = %+v, want 1 item", items)
 	}
 	id := items[0].ID
 
 	out := captureStdout(t, func() {
-		if code, err := a.cmdBacklog(nil); code != 0 || err != nil {
+		if code, err := CmdBacklog(cfg, nil); code != 0 || err != nil {
 			t.Errorf("bare cmdBacklog: code=%d err=%v", code, err)
 		}
 	})
@@ -188,28 +188,28 @@ func TestCmdBacklogDispatch(t *testing.T) {
 		t.Errorf("bare backlog should list the idea, got:\n%s", out)
 	}
 
-	if code, err := a.cmdBacklog([]string{"promote", id}); code != 0 || err != nil {
+	if code, err := CmdBacklog(cfg, []string{"promote", id}); code != 0 || err != nil {
 		t.Fatalf("cmdBacklog promote: code=%d err=%v", code, err)
 	}
-	if tree := readTaskTree(root); len(tree) != 1 || tree[0].State != stateTodo {
+	if tree := ReadTaskTree(root); len(tree) != 1 || tree[0].State != StateTodo {
 		t.Fatalf("after promote, tree = %+v, want the id in todo", tree)
 	}
 
 	// Failure paths through the dispatcher: unknown verb; rm refused without --yes (no TTY).
-	if code, err := a.cmdBacklog([]string{"bogus"}); code != 2 || err == nil {
+	if code, err := CmdBacklog(cfg, []string{"bogus"}); code != 2 || err == nil {
 		t.Errorf("unknown verb = (%d, %v), want (2, error)", code, err)
 	}
-	if code, err := a.cmdBacklog([]string{"add", "drop me"}); code != 0 || err != nil {
+	if code, err := CmdBacklog(cfg, []string{"add", "drop me"}); code != 0 || err != nil {
 		t.Fatalf("second add: code=%d err=%v", code, err)
 	}
-	dropID := readBacklog(root)[0].ID
-	if code, err := a.cmdBacklog([]string{"rm", dropID}); code != 2 || err == nil {
+	dropID := ReadBacklog(root)[0].ID
+	if code, err := CmdBacklog(cfg, []string{"rm", dropID}); code != 2 || err == nil {
 		t.Errorf("rm without --yes piped = (%d, %v), want a refusal (2)", code, err)
 	}
-	if code, err := a.cmdBacklog([]string{"rm", dropID, "--yes"}); code != 0 || err != nil {
+	if code, err := CmdBacklog(cfg, []string{"rm", dropID, "--yes"}); code != 0 || err != nil {
 		t.Fatalf("rm --yes: code=%d err=%v", code, err)
 	}
-	if len(readBacklog(root)) != 0 {
+	if len(ReadBacklog(root)) != 0 {
 		t.Error("after rm --yes, the drawer should be empty")
 	}
 }
@@ -225,15 +225,15 @@ func TestCmdBacklogMonorepo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("subprojects:\n  - svc-a\n  - svc-b\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	cfg := &config.Config{RepoOverride: repo}
 	rootA := filepath.Join(repo, "svc-a", ".agent", "tasks")
-	if code, err := tasksFolderAdd(rootA, []string{"an a-side idea"}, stateBacklog, "backlog add"); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(rootA, []string{"an a-side idea"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("seed svc-a: code=%d err=%v", code, err)
 	}
-	id := readBacklog(rootA)[0].ID
+	id := ReadBacklog(rootA)[0].ID
 
 	out := captureStdout(t, func() {
-		if code, err := a.cmdBacklog(nil); code != 0 || err != nil {
+		if code, err := CmdBacklog(cfg, nil); code != 0 || err != nil {
 			t.Errorf("rollup: code=%d err=%v", code, err)
 		}
 	})
@@ -244,18 +244,18 @@ func TestCmdBacklogMonorepo(t *testing.T) {
 	}
 
 	// add must not guess which queue in a monorepo.
-	if code, err := a.cmdBacklog([]string{"add", "which queue?"}); code != 2 || err == nil || !strings.Contains(err.Error(), "one queue at a time") {
+	if code, err := CmdBacklog(cfg, []string{"add", "which queue?"}); code != 2 || err == nil || !strings.Contains(err.Error(), "one queue at a time") {
 		t.Errorf("monorepo add = (%d, %v), want the one-queue refusal", code, err)
 	}
 	// promote routes to the queue that holds the id.
-	if code, err := a.cmdBacklog([]string{"promote", id}); code != 0 || err != nil {
+	if code, err := CmdBacklog(cfg, []string{"promote", id}); code != 0 || err != nil {
 		t.Fatalf("monorepo promote: code=%d err=%v", code, err)
 	}
-	if tree := readTaskTree(rootA); len(tree) != 1 || tree[0].State != stateTodo {
+	if tree := ReadTaskTree(rootA); len(tree) != 1 || tree[0].State != StateTodo {
 		t.Fatalf("promote should land in svc-a's todo, tree = %+v", tree)
 	}
 	// an id no queue holds fails loudly.
-	if code, err := a.cmdBacklog([]string{"promote", "no-such-id"}); code != 1 || err == nil {
+	if code, err := CmdBacklog(cfg, []string{"promote", "no-such-id"}); code != 1 || err == nil {
 		t.Errorf("promote of an absent id = (%d, %v), want (1, error)", code, err)
 	}
 }
@@ -269,23 +269,23 @@ func TestCmdBacklogMonorepo(t *testing.T) {
 // used to error.
 func TestBacklogBareLeadingFlagRoutesToLs(t *testing.T) {
 	repo := t.TempDir()
-	if code, err := tasksFolderAdd(filepath.Join(repo, tasksRoot), []string{"an idea"}, stateBacklog, "backlog add"); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(filepath.Join(repo, TasksRoot), []string{"an idea"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("seed add: code=%d err=%v", code, err)
 	}
 
-	_, err := appFor(repo).cmdBacklog([]string{"-x"})
+	_, err := CmdBacklog(&config.Config{RepoOverride: repo, TasksFiles: []string{TasksRoot}}, []string{"-x"})
 	if err == nil || !strings.Contains(err.Error(), "backlog ls") || !strings.Contains(err.Error(), "unknown flag") {
 		t.Fatalf("coop backlog -x = %v, want ls's own unknown-flag error (routed to ls, not the unknown-subcommand path)", err)
 	}
 
 	// Umbrella (several queues): the same shorthand routes the same way — ls has nothing to
 	// reject, so it reaches the roll-up listing (the unfixed dispatcher errored here instead).
-	if code, err := tasksFolderAdd(filepath.Join(repo, "sub", tasksRoot), []string{"a sub idea"}, stateBacklog, "backlog add"); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(filepath.Join(repo, "sub", TasksRoot), []string{"a sub idea"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("seed sub add: code=%d err=%v", code, err)
 	}
-	multi := &app{cfg: &config.Config{RepoOverride: repo, TasksFiles: []string{tasksRoot, filepath.Join("sub", tasksRoot)}}}
+	multiCfg := &config.Config{RepoOverride: repo, TasksFiles: []string{TasksRoot, filepath.Join("sub", TasksRoot)}}
 	out := captureStdout(t, func() {
-		if code, err := multi.cmdBacklog([]string{"-x"}); code != 0 || err != nil {
+		if code, err := CmdBacklog(multiCfg, []string{"-x"}); code != 0 || err != nil {
 			t.Errorf("umbrella coop backlog -x: got (%d, %v), want (0, nil) — routed to the roll-up listing", code, err)
 		}
 	})

@@ -2,8 +2,8 @@
 name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
-sources: [internal/cli/commands.go, internal/cli/completionwindow.go, internal/cli/loopchanges.go, internal/cli/taskcmd.go]
-updated: 2026-07-26
+sources: [internal/cli/commands.go, internal/tasks/completion.go, internal/cli/loopchanges.go, internal/tasks/cmd.go]
+updated: 2026-08-10
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -24,7 +24,7 @@ re-enters it they show up in the next round's diff). Two wrong placements that f
   unrelated task while the review box runs. The review's completion window tolerates it (the
   window records the review's exact subject ids; a host-receipted non-subject completion is
   concurrent activity, not the review's mutation — everything else still fails closed), and
-  `finishReview` returns those ids so `reviewBaselineAfterVerdict` excludes them too. Absorbing
+  `FinishReview` returns those ids so `reviewBaselineAfterVerdict` excludes them too. Absorbing
   them into the baseline would ship a human-completed task with no review round ever seeing it.
   Final verify returns to signoff when it observes one. If the controller crashes first, startup
   replay returns the journal's concurrent ids and excludes them from the new run baseline.
@@ -78,6 +78,9 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-08-10 — sources repointed: `completionwindow.go`/`taskcmd.go` moved to
+  `internal/tasks/completion.go`/`internal/tasks/cmd.go` (the 2026-08 tasks/lease/completion-audit
+  extraction); `finishReview` is now exported `tasks.FinishReview`. Facts unchanged.
 - 2026-07-26 — documented authority-locked startup classification, overlapping-window precedence,
   and durable mutation/recovered-departure markers for crash-safe recovery.
 - 2026-07-26 — documented CLI-authoritative task deletion and live-lease refusal; verified against

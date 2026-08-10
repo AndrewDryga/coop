@@ -15,6 +15,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -37,20 +38,19 @@ func resolveVersion() string {
 }
 
 type app struct {
-	cfg                      *config.Config
-	rt                       runtime.Runtime
-	rtSet                    bool                                         // whether rt has been detected yet (ensureRuntime is lazy — see below)
-	sweptRepos               map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
-	preset                   *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
-	runID                    string                                       // the active loop run's id, passed to boxes as COOP_RUN_ID so consult peers log usage; empty outside a loop
-	forkOwner                string                                       // repo-scoped runtime owner for the active fork loop; empty for local loops
-	streamSeq                int                                          // streaming box attempt sequence within runID
-	streamOff                bool                                         // an open failure disables best-effort tracing for the rest of the run
-	gateOK                   func(gateRepo, treeDir, img string) bool     // test seam for the merge gate; nil → the real box gate
-	beforeSignRefUpdate      func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
-	beforeRefAuthorityWindow func(repo, headAfter string)                 // test seam: fires just before the ref-authority lock is taken
-	acpModels                func(agent string) ([]acpctl.Model, error)   // test seam for Claude/Gemini model refresh; nil → a real ACP box
-	acpSupervise             func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor
+	cfg                 *config.Config
+	rt                  runtime.Runtime
+	rtSet               bool                                         // whether rt has been detected yet (ensureRuntime is lazy — see below)
+	sweptRepos          map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
+	preset              *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
+	runID               string                                       // the active loop run's id, passed to boxes as COOP_RUN_ID so consult peers log usage; empty outside a loop
+	forkOwner           string                                       // repo-scoped runtime owner for the active fork loop; empty for local loops
+	streamSeq           int                                          // streaming box attempt sequence within runID
+	streamOff           bool                                         // an open failure disables best-effort tracing for the rest of the run
+	gateOK              func(gateRepo, treeDir, img string) bool     // test seam for the merge gate; nil → the real box gate
+	beforeSignRefUpdate func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
+	acpModels           func(agent string) ([]acpctl.Model, error)   // test seam for Claude/Gemini model refresh; nil → a real ACP box
+	acpSupervise        func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor
 }
 
 // ensureRuntime lazily detects and caches the container runtime the first time a box-running command
@@ -236,6 +236,27 @@ func (a *app) dispatch(argv []string) (int, error) {
 		// fast here. Raw box commands are explicit (`coop run -- <cmd>`).
 		return 2, unknownCommandErr(argv)
 	}
+}
+
+// tasksHost builds the real tasks.Host: the command-help catalog and the live-board driver the
+// `coop tasks`/`coop backlog` verb family need but cannot own itself (see internal/tasks's Host
+// doc) — both cli-wide, not task-specific, shared with `coop fleet watch`'s own board.
+func tasksHost() tasks.Host {
+	return tasks.Host{
+		GroupHelp:    groupHelp,
+		RunWatchLoop: runWatchLoop,
+	}
+}
+
+// cmdTasks and cmdBacklog are thin `*app` shims: internal/tasks owns the folder-mode verb family
+// as plain functions (it has no `*app` of its own to be a method on), so cli's dispatch table calls
+// through these rather than the package directly.
+func (a *app) cmdTasks(args []string) (int, error) {
+	return tasks.CmdTasks(tasksHost(), a.cfg, args)
+}
+
+func (a *app) cmdBacklog(args []string) (int, error) {
+	return tasks.CmdBacklog(a.cfg, args)
 }
 
 // topLevelCommands is coop's own subcommands, used only to suggest a correction on a

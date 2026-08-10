@@ -2,9 +2,9 @@
 name: bare-subcommand-shows-help
 description: "a bare group prints help or its default view, never an empty-token error"
 scope: cli-grammar
-sources: [internal/cli/help.go, internal/cli/fork.go, internal/cli/tasks.go]
+sources: [internal/cli/help.go, internal/cli/fork.go, internal/tasks/queue.go]
 check: "none"
-updated: 2026-08-09
+updated: 2026-08-10
 ---
 
 # A bare subcommand group shows help, never an "unknown command \"\"" error
@@ -45,3 +45,6 @@ Bare `coop` prints help; a bare group should match that.
   sessions, or presets, which already correctly hold the invariant. Card documentation drift, not
   a code bug — flagged for the lead, not fixed here.
 - 2026-08-09 — drift repair from the backfill sweep's findings: Current-sweep bullet refreshed to the real 2026-08-09 group list (pool retired, profiles renamed, backlog/sessions/presets added).
+- 2026-08-10 — sources repointed: `tasks.go` moved to `internal/tasks/queue.go` (the 2026-08
+  tasks/lease/completion-audit extraction); `groupHelp` is now injected into `internal/tasks` via
+  its `Host` (cli's own callers still use it directly). Facts unchanged.

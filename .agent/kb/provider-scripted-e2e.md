@@ -2,8 +2,8 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/fork.go, internal/cli/fork_loop.go, internal/cli/fork_fleet.go, internal/cli/fork_merge.go, internal/cli/tasklease.go, internal/cli/streamjson.go, internal/cli/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-07-26
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/cli/commands.go, internal/tasks/audit.go, internal/cli/fork.go, internal/cli/fork_loop.go, internal/cli/fork_fleet.go, internal/cli/fork_merge.go, internal/tasks/lease.go, internal/cli/streamjson.go, internal/cli/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
+updated: 2026-08-10
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -114,6 +114,11 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-08-10 - sources repointed: `controller.go`/`tasklease.go` moved to `internal/tasks/audit.go`/
+  `internal/tasks/lease.go` (the 2026-08 tasks/lease/completion-audit extraction; the two
+  providere2e tests that reached their unexported symbols — `processLeaseAuthorityRoot` in
+  `scripted_process_e2e_test.go` and the completion-window watchdog assertion in
+  `scripted_loop_watchdog_process_e2e_test.go` — now use the exported forms). Facts unchanged.
 - 2026-07-26 - added the exact non-streaming Claude credit-limit stdout rotation boundary
 - 2026-07-25 - corrected Claude credit-limit coverage to the upstream structured assistant + result boundary
 - 2026-07-25 - added Claude assistant-only credit-limit rotation and all-limited wait/resume coverage

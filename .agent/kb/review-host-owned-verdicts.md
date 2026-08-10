@@ -2,8 +2,8 @@
 name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
-sources: [internal/box/run.go, internal/cli/commands.go, internal/cli/controller.go, internal/cli/loopchanges.go, internal/cli/streamjson_providers.go, internal/cli/taskcmd.go, internal/cli/tasklease.go, internal/cli/tasks.go, internal/cli/util.go, internal/loopcfg/loopcfg.go]
-updated: 2026-07-26
+sources: [internal/box/run.go, internal/cli/commands.go, internal/tasks/audit.go, internal/cli/loopchanges.go, internal/cli/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/cli/util.go, internal/loopcfg/loopcfg.go]
+updated: 2026-08-10
 ---
 
 `between`, `signoff`, and `verify` default to `writes: tasks`. The name is retained for
@@ -96,6 +96,11 @@ tasks this controller accepted as completed during the run and that remain archi
 
 ## Changelog
 
+- 2026-08-10 — sources repointed: `controller.go`/`taskcmd.go`/`tasklease.go`/`tasks.go` moved to
+  `internal/tasks/audit.go`/`internal/tasks/cmd.go`/`internal/tasks/lease.go`/`internal/tasks/queue.go`
+  (the 2026-08 tasks/lease/completion-audit extraction); `internal/cli/util.go` unchanged (the moved
+  package's own `internal/tasks/util.go` carries a separate local copy of the trivial helpers it
+  needed). Facts unchanged.
 - 2026-07-26 — pinned audit rewrites to the reviewed subject's raw sole parent (including root),
   raw-walked reachable bindings plus the persisted baseline and complete replacement sequence,
   parsed fixed-grammar bindings and metadata from locally hashed commit bodies, snapshotted locally

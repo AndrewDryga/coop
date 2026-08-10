@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 func TestMain(m *testing.M) {
@@ -12,7 +14,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if err := os.Setenv(testLeaseAuthorityRootEnv, root); err != nil {
+	if err := os.Setenv(tasks.TestLeaseAuthorityRootEnv, root); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		_ = os.RemoveAll(root)
 		os.Exit(1)

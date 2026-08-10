@@ -1,4 +1,4 @@
-package cli
+package tasks
 
 import (
 	"fmt"
@@ -16,40 +16,40 @@ import (
 // active fork (labeled by its name) — with that source's own task counts.
 type watchSource struct {
 	label  string
-	counts taskCounts
+	counts TaskCounts
 }
 
 // mergedTask is a task in the unified view: the task plus the fork that owns it (claimed or worked
 // it), or "" when it lives in the local queue. Sources are deduped by task id.
 type mergedTask struct {
-	taskItem
+	Item
 	fork  string
-	lease taskLeaseObservation
+	lease TaskLeaseObservation
 }
 
 // stateRank orders task states by advancement, so deduping by id keeps the truest state when the
 // same task shows up in several sources (a fork's live copy vs the local seed): done > in progress
 // > blocked > todo.
-var stateRank = map[string]int{stateTodo: 0, stateBlocked: 1, stateInProgress: 2, stateDone: 3}
+var stateRank = map[string]int{StateTodo: 0, StateBlocked: 1, StateInProgress: 2, StateDone: 3}
 
-// tasksWatch is the live `coop tasks watch` board: every task across the configured queue(s) AND
+// TasksWatch is the live `coop tasks watch` board: every task across the configured queue(s) AND
 // any active fork, merged into one view and deduped by id — so you see the whole backlog and who's
 // on what (in progress with the fork that claimed it, then todo, blocked), refreshed in place.
 // Unlike the per-fork fleet board, this is task-centric. It auto-exits only when everything is
 // drained; without a TTY it prints the list once (pipe-safe).
-func (a *app) tasksWatch(repo string, rels []string) (int, error) {
+func TasksWatch(host Host, repo string, rels []string) (int, error) {
 	read := func() ([]watchSource, []mergedTask, int, int) {
 		var sources []watchSource
 		merged := map[string]mergedTask{}
 		// add merges a source's tasks, keeping the most-advanced state per id; processed in order
 		// (configured queues, then forks) so a fork's live copy wins ties over the local seed.
-		add := func(label string, items []taskItem, fork string) {
-			c, _ := taskTreeCounts(items)
+		add := func(label string, items []Item, fork string) {
+			c, _ := TaskTreeCounts(items)
 			sources = append(sources, watchSource{label: label, counts: c})
 			for _, t := range items {
 				if ex, ok := merged[t.ID]; !ok || stateRank[t.State] >= stateRank[ex.State] {
-					m := mergedTask{taskItem: t, fork: fork}
-					if t.State == stateInProgress {
+					m := mergedTask{Item: t, fork: fork}
+					if t.State == StateInProgress {
 						m.lease = observeTaskLease(t, time.Now())
 					}
 					merged[t.ID] = m
@@ -57,7 +57,7 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 			}
 		}
 		for _, rel := range rels {
-			if items := readTaskTree(filepath.Join(repo, rel)); len(items) > 0 {
+			if items := ReadTaskTree(filepath.Join(repo, rel)); len(items) > 0 {
 				add(rel, items, "")
 			}
 		}
@@ -68,7 +68,7 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 			if pid != 0 {
 				running++
 			}
-			items := readTaskTree(filepath.Join(forkspace.Workspace(repo, name), tasksRoot))
+			items := ReadTaskTree(filepath.Join(forkspace.Workspace(repo, name), TasksRoot))
 			if len(items) == 0 && pid == 0 {
 				continue // a dead, empty fork isn't part of the picture
 			}
@@ -112,25 +112,25 @@ func (a *app) tasksWatch(repo string, rels []string) (int, error) {
 		// guard so a just-launched fleet doesn't conclude "drained" before it claims.
 		return frame, tasksWatchSettling(c, running, sawActive, sawFork)
 	}
-	return runWatchLoop(screen, tick, func() {
+	return host.runWatchLoop(screen, tick, func() {
 		ui.OK("queue drained — every task is done")
 	})
 }
 
 // mergedCounts tallies the deduped task set — each task counted once, by its winning state.
-func mergedCounts(merged []mergedTask) taskCounts {
-	items := make([]taskItem, len(merged))
+func mergedCounts(merged []mergedTask) TaskCounts {
+	items := make([]Item, len(merged))
 	for i, m := range merged {
-		items[i] = m.taskItem
+		items[i] = m.Item
 	}
-	c, _ := taskTreeCounts(items)
+	c, _ := TaskTreeCounts(items)
 	return c
 }
 
 // tasksDrained reports whether the queue has no work left — nothing todo, in progress, or blocked,
 // so every task is done (or there are none). It's the auto-exit condition for `coop tasks watch`:
 // a blocked or unfinished-but-idle queue is NOT drained, so the watch keeps running.
-func tasksDrained(c taskCounts) bool {
+func tasksDrained(c TaskCounts) bool {
 	return c.Todo == 0 && c.Doing == 0 && c.Blocked == 0
 }
 
@@ -139,7 +139,7 @@ func tasksDrained(c taskCounts) bool {
 // seen (sawActive) or no fork ever appeared (a plain local watch, nothing to wait for). The guard
 // stops a just-launched fleet, whose boxes are still spawning and whose queue reads idle for a tick,
 // from concluding "drained" and exiting in its startup window (watchIdleExit is only ~1s of ticks).
-func tasksWatchSettling(c taskCounts, running int, sawActive, sawFork bool) bool {
+func tasksWatchSettling(c TaskCounts, running int, sawActive, sawFork bool) bool {
 	return tasksDrained(c) && running == 0 && (sawActive || !sawFork)
 }
 
@@ -170,15 +170,15 @@ func tasksWatchFrame(sources []watchSource, merged []mergedTask, spin, width int
 
 // tasksProgressLine is the overall header: the merged progress bar and the per-state counts (each in
 // the state's color). No status glyph — the bar and counts already convey state.
-func tasksProgressLine(p ui.Palette, c taskCounts) string {
-	return fmt.Sprintf("%s  %s", ui.ProgressBarStates(c.Done, c.Doing, c.Blocked, c.total(), 22), tasksCountSummary(p, c))
+func tasksProgressLine(p ui.Palette, c TaskCounts) string {
+	return fmt.Sprintf("%s  %s", ui.ProgressBarStates(c.Done, c.Doing, c.Blocked, c.Total(), 22), tasksCountSummary(p, c))
 }
 
 // sourceLine is one source's compact breakdown — its label (queue path or fork name), a small bar
 // (done cyan, in-progress yellow, blocked red), done/total, and the blocked count when any — so
 // several queues/forks each fit on one line under the overall header and live/parked work is visible.
-func sourceLine(p ui.Palette, label string, w int, c taskCounts) string {
-	line := fmt.Sprintf("  %s  %s  %s/%d", p.Bold(padRight(label, w)), ui.ProgressBarStates(c.Done, c.Doing, c.Blocked, c.total(), 14), p.Green(fmt.Sprintf("%d", c.Done)), c.total())
+func sourceLine(p ui.Palette, label string, w int, c TaskCounts) string {
+	line := fmt.Sprintf("  %s  %s  %s/%d", p.Bold(padRight(label, w)), ui.ProgressBarStates(c.Done, c.Doing, c.Blocked, c.Total(), 14), p.Green(fmt.Sprintf("%d", c.Done)), c.Total())
 	if c.Blocked > 0 {
 		line += p.Dim(" · ") + p.Red(fmt.Sprintf("%d blocked", c.Blocked))
 	}
@@ -188,19 +188,19 @@ func sourceLine(p ui.Palette, label string, w int, c taskCounts) string {
 // tasksCountSummary is the per-state breakdown shown after the bar — todo · in_progress · blocked ·
 // done — each painted by the shared state key (cyan / yellow / red / green), so a glance maps color
 // to state. Every state shows, even at zero, so the colors read as a consistent legend.
-func tasksCountSummary(p ui.Palette, c taskCounts) string {
+func tasksCountSummary(p ui.Palette, c TaskCounts) string {
 	cells := []struct {
 		state string
 		n     int
 	}{
-		{stateTodo, c.Todo},
-		{stateInProgress, c.Doing},
-		{stateBlocked, c.Blocked},
-		{stateDone, c.Done},
+		{StateTodo, c.Todo},
+		{StateInProgress, c.Doing},
+		{StateBlocked, c.Blocked},
+		{StateDone, c.Done},
 	}
 	out := make([]string, len(cells))
 	for i, cell := range cells {
-		out[i] = paintState(p, cell.state, fmt.Sprintf("%d %s", cell.n, stateLabel(cell.state)))
+		out[i] = paintState(p, cell.state, fmt.Sprintf("%d %s", cell.n, StateLabel(cell.state)))
 	}
 	return strings.Join(out, p.Dim(" · "))
 }
@@ -222,10 +222,10 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
 	var out []string
 	emit := func(m mergedTask) {
 		suffix := ""
-		if m.fork != "" && m.State == stateInProgress {
+		if m.fork != "" && m.State == StateInProgress {
 			suffix += "  ← " + m.fork
 		}
-		if m.State == stateInProgress {
+		if m.State == StateInProgress {
 			suffix += " · " + m.lease.label()
 		}
 		// AltScreen leaves the terminal's final column empty so a full row cannot auto-wrap. Give
@@ -237,10 +237,10 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
 		}
 		out = append(out, line)
 	}
-	for _, m := range byState[stateInProgress] { // being worked — never elided
+	for _, m := range byState[StateInProgress] { // being worked — never elided
 		emit(m)
 	}
-	todo := byState[stateTodo]
+	todo := byState[StateTodo]
 	for i, m := range todo {
 		if i >= todoCap {
 			out = append(out, p.Dim(fmt.Sprintf("  … +%d more", len(todo)-todoCap)))
@@ -248,7 +248,7 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
 		}
 		emit(m)
 	}
-	for _, m := range byState[stateBlocked] { // parked on a decision — never elided
+	for _, m := range byState[StateBlocked] { // parked on a decision — never elided
 		emit(m)
 	}
 	return out
@@ -258,9 +258,9 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
 // (paintState): yellow Corner Run for in-progress, a red flag for blocked, a cyan dot for todo.
 func taskWatchMarker(p ui.Palette, state string, spin int) string {
 	switch state {
-	case stateInProgress:
+	case StateInProgress:
 		return p.Yellow(ui.CompactSpinFrame(spin))
-	case stateBlocked:
+	case StateBlocked:
 		return p.Red("⚑")
 	default: // todo
 		return p.Cyan("○")

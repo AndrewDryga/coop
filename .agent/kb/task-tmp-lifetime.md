@@ -2,8 +2,8 @@
 name: task-tmp-lifetime
 description: task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist
 subsystem: tasks
-sources: [internal/cli/taskcmd.go, internal/cli/tasklease.go, internal/cli/controller.go, internal/cli/commands.go, internal/scaffold/templates/agent/tasks/README.md]
-updated: 2026-07-14
+sources: [internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/audit.go, internal/cli/commands.go, internal/scaffold/templates/agent/tasks/README.md]
+updated: 2026-08-10
 ---
 A task's `tmp/` is disposable but resumable: because it sits inside the task folder, ordinary
 todo/in-progress/blocked/reopen moves carry it along. `tasksFolderMove` removes only `tmp/` when a
@@ -25,3 +25,6 @@ newly done task's `tmp/`, so that cleanup is the only normal path that removes t
 ## Changelog
 - 2026-07-14 — documented loop lease lifetime and the release-before-done-cleanup boundary against `tasklease.go`, `controller.go`, and `commands.go`.
 - 2026-07-14 — created from the task-local temporary-workspace lifecycle implementation and tests.
+- 2026-08-10 — sources repointed: `taskcmd.go`/`tasklease.go`/`controller.go` moved to
+  `internal/tasks/cmd.go`/`internal/tasks/lease.go`/`internal/tasks/audit.go` (the 2026-08
+  tasks/lease/completion-audit extraction). Facts unchanged.

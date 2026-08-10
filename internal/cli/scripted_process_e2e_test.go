@@ -19,6 +19,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -242,7 +243,7 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 // seed or inspect host records must point at exactly this path, or they write somewhere the child
 // will never read.
 func processLeaseAuthorityRoot(layout procharness.Layout) string {
-	return filepath.Join(layout.Home, ".local", "state", "coop", "task-leases", leaseAuthorityVersion)
+	return filepath.Join(layout.Home, ".local", "state", "coop", "task-leases", tasks.LeaseAuthorityVersion)
 }
 
 func buildProcessBinary(t *testing.T, root, output, pkg string) {

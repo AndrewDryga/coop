@@ -2,8 +2,8 @@
 name: task-authority-registry-is-durable-state
 description: host-global completion trust lives in ~/.local/state/coop/task-leases, never a cache dir; adoption off the old cache path is one-shot and every authority flock rechecks its inode
 subsystem: tasks
-sources: [internal/cli/tasklease.go, internal/cli/completionwindow.go, internal/cli/controller.go, internal/sessionsvc/http.go]
-updated: 2026-08-09
+sources: [internal/tasks/lease.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/sessionsvc/http.go]
+updated: 2026-08-10
 ---
 Everything that decides whether a task is *really* finished lives OUTSIDE the repo, in one
 host-global registry: the `<sha>.lock` files whose kernel flock makes one controller the single
@@ -19,7 +19,7 @@ it), and a purge breaks trust two ways: mid-run it unlinks a lock file whose fd 
 the next `openLeaseAuthorityRecord` recreates the name as a NEW inode and two controllers each hold
 an "exclusive" lock on a different one — silently; between runs it erases receipts and reopen
 authority, degrading crash recovery to restore-and-redo. `leaseAuthorityRoots`
-(`internal/cli/tasklease.go`) now resolves `$HOME/.local/state/coop/task-leases/v1` on both darwin
+(`internal/tasks/lease.go`) now resolves `$HOME/.local/state/coop/task-leases/v1` on both darwin
 and linux, the same durable family as the session store's `defaultSessionStateRoot`
 (`internal/sessionsvc/http.go`) — NOT XDG-configurable, matching that precedent exactly.
 
@@ -35,7 +35,7 @@ the old inodes and is not mutually exclusive with a new-binary process until it 
 runs finish before upgrading.
 
 **Every authority flock is proved after the fact.** Take authority locks through
-`lockLeaseAuthority` / `lockLeaseAuthorityForAudit` (`tasklease.go`), never a bare `syscall.Flock`
+`lockLeaseAuthority` / `lockLeaseAuthorityForAudit` (`internal/tasks/lease.go`), never a bare `syscall.Flock`
 on an `openLeaseAuthority` result: they open → lock → `fstat(fd)` vs a fresh `lstat(name)` → on a
 mismatch drop the lock and retry on the inode that answers the name now, bounded by
 `leaseAuthorityIdentityAttempts`, then `errLeaseAuthorityIdentity`. flock binds a process to an
@@ -44,5 +44,10 @@ INODE, never to a name; without the recheck a deleted-underfoot lock is silently
 for the repo-local queue, which did NOT move.
 
 ## Changelog
+- 2026-08-10 — sources repointed again: `tasklease.go`/`completionwindow.go`/`controller.go` moved
+  out of `internal/cli` into `internal/tasks` (`lease.go`/`completion.go`/`audit.go`) whole — the
+  2026-08 tasks/lease/completion-audit extraction. The registry's on-disk format and every fact here
+  are unchanged (another move-only extraction); see [[task-authority-model]] for the full
+  four-authority map this registry backs.
 - 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).
 - 2026-08-09 — created: registry moved out of `os.UserCacheDir()` to the session store's state-root family, with one-shot locked adoption and a post-flock inode identity recheck at every authority lock site.

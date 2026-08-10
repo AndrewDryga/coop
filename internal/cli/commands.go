@@ -31,6 +31,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -1102,7 +1103,7 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, pr
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
-	flags, rest, err := extractTasksFlags(args)
+	flags, rest, err := tasks.ExtractTasksFlags(args)
 	if err != nil {
 		return 2, err
 	}
@@ -1161,7 +1162,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return 2, noProviderErr("loop")
 	}
 	a.applyPreset(p, agent)
-	queues, err := taskQueues(a.cfg, repo, flags)
+	queues, err := tasks.TaskQueues(a.cfg, repo, flags)
 	if err != nil {
 		return 2, err
 	}
@@ -1353,17 +1354,17 @@ func (a *app) runReview(ctx context.Context, repo, img string, rev *ladder.Rotat
 		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 		code, out, usage, classification, windows, runErr := a.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowReview, subjects, reviewRepoReadOnly(writes), sink, peers, activity, "")
 		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target, concurrent: concurrent}
-		if errors.Is(runErr, errCompletionWindowSetup) {
+		if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 			return last, runErr
 		}
-		observed, completionErr := windows.finishReview()
+		observed, completionErr := windows.FinishReview()
 		if len(observed) > 0 {
 			ui.Info("concurrent host completion during review: %s — a parallel host session's change, not this review's", strings.Join(observed, ", "))
 			concurrent = slices.Compact(slices.Sorted(slices.Values(append(concurrent, observed...))))
 			last.concurrent = concurrent
 		}
 		if completionErr != nil {
-			return last, fmt.Errorf("%w: review stage changed task completion ownership: %v", errCompletionWindowAudit, completionErr)
+			return last, fmt.Errorf("%w: review stage changed task completion ownership: %v", tasks.ErrCompletionWindowAudit, completionErr)
 		}
 		if ctx != nil && ctx.Err() != nil {
 			return interruptedReviewResult(last, totalRetries), errReviewInterrupted
@@ -1455,7 +1456,7 @@ type reviewSubjectSnapshot struct {
 	root        string
 	dir         string
 	id          string
-	fingerprint completionFingerprint
+	fingerprint tasks.CompletionFingerprint
 }
 
 func snapshotReviewSubjects(hosts, subjects []string) ([]reviewSubjectSnapshot, error) {
@@ -1465,7 +1466,7 @@ func snapshotReviewSubjects(hosts, subjects []string) ([]reviewSubjectSnapshot, 
 		if err != nil {
 			return nil, err
 		}
-		fingerprint, err := completionFingerprintFor(subject.Root, subject.Item)
+		fingerprint, err := tasks.CompletionFingerprintFor(subject.Root, subject.Item)
 		if err != nil {
 			return nil, fmt.Errorf("review subject %s fingerprint: %w", id, err)
 		}
@@ -1485,7 +1486,7 @@ func validateReviewSubjects(hosts []string, snapshots []reviewSubjectSnapshot) e
 		if subject.Root != snapshot.root || subject.Item.Dir != snapshot.dir {
 			return fmt.Errorf("review subject %s changed task queue", snapshot.id)
 		}
-		fingerprint, err := completionFingerprintFor(subject.Root, subject.Item)
+		fingerprint, err := tasks.CompletionFingerprintFor(subject.Root, subject.Item)
 		if err != nil {
 			return fmt.Errorf("review subject %s fingerprint: %w", snapshot.id, err)
 		}
@@ -1505,14 +1506,14 @@ func (a *app) runReviewVerdict(ctx context.Context, repo, img string, rev *ladde
 	subjects = slices.Clone(subjects)
 	subjectSnapshots, err := snapshotReviewSubjects(hosts, subjects)
 	if err != nil {
-		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: snapshot review subjects: %v", errCompletionWindowSetup, err)
+		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: snapshot review subjects: %v", tasks.ErrCompletionWindowSetup, err)
 	}
 	var concurrent []string
 	var last reviewRunResult
 	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
 			if err := validateReviewSubjects(hosts, subjectSnapshots); err != nil {
-				return last, fmt.Errorf("%w: review subjects changed before the corrected attempt: %v", errCompletionWindowAudit, err)
+				return last, fmt.Errorf("%w: review subjects changed before the corrected attempt: %v", tasks.ErrCompletionWindowAudit, err)
 			}
 		}
 		attemptPrompt := prompt
@@ -1526,7 +1527,7 @@ func (a *app) runReviewVerdict(ctx context.Context, repo, img string, rev *ladde
 		run.concurrent = slices.Clone(concurrent)
 		if err == nil {
 			if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
-				err = fmt.Errorf("%w: review subjects changed before verdict application: %v", errCompletionWindowAudit, snapshotErr)
+				err = fmt.Errorf("%w: review subjects changed before verdict application: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
 			} else {
 				run.reopened, err = applyReviewVerdictInRepo(repo, hosts, subjects, run.output)
 			}
@@ -1735,33 +1736,33 @@ func normalizeReviewVerdictOutput(output string) string {
 	return strings.Join(normalized, "\n")
 }
 
-func reviewSubject(hosts []string, id string) (queuedTask, error) {
+func reviewSubject(hosts []string, id string) (tasks.QueuedTask, error) {
 	found, err := lifecycleTaskSubject(hosts, id)
 	if err != nil {
-		return queuedTask{}, fmt.Errorf("review subject %s %w", id, err)
+		return tasks.QueuedTask{}, fmt.Errorf("review subject %s %w", id, err)
 	}
-	if found.Item.State != stateDone {
-		return queuedTask{}, fmt.Errorf("review subject %s is %s, want done before host reopen", id, stateLabel(found.Item.State))
+	if found.Item.State != tasks.StateDone {
+		return tasks.QueuedTask{}, fmt.Errorf("review subject %s is %s, want done before host reopen", id, tasks.StateLabel(found.Item.State))
 	}
 	return found, nil
 }
 
-func lifecycleTaskSubject(hosts []string, id string) (queuedTask, error) {
-	var found *queuedTask
+func lifecycleTaskSubject(hosts []string, id string) (tasks.QueuedTask, error) {
+	var found *tasks.QueuedTask
 	for _, root := range hosts {
-		for _, task := range readTaskTree(root) {
+		for _, task := range tasks.ReadTaskTree(root) {
 			if task.ID != id {
 				continue
 			}
-			candidate := queuedTask{Root: root, Item: task}
+			candidate := tasks.QueuedTask{Root: root, Item: task}
 			if found != nil {
-				return queuedTask{}, errors.New("exists in multiple lifecycle queues")
+				return tasks.QueuedTask{}, errors.New("exists in multiple lifecycle queues")
 			}
 			found = &candidate
 		}
 	}
 	if found == nil {
-		return queuedTask{}, errors.New("is no longer in a lifecycle queue")
+		return tasks.QueuedTask{}, errors.New("is no longer in a lifecycle queue")
 	}
 	return *found, nil
 }
@@ -1795,7 +1796,7 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 		}
 		reopenSet[id] = true
 	}
-	tasks := make([]queuedTask, 0, len(receipt.reopened))
+	reopenTasks := make([]tasks.QueuedTask, 0, len(receipt.reopened))
 	for _, id := range subjects {
 		observation, exists := evidence[id]
 		if !exists {
@@ -1812,18 +1813,18 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 		if !reopenSet[id] {
 			continue
 		}
-		tasks = append(tasks, task)
+		reopenTasks = append(reopenTasks, task)
 	}
-	if len(tasks) == 0 {
+	if len(reopenTasks) == 0 {
 		return nil, nil
 	}
 	if repo == "" {
 		return nil, errors.New("host authorize review reopen: repository context is required")
 	}
-	moves := make([]trustedTaskMove, 0, len(tasks))
-	for _, task := range tasks {
+	moves := make([]tasks.TrustedTaskMove, 0, len(reopenTasks))
+	for _, task := range reopenTasks {
 		task := task
-		record, err := captureAuditReopen(repo, task.Item.ID)
+		record, err := tasks.CaptureAuditReopen(repo, task.Item.ID)
 		if err != nil {
 			return nil, fmt.Errorf("host authorize review reopen for task %s: %w", task.Item.ID, err)
 		}
@@ -1834,12 +1835,12 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 			encodeUntrustedReviewField(observation.gate),
 			encodeUntrustedReviewField(observation.findings),
 		)
-		moves = append(moves, trustedTaskMove{
-			root: task.Root, task: task.Item, newState: stateInProgress, reopen: reopen,
-			afterMove: func(dir string) error {
+		moves = append(moves, tasks.TrustedTaskMove{
+			Root: task.Root, Task: task.Item, NewState: tasks.StateInProgress, Reopen: reopen,
+			AfterMove: func(dir string) error {
 				return errors.Join(
-					appendTaskLogStrict(dir, note),
-					normalizeTaskState(
+					tasks.AppendTaskLogStrict(dir, note),
+					tasks.NormalizeTaskState(
 						task.Item.ID,
 						dir,
 						"reopened — review finding",
@@ -1851,7 +1852,7 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 			},
 		})
 	}
-	if err := moveTrustedTasksFromDoneWith(moves); err != nil {
+	if err := tasks.MoveTrustedTasksFromDoneWith(moves); err != nil {
 		return nil, fmt.Errorf("host reopen review tasks: %w", err)
 	}
 	return slices.Clone(receipt.reopened), nil
@@ -1954,7 +1955,7 @@ func loopWorkPrompt(repo, assignedRoot, assignedID, agent string, peers []agents
 	}, " ")
 	return loopPeerCapabilities(agent, peers, p) + "\n\n" + fmt.Sprintf(instructions,
 		filepath.Join(repo, "AGENTS.md"),
-		filepath.Join(absQueuePath(repo, assignedRoot), stateInProgress, assignedID),
+		filepath.Join(absQueuePath(repo, assignedRoot), tasks.StateInProgress, assignedID),
 		absQueuePath(repo, assignedRoot), assignedID)
 }
 
@@ -2100,8 +2101,8 @@ func shouldRunBetweenAudit(iterationSucceeded, auditAvailable, protected bool) b
 func doneTaskDirs(hosts []string) map[string]string {
 	out := map[string]string{}
 	for _, h := range hosts {
-		for _, t := range readTaskTree(h) {
-			if t.State == stateDone {
+		for _, t := range tasks.ReadTaskTree(h) {
+			if t.State == tasks.StateDone {
 				out[t.ID] = t.Dir
 			}
 		}
@@ -2112,10 +2113,10 @@ func doneTaskDirs(hosts []string) map[string]string {
 // completedReviewSubjects returns only tasks this controller accepted during the current run and
 // that are still archived. Commit trailers describe their changes but never grant review authority.
 func completedReviewSubjects(hosts []string, completed map[string]bool) []string {
-	states := queueSnapshot(hosts)
+	states := tasks.QueueSnapshot(hosts)
 	var ids []string
 	for id := range completed {
-		if states[id] == stateDone {
+		if states[id] == tasks.StateDone {
 			ids = append(ids, id)
 		}
 	}
@@ -2186,23 +2187,23 @@ func signoffRounds(lc *loopcfg.Config) int {
 // directly. Best-effort: a move/write failure is surfaced and skipped, never fatal — the closing
 // banner still reports the honest count.
 func blockReopenedTasks(hosts, reopened []string, rounds int) error {
-	moves := make([]trustedTaskMove, 0, len(reopened))
+	moves := make([]tasks.TrustedTaskMove, 0, len(reopened))
 	for _, id := range reopened {
 		task, err := lifecycleTaskSubject(hosts, id)
 		if err != nil {
 			return fmt.Errorf("capped signoff task %s %w", id, err)
 		}
 		title := task.Item.Title
-		moves = append(moves, trustedTaskMove{
-			root: task.Root, task: taskItem{ID: id}, newState: stateBlocked,
-			sourceStates:  []string{stateTodo, stateInProgress, stateDone, stateBlocked},
-			metadataNames: []string{"decision.md"},
-			afterMove: func(dir string) error {
+		moves = append(moves, tasks.TrustedTaskMove{
+			Root: task.Root, Task: tasks.Item{ID: id}, NewState: tasks.StateBlocked,
+			SourceStates:  []string{tasks.StateTodo, tasks.StateInProgress, tasks.StateDone, tasks.StateBlocked},
+			MetadataNames: []string{"decision.md"},
+			AfterMove: func(dir string) error {
 				return writeReviewBlockDecision(filepath.Join(dir, "decision.md"), id, title, rounds)
 			},
 		})
 	}
-	if err := moveTrustedTasksFromDoneWith(moves); err != nil {
+	if err := tasks.MoveTrustedTasksFromDoneWith(moves); err != nil {
 		return fmt.Errorf("authoritatively block capped signoff tasks: %w", err)
 	}
 	return nil
@@ -2230,7 +2231,7 @@ func writeReviewBlockDecision(path, id, title string, rounds int) error {
 }
 
 // loopPreflightPrompt frames the CUSTOM pre-loop cleanup (loop.yaml preflight.prompt) — the
-// built-in job, unblocking answered decisions, runs host-side in unblockResolved, so a box (and
+// built-in job, unblocking answered decisions, runs host-side in tasks.UnblockResolved, so a box (and
 // its tokens) spins up only for these extra instructions. The guardrails still bound them:
 // cleanup only, no task work, no code, no commits (the queue files are git-ignored anyway).
 func loopPreflightPrompt(repo string, queues []string, customPrompt string) string {
@@ -2334,7 +2335,7 @@ func (l *loopTaskLimit) observe(snapshot map[string]string) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("task-limited run lost task %s from the queue — inspect `coop tasks` before retrying", l.currentID)
 	}
-	if state != stateDone && state != stateBlocked {
+	if state != tasks.StateDone && state != tasks.StateBlocked {
 		return false, nil
 	}
 	l.settled++
@@ -2355,9 +2356,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *ladder.Rotation, queu
 	for i, q := range queues {
 		hosts[i] = filepath.Join(repo, q)
 	}
-	// A queue is a directory (.agent/tasks), so check for one with isTaskDir — fileExists is
+	// A queue is a directory (.agent/tasks), so check for one with tasks.IsTaskDir — fileExists is
 	// false for a directory and used to reject every folder queue, so the loop never ran.
-	if !slices.ContainsFunc(hosts, isTaskDir) {
+	if !slices.ContainsFunc(hosts, tasks.IsTaskDir) {
 		return -1, fmt.Errorf("no task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(queues, ", "))
 	}
 	// One loop per checkout, claimed before ANY queue state is touched — the reconcilers just
@@ -2387,14 +2388,14 @@ func (a *app) loop(repo, img, agent, forkName string, rot *ladder.Rotation, queu
 	if lc.MCPDisabled() {
 		a.cfg.MCPFile = ""
 	}
-	if err := reconcileInterruptedCompletions(hosts); err != nil {
+	if err := tasks.ReconcileInterruptedCompletions(hosts); err != nil {
 		return 1, fmt.Errorf("recover interrupted completion: %w", err)
 	}
-	recoveredReviewCompletions, err := reconcileCompletionWindowsWithActivity(hosts)
+	recoveredReviewCompletions, err := tasks.ReconcileCompletionWindowsWithActivity(hosts)
 	if err != nil {
 		return 1, fmt.Errorf("recover interrupted completion window: %w", err)
 	}
-	if duplicates := nonArchivedDuplicateTaskIDs(hosts); len(duplicates) > 0 {
+	if duplicates := tasks.NonArchivedDuplicateTaskIDs(hosts); len(duplicates) > 0 {
 		return 1, fmt.Errorf("aggregated loop cannot safely distinguish non-archived task id(s) present in multiple queues: %s — rename the duplicates or select one queue with --tasks", strings.Join(duplicates, ", "))
 	}
 	custom := lc.Work.Command
@@ -2405,13 +2406,13 @@ func (a *app) loop(repo, img, agent, forkName string, rot *ladder.Rotation, queu
 	preflightBuiltinRan := false
 	if limit.enabled() && preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
-		if ids := unblockResolved(hosts); len(ids) > 0 {
+		if ids := tasks.UnblockResolved(hosts); len(ids) > 0 {
 			ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
 		}
 		preflightBuiltinRan = true
 	}
 	if limit.enabled() {
-		cf, _ := queueProgress(hosts)
+		cf, _ := tasks.QueueProgress(hosts)
 		if cf.Todo+cf.Doing == 0 {
 			fmt.Fprintln(os.Stderr, loopTaskLimitBanner(cf, limit))
 			return loopExitCode(cf), nil
@@ -2547,7 +2548,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *ladder.Rotation, queu
 	if preflight && len(custom) == 0 {
 		if !preflightBuiltinRan {
 			ui.Info("pre-flight: resolving answered blockers")
-			if ids := unblockResolved(hosts); len(ids) > 0 {
+			if ids := tasks.UnblockResolved(hosts); len(ids) > 0 {
 				ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
 			}
 		}
@@ -2557,10 +2558,10 @@ func (a *app) loop(repo, img, agent, forkName string, rot *ladder.Rotation, queu
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
 			pfCode, _, _, pfClassification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, completionWindowReview, nil, false, sink, peers, "preflight", "")
-			if errors.Is(runErr, errCompletionWindowSetup) {
+			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 				return 1, runErr
 			}
-			if _, err := windows.finishReview(); err != nil {
+			if _, err := windows.FinishReview(); err != nil {
 				return 1, fmt.Errorf("pre-flight changed task completion ownership: %w", err)
 			}
 			a.recordStage(repo, runid, "preflight", pfClassification.outcome, rot.Active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil)
@@ -2577,7 +2578,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *ladder.Rotation, queu
 		}
 	}
 	label := strings.Join(queues, ", ")
-	c0, _ := queueProgress(hosts)
+	c0, _ := tasks.QueueProgress(hosts)
 	stopHint := "Ctrl-C to stop"
 	if limit.enabled() {
 		stopHint = fmt.Sprintf("at most %s, then pause", ui.Count(limit.max, "task"))
@@ -2585,9 +2586,9 @@ func (a *app) loop(repo, img, agent, forkName string, rot *ladder.Rotation, queu
 		stopHint = "Ctrl-C to stop after this task, again to stop now"
 	}
 	if len(custom) == 0 {
-		ui.Info("starting unattended loop on %s with %s — %d/%d done (%s)", label, agent, c0.Done, c0.total(), stopHint)
+		ui.Info("starting unattended loop on %s with %s — %d/%d done (%s)", label, agent, c0.Done, c0.Total(), stopHint)
 	} else {
-		ui.Info("starting unattended loop on %s — %d/%d done (%s)", label, c0.Done, c0.total(), stopHint)
+		ui.Info("starting unattended loop on %s — %d/%d done (%s)", label, c0.Done, c0.Total(), stopHint)
 	}
 	if rot.Rotates() {
 		ui.Info("rotating %d targets on rate limit: %s", rot.Len(), strings.Join(rot.Members(), ", "))
@@ -2595,7 +2596,7 @@ func (a *app) loop(repo, img, agent, forkName string, rot *ladder.Rotation, queu
 	// An in_progress task whose commit is already in history means a previous run died between the
 	// commit and the folder move. Say so before working it: the resume recipe only stays safe while
 	// that commit is HEAD, and left unnoticed these sat in the queue for days.
-	for _, t := range alreadyCommittedInProgress(repo, hosts) {
+	for _, t := range tasks.AlreadyCommittedInProgress(repo, hosts) {
 		ui.Warn("task %s is in progress but its commit %s is already in history (%s on top) — it may be finished; verify it and `coop tasks done %s`, or leave it to be resumed",
 			t.ID, t.Commit, ui.Count(t.Depth, "commit"), t.ID)
 	}
@@ -2632,7 +2633,7 @@ reviewAgain:
 			if softStop.Load() || iterCtx.Err() != nil {
 				break
 			}
-			reached, limitErr := limit.observe(queueSnapshot(hosts))
+			reached, limitErr := limit.observe(tasks.QueueSnapshot(hosts))
 			if limitErr != nil {
 				return 1, limitErr
 			}
@@ -2645,19 +2646,19 @@ reviewAgain:
 			target := rot.Active()
 			// Select and host-claim one authoritative task before the box starts. The returned task
 			// drives both the banner and prompt, so the model cannot guess a different "next" task.
-			assignment, assignErr := assignLoopTaskOnly(hosts, taskLeaseOwner{
+			assignment, assignErr := tasks.AssignLoopTaskOnly(hosts, tasks.TaskLeaseOwner{
 				RunID: a.runID, PID: os.Getpid(), Provider: agent, Target: target.String(),
 			}, limit.scope())
 			if assignErr != nil {
 				return 1, assignErr
 			}
-			if assignment.Outcome == assignmentUnavailable {
+			if assignment.Outcome == tasks.AssignmentUnavailable {
 				// Foreign-held work is not a drained queue. Do not sign off a batch another live
 				// controller still owns; its kernel lock will make the task adoptable on death.
 				ui.Info("no task lease available — %s; stopping without signoff", assignment.Busy)
 				return 0, nil
 			}
-			if assignment.Outcome == assignmentDrained {
+			if assignment.Outcome == tasks.AssignmentDrained {
 				if limit.scope() != "" {
 					continue // the selected task settled between scans; observe and count its final state
 				}
@@ -2665,7 +2666,7 @@ reviewAgain:
 			}
 			c, assigned, lease := assignment.Counts, assignment.Task, assignment.Lease
 			limit.assign(assigned.Item.ID)
-			if lease.legacy {
+			if lease.Legacy {
 				ui.Info("adopting unleased in-progress task %s", assigned.Item.ID)
 			}
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
@@ -2681,10 +2682,10 @@ reviewAgain:
 			// Coop-Recovery receipt); otherwise a landed Coop-Task commit (a crash after commit before
 			// the folder-move) gets the crash/reopen disambiguation line. Empty prefix → prompt unchanged.
 			iterHead := gitOut(repo, "rev-parse", "HEAD")
-			if authorityErr := validateLeasedAuditReopen(repo, iterHead, assigned.Item.ID, lease.reopen); authorityErr != nil {
-				baseline := lease.reopen.BaselineHead
-				parkErr := parkStaleAuditReopen(assigned, baseline)
-				releaseErr := lease.release()
+			if authorityErr := tasks.ValidateLeasedAuditReopen(repo, iterHead, assigned.Item.ID, lease.Reopen); authorityErr != nil {
+				baseline := lease.Reopen.BaselineHead
+				parkErr := tasks.ParkStaleAuditReopen(assigned, baseline)
+				releaseErr := lease.Release()
 				if parkErr != nil {
 					return 1, errors.Join(
 						authorityErr,
@@ -2693,36 +2694,36 @@ reviewAgain:
 					)
 				}
 				return 1, errors.Join(
-					fmt.Errorf("%w; %s", authorityErr, staleAuditReopenRecovery(assigned.Item.ID, baseline)),
+					fmt.Errorf("%w; %s", authorityErr, tasks.StaleAuditReopenRecovery(assigned.Item.ID, baseline)),
 					releaseErr,
 				)
 			}
-			work := loopWorkPrompt(repo, assigned.Root, assigned.Item.ID, agent, peers, a.preset, lease.reopen != nil)
+			work := loopWorkPrompt(repo, assigned.Root, assigned.Item.ID, agent, peers, a.preset, lease.Reopen != nil)
 			iterWork := work
-			if pre := a.resumePrefixFor(repo, assigned.Item.ID, assigned.Item.State, lease.reopen); pre != "" {
+			if pre := tasks.ResumePrefixFor(repo, assigned.Item.ID, assigned.Item.State, lease.Reopen); pre != "" {
 				iterWork = pre + "\n\n" + work
 			}
 			iterStart := time.Now()
 			cmd, streaming := iterCmd(agent, iterWork)
 			code, _, res, classification, windows, runErr := a.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowWork, []string{assigned.Item.ID}, false, sink, peers, active, assigned.Item.ID)
-			if errors.Is(runErr, errCompletionWindowSetup) {
-				return 1, errors.Join(runErr, lease.release())
+			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
+				return 1, errors.Join(runErr, lease.Release())
 			}
 			// Stop metadata writes but keep the flock while validating and finalizing this exact task.
-			lease.quiesce()
+			lease.Quiesce()
 			// Completion integrity is a hard boundary. Fresh work must bind inside this iteration's
 			// commit range. Crash recovery restores work for a new range-bound attempt, never trusting
 			// provider-writable metadata or reachable history. The flock stays held through validation,
 			// recovery notes, and accepted-state cleanup so no second controller sees a half-transition.
-			completedTasks, unowned, completionScanErr := windows.auditDoneCandidates(assigned)
+			completedTasks, unowned, completionScanErr := windows.AuditDoneCandidates(assigned)
 			if completionScanErr != nil {
 				return 1, errors.Join(
 					fmt.Errorf("scan task completions: %w", completionScanErr),
-					lease.release(), windows.abandon(),
+					lease.Release(), windows.Abandon(),
 				)
 			}
 			var finished []string
-			var assignedCompletion *queuedTask
+			var assignedCompletion *tasks.QueuedTask
 			for i := range completedTasks {
 				if completedTasks[i].Root == assigned.Root && completedTasks[i].Item.ID == assigned.Item.ID {
 					assignedCompletion = &completedTasks[i]
@@ -2736,11 +2737,11 @@ reviewAgain:
 			// can inspect the outcome. A small dedicated cap prevents a quiet respawn loop.
 			if isBackgroundHandoff(classification.outcome) {
 				if assignedCompletion != nil {
-					if restoreErr := restoreBackgroundHandoffCompletion(*assignedCompletion); restoreErr != nil {
-						return 1, errors.Join(restoreErr, lease.release(), windows.abandon())
+					if restoreErr := tasks.RestoreBackgroundHandoffCompletion(*assignedCompletion); restoreErr != nil {
+						return 1, errors.Join(restoreErr, lease.Release(), windows.Abandon())
 					}
 				}
-				if releaseErr := errors.Join(lease.release(), windows.close()); releaseErr != nil {
+				if releaseErr := errors.Join(lease.Release(), windows.Close()); releaseErr != nil {
 					return 1, fmt.Errorf("release task lease %s after background handoff: %w", assigned.Item.ID, releaseErr)
 				}
 				handoffs++
@@ -2758,23 +2759,23 @@ reviewAgain:
 			// capped at three consecutive timeouts, no ordinary counter consumed.
 			if isProviderTimeout(classification.outcome) {
 				if assignedCompletion != nil {
-					if restoreErr := restoreProviderTimeoutCompletion(*assignedCompletion, lease.reopen != nil); restoreErr != nil {
-						return 1, errors.Join(restoreErr, lease.release(), windows.abandon())
+					if restoreErr := tasks.RestoreProviderTimeoutCompletion(*assignedCompletion, lease.Reopen != nil); restoreErr != nil {
+						return 1, errors.Join(restoreErr, lease.Release(), windows.Abandon())
 					}
 				}
-				if authorityErr := lease.rebaseTimedOutAuditReopen(repo, iterHead, gitOut(repo, "rev-parse", "HEAD")); authorityErr != nil {
-					baseline := lease.reopen.BaselineHead
-					parkErr := parkStaleAuditReopen(assigned, baseline)
-					releaseErr := errors.Join(lease.release(), windows.abandon())
+				if authorityErr := lease.RebaseTimedOutAuditReopen(repo, iterHead, gitOut(repo, "rev-parse", "HEAD")); authorityErr != nil {
+					baseline := lease.Reopen.BaselineHead
+					parkErr := tasks.ParkStaleAuditReopen(assigned, baseline)
+					releaseErr := errors.Join(lease.Release(), windows.Abandon())
 					if parkErr != nil {
 						return 1, errors.Join(authorityErr, fmt.Errorf("could not park stale audit task %s: %w", assigned.Item.ID, parkErr), releaseErr)
 					}
 					return 1, errors.Join(
-						fmt.Errorf("task %s audit authority no longer matches the tree its timed-out attempt left: %w; %s", assigned.Item.ID, authorityErr, staleAuditReopenRecovery(assigned.Item.ID, baseline)),
+						fmt.Errorf("task %s audit authority no longer matches the tree its timed-out attempt left: %w; %s", assigned.Item.ID, authorityErr, tasks.StaleAuditReopenRecovery(assigned.Item.ID, baseline)),
 						releaseErr,
 					)
 				}
-				departed, departureErr := windows.departures()
+				departed, departureErr := windows.Departures()
 				if len(departed) > 0 {
 					departureErr = errors.Join(departureErr, fmt.Errorf(
 						"work stage reopened unowned archived task(s) %s",
@@ -2783,12 +2784,12 @@ reviewAgain:
 				}
 				var unownedErr error
 				if len(unowned) > 0 {
-					unownedErr = unownedCompletionError(unowned, nil)
+					unownedErr = tasks.UnownedCompletionError(unowned, nil)
 				}
 				if auditErr := errors.Join(unownedErr, departureErr); auditErr != nil {
-					return 1, errors.Join(auditErr, lease.release(), windows.abandon())
+					return 1, errors.Join(auditErr, lease.Release(), windows.Abandon())
 				}
-				if releaseErr := errors.Join(lease.release(), windows.close()); releaseErr != nil {
+				if releaseErr := errors.Join(lease.Release(), windows.Close()); releaseErr != nil {
 					return 1, fmt.Errorf("release task lease %s after provider timeout: %w", assigned.Item.ID, releaseErr)
 				}
 				timeouts++
@@ -2807,49 +2808,49 @@ reviewAgain:
 			}
 			handoffs, timeouts = 0, 0
 			headAfter := gitOut(repo, "rev-parse", "HEAD")
-			// Ref authority: from here through consumeAuditReopen/windows.close(), this worktree's
+			// Ref authority: from here through consumeAuditReopen/windows.Close(), this worktree's
 			// HEAD is exclusive to this controller. Everything below assumes HEAD == headAfter; an
 			// interactive coop run, a host signing rewrite, a fork land, or a human commit could move
 			// it during the several filesystem operations between this line and consumeAuditReopen,
 			// so the window closes that gap instead of trusting the value across it. The first action
-			// inside the lock re-reads HEAD and compares — see enterRefAuthorityWindow.
-			refRelease, liveHead, refErr := a.enterRefAuthorityWindow(repo, headAfter)
+			// inside the lock re-reads HEAD and compares — see tasks.EnterRefAuthorityWindow.
+			refRelease, liveHead, refErr := tasks.EnterRefAuthorityWindow(a.cfg, repo, headAfter, nil)
 			if refErr != nil {
 				reason := refErr.Error()
-				if errors.Is(refErr, errRefAuthorityMoved) {
+				if errors.Is(refErr, tasks.ErrRefAuthorityMoved) {
 					reason = fmt.Sprintf("HEAD moved from the validated %s to %s before task authority could be consumed — another process changed this checkout during completion", headAfter, liveHead)
 				}
 				var restoreErr error
 				if assignedCompletion != nil {
-					restoreErr = restoreRefAuthorityFailure(*assignedCompletion, reason)
+					restoreErr = tasks.RestoreRefAuthorityFailure(*assignedCompletion, reason)
 				}
-				releaseErr := errors.Join(lease.release(), windows.abandon())
-				return 1, errors.Join(refAuthorityFailureError(assigned.Item.ID, reason, restoreErr), releaseErr)
+				releaseErr := errors.Join(lease.Release(), windows.Abandon())
+				return 1, errors.Join(tasks.RefAuthorityFailureError(assigned.Item.ID, reason, restoreErr), releaseErr)
 			}
 			// departures runs before the binding check so its ids are already known: the touched set
 			// below needs them, and this restore/reject sequence stays in the exact order it ran in
 			// before (departure churn still wins over a binding rejection).
-			departed, departureErr := windows.departures()
+			departed, departureErr := windows.Departures()
 			var restoreErr error
 			if departureErr != nil {
 				if assignedCompletion != nil {
-					restoreErr = restoreCompromisedCompletion(*assignedCompletion, lease.reopen != nil)
+					restoreErr = tasks.RestoreCompromisedCompletion(*assignedCompletion, lease.Reopen != nil)
 				}
-				releaseErr := errors.Join(lease.release(), windows.abandon())
+				releaseErr := errors.Join(lease.Release(), windows.Abandon())
 				refRelease()
 				return 1, errors.Join(departureErr, restoreErr, releaseErr)
 			}
 			if len(departed) > 0 {
 				if assignedCompletion != nil {
-					restoreErr = restoreCompromisedCompletion(*assignedCompletion, lease.reopen != nil)
+					restoreErr = tasks.RestoreCompromisedCompletion(*assignedCompletion, lease.Reopen != nil)
 				}
 				var windowErr error
 				if restoreErr != nil {
-					windowErr = windows.abandon()
+					windowErr = windows.Abandon()
 				} else {
-					windowErr = windows.close()
+					windowErr = windows.Close()
 				}
-				releaseErr := errors.Join(lease.release(), windowErr)
+				releaseErr := errors.Join(lease.Release(), windowErr)
 				refRelease()
 				departureErr = fmt.Errorf("work stage reopened unowned archived task(s) %s", strings.Join(departed, ", "))
 				return 1, errors.Join(departureErr, restoreErr, releaseErr)
@@ -2863,7 +2864,7 @@ reviewAgain:
 			// archived task's history is meant to be closed, and a forged extra commit corrupts that
 			// closed record without needing to touch its folder at all. A foreign Coop-Task trailer in
 			// range for anything outside this set is tolerated rather than rejecting this completion —
-			// see unbindableTasks, completionWindowSet.baselineDoneIDs, and
+			// see unbindableTasks, tasks.CompletionWindowSet.baselineDoneIDs, and
 			// .agent/kb/loop-range-rejects-outside-commits.md. All of it is built and used inside the
 			// ref authority window already entered above, so nothing can move HEAD or a queue folder
 			// out from under the comparison.
@@ -2871,8 +2872,8 @@ reviewAgain:
 			for _, id := range finished {
 				touched[id] = true
 			}
-			if lease.reopen != nil {
-				touched[lease.reopen.TaskID] = true
+			if lease.Reopen != nil {
+				touched[lease.Reopen.TaskID] = true
 			}
 			for _, t := range completedTasks {
 				touched[t.Item.ID] = true
@@ -2880,84 +2881,84 @@ reviewAgain:
 			for _, id := range departed {
 				touched[id] = true
 			}
-			for id := range windows.baselineDoneIDs() {
+			for id := range windows.BaselineDoneIDs() {
 				touched[id] = true
 			}
 			var missing, tolerated []string
 			if assignedCompletion != nil {
-				missing, tolerated = completionUnbindableTasks(repo, iterHead, headAfter, finished, lease.reopen, touched)
+				missing, tolerated = tasks.CompletionUnbindableTasks(repo, iterHead, headAfter, finished, lease.Reopen, touched)
 			}
-			reportToleratedForeignBindings(repo, hosts, iterHead, headAfter, assigned.Item.ID, tolerated)
+			tasks.ReportToleratedForeignBindings(repo, hosts, iterHead, headAfter, assigned.Item.ID, tolerated)
 			if len(missing) > 0 {
-				restoreErr = errors.Join(restoreErr, restoreQueuedCompletion(*assignedCompletion, lease.reopen != nil))
+				restoreErr = errors.Join(restoreErr, tasks.RestoreQueuedCompletion(*assignedCompletion, lease.Reopen != nil))
 				var windowErr error
 				if restoreErr != nil {
-					windowErr = windows.abandon()
+					windowErr = windows.Abandon()
 				} else {
-					windowErr = windows.close()
+					windowErr = windows.Close()
 				}
-				releaseErr := errors.Join(lease.release(), windowErr)
+				releaseErr := errors.Join(lease.Release(), windowErr)
 				refRelease()
 				var unownedErr error
 				if len(unowned) > 0 {
-					unownedErr = unownedCompletionError(unowned, nil)
+					unownedErr = tasks.UnownedCompletionError(unowned, nil)
 				}
-				bindErr := unbindableCompletionError(missing, restoreErr)
-				if lease.reopen != nil {
+				bindErr := tasks.UnbindableCompletionError(missing, restoreErr)
+				if lease.Reopen != nil {
 					// With audit authority, missing is exactly the assigned reopened task and the
 					// failure was the semantic replay validation, not trailer counting.
-					bindErr = auditCompletionError(missing[0], restoreErr)
+					bindErr = tasks.AuditCompletionError(missing[0], restoreErr)
 				}
 				return 1, errors.Join(bindErr, unownedErr, releaseErr)
 			}
 			if len(unowned) > 0 {
 				if assignedCompletion != nil {
-					restoreErr = errors.Join(restoreErr, restoreCompromisedCompletion(*assignedCompletion, lease.reopen != nil))
+					restoreErr = errors.Join(restoreErr, tasks.RestoreCompromisedCompletion(*assignedCompletion, lease.Reopen != nil))
 				}
 				var windowErr error
 				if restoreErr != nil {
-					windowErr = windows.abandon()
+					windowErr = windows.Abandon()
 				} else {
-					windowErr = windows.close()
+					windowErr = windows.Close()
 				}
-				releaseErr := errors.Join(lease.release(), windowErr)
+				releaseErr := errors.Join(lease.Release(), windowErr)
 				refRelease()
-				return 1, errors.Join(unownedCompletionError(unowned, restoreErr), releaseErr)
+				return 1, errors.Join(tasks.UnownedCompletionError(unowned, restoreErr), releaseErr)
 			}
-			if err := lease.preserveBlockedAuditReopen(repo, iterHead, headAfter); err != nil {
-				releaseErr := errors.Join(lease.release(), windows.close())
+			if err := lease.PreserveBlockedAuditReopen(repo, iterHead, headAfter); err != nil {
+				releaseErr := errors.Join(lease.Release(), windows.Close())
 				refRelease()
 				return 1, errors.Join(fmt.Errorf("preserve task %s blocked audit reopen authority: %w", assigned.Item.ID, err), releaseErr)
 			}
 			// Finalize only the completion whose lease this controller owns. Concurrent controllers
 			// close their own crash boundaries and unowned moves have already failed closed above.
 			if assignedCompletion != nil {
-				if cleanupErr := finalizeQueuedCompletion(*assignedCompletion); cleanupErr != nil {
-					releaseErr := errors.Join(lease.release(), windows.abandon())
+				if cleanupErr := tasks.FinalizeQueuedCompletion(*assignedCompletion); cleanupErr != nil {
+					releaseErr := errors.Join(lease.Release(), windows.Abandon())
 					refRelease()
 					return 1, errors.Join(fmt.Errorf("%w — completion was not accepted; fix the obstruction and re-run `coop loop`", cleanupErr), releaseErr)
 				}
-				if receiptErr := lease.markCompleted(assignedCompletion.Item.Dir); receiptErr != nil {
-					restoreErr := restoreUnrecordedCompletion(*assignedCompletion)
-					clearErr := lease.clearCompleted()
-					releaseErr := errors.Join(lease.release(), windows.abandon())
+				if receiptErr := lease.MarkCompleted(assignedCompletion.Item.Dir); receiptErr != nil {
+					restoreErr := tasks.RestoreUnrecordedCompletion(*assignedCompletion)
+					clearErr := lease.ClearCompleted()
+					releaseErr := errors.Join(lease.Release(), windows.Abandon())
 					refRelease()
 					return 1, errors.Join(fmt.Errorf("record task completion %s: %w", assigned.Item.ID, receiptErr), restoreErr, clearErr, releaseErr)
 				}
-				if consumeErr := lease.consumeAuditReopen(); consumeErr != nil {
-					releaseErr := errors.Join(lease.release(), windows.close())
+				if consumeErr := lease.ConsumeAuditReopen(); consumeErr != nil {
+					releaseErr := errors.Join(lease.Release(), windows.Close())
 					refRelease()
 					return 1, errors.Join(fmt.Errorf("consume task %s audit reopen authority: %w", assigned.Item.ID, consumeErr), releaseErr)
 				}
 			}
 			refRelease()
-			if releaseErr := errors.Join(lease.release(), windows.close()); releaseErr != nil {
+			if releaseErr := errors.Join(lease.Release(), windows.Close()); releaseErr != nil {
 				return 1, fmt.Errorf("release task lease %s: %w", assigned.Item.ID, releaseErr)
 			}
 			if assignedCompletion != nil {
 				completedThisRun[assignedCompletion.Item.ID] = true
 			}
-			gateHits := protectedGateChanges(repo, iterHead, headAfter)
+			gateHits := tasks.ProtectedGateChanges(repo, iterHead, headAfter)
 			if len(gateHits) > 0 {
 				ui.Warn("this iteration edited gate-defining file(s) %s — the review must confirm the gate wasn't weakened to pass", strings.Join(gateHits, ", "))
 			}
@@ -2990,7 +2991,7 @@ reviewAgain:
 					finishedDirs := []string{assignedCompletion.Item.ID + " — " + assignedCompletion.Item.Dir}
 					finishedIDs := taskIDsOf(finishedDirs)
 					stepChanges := loopChanges(repo, loopStartHead, headAfter).forTasks(finishedIDs)
-					auditGateFiles := protectedGateFiles(append(stepChanges.gateFiles(), gateHits...))
+					auditGateFiles := tasks.ProtectedGateFiles(append(stepChanges.gateFiles(), gateHits...))
 					setPrompt, auditAvailable := betweenAuditSetPrompt(betweenEnabled, lc.Between.Prompt, auditGateFiles)
 					protectedAudit := len(auditGateFiles) > 0
 					runAudit := shouldRunBetweenAudit(action == actContinue, auditAvailable, protectedAudit)
@@ -3020,7 +3021,7 @@ reviewAgain:
 						if errors.Is(rerr, errReviewInterrupted) {
 							break
 						}
-						if errors.Is(rerr, errCompletionWindowSetup) || errors.Is(rerr, errCompletionWindowAudit) || errors.Is(rerr, errReviewVerdict) {
+						if errors.Is(rerr, tasks.ErrCompletionWindowSetup) || errors.Is(rerr, tasks.ErrCompletionWindowAudit) || errors.Is(rerr, errReviewVerdict) {
 							return 1, rerr
 						}
 						if rerr != nil {
@@ -3107,12 +3108,12 @@ reviewAgain:
 		// A requested stop (soft: the current iteration finished; hard: it was torn down) skips the
 		// signoff pass and the drain summary — the queue isn't done, the user asked to stop.
 		if softStop.Load() || iterCtx.Err() != nil {
-			cf, _ := queueProgress(hosts)
+			cf, _ := tasks.QueueProgress(hosts)
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 			return loopInterruptedExitCode, nil
 		}
 		if limit.enabled() {
-			cf, _ := queueProgress(hosts)
+			cf, _ := tasks.QueueProgress(hosts)
 			fmt.Fprintln(os.Stderr, loopTaskLimitBanner(cf, limit))
 			if limit.settled == 0 {
 				return loopExitCode(cf), nil
@@ -3152,7 +3153,7 @@ reviewAgain:
 		// Preserve the exact tasks the host reopened before any early return.
 		reopenedIDs := soRun.reopened
 		if errors.Is(serr, errReviewInterrupted) {
-			cf, _ := queueProgress(hosts)
+			cf, _ := tasks.QueueProgress(hosts)
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 			return loopInterruptedExitCode, nil
 		}
@@ -3161,7 +3162,7 @@ reviewAgain:
 		}
 		// A stop that landed during the signoff pass is honored before the next round is decided.
 		if softStop.Load() || iterCtx.Err() != nil {
-			cf, _ := queueProgress(hosts)
+			cf, _ := tasks.QueueProgress(hosts)
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 			return loopInterruptedExitCode, nil
 		}
@@ -3238,11 +3239,11 @@ reviewAgain:
 			reopenedIDs := vRun.reopened
 			health.noteReopen(reopenedIDs)
 			if errors.Is(verr, errReviewInterrupted) {
-				cf, _ := queueProgress(hosts)
+				cf, _ := tasks.QueueProgress(hosts)
 				fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 				return loopInterruptedExitCode, nil
 			}
-			if errors.Is(verr, errCompletionWindowSetup) || errors.Is(verr, errCompletionWindowAudit) {
+			if errors.Is(verr, tasks.ErrCompletionWindowSetup) || errors.Is(verr, tasks.ErrCompletionWindowAudit) {
 				return 1, verr
 			}
 			if errors.Is(verr, errReviewVerdictMalformed) {
@@ -3267,12 +3268,12 @@ reviewAgain:
 			ui.Info("signed %s with your host key", ui.Count(signed, "commit"))
 		}
 	}
-	cf, _ := queueProgress(hosts)
+	cf, _ := tasks.QueueProgress(hosts)
 	// A human-facing digest above the verdict banner: what shipped (per task + areas), what's blocked,
 	// and any task the run flagged — so you see what to review/e2e at a glance.
 	if len(custom) == 0 {
 		cost := costFromRecords(readStageRecords(repo, runid), readPeerRecords(repo, runid))
-		if digest := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD")).humanDigest(health, blockedTaskIDs(hosts), cost); digest != "" {
+		if digest := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD")).humanDigest(health, tasks.BlockedTaskIDs(hosts), cost); digest != "" {
 			fmt.Fprintln(os.Stderr, digest)
 		}
 		// Done folders accumulate until a human prunes them (agents never delete) — and a big
@@ -3330,13 +3331,13 @@ func (a *app) cmdPrompt(args []string) (int, error) {
 	if err != nil {
 		return 0, nil // not in a resolvable repo → stay quiet
 	}
-	var c taskCounts
-	if queues, qerr := taskQueues(a.cfg, repo, nil); qerr == nil {
+	var c tasks.TaskCounts
+	if queues, qerr := tasks.TaskQueues(a.cfg, repo, nil); qerr == nil {
 		hosts := make([]string, len(queues))
 		for i, q := range queues {
 			hosts[i] = filepath.Join(repo, q)
 		}
-		c, _ = queueProgress(hosts)
+		c, _ = tasks.QueueProgress(hosts)
 	}
 	// Fork activity from a dir listing + pidfiles — no git, so it stays prompt-cheap.
 	names := forkspace.Names(repo)
@@ -3360,7 +3361,7 @@ func (a *app) cmdPrompt(args []string) (int, error) {
 
 // promptLine builds coop prompt's compact status line from the counts: non-zero segments only,
 // "·"-separated, returning "" when everything is idle so an embedding prompt shows nothing.
-func promptLine(c taskCounts, forks, looping int, signWarn bool) string {
+func promptLine(c tasks.TaskCounts, forks, looping int, signWarn bool) string {
 	var seg []string
 	if c.Todo > 0 {
 		seg = append(seg, fmt.Sprintf("%d todo", c.Todo))
@@ -3396,7 +3397,7 @@ func promptLine(c taskCounts, forks, looping int, signWarn bool) string {
 // otherwise masquerade as a stalled iteration, spending the stall budget on a broken repo — and the
 // next iteration would work a task it can't bind a commit range to anyway.
 func (a *app) advanceStall(repo string, hosts []string, prevHead string, settledBaseline, stalls int, active string) (string, int, int, error) {
-	after, _ := queueProgress(hosts)
+	after, _ := tasks.QueueProgress(hosts)
 	settled := after.Done + after.Blocked
 	head, err := gitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil {
@@ -3416,7 +3417,7 @@ func (a *app) advanceStall(repo string, hosts []string, prevHead string, settled
 // the loop's outcome without parsing stderr prose: 1 when a final review left work actionable, 3
 // when work is blocked on a human decision and nothing else is actionable, and 0 only when the
 // queue is verified done. Other failures (1) and usage errors (2) surface from their own call sites.
-func loopExitCode(cf taskCounts) int {
+func loopExitCode(cf tasks.TaskCounts) int {
 	if cf.Todo+cf.Doing > 0 {
 		return 1
 	}
@@ -3432,7 +3433,7 @@ func loopExitCode(cf taskCounts) int {
 // exits either accepted (nothing reopened) or with the stuck task blocked, but the reopened branch
 // stays as a defensive fallback (e.g. a custom work.command run). Pure, so the outcomes are
 // unit-tested without running the loop.
-func loopClosingBanner(cf taskCounts, completed int) string {
+func loopClosingBanner(cf tasks.TaskCounts, completed int) string {
 	switch {
 	case cf.Todo+cf.Doing > 0:
 		return ui.Bold(ui.Yellow(fmt.Sprintf(
@@ -3441,9 +3442,9 @@ func loopClosingBanner(cf taskCounts, completed int) string {
 		// Tasks parked in 50_blocked/ on a human decision are NOT done — don't report success.
 		return ui.Bold(ui.Yellow(fmt.Sprintf(
 			"stopped — %d/%d done, %d blocked on a decision; resolve them (coop tasks decisions), then re-run",
-			cf.Done, cf.total(), cf.Blocked)))
+			cf.Done, cf.Total(), cf.Blocked)))
 	default:
-		msg := fmt.Sprintf("✓ queue verified done — %d/%d", cf.Done, cf.total())
+		msg := fmt.Sprintf("✓ queue verified done — %d/%d", cf.Done, cf.Total())
 		if completed > 0 {
 			msg += fmt.Sprintf(" in %d iterations", completed)
 		}
@@ -3453,25 +3454,25 @@ func loopClosingBanner(cf taskCounts, completed int) string {
 
 const loopInterruptedExitCode = 130
 
-func loopInterruptedBanner(cf taskCounts) string {
-	return ui.Bold(ui.Yellow(fmt.Sprintf("■ interrupted before queue verification — %d/%d done; run 'coop loop' to resume", cf.Done, cf.total())))
+func loopInterruptedBanner(cf tasks.TaskCounts) string {
+	return ui.Bold(ui.Yellow(fmt.Sprintf("■ interrupted before queue verification — %d/%d done; run 'coop loop' to resume", cf.Done, cf.Total())))
 }
 
-func loopTaskLimitBanner(cf taskCounts, limit loopTaskLimit) string {
+func loopTaskLimitBanner(cf tasks.TaskCounts, limit loopTaskLimit) string {
 	if limit.settled == 0 {
 		if cf.Blocked > 0 {
 			return ui.Bold(ui.Yellow(fmt.Sprintf("■ task-limited run idle — no actionable task; %d blocked on a decision; no box started", cf.Blocked)))
 		}
 		return ui.Bold(ui.Green("✓ task-limited run idle — no actionable task; no box started"))
 	}
-	last := fmt.Sprintf("last: %s %s", limit.lastID, stateLabel(limit.lastState))
+	last := fmt.Sprintf("last: %s %s", limit.lastID, tasks.StateLabel(limit.lastState))
 	if limit.settled >= limit.max {
 		noun := "tasks"
 		if limit.max == 1 {
 			noun = "task"
 		}
 		msg := fmt.Sprintf("task limit reached — %d/%d %s settled (%s); paused before another task or final signoff", limit.settled, limit.max, noun, last)
-		if limit.lastState == stateBlocked {
+		if limit.lastState == tasks.StateBlocked {
 			return ui.Bold(ui.Yellow("■ " + msg))
 		}
 		return ui.Bold(ui.Green("✓ " + msg))
@@ -3564,20 +3565,20 @@ func (p *claudePlainLimitProbe) limited(code int) bool {
 // live bar watches task counts while its explicit activity remains fixed. On interactive terminals
 // the agent's output is funneled into the scroll history above a sticky progress bar (a
 // Docker-build-style live view). Non-terminal output goes straight to the destination unchanged.
-func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string) (code int, output string, res *iterResult, classification iterationClassification, windows *completionWindowSet, err error) {
+func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {
 	if windowMode == completionWindowReview {
-		windows, err = beginReviewCompletionWindows(hosts, reviewSubjects)
+		windows, err = tasks.BeginReviewCompletionWindows(hosts, reviewSubjects)
 	} else if windowMode == completionWindowWork {
 		if len(reviewSubjects) != 1 {
 			err = errors.New("work completion window requires one assigned subject")
 		} else {
-			windows, err = beginWorkCompletionWindows(hosts, reviewSubjects[0])
+			windows, err = tasks.BeginWorkCompletionWindows(hosts, reviewSubjects[0])
 		}
 	} else {
-		windows, err = beginCompletionWindows(hosts)
+		windows, err = tasks.BeginCompletionWindows(hosts)
 	}
 	if err != nil {
-		err = fmt.Errorf("%w: %v", errCompletionWindowSetup, err)
+		err = fmt.Errorf("%w: %v", tasks.ErrCompletionWindowSetup, err)
 		classification = classifyIteration(agent, 1, err, err.Error(), streamNotUsed, time.Now())
 		return 1, "", nil, classification, nil, err
 	}
@@ -3592,7 +3593,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 	if live {
 		liveWidth = func() int { return ui.TermWidth(os.Stderr) }
 		region := ui.NewRegion(os.Stderr, liveWidth)
-		c0, _ := queueProgress(hosts)
+		c0, _ := tasks.QueueProgress(hosts)
 		bar = newLoopBar(region, liveWidth, time.Now(), c0, activity)
 		funnel = &lineWriter{fn: bar.history} // agent/loop lines scroll above the bar
 		termOut, termErr = funnel, funnel
@@ -3761,7 +3762,7 @@ func (a *app) runIteration(ctx context.Context, repo, img, agent, forkName strin
 func monitorProgress(hosts []string, stop <-chan struct{}, bar *loopBar) {
 	t := time.NewTicker(progressPoll)
 	defer t.Stop()
-	last, _ := queueProgress(hosts) // the bar was built with this baseline
+	last, _ := tasks.QueueProgress(hosts) // the bar was built with this baseline
 	for {
 		select {
 		case <-stop:
@@ -3772,11 +3773,11 @@ func monitorProgress(hosts []string, stop <-chan struct{}, bar *loopBar) {
 	}
 }
 
-func updateLoopBarCounts(hosts []string, last taskCounts, bar *loopBar) taskCounts {
+func updateLoopBarCounts(hosts []string, last tasks.TaskCounts, bar *loopBar) tasks.TaskCounts {
 	// c.total()==0 while we had a baseline is a torn read (a folder caught mid-move) — a
 	// running loop always has tasks; keep the last good counts rather than blink to 0/0.
-	c, _ := queueProgress(hosts)
-	if c != last && (c.total() > 0 || last.total() == 0) {
+	c, _ := tasks.QueueProgress(hosts)
+	if c != last && (c.Total() > 0 || last.Total() == 0) {
 		bar.setCounts(c)
 		return c
 	}

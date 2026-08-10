@@ -10,6 +10,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -34,7 +35,7 @@ type fleetRow struct {
 	running bool
 	cleanup bool
 	ran     bool // its loop produced log output — tells a stopped-incomplete fork from a never-started one
-	counts  taskCounts
+	counts  tasks.TaskCounts
 	active  string
 	lastLog string
 	cost    float64 // the fork's total spend across its loop runs (from its COOP_RUN_ID telemetry), 0 if none
@@ -42,7 +43,7 @@ type fleetRow struct {
 
 func gatherFleetRow(repo, name string) fleetRow {
 	ws := forkspace.Workspace(repo, name)
-	counts, active := queueCounts(wsTaskSource(ws))
+	counts, active := tasks.QueueCounts(tasks.WsTaskSource(ws))
 	running := forkspace.RunningPid(repo, name) != 0
 	return fleetRow{
 		name:    name,
@@ -70,7 +71,7 @@ func forkRan(repo, name string) bool {
 // drops to zero tasks, so when the fresh read shows none but the last one had some, keep the
 // previous counts/active. Everything not derived from the tree (running, lastLog, ran) stays fresh.
 func keepLastGood(fresh, prev fleetRow) fleetRow {
-	if fresh.counts.total() == 0 && prev.counts.total() > 0 {
+	if fresh.counts.Total() == 0 && prev.counts.Total() > 0 {
 		fresh.counts = prev.counts
 		fresh.active = prev.active
 	}
@@ -147,7 +148,7 @@ func fleetSettled(rows []fleetRow) bool {
 		if r.cleanup {
 			return false
 		}
-		if r.counts.total() == 0 && !r.ran {
+		if r.counts.Total() == 0 && !r.ran {
 			return false // not yet seeded (startup) or an interactive fork — can't conclude "finished"
 		}
 	}
@@ -170,9 +171,9 @@ func fleetDashboard(name string, rows []fleetRow, spin, width int) []string {
 		doing += r.counts.Doing
 		blocked += r.counts.Blocked
 		done += r.counts.Done
-		total += r.counts.total()
+		total += r.counts.Total()
 		totalCost += r.cost
-		if w := len(fmt.Sprintf("%d/%d", r.counts.Done, r.counts.total())); w > countW {
+		if w := len(fmt.Sprintf("%d/%d", r.counts.Done, r.counts.Total())); w > countW {
 			countW = w
 		}
 	}
@@ -238,7 +239,7 @@ func stateGlyph(running bool, done, total, spin int) string {
 // fleetRowLine renders one fork's row: a state glyph (spinner running / ‖ idle / ✓ done), a
 // small progress bar, the done/total count, what it's working on, and the last line of its log.
 func fleetRowLine(r fleetRow, spin, countW, nameW, width int) string {
-	total := r.counts.total()
+	total := r.counts.Total()
 	allDone := total > 0 && r.counts.Done == total // "done" = every task in done/, not just "no todo/ left"
 	// stopped: the loop exited (not running) with tasks unfinished — it ran and quit at N/M. Distinct
 	// from a fork merely idle and never started (no log), which recedes below.

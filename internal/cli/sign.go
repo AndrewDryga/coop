@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -134,7 +135,7 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	// guards the work loop's validate→consume window guards this compare-and-swap too, so a signing
 	// rewrite can never land in the middle of another controller's window (and vice versa) — coop
 	// never trips its own compare-and-swap. Acquired only for this short tail, never the rebase above.
-	release, lockErr := lockRefAuthority(a.cfg, repo)
+	release, lockErr := tasks.LockRefAuthority(a.cfg, repo)
 	if lockErr != nil {
 		return 0, fmt.Errorf("acquire ref authority for %s: %w", repo, lockErr)
 	}

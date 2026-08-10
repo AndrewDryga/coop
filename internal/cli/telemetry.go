@@ -15,6 +15,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -52,7 +53,7 @@ type stageRecord struct {
 
 // buildStageRecord assembles a record from a stage's EFFECTIVE target (the post-rotation Target, so
 // the row shows what ran, not what was configured) and its outcome. Pure — unit-tested.
-func buildStageRecord(run, stage, outcome, coopVer string, tgt agents.Target, start, end time.Time, exit, retries, reopened int, headBefore, headAfter string, q taskCounts, finished, gateFiles []string) stageRecord {
+func buildStageRecord(run, stage, outcome, coopVer string, tgt agents.Target, start, end time.Time, exit, retries, reopened int, headBefore, headAfter string, q tasks.TaskCounts, finished, gateFiles []string) stageRecord {
 	return stageRecord{
 		Run:        run,
 		Stage:      stage,
@@ -172,7 +173,7 @@ func openRunsRoot(repo string, create bool) (*os.Root, error) {
 // counts at emit time. Best-effort — a write failure is warned once and swallowed, so telemetry can
 // never break the run it observes.
 func (a *app) recordStage(repo, run, stage, outcome string, tgt agents.Target, start time.Time, exit, retries, reopened int, headBefore string, hosts, finished, gateFiles []string, res *iterResult) {
-	cnt, _ := queueProgress(hosts)
+	cnt, _ := tasks.QueueProgress(hosts)
 	rec := buildStageRecord(run, stage, outcome, resolveVersion(), tgt, start, time.Now(), exit, retries, reopened, headBefore, gitOut(repo, "rev-parse", "HEAD"), cnt, finished, gateFiles)
 	if res != nil { // the box run's result-event tally (nil for stages that had no stream-json result)
 		rec.CostUSD, rec.InTok, rec.OutTok = res.CostUSD, res.InTok, res.OutTok

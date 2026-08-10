@@ -10,13 +10,14 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 func TestBuildStageRecord(t *testing.T) {
 	tgt := agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"work"}}
 	start := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
 	end := start.Add(90 * time.Second)
-	q := taskCounts{Todo: 2, Doing: 1, Done: 5}
+	q := tasks.TaskCounts{Todo: 2, Doing: 1, Done: 5}
 	rec := buildStageRecord("run123", "work", "success", "v4.0.0", tgt, start, end, 0, 3, 2, "abc123", "def456", q, []string{"t-1"}, []string{".claude/settings.json"})
 
 	// The EFFECTIVE (post-rotation) target is flattened onto the record — provider included, so a

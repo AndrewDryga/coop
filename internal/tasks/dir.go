@@ -1,4 +1,4 @@
-package cli
+package tasks
 
 import (
 	"io/fs"
@@ -21,7 +21,7 @@ import (
 // The contract is in AGENTS.md; converting a legacy single-file queue is MIGRATING.md.
 
 // tasksRoot is the repo-relative task queue directory every reader works against.
-const tasksRoot = ".agent/tasks"
+const TasksRoot = ".agent/tasks"
 
 // Task state directories, in lifecycle order. The directory name IS the status. Each carries a
 // numeric sort-key prefix so a plain `ls .agent/tasks` lists the states in lifecycle order
@@ -30,21 +30,21 @@ const tasksRoot = ".agent/tasks"
 // imports scaffold, so scaffold can't import back) — and these are local aliases so call sites
 // read unchanged. stateLabel strips the prefix for human-facing output; paths use the dir name.
 const (
-	stateTodo       = taskstate.Todo
-	stateInProgress = taskstate.InProgress
-	stateBlocked    = taskstate.Blocked
-	stateDone       = taskstate.Done
+	StateTodo       = taskstate.Todo
+	StateInProgress = taskstate.InProgress
+	StateBlocked    = taskstate.Blocked
+	StateDone       = taskstate.Done
 	// stateBacklog is the staging drawer for unscheduled ideas (`coop backlog`). It lives OUTSIDE
 	// taskStates on purpose, so readTaskTree/findTask/the loop/counters never see it — only the
 	// readBacklog-based `coop backlog` commands do. See taskstate.Backlog.
-	stateBacklog = taskstate.Backlog
+	StateBacklog = taskstate.Backlog
 )
 
 // taskStates is the canonical ordered set of state directories.
-var taskStates = taskstate.All
+var TaskStates = taskstate.All
 
 // taskItem is one parsed task folder.
-type taskItem struct {
+type Item struct {
 	ID          string // = folder name; the stable handle (constant across moves)
 	Title       string // frontmatter `title:`, else the body H1, else the ID
 	State       string // one of taskStates — the parent directory
@@ -54,7 +54,7 @@ type taskItem struct {
 }
 
 // doneSubtasks returns how many of the task's subtask checkboxes are checked.
-func (t taskItem) doneSubtasks() int {
+func (t Item) doneSubtasks() int {
 	n := 0
 	for _, d := range t.Subtasks {
 		if d {
@@ -65,7 +65,7 @@ func (t taskItem) doneSubtasks() int {
 }
 
 // isTaskDir reports whether path exists and is a directory — the folder-mode selector.
-func isTaskDir(path string) bool {
+func IsTaskDir(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.IsDir()
 }
@@ -78,7 +78,7 @@ var subtaskRe = regexp.MustCompile(`^[ \t]*[-*] \[(.)\] `)
 // It parses only flat `key: value` lines (enough for id/title/labels/parent/updated);
 // comment (`#`) and blank lines are skipped. With no well-formed header, all of content
 // is the body and fields is empty. Kept dependency-free on purpose — coop is stdlib-only.
-func splitFrontmatter(content string) (fields map[string]string, body string) {
+func SplitFrontmatter(content string) (fields map[string]string, body string) {
 	fields = map[string]string{}
 	lines := strings.Split(content, "\n")
 	// The frontmatter is the first `---` fence — but `coop tasks add` seeds task.md with a leading
@@ -178,13 +178,13 @@ func scanSubtasks(body string) []bool {
 
 // parseTaskFolder reads dir/task.md into a taskItem, with State set by the caller. It
 // returns ok=false when there is no task.md (so a stray non-task folder is skipped).
-func parseTaskFolder(dir, state string) (taskItem, bool) {
+func parseTaskFolder(dir, state string) (Item, bool) {
 	path := filepath.Join(dir, "task.md")
 	if !fileExists(path) {
-		return taskItem{}, false
+		return Item{}, false
 	}
 	content := readFileString(path)
-	fields, body := splitFrontmatter(content)
+	fields, body := SplitFrontmatter(content)
 	id := filepath.Base(dir)
 	title := fields["title"]
 	if title == "" {
@@ -194,7 +194,7 @@ func parseTaskFolder(dir, state string) (taskItem, bool) {
 		title = id
 	}
 	title = sanitizeCell(title) // task.md can be agent-authored — keep control chars/ANSI out of output
-	return taskItem{
+	return Item{
 		ID:          id,
 		Title:       title,
 		State:       state,
@@ -207,8 +207,8 @@ func parseTaskFolder(dir, state string) (taskItem, bool) {
 // readTaskTree enumerates every task folder under root's state directories, sorted by
 // state (lifecycle order) then ID, so callers get a stable ordering. A missing state
 // dir is simply empty. root is typically <repo>/.agent/tasks.
-func readTaskTree(root string) []taskItem {
-	var items []taskItem
+func ReadTaskTree(root string) []Item {
+	var items []Item
 	// The four ReadDir calls below aren't one atomic snapshot, so a task being moved between state
 	// dirs (an os.Rename) can be read in BOTH — once in the source dir, once in the destination.
 	// Dedup by id, keeping the first (lifecycle-earliest) occurrence, so a torn read can't inflate
@@ -216,7 +216,7 @@ func readTaskTree(root string) []taskItem {
 	// PERSISTENT duplicate (a copy mistake, not a rename in flight) is surfaced by `coop tasks
 	// lint` via duplicateTaskIDs — this hot path stays quiet by design.
 	seen := map[string]bool{}
-	for _, state := range taskStates {
+	for _, state := range TaskStates {
 		stateDir := filepath.Join(root, state)
 		entries, err := os.ReadDir(stateDir)
 		if err != nil {
@@ -233,7 +233,7 @@ func readTaskTree(root string) []taskItem {
 		}
 	}
 	sort.SliceStable(items, func(i, j int) bool {
-		si, sj := stateOrder(items[i].State), stateOrder(items[j].State)
+		si, sj := StateOrder(items[i].State), StateOrder(items[j].State)
 		if si != sj {
 			return si < sj
 		}
@@ -249,7 +249,7 @@ func readTaskTree(root string) []taskItem {
 // second look are returned. Map: id → the state dirs (lifecycle order) that hold it.
 func duplicateTaskIDs(root string) map[string][]string {
 	found := map[string][]string{}
-	for _, state := range taskStates {
+	for _, state := range TaskStates {
 		entries, err := os.ReadDir(filepath.Join(root, state))
 		if err != nil {
 			continue
@@ -283,9 +283,9 @@ func duplicateTaskIDs(root string) map[string][]string {
 // so it's the only path that surfaces backlog items (the `coop backlog` commands). A missing dir is
 // simply empty. No cross-state dedup is needed: a backlog item lives only here until it's promoted
 // (an atomic os.Rename out), so it can't be read in two states at once.
-func readBacklog(root string) []taskItem {
-	var items []taskItem
-	entries, err := os.ReadDir(filepath.Join(root, stateBacklog))
+func ReadBacklog(root string) []Item {
+	var items []Item
+	entries, err := os.ReadDir(filepath.Join(root, StateBacklog))
 	if err != nil {
 		return nil
 	}
@@ -293,7 +293,7 @@ func readBacklog(root string) []taskItem {
 		if !e.IsDir() {
 			continue
 		}
-		if t, ok := parseTaskFolder(filepath.Join(root, stateBacklog, e.Name()), stateBacklog); ok {
+		if t, ok := parseTaskFolder(filepath.Join(root, StateBacklog, e.Name()), StateBacklog); ok {
 			items = append(items, t)
 		}
 	}
@@ -303,7 +303,7 @@ func readBacklog(root string) []taskItem {
 
 // copyTree recursively copies directory src into dst (creating dst and parents). Used to
 // seed a fork worktree with a folder-mode task tree, and to write per-fork task slices.
-func copyTree(src, dst string) error {
+func CopyTree(src, dst string) error {
 	return fs.WalkDir(os.DirFS(src), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -322,8 +322,8 @@ func copyTree(src, dst string) error {
 // 10_in_progress, silently corrupting the queue. Split producers and fork seeding call this so a
 // slice or seeded fork queue is safe to move within (`coop init` scaffolds the same four its own
 // way). Idempotent — MkdirAll on an existing dir is a no-op.
-func scaffoldStateDirs(root string) error {
-	for _, st := range taskStates {
+func ScaffoldStateDirs(root string) error {
+	for _, st := range TaskStates {
 		if err := os.MkdirAll(filepath.Join(root, st), 0o755); err != nil {
 			return err
 		}
@@ -344,9 +344,9 @@ func splitTodoFolders(repo, root string, names []string) (written []string, coun
 	if n == 0 {
 		return written, counts, 0, nil
 	}
-	var todo []taskItem
-	for _, it := range readTaskTree(root) {
-		if it.State == stateTodo {
+	var todo []Item
+	for _, it := range ReadTaskTree(root) {
+		if it.State == StateTodo {
 			todo = append(todo, it)
 		}
 	}
@@ -362,7 +362,7 @@ func splitTodoFolders(repo, root string, names []string) (written []string, coun
 	}
 	for i, it := range todo {
 		b := i % n // deterministic round-robin over the sorted todo list
-		if e := copyTree(it.Dir, filepath.Join(parent, "tasks."+names[b], stateTodo, it.ID)); e != nil {
+		if e := CopyTree(it.Dir, filepath.Join(parent, "tasks."+names[b], StateTodo, it.ID)); e != nil {
 			return nil, nil, 0, e
 		}
 		counts[b]++
@@ -372,7 +372,7 @@ func splitTodoFolders(repo, root string, names []string) (written []string, coun
 			continue
 		}
 		sliceDir := filepath.Join(parent, "tasks."+names[i])
-		if e := scaffoldStateDirs(sliceDir); e != nil { // all four states, so an in-box `mv` between them can't corrupt the slice
+		if e := ScaffoldStateDirs(sliceDir); e != nil { // all four states, so an in-box `mv` between them can't corrupt the slice
 			return nil, nil, 0, e
 		}
 		if rel, e := filepath.Rel(repo, sliceDir); e == nil {
@@ -385,19 +385,19 @@ func splitTodoFolders(repo, root string, names []string) (written []string, coun
 }
 
 // stateOrder maps a state to its lifecycle index for sorting (unknown states sort last).
-func stateOrder(state string) int {
-	for i, s := range taskStates {
+func StateOrder(state string) int {
+	for i, s := range TaskStates {
 		if s == state {
 			return i
 		}
 	}
-	return len(taskStates)
+	return len(TaskStates)
 }
 
 // stateLabel is a state's human-readable name with the on-disk sort prefix stripped
 // ("00_todo" → "todo", "99_done" → "done"). Output uses it; filesystem paths use the
 // dir name verbatim (so a path coop prints is one you can actually cd into).
-func stateLabel(state string) string {
+func StateLabel(state string) string {
 	if _, name, ok := strings.Cut(state, "_"); ok {
 		return name
 	}
@@ -407,24 +407,24 @@ func stateLabel(state string) string {
 // queueCounts reads a task queue directory (.agent/tasks) and returns its counts and active
 // task — the one seam the status, loop, and fleet readers funnel through. A missing/empty dir
 // reads as all-zero.
-func queueCounts(dir string) (taskCounts, string) {
-	return taskTreeCounts(readTaskTree(dir))
+func QueueCounts(dir string) (TaskCounts, string) {
+	return TaskTreeCounts(ReadTaskTree(dir))
 }
 
 // wsTaskSource returns a workspace's task queue directory (.agent/tasks). Used by the status
 // and fleet views, which read a fork's queue directly rather than through taskQueues.
-func wsTaskSource(ws string) string {
-	return filepath.Join(ws, tasksRoot)
+func WsTaskSource(ws string) string {
+	return filepath.Join(ws, TasksRoot)
 }
 
 // latestTaskLog returns the last n lines of the most-recently-modified per-task log.md under
 // ws's .agent/tasks tree (the agent's "why") — surfaced by `coop fork review`; "" if none.
-func latestTaskLog(ws string, n int) string {
+func LatestTaskLog(ws string, n int) string {
 	// Only COMPLETED tasks (99_done): a fork's "why" is what it FINISHED. Scanning every state also
 	// picked up seeded 00_todo templates copied from the parent, whose mtimes can tie or beat the
 	// fork's own work — so a fresh fork's brief showed a pristine template. A seeded fork's 99_done is
 	// its own (slices seed only todo); empty means the fork hasn't finished anything (caller says so).
-	matches, _ := filepath.Glob(filepath.Join(ws, tasksRoot, stateDone, "*", "log.md"))
+	matches, _ := filepath.Glob(filepath.Join(ws, TasksRoot, StateDone, "*", "log.md"))
 	newest, newestMod := "", time.Time{}
 	for _, m := range matches {
 		if fi, err := os.Stat(m); err == nil && fi.ModTime().After(newestMod) {
@@ -440,24 +440,24 @@ func latestTaskLog(ws string, n int) string {
 // taskTreeCounts tallies a task tree into the shared taskCounts and returns the "active"
 // task title — the first in_progress task, or failing that the first todo — so the
 // status, loop, and fleet views all agree on what a queue is "working on".
-func taskTreeCounts(items []taskItem) (taskCounts, string) {
-	var c taskCounts
+func TaskTreeCounts(items []Item) (TaskCounts, string) {
+	var c TaskCounts
 	active, firstTodo := "", ""
 	for _, t := range items {
 		switch t.State {
-		case stateTodo:
+		case StateTodo:
 			c.Todo++
 			if firstTodo == "" {
 				firstTodo = t.Title
 			}
-		case stateInProgress:
+		case StateInProgress:
 			c.Doing++
 			if active == "" {
 				active = t.Title
 			}
-		case stateBlocked:
+		case StateBlocked:
 			c.Blocked++
-		case stateDone:
+		case StateDone:
 			c.Done++
 		}
 	}

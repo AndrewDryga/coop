@@ -12,6 +12,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 // setLoopWatchdogDeadlines appends the internal COOP_PROVIDER_TIMEOUTS override to the suite's
@@ -292,8 +293,8 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			!pathExists(filepath.Join(root, stateInProgress, archiveID)) {
 			t.Fatal("timeout ownership failure did not leave both tasks actionable")
 		}
-		t.Setenv(testLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
-		index, err := readCompletionWindowIndex(root)
+		t.Setenv(tasks.TestLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
+		index, err := tasks.ReadCompletionWindowIndex(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -308,7 +309,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 				t.Fatalf("retained completion window lost archived baseline %s", archiveID)
 			}
 		}
-		if err := reconcileCompletionWindows([]string{root}); err == nil ||
+		if err := tasks.ReconcileCompletionWindows([]string{root}); err == nil ||
 			!strings.Contains(err.Error(), "archived task(s) "+archiveID+" left done") {
 			t.Fatalf("startup recovery archive departure = %v", err)
 		}

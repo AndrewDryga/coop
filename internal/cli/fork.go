@@ -20,6 +20,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -608,12 +609,12 @@ func readForkMeta(ws, path string) string {
 	if filepath.Dir(path) != meta {
 		return ""
 	}
-	root, err := openTaskMetadataRoot(meta)
+	root, err := tasks.OpenTaskMetadataRoot(meta)
 	if err != nil {
 		return ""
 	}
 	defer root.Close()
-	data, err := readTaskMetadataFile(root, filepath.Base(path))
+	data, err := tasks.ReadTaskMetadataFile(root, filepath.Base(path))
 	if err != nil || len(data) > forkMetadataFileLimit {
 		return ""
 	}
@@ -628,12 +629,12 @@ func saveForkMeta(ws, path, value string) {
 	if err := os.Mkdir(meta, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
 		return
 	}
-	root, err := openTaskMetadataRoot(meta)
+	root, err := tasks.OpenTaskMetadataRoot(meta)
 	if err != nil {
 		return
 	}
 	defer root.Close()
-	_ = atomicWriteTaskFile(root, filepath.Base(path), []byte(value+"\n"))
+	_ = tasks.AtomicWriteTaskFile(root, filepath.Base(path), []byte(value+"\n"))
 }
 
 // forkSessionFile records the coop-owned session id for a fork+agent+account,
@@ -668,7 +669,7 @@ func saveForkSession(ws, agent, account, id string) {
 
 func clearForkSession(ws, agent, account string) {
 	meta := filepath.Join(ws, ".coop")
-	root, err := openTaskMetadataRoot(meta)
+	root, err := tasks.OpenTaskMetadataRoot(meta)
 	if err != nil {
 		return
 	}
@@ -1207,7 +1208,7 @@ func (a *app) forkBrief(repo, ws, name, ref string, gateOutcome forkReviewGateOu
 		fmt.Println(ui.Bold("commits:"))
 		fmt.Println(indent(log))
 	}
-	if why := latestTaskLog(ws, 12); strings.TrimSpace(why) != "" {
+	if why := tasks.LatestTaskLog(ws, 12); strings.TrimSpace(why) != "" {
 		fmt.Println(ui.Bold("why (agent's claim — latest task log):"))
 		fmt.Println(indent(why))
 	} else {

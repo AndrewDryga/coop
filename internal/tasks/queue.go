@@ -1,4 +1,4 @@
-package cli
+package tasks
 
 import (
 	"errors"
@@ -19,7 +19,7 @@ import (
 // returning the collected paths and the remaining args. Shared by `coop tasks` and
 // `coop loop` so they accept the same repeatable flag. A trailing `--tasks` with no path
 // is an error, not a silently-dropped flag.
-func extractTasksFlags(args []string) (tasks []string, rest []string, err error) {
+func ExtractTasksFlags(args []string) (tasks []string, rest []string, err error) {
 	for i := 0; i < len(args); i++ {
 		if v, n, ok, e := flagValue(args, i, "--tasks"); ok {
 			if e != nil {
@@ -181,7 +181,7 @@ func taskProjectAddError(name string, choices []taskProjectChoice) error {
 // relative path is taken relative to the repo root (where the box runs); an absolute one must
 // live inside the repo. The repo-relative form is what the loop's prompt names and the host
 // joins with the repo to read.
-func taskQueues(cfg *config.Config, repo string, flags []string) ([]string, error) {
+func TaskQueues(cfg *config.Config, repo string, flags []string) ([]string, error) {
 	given := flags
 	if len(given) == 0 {
 		given = cfg.TasksFiles
@@ -214,11 +214,11 @@ func taskQueues(cfg *config.Config, repo string, flags []string) ([]string, erro
 	return rels, nil
 }
 
-// cmdTasks drives the folder task queue (.agent/tasks): one folder per task, its state the
+// CmdTasks drives the folder task queue (.agent/tasks): one folder per task, its state the
 // parent directory. The subcommands (list/lint/add/claim/block/unblock/done/remove/split/
-// decisions) live in taskcmd.go; a bare `coop tasks` shows help.
-func (a *app) cmdTasks(args []string) (int, error) {
-	flags, rest, err := extractTasksFlags(args)
+// decisions) live in cmd.go; a bare `coop tasks` shows help.
+func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
+	flags, rest, err := ExtractTasksFlags(args)
 	if err != nil {
 		return 2, err
 	}
@@ -229,7 +229,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	if len(rest) > 0 && strings.HasPrefix(rest[0], "-") && rest[0] != "-" {
 		rest = append([]string{"ls"}, rest...)
 	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	repo, err := box.ResolveRepo(cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
@@ -242,7 +242,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		}
 		rest = append([]string{"add"}, addArgs...)
 	}
-	explicitQueues := len(flags) > 0 || len(a.cfg.TasksFiles) > 0
+	explicitQueues := len(flags) > 0 || len(cfg.TasksFiles) > 0
 	if projectName != "" && explicitQueues {
 		return 2, errors.New("coop tasks add: --project cannot be combined with --tasks or COOP_TASKS; choose one queue selector")
 	}
@@ -265,7 +265,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	if projectName != "" {
 		return 2, errors.New("coop tasks add: --project is only for umbrella projects with subprojects in .agent/project.yaml")
 	}
-	rels, err := taskQueues(a.cfg, repo, flags)
+	rels, err := TaskQueues(cfg, repo, flags)
 	if err != nil {
 		return 2, err
 	}
@@ -279,7 +279,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		if len(rels) == 0 {
 			return 2, errors.New("coop tasks watch: no task queue configured — set COOP_TASKS or pass --tasks <path>")
 		}
-		return a.tasksWatch(repo, rels)
+		return TasksWatch(host, repo, rels)
 	}
 	if sub == "queues" {
 		// Print each configured queue's absolute path, one per line — a stable primitive for scripts
@@ -294,7 +294,7 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		// operations later — this host-driven completion path takes the same ref-authority lock as
 		// the work loop's own validate→consume window, so `coop tasks done` can never land mid-loop
 		// (and a running loop can never make this refuse by moving HEAD underneath it).
-		release, lockErr := lockRefAuthority(a.cfg, repo)
+		release, lockErr := LockRefAuthority(cfg, repo)
 		if lockErr != nil {
 			return -1, fmt.Errorf("acquire ref authority for %s: %w", repo, lockErr)
 		}
@@ -323,10 +323,10 @@ func (a *app) cmdTasks(args []string) (int, error) {
 	if len(rels) == 0 {
 		return 2, errors.New("coop tasks: no task queue configured — set COOP_TASKS or pass --tasks <path>")
 	}
-	return tasksInQueue(repo, rels[0], rest, flags)
+	return tasksInQueue(host, repo, rels[0], rest, flags)
 }
 
-func tasksInQueue(repo, rel string, rest, flags []string) (int, error) {
+func tasksInQueue(host Host, repo, rel string, rest, flags []string) (int, error) {
 	sub := ""
 	if len(rest) > 0 {
 		sub = rest[0]
@@ -336,7 +336,7 @@ func tasksInQueue(repo, rel string, rest, flags []string) (int, error) {
 	// bootstraps it on demand (tasksFolderAdd creates the folder) — that's how you start a
 	// secondary --tasks queue in a monorepo, since `coop init` only scaffolds the repo root.
 	// Every other subcommand needs an existing queue to act on.
-	if !isTaskDir(root) {
+	if !IsTaskDir(root) {
 		switch sub {
 		case "":
 			// `coop tasks --tasks done` greedily eats `done` as the queue path, leaving no
@@ -345,19 +345,19 @@ func tasksInQueue(repo, rel string, rest, flags []string) (int, error) {
 			if len(flags) == 1 && isTasksSubcommand(flags[0]) {
 				return 2, fmt.Errorf("`--tasks` takes a queue dir, not a subcommand — did you mean `coop tasks %s`? (no task queue %q here)", flags[0], rel)
 			}
-			return groupHelp("tasks")
+			return host.groupHelp("tasks")
 		case "add":
 			// fall through — tasksFolderAdd creates the queue dir
 		default:
 			return -1, fmt.Errorf("no task queue at %s — run 'coop init' (or 'coop tasks --tasks %s add \"<title>\"' to start one here)", rel, rel)
 		}
 	}
-	return cmdTasksFolder(repo, root, rest)
+	return CmdTasksFolder(repo, root, rest)
 }
 
 func tasksAddInQueue(repo, rel string, args []string, projectName string) (int, error) {
 	root := filepath.Join(repo, rel)
-	return tasksFolderAddWithProject(root, args, stateTodo, "tasks add", projectName)
+	return tasksFolderAddWithProject(root, args, StateTodo, "tasks add", projectName)
 }
 
 // tasksListAll rolls up `coop tasks ls` across several configured queues (a monorepo with a
@@ -381,9 +381,9 @@ func tasksListAll(repo string, rels []string, args []string) (int, error) {
 		// Empty/absent queues print a plain gray line (not ui.Info) so the whole roll-up stays one
 		// clean stdout block — no "coop:" prefix mid-list, and `coop tasks ls > file` keeps it all.
 		switch {
-		case !isTaskDir(root):
+		case !IsTaskDir(root):
 			fmt.Println(p.Gray("  (no task queue here yet)"))
-		case len(readTaskTree(root)) == 0:
+		case len(ReadTaskTree(root)) == 0:
 			fmt.Println(p.Gray("  (no tasks)"))
 		default:
 			if _, err := tasksFolderList(root, all, only...); err != nil {
@@ -436,13 +436,13 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 		}
 	}
 	if id == "" {
-		return cmdTasksFolder(repo, filepath.Join(repo, rels[0]), rest)
+		return CmdTasksFolder(repo, filepath.Join(repo, rels[0]), rest)
 	}
 	rel, err := queueOfTask(repo, rels, id)
 	if err != nil {
 		return 1, err
 	}
-	return cmdTasksFolder(repo, filepath.Join(repo, rel), rest)
+	return CmdTasksFolder(repo, filepath.Join(repo, rel), rest)
 }
 
 // queueOfTask finds which configured queue holds the task id — the multi-queue analog of
@@ -451,13 +451,13 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 // into slices WITH their ids, so duplicates across queues are real — acting on an arbitrary one
 // would silently touch the wrong tree.
 func queueOfTask(repo string, rels []string, id string) (string, error) {
-	return queueOfTaskWith(repo, rels, id, readTaskTree)
+	return queueOfTaskWith(repo, rels, id, ReadTaskTree)
 }
 
 // queueOfTaskWith is queueOfTask parametrized by the per-queue reader, so the lifecycle tree
 // (readTaskTree) and the backlog drawer (readBacklog) share one resolver. read maps a queue root to
 // its items; everything else — exact-beats-substring precedence, the absent/ambiguous errors — is common.
-func queueOfTaskWith(repo string, rels []string, id string, read func(string) []taskItem) (string, error) {
+func queueOfTaskWith(repo string, rels []string, id string, read func(string) []Item) (string, error) {
 	type hit struct{ rel, id string }
 	var exact, subs []hit
 	for _, rel := range rels {
@@ -495,7 +495,7 @@ func tasksLintAll(repo string, rels []string) (int, error) {
 	first := true
 	for _, rel := range rels {
 		root := filepath.Join(repo, rel)
-		if !isTaskDir(root) {
+		if !IsTaskDir(root) {
 			continue
 		}
 		if !first {
@@ -534,11 +534,11 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 		var refs []decisionRef
 		for _, rel := range rels {
 			root := filepath.Join(repo, rel)
-			if !isTaskDir(root) {
+			if !IsTaskDir(root) {
 				continue
 			}
-			for _, t := range readTaskTree(root) {
-				if t.State == stateBlocked {
+			for _, t := range ReadTaskTree(root) {
+				if t.State == StateBlocked {
 					refs = append(refs, decisionRef{root: root, label: rel, id: t.ID})
 				}
 			}
@@ -561,14 +561,14 @@ func tasksDecisionsRollup(repo string, rels []string) (int, error) {
 	first := true
 	for _, rel := range rels {
 		root := filepath.Join(repo, rel)
-		if !isTaskDir(root) {
+		if !IsTaskDir(root) {
 			continue
 		}
 		// Only surface a queue that actually has an open decision, so the roll-up never prints a
 		// bare "# path" header over nothing (the per-queue "none" note goes to stderr).
 		hasBlocked := false
-		for _, t := range readTaskTree(root) {
-			if t.State == stateBlocked {
+		for _, t := range ReadTaskTree(root) {
+			if t.State == StateBlocked {
 				hasBlocked = true
 				break
 			}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -284,24 +285,28 @@ func (t taskHealth) shaky() bool {
 }
 
 // parseLoopCommits groups unambiguously parsed commit records by trailer id (first-seen order)
-// plus untrailered/malformed commits. Pure — tested on fixed records.
-func parseLoopCommits(records []taskTrailerCommit) (order []string, byTask map[string][]commitInfo, misc []commitInfo, invalid bool) {
+// plus untrailered/malformed commits. Pure — tested on fixed records. Converts each
+// tasks.TaskTrailerCommit's tasks.CommitInfo into this file's own commitInfo — a mirror, not a
+// shared type (see tasks.CommitInfo's doc comment): two packages independently holding the same
+// 2-field shape is normal Go, not duplication.
+func parseLoopCommits(records []tasks.TaskTrailerCommit) (order []string, byTask map[string][]commitInfo, misc []commitInfo, invalid bool) {
 	byTask = map[string][]commitInfo{}
 	for _, record := range records {
-		if record.malformed || len(record.values) > 1 || (len(record.values) == 1 && record.values[0] == "") {
-			misc = append(misc, record.info)
+		info := commitInfo{sha: record.Info.SHA, subject: record.Info.Subject}
+		if record.Malformed || len(record.Values) > 1 || (len(record.Values) == 1 && record.Values[0] == "") {
+			misc = append(misc, info)
 			invalid = true
 			continue
 		}
-		if len(record.values) == 0 {
-			misc = append(misc, record.info)
+		if len(record.Values) == 0 {
+			misc = append(misc, info)
 			continue
 		}
-		id := record.values[0]
+		id := record.Values[0]
 		if _, seen := byTask[id]; !seen {
 			order = append(order, id)
 		}
-		byTask[id] = append(byTask[id], record.info)
+		byTask[id] = append(byTask[id], info)
 	}
 	return order, byTask, misc, invalid
 }
@@ -340,7 +345,7 @@ func loopChanges(repo, base, head string) loopChangeSet {
 		return loopChangeSet{}
 	}
 	rng := base + ".." + head
-	records, err := taskTrailerCommits(repo, rng, true)
+	records, err := tasks.TaskTrailerCommits(repo, rng, true)
 	order, byTask, misc, invalid := parseLoopCommits(records)
 	cs := loopChangeSet{
 		misc:                misc,
@@ -433,7 +438,7 @@ func (cs loopChangeSet) gateFiles() []string {
 	for _, t := range cs.tasks {
 		files = append(files, t.files...)
 	}
-	return protectedGateFiles(files)
+	return tasks.ProtectedGateFiles(files)
 }
 
 // reviewBlock renders the loop's changes + health as a prompt section for the signoff/verify
@@ -455,9 +460,9 @@ func (cs loopChangeSet) reviewBlock(h *loopHealth) string {
 		}
 		fmt.Fprintf(&b, "- %s — %s\n    files: %s\n", t.id, abbrev(subs, 3), abbrev(t.files, 6))
 		th := h.byTask[t.id]
-		gateFiles := protectedGateFiles(t.files)
+		gateFiles := tasks.ProtectedGateFiles(t.files)
 		if th != nil {
-			gateFiles = protectedGateFiles(append(gateFiles, th.gateFiles...))
+			gateFiles = tasks.ProtectedGateFiles(append(gateFiles, th.gateFiles...))
 		}
 		if (th != nil && th.shaky()) || len(gateFiles) > 0 {
 			var flags []string

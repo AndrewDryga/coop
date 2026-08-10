@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 func TestHasYes(t *testing.T) {
@@ -156,15 +158,15 @@ func TestQueueProgress(t *testing.T) {
 	writeTaskFile(t, filepath.Join(q2, stateTodo, "g", "task.md"), "# another\n")
 	writeTaskFile(t, filepath.Join(q2, stateBlocked, "f", "task.md"), "# stuck\n")
 	c, active := queueProgress([]string{q1, q2})
-	if c.Done != 2 || c.Doing != 1 || c.Todo != 2 || c.Blocked != 1 || c.total() != 6 {
-		t.Errorf("counts = %+v (total %d), want Done2 Doing1 Todo2 Blocked1 total6", c, c.total())
+	if c.Done != 2 || c.Doing != 1 || c.Todo != 2 || c.Blocked != 1 || c.Total() != 6 {
+		t.Errorf("counts = %+v (total %d), want Done2 Doing1 Todo2 Blocked1 total6", c, c.Total())
 	}
 	// The active task is the first in_progress across the queues, not a later todo.
 	if active != "wiring it up" {
 		t.Errorf("active = %q, want %q", active, "wiring it up")
 	}
 	// A missing queue contributes nothing and doesn't panic.
-	if c2, a2 := queueProgress([]string{filepath.Join(t.TempDir(), "nope")}); c2.total() != 0 || a2 != "" {
+	if c2, a2 := queueProgress([]string{filepath.Join(t.TempDir(), "nope")}); c2.Total() != 0 || a2 != "" {
 		t.Errorf("missing queue = %+v %q, want zero/empty", c2, a2)
 	}
 }
@@ -172,33 +174,33 @@ func TestQueueProgress(t *testing.T) {
 func TestProgressBanner(t *testing.T) {
 	// Colors are off when stderr isn't a tty (as under `go test`), so the banner renders
 	// plain — assert the structure.
-	if got := progressBanner(3, taskCounts{Todo: 9, Doing: 1, Done: 4}, "Wire up the portal auth callback"); got != "iteration 3 · 4/14 done · now: Wire up the portal auth callback" {
+	if got := progressBanner(3, tasks.TaskCounts{Todo: 9, Doing: 1, Done: 4}, "Wire up the portal auth callback"); got != "iteration 3 · 4/14 done · now: Wire up the portal auth callback" {
 		t.Errorf("banner = %q", got)
 	}
 	// Blocked is shown only when nonzero.
-	if got := progressBanner(1, taskCounts{Done: 2, Blocked: 1, Todo: 1}, ""); got != "iteration 1 · 2/4 done · 1 blocked" {
+	if got := progressBanner(1, tasks.TaskCounts{Done: 2, Blocked: 1, Todo: 1}, ""); got != "iteration 1 · 2/4 done · 1 blocked" {
 		t.Errorf("blocked banner = %q", got)
 	}
 	// No active task → no "now:" clause; no blocked → no blocked clause.
-	if got := progressBanner(2, taskCounts{Done: 5}, ""); got != "iteration 2 · 5/5 done" {
+	if got := progressBanner(2, tasks.TaskCounts{Done: 5}, ""); got != "iteration 2 · 5/5 done" {
 		t.Errorf("plain banner = %q", got)
 	}
 	// A long title is truncated, not printed whole.
 	long := strings.Repeat("x", 80)
-	if got := progressBanner(1, taskCounts{Todo: 1}, long); !strings.Contains(got, "…") || strings.Contains(got, long) {
+	if got := progressBanner(1, tasks.TaskCounts{Todo: 1}, long); !strings.Contains(got, "…") || strings.Contains(got, long) {
 		t.Errorf("long title not truncated: %q", got)
 	}
 }
 
 func TestProgressBannerWidthUsesAvailableTerminalWidth(t *testing.T) {
 	activity := "Reconcile every provider credential rotation before the deployment cutover"
-	wide := progressBannerWidth(3, taskCounts{Doing: 1}, activity, 120)
+	wide := progressBannerWidth(3, tasks.TaskCounts{Doing: 1}, activity, 120)
 	if !strings.Contains(wide, activity) {
 		t.Errorf("wide progress banner should show activity past the old fixed cap: %q", wide)
 	}
 
 	const narrowWidth = 44
-	narrow := progressBannerWidth(3, taskCounts{Doing: 1}, activity, narrowWidth)
+	narrow := progressBannerWidth(3, tasks.TaskCounts{Doing: 1}, activity, narrowWidth)
 	if strings.Contains(narrow, activity) || !strings.Contains(narrow, "…") {
 		t.Errorf("narrow progress banner should elide activity: %q", narrow)
 	}
@@ -210,10 +212,10 @@ func TestProgressBannerWidthUsesAvailableTerminalWidth(t *testing.T) {
 func TestProgressLine(t *testing.T) {
 	// The mid-iteration line the monitor prints live: done/total, blocked only when there
 	// is some, and the active task — no "iteration N" prefix.
-	if got := progressLine(taskCounts{Done: 8, Blocked: 1, Todo: 11}, "Task 9"); got != "8/20 done · 1 blocked · now: Task 9" {
+	if got := progressLine(tasks.TaskCounts{Done: 8, Blocked: 1, Todo: 11}, "Task 9"); got != "8/20 done · 1 blocked · now: Task 9" {
 		t.Errorf("progressLine = %q", got)
 	}
-	if got := progressLine(taskCounts{Done: 20}, ""); got != "20/20 done" {
+	if got := progressLine(tasks.TaskCounts{Done: 20}, ""); got != "20/20 done" {
 		t.Errorf("done-only progressLine = %q", got)
 	}
 }

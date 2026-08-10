@@ -1,4 +1,4 @@
-package cli
+package tasks
 
 import (
 	"os"
@@ -21,7 +21,7 @@ func TestTaskQueuesMonorepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := taskQueues(&config.Config{}, repo, nil)
+	got, err := TaskQueues(&config.Config{}, repo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,20 +31,20 @@ func TestTaskQueuesMonorepo(t *testing.T) {
 	}
 
 	// An explicit COOP_TASKS (cfg.TasksFiles) overrides project.yaml.
-	got, _ = taskQueues(&config.Config{TasksFiles: []string{".agent/tasks"}}, repo, nil)
+	got, _ = TaskQueues(&config.Config{TasksFiles: []string{".agent/tasks"}}, repo, nil)
 	if !slices.Equal(got, []string{".agent/tasks"}) {
 		t.Errorf("COOP_TASKS override = %v, want [.agent/tasks]", got)
 	}
 
 	// A single repo (no project.yaml) still defaults to .agent/tasks.
-	got, _ = taskQueues(&config.Config{}, t.TempDir(), nil)
+	got, _ = TaskQueues(&config.Config{}, t.TempDir(), nil)
 	if !slices.Equal(got, []string{filepath.Join(".agent", "tasks")}) {
 		t.Errorf("single-repo default = %v, want [.agent/tasks]", got)
 	}
 }
 
 func TestExtractTasksFlags(t *testing.T) {
-	flags, rest, err := extractTasksFlags([]string{"--tasks", "a", "list", "--tasks=b", "--debug"})
+	flags, rest, err := ExtractTasksFlags([]string{"--tasks", "a", "list", "--tasks=b", "--debug"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestExtractTasksFlags(t *testing.T) {
 
 	// A value-bearing flag with no value is an error, not a silently-dropped flag.
 	for _, bad := range [][]string{{"--tasks"}, {"list", "--tasks"}, {"--tasks="}, {"--tasks", "--debug"}} {
-		if _, _, err := extractTasksFlags(bad); err == nil {
+		if _, _, err := ExtractTasksFlags(bad); err == nil {
 			t.Errorf("extractTasksFlags(%v) should error on a missing value", bad)
 		}
 	}
@@ -90,21 +90,21 @@ func TestTaskQueues(t *testing.T) {
 	cfg := &config.Config{TasksFiles: []string{".agent/tasks"}}
 
 	// No flags → the configured default (.agent/tasks).
-	if got, err := taskQueues(cfg, repo, nil); err != nil || !slices.Equal(got, []string{".agent/tasks"}) {
+	if got, err := TaskQueues(cfg, repo, nil); err != nil || !slices.Equal(got, []string{".agent/tasks"}) {
 		t.Fatalf("default = %v err %v", got, err)
 	}
 	// Relative flags → repo-relative, untouched (a monorepo's per-component trees).
-	got, err := taskQueues(cfg, repo, []string{"portal/.agent/tasks", "runner/.agent/tasks"})
+	got, err := TaskQueues(cfg, repo, []string{"portal/.agent/tasks", "runner/.agent/tasks"})
 	if err != nil || !slices.Equal(got, []string{"portal/.agent/tasks", "runner/.agent/tasks"}) {
 		t.Fatalf("relative = %v err %v", got, err)
 	}
 	// An absolute path inside the repo is relativized.
 	abs := filepath.Join(repo, "mcp", ".agent", "tasks")
-	if got, err := taskQueues(cfg, repo, []string{abs}); err != nil || !slices.Equal(got, []string{filepath.Join("mcp", ".agent", "tasks")}) {
+	if got, err := TaskQueues(cfg, repo, []string{abs}); err != nil || !slices.Equal(got, []string{filepath.Join("mcp", ".agent", "tasks")}) {
 		t.Fatalf("absolute = %v err %v", got, err)
 	}
 	// A path escaping the repo is rejected.
-	if _, err := taskQueues(cfg, repo, []string{"../outside/tasks"}); err == nil {
+	if _, err := TaskQueues(cfg, repo, []string{"../outside/tasks"}); err == nil {
 		t.Error("a path escaping the repo should error")
 	}
 }
