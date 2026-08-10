@@ -1387,7 +1387,9 @@ func boxLimits(cfg *config.Config, rt runtime.Runtime) []string {
 // needs egress open (a --network none box has nothing to bind), else all are skipped. Bound to
 // localhost, not 0.0.0.0, so the port isn't exposed to the LAN. Mappings/skips are noted on stderr
 // (the ACP server log or the terminal) — never stdout, which on ACP is the JSON-RPC wire.
-func appendPublish(args []string, cfg *config.Config, spec RunSpec) []string {
+// free reports whether a host port is bindable (hostPortFree in production), injected so the
+// publish decision is unit-tested without claiming a real port.
+func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(int) bool) []string {
 	policyRepo := projectPolicyRepo(spec)
 	p, err := project.Load(policyRepo)
 	if err != nil {
@@ -1409,7 +1411,7 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec) []string {
 		// The assigned host-facing URL is stable workspace discovery even when another process from
 		// this workspace already owns the port. Only the current box's publish mapping is conditional.
 		args = append(args, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", port, host))
-		if !hostPortFree(host) {
+		if !free(host) {
 			fmt.Fprintf(os.Stderr, "coop: host port %d (for :%d) is in use — not publishing this box\n", host, port)
 			continue
 		}
@@ -1648,7 +1650,7 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 		args = append(args, "-e", "COOP_SUPERVISE_DESCENDANTS=1")
 	}
 	if spec.Serve {
-		args = appendPublish(args, cfg, spec)
+		args = appendPublish(args, cfg, spec, hostPortFree)
 	}
 	// Egress fails CLOSED at the box boundary: full/services networking only when COOP_EGRESS is
 	// explicitly "open" — any other value (the normalized "none", or a value that somehow skipped

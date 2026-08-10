@@ -53,6 +53,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [box-entrypoint-descendant-handoff](box-entrypoint-descendant-handoff.md) — supervised loop/review boxes authenticate forwarder exemptions and hand off live detached jobs
 - [box-orphans-survive-pdeathsig](box-orphans-survive-pdeathsig.md) — Pdeathsig is not inherited across fork, so a forking worker orphans into the box and holds it open for the whole drain
 - [box-supervisor-label-and-orphan-sweep](box-supervisor-label-and-orphan-sweep.md) — every box records the host process supervising it; only a provably dead one authorizes a reap, scoped to the workspace that launched it
+- [box-host-port-window-is-contended](box-host-port-window-is-contended.md) — coop's deterministic serve host ports sit inside the OS ephemeral range, so any process can be holding one; publishing is best-effort and a test must never claim one for real
 - [host-disk-exhaustion-stops-the-runtime](host-disk-exhaustion-stops-the-runtime.md) — a full host disk stops the container runtime mid-run and surfaces as unexplained "unexpected EOF" iteration failures; prune alone never returns the space
 - [services-teardown-needs-the-workspace](services-teardown-needs-the-workspace.md) — sibling services persist across boxes on purpose, but teardown reads the workspace's compose file, so stopping them after deleting the workspace does nothing
 - [credentials-expired-is-a-false-alarm](credentials-expired-is-a-false-alarm.md) — refreshable OAuth stays signed in; re-login required means the stored login cannot recover
