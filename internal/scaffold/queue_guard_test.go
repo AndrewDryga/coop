@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +45,19 @@ func TestSweepQueueGuard(t *testing.T) {
 	}
 	if strings.Contains(string(skill), ".agent/active") {
 		t.Fatal("sweep skill still carries the retired repo-global marker")
+	}
+	// Everything below proves the EMBEDDED template, while the Stop hook just asserted runs the
+	// canonical copy in this repo's own .agent/skills — so unless the two are byte-identical, this
+	// test is proving a guard that does not run. TestSkillsTemplatesMatchCanonical holds the whole
+	// skills tree to that; the guard's own precondition is checked here, where it is the reason.
+	canonical, err := os.ReadFile(filepath.Join("..", "..", ".agent", "skills", "sweep", "queue-guard.sh"))
+	if err != nil {
+		t.Fatalf("read the canonical queue guard the Stop hook runs: %v", err)
+	}
+	if !bytes.Equal(canonical, hookBytes) {
+		t.Fatal(".agent/skills/sweep/queue-guard.sh and internal/scaffold/templates/skills/sweep/queue-guard.sh " +
+			"have drifted: the copy this test exercises is not the copy the sweep runs. Sync them (the " +
+			"template is the source), then re-run")
 	}
 	proj := t.TempDir()
 	write := func(rel, content string) {

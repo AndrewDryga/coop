@@ -2,7 +2,7 @@
 name: shell-guards-fail-closed
 description: "a shell guard checks every command's status and fails CLOSED on ambiguity; a script that fails open says so in its header"
 scope: agent-workflow
-sources: [.agent/skills/sweep/queue-guard.sh, internal/scaffold/templates/skills/sweep/queue-guard.sh, internal/scaffold/queue_guard_test.go, .claude/hooks/commit-gate.sh]
+sources: [.agent/skills/sweep/queue-guard.sh, internal/scaffold/templates/skills/sweep/queue-guard.sh, internal/scaffold/queue_guard_test.go, .claude/hooks/commit-gate.sh, Makefile]
 check: "go test ./internal/scaffold -run TestSweepQueueGuard"
 updated: 2026-08-10
 ---
@@ -39,7 +39,11 @@ from "I could not look" is worse than no guard: it reports success either way.
   than skipping them quietly.
 - Both copies of the guard — this repo's `.agent/skills/sweep/` and the scaffold template shipped by
   `coop init` — must stay identical; `TestSweepQueueGuard` runs the template one, including its
-  "configured discovery failure fails closed" and "count failure fails closed" subtests.
+  "configured discovery failure fails closed" and "count failure fails closed" subtests, and asserts
+  the canonical copy is byte-identical first — otherwise it proves a guard that does not run.
+- Every tracked `.sh` is linted by `make shellcheck`, which takes its file list from `git ls-files`:
+  a new shell file is covered the moment it is tracked, and an empty list fails the target instead of
+  passing by checking nothing.
 
 Related: [[fix-the-bug-not-the-feature]] (a guard that keeps firing is fixed at the cause, never by
 loosening it) and [[static-bounded-supervision]].
@@ -56,3 +60,18 @@ loosening it) and [[static-bounded-supervision]].
   the fix in place rather than describing a live mess. Two gaps found and reported for the queue:
   `make shellcheck` lints `install.sh` only (neither guard copy nor the commit hook), and nothing
   pins the two guard copies byte-identical.
+- 2026-08-10 — **both gaps closed.** `make shellcheck` now lints every tracked `.sh`
+  (`git ls-files '*.sh'`, 4 files: the installer, both guard copies, the commit hook) and fails
+  closed on an empty list. The widened lint found exactly one real defect, in the newly-covered
+  `.claude/hooks/commit-gate.sh`: `gofmt -l $go_files` (SC2086) word-split a staged path containing
+  a space, so `gofmt` was handed nonexistent filenames, printed nothing to the captured stdout, and
+  the hook exited 0 — **an unformatted file walked straight through the gate** (verified against the
+  old script: exit 0 where the fixed one exits 2). Fixed by collecting the paths into a bash array
+  and quoting the expansion; the hook still fails open, as its header says, but it no longer misses
+  what it was asked to check. Both guard copies were already shellcheck-clean.
+  The second gap was **misdiagnosed by the sweep above**: `TestSkillsTemplatesMatchCanonical` has
+  been pinning the whole `templates/skills/` tree byte-identical to `.agent/skills/` in both
+  directions all along — proved by mutating a copy and watching it fail — so no second comparison
+  test was added. What was missing is that the property is only *incidental* there: `TestSweepQueueGuard`
+  exercises the embedded template while the Stop hook it asserts runs the canonical copy, so the
+  identity check now also lives in that test as the precondition it is.

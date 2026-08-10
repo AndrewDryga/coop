@@ -37,9 +37,13 @@ lint: ## gofmt check + go vet + Staticcheck at the pinned version
 staticcheck-version:
 	@echo $(STATICCHECK_VERSION)
 
-shellcheck: ## ShellCheck install.sh (the curl one-liner every new user runs)
+shellcheck: ## ShellCheck every tracked .sh: the installer, both sweep queue guards, the commit hook
 	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck is not installed — run: brew install shellcheck (macOS) or apt-get install -y shellcheck (Debian)"; exit 1; }
-	@shellcheck install.sh
+# The file list comes from git, so a new .sh is covered the moment it is tracked — no list here to
+# forget to update. An empty list means git failed or the tree moved, never "nothing to check":
+# that is the one way a lint silently stops running, so it fails closed.
+	@git ls-files '*.sh' | grep -q . || { echo "shellcheck: no tracked .sh files found — refusing to pass by checking nothing"; exit 1; }
+	@git ls-files -z '*.sh' | xargs -0 shellcheck
 
 # Guard for the python-backed targets: name the fix instead of leaving make to print a bare
 # "python3: No such file or directory". No ## — it's a prerequisite, not something you run.
