@@ -3385,6 +3385,25 @@ reviewAgain:
 			}
 			handoffs, timeouts = 0, 0
 			headAfter := gitOut(repo, "rev-parse", "HEAD")
+			// Ref authority: from here through consumeAuditReopen/windows.close(), this worktree's
+			// HEAD is exclusive to this controller. Everything below assumes HEAD == headAfter; an
+			// interactive coop run, a host signing rewrite, a fork land, or a human commit could move
+			// it during the several filesystem operations between this line and consumeAuditReopen,
+			// so the window closes that gap instead of trusting the value across it. The first action
+			// inside the lock re-reads HEAD and compares — see enterRefAuthorityWindow.
+			refRelease, liveHead, refErr := a.enterRefAuthorityWindow(repo, headAfter)
+			if refErr != nil {
+				reason := refErr.Error()
+				if errors.Is(refErr, errRefAuthorityMoved) {
+					reason = fmt.Sprintf("HEAD moved from the validated %s to %s before task authority could be consumed — another process changed this checkout during completion", headAfter, liveHead)
+				}
+				var restoreErr error
+				if assignedCompletion != nil {
+					restoreErr = restoreRefAuthorityFailure(*assignedCompletion, reason)
+				}
+				releaseErr := errors.Join(lease.release(), windows.abandon())
+				return 1, errors.Join(refAuthorityFailureError(assigned.Item.ID, reason, restoreErr), releaseErr)
+			}
 			var missing []string
 			if assignedCompletion != nil {
 				missing = completionUnbindableTasks(repo, iterHead, headAfter, finished, lease.reopen)
@@ -3395,7 +3414,9 @@ reviewAgain:
 				if assignedCompletion != nil {
 					restoreErr = restoreCompromisedCompletion(*assignedCompletion, lease.reopen != nil)
 				}
-				return 1, errors.Join(departureErr, restoreErr, lease.release(), windows.abandon())
+				releaseErr := errors.Join(lease.release(), windows.abandon())
+				refRelease()
+				return 1, errors.Join(departureErr, restoreErr, releaseErr)
 			}
 			if len(departed) > 0 {
 				if assignedCompletion != nil {
@@ -3408,6 +3429,7 @@ reviewAgain:
 					windowErr = windows.close()
 				}
 				releaseErr := errors.Join(lease.release(), windowErr)
+				refRelease()
 				departureErr = fmt.Errorf("work stage reopened unowned archived task(s) %s", strings.Join(departed, ", "))
 				return 1, errors.Join(departureErr, restoreErr, releaseErr)
 			}
@@ -3420,6 +3442,7 @@ reviewAgain:
 					windowErr = windows.close()
 				}
 				releaseErr := errors.Join(lease.release(), windowErr)
+				refRelease()
 				var unownedErr error
 				if len(unowned) > 0 {
 					unownedErr = unownedCompletionError(unowned, nil)
@@ -3443,10 +3466,12 @@ reviewAgain:
 					windowErr = windows.close()
 				}
 				releaseErr := errors.Join(lease.release(), windowErr)
+				refRelease()
 				return 1, errors.Join(unownedCompletionError(unowned, restoreErr), releaseErr)
 			}
 			if err := lease.preserveBlockedAuditReopen(repo, iterHead, headAfter); err != nil {
 				releaseErr := errors.Join(lease.release(), windows.close())
+				refRelease()
 				return 1, errors.Join(fmt.Errorf("preserve task %s blocked audit reopen authority: %w", assigned.Item.ID, err), releaseErr)
 			}
 			// Finalize only the completion whose lease this controller owns. Concurrent controllers
@@ -3454,19 +3479,23 @@ reviewAgain:
 			if assignedCompletion != nil {
 				if cleanupErr := finalizeQueuedCompletion(*assignedCompletion); cleanupErr != nil {
 					releaseErr := errors.Join(lease.release(), windows.abandon())
+					refRelease()
 					return 1, errors.Join(fmt.Errorf("%w — completion was not accepted; fix the obstruction and re-run `coop loop`", cleanupErr), releaseErr)
 				}
 				if receiptErr := lease.markCompleted(assignedCompletion.Item.Dir); receiptErr != nil {
 					restoreErr := restoreUnrecordedCompletion(*assignedCompletion)
 					clearErr := lease.clearCompleted()
 					releaseErr := errors.Join(lease.release(), windows.abandon())
+					refRelease()
 					return 1, errors.Join(fmt.Errorf("record task completion %s: %w", assigned.Item.ID, receiptErr), restoreErr, clearErr, releaseErr)
 				}
 				if consumeErr := lease.consumeAuditReopen(); consumeErr != nil {
 					releaseErr := errors.Join(lease.release(), windows.close())
+					refRelease()
 					return 1, errors.Join(fmt.Errorf("consume task %s audit reopen authority: %w", assigned.Item.ID, consumeErr), releaseErr)
 				}
 			}
+			refRelease()
 			if releaseErr := errors.Join(lease.release(), windows.close()); releaseErr != nil {
 				return 1, fmt.Errorf("release task lease %s: %w", assigned.Item.ID, releaseErr)
 			}

@@ -406,6 +406,15 @@ func (a *app) fastForwardParent(repo, ws, name string) error {
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return fmt.Errorf("%s: git fetch: %w", name, err)
 	}
+	// This is coop's own host-side ref mutation on the PARENT checkout — the same worktree a `coop
+	// loop` there may be validating a completion against. The ref-authority lock keeps this
+	// fast-forward from landing inside that loop's validate→consume window (and vice versa), so
+	// landing a fork can never trip the loop's own compare-and-swap.
+	release, lockErr := lockRefAuthority(a.cfg, repo)
+	if lockErr != nil {
+		return fmt.Errorf("%s: acquire ref authority for %s: %w", name, repo, lockErr)
+	}
+	defer release()
 	if err := gitRun(repo, "merge", "--ff-only", "review/"+name); err != nil {
 		return fmt.Errorf("%s: the parent advanced during the merge — nothing landed; re-run to rebase onto the new HEAD", name)
 	}

@@ -2833,6 +2833,28 @@ func restoreCompromisedCompletion(task queuedTask, audit bool) error {
 	)
 }
 
+// restoreRefAuthorityFailure restores a completion the box already folder-moved when the ref
+// authority window could not be trusted through consumption — either the lock itself could not be
+// acquired, or the compare-and-swap proved HEAD moved since validation. Neither is a binding or
+// ownership problem, so it gets its own reason text instead of reusing unbindable/unowned wording.
+// The tree the provider committed is untouched: only the folder move and its state notes are undone,
+// so the same commit is still there for the next iteration to resume, exactly as
+// .agent/kb/loop-range-rejects-outside-commits.md describes for a foreign in-range commit.
+func restoreRefAuthorityFailure(task queuedTask, reason string) error {
+	id := task.Item.ID
+	if task.Item.State == stateDone {
+		if err := moveTaskDir(task.Root, task.Item, stateInProgress); err != nil {
+			return fmt.Errorf("restore task %s: %w", id, err)
+		}
+	}
+	dir := filepath.Join(task.Root, stateInProgress, id)
+	note := fmt.Sprintf("completion rejected: %s; the commit is still in history, so re-running `coop loop` resumes it", reason)
+	return errors.Join(
+		appendTaskLogStrict(dir, note),
+		normalizeTaskState(id, dir, "in progress — completion rejected", "re-run `coop loop`; it resumes this task", "completion was rejected: ref authority could not be confirmed", reason),
+	)
+}
+
 func restoreUnrecordedCompletion(task queuedTask) error {
 	id := task.Item.ID
 	if task.Item.State == stateDone {
@@ -2916,6 +2938,18 @@ func auditBindingRecovery(id string) string {
 
 func auditCompletionError(id string, restoreErr error) error {
 	msg := fmt.Sprintf("completion rejected for audit-reopened task %s: the host audit authority accepts only a zero-commit verification-only re-close or a rewrite whose subject tree actually changes with semantically unchanged descendants; task restored to in_progress — %s; then re-run `coop loop`", id, auditBindingRecovery(id))
+	if restoreErr != nil {
+		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
+	}
+	return errors.New(msg)
+}
+
+// refAuthorityFailureError reports why the ref-authority window refused to consume task authority
+// for id — either the lock itself could not be acquired (a stuck holder, named in reason) or the
+// compare-and-swap proved HEAD moved since validation (reason names the observed and expected SHAs).
+// Either way the task is restored, actionable, and nothing was consumed.
+func refAuthorityFailureError(id, reason string, restoreErr error) error {
+	msg := fmt.Sprintf("completion rejected for task %s: %s; task restored to in_progress with its commit intact — re-run `coop loop` to resume it", id, reason)
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
 	}
@@ -3381,6 +3415,15 @@ func (a *app) reconcileQueueAfterMerge(repo, forkName, revRange string) error {
 		delete(landed, id)
 		ui.Warn("reconcile: task id %s exists in multiple queues; skipped automatic fork reconciliation", id)
 	}
+	// completeTrustedTask's audit-reopen branch reads HEAD, validates it, and consumes authority
+	// several operations later — the same validate-then-consume shape the work loop closes for its
+	// own completion path. The ref-authority lock covers that window here too, so a concurrent
+	// process (a loop, a signing rewrite, another land) can never move HEAD in the gap.
+	release, lockErr := lockRefAuthority(a.cfg, repo)
+	if lockErr != nil {
+		return fmt.Errorf("fork %s landed, but reconciling the parent queue could not acquire ref authority: %w — %s", forkName, lockErr, unreconciledQueueRecovery(repo, revRange))
+	}
+	defer release()
 	for _, q := range queues {
 		host := filepath.Join(repo, q)
 		states := map[string]string{}

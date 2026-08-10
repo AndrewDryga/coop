@@ -4,6 +4,30 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A completion can no longer be trusted against history nobody validated.** The work loop reads
+  `headAfter` once an iteration's box exits, validates the completion over `iterHead..headAfter`,
+  then — many filesystem operations later — consumes task authority: finalizes the completion, writes
+  its receipt, and (for host-authorized rework) removes the single-use audit-reopen record. Nothing
+  serialized the repository ref across that gap: an interactive `coop run`, a host-side signing
+  rewrite, `coop fork merge` landing onto the same checkout, or a human commit could all move `HEAD`
+  in between, so a reviewed generation could be consumed while unvalidated history was already
+  current. `lockLoopCheckout` closed the loop-vs-loop case but excludes everything else. A new
+  per-worktree `lockRefAuthority` — keyed and located exactly like `lockLoopCheckout` (the resolved
+  worktree path, under `$ConfigDir/.locks`, never the repo name, so a fork fleet stays fully parallel)
+  — now covers the short validate→finalize→consume window only, never the box run itself: the first
+  action inside it re-reads `HEAD` and fails closed — no receipt written, no audit-reopen generation
+  consumed, the task left actionable in `10_in_progress/` with its commit intact — the instant it no
+  longer matches the value that was validated. Every one of coop's own host-side ref-mutating paths
+  now takes the same lock, so coop can never trip its own refusal: the loop's own signing sweep
+  (`signUnpushed`), `coop fork merge`'s fast-forward onto the parent, and the host-authorized
+  completion of audit-reopened work (`coop tasks done`, and fork-merge's queue reconciliation) — which
+  shares the loop's exact validate-then-consume shape, just reached by a human instead of a box.
+  Unlike `lockLoopCheckout`'s bare flock, the new lock is proved after the fact the way task-lease
+  authority already is (`lockLeaseAuthorityWith`, `tasklease.go`): open, flock, then `fstat` the held
+  descriptor against a fresh `lstat` of the name, so a lock file removed and recreated underfoot — a
+  purge, a careless `rm -rf .locks` — can never leave two controllers each holding an "exclusive" lock
+  on a different inode.
+
 - _Internal restructuring, no user-visible change._ The `transport-bounds-do-not-abort-valid-work`
   rule (`.agent/kb/rules/`) is now gated instead of riding on review alone. It was created
   2026-08-02 after two same-day violations that killed working consults — a reintroduced timing

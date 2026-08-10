@@ -130,6 +130,15 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	if err := os.RemoveAll(tempRoot); err != nil {
 		return 0, fmt.Errorf("remove signing scratch before updating the branch: %w", err)
 	}
+	// This is coop's own host-side ref mutation: the same per-worktree ref-authority lock that
+	// guards the work loop's validate→consume window guards this compare-and-swap too, so a signing
+	// rewrite can never land in the middle of another controller's window (and vice versa) — coop
+	// never trips its own compare-and-swap. Acquired only for this short tail, never the rebase above.
+	release, lockErr := lockRefAuthority(a.cfg, repo)
+	if lockErr != nil {
+		return 0, fmt.Errorf("acquire ref authority for %s: %w", repo, lockErr)
+	}
+	defer release()
 	if a.beforeSignRefUpdate != nil {
 		a.beforeSignRefUpdate(repo, branchRef, oldHead, newHead)
 	}

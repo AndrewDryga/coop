@@ -289,6 +289,17 @@ func (a *app) cmdTasks(args []string) (int, error) {
 		}
 		return 0, nil
 	}
+	if sub == "done" {
+		// completeTrustedTask's audit-reopen branch validates against HEAD and consumes authority
+		// operations later — this host-driven completion path takes the same ref-authority lock as
+		// the work loop's own validate→consume window, so `coop tasks done` can never land mid-loop
+		// (and a running loop can never make this refuse by moving HEAD underneath it).
+		release, lockErr := lockRefAuthority(a.cfg, repo)
+		if lockErr != nil {
+			return -1, fmt.Errorf("acquire ref authority for %s: %w", repo, lockErr)
+		}
+		defer release()
+	}
 	if len(rels) > 1 {
 		// A monorepo can configure several queues (COOP_TASKS, or repeated --tasks) — the same set
 		// `coop loop`/`coop fleet` drain. The roll-ups span them all (each under a header) and the
