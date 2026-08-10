@@ -478,11 +478,11 @@ first run, and each tool's normal user-level config works there as-is —
 credential is mounted, so a running agent sees just the account it's using, not the
 whole vault.
 
-Each run mounts only the **launched agent's** credentials: `coop claude` mounts
+Each run mounts only the launched agent's credentials: `coop claude` mounts
 `~/.claude` (and that agent's API key from the env file), never the Codex or Gemini ones.
 The exceptions are the modes where the lead is explicitly told to call its peers —
 `coop fusion <agent> --peer <agent>...` and `coop <agent> --peer <agent>...` (and forks) — which
-also mount the **named** peers so they can be consulted read-only (only those you
+also mount the named peers so they can be consulted read-only (only those you
 name, never everyone signed in). A preset is explicit too: every signed-in provider
 named by a consult/delegate role ladder is mounted for that role; unavailable rungs are
 skipped. Raw runs (`coop run`,
@@ -543,7 +543,7 @@ sandbox, so trusting the one mounted repo is the intended posture.)
 
 ### Multiple subscriptions, with failover
 
-One agent can hold several accounts as named **credentials** — each a stored login and
+One agent can hold several accounts as named credentials — each a stored login and
 its own rate-limit pool — so a long unattended run can ride through a subscription's cap
 instead of parking on it (`coop profiles` was the pre-v3 name for the same thing):
 
@@ -561,7 +561,7 @@ cooling. There is no persistent pool to configure: the rotation *is* the model-f
 `agent:` ladder of the loop's lead. With no preset it rotates the agent's default model across every signed-in
 account; a bare model in a ladder does the same, while a pinned `model@account` runs just
 one. Limits are tracked per (model, account), so `claude-opus-4-8@personal` stays usable
-while `claude-opus-4-8@work` cools down. A ladder gives you **fallbacks** in the order you
+while `claude-opus-4-8@work` cools down. A ladder gives you fallbacks in the order you
 write them — step to a cheaper model, another account, or both:
 
 ```yaml
@@ -678,10 +678,10 @@ scoping is already handled.
 ### Presets: the whole arrangement in one YAML file
 
 The orchestrator pattern above is assembled by hand — a `:model` here, a `--peer <peer>`
-there. A **preset** declares the whole arrangement once, as a runtime recipe under
-`.agent/presets/<name>/`: who leads, and which **roles** it routes work to. Three role
+there. A preset declares the whole arrangement once, as a runtime recipe under
+`.agent/presets/<name>/`: who leads, and which roles it routes work to. Three role
 modes cover the spectrum: `native` (a Claude subagent inside the lead's session),
-`consult` (a read-only peer via `coop-consult`), and `delegate` (a **write-capable**
+`consult` (a read-only peer via `coop-consult`), and `delegate` (a write-capable
 delegate via `coop-delegate`). `.agent/presets/frontier/preset.yaml`:
 
 ```yaml
@@ -737,10 +737,10 @@ coop generates the lead's routing contract from the YAML — each role, when to 
 and its role-addressed invocation (`@coop-thinker`, `coop-consult critic --fresh "…"`, or a
 `coop-delegate fast <<'EOF' … EOF` heredoc) — and mounts the wrappers. Required routing files,
 wrappers, and role prompts are assembled as one contract: if any cannot be created, coop exits
-before starting the provider instead of silently dropping a role. A **native** role
+before starting the provider instead of silently dropping a role. A native role
 generates its Claude subagent in the box — `coop-<role>`, from the role's model + `when` +
 prompt, never written to your repo (`.gitignore` keeps the overlay out of commits); set
-`subagent: <name>` to reference an existing `.claude/agents/` subagent instead. A **consult**
+`subagent: <name>` to reference an existing `.claude/agents/` subagent instead. A consult
 role accepts one target or a fallback list. Its wrapper advances only after a failed command
 proves a rate limit; timeout, output overflow, and ordinary failures stay visible and never spend a
 second rung. Consult continuity follows the successful rung. A failed native resume returns that
@@ -759,7 +759,7 @@ defaults, not placeholders); their Markdown feeds the generated text — never r
 safety/routing rules — and you edit or delete them freely.
 
 `coop-delegate` is the write-capable counterpart of the read-only `coop-consult`: the
-delegate may edit the shared worktree, runs are serialized, and it must **not** commit —
+delegate may edit the shared worktree, runs are serialized, and it must never commit —
 the wrapper verifies `HEAD`, refs, and reflogs before and after each attempt and fails loud
 without discarding the evidence if history changed. Fallback is allowed only after a proven
 rate limit from a clean worktree whose tracked, untracked, staged, and ignored state stayed
@@ -1088,7 +1088,7 @@ coop loop claude          # disposable agents work the queue until it's done, th
 coop loop codex           # …or name claude, codex, gemini, grok, or a preset
 ```
 
-A task is a **folder** under `.agent/tasks/`, and its state is which directory it sits
+A task is a folder under `.agent/tasks/`, and its state is which directory it sits
 in: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix sorts
 `ls` in lifecycle order; `coop tasks` shows the clean names). Before each iteration, `loop`
 selects and claims the next task host-side (or resumes one left in `10_in_progress/`), then
@@ -1098,14 +1098,14 @@ state has acquirable work. Name the agent
 iteration command if you need something custom. When the queue empties, a fresh, **demanding
 signoff** pass (a senior reviewer's bar) re-checks each shipped task: goal met (every acceptance
 criterion and subtask), standards followed (`AGENTS.md` + `.agent/kb/rules`, no scope creep),
-the **failure path** tested, the change polished (docs/CHANGELOG updated), plus bookkeeping.
+the failure path tested, the change polished (docs/CHANGELOG updated), plus bookkeeping.
 Coop atomically finalizes each completed `state.md` before review. Reviewers never mutate an
 archived task in place; an unexpected lifecycle defect is reopened and reported like any other
-completion-integrity failure. The reviewer then runs the repo's gate **once** across the whole repo and reopens anything short of "merge with no
-changes". If the signoff reopened work, the loop drains and signs off **again** — repeating
+completion-integrity failure. The reviewer then runs the repo's gate once across the whole repo and reopens anything short of "merge with no
+changes". If the signoff reopened work, the loop drains and signs off again — repeating
 until a signoff reopens nothing (verified done) or it hits the round cap, at which point the
 task it keeps reopening is blocked for a human rather than reported as done. The cap
-**scales with the batch**: half the tasks worked this run, clamped to
+scales with the batch: half the tasks worked this run, clamped to
 `[3, signoff.rounds]` (default `5`) — a small batch still gets a few tries, a big
 overnight batch can't ping-pong one stuck task forever.
 
@@ -1239,7 +1239,7 @@ and coop aggregates every member's `.agent/tasks` automatically — `coop tasks`
 them up under per-queue headers, one `coop loop` drains them all, `coop prompt` counts
 across them, and the id commands (`claim`/`done`/…) find a task in whichever queue holds
 it. No more hand-maintaining `COOP_TASKS` (an explicit `COOP_TASKS`/`--tasks` still
-overrides). Members keep their **own** queues for their own work; the root keeps one too,
+overrides). Members keep their own queues for their own work; the root keeps one too,
 for changes that span members.
 
 `coop init` at the root detects the members (direct child dirs that have a `.agent/`),
@@ -1467,7 +1467,7 @@ services:
       coop.service.scheme: https         # scheme for COOP_SERVICE_*_URL (default http)
 ```
 
-coop assigns a stable host port per **workspace** (so parallel forks never collide — the port is
+coop assigns a stable host port per workspace (so parallel forks never collide — the port is
 keyed on the service *and* the port, so two sidecars, or a sidecar and a `serve.port`, don't clash),
 publishes it loopback-only, and runs a tiny raw-TCP forwarder inside the box so
 `https://localhost:<port>` resolves to Keycloak from *both* sides — the issuer string matches, no
@@ -1480,10 +1480,10 @@ The agent never installs or hosts a database, so it can't corrupt one, and `coop
 resets to a clean slate. A shared `coop-cache` volume at `~/.cache` keeps disposable runs
 from re-downloading the world.
 
-`.agent/compose.yml` runs on your **host** daemon (that's how a service becomes a real
-container), so coop **validates it before every run** — `coop up` and each networked launch
+`.agent/compose.yml` runs on your host daemon (that's how a service becomes a real
+container), so coop validates it before every run — `coop up` and each networked launch
 alike. Only plain sibling-service directives pass: an `image`, inline `environment`, named
-volumes or repo-relative binds, `healthcheck`, `depends_on`, and **loopback-only** published
+volumes or repo-relative binds, `healthcheck`, `depends_on`, and loopback-only published
 ports. Anything that would reach past a repo-scoped container is refused with the exact reason —
 `privileged`, `cap_add`, a host bind like `/:/host` or `/var/run/docker.sock`, `network_mode:
 host`, `env_file`, `build`, a `0.0.0.0` port, an escaping symlink. So the file is safe to
@@ -1572,7 +1572,7 @@ coop context --changed --json     # same, as data (files + the route that select
 coop context --changed --rendered # the compiled content itself, canonical first
 ```
 
-Scope is **deterministic** — explicit paths, git-changed paths, a task's declared paths, or the
+Scope is deterministic — explicit paths, git-changed paths, a task's declared paths, or the
 current subproject — never inferred from a prompt. A route include that's missing or escapes the
 repo is an error; canonical instructions are never summarized or truncated. Config comes from the
 committed `project.yaml` (so a fork inherits the parent's routes) while scope comes from the fork's
@@ -1602,7 +1602,7 @@ turn them off.
 | `COOP_NO_NEW_PRIVILEGES` | `1` | `--security-opt no-new-privileges` on the box |
 | `COOP_HOMES` | `1` | mount your per-agent home dirs (auth + settings) into the box; `0` keeps them out and therefore disables preset, consult, and Fusion runs because their routing contract cannot mount |
 | `COOP_EGRESS` | `open` | `none` cuts the box off the network (`--network none`) — no outbound, so a prompt-injected agent can't exfiltrate the repo, secrets, or its credentials. Breaks installs / the model API, so it's opt-in; the default keeps full outbound. |
-| `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning; stale Node shim repair still runs. Read **in the box** — set it in `agents/env` (forwarded into the box), not your host shell |
+| `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning; stale Node shim repair still runs. Read in the box — set it in `agents/env` (forwarded into the box), not your host shell |
 | `COOP_NETWORK` · `COOP_CACHE` | `1` | join the services network · mount the cache volume |
 | `COOP_AUTO_UP` | `1` | auto-start sibling services (`compose up`) before every box when a `.agent/compose.yml` is present, so any mode (agent, fusion, acp, loop, fork) can reach them; `0` to manage them with `coop up`/`coop down` yourself |
 | `COOP_SERVICES_NET` | (auto) | services network to join (let a fleet share one db) |
@@ -1639,7 +1639,7 @@ root-in-container (a repo `.agent/Dockerfile` that does `USER root`) from holdin
 | `COOP_LOOP_MODEL` | — | `model[/effort]` for loop iterations (e.g. `opus/low` — overnight runs on a cheaper/lighter setting than interactive) |
 | `COOP_REVIEW_MODEL` | — | `model[/effort]` for `coop loop`'s review pass + between-tasks audit — a stronger model/effort reviews the cheaper loop's work (unset = the loop's) |
 | `COOP_MAX_REVIEW_ROUNDS` | `5` | the ceiling for `coop loop`'s work→review rounds before blocking a task the review keeps reopening; the actual cap scales with the batch (`clamp(tasks/2, 3, this)`) |
-| `COOP_TASKS` | (derived) | explicit task queue dir(s) for `coop tasks` and the loop (space-separated for several). Unset, the queues come from `.agent/project.yaml` — a [monorepo's](#monorepos) subproject queues — else `.agent/tasks`. `--tasks` **replaces** this for a run (it doesn't merge) |
+| `COOP_TASKS` | (derived) | explicit task queue dir(s) for `coop tasks` and the loop (space-separated for several). Unset, the queues come from `.agent/project.yaml` — a [monorepo's](#monorepos) subproject queues — else `.agent/tasks`. `--tasks` replaces this for a run (it doesn't merge) |
 | `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |
 | `COOP_CAFFEINATE` | `1` | while a loop runs, hold a system sleep inhibitor so the machine doesn't idle-sleep mid-drain (macOS `caffeinate`; released when the loop ends). `0`/`false` to disable |
 | `COOP_SPINNER` | `1` | animate Coop's live-view spinners: five-column Box Run beside progress bars and one-column Corner Run (`◰ ◳ ◲ ◱`) in dense task rows. `0`/`false` freezes them and suppresses the loop's fast repaint ticker, useful for debugging and terminal recording |

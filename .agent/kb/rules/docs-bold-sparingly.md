@@ -48,3 +48,9 @@ aid. (The README had grown to ~100 bold spans, most of them inline emphasis.)
   so the original cleanup looks incomplete or has regressed as prose was added since. Full list
   queued for the lead; not fixed here. The rule itself still looks sound — this is compliance
   drift, not a wrong rule.
+- 2026-08-09 — fixed sweep: all 23 flagged spans de-bolded (re-located by quoted text — README
+  churn earlier the same day had drifted line numbers, mostly +3 past README.md:~1460). 22 were
+  plain markup removal (the word/phrase reads the same without it); :762 "must **not** commit" was
+  reworded instead per the card's own guidance — "must never commit", so the prohibition still
+  lands on a word that's hard to skim past, without the markup crutch. None were already resolved.
+  Smell check now `grep -oE '\*\*[^*]+\*\*' README.md | wc -l` = 77 (100 − 23). `make align` green.
