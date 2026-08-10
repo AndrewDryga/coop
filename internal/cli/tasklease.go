@@ -691,6 +691,120 @@ func appendTrustedDoneDeparture(root, id, nonce string) error {
 	return writeTrustedDoneDeparture(root, record)
 }
 
+const taskOwnerRecordVersion = 1
+
+// taskOwnerSourceInteractiveClaim is the only source `coop tasks claim` ever writes. The field
+// exists so a future host-only claim path is provable from the record instead of merely assumed.
+const taskOwnerSourceInteractiveClaim = "interactive-claim"
+
+// taskOwnerRecord is durable evidence that a HUMAN, not a process, owns a task. A lease is a kernel
+// flock held for one loop iteration; `coop tasks claim` exits immediately and holds nothing, so a
+// human's claim needs a record instead of a lock — the same host-only registry the lease authority
+// and audit-reopen records already live in, keyed the same way (see leaseAuthorityKey). It is
+// cleared ONLY by an explicit lifecycle act — done, block, unblock, or `coop tasks release` — never
+// inferred from mtime, PID, or heartbeat age: none of those can tell "gone quiet for a good reason"
+// from "abandoned," and guessing wrong is the exact incident this record exists to prevent. See
+// .agent/kb/task-authority-model.md for how this sits alongside the lease, checkout, and ref
+// authorities.
+type taskOwnerRecord struct {
+	Version   int       `json:"version"`
+	TaskID    string    `json:"task_id"`
+	Source    string    `json:"source"`
+	User      string    `json:"user"`
+	Host      string    `json:"host"`
+	ClaimedAt time.Time `json:"claimed_at"`
+}
+
+func taskOwnerRecordName(root, id string) (string, error) {
+	key, err := leaseAuthorityKey(root, id)
+	if err != nil {
+		return "", err
+	}
+	return key + ".owner.json", nil
+}
+
+// validateTaskOwnerRecord mirrors validateAuditReopenRecord/validateTrustedDoneDeparture: a record
+// whose TaskID doesn't match the id being read (or that's otherwise malformed) is rejected outright
+// rather than silently treated as absent — a corrupt or mismatched record must fail closed, not
+// quietly stop protecting the task it claims to own.
+func validateTaskOwnerRecord(record taskOwnerRecord, id string) error {
+	if record.Version != taskOwnerRecordVersion || record.TaskID != id || record.Source == "" ||
+		strings.TrimSpace(record.User) == "" || strings.TrimSpace(record.Host) == "" || record.ClaimedAt.IsZero() {
+		return errors.New("invalid task owner record")
+	}
+	return nil
+}
+
+// readTaskOwnerRecord reports a task's durable claim, if any. A missing record reads as (zero,
+// false, nil) — the common case, since most tasks are never interactively claimed — but a present,
+// invalid record (corrupt JSON, mismatched id) surfaces as an error rather than "no owner": the
+// caller (assignLoopTaskOnly) must fail closed rather than adopt work it could not actually verify
+// is unowned.
+func readTaskOwnerRecord(root, id string) (taskOwnerRecord, bool, error) {
+	name, err := taskOwnerRecordName(root, id)
+	if err != nil {
+		return taskOwnerRecord{}, false, err
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return taskOwnerRecord{}, false, err
+	}
+	defer registry.Close()
+	data, err := readTaskMetadataFile(registry, name)
+	if errors.Is(err, os.ErrNotExist) {
+		return taskOwnerRecord{}, false, nil
+	}
+	if err != nil {
+		return taskOwnerRecord{}, false, err
+	}
+	var record taskOwnerRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return taskOwnerRecord{}, false, err
+	}
+	if err := validateTaskOwnerRecord(record, id); err != nil {
+		return taskOwnerRecord{}, false, err
+	}
+	return record, true, nil
+}
+
+func writeTaskOwnerRecord(root string, record taskOwnerRecord) error {
+	if err := validateTaskOwnerRecord(record, record.TaskID); err != nil {
+		return err
+	}
+	name, err := taskOwnerRecordName(root, record.TaskID)
+	if err != nil {
+		return err
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	return atomicWriteTaskFile(registry, name, append(data, '\n'))
+}
+
+// removeTaskOwnerRecord is idempotent — a missing record is not an error — because most lifecycle
+// transitions (done/block/unblock on a task the loop, not a human, adopted) legitimately have none.
+func removeTaskOwnerRecord(root, id string) error {
+	name, err := taskOwnerRecordName(root, id)
+	if err != nil {
+		return err
+	}
+	registry, err := openLeaseAuthorityRoot()
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	if err := registry.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func auditReopenRecordName(root, id string) (string, error) {
 	key, err := leaseAuthorityKey(root, id)
 	if err != nil {
@@ -1069,6 +1183,7 @@ func (o taskLeaseObservation) label() string {
 }
 
 type taskLeaseSummary struct {
+	Owned   int // a durable human claim (taskOwnerRecord) — never a lease state, so add() can't set it
 	Busy    int
 	Stalled int
 }
@@ -1083,7 +1198,10 @@ func (s *taskLeaseSummary) add(o taskLeaseObservation) {
 }
 
 func (s taskLeaseSummary) String() string {
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 3)
+	if s.Owned > 0 {
+		parts = append(parts, fmt.Sprintf("%d owned", s.Owned))
+	}
 	if s.Busy > 0 {
 		parts = append(parts, fmt.Sprintf("%d busy", s.Busy))
 	}

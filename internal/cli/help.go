@@ -618,6 +618,7 @@ var commandHelp = map[string]string{
   add [--project <name>] "<title>"
                    scaffold a task folder in todo (or fill it inline: --context/--acceptance/--approach/--subtask)
   claim <id>       claim a task before you start it (todo -> in_progress)
+  release <id>     hand back a claim without finishing it (stays in_progress; the loop can adopt it)
   block <id>       park it on a decision (-> blocked) and write a decision.md stub
   unblock <id>     move it back to todo; add "<answer>" to record in decision.md
   done <id>        move it to done (the archive)

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/url"
 	"os"
+	osuser "os/user"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -38,7 +39,7 @@ type taskArgSpec struct {
 var taskArgSpecs = map[string]taskArgSpec{
 	"ls":    {lsFlags, 0},
 	"lint":  {nil, 0},
-	"claim": {nil, 1}, "path": {nil, 1},
+	"claim": {nil, 1}, "release": {nil, 1}, "path": {nil, 1},
 	"block": {nil, 1}, "done": {nil, 1}, "split": {nil, 1},
 	"rm": {[]string{"--all-done", "--yes", "-y"}, 1},
 }
@@ -133,6 +134,8 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderAdd(root, args, stateTodo, "tasks add")
 	case "claim":
 		return tasksFolderMove(root, args, stateInProgress, "claim", "claimed")
+	case "release":
+		return tasksFolderRelease(root, args)
 	case "block":
 		return tasksFolderBlock(root, args)
 	case "unblock":
@@ -157,7 +160,7 @@ func cmdTasksFolder(repo, root string, rest []string) (int, error) {
 // tasksVerbs are the canonical `coop tasks` subcommands (primary spellings, no aliases): the single
 // source for the unknown-subcommand suggester and isTasksSubcommand, so the two can't drift. `watch`
 // belongs here even though cmdTasks (not cmdTasksFolder) handles it — a mistype of it should suggest it.
-var tasksVerbs = []string{"ls", "lint", "add", "claim", "block", "unblock", "done", "watch", "queues", "path", "rm", "clear", "split", "decisions"}
+var tasksVerbs = []string{"ls", "lint", "add", "claim", "release", "block", "unblock", "done", "watch", "queues", "path", "rm", "clear", "split", "decisions"}
 
 // isTasksSubcommand reports whether s names a `coop tasks` subcommand. cmdTasks uses it to catch
 // `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path. v3 keeps no
@@ -428,6 +431,50 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 	return 0, nil
 }
 
+// taskOwnerIdentity is the best-effort "who is claiming this" pair `coop tasks claim` records: no
+// network call, no config lookup, nothing that could block or slow a claim down — a claim that
+// can't identify its human still durably reserves the task, it just reserves it for "unknown".
+func taskOwnerIdentity() (user, host string) {
+	for _, key := range []string{"USER", "LOGNAME"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			user = v
+			break
+		}
+	}
+	if user == "" {
+		if u, err := osuser.Current(); err == nil {
+			user = strings.TrimSpace(u.Username)
+		}
+	}
+	if user == "" {
+		user = "unknown"
+	}
+	if h, err := os.Hostname(); err == nil {
+		host = strings.TrimSpace(h)
+	}
+	if host == "" {
+		host = "unknown"
+	}
+	return user, host
+}
+
+// claimTaskOwnerRecord writes durable evidence that a HUMAN — not a loop-adopted process — owns
+// this task, so assignLoopTaskOnly refuses to adopt it even long after the `coop tasks claim`
+// process that called this has exited. Called ONLY from the interactive claim path below: the
+// loop's own todo->in_progress adoption (assignLoopTaskOnly -> moveTaskDir) must never call this, or
+// the loop would lock itself out of its own resumed work.
+func claimTaskOwnerRecord(root, id string) error {
+	user, host := taskOwnerIdentity()
+	return writeTaskOwnerRecord(root, taskOwnerRecord{
+		Version:   taskOwnerRecordVersion,
+		TaskID:    id,
+		Source:    taskOwnerSourceInteractiveClaim,
+		User:      user,
+		Host:      host,
+		ClaimedAt: time.Now(),
+	})
+}
+
 // tasksFolderMove relocates a task's folder to newState (claim/done). verb is the imperative used
 // in the usage line ("claim"); pastVerb is the past tense for the success note ("claimed"). Moving
 // to the state it's already in is a no-op note, not an error.
@@ -440,12 +487,23 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 		return 1, err
 	}
 	if t.State == newState {
-		if newState == stateDone {
+		switch newState {
+		case stateDone:
 			if err := completeTrustedTask(root, t); err != nil {
 				return -1, trustedCompletionError(err, t.ID)
 			}
+			ui.Note("%s is already %s", t.ID, stateLabel(newState))
+		case stateInProgress:
+			// Re-claiming a task already in progress (yours, or one the loop currently holds) is a
+			// legitimate take-over, not a no-op: it (re)asserts durable ownership regardless of who
+			// put it there.
+			if err := claimTaskOwnerRecord(root, t.ID); err != nil {
+				return -1, fmt.Errorf("%s is already in progress, but recording your claim failed: %w", t.ID, err)
+			}
+			ui.OK("claimed %s — already in progress; the loop won't adopt it again until you release it", t.ID)
+		default:
+			ui.Note("%s is already %s", t.ID, stateLabel(newState))
 		}
-		ui.Note("%s is already %s", t.ID, stateLabel(newState))
 		return 0, nil
 	}
 	if newState == stateDone {
@@ -453,6 +511,16 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 			return -1, trustedCompletionError(err, t.ID)
 		}
 	} else {
+		// A human claim must protect the task from the INSTANT it starts, not from whenever the
+		// folder move happens to land — so the record is written FIRST, before the move, and rolled
+		// back if the move then fails. A claim that didn't take must not leave a phantom owner
+		// blocking the loop forever: fail-closed cuts both ways here (no gap while claiming, no
+		// orphan record when claiming fails).
+		if newState == stateInProgress {
+			if err := claimTaskOwnerRecord(root, t.ID); err != nil {
+				return -1, fmt.Errorf("record claim ownership for %s: %w", t.ID, err)
+			}
+		}
 		var err error
 		if t.State == stateDone {
 			err = moveTrustedTaskFromDone(root, t, newState)
@@ -460,10 +528,42 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 			err = moveTaskDir(root, t, newState)
 		}
 		if err != nil {
+			if newState == stateInProgress {
+				_ = removeTaskOwnerRecord(root, t.ID) // best-effort: the claim never took effect
+			}
 			return -1, err
 		}
 	}
 	ui.OK("%s %s", pastVerb, t.ID)
+	return 0, nil
+}
+
+// tasksFolderRelease is the explicit hand-back for a human claim (the counterpart to claim): it
+// clears the durable owner record, but — unlike done/block/unblock — does NOT move the folder, so
+// the task stays exactly where it is in 10_in_progress/ and the loop can adopt it on its next scan.
+func tasksFolderRelease(root string, args []string) (int, error) {
+	if len(args) < 1 {
+		return 2, errors.New("usage: coop tasks release <id>")
+	}
+	t, err := findTask(root, args[0])
+	if err != nil {
+		return 1, err
+	}
+	if t.State != stateInProgress {
+		return 1, fmt.Errorf("%s is not in progress (it's %s) — nothing to release", t.ID, stateLabel(t.State))
+	}
+	_, owned, err := readTaskOwnerRecord(root, t.ID)
+	if err != nil {
+		return -1, fmt.Errorf("read owner record for %s: %w", t.ID, err)
+	}
+	if !owned {
+		ui.Note("%s has no claim to release — the loop can already adopt it", t.ID)
+		return 0, nil
+	}
+	if err := removeTaskOwnerRecord(root, t.ID); err != nil {
+		return -1, fmt.Errorf("release %s: %w", t.ID, err)
+	}
+	ui.OK("released %s — stays in progress; the loop can adopt it next", t.ID)
 	return 0, nil
 }
 
@@ -746,6 +846,12 @@ func moveBlockedAuditUnblock(root string, t taskItem, upgrade *blockedAuditUnblo
 	}
 	if err := upgrade.finish(nil); err != nil {
 		return &unblockStageError{stage: "host authority lock release", state: stateTodo, err: err}
+	}
+	// Defensive, not load-bearing: block() already clears any claim before a task can reach
+	// 50_blocked/, so a blocked task should never carry one — but unblock is the last lifecycle verb
+	// that ends a claim, so it closes the loop if that invariant is ever violated. Idempotent.
+	if err := removeTaskOwnerRecord(root, t.ID); err != nil {
+		return &unblockStageError{stage: "owner record cleanup", state: stateTodo, err: err}
 	}
 	return nil
 }
@@ -1042,6 +1148,12 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			return -1, err
 		}
 	}
+	// Blocking ends a human claim same as done/unblock/release: the task leaves 10_in_progress/ (or
+	// was never there) to wait on a decision, so any durable claim on it is now stale. Idempotent — a
+	// loop-owned task legitimately has none.
+	if err := removeTaskOwnerRecord(root, t.ID); err != nil {
+		return -1, fmt.Errorf("task %s is now blocked, but clearing its owner record failed: %w", t.ID, err)
+	}
 	dec := filepath.Join(root, stateBlocked, t.ID, "decision.md")
 	if !fileExists(dec) {
 		stub := "<!-- A one-way-door choice that blocks this task. The agent fills The decision,\n" +
@@ -1209,6 +1321,7 @@ func removeTaskFolderAndRecords(root string, task taskItem) (removed bool, err e
 		removeLeaseAuthorityMetadata(root, task.ID),
 		removeAuditReopenRecord(root, task.ID),
 		removeTrustedDoneDeparture(root, task.ID),
+		removeTaskOwnerRecord(root, task.ID),
 	); err != nil {
 		return false, err
 	}
@@ -1497,9 +1610,10 @@ func decisionDivider(p ui.Palette, n, total int, where string) string {
 }
 
 // listMarkers renders a task's at-a-glance markers — subtask progress (plain while work remains,
-// gray once every box is checked so a finished count recedes) and a red ⚠ on a blocked task —
-// joined with two spaces, or "" when there are none (a task with no subtasks shows no count). They
-// lead the id line, so the wrapped title above stays clean.
+// gray once every box is checked so a finished count recedes), a red ⚠ on a blocked task, and an
+// in-progress task's lease state or (tag-exceptions-not-every-row: only the exceptional row) who
+// claimed it — joined with two spaces, or "" when there are none (a task with no subtasks shows no
+// count). They lead the id line, so the wrapped title above stays clean.
 func listMarkers(p ui.Palette, t taskItem) string {
 	var parts []string
 	if n := len(t.Subtasks); n > 0 {
@@ -1514,9 +1628,23 @@ func listMarkers(p ui.Palette, t taskItem) string {
 		parts = append(parts, p.Red("⚠"))
 	}
 	if t.State == stateInProgress {
-		parts = append(parts, p.Dim(observeTaskLease(t, time.Now()).label()))
+		parts = append(parts, p.Dim(inProgressMarker(t)))
 	}
 	return strings.Join(parts, "  ")
+}
+
+// inProgressMarker labels an in-progress task with the one fact that explains whether the loop will
+// touch it next: a durable human claim beats the lease-derived busy/stalled/unleased label, because
+// a claimed task with nobody actively holding its lease would otherwise read "unleased" — a word
+// that, for a claimed task, wrongly suggests the loop is free to take it (it never is: see
+// assignLoopTaskOnly). A read error falls back to the ordinary lease label: ls is a display, not the
+// adoption gate, so it degrades gracefully instead of failing the whole listing.
+func inProgressMarker(t taskItem) string {
+	root := filepath.Dir(filepath.Dir(t.Dir))
+	if rec, owned, err := readTaskOwnerRecord(root, t.ID); err == nil && owned {
+		return "claimed by " + rec.User
+	}
+	return observeTaskLease(t, time.Now()).label()
 }
 
 func tasksFolderDecisions(root string, args []string) (int, error) {

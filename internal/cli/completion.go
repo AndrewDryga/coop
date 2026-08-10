@@ -291,7 +291,7 @@ func forkVerbList2(v string) bool {
 // taskIDVerb reports whether a tasks subcommand takes a task id (so `coop tasks <verb> <TAB>` offers ids).
 func taskIDVerb(v string) bool {
 	switch v {
-	case "claim", "block", "unblock", "done", "path", "rm":
+	case "claim", "release", "block", "unblock", "done", "path", "rm":
 		return true
 	}
 	return false

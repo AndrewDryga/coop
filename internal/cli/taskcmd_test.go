@@ -124,6 +124,11 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if got := readTaskTree(root)[0].State; got != stateInProgress {
 		t.Fatalf("after claim, state = %s", got)
 	}
+	if rec, owned := taskOwned(t, root, id); !owned {
+		t.Fatal("claim must write a durable owner record")
+	} else if rec.Source != taskOwnerSourceInteractiveClaim || rec.TaskID != id || rec.User == "" || rec.Host == "" || rec.ClaimedAt.IsZero() {
+		t.Errorf("claim owner record = %+v, want a fully populated interactive-claim record", rec)
+	}
 	tmpFile := filepath.Join(root, stateInProgress, id, "tmp", "scratch.patch")
 	artifact := filepath.Join(root, stateInProgress, id, "artifacts", "evidence.txt")
 	writeTaskFile(t, tmpFile, "resume me\n")
@@ -135,6 +140,9 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 	if !fileExists(tmpFile) {
 		t.Fatal("an interrupted in-progress task lost its tmp")
+	}
+	if _, owned := taskOwned(t, root, id); !owned {
+		t.Error("re-claiming an already in-progress task must still hold the owner record")
 	}
 
 	// block → moves to blocked/ and writes decision.md
@@ -151,6 +159,9 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if !fileExists(filepath.Join(root, stateBlocked, id, "tmp", "scratch.patch")) {
 		t.Error("blocking a task must retain its tmp")
 	}
+	if _, owned := taskOwned(t, root, id); owned {
+		t.Error("block must clear the owner record")
+	}
 
 	// unblock WITH an answer → todo (available again; the in_progress lock is taken by claim), the
 	// resolved decision.md rides along. (A no-answer unblock of an unresolved decision is refused —
@@ -164,6 +175,9 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if !fileExists(filepath.Join(root, stateTodo, id, "tmp", "scratch.patch")) {
 		t.Error("unblocking a task must retain its tmp")
 	}
+	if _, owned := taskOwned(t, root, id); owned {
+		t.Error("unblock must leave the owner record cleared (idempotent — block already cleared it)")
+	}
 	// unblocking a non-blocked task is an error (it's in todo now), not a silent reopen.
 	if code, err := tasksFolderUnblock(root, []string{id}); code == 0 || err == nil {
 		t.Errorf("unblock of a non-blocked task should error, got (%d, %v)", code, err)
@@ -174,6 +188,9 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 	if !fileExists(filepath.Join(root, stateInProgress, id, "tmp", "scratch.patch")) {
 		t.Error("reclaiming a task must retain its tmp")
+	}
+	if _, owned := taskOwned(t, root, id); !owned {
+		t.Error("reclaiming from todo must write a fresh owner record")
 	}
 
 	// done → done/ and removes only tmp; durable artifacts survive for review/archive.
@@ -188,6 +205,9 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 	if !fileExists(filepath.Join(root, stateDone, id, "artifacts", "evidence.txt")) {
 		t.Error("done must retain durable artifacts")
+	}
+	if _, owned := taskOwned(t, root, id); owned {
+		t.Error("done must clear the owner record")
 	}
 	completedState := readFileString(filepath.Join(root, stateDone, id, "state.md"))
 	if !strings.Contains(completedState, "**Status:** complete") || !strings.Contains(completedState, "**Next action:** none") {
@@ -207,6 +227,9 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 	if !fileExists(filepath.Join(root, stateInProgress, id, "tmp", "review-notes.txt")) {
 		t.Error("review reopen must retain tmp")
+	}
+	if _, owned := taskOwned(t, root, id); !owned {
+		t.Error("claiming a review reopen must write a fresh owner record")
 	}
 	authority, err := openLeaseAuthority(root, id, false)
 	if err != nil {
@@ -236,6 +259,9 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if pathExists(filepath.Join(root, stateDone, id, "tmp")) {
 		t.Error("done after review reopen must remove tmp")
 	}
+	if _, owned := taskOwned(t, root, id); owned {
+		t.Error("done after review reopen must clear the owner record")
+	}
 	if !taskCompletionRecorded(root, doneItem) {
 		t.Error("done after review reopen must refresh host-only completion evidence")
 	}
@@ -251,6 +277,83 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 	if len(readTaskTree(root)) != 0 {
 		t.Fatal("after remove, tree not empty")
+	}
+}
+
+// TestTasksFolderRelease covers `coop tasks release <id>` — the explicit hand-back for a human
+// claim — end to end: usage, the state guard, the "nothing to release" soft no-op on an unclaimed
+// in-progress task (e.g. one the loop itself adopted), and the substantive clear-without-moving case.
+func TestTasksFolderRelease(t *testing.T) {
+	t.Run("usage error with no id", func(t *testing.T) {
+		root := t.TempDir()
+		if code, err := tasksFolderRelease(root, nil); code != 2 || err == nil {
+			t.Errorf("release with no id = code %d err %v, want a usage error", code, err)
+		}
+	})
+
+	t.Run("refuses a task that is not in progress", func(t *testing.T) {
+		root := t.TempDir()
+		writeTaskFile(t, filepath.Join(root, stateTodo, "still-todo", "task.md"), "# Todo\n")
+		code, err := tasksFolderRelease(root, []string{"still-todo"})
+		if code != 1 || err == nil || !strings.Contains(err.Error(), "not in progress") {
+			t.Fatalf("release of a todo task = code %d err %v, want a state error", code, err)
+		}
+	})
+
+	t.Run("nothing to release is a soft note, not an error", func(t *testing.T) {
+		root := t.TempDir()
+		// Simulate a loop adoption directly (moveTaskDir, never claim): in progress, no record —
+		// exactly what the loop's own todo->in_progress move produces.
+		writeTaskFile(t, filepath.Join(root, stateInProgress, "loop-owned", "task.md"), "# Loop\n")
+		code, err := tasksFolderRelease(root, []string{"loop-owned"})
+		if code != 0 || err != nil {
+			t.Fatalf("release of an unclaimed in-progress task = code %d err %v, want a clean no-op", code, err)
+		}
+		if !pathExists(filepath.Join(root, stateInProgress, "loop-owned")) {
+			t.Fatal("release must never move the folder, claimed or not")
+		}
+	})
+
+	t.Run("clears an existing claim and leaves the folder in place", func(t *testing.T) {
+		root := t.TempDir()
+		writeTaskFile(t, filepath.Join(root, stateTodo, "claimed", "task.md"), "# Claimed\n")
+		if code, err := tasksFolderMove(root, []string{"claimed"}, stateInProgress, "claim", "claimed"); code != 0 || err != nil {
+			t.Fatalf("claim: code=%d err=%v", code, err)
+		}
+		code, err := tasksFolderRelease(root, []string{"claimed"})
+		if code != 0 || err != nil {
+			t.Fatalf("release: code=%d err=%v", code, err)
+		}
+		if _, owned := taskOwned(t, root, "claimed"); owned {
+			t.Error("release must clear the owner record")
+		}
+		if !pathExists(filepath.Join(root, stateInProgress, "claimed")) {
+			t.Fatal("release must leave the task in 10_in_progress/")
+		}
+	})
+}
+
+// TestCmdTasksFolderReleaseDispatch proves "release" is wired end to end through the dispatcher —
+// not just callable as a bare function: it validates args like every other structured subcommand and
+// is a recognized verb for completion and the unknown-subcommand suggester.
+func TestCmdTasksFolderReleaseDispatch(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateTodo, "dispatch-me", "task.md"), "# Dispatch\n")
+	if code, err := cmdTasksFolder("", root, []string{"claim", "dispatch-me"}); code != 0 || err != nil {
+		t.Fatalf("claim via cmdTasksFolder: code=%d err=%v", code, err)
+	}
+	if code, err := cmdTasksFolder("", root, []string{"release", "dispatch-me"}); code != 0 || err != nil {
+		t.Fatalf("release via cmdTasksFolder: code=%d err=%v", code, err)
+	}
+	if _, owned := taskOwned(t, root, "dispatch-me"); owned {
+		t.Error("release via cmdTasksFolder must clear the owner record")
+	}
+	// The verb participates in flag/positional validation like every other structured subcommand.
+	if code, err := cmdTasksFolder("", root, []string{"release", "dispatch-me", "extra"}); code != 2 || err == nil {
+		t.Errorf("release with a stray extra arg = code %d err %v, want a usage error", code, err)
+	}
+	if !slices.Contains(tasksVerbs, "release") {
+		t.Error("release must be a recognized tasks verb (drives completion + unknownErr suggestions)")
 	}
 }
 
@@ -549,6 +652,9 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := claimTaskOwnerRecord(root, task.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	if code, err := tasksFolderRemove(root, []string{task.ID, "--yes"}); code != 0 || err != nil {
 		t.Fatalf("rm cancelled task = (%d, %v), want (0, nil)", code, err)
@@ -593,6 +699,9 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	}
 	if auditReopenRecordExists(root, task.ID) {
 		t.Fatal("removed task retained stale audit-reopen authority")
+	}
+	if _, owned, err := readTaskOwnerRecord(root, task.ID); err != nil || owned {
+		t.Fatalf("removed task retained its owner record: owned=%v err=%v", owned, err)
 	}
 	if _, ok, err := readTrustedDoneDeparture(root, task.ID); err != nil || ok {
 		t.Fatalf("removed task trusted departure = ok %v, err %v; want absent", ok, err)
@@ -1093,6 +1202,36 @@ func TestTasksFolderListSubtaskLegend(t *testing.T) {
 	out2 := captureStdout(t, func() { _, _ = tasksFolderList(bare, false) })
 	if strings.Contains(out2, "= subtasks") {
 		t.Errorf("a subtask-free listing must not show the legend:\n%s", out2)
+	}
+}
+
+// `coop tasks ls` tags an in-progress row with who claimed it (tag-exceptions-not-every-row: only
+// the exceptional, claimed row) instead of its usual lease label — which would otherwise read the
+// misleading "unleased" for a task nobody need be actively holding a lock on to own.
+func TestTasksFolderListShowsOwner(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-01-unowned", "task.md"), "# Unowned\n")
+	unowned := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
+	if !strings.Contains(unowned, "unleased") {
+		t.Errorf("an in-progress task with no lease and no claim should show \"unleased\":\n%s", unowned)
+	}
+	if strings.Contains(unowned, "claimed by") {
+		t.Errorf("an unclaimed task must not show a claimed-by tag:\n%s", unowned)
+	}
+
+	if code, err := tasksFolderMove(root, []string{"2026-01-01-unowned"}, stateInProgress, "claim", "claimed"); code != 0 || err != nil {
+		t.Fatalf("claim: code=%d err=%v", code, err)
+	}
+	owned := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
+	rec, ok := taskOwned(t, root, "2026-01-01-unowned")
+	if !ok {
+		t.Fatal("expected an owner record after claim")
+	}
+	if !strings.Contains(owned, "claimed by "+rec.User) {
+		t.Errorf("a claimed task should show \"claimed by %s\":\n%s", rec.User, owned)
+	}
+	if strings.Contains(owned, "unleased") {
+		t.Errorf("a claimed task must not also show the lease label \"unleased\":\n%s", owned)
 	}
 }
 

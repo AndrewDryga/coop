@@ -376,6 +376,13 @@ func completeTrustedTask(root string, task taskItem) (retErr error) {
 			return err
 		}
 	}
+	// done ends a human claim same as block/unblock/release — a task in 99_done/ is never a loop
+	// candidate again, so a leftover record would only ever be silent dead weight, but clearing it
+	// here (not just in tasksFolderMove) covers every caller: the interactive verb, fork-merge
+	// reconciliation, and a re-run of `done` on an already-done task all funnel through this one place.
+	if err := removeTaskOwnerRecord(root, task.ID); err != nil {
+		return err
+	}
 	acceptedTask = queuedTask{Root: root, Item: current}
 	accepted = true
 	return nil
@@ -3324,10 +3331,36 @@ func assignLoopTask(hosts []string, owner taskLeaseOwner) (taskAssignment, error
 	return assignLoopTaskOnly(hosts, owner, "")
 }
 
+// skipOwnedCandidate reports whether id carries a durable human-claim record (taskOwnerRecord) — if
+// so, the loop must not adopt it, lease or no lease: `coop tasks claim` holds no flock, so an
+// unheld lease proves nothing about whether a human still owns the work. Checked BEFORE
+// tryTaskLease, not after, for two reasons: it avoids taking (and then having to release) a flock on
+// work the loop was never going to adopt anyway, and `coop tasks claim` writes this record BEFORE it
+// moves the task's folder (see claimTaskOwnerRecord), so the record protects an in-flight claim from
+// the instant it starts — before a concurrent scan could even see the folder move. noted dedupes the
+// human-facing notice per assignLoopTaskOnly call, so a candidate seen again on an internal rescan
+// (maxLeaseRescans) is skipped again silently rather than re-announced.
+func skipOwnedCandidate(root, id string, noted map[string]bool) (bool, error) {
+	rec, ok, err := readTaskOwnerRecord(root, id)
+	if err != nil {
+		return false, fmt.Errorf("read owner record for task %s: %w", id, err)
+	}
+	if !ok {
+		return false, nil
+	}
+	if !noted[id] {
+		noted[id] = true
+		ui.Info("%s is claimed by %s@%s — the loop will not adopt it; release it first: coop tasks release %s",
+			id, rec.User, rec.Host, id)
+	}
+	return true, nil
+}
+
 // assignLoopTaskOnly scopes assignment to the current task in a limited run. Counts still cover the
 // whole queue for truthful banners, but another actionable task can never be claimed while the
 // selected task is retrying or has been reopened by its between-task audit.
 func assignLoopTaskOnly(hosts []string, owner taskLeaseOwner, onlyID string) (taskAssignment, error) {
+	noted := map[string]bool{} // spans every rescan attempt below, so an owned skip is reported once
 	for attempt := 0; attempt < maxLeaseRescans; attempt++ {
 		var counts taskCounts
 		var inProgress, todo []queuedTask
@@ -3355,6 +3388,12 @@ func assignLoopTaskOnly(hosts []string, owner taskLeaseOwner, onlyID string) (ta
 		var busy taskLeaseSummary
 		changed := false
 		for _, candidate := range inProgress {
+			if owned, err := skipOwnedCandidate(candidate.Root, candidate.Item.ID, noted); err != nil {
+				return taskAssignment{}, err
+			} else if owned {
+				busy.Owned++
+				continue
+			}
 			lease, observed, err := tryTaskLease(candidate.Root, candidate.Item, owner)
 			if errors.Is(err, errLeaseCandidateGone) {
 				changed = true
@@ -3376,6 +3415,12 @@ func assignLoopTaskOnly(hosts []string, owner taskLeaseOwner, onlyID string) (ta
 		}
 
 		for _, candidate := range todo {
+			if owned, err := skipOwnedCandidate(candidate.Root, candidate.Item.ID, noted); err != nil {
+				return taskAssignment{}, err
+			} else if owned {
+				busy.Owned++
+				continue
+			}
 			lease, observed, err := tryTaskLease(candidate.Root, candidate.Item, owner)
 			if errors.Is(err, errLeaseCandidateGone) {
 				changed = true

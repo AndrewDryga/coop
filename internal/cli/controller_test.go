@@ -2778,6 +2778,249 @@ func TestAssignLoopTaskOnlyNeverSwitchesTasks(t *testing.T) {
 	}
 }
 
+// TestOwnerRecordGatesLoopAdoption drives the five deterministic cases from
+// 2026-07-25-design-durable-ownership-for-human-claims-and-lo's acceptance criteria: a human's
+// durable claim keeps the loop off a task until it's explicitly released, while every existing
+// no-record adoption path — the loop's own resumed work, an in-box folder move, and a crashed
+// controller's stale lease metadata — is completely unaffected.
+func TestOwnerRecordGatesLoopAdoption(t *testing.T) {
+	t.Run("claim blocks loop adoption", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), ".agent", "tasks")
+		writeTaskFile(t, filepath.Join(root, stateTodo, "claimed-task", "task.md"), "# Claimed\n")
+		if code, err := tasksFolderMove(root, []string{"claimed-task"}, stateInProgress, "claim", "claimed"); code != 0 || err != nil {
+			t.Fatalf("claim = code %d err %v", code, err)
+		}
+		if _, owned := taskOwned(t, root, "claimed-task"); !owned {
+			t.Fatal("claim must write a durable owner record")
+		}
+
+		assignment, err := assignLoopTask([]string{root}, testLeaseOwner())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if assignment.Outcome != assignmentUnavailable {
+			t.Fatalf("assignment = %+v, want unavailable — a claimed task must not be adoptable", assignment)
+		}
+		if assignment.Busy.Owned != 1 || assignment.Busy.Busy != 0 || assignment.Busy.Stalled != 0 {
+			t.Fatalf("busy summary = %+v, want exactly 1 owned", assignment.Busy)
+		}
+		if got := assignment.Busy.String(); !strings.Contains(got, "owned") {
+			t.Errorf("busy summary = %q, a fully-owned queue must report \"owned\", not \"drained\"", got)
+		}
+		// The task itself is untouched: still in_progress, still unleased (claim holds no flock).
+		if !pathExists(filepath.Join(root, stateInProgress, "claimed-task")) {
+			t.Fatal("claimed task moved unexpectedly")
+		}
+	})
+
+	t.Run("release lets the loop adopt", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), ".agent", "tasks")
+		writeTaskFile(t, filepath.Join(root, stateTodo, "claimed-task", "task.md"), "# Claimed\n")
+		if code, err := tasksFolderMove(root, []string{"claimed-task"}, stateInProgress, "claim", "claimed"); code != 0 || err != nil {
+			t.Fatalf("claim = code %d err %v", code, err)
+		}
+		if code, err := tasksFolderRelease(root, []string{"claimed-task"}); code != 0 || err != nil {
+			t.Fatalf("release = code %d err %v", code, err)
+		}
+		if _, owned := taskOwned(t, root, "claimed-task"); owned {
+			t.Fatal("release must clear the owner record")
+		}
+		if !pathExists(filepath.Join(root, stateInProgress, "claimed-task")) {
+			t.Fatal("release must leave the task in 10_in_progress/, not move it")
+		}
+
+		assignment, err := assignLoopTask([]string{root}, testLeaseOwner())
+		if err != nil || assignment.Outcome != assignmentReady || assignment.Task.Item.ID != "claimed-task" {
+			t.Fatalf("post-release assignment = %+v, err %v, want ready on claimed-task", assignment, err)
+		}
+		if err := assignment.Lease.release(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("the loop's own resumed task carries no record and is still adopted", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), ".agent", "tasks")
+		writeTaskFile(t, filepath.Join(root, stateTodo, "loop-task", "task.md"), "# Loop\n")
+
+		first, err := assignLoopTask([]string{root}, testLeaseOwner())
+		if err != nil || first.Outcome != assignmentReady || first.Task.Item.ID != "loop-task" {
+			t.Fatalf("first adoption = %+v, err %v", first, err)
+		}
+		if first.Lease.legacy {
+			t.Fatal("a task the loop itself just claimed via moveTaskDir must not be legacy")
+		}
+		if _, owned := taskOwned(t, root, "loop-task"); owned {
+			t.Fatal("the loop's own todo->in_progress adoption must never write an owner record")
+		}
+		if err := first.Lease.release(); err != nil { // end of iteration (or a crash — either way, unheld)
+			t.Fatal(err)
+		}
+
+		second, err := assignLoopTask([]string{root}, testLeaseOwner())
+		if err != nil || second.Outcome != assignmentReady || second.Task.Item.ID != "loop-task" {
+			t.Fatalf("resumed adoption = %+v, err %v, want the loop to resume its own work", second, err)
+		}
+		if second.Lease.legacy {
+			t.Error("resuming a task with an existing lease.lock file should not be legacy")
+		}
+		if err := second.Lease.release(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("an in-box folder move carries no record and is still adopted", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), ".agent", "tasks")
+		// Simulates an agent INSIDE the box moving the folder directly (coop isn't installed there —
+		// AGENTS.md: "inside the box ... move the folder yourself"): the task lands in in_progress
+		// with no lease.lock ever created, and of course no owner record either.
+		writeTaskFile(t, filepath.Join(root, stateInProgress, "in-box-task", "task.md"), "# In box\n")
+
+		assignment, err := assignLoopTask([]string{root}, testLeaseOwner())
+		if err != nil || assignment.Outcome != assignmentReady || assignment.Task.Item.ID != "in-box-task" {
+			t.Fatalf("in-box adoption = %+v, err %v", assignment, err)
+		}
+		if !assignment.Lease.legacy {
+			t.Error("a task moved without ever creating lease.lock should be adopted as a legacy candidate")
+		}
+		if err := assignment.Lease.release(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("a crashed controller's stale lease metadata carries no record and is still adopted", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), ".agent", "tasks")
+		item := taskForLease(t, root, stateInProgress, "crashed-task")
+		if _, err := taskLeaseDir(item.Dir); err != nil {
+			t.Fatal(err)
+		}
+		lock, err := openLeaseLock(item.Dir, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lock.Close(); err != nil { // created, never held — the flock a crash would leave behind
+			t.Fatal(err)
+		}
+		stale := taskLeaseMetadata{
+			Version: leaseMetadataVersion, RunID: "dead-run", ControllerPID: 999999,
+			Provider: "codex", Target: "codex:old",
+			AcquiredAt: time.Now().Add(-time.Hour), HeartbeatAt: time.Now().Add(-time.Hour),
+		}
+		if err := errors.Join(
+			writeLeaseAuthorityMetadata(root, "crashed-task", stale),
+			writeLeaseMetadata(root, "crashed-task", stale),
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		assignment, err := assignLoopTask([]string{root}, testLeaseOwner())
+		if err != nil || assignment.Outcome != assignmentReady || assignment.Task.Item.ID != "crashed-task" {
+			t.Fatalf("crash-recovery adoption = %+v, err %v, want ready — an unheld flock is unleased", assignment, err)
+		}
+		if err := assignment.Lease.release(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// TestOwnerRecordFailurePaths covers spec.md's supplementary failure paths beyond the five required
+// acceptance cases: an owner record combined with a genuinely held foreign lease is still reported
+// as owned (not double-counted as also busy), a corrupt/mismatched record fails the whole scan
+// closed instead of silently adopting, and a claim that loses its folder-move race leaves no orphan
+// record behind (the write-before-move ordering's core safety property).
+func TestOwnerRecordFailurePaths(t *testing.T) {
+	t.Run("owned and foreign-leased is reported once as owned, not also busy", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), ".agent", "tasks")
+		item := taskForLease(t, root, stateInProgress, "double-guarded")
+		if err := claimTaskOwnerRecord(root, item.ID); err != nil {
+			t.Fatal(err)
+		}
+		foreign, _, err := tryTaskLease(root, item, testLeaseOwner())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = foreign.release() })
+
+		assignment, err := assignLoopTask([]string{root}, testLeaseOwner())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if assignment.Outcome != assignmentUnavailable {
+			t.Fatalf("assignment = %+v, want unavailable", assignment)
+		}
+		if assignment.Busy.Owned != 1 || assignment.Busy.Busy != 0 {
+			t.Fatalf("busy summary = %+v, want exactly 1 owned and 0 busy (skipped once, on ownership alone)", assignment.Busy)
+		}
+	})
+
+	t.Run("a corrupt owner record fails the scan closed instead of adopting", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), ".agent", "tasks")
+		writeTaskFile(t, filepath.Join(root, stateInProgress, "corrupt-owner", "task.md"), "# Corrupt\n")
+		name, err := taskOwnerRecordName(root, "corrupt-owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		registry, err := openLeaseAuthorityRoot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := atomicWriteTaskFile(registry, name, []byte("not json\n")); err != nil {
+			t.Fatal(err)
+		}
+		_ = registry.Close()
+
+		if _, err := assignLoopTask([]string{root}, testLeaseOwner()); err == nil {
+			t.Fatal("a corrupt owner record must fail the scan closed, not silently adopt the task")
+		}
+	})
+
+	t.Run("a claim that loses its move race leaves no orphan record", func(t *testing.T) {
+		root := t.TempDir()
+		id := "raced-task"
+		// A torn move or stray copy: the SAME id in both todo and in_progress. findTask resolves the
+		// lifecycle-earliest (todo), so tasksFolderMove writes the claim, then moveTaskDir refuses the
+		// move because in_progress/raced-task already exists — exactly what a lost race against a
+		// concurrent adopter (the loop, or a second claim) produces.
+		writeTaskFile(t, filepath.Join(root, stateTodo, id, "task.md"), "# Raced\n")
+		writeTaskFile(t, filepath.Join(root, stateInProgress, id, "task.md"), "# Raced (winner)\n")
+
+		code, err := tasksFolderMove(root, []string{id}, stateInProgress, "claim", "claimed")
+		if code == 0 || err == nil {
+			t.Fatalf("claim into an occupied destination = code %d err %v, want a move error", code, err)
+		}
+		if _, owned, readErr := readTaskOwnerRecord(root, id); readErr != nil || owned {
+			t.Fatalf("a lost claim race left an orphan record: owned=%v err=%v", owned, readErr)
+		}
+	})
+}
+
+// TestClaimWritesOwnerRecordLoopAdoptionDoesNot is spec step 2's own assertion, isolated from the
+// rest of the lifecycle: the interactive claim path writes the durable record, but
+// assignLoopTaskOnly's todo->in_progress adoption (the SAME folder move, moveTaskDir) never does —
+// or the loop would lock itself out of every task it ever picks up.
+func TestClaimWritesOwnerRecordLoopAdoptionDoesNot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "human-claim", "task.md"), "# Human\n")
+	writeTaskFile(t, filepath.Join(root, stateTodo, "loop-claim", "task.md"), "# Loop\n")
+
+	if code, err := tasksFolderMove(root, []string{"human-claim"}, stateInProgress, "claim", "claimed"); code != 0 || err != nil {
+		t.Fatalf("interactive claim = code %d err %v", code, err)
+	}
+	if _, owned := taskOwned(t, root, "human-claim"); !owned {
+		t.Error("coop tasks claim must write an owner record")
+	}
+
+	assignment, err := assignLoopTaskOnly([]string{root}, testLeaseOwner(), "loop-claim")
+	if err != nil || assignment.Outcome != assignmentReady || assignment.Task.Item.ID != "loop-claim" {
+		t.Fatalf("loop adoption = %+v, err %v", assignment, err)
+	}
+	if _, owned := taskOwned(t, root, "loop-claim"); owned {
+		t.Error("the loop's own adoption must NOT write an owner record")
+	}
+	if err := assignment.Lease.release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestCommitsForTaskAndUnbindableTasks drives the real git trailer parser. Fresh work binds only
 // when the iteration range and reachable history each contain exactly one binding; unchanged HEAD,
 // malformed, duplicate, different-id, substring, and historical duplicate values fail closed. Every

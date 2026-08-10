@@ -212,7 +212,7 @@ spelled out here (there's room to render them).
 |---|---|
 | `coop tasks ls` | show the queue, grouped by state (a folder per task; its directory *is* its state) |
 | `coop tasks watch` | live board of the queue + any active forks, merged and deduped by id (auto-exits when every task's done; Ctrl-C anytime) |
-| `coop tasks add "<title>"` · `claim` · `block` · `unblock` · `done` · `rm` | move one task through its states (moving its folder is the state change) |
+| `coop tasks add "<title>"` · `claim` · `release` · `block` · `unblock` · `done` · `rm` | move one task through its states (moving its folder is the state change); `release` hands a claim back without finishing it |
 | `coop tasks decisions [-i]` · `lint` · `split <n>` | what's blocked on a decision (`-i` to answer) · check the tree · carve todo tasks into per-fork slices |
 | `coop backlog` · `add "<title>"` · `promote <id>` · `rm <id>` | park unscheduled ideas in the `xx_backlog/` drawer — same folder format, but outside the lifecycle (never auto-worked, never nagged); `promote` moves one into `00_todo/` when it's ready |
 
@@ -1120,7 +1120,10 @@ the agent runs. A second loop skips a held task and can take independent todo wo
 watch` shows concise `busy`, `stalled`, or `unleased` lease state without exposing run IDs or PIDs.
 A stale heartbeat is a diagnostic only — a task is adopted immediately only after its kernel lock
 is available, never by timeout. An older, unleased in-progress folder is adopted through that same
-lock acquisition and is called out once. Stop pre-lease Coop controllers before upgrading: an old
+lock acquisition and is called out once. A human's `coop tasks claim <id>` is different: the command
+exits immediately and holds no lock, so it records durable ownership instead — the loop refuses that
+task, naming the owner and `coop tasks release <id>`, until an explicit `release`, `block`,
+`unblock`, or `done` clears it; nothing about a claim ever expires on its own. Stop pre-lease Coop controllers before upgrading: an old
 binary does not participate in this safety boundary. A completed task leaves a small host-only
 receipt on the persistent authority lock inode, so concurrent loops can recognize a released
 owner's finalized folder without trusting provider-writable task metadata. Before every writable

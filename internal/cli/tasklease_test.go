@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -32,6 +33,18 @@ func taskCompletionReceipt(root string, task taskItem) (leaseCompletionReceipt, 
 func taskCompletionRecorded(root string, task taskItem) bool {
 	_, ok := taskCompletionReceipt(root, task)
 	return ok
+}
+
+// taskOwned reads a task's durable claim record for a test assertion, failing the test outright on
+// a read error (a corrupt/mismatched record must never be silently treated as "no owner" — see
+// readTaskOwnerRecord) rather than being mistaken for the common "never claimed" case.
+func taskOwned(t *testing.T, root, id string) (taskOwnerRecord, bool) {
+	t.Helper()
+	rec, ok, err := readTaskOwnerRecord(root, id)
+	if err != nil {
+		t.Fatalf("readTaskOwnerRecord(%s): %v", id, err)
+	}
+	return rec, ok
 }
 
 func taskForLease(t *testing.T, root, state, id string) taskItem {
@@ -311,6 +324,108 @@ func TestTrustedManualCompletionConsumesAuditReopenGeneration(t *testing.T) {
 	if _, ok, err := readAuditReopenRecord(root, task.ID); err != nil || ok {
 		t.Fatalf("manual completion retained generation: ok=%v err=%v", ok, err)
 	}
+}
+
+// TestTaskOwnerRecordRoundTripsMismatchAndCorruption covers the owner record's registry I/O in
+// isolation from any CLI verb: a clean round trip, a record whose TaskID doesn't match the id being
+// read (mirroring the audit-reopen record's own id-binding check), and a corrupt body — both of the
+// latter two must fail closed (an error), never silently read back as "no owner".
+func TestTaskOwnerRecordRoundTripsMismatchAndCorruption(t *testing.T) {
+	t.Run("round trip", func(t *testing.T) {
+		root := t.TempDir()
+		want := taskOwnerRecord{
+			Version: taskOwnerRecordVersion, TaskID: "round-trip", Source: taskOwnerSourceInteractiveClaim,
+			User: "ada", Host: "workstation", ClaimedAt: time.Now().Truncate(time.Second),
+		}
+		if err := writeTaskOwnerRecord(root, want); err != nil {
+			t.Fatal(err)
+		}
+		got, ok, err := readTaskOwnerRecord(root, "round-trip")
+		if err != nil || !ok || !got.ClaimedAt.Equal(want.ClaimedAt) ||
+			got.Version != want.Version || got.TaskID != want.TaskID || got.Source != want.Source ||
+			got.User != want.User || got.Host != want.Host {
+			t.Fatalf("round trip = %#v, ok=%v err=%v, want %#v", got, ok, err, want)
+		}
+		if err := removeTaskOwnerRecord(root, "round-trip"); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := readTaskOwnerRecord(root, "round-trip"); err != nil || ok {
+			t.Fatalf("after remove: ok=%v err=%v, want absent", ok, err)
+		}
+		// Removing an already-absent record is a no-op, not an error — most lifecycle transitions
+		// (block/unblock/done on a loop-owned task) legitimately have none to clear.
+		if err := removeTaskOwnerRecord(root, "round-trip"); err != nil {
+			t.Fatalf("idempotent remove: %v", err)
+		}
+	})
+
+	t.Run("missing record reads as absent, not an error", func(t *testing.T) {
+		root := t.TempDir()
+		if _, ok, err := readTaskOwnerRecord(root, "never-claimed"); err != nil || ok {
+			t.Fatalf("never-written record = ok=%v err=%v, want (false, nil)", ok, err)
+		}
+	})
+
+	t.Run("mismatched task id is rejected, not silently absent", func(t *testing.T) {
+		root := t.TempDir()
+		record := taskOwnerRecord{
+			Version: taskOwnerRecordVersion, TaskID: "task-a", Source: taskOwnerSourceInteractiveClaim,
+			User: "ada", Host: "workstation", ClaimedAt: time.Now(),
+		}
+		if err := writeTaskOwnerRecord(root, record); err != nil {
+			t.Fatal(err)
+		}
+		// Write task-a's already-validated bytes directly under task-b's registry name — provider-
+		// writable task prose must never be able to redirect a claim onto a different task's record
+		// (same threat TestTaskLeaseAuditReopenAuthorityIsScopedConsumedAndNotReusable covers for
+		// audit-reopen authority).
+		name, err := taskOwnerRecordName(root, "task-b")
+		if err != nil {
+			t.Fatal(err)
+		}
+		registry, err := openLeaseAuthorityRoot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := json.Marshal(record)
+		if err := atomicWriteTaskFile(registry, name, append(data, '\n')); err != nil {
+			t.Fatal(err)
+		}
+		_ = registry.Close()
+		if _, ok, err := readTaskOwnerRecord(root, "task-b"); err == nil || ok {
+			t.Fatalf("mismatched-id record = ok=%v err=%v, want a validation error", ok, err)
+		}
+	})
+
+	t.Run("corrupt body fails closed", func(t *testing.T) {
+		root := t.TempDir()
+		name, err := taskOwnerRecordName(root, "corrupt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		registry, err := openLeaseAuthorityRoot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := atomicWriteTaskFile(registry, name, []byte("not json\n")); err != nil {
+			t.Fatal(err)
+		}
+		_ = registry.Close()
+		if _, ok, err := readTaskOwnerRecord(root, "corrupt"); err == nil || ok {
+			t.Fatalf("corrupt record = ok=%v err=%v, want an error", ok, err)
+		}
+	})
+
+	t.Run("write validates before touching disk", func(t *testing.T) {
+		root := t.TempDir()
+		bad := taskOwnerRecord{Version: taskOwnerRecordVersion, TaskID: "bad", Source: ""} // no source/user/host/time
+		if err := writeTaskOwnerRecord(root, bad); err == nil {
+			t.Fatal("write accepted an incomplete owner record")
+		}
+		if _, ok, err := readTaskOwnerRecord(root, "bad"); err != nil || ok {
+			t.Fatalf("rejected write still landed: ok=%v err=%v", ok, err)
+		}
+	})
 }
 
 func TestTaskLeaseWritesRenameSafeHeartbeatAndReleases(t *testing.T) {

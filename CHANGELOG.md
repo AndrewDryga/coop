@@ -4,6 +4,32 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The loop can no longer adopt a task a human is actively claiming.** `coop tasks claim` is a pure
+  folder move that exits immediately — it held no lease and left no durable record that anyone owned
+  the task. `assignLoopTaskOnly` prefers an already-in-progress candidate, found the task's lease
+  flock free (nobody was holding it — a human's claim holds nothing), and adopted it: a 2026-07-25
+  dogfood run did exactly this to a founder's claimed task, duplicating the work underneath them. The
+  lease system itself was never the problem — the kernel flock is the right authority for a live
+  PROCESS, and a human's claim has no process left to hold one once `claim` exits. The fix adds the
+  missing primitive: a durable ownership record, `<key>.owner.json`, in the same host-only registry
+  the lease authority's own siblings (`<key>.json` metadata, `<key>.reopen.json` audit authority)
+  already live in, with the same strict validation and atomic writes. `coop tasks claim` writes it
+  (source, user, host, claimed-at) BEFORE it moves the folder, so a claim is protected from the
+  instant it starts rather than from whenever its move happens to land; a claim that then loses the
+  move race rolls the record back instead of leaving a phantom owner behind. `assignLoopTaskOnly` now
+  checks every candidate — in-progress or todo — for this record before ever taking its lease, and
+  skips one that carries it exactly like a busy lease, naming the owner and the release command; the
+  loop's own resumed work is unaffected, because its adoption path never writes the record in the
+  first place. The record never auto-expires: no mtime, no PID liveness, no heartbeat age ever clears
+  it, because none of those can tell "gone quiet for a good reason" from "abandoned" — guessing wrong
+  between those two is the exact incident this fixes, and long, quiet, legitimate work must survive.
+  Only an explicit lifecycle act clears it: `done`, `block`, `unblock`, and a new explicit
+  `coop tasks release <id>` — the hand-back that clears the claim but leaves the task in
+  `10_in_progress/` for the loop to pick up next. `coop tasks ls` now tags a claimed in-progress row
+  "claimed by `<user>`" in place of its usual lease label, which would otherwise read the actively
+  misleading "unleased." `.agent/kb/task-authority-model.md` now maps all four authorities over a
+  task and its checkout — claim, lease, checkout, and ref — so nobody has to re-derive this shape.
+
 - **A stray commit landing mid-iteration no longer destroys a finished task's completion.** `coop
   loop` validates a completion over its iteration's commit range, which is a time window on one
   branch — anything committed to the same checkout while a box is running joins that range,
