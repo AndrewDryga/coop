@@ -219,7 +219,7 @@ func (a *app) cmdSign(args []string) (int, error) {
 		return -1, err
 	}
 	if n == 0 {
-		ui.Info("nothing to sign — no unpushed commits")
+		ui.Note("nothing to sign — no unpushed commits")
 		return 0, nil
 	}
 	ui.OK("signed %s with your host key", ui.Count(n, "unpushed commit"))

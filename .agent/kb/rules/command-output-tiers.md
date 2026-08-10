@@ -74,3 +74,12 @@ See also [[help-output-style]] and [[no-color-in-width-fields]].
   after every command in cli.go:75) also fires `ui.Info` after standalone commands — judged
   defensible, since it's a cross-cutting aside orthogonal to the invoked command's own tiering,
   not a violation of this rule.
+- 2026-08-09 — fixed sweep: sign.go's nothing-to-sign line is now `ui.Note`, matching its sibling
+  `ui.OK` on the success path. `cmdInit` now closes on exactly one `ui.Info` anchor
+  ("already initialized at .../scaffolded into ..."): the monorepo member-count line and the
+  per-agent-dirs/no-agents-signed-in line are demoted to `ui.Detail`, moved ahead of the anchor so
+  the dim log still reads top-to-bottom before the closing line; the `ui.Warn` for an unregistered
+  subproject is untouched (a real warning, not part of this violation). No output-assertion test
+  covered either exact string (grepped *_test.go and testdata; `TestInitNextSteps` only exercises
+  the `initNextSteps` helper, not `cmdInit`'s printed lines) — none to update. `cmdInit` is once
+  again the rule's own compliant example.

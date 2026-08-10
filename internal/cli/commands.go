@@ -1503,7 +1503,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 		if len(added) > 0 {
 			ui.Detail("registered in subprojects: %s", strings.Join(added, ", "))
 		}
-		ui.Info("monorepo: %d member(s) (%s) — .agent/project.yaml aggregates their task queues", len(subs), strings.Join(subs, ", "))
+		ui.Detail("monorepo: %d member(s) (%s) — .agent/project.yaml aggregates their task queues", len(subs), strings.Join(subs, ", "))
 		// Only if the edit couldn't be placed (a hand-restructured project.yaml) does the advisory
 		// remain — coop never silently drops a member on the floor.
 		if pj, err := project.Load(repo); err == nil {
@@ -1518,6 +1518,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 			}
 		}
 	}
+	if len(agentDirs) > 0 {
+		ui.Detail("per-agent dirs: %s — missing artifacts synthesize in-box from shared sources on demand", strings.Join(agentDirs, ", "))
+	} else {
+		ui.Detail("no agents signed in — scaffolded .agent/ only; sign in and run, or `coop init --agents claude,codex`")
+	}
 	// One "coop:" anchor closes the dim per-file log; then the optional Docker-box guidance
 	// (only when the repo has its own Docker and no .agent/Dockerfile yet); then the actions you
 	// need to take next stand on their own — derived from what actually landed, not a fixed script.
@@ -1527,11 +1532,6 @@ func (a *app) cmdInit(args []string) (int, error) {
 		ui.Info("already initialized at %s — anything missing above was added", repo)
 	} else {
 		ui.Info("scaffolded into %s", repo)
-	}
-	if len(agentDirs) > 0 {
-		ui.Info("per-agent dirs: %s — missing artifacts synthesize in-box from shared sources on demand", strings.Join(agentDirs, ", "))
-	} else {
-		ui.Info("no agents signed in — scaffolded .agent/ only; sign in and run, or `coop init --agents claude,codex`")
 	}
 	scaffold.SuggestDocker(repo)
 	// "review .agent/Dockerfile, then `coop build`" is first-run advice. On a repo that has been
