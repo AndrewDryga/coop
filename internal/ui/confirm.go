@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -43,11 +44,22 @@ func DestroyGate(what string, yes bool, asks ...func(string) bool) error {
 	return nil
 }
 
+// confirmInput is a narrow test seam for the one thing Confirm cannot do without a terminal: read
+// the answer back. nil — which it always is outside this package's own tests — means the real
+// interactive path, os.Stdin gated by IsTerminal, so an interactive user's behavior is unchanged.
+// A test points it at a reader standing in for the terminal; that is the only way the bare-Enter,
+// explicit-answer, and EOF branches below are reachable in a gate that has no tty.
+var confirmInput io.Reader
+
 // Confirm asks a yes/no question, returning def with no tty (batch runs) or on a
 // bare Enter.
 func Confirm(prompt string, def bool) bool {
-	if !IsTerminal(os.Stdin) {
-		return def
+	in := confirmInput
+	if in == nil {
+		if !IsTerminal(os.Stdin) {
+			return def
+		}
+		in = os.Stdin // fmt.Scanln IS Fscanln(os.Stdin, …), so the read below is the same call
 	}
 	hint := "Y/n"
 	if !def {
@@ -55,7 +67,7 @@ func Confirm(prompt string, def bool) bool {
 	}
 	fmt.Fprintf(os.Stderr, "%s [%s] ", prompt, hint)
 	var resp string
-	fmt.Scanln(&resp)
+	fmt.Fscanln(in, &resp)
 	return ConfirmationResponse(resp, def)
 }
 
