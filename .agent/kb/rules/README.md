@@ -125,6 +125,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [agents-are-one-file](agents-are-one-file.md) — a coding agent is one self-registering file in `internal/agent`, never a switch elsewhere
 - [internal-import-dag](internal-import-dag.md) — a new internal import edge is an architecture decision — the allowlist test and this card move in the same commit
 - [transport-bounds-do-not-abort-valid-work](transport-bounds-do-not-abort-valid-work.md) — bound retained state and single payloads, never the cumulative volume of valid work
+- [hermetic-git-tests](hermetic-git-tests.md) — a test that runs git pins `GIT_CONFIG_GLOBAL` *and* `GIT_CONFIG_SYSTEM`; identity envs alone still let the host's config in
 
 **Agent workflow** — how an agent works here, not what it ships
 - [fix-the-bug-not-the-feature](fix-the-bug-not-the-feature.md) — root-cause the misbehavior; deleting the feature is never the fix without the human
@@ -132,3 +133,4 @@ updated: <YYYY-MM-DD>                # last edit
 - [small-work-to-the-queue](small-work-to-the-queue.md) — ready work goes to `00_todo/`; only the genuinely large or unscoped goes to the backlog
 - [static-bounded-supervision](static-bounded-supervision.md) — supervised long commands keep output static and only a bounded excerpt in context
 - [agent-instructions-use-in-box-capabilities](agent-instructions-use-in-box-capabilities.md) — agent-facing instructions name in-box capabilities, never host-side `coop fork`/`fleet`
+- [shell-guards-fail-closed](shell-guards-fail-closed.md) — a shell guard checks every command's status and fails CLOSED on ambiguity; a script that fails open says so in its header
