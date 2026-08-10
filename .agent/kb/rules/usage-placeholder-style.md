@@ -50,3 +50,18 @@ See also [[help-output-style]].
   [--context <c> --acceptance <a> --approach <p> --subtask <s>...]`` — the exact `p`/`m`-style
   abbreviation the rule's own "Why" section names. Both queued for the lead as violations, not
   fixed here.
+- 2026-08-09 — fixed sweep: both clusters above corrected. `…`→`...` at help.go:98,258,437,470,778
+  and its now-doubled site help.go:710 (`[@account,…]` and `[--peer <peer>…]` in the same `coop
+  loop` Usage: line), plus commands.go:319 and commands.go:1676 (same `[@account,…]` +
+  `[--peer <agent>]…` pair, error-hint form). Also normalized tasks.go:352's `add "…"` hint to the
+  established `add "<title>"` form (same value, same rule). taskcmd.go:368's single letters moved
+  to taskcmd.go:371 by intervening commits; `<c>/<a>/<p>/<s>` → `<context>/<acceptance>/<approach>/
+  <subtask>`, matching the flag names. help.go:258's column layout is auto-computed by rune count
+  (`row`/manual two-space columns) and stayed aligned; verified by rendering `coop help`/`help
+  <agent>`/`help loop`/`help fusion`. `make docs` regenerated docs/cli.md, docs/man/coop.1,
+  site/llms.txt with no other drift. Left every other `…` hit in internal/cli/*.go alone —
+  narrative comments, truncation ellipses (util.go's `truncate`, acpcontrol.go tool-title/history
+  elision, commands.go's log-tail clip, loopchanges.go's audit-evidence clip), live status/list
+  narration (ratelimit.go's countdown, taskcmd.go/taskwatch.go's "+N more" elision), and the
+  unrelated `<…>` task-scaffold "fill this in" marker in taskcmd.go (294/378/1874/1916) — none are
+  a `Usage:`/`usage:` string or error hint.

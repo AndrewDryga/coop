@@ -349,7 +349,7 @@ func tasksInQueue(repo, rel string, rest, flags []string) (int, error) {
 		case "add":
 			// fall through — tasksFolderAdd creates the queue dir
 		default:
-			return -1, fmt.Errorf("no task queue at %s — run 'coop init' (or 'coop tasks --tasks %s add \"…\"' to start one here)", rel, rel)
+			return -1, fmt.Errorf("no task queue at %s — run 'coop init' (or 'coop tasks --tasks %s add \"<title>\"' to start one here)", rel, rel)
 		}
 	}
 	return cmdTasksFolder(repo, root, rest)

@@ -95,7 +95,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop <preset>", "run a preset interactively (its lead leads)")
 	row("coop fusion <agent|preset>", "one leads, council members advise")
 	row("coop acp <agent|fusion|preset>", "serve as an editor agent (ACP; e.g. Zed)")
-	row("coop <agent> --peer <peer>…", "a read-only second opinion, named peers")
+	row("coop <agent> --peer <peer>...", "a read-only second opinion, named peers")
 
 	group("CREDENTIALS, MODELS & PRESETS")
 	row("coop login <agent>", "sign in an agent (a subscription)")
@@ -255,7 +255,7 @@ const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex,
   coop frontier (its lead + roles; see coop help presets). A run names one, never both.
 
   These flags are coop's own, read before a -- (everything after -- goes to the agent):
-    --peer <peer>…       a read-only second opinion from NAMED peers (repeatable); each
+    --peer <peer>...     a read-only second opinion from NAMED peers (repeatable); each
                          <peer> is a target: --peer codex:gpt-5.5 --peer gemini
     --                   pass the rest verbatim to the agent, e.g. coop claude -- --help
 
@@ -434,7 +434,7 @@ var commandHelp = map[string]string{
   A bare preset name in the who-runs slot runs the session under that orchestration
   preset (its lead is the agent — or governor, under fusion; see 'coop help presets').
 
-  --peer <peer>… lets the session ask NAMED peers for a read-only second opinion
+  --peer <peer>... lets the session ask NAMED peers for a read-only second opinion
   (repeatable; only those peers' credentials are mounted) — the orchestrator pattern,
   from your editor. Under Fusion, an explicit peer equal to the active governor is removed
   for that spawn; every preset lead provider is validated up front so a later rung cannot
@@ -467,7 +467,7 @@ var commandHelp = map[string]string{
   The governor is a REQUIRED target — name it (or let a preset's lead govern); there is
   no implicit default. Its :model, /effort, and @account fold into this run; the peers keep
   their own. Peers advise read-only; only the governor writes. Lighter, opt-in variant:
-  coop <agent> --peer <peer>…
+  coop <agent> --peer <peer>...
 
   --peer <agent> names a council member (repeatable, at least one required — or a
   preset that supplies an effective consult role):
@@ -707,7 +707,7 @@ var commandHelp = map[string]string{
 
 	"loop": `coop loop [agent] — work the task queue until done, then sign off.
 
-  Usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>]... [--peer <peer>…] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail]
+  Usage: coop loop [<agent>[:model][/effort][@account,...] | <preset>] [--tasks <path>]... [--peer <peer>...] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
@@ -775,7 +775,7 @@ var commandHelp = map[string]string{
   the rungs on a rate limit. Below a rung's own model sits the account's marked default
   ('coop models'), then COOP_<AGENT>_MODEL — so overnight runs can grind on a cheaper model.
 
-  --peer <peer>… lets each iteration ask NAMED peers for a read-only second opinion
+  --peer <peer>... lets each iteration ask NAMED peers for a read-only second opinion
   (repeatable; coop-consult on PATH, only those peers' credentials mounted) — the
   orchestrator pattern running unattended. Off by default: it widens each box's
   credential scope to exactly the named peers. Also on fork loops:

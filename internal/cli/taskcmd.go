@@ -368,7 +368,7 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 	}
 	title := strings.TrimSpace(strings.Join(titleWords, " "))
 	if title == "" {
-		return 2, fmt.Errorf(`usage: coop %s "<title>" [--context <c> --acceptance <a> --approach <p> --subtask <s>...]`, cmdLabel)
+		return 2, fmt.Errorf(`usage: coop %s "<title>" [--context <context> --acceptance <acceptance> --approach <approach> --subtask <subtask>...]`, cmdLabel)
 	}
 	slug := slugify(title)
 	if slug == "" {

@@ -316,7 +316,7 @@ func (a *app) applyOneOff(tool, model, credential, effort string) error {
 // the repeatable form. `--`-aware. The one --peer parser for every command (the retired --consult
 // spelling is now just an unknown flag).
 func extractPeer(args []string) (peers, rest []string, err error) {
-	return extractRepeatable(args, "--peer", "name each peer: --peer <agent> [--peer <agent> …]")
+	return extractRepeatable(args, "--peer", "name each peer: --peer <agent> [--peer <agent> ...]")
 }
 
 // extractRepeatable collects every `--flag <value>` occurrence (repeatable) out of args, in
@@ -1673,7 +1673,7 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, pr
 			}
 			maxTasks = n
 		default:
-			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<agent>[:model][/effort][@account,…] | <preset>] [--tasks <path>] [--peer <agent>]… [--max-tasks <n>] [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail])", x)
+			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<agent>[:model][/effort][@account,...] | <preset>] [--tasks <path>] [--peer <agent>]... [--max-tasks <n>] [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail])", x)
 		}
 	}
 	return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, nil
