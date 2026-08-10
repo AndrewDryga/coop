@@ -81,8 +81,9 @@ func hasTerraformFiles(repo string) bool {
 
 // gateSnippets is the per-language format check, command-v guarded so it runs in the box
 // (toolchain provisioned) and skips on a host that lacks the tool. @EXIT@ is the exit code
-// to block with (1 for the git hook, 2 for the Claude hook). Go and Terraform are list-based
-// so a tool error fails open (only a real diff blocks).
+// to block with (1 for the git hook, 2 for the Claude hook). Every snippet is list-based —
+// it names exactly the files that need formatting — so a tool error (crash, bad syntax, a
+// missing config) fails open instead of blocking on a broken toolchain; only a real diff blocks.
 var gateSnippets = map[string]string{
 	"go": `# Go: block the commit if any staged .go file isn't gofmt-clean.
 go_files=$(echo "$staged" | grep '\.go$' || true)
@@ -104,21 +105,38 @@ if [ -n "$tf_files" ] && command -v terraform >/dev/null 2>&1; then
     echo "fix: terraform fmt <files>   (skip once: git commit --no-verify)" >&2; exit @EXIT@
   fi
 fi`,
-	"elixir": `# Elixir: block the commit if any staged .ex/.exs file isn't mix-format clean.
+	"elixir": `# Elixir: block the commit if any staged .ex/.exs file isn't mix-format clean. mix has no
+# flag to list many files at once, so check one at a time and match its stable
+# "--check-formatted" failure text — any other failure (crash, syntax error) fails open.
 ex_files=$(echo "$staged" | grep -E '\.exs?$' || true)
 if [ -n "$ex_files" ] && command -v mix >/dev/null 2>&1; then
-  # shellcheck disable=SC2086  # intentional: split the file list into separate mix-format args
-  if ! mix format --check-formatted $ex_files >/dev/null 2>&1; then
-    echo "pre-commit blocked — these need mix format:" >&2; echo "  ${ex_files//$'\n'/$'\n'  }" >&2
-    echo "fix: mix format   (skip once: git commit --no-verify)" >&2; exit @EXIT@
+  bad=""
+  for f in $ex_files; do
+    out=$(mix format --check-formatted "$f" 2>&1 >/dev/null)
+    echo "$out" | grep -q "failed due to --check-formatted" && bad="$bad $f"
+  done
+  if [ -n "$bad" ]; then
+    echo "pre-commit blocked — these need mix format:$bad" >&2
+    echo "fix: mix format <files>   (skip once: git commit --no-verify)" >&2; exit @EXIT@
   fi
 fi`,
-	"rust": `# Rust: block the commit if staged .rs files aren't rustfmt-clean.
+	"rust": `# Rust: block the commit if staged .rs files aren't rustfmt-clean. rustfmt defaults to the
+# 2015 edition unless told otherwise, which hard-fails to parse async/gen code, so read the
+# crate's real edition off Cargo.toml first. -l lists exactly the files that need formatting;
+# any other failure (crash, syntax error) fails open.
 rs_files=$(echo "$staged" | grep '\.rs$' || true)
-if [ -n "$rs_files" ] && command -v cargo >/dev/null 2>&1; then
-  if ! cargo fmt --check >/dev/null 2>&1; then
-    echo "pre-commit blocked — run rustfmt on the staged Rust files" >&2
-    echo "fix: cargo fmt   (skip once: git commit --no-verify)" >&2; exit @EXIT@
+if [ -n "$rs_files" ] && command -v rustfmt >/dev/null 2>&1; then
+  edition_line=$(grep -m1 '^edition' Cargo.toml 2>/dev/null)
+  edition=${edition_line#*\"}; edition=${edition%%\"*}
+  edflag=""; [ -n "$edition" ] && edflag="--edition=$edition"
+  bad=""
+  for f in $rs_files; do
+    # shellcheck disable=SC2086  # intentional: $edflag is empty or exactly one --edition=X token
+    [ -n "$(rustfmt --check -l $edflag "$f" 2>/dev/null)" ] && bad="$bad $f"
+  done
+  if [ -n "$bad" ]; then
+    echo "pre-commit blocked — these need rustfmt:$bad" >&2
+    echo "fix: rustfmt <files>   (skip once: git commit --no-verify)" >&2; exit @EXIT@
   fi
 fi`,
 }
