@@ -105,9 +105,7 @@ func TestRunDeadlineReapsTheProcessGroup(t *testing.T) {
 	}
 	pids := filepath.Join(layout.State, "pids")
 	script := fmt.Sprintf("trap '' TERM; sleep 30 & child=$!; printf '%%s %%s\\n' $$ $child > %s; wait", shellQuote(pids))
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	defer cancel()
-	result := Run(ctx, Command{
+	process, err := Start(Command{
 		Path:      "/bin/sh",
 		Args:      []string{"-c", script},
 		Dir:       layout.Root,
@@ -115,14 +113,22 @@ func TestRunDeadlineReapsTheProcessGroup(t *testing.T) {
 		KillGrace: 50 * time.Millisecond,
 		MaxOutput: 1024,
 	})
-	if result.Err == nil || ctx.Err() == nil {
-		t.Fatalf("Run deadline = %v (context %v), want cancellation", result.Err, ctx.Err())
-	}
-	data, err := os.ReadFile(pids)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range strings.Fields(string(data)) {
+	defer process.Cleanup()
+	// Wait for the trap and the background sleep to actually be set up before cancelling: a
+	// fixed wall-clock budget for shell startup itself can slip under host contention (the pids
+	// file silently never gets written, which is the flake this hardens), so key off the file
+	// the script writes once it's ready instead of a duration.
+	data := awaitFileContent(t, pids)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result := process.Wait(ctx)
+	if result.Err == nil || ctx.Err() == nil {
+		t.Fatalf("Run deadline = %v (context %v), want cancellation", result.Err, ctx.Err())
+	}
+	for _, field := range strings.Fields(data) {
 		pid, err := strconv.Atoi(field)
 		if err != nil {
 			t.Fatal(err)
@@ -136,19 +142,31 @@ func TestRunDeadlineCallsBeforeCancelBeforeFirstSignal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ready := filepath.Join(layout.State, "ready")
 	revoked := filepath.Join(layout.State, "revoked")
 	observed := filepath.Join(layout.State, "observed")
 	script := fmt.Sprintf(
-		"trap 'test -e %s && printf revoked > %s; exit 0' TERM; while :; do sleep 0.01; done",
-		shellQuote(revoked), shellQuote(observed),
+		"trap 'test -e %s && printf revoked > %s; exit 0' TERM; : > %s; while :; do sleep 0.01; done",
+		shellQuote(revoked), shellQuote(observed), shellQuote(ready),
 	)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	result := Run(ctx, Command{
+	process, err := Start(Command{
 		Path: "/bin/sh", Args: []string{"-c", script}, Dir: layout.Root,
 		Env: []string{"PATH=/usr/bin:/bin"}, KillGrace: time.Second, MaxOutput: 1024,
 		BeforeCancel: func() error { return os.WriteFile(revoked, nil, 0o600) },
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.Cleanup()
+	// Wait for the TERM trap to actually be installed before cancelling: under host contention
+	// a not-yet-trapped process dies to the *default* SIGTERM disposition instead, skipping the
+	// handler this test inspects entirely (observed ends up missing, not "wrong order") — the
+	// flake this hardens. The ready marker is written right after the trap statement, so
+	// observing it guarantees the trap is already live.
+	awaitFileExists(t, ready)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result := process.Wait(ctx)
 	if result.Err == nil {
 		t.Fatal("deadline unexpectedly succeeded")
 	}
@@ -346,5 +364,41 @@ func awaitGone(t *testing.T, pid int) {
 	}
 	if ProcessAlive(pid) {
 		t.Errorf("process %d survived group cleanup", pid)
+	}
+}
+
+// awaitFileExists polls for an empty marker a fixture touches once some earlier setup (e.g.
+// installing a trap) has actually happened, so a deadline test can key off that event instead of
+// guessing how long setup takes — a fixed wall-clock budget for it is exactly what host
+// contention can blow through, racing the fixture against the deadline it's supposed to trigger.
+func awaitFileExists(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s did not appear in time", path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// awaitFileContent is awaitFileExists for a fixture that carries data (e.g. recorded pids)
+// rather than a bare marker: existing-but-still-empty (its writer's open/truncate having
+// outrun its write under the same contention) isn't ready either, so this polls for non-empty
+// content and returns it.
+func awaitFileContent(t *testing.T, path string) string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+			return string(data)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s was not written in time", path)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
