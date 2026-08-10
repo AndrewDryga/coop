@@ -449,6 +449,7 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 		var ok bool
 		command, ok = providerResumeLiveCommand(ag, cfg, stage, sessionID, prompt)
 		if !ok {
+			cancelPrompt()
 			failed := fail(true, liveprovider.ReasonPromptExit, "prompt", 0, false, false, "session_missing")
 			failed.DetailCode = "session_lookup"
 			return failed

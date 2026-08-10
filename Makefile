@@ -26,6 +26,9 @@ cover: ## Run unit tests with a coverage summary
 lint: ## gofmt check + go vet + Staticcheck at the pinned version
 	@gofmt -l . | (! grep .) || { echo "gofmt: files need formatting (run: gofmt -w .)"; exit 1; }
 	@go vet ./...
+# The e2e/live files sit behind build tags, so the pass above never compiles them — a lost cancel
+# lived there unseen. Every tag in the tree in one pass; the untagged pass still covers !cooplivetest.
+	@go vet -tags acpe2e,boxruntimee2e,cooplivetest,providere2e,providerlivee2e,reviewwritee2e ./...
 	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck is not installed — run: go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)"; exit 1; }
 	@staticcheck -version | grep -qF "($(STATICCHECK_VERSION))" || { echo "$$(staticcheck -version) is not the pinned $(STATICCHECK_VERSION) — run: go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)"; exit 1; }
 	@staticcheck ./...
