@@ -131,11 +131,24 @@ On session creation Coop resolves all configured repositories concurrently. A re
 `remote` and `branch` is pinned to that remote branch's exact commit; otherwise Coop preserves the
 legacy local-`HEAD` behavior. Remote refresh imports only the immutable commit object and does not
 move local branches, update tracking refs, write `FETCH_HEAD`, or touch working-tree changes. Coop
-then creates each companion as a detached, clean snapshot worktree under the owner-private session
-state root. The agent sees only read-only mounts
-at `/coop/repositories/<alias>` plus
+then creates each companion as a detached, clean snapshot with self-contained Git metadata under
+the owner-private session state root. Repositories whose pinned history contains at most 1 GiB of
+logical object data retain that complete reachable history. Above that bound—or when a partial
+clone cannot prove its complete history is locally available—the companion becomes a one-commit
+shallow snapshot containing the exact pinned commit and its complete tree. This keeps large-session
+creation bounded by the checked-out revision instead of the source repository's lifetime while
+preserving historical Git operations for smaller repositories. Selection and materialization do not
+lazy-fetch from repository-configured promisor remotes: the trusted policy remote refresh must leave
+the pinned commit and complete tree available locally, or session creation fails. The agent sees only
+read-only mounts at `/coop/repositories/<alias>` plus
 `COOP_COMPANION_REPOSITORIES_JSON` containing aliases, in-box paths, and commits. The primary
 repository remains the current working directory and is the only writable, reviewable tree.
+Companion creation and verification ignore host global and system Git configuration and host
+attribute files, so repository attributes cannot invoke host-configured LFS, smudge, clean, or
+process filters and operator attributes cannot rewrite checkout bytes. Verification computes status
+with an isolated Git directory, config, and index backed only by the pinned companion objects.
+Gitlink placeholders are checked directly and must remain real empty directories, avoiding
+submodule config execution without weakening discard's modified-snapshot rejection.
 Companion host paths are never returned by the API. Discard verifies and removes both the primary
 fork and every owned companion snapshot.
 

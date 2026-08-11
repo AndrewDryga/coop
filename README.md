@@ -954,9 +954,11 @@ inspection, a read-only review, non-destructive close, and explicit two-step dis
 starts a boxed ACP child and tears it down before parking, so an idle conversation consumes no box.
 
 An operator-owned session policy may also declare up to 32 companion Git repositories. Coop pins
-each at session creation and mounts a detached snapshot read-only at
-`/coop/repositories/<alias>`. The primary fork remains the only writable and reviewable tree;
-companion host paths never enter the request or public API.
+each at session creation and mounts a self-contained snapshot read-only at
+`/coop/repositories/<alias>`. Snapshots retain complete reachable history through 1 GiB of logical
+object data; larger or locally incomplete histories use an exact one-commit shallow snapshot. The
+primary fork remains the only writable and reviewable tree; companion host paths never enter the
+request or public API.
 
 The API deliberately cannot merge, sign, push, publish a PR, accept arbitrary host paths, or choose
 credentials and sandbox settings from a request. A same-UID caller is trusted at the Unix-account

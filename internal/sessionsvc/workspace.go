@@ -123,9 +123,18 @@ func (w *sessionWorkspaceLimitedWriter) Write(p []byte) (int, error) {
 }
 
 func runSessionWorkspaceGit(dir string, limit int, args ...string) ([]byte, bool, error) {
+	return runSessionWorkspaceGitWithEnv(dir, limit, nil, args...)
+}
+
+func runSessionWorkspaceGitWithEnv(
+	dir string, limit int, env []string, args ...string,
+) ([]byte, bool, error) {
 	stdout := &sessionWorkspaceLimitedWriter{limit: limit}
 	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
 	cmd := exec.Command("git", gitArgs(dir, args)...)
+	if env != nil {
+		cmd.Env = env
+	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {

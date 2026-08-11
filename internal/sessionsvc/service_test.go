@@ -2,12 +2,15 @@ package sessionsvc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -549,21 +552,44 @@ func runGitTest(t *testing.T, dir string, args ...string) {
 }
 
 func TestSessionServicePinsPersistsAndDiscardsCompanionRepositories(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	primary, primaryGit := gitrepo.New(t)
 	primaryGit("commit", "-q", "--allow-empty", "-m", "primary base")
-	companion, companionGit := gitrepo.New(t)
+	companionOrigin, companionOriginGit := gitrepo.New(t)
 	if err := os.WriteFile(
-		filepath.Join(companion, "topology.txt"), []byte("v1\n"), 0o644,
+		filepath.Join(companionOrigin, "topology.txt"), []byte("v0\n"), 0o644,
 	); err != nil {
 		t.Fatal(err)
 	}
-	companionGit("add", "topology.txt")
-	companionGit("commit", "-qm", "companion base")
+	companionOriginGit("add", "topology.txt")
+	companionOriginGit("commit", "-qm", "companion ancestor")
+	if err := os.WriteFile(
+		filepath.Join(companionOrigin, "topology.txt"), []byte("v1\n"), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	companionOriginGit("commit", "-qam", "companion base")
+	companion := filepath.Join(t.TempDir(), "companion-shared")
+	runGitTest(t, "", "clone", "--quiet", "--shared", companionOrigin, companion)
+	runGitTest(t, companion, "config", "user.email", "t@t")
+	runGitTest(t, companion, "config", "user.name", "T")
 	companionBase := gitOut(companion, "rev-parse", "HEAD")
+	baseBranch := gitOut(companion, "symbolic-ref", "--short", "HEAD")
+	runGitTest(t, companion, "checkout", "--quiet", "-b", "local-secret")
+	if err := os.WriteFile(
+		filepath.Join(companion, "local-secret.txt"), []byte("not pinned\n"), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, companion, "add", "local-secret.txt")
+	runGitTest(t, companion, "commit", "--quiet", "-m", "local-only secret")
+	secretCommit := gitOut(companion, "rev-parse", "HEAD")
 	policies := testSessionPolicies(primary)
 	policy := policies["responder"]
 	policy.Companions = []CompanionPolicy{{
 		Name: "topology", Repository: companion,
+		Remote: "origin", Branch: baseBranch,
 	}}
 	policies["responder"] = policy
 	service := newTestSessionService(
@@ -587,17 +613,85 @@ func TestSessionServicePinsPersistsAndDiscardsCompanionRepositories(t *testing.T
 	if branch := gitOut(created.Companions[0].Workspace, "rev-parse", "--abbrev-ref", "HEAD"); branch != "HEAD" {
 		t.Fatalf("companion snapshot branch = %q, want detached HEAD", branch)
 	}
+	metadata, err := os.Lstat(filepath.Join(created.Companions[0].Workspace, ".git"))
+	if err != nil || !metadata.IsDir() || metadata.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("companion Git metadata = %v, %v; want a self-contained directory", metadata, err)
+	}
+	unavailable := companion + "-unavailable"
+	originUnavailable := companionOrigin + "-unavailable"
+	if err := os.Rename(companion, unavailable); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(companionOrigin, originUnavailable); err != nil {
+		_ = os.Rename(unavailable, companion)
+		t.Fatal(err)
+	}
+	objectCmd := exec.Command(
+		"git", "-C", created.Companions[0].Workspace,
+		"cat-file", "-e", "HEAD^{commit}",
+	)
+	objectErr := objectCmd.Run()
+	treeCmd := exec.Command(
+		"git", "-C", created.Companions[0].Workspace,
+		"cat-file", "-p", "HEAD:topology.txt",
+	)
+	treeOutput, treeErr := treeCmd.CombinedOutput()
+	ancestorCmd := exec.Command(
+		"git", "-C", created.Companions[0].Workspace,
+		"cat-file", "-p", "HEAD^:topology.txt",
+	)
+	ancestorOutput, ancestorErr := ancestorCmd.CombinedOutput()
+	secretCmd := exec.Command(
+		"git", "-C", created.Companions[0].Workspace,
+		"cat-file", "-e", secretCommit+"^{commit}",
+	)
+	secretErr := secretCmd.Run()
+	logCmd := exec.Command(
+		"git", "-C", created.Companions[0].Workspace,
+		"log", "--format=%H",
+	)
+	logOutput, logErr := logCmd.CombinedOutput()
+	if _, err := planSessionCompanionDiscard(created.Companions[0]); err != nil {
+		t.Fatalf("verify self-contained companion without source: %v", err)
+	}
+	restoreOriginErr := os.Rename(originUnavailable, companionOrigin)
+	restoreSourceErr := os.Rename(unavailable, companion)
+	if restoreOriginErr != nil || restoreSourceErr != nil {
+		t.Fatalf(
+			"restore companion source: source=%v alternate=%v",
+			restoreSourceErr, restoreOriginErr,
+		)
+	}
+	if objectErr != nil || treeErr != nil || string(treeOutput) != "v1\n" ||
+		ancestorErr != nil || string(ancestorOutput) != "v0\n" {
+		t.Fatalf(
+			"companion Git without source: object=%v tree=%q, %v ancestor=%q, %v",
+			objectErr, string(treeOutput), treeErr, string(ancestorOutput), ancestorErr,
+		)
+	}
+	if secretErr == nil {
+		t.Fatalf("companion retained unpinned local commit %s", secretCommit)
+	}
+	logCommits := strings.Fields(string(logOutput))
+	if logErr != nil || len(logCommits) != 2 || logCommits[0] != companionBase {
+		t.Fatalf("companion log = %q, %v", string(logOutput), logErr)
+	}
+	metadataRoot := filepath.Join(created.Companions[0].Workspace, ".git")
+	if config := readFile(t, filepath.Join(metadataRoot, "config")); strings.Contains(config, companion) || strings.Contains(config, companionOrigin) {
+		t.Fatalf("companion Git config exposes a host source path:\n%s", config)
+	}
 	if got := readFile(
 		t, filepath.Join(created.Companions[0].Workspace, "topology.txt"),
 	); got != "v1\n" {
 		t.Fatalf("companion snapshot = %q", got)
 	}
+	runGitTest(t, companion, "checkout", "--quiet", baseBranch)
 	if err := os.WriteFile(
 		filepath.Join(companion, "topology.txt"), []byte("v2\n"), 0o644,
 	); err != nil {
 		t.Fatal(err)
 	}
-	companionGit("commit", "-qam", "advance companion")
+	runGitTest(t, companion, "commit", "-qam", "advance companion")
 	if got := readFile(
 		t, filepath.Join(created.Companions[0].Workspace, "topology.txt"),
 	); got != "v1\n" {
@@ -613,6 +707,28 @@ func TestSessionServicePinsPersistsAndDiscardsCompanionRepositories(t *testing.T
 		public.Companions[0].Path != "/coop/repositories/topology" ||
 		public.Companions[0].BaseCommit != companionBase {
 		t.Fatalf("public companion = %+v", public.Companions)
+	}
+	guardPlan, err := planSessionCompanionDiscard(created.Companions[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(
+		created.Companions[0].Workspace, ".git", sessionCompanionMarkerFile,
+	)
+	if err := os.WriteFile(markerPath, []byte("replaced\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := discardSessionCompanion(guardPlan); err == nil ||
+		!strings.Contains(err.Error(), "ownership marker does not match") {
+		t.Fatalf("discard with replaced marker error = %v", err)
+	}
+	if !pathExists(created.Companions[0].Workspace) {
+		t.Fatal("discard removed a companion with a replaced ownership marker")
+	}
+	if err := os.WriteFile(
+		markerPath, []byte(sessionCompanionMarker+companionBase+"\n"), 0o600,
+	); err != nil {
+		t.Fatal(err)
 	}
 
 	closed, err := service.Close(
@@ -640,6 +756,889 @@ func TestSessionServicePinsPersistsAndDiscardsCompanionRepositories(t *testing.T
 	if err != nil || discarded.State != session.SessionDiscarded ||
 		pathExists(created.Companions[0].Workspace) {
 		t.Fatalf("companion discard = %+v, %v", discarded, err)
+	}
+}
+
+func TestDiscardSessionCompanionRemovesLegacyLinkedWorktree(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	companion, companionGit := gitrepo.New(t)
+	companionGit("commit", "-q", "--allow-empty", "-m", "companion base")
+	baseCommit := gitOut(companion, "rev-parse", "HEAD")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "legacy",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(
+		t, companion, "worktree", "add", "--quiet", "--detach", "--", workspace, baseCommit,
+	)
+	binding := session.CompanionRepository{
+		Name: "legacy", Repository: companion,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	plan, err := planSessionCompanionDiscard(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := discardSessionCompanion(plan); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(workspace) {
+		t.Fatal("legacy linked companion survived discard")
+	}
+	if worktrees := gitOut(companion, "worktree", "list", "--porcelain"); strings.Contains(worktrees, workspace) {
+		t.Fatalf("legacy companion remains registered:\n%s", worktrees)
+	}
+}
+
+func TestEnsureSessionCompanionIgnoresHostGitFilters(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	xdgConfig := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(xdgConfig, "git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(xdgConfig, "git", "attributes"), []byte("asset.bin eol=crlf\n"), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", xdgConfig)
+	companion, companionGit := gitrepo.New(t)
+	if err := os.WriteFile(
+		filepath.Join(companion, ".gitattributes"), []byte("asset.bin filter=hostile\n"), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(companion, "asset.bin"), []byte("stored pointer\n"), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	companionGit("add", ".gitattributes", "asset.bin")
+	companionGit("commit", "--quiet", "-m", "filtered asset")
+	baseCommit := gitOut(companion, "rev-parse", "HEAD")
+
+	filterScript := filepath.Join(t.TempDir(), "hostile-smudge")
+	filterMarker := filterScript + ".invoked"
+	if err := os.WriteFile(
+		filterScript,
+		[]byte("#!/bin/sh\n: > \"${0}.invoked\"\nexit 42\n"),
+		0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	globalConfig := filepath.Join(t.TempDir(), "global.gitconfig")
+	runGitTest(
+		t, "", "config", "--file", globalConfig,
+		"filter.hostile.smudge", strconv.Quote(filterScript),
+	)
+	runGitTest(
+		t, "", "config", "--file", globalConfig,
+		"filter.hostile.required", "true",
+	)
+	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
+
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "filtered",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := session.CompanionRepository{
+		Name: "filtered", Repository: companion,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	if _, err := ensureSessionCompanion(
+		stateRoot, "remote_00000000000000000000000000000000", binding,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(filterMarker) {
+		t.Fatal("companion checkout invoked a host-configured Git filter")
+	}
+	if got := readFile(t, filepath.Join(workspace, "asset.bin")); got != "stored pointer\n" {
+		t.Fatalf("companion asset = %q", got)
+	}
+}
+
+func TestEnsureSessionCompanionIgnoresAmbientGitOverrides(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	companion, companionGit := gitrepo.New(t)
+	if err := os.WriteFile(
+		filepath.Join(companion, ".gitattributes"), []byte("asset.bin filter=hostile\n"), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(companion, "asset.bin"), []byte("stored pointer\n"), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	companionGit("add", ".gitattributes", "asset.bin")
+	companionGit("commit", "--quiet", "-m", "filtered asset")
+	baseCommit := gitOut(companion, "rev-parse", "HEAD")
+
+	filterScript := filepath.Join(t.TempDir(), "ambient-smudge")
+	filterMarker := filterScript + ".invoked"
+	if err := os.WriteFile(
+		filterScript,
+		[]byte("#!/bin/sh\n: > \"${0}.invoked\"\nexit 42\n"),
+		0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_COUNT", "2")
+	t.Setenv("GIT_CONFIG_KEY_0", "filter.hostile.smudge")
+	t.Setenv("GIT_CONFIG_VALUE_0", strconv.Quote(filterScript))
+	t.Setenv("GIT_CONFIG_KEY_1", "filter.hostile.required")
+	t.Setenv("GIT_CONFIG_VALUE_1", "true")
+	redirectedWorktree := t.TempDir()
+	redirectedSentinel := filepath.Join(redirectedWorktree, "sentinel")
+	if err := os.WriteFile(redirectedSentinel, []byte("untouched\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_WORK_TREE", redirectedWorktree)
+
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "ambient",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := session.CompanionRepository{
+		Name: "ambient", Repository: companion,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	if _, err := ensureSessionCompanion(
+		stateRoot, "remote_00000000000000000000000000000000", binding,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(filterMarker) {
+		t.Fatal("companion checkout invoked a command-scoped Git filter")
+	}
+	if got := readFile(t, redirectedSentinel); got != "untouched\n" {
+		t.Fatalf("ambient GIT_WORK_TREE target changed: %q", got)
+	}
+	if got := readFile(t, filepath.Join(workspace, "asset.bin")); got != "stored pointer\n" {
+		t.Fatalf("companion asset = %q", got)
+	}
+}
+
+func TestDiscardSessionCompanionNeutralizesLegacyEffectiveFilters(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	companion, companionGit := gitrepo.New(t)
+	if err := os.WriteFile(
+		filepath.Join(companion, ".gitattributes"),
+		[]byte("local.bin filter=local\nincluded.bin filter=included\nworktree.bin filter=worktree\nequals.bin filter=x=y\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	filteredFiles := []string{"local.bin", "included.bin", "worktree.bin", "equals.bin"}
+	for _, name := range filteredFiles {
+		if err := os.WriteFile(filepath.Join(companion, name), []byte(name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	addArgs := append([]string{"add", ".gitattributes"}, filteredFiles...)
+	companionGit(addArgs...)
+	companionGit("commit", "--quiet", "-m", "filtered asset")
+	baseCommit := gitOut(companion, "rev-parse", "HEAD")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "legacy-filter",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(
+		t, companion, "worktree", "add", "--quiet", "--detach", "--", workspace, baseCommit,
+	)
+	filterScripts := map[string]string{}
+	filterMarkers := map[string]string{}
+	for _, name := range []string{"local", "included", "worktree", "equals"} {
+		script := filepath.Join(t.TempDir(), name+"-clean")
+		if err := os.WriteFile(
+			script,
+			[]byte("#!/bin/sh\n: > \"${0}.invoked\"\ncat\n"),
+			0o700,
+		); err != nil {
+			t.Fatal(err)
+		}
+		filterScripts[name] = script
+		filterMarkers[name] = script + ".invoked"
+	}
+	companionGit("config", "filter.local.clean", strconv.Quote(filterScripts["local"]))
+	companionGit("config", "filter.local.required", "true")
+	companionGit("config", "filter.x=y.clean", strconv.Quote(filterScripts["equals"]))
+	companionGit("config", "filter.x=y.required", "true")
+	includedConfig := filepath.Join(t.TempDir(), "included.gitconfig")
+	runGitTest(
+		t, "", "config", "--file", includedConfig,
+		"filter.included.clean", strconv.Quote(filterScripts["included"]),
+	)
+	runGitTest(
+		t, "", "config", "--file", includedConfig,
+		"filter.included.required", "true",
+	)
+	companionGit("config", "--add", "include.path", includedConfig)
+	companionGit("config", "extensions.worktreeConfig", "true")
+	runGitTest(
+		t, workspace, "config", "--worktree",
+		"filter.worktree.clean", strconv.Quote(filterScripts["worktree"]),
+	)
+	runGitTest(
+		t, workspace, "config", "--worktree", "filter.worktree.required", "true",
+	)
+	poisonStats := func() {
+		t.Helper()
+		for _, name := range filteredFiles {
+			if err := os.Chtimes(
+				filepath.Join(workspace, name), time.Now().Add(-time.Hour), time.Now().Add(time.Hour),
+			); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	poisonStats()
+	positiveControl := exec.Command(
+		"git", gitArgs(
+			workspace,
+			[]string{"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z"},
+		)...,
+	)
+	positiveControl.Env = sessionCompanionGitEnv()
+	if out, err := positiveControl.CombinedOutput(); err != nil {
+		t.Fatalf("exercise legacy local filter: %v: %s", err, out)
+	}
+	for name, marker := range filterMarkers {
+		if !pathExists(marker) {
+			t.Fatalf("legacy %s filter fixture did not execute its positive control", name)
+		}
+		if err := os.Remove(marker); err != nil {
+			t.Fatal(err)
+		}
+	}
+	poisonStats()
+	poison, poisonGit := gitrepo.New(t)
+	poisonGit("commit", "--quiet", "--allow-empty", "-m", "ambient redirect")
+	t.Setenv("GIT_DIR", filepath.Join(poison, ".git"))
+
+	binding := session.CompanionRepository{
+		Name: "legacy-filter", Repository: companion,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	plan, err := planSessionCompanionDiscard(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, marker := range filterMarkers {
+		if pathExists(marker) {
+			t.Fatalf("legacy companion verification invoked its %s Git filter", name)
+		}
+	}
+	poisonStats()
+	if err := discardSessionCompanion(plan); err != nil {
+		t.Fatal(err)
+	}
+	for name, marker := range filterMarkers {
+		if pathExists(marker) {
+			t.Fatalf("legacy companion discard invoked its %s Git filter", name)
+		}
+	}
+}
+
+func TestSessionCompanionStatusIgnoresMutableInfoAttributes(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	companion, companionGit := gitrepo.New(t)
+	if err := os.WriteFile(
+		filepath.Join(companion, ".gitattributes"), []byte("asset.bin filter=race\n"), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(companion, "asset.bin"), []byte("asset\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	companionGit("add", ".gitattributes", "asset.bin")
+	companionGit("commit", "--quiet", "-m", "filtered asset")
+	baseCommit := gitOut(companion, "rev-parse", "HEAD")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "legacy-race",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(
+		t, companion, "worktree", "add", "--quiet", "--detach", "--", workspace, baseCommit,
+	)
+	binding := session.CompanionRepository{
+		Name: "legacy-race", Repository: companion,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	filterScript := filepath.Join(t.TempDir(), "info-clean")
+	filterMarker := filterScript + ".invoked"
+	if err := os.WriteFile(
+		filterScript,
+		[]byte("#!/bin/sh\n: > \"${0}.invoked\"\ncat\n"),
+		0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	companionGit("config", "filter.info.clean", strconv.Quote(filterScript))
+	companionGit("config", "filter.info.required", "true")
+	if err := os.WriteFile(
+		filepath.Join(companion, ".git", "info", "attributes"),
+		[]byte("asset.bin filter=info\n"), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	poisonStat := func() {
+		t.Helper()
+		if err := os.Chtimes(
+			filepath.Join(workspace, "asset.bin"), time.Now().Add(-time.Hour), time.Now().Add(time.Hour),
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	poisonStat()
+	positiveControl := exec.Command(
+		"git", gitArgs(
+			workspace,
+			[]string{"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z"},
+		)...,
+	)
+	positiveControl.Env = sessionCompanionGitEnv()
+	if out, err := positiveControl.CombinedOutput(); err != nil {
+		t.Fatalf("exercise info-attribute filter: %v: %s", err, out)
+	}
+	if !pathExists(filterMarker) {
+		t.Fatal("info-attribute filter fixture did not execute its positive control")
+	}
+	if err := os.Remove(filterMarker); err != nil {
+		t.Fatal(err)
+	}
+	poisonStat()
+	status, truncated, err := sessionCompanionStatus(binding)
+	if err != nil || truncated || len(status) != 0 {
+		t.Fatalf("protected legacy status = %q, truncated=%v, err=%v", status, truncated, err)
+	}
+	if pathExists(filterMarker) {
+		t.Fatal("mutable info-attribute filter executed during isolated status")
+	}
+}
+
+func TestSessionCompanionDiscardRejectsModifiedGitlinkWorktree(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	submodule, submoduleGit := gitrepo.New(t)
+	submoduleGit("commit", "--quiet", "--allow-empty", "-m", "submodule base")
+	submoduleCommit := gitOut(submodule, "rev-parse", "HEAD")
+
+	companion, companionGit := gitrepo.New(t)
+	companionGit(
+		"update-index", "--add", "--cacheinfo", "160000,"+submoduleCommit+",dependency",
+	)
+	companionGit("commit", "--quiet", "-m", "add gitlink")
+	baseCommit := gitOut(companion, "rev-parse", "HEAD")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "gitlink",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := session.CompanionRepository{
+		Name: "gitlink", Repository: companion,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	if _, err := ensureSessionCompanion(
+		stateRoot, "remote_00000000000000000000000000000000", binding,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(workspace, "dependency", "modified"), []byte("modified\n"), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planSessionCompanionDiscard(binding); err == nil {
+		t.Fatal("discard planned for a companion with a populated gitlink worktree")
+	}
+	if err := os.Remove(filepath.Join(workspace, "dependency", "modified")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(workspace, "dependency")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planSessionCompanionDiscard(binding); err == nil {
+		t.Fatal("discard planned for a companion with a deleted gitlink worktree")
+	}
+}
+
+func TestEnsureSessionCompanionPublishesAroundInterruptedStage(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	companion, companionGit := gitrepo.New(t)
+	companionGit("commit", "-q", "--allow-empty", "-m", "companion base")
+	baseCommit := gitOut(companion, "rev-parse", "HEAD")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "topology",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	interrupted := filepath.Join(filepath.Dir(workspace), ".topology-interrupted")
+	if err := os.Mkdir(interrupted, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(interrupted, "partial"), []byte("operator-owned\n"), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	binding := session.CompanionRepository{
+		Name: "topology", Repository: companion,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	if _, err := ensureSessionCompanion(
+		stateRoot, "remote_00000000000000000000000000000000", binding,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(interrupted, "partial")); got != "operator-owned\n" {
+		t.Fatalf("interrupted staging directory changed: %q", got)
+	}
+	plan, err := planSessionCompanionDiscard(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := discardSessionCompanion(plan); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureSessionCompanionDoesNotHydrateUnavailablePartialHistory(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	origin, originGit := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(origin, "asset.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	originGit("add", "asset.txt")
+	originGit("commit", "--quiet", "-m", "old asset")
+	if err := os.WriteFile(filepath.Join(origin, "asset.txt"), []byte("current\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	originGit("commit", "--quiet", "-am", "current asset")
+	originGit("config", "uploadpack.allowFilter", "true")
+	partial := filepath.Join(t.TempDir(), "partial")
+	runGitTest(
+		t, "", "clone", "--quiet", "--filter=blob:none", "--no-checkout",
+		"file://"+origin, partial,
+	)
+	runGitTest(t, partial, "checkout", "--quiet", "HEAD")
+	if gitOut(partial, "config", "--bool", "--get", "remote.origin.promisor") != "true" {
+		t.Fatal("partial-clone fixture is not marked as a promisor repository")
+	}
+	baseCommit := gitOut(partial, "rev-parse", "HEAD")
+	ancestorBlob := gitOut(origin, "rev-parse", "HEAD^:asset.txt")
+	missingCmd := exec.Command("git", "-C", partial, "cat-file", "-e", ancestorBlob)
+	missingCmd.Env = sessionCompanionGitEnv()
+	if err := missingCmd.Run(); err == nil {
+		t.Fatal("partial-clone fixture already contains its historical blob")
+	}
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "partial",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := session.CompanionRepository{
+		Name: "partial", Repository: partial,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	originUnavailable := origin + "-unavailable"
+	if err := os.Rename(origin, originUnavailable); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ensureSessionCompanion(
+		stateRoot, "remote_00000000000000000000000000000000", binding,
+	); err != nil {
+		_ = os.Rename(originUnavailable, origin)
+		t.Fatal(err)
+	}
+	missingCmd = exec.Command("git", "-C", partial, "cat-file", "-e", ancestorBlob)
+	missingCmd.Env = sessionCompanionGitEnv()
+	historyStillMissing := missingCmd.Run()
+	partialUnavailable := partial + "-unavailable"
+	if err := os.Rename(partial, partialUnavailable); err != nil {
+		_ = os.Rename(originUnavailable, origin)
+		t.Fatal(err)
+	}
+	contentCmd := exec.Command(
+		"git", "-C", workspace, "cat-file", "-p", "HEAD:asset.txt",
+	)
+	content, contentErr := contentCmd.CombinedOutput()
+	ancestorCmd := exec.Command(
+		"git", "-C", workspace, "cat-file", "-e", "HEAD^",
+	)
+	ancestorErr := ancestorCmd.Run()
+	restoreOriginErr := os.Rename(originUnavailable, origin)
+	restorePartialErr := os.Rename(partialUnavailable, partial)
+	if restoreOriginErr != nil || restorePartialErr != nil {
+		t.Fatalf(
+			"restore partial source: partial=%v origin=%v",
+			restorePartialErr, restoreOriginErr,
+		)
+	}
+	if contentErr != nil || string(content) != "current\n" {
+		t.Fatalf("materialized partial companion content = %q, %v", content, contentErr)
+	}
+	if historyStillMissing == nil {
+		t.Fatal("companion sizing hydrated unavailable partial history")
+	}
+	if ancestorErr == nil {
+		t.Fatal("partial companion retained history beyond its shallow boundary")
+	}
+	if got := readFile(t, filepath.Join(workspace, ".git", sessionCompanionHistoryFile)); got != sessionCompanionHistoryShallow {
+		t.Fatalf("partial companion history mode = %q", got)
+	}
+	plan, err := planSessionCompanionDiscard(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := discardSessionCompanion(plan); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureSessionCompanionDoesNotLazyFetchPinnedTree(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	origin, originGit := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(origin, "asset.txt"), []byte("current\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	originGit("add", "asset.txt")
+	originGit("commit", "--quiet", "-m", "asset")
+	originGit("config", "uploadpack.allowFilter", "true")
+	partial := filepath.Join(t.TempDir(), "partial")
+	runGitTest(
+		t, "", "clone", "--quiet", "--filter=blob:none", "--no-checkout",
+		"file://"+origin, partial,
+	)
+	baseCommit := gitOut(partial, "rev-parse", "HEAD")
+	assetBlob := gitOut(origin, "rev-parse", "HEAD:asset.txt")
+	missingCmd := exec.Command("git", "-C", partial, "cat-file", "-e", assetBlob)
+	missingCmd.Env = sessionCompanionGitEnv()
+	if err := missingCmd.Run(); err == nil {
+		t.Fatal("partial-clone fixture already contains its pinned blob")
+	}
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "partial",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := session.CompanionRepository{
+		Name: "partial", Repository: partial,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	_, err = ensureSessionCompanion(
+		stateRoot, "remote_00000000000000000000000000000000", binding,
+	)
+	if err == nil || !strings.Contains(err.Error(), "enumerate companion tree objects") {
+		t.Fatalf("create with unavailable pinned tree error = %v", err)
+	}
+	missingCmd = exec.Command("git", "-C", partial, "cat-file", "-e", assetBlob)
+	missingCmd.Env = sessionCompanionGitEnv()
+	if err := missingCmd.Run(); err == nil {
+		t.Fatal("companion creation lazy-fetched its pinned blob")
+	}
+	if pathExists(workspace) {
+		t.Fatal("failed partial companion workspace survived")
+	}
+}
+
+func TestCreateSessionCompanionUsesShallowSnapshotAboveHistoryLimit(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	source, sourceGit := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(source, "asset.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sourceGit("add", "asset.txt")
+	sourceGit("commit", "--quiet", "-m", "old asset")
+	ancestorCommit := gitOut(source, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(source, "asset.txt"), []byte("current\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sourceGit("commit", "--quiet", "-am", "current asset")
+	baseCommit := gitOut(source, "rev-parse", "HEAD")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "large",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	binding := session.CompanionRepository{
+		Name: "large", Repository: source,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	if err := createSessionCompanionWithHistoryLimit(binding, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(workspace, "asset.txt")); got != "current\n" {
+		t.Fatalf("shallow companion content = %q", got)
+	}
+	if got := gitOut(workspace, "rev-parse", "--is-shallow-repository"); got != "true" {
+		t.Fatalf("shallow companion mode = %q", got)
+	}
+	ancestorCmd := exec.Command("git", "-C", workspace, "cat-file", "-e", ancestorCommit)
+	if err := ancestorCmd.Run(); err == nil {
+		t.Fatalf("shallow companion retained ancestor %s", ancestorCommit)
+	}
+	plan, err := planSessionCompanionDiscard(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyPath := filepath.Join(workspace, ".git", sessionCompanionHistoryFile)
+	if err := os.WriteFile(historyPath, []byte(sessionCompanionHistoryFull), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := discardSessionCompanion(plan); err == nil ||
+		!strings.Contains(err.Error(), "full history is marked shallow") {
+		t.Fatalf("discard with replaced history marker error = %v", err)
+	}
+	if !pathExists(workspace) {
+		t.Fatal("discard removed companion with a replaced history marker")
+	}
+	if err := os.WriteFile(historyPath, []byte(sessionCompanionHistoryShallow), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := discardSessionCompanion(plan); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateSessionCompanionMeasuresLogicalSizeAcrossExternalDelta(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	source, sourceGit := gitrepo.New(t)
+	payload := make([]byte, 16<<20)
+	var counter [8]byte
+	for offset := 0; offset < len(payload); offset += sha256.Size {
+		binary.LittleEndian.PutUint64(counter[:], uint64(offset/sha256.Size))
+		digest := sha256.Sum256(counter[:])
+		copy(payload[offset:], digest[:])
+	}
+	asset := filepath.Join(source, "asset.bin")
+	if err := os.WriteFile(asset, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sourceGit("add", "asset.bin")
+	sourceGit("commit", "--quiet", "-m", "base root")
+	commitA := gitOut(source, "rev-parse", "HEAD")
+	sourceGit("checkout", "--quiet", "--orphan", "delta-root")
+	sourceGit("rm", "--quiet", "-rf", ".")
+	payload[len(payload)/2] ^= 0xff
+	if err := os.WriteFile(asset, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sourceGit("add", "asset.bin")
+	sourceGit("commit", "--quiet", "-m", "delta root")
+	commitB := gitOut(source, "rev-parse", "HEAD")
+	sourceGit("repack", "--quiet", "-a", "-d", "-f", "--window=50", "--depth=50")
+	usage := func(commit string) uint64 {
+		t.Helper()
+		value, err := strconv.ParseUint(
+			gitOut(source, "rev-list", "--disk-usage", "--objects", commit), 10, 64,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	baseCommit, diskUsage := commitA, usage(commitA)
+	if other := usage(commitB); other < diskUsage {
+		baseCommit, diskUsage = commitB, other
+	}
+	const limit = uint64(1 << 20)
+	if diskUsage >= limit {
+		t.Fatalf("external-delta fixture disk usage = %d, want below %d", diskUsage, limit)
+	}
+	packPrefix := filepath.Join(t.TempDir(), "pack")
+	packCmd := exec.Command(
+		"git", gitArgs(source, []string{"pack-objects", "--quiet", "--revs", packPrefix})...,
+	)
+	packCmd.Stdin = strings.NewReader(baseCommit + "\n")
+	if out, err := packCmd.CombinedOutput(); err != nil {
+		t.Fatalf("pack external-delta commit: %v\n%s", err, out)
+	}
+	packFiles, err := filepath.Glob(packPrefix + "-*.pack")
+	if err != nil || len(packFiles) != 1 {
+		t.Fatalf("self-contained pack files = %v, %v", packFiles, err)
+	}
+	packInfo, err := os.Stat(packFiles[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packInfo.Size() <= int64(limit) {
+		t.Fatalf("self-contained pack size = %d, want above %d", packInfo.Size(), limit)
+	}
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "delta",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	binding := session.CompanionRepository{
+		Name: "delta", Repository: source,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	if err := createSessionCompanionWithHistoryLimit(binding, limit); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(workspace, ".git", sessionCompanionHistoryFile)); got != sessionCompanionHistoryShallow {
+		t.Fatalf("external-delta companion history mode = %q", got)
+	}
+	plan, err := planSessionCompanionDiscard(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := discardSessionCompanion(plan); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureSessionCompanionPinsObjectFormatAndIgnoresTemplate(t *testing.T) {
+	for _, test := range []struct {
+		name, sourceFormat, ambientFormat string
+	}{
+		{name: "sha1", sourceFormat: "sha1", ambientFormat: "sha256"},
+		{name: "sha256", sourceFormat: "sha256", ambientFormat: "sha1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+			t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+			t.Setenv("GIT_DEFAULT_HASH", test.ambientFormat)
+			poisonedTemplate := t.TempDir()
+			if err := os.WriteFile(
+				filepath.Join(poisonedTemplate, "credential-sentinel"),
+				[]byte("must not be mounted\n"), 0o600,
+			); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GIT_TEMPLATE_DIR", poisonedTemplate)
+			source := filepath.Join(t.TempDir(), "source")
+			runGitTest(
+				t, "", "init", "--quiet", "--object-format="+test.sourceFormat,
+				"--template="+t.TempDir(), source,
+			)
+			runGitTest(t, source, "config", "user.email", "t@t")
+			runGitTest(t, source, "config", "user.name", "T")
+			runGitTest(t, source, "commit", "--quiet", "--allow-empty", "-m", "base")
+			baseCommit := gitOut(source, "rev-parse", "HEAD")
+			stateRoot := filepath.Join(t.TempDir(), "state")
+			if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			workspace, err := sessionCompanionWorkspace(
+				stateRoot, "remote_00000000000000000000000000000000", "format",
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			binding := session.CompanionRepository{
+				Name: "format", Repository: source,
+				Workspace: workspace, BaseCommit: baseCommit,
+			}
+			if _, err := ensureSessionCompanion(
+				stateRoot, "remote_00000000000000000000000000000000", binding,
+			); err != nil {
+				t.Fatal(err)
+			}
+			if got := gitOut(workspace, "rev-parse", "--show-object-format"); got != test.sourceFormat {
+				t.Fatalf("companion object format = %q, want %q", got, test.sourceFormat)
+			}
+			if pathExists(filepath.Join(workspace, ".git", "credential-sentinel")) {
+				t.Fatal("ambient Git template content entered companion metadata")
+			}
+			plan, err := planSessionCompanionDiscard(binding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := discardSessionCompanion(plan); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
