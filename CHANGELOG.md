@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 8.0.0
 
 - **The loop can no longer adopt a task a human is actively claiming.** `coop tasks claim` is a pure
   folder move that exits immediately — it held no lease and left no durable record that anyone owned
