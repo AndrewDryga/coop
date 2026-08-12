@@ -27,6 +27,13 @@ const (
 	sessionReviewArtifactMaxBytes  = 64 << 20
 )
 
+var errSessionReviewSourceBranch = errors.New("review source is not on its bound branch")
+
+var (
+	errSessionReviewSourceDirty       = errors.New("review source is not clean")
+	errSessionReviewSourceStatusLarge = errors.New("review source status exceeds the bounded limit")
+)
+
 type ReviewGateStatus string
 
 const (
@@ -50,28 +57,29 @@ type RunReviewRequest struct {
 }
 
 type ReviewDossier struct {
-	OperationID           string             `json:"operation_id"`
-	SessionID             string             `json:"session_id"`
-	SessionRevision       int64              `json:"session_revision"`
-	PolicyDigest          string             `json:"policy_digest"`
-	CreationBase          string             `json:"creation_base"`
-	SourceHead            string             `json:"source_head"`
-	SourceTree            string             `json:"source_tree"`
-	ParentHead            string             `json:"parent_head"`
-	ParentTree            string             `json:"parent_tree"`
-	CandidateHead         string             `json:"candidate_head"`
-	CandidateTree         string             `json:"candidate_tree"`
-	Rebase                ReviewRebaseStatus `json:"rebase"`
-	Gate                  ReviewGateStatus   `json:"gate"`
-	GateError             string             `json:"gate_error,omitempty"`
-	PolicyFindings        []string           `json:"policy_findings,omitempty"`
-	Patch                 []byte             `json:"patch,omitempty"`
-	PatchTruncated        bool               `json:"patch_truncated"`
-	PatchArtifactID       string             `json:"patch_artifact_id,omitempty"`
-	PatchDigest           string             `json:"patch_digest,omitempty"`
-	PatchBytes            int64              `json:"patch_bytes"`
-	Publishable           bool               `json:"publishable"`
-	NotPublishableReasons []string           `json:"not_publishable_reasons,omitempty"`
+	OperationID           string                      `json:"operation_id"`
+	SessionID             string                      `json:"session_id"`
+	SessionRevision       int64                       `json:"session_revision"`
+	PolicyDigest          string                      `json:"policy_digest"`
+	PullRequest           *session.PullRequestBinding `json:"pull_request,omitempty"`
+	CreationBase          string                      `json:"creation_base"`
+	SourceHead            string                      `json:"source_head"`
+	SourceTree            string                      `json:"source_tree"`
+	ParentHead            string                      `json:"parent_head"`
+	ParentTree            string                      `json:"parent_tree"`
+	CandidateHead         string                      `json:"candidate_head"`
+	CandidateTree         string                      `json:"candidate_tree"`
+	Rebase                ReviewRebaseStatus          `json:"rebase"`
+	Gate                  ReviewGateStatus            `json:"gate"`
+	GateError             string                      `json:"gate_error,omitempty"`
+	PolicyFindings        []string                    `json:"policy_findings,omitempty"`
+	Patch                 []byte                      `json:"patch,omitempty"`
+	PatchTruncated        bool                        `json:"patch_truncated"`
+	PatchArtifactID       string                      `json:"patch_artifact_id,omitempty"`
+	PatchDigest           string                      `json:"patch_digest,omitempty"`
+	PatchBytes            int64                       `json:"patch_bytes"`
+	Publishable           bool                        `json:"publishable"`
+	NotPublishableReasons []string                    `json:"not_publishable_reasons,omitempty"`
 }
 
 // ReviewGateResult is the complete outcome of the trusted parent gate.
@@ -100,20 +108,21 @@ func (f ReviewGateFunc) Run(ctx context.Context, gateRepo, treeDir string) (Revi
 const MaxReviewErrorBytes = session.MaxErrorDetailBytes
 
 type sessionReviewIntent struct {
-	OperationID        string `json:"operation_id"`
-	SessionID          string `json:"session_id"`
-	SessionRevision    int64  `json:"session_revision"`
-	Repository         string `json:"repository"`
-	Workspace          string `json:"workspace"`
-	CreationBase       string `json:"creation_base"`
-	SourceHead         string `json:"source_head"`
-	SourceTree         string `json:"source_tree"`
-	SourceBranch       string `json:"source_branch"`
-	SourceStatusDigest string `json:"source_status_digest"`
-	ParentHead         string `json:"parent_head"`
-	ParentTree         string `json:"parent_tree"`
-	PolicyDigest       string `json:"policy_digest"`
-	MaxPatchBytes      int    `json:"max_patch_bytes"`
+	OperationID        string                      `json:"operation_id"`
+	SessionID          string                      `json:"session_id"`
+	SessionRevision    int64                       `json:"session_revision"`
+	Repository         string                      `json:"repository"`
+	Workspace          string                      `json:"workspace"`
+	CreationBase       string                      `json:"creation_base"`
+	SourceHead         string                      `json:"source_head"`
+	SourceTree         string                      `json:"source_tree"`
+	SourceBranch       string                      `json:"source_branch"`
+	SourceStatusDigest string                      `json:"source_status_digest"`
+	ParentHead         string                      `json:"parent_head"`
+	ParentTree         string                      `json:"parent_tree"`
+	PolicyDigest       string                      `json:"policy_digest"`
+	PullRequest        *session.PullRequestBinding `json:"pull_request,omitempty"`
+	MaxPatchBytes      int                         `json:"max_patch_bytes"`
 }
 
 type sessionReviewSourceIdentity struct {
@@ -239,10 +248,35 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 	}
 	source, err := captureSessionReviewSource(sess.Repository, sess.Workspace, sess.ForkName)
 	if err != nil {
+		if errors.Is(err, errSessionReviewSourceBranch) {
+			return sessionReviewIntent{}, &session.Error{
+				Code: session.CodeInvalidSessionState,
+				Detail: fmt.Sprintf(
+					"review requires a clean task workspace checked out on its bound branch %q; ask the agent to restore that branch before retrying",
+					sess.ForkName,
+				),
+			}
+		}
+		if errors.Is(err, errSessionReviewSourceDirty) ||
+			errors.Is(err, errSessionReviewSourceStatusLarge) {
+			return sessionReviewIntent{}, &session.Error{
+				Code: session.CodeInvalidSessionState,
+				Detail: fmt.Sprintf(
+					"review requires a clean committed task workspace on bound branch %q; commit or remove workspace changes before retrying",
+					sess.ForkName,
+				),
+			}
+		}
 		return sessionReviewIntent{}, fmt.Errorf("inspect review source: %w", err)
 	}
 	if source.Branch != sess.ForkName {
-		return sessionReviewIntent{}, errors.New("review source is not checked out on its bound branch")
+		return sessionReviewIntent{}, &session.Error{
+			Code: session.CodeInvalidSessionState,
+			Detail: fmt.Sprintf(
+				"review source is not checked out on its bound branch %q; ask the agent to restore that branch before retrying",
+				sess.ForkName,
+			),
+		}
 	}
 	if source.StatusDigest == "" {
 		return sessionReviewIntent{}, errors.New("review source status digest is empty")
@@ -253,6 +287,22 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 	}
 	if !ancestor {
 		return sessionReviewIntent{}, errors.New("creation base is not an ancestor of source HEAD")
+	}
+	if sess.PullRequest != nil {
+		pullHead, err := sessionWorkspaceCommit(sess.Repository, sess.PullRequest.HeadCommit)
+		if err != nil {
+			return sessionReviewIntent{}, fmt.Errorf("resolve admitted pull request head: %w", err)
+		}
+		containsPullRequest, err := sessionReviewIsAncestor(sess.Workspace, pullHead, source.Head)
+		if err != nil {
+			return sessionReviewIntent{}, fmt.Errorf("check admitted pull request ancestry: %w", err)
+		}
+		if !containsPullRequest {
+			return sessionReviewIntent{}, &session.Error{
+				Code:   session.CodeInvalidSessionState,
+				Detail: "review source no longer contains the admitted pull request head; restore the task branch before retrying",
+			}
+		}
 	}
 	parentHead, err := s.pinCurrentSessionParent(ctx, sess)
 	if err != nil {
@@ -275,7 +325,8 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 		CreationBase: base, SourceHead: source.Head, SourceTree: source.Tree,
 		SourceBranch: source.Branch, SourceStatusDigest: source.StatusDigest,
 		ParentHead: parent.Head, ParentTree: parent.Tree,
-		PolicyDigest: sess.PolicyDigest, MaxPatchBytes: sess.MaxPatchBytes,
+		PolicyDigest: sess.PolicyDigest, PullRequest: cloneSessionPullRequestBinding(sess.PullRequest),
+		MaxPatchBytes: sess.MaxPatchBytes,
 	}, nil
 }
 
@@ -293,6 +344,9 @@ func captureSessionReviewSource(repo, workspace, branch string) (sessionReviewSo
 	}
 	gotBranch, err := sessionWorkspaceBranch(workspace)
 	if err != nil {
+		if errors.Is(err, errSessionWorkspaceDetachedHead) {
+			return sessionReviewSourceIdentity{}, fmt.Errorf("%w: %v", errSessionReviewSourceBranch, err)
+		}
 		return sessionReviewSourceIdentity{}, err
 	}
 	status, truncated, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
@@ -301,13 +355,13 @@ func captureSessionReviewSource(repo, workspace, branch string) (sessionReviewSo
 		return sessionReviewSourceIdentity{}, err
 	}
 	if truncated {
-		return sessionReviewSourceIdentity{}, errors.New("review source status exceeds the bounded limit")
+		return sessionReviewSourceIdentity{}, errSessionReviewSourceStatusLarge
 	}
 	if len(status) != 0 {
-		return sessionReviewSourceIdentity{}, errors.New("review source is not clean")
+		return sessionReviewSourceIdentity{}, errSessionReviewSourceDirty
 	}
 	if branch != "" && gotBranch != branch {
-		return sessionReviewSourceIdentity{}, fmt.Errorf("review source branch is %q, want %q", gotBranch, branch)
+		return sessionReviewSourceIdentity{}, fmt.Errorf("%w: got %q, want %q", errSessionReviewSourceBranch, gotBranch, branch)
 	}
 	return sessionReviewSourceIdentity{Head: head, Tree: tree, Branch: gotBranch, StatusDigest: sessionWorkspaceStatusDigest(status)}, nil
 }
@@ -365,6 +419,11 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	if intent.OperationID != op.ID || intent.SessionID == "" || intent.Repository == "" || intent.Workspace == "" || intent.SessionRevision <= 0 || !validSessionReviewObject(intent.CreationBase) || !validSessionReviewObject(intent.SourceHead) || !validSessionReviewObject(intent.SourceTree) || !validSessionReviewObject(intent.ParentHead) || !validSessionReviewObject(intent.ParentTree) || intent.MaxPatchBytes <= 0 || intent.MaxPatchBytes > session.MaxPatchBytesLimit {
 		return ReviewDossier{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "review operation intent is invalid"}
 	}
+	if intent.PullRequest != nil && (intent.PullRequest.Number < 1 ||
+		intent.PullRequest.Ref != fmt.Sprintf("refs/pull/%d/head", intent.PullRequest.Number) ||
+		!validSessionReviewObject(intent.PullRequest.HeadCommit)) {
+		return ReviewDossier{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "review pull request binding is invalid"}
+	}
 	candidate, err := prepareForkReviewCandidateFromIntent(intent)
 	if err != nil {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
@@ -372,8 +431,9 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	defer candidate.cleanup()
 	dossier := ReviewDossier{
 		OperationID: op.ID, SessionID: intent.SessionID, SessionRevision: intent.SessionRevision,
-		PolicyDigest: intent.PolicyDigest, CreationBase: intent.CreationBase,
-		SourceHead: intent.SourceHead, SourceTree: intent.SourceTree,
+		PolicyDigest: intent.PolicyDigest, PullRequest: cloneSessionPullRequestBinding(intent.PullRequest),
+		CreationBase: intent.CreationBase,
+		SourceHead:   intent.SourceHead, SourceTree: intent.SourceTree,
 		ParentHead: intent.ParentHead, ParentTree: intent.ParentTree,
 		Rebase: ReviewRebaseClean, Gate: ReviewGateNotRun,
 	}

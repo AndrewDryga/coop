@@ -29,27 +29,28 @@ const (
 // These DTOs are the public v1 wire types. They deliberately do not mirror the durable records:
 // the latter contain prompts, operation secrets, native provider identities, and host paths.
 type SessionDTO struct {
-	ID                string                `json:"id"`
-	ExternalRef       string                `json:"external_ref"`
-	Target            string                `json:"target"`
-	Policy            string                `json:"policy"`
-	PolicyDigest      string                `json:"policy_digest"`
-	BaseCommit        string                `json:"base_commit"`
-	Companions        []SessionCompanionDTO `json:"companions,omitempty"`
-	ForkName          string                `json:"fork_name"`
-	Revision          int64                 `json:"revision"`
-	State             session.SessionState  `json:"state"`
-	Activity          session.ActivityState `json:"activity"`
-	MaxTurns          int                   `json:"max_turns"`
-	MaxQueuedTurns    int                   `json:"max_queued_turns"`
-	MaxQueuedBytes    int                   `json:"max_queued_bytes"`
-	TurnsUsed         int                   `json:"turns_used"`
-	QueuedTurnCount   int                   `json:"queued_turn_count"`
-	QueuedPromptBytes int                   `json:"queued_prompt_bytes"`
-	ActiveTurnID      string                `json:"active_turn_id,omitempty"`
-	LastEventSequence int64                 `json:"last_event_sequence"`
-	CreatedAt         time.Time             `json:"created_at"`
-	UpdatedAt         time.Time             `json:"updated_at"`
+	ID                string                      `json:"id"`
+	ExternalRef       string                      `json:"external_ref"`
+	Target            string                      `json:"target"`
+	Policy            string                      `json:"policy"`
+	PolicyDigest      string                      `json:"policy_digest"`
+	BaseCommit        string                      `json:"base_commit"`
+	PullRequest       *session.PullRequestBinding `json:"pull_request,omitempty"`
+	Companions        []SessionCompanionDTO       `json:"companions,omitempty"`
+	ForkName          string                      `json:"fork_name"`
+	Revision          int64                       `json:"revision"`
+	State             session.SessionState        `json:"state"`
+	Activity          session.ActivityState       `json:"activity"`
+	MaxTurns          int                         `json:"max_turns"`
+	MaxQueuedTurns    int                         `json:"max_queued_turns"`
+	MaxQueuedBytes    int                         `json:"max_queued_bytes"`
+	TurnsUsed         int                         `json:"turns_used"`
+	QueuedTurnCount   int                         `json:"queued_turn_count"`
+	QueuedPromptBytes int                         `json:"queued_prompt_bytes"`
+	ActiveTurnID      string                      `json:"active_turn_id,omitempty"`
+	LastEventSequence int64                       `json:"last_event_sequence"`
+	CreatedAt         time.Time                   `json:"created_at"`
+	UpdatedAt         time.Time                   `json:"updated_at"`
 }
 
 type SessionCompanionDTO struct {
@@ -124,6 +125,8 @@ type SessionParentDivergenceDTO struct {
 type SessionChangesDTO struct {
 	BaseCommit       string                     `json:"base_commit"`
 	ForkHead         string                     `json:"fork_head"`
+	ForkTree         string                     `json:"fork_tree"`
+	PullRequestTree  string                     `json:"pull_request_tree,omitempty"`
 	ParentHead       string                     `json:"parent_head"`
 	Committed        []SessionChangeDTO         `json:"committed"`
 	Staged           []SessionChangeDTO         `json:"staged"`
@@ -141,28 +144,29 @@ type SessionChangesDTO struct {
 }
 
 type SessionReviewDTO struct {
-	OperationID           string             `json:"operation_id"`
-	SessionID             string             `json:"session_id"`
-	SessionRevision       int64              `json:"session_revision"`
-	PolicyDigest          string             `json:"policy_digest"`
-	CreationBase          string             `json:"creation_base"`
-	SourceHead            string             `json:"source_head"`
-	SourceTree            string             `json:"source_tree"`
-	ParentHead            string             `json:"parent_head"`
-	ParentTree            string             `json:"parent_tree"`
-	CandidateHead         string             `json:"candidate_head"`
-	CandidateTree         string             `json:"candidate_tree"`
-	Rebase                ReviewRebaseStatus `json:"rebase"`
-	Gate                  ReviewGateStatus   `json:"gate"`
-	GateError             string             `json:"gate_error,omitempty"`
-	PolicyFindings        []string           `json:"policy_findings,omitempty"`
-	Patch                 []byte             `json:"patch,omitempty"`
-	PatchTruncated        bool               `json:"patch_truncated"`
-	PatchArtifactID       string             `json:"patch_artifact_id,omitempty"`
-	PatchDigest           string             `json:"patch_digest,omitempty"`
-	PatchBytes            int64              `json:"patch_bytes"`
-	Publishable           bool               `json:"publishable"`
-	NotPublishableReasons []string           `json:"not_publishable_reasons,omitempty"`
+	OperationID           string                      `json:"operation_id"`
+	SessionID             string                      `json:"session_id"`
+	SessionRevision       int64                       `json:"session_revision"`
+	PolicyDigest          string                      `json:"policy_digest"`
+	PullRequest           *session.PullRequestBinding `json:"pull_request,omitempty"`
+	CreationBase          string                      `json:"creation_base"`
+	SourceHead            string                      `json:"source_head"`
+	SourceTree            string                      `json:"source_tree"`
+	ParentHead            string                      `json:"parent_head"`
+	ParentTree            string                      `json:"parent_tree"`
+	CandidateHead         string                      `json:"candidate_head"`
+	CandidateTree         string                      `json:"candidate_tree"`
+	Rebase                ReviewRebaseStatus          `json:"rebase"`
+	Gate                  ReviewGateStatus            `json:"gate"`
+	GateError             string                      `json:"gate_error,omitempty"`
+	PolicyFindings        []string                    `json:"policy_findings,omitempty"`
+	Patch                 []byte                      `json:"patch,omitempty"`
+	PatchTruncated        bool                        `json:"patch_truncated"`
+	PatchArtifactID       string                      `json:"patch_artifact_id,omitempty"`
+	PatchDigest           string                      `json:"patch_digest,omitempty"`
+	PatchBytes            int64                       `json:"patch_bytes"`
+	Publishable           bool                        `json:"publishable"`
+	NotPublishableReasons []string                    `json:"not_publishable_reasons,omitempty"`
 }
 
 type SessionDiscardWorkspaceDTO struct {
@@ -423,13 +427,16 @@ func (h *sessionHTTPHandler) createSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		Policy string `json:"policy"`
-		Task   string `json:"task"`
+		Policy      string                    `json:"policy"`
+		Task        string                    `json:"task"`
+		PullRequest *RemotePullRequestBinding `json:"pull_request,omitempty"`
 	}
 	if !decodeSessionJSON(w, r, &body) {
 		return
 	}
-	sess, err := h.service.CreateRemoteSession(r.Context(), sessionIdempotencyKey(r), CreateRemoteSessionRequest{Policy: body.Policy, Task: body.Task})
+	sess, err := h.service.CreateRemoteSession(r.Context(), sessionIdempotencyKey(r), CreateRemoteSessionRequest{
+		Policy: body.Policy, Task: body.Task, PullRequest: body.PullRequest,
+	})
 	if err != nil {
 		writeSessionServiceError(w, err)
 		return
@@ -970,7 +977,8 @@ func publicSession(value session.Session) SessionDTO {
 	return SessionDTO{
 		ID: value.ID, ExternalRef: value.ExternalRef, Target: value.Target, Policy: value.Policy,
 		PolicyDigest: value.PolicyDigest, BaseCommit: value.BaseCommit,
-		Companions: companions, ForkName: value.ForkName,
+		PullRequest: cloneSessionPullRequestBinding(value.PullRequest),
+		Companions:  companions, ForkName: value.ForkName,
 		Revision: value.Revision, State: value.State, Activity: value.Activity, MaxTurns: value.MaxTurns,
 		MaxQueuedTurns: value.MaxQueuedTurns, MaxQueuedBytes: value.MaxQueuedBytes, TurnsUsed: value.TurnsUsed,
 		QueuedTurnCount: value.QueuedTurnCount, QueuedPromptBytes: value.QueuedPromptBytes,
@@ -1021,7 +1029,8 @@ func publicChanges(value WorkspaceChanges) SessionChangesDTO {
 		return out
 	}
 	return SessionChangesDTO{
-		BaseCommit: value.BaseCommit, ForkHead: value.ForkHead, ParentHead: value.ParentHead,
+		BaseCommit: value.BaseCommit, ForkHead: value.ForkHead, ForkTree: value.ForkTree,
+		PullRequestTree: value.PullRequestTree, ParentHead: value.ParentHead,
 		Committed: convert(value.Committed), Staged: convert(value.Staged), Unstaged: convert(value.Unstaged),
 		Untracked: convert(value.Untracked), Conflicts: convert(value.Conflicts),
 		ParentDivergence: SessionParentDivergenceDTO{Ahead: value.ParentDivergence.Ahead, Behind: value.ParentDivergence.Behind, BaseToFork: value.ParentDivergence.BaseToFork, BaseToParent: value.ParentDivergence.BaseToParent, Diverged: value.ParentDivergence.Diverged},
@@ -1035,7 +1044,8 @@ func publicChanges(value WorkspaceChanges) SessionChangesDTO {
 func publicReview(value ReviewDossier) SessionReviewDTO {
 	result := SessionReviewDTO{
 		OperationID: value.OperationID, SessionID: value.SessionID, SessionRevision: value.SessionRevision,
-		PolicyDigest: value.PolicyDigest, CreationBase: value.CreationBase, SourceHead: value.SourceHead,
+		PolicyDigest: value.PolicyDigest, PullRequest: cloneSessionPullRequestBinding(value.PullRequest),
+		CreationBase: value.CreationBase, SourceHead: value.SourceHead,
 		SourceTree: value.SourceTree, ParentHead: value.ParentHead, ParentTree: value.ParentTree,
 		CandidateHead: value.CandidateHead, CandidateTree: value.CandidateTree, Rebase: value.Rebase,
 		Gate: value.Gate, PolicyFindings: append([]string(nil), value.PolicyFindings...),

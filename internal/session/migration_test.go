@@ -33,6 +33,9 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 	if version >= 4 {
 		ddl += schemaV4
 	}
+	if version >= 5 {
+		ddl += schemaV5
+	}
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("build v%d schema: %v", version, err)
 	}

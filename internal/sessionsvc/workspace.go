@@ -23,6 +23,8 @@ const (
 	sessionWorkspaceErrorLimit     = 8 << 10
 )
 
+var errSessionWorkspaceDetachedHead = errors.New("workspace HEAD is detached")
+
 // sessionWorkspace is the host-owned identity captured when a remote session fork is created.
 // The fields are exported so the unexported boundary remains directly JSON-marshalable.
 type sessionWorkspace struct {
@@ -53,6 +55,8 @@ type sessionWorkspaceParentDivergence struct {
 type WorkspaceChanges struct {
 	BaseCommit       string                           `json:"base_commit"`
 	ForkHead         string                           `json:"fork_head"`
+	ForkTree         string                           `json:"fork_tree"`
+	PullRequestTree  string                           `json:"pull_request_tree,omitempty"`
 	ParentHead       string                           `json:"parent_head"`
 	Committed        []sessionWorkspaceChange         `json:"committed,omitempty"`
 	Staged           []sessionWorkspaceChange         `json:"staged,omitempty"`
@@ -251,6 +255,10 @@ func validSessionWorkspaceCommit(commit string) bool {
 func sessionWorkspaceBranch(dir string) (string, error) {
 	out, err := sessionWorkspaceGitText(dir, 4<<10, "symbolic-ref", "--quiet", "--short", "HEAD")
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", errSessionWorkspaceDetachedHead
+		}
 		return "", fmt.Errorf("resolve workspace branch: %w", err)
 	}
 	branch := strings.TrimSpace(string(out))
@@ -581,6 +589,10 @@ func inspectSessionChangesPageAtParent(
 	if err != nil {
 		return WorkspaceChanges{}, fmt.Errorf("resolve workspace HEAD: %w", err)
 	}
+	forkTree, err := sessionWorkspaceTree(workspace, forkHead)
+	if err != nil {
+		return WorkspaceChanges{}, fmt.Errorf("resolve workspace tree: %w", err)
+	}
 	parentHead, err := sessionWorkspaceCommit(repo, parent)
 	if err != nil {
 		return WorkspaceChanges{}, fmt.Errorf("resolve current parent: %w", err)
@@ -640,6 +652,7 @@ func inspectSessionChangesPageAtParent(
 	}
 	changes.BaseCommit = baseCommit
 	changes.ForkHead = forkHead
+	changes.ForkTree = forkTree
 	changes.ParentHead = parentHead
 	changes.ParentDivergence = sessionWorkspaceParentDivergence{
 		Ahead:        behind,
@@ -656,6 +669,21 @@ func inspectSessionChangesPageAtParent(
 	changes.PatchHasMore = patchHasMore
 	changes.Truncated = patchOffset > 0 || patchHasMore
 	return changes, nil
+}
+
+func sessionWorkspaceTree(dir, revision string) (string, error) {
+	out, err := sessionWorkspaceGitText(
+		dir, sessionWorkspaceGitOutputLimit,
+		"rev-parse", "--verify", "--end-of-options", revision+"^{tree}",
+	)
+	if err != nil {
+		return "", err
+	}
+	tree := strings.TrimSpace(string(out))
+	if !validSessionWorkspaceCommit(tree) {
+		return "", fmt.Errorf("malformed tree identity %q", tree)
+	}
+	return tree, nil
 }
 
 func sessionWorkspaceName(repo, workspace string) (string, error) {

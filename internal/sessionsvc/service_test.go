@@ -1,6 +1,7 @@
 package sessionsvc
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -469,6 +470,121 @@ func TestSessionServicePinsConfiguredRemoteWithoutChangingLocalCheckout(t *testi
 		DiscardRequest{PlanOperationID: plan.OperationID},
 	); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSessionServicePinsExactPullRequestHeadOnBoundBranch(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	seed, seedGit := gitrepo.New(t)
+	seedGit("commit", "-q", "--allow-empty", "-m", "base")
+	seedGit("branch", "-M", "main")
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	runGitTest(t, "", "init", "-q", "--bare", remote)
+	seedGit("remote", "add", "origin", remote)
+	seedGit("push", "-q", "-u", "origin", "main")
+
+	seedGit("checkout", "-qb", "pull-514")
+	if err := os.WriteFile(filepath.Join(seed, "existing-pr-change.txt"), []byte("must be reviewed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedGit("add", "existing-pr-change.txt")
+	seedGit("commit", "-q", "-m", "pull request")
+	pullHead := gitOut(seed, "rev-parse", "HEAD")
+	seedGit("push", "-q", "origin", "HEAD:refs/pull/514/head")
+	seedGit("checkout", "-q", "main")
+	seedGit("commit", "-q", "--allow-empty", "-m", "new main")
+	seedGit("push", "-q", "origin", "main")
+
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	runGitTest(t, "", "clone", "-q", "-b", "main", remote, checkout)
+	policies := testSessionPolicies(checkout)
+	policy := policies["responder"]
+	policy.Remote, policy.Branch = "origin", "main"
+	policies["responder"] = policy
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+
+	request := CreateRemoteSessionRequest{
+		Policy: "responder", Task: "edit exact pull request",
+		PullRequest: &RemotePullRequestBinding{Number: 514, HeadCommit: pullHead},
+	}
+	sess, err := service.CreateRemoteSession(context.Background(), "pull-source-create", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creationBase := gitOut(checkout, "merge-base", "origin/main", pullHead)
+	if sess.BaseCommit != creationBase || gitOut(sess.Workspace, "rev-parse", "HEAD") != pullHead {
+		t.Fatalf("session base = %s, workspace HEAD = %s, want merge base %s and PR head %s", sess.BaseCommit, gitOut(sess.Workspace, "rev-parse", "HEAD"), creationBase, pullHead)
+	}
+	if sess.PullRequest == nil || sess.PullRequest.Number != 514 ||
+		sess.PullRequest.Ref != "refs/pull/514/head" || sess.PullRequest.HeadCommit != pullHead {
+		t.Fatalf("session pull request binding = %+v", sess.PullRequest)
+	}
+	if got := gitOut(sess.Workspace, "symbolic-ref", "--short", "HEAD"); got != sess.ForkName {
+		t.Fatalf("workspace branch = %q, want bound branch %q", got, sess.ForkName)
+	}
+	changes, err := service.GetChanges(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changes.ForkTree == "" || changes.PullRequestTree == "" ||
+		changes.ForkTree != changes.PullRequestTree {
+		t.Fatalf("untouched PR trees = fork %q admitted %q", changes.ForkTree, changes.PullRequestTree)
+	}
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "task-change.txt"), []byte("new work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceGit(t, sess.Workspace, "add", "task-change.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "task change")
+	changes, err = service.GetChanges(context.Background(), sess.ID)
+	if err != nil || changes.ForkTree == changes.PullRequestTree {
+		t.Fatalf("changed PR trees = fork %q admitted %q err=%v", changes.ForkTree, changes.PullRequestTree, err)
+	}
+	replayed, err := service.CreateRemoteSession(context.Background(), "pull-source-create", request)
+	if err != nil || replayed.ID != sess.ID || replayed.BaseCommit != creationBase ||
+		replayed.PullRequest == nil || replayed.PullRequest.HeadCommit != pullHead {
+		t.Fatalf("create replay = %+v, err=%v", replayed, err)
+	}
+	service.reviewGate = ReviewGateFunc(func(_ context.Context, _, candidate string) (ReviewGateResult, error) {
+		if got := readFile(t, filepath.Join(candidate, "existing-pr-change.txt")); got != "must be reviewed\n" {
+			t.Fatalf("gate candidate omitted pre-existing PR change: %q", got)
+		}
+		if got := readFile(t, filepath.Join(candidate, "task-change.txt")); got != "new work\n" {
+			t.Fatalf("gate candidate omitted task change: %q", got)
+		}
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	})
+	dossier, err := service.RunReview(context.Background(), "pull-source-review", RunReviewRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dossier.Publishable || dossier.PullRequest == nil ||
+		dossier.PullRequest.Number != 514 || dossier.PullRequest.HeadCommit != pullHead ||
+		dossier.CandidateHead == pullHead ||
+		!bytes.Contains(dossier.Patch, []byte("existing-pr-change.txt")) ||
+		!bytes.Contains(dossier.Patch, []byte("task-change.txt")) {
+		t.Fatalf("pull request review dossier = %+v", dossier)
+	}
+
+	_, err = service.CreateRemoteSession(context.Background(), "moved-pull-source", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "stale pull request",
+		PullRequest: &RemotePullRequestBinding{Number: 514, HeadCommit: strings.Repeat("a", 40)},
+	})
+	if session.CodeOf(err) != session.CodeInvalidRequest ||
+		!strings.Contains(err.Error(), "pull request head changed") {
+		t.Fatalf("stale pull request error = %v", err)
+	}
+	seedGit("push", "-q", "origin", ":refs/pull/514/head")
+	_, err = service.CreateRemoteSession(context.Background(), "missing-pull-source", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "closed pull request",
+		PullRequest: &RemotePullRequestBinding{Number: 514, HeadCommit: pullHead},
+	})
+	if session.CodeOf(err) != session.CodeInvalidRequest ||
+		!strings.Contains(err.Error(), "refs/pull/514/head does not exist") {
+		t.Fatalf("missing pull request ref error = %v", err)
 	}
 }
 

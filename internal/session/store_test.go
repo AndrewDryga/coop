@@ -678,6 +678,10 @@ func TestSessionBindingPersistenceAndFixedIDValidation(t *testing.T) {
 	sess, err := store.CreateSession(ctx, "create-fixed", CreateSessionRequest{
 		ID: "session-fixed", Target: "target", Policy: "policy", Repository: "/repo",
 		Workspace: "/workspace", ForkName: "fork-fixed", BaseCommit: "0123456789abcdef",
+		PullRequest: &PullRequestBinding{
+			Number: 514, Ref: "refs/pull/514/head",
+			HeadCommit: "0123456789abcdef0123456789abcdef01234567",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -694,13 +698,26 @@ func TestSessionBindingPersistenceAndFixedIDValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reopened.Policy != sess.Policy || reopened.Repository != sess.Repository || reopened.Workspace != sess.Workspace || reopened.ForkName != sess.ForkName || reopened.BaseCommit != sess.BaseCommit {
+	if reopened.Policy != sess.Policy || reopened.Repository != sess.Repository || reopened.Workspace != sess.Workspace || reopened.ForkName != sess.ForkName || reopened.BaseCommit != sess.BaseCommit ||
+		reopened.PullRequest == nil || reopened.PullRequest.Number != 514 ||
+		reopened.PullRequest.Ref != "refs/pull/514/head" ||
+		reopened.PullRequest.HeadCommit != "0123456789abcdef0123456789abcdef01234567" {
 		t.Fatalf("reopened session binding = %+v", reopened)
 	}
 	for name, req := range map[string]CreateSessionRequest{
 		"partial binding": {ID: "partial", Target: "target", Policy: "policy"},
 		"invalid id":      {ID: "bad\x00id", Target: "target"},
 		"long id":         {ID: strings.Repeat("x", MaxIDBytes+1), Target: "target"},
+		"invalid pull request ref": {
+			ID: "bad-pull-ref", Target: "target", Policy: "policy", Repository: "/repo",
+			Workspace: "/workspace-bad", ForkName: "fork-bad", BaseCommit: "base",
+			PullRequest: &PullRequestBinding{Number: 514, Ref: "refs/heads/main", HeadCommit: strings.Repeat("a", 40)},
+		},
+		"invalid pull request head": {
+			ID: "bad-pull-head", Target: "target", Policy: "policy", Repository: "/repo",
+			Workspace: "/workspace-bad", ForkName: "fork-bad", BaseCommit: "base",
+			PullRequest: &PullRequestBinding{Number: 514, Ref: "refs/pull/514/head", HeadCommit: "not-a-commit"},
+		},
 	} {
 		if _, err := store.CreateSession(ctx, "invalid-"+name, req); CodeOf(err) != CodeInvalidRequest {
 			t.Fatalf("%s error = %v", name, err)

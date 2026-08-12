@@ -141,6 +141,15 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	if duplicateResponse.Code != http.StatusBadRequest {
 		t.Fatalf("duplicate idempotency status = %d body=%s", duplicateResponse.Code, duplicateResponse.Body.String())
 	}
+	response = sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions",
+		`{"policy":"responder","task":"pull request","pull_request":{"number":514,"head_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`,
+		"create-pull-request", "application/json",
+	)
+	if response.Code != http.StatusBadRequest ||
+		!strings.Contains(response.Body.String(), "operator-configured remote") {
+		t.Fatalf("pull request body status = %d body=%s", response.Code, response.Body.String())
+	}
 
 	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"task"}`, "create", "application/json")
 	if response.Code != http.StatusOK {
@@ -196,6 +205,73 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	getResponse := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+created.Session.ID, "", "", "")
 	if getResponse.Code != http.StatusOK || strings.Contains(getResponse.Body.String(), repo) || strings.Contains(getResponse.Body.String(), "native-secret") {
 		t.Fatalf("session response leaked private data: %d %s", getResponse.Code, getResponse.Body.String())
+	}
+}
+
+func TestSessionHTTPExistingPullRequestBindingSurvivesCreateAndReview(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	seed, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	git("branch", "-M", "main")
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	runGitTest(t, "", "init", "-q", "--bare", remote)
+	git("remote", "add", "origin", remote)
+	git("push", "-q", "-u", "origin", "main")
+	git("checkout", "-qb", "pull-514")
+	if err := os.WriteFile(filepath.Join(seed, "pull.txt"), []byte("pull request\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "pull.txt")
+	git("commit", "-qm", "pull request")
+	pullHead := gitOut(seed, "rev-parse", "HEAD")
+	git("push", "-q", "origin", "HEAD:refs/pull/514/head")
+
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	runGitTest(t, "", "clone", "-q", "-b", "main", remote, checkout)
+	policies := testSessionPolicies(checkout)
+	policy := policies["responder"]
+	policy.Remote, policy.Branch = "origin", "main"
+	policies["responder"] = policy
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	service.reviewGate = ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	})
+	defer service.Stop()
+	handler := NewHTTPHandler(service)
+	create := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions",
+		fmt.Sprintf(`{"policy":"responder","task":"pull request","pull_request":{"number":514,"head_commit":%q}}`, pullHead),
+		"create-pull-http", "application/json",
+	)
+	if create.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", create.Code, create.Body.String())
+	}
+	var created sessionMutationSessionResponse
+	if err := json.Unmarshal(create.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Session.PullRequest == nil || created.Session.PullRequest.Number != 514 ||
+		created.Session.PullRequest.Ref != "refs/pull/514/head" ||
+		created.Session.PullRequest.HeadCommit != pullHead {
+		t.Fatalf("created pull request binding = %+v", created.Session.PullRequest)
+	}
+	review := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/review",
+		fmt.Sprintf(`{"expected_revision":%d}`, created.Session.Revision),
+		"review-pull-http", "application/json",
+	)
+	if review.Code != http.StatusOK {
+		t.Fatalf("review status=%d body=%s", review.Code, review.Body.String())
+	}
+	var reviewed sessionMutationReviewResponse
+	if err := json.Unmarshal(review.Body.Bytes(), &reviewed); err != nil {
+		t.Fatal(err)
+	}
+	if reviewed.Review.PullRequest == nil || reviewed.Review.PullRequest.Number != 514 ||
+		reviewed.Review.PullRequest.Ref != "refs/pull/514/head" ||
+		reviewed.Review.PullRequest.HeadCommit != pullHead {
+		t.Fatalf("reviewed pull request binding = %+v", reviewed.Review.PullRequest)
 	}
 }
 

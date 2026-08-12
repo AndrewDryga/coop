@@ -17,13 +17,33 @@ type sessionRepositorySource struct {
 	repository string
 	remote     string
 	branch     string
+	ref        string
+	expected   string
 }
 
-func pinSessionPolicyRepositories(ctx context.Context, policy Policy) (string, []string, error) {
+type sessionPolicyPins struct {
+	creationBase  string
+	workspaceHead string
+	companions    []string
+}
+
+func pinSessionPolicyRepositories(
+	ctx context.Context,
+	policy Policy,
+	pullRequest *RemotePullRequestBinding,
+) (sessionPolicyPins, error) {
 	sources := make([]sessionRepositorySource, 1+len(policy.Companions))
 	sources[0] = sessionRepositorySource{
 		label: "primary", repository: policy.Repository,
 		remote: policy.Remote, branch: policy.Branch,
+	}
+	if pullRequest != nil {
+		if policy.Remote == "" {
+			return sessionPolicyPins{}, &session.Error{
+				Code:   session.CodeInvalidRequest,
+				Detail: "pull request sessions require an operator-configured remote",
+			}
+		}
 	}
 	for index, companion := range policy.Companions {
 		sources[index+1] = sessionRepositorySource{
@@ -64,12 +84,37 @@ func pinSessionPolicyRepositories(ctx context.Context, policy Policy) (string, [
 	wg.Wait()
 	close(errs)
 	if err := <-errs; err != nil {
-		return "", nil, err
+		return sessionPolicyPins{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return "", nil, err
+		return sessionPolicyPins{}, err
 	}
-	return commits[0], commits[1:], nil
+	result := sessionPolicyPins{
+		creationBase: commits[0], workspaceHead: commits[0], companions: commits[1:],
+	}
+	if pullRequest == nil {
+		return result, nil
+	}
+	pullHead, err := pinSessionRepository(ctx, sessionRepositorySource{
+		label: "pull request", repository: policy.Repository, remote: policy.Remote,
+		branch: policy.Branch, ref: fmt.Sprintf("refs/pull/%d/head", pullRequest.Number),
+		expected: pullRequest.HeadCommit,
+	})
+	if err != nil {
+		return sessionPolicyPins{}, err
+	}
+	mergeBase, err := sessionWorkspaceGitText(
+		policy.Repository, 4<<10, "merge-base", result.creationBase, pullHead,
+	)
+	if err != nil {
+		return sessionPolicyPins{}, fmt.Errorf("resolve pull request merge base: %w", err)
+	}
+	result.creationBase = strings.TrimSpace(string(mergeBase))
+	if !validSessionWorkspaceCommit(result.creationBase) {
+		return sessionPolicyPins{}, errors.New("pull request merge base is invalid")
+	}
+	result.workspaceHead = pullHead
+	return result, nil
 }
 
 func pinSessionRepository(ctx context.Context, source sessionRepositorySource) (string, error) {
@@ -83,28 +128,62 @@ func pinSessionRepository(ctx context.Context, source sessionRepositorySource) (
 
 	remoteCtx, cancel := context.WithTimeout(ctx, sessionPolicyRemoteTimeout)
 	defer cancel()
-	ref := "refs/heads/" + source.branch
+	ref := source.ref
+	if ref == "" {
+		ref = "refs/heads/" + source.branch
+	}
 	out, err := runSessionSourceGit(remoteCtx, source.repository,
 		"ls-remote", "--exit-code", "--refs", "--", source.remote, ref)
 	if err != nil {
+		var exitErr *exec.ExitError
+		if source.ref != "" && errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			return "", &session.Error{
+				Code: session.CodeInvalidRequest,
+				Detail: fmt.Sprintf(
+					"pull request ref %s does not exist on the operator-configured remote; create a fresh task for an open pull request",
+					ref,
+				),
+			}
+		}
+		display := source.branch
+		if source.ref != "" {
+			display = source.ref
+		}
 		return "", fmt.Errorf(
 			"refresh %s repository from %s/%s: %w; check the remote, branch, network, and Git credentials",
-			source.label, source.remote, source.branch, err,
+			source.label, source.remote, display, err,
 		)
 	}
 	fields := strings.Fields(string(out))
 	if len(fields) != 2 || fields[1] != ref || !validSessionWorkspaceCommit(fields[0]) {
+		display := source.branch
+		if source.ref != "" {
+			display = source.ref
+		}
 		return "", fmt.Errorf(
 			"refresh %s repository from %s/%s: remote returned an invalid branch identity",
-			source.label, source.remote, source.branch,
+			source.label, source.remote, display,
 		)
 	}
 	commit := fields[0]
+	if source.expected != "" && commit != source.expected {
+		return "", &session.Error{
+			Code: session.CodeInvalidRequest,
+			Detail: fmt.Sprintf(
+				"pull request head changed before session creation; expected %s, found %s; create a fresh task for the current revision",
+				source.expected, commit,
+			),
+		}
+	}
 	if _, err := runSessionSourceGit(remoteCtx, source.repository,
 		"fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--", source.remote, commit); err != nil {
+		display := source.branch
+		if source.ref != "" {
+			display = source.ref
+		}
 		return "", fmt.Errorf(
 			"refresh %s repository from %s/%s at %s: %w; check the network and Git credentials",
-			source.label, source.remote, source.branch, commit, err,
+			source.label, source.remote, display, commit, err,
 		)
 	}
 	resolved, err := sessionWorkspaceCommit(source.repository, commit)

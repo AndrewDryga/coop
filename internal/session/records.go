@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 5
+	SchemaVersion = 6
 
 	MaxIDBytes              = 256
 	MaxMethodBytes          = 128
@@ -206,6 +206,7 @@ type Session struct {
 	Workspace         string                `json:"workspace"`
 	ForkName          string                `json:"fork_name"`
 	BaseCommit        string                `json:"base_commit"`
+	PullRequest       *PullRequestBinding   `json:"pull_request,omitempty"`
 	Companions        []CompanionRepository `json:"companions,omitempty"`
 	NativeSessionID   string                `json:"native_session_id"`
 	TurnTimeout       time.Duration         `json:"turn_timeout"`
@@ -223,6 +224,16 @@ type Session struct {
 	LastEventSequence int64                 `json:"last_event_sequence"`
 	CreatedAt         time.Time             `json:"created_at"`
 	UpdatedAt         time.Time             `json:"updated_at"`
+}
+
+// PullRequestBinding is the immutable source identity for a session created
+// from an existing pull request. Repository authority remains in the session's
+// operator policy; this binding records only the policy-derived ref and its
+// exact head at admission.
+type PullRequestBinding struct {
+	Number     int    `json:"number"`
+	Ref        string `json:"ref"`
+	HeadCommit string `json:"head_commit"`
 }
 
 // CompanionRepository is an operator-policy-selected repository snapshot available read-only
@@ -322,6 +333,7 @@ type CreateSessionRequest struct {
 	Workspace      string                `json:"workspace"`
 	ForkName       string                `json:"fork_name"`
 	BaseCommit     string                `json:"base_commit"`
+	PullRequest    *PullRequestBinding   `json:"pull_request,omitempty"`
 	Companions     []CompanionRepository `json:"companions,omitempty"`
 	TurnTimeout    time.Duration         `json:"turn_timeout"`
 	MaxPatchBytes  int                   `json:"max_patch_bytes"`

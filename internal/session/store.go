@@ -582,6 +582,7 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 		Workspace:      req.Workspace,
 		ForkName:       req.ForkName,
 		BaseCommit:     req.BaseCommit,
+		PullRequest:    clonePullRequestBinding(req.PullRequest),
 		Companions:     append([]CompanionRepository(nil), req.Companions...),
 		TurnTimeout:    req.TurnTimeout,
 		MaxPatchBytes:  req.MaxPatchBytes,
@@ -604,10 +605,11 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
 		(id, external_ref, target, policy, policy_digest, repository, workspace, fork_name, base_commit, companions,
+		 pull_request_number, pull_request_ref, pull_request_head_commit,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
 		sess.Policy, sess.PolicyDigest, sess.Repository, sess.Workspace, sess.ForkName, sess.BaseCommit,
-		string(companions),
+		string(companions), pullRequestNumber(sess.PullRequest), pullRequestRef(sess.PullRequest), pullRequestHead(sess.PullRequest),
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
 		sess.MaxQueuedTurns, sess.MaxQueuedBytes, now.UnixNano(), now.UnixNano()); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: sessions.id") {
@@ -661,7 +663,8 @@ func normalizeCreateRequest(req CreateSessionRequest) CreateSessionRequest {
 		companions, _ := json.Marshal(req.Companions)
 		sum := sha256.Sum256([]byte(strings.Join([]string{
 			req.Policy, req.Target, req.Repository, req.Workspace, req.ForkName, req.BaseCommit,
-			string(companions),
+			string(companions), fmt.Sprintf("%d", pullRequestNumber(req.PullRequest)),
+			pullRequestRef(req.PullRequest), pullRequestHead(req.PullRequest),
 			fmt.Sprintf("%d", req.TurnTimeout), fmt.Sprintf("%d", req.MaxPatchBytes),
 		}, "\x00")))
 		req.PolicyDigest = hex.EncodeToString(sum[:])
@@ -704,6 +707,15 @@ func validateCreateRequest(req CreateSessionRequest) error {
 	if boundCount != 0 && boundCount != len(bindings) {
 		return &Error{Code: CodeInvalidRequest, Detail: "session bindings must be all-or-none"}
 	}
+	if req.PullRequest != nil {
+		if req.PullRequest.Number < 1 || req.PullRequest.Ref == "" || req.PullRequest.HeadCommit == "" ||
+			!validBoundedText(req.PullRequest.Ref, MaxBindingBytes) ||
+			!validBoundedText(req.PullRequest.HeadCommit, MaxBindingBytes) ||
+			req.PullRequest.Ref != fmt.Sprintf("refs/pull/%d/head", req.PullRequest.Number) ||
+			!validGitObjectID(req.PullRequest.HeadCommit) || boundCount != len(bindings) {
+			return &Error{Code: CodeInvalidRequest, Detail: "pull request binding is invalid"}
+		}
+	}
 	seenCompanions := make(map[string]bool, len(req.Companions))
 	for _, companion := range req.Companions {
 		if companion.Name == "" || seenCompanions[companion.Name] ||
@@ -717,6 +729,18 @@ func validateCreateRequest(req CreateSessionRequest) error {
 		seenCompanions[companion.Name] = true
 	}
 	return nil
+}
+
+func validGitObjectID(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 const MaxBindingBytes = 4096
@@ -815,7 +839,8 @@ func (s *Store) ListInterruptedTurns(ctx context.Context) ([]Turn, error) {
 }
 
 const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, repository, workspace, fork_name,
-	   base_commit, companions, native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
+	   base_commit, companions, pull_request_number, pull_request_ref, pull_request_head_commit,
+	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
 	   max_turns, max_queued_turns, max_queued_bytes, turns_used, queued_turn_count,
 	   queued_prompt_bytes, active_turn_id, last_event_sequence, created_at, updated_at
 FROM sessions`
@@ -826,10 +851,13 @@ func scanSession(row rowScanner) (Session, error) {
 	var sess Session
 	var state, activity, active string
 	var companions string
+	var pullRequestNumber int
+	var pullRequestRef, pullRequestHead string
 	var turnTimeout int64
 	var createdAt, updatedAt int64
 	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest,
-		&sess.Repository, &sess.Workspace, &sess.ForkName, &sess.BaseCommit, &companions, &sess.NativeSessionID,
+		&sess.Repository, &sess.Workspace, &sess.ForkName, &sess.BaseCommit, &companions,
+		&pullRequestNumber, &pullRequestRef, &pullRequestHead, &sess.NativeSessionID,
 		&turnTimeout, &sess.MaxPatchBytes, &sess.Revision, &state, &activity, &sess.MaxTurns,
 		&sess.MaxQueuedTurns, &sess.MaxQueuedBytes, &sess.TurnsUsed, &sess.QueuedTurnCount,
 		&sess.QueuedPromptBytes, &active,
@@ -839,6 +867,9 @@ func scanSession(row rowScanner) (Session, error) {
 	if err := json.Unmarshal([]byte(companions), &sess.Companions); err != nil {
 		return Session{}, fmt.Errorf("decode companion repositories: %w", err)
 	}
+	if pullRequestNumber > 0 {
+		sess.PullRequest = &PullRequestBinding{Number: pullRequestNumber, Ref: pullRequestRef, HeadCommit: pullRequestHead}
+	}
 	sess.State = SessionState(state)
 	sess.Activity = ActivityState(activity)
 	sess.TurnTimeout = time.Duration(turnTimeout)
@@ -846,6 +877,35 @@ func scanSession(row rowScanner) (Session, error) {
 	sess.CreatedAt = fromUnixNano(createdAt)
 	sess.UpdatedAt = fromUnixNano(updatedAt)
 	return sess, nil
+}
+
+func clonePullRequestBinding(value *PullRequestBinding) *PullRequestBinding {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
+func pullRequestNumber(value *PullRequestBinding) int {
+	if value == nil {
+		return 0
+	}
+	return value.Number
+}
+
+func pullRequestRef(value *PullRequestBinding) string {
+	if value == nil {
+		return ""
+	}
+	return value.Ref
+}
+
+func pullRequestHead(value *PullRequestBinding) string {
+	if value == nil {
+		return ""
+	}
+	return value.HeadCommit
 }
 
 func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnRequest) (Turn, error) {

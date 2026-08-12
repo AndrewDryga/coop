@@ -74,6 +74,53 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 	}
 }
 
+func TestSessionServiceRunReviewRejectsDetachedHeadWithoutRetry(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newReviewTestService(t, repo, 1<<20, nil)
+	defer service.Stop()
+	sess := createReviewSession(t, service, "detached")
+	sessionWorkspaceGit(t, sess.Workspace, "checkout", "--quiet", "--detach", "HEAD")
+
+	_, err := service.RunReview(
+		context.Background(), "review-detached",
+		RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision},
+	)
+	if session.CodeOf(err) != session.CodeInvalidSessionState ||
+		!strings.Contains(err.Error(), "bound branch") ||
+		!strings.Contains(err.Error(), sess.ForkName) {
+		t.Fatalf("detached review error = %v", err)
+	}
+}
+
+func TestSessionServiceRunReviewDoesNotMisclassifyGitFailureAsDetached(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newReviewTestService(t, repo, 1<<20, nil)
+	defer service.Stop()
+	sess := createReviewSession(t, service, "corrupt-head")
+	gitDir := gitOut(sess.Workspace, "rev-parse", "--git-dir")
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(sess.Workspace, gitDir)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("not a valid HEAD\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := service.RunReview(
+		context.Background(), "review-corrupt-head",
+		RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision},
+	)
+	if err == nil || session.CodeOf(err) == session.CodeInvalidSessionState ||
+		strings.Contains(err.Error(), "bound branch") {
+		t.Fatalf("corrupt HEAD error = %v", err)
+	}
+}
+
 func TestSessionServiceRunReviewUsesConfiguredRemoteParent(t *testing.T) {
 	seed, seedGit := gitrepo.New(t)
 	if err := os.WriteFile(filepath.Join(seed, "version.txt"), []byte("v1\n"), 0o644); err != nil {
@@ -351,7 +398,8 @@ func TestSessionServiceRunReviewConflictAndDirtyReject(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := service.RunReview(context.Background(), "review-dirty", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
-		if err == nil {
+		if session.CodeOf(err) != session.CodeInvalidSessionState ||
+			!strings.Contains(err.Error(), "clean committed task workspace") {
 			t.Fatalf("dirty review err = %v", err)
 		}
 		op, err := service.Store().GetOperation(context.Background(), "review-dirty")

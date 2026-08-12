@@ -286,14 +286,22 @@ curl --unix-socket "$SOCKET" \
 The `task` is a bounded opaque external reference, not a shell command or authority-bearing
 configuration.
 
+To edit an existing GitHub pull request, the trusted caller may also send
+`"pull_request":{"number":514,"head_commit":"<exact full commit>"}`. Coop derives
+`refs/pull/514/head` through the policy's configured remote, requires it to equal the supplied
+commit, starts the generated bound branch at that commit, and records the pull-request binding.
+The caller cannot choose a repository, remote, or arbitrary ref. The session creation base is the
+merge base with the policy branch so review covers the complete existing pull-request change.
+
 | Method | Path | Body/query |
 | --- | --- | --- |
-| `POST` | `/v1/sessions` | `policy`, `task` |
+| `POST` | `/v1/sessions` | `policy`, `task`, optional `pull_request.number` + `pull_request.head_commit` |
 | `GET` | `/v1/sessions?limit=100` | `limit` is `1..1000` |
 | `GET` | `/v1/sessions/{session_id}` | none |
 | `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; policy must enable warm execution |
 
-The public session includes IDs, target, policy digest, primary base commit, companion aliases,
+The public session includes IDs, target, policy digest, primary base commit, optional immutable
+pull-request number/ref/head binding, companion aliases,
 in-box paths and pinned commits, generated fork name, revision, state, activity, queue/budget
 counters, event cursor, and timestamps. It excludes host repository and workspace paths, native
 session ID, prompts, credentials, environment, caller-defined mounts, and runtime data.
@@ -400,7 +408,9 @@ curl --unix-socket "$SOCKET" \
 
 `GET /v1/sessions/{session_id}/changes` returns:
 
-- immutable `base_commit`, current `fork_head`, and current `parent_head`;
+- immutable `base_commit`, current `fork_head` and `fork_tree`, and current `parent_head`;
+- for an existing-PR session, immutable `pull_request_tree`, allowing callers to distinguish new
+  content from empty commits or commit-and-revert history above the admitted PR head;
 - committed, staged, unstaged, untracked, and conflicted typed path records;
 - ahead/behind and base-to-head divergence counts;
 - a bounded binary patch page;
@@ -435,6 +445,7 @@ It snapshots exact source and parent commit/tree identities, prepares a disposab
 against current parent `HEAD`, runs the trusted parent gate read-only, and returns:
 
 - creation base, source, parent, and candidate commit/tree identities;
+- the immutable pull-request number/ref/head binding when the session came from an existing PR;
 - rebase status and gate status;
 - bounded policy findings;
 - a bounded inline patch preview from parent tree to candidate tree;
@@ -452,7 +463,9 @@ for conflict, no/failed gate, startup failure, policy findings, parent or source
 fork ownership, or an unavailable/oversized complete artifact. An external publisher applies the
 verified artifact to the exact `parent_head` in an isolated checkout and verifies that the resulting
 tree equals `candidate_tree`. It must stop on any mismatch and owns all GitHub credentials,
-branching, secret scans, commit creation, and draft-PR idempotency.
+branching, secret scans, commit creation, and draft-PR idempotency. For an existing pull request,
+the publisher must also compare-and-swap the recorded repository/ref at the recorded head before
+pushing and verify that the same pull request points to the resulting exact commit afterward.
 
 ### Close and discard
 

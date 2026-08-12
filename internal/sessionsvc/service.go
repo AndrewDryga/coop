@@ -462,8 +462,27 @@ func realGitRepository(path string) (string, error) {
 }
 
 type CreateRemoteSessionRequest struct {
-	Policy string `json:"policy"`
-	Task   string `json:"task"`
+	Policy      string                    `json:"policy"`
+	Task        string                    `json:"task"`
+	PullRequest *RemotePullRequestBinding `json:"pull_request,omitempty"`
+}
+
+// RemotePullRequestBinding selects one GitHub pull-request head through the
+// operator-owned remote configured by the session policy. The caller cannot
+// name a repository, remote, or arbitrary ref, and the expected head makes a
+// PR update racing session creation fail closed instead of silently changing
+// the task's approved source.
+type RemotePullRequestBinding struct {
+	Number     int    `json:"number"`
+	HeadCommit string `json:"head_commit"`
+}
+
+func cloneSessionPullRequestBinding(value *session.PullRequestBinding) *session.PullRequestBinding {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
 }
 
 type Runner interface {
@@ -1127,6 +1146,12 @@ func (s *Service) CreateRemoteSession(ctx context.Context, key string, req Creat
 	if req.Policy == "" || len(req.Policy) > session.MaxIDBytes || !utf8SessionText(req.Policy) || req.Task == "" || len(req.Task) > session.MaxExternalRefBytes || !utf8SessionText(req.Task) {
 		return session.Session{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "policy and bounded task are required"}
 	}
+	if req.PullRequest != nil && (req.PullRequest.Number < 1 ||
+		!validSessionWorkspaceCommit(req.PullRequest.HeadCommit)) {
+		return session.Session{}, &session.Error{
+			Code: session.CodeInvalidRequest, Detail: "pull request number and exact head commit are required",
+		}
+	}
 	op, replay, err := s.store.ReserveOperation(ctx, "CreateRemoteSession", key, req)
 	if err != nil {
 		return session.Session{}, err
@@ -1165,13 +1190,15 @@ func (s *Service) replayCreateOperation(ctx context.Context, op session.Operatio
 }
 
 type sessionCreateIntent struct {
-	OperationID string                        `json:"operation_id"`
-	Policy      Policy                        `json:"policy"`
-	Task        string                        `json:"task"`
-	SessionID   string                        `json:"session_id"`
-	ForkName    string                        `json:"fork_name"`
-	BaseCommit  string                        `json:"base_commit"`
-	Companions  []session.CompanionRepository `json:"companions,omitempty"`
+	OperationID     string                        `json:"operation_id"`
+	Policy          Policy                        `json:"policy"`
+	Task            string                        `json:"task"`
+	SessionID       string                        `json:"session_id"`
+	ForkName        string                        `json:"fork_name"`
+	BaseCommit      string                        `json:"base_commit"`
+	WorkspaceCommit string                        `json:"workspace_commit"`
+	PullRequest     *session.PullRequestBinding   `json:"pull_request,omitempty"`
+	Companions      []session.CompanionRepository `json:"companions,omitempty"`
 }
 
 func (s *Service) executeCreate(ctx context.Context, op session.Operation, req CreateRemoteSessionRequest) (session.Session, error) {
@@ -1180,7 +1207,7 @@ func (s *Service) executeCreate(ctx context.Context, op session.Operation, req C
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	sessionID := deterministicSessionID(op.ID)
-	base, companionCommits, err := pinSessionPolicyRepositories(ctx, policy)
+	pins, err := pinSessionPolicyRepositories(ctx, policy, req.PullRequest)
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
@@ -1194,13 +1221,21 @@ func (s *Service) executeCreate(ctx context.Context, op session.Operation, req C
 		}
 		companions = append(companions, session.CompanionRepository{
 			Name: companion.Name, Repository: companion.Repository,
-			Workspace: workspace, BaseCommit: companionCommits[index],
+			Workspace: workspace, BaseCommit: pins.companions[index],
 		})
 	}
 	intent := sessionCreateIntent{
 		OperationID: op.ID, Policy: policy, Task: req.Task,
-		SessionID: sessionID, ForkName: deterministicForkName(op.ID), BaseCommit: base,
-		Companions: companions,
+		SessionID: sessionID, ForkName: deterministicForkName(op.ID), BaseCommit: pins.creationBase,
+		WorkspaceCommit: pins.workspaceHead,
+		Companions:      companions,
+	}
+	if req.PullRequest != nil {
+		intent.PullRequest = &session.PullRequestBinding{
+			Number:     req.PullRequest.Number,
+			Ref:        fmt.Sprintf("refs/pull/%d/head", req.PullRequest.Number),
+			HeadCommit: req.PullRequest.HeadCommit,
+		}
 	}
 	data, err := json.Marshal(intent)
 	if err != nil {
@@ -1223,12 +1258,18 @@ func deterministicForkName(operationID string) string {
 }
 
 func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation, intent sessionCreateIntent) (session.Session, error) {
+	workspaceCommit := intent.WorkspaceCommit
+	if workspaceCommit == "" {
+		// Compatibility with create intents reserved before workspace_commit was added.
+		workspaceCommit = intent.BaseCommit
+	}
 	if intent.OperationID != op.ID || intent.SessionID == "" ||
 		!forkspace.ValidName(intent.ForkName) ||
-		!validSessionWorkspaceCommit(intent.BaseCommit) {
+		!validSessionWorkspaceCommit(intent.BaseCommit) ||
+		!validSessionWorkspaceCommit(workspaceCommit) {
 		return session.Session{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "create operation intent is invalid"}
 	}
-	workspace, err := ensureSessionWorkspace(intent.Policy.Repository, intent.ForkName, intent.BaseCommit)
+	workspace, err := ensureSessionWorkspace(intent.Policy.Repository, intent.ForkName, workspaceCommit)
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("ensure session workspace: %w", err))
 	}
@@ -1258,7 +1299,7 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		ID: intent.SessionID, ExternalRef: intent.Task, Target: intent.Policy.Targets[0].String(), Policy: intent.Policy.Name,
 		PolicyDigest: resolvedSessionPolicyDigest(intent.Policy),
 		Repository:   intent.Policy.Repository, Workspace: workspace.Path, ForkName: intent.ForkName,
-		BaseCommit: intent.BaseCommit, Companions: companions,
+		BaseCommit: intent.BaseCommit, PullRequest: intent.PullRequest, Companions: companions,
 		MaxTurns:       intent.Policy.MaxTurns,
 		MaxQueuedTurns: intent.Policy.MaxQueuedTurns, MaxQueuedBytes: intent.Policy.MaxQueuedBytes,
 		TurnTimeout: intent.Policy.TurnTimeout, MaxPatchBytes: intent.Policy.MaxPatchBytes,
@@ -1434,9 +1475,18 @@ func (s *Service) GetChanges(ctx context.Context, sessionID string) (WorkspaceCh
 	if err != nil {
 		return WorkspaceChanges{}, err
 	}
-	return inspectSessionChangesPageAtParent(
+	changes, err := inspectSessionChangesPageAtParent(
 		sess.Repository, sess.Workspace, sess.BaseCommit, parentHead, 0, sess.MaxPatchBytes,
 	)
+	if err != nil {
+		return WorkspaceChanges{}, err
+	}
+	if sess.PullRequest != nil {
+		changes.PullRequestTree, err = sessionWorkspaceTree(
+			sess.Workspace, sess.PullRequest.HeadCommit,
+		)
+	}
+	return changes, err
 }
 
 func (s *Service) GetChangesPage(
@@ -1462,7 +1512,7 @@ func (s *Service) GetChangesPage(
 	if err != nil {
 		return WorkspaceChanges{}, err
 	}
-	return inspectSessionChangesPageAtParent(
+	changes, err := inspectSessionChangesPageAtParent(
 		sess.Repository,
 		sess.Workspace,
 		sess.BaseCommit,
@@ -1470,6 +1520,15 @@ func (s *Service) GetChangesPage(
 		patchOffset,
 		patchLimit,
 	)
+	if err != nil {
+		return WorkspaceChanges{}, err
+	}
+	if sess.PullRequest != nil {
+		changes.PullRequestTree, err = sessionWorkspaceTree(
+			sess.Workspace, sess.PullRequest.HeadCommit,
+		)
+	}
+	return changes, err
 }
 
 type PlanDiscardRequest struct {
