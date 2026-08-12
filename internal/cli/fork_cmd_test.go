@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -436,6 +437,77 @@ func TestForkACPAcceptsCredential(t *testing.T) {
 	}
 	if code, err := a.forkACP("myfork", []string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
 		t.Errorf("fork acp --credential = (%d, %v), want (2, error)", code, err)
+	}
+}
+
+func TestForkACPMountsSessionCompanionsReadOnly(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "repo")
+	companion := filepath.Join(root, "topology")
+	for _, path := range []string{
+		repo,
+		forkspace.Workspace(repo, "myfork"),
+		companion,
+	} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bindings, err := json.Marshal([]map[string]string{{
+		"name": "topology", "repository": filepath.Join(root, "source-checkout"),
+		"workspace":   companion,
+		"base_commit": "0123456789abcdef0123456789abcdef01234567",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_SESSION_COMPANIONS", string(bindings))
+	recorder := filepath.Join(root, "runtime-args")
+	a := &app{
+		cfg: &config.Config{
+			RepoOverride: repo, ConfigDir: filepath.Join(root, "config"),
+			BoxHome: filepath.Join(root, "box"), HomeInBox: "/home/node",
+			ImageOverride: "test-image", Egress: "none",
+		},
+		rt: fusionRecordingRuntime(t, recorder), rtSet: true,
+	}
+	if code, runErr := a.forkACP("myfork", []string{"codex"}); runErr != nil || code != 0 {
+		t.Fatalf("forkACP = (%d, %v), want mounted companion", code, runErr)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		companion + ":/coop/repositories/topology:ro",
+		`"path":"/coop/repositories/topology"`,
+		`"base_commit":"0123456789abcdef0123456789abcdef01234567"`,
+	} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("fork ACP runtime args lack %q:\n%s", want, args)
+		}
+	}
+	if strings.Contains(string(args), filepath.Join(root, "source-checkout")) {
+		t.Fatalf("fork ACP mounted the policy source checkout:\n%s", args)
+	}
+}
+
+func TestForkACPRejectsMalformedSessionCompanionsBeforeRuntime(t *testing.T) {
+	t.Setenv("COOP_SESSION_COMPANIONS", "{")
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	a := &app{
+		cfg: &config.Config{RepoOverride: t.TempDir(), ImageOverride: "test-image"},
+		rt:  fusionRecordingRuntime(t, recorder), rtSet: true,
+	}
+	code, err := a.forkACP("myfork", []string{"codex"})
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "malformed") {
+		t.Fatalf("forkACP with malformed companions = (%d, %v), want fail closed", code, err)
+	}
+	if _, err := os.Stat(recorder); !os.IsNotExist(err) {
+		t.Fatalf("malformed companion binding reached runtime: %v", err)
 	}
 }
 

@@ -616,6 +616,10 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !forkspace.ValidExistingName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
 	}
+	companionRepositories, err := sessionCompanionRepositoriesFromEnvironment()
+	if err != nil {
+		return -1, err
+	}
 	peerVals, rest, err := extractPeer(rest)
 	if err != nil {
 		return 2, err
@@ -669,7 +673,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		Image: img, Repo: ws, Workdir: ws, Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name),
-		RunID: sessionsvc.RunIDFromEnv(),
+		RunID: sessionsvc.RunIDFromEnv(), CompanionRepositories: companionRepositories,
 	})
 }
 

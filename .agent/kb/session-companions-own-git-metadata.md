@@ -2,7 +2,7 @@
 name: session-companions-own-git-metadata
 description: companion boxes mount only the pinned workspace, so each snapshot must own usable Git metadata rather than point back to its source checkout
 subsystem: sessions
-sources: [internal/sessionsvc/companion.go, internal/box/run.go]
+sources: [internal/sessionsvc/companion.go, internal/cli/fork_cmd.go, internal/box/run.go]
 updated: 2026-08-11
 ---
 
@@ -13,6 +13,11 @@ updated: 2026-08-11
 operator's source checkout or Git configuration. A linked worktree therefore cannot function in
 the box: its `.git` file points to an absolute worktree-admin directory under the unmounted source
 repository.
+
+Session ACP runs enter that box through `forkACP`, not the ordinary direct-run path. The session
+service passes its policy-owned bindings in `COOP_SESSION_COMPANIONS`; `forkACP` must parse that
+trusted value and copy it into `RunSpec.CompanionRepositories` before launch. Keeping the handoff at
+that host-only boundary prevents the ACP request surface from supplying mount paths.
 
 `createSessionCompanion` builds an empty repository in an identity-pinned private staging directory.
 It enumerates reachable object IDs without lazy fetches, then sums their logical sizes through
@@ -45,3 +50,4 @@ discarded during rollout.
 - 2026-08-11 — isolated companion Git commands from host global and system configuration after a live Blitz checkout invoked Git LFS against a remote-less snapshot; added a hostile-filter regression and reverified code ranges
 - 2026-08-11 — moved cleanliness checks into an isolated temporary Git repository and disabled host attribute files during checkout after review found mutable local config, info attributes, and operator attributes could execute filters or rewrite bytes
 - 2026-08-11 — retained gitlink cleanliness without submodule recursion after rules review found that ignoring submodules could otherwise hide populated or deleted submodule paths during discard
+- 2026-08-11 — documented and regression-tested the fork-ACP environment-to-RunSpec handoff after live repository-set sessions received companion metadata but launched boxes without the mounts
