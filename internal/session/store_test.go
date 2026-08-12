@@ -495,12 +495,14 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
 	sess, err := store.CreateSession(ctx, "policy-fields", CreateSessionRequest{
-		Target: "target", PolicyDigest: strings.Repeat("a", 64), TurnTimeout: 3 * time.Minute, MaxPatchBytes: 1234,
+		Target: "target", PolicyDigest: strings.Repeat("a", 64), OmitEnv: true, OmitMCP: true,
+		TurnTimeout: 3 * time.Minute, MaxPatchBytes: 1234,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.PolicyDigest != strings.Repeat("a", 64) || sess.TurnTimeout != 3*time.Minute || sess.MaxPatchBytes != 1234 {
+	if sess.PolicyDigest != strings.Repeat("a", 64) || sess.ProjectEnv || sess.ProjectMCP ||
+		sess.TurnTimeout != 3*time.Minute || sess.MaxPatchBytes != 1234 {
 		t.Fatalf("created policy fields = %+v", sess)
 	}
 	if err := store.Close(); err != nil {
@@ -509,7 +511,8 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	store = openTestStore(t, root)
 	defer store.Close()
 	reopened, err := store.GetSession(ctx, sess.ID)
-	if err != nil || reopened.PolicyDigest != sess.PolicyDigest || reopened.TurnTimeout != sess.TurnTimeout || reopened.MaxPatchBytes != sess.MaxPatchBytes {
+	if err != nil || reopened.PolicyDigest != sess.PolicyDigest || reopened.ProjectEnv || reopened.ProjectMCP ||
+		reopened.TurnTimeout != sess.TurnTimeout || reopened.MaxPatchBytes != sess.MaxPatchBytes {
 		t.Fatalf("reopened policy fields = %+v, err=%v", reopened, err)
 	}
 

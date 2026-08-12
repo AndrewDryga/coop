@@ -56,6 +56,8 @@ policies:
       - name: responder
         repository: /srv/repos/responder
     target: [codex:gpt-5.6/medium@oncall, claude@oncall]
+    project_env: false
+    project_mcp: false
     max_turns: 100
     max_queued_turns: 20
     max_queued_bytes: 1048576
@@ -75,6 +77,9 @@ The parser rejects unknown fields and requires:
   configure its own paired `remote` and `branch`;
 - `target`: an ACP-capable target, or a list of up to 4 of them forming a fallback ladder; each
   rung names at most one credential, and no rung may repeat another;
+- `project_env` and `project_mcp`: optional booleans, defaulting to `true`, that let a policy omit
+  the daemon's shared environment or MCP configuration while retaining the selected provider
+  credential and trusted instructions;
 - `max_turns`: `1..10000`;
 - `max_queued_turns`: `1..1000`;
 - `max_queued_bytes`: `1..67108864`;
@@ -152,8 +157,9 @@ submodule config execution without weakening discard's modified-snapshot rejecti
 Companion host paths are never returned by the API. Discard verifies and removes both the primary
 fork and every owned companion snapshot.
 
-The daemon's `mcp.json`, `env`, and `INSTRUCTIONS.md` are copied into private session state only
-while a turn runs, then removed with the projected provider credential. This lets an operator run
+Unless the session policy disables them, the daemon's `mcp.json` and `env` are copied into private
+session state with `INSTRUCTIONS.md` only while a turn runs, then removed with the projected
+provider credential. This lets an operator run
 the daemon under a dedicated least-privilege Coop configuration, for example an observe-only Emisar
 MCP credential, without mounting the shared provider home. These files apply to every policy served
 by that daemon; use a separate state root/socket and dedicated Coop configuration for a distinct

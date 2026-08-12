@@ -36,6 +36,9 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 	if version >= 5 {
 		ddl += schemaV5
 	}
+	if version >= 6 {
+		ddl += schemaV6
+	}
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("build v%d schema: %v", version, err)
 	}
@@ -109,7 +112,8 @@ func TestMigrationFromEachHistoricalVersionReachesCurrentSchema(t *testing.T) {
 			if err != nil {
 				t.Fatalf("legacy session after v%d migration: %v", version, err)
 			}
-			if sess.Target != "codex:legacy" || sess.State != SessionOpen || sess.MaxPatchBytes != 1048576 {
+			if sess.Target != "codex:legacy" || sess.State != SessionOpen ||
+				sess.MaxPatchBytes != 1048576 || !sess.ProjectEnv || !sess.ProjectMCP {
 				t.Fatalf("legacy session after v%d migration = %+v", version, sess)
 			}
 			wantCompanions := 0

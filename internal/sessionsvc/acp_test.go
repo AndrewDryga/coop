@@ -621,6 +621,39 @@ func TestSessionACPProjectionTracksDestinationBeforeFailedWrite(t *testing.T) {
 	}
 }
 
+func TestSessionACPProjectionCanOmitSharedEnvironmentAndMCP(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	bound := fixture.session
+	bound.ProjectEnv = false
+	bound.ProjectMCP = false
+	target, err := agents.ParseTarget(bound.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, ok := agents.Get(target.Provider)
+	if !ok {
+		t.Fatal("codex test agent is unavailable")
+	}
+	projection, err := fixture.runner.projectCredentials(bound, target, agent, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = projection.remove() })
+	for _, name := range []string{"env", "mcp.json"} {
+		if pathExists(filepath.Join(fixture.private, name)) {
+			t.Fatalf("policy-disabled %s was projected", name)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(fixture.private, "INSTRUCTIONS.md"),
+		filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json"),
+	} {
+		if !pathExists(path) {
+			t.Fatalf("required session projection is missing: %s", path)
+		}
+	}
+}
+
 func TestSessionTurnRunnerStartupCleanupPreservesNativeHistory(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	profile := filepath.Join(fixture.private, "codex", "profiles", "work")

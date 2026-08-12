@@ -60,6 +60,8 @@ type Policy struct {
 	Branch          string
 	Companions      []CompanionPolicy
 	Targets         []agents.Target
+	OmitEnv         bool
+	OmitMCP         bool
 	MaxTurns        int
 	MaxQueuedTurns  int
 	MaxQueuedBytes  int
@@ -108,6 +110,8 @@ type rawSessionPolicy struct {
 	Branch          string                      `yaml:"branch"`
 	Companions      []rawSessionCompanionPolicy `yaml:"companions"`
 	Target          yaml.Node                   `yaml:"target"`
+	ProjectEnv      *bool                       `yaml:"project_env"`
+	ProjectMCP      *bool                       `yaml:"project_mcp"`
 	MaxTurns        int                         `yaml:"max_turns"`
 	MaxQueuedTurns  int                         `yaml:"max_queued_turns"`
 	MaxQueuedBytes  int                         `yaml:"max_queued_bytes"`
@@ -351,8 +355,11 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 	}
 	return Policy{
 		Name: name, Repository: realRepo, Remote: raw.Remote, Branch: raw.Branch,
-		Companions: companions,
-		Targets:    ladder, MaxTurns: raw.MaxTurns,
+		Companions:     companions,
+		Targets:        ladder,
+		OmitEnv:        raw.ProjectEnv != nil && !*raw.ProjectEnv,
+		OmitMCP:        raw.ProjectMCP != nil && !*raw.ProjectMCP,
+		MaxTurns:       raw.MaxTurns,
 		MaxQueuedTurns: raw.MaxQueuedTurns, MaxQueuedBytes: raw.MaxQueuedBytes,
 		TurnTimeout: timeout, WarmIdleTimeout: warmIdleTimeout,
 		MaxPatchBytes: raw.MaxPatchBytes,
@@ -706,6 +713,8 @@ func resolvedSessionPolicyDigest(policy Policy) string {
 		Branch          string            `json:"branch,omitempty"`
 		Companions      []CompanionPolicy `json:"companions,omitempty"`
 		Target          string            `json:"target"`
+		OmitEnv         bool              `json:"omit_env,omitempty"`
+		OmitMCP         bool              `json:"omit_mcp,omitempty"`
 		MaxTurns        int               `json:"max_turns"`
 		MaxQueuedTurns  int               `json:"max_queued_turns"`
 		MaxQueuedBytes  int               `json:"max_queued_bytes"`
@@ -715,7 +724,8 @@ func resolvedSessionPolicyDigest(policy Policy) string {
 	}{
 		Name: policy.Name, Repository: policy.Repository,
 		Remote: policy.Remote, Branch: policy.Branch, Companions: policy.Companions,
-		Target:   sessionTargetList(policy.Targets),
+		Target:  sessionTargetList(policy.Targets),
+		OmitEnv: policy.OmitEnv, OmitMCP: policy.OmitMCP,
 		MaxTurns: policy.MaxTurns, MaxQueuedTurns: policy.MaxQueuedTurns,
 		MaxQueuedBytes: policy.MaxQueuedBytes, TurnTimeout: int64(policy.TurnTimeout),
 		WarmIdleTimeout: int64(policy.WarmIdleTimeout),
@@ -1522,6 +1532,8 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		// A session starts on the ladder's first rung; a rate limit rotates it to the next.
 		ID: intent.SessionID, ExternalRef: intent.Task, Target: intent.Policy.Targets[0].String(), Policy: intent.Policy.Name,
 		PolicyDigest: resolvedSessionPolicyDigest(intent.Policy),
+		OmitEnv:      intent.Policy.OmitEnv,
+		OmitMCP:      intent.Policy.OmitMCP,
 		Repository:   intent.Policy.Repository, Workspace: workspace.Path, ForkName: intent.ForkName,
 		BaseCommit: intent.BaseCommit, PullRequest: intent.PullRequest, Companions: companions,
 		MaxTurns:       intent.Policy.MaxTurns,

@@ -781,7 +781,7 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 		return nil, acpFailure(sessionACPCredentialError, "private credential root overlaps source credentials")
 	}
 	projection := &sessionACPProjection{privateRoot: privateRoot}
-	if err := r.projectSessionConfigFiles(sourceRoot, projection); err != nil {
+	if err := r.projectSessionConfigFiles(sourceRoot, bound, projection); err != nil {
 		return projection, err
 	}
 	sourceProfile := filepath.Join(sourceRoot, target.Provider, "profiles", account)
@@ -873,7 +873,11 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	return projection, nil
 }
 
-func (r *sessionTurnRunner) projectSessionConfigFiles(sourceRoot string, projection *sessionACPProjection) error {
+func (r *sessionTurnRunner) projectSessionConfigFiles(
+	sourceRoot string,
+	bound session.Session,
+	projection *sessionACPProjection,
+) error {
 	mcpFile := r.sourceCfg.MCPFile
 	if mcpFile == "" {
 		mcpFile = filepath.Join(sourceRoot, "mcp.json")
@@ -890,6 +894,10 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(sourceRoot string, project
 		destination := filepath.Join(projection.privateRoot, source.name)
 		if err := removeProjectedSessionFile(destination); err != nil {
 			return acpFailure(sessionACPCredentialError, "stale private config is unsafe")
+		}
+		if source.name == "env" && !bound.ProjectEnv ||
+			source.name == "mcp.json" && !bound.ProjectMCP {
+			continue
 		}
 		sourcePath, err := filepath.Abs(filepath.Clean(source.path))
 		if err != nil {

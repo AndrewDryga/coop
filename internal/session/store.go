@@ -681,6 +681,8 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 		Target:         req.Target,
 		Policy:         req.Policy,
 		PolicyDigest:   req.PolicyDigest,
+		ProjectEnv:     !req.OmitEnv,
+		ProjectMCP:     !req.OmitMCP,
 		Repository:     req.Repository,
 		Workspace:      req.Workspace,
 		ForkName:       req.ForkName,
@@ -707,11 +709,11 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
-		(id, external_ref, target, policy, policy_digest, repository, workspace, fork_name, base_commit, companions,
+		(id, external_ref, target, policy, policy_digest, project_env, project_mcp, repository, workspace, fork_name, base_commit, companions,
 		 pull_request_number, pull_request_ref, pull_request_head_commit,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
-		sess.Policy, sess.PolicyDigest, sess.Repository, sess.Workspace, sess.ForkName, sess.BaseCommit,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		sess.Policy, sess.PolicyDigest, sess.ProjectEnv, sess.ProjectMCP, sess.Repository, sess.Workspace, sess.ForkName, sess.BaseCommit,
 		string(companions), pullRequestNumber(sess.PullRequest), pullRequestRef(sess.PullRequest), pullRequestHead(sess.PullRequest),
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
 		sess.MaxQueuedTurns, sess.MaxQueuedBytes, now.UnixNano(), now.UnixNano()); err != nil {
@@ -764,12 +766,16 @@ func normalizeCreateRequest(req CreateSessionRequest) CreateSessionRequest {
 	}
 	if req.PolicyDigest == "" {
 		companions, _ := json.Marshal(req.Companions)
-		sum := sha256.Sum256([]byte(strings.Join([]string{
+		bindings := []string{
 			req.Policy, req.Target, req.Repository, req.Workspace, req.ForkName, req.BaseCommit,
 			string(companions), fmt.Sprintf("%d", pullRequestNumber(req.PullRequest)),
 			pullRequestRef(req.PullRequest), pullRequestHead(req.PullRequest),
 			fmt.Sprintf("%d", req.TurnTimeout), fmt.Sprintf("%d", req.MaxPatchBytes),
-		}, "\x00")))
+		}
+		if req.OmitEnv || req.OmitMCP {
+			bindings = append(bindings, fmt.Sprintf("omit-env=%t", req.OmitEnv), fmt.Sprintf("omit-mcp=%t", req.OmitMCP))
+		}
+		sum := sha256.Sum256([]byte(strings.Join(bindings, "\x00")))
 		req.PolicyDigest = hex.EncodeToString(sum[:])
 	}
 	return req
@@ -941,7 +947,7 @@ func (s *Store) ListInterruptedTurns(ctx context.Context) ([]Turn, error) {
 	return turns, nil
 }
 
-const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, repository, workspace, fork_name,
+const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, project_env, project_mcp, repository, workspace, fork_name,
 	   base_commit, companions, pull_request_number, pull_request_ref, pull_request_head_commit,
 	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
 	   max_turns, max_queued_turns, max_queued_bytes, turns_used, queued_turn_count,
@@ -959,7 +965,7 @@ func scanSession(row rowScanner) (Session, error) {
 	var turnTimeout int64
 	var createdAt, updatedAt int64
 	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest,
-		&sess.Repository, &sess.Workspace, &sess.ForkName, &sess.BaseCommit, &companions,
+		&sess.ProjectEnv, &sess.ProjectMCP, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.BaseCommit, &companions,
 		&pullRequestNumber, &pullRequestRef, &pullRequestHead, &sess.NativeSessionID,
 		&turnTimeout, &sess.MaxPatchBytes, &sess.Revision, &state, &activity, &sess.MaxTurns,
 		&sess.MaxQueuedTurns, &sess.MaxQueuedBytes, &sess.TurnsUsed, &sess.QueuedTurnCount,

@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Remote-session policies can now withhold shared operational capabilities.** Policies may set
+  `project_env: false` and `project_mcp: false` to keep the daemon's shared environment and MCP
+  configuration out of a session while still projecting the selected model credential and trusted
+  instructions. The choices are policy-digested, persisted with the session, and enforced on every
+  cold or warm ACP turn; existing policies retain their current projection defaults.
+
 ## 8.0.0
 
 - **The loop can no longer adopt a task a human is actively claiming.** `coop tasks claim` is a pure

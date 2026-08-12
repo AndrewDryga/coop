@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 6
+	SchemaVersion = 7
 
 	MaxIDBytes              = 256
 	MaxMethodBytes          = 128
@@ -202,6 +202,8 @@ type Session struct {
 	Target            string                `json:"target"`
 	Policy            string                `json:"policy"`
 	PolicyDigest      string                `json:"policy_digest"`
+	ProjectEnv        bool                  `json:"project_env"`
+	ProjectMCP        bool                  `json:"project_mcp"`
 	Repository        string                `json:"repository"`
 	Workspace         string                `json:"workspace"`
 	ForkName          string                `json:"fork_name"`
@@ -329,6 +331,8 @@ type CreateSessionRequest struct {
 	Target         string                `json:"target"`
 	Policy         string                `json:"policy"`
 	PolicyDigest   string                `json:"policy_digest"`
+	OmitEnv        bool                  `json:"omit_env,omitempty"`
+	OmitMCP        bool                  `json:"omit_mcp,omitempty"`
 	Repository     string                `json:"repository"`
 	Workspace      string                `json:"workspace"`
 	ForkName       string                `json:"fork_name"`

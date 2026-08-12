@@ -133,6 +133,22 @@ func TestParseSessionPoliciesAcceptsATargetLadder(t *testing.T) {
 	if got := sessionTargetList(policies["responder"].Targets); got != "codex:gpt-5.6-sol/xhigh@oncall claude@oncall" {
 		t.Fatalf("cross-provider ladder = %q", got)
 	}
+	if policies["responder"].OmitEnv || policies["responder"].OmitMCP {
+		t.Fatal("omitted projection controls changed the existing policy defaults")
+	}
+	lockedDown := bytes.Replace(
+		policy("codex@oncall"),
+		[]byte("    target:"),
+		[]byte("    project_env: false\n    project_mcp: false\n    target:"),
+		1,
+	)
+	policies, err = parseSessionPolicies(lockedDown, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policies["responder"].OmitEnv || !policies["responder"].OmitMCP {
+		t.Fatalf("locked-down projection controls = %+v", policies["responder"])
+	}
 
 	// A rung with no @credential resolves to that provider's default, exactly as a scalar does.
 	policies, err = parseSessionPolicies(policy("[claude@oncall, codex]"), cfg)
@@ -185,6 +201,11 @@ func TestWarmIdleTimeoutIsBoundIntoPolicyDigest(t *testing.T) {
 		t.Fatal("warm idle timeout did not change the immutable policy digest")
 	}
 	policy.WarmIdleTimeout = 0
+	policy.OmitMCP = true
+	if withoutMCP := resolvedSessionPolicyDigest(policy); withoutMCP == cold {
+		t.Fatal("MCP projection policy did not change the immutable policy digest")
+	}
+	policy.OmitMCP = false
 	policy.Remote, policy.Branch = "origin", "main"
 	if remote := resolvedSessionPolicyDigest(policy); remote == cold {
 		t.Fatal("remote repository source did not change the immutable policy digest")
