@@ -224,8 +224,19 @@ returns `idempotency_conflict`.
 
 After a lost response, retry the same request with the same key. If an earlier response supplied an
 operation ID, `GET /v1/operations/{operation_id}` reports its state, error code, and resource ID.
+When a mutation response may have been lost after admission, `GET /v1/operations?key=<idempotency-key>`
+recovers the same public projection by the caller's exact bounded idempotency key. The query accepts
+one `key` only and never returns the key, request hash, private intent, or result body.
 Operation lookup deliberately omits the stored request, private result, prompts, native provider
 IDs, and host paths.
+
+Session creation can be admitted without holding the HTTP request open. Send
+`Prefer: respond-async` on `POST /v1/sessions`; Coop durably records the create intent and returns
+`202 Accepted` with an `operation` in `running` or terminal state. Poll
+`GET /v1/operations/{operation_id}` until it succeeds, then fetch the returned session resource.
+The create continues under the daemon lifetime if the client disconnects. An exact replay with the
+same key coalesces onto the same operation. Callers that omit the preference retain the synchronous
+response for compatibility.
 
 State-changing requests carry `expected_revision`. Read the current session before acting and treat
 `revision_conflict` as a request to reconcile, not as permission to guess a new action.
@@ -279,6 +290,7 @@ Create:
 curl --unix-socket "$SOCKET" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: responder:create:01J...' \
+  -H 'Prefer: respond-async' \
   -d '{"policy":"emisar-observe","task":"incident/repository binding 01J..."}' \
   http://localhost/v1/sessions
 ```
@@ -292,6 +304,11 @@ To edit an existing GitHub pull request, the trusted caller may also send
 commit, starts the generated bound branch at that commit, and records the pull-request binding.
 The caller cannot choose a repository, remote, or arbitrary ref. The session creation base is the
 merge base with the policy branch so review covers the complete existing pull-request change.
+
+With `Prefer: respond-async`, this endpoint returns only the public operation and status 202. The
+operation's successful `resource_type` is `session`; `resource_id` is then safe to fetch through
+`GET /v1/sessions/{session_id}`. Without that preference, it waits and returns the historical
+operation-plus-session response.
 
 | Method | Path | Body/query |
 | --- | --- | --- |
@@ -518,10 +535,17 @@ Errors have one shape:
 {
   "error": {
     "code": "revision_conflict",
-    "detail": "expected revision 4, current revision 5"
+    "detail": "expected revision 4, current revision 5",
+    "operation_id": "op_..."
   }
 }
 ```
+
+`operation_id` is present when Coop admitted an operation before the failure. Internal details
+remain suppressed on the public API. The daemon emits a bounded JSON diagnostic to stderr with the
+same operation ID, method, resource identity, error code, and a sanitized detail; repository and
+state-root paths are replaced and secret-bearing lines are removed. Use the ID to correlate the
+client error, operation record, and supervisor log without reading SQLite directly.
 
 Common status mapping:
 
@@ -551,6 +575,10 @@ intent remains `operation_uncertain`.
 | Daemon already owns state | Stop or inspect that daemon; do not remove the lock |
 | Stale socket after crash | Start the daemon with the same state root; it removes only a socket after acquiring the state lock |
 | Queued turn at restart | Coop resumes it in FIFO order |
+| Running session create at restart | Coop resumes its durable create intent automatically |
+| Reserved operation at restart | Coop records an interrupted-admission failure; nothing external was attempted |
+| Other running operation at restart | Coop marks it `operation_uncertain`; reconcile rather than replaying under a new key |
+| Operation remains running after startup | The periodic watchdog resumes safe creates and marks stale ambiguous mutations uncertain |
 | Turn interrupted after send intent | Surface interrupted; do not submit the same human input automatically |
 | Active turn must stop | Use the idempotent cancel endpoint, then reconcile the terminal turn |
 | Session should stop costing runtime | Wait for park; no agent or Compose service container remains between turns |

@@ -336,6 +336,102 @@ func TestMarkOperationRunningIsBoundedIdempotentAndRaceSafe(t *testing.T) {
 	}
 }
 
+func TestReplaceOperationIntentAndListIncompleteOperations(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	first, _, err := store.ReserveOperation(ctx, "CreateRemoteSession", "replace-first", map[string]string{"task": "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := store.ReserveOperation(ctx, "RunReview", "replace-second", map[string]string{"task": "two"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstIntent := []byte(`{"phase":"admitted"}`)
+	secondIntent := []byte(`{"phase":"reviewing"}`)
+	if err := store.MarkOperationRunning(ctx, first.ID, firstIntent); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkOperationRunning(ctx, second.ID, secondIntent); err != nil {
+		t.Fatal(err)
+	}
+	reserved, _, err := store.ReserveOperation(ctx, "CreateRemoteSession", "reserved-operation", map[string]string{"task": "not started"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := []byte(`{"phase":"pinned","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
+	if err := store.ReplaceOperationIntent(ctx, first.ID, firstIntent, pinned); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceOperationIntent(ctx, first.ID, firstIntent, []byte(`{"phase":"stale"}`)); CodeOf(err) != CodeOperationIntentConflict {
+		t.Fatalf("stale intent replacement error = %v", err)
+	}
+	running, err := store.ListIncompleteOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(running) != 3 {
+		t.Fatalf("incomplete operations = %+v", running)
+	}
+	byID := make(map[string]Operation, len(running))
+	for _, operation := range running {
+		byID[operation.ID] = operation
+	}
+	if string(byID[first.ID].Result) != string(pinned) ||
+		string(byID[second.ID].Result) != string(secondIntent) ||
+		byID[reserved.ID].State != OperationReserved {
+		t.Fatalf("incomplete operation intents = %+v", byID)
+	}
+	if err := store.CompleteOperation(ctx, first.ID, "session", "s1", []byte(`{"id":"s1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceOperationIntent(ctx, first.ID, pinned, []byte(`{"phase":"late"}`)); CodeOf(err) != CodeOperationIntentConflict {
+		t.Fatalf("terminal intent replacement error = %v", err)
+	}
+	running, err = store.ListIncompleteOperations(ctx)
+	if err != nil || len(running) != 2 {
+		t.Fatalf("incomplete operations after completion = %+v, err=%v", running, err)
+	}
+}
+
+func TestReconcileOperationRejectsAStaleSnapshotWithTheSameClock(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	op, _, err := store.ReserveOperation(ctx, "CreateRemoteSession", "reconcile-cas", map[string]string{"task": "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted := []byte(`{"phase":"admitted"}`)
+	if err := store.MarkOperationRunning(ctx, op.ID, admitted); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.GetOperationByID(ctx, op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := []byte(`{"phase":"pinned","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
+	if err := store.ReplaceOperationIntent(ctx, op.ID, admitted, pinned); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := store.ReconcileOperation(ctx, snapshot, OperationUncertain, CodeOperationUncertain, "stale watchdog")
+	if err != nil || changed {
+		t.Fatalf("stale reconcile = changed %t, %v", changed, err)
+	}
+	current, err := store.GetOperationByID(ctx, op.ID)
+	if err != nil || current.State != OperationRunning || string(current.Result) != string(pinned) {
+		t.Fatalf("current operation = %+v, %v", current, err)
+	}
+	if err := store.CompleteOperation(ctx, op.ID, "session", "ses_1", []byte(`{"id":"ses_1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	changed, err = store.ReconcileOperation(ctx, current, OperationUncertain, CodeOperationUncertain, "late watchdog")
+	if err != nil || changed {
+		t.Fatalf("completed reconcile = changed %t, %v", changed, err)
+	}
+}
+
 func TestMarkOperationUncertainPreservesRunningIntent(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))

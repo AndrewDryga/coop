@@ -1,6 +1,7 @@
 package forkspace
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/processidentity"
 )
@@ -34,6 +36,13 @@ func LockPath(repo, name string) string { return filepath.Join(StateDir(repo), n
 // LockState serializes start, worker cleanup, and stop for one fork. The lock file persists,
 // but flock ownership does not: the kernel releases it if a coop process crashes.
 func LockState(repo, name string) (func(), error) {
+	return LockStateContext(context.Background(), repo, name)
+}
+
+// LockStateContext acquires a lifecycle lock without making service shutdown
+// wait forever behind another process. The ordinary command path passes a
+// background context and retains the historical blocking behavior.
+func LockStateContext(ctx context.Context, repo, name string) (func(), error) {
 	if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
 		return nil, err
 	}
@@ -41,9 +50,21 @@ func LockState(repo, name string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		_ = f.Close()
-		return nil, err
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			_ = f.Close()
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			_ = f.Close()
+			return nil, ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
 	}
 	return func() {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

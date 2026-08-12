@@ -360,6 +360,40 @@ func (s *Store) MarkOperationRunning(ctx context.Context, operationID string, in
 	return nil
 }
 
+// ReplaceOperationIntent advances a running operation's recoverable intent
+// with an optimistic compare-and-swap. It is used when admission is durable
+// before a slow external read (for example Git ref resolution), then that read
+// supplies immutable pins required by the execution phase.
+func (s *Store) ReplaceOperationIntent(
+	ctx context.Context,
+	operationID string,
+	expected []byte,
+	intent []byte,
+) error {
+	if operationID == "" || !validBoundedText(operationID, MaxIDBytes) {
+		return &Error{Code: CodeInvalidRequest, Detail: "operation id is required"}
+	}
+	if len(expected) == 0 || len(intent) == 0 || len(intent) > MaxOperationResultBytes {
+		return &Error{Code: CodeInvalidRequest, Detail: "operation intent is outside bounds"}
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE operations SET result = ?, updated_at = ?
+		WHERE id = ? AND state = ? AND result = ?`,
+		intent, s.now().UnixNano(), operationID, string(OperationRunning), expected,
+	)
+	if err != nil {
+		return fmt.Errorf("replace operation intent: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("replace operation intent: %w", err)
+	}
+	if rows != 1 {
+		return &Error{Code: CodeOperationIntentConflict, Detail: "operation intent changed before it could be advanced"}
+	}
+	return nil
+}
+
 // MarkOperationUncertain preserves the recorded intent while making a running
 // operation non-replayable after its external outcome is unknown.
 func (s *Store) MarkOperationUncertain(ctx context.Context, operationID string) error {
@@ -392,6 +426,36 @@ func (s *Store) MarkOperationUncertain(ctx context.Context, operationID string) 
 		return fmt.Errorf("commit uncertain operation: %w", err)
 	}
 	return nil
+}
+
+// ReconcileOperation applies a watchdog transition only to the exact snapshot
+// the watchdog inspected. Timestamp, intent bytes, and resource identity form
+// the mutable snapshot, so a concurrent replay or receipt wins even under a
+// fixed/coarse clock and stale reconciliation becomes a harmless no-op.
+func (s *Store) ReconcileOperation(
+	ctx context.Context,
+	operation Operation,
+	state OperationState,
+	code ErrorCode,
+	detail string,
+) (bool, error) {
+	if operation.ID == "" || (state != OperationFailed && state != OperationUncertain) {
+		return false, &Error{Code: CodeInvalidRequest, Detail: "invalid operation reconciliation"}
+	}
+	detail = boundedErrorDetail(detail)
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE operations SET state = ?, error_code = ?, error_detail = ?, updated_at = ?
+		WHERE id = ? AND state = ? AND updated_at = ?
+		  AND resource_type = ? AND resource_id = ? AND result IS ?`,
+		string(state), string(code), detail, s.now().UnixNano(),
+		operation.ID, string(operation.State), operation.UpdatedAt.UnixNano(),
+		operation.ResourceType, operation.ResourceID, operation.Result,
+	)
+	if err != nil {
+		return false, fmt.Errorf("reconcile operation: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	return rows == 1, err
 }
 
 func (s *Store) CompleteOperation(ctx context.Context, id, resourceType, resourceID string, result []byte) error {
@@ -479,6 +543,33 @@ func (s *Store) GetOperationByID(ctx context.Context, id string) (Operation, err
 	return s.getOperation(ctx, `WHERE id = ?`, id)
 }
 
+// ListIncompleteOperations returns every durable mutation that has not reached
+// a terminal receipt. Reserved rows are included because a process can crash
+// between admission and persisting its recoverable running intent.
+func (s *Store) ListIncompleteOperations(ctx context.Context) ([]Operation, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, method, idempotency_key, request_hash, state, resource_type,
+		       resource_id, result, error_code, error_detail, created_at, updated_at
+		FROM operations WHERE state IN (?, ?) ORDER BY updated_at, id`,
+		string(OperationReserved), string(OperationRunning))
+	if err != nil {
+		return nil, fmt.Errorf("list incomplete operations: %w", err)
+	}
+	defer rows.Close()
+	var operations []Operation
+	for rows.Next() {
+		op, err := scanOperationRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan incomplete operation: %w", err)
+		}
+		operations = append(operations, op)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list incomplete operations: %w", err)
+	}
+	return operations, nil
+}
+
 func (s *Store) ListOperationIDsForResource(
 	ctx context.Context,
 	method string,
@@ -530,10 +621,22 @@ func (s *Store) getOperation(ctx context.Context, where string, arg string) (Ope
 }
 
 func scanOperation(row *sql.Row) (Operation, error) {
+	return scanOperationValue(row.Scan)
+}
+
+type operationScanner interface {
+	Scan(...any) error
+}
+
+func scanOperationRows(row operationScanner) (Operation, error) {
+	return scanOperationValue(row.Scan)
+}
+
+func scanOperationValue(scan func(...any) error) (Operation, error) {
 	var op Operation
 	var state, resourceType, resourceID, errorCode, errorDetail string
 	var createdAt, updatedAt int64
-	if err := row.Scan(&op.ID, &op.Method, &op.IdempotencyKey, &op.RequestHash, &state,
+	if err := scan(&op.ID, &op.Method, &op.IdempotencyKey, &op.RequestHash, &state,
 		&resourceType, &resourceID, &op.Result, &errorCode, &errorDetail, &createdAt, &updatedAt); err != nil {
 		return Operation{}, err
 	}

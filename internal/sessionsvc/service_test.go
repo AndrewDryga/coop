@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -333,6 +335,414 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 	replayed, err := service.CreateRemoteSession(context.Background(), "create-1", request)
 	if err != nil || replayed.ID != sess.ID || replayed.Workspace != sess.Workspace {
 		t.Fatalf("create replay = %+v, err=%v", replayed, err)
+	}
+}
+
+func TestSessionServiceAsyncCreateReturnsBeforeSlowPinAndCompletes(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	service.testBeforeCreatePin = func() error {
+		close(entered)
+		<-release
+		return nil
+	}
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	op, err := service.CreateRemoteSessionAsync(
+		context.Background(), "async-create", CreateRemoteSessionRequest{Policy: "responder", Task: "slow pin"},
+	)
+	if err != nil || op.State != session.OperationRunning {
+		t.Fatalf("async create = %+v, err=%v", op, err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("asynchronous create did not start")
+	}
+	current, err := service.Store().GetOperationByID(context.Background(), op.ID)
+	if err != nil || current.State != session.OperationRunning {
+		t.Fatalf("blocked operation = %+v, err=%v", current, err)
+	}
+	close(release)
+	waitForSessionTest(t, func() bool {
+		current, err = service.Store().GetOperationByID(context.Background(), op.ID)
+		return err == nil && current.State == session.OperationSucceeded
+	})
+	created, err := service.Store().GetSession(context.Background(), current.ResourceID)
+	if err != nil || created.ExternalRef != "slow pin" {
+		t.Fatalf("created session = %+v, err=%v", created, err)
+	}
+}
+
+func TestSessionServiceStartupRecoversAsyncCreateAndMakesOtherOperationsUncertain(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	policies := testSessionPolicies(repo)
+	before := newTestSessionService(t, stateRoot, policies, nil)
+	create, err := before.CreateRemoteSessionAsync(
+		context.Background(), "restart-create", CreateRemoteSessionRequest{Policy: "responder", Task: "resume after restart"},
+	)
+	if err != nil || create.State != session.OperationRunning {
+		t.Fatalf("admitted create = %+v, err=%v", create, err)
+	}
+	other, _, err := before.Store().ReserveOperation(
+		context.Background(), "RunReview", "stranded-review", map[string]string{"session_id": "s1"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := before.Store().MarkOperationRunning(context.Background(), other.ID, []byte(`{"session_id":"s1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	reserved, _, err := before.Store().ReserveOperation(
+		context.Background(), "ExtendBudget", "stranded-reserved", map[string]string{"session_id": "s1"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := before.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	after := newTestSessionService(t, stateRoot, policies, nil)
+	if err := after.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer after.Stop()
+	var recovered, uncertain, reservedAfter session.Operation
+	waitForSessionTest(t, func() bool {
+		recovered, _ = after.Store().GetOperationByID(context.Background(), create.ID)
+		uncertain, _ = after.Store().GetOperationByID(context.Background(), other.ID)
+		reservedAfter, _ = after.Store().GetOperationByID(context.Background(), reserved.ID)
+		return recovered.State == session.OperationSucceeded &&
+			uncertain.State == session.OperationUncertain &&
+			reservedAfter.State == session.OperationFailed
+	})
+	if recovered.ResourceType != "session" || recovered.ResourceID == "" ||
+		uncertain.ErrorCode != session.CodeOperationUncertain ||
+		reservedAfter.ErrorCode != session.CodeOperationUncertain {
+		t.Fatalf("recovered create=%+v uncertain review=%+v reserved=%+v", recovered, uncertain, reservedAfter)
+	}
+}
+
+func TestSessionServiceShutdownLeavesActiveCreateRecoverable(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	policies := testSessionPolicies(repo)
+	before := newTestSessionService(t, stateRoot, policies, nil)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	before.testBeforeCreatePin = func() error {
+		close(entered)
+		<-release
+		return nil
+	}
+	if err := before.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	op, err := before.CreateRemoteSessionAsync(
+		context.Background(), "shutdown-create",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "survive restart"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("asynchronous create did not start")
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- before.Stop() }()
+	close(release)
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+
+	after := newTestSessionService(t, stateRoot, policies, nil)
+	if err := after.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer after.Stop()
+	var recovered session.Operation
+	waitForSessionTest(t, func() bool {
+		recovered, _ = after.Store().GetOperationByID(context.Background(), op.ID)
+		return recovered.State == session.OperationSucceeded
+	})
+	if recovered.ResourceType != "session" || recovered.ResourceID == "" {
+		t.Fatalf("recovered create = %+v", recovered)
+	}
+}
+
+func TestSessionServiceCancelledSynchronousDuplicateCannotFailAsyncCreate(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(
+		t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil,
+	)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	service.testBeforeCreatePin = func() error {
+		close(entered)
+		<-release
+		return nil
+	}
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	req := CreateRemoteSessionRequest{Policy: "responder", Task: "mixed client replay"}
+	op, err := service.CreateRemoteSessionAsync(context.Background(), "mixed-create", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("asynchronous create did not start")
+	}
+	duplicateCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	_, duplicateErr := service.CreateRemoteSession(duplicateCtx, "mixed-create", req)
+	cancel()
+	if !errors.Is(duplicateErr, context.DeadlineExceeded) {
+		t.Fatalf("synchronous duplicate error = %v", duplicateErr)
+	}
+	current, err := service.Store().GetOperationByID(context.Background(), op.ID)
+	if err != nil || current.State != session.OperationRunning {
+		t.Fatalf("operation after cancelled duplicate = %+v err=%v", current, err)
+	}
+	close(release)
+	waitForSessionTest(t, func() bool {
+		current, _ = service.Store().GetOperationByID(context.Background(), op.ID)
+		return current.State == session.OperationSucceeded
+	})
+}
+
+func TestSessionServiceWatchdogDefersActiveOperationThenMakesItUncertain(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	service.operationStaleAfter = time.Nanosecond
+	defer service.Stop()
+	op, _, err := service.Store().ReserveOperation(
+		context.Background(), "DiscardSession", "active-discard", map[string]string{"session_id": "s1"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Store().MarkOperationRunning(context.Background(), op.ID, []byte(`{"session_id":"s1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	unlock := service.lockOperation(op.IdempotencyKey)
+	if err := service.reconcileInterruptedOperations(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	active, err := service.Store().GetOperationByID(context.Background(), op.ID)
+	if err != nil || active.State != session.OperationRunning {
+		t.Fatalf("active operation = %+v, err=%v", active, err)
+	}
+	unlock()
+	if err := service.reconcileInterruptedOperations(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := service.Store().GetOperationByID(context.Background(), op.ID)
+	if err != nil || stale.State != session.OperationUncertain {
+		t.Fatalf("stale operation = %+v, err=%v", stale, err)
+	}
+}
+
+func TestSessionServiceWatchdogPreservesPendingCancelUntilWorkerRegisters(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	leased := make(chan struct{})
+	release := make(chan struct{})
+	var fakeStore *session.Store
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), func(st *session.Store) Runner {
+		fakeStore = st
+		return RunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
+			<-ctx.Done()
+			return fakeStore.CancelTurn(context.Background(), "cancel-delayed-worker", session.CancelTurnRequest{
+				SessionID: bound.ID, TurnID: turn.ID, ExpectedRevision: bound.Revision,
+			})
+		})
+	})
+	service.stopTimeout = 10 * time.Millisecond
+	service.operationStaleAfter = time.Nanosecond
+	defer service.Stop()
+	service.testAfterTurnLease = func(session.Turn) { close(leased); <-release }
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := service.CreateRemoteSession(context.Background(), "create-delayed-worker", CreateRemoteSessionRequest{Policy: "responder", Task: "delayed worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := service.SubmitTurn(context.Background(), "turn-delayed-worker", session.SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "queued"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-leased
+	_, cancelErr := service.CancelTurn(context.Background(), "cancel-delayed-worker", session.CancelTurnRequest{SessionID: sess.ID, TurnID: turn.ID, ExpectedRevision: sess.Revision})
+	if cancelErr == nil || session.CodeOf(cancelErr) == session.CodeOperationUncertain {
+		t.Fatalf("cancel handoff error = %v", cancelErr)
+	}
+	if err := service.reconcileInterruptedOperations(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	op, err := service.Store().GetOperation(context.Background(), "cancel-delayed-worker")
+	if err != nil || op.State != session.OperationRunning {
+		t.Fatalf("pending cancel operation = %+v, %v", op, err)
+	}
+	close(release)
+	waitForSessionTest(t, func() bool {
+		op, _ = service.Store().GetOperation(context.Background(), "cancel-delayed-worker")
+		return op.State == session.OperationSucceeded
+	})
+	stored, err := service.GetTurn(context.Background(), sess.ID, turn.ID)
+	if err != nil || stored.State != session.TurnCancelled {
+		t.Fatalf("delayed cancellation = %+v, %v", stored, err)
+	}
+}
+
+func TestSessionServiceStartupCompletesInterruptedCancelReceipt(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	before := newTestSessionService(t, stateRoot, testSessionPolicies(repo), nil)
+	sess, err := before.CreateRemoteSession(context.Background(), "create-cancel-crash", CreateRemoteSessionRequest{Policy: "responder", Task: "cancel crash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := before.SubmitTurn(context.Background(), "turn-cancel-crash", session.SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "queued"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := before.Store().LeaseNextTurn(context.Background(), sess.ID); err != nil || !ok {
+		t.Fatalf("lease turn = %t, %v", ok, err)
+	}
+	current, err := before.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := session.CancelTurnRequest{SessionID: sess.ID, TurnID: turn.ID, ExpectedRevision: current.Revision}
+	op, replay, err := before.Store().ReserveOperation(context.Background(), "CancelTurn", "cancel-crash", req)
+	if err != nil || replay {
+		t.Fatalf("reserve cancel = %+v replay=%t err=%v", op, replay, err)
+	}
+	intent, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := before.Store().MarkOperationRunning(context.Background(), op.ID, intent); err != nil {
+		t.Fatal(err)
+	}
+	if err := before.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	runner := &startupCleaningRunner{}
+	after, err := NewService(Config{StateRoot: stateRoot, Policies: testSessionPolicies(repo), Runner: runner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer after.Stop()
+	if err := after.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := after.Store().GetOperation(context.Background(), "cancel-crash")
+	if err != nil || recovered.State != session.OperationSucceeded || recovered.ResourceID != turn.ID {
+		t.Fatalf("recovered cancel = %+v, %v", recovered, err)
+	}
+	replayed, err := after.CancelTurn(context.Background(), "cancel-crash", req)
+	if err != nil || replayed.ID != turn.ID || !sessionTurnTerminal(replayed.State) {
+		t.Fatalf("replayed cancel = %+v, %v", replayed, err)
+	}
+}
+
+func TestSessionServiceLogsSanitizedOperationFailureWithCorrelationID(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	var logs bytes.Buffer
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo),
+		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+			return turn, nil
+		}),
+		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := `api_key = "aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sG2eU4iO7p"`
+	service.testBeforeCreatePin = func() error {
+		return fmt.Errorf("cannot inspect %s\n%s", repo, secret)
+	}
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	op, err := service.CreateRemoteSessionAsync(
+		context.Background(), "diagnostic-create", CreateRemoteSessionRequest{Policy: "responder", Task: "diagnostic"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var failed session.Operation
+	waitForSessionTest(t, func() bool {
+		failed, _ = service.Store().GetOperationByID(context.Background(), op.ID)
+		return failed.State == session.OperationFailed
+	})
+	output := logs.String()
+	if !strings.Contains(output, `"operation_id":"`+op.ID+`"`) ||
+		!strings.Contains(output, `"method":"CreateRemoteSession"`) ||
+		!strings.Contains(output, `"error_code":"internal_error"`) {
+		t.Fatalf("structured operation log = %s", output)
+	}
+	if strings.Contains(output, repo) || strings.Contains(output, secret) || strings.Contains(failed.ErrorDetail, repo) || strings.Contains(failed.ErrorDetail, secret) {
+		t.Fatalf("operation diagnostic leaked repository or secret: op=%+v log=%s", failed, output)
+	}
+	if !strings.Contains(failed.ErrorDetail, "<repository:responder>") ||
+		!strings.Contains(failed.ErrorDetail, "<redacted secret-bearing diagnostic line>") {
+		t.Fatalf("sanitized operation detail = %q", failed.ErrorDetail)
+	}
+}
+
+func TestOperationalErrorDetailSanitizesBeforeByteBounding(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repository-with-sensitive-path")
+	service := &Service{stateRoot: filepath.Dir(repo), policies: testSessionPolicies(repo)}
+	secret := `api_key = "aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sG2eU4iO7p"`
+	detail := service.operationalErrorDetail(errors.New(
+		strings.Repeat("x", session.MaxErrorDetailBytes-8) + repo + "\n" + secret,
+	))
+	if len(detail) > session.MaxErrorDetailBytes || !utf8.ValidString(detail) {
+		t.Fatalf("detail bounds = %d, %q", len(detail), detail)
+	}
+	if strings.Contains(detail, repo) || strings.Contains(detail, secret) || strings.Contains(detail, "aB3xK9") {
+		t.Fatalf("boundary diagnostic leaked: %q", detail)
+	}
+}
+
+func TestOperationalErrorDetailRepairsShortInvalidUTF8BeforeReceipt(t *testing.T) {
+	service := &Service{}
+	detail := service.operationalErrorDetail(errors.New("git failed: \xff"))
+	if !utf8.ValidString(detail) || !strings.Contains(detail, "�") {
+		t.Fatalf("invalid UTF-8 detail = %q", detail)
 	}
 }
 
@@ -1676,7 +2086,7 @@ func TestCreateSessionCompanionUsesShallowSnapshotAboveHistoryLimit(t *testing.T
 		Name: "large", Repository: source,
 		Workspace: workspace, BaseCommit: baseCommit,
 	}
-	if err := createSessionCompanionWithHistoryLimit(binding, 0); err != nil {
+	if err := createSessionCompanionWithHistoryLimit(context.Background(), binding, 0); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, filepath.Join(workspace, "asset.txt")); got != "current\n" {
@@ -1794,7 +2204,7 @@ func TestCreateSessionCompanionMeasuresLogicalSizeAcrossExternalDelta(t *testing
 		Name: "delta", Repository: source,
 		Workspace: workspace, BaseCommit: baseCommit,
 	}
-	if err := createSessionCompanionWithHistoryLimit(binding, limit); err != nil {
+	if err := createSessionCompanionWithHistoryLimit(context.Background(), binding, limit); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, filepath.Join(workspace, ".git", sessionCompanionHistoryFile)); got != sessionCompanionHistoryShallow {
@@ -2052,6 +2462,63 @@ func TestSessionServiceQueuedCancelReplaysAfterRevisionChange(t *testing.T) {
 	}
 }
 
+func TestSessionServiceCancellationWaitsForTurnWorkerRegistration(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	leased := make(chan struct{})
+	release := make(chan struct{})
+	var fakeStore *session.Store
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), func(st *session.Store) Runner {
+		fakeStore = st
+		return RunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
+			<-ctx.Done()
+			return fakeStore.CancelTurn(context.Background(), "cancel-missing-worker", session.CancelTurnRequest{
+				SessionID: bound.ID, TurnID: turn.ID, ExpectedRevision: bound.Revision,
+			})
+		})
+	})
+	defer service.Stop()
+	service.testAfterTurnLease = func(session.Turn) { close(leased); <-release }
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := service.CreateRemoteSession(
+		context.Background(), "create-missing-cancel-worker",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "missing cancel worker"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := service.SubmitTurn(
+		context.Background(), "turn-missing-cancel-worker",
+		session.SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "queued"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-leased
+	result := make(chan error, 1)
+	go func() {
+		_, cancelErr := service.CancelTurn(
+			context.Background(), "cancel-missing-worker",
+			session.CancelTurnRequest{SessionID: sess.ID, TurnID: turn.ID, ExpectedRevision: sess.Revision},
+		)
+		result <- cancelErr
+	}()
+	close(release)
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	stored, err := service.GetTurn(context.Background(), sess.ID, turn.ID)
+	if err != nil || stored.State != session.TurnCancelled {
+		t.Fatalf("turn after registration handoff = %+v, %v", stored, err)
+	}
+	op, err := service.Store().GetOperation(context.Background(), "cancel-missing-worker")
+	if err != nil || op.State != session.OperationSucceeded {
+		t.Fatalf("cancel operation = %+v err=%v", op, err)
+	}
+}
+
 func TestSessionServiceCancelNaturalCompletionReplaysObservedTerminalTurn(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
@@ -2159,6 +2626,64 @@ func TestSessionServiceStopWaitsForWorkerBeforeClosingStore(t *testing.T) {
 	defer service.mu.Unlock()
 	if len(service.workers) != 0 || len(service.active) != 0 {
 		t.Fatalf("stopped service retained workers=%d active=%d", len(service.workers), len(service.active))
+	}
+}
+
+func TestSessionServiceStopCancelsInFlightCreateGitAndRestartRecovers(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	service := newTestSessionService(t, stateRoot, testSessionPolicies(repo), nil)
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	realPath := os.Getenv("PATH")
+	bin := t.TempDir()
+	started := filepath.Join(bin, "started")
+	script := []byte("#!/bin/sh\n: > \"$COOP_TEST_GIT_STARTED\"\nexec /bin/sleep 30\n")
+	if err := os.WriteFile(filepath.Join(bin, "git"), script, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Setenv("COOP_TEST_GIT_STARTED", started); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Unsetenv("COOP_TEST_GIT_STARTED")
+	if err := os.Setenv("PATH", bin); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Setenv("PATH", realPath)
+
+	op, err := service.CreateRemoteSessionAsync(context.Background(), "create-stop-git", CreateRemoteSessionRequest{Policy: "responder", Task: "cancel in-flight git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionTest(t, func() bool { _, err := os.Stat(started); return err == nil })
+	stoppedAt := time.Now()
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(stoppedAt); elapsed > 2*time.Second {
+		t.Fatalf("Stop took %s with cancellable Git", elapsed)
+	}
+	if err := os.Setenv("PATH", realPath); err != nil {
+		t.Fatal(err)
+	}
+
+	after := newTestSessionService(t, stateRoot, testSessionPolicies(repo), nil)
+	defer after.Stop()
+	if err := after.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var current session.Operation
+	waitForSessionTest(t, func() bool {
+		current, _ = after.Store().GetOperationByID(context.Background(), op.ID)
+		return current.State == session.OperationSucceeded || current.State == session.OperationFailed
+	})
+	if current.State != session.OperationSucceeded {
+		t.Fatalf("recovered create = %+v", current)
 	}
 }
 

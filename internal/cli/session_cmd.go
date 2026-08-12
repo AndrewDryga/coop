@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -145,7 +146,7 @@ func runSessionServe(state, policy, socket string) (int, error) {
 	}
 	service, err := sessionsvc.NewService(sessionsvc.Config{
 		StateRoot: state, PolicyPath: policy, SourceConfig: config.Load(), Executable: os.Args[0],
-		Host: sessionHost(),
+		Host: sessionHost(), Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
 	})
 	if err != nil {
 		return 1, err

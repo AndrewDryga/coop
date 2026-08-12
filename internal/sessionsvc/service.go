@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,6 +47,8 @@ const (
 	sessionPolicyMaxTurnTimeout     = 24 * time.Hour
 	sessionPolicyMaxWarmIdleTimeout = time.Hour
 	sessionServiceCleanupInterval   = time.Minute
+	sessionOperationStaleAfter      = 2 * time.Minute
+	sessionCreateConcurrency        = 2
 )
 
 // Policy is operator-owned authority for one remote session. It is intentionally small:
@@ -548,19 +551,21 @@ func (f RunnerFunc) Run(ctx context.Context, sess session.Session, turn session.
 type RunnerFactory func(*session.Store) Runner
 
 type Config struct {
-	StateRoot       string
-	PolicyPath      string
-	Policies        map[string]Policy
-	SourceConfig    *config.Config
-	Config          *config.Config
-	Runtime         runtime.Runtime
-	Executable      string
-	Host            Host
-	Runner          Runner
-	RunnerFactory   RunnerFactory
-	ReviewGate      ReviewGate
-	StopTimeout     time.Duration
-	CleanupInterval time.Duration
+	StateRoot           string
+	PolicyPath          string
+	Policies            map[string]Policy
+	SourceConfig        *config.Config
+	Config              *config.Config
+	Runtime             runtime.Runtime
+	Executable          string
+	Host                Host
+	Runner              Runner
+	RunnerFactory       RunnerFactory
+	ReviewGate          ReviewGate
+	StopTimeout         time.Duration
+	CleanupInterval     time.Duration
+	OperationStaleAfter time.Duration
+	Logger              *slog.Logger
 }
 
 type sessionWorker struct {
@@ -578,38 +583,51 @@ type activeSessionTurn struct {
 	requested bool
 }
 
+type pendingSessionCancel struct {
+	key     string
+	request session.CancelTurnRequest
+	ready   chan struct{}
+}
+
 type sessionOperationLock struct {
 	mu   sync.Mutex
 	refs int
 }
 
 type Service struct {
-	store           *session.Store
-	stateRoot       string
-	policies        map[string]Policy
-	sourceCfg       *config.Config
-	rt              runtime.Runtime
-	executable      string
-	host            Host
-	runner          Runner
-	reviewGate      ReviewGate
-	stopTimeout     time.Duration
-	cleanupInterval time.Duration
+	store               *session.Store
+	stateRoot           string
+	policies            map[string]Policy
+	sourceCfg           *config.Config
+	rt                  runtime.Runtime
+	executable          string
+	host                Host
+	runner              Runner
+	reviewGate          ReviewGate
+	stopTimeout         time.Duration
+	cleanupInterval     time.Duration
+	operationStaleAfter time.Duration
+	log                 *slog.Logger
 
-	stopMu   sync.Mutex
-	mu       sync.Mutex
-	started  bool
-	starting bool
-	ctx      context.Context
-	cancel   context.CancelFunc
-	workers  map[string]*sessionWorker
-	active   map[string]*activeSessionTurn
-	wg       sync.WaitGroup
+	stopMu         sync.Mutex
+	mu             sync.Mutex
+	started        bool
+	starting       bool
+	ctx            context.Context
+	cancel         context.CancelFunc
+	workers        map[string]*sessionWorker
+	active         map[string]*activeSessionTurn
+	pendingCancels map[string]*pendingSessionCancel
+	wg             sync.WaitGroup
 
-	operationMu    sync.Mutex
-	operationLocks map[string]*sessionOperationLock
-	runtimeMu      sync.Mutex
-	runtimeLocks   map[string]*sessionOperationLock
+	operationMu         sync.Mutex
+	operationLocks      map[string]*sessionOperationLock
+	createActive        map[string]bool
+	createSlots         chan struct{}
+	testBeforeCreatePin func() error
+	testAfterTurnLease  func(session.Turn)
+	runtimeMu           sync.Mutex
+	runtimeLocks        map[string]*sessionOperationLock
 }
 
 func NewService(cfg Config) (*Service, error) {
@@ -639,18 +657,28 @@ func NewService(cfg Config) (*Service, error) {
 		store: store, stateRoot: cfg.StateRoot,
 		policies: cloneSessionPolicies(policies), sourceCfg: sourceCfg,
 		rt: cfg.Runtime, executable: cfg.Executable, host: cfg.Host, runner: cfg.Runner,
-		reviewGate:      cfg.ReviewGate,
-		stopTimeout:     cfg.StopTimeout,
-		cleanupInterval: cfg.CleanupInterval,
-		workers:         make(map[string]*sessionWorker), active: make(map[string]*activeSessionTurn),
+		reviewGate:          cfg.ReviewGate,
+		stopTimeout:         cfg.StopTimeout,
+		cleanupInterval:     cfg.CleanupInterval,
+		operationStaleAfter: cfg.OperationStaleAfter,
+		log:                 cfg.Logger,
+		workers:             make(map[string]*sessionWorker), active: make(map[string]*activeSessionTurn),
+		pendingCancels: make(map[string]*pendingSessionCancel),
 		operationLocks: make(map[string]*sessionOperationLock),
-		runtimeLocks:   make(map[string]*sessionOperationLock),
+		createActive:   make(map[string]bool), createSlots: make(chan struct{}, sessionCreateConcurrency),
+		runtimeLocks: make(map[string]*sessionOperationLock),
 	}
 	if service.stopTimeout <= 0 {
 		service.stopTimeout = DefaultStopTimeout
 	}
 	if service.cleanupInterval <= 0 {
 		service.cleanupInterval = sessionServiceCleanupInterval
+	}
+	if service.operationStaleAfter <= 0 {
+		service.operationStaleAfter = sessionOperationStaleAfter
+	}
+	if service.log == nil {
+		service.log = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
 	if cfg.RunnerFactory != nil {
 		service.runner = cfg.RunnerFactory(store)
@@ -720,6 +748,30 @@ func (s *Service) lockOperation(key string) func() {
 		}
 		s.operationMu.Unlock()
 	}
+}
+
+// tryLockOperation reserves an idle operation key for watchdog reconciliation
+// without waiting behind a live request. Registration and ownership are one
+// critical section, so a replay cannot slip between the idle check and claim.
+func (s *Service) tryLockOperation(key string) (func(), bool) {
+	s.operationMu.Lock()
+	if s.operationLocks[key] != nil {
+		s.operationMu.Unlock()
+		return nil, false
+	}
+	lock := &sessionOperationLock{refs: 1}
+	lock.mu.Lock()
+	s.operationLocks[key] = lock
+	s.operationMu.Unlock()
+	return func() {
+		lock.mu.Unlock()
+		s.operationMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(s.operationLocks, key)
+		}
+		s.operationMu.Unlock()
+	}, true
 }
 
 func (s *Service) lockSessionRuntime(sessionID string) func() {
@@ -831,7 +883,16 @@ func (s *Service) Start(parent context.Context) error {
 	}
 	s.started, s.starting, s.ctx, s.cancel = true, false, ctx, cancel
 	s.wg.Add(1)
-	go s.runParkedSessionCleanup(ctx)
+	go s.runSessionMaintenance(ctx)
+	s.mu.Unlock()
+	// Recover durable cancellation and create intents before re-leasing queued
+	// turns. Otherwise a restart can run a turn whose cancellation was already
+	// admitted before the crash.
+	if err := s.reconcileInterruptedOperations(ctx, true); err != nil {
+		_ = s.Stop()
+		return fmt.Errorf("reconcile interrupted session operations: %w", err)
+	}
+	s.mu.Lock()
 	for _, sess := range sessions {
 		if sess.QueuedTurnCount > 0 {
 			s.ensureWorkerLocked(sess.ID)
@@ -844,7 +905,7 @@ func (s *Service) Start(parent context.Context) error {
 	return nil
 }
 
-func (s *Service) runParkedSessionCleanup(ctx context.Context) {
+func (s *Service) runSessionMaintenance(ctx context.Context) {
 	defer s.wg.Done()
 	ticker := time.NewTicker(s.cleanupInterval)
 	defer ticker.Stop()
@@ -854,6 +915,9 @@ func (s *Service) runParkedSessionCleanup(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.cleanupParkedSessions(ctx)
+			if err := s.reconcileInterruptedOperations(ctx, false); err != nil && ctx.Err() == nil {
+				s.log.Error("session operation reconciliation failed", "error", err)
+			}
 		}
 	}
 }
@@ -986,10 +1050,14 @@ func (s *Service) Stop() error {
 	for _, worker := range workers {
 		worker.cancel()
 	}
+	// Every session-create lock and Git subprocess is context-aware. Waiting
+	// here is therefore the proof that no old worker can mutate after the store
+	// closes or a replacement service starts.
 	s.wg.Wait()
 	s.mu.Lock()
 	s.workers = make(map[string]*sessionWorker)
 	s.active = make(map[string]*activeSessionTurn)
+	s.pendingCancels = make(map[string]*pendingSessionCancel)
 	s.mu.Unlock()
 	if closer, ok := s.runner.(sessionRunnerCloser); ok {
 		if err := closer.CloseWarmSessions(); err != nil {
@@ -1093,11 +1161,23 @@ func (s *Service) drainSession(ctx context.Context, sessionID string) {
 		if err != nil || !ok {
 			return
 		}
+		if s.testAfterTurnLease != nil {
+			s.testAfterTurnLease(leased)
+		}
 		turnCtx, turnCancel := context.WithTimeout(ctx, bound.TurnTimeout)
 		active := &activeSessionTurn{cancel: turnCancel, done: make(chan struct{})}
 		s.mu.Lock()
+		pending := s.pendingCancels[leased.ID]
+		if pending != nil {
+			active.key, active.request, active.requested = pending.key, pending.request, true
+			delete(s.pendingCancels, leased.ID)
+		}
 		s.active[leased.ID] = active
 		s.mu.Unlock()
+		if pending != nil {
+			close(pending.ready)
+			turnCancel()
+		}
 		runCtx := context.WithValue(turnCtx, sessionCancelRequestContextKey{}, func() (string, session.CancelTurnRequest, bool) {
 			s.mu.Lock()
 			defer s.mu.Unlock()
@@ -1130,6 +1210,14 @@ func (s *Service) drainSession(ctx context.Context, sessionID string) {
 			if getErr == nil && (current.State == session.TurnStarting || current.State == session.TurnRunning) && !requested {
 				_, _ = s.store.FailTurn(context.Background(), session.FailTurnRequest{SessionID: sessionID, TurnID: leased.ID, ErrorCode: session.CodeInternal, ErrorDetail: boundedSessionServiceError(runErr)})
 			}
+			code := session.CodeOf(runErr)
+			if code == "" {
+				code = session.CodeInternal
+			}
+			s.log.Error("session turn failed",
+				"session_id", sessionID, "turn_id", leased.ID,
+				"error_code", code, "error_detail", s.operationalErrorDetail(runErr),
+			)
 		}
 	}
 }
@@ -1144,6 +1232,7 @@ func boundedSessionServiceError(err error) string {
 		return "session turn failed"
 	}
 	detail := err.Error()
+	detail = strings.ToValidUTF8(detail, "�")
 	if len(detail) > session.MaxErrorDetailBytes {
 		detail = detail[:session.MaxErrorDetailBytes]
 	}
@@ -1162,29 +1251,105 @@ func (s *Service) policy(name string) (Policy, error) {
 }
 
 func (s *Service) CreateRemoteSession(ctx context.Context, key string, req CreateRemoteSessionRequest) (session.Session, error) {
-	unlock := s.lockOperation(key)
-	defer unlock()
+	op, err := s.beginCreateOperation(ctx, key, req)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if s.serviceRunning() {
+		if op.State == session.OperationRunning {
+			s.scheduleCreateOperation(op.ID)
+		}
+		return s.waitForCreateOperation(ctx, op)
+	}
+	return s.replayCreateOperation(ctx, op)
+}
 
+func (s *Service) serviceRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.started && s.ctx != nil
+}
+
+func (s *Service) waitForCreateOperation(
+	ctx context.Context,
+	op session.Operation,
+) (session.Session, error) {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for op.State == session.OperationReserved || op.State == session.OperationRunning {
+		select {
+		case <-ctx.Done():
+			return session.Session{}, wrapServiceOperationError(op.ID, ctx.Err())
+		case <-ticker.C:
+		}
+		var err error
+		op, err = s.store.GetOperationByID(ctx, op.ID)
+		if err != nil {
+			return session.Session{}, wrapServiceOperationError(op.ID, err)
+		}
+	}
+	return s.replayCreateOperation(ctx, op)
+}
+
+// CreateRemoteSessionAsync durably admits a create before returning. Slow Git
+// resolution and workspace materialization run under the service lifetime,
+// independent of the HTTP request that admitted them.
+func (s *Service) CreateRemoteSessionAsync(
+	ctx context.Context,
+	key string,
+	req CreateRemoteSessionRequest,
+) (session.Operation, error) {
+	op, err := s.beginCreateOperation(ctx, key, req)
+	if err != nil {
+		return session.Operation{}, err
+	}
+	if op.State == session.OperationRunning {
+		s.scheduleCreateOperation(op.ID)
+	}
+	return op, nil
+}
+
+func (s *Service) beginCreateOperation(
+	ctx context.Context,
+	key string,
+	req CreateRemoteSessionRequest,
+) (session.Operation, error) {
 	if req.Policy == "" || len(req.Policy) > session.MaxIDBytes || !utf8SessionText(req.Policy) || req.Task == "" || len(req.Task) > session.MaxExternalRefBytes || !utf8SessionText(req.Task) {
-		return session.Session{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "policy and bounded task are required"}
+		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "policy and bounded task are required"}
 	}
 	if req.PullRequest != nil && (req.PullRequest.Number < 1 ||
 		!validSessionWorkspaceCommit(req.PullRequest.HeadCommit)) {
-		return session.Session{}, &session.Error{
+		return session.Operation{}, &session.Error{
 			Code: session.CodeInvalidRequest, Detail: "pull request number and exact head commit are required",
 		}
 	}
 	op, replay, err := s.store.ReserveOperation(ctx, "CreateRemoteSession", key, req)
 	if err != nil {
-		return session.Session{}, err
+		return session.Operation{}, err
 	}
 	if replay {
-		if op.State == session.OperationReserved {
-			return s.executeCreate(ctx, op, req)
+		if op.State != session.OperationReserved {
+			return op, nil
 		}
-		return s.replayCreateOperation(ctx, op)
 	}
-	return s.executeCreate(ctx, op, req)
+	intent, err := s.captureCreateIntent(op, req)
+	if err != nil {
+		return session.Operation{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	data, err := json.Marshal(intent)
+	if err != nil {
+		return session.Operation{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	if err := s.store.MarkOperationRunning(ctx, op.ID, data); err != nil {
+		if replay {
+			latest, getErr := s.store.GetOperationByID(ctx, op.ID)
+			if getErr == nil && latest.State != session.OperationReserved {
+				return latest, nil
+			}
+		}
+		return session.Operation{}, err
+	}
+	return s.store.GetOperationByID(ctx, op.ID)
 }
 
 func (s *Service) replayCreateOperation(ctx context.Context, op session.Operation) (session.Session, error) {
@@ -1192,14 +1357,19 @@ func (s *Service) replayCreateOperation(ctx context.Context, op session.Operatio
 	case session.OperationSucceeded:
 		var sess session.Session
 		if err := json.Unmarshal(op.Result, &sess); err != nil {
-			return session.Session{}, fmt.Errorf("decode create operation result: %w", err)
+			return session.Session{}, wrapServiceOperationError(op.ID,
+				fmt.Errorf("decode create operation result: %w", err))
 		}
 		if sess.ID == "" {
-			return session.Session{}, errors.New("decode create operation result: missing session id")
+			return session.Session{}, wrapServiceOperationError(op.ID,
+				errors.New("decode create operation result: missing session id"))
 		}
 		return sess, nil
 	case session.OperationFailed:
-		return session.Session{}, &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail}
+		return session.Session{}, &serviceOperationError{
+			operationID: op.ID,
+			err:         &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail},
+		}
 	case session.OperationRunning:
 		var intent sessionCreateIntent
 		if err := json.Unmarshal(op.Result, &intent); err != nil {
@@ -1207,7 +1377,10 @@ func (s *Service) replayCreateOperation(ctx context.Context, op session.Operatio
 		}
 		return s.executeCreateIntent(ctx, op, intent)
 	default:
-		return session.Session{}, session.ErrOperationUncertain
+		return session.Session{}, &serviceOperationError{
+			operationID: op.ID,
+			err:         session.ErrOperationUncertain,
+		}
 	}
 }
 
@@ -1223,34 +1396,28 @@ type sessionCreateIntent struct {
 	Companions      []session.CompanionRepository `json:"companions,omitempty"`
 }
 
-func (s *Service) executeCreate(ctx context.Context, op session.Operation, req CreateRemoteSessionRequest) (session.Session, error) {
+func (s *Service) captureCreateIntent(op session.Operation, req CreateRemoteSessionRequest) (sessionCreateIntent, error) {
 	policy, err := s.policy(req.Policy)
 	if err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+		return sessionCreateIntent{}, err
 	}
 	sessionID := deterministicSessionID(op.ID)
-	pins, err := pinSessionPolicyRepositories(ctx, policy, req.PullRequest)
-	if err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
-	}
 	companions := make([]session.CompanionRepository, 0, len(policy.Companions))
-	for index, companion := range policy.Companions {
+	for _, companion := range policy.Companions {
 		workspace, err := sessionCompanionWorkspace(
 			s.store.Root(), sessionID, companion.Name,
 		)
 		if err != nil {
-			return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+			return sessionCreateIntent{}, err
 		}
 		companions = append(companions, session.CompanionRepository{
 			Name: companion.Name, Repository: companion.Repository,
-			Workspace: workspace, BaseCommit: pins.companions[index],
+			Workspace: workspace,
 		})
 	}
 	intent := sessionCreateIntent{
 		OperationID: op.ID, Policy: policy, Task: req.Task,
-		SessionID: sessionID, ForkName: deterministicForkName(op.ID), BaseCommit: pins.creationBase,
-		WorkspaceCommit: pins.workspaceHead,
-		Companions:      companions,
+		SessionID: sessionID, ForkName: deterministicForkName(op.ID), Companions: companions,
 	}
 	if req.PullRequest != nil {
 		intent.PullRequest = &session.PullRequestBinding{
@@ -1259,14 +1426,22 @@ func (s *Service) executeCreate(ctx context.Context, op session.Operation, req C
 			HeadCommit: req.PullRequest.HeadCommit,
 		}
 	}
-	data, err := json.Marshal(intent)
-	if err != nil {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+	return intent, nil
+}
+
+func (s *Service) runCreateOperation(ctx context.Context, operationID string) error {
+	op, err := s.store.GetOperationByID(ctx, operationID)
+	if err != nil || op.State != session.OperationRunning || op.Method != "CreateRemoteSession" {
+		return err
 	}
-	if err := s.store.MarkOperationRunning(ctx, op.ID, data); err != nil {
-		return session.Session{}, err
+	unlock := s.lockOperation(op.IdempotencyKey)
+	defer unlock()
+	op, err = s.store.GetOperationByID(ctx, operationID)
+	if err != nil || op.State != session.OperationRunning {
+		return err
 	}
-	return s.executeCreateIntent(ctx, op, intent)
+	_, err = s.replayCreateOperation(ctx, op)
+	return err
 }
 
 func deterministicSessionID(operationID string) string {
@@ -1280,26 +1455,50 @@ func deterministicForkName(operationID string) string {
 }
 
 func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation, intent sessionCreateIntent) (session.Session, error) {
-	workspaceCommit := intent.WorkspaceCommit
-	if workspaceCommit == "" {
-		// Compatibility with create intents reserved before workspace_commit was added.
-		workspaceCommit = intent.BaseCommit
-	}
 	if intent.OperationID != op.ID || intent.SessionID == "" ||
-		!forkspace.ValidName(intent.ForkName) ||
-		!validSessionWorkspaceCommit(intent.BaseCommit) ||
-		!validSessionWorkspaceCommit(workspaceCommit) {
+		!forkspace.ValidName(intent.ForkName) {
 		return s.rejectCreateIntent(ctx, op.ID, "create operation intent is invalid")
 	}
 	if !validSessionIntentTargets(intent.Policy.Targets) {
 		return s.rejectCreateIntent(ctx, op.ID, "create operation intent has no valid target")
 	}
-	workspace, err := ensureSessionWorkspace(intent.Policy.Repository, intent.ForkName, workspaceCommit)
+	if intent.BaseCommit == "" {
+		if intent.WorkspaceCommit != "" {
+			return s.rejectCreateIntent(ctx, op.ID, "create operation intent has incomplete repository pins")
+		}
+		var err error
+		intent, err = s.pinCreateIntent(ctx, op, intent)
+		if err != nil {
+			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+				return session.Session{}, err
+			}
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+		}
+	}
+	workspaceCommit := intent.WorkspaceCommit
+	if workspaceCommit == "" {
+		// Compatibility with create intents reserved before workspace_commit was added.
+		workspaceCommit = intent.BaseCommit
+	}
+	if !validSessionWorkspaceCommit(intent.BaseCommit) ||
+		!validSessionWorkspaceCommit(workspaceCommit) {
+		return s.rejectCreateIntent(ctx, op.ID, "create operation intent has invalid repository pins")
+	}
+	workspace, err := ensureSessionWorkspaceContext(ctx, intent.Policy.Repository, intent.ForkName, workspaceCommit)
 	if err != nil {
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return session.Session{}, err
+		}
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("ensure session workspace: %w", err))
 	}
 	companions := make([]session.CompanionRepository, 0, len(intent.Companions))
 	failCreate := func(cause error) (session.Session, error) {
+		if ctx.Err() != nil && errors.Is(cause, ctx.Err()) {
+			// Deterministic intent and workspace names make restart recovery the
+			// safe cleanup owner. Contextless rollback here would outlive Stop and
+			// race that recovery process.
+			return session.Session{}, cause
+		}
 		if cleanupErr := rollbackSessionCreate(workspace, companions); cleanupErr != nil {
 			cause = errors.Join(
 				cause,
@@ -1309,8 +1508,8 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, cause)
 	}
 	for _, companion := range intent.Companions {
-		resolved, err := ensureSessionCompanion(
-			s.store.Root(), intent.SessionID, companion,
+		resolved, err := ensureSessionCompanionContext(
+			ctx, s.store.Root(), intent.SessionID, companion,
 		)
 		if err != nil {
 			return failCreate(
@@ -1343,6 +1542,60 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 	return sess, nil
 }
 
+func (s *Service) pinCreateIntent(
+	ctx context.Context,
+	op session.Operation,
+	intent sessionCreateIntent,
+) (sessionCreateIntent, error) {
+	if s.testBeforeCreatePin != nil {
+		if err := s.testBeforeCreatePin(); err != nil {
+			return sessionCreateIntent{}, err
+		}
+	}
+	if len(intent.Companions) != len(intent.Policy.Companions) {
+		return sessionCreateIntent{}, errors.New("create operation companion intent is incomplete")
+	}
+	for index, companion := range intent.Policy.Companions {
+		bound := intent.Companions[index]
+		workspace, err := sessionCompanionWorkspace(
+			s.store.Root(), intent.SessionID, companion.Name,
+		)
+		if err != nil {
+			return sessionCreateIntent{}, err
+		}
+		if bound.Name != companion.Name || bound.Repository != companion.Repository ||
+			bound.Workspace != workspace || bound.BaseCommit != "" {
+			return sessionCreateIntent{}, errors.New("create operation companion intent does not match policy")
+		}
+	}
+	var source *RemotePullRequestBinding
+	if intent.PullRequest != nil {
+		if intent.PullRequest.Ref != fmt.Sprintf("refs/pull/%d/head", intent.PullRequest.Number) {
+			return sessionCreateIntent{}, errors.New("create operation pull request ref is invalid")
+		}
+		source = &RemotePullRequestBinding{
+			Number: intent.PullRequest.Number, HeadCommit: intent.PullRequest.HeadCommit,
+		}
+	}
+	pins, err := pinSessionPolicyRepositories(ctx, intent.Policy, source)
+	if err != nil {
+		return sessionCreateIntent{}, err
+	}
+	intent.BaseCommit = pins.creationBase
+	intent.WorkspaceCommit = pins.workspaceHead
+	for index := range intent.Companions {
+		intent.Companions[index].BaseCommit = pins.companions[index]
+	}
+	next, err := json.Marshal(intent)
+	if err != nil {
+		return sessionCreateIntent{}, err
+	}
+	if err := s.store.ReplaceOperationIntent(ctx, op.ID, op.Result, next); err != nil {
+		return sessionCreateIntent{}, err
+	}
+	return intent, nil
+}
+
 func validSessionIntentTargets(targets []agents.Target) bool {
 	if len(targets) == 0 || len(targets) > sessionPolicyMaxTargets {
 		return false
@@ -1361,11 +1614,37 @@ func (s *Service) rejectCreateIntent(
 	operationID string,
 	detail string,
 ) (session.Session, error) {
-	if err := s.store.MarkOperationUncertain(ctx, operationID); err != nil {
-		return session.Session{}, fmt.Errorf("mark invalid create operation uncertain: %w", err)
+	op, _ := s.store.GetOperationByID(context.WithoutCancel(ctx), operationID)
+	if op.ID == "" {
+		op.ID = operationID
 	}
-	return session.Session{}, &session.Error{
-		Code: session.CodeOperationUncertain, Detail: detail,
+	return session.Session{}, s.makeOperationUncertain(ctx, op, detail)
+}
+
+func (s *Service) makeOperationUncertain(
+	ctx context.Context,
+	op session.Operation,
+	detail string,
+) error {
+	receiptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	if err := s.store.MarkOperationUncertain(receiptCtx, op.ID); err != nil {
+		return &serviceOperationError{
+			operationID: op.ID,
+			err:         fmt.Errorf("mark operation uncertain: %w", err),
+		}
+	}
+	detail = s.operationalErrorDetail(errors.New(detail))
+	s.log.Warn("session operation intent rejected",
+		"operation_id", op.ID, "method", op.Method,
+		"resource_type", op.ResourceType, "resource_id", op.ResourceID,
+		"error_code", session.CodeOperationUncertain, "error_detail", detail,
+	)
+	return &serviceOperationError{
+		operationID: op.ID,
+		err: &session.Error{
+			Code: session.CodeOperationUncertain, Detail: detail,
+		},
 	}
 }
 
@@ -1405,8 +1684,108 @@ func (s *Service) failServiceOperation(ctx context.Context, id string, err error
 	if code == "" {
 		code = session.CodeInternal
 	}
-	_ = s.store.FailOperation(ctx, id, code, boundedSessionServiceError(err))
-	return err
+	detail := s.operationalErrorDetail(err)
+	receiptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	op, _ := s.store.GetOperationByID(receiptCtx, id)
+	failErr := s.store.FailOperation(receiptCtx, id, code, detail)
+	attributes := []any{
+		"operation_id", id, "method", op.Method,
+		"resource_type", op.ResourceType, "resource_id", op.ResourceID,
+		"error_code", code, "error_detail", detail,
+	}
+	if failErr != nil {
+		attributes = append(attributes, "receipt_error", s.operationalErrorDetail(failErr))
+	}
+	s.log.Error("session operation failed", attributes...)
+	return &serviceOperationError{operationID: id, err: err}
+}
+
+// correlateOperationError handles mutations whose store transaction owns the
+// operation reservation and failure receipt. It preserves the store's typed
+// error while adding the same correlation and redacted log surface as service-
+// owned operations.
+func (s *Service) correlateOperationError(
+	ctx context.Context,
+	key string,
+	err error,
+) error {
+	if err == nil || key == "" {
+		return err
+	}
+	receiptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	op, getErr := s.store.GetOperation(receiptCtx, key)
+	if getErr != nil || op.ID == "" {
+		return err
+	}
+	code := session.CodeOf(err)
+	if code == "" {
+		code = session.CodeInternal
+	}
+	detail := s.operationalErrorDetail(err)
+	if op.State == session.OperationFailed {
+		code = op.ErrorCode
+		detail = s.operationalErrorDetail(errors.New(op.ErrorDetail))
+	}
+	s.log.Error("session operation failed",
+		"operation_id", op.ID, "method", op.Method,
+		"resource_type", op.ResourceType, "resource_id", op.ResourceID,
+		"error_code", code, "error_detail", detail,
+	)
+	return wrapServiceOperationError(op.ID, err)
+}
+
+func wrapServiceOperationError(operationID string, err error) error {
+	if err == nil || operationID == "" {
+		return err
+	}
+	var correlated interface{ OperationID() string }
+	if errors.As(err, &correlated) {
+		return err
+	}
+	return &serviceOperationError{operationID: operationID, err: err}
+}
+
+type serviceOperationError struct {
+	operationID string
+	err         error
+}
+
+func (e *serviceOperationError) Error() string       { return e.err.Error() }
+func (e *serviceOperationError) Unwrap() error       { return e.err }
+func (e *serviceOperationError) OperationID() string { return e.operationID }
+
+func (s *Service) operationalErrorDetail(err error) string {
+	if err == nil {
+		return "session operation failed"
+	}
+	detail := err.Error()
+	detail = strings.ToValidUTF8(detail, "�")
+	if s.stateRoot != "" {
+		detail = strings.ReplaceAll(detail, s.stateRoot, "<state-root>")
+	}
+	for name, policy := range s.policies {
+		detail = strings.ReplaceAll(detail, policy.Repository, "<repository:"+name+">")
+		for _, companion := range policy.Companions {
+			detail = strings.ReplaceAll(
+				detail, companion.Repository, "<repository:"+companion.Name+">")
+		}
+	}
+	lines := strings.Split(detail, "\n")
+	for index, line := range lines {
+		if len(box.ScanSecrets(line)) > 0 {
+			lines[index] = "<redacted secret-bearing diagnostic line>"
+		}
+	}
+	detail = strings.Join(lines, "\n")
+	if len(detail) > session.MaxErrorDetailBytes {
+		detail = detail[:session.MaxErrorDetailBytes]
+		for !utf8.ValidString(detail) {
+			detail = detail[:len(detail)-1]
+		}
+	}
+	return detail
 }
 
 func utf8SessionText(value string) bool {
@@ -1464,6 +1843,8 @@ func (s *Service) SubmitTurn(ctx context.Context, key string, req session.Submit
 	turn, err := s.store.SubmitTurn(ctx, key, req)
 	if err == nil {
 		s.schedule(req.SessionID)
+	} else {
+		err = s.correlateOperationError(ctx, key, err)
 	}
 	return turn, err
 }
@@ -1485,7 +1866,8 @@ func (s *Service) ListEvents(ctx context.Context, sessionID string, after int64,
 }
 
 func (s *Service) ExtendBudget(ctx context.Context, key string, req session.ExtendBudgetRequest) (session.Session, error) {
-	return s.store.ExtendBudget(ctx, key, req)
+	sess, err := s.store.ExtendBudget(ctx, key, req)
+	return sess, s.correlateOperationError(ctx, key, err)
 }
 
 func (s *Service) Close(ctx context.Context, key string, req session.CloseSessionRequest) (session.Session, error) {
@@ -1496,7 +1878,8 @@ func (s *Service) Close(ctx context.Context, key string, req session.CloseSessio
 		return session.Session{}, err
 	}
 	if current.State == session.SessionClosed {
-		return s.store.CloseSession(ctx, key, req)
+		closed, closeErr := s.store.CloseSession(ctx, key, req)
+		return closed, s.correlateOperationError(ctx, key, closeErr)
 	}
 	if current.Revision != req.ExpectedRevision {
 		return session.Session{}, session.ErrRevisionConflict
@@ -1510,7 +1893,8 @@ func (s *Service) Close(ctx context.Context, key string, req session.CloseSessio
 			return session.Session{}, err
 		}
 	}
-	return s.store.CloseSession(ctx, key, req)
+	closed, closeErr := s.store.CloseSession(ctx, key, req)
+	return closed, s.correlateOperationError(ctx, key, closeErr)
 }
 
 func (s *Service) CloseSession(ctx context.Context, key string, req session.CloseSessionRequest) (session.Session, error) {
@@ -1686,14 +2070,15 @@ func (s *Service) executePlanDiscard(ctx context.Context, op session.Operation, 
 
 func replayPlanDiscard(op session.Operation) (PlanDiscardResult, error) {
 	if op.State == session.OperationFailed {
-		return PlanDiscardResult{}, &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail}
+		return PlanDiscardResult{}, wrapServiceOperationError(op.ID,
+			&session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail})
 	}
 	if op.State != session.OperationSucceeded && op.State != session.OperationRunning {
-		return PlanDiscardResult{}, session.ErrOperationUncertain
+		return PlanDiscardResult{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 	}
 	var result PlanDiscardResult
 	if err := json.Unmarshal(op.Result, &result); err != nil {
-		return PlanDiscardResult{}, err
+		return PlanDiscardResult{}, wrapServiceOperationError(op.ID, err)
 	}
 	return result, nil
 }
@@ -1714,7 +2099,7 @@ func (s *Service) Discard(ctx context.Context, key string, req DiscardRequest) (
 		if op.State == session.OperationRunning {
 			var intent discardIntent
 			if err := json.Unmarshal(op.Result, &intent); err != nil {
-				return session.Session{}, session.ErrOperationUncertain
+				return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 			}
 			return s.executeDiscard(ctx, op, intent.Plan)
 		}
@@ -1764,11 +2149,11 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 	}
 	if sess.State == session.SessionDiscarded {
 		if err := s.removeSessionReviewArtifacts(ctx, sess.ID); err != nil {
-			return session.Session{}, session.ErrOperationUncertain
+			return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 		}
 		completed, err := s.completeDiscardOperation(ctx, op.ID, sess)
 		if err != nil {
-			return session.Session{}, session.ErrOperationUncertain
+			return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 		}
 		return completed, nil
 	}
@@ -1792,22 +2177,22 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 	}
 	for _, companion := range planned.Plan.Companions {
 		if err := discardSessionCompanion(companion); err != nil {
-			return session.Session{}, session.ErrOperationUncertain
+			return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 		}
 	}
 	if err := removePrivateSessionState(s.store.Root(), planned.Plan.SessionID); err != nil {
-		return session.Session{}, session.ErrOperationUncertain
+		return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 	}
 	sess, err = s.store.MarkSessionDiscarded(ctx, planned.Plan.SessionID)
 	if err != nil {
-		return session.Session{}, session.ErrOperationUncertain
+		return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 	}
 	if err := s.removeSessionReviewArtifacts(ctx, sess.ID); err != nil {
-		return session.Session{}, session.ErrOperationUncertain
+		return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 	}
 	completed, err := s.completeDiscardOperation(ctx, op.ID, sess)
 	if err != nil {
-		return session.Session{}, session.ErrOperationUncertain
+		return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 	}
 	return completed, nil
 }
@@ -1840,17 +2225,19 @@ func (s *Service) removeSessionReviewArtifacts(
 
 func replaySessionOperation(op session.Operation) (session.Session, error) {
 	if op.State == session.OperationFailed {
-		return session.Session{}, &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail}
+		return session.Session{}, wrapServiceOperationError(op.ID,
+			&session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail})
 	}
 	if op.State != session.OperationSucceeded {
-		return session.Session{}, session.ErrOperationUncertain
+		return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 	}
 	var sess session.Session
 	if err := json.Unmarshal(op.Result, &sess); err != nil {
-		return session.Session{}, err
+		return session.Session{}, wrapServiceOperationError(op.ID, err)
 	}
 	if sess.ID == "" {
-		return session.Session{}, errors.New("decode session operation result: missing session id")
+		return session.Session{}, wrapServiceOperationError(op.ID,
+			errors.New("decode session operation result: missing session id"))
 	}
 	return sess, nil
 }
@@ -1899,6 +2286,8 @@ func removePrivateSessionState(stateRoot, sessionID string) error {
 }
 
 func (s *Service) CancelTurn(ctx context.Context, key string, req session.CancelTurnRequest) (session.Turn, error) {
+	unlock := s.lockOperation(key)
+	defer unlock()
 	op, replay, err := s.store.ReserveOperation(ctx, "CancelTurn", key, req)
 	if err != nil {
 		return session.Turn{}, err
@@ -1933,6 +2322,8 @@ func (s *Service) CancelTurn(ctx context.Context, key string, req session.Cancel
 		cancelled, err := s.store.CancelTurn(ctx, key, req)
 		if err == nil {
 			s.schedule(req.SessionID)
+		} else {
+			err = s.correlateOperationError(ctx, key, err)
 		}
 		return cancelled, err
 	}
@@ -1943,11 +2334,46 @@ func (s *Service) CancelTurn(ctx context.Context, key string, req session.Cancel
 		err := &session.Error{Code: session.CodeTurnNotRunnable, Detail: "turn is already terminal"}
 		return session.Turn{}, s.failCancelOperation(ctx, op, err)
 	}
+	if op.State == session.OperationReserved {
+		intent, marshalErr := json.Marshal(req)
+		if marshalErr != nil {
+			return session.Turn{}, s.failCancelOperation(ctx, op, marshalErr)
+		}
+		if err := s.store.MarkOperationRunning(ctx, op.ID, intent); err != nil {
+			return session.Turn{}, wrapServiceOperationError(op.ID, err)
+		}
+		op.State = session.OperationRunning
+	}
 	s.mu.Lock()
 	active := s.active[req.TurnID]
 	if active == nil {
+		pending := s.pendingCancels[req.TurnID]
+		if pending != nil && (pending.key != key || pending.request != req) {
+			s.mu.Unlock()
+			return session.Turn{}, s.failCancelOperation(ctx, op, session.ErrIdempotencyConflict)
+		}
+		if pending == nil {
+			pending = &pendingSessionCancel{key: key, request: req, ready: make(chan struct{})}
+			s.pendingCancels[req.TurnID] = pending
+		}
 		s.mu.Unlock()
-		return session.Turn{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "active turn worker is unavailable"}
+		timer := time.NewTimer(s.stopTimeout)
+		defer timer.Stop()
+		select {
+		case <-pending.ready:
+			s.mu.Lock()
+			active = s.active[req.TurnID]
+			s.mu.Unlock()
+			if active == nil {
+				return s.uncertainCancelOperation(ctx, op, "active turn finished during cancellation handoff")
+			}
+		case <-timer.C:
+			return session.Turn{}, wrapServiceOperationError(op.ID,
+				errors.New("active turn worker did not register before the cancellation deadline"))
+		case <-ctx.Done():
+			return session.Turn{}, wrapServiceOperationError(op.ID, ctx.Err())
+		}
+		s.mu.Lock()
 	}
 	if active.requested {
 		if active.key != key || active.request != req {
@@ -1966,16 +2392,16 @@ func (s *Service) CancelTurn(ctx context.Context, key string, req session.Cancel
 	case <-done:
 		observed, err := s.store.GetTurn(context.Background(), req.SessionID, req.TurnID)
 		if err != nil {
-			return session.Turn{}, err
+			return s.uncertainCancelOperation(ctx, op, "active turn cleanup could not be read")
 		}
 		if sessionTurnTerminal(observed.State) {
 			return s.completeObservedCancel(context.Background(), op, observed)
 		}
-		return session.Turn{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "active turn cleanup finished without a terminal result"}
+		return s.uncertainCancelOperation(ctx, op, "active turn cleanup finished without a terminal result")
 	case <-timer.C:
-		return session.Turn{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "active turn cleanup is still pending"}
+		return s.uncertainCancelOperation(ctx, op, "active turn cleanup is still pending")
 	case <-ctx.Done():
-		return session.Turn{}, ctx.Err()
+		return s.uncertainCancelOperation(ctx, op, "caller stopped waiting during active turn cleanup")
 	}
 }
 
@@ -1990,9 +2416,24 @@ func sessionTurnTerminal(state session.TurnState) bool {
 
 func (s *Service) failCancelOperation(ctx context.Context, op session.Operation, err error) error {
 	if op.ID != "" {
-		_ = s.store.FailOperation(ctx, op.ID, session.CodeOf(err), boundedSessionServiceError(err))
+		return s.failServiceOperation(ctx, op.ID, err)
 	}
 	return err
+}
+
+func (s *Service) uncertainCancelOperation(
+	ctx context.Context,
+	op session.Operation,
+	detail string,
+) (session.Turn, error) {
+	err := s.makeOperationUncertain(ctx, op, detail)
+	if session.CodeOf(err) == session.CodeInvalidRequest {
+		latest, getErr := s.store.GetOperationByID(context.WithoutCancel(ctx), op.ID)
+		if getErr == nil {
+			return replayCancelOperation(latest)
+		}
+	}
+	return session.Turn{}, err
 }
 
 func (s *Service) completeObservedCancel(ctx context.Context, op session.Operation, turn session.Turn) (session.Turn, error) {
@@ -2012,17 +2453,20 @@ func (s *Service) completeObservedCancel(ctx context.Context, op session.Operati
 
 func replayCancelOperation(op session.Operation) (session.Turn, error) {
 	if op.State == session.OperationFailed {
-		return session.Turn{}, &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail}
+		return session.Turn{}, wrapServiceOperationError(op.ID,
+			&session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail})
 	}
 	if op.State != session.OperationSucceeded {
-		return session.Turn{}, session.ErrOperationUncertain
+		return session.Turn{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 	}
 	var turn session.Turn
 	if err := json.Unmarshal(op.Result, &turn); err != nil {
-		return session.Turn{}, fmt.Errorf("decode cancel operation result: %w", err)
+		return session.Turn{}, wrapServiceOperationError(op.ID,
+			fmt.Errorf("decode cancel operation result: %w", err))
 	}
 	if turn.ID == "" {
-		return session.Turn{}, errors.New("decode cancel operation result: missing turn id")
+		return session.Turn{}, wrapServiceOperationError(op.ID,
+			errors.New("decode cancel operation result: missing turn id"))
 	}
 	return turn, nil
 }

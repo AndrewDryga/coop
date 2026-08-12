@@ -151,9 +151,11 @@ func (s *Service) RunReview(ctx context.Context, key string, req RunReviewReques
 	if replay {
 		switch op.State {
 		case session.OperationSucceeded:
-			return decodeSessionReviewDossier(op.Result)
+			dossier, decodeErr := decodeSessionReviewDossier(op.Result)
+			return dossier, wrapServiceOperationError(op.ID, decodeErr)
 		case session.OperationFailed:
-			return ReviewDossier{}, &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail}
+			return ReviewDossier{}, wrapServiceOperationError(op.ID,
+				&session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail})
 		case session.OperationRunning, session.OperationUncertain:
 			return s.resumeReview(ctx, op)
 		default:
@@ -181,16 +183,25 @@ func (s *Service) resumeReview(
 	var intent sessionReviewIntent
 	if err := json.Unmarshal(op.Result, &intent); err != nil {
 		if op.State == session.OperationRunning {
-			_ = s.store.MarkOperationUncertain(ctx, op.ID)
+			return ReviewDossier{}, s.makeOperationUncertain(
+				ctx, op, "review operation intent is unreadable",
+			)
 		}
-		return ReviewDossier{}, &session.Error{
-			Code: session.CodeOperationUncertain, Detail: "review operation intent is unreadable",
+		return ReviewDossier{}, &serviceOperationError{
+			operationID: op.ID,
+			err: &session.Error{
+				Code: session.CodeOperationUncertain, Detail: "review operation intent is unreadable",
+			},
 		}
 	}
 	dossier, err := s.executeReviewIntent(s.reviewExecutionContext(), op, intent)
 	if err != nil && session.CodeOf(err) == session.CodeOperationUncertain &&
 		op.State == session.OperationRunning {
-		_ = s.store.MarkOperationUncertain(ctx, op.ID)
+		var correlated interface{ OperationID() string }
+		if errors.As(err, &correlated) {
+			return ReviewDossier{}, err
+		}
+		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, boundedSessionServiceError(err))
 	}
 	return dossier, err
 }
@@ -417,12 +428,12 @@ func sessionReviewIsAncestor(dir, base, head string) (bool, error) {
 
 func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation, intent sessionReviewIntent) (ReviewDossier, error) {
 	if intent.OperationID != op.ID || intent.SessionID == "" || intent.Repository == "" || intent.Workspace == "" || intent.SessionRevision <= 0 || !validSessionReviewObject(intent.CreationBase) || !validSessionReviewObject(intent.SourceHead) || !validSessionReviewObject(intent.SourceTree) || !validSessionReviewObject(intent.ParentHead) || !validSessionReviewObject(intent.ParentTree) || intent.MaxPatchBytes <= 0 || intent.MaxPatchBytes > session.MaxPatchBytesLimit {
-		return ReviewDossier{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "review operation intent is invalid"}
+		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review operation intent is invalid")
 	}
 	if intent.PullRequest != nil && (intent.PullRequest.Number < 1 ||
 		intent.PullRequest.Ref != fmt.Sprintf("refs/pull/%d/head", intent.PullRequest.Number) ||
 		!validSessionReviewObject(intent.PullRequest.HeadCommit)) {
-		return ReviewDossier{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "review pull request binding is invalid"}
+		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review pull request binding is invalid")
 	}
 	candidate, err := prepareForkReviewCandidateFromIntent(intent)
 	if err != nil {

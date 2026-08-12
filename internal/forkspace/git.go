@@ -1,6 +1,8 @@
 package forkspace
 
 import (
+	"context"
+	"errors"
 	"os/exec"
 	"strings"
 )
@@ -48,12 +50,24 @@ var GitHardening = []string{
 // GitClone clones src→dst carrying GitHardening like every other repo-touching git call:
 // inert for a plain local clone, but defense in depth if the source's config was poisoned.
 func GitClone(src, dst string) error {
-	args := append(append([]string{}, GitHardening...), "clone", "--quiet", src, dst)
-	return exec.Command("git", args...).Run()
+	return GitCloneContext(context.Background(), src, dst)
 }
 
-func gitCheckoutNewBranch(repo, branch string) error {
-	return exec.Command("git", "-C", repo, "checkout", "--quiet", "-b", branch).Run()
+func GitCloneContext(ctx context.Context, src, dst string) error {
+	args := append(append([]string{}, GitHardening...), "clone", "--quiet", src, dst)
+	err := exec.CommandContext(ctx, "git", args...).Run()
+	if ctx.Err() != nil {
+		return errors.Join(ctx.Err(), err)
+	}
+	return err
+}
+
+func gitCheckoutNewBranchContext(ctx context.Context, repo, branch string) error {
+	err := exec.CommandContext(ctx, "git", "-C", repo, "checkout", "--quiet", "-b", branch).Run()
+	if ctx.Err() != nil {
+		return errors.Join(ctx.Err(), err)
+	}
+	return err
 }
 
 // gitArgs builds `git -C dir <hardening> <args>`, the same shape internal/cli uses.
@@ -63,7 +77,11 @@ func gitArgs(dir string, args []string) []string {
 
 // gitOut runs `git -C dir <args>` hardened and returns trimmed stdout, or "" on error.
 func gitOut(dir string, args ...string) string {
-	out, err := exec.Command("git", gitArgs(dir, args)...).Output()
+	return gitOutContext(context.Background(), dir, args...)
+}
+
+func gitOutContext(ctx context.Context, dir string, args ...string) string {
+	out, err := exec.CommandContext(ctx, "git", gitArgs(dir, args)...).Output()
 	if err != nil {
 		return ""
 	}
@@ -72,7 +90,11 @@ func gitOut(dir string, args ...string) string {
 
 // gitRun runs `git -C dir <args>` hardened, for effect, returning its error.
 func gitRun(dir string, args ...string) error {
-	return exec.Command("git", gitArgs(dir, args)...).Run()
+	return gitRunContext(context.Background(), dir, args...)
+}
+
+func gitRunContext(ctx context.Context, dir string, args ...string) error {
+	return exec.CommandContext(ctx, "git", gitArgs(dir, args)...).Run()
 }
 
 // gitGlobalOut reads from the host user's GLOBAL git config (`git config --global …`) — the
@@ -81,7 +103,11 @@ func gitRun(dir string, args ...string) error {
 // repo redirect coop to run or exfiltrate whatever it names. Returns "" when unset or git is
 // unavailable.
 func gitGlobalOut(args ...string) string {
-	out, err := exec.Command("git", append([]string{"config", "--global"}, args...)...).Output()
+	return gitGlobalOutContext(context.Background(), args...)
+}
+
+func gitGlobalOutContext(ctx context.Context, args ...string) string {
+	out, err := exec.CommandContext(ctx, "git", append([]string{"config", "--global"}, args...)...).Output()
 	if err != nil {
 		return ""
 	}

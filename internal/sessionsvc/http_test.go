@@ -195,6 +195,15 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &turnResponse); err != nil {
 		t.Fatal(err)
 	}
+	invalidTurn := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
+		`{"expected_revision":999,"prompt":"stale"}`, "turn-invalid", "application/json",
+	)
+	if invalidTurn.Code != http.StatusConflict ||
+		!strings.Contains(invalidTurn.Body.String(), `"operation_id":"`) ||
+		!strings.Contains(invalidTurn.Body.String(), `"code":"revision_conflict"`) {
+		t.Fatalf("correlated turn failure status=%d body=%s", invalidTurn.Code, invalidTurn.Body.String())
+	}
 	operationResponse := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/operations/"+created.Operation.ID, "", "", "")
 	if operationResponse.Code != http.StatusOK {
 		t.Fatalf("operation status = %d body=%s", operationResponse.Code, operationResponse.Body.String())
@@ -202,9 +211,92 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	if strings.Contains(operationResponse.Body.String(), "native-secret") || strings.Contains(operationResponse.Body.String(), "secret prompt") || strings.Contains(operationResponse.Body.String(), "request_hash") || strings.Contains(operationResponse.Body.String(), "result") {
 		t.Fatalf("operation response leaked private data: %s", operationResponse.Body.String())
 	}
+	operationByKey := sessionHTTPTestRequest(
+		t, handler, http.MethodGet, "/v1/operations?key=create", "", "", "",
+	)
+	if operationByKey.Code != http.StatusOK ||
+		!strings.Contains(operationByKey.Body.String(), created.Operation.ID) ||
+		strings.Contains(operationByKey.Body.String(), "idempotency_key") {
+		t.Fatalf("operation-by-key status=%d body=%s", operationByKey.Code, operationByKey.Body.String())
+	}
 	getResponse := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+created.Session.ID, "", "", "")
 	if getResponse.Code != http.StatusOK || strings.Contains(getResponse.Body.String(), repo) || strings.Contains(getResponse.Body.String(), "native-secret") {
 		t.Fatalf("session response leaked private data: %d %s", getResponse.Code, getResponse.Body.String())
+	}
+}
+
+func TestSessionHTTPAsyncCreateReturnsOperationAndCoalescesReplay(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	service, _ := newHTTPTestSessionService(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	service.testBeforeCreatePin = func() error {
+		close(entered)
+		<-release
+		return nil
+	}
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	handler := NewHTTPHandler(service)
+
+	requestAsync := func(key, policy string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(
+			http.MethodPost, "http://unix/v1/sessions",
+			strings.NewReader(fmt.Sprintf(`{"policy":%q,"task":"cold session"}`, policy)),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Idempotency-Key", key)
+		request.Header.Set("Prefer", "wait=1, RESPOND-ASYNC")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	response := requestAsync("async-http-create", "responder")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("async create status=%d body=%s", response.Code, response.Body.String())
+	}
+	var admitted sessionAsyncOperationResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &admitted); err != nil {
+		t.Fatal(err)
+	}
+	if admitted.Operation.ID == "" || admitted.Operation.State != session.OperationRunning {
+		t.Fatalf("async create response = %+v", admitted)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("asynchronous create did not begin")
+	}
+	replay := requestAsync("async-http-create", "responder")
+	var replayed sessionAsyncOperationResponse
+	if replay.Code != http.StatusAccepted || json.Unmarshal(replay.Body.Bytes(), &replayed) != nil ||
+		replayed.Operation.ID != admitted.Operation.ID {
+		t.Fatalf("async replay status=%d body=%s", replay.Code, replay.Body.String())
+	}
+	close(release)
+	var operation OperationDTO
+	waitForSessionTest(t, func() bool {
+		got := sessionHTTPTestRequest(
+			t, handler, http.MethodGet, "/v1/operations/"+admitted.Operation.ID, "", "", "",
+		)
+		if got.Code != http.StatusOK {
+			return false
+		}
+		return json.Unmarshal(got.Body.Bytes(), &operation) == nil &&
+			operation.State == session.OperationSucceeded
+	})
+	if operation.ResourceType != "session" || operation.ResourceID == "" {
+		t.Fatalf("completed async operation = %+v", operation)
+	}
+
+	failure := requestAsync("async-http-invalid", "missing")
+	if failure.Code != http.StatusBadRequest ||
+		!strings.Contains(failure.Body.String(), `"operation_id":"`) ||
+		!strings.Contains(failure.Body.String(), `"code":"invalid_request"`) {
+		t.Fatalf("correlated failure status=%d body=%s", failure.Code, failure.Body.String())
 	}
 }
 

@@ -103,11 +103,15 @@ func pinSessionPolicyRepositories(
 	if err != nil {
 		return sessionPolicyPins{}, err
 	}
-	mergeBase, err := sessionWorkspaceGitText(
-		policy.Repository, 4<<10, "merge-base", result.creationBase, pullHead,
+	mergeBase, truncated, err := runSessionWorkspaceGitWithEnvContext(
+		ctx, policy.Repository, 4<<10, nil,
+		"merge-base", result.creationBase, pullHead,
 	)
 	if err != nil {
 		return sessionPolicyPins{}, fmt.Errorf("resolve pull request merge base: %w", err)
+	}
+	if truncated {
+		return sessionPolicyPins{}, errors.New("pull request merge base exceeds bounds")
 	}
 	result.creationBase = strings.TrimSpace(string(mergeBase))
 	if !validSessionWorkspaceCommit(result.creationBase) {
@@ -119,7 +123,7 @@ func pinSessionPolicyRepositories(
 
 func pinSessionRepository(ctx context.Context, source sessionRepositorySource) (string, error) {
 	if source.remote == "" {
-		commit, err := sessionWorkspaceCommit(source.repository, "HEAD")
+		commit, err := sessionWorkspaceCommitContext(ctx, source.repository, "HEAD")
 		if err != nil {
 			return "", fmt.Errorf("pin %s repository HEAD: %w", source.label, err)
 		}
@@ -186,7 +190,7 @@ func pinSessionRepository(ctx context.Context, source sessionRepositorySource) (
 			source.label, source.remote, display, commit, err,
 		)
 	}
-	resolved, err := sessionWorkspaceCommit(source.repository, commit)
+	resolved, err := sessionWorkspaceCommitContext(ctx, source.repository, commit)
 	if err != nil {
 		return "", fmt.Errorf("verify refreshed %s repository commit %s: %w", source.label, commit, err)
 	}
@@ -246,8 +250,13 @@ func runSessionSourceGit(ctx context.Context, dir string, args ...string) ([]byt
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("git %s timed out after %s", strings.Join(args, " "), sessionPolicyRemoteTimeout)
+		if ctx.Err() != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil, errors.Join(ctx.Err(), fmt.Errorf(
+					"git %s timed out after %s", strings.Join(args, " "), sessionPolicyRemoteTimeout,
+				))
+			}
+			return nil, errors.Join(ctx.Err(), err)
 		}
 		detail := strings.TrimSpace(stderr.buf.String())
 		if detail != "" {

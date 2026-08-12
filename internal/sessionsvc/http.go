@@ -196,6 +196,10 @@ type sessionMutationSessionResponse struct {
 	Session   SessionDTO   `json:"session"`
 }
 
+type sessionAsyncOperationResponse struct {
+	Operation OperationDTO `json:"operation"`
+}
+
 type sessionMutationTurnResponse struct {
 	Operation OperationDTO `json:"operation"`
 	Turn      TurnDTO      `json:"turn"`
@@ -220,8 +224,9 @@ type sessionReadyDTO struct {
 }
 
 type sessionHTTPErrorBody struct {
-	Code   string `json:"code"`
-	Detail string `json:"detail,omitempty"`
+	Code        string `json:"code"`
+	Detail      string `json:"detail,omitempty"`
+	OperationID string `json:"operation_id,omitempty"`
 }
 
 type sessionHTTPErrorResponse struct {
@@ -274,7 +279,28 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveOperationPath(w, r)
 		return
 	}
+	if r.URL.Path == "/v1/operations" {
+		h.getOperationByKey(w, r)
+		return
+	}
 	writeSessionHTTPError(w, http.StatusNotFound, "not_found", "resource not found")
+}
+
+func (h *sessionHTTPHandler) getOperationByKey(w http.ResponseWriter, r *http.Request) {
+	if !sessionHTTPMethod(w, r, http.MethodGet) || !sessionQueryOnly(w, r, "key") {
+		return
+	}
+	key := r.URL.Query().Get("key")
+	if key == "" || len(key) > session.MaxIdempotencyKeyBytes || !utf8SessionText(key) {
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "invalid idempotency key")
+		return
+	}
+	op, err := h.service.GetOperation(r.Context(), key)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, publicOperation(op))
 }
 
 func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Request) {
@@ -434,9 +460,23 @@ func (h *sessionHTTPHandler) createSession(w http.ResponseWriter, r *http.Reques
 	if !decodeSessionJSON(w, r, &body) {
 		return
 	}
-	sess, err := h.service.CreateRemoteSession(r.Context(), sessionIdempotencyKey(r), CreateRemoteSessionRequest{
+	request := CreateRemoteSessionRequest{
 		Policy: body.Policy, Task: body.Task, PullRequest: body.PullRequest,
-	})
+	}
+	if sessionPreferAsync(r) {
+		op, err := h.service.CreateRemoteSessionAsync(
+			r.Context(), sessionIdempotencyKey(r), request,
+		)
+		if err != nil {
+			writeSessionServiceError(w, err)
+			return
+		}
+		writeSessionJSON(w, http.StatusAccepted, sessionAsyncOperationResponse{
+			Operation: publicOperation(op),
+		})
+		return
+	}
+	sess, err := h.service.CreateRemoteSession(r.Context(), sessionIdempotencyKey(r), request)
 	if err != nil {
 		writeSessionServiceError(w, err)
 		return
@@ -446,6 +486,17 @@ func (h *sessionHTTPHandler) createSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeSessionJSON(w, http.StatusOK, sessionMutationSessionResponse{Operation: publicOperation(op), Session: publicSession(sess)})
+}
+
+func sessionPreferAsync(r *http.Request) bool {
+	for _, value := range r.Header.Values("Prefer") {
+		for _, preference := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(preference), "respond-async") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (h *sessionHTTPHandler) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -1104,7 +1155,14 @@ func writeSessionHTTPError(w http.ResponseWriter, status int, code, detail strin
 
 func writeSessionServiceError(w http.ResponseWriter, err error) {
 	code, status, detail := sessionHTTPError(err)
-	writeSessionHTTPError(w, status, code, detail)
+	var operationID string
+	var operationErr interface{ OperationID() string }
+	if errors.As(err, &operationErr) {
+		operationID = operationErr.OperationID()
+	}
+	writeSessionJSON(w, status, sessionHTTPErrorResponse{Error: sessionHTTPErrorBody{
+		Code: code, Detail: BoundedDetail(detail), OperationID: operationID,
+	}})
 }
 
 func sessionHTTPError(err error) (string, int, string) {

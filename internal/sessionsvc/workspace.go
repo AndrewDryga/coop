@@ -2,6 +2,7 @@ package sessionsvc
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -133,15 +134,26 @@ func runSessionWorkspaceGit(dir string, limit int, args ...string) ([]byte, bool
 func runSessionWorkspaceGitWithEnv(
 	dir string, limit int, env []string, args ...string,
 ) ([]byte, bool, error) {
+	return runSessionWorkspaceGitWithEnvContext(
+		context.Background(), dir, limit, env, args...,
+	)
+}
+
+func runSessionWorkspaceGitWithEnvContext(
+	ctx context.Context, dir string, limit int, env []string, args ...string,
+) ([]byte, bool, error) {
 	stdout := &sessionWorkspaceLimitedWriter{limit: limit}
 	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	cmd := exec.Command("git", gitArgs(dir, args)...)
+	cmd := exec.CommandContext(ctx, "git", gitArgs(dir, args)...)
 	if env != nil {
 		cmd.Env = env
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = errors.Join(ctx.Err(), err)
+		}
 		detail := strings.TrimSpace(stderr.buf.String())
 		if detail != "" {
 			return nil, false, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, detail)
@@ -214,7 +226,11 @@ func runSessionWorkspaceGitWindow(
 }
 
 func sessionWorkspaceGitText(dir string, limit int, args ...string) ([]byte, error) {
-	out, truncated, err := runSessionWorkspaceGit(dir, limit, args...)
+	return sessionWorkspaceGitTextContext(context.Background(), dir, limit, args...)
+}
+
+func sessionWorkspaceGitTextContext(ctx context.Context, dir string, limit int, args ...string) ([]byte, error) {
+	out, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, dir, limit, nil, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -225,13 +241,22 @@ func sessionWorkspaceGitText(dir string, limit int, args ...string) ([]byte, err
 }
 
 func sessionWorkspaceCommit(dir, revision string) (string, error) {
+	return sessionWorkspaceCommitContext(context.Background(), dir, revision)
+}
+
+func sessionWorkspaceCommitContext(ctx context.Context, dir, revision string) (string, error) {
 	if revision == "" || strings.ContainsAny(revision, "\x00\r\n") {
 		return "", errors.New("invalid commit revision")
 	}
-	out, err := sessionWorkspaceGitText(dir, sessionWorkspaceGitOutputLimit,
-		"rev-parse", "--verify", "--end-of-options", revision+"^{commit}")
+	out, truncated, err := runSessionWorkspaceGitWithEnvContext(
+		ctx, dir, sessionWorkspaceGitOutputLimit, nil,
+		"rev-parse", "--verify", "--end-of-options", revision+"^{commit}",
+	)
 	if err != nil {
 		return "", fmt.Errorf("resolve commit %q: %w", revision, err)
+	}
+	if truncated {
+		return "", fmt.Errorf("resolve commit %q: output exceeds bounds", revision)
 	}
 	commit := strings.TrimSpace(string(out))
 	if !validSessionWorkspaceCommit(commit) {
@@ -253,7 +278,11 @@ func validSessionWorkspaceCommit(commit string) bool {
 }
 
 func sessionWorkspaceBranch(dir string) (string, error) {
-	out, err := sessionWorkspaceGitText(dir, 4<<10, "symbolic-ref", "--quiet", "--short", "HEAD")
+	return sessionWorkspaceBranchContext(context.Background(), dir)
+}
+
+func sessionWorkspaceBranchContext(ctx context.Context, dir string) (string, error) {
+	out, err := sessionWorkspaceGitTextContext(ctx, dir, 4<<10, "symbolic-ref", "--quiet", "--short", "HEAD")
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
@@ -286,11 +315,15 @@ func createSessionWorkspace(repo, generatedName string) (sessionWorkspace, error
 // already-persisted base. An existing path is read-only inspected: a crash-recovery retry must
 // never reset, clean, or replace an ambiguous workspace it did not create.
 func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace, error) {
+	return ensureSessionWorkspaceContext(context.Background(), repo, generatedName, base)
+}
+
+func ensureSessionWorkspaceContext(ctx context.Context, repo, generatedName, base string) (sessionWorkspace, error) {
 	if repo == "" || !filepath.IsAbs(repo) || !forkspace.ValidName(generatedName) || !validSessionWorkspaceCommit(base) {
 		return sessionWorkspace{}, errors.New("invalid session workspace binding")
 	}
 	ws := forkspace.Workspace(repo, generatedName)
-	unlock, err := forkspace.LockState(repo, generatedName)
+	unlock, err := forkspace.LockStateContext(ctx, repo, generatedName)
 	if err != nil {
 		return sessionWorkspace{}, fmt.Errorf("lock session workspace %s: %w", generatedName, err)
 	}
@@ -302,7 +335,7 @@ func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace,
 		return sessionWorkspace{}, fmt.Errorf("inspect session workspace %q: %w", generatedName, statErr)
 	}
 	if created {
-		createdPath, createErr := forkspace.Setup(repo, generatedName)
+		createdPath, createErr := forkspace.SetupContext(ctx, repo, generatedName)
 		if createErr != nil {
 			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, fmt.Errorf("create session workspace: %w", createErr))
 		}
@@ -326,16 +359,18 @@ func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace,
 			}
 			return cause
 		}
-		if head, headErr := sessionWorkspaceCommit(ws, "HEAD"); headErr != nil {
+		if head, headErr := sessionWorkspaceCommitContext(ctx, ws, "HEAD"); headErr != nil {
 			return sessionWorkspace{}, cleanupPartial(fmt.Errorf("verify new session workspace HEAD: %w", headErr))
 		} else if head != base {
-			if _, _, resetErr := runSessionWorkspaceGit(ws, sessionWorkspaceGitOutputLimit, "reset", "--hard", base); resetErr != nil {
+			if _, _, resetErr := runSessionWorkspaceGitWithEnvContext(
+				ctx, ws, sessionWorkspaceGitOutputLimit, nil, "reset", "--hard", base,
+			); resetErr != nil {
 				return sessionWorkspace{}, cleanupPartial(fmt.Errorf("reset new session workspace to persisted base: %w", resetErr))
 			}
 		}
 	}
 
-	workspace, err := verifySessionWorkspace(repo, generatedName, ws, base)
+	workspace, err := verifySessionWorkspaceContext(ctx, repo, generatedName, ws, base)
 	if err != nil {
 		if created {
 			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, err)
@@ -363,7 +398,7 @@ func removeCreatedSessionWorkspace(path string, cause error) error {
 	return cause
 }
 
-func verifySessionWorkspace(repo, name, workspace, base string) (sessionWorkspace, error) {
+func verifySessionWorkspaceContext(ctx context.Context, repo, name, workspace, base string) (sessionWorkspace, error) {
 	info, err := os.Lstat(workspace)
 	if err != nil {
 		return sessionWorkspace{}, err
@@ -371,11 +406,11 @@ func verifySessionWorkspace(repo, name, workspace, base string) (sessionWorkspac
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return sessionWorkspace{}, errors.New("workspace is not a real directory")
 	}
-	branch, err := sessionWorkspaceBranch(workspace)
+	branch, err := sessionWorkspaceBranchContext(ctx, workspace)
 	if err != nil {
 		return sessionWorkspace{}, err
 	}
-	head, err := sessionWorkspaceCommit(workspace, "HEAD")
+	head, err := sessionWorkspaceCommitContext(ctx, workspace, "HEAD")
 	if err != nil {
 		return sessionWorkspace{}, err
 	}
@@ -385,7 +420,7 @@ func verifySessionWorkspace(repo, name, workspace, base string) (sessionWorkspac
 	if head != base {
 		return sessionWorkspace{}, fmt.Errorf("workspace HEAD is %s, want persisted base %s", head, base)
 	}
-	status, truncated, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
+	status, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, workspace, sessionWorkspaceGitOutputLimit, nil,
 		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z")
 	if err != nil {
 		return sessionWorkspace{}, fmt.Errorf("verify workspace cleanliness: %w", err)
@@ -393,9 +428,14 @@ func verifySessionWorkspace(repo, name, workspace, base string) (sessionWorkspac
 	if truncated || len(status) != 0 {
 		return sessionWorkspace{}, errors.New("workspace is not clean")
 	}
-	origin, err := sessionWorkspaceGitText(workspace, 4<<10, "remote", "get-url", "origin")
+	origin, originTruncated, err := runSessionWorkspaceGitWithEnvContext(
+		ctx, workspace, 4<<10, nil, "remote", "get-url", "origin",
+	)
 	if err != nil {
 		return sessionWorkspace{}, fmt.Errorf("verify workspace origin: %w", err)
+	}
+	if originTruncated {
+		return sessionWorkspace{}, errors.New("workspace origin exceeds bounds")
 	}
 	if !sameRealPath(strings.TrimSpace(string(origin)), repo) {
 		return sessionWorkspace{}, fmt.Errorf("workspace origin is not repository %q", repo)
