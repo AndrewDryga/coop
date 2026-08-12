@@ -65,6 +65,28 @@ type Policy struct {
 	MaxPatchBytes   int
 }
 
+// UnmarshalJSON retains the write-ahead intent format written before target ladders. Policy
+// files use YAML and new JSON intents marshal Targets, so compatibility stays read-only.
+func (p *Policy) UnmarshalJSON(data []byte) error {
+	type policyAlias Policy
+	wire := struct {
+		*policyAlias
+		LegacyTarget string `json:"Target"`
+	}{policyAlias: (*policyAlias)(p)}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	if len(p.Targets) != 0 || wire.LegacyTarget == "" {
+		return nil
+	}
+	target, err := agents.ParseTarget(wire.LegacyTarget)
+	if err != nil {
+		return fmt.Errorf("decode legacy session target: %w", err)
+	}
+	p.Targets = []agents.Target{target}
+	return nil
+}
+
 type CompanionPolicy struct {
 	Name       string `json:"name"`
 	Repository string `json:"repository"`
@@ -1181,7 +1203,7 @@ func (s *Service) replayCreateOperation(ctx context.Context, op session.Operatio
 	case session.OperationRunning:
 		var intent sessionCreateIntent
 		if err := json.Unmarshal(op.Result, &intent); err != nil {
-			return session.Session{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "create operation intent is unreadable"}
+			return s.rejectCreateIntent(ctx, op.ID, "create operation intent is unreadable")
 		}
 		return s.executeCreateIntent(ctx, op, intent)
 	default:
@@ -1267,7 +1289,10 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		!forkspace.ValidName(intent.ForkName) ||
 		!validSessionWorkspaceCommit(intent.BaseCommit) ||
 		!validSessionWorkspaceCommit(workspaceCommit) {
-		return session.Session{}, &session.Error{Code: session.CodeOperationUncertain, Detail: "create operation intent is invalid"}
+		return s.rejectCreateIntent(ctx, op.ID, "create operation intent is invalid")
+	}
+	if !validSessionIntentTargets(intent.Policy.Targets) {
+		return s.rejectCreateIntent(ctx, op.ID, "create operation intent has no valid target")
 	}
 	workspace, err := ensureSessionWorkspace(intent.Policy.Repository, intent.ForkName, workspaceCommit)
 	if err != nil {
@@ -1316,6 +1341,32 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		return session.Session{}, err
 	}
 	return sess, nil
+}
+
+func validSessionIntentTargets(targets []agents.Target) bool {
+	if len(targets) == 0 || len(targets) > sessionPolicyMaxTargets {
+		return false
+	}
+	for _, target := range targets {
+		parsed, err := agents.ParseTarget(target.String())
+		if err != nil || len(parsed.Accounts) > 1 {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) rejectCreateIntent(
+	ctx context.Context,
+	operationID string,
+	detail string,
+) (session.Session, error) {
+	if err := s.store.MarkOperationUncertain(ctx, operationID); err != nil {
+		return session.Session{}, fmt.Errorf("mark invalid create operation uncertain: %w", err)
+	}
+	return session.Session{}, &session.Error{
+		Code: session.CodeOperationUncertain, Detail: detail,
+	}
 }
 
 func rollbackSessionCreate(

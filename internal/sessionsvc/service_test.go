@@ -336,6 +336,121 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 	}
 }
 
+func TestSessionServiceCreateReplayNormalizesLegacySingleTargetIntent(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	policies := testSessionPolicies(repo)
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+	request := CreateRemoteSessionRequest{Policy: "responder", Task: "legacy task"}
+	op, replay, err := service.Store().ReserveOperation(
+		context.Background(), "CreateRemoteSession", "legacy-create", request,
+	)
+	if err != nil || replay {
+		t.Fatalf("reserve legacy create = %+v, replay=%v, err=%v", op, replay, err)
+	}
+	legacyPolicy := policies["responder"]
+	wantTarget := legacyPolicy.Targets[0].String()
+	legacyPolicy.Targets = nil
+	intent := sessionCreateIntent{
+		OperationID: op.ID, Policy: legacyPolicy, Task: request.Task,
+		SessionID: deterministicSessionID(op.ID), ForkName: deterministicForkName(op.ID),
+		BaseCommit: base,
+	}
+	intentBytes, err := json.Marshal(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyWire map[string]any
+	if err := json.Unmarshal(intentBytes, &legacyWire); err != nil {
+		t.Fatal(err)
+	}
+	policyWire := legacyWire["policy"].(map[string]any)
+	policyWire["Target"] = wantTarget
+	intentBytes, err = json.Marshal(legacyWire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Store().MarkOperationRunning(
+		context.Background(), op.ID, intentBytes,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	sess, err := service.CreateRemoteSession(context.Background(), "legacy-create", request)
+	if err != nil || sess.Target != wantTarget || sess.ID != intent.SessionID {
+		t.Fatalf("legacy create replay = %+v, err=%v", sess, err)
+	}
+	resolved, err := service.Store().GetOperationByID(context.Background(), op.ID)
+	if err != nil || resolved.State != session.OperationSucceeded ||
+		resolved.ResourceID != sess.ID {
+		t.Fatalf("legacy create operation = %+v, err=%v", resolved, err)
+	}
+}
+
+func TestSessionServiceCreateReplayRejectsInvalidLegacyTargetWithoutPanic(t *testing.T) {
+	for _, legacyTarget := range []string{"", "not-a-provider"} {
+		name := "missing"
+		if legacyTarget != "" {
+			name = "malformed"
+		}
+		t.Run(name, func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			git("commit", "-q", "--allow-empty", "-m", "base")
+			base := gitOut(repo, "rev-parse", "HEAD")
+			policies := testSessionPolicies(repo)
+			service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+			defer service.Stop()
+			request := CreateRemoteSessionRequest{Policy: "responder", Task: "invalid legacy task"}
+			key := "invalid-legacy-create-" + name
+			op, replay, err := service.Store().ReserveOperation(
+				context.Background(), "CreateRemoteSession", key, request,
+			)
+			if err != nil || replay {
+				t.Fatalf("reserve invalid legacy create = %+v, replay=%v, err=%v", op, replay, err)
+			}
+			invalidPolicy := policies["responder"]
+			invalidPolicy.Targets = nil
+			intent := sessionCreateIntent{
+				OperationID: op.ID, Policy: invalidPolicy, Task: request.Task,
+				SessionID: deterministicSessionID(op.ID), ForkName: deterministicForkName(op.ID),
+				BaseCommit: base,
+			}
+			intentBytes, err := json.Marshal(intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if legacyTarget != "" {
+				var wire map[string]any
+				if err := json.Unmarshal(intentBytes, &wire); err != nil {
+					t.Fatal(err)
+				}
+				wire["policy"].(map[string]any)["Target"] = legacyTarget
+				intentBytes, err = json.Marshal(wire)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := service.Store().MarkOperationRunning(
+				context.Background(), op.ID, intentBytes,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := service.CreateRemoteSession(
+				context.Background(), key, request,
+			); session.CodeOf(err) != session.CodeOperationUncertain {
+				t.Fatalf("invalid legacy create replay = %v", err)
+			}
+			rejected, err := service.Store().GetOperationByID(context.Background(), op.ID)
+			if err != nil || rejected.State != session.OperationUncertain {
+				t.Fatalf("invalid legacy operation = %+v, err=%v", rejected, err)
+			}
+		})
+	}
+}
+
 func TestSessionServicePinsConfiguredRemoteWithoutChangingLocalCheckout(t *testing.T) {
 	seed, seedGit := gitrepo.New(t)
 	if err := os.WriteFile(filepath.Join(seed, "version.txt"), []byte("v1\n"), 0o644); err != nil {
