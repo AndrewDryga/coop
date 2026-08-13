@@ -24,6 +24,10 @@ const (
 	sessionHTTPTurnMaxBody = 12 << 20
 	sessionHTTPDefaultMax  = 100
 	sessionHTTPMaxList     = 1000
+	// sessionEventPageBytes caps the payload bytes one event page may carry.
+	// Chosen well under the 3 MiB a client reasonably allows for a whole
+	// response, since the DTO envelope and JSON escaping both add to it.
+	sessionEventPageBytes = 1 << 20
 )
 
 // These DTOs are the public v1 wire types. They deliberately do not mirror the durable records:
@@ -92,6 +96,11 @@ type EventDTO struct {
 	Type       session.EventType `json:"type"`
 	Version    int               `json:"version"`
 	OccurredAt time.Time         `json:"occurred_at"`
+	// Payload is the event's own record of what happened. It was withheld for
+	// a long time, which left a caller able to count that a turn failed but
+	// not to say why, and able to see that a turn ran without seeing any of
+	// the work inside it.
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 type OperationDTO struct {
@@ -634,7 +643,19 @@ func (h *sessionHTTPHandler) listEvents(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	result := make([]EventDTO, 0, len(events))
+	// Payloads are what make an event readable rather than merely countable,
+	// but they are individually bounded at 256 KiB and a page holds up to a
+	// thousand of them, so a page has to be bounded by bytes as well as by
+	// count. Returning a short page is correct: the caller pages by sequence
+	// and the next request resumes exactly where this one stopped. Always
+	// return at least one event, or a single large payload would wedge the
+	// cursor forever.
+	budget := sessionEventPageBytes
 	for _, event := range events {
+		if len(result) > 0 && budget-len(event.Payload) < 0 {
+			break
+		}
+		budget -= len(event.Payload)
 		result = append(result, publicEvent(event))
 	}
 	writeSessionJSON(w, http.StatusOK, result)
@@ -1056,7 +1077,7 @@ func publicTurn(value session.Turn) TurnDTO {
 }
 
 func publicEvent(value session.Event) EventDTO {
-	return EventDTO{ID: value.ID, SessionID: value.SessionID, Sequence: value.Sequence, TurnID: value.TurnID, Type: value.Type, Version: value.Version, OccurredAt: value.OccurredAt}
+	return EventDTO{ID: value.ID, SessionID: value.SessionID, Sequence: value.Sequence, TurnID: value.TurnID, Type: value.Type, Version: value.Version, OccurredAt: value.OccurredAt, Payload: json.RawMessage(value.Payload)}
 }
 
 func publicOperation(value session.Operation) OperationDTO {

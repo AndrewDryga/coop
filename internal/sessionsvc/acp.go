@@ -1564,6 +1564,18 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 	var cumulativeCostUSD float64
 	var costRecorded bool
 	collectAssistant := false
+	// Narration is bound to the admitted prompt for the same reason assistant
+	// text is: startup, auth, and status frames are not work the caller asked
+	// for. close() runs before this function returns, so every activity event
+	// is sequenced below the turn.completed that completeTurn appends after it.
+	activity := newSessionActivity(r.store, bound.ID, leased.ID)
+	defer func() {
+		drainCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx), sessionACPCleanupTimeout,
+		)
+		activity.close(drainCtx)
+		cancel()
+	}()
 	next := func() json.RawMessage {
 		process.nextID++
 		return json.RawMessage(strconv.FormatInt(process.nextID, 10))
@@ -1600,6 +1612,7 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 					if amount, ok := sessionACPReportedCost(envelope.Params); ok {
 						cumulativeCostUSD, costRecorded = amount, true
 					}
+					activity.observe(envelope.Params)
 				}
 				transcriptBytes += sessionACPUpdateTranscriptBytes(
 					envelope.Params,
@@ -1616,14 +1629,28 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 			}
 			if envelope.Method == "session/request_permission" {
 				var params struct {
-					Options []permOption `json:"options"`
+					Options  []permOption `json:"options"`
+					ToolCall struct {
+						ToolCallID string `json:"toolCallId"`
+					} `json:"toolCall"`
 				}
 				if err := json.Unmarshal(envelope.Params, &params); err != nil {
 					return nil, "", acpFailure(sessionACPProtocolError, "malformed permission request")
 				}
 				outcome := map[string]any{"outcome": "cancelled"}
-				if option := chooseSessionACPAllow(params.Options); option != "" {
+				decision := "cancelled"
+				option := chooseSessionACPAllow(params.Options)
+				if option != "" {
 					outcome = map[string]any{"outcome": "selected", "optionId": option}
+					decision = "selected"
+				}
+				if collectAssistant {
+					// Nobody human answered this. Which way the policy answered
+					// on their behalf is exactly the kind of fact a trace owes.
+					activity.permission(
+						params.ToolCall.ToolCallID, decision,
+						option, permOptionKind(params.Options, option),
+					)
 				}
 				if err := writeSessionACPResponse(ctx, process.stdin, envelope.ID, map[string]any{"outcome": outcome}); err != nil {
 					return nil, "", err
@@ -1973,6 +2000,20 @@ func validACPStopReason(reason string) bool {
 type permOption struct {
 	OptionID string `json:"optionId"`
 	Kind     string `json:"kind"`
+}
+
+// permOptionKind names the kind of the option that was actually chosen, so a
+// recorded permission says "allow_always" rather than only an opaque id.
+func permOptionKind(options []permOption, optionID string) string {
+	if optionID == "" {
+		return ""
+	}
+	for _, option := range options {
+		if option.OptionID == optionID {
+			return option.Kind
+		}
+	}
+	return ""
 }
 
 func chooseSessionACPAllow(options []permOption) string {

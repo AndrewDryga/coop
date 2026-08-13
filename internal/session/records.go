@@ -126,6 +126,20 @@ const (
 	EventSessionParked        EventType = "session.parked"
 	EventSessionClosed        EventType = "session.closed"
 	EventWorkspaceDiscarded   EventType = "workspace.discarded"
+
+	// Activity events narrate what the model did inside a turn. Everything
+	// above is a lifecycle fact Coop decided; these are observations of the
+	// agent, forwarded so a caller can show the work instead of a stopwatch.
+	//
+	// They are appended from the ACP frame loop and always land before the
+	// turn's own terminal event, because a caller that stops polling at
+	// turn.completed would never see anything sequenced after it.
+	EventToolStarted    EventType = "tool.started"
+	EventToolCompleted  EventType = "tool.completed"
+	EventModelPlan      EventType = "model.plan"
+	EventModelThought   EventType = "model.thought"
+	EventPermission     EventType = "permission.decided"
+	EventActivityElided EventType = "activity.elided"
 )
 
 type ErrorCode string
