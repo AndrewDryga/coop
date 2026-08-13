@@ -869,6 +869,60 @@ func TestLeaseSendCheckpointsAndCompletion(t *testing.T) {
 	}
 }
 
+func TestCompletedTurnsPersistProviderCostAsCumulativeDeltas(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "cost-session", CreateSessionRequest{Target: "claude:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete := func(key string, cumulative float64) Turn {
+		t.Helper()
+		turn, err := store.SubmitTurn(ctx, key, SubmitTurnRequest{
+			SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: key,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		turn, found, err := store.LeaseNextTurn(ctx, sess.ID)
+		if err != nil || !found {
+			t.Fatalf("lease %s = %+v, found=%t, err=%v", key, turn, found, err)
+		}
+		if _, err := store.MarkTurnSendIntent(ctx, sess.ID, turn.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.MarkTurnSent(ctx, sess.ID, turn.ID); err != nil {
+			t.Fatal(err)
+		}
+		turn, err = store.CompleteTurn(ctx, CompleteTurnRequest{
+			SessionID: sess.ID, TurnID: turn.ID, Message: "done",
+			CumulativeCostUSD: cumulative, CostRecorded: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return turn
+	}
+
+	first := complete("cost-turn-1", 0.25)
+	second := complete("cost-turn-2", 0.40)
+	reset := complete("cost-turn-3", 0.10)
+	if !first.Usage.CostRecorded || first.Usage.CostUSD != 0.25 {
+		t.Fatalf("first cost = %+v, want reported 0.25", first.Usage)
+	}
+	if !second.Usage.CostRecorded || second.Usage.CostUSD < 0.149999 || second.Usage.CostUSD > 0.150001 {
+		t.Fatalf("second cost = %+v, want reported cumulative delta 0.15", second.Usage)
+	}
+	if !reset.Usage.CostRecorded || reset.Usage.CostUSD != 0.10 {
+		t.Fatalf("reset cost = %+v, want new-segment cost 0.10", reset.Usage)
+	}
+	got, err := store.GetTurn(ctx, sess.ID, second.ID)
+	if err != nil || !got.Usage.CostRecorded || got.Usage.CostUSD != second.Usage.CostUSD {
+		t.Fatalf("reopened second cost = %+v, err=%v", got.Usage, err)
+	}
+}
+
 func TestNativeSessionBindingIsImmutableAfterFirstValidID(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))

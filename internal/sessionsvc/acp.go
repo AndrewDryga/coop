@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -411,6 +412,28 @@ func (u *acpUsage) session() session.Usage {
 	}
 }
 
+// sessionACPReportedCost reads ACP's cumulative session cost update. Cost is
+// optional and separate from PromptResponse.usage in the protocol; Claude's
+// adapter reports it here while Codex currently reports token counts only.
+func sessionACPReportedCost(raw json.RawMessage) (float64, bool) {
+	var params struct {
+		Update struct {
+			SessionUpdate string `json:"sessionUpdate"`
+			Cost          *struct {
+				Amount   float64 `json:"amount"`
+				Currency string  `json:"currency"`
+			} `json:"cost"`
+		} `json:"update"`
+	}
+	if json.Unmarshal(raw, &params) != nil || params.Update.SessionUpdate != "usage_update" ||
+		params.Update.Cost == nil || params.Update.Cost.Currency != "USD" ||
+		params.Update.Cost.Amount < 0 || math.IsNaN(params.Update.Cost.Amount) ||
+		math.IsInf(params.Update.Cost.Amount, 0) {
+		return 0, false
+	}
+	return params.Update.Cost.Amount, true
+}
+
 func acpFailure(code session.ErrorCode, detail string) error {
 	if code == "" {
 		code = session.CodeInternal
@@ -431,9 +454,12 @@ func classifyContextFailure(err error) error {
 func (r *sessionTurnRunner) completeTurn(bound session.Session, leased session.Turn, assistant string, artifacts []session.OutputArtifact, usage session.Usage) (session.Turn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
 	defer cancel()
+	cumulativeCost, costRecorded := usage.CostUSD, usage.CostRecorded
+	usage.CostUSD, usage.CostRecorded = 0, false
 	return r.store.CompleteTurn(ctx, session.CompleteTurnRequest{
 		SessionID: bound.ID, TurnID: leased.ID, Message: assistant,
 		Artifacts: artifacts, Usage: usage,
+		CumulativeCostUSD: cumulativeCost, CostRecorded: costRecorded,
 	})
 }
 
@@ -1535,6 +1561,8 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 	var transcriptBytes int
 	var assistant []byte
 	var outputArtifacts []session.OutputArtifact
+	var cumulativeCostUSD float64
+	var costRecorded bool
 	collectAssistant := false
 	next := func() json.RawMessage {
 		process.nextID++
@@ -1568,6 +1596,9 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 					imageFrame, err = accumulateSessionACPUpdateArtifacts(envelope.Params, expectedSession, &assistant, &outputArtifacts)
 					if err != nil {
 						return nil, "", err
+					}
+					if amount, ok := sessionACPReportedCost(envelope.Params); ok {
+						cumulativeCostUSD, costRecorded = amount, true
 					}
 				}
 				transcriptBytes += sessionACPUpdateTranscriptBytes(
@@ -1816,6 +1847,7 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 	if !usage.Recorded() && promptResult.Meta != nil {
 		usage = promptResult.Meta.Usage.session()
 	}
+	usage.CostUSD, usage.CostRecorded = cumulativeCostUSD, costRecorded
 	return string(assistant), outputArtifacts, usage, nil
 }
 

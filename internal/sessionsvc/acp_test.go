@@ -722,6 +722,19 @@ func TestSessionTurnRunnerCompletesTheTurnWhenCleanupFails(t *testing.T) {
 	}
 }
 
+func TestSessionTurnRunnerPersistsUsageUpdateCost(t *testing.T) {
+	fixture := newSessionACPFixture(t, "usage")
+	turn := fixture.submit(t, "measure this turn")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Usage.CostRecorded || result.Usage.CostUSD != 0.375 ||
+		result.Usage.InputTokens != 1200 || result.Usage.OutputTokens != 34 {
+		t.Fatalf("completed usage = %+v", result.Usage)
+	}
+}
+
 // A turn that actually failed still reports the cleanup failure — with its
 // cause, not the bare constant that made a slow daemon and a broken compose
 // project read identically.
@@ -1110,6 +1123,16 @@ func TestSessionACPChildHelper(t *testing.T) {
 			}
 		case "session/prompt":
 			switch scenario {
+			case "usage":
+				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+					"sessionId": frame.Params.SessionID,
+					"update": map[string]any{"sessionUpdate": "usage_update", "used": 123, "size": 200000,
+						"cost": map[string]any{"amount": 0.375, "currency": "USD"}},
+				}})
+				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": "measured"}}}})
+				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
+					"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 1200, "outputTokens": 34},
+				}})
 			case "large-tool-output":
 				chunk := strings.Repeat("e", 1<<20)
 				for i := 0; i < 5; i++ {

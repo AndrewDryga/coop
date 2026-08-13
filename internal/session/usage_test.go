@@ -11,6 +11,7 @@ func TestUsageRecordedDistinguishesAbsenceFromZero(t *testing.T) {
 	}
 	for _, usage := range []Usage{
 		{InputTokens: 1}, {CachedInputTokens: 1}, {OutputTokens: 1}, {ReasoningTokens: 1},
+		{CostRecorded: true},
 	} {
 		if !usage.Recorded() {
 			t.Errorf("%+v is a real measurement and reports otherwise", usage)

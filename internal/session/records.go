@@ -11,14 +11,20 @@ import (
 )
 
 const (
-	SchemaVersion = 7
+	SchemaVersion = 8
 
-	MaxIDBytes              = 256
-	MaxMethodBytes          = 128
-	MaxIdempotencyKeyBytes  = 256
-	MaxTargetBytes          = 512
-	MaxExternalRefBytes     = 512
-	MaxPromptBytes          = 64 << 10
+	MaxIDBytes             = 256
+	MaxMethodBytes         = 128
+	MaxIdempotencyKeyBytes = 256
+	MaxTargetBytes         = 512
+	MaxExternalRefBytes    = 512
+	// 256 KiB, up from 64 KiB: at the old cap the Responder deployment
+	// trimmed context on 100% of turns — dropping evidence, related
+	// summaries, and continuity on nearly every call — and still hit
+	// transport elision. Every ladder model accepts far larger inputs, and
+	// callers bound their sources independently, so the cap's job is to be
+	// a transport backstop, not the working ceiling of every turn.
+	MaxPromptBytes          = 256 << 10
 	MaxTurnArtifacts        = 4
 	MaxArtifactBytes        = 8 << 20
 	MaxTurnArtifactBytes    = 8 << 20
@@ -281,17 +287,19 @@ type Turn struct {
 // it is priced differently by every provider, and a caller computing cost from
 // a merged figure would overcharge itself.
 type Usage struct {
-	InputTokens       int `json:"input_tokens,omitempty"`
-	CachedInputTokens int `json:"cached_input_tokens,omitempty"`
-	OutputTokens      int `json:"output_tokens,omitempty"`
-	ReasoningTokens   int `json:"reasoning_tokens,omitempty"`
+	InputTokens       int     `json:"input_tokens,omitempty"`
+	CachedInputTokens int     `json:"cached_input_tokens,omitempty"`
+	OutputTokens      int     `json:"output_tokens,omitempty"`
+	ReasoningTokens   int     `json:"reasoning_tokens,omitempty"`
+	CostUSD           float64 `json:"cost_usd,omitempty"`
+	CostRecorded      bool    `json:"cost_recorded,omitempty"`
 }
 
 // Recorded reports whether the provider gave us anything. Zero is a real
 // answer for a trivial turn, so absence has to be distinguishable from free.
 func (u Usage) Recorded() bool {
 	return u.InputTokens > 0 || u.CachedInputTokens > 0 ||
-		u.OutputTokens > 0 || u.ReasoningTokens > 0
+		u.OutputTokens > 0 || u.ReasoningTokens > 0 || u.CostRecorded
 }
 
 // OutputArtifact is a bounded generated file produced by one completed turn. Public turn
@@ -365,11 +373,13 @@ type ExhaustBudgetRequest struct {
 }
 
 type CompleteTurnRequest struct {
-	SessionID string
-	TurnID    string
-	Message   string
-	Artifacts []OutputArtifact
-	Usage     Usage
+	SessionID         string
+	TurnID            string
+	Message           string
+	Artifacts         []OutputArtifact
+	Usage             Usage
+	CumulativeCostUSD float64
+	CostRecorded      bool
 }
 
 type FailTurnRequest struct {

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -1535,7 +1536,8 @@ func (s *Store) ReconcileInterruptedTurns(ctx context.Context) ([]Turn, error) {
 
 const turnSelect = `SELECT id, session_id, ordinal, idempotency_key, request_hash, state, send_state,
 	   prompt, queued_at, started_at, finished_at, stop_reason, assistant_message, error_code, error_detail,
-	   usage_input_tokens, usage_cached_input_tokens, usage_output_tokens, usage_reasoning_tokens
+	   usage_input_tokens, usage_cached_input_tokens, usage_output_tokens, usage_reasoning_tokens,
+	   usage_cost_usd, usage_cost_recorded
 FROM turns`
 
 func (s *Store) GetTurn(ctx context.Context, sessionID, turnID string) (Turn, error) {
@@ -1648,7 +1650,8 @@ func scanTurn(row rowScanner) (Turn, error) {
 		&turn.RequestHash, &state, &sendState, &turn.Prompt, &queuedAt, &startedAt, &finishedAt,
 		&stopReason, &turn.AssistantMessage, &errorCode, &turn.ErrorDetail,
 		&turn.Usage.InputTokens, &turn.Usage.CachedInputTokens,
-		&turn.Usage.OutputTokens, &turn.Usage.ReasoningTokens); err != nil {
+		&turn.Usage.OutputTokens, &turn.Usage.ReasoningTokens,
+		&turn.Usage.CostUSD, &turn.Usage.CostRecorded); err != nil {
 		return Turn{}, err
 	}
 	turn.State = TurnState(state)
@@ -1780,6 +1783,9 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	if len(req.Artifacts) > MaxTurnArtifacts {
 		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "turn has too many output artifacts"}
 	}
+	if req.CostRecorded && (req.CumulativeCostUSD < 0 || math.IsNaN(req.CumulativeCostUSD) || math.IsInf(req.CumulativeCostUSD, 0)) {
+		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "turn cost is outside bounds"}
+	}
 	total := 0
 	seenIDs := make(map[string]bool, len(req.Artifacts))
 	seenDigests := make(map[string]bool, len(req.Artifacts))
@@ -1825,12 +1831,28 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	turn.StopReason = StopEndTurn
 	turn.AssistantMessage = req.Message
 	turn.Usage = req.Usage
+	turn.Usage.CostUSD, turn.Usage.CostRecorded = 0, false
+	if req.CostRecorded {
+		var previous float64
+		var recorded bool
+		if err := tx.QueryRowContext(ctx, `SELECT usage_cumulative_cost_usd, usage_cost_recorded FROM sessions WHERE id = ?`, req.SessionID).
+			Scan(&previous, &recorded); err != nil {
+			return Turn{}, fmt.Errorf("read cumulative session cost: %w", err)
+		}
+		turn.Usage.CostUSD = req.CumulativeCostUSD
+		if recorded && req.CumulativeCostUSD >= previous {
+			turn.Usage.CostUSD -= previous
+		}
+		turn.Usage.CostRecorded = true
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?,
 	    assistant_message = ?, usage_input_tokens = ?, usage_cached_input_tokens = ?,
-	    usage_output_tokens = ?, usage_reasoning_tokens = ? WHERE id = ?`,
+	    usage_output_tokens = ?, usage_reasoning_tokens = ?, usage_cost_usd = ?,
+	    usage_cost_recorded = ? WHERE id = ?`,
 		string(turn.State), now.UnixNano(), string(turn.StopReason), turn.AssistantMessage,
 		turn.Usage.InputTokens, turn.Usage.CachedInputTokens,
-		turn.Usage.OutputTokens, turn.Usage.ReasoningTokens, turn.ID); err != nil {
+		turn.Usage.OutputTokens, turn.Usage.ReasoningTokens,
+		turn.Usage.CostUSD, turn.Usage.CostRecorded, turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("complete turn: %w", err)
 	}
 	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
@@ -1852,7 +1874,12 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	if _, err := s.appendEventTx(ctx, tx, req.SessionID, req.TurnID, EventTurnCompleted, 1, mustJSON(map[string]any{"stop_reason": string(turn.StopReason)})); err != nil {
 		return Turn{}, fmt.Errorf("append turn.completed: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET active_turn_id = '', activity = ?, turns_used = turns_used + 1, updated_at = ? WHERE id = ?`, string(ActivityParked), now.UnixNano(), req.SessionID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET active_turn_id = '', activity = ?,
+	    turns_used = turns_used + 1,
+	    usage_cumulative_cost_usd = CASE WHEN ? THEN ? ELSE usage_cumulative_cost_usd END,
+	    usage_cost_recorded = usage_cost_recorded OR ?, updated_at = ? WHERE id = ?`,
+		string(ActivityParked), req.CostRecorded, req.CumulativeCostUSD,
+		req.CostRecorded, now.UnixNano(), req.SessionID); err != nil {
 		return Turn{}, fmt.Errorf("park session after turn: %w", err)
 	}
 	if sess.TurnsUsed+1 >= sess.MaxTurns {

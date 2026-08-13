@@ -48,3 +48,24 @@ func TestACPUsageAcceptsBothSpellings(t *testing.T) {
 		t.Error("a missing usage object reports itself as measured")
 	}
 }
+
+func TestACPUsageUpdateCarriesProviderReportedUSDCost(t *testing.T) {
+	reported := json.RawMessage(`{
+	  "sessionId":"native-1",
+	  "update":{"sessionUpdate":"usage_update","used":123,"size":200000,
+	    "cost":{"amount":0.375,"currency":"USD"}}
+	}`)
+	amount, ok := sessionACPReportedCost(reported)
+	if !ok || amount != 0.375 {
+		t.Fatalf("reported cost = %v, ok=%t", amount, ok)
+	}
+	for _, raw := range []string{
+		`{"update":{"sessionUpdate":"usage_update","cost":{"amount":-1,"currency":"USD"}}}`,
+		`{"update":{"sessionUpdate":"usage_update","cost":{"amount":1,"currency":"EUR"}}}`,
+		`{"update":{"sessionUpdate":"assistant_message_chunk"}}`,
+	} {
+		if amount, ok := sessionACPReportedCost(json.RawMessage(raw)); ok {
+			t.Errorf("unsupported update reported cost %v: %s", amount, raw)
+		}
+	}
+}

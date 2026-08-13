@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Remote-session turns now retain provider-reported cost.** Coop captures ACP cumulative USD
+  cost updates, converts them into durable per-turn deltas, and exposes the amount beside token
+  usage so API clients do not need a separate pricing table to account for reported spend.
+
 - **Remote-session policies can now withhold shared operational capabilities.** Policies may set
   `project_env: false` and `project_mcp: false` to keep the daemon's shared environment and MCP
   configuration out of a session while still projecting the selected model credential and trusted

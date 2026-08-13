@@ -545,9 +545,11 @@ func TestSessionHTTPTurnPublishesRecordedUsage(t *testing.T) {
 	if _, err := service.store.MarkTurnSent(context.Background(), created.Session.ID, leased.ID); err != nil {
 		t.Fatal(err)
 	}
-	want := session.Usage{InputTokens: 8, CachedInputTokens: 979866, OutputTokens: 10939, ReasoningTokens: 512}
+	want := session.Usage{InputTokens: 8, CachedInputTokens: 979866, OutputTokens: 10939, ReasoningTokens: 512, CostUSD: 0.375, CostRecorded: true}
 	completed, err := service.store.CompleteTurn(context.Background(), session.CompleteTurnRequest{
-		SessionID: created.Session.ID, TurnID: submitted.Turn.ID, Message: "Measured.", Usage: want,
+		SessionID: created.Session.ID, TurnID: submitted.Turn.ID, Message: "Measured.",
+		Usage:             session.Usage{InputTokens: 8, CachedInputTokens: 979866, OutputTokens: 10939, ReasoningTokens: 512},
+		CumulativeCostUSD: 0.375, CostRecorded: true,
 	})
 	if err != nil {
 		t.Fatal(err)
