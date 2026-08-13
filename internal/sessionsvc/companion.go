@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
@@ -22,9 +23,41 @@ const (
 	sessionCompanionMarkerFile                       = "coop-session-companion"
 	sessionCompanionHistoryFile                      = "coop-session-companion-history"
 	sessionCompanionHistoryFull                      = "full\n"
+	sessionCompanionHistoryBounded                   = "bounded\n"
 	sessionCompanionHistoryShallow                   = "shallow\n"
 	sessionCompanionFullHistoryMaxLogicalSize uint64 = 1 << 30
 )
+
+// sessionCompanionHistoryWindows are the recent-history windows tried, longest
+// first, when a repository's whole history will not fit the budget.
+//
+// The choice used to be all of it or one commit, and one commit is not a
+// history: an agent asked what changed in a repository last week could see the
+// current source and nothing else, and reported — correctly — that the
+// checkout had no parent history. It could not even deepen it, because a
+// commit-only companion is created with no remote to fetch from.
+//
+// Most questions that need history need weeks of it, not years, and the tail
+// is where the bytes are. On the repository that produced that report, all
+// 850 commits measure 1.25 GiB against a 1 GiB budget while the last 90 days
+// are 281 commits and 0.81 GiB — the same budget buys a third of the history
+// instead of none of it.
+var sessionCompanionHistoryWindows = []time.Duration{
+	90 * 24 * time.Hour,
+	30 * 24 * time.Hour,
+	7 * 24 * time.Hour,
+}
+
+// sessionCompanionHistory is how much of a repository a companion gets, and
+// the cutoff that produced it.
+type sessionCompanionHistory struct {
+	mode  string
+	since string
+}
+
+func (h sessionCompanionHistory) shallow() bool {
+	return h.mode != sessionCompanionHistoryFull
+}
 
 type sessionCompanionGitConfig struct {
 	Key   string
@@ -152,13 +185,12 @@ func createSessionCompanionWithHistoryLimit(
 		(objectFormat != "sha256" || len(binding.BaseCommit) != 64) {
 		return errors.New("companion commit does not match its repository object format")
 	}
-	fullHistory, err := sessionCompanionHistoryWithinLimit(
-		ctx, binding, fullHistoryMaxLogicalSize,
+	history, err := planSessionCompanionHistory(
+		ctx, binding, fullHistoryMaxLogicalSize, time.Now(),
 	)
 	if err != nil {
 		return err
 	}
-	shallow := !fullHistory
 	emptyTemplate := filepath.Join(stage, ".coop-empty-git-template")
 	if err := os.Mkdir(emptyTemplate, 0o700); err != nil {
 		return fmt.Errorf("create empty companion Git template: %w", err)
@@ -186,15 +218,22 @@ func createSessionCompanionWithHistoryLimit(
 	if err := os.Remove(emptyTemplate); err != nil {
 		return fmt.Errorf("remove empty companion Git template: %w", err)
 	}
-	if err := materializeSessionCompanionObjects(ctx, binding, stage, shallow); err != nil {
+	if err := materializeSessionCompanionObjects(ctx, binding, stage, history); err != nil {
 		return err
 	}
-	historyMode := sessionCompanionHistoryFull
-	if shallow {
-		historyMode = sessionCompanionHistoryShallow
-		if err := os.WriteFile(
-			filepath.Join(stage, ".git", "shallow"),
-			[]byte(binding.BaseCommit+"\n"), 0o600,
+	historyMode := history.mode
+	if history.shallow() {
+		boundary, err := sessionCompanionShallowBoundary(ctx, binding, history)
+		if err != nil {
+			return err
+		}
+		if boundary == "" {
+			// The window turned out to reach the root, so nothing was cut and
+			// the companion is not shallow. Marking it otherwise would fail
+			// its own reuse check on the next session.
+			historyMode = sessionCompanionHistoryFull
+		} else if err := os.WriteFile(
+			filepath.Join(stage, ".git", "shallow"), []byte(boundary), 0o600,
 		); err != nil {
 			return fmt.Errorf("write companion shallow boundary: %w", err)
 		}
@@ -237,10 +276,11 @@ func createSessionCompanionWithHistoryLimit(
 }
 
 func materializeSessionCompanionObjects(
-	ctx context.Context, binding session.CompanionRepository, stage string, shallow bool,
+	ctx context.Context, binding session.CompanionRepository, stage string,
+	history sessionCompanionHistory,
 ) (returnErr error) {
 	packPrefix := filepath.Join(stage, ".git", "objects", "pack", "pack")
-	if !shallow {
+	if !history.shallow() {
 		packCmd := exec.CommandContext(ctx,
 			"git", gitArgs(
 				binding.Repository,
@@ -276,18 +316,23 @@ func materializeSessionCompanionObjects(
 			}
 		}
 	}()
-	if _, err := objectList.WriteString(binding.BaseCommit + "\n"); err != nil {
-		return fmt.Errorf("write companion commit object: %w", err)
+	listArgs := sessionCompanionHistoryRevListArgs(
+		binding.BaseCommit, history.since, "--objects", "--no-object-names",
+	)
+	if history.since == "" {
+		// The pinned commit alone. Its own object is not reachable from its
+		// tree, so it is written before the tree walk rather than listed by it.
+		if _, err := objectList.WriteString(binding.BaseCommit + "\n"); err != nil {
+			return fmt.Errorf("write companion commit object: %w", err)
+		}
+		listArgs = []string{
+			"rev-list", "--objects", "--no-object-names",
+			binding.BaseCommit + "^{tree}",
+		}
 	}
 	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
 	listCmd := exec.CommandContext(ctx,
-		"git", gitArgs(
-			binding.Repository,
-			[]string{
-				"rev-list", "--objects", "--no-object-names",
-				binding.BaseCommit + "^{tree}",
-			},
-		)...,
+		"git", gitArgs(binding.Repository, listArgs)...,
 	)
 	listCmd.Env = sessionCompanionGitEnv()
 	listCmd.Stdout = objectList
@@ -335,16 +380,123 @@ func materializeSessionCompanionObjects(
 	return nil
 }
 
+// sessionCompanionShallowBoundary is what goes in .git/shallow: the commits
+// this companion carries whose parents it does not.
+//
+// Not what "rev-list --boundary" prints. That reports the commits just outside
+// the walk — the missing parents themselves — and writing those produces a
+// repository git believes is truncated in the wrong place: it still thinks it
+// holds the oldest commit's parents, and fsck fails on the objects that are
+// genuinely absent. The grafted commits are the youngest ones on the far side,
+// which are present. This was caught by building a companion from a real
+// repository and running fsck against it; the two sets share no members.
+//
+// Getting it wrong is not cosmetic. Git trusts this file rather than checking,
+// so a wrong boundary is a repository that walks straight into a missing
+// object on the first command that reaches the edge.
+func sessionCompanionShallowBoundary(
+	ctx context.Context, binding session.CompanionRepository, history sessionCompanionHistory,
+) (string, error) {
+	if history.since == "" {
+		return binding.BaseCommit + "\n", nil
+	}
+	out, err := sessionCompanionGitTextContext(ctx, binding.Repository,
+		sessionWorkspaceGitOutputLimit,
+		sessionCompanionHistoryRevListArgs(binding.BaseCommit, history.since, "--parents")...,
+	)
+	if err != nil {
+		return "", fmt.Errorf("enumerate companion history boundary: %w", err)
+	}
+	lines := strings.Split(string(out), "\n")
+	carried := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		commit, _, _ := strings.Cut(strings.TrimSpace(line), " ")
+		if validSessionWorkspaceCommit(commit) {
+			carried[commit] = struct{}{}
+		}
+	}
+	var boundary strings.Builder
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || !validSessionWorkspaceCommit(fields[0]) {
+			continue
+		}
+		for _, parent := range fields[1:] {
+			if _, held := carried[parent]; !held {
+				boundary.WriteString(fields[0] + "\n")
+				break
+			}
+		}
+	}
+	if boundary.Len() == 0 {
+		// Every parent of every carried commit is carried too, so the window
+		// reached the root and nothing is truncated. Claiming a cut that is
+		// not there would make git refuse to walk history it actually has.
+		return "", nil
+	}
+	return boundary.String(), nil
+}
+
+// sessionCompanionHistoryRevListArgs builds the walk that defines a history:
+// everything reachable from the pinned commit, stopping at the window when one
+// is set. Both the measurement and the packing use it, so what is measured is
+// exactly what is later written.
+func sessionCompanionHistoryRevListArgs(baseCommit, since string, extra ...string) []string {
+	args := append([]string{"rev-list"}, extra...)
+	if since != "" {
+		args = append(args, "--since="+since)
+	}
+	return append(args, baseCommit)
+}
+
+// planSessionCompanionHistory picks the most history that fits the budget:
+// all of it, else the longest window that fits, else the pinned commit alone.
+// The ladder only ever descends, so a companion can never grow past the budget
+// this function exists to enforce.
+func planSessionCompanionHistory(
+	ctx context.Context,
+	binding session.CompanionRepository,
+	limit uint64,
+	now time.Time,
+) (sessionCompanionHistory, error) {
+	full, err := sessionCompanionHistoryWithinLimit(ctx, binding, limit, "")
+	if err != nil {
+		return sessionCompanionHistory{}, err
+	}
+	if full {
+		return sessionCompanionHistory{mode: sessionCompanionHistoryFull}, nil
+	}
+	for _, window := range sessionCompanionHistoryWindows {
+		// A fixed instant rather than git's own "90.days.ago": the same cutoff
+		// has to reach the measurement and the pack, and a relative date
+		// evaluated twice is two different cutoffs.
+		since := now.UTC().Add(-window).Format(time.RFC3339)
+		fits, err := sessionCompanionHistoryWithinLimit(ctx, binding, limit, since)
+		if err != nil {
+			return sessionCompanionHistory{}, err
+		}
+		if fits {
+			return sessionCompanionHistory{
+				mode: sessionCompanionHistoryBounded, since: since,
+			}, nil
+		}
+	}
+	return sessionCompanionHistory{mode: sessionCompanionHistoryShallow}, nil
+}
+
+// sessionCompanionHistoryWithinLimit measures the uncompressed bytes of the
+// objects a history would carry. A window of "" measures the whole history;
+// otherwise the walk stops at commits older than that Git date, which is the
+// same commit-date boundary git's own --shallow-since draws.
 func sessionCompanionHistoryWithinLimit(
-	ctx context.Context, binding session.CompanionRepository, limit uint64,
+	ctx context.Context, binding session.CompanionRepository, limit uint64, since string,
 ) (bool, error) {
 	listStderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
 	listCmd := exec.CommandContext(ctx,
 		"git", gitArgs(
 			binding.Repository,
-			[]string{
-				"rev-list", "--objects", "--no-object-names", binding.BaseCommit,
-			},
+			sessionCompanionHistoryRevListArgs(binding.BaseCommit, since,
+				"--objects", "--no-object-names"),
 		)...,
 	)
 	listCmd.Env = sessionCompanionGitEnv()
@@ -605,6 +757,19 @@ func verifySessionCompanionContext(ctx context.Context, binding session.Companio
 			)
 			if err != nil || !isShallow || strings.TrimSpace(string(commits)) != "1" {
 				return errors.New("companion workspace shallow history does not match")
+			}
+		case sessionCompanionHistoryBounded:
+			// The exact commit count depends on when the companion was built,
+			// so what is checked is the shape the marker promises: history
+			// that is present and truncated.
+			commits, err := sessionCompanionGitTextContext(ctx,
+				binding.Workspace, 16, "rev-list", "--count", "HEAD",
+			)
+			if err != nil || !isShallow {
+				return errors.New("companion workspace bounded history does not match")
+			}
+			if count, convErr := strconv.Atoi(strings.TrimSpace(string(commits))); convErr != nil || count < 1 {
+				return errors.New("companion workspace bounded history is empty")
 			}
 		case sessionCompanionHistoryFull:
 			if isShallow {
