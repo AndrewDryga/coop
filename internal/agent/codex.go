@@ -527,6 +527,12 @@ func (codexAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
 	return []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}}, nil
 }
 
+// ACPMCPServers is nil: this agent's ACP adapter reads the [mcp_servers.*] config.toml MCP mounts,
+// so passing the servers again would register every one of them twice.
+func (codexAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[string]any, error) {
+	return nil, nil
+}
+
 // EnsureDefaults pre-trusts the workdir in codex's config.toml so a fresh box doesn't
 // stop at "Do you trust this directory?". Codex records trust as
 // [projects."<dir>"] trust_level = "trusted"; we append it idempotently. The box is the

@@ -1650,6 +1650,32 @@ func TestMCP(t *testing.T) {
 	}
 }
 
+// Every registered agent reaches the shared servers by exactly one route: a generated config
+// file its adapter reads, or the ACP session parameter when it has no file to read. Both routes
+// at once registers every server twice; neither is how an ACP claude session ran with no MCP at
+// all while its box faithfully mounted an mcp.json nothing in that session ever opened.
+func TestEveryAgentReachesTheSharedServersByExactlyOneRoute(t *testing.T) {
+	dir := t.TempDir()
+	mcpFile := filepath.Join(dir, "mcp.json")
+	mustWrite(t, mcpFile, `{"mcpServers":{"x":{"url":"https://x.example/mcp"}}}`)
+	cfg := &config.Config{MCPFile: mcpFile, ConfigDir: dir, HomeInBox: "/home/node"}
+	for _, name := range Names() {
+		ag, _ := Get(name)
+		mounts, err := ag.MCP(cfg)
+		if err != nil {
+			t.Fatalf("%s MCP = %v", name, err)
+		}
+		servers, err := ag.ACPMCPServers(mcpFile, func(string) (string, bool) { return "", false })
+		if err != nil {
+			t.Fatalf("%s ACPMCPServers = %v", name, err)
+		}
+		if (len(mounts) > 0) == (len(servers) > 0) {
+			t.Errorf("%s: %d generated mount(s) and %d ACP server(s); want exactly one of the two",
+				name, len(mounts), len(servers))
+		}
+	}
+}
+
 // TestClaudeProjectKey: the session-dir key dashes every non-alphanumeric char (matching
 // Claude Code), so a dotted segment like ".agent" maps to "-agent" and coop resolves the
 // right project dir. Ground truth: Claude stores "/x/.config" as "-x--config".

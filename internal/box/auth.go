@@ -182,14 +182,20 @@ func excluding(names []string, drop string) []string {
 	return out
 }
 
-// envFileKeys resolves an env file into the keys whose effective values are non-empty. A bare KEY
-// imports the ambient value, and later duplicate assignments win, matching the runtime env-file
-// contract. Comments, blanks, and a missing file yield no keys.
-func envFileKeys(path string) map[string]bool {
-	keys := map[string]bool{}
+// EnvFileValues resolves an env file into the KEY→value pairs a box started from it will actually
+// see. A bare KEY imports the ambient value (and, when there is none to import, leaves an earlier
+// assignment standing rather than clearing it), and later duplicate assignments win, matching the
+// runtime env-file contract. Comments, blanks, an empty key, and a missing file contribute nothing.
+//
+// Exported because a value in here is not only the box's: the host resolves a bearer token from
+// this same file when it has to inline one for an agent that cannot read the file itself
+// (internal/sessionsvc, ACP mcpServers). One parser, so the two can never disagree about what the
+// box has.
+func EnvFileValues(path string) map[string]string {
+	values := map[string]string{}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return keys
+		return values
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -197,23 +203,25 @@ func envFileKeys(path string) map[string]bool {
 			continue
 		}
 		if k, v, ok := strings.Cut(line, "="); ok {
-			k = strings.TrimSpace(k)
-			if k == "" {
-				continue
-			}
-			if strings.TrimSpace(v) != "" {
-				keys[k] = true
-			} else {
-				delete(keys, k)
+			if k = strings.TrimSpace(k); k != "" {
+				values[k] = v
 			}
 			continue
 		}
 		if value, ok := os.LookupEnv(line); ok {
-			if value != "" {
-				keys[line] = true
-			} else {
-				delete(keys, line)
-			}
+			values[line] = value
+		}
+	}
+	return values
+}
+
+// envFileKeys is EnvFileValues reduced to the keys whose effective value is non-empty — the
+// question credential scoping asks, where the value itself is nobody's business.
+func envFileKeys(path string) map[string]bool {
+	keys := map[string]bool{}
+	for key, value := range EnvFileValues(path) {
+		if strings.TrimSpace(value) != "" {
+			keys[key] = true
 		}
 	}
 	return keys

@@ -281,3 +281,108 @@ func TestGenerateCodexHTTPHeaders(t *testing.T) {
 		t.Errorf("the header-gap notice should fire exactly once (only the headers-only server), got %d:\n%s", n, got)
 	}
 }
+
+// The ACP adapter reads a shape mcp.json does not have: name/value PAIR LISTS for headers and
+// env, "type" present on a remote server and ABSENT on a stdio one (it decides which arm to take
+// by that key alone, so a stdio server that declares "stdio" is dropped on the floor).
+func TestACPServersRenderTheShapeTheClaudeAdapterReads(t *testing.T) {
+	env := map[string]string{"EMISAR_API_KEY": "emk-x"}
+	lookup := func(key string) (string, bool) { v, ok := env[key]; return v, ok }
+	for name, expect := range map[string]struct{ src, want string }{
+		"bearer token becomes an Authorization header": {
+			`{"mcpServers":{"emisar":{"type":"http","url":"https://emisar.dev/api/mcp/rpc","bearer_token_env_var":"EMISAR_API_KEY"}}}`,
+			`[{"headers":[{"name":"Authorization","value":"Bearer emk-x"}],"name":"emisar","type":"http","url":"https://emisar.dev/api/mcp/rpc"}]`,
+		},
+		"explicit headers become a sorted pair list": {
+			`{"mcpServers":{"h":{"type":"http","url":"https://a.example/mcp","headers":{"X-Api-Key":"k","Authorization":"Bearer inline"}}}}`,
+			`[{"headers":[{"name":"Authorization","value":"Bearer inline"},{"name":"X-Api-Key","value":"k"}],"name":"h","type":"http","url":"https://a.example/mcp"}]`,
+		},
+		"sse keeps its transport": {
+			`{"mcpServers":{"legacy":{"type":"sse","url":"https://legacy.example/sse"}}}`,
+			`[{"name":"legacy","type":"sse","url":"https://legacy.example/sse"}]`,
+		},
+		"a url without a declared type is http": {
+			`{"mcpServers":{"plain":{"url":"https://plain.example/mcp"}}}`,
+			`[{"name":"plain","type":"http","url":"https://plain.example/mcp"}]`,
+		},
+		"stdio carries command, args and a sorted env pair list": {
+			`{"mcpServers":{"ctx7":{"command":"npx","args":["-y","@upstash/context7-mcp"],"env":{"PORT":8080,"K":"v"}}}}`,
+			`[{"args":["-y","@upstash/context7-mcp"],"command":"npx","env":[{"name":"K","value":"v"},{"name":"PORT","value":"8080"}],"name":"ctx7"}]`,
+		},
+		"a stdio server that declares its type does not keep it": {
+			`{"mcpServers":{"s":{"type":"stdio","command":"x"}}}`,
+			`[{"command":"x","name":"s"}]`,
+		},
+		"a server with no transport is skipped": {
+			`{"mcpServers":{"broken":{},"good":{"command":"x"}}}`,
+			`[{"command":"x","name":"good"}]`,
+		},
+		"no servers is an empty list": {`{"mcpServers":{}}`, `[]`},
+	} {
+		servers, err := ACPServers(writeTmp(t, "mcp.json", expect.src), lookup)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got, err := json.Marshal(servers)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if string(got) != expect.want {
+			t.Errorf("%s:\n--- got ---\n%s\n--- want ---\n%s", name, got, expect.want)
+		}
+	}
+}
+
+// The adapter has no bearer_token_env_var — only inline headers — so a token the host cannot
+// resolve cannot be sent at all. Handing over the url anyway would give the model a tool that
+// answers every call with a 401, which it spends the turn retrying; the server is dropped instead.
+func TestACPServersDropAServerWhoseBearerTokenCannotBeResolved(t *testing.T) {
+	env := map[string]string{"PRESENT": "tok", "BLANK": "", "SPACES": "   "}
+	src := `{"mcpServers":{
+		"absent":  {"url":"https://a.example/mcp","bearer_token_env_var":"NOT_IN_ENV"},
+		"blank":   {"url":"https://b.example/mcp","bearer_token_env_var":"BLANK"},
+		"spaces":  {"url":"https://c.example/mcp","bearer_token_env_var":"SPACES"},
+		"present": {"url":"https://d.example/mcp","bearer_token_env_var":"PRESENT"}
+	}}`
+	servers, err := ACPServers(writeTmp(t, "mcp.json", src), func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(servers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"headers":[{"name":"Authorization","value":"Bearer tok"}],"name":"present","type":"http","url":"https://d.example/mcp"}]`
+	if string(got) != want {
+		t.Errorf("unauthenticatable servers were not dropped:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+// A missing mcp.json is not an error here (unlike the file generators): an agent with no MCP still
+// runs the turn. It must still be an empty JSON array — a null "mcpServers" is a different
+// parameter to the adapter than a list with nothing in it.
+func TestACPServersAreAnEmptyListWhenThereIsNoMCPFile(t *testing.T) {
+	for name, path := range map[string]string{
+		"missing file":   filepath.Join(t.TempDir(), "nope.json"),
+		"no file at all": "",
+	} {
+		servers, err := ACPServers(path, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got, _ := json.Marshal(servers); string(got) != "[]" {
+			t.Errorf("%s: mcpServers = %s, want []", name, got)
+		}
+	}
+}
+
+// A present-but-malformed mcp.json is an error, so the caller can say the session lost its tools
+// instead of starting one that quietly has none.
+func TestACPServersRefuseAMalformedMCPFile(t *testing.T) {
+	if _, err := ACPServers(writeTmp(t, "mcp.json", "{not json"), nil); err == nil {
+		t.Error("malformed mcp.json should error")
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/mcp"
 )
 
 type claudeAgent struct{}
@@ -547,6 +548,15 @@ func requestClaudeCredentialRefresh(
 
 // MCP is nil: claude reads the shared mcp.json directly via --mcp-config (see base).
 func (claudeAgent) MCP(*config.Config) ([]MCPMount, error) { return nil, nil }
+
+// ACPMCPServers is how claude gets MCP in an ACP session, and the only way it can: claude-agent-acp
+// takes no flags, so the --mcp-config base() passes the CLI never reaches it and the mounted
+// mcp.json goes unread. Production ran that way — 706 tool calls from claude sessions with not one
+// mcp.*, against 924 mcp.emisar.* from codex, which mounts a generated [mcp_servers.*] file — and
+// what the model did instead was curl the API by hand and collect 401s.
+func (claudeAgent) ACPMCPServers(mcpFile string, lookupEnv func(string) (string, bool)) ([]map[string]any, error) {
+	return mcp.ACPServers(mcpFile, lookupEnv)
+}
 
 // ClaudeProjectKey is how Claude Code names a project's session dir: the absolute cwd with
 // every non-alphanumeric character (not just "/") turned into a dash. coop must match it

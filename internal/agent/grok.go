@@ -338,6 +338,12 @@ func (grokAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
 	return []MCPMount{{Content: gx, BoxPath: cfg.HomeInBox + "/.grok/config.toml"}}, nil
 }
 
+// ACPMCPServers is nil: this agent's ACP adapter reads the config.toml MCP mounts,
+// so passing the servers again would register every one of them twice.
+func (grokAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[string]any, error) {
+	return nil, nil
+}
+
 // EnsureDefaults is a no-op: grok launches in the mounted repo (a project dir) with its
 // auth.json mounted, so it goes straight to work without a first-run prompt to pre-answer.
 // (Any config.toml keys a fresh box turns out to need are a box-verified finalization item.)

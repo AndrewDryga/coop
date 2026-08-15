@@ -290,6 +290,12 @@ func (geminiAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
 	return []MCPMount{{Content: gm, BoxPath: cfg.HomeInBox + "/.gemini/settings.json"}}, nil
 }
 
+// ACPMCPServers is nil: this agent's ACP adapter reads the settings.json MCP mounts,
+// so passing the servers again would register every one of them twice.
+func (geminiAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[string]any, error) {
+	return nil, nil
+}
+
 // EnsureDefaults guarantees a valid settings.json (an empty/missing one makes gemini
 // fail at launch) and turns off its folder-trust prompt — the box is the sandbox. An
 // existing choice is kept; a non-blank but unparseable file is left for the user.

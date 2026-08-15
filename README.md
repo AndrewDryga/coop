@@ -837,6 +837,11 @@ converted to `[mcp_servers.*]` in its `config.toml`. The generated versions are 
 read-only on top of your existing config (pure Go, no extra tooling) — your own files
 are never touched, and servers from `mcp.json` win on a name clash.
 
+A remote session is the exception: its ACP adapter takes no flags, so `--mcp-config`
+never reaches Claude there and coop hands the same servers to the session directly,
+resolving `bearer_token_env_var` into an `Authorization` header on the way (ACP carries
+headers, not env-var names). Nothing to configure — it is the same `mcp.json`.
+
 An `env` block on a command server (`github` above) reaches that server under every
 agent, verbatim — values are literal strings, no `$VAR` substitution. To keep a token
 out of `mcp.json`, point `bearer_token_env_var` at a variable (`sentry` above) and put

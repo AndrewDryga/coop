@@ -1282,11 +1282,59 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if err := ctx.Err(); err != nil {
 		return nil, classifyContextFailure(err)
 	}
+	mcpServers := r.sessionACPMCPServers(bound, privateRoot)
 	process, err := startSessionACPProcess(cmd)
 	if process != nil {
 		process.runID = runID
+		process.mcpServers = mcpServers
 	}
 	return process, err
+}
+
+// sessionACPMCPServers asks the agent for the MCP servers its ACP session has to be handed
+// directly, because its adapter cannot read the config file the box mounts (claude — see
+// claudeAgent.ACPMCPServers for what that cost in production). Nil for every other agent.
+//
+// Both inputs come from the session's OWN private root rather than the shared config: a policy
+// that withheld env or mcp.json from this session withholds them here too, and that root is
+// exactly what the box is started from, so a token resolved here is one the box also has.
+func (r *sessionTurnRunner) sessionACPMCPServers(bound session.Session, privateRoot string) []map[string]any {
+	target, err := agents.ParseTarget(bound.Target)
+	if err != nil {
+		return nil
+	}
+	agent, ok := agents.Get(target.Provider)
+	if !ok {
+		return nil
+	}
+	values := box.EnvFileValues(filepath.Join(privateRoot, "env"))
+	servers, err := agent.ACPMCPServers(
+		filepath.Join(privateRoot, "mcp.json"),
+		func(key string) (string, bool) {
+			value, ok := values[key]
+			return value, ok
+		},
+	)
+	if err != nil {
+		// A broken mcp.json costs the turn its tools, not the turn. Say so once, here, where
+		// the alternative is a session that silently answers from memory.
+		r.host.warnf(
+			"session %s starts without MCP tools: %s",
+			bound.ID, sessionACPBoundedDetail("cause", err.Error()),
+		)
+		return nil
+	}
+	return servers
+}
+
+// sessionACPMCPServerParam is the "mcpServers" value for session/new and session/load. The
+// adapter fingerprints cwd plus this list to decide whether a load can reuse its process, so the
+// two requests must carry the identical value — and an empty list, never a null.
+func sessionACPMCPServerParam(servers []map[string]any) any {
+	if len(servers) == 0 {
+		return []any{}
+	}
+	return servers
 }
 
 func sessionACPChildEnvironment(
@@ -1403,6 +1451,7 @@ type sessionACPProcess struct {
 	stopOnce               sync.Once
 	stopErr                error
 	runID                  string
+	mcpServers             []map[string]any
 	nextID                 int64
 	initialized            bool
 	nativeSessionID        string
@@ -1829,9 +1878,10 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 		}
 		process.imageCapable = initialized.AgentCapabilities.PromptCapabilities.Image
 		process.embeddedContextCapable = initialized.AgentCapabilities.PromptCapabilities.EmbeddedContext
+		mcpServers := sessionACPMCPServerParam(process.mcpServers)
 		nativeID := bound.NativeSessionID
 		if nativeID == "" {
-			result, err := request("session/new", map[string]any{"cwd": bound.Workspace, "mcpServers": []any{}}, "")
+			result, err := request("session/new", map[string]any{"cwd": bound.Workspace, "mcpServers": mcpServers}, "")
 			if err != nil {
 				return "", nil, session.Usage{}, err
 			}
@@ -1844,7 +1894,7 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 			nativeID = created.SessionID
 		} else if !validACPSessionID(nativeID) {
 			return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "stored native session id is invalid")
-		} else if _, err := request("session/load", map[string]any{"sessionId": nativeID, "cwd": bound.Workspace, "mcpServers": []any{}}, nativeID); err != nil {
+		} else if _, err := request("session/load", map[string]any{"sessionId": nativeID, "cwd": bound.Workspace, "mcpServers": mcpServers}, nativeID); err != nil {
 			return "", nil, session.Usage{}, err
 		}
 		process.nativeSessionID = nativeID

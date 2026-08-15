@@ -324,6 +324,13 @@ type Agent interface {
 	// MCP returns the config files to mount so the agent sees the shared mcp.json — its
 	// native translation (gemini/codex) or none when it reads mcp.json directly (claude).
 	MCP(cfg *config.Config) ([]MCPMount, error)
+	// ACPMCPServers is the same servers as the ACP session parameter, for an adapter that
+	// cannot be pointed at a file: it takes no flags, so a mount MCP already covers is no
+	// use to it. Nil for every agent whose adapter reads what MCP mounts — sending the list
+	// as well would register each server twice. mcpFile is the mcp.json THIS session runs
+	// with, which is not always the shared one; lookupEnv resolves a bearer_token_env_var
+	// against the environment that session's box gets, since ACP carries headers only.
+	ACPMCPServers(mcpFile string, lookupEnv func(string) (string, bool)) ([]map[string]any, error)
 	// EnsureDefaults pre-answers the agent's first-run prompts (theme, folder-trust,
 	// sandbox) in its config dir so a fresh box goes straight to work. Best-effort; an
 	// agent that needs nothing leaves it empty. workdir is the resolved box cwd.

@@ -91,6 +91,72 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	}
 }
 
+// An ACP session's MCP servers arrive in the session/new parameter or not at all: the adapter
+// takes no flags, so the mounted mcp.json that --mcp-config points the claude CLI at is invisible
+// to it. Production ran that way — 706 tool calls from claude sessions, not one of them mcp.*.
+func TestAClaudeACPSessionIsHandedTheSharedMCPServers(t *testing.T) {
+	// The token must come from the session's own projected env file, not from whatever the
+	// controller process happens to be holding.
+	t.Setenv("EMISAR_TOKEN", "ambient-token")
+	fixture := newSessionACPFixture(t, "normal", "claude@work")
+	first := fixture.submit(t, "first prompt")
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, first); err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"headers":[{"name":"Authorization","value":"Bearer observe-only"}],` +
+		`"name":"emisar","type":"http","url":"https://example.invalid/mcp"}]`
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != want {
+		t.Fatalf("session/new mcpServers = %s, want %s", got, want)
+	}
+
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.session = bound
+	second := fixture.submit(t, "second prompt")
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, second); err != nil {
+		t.Fatal(err)
+	}
+	// The adapter fingerprints cwd plus this list to decide whether a load can reuse its process,
+	// so a load carrying a different list quietly restarts the conversation it was resuming.
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/load"); got != want {
+		t.Fatalf("session/load mcpServers = %s, want the session/new list %s", got, want)
+	}
+}
+
+// Codex reads the same servers from the generated [mcp_servers.*] file its box mounts. Sending
+// them here as well would register every server twice in one session.
+func TestAnAgentWithAGeneratedMCPConfigIsHandedNoACPServers(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	leased := fixture.submit(t, "first prompt")
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != "[]" {
+		t.Fatalf("codex session/new mcpServers = %s, want an empty list", got)
+	}
+}
+
+// sessionACPRequestMCPServers returns the "mcpServers" parameter of the first logged request for
+// method, exactly as it went over the wire.
+func sessionACPRequestMCPServers(t *testing.T, path, method string) string {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSpace(readFile(t, path)), "\n") {
+		var frame struct {
+			Method string `json:"method"`
+			Params struct {
+				MCPServers json.RawMessage `json:"mcpServers"`
+			} `json:"params"`
+		}
+		if json.Unmarshal([]byte(line), &frame) == nil && frame.Method == method {
+			return string(frame.Params.MCPServers)
+		}
+	}
+	t.Fatalf("no %s request was sent", method)
+	return ""
+}
+
 func TestSessionACPRejectionDetailIsUsefulAndBounded(t *testing.T) {
 	for name, expect := range map[string]struct {
 		raw  string
@@ -949,21 +1015,49 @@ func codexTestCredential(expires time.Time) string {
 	return `{"auth_mode":"chatgpt","tokens":{"id_token":"identity","access_token":"x.` + payload + `.x","refresh_token":"refresh"},"last_refresh":"2026-07-26T00:00:00Z"}`
 }
 
-func newSessionACPFixture(t *testing.T, scenario string) *sessionACPFixture {
+func claudeTestCredential(expires time.Time) string {
+	return fmt.Sprintf(
+		`{"claudeAiOauth":{"accessToken":"access","refreshToken":"refresh","expiresAt":%d,"scopes":["user:inference"]}}`,
+		expires.UnixMilli(),
+	)
+}
+
+// writeSessionTestCredential signs the fixture's account in for whichever provider the target
+// names, in that provider's own on-disk shape — what projectCredentials reads, renews and projects.
+func writeSessionTestCredential(t *testing.T, source, target string) {
 	t.Helper()
-	root := t.TempDir()
-	source := filepath.Join(root, "shared-agents")
-	profile := filepath.Join(source, "codex", "profiles", "work")
+	parsed, err := agents.ParseTarget(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := filepath.Join(source, parsed.Provider, "profiles", parsed.Account())
 	if err := os.MkdirAll(profile, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	auth := codexTestCredential(time.Now().Add(2 * time.Hour))
-	if err := os.WriteFile(filepath.Join(profile, "auth.json"), []byte(auth), 0o600); err != nil {
+	name, body := "auth.json", codexTestCredential(time.Now().Add(2*time.Hour))
+	if parsed.Provider == "claude" {
+		name, body = ".credentials.json", claudeTestCredential(time.Now().Add(2*time.Hour))
+	}
+	if err := os.WriteFile(filepath.Join(profile, name), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// newSessionACPFixture builds a signed-in session on codex@work, or on the one target given.
+func newSessionACPFixture(t *testing.T, scenario string, target ...string) *sessionACPFixture {
+	t.Helper()
+	root := t.TempDir()
+	source := filepath.Join(root, "shared-agents")
+	sessionTarget := "codex@work"
+	if len(target) > 0 && target[0] != "" {
+		sessionTarget = target[0]
+	}
+	writeSessionTestCredential(t, source, sessionTarget)
 	for name, body := range map[string]string{
-		"env":             "EMISAR_TOKEN=observe-only\n",
-		"mcp.json":        `{"mcpServers":{"emisar":{"url":"https://example.invalid/mcp"}}}`,
+		"env": "EMISAR_TOKEN=observe-only\n",
+		// The production shape: a remote server the box authenticates from its env file, which
+		// only an agent holding that file can resolve for itself.
+		"mcp.json":        `{"mcpServers":{"emisar":{"type":"http","url":"https://example.invalid/mcp","bearer_token_env_var":"EMISAR_TOKEN"}}}`,
 		"INSTRUCTIONS.md": "Investigate before changing code.\n",
 	} {
 		if err := os.WriteFile(filepath.Join(source, name), []byte(body), 0o600); err != nil {
@@ -985,7 +1079,7 @@ func newSessionACPFixture(t *testing.T, scenario string) *sessionACPFixture {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	sess, err := store.CreateSession(context.Background(), "create", session.CreateSessionRequest{
-		Target: "codex@work", Policy: "policy", Repository: repo, Workspace: workspace, ForkName: "fork", BaseCommit: strings.Repeat("a", 40),
+		Target: sessionTarget, Policy: "policy", Repository: repo, Workspace: workspace, ForkName: "fork", BaseCommit: strings.Repeat("a", 40),
 	})
 	if err != nil {
 		t.Fatal(err)

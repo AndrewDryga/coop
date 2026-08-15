@@ -1,11 +1,14 @@
 // Package mcp turns one shared mcp.json (the standard {"mcpServers": {...}}
-// shape) into each agent's native MCP configuration. Claude reads mcp.json
-// directly via --mcp-config, so only Gemini and Codex need translation:
+// shape) into each agent's native MCP configuration:
 //
 //   - Gemini: merge the servers into its settings.json (same JSON shape).
 //   - Codex:  emit [mcp_servers.*] tables in its config.toml.
+//   - ACP:    pass the servers to session/new, which takes them as a parameter.
 //
-// Both are generated on top of the user's existing config (never mutating it),
+// An ACP adapter takes no flags, so a file it could be pointed at is no use to it. The claude
+// CLI needs no translation at all — it reads mcp.json directly via --mcp-config.
+//
+// The generated files are written on top of the user's existing config (never mutating it),
 // with servers from mcp.json winning on a name clash. Output is deterministic
 // (servers sorted by name) so it is stable across runs and easy to test.
 package mcp
@@ -13,6 +16,7 @@ package mcp
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -20,10 +24,13 @@ import (
 	"strings"
 )
 
-// server is the typed view of one entry, sufficient to emit Codex TOML. Headers is the canonical
-// HTTP-auth field claude + gemini read directly; codex can't use it (it has no inline-header support,
-// only bearer_token_env_var / OAuth), so it's kept here only to flag that gap, not to emit.
+// server is the typed view of one entry, sufficient to emit Codex TOML and the ACP parameter.
+// Headers is the canonical HTTP-auth field claude + gemini read directly; codex can't use it (it
+// has no inline-header support, only bearer_token_env_var / OAuth), so for codex it's kept here
+// only to flag that gap, not to emit. Type distinguishes "sse" from the "http" default; it is
+// absent on a stdio server and must stay absent in the ACP shape (see acpServer).
 type server struct {
+	Type              string         `json:"type"`
 	Command           string         `json:"command"`
 	Args              []string       `json:"args"`
 	Env               map[string]any `json:"env"`
@@ -99,6 +106,88 @@ func GenerateCodex(mcpFile, existing string) (string, error) {
 		return "", nil
 	}
 	return out + "\n", nil
+}
+
+// ACPServers renders the shared servers as the list an ACP session/new (and the identical
+// session/load) carries in its "mcpServers" parameter. The adapter is the only consumer, and it
+// wants name/value PAIR LISTS where mcp.json has objects, so this is a translation, not a
+// passthrough (verified against @agentclientprotocol/claude-agent-acp 0.68.0):
+//
+//	http/sse: {"type":"http"|"sse","name":…,"url":…,"headers":[{"name":…,"value":…}]}
+//	stdio:    {"name":…,"command":…,"args":[…],"env":[{"name":…,"value":…}]}
+//
+// lookupEnv resolves bearer_token_env_var, which the adapter has no equivalent for — it accepts
+// inline headers only — so the token is read here and sent as Authorization. A server whose token
+// does not resolve is DROPPED: the adapter would otherwise hold an unauthenticated tool the model
+// spends its turn getting 401s from. A missing mcpFile, or one with no servers, is an empty list
+// and no error, unlike the file generators: an agent that gets no MCP still runs.
+func ACPServers(mcpFile string, lookupEnv func(string) (string, bool)) ([]map[string]any, error) {
+	out := []map[string]any{}
+	if mcpFile == "" {
+		return out, nil
+	}
+	servers, err := loadServersTyped(mcpFile)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return out, nil
+		}
+		return nil, err
+	}
+	for _, name := range sortedKeys(servers) {
+		if rendered := acpServer(name, servers[name], lookupEnv); rendered != nil {
+			out = append(out, rendered)
+		}
+	}
+	return out, nil
+}
+
+// acpServer renders one entry, or nil for one the adapter must not be given.
+func acpServer(name string, s server, lookupEnv func(string) (string, bool)) map[string]any {
+	switch {
+	case s.URL != "":
+		headers := make([]map[string]any, 0, len(s.Headers)+1)
+		for _, key := range sortedKeys(s.Headers) {
+			headers = append(headers, map[string]any{"name": key, "value": envValueString(s.Headers[key])})
+		}
+		if s.BearerTokenEnvVar != "" {
+			token := ""
+			if lookupEnv != nil {
+				token, _ = lookupEnv(s.BearerTokenEnvVar)
+			}
+			if strings.TrimSpace(token) == "" {
+				return nil // unauthenticatable — see ACPServers
+			}
+			headers = append(headers, map[string]any{"name": "Authorization", "value": "Bearer " + token})
+		}
+		// "type" is what tells the adapter this is a remote server at all; without it the entry
+		// falls through to its stdio arm and becomes a server with no command.
+		transport := "http"
+		if s.Type == "sse" {
+			transport = "sse"
+		}
+		rendered := map[string]any{"type": transport, "name": name, "url": s.URL}
+		if len(headers) > 0 {
+			rendered["headers"] = headers
+		}
+		return rendered
+	case s.Command != "":
+		// No "type" key: the adapter reads a stdio server by the ABSENCE of one, so declaring
+		// the "stdio" that mcp.json is entitled to write would drop the server silently.
+		rendered := map[string]any{"name": name, "command": s.Command}
+		if len(s.Args) > 0 {
+			rendered["args"] = s.Args
+		}
+		env := make([]map[string]any, 0, len(s.Env))
+		for _, key := range sortedKeys(s.Env) {
+			env = append(env, map[string]any{"name": key, "value": envValueString(s.Env[key])})
+		}
+		if len(env) > 0 {
+			rendered["env"] = env
+		}
+		return rendered
+	}
+	// No transport — skip this malformed/empty entry, as writeCodexServer does.
+	return nil
 }
 
 // envValueString renders an MCP env value as the string Codex (and the shell) will see. MCP env is
