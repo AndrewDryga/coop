@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A remote-session turn crawling inside a provider's own retry loop is now audible.** Coop emits
+  `provider.alive` — cumulative `frames` and `bytes` counters — at most once a minute while ACP
+  frames keep arriving and nothing higher-level has been narrated in that window. `provider.backoff`
+  only covers limits Coop's own target ladder acts on; a provider CLI retrying 429s internally never
+  reaches the ladder, so that turn streamed and produced no events whatsoever, which is exactly what
+  a dead turn looks like. An ordinary turn narrates none, a long tool call is not described twice,
+  and a turn producing no frames at all still produces nothing — leaving a client's silent-turn
+  deadline to mean what it says.
+
 - **A remote-session turn can now name the ladder rung it is delivered on.** `POST
   /v1/sessions/{session_id}/turns` accepts an optional zero-based `min_target_index`, and that turn
   is delivered no lower than that rung of the policy's target ladder. It is the escalation a client

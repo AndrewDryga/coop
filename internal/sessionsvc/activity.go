@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/session"
@@ -52,6 +53,12 @@ const (
 	sessionActivityThoughtBytes = 4 << 10
 	sessionActivityPlanEntries  = 32
 	sessionActivityPlanBytes    = 300
+	// sessionActivityAliveInterval is how long a turn may stream without saying
+	// anything before the transport itself becomes the news. A minute is far
+	// longer than the gap between a healthy turn's own narration, so an ordinary
+	// turn never trips it, and far shorter than any deadline a client sets on
+	// silence — the point is to be countable, not prompt.
+	sessionActivityAliveInterval = time.Minute
 )
 
 // sessionActivityTool is a tool call in flight: what it was called, and whether
@@ -67,32 +74,81 @@ type sessionActivity struct {
 	store     *session.Store
 	sessionID string
 	turnID    string
+	now       func() time.Time
 
-	mu      sync.Mutex
-	pending []session.AppendEventRequest
-	tools   map[string]*sessionActivityTool
-	thought []byte
-	budget  int
-	dropped int
-	closed  bool
+	mu         sync.Mutex
+	pending    []session.AppendEventRequest
+	tools      map[string]*sessionActivityTool
+	thought    []byte
+	budget     int
+	dropped    int
+	closed     bool
+	frames     int
+	frameBytes int
+	// narratedAt is when this turn last said anything — the window the alive
+	// heartbeat measures against, so activity that already told the story
+	// suppresses it instead of doubling it.
+	narratedAt time.Time
 
 	wake chan struct{}
 	done chan struct{}
 }
 
-func newSessionActivity(store *session.Store, sessionID, turnID string) *sessionActivity {
+// newSessionActivity builds a turn's recorder. clock is a test seam: the alive
+// heartbeat's window is measured in minutes against frames arriving from a real
+// child, which a wall clock makes either slow or timing-dependent to test.
+func newSessionActivity(
+	store *session.Store, sessionID, turnID string, clock ...func() time.Time,
+) *sessionActivity {
 	if store == nil || sessionID == "" {
 		return nil
 	}
+	now := time.Now
+	if len(clock) > 0 && clock[0] != nil {
+		now = clock[0]
+	}
 	a := &sessionActivity{
-		store: store, sessionID: sessionID, turnID: turnID,
+		store: store, sessionID: sessionID, turnID: turnID, now: now,
 		tools:  map[string]*sessionActivityTool{},
 		budget: sessionActivityMaxEvents,
 		wake:   make(chan struct{}, 1),
 		done:   make(chan struct{}),
 	}
+	// A turn is born having just said something — turn.started — so the first
+	// window is measured from its start and a short turn never reports a pulse.
+	a.narratedAt = now()
 	go a.drain()
 	return a
+}
+
+// frame records one ACP frame read for this turn's prompt, and reports the
+// transport's own pulse when nothing else has for a while.
+//
+// It counts every frame, not the narratable ones: a provider CLI retrying 429s
+// inside itself streams frames that say nothing, and that turn — the majority of
+// the 2026-08-15 storm — produced no events whatsoever. A client watching for
+// silence could only read it as dead, so Responder's silent-turn deadline had to
+// be widened from 15m to 45m to stop it cancelling work that was making
+// progress. The counters are cumulative on purpose: a client re-reading its
+// cursor tells a redelivered event from new progress by the numbers, not by the
+// timestamp.
+//
+// Called after the frame is handled, so a frame that produced real narration has
+// already moved the window and is not announced twice.
+func (a *sessionActivity) frame(size int) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.frames++
+	a.frameBytes += size
+	if a.now().Sub(a.narratedAt) < sessionActivityAliveInterval {
+		return
+	}
+	a.enqueueLocked(session.EventProviderAlive, map[string]any{
+		"frames": a.frames, "bytes": a.frameBytes,
+	})
 }
 
 // observe records one ACP frame. It parses and buffers; it never writes and
@@ -323,6 +379,10 @@ func (a *sessionActivity) enqueueLocked(eventType session.EventType, payload map
 		a.dropped++
 		return
 	}
+	// Every event moves the alive window, including an alive event itself: the
+	// heartbeat exists for turns that have gone quiet, and a turn narrating its
+	// work is not quiet.
+	a.narratedAt = a.now()
 	a.budget--
 	a.pending = append(a.pending, a.request(eventType, payload))
 	select {

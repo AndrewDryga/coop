@@ -2,7 +2,7 @@
 name: session-api-dto-is-a-second-projection
 description: A field on session.Turn/Session is invisible to API clients until the hand-written DTO and its public* copier carry it too.
 subsystem: sessions
-sources: [internal/sessionsvc/http.go, internal/session/records.go, internal/sessionsvc/http_test.go]
+sources: [internal/sessionsvc/http.go, internal/session/records.go, internal/sessionsvc/http_test.go, internal/sessionsvc/activity.go]
 updated: 2026-08-15
 ---
 
@@ -35,9 +35,21 @@ turn crawling through provider 429s from a dead one. It now carries `Event.Paylo
 type is only useful once its payload says something, and `internal/sessionsvc/http_test.go` is
 where that is proven off the wire.
 
+Two events answer that last question, and they are not interchangeable. `provider.backoff` is a
+decision Coop's own target ladder made, so it exists only for a limit that reached the ladder as an
+ACP rejection. A provider CLI that retries its 429s INTERNALLY never produces one: it streams frames,
+makes no tool calls, and its turn is silent end to end — which is most of what a real throttle storm
+looks like. `provider.alive` (`internal/sessionsvc/activity.go`) covers that half from the frame pump
+instead, bounded to one per minute and suppressed by any narration in the same window. When you
+reach for "is this turn alive", ask which half you are in first.
+
 See also [[acp-generated-output-boundary]] (what public turn JSON may contain, and what stays behind
 the artifact endpoint).
 
 ## Changelog
+- 2026-08-15 — recorded the split between `provider.backoff` (a ladder decision) and `provider.alive`
+  (the frame pump's own pulse), because the card's "crawling through 429s" line read as if the first
+  had covered the whole problem; it only covered the limits the ladder can see. `sources` gains
+  `internal/sessionsvc/activity.go`, where the pulse and its window live.
 - 2026-08-09 — created after `TurnDTO` was found dropping `Usage`; verified against `publicTurn`, `publicSession`, `publicOperation` and `publicEvent` in `internal/sessionsvc/http.go`.
 - 2026-08-15 — drift: the card still said `EventDTO` never exposes a payload, which stopped being true when turn narration shipped; re-read `publicEvent` and `EventDTO` and corrected it. `docs/session-api.md` carried the same stale claim and was fixed in the same commit.

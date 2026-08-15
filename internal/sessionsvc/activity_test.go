@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/session"
 )
@@ -38,7 +40,8 @@ func activityEvents(t *testing.T, store *session.Store, sessionID string) []sess
 	for _, event := range events {
 		switch event.Type {
 		case session.EventToolStarted, session.EventToolCompleted, session.EventModelPlan,
-			session.EventModelThought, session.EventPermission, session.EventActivityElided:
+			session.EventModelThought, session.EventPermission, session.EventActivityElided,
+			session.EventProviderAlive:
 			recorded = append(recorded, event)
 		}
 	}
@@ -256,6 +259,110 @@ func TestSessionActivityReportsWhatItCouldNotNarrate(t *testing.T) {
 	}
 	if dropped, _ := activityPayload(t, last)["dropped"].(float64); int(dropped) != 20 {
 		t.Fatalf("wrong drop count: %v", dropped)
+	}
+}
+
+// activityTestClock is a hand-advanced clock. The alive window is a minute long
+// and the events under test are counted in windows, so the test moves time
+// itself rather than waiting for it or shrinking the constant it is asserting.
+type activityTestClock struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func (c *activityTestClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at
+}
+
+func (c *activityTestClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at = c.at.Add(d)
+}
+
+// A turn whose provider CLI is retrying 429s inside itself streams frames and
+// narrates nothing: no tool calls, no plan, no thoughts. Before this it produced
+// no events at all, and a client watching for silence could only read it as
+// dead — Responder widened its silent-turn deadline from 15m to 45m because
+// cancelling one replayed the work into a fresh session that inherited the same
+// throttle (2026-08-15). The pulse is per window, not per frame, and its
+// counters are cumulative so a redelivered event is not read as new progress.
+func TestAStreamingTurnWithNothingToNarrateStillReportsItIsAlive(t *testing.T) {
+	store, sess := newActivityTestStore(t)
+	clock := &activityTestClock{at: time.Unix(1_760_000_000, 0)}
+	activity := newSessionActivity(store, sess.ID, "turn-1", clock.now)
+
+	// Two full windows of frames, forty frames apiece, with nothing narratable
+	// in any of them.
+	for window := range 2 {
+		for range 40 {
+			activity.frame(512)
+		}
+		if window == 0 {
+			clock.advance(sessionActivityAliveInterval)
+		}
+	}
+	activity.close(context.Background())
+
+	events := activityEvents(t, store, sess.ID)
+	if len(events) != 1 {
+		t.Fatalf("want one pulse for the one elapsed window, got %d: %v", len(events), eventTypes(events))
+	}
+	if events[0].Type != session.EventProviderAlive || events[0].Version != 1 {
+		t.Fatalf("pulse = %s v%d", events[0].Type, events[0].Version)
+	}
+	payload := activityPayload(t, events[0])
+	if frames, _ := payload["frames"].(float64); int(frames) != 41 {
+		t.Fatalf("pulse counted %v frames, want every frame of the turn so far", payload["frames"])
+	}
+	if bytes, _ := payload["bytes"].(float64); int(bytes) != 41*512 {
+		t.Fatalf("pulse counted %v bytes", payload["bytes"])
+	}
+
+	// A second window with frames still flowing pulses again, and the counters
+	// have moved — that is how a client tells progress from a redelivery.
+	clock.advance(sessionActivityAliveInterval)
+	activity = newSessionActivity(store, sess.ID, "turn-1", clock.now)
+	clock.advance(sessionActivityAliveInterval)
+	activity.frame(512)
+	clock.advance(sessionActivityAliveInterval)
+	activity.frame(512)
+	activity.close(context.Background())
+
+	events = activityEvents(t, store, sess.ID)
+	if len(events) != 3 {
+		t.Fatalf("want a pulse per elapsed window, got %d: %v", len(events), eventTypes(events))
+	}
+	first, second := activityPayload(t, events[1]), activityPayload(t, events[2])
+	if first["frames"].(float64) >= second["frames"].(float64) {
+		t.Fatalf("pulse counters did not advance: %v then %v", first, second)
+	}
+}
+
+// The pulse is for turns that have gone QUIET. A turn narrating its work is not
+// quiet, and a second line saying so would double-narrate every long tool call —
+// teaching a client to discount the one signal this exists to send.
+func TestAliveIsSilentWhileTheTurnIsNarratingItsWork(t *testing.T) {
+	store, sess := newActivityTestStore(t)
+	clock := &activityTestClock{at: time.Unix(1_760_000_000, 0)}
+	activity := newSessionActivity(store, sess.ID, "turn-1", clock.now)
+
+	// A window passes, but the frame that ends it carried a tool call, which the
+	// frame loop narrates before reporting the frame.
+	clock.advance(sessionActivityAliveInterval)
+	activity.observe(json.RawMessage(
+		`{"update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read job","kind":"read"}}`))
+	activity.frame(512)
+	// And the window after it is spent inside that same tool call.
+	clock.advance(sessionActivityAliveInterval - time.Second)
+	activity.frame(512)
+	activity.close(context.Background())
+
+	events := activityEvents(t, store, sess.ID)
+	if len(events) != 1 || events[0].Type != session.EventToolStarted {
+		t.Fatalf("want only the tool start, got %v", eventTypes(events))
 	}
 }
 

@@ -147,6 +147,16 @@ const (
 	// 429 from a dead transport, and Responder cancelled crawling turns on
 	// exactly that ambiguity (2026-08-15).
 	EventProviderBackoff EventType = "provider.backoff"
+	// EventProviderAlive is the transport's own pulse: frames are still
+	// arriving from the provider child, and nothing higher-level has been
+	// narrated for a while. provider.backoff covers the limit Coop's own ladder
+	// decided on; it says nothing about a provider CLI retrying 429s INSIDE
+	// itself, which is what most of the 2026-08-15 storm actually was — that
+	// turn streams, makes no tool calls, and produces no events at all. Emitted
+	// at most once per window and never alongside activity that already said
+	// the same thing, so a crawling turn stays distinguishable from a dead one
+	// without narrating twice.
+	EventProviderAlive EventType = "provider.alive"
 )
 
 type ErrorCode string

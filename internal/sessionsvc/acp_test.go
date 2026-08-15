@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -327,6 +328,103 @@ func TestATurnThatIsNotThrottledNarratesNoBackoff(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A turn crawling inside the provider CLI's own retry loop is the shape the
+// 2026-08-15 storm mostly took: frames keep arriving, and not one of them is a
+// tool call, a plan, or a thought. Coop's ladder never sees a limit, so it
+// narrates no backoff, and before the pulse the whole turn was silent — which is
+// exactly what a dead one looks like, and why Responder's silent-turn deadline
+// sits at 45m instead of 15m.
+func TestATurnCrawlingInsideTheProviderIsAudibleWithoutAnyToolCalls(t *testing.T) {
+	fixture := newSessionACPFixture(t, "slow-stream")
+	// Half the alive window per clock read, so the streamed frames themselves
+	// carry the turn across window boundaries deterministically.
+	fixture.runner.activityClock = steppedClock(sessionActivityAliveInterval / 2)
+	leased := fixture.submit(t, "crawl")
+	ctx := contextWithTurnDeadline(t)
+	if _, err := fixture.runner.Run(ctx, fixture.session, leased); err != nil {
+		t.Fatal(err)
+	}
+	pulses := sessionAlivePayloads(t, fixture)
+	if len(pulses) < 2 {
+		t.Fatalf("a crawling turn produced %d pulses; a client watching it cannot tell it from a dead one", len(pulses))
+	}
+	// Throttled, not a per-frame ticker: the child streams sessionSlowStreamFrames
+	// chunks plus its response, and the pulse must cost fewer events than that.
+	if len(pulses) >= sessionSlowStreamFrames {
+		t.Fatalf("the pulse fired once per frame (%d pulses); it must be bounded by its window", len(pulses))
+	}
+	previous := 0.0
+	for i, pulse := range pulses {
+		frames, ok := pulse["frames"].(float64)
+		if !ok || frames <= previous {
+			t.Fatalf("pulse %d counters did not advance: %v after %v", i, pulse, previous)
+		}
+		if bytes, _ := pulse["bytes"].(float64); bytes <= 0 {
+			t.Fatalf("pulse %d counted no bytes: %v", i, pulse)
+		}
+		previous = frames
+	}
+	// A pulse is not narration: nothing here claims the model did anything.
+	events, err := fixture.store.ListEvents(context.Background(), fixture.session.ID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type == session.EventToolStarted || event.Type == session.EventProviderBackoff {
+			t.Fatalf("a crawling turn narrated %s, which nothing in it did", event.Type)
+		}
+	}
+}
+
+// An ordinary turn already says what it is doing, so it owes no pulse. One here
+// would be a second line about the same second, and a client that learns the
+// event is routine stops reading it as the signal it is.
+func TestAnOrdinaryTurnNarratesNoPulse(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	leased := fixture.submit(t, "ordinary work")
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased); err != nil {
+		t.Fatal(err)
+	}
+	if pulses := sessionAlivePayloads(t, fixture); len(pulses) != 0 {
+		t.Fatalf("an ordinary turn narrated %d pulses: %v", len(pulses), pulses)
+	}
+}
+
+// steppedClock advances one step on every read. The alive window is a minute
+// long and the frames that cross it come from a real child process, so a wall
+// clock would make this test either minutes long or dependent on how loaded the
+// machine is; stepping per read ties the window to the frames themselves.
+func steppedClock(step time.Duration) func() time.Time {
+	start := time.Now()
+	var reads atomic.Int64
+	return func() time.Time { return start.Add(time.Duration(reads.Add(1)) * step) }
+}
+
+// sessionAlivePayloads decodes the turn's provider.alive pulses in sequence
+// order — the same bytes a client polling GET /v1/sessions/{id}/events reads.
+func sessionAlivePayloads(t *testing.T, fixture *sessionACPFixture) []map[string]any {
+	t.Helper()
+	events, err := fixture.store.ListEvents(context.Background(), fixture.session.ID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payloads []map[string]any
+	for _, event := range events {
+		if event.Type != session.EventProviderAlive {
+			continue
+		}
+		if event.Version != 1 {
+			t.Fatalf("provider.alive version = %d, want 1", event.Version)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("alive payload %s: %v", event.Payload, err)
+		}
+		payloads = append(payloads, payload)
+	}
+	return payloads
 }
 
 // sessionBackoffPayloads decodes the turn's provider.backoff narration in
@@ -1430,6 +1528,10 @@ func TestAccumulateSessionACPUpdateDecodesContentByUpdateType(t *testing.T) {
 	}
 }
 
+// sessionSlowStreamFrames is how many prompt-phase frames the "slow-stream"
+// child produces in total, counting the response that ends it.
+const sessionSlowStreamFrames = 7
+
 func TestSessionACPChildHelper(t *testing.T) {
 	if os.Getenv("COOP_TEST_SESSION_CHILD") != "1" {
 		return
@@ -1577,6 +1679,14 @@ func TestSessionACPChildHelper(t *testing.T) {
 					continue
 				}
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": "rotated answer"}}}})
+				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
+			case "slow-stream":
+				// A provider CLI retrying 429s inside itself: the transport keeps
+				// moving and nothing it carries is narratable — no tool calls, no
+				// plan, no thoughts, and no ACP-level rejection for the ladder to see.
+				for range sessionSlowStreamFrames - 1 {
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": "."}}}})
+				}
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
 			case "limit-prose":
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": "the runbook says: Claude AI usage limit reached|2000000000"}}}})

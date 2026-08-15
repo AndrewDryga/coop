@@ -96,6 +96,9 @@ type sessionTurnRunner struct {
 	// restarted controller resumes on, and re-probing a cooled rung once costs one turn.
 	rotateMu  sync.Mutex
 	rotations map[string]*sessionLadder
+	// activityClock is the narration recorder's clock; nil is time.Now. Only tests set it, so
+	// the alive heartbeat's minute-long window can be asserted without a minute-long test.
+	activityClock func() time.Time
 }
 
 // sessionLadder is a session's rotation plus the ladder it was built from, so a policy edit
@@ -1776,7 +1779,7 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 	// text is: startup, auth, and status frames are not work the caller asked
 	// for. close() runs before this function returns, so every activity event
 	// is sequenced below the turn.completed that completeTurn appends after it.
-	activity := newSessionActivity(r.store, bound.ID, leased.ID)
+	activity := newSessionActivity(r.store, bound.ID, leased.ID, r.activityClock)
 	defer func() {
 		drainCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx), sessionACPCleanupTimeout,
@@ -1904,6 +1907,12 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 				responseID, result, err := handle(frame.line, expectedSession)
 				if err != nil {
 					return nil, err
+				}
+				// After handling, and only for the admitted prompt: startup and auth frames
+				// are not the turn's progress, and a frame that narrated something has
+				// already moved the window it would otherwise be announced in.
+				if collectAssistant {
+					activity.frame(len(frame.line))
 				}
 				if responseID != nil && bytes.Equal(bytes.TrimSpace(responseID), bytes.TrimSpace(id)) {
 					var envelope struct {

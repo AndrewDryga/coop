@@ -459,6 +459,7 @@ model.thought           # text
 permission.decided      # tool_call_id, title, outcome, option_id, option_kind
 activity.elided         # dropped, reason
 provider.backoff        # attempt, target, next_target, retry_after_seconds, reset_at, all_limited_until
+provider.alive          # frames, bytes
 ```
 
 `provider.backoff` is how a throttled turn stays audible. One event per proven rate limit, which
@@ -468,6 +469,16 @@ own reset when it named one, the ladder's bounded backoff when it did not. A rot
 `next_target`; the last backoff on an exhausted ladder carries `all_limited_until` instead. Without
 it a turn crawling through 429s was indistinguishable from a dead one, and a client watching for
 silence would cancel work that was making progress.
+
+`provider.alive` covers the throttle Coop cannot see. A backoff is narrated when Coop's own ladder
+acts on a limit; a provider CLI retrying 429s INSIDE itself never reaches the ladder, and that turn
+streams frames while making no tool calls and producing no other events at all. The pulse says the
+transport is still moving: `frames` and `bytes` count every ACP frame read for that turn's prompt,
+cumulatively, so a client re-reading its cursor tells new progress from a redelivered event by the
+numbers rather than the timestamp. It is emitted at most once a minute, and never in a window where
+the turn already narrated something — an ordinary turn produces none, and a long tool call is not
+described twice. A turn producing no frames at all still produces no events, which is what a client's
+silent-turn deadline is for.
 
 ### Budget
 
