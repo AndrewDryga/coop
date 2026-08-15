@@ -140,6 +140,13 @@ const (
 	EventModelThought   EventType = "model.thought"
 	EventPermission     EventType = "permission.decided"
 	EventActivityElided EventType = "activity.elided"
+	// EventProviderBackoff narrates a rate-limit decision mid-turn: a rung
+	// marked cooling, the rotation taken or refused, and the reset the
+	// provider promised. Before it existed a throttled turn was silent — a
+	// client watching the event stream could not tell a model waiting out a
+	// 429 from a dead transport, and Responder cancelled crawling turns on
+	// exactly that ambiguity (2026-08-15).
+	EventProviderBackoff EventType = "provider.backoff"
 )
 
 type ErrorCode string

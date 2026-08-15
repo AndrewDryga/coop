@@ -163,6 +163,7 @@ func (r *sessionTurnRunner) rotateOnLimit(
 		// Every rung is cooling. Unlike an editor session, a queued turn does not wait it out:
 		// the client owns retry and its own backoff, and holding the turn only burns its
 		// deadline before failing anyway. Hand back the soonest reset so it can time that retry.
+		r.narrateProviderBackoff(ctx, bound.ID, leased.ID, bound.Target, "", failure.resetAt, until)
 		return false, acpFailure(sessionACPRateLimited,
 			"every target in the policy ladder is rate limited until "+until.UTC().Format(time.RFC3339))
 	}
@@ -171,6 +172,7 @@ func (r *sessionTurnRunner) rotateOnLimit(
 	if err != nil {
 		return false, acpFailure(sessionACPInvalidTarget, "session target is unparseable")
 	}
+	r.narrateProviderBackoff(ctx, bound.ID, leased.ID, bound.Target, next.String(), failure.resetAt, time.Time{})
 	rotated, rewound, err := r.store.RotateTurnTarget(
 		ctx, bound.ID, leased.ID, bound.Target, next.String(), current.Provider != next.Provider,
 	)
@@ -179,6 +181,43 @@ func (r *sessionTurnRunner) rotateOnLimit(
 	}
 	*bound, *leased = rotated, rewound
 	return true, nil
+}
+
+// narrateProviderBackoff makes a rate-limit decision audible on the event
+// stream. Before it, a throttled turn was silent between attempts: a client
+// watching events could not tell a model waiting out a 429 from a dead
+// transport, and Responder cancelled crawling turns on exactly that ambiguity
+// (2026-08-15). Narration failure is never turn failure — the append error is
+// discarded, matching the activity recorder's rule — and the write survives a
+// turn already at its deadline the same way cleanup does.
+func (r *sessionTurnRunner) narrateProviderBackoff(
+	ctx context.Context,
+	sessionID, turnID, target, nextTarget string,
+	resetAt, allLimitedUntil time.Time,
+) {
+	payload := map[string]any{"target": target}
+	if nextTarget != "" {
+		payload["next_target"] = nextTarget
+	}
+	if !resetAt.IsZero() {
+		payload["reset_at"] = resetAt.UTC().Format(time.RFC3339)
+	}
+	if !allLimitedUntil.IsZero() {
+		payload["all_limited_until"] = allLimitedUntil.UTC().Format(time.RFC3339)
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	appendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionACPCleanupTimeout)
+	defer cancel()
+	_, _ = r.store.AppendEvent(appendCtx, session.AppendEventRequest{
+		SessionID: sessionID,
+		TurnID:    turnID,
+		Type:      session.EventProviderBackoff,
+		Version:   1,
+		Payload:   encoded,
+	})
 }
 
 // Run executes exactly one turn returned by Store.LeaseNextTurn. It never leases another turn.

@@ -155,13 +155,55 @@ func TestSessionTurnRunnerRotatesToTheNextRungOnARateLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	rotated := ""
+	backoff := ""
 	for _, event := range events {
 		if event.Type == session.EventSessionTargetRotated {
 			rotated = string(event.Payload)
 		}
+		if event.Type == session.EventProviderBackoff {
+			backoff = string(event.Payload)
+		}
 	}
 	if rotated != `{"from":"codex@work","native_session_reset":false,"to":"codex@backup"}` {
 		t.Fatalf("rotation event = %s", rotated)
+	}
+	// The limit is audible before the rotation: a client watching events can
+	// tell a throttled rung from a dead transport (2026-08-15, when it could
+	// not, Responder cancelled crawling turns on that ambiguity).
+	if !strings.Contains(backoff, `"target":"codex@work"`) ||
+		!strings.Contains(backoff, `"next_target":"codex@backup"`) {
+		t.Fatalf("backoff event = %s", backoff)
+	}
+}
+
+// The all-cooling branch narrates too, so the reset the provider promised is
+// on the stream a client can read, not only inside the error detail prose.
+func TestAnExhaustedLadderNarratesItsBackoffBeforeFailing(t *testing.T) {
+	fixture := newSessionACPFixture(t, "rate-limited")
+	fixture.signIn(t, "codex", "backup")
+	leased := fixture.submit(t, "investigate")
+	ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
+	_, err := fixture.runner.Run(ctx, fixture.session, leased)
+	if err == nil {
+		t.Fatal("an exhausted ladder completed the turn")
+	}
+	events, err := fixture.store.ListEvents(context.Background(), fixture.session.ID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backoffs := 0
+	allLimited := ""
+	for _, event := range events {
+		if event.Type == session.EventProviderBackoff {
+			backoffs++
+			allLimited = string(event.Payload)
+		}
+	}
+	if backoffs == 0 {
+		t.Fatal("an exhausted ladder failed silently; no provider.backoff event landed")
+	}
+	if !strings.Contains(allLimited, `"all_limited_until"`) {
+		t.Fatalf("the final backoff event carries no reset: %s", allLimited)
 	}
 }
 
