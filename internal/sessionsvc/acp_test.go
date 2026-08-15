@@ -207,6 +207,85 @@ func TestAnExhaustedLadderNarratesItsBackoffBeforeFailing(t *testing.T) {
 	}
 }
 
+// A crawling turn has to say WHICH wait it is on and how long it is. During the
+// 2026-08-15 storm a throttled turn produced no events at all, so Responder's
+// silent-turn deadline cancel-replayed healthy crawling turns into fresh
+// sessions that inherited the same throttle; the deadline was widened 15m→45m
+// as a stopgap. Restoring it needs more than "something happened": a client has
+// to count the backoffs (so a redelivered event is not read as new progress)
+// and read the wait off the provider's own reset — an hour here — rather than
+// guess from a bounded-backoff placeholder.
+func TestEachBackoffOnATurnIsNumberedAndCarriesItsWait(t *testing.T) {
+	fixture := newSessionACPFixture(t, "rate-limited")
+	fixture.signIn(t, "codex", "backup")
+	leased := fixture.submit(t, "investigate")
+	ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
+	if _, err := fixture.runner.Run(ctx, fixture.session, leased); err == nil {
+		t.Fatal("an exhausted ladder completed the turn")
+	}
+	backoffs := sessionBackoffPayloads(t, fixture)
+	if len(backoffs) != 2 {
+		t.Fatalf("a two-rung ladder narrated %d backoffs, want one per rung: %v", len(backoffs), backoffs)
+	}
+	for i, payload := range backoffs {
+		attempt, ok := payload["attempt"].(float64)
+		if !ok || int(attempt) != i+1 {
+			t.Fatalf("backoff %d is numbered %v, want %d", i, payload["attempt"], i+1)
+		}
+		wait, ok := payload["retry_after_seconds"].(float64)
+		if !ok || wait < 3000 || wait > 3700 {
+			t.Fatalf("backoff %d waits %v, want the provider's hour-long reset", i, payload["retry_after_seconds"])
+		}
+	}
+}
+
+// The heartbeat is a signal, so it must be silent on a turn nobody throttled —
+// including the turn whose own answer quotes limit wording, which the ladder
+// deliberately refuses to treat as evidence. A backoff event on a healthy turn
+// would teach a client to ignore the one case it exists for.
+func TestATurnThatIsNotThrottledNarratesNoBackoff(t *testing.T) {
+	for name, scenario := range map[string]string{
+		"a healthy turn":              "normal",
+		"limit wording in the answer": "limit-prose",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newSessionACPFixture(t, scenario)
+			fixture.signIn(t, "codex", "backup")
+			leased := fixture.submit(t, "investigate")
+			ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
+			if _, err := fixture.runner.Run(ctx, fixture.session, leased); err != nil {
+				t.Fatal(err)
+			}
+			if backoffs := sessionBackoffPayloads(t, fixture); len(backoffs) != 0 {
+				t.Fatalf("an unthrottled turn narrated %d backoffs: %v", len(backoffs), backoffs)
+			}
+		})
+	}
+}
+
+// sessionBackoffPayloads decodes the turn's provider.backoff narration in
+// sequence order — the same bytes a client polling GET /v1/sessions/{id}/events
+// reads off the wire.
+func sessionBackoffPayloads(t *testing.T, fixture *sessionACPFixture) []map[string]any {
+	t.Helper()
+	events, err := fixture.store.ListEvents(context.Background(), fixture.session.ID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payloads []map[string]any
+	for _, event := range events {
+		if event.Type != session.EventProviderBackoff {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("backoff payload %s: %v", event.Payload, err)
+		}
+		payloads = append(payloads, payload)
+	}
+	return payloads
+}
+
 func TestSessionTurnRunnerFailsTheTurnWhenEveryRungIsRateLimited(t *testing.T) {
 	fixture := newSessionACPFixture(t, "rate-limited")
 	fixture.signIn(t, "codex", "backup")

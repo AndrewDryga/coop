@@ -3,7 +3,7 @@ name: session-api-dto-is-a-second-projection
 description: A field on session.Turn/Session is invisible to API clients until the hand-written DTO and its public* copier carry it too.
 subsystem: sessions
 sources: [internal/sessionsvc/http.go, internal/session/records.go, internal/sessionsvc/http_test.go]
-updated: 2026-08-09
+updated: 2026-08-15
 ---
 
 The durable record and the public wire type are two separate hand-maintained structs. `session.Turn`
@@ -26,13 +26,18 @@ the store, the DTO, and a test in `internal/sessionsvc/http_test.go` that reads 
 the wire — decoded from the JSON, not through `TurnDTO`, so it fails on the bytes a caller receives
 rather than compiling against the type you just fixed.
 
-The same seam runs through `publicSession`, `publicOperation` and `publicEvent`. Two of those drop
-data on purpose and must keep doing so: `OperationDTO` never exposes `Operation.Result`, and
-`EventDTO` never exposes an event payload — a client is expected to re-fetch the turn or the session
-the event names. Do not "fix" those by copying the field across.
+The same seam runs through `publicSession`, `publicOperation` and `publicEvent`. `OperationDTO`
+drops `Operation.Result` on purpose and must keep doing so; do not "fix" that by copying the field
+across. `EventDTO` used to drop the payload for the same reason, and that turned out to be the
+wrong call: a caller could count that a turn failed without being told why, watch a turn run
+without seeing any of the work inside it, and — until `provider.backoff` — could not distinguish a
+turn crawling through provider 429s from a dead one. It now carries `Event.Payload`, so a new event
+type is only useful once its payload says something, and `internal/sessionsvc/http_test.go` is
+where that is proven off the wire.
 
 See also [[acp-generated-output-boundary]] (what public turn JSON may contain, and what stays behind
 the artifact endpoint).
 
 ## Changelog
 - 2026-08-09 — created after `TurnDTO` was found dropping `Usage`; verified against `publicTurn`, `publicSession`, `publicOperation` and `publicEvent` in `internal/sessionsvc/http.go`.
+- 2026-08-15 — drift: the card still said `EventDTO` never exposes a payload, which stopped being true when turn narration shipped; re-read `publicEvent` and `EventDTO` and corrected it. `docs/session-api.md` carried the same stale claim and was fixed in the same commit.

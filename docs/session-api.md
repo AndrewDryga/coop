@@ -388,12 +388,13 @@ curl --unix-socket "$SOCKET" \
 Events are returned as a JSON array ordered by monotonically increasing per-session `sequence`.
 Persist the last processed sequence and request `after=<sequence>` after a disconnect.
 
-Public events contain identity, sequence, turn ID, type, version, and timestamp. Payloads are
-deliberately omitted. On `assistant.message` or a terminal turn event, fetch the referenced turn.
-On a session/activity event, fetch the session. This prevents internal event payloads from becoming
-an accidental public output channel.
+Public events contain identity, sequence, turn ID, type, version, timestamp, and the event's own
+payload: what happened, never anything that names the host — not a repository path, not a native
+session id, not a tool's results. Each payload is capped at 256 KiB and a page is bounded by total
+bytes as well as by `limit`, so a caller reading a chatty turn gets a short page rather than a
+truncated one.
 
-Event types:
+Lifecycle event types — what Coop itself decided:
 
 ```text
 session.created
@@ -407,10 +408,33 @@ turn.failed
 turn.cancelled
 turn.interrupted
 budget.exhausted
+session.target_rotated
 session.parked
 session.closed
 workspace.discarded
 ```
+
+Activity events narrate the interior of a turn — what the model did, as against what Coop decided —
+and are always sequenced before the turn's own terminal event, so a caller that stops polling at
+`turn.completed` has already seen them:
+
+```text
+tool.started            # tool_call_id, title, kind, input
+tool.completed          # tool_call_id, title, kind, status
+model.plan              # entries
+model.thought           # text
+permission.decided      # tool_call_id, title, outcome, option_id, option_kind
+activity.elided         # dropped, reason
+provider.backoff        # attempt, target, next_target, retry_after_seconds, reset_at, all_limited_until
+```
+
+`provider.backoff` is how a throttled turn stays audible. One event per proven rate limit, which
+the ladder bounds to one per rung: `attempt` numbers them from 1 within the turn, `target` is the
+rung the provider limited, and `retry_after_seconds` is how long that rung is out — the provider's
+own reset when it named one, the ladder's bounded backoff when it did not. A rotation also carries
+`next_target`; the last backoff on an exhausted ladder carries `all_limited_until` instead. Without
+it a turn crawling through 429s was indistinguishable from a dead one, and a client watching for
+silence would cancel work that was making progress.
 
 ### Budget
 

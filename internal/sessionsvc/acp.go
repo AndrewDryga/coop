@@ -150,20 +150,34 @@ func (r *sessionTurnRunner) forgetRotation(sessionID string) {
 //
 // bound and leased are updated in place to the rung and rewound turn the retry runs on. Each
 // rotation marks a rung cooling, so the caller's loop turns over at most once per rung before
-// this reports that none is free.
+// this reports that none is free. backoffs counts the limits this turn has hit, so the narration
+// can number them; only a proven limit advances it.
 func (r *sessionTurnRunner) rotateOnLimit(
-	ctx context.Context, bound *session.Session, leased *session.Turn, rot *ladder.Rotation, cause error,
+	ctx context.Context, bound *session.Session, leased *session.Turn, rot *ladder.Rotation,
+	cause error, backoffs *int,
 ) (bool, error) {
 	var failure *sessionACPFailure
 	if rot == nil || !errors.As(cause, &failure) || failure.code != sessionACPRateLimited {
 		return false, nil
 	}
-	sleep, until := rot.OnLimit(failure.resetAt, 0, time.Now())
+	*backoffs++
+	now := time.Now()
+	marked := rot.Active().String()
+	sleep, until := rot.OnLimit(failure.resetAt, 0, now)
+	// Read the cooldown back off the rung the ladder just marked rather than reusing the
+	// provider's claim: a limit with no reset, or one already in the past, is normalized into the
+	// ladder's own bounded backoff, and the client timing its next poll needs the wait that
+	// actually applies rather than the zero the provider sent.
+	backoff := providerBackoff{
+		attempt: *backoffs, target: bound.Target,
+		resetAt: failure.resetAt, retryAfter: rot.LimitedUntil(marked).Sub(now),
+	}
 	if sleep > 0 {
 		// Every rung is cooling. Unlike an editor session, a queued turn does not wait it out:
 		// the client owns retry and its own backoff, and holding the turn only burns its
 		// deadline before failing anyway. Hand back the soonest reset so it can time that retry.
-		r.narrateProviderBackoff(ctx, bound.ID, leased.ID, bound.Target, "", failure.resetAt, until)
+		backoff.allLimitedUntil = until
+		r.narrateProviderBackoff(ctx, bound.ID, leased.ID, backoff)
 		return false, acpFailure(sessionACPRateLimited,
 			"every target in the policy ladder is rate limited until "+until.UTC().Format(time.RFC3339))
 	}
@@ -172,7 +186,8 @@ func (r *sessionTurnRunner) rotateOnLimit(
 	if err != nil {
 		return false, acpFailure(sessionACPInvalidTarget, "session target is unparseable")
 	}
-	r.narrateProviderBackoff(ctx, bound.ID, leased.ID, bound.Target, next.String(), failure.resetAt, time.Time{})
+	backoff.nextTarget = next.String()
+	r.narrateProviderBackoff(ctx, bound.ID, leased.ID, backoff)
 	rotated, rewound, err := r.store.RotateTurnTarget(
 		ctx, bound.ID, leased.ID, bound.Target, next.String(), current.Provider != next.Provider,
 	)
@@ -183,27 +198,42 @@ func (r *sessionTurnRunner) rotateOnLimit(
 	return true, nil
 }
 
+// providerBackoff is one rate-limit decision in the shape the event carries:
+// which rung the provider limited, how long it is out, what the turn did next,
+// and which backoff of this turn it is.
+type providerBackoff struct {
+	attempt         int
+	target          string
+	nextTarget      string
+	retryAfter      time.Duration
+	resetAt         time.Time
+	allLimitedUntil time.Time
+}
+
 // narrateProviderBackoff makes a rate-limit decision audible on the event
 // stream. Before it, a throttled turn was silent between attempts: a client
 // watching events could not tell a model waiting out a 429 from a dead
 // transport, and Responder cancelled crawling turns on exactly that ambiguity
-// (2026-08-15). Narration failure is never turn failure — the append error is
-// discarded, matching the activity recorder's rule — and the write survives a
-// turn already at its deadline the same way cleanup does.
+// (2026-08-15). One event per proven limit, which the ladder bounds to one per
+// rung — a heartbeat a client can count, never a poll-rate ticker. Narration
+// failure is never turn failure — the append error is discarded, matching the
+// activity recorder's rule — and the write survives a turn already at its
+// deadline the same way cleanup does.
 func (r *sessionTurnRunner) narrateProviderBackoff(
-	ctx context.Context,
-	sessionID, turnID, target, nextTarget string,
-	resetAt, allLimitedUntil time.Time,
+	ctx context.Context, sessionID, turnID string, backoff providerBackoff,
 ) {
-	payload := map[string]any{"target": target}
-	if nextTarget != "" {
-		payload["next_target"] = nextTarget
+	payload := map[string]any{"attempt": backoff.attempt, "target": backoff.target}
+	if backoff.nextTarget != "" {
+		payload["next_target"] = backoff.nextTarget
 	}
-	if !resetAt.IsZero() {
-		payload["reset_at"] = resetAt.UTC().Format(time.RFC3339)
+	if backoff.retryAfter > 0 {
+		payload["retry_after_seconds"] = int(backoff.retryAfter.Round(time.Second) / time.Second)
 	}
-	if !allLimitedUntil.IsZero() {
-		payload["all_limited_until"] = allLimitedUntil.UTC().Format(time.RFC3339)
+	if !backoff.resetAt.IsZero() {
+		payload["reset_at"] = backoff.resetAt.UTC().Format(time.RFC3339)
+	}
+	if !backoff.allLimitedUntil.IsZero() {
+		payload["all_limited_until"] = backoff.allLimitedUntil.UTC().Format(time.RFC3339)
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -332,6 +362,10 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 
 	rungs, _ := ctx.Value(sessionTargetLadderContextKey{}).([]agents.Target)
 	rot := r.sessionRotation(bound.ID, rungs, bound.Target)
+	// Counts the rate limits this turn has hit, so its narration numbers them. Per Run and not
+	// per runner: a turn re-leased after a controller restart re-probes the ladder from scratch,
+	// and numbering that second pass on from the first would claim a continuity it does not have.
+	backoffs := 0
 
 	for {
 		target, err := agents.ParseTarget(bound.Target)
@@ -384,7 +418,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		if err == nil {
 			break
 		}
-		retry, rotateErr := r.rotateOnLimit(ctx, &bound, &leased, rot, err)
+		retry, rotateErr := r.rotateOnLimit(ctx, &bound, &leased, rot, err, &backoffs)
 		if rotateErr != nil {
 			runErr = rotateErr
 			return result, runErr
