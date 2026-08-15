@@ -1075,11 +1075,13 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 		SendState:      SendStateNone,
 		Prompt:         req.Prompt,
 		QueuedAt:       now,
+		MinTargetIndex: req.MinTargetIndex,
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO turns (id, session_id, ordinal, idempotency_key, request_hash, state, send_state, prompt, queued_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.SessionID, turn.Ordinal, turn.IdempotencyKey,
-		turn.RequestHash, string(turn.State), string(turn.SendState), turn.Prompt, now.UnixNano()); err != nil {
+		INSERT INTO turns (id, session_id, ordinal, idempotency_key, request_hash, state, send_state, prompt, queued_at, min_target_index)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.SessionID, turn.Ordinal, turn.IdempotencyKey,
+		turn.RequestHash, string(turn.State), string(turn.SendState), turn.Prompt, now.UnixNano(),
+		turn.MinTargetIndex); err != nil {
 		return Turn{}, fmt.Errorf("insert turn: %w", err)
 	}
 	for ordinal, artifact := range req.Artifacts {
@@ -1120,6 +1122,12 @@ func validateSubmitRequest(req SubmitTurnRequest) error {
 	}
 	if req.Prompt == "" || len(req.Prompt) > MaxPromptBytes || !utf8.ValidString(req.Prompt) || strings.IndexByte(req.Prompt, 0) >= 0 {
 		return &Error{Code: CodeInvalidRequest, Detail: "prompt must be bounded UTF-8 text"}
+	}
+	// The store owns only the shape of the index. Whether the rung exists is a
+	// question about the session's policy ladder, which this layer never sees;
+	// the service checks it there, where the answer can name the ladder's size.
+	if req.MinTargetIndex < 0 {
+		return &Error{Code: CodeInvalidRequest, Detail: "min_target_index must not be negative"}
 	}
 	if len(req.Artifacts) > MaxTurnArtifacts {
 		return &Error{Code: CodeInvalidRequest, Detail: "turn has too many artifacts"}
@@ -1371,17 +1379,19 @@ func (s *Store) BindNativeSession(ctx context.Context, sessionID, nativeID strin
 	return sess, nil
 }
 
-// RotateTurnTarget moves a session onto another rung of its policy's target ladder after the
-// active rung rate limited the in-flight turn, and rewinds that turn so it can be delivered
-// again. It compare-and-swaps on the active target, so a rotation can never double-advance past
-// a rung something else already moved off.
+// RotateTurnTarget moves a session onto another rung of its policy's target ladder — because the
+// active rung rate limited the in-flight turn, or because that turn was admitted with an
+// escalation floor above it — and rewinds the turn so it can be delivered again. It
+// compare-and-swaps on the active target, so a rotation can never double-advance past a rung
+// something else already moved off.
 //
 // The rewind is the reason this is one transaction rather than two. SendState is the delivery
 // ledger: `sent` means a prompt reached a provider and may have had effects, which is why
 // MarkTurnSendIntent refuses a second delivery. A rate-limited prompt is the one refusal that
 // provably did no work — no tools ran, no tokens were produced — so the rotation un-sends it
-// back to the state LeaseNextTurn leaves behind. Splitting the two would let a crash strand a
-// turn that is rotated but still marked delivered, or delivered but still on the limited rung.
+// back to the state LeaseNextTurn leaves behind (a turn escalated before its first delivery has
+// nothing to un-send). Splitting the two would let a crash strand a turn that is rotated but
+// still marked delivered, or delivered but still on the limited rung.
 //
 // resetNativeSession drops the bound native session id. The caller decides, because only it knows
 // the target grammar: a rung on the same provider keeps its transcript, but a cross-provider hop
@@ -1537,7 +1547,7 @@ func (s *Store) ReconcileInterruptedTurns(ctx context.Context) ([]Turn, error) {
 const turnSelect = `SELECT id, session_id, ordinal, idempotency_key, request_hash, state, send_state,
 	   prompt, queued_at, started_at, finished_at, stop_reason, assistant_message, error_code, error_detail,
 	   usage_input_tokens, usage_cached_input_tokens, usage_output_tokens, usage_reasoning_tokens,
-	   usage_cost_usd, usage_cost_recorded
+	   usage_cost_usd, usage_cost_recorded, min_target_index
 FROM turns`
 
 func (s *Store) GetTurn(ctx context.Context, sessionID, turnID string) (Turn, error) {
@@ -1651,7 +1661,7 @@ func scanTurn(row rowScanner) (Turn, error) {
 		&stopReason, &turn.AssistantMessage, &errorCode, &turn.ErrorDetail,
 		&turn.Usage.InputTokens, &turn.Usage.CachedInputTokens,
 		&turn.Usage.OutputTokens, &turn.Usage.ReasoningTokens,
-		&turn.Usage.CostUSD, &turn.Usage.CostRecorded); err != nil {
+		&turn.Usage.CostUSD, &turn.Usage.CostRecorded, &turn.MinTargetIndex); err != nil {
 		return Turn{}, err
 	}
 	turn.State = TurnState(state)

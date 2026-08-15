@@ -4,7 +4,7 @@ description: "in the loop, failover swaps the active credential and never a sess
 scope: loop
 sources: [internal/ladder/limit.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/config/config.go, internal/sessionsvc/acp.go]
 check: "none"
-updated: 2026-08-10
+updated: 2026-08-15
 ---
 
 # Loop failover swaps the active credential profile, never a session
@@ -45,6 +45,13 @@ does NOT wait out an all-rungs-limited ladder the way the editor path does; it f
 `rate_limited` and lets the client's own backoff own the retry. Cooldowns still live only in
 memory, as below.
 
+A limit is no longer the only thing that moves a session's rung: a turn submitted with
+`min_target_index` is delivered no lower than that rung and rotates the session up to it through the
+same `Store.RotateTurnTarget`, before its first delivery. That is a caller's escalation, not a
+failover, so nothing is narrated as a backoff — and for that turn the floor also blocks the ladder's
+circular wrap, which would otherwise answer from the rung the caller escalated past. The rotate-only-
+on-a-proven-limit rule below is unchanged: the floor is an explicit request, never an inference.
+
 **How to apply / extend:**
 - Anything that needs "the agent's home for this run" goes through `cfg.AgentDir`, never a
   hand-built `filepath.Join(ConfigDir, agent)` — that join is the seam the active profile
@@ -61,6 +68,10 @@ memory, as below.
   (`model@account`), but the logins themselves stay in the vault, never committed.
 
 ## Changelog
+- 2026-08-15 — recorded the second thing that moves a session's rung: a turn's `min_target_index`
+  escalation floor, which rotates before the first delivery and bounds the ladder's wrap for that
+  turn. Swept `internal/sessionsvc` for other `RotateTurnTarget` callers — `rotateOnLimit` and the
+  new `startAtLadderFloor` are the only two, and the loop's own rotation is untouched.
 - 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).
 - 2026-06-17 — created
 - 2026-07-11 — revised

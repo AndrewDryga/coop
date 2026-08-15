@@ -293,6 +293,100 @@ func TestTurnArtifactValidationAndIdempotencyBinding(t *testing.T) {
 	}
 }
 
+// The escalation floor is read by the runner when the turn is LEASED, which can
+// be after a controller restart, so it has to come back off disk with the turn
+// rather than living in the admitting process. A floor that survives only in
+// memory would silently re-deliver a corrected turn on the rung the caller
+// escalated past.
+func TestAnEscalationFloorSurvivesTheStoreItWasAdmittedThrough(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "state")
+	store := openTestStore(t, root)
+	sess, err := store.CreateSession(ctx, "floor-session", CreateSessionRequest{Target: "codex:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := store.SubmitTurn(ctx, "floor-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "re-deliver higher", MinTargetIndex: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if turn.MinTargetIndex != 2 {
+		t.Fatalf("admitted turn floor = %d, want 2", turn.MinTargetIndex)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store = openTestStore(t, root)
+	defer store.Close()
+	leased, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("lease turn = %+v, ok=%v, err=%v", leased, ok, err)
+	}
+	if leased.MinTargetIndex != 2 {
+		t.Fatalf("leased turn floor = %d, want the admitted 2", leased.MinTargetIndex)
+	}
+	if leased.ID != turn.ID {
+		t.Fatalf("leased turn = %q, want %q", leased.ID, turn.ID)
+	}
+}
+
+// A negative rung is not a rung. The store owns the shape of the index because
+// it is the layer that writes it; the ladder's size is the service's question.
+func TestANegativeEscalationFloorIsRefused(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "negative-floor", CreateSessionRequest{Target: "codex:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.SubmitTurn(ctx, "negative-floor-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "escalate", MinTargetIndex: -1,
+	})
+	if CodeOf(err) != CodeInvalidRequest || !strings.Contains(err.Error(), "min_target_index") {
+		t.Fatalf("negative floor error = %v, want an invalid_request naming the field", err)
+	}
+}
+
+// Responder holds idempotency keys across a Coop upgrade: a turn admitted before
+// the floor existed, retried after it, must still REPLAY rather than conflict.
+// CanonicalRequestHash marshals the request struct, so a new field without
+// omitempty would have changed every hash in flight and turned each of those
+// retries into a duplicate turn.
+func TestATurnWithoutAFloorHashesAsThePreFloorRequestDid(t *testing.T) {
+	preFloor := struct {
+		SessionID        string
+		ExpectedRevision int64
+		Prompt           string
+		Artifacts        []InputArtifact
+	}{SessionID: "sess-1", ExpectedRevision: 3, Prompt: "investigate"}
+	want, err := CanonicalRequestHash(preFloor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := CanonicalRequestHash(SubmitTurnRequest{
+		SessionID: "sess-1", ExpectedRevision: 3, Prompt: "investigate",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("unfloored request hash = %s, want the pre-floor %s", got, want)
+	}
+	floored, err := CanonicalRequestHash(SubmitTurnRequest{
+		SessionID: "sess-1", ExpectedRevision: 3, Prompt: "investigate", MinTargetIndex: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if floored == want {
+		t.Fatal("a floored request hashes as an unfloored one; the same key would replay the wrong rung")
+	}
+}
+
 func TestMarkOperationRunningIsBoundedIdempotentAndRaceSafe(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))

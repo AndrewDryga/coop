@@ -3282,6 +3282,56 @@ func TestSessionServiceDiscardsSessionsWhosePolicyDrifted(t *testing.T) {
 	}
 }
 
+// A rung index that names no rung is refused AT ADMISSION. This is the only
+// layer that knows the policy, so it is the only one whose refusal can say how
+// many rungs there are; accepting it here and failing the turn a minute later
+// would spend a correction's whole latency to deliver the same news.
+func TestAnEscalationFloorOffTheLadderIsRefusedAtAdmission(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := testSessionPolicies(repo)
+	policy := policies["responder"]
+	policy.Targets = mustTargets("codex@work", "codex:fallback-model@work")
+	policies["responder"] = policy
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+	sess, err := service.CreateRemoteSession(
+		context.Background(), "floor-create",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "escalation"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.SubmitTurn(context.Background(), "floor-too-high", session.SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "escalate", MinTargetIndex: 2,
+	})
+	if session.CodeOf(err) != session.CodeInvalidRequest || !strings.Contains(err.Error(), "2-rung") {
+		t.Fatalf("off-ladder floor error = %v, want an invalid_request naming the ladder's size", err)
+	}
+	turns, err := service.ListTurns(context.Background(), sess.ID, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 0 {
+		t.Fatalf("a refused escalation still queued %d turns", len(turns))
+	}
+
+	admitted, err := service.SubmitTurn(context.Background(), "floor-ok", session.SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "escalate", MinTargetIndex: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admitted.MinTargetIndex != 1 {
+		t.Fatalf("admitted turn floor = %d, want 1", admitted.MinTargetIndex)
+	}
+}
+
 // The ladder has to reach the runner through the real turn path, for the real
 // sessions a deployment holds — including ones that survived a policy edit.
 // The rotation logic had unit tests; what production hit was the wiring above

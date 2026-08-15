@@ -118,6 +118,38 @@ client needs to know: a rung on the same provider keeps the conversation, but a 
 drops the native transcript, because the new provider cannot load the previous one's session. A
 client that wants continuity across a hop re-seeds it from its own durable context.
 
+### Starting above the first rung
+
+One turn may name the rung it is delivered on:
+
+```bash
+curl --unix-socket "$SOCKET" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: responder:turn:01J...' \
+  -d '{"expected_revision":4,"prompt":"Re-deliver the corrected answer.","min_target_index":1}' \
+  http://localhost/v1/sessions/remote_.../turns
+```
+
+`min_target_index` is a zero-based index into the policy's `target` ladder, and it governs that one
+turn: the turn is delivered no lower than that rung. A session already on that rung or above does
+not move — it is a floor, not a seat assignment. Absent, or zero (which is rung zero), is the
+ordinary turn, unchanged.
+
+It is a floor for the whole turn, not a starting hint. Rotation continues upward from it exactly as
+it would otherwise, and when every rung at or above it is cooling the turn fails with `rate_limited`
+naming the rung rather than falling back below it. A corrected answer re-delivered by the model that
+produced the answer being corrected would reach the client looking exactly like an honored
+escalation, so the client owns that retry.
+
+The move is durable in the same way a rotation is: `target` on the session becomes that rung, a
+`session.target_rotated` event carries `from`, `to`, and `native_session_reset`, and later turns
+start there unless the ladder moves again. Nothing is narrated as a backoff, because nothing was
+throttled.
+
+An index that names no rung of the session's current ladder is refused at admission with
+`invalid_request`, naming how many rungs there are. A policy edited between admission and delivery
+is caught at delivery instead, where the turn fails with `invalid_session_target`.
+
 A rejection that is not a rate limit still fails the turn as `acp_protocol_error`, but its detail
 now carries the adapter's own message — normalised to one bounded line — instead of a fixed
 "ACP request was rejected" that named neither the cause nor the fix.
@@ -343,15 +375,16 @@ curl --unix-socket "$SOCKET" \
 
 | Method | Path | Body/query |
 | --- | --- | --- |
-| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt` |
+| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt`, optional `min_target_index` |
 | `GET` | `/v1/sessions/{session_id}/turns?after=0&limit=100` | ordinal cursor |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}` | none |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}/artifacts/{artifact_id}` | raw generated image |
 | `POST` | `/v1/sessions/{session_id}/turns/{turn_id}/cancel` | `expected_revision` |
 
-A public turn excludes its prompt and idempotency data. A completed turn's `assistant_message` is
-the user-facing response. Coop does not publish hidden reasoning, raw tool calls, raw ACP frames, or
-box logs.
+A public turn excludes its prompt, its idempotency data, and its `min_target_index` — request data,
+whose effect is published as the session's `target` and its `session.target_rotated` event. A
+completed turn's `assistant_message` is the user-facing response. Coop does not publish hidden
+reasoning, raw tool calls, raw ACP frames, or box logs.
 
 A completed turn carries `usage` when the adapter reported what it cost: `input_tokens`,
 `cached_input_tokens`, `output_tokens`, `reasoning_tokens`, and provider-reported `cost_usd` when

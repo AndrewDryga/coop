@@ -1852,6 +1852,9 @@ func (s *Service) ListSessions(ctx context.Context, limit int) ([]session.Sessio
 }
 
 func (s *Service) SubmitTurn(ctx context.Context, key string, req session.SubmitTurnRequest) (session.Turn, error) {
+	if err := s.validateTurnEscalation(ctx, req); err != nil {
+		return session.Turn{}, err
+	}
 	turn, err := s.store.SubmitTurn(ctx, key, req)
 	if err == nil {
 		s.schedule(req.SessionID)
@@ -1859,6 +1862,37 @@ func (s *Service) SubmitTurn(ctx context.Context, key string, req session.Submit
 		err = s.correlateOperationError(ctx, key, err)
 	}
 	return turn, err
+}
+
+// validateTurnEscalation resolves a turn's escalation floor against the ladder it names, at
+// admission — this is the layer that knows the policy, so it is the only one whose refusal can
+// say how many rungs there are. The runner refuses an unresolvable floor as well, but a caller
+// that mistyped a rung index should hear it while it is still on the line, not a minute later as
+// a failed turn.
+func (s *Service) validateTurnEscalation(ctx context.Context, req session.SubmitTurnRequest) error {
+	if req.MinTargetIndex <= 0 {
+		return nil
+	}
+	bound, err := s.store.GetSession(ctx, req.SessionID)
+	if err != nil {
+		// Not this check's failure to report: the store admits the turn against its own
+		// canonical errors and records the operation a retry reads back.
+		return nil
+	}
+	policy, ok := s.policies[bound.Policy]
+	if !ok {
+		return &session.Error{
+			Code:   session.CodeInvalidRequest,
+			Detail: "this session's policy is no longer configured, so min_target_index names no rung",
+		}
+	}
+	if req.MinTargetIndex >= len(policy.Targets) {
+		return &session.Error{Code: session.CodeInvalidRequest, Detail: fmt.Sprintf(
+			"min_target_index %d is not a rung of this session's %d-rung target ladder",
+			req.MinTargetIndex, len(policy.Targets),
+		)}
+	}
+	return nil
 }
 
 func (s *Service) GetTurn(ctx context.Context, sessionID, turnID string) (session.Turn, error) {

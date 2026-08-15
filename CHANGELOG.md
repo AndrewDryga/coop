@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A remote-session turn can now name the ladder rung it is delivered on.** `POST
+  /v1/sessions/{session_id}/turns` accepts an optional zero-based `min_target_index`, and that turn
+  is delivered no lower than that rung of the policy's target ladder. It is the escalation a client
+  needs to re-deliver a corrected turn, because the rung that produced the answer being corrected is
+  not the rung to correct it on. A session already at or above the rung does not move; rotation
+  continues upward from it as usual; and when every rung at or above it is cooling the turn fails
+  with `rate_limited` naming the rung rather than falling back below it, which would reach the client
+  looking exactly like an honored escalation. An index that names no rung of the session's ladder is
+  refused at admission, naming how many rungs there are. Turns submitted without the field behave
+  exactly as before, down to the idempotency-key hash an in-flight retry replays against.
+
 - **Remote-session turns now retain provider-reported cost.** Coop captures ACP cumulative USD
   cost updates, converts them into durable per-turn deltas, and exposes the amount beside token
   usage so API clients do not need a separate pricing table to account for reported spend.

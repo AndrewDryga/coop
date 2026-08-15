@@ -548,13 +548,14 @@ func (h *sessionHTTPHandler) submitTurn(w http.ResponseWriter, r *http.Request, 
 		ExpectedRevision int64                   `json:"expected_revision"`
 		Prompt           string                  `json:"prompt"`
 		Artifacts        []session.InputArtifact `json:"artifacts,omitempty"`
+		MinTargetIndex   int                     `json:"min_target_index,omitempty"`
 	}
 	if !decodeSessionJSONLimit(w, r, &body, sessionHTTPTurnMaxBody) {
 		return
 	}
 	turn, err := h.service.SubmitTurn(r.Context(), sessionIdempotencyKey(r), session.SubmitTurnRequest{
 		SessionID: sessionID, ExpectedRevision: body.ExpectedRevision, Prompt: body.Prompt,
-		Artifacts: body.Artifacts,
+		Artifacts: body.Artifacts, MinTargetIndex: body.MinTargetIndex,
 	})
 	if err != nil {
 		writeSessionServiceError(w, err)

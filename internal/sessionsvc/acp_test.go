@@ -352,6 +352,176 @@ func sessionBackoffPayloads(t *testing.T, fixture *sessionACPFixture) []map[stri
 	return payloads
 }
 
+// Responder re-delivers a corrected turn on a higher rung: the rung that produced
+// the answer being corrected is not the rung to correct it on. The floor has to
+// apply to the FIRST delivery — a turn that spends an attempt on rung one and
+// only then climbs has already spent the correction on the model being corrected.
+func TestAnEscalatedTurnIsDeliveredFirstOnTheRungItNames(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	fixture.signIn(t, "codex", "backup")
+	leased := fixture.submitFromRung(t, "re-deliver the correction", 1)
+	ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
+	result, err := fixture.runner.Run(ctx, fixture.session, leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != session.TurnCompleted {
+		t.Fatalf("escalated turn = %+v", result)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Target != "codex@backup" {
+		t.Fatalf("escalated turn ran on %q, want the rung it named", bound.Target)
+	}
+	// One prompt, not two: the floor is where the turn starts, not somewhere it
+	// arrives after burning an attempt on the rung below.
+	methods := readSessionACPLog(t, fixture.childLog)
+	want := []string{"initialize", "session/new", "session/prompt"}
+	if fmt.Sprint(methods) != fmt.Sprint(want) {
+		t.Fatalf("ACP methods = %v, want %v", methods, want)
+	}
+	// Nothing was throttled, so nothing may claim it was.
+	if backoffs := sessionBackoffPayloads(t, fixture); len(backoffs) != 0 {
+		t.Fatalf("an escalated turn narrated %d backoffs: %v", len(backoffs), backoffs)
+	}
+}
+
+// A turn with no floor is the old turn, byte for byte: it starts on the session's
+// own rung and the ladder is untouched.
+func TestATurnWithoutAnEscalationFloorStartsWhereTheSessionIs(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	fixture.signIn(t, "codex", "backup")
+	leased := fixture.submit(t, "ordinary turn")
+	ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
+	if _, err := fixture.runner.Run(ctx, fixture.session, leased); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Target != "codex@work" {
+		t.Fatalf("an unfloored turn moved the session to %q", bound.Target)
+	}
+	events, err := fixture.store.ListEvents(context.Background(), fixture.session.ID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type == session.EventSessionTargetRotated {
+			t.Fatalf("an unfloored turn rotated the session: %s", event.Payload)
+		}
+	}
+}
+
+// The floor composes with the ordinary ladder: it says where the turn starts, and
+// a rate limit there still rotates UPWARD to the next free rung the way any other
+// turn's would.
+func TestAnEscalatedTurnStillRotatesUpwardWhenItsRungIsLimited(t *testing.T) {
+	fixture := newSessionACPFixture(t, "rate-limited-once")
+	fixture.signIn(t, "codex", "backup")
+	fixture.signIn(t, "codex", "reserve")
+	t.Setenv("COOP_TEST_SESSION_LIMIT_MARKER", filepath.Join(t.TempDir(), "limited"))
+	leased := fixture.submitFromRung(t, "escalate then rotate", 1)
+	ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup", "codex@reserve")
+	result, err := fixture.runner.Run(ctx, fixture.session, leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AssistantMessage != "rotated answer" {
+		t.Fatalf("escalated-then-rotated turn = %+v", result)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Target != "codex@reserve" {
+		t.Fatalf("session target = %q, want the rung above the floor", bound.Target)
+	}
+	backoffs := sessionBackoffPayloads(t, fixture)
+	if len(backoffs) != 1 {
+		t.Fatalf("want one backoff for the limited floor rung, got %v", backoffs)
+	}
+	if backoffs[0]["target"] != "codex@backup" || backoffs[0]["next_target"] != "codex@reserve" {
+		t.Fatalf("backoff did not rotate above the floor: %v", backoffs[0])
+	}
+}
+
+// The floor is a floor, not a hint. When every rung at or above it is cooling the
+// turn FAILS on the code a client retries against, because answering from the rung
+// the caller escalated past is the outcome the parameter exists to prevent — and
+// the failure has to name the floor, or an operator reads it as a dead ladder.
+func TestAnEscalatedTurnNeverFallsBackBelowItsFloor(t *testing.T) {
+	fixture := newSessionACPFixture(t, "rate-limited")
+	fixture.signIn(t, "codex", "backup")
+	leased := fixture.submitFromRung(t, "escalate into a storm", 1)
+	ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
+	result, err := fixture.runner.Run(ctx, fixture.session, leased)
+	if err == nil {
+		t.Fatal("a floored turn with no free rung above the floor completed")
+	}
+	if result.ErrorCode != sessionACPRateLimited ||
+		!strings.Contains(result.ErrorDetail, "rung 1") {
+		t.Fatalf("floored exhaustion = %+v, want a rate_limited failure naming the floor", result)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Target != "codex@backup" {
+		t.Fatalf("session fell back to %q, below the floor it was given", bound.Target)
+	}
+}
+
+// "No LOWER than" — a session already above the floor stays where it is. Reading
+// the parameter as "start exactly here" would demote a session that had already
+// climbed, which is the same bug in the other direction.
+func TestAnEscalationFloorNeverDemotesASessionAlreadyAboveIt(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal", "codex@reserve")
+	fixture.signIn(t, "codex", "work")
+	fixture.signIn(t, "codex", "backup")
+	leased := fixture.submitFromRung(t, "already high", 1)
+	ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup", "codex@reserve")
+	if _, err := fixture.runner.Run(ctx, fixture.session, leased); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Target != "codex@reserve" {
+		t.Fatalf("a floor of rung 1 moved a session on rung 2 to %q", bound.Target)
+	}
+}
+
+// A rung that is not on the ladder cannot be silently ignored: the turn would run
+// on the rung the caller escalated past and read as an honored escalation. The
+// service refuses the index at admission; this is the same refusal at the far end,
+// where a policy edited between admission and lease lands.
+func TestAnEscalationFloorOffTheLadderFailsTheTurnPlainly(t *testing.T) {
+	for name, ladderRungs := range map[string][]string{
+		"beyond the ladder": {"codex@work", "codex@backup"},
+		"no ladder at all":  nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newSessionACPFixture(t, "normal")
+			fixture.signIn(t, "codex", "backup")
+			leased := fixture.submitFromRung(t, "escalate off the end", 3)
+			ctx := ladderContext(t, contextWithTurnDeadline(t), ladderRungs...)
+			result, err := fixture.runner.Run(ctx, fixture.session, leased)
+			if err == nil {
+				t.Fatal("a turn floored above the ladder completed anyway")
+			}
+			if result.ErrorCode != sessionACPInvalidTarget ||
+				!strings.Contains(result.ErrorDetail, "rung 3") {
+				t.Fatalf("off-ladder floor = %+v, want an invalid_session_target naming the rung", result)
+			}
+		})
+	}
+}
+
 func TestSessionTurnRunnerFailsTheTurnWhenEveryRungIsRateLimited(t *testing.T) {
 	fixture := newSessionACPFixture(t, "rate-limited")
 	fixture.signIn(t, "codex", "backup")
@@ -1146,7 +1316,7 @@ func ladderContext(t *testing.T, parent context.Context, values ...string) conte
 }
 
 func (f *sessionACPFixture) submit(t *testing.T, prompt string) session.Turn {
-	return f.submitArtifacts(t, prompt, nil)
+	return f.submitRequest(t, session.SubmitTurnRequest{Prompt: prompt})
 }
 
 func (f *sessionACPFixture) submitArtifacts(
@@ -1154,14 +1324,25 @@ func (f *sessionACPFixture) submitArtifacts(
 	prompt string,
 	artifacts []session.InputArtifact,
 ) session.Turn {
+	return f.submitRequest(t, session.SubmitTurnRequest{Prompt: prompt, Artifacts: artifacts})
+}
+
+// submitFromRung admits a turn the caller requires to be delivered no lower than
+// the named rung of the policy ladder — Responder's escalation path.
+func (f *sessionACPFixture) submitFromRung(t *testing.T, prompt string, floor int) session.Turn {
+	return f.submitRequest(t, session.SubmitTurnRequest{Prompt: prompt, MinTargetIndex: floor})
+}
+
+// submitRequest admits one turn against the session's current revision and leases
+// it, which is the state Run expects to be handed.
+func (f *sessionACPFixture) submitRequest(t *testing.T, req session.SubmitTurnRequest) session.Turn {
 	t.Helper()
 	sess, err := f.store.GetSession(context.Background(), f.session.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = f.store.SubmitTurn(context.Background(), "turn-"+prompt, session.SubmitTurnRequest{
-		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: prompt, Artifacts: artifacts,
-	})
+	req.SessionID, req.ExpectedRevision = sess.ID, sess.Revision
+	_, err = f.store.SubmitTurn(context.Background(), "turn-"+req.Prompt, req)
 	if err != nil {
 		t.Fatal(err)
 	}

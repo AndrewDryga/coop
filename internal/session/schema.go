@@ -149,6 +149,13 @@ ALTER TABLE turns ADD COLUMN usage_cost_usd REAL NOT NULL DEFAULT 0;
 ALTER TABLE turns ADD COLUMN usage_cost_recorded INTEGER NOT NULL DEFAULT 0;
 `
 
+// The escalation floor is per-turn request data, so it lives on the turn rather
+// than the session: a caller re-delivering a corrected turn on a higher rung is
+// making a claim about that turn, not editing the session's ladder.
+const schemaV9 = `
+ALTER TABLE turns ADD COLUMN min_target_index INTEGER NOT NULL DEFAULT 0;
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -213,6 +220,12 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v8: %w", err)
 		}
 		version = 8
+	}
+	if version < 9 {
+		if _, err := tx.Exec(schemaV9); err != nil {
+			return fmt.Errorf("migrate schema v9: %w", err)
+		}
+		version = 9
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)

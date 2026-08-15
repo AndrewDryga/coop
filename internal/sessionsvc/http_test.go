@@ -601,6 +601,55 @@ func TestSessionHTTPTurnPublishesRecordedUsage(t *testing.T) {
 	}
 }
 
+// The escalation floor is a request field, and the turn body decoder rejects
+// unknown fields — so a parameter Coop's struct does not name is a 400 rather
+// than a silently ignored hint, and "the wire accepts it" is a claim that has to
+// be proven on the wire. It is deliberately not published back on the turn: a
+// public turn carries no request data, and what a client can observe instead is
+// the session's target and its session.target_rotated event.
+func TestATurnSubmittedWithAnEscalationFloorCarriesItOffTheWire(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t, "codex@work", "codex:fallback-model@work")
+	defer service.Stop()
+	handler := NewHTTPHandler(service)
+	createdResponse := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"escalation"}`,
+		"floor-create", "application/json",
+	)
+	var created sessionMutationSessionResponse
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	turnResponse := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
+		`{"expected_revision":1,"prompt":"re-deliver higher","min_target_index":1}`,
+		"floor-turn", "application/json",
+	)
+	if turnResponse.Code != http.StatusOK {
+		t.Fatalf("floored turn status = %d body=%s", turnResponse.Code, turnResponse.Body.String())
+	}
+	var submitted sessionMutationTurnResponse
+	if err := json.Unmarshal(turnResponse.Body.Bytes(), &submitted); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := service.store.GetTurn(context.Background(), created.Session.ID, submitted.Turn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.MinTargetIndex != 1 {
+		t.Fatalf("turn admitted over HTTP has floor %d, want the requested 1", stored.MinTargetIndex)
+	}
+
+	offLadder := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
+		`{"expected_revision":1,"prompt":"re-deliver higher","min_target_index":9}`,
+		"floor-off-ladder", "application/json",
+	)
+	if offLadder.Code != http.StatusBadRequest ||
+		!strings.Contains(offLadder.Body.String(), "2-rung") {
+		t.Fatalf("off-ladder floor status = %d body=%s", offLadder.Code, offLadder.Body.String())
+	}
+}
+
 type preparingHTTPRunner struct{ calls atomic.Int32 }
 
 func (*preparingHTTPRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
@@ -646,12 +695,20 @@ func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
 	}
 }
 
-func newHTTPTestSessionService(t *testing.T) (*Service, string) {
+// newHTTPTestSessionService builds the handler's service on the one-rung test policy, or on the
+// ladder given — which a test needs before it can name a rung above the first.
+func newHTTPTestSessionService(t *testing.T, ladder ...string) (*Service, string) {
 	t.Helper()
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
+	policies := testSessionPolicies(repo)
+	if len(ladder) > 0 {
+		policy := policies["responder"]
+		policy.Targets = mustTargets(ladder...)
+		policies["responder"] = policy
+	}
 	service, err := NewService(Config{
-		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo),
+		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies,
 		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
 			return turn, nil
 		}),

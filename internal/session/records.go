@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 8
+	SchemaVersion = 9
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -294,6 +294,11 @@ type Turn struct {
 	ErrorCode        ErrorCode        `json:"error_code"`
 	ErrorDetail      string           `json:"error_detail"`
 	Usage            Usage            `json:"usage,omitzero"`
+	// MinTargetIndex is the escalation floor the turn was admitted with, carried
+	// durably because the runner reads it on a lease that may happen after a
+	// controller restart — the floor has to survive the crash the same way the
+	// prompt does.
+	MinTargetIndex int `json:"min_target_index,omitempty"`
 }
 
 // Usage is what one turn cost the provider.
@@ -375,11 +380,18 @@ type CreateSessionRequest struct {
 	MaxQueuedBytes int                   `json:"max_queued_bytes"`
 }
 
+// SubmitTurnRequest admits one turn. MinTargetIndex is the escalation floor: the
+// turn is delivered no lower than that rung of the session policy's target
+// ladder, for this turn only. Zero is absent, which is also rung zero, so a
+// caller that never sets it is indistinguishable from one submitting against the
+// pre-ladder-floor API — including in CanonicalRequestHash, which the omitempty
+// tag keeps byte-identical so an in-flight idempotency key still replays.
 type SubmitTurnRequest struct {
 	SessionID        string
 	ExpectedRevision int64
 	Prompt           string
 	Artifacts        []InputArtifact
+	MinTargetIndex   int `json:",omitempty"`
 }
 
 type CancelTurnRequest struct {

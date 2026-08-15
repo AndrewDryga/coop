@@ -143,6 +143,73 @@ func (r *sessionTurnRunner) forgetRotation(sessionID string) {
 	r.rotateMu.Unlock()
 }
 
+// sessionLadderIndex is where a rung sits on the ladder, or -1 when the ladder does not hold it.
+func sessionLadderIndex(members []string, target string) int {
+	for i, member := range members {
+		if member == target {
+			return i
+		}
+	}
+	return -1
+}
+
+// startAtLadderFloor honors a turn's escalation floor before its FIRST delivery: the turn runs no
+// lower than rung floor of the policy ladder. Responder re-delivers a corrected turn this way, and
+// the rung that produced the answer being corrected is not the rung to correct it on — so a floor
+// that cannot be resolved fails the turn instead of quietly answering from below it, which would
+// reach the client as an honored escalation. A session already at or above the floor does not
+// move: "no lower than rung N" is a floor, not a seat assignment.
+func (r *sessionTurnRunner) startAtLadderFloor(
+	ctx context.Context, bound *session.Session, leased *session.Turn,
+	rungs []agents.Target, rot *ladder.Rotation,
+) error {
+	floor := leased.MinTargetIndex
+	if floor <= 0 {
+		return nil
+	}
+	if rot == nil || floor >= len(rungs) {
+		return acpFailure(sessionACPInvalidTarget, fmt.Sprintf(
+			"turn requires policy ladder rung %d, and this session's ladder has %d",
+			floor, len(rungs),
+		))
+	}
+	if sessionLadderIndex(rot.Members(), bound.Target) >= floor {
+		return nil
+	}
+	current, err := agents.ParseTarget(bound.Target)
+	if err != nil {
+		return acpFailure(sessionACPInvalidTarget, "session target is unparseable")
+	}
+	next := rungs[floor]
+	rotated, rewound, err := r.store.RotateTurnTarget(
+		ctx, bound.ID, leased.ID, bound.Target, next.String(), current.Provider != next.Provider,
+	)
+	if err != nil {
+		return err
+	}
+	*bound, *leased = rotated, rewound
+	rot.Focus(next.String())
+	return nil
+}
+
+// sessionFloorLimitedUntil is the soonest cooldown to expire among the rungs a floored turn may
+// still use. Reaching it means every one of them is cooling — the ladder wraps below the floor
+// only when none is free — and the rung just marked is itself at or above the floor with a
+// freshly written reset, so the minimum is always a real time.
+func sessionFloorLimitedUntil(rot *ladder.Rotation, floor int) time.Time {
+	var soonest time.Time
+	for _, member := range rot.Members()[floor:] {
+		until := rot.LimitedUntil(member)
+		if until.IsZero() {
+			continue
+		}
+		if soonest.IsZero() || until.Before(soonest) {
+			soonest = until
+		}
+	}
+	return soonest
+}
+
 // rotateOnLimit moves the session onto another rung after the active one was rate limited, and
 // reports whether the turn should be retried. Only a proven rate limit rotates: an expired or
 // revoked credential looks like a failure, not a limit, and must surface so a human fixes it
@@ -151,10 +218,11 @@ func (r *sessionTurnRunner) forgetRotation(sessionID string) {
 // bound and leased are updated in place to the rung and rewound turn the retry runs on. Each
 // rotation marks a rung cooling, so the caller's loop turns over at most once per rung before
 // this reports that none is free. backoffs counts the limits this turn has hit, so the narration
-// can number them; only a proven limit advances it.
+// can number them; only a proven limit advances it. floor is the turn's escalation floor, which
+// no rotation may cross.
 func (r *sessionTurnRunner) rotateOnLimit(
 	ctx context.Context, bound *session.Session, leased *session.Turn, rot *ladder.Rotation,
-	cause error, backoffs *int,
+	cause error, backoffs *int, floor int,
 ) (bool, error) {
 	var failure *sessionACPFailure
 	if rot == nil || !errors.As(cause, &failure) || failure.code != sessionACPRateLimited {
@@ -182,6 +250,19 @@ func (r *sessionTurnRunner) rotateOnLimit(
 			"every target in the policy ladder is rate limited until "+until.UTC().Format(time.RFC3339))
 	}
 	next := rot.Active()
+	// The ladder rotates in a circle, so an exhausted top wraps back onto the rung a floored turn
+	// was told to start above. Delivering there would answer from the model the escalation existed
+	// to replace, and would reach the client looking exactly like an honored escalation. For this
+	// turn that wrap is "nothing free": fail on the code the client already retries against, and
+	// hand back the soonest reset among the rungs it may still use.
+	if floor > 0 && sessionLadderIndex(rot.Members(), next.String()) < floor {
+		backoff.allLimitedUntil = sessionFloorLimitedUntil(rot, floor)
+		r.narrateProviderBackoff(ctx, bound.ID, leased.ID, backoff)
+		return false, acpFailure(sessionACPRateLimited, fmt.Sprintf(
+			"every target at or above policy ladder rung %d is rate limited until %s",
+			floor, backoff.allLimitedUntil.UTC().Format(time.RFC3339),
+		))
+	}
 	current, err := agents.ParseTarget(bound.Target)
 	if err != nil {
 		return false, acpFailure(sessionACPInvalidTarget, "session target is unparseable")
@@ -362,6 +443,11 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 
 	rungs, _ := ctx.Value(sessionTargetLadderContextKey{}).([]agents.Target)
 	rot := r.sessionRotation(bound.ID, rungs, bound.Target)
+	if err := r.startAtLadderFloor(ctx, &bound, &leased, rungs, rot); err != nil {
+		runErr = err
+		return result, runErr
+	}
+	floor := leased.MinTargetIndex
 	// Counts the rate limits this turn has hit, so its narration numbers them. Per Run and not
 	// per runner: a turn re-leased after a controller restart re-probes the ladder from scratch,
 	// and numbering that second pass on from the first would claim a continuity it does not have.
@@ -418,7 +504,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		if err == nil {
 			break
 		}
-		retry, rotateErr := r.rotateOnLimit(ctx, &bound, &leased, rot, err, &backoffs)
+		retry, rotateErr := r.rotateOnLimit(ctx, &bound, &leased, rot, err, &backoffs, floor)
 		if rotateErr != nil {
 			runErr = rotateErr
 			return result, runErr
