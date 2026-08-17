@@ -76,3 +76,21 @@ func TestTargetString(t *testing.T) {
 		}
 	}
 }
+
+func TestLoginCommandQuotesUnsafeTarget(t *testing.T) {
+	if got := LoginCommand("claude@personal_backup"); got != "coop login claude@personal_backup" {
+		t.Fatalf("safe login command = %q", got)
+	}
+	if got := LoginCommand("claude@work; $(touch nope)"); got != "coop login 'claude@work; $(touch nope)'" {
+		t.Fatalf("unsafe login command = %q", got)
+	}
+	if got := LoginCommand("claude@founder's"); got != `coop login 'claude@founder'"'"'s'` {
+		t.Fatalf("quoted login command = %q", got)
+	}
+	if got := LoginCommand("claude@line\nnext"); got != `coop login $'claude@line\nnext'` {
+		t.Fatalf("control-character login command = %q", got)
+	}
+	if got := DisplayTarget("claude@line\nnext"); got != `"claude@line\nnext"` {
+		t.Fatalf("control-character target display = %q", got)
+	}
+}

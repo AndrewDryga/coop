@@ -4,15 +4,16 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// signInCred writes a fake credential for agent so box.ProfileAuthed sees it signed in — using
-// the agent's OWN auth marker (claude's .credentials.json, codex's auth.json, …), not a hardcoded
-// one, so it works for a cross-provider rotation test too.
+// signInCred writes a minimal adapter-valid credential so rotation sees a runnable account, not
+// merely a marker file. Keep every registered shape here because this helper is shared by the CLI's
+// cross-provider credential matrix.
 func signInCred(t *testing.T, cfg *config.Config, agent, name string) {
 	t.Helper()
 	dir := cfg.AgentProfileDir(agent, name)
@@ -24,7 +25,26 @@ func signInCred(t *testing.T, cfg *config.Config, agent, name string) {
 		t.Fatalf("unknown agent %q", agent)
 	}
 	file, _ := ag.AuthMarker()
-	if err := os.WriteFile(filepath.Join(dir, file), []byte("x"), 0o600); err != nil {
+	body := map[string]string{
+		"claude": `{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`,
+		"codex":  `{"auth_mode":"chatgpt","tokens":{"refresh_token":"refresh"}}`,
+		"gemini": `{"encrypted":"opaque"}`,
+		"grok":   `{"issuer::id":{"key":"access","refresh_token":"refresh","expires_at":"2000-01-01T00:00:00Z","auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2000-01-01T00:00:00Z"}}`,
+	}[agent]
+	if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func signInDeadCred(t *testing.T, cfg *config.Config, agent, name string) {
+	t.Helper()
+	dir := cfg.AgentProfileDir(agent, name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ag, _ := agents.Get(agent)
+	file, _ := ag.AuthMarker()
+	if err := os.WriteFile(filepath.Join(dir, file), []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -65,6 +85,49 @@ func TestExpandLadder(t *testing.T) {
 	// No signed-in accounts at all → error.
 	if _, err := expandLadder(&config.Config{ConfigDir: t.TempDir()}, "claude", nil); err == nil {
 		t.Error("no signed-in account should error")
+	}
+}
+
+func TestExpandLadderSkipsCredentialsThatNeedRelogin(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	signInCred(t, cfg, "claude", "personal")
+	signInDeadCred(t, cfg, "claude", "personal_backup")
+	if err := cfg.SetDefaultProfile("claude", "personal"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := accountsFor(cfg, "claude"); !slices.Equal(got, []string{"personal"}) {
+		t.Fatalf("runnable Claude accounts = %v, want only personal", got)
+	}
+	targets, err := expandLadder(cfg, "claude", nil)
+	if err != nil || !slices.Equal(members(targets), []string{"claude@personal"}) {
+		t.Fatalf("rotation with dead fallback = %v, %v", members(targets), err)
+	}
+
+	_, err = expandLadder(cfg, "claude", []agents.Target{{Accounts: []string{"personal_backup"}}})
+	if err == nil || !strings.Contains(err.Error(), "credential claude@personal_backup requires re-login") ||
+		!strings.Contains(err.Error(), "coop login claude@personal_backup") {
+		t.Fatalf("dead pinned credential error = %v, want exact re-login remedy", err)
+	}
+
+	_, err = expandLadder(cfg, "claude", []agents.Target{{Accounts: []string{"missing"}}})
+	if err == nil || !strings.Contains(err.Error(), "credential claude@missing is not signed in") ||
+		!strings.Contains(err.Error(), "coop login claude@missing") || strings.Contains(err.Error(), "personal_backup") {
+		t.Fatalf("missing pinned credential error = %v, want only its exact login remedy", err)
+	}
+
+	signInDeadCred(t, cfg, "claude", "unsafe;echo nope")
+	_, err = expandLadder(cfg, "claude", []agents.Target{{Accounts: []string{"unsafe;echo nope"}}})
+	if err == nil || !strings.Contains(err.Error(), "coop login 'claude@unsafe;echo nope'") {
+		t.Fatalf("unsafe credential recovery command = %v, want a shell-quoted target", err)
+	}
+
+	signInDeadCred(t, cfg, "claude", "line\nnext")
+	_, err = expandLadder(cfg, "claude", []agents.Target{{Accounts: []string{"line\nnext"}}})
+	if err == nil || strings.Contains(err.Error(), "line\nnext") ||
+		!strings.Contains(err.Error(), `"claude@line\nnext"`) ||
+		!strings.Contains(err.Error(), `coop login $'claude@line\nnext'`) {
+		t.Fatalf("control-character credential recovery = %q, want escaped display and command", err)
 	}
 }
 

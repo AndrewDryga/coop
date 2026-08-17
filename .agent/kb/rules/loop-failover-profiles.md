@@ -2,9 +2,9 @@
 name: loop-failover-profiles
 description: "in the loop, failover swaps the active credential and never a session; the session API is the one surface that rotates the session itself"
 scope: loop
-sources: [internal/ladder/limit.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/config/config.go, internal/sessionsvc/acp.go]
+sources: [internal/agent/agent.go, internal/box/profiles.go, internal/ladder/limit.go, internal/cli/rotation.go, internal/loop/loop.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/config/config.go, internal/sessionsvc/acp.go]
 check: "none"
-updated: 2026-08-15
+updated: 2026-08-17
 ---
 
 # Loop failover swaps the active credential profile, never a session
@@ -31,7 +31,9 @@ adapter-interface change and no `RunSpec` change. The loop rotates by calling
 a running agent can read just the one account it's using — never the rest of the vault.
 There is no per-repo pool file anymore: the rotation is expanded at loop start from the
 `agent:` ladder in play (a loop.yaml step, a preset's lead, or the command-line target)
-against the signed-in accounts. A ladder names *accounts* (`provider:model@account`), never their logins —
+against runnable credentials. A native marker that its adapter knows requires another login is
+excluded; env-backed and opaque credentials remain eligible because Coop cannot prove them dead.
+A ladder names *accounts* (`provider:model@account`), never their logins —
 the credentials themselves stay in the vault outside the repo, so nothing lands where it
 could be committed (this is the tool whose job is catching exactly that).
 
@@ -56,18 +58,23 @@ on-a-proven-limit rule below is unchanged: the floor is an explicit request, nev
 - Anything that needs "the agent's home for this run" goes through `cfg.AgentDir`, never a
   hand-built `filepath.Join(ConfigDir, agent)` — that join is the seam the active profile
   rides on, and bypassing it pins you to the default profile.
-- Rotation triggers only on a detected rate limit with a *non-zero exit* (`decideIteration`
+- Rate-limit-triggered rotation requires a detected limit with a *non-zero exit* (`decideIteration`
   gates on `code != 0` by design, so a coding loop that prints "rate limit" in a diff
   doesn't falsely rotate). A new agent whose limit output isn't caught → add a marker to
   `ladder.DetectLimit` (internal/ladder/limit.go); don't loosen the exit gate.
-- Keep rotation strictly rate-limit-driven. An expired/revoked credential looks like a
-  failure, not a limit, so it surfaces instead of rotating — intended for v1.
+- Rotation advances on a proven non-zero-exit rate limit and on a provider-owned authentication
+  failure. Authentication failures stay dead for the run; at construction, credentials already
+  known to require another login are excluded. Do not infer authentication failure from arbitrary
+  prose — each adapter's `AuthSignals` owns the provider CLI wording.
 - A free rotation resets the wait counter; only consecutive *all-profiles-limited* waits
   count toward the stop cap. Otherwise a healthy multi-account run would trip the cap.
 - Never put a credential in a repo. A preset's `agent:` ladder may name accounts
   (`model@account`), but the logins themselves stay in the vault, never committed.
 
 ## Changelog
+- 2026-08-17 — excluded adapter-inspectable re-login credentials from rotation construction and
+  documented authentication failure as the second runtime advance trigger; swept production
+  expansion and process fixtures, with no marker-only runnable fixture left in the covered paths
 - 2026-08-15 — recorded the second thing that moves a session's rung: a turn's `min_target_index`
   escalation floor, which rotates before the first delivery and bounds the ladder's wrap for that
   turn. Swept `internal/sessionsvc` for other `RotateTurnTarget` callers — `rotateOnLimit` and the

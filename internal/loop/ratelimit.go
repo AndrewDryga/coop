@@ -1,7 +1,6 @@
 package loop
 
 import (
-	"strings"
 	"sync"
 	"time"
 
@@ -18,24 +17,7 @@ import (
 // the wall-clock wait mechanics the narration drives (ladder.WaitUntilWall).
 
 func iterationAuthentication(provider, output string) bool {
-	agent, ok := agents.Get(provider)
-	if !ok {
-		return false
-	}
-	for _, raw := range strings.Split(strings.ToLower(output), "\n") {
-		line := strings.TrimSpace(raw)
-		for _, signal := range agent.LiveCredentials().AuthSignals {
-			signal = strings.ToLower(strings.TrimSpace(signal))
-			if signal == "" {
-				continue
-			}
-			if line == signal || strings.HasPrefix(line, signal+".") || strings.HasPrefix(line, signal+":") ||
-				((strings.HasPrefix(line, "error:") || strings.HasPrefix(line, "fatal:") || strings.HasPrefix(line, "{") || strings.HasPrefix(line, "[")) && strings.Contains(line, signal)) {
-				return true
-			}
-		}
-	}
-	return false
+	return agents.AuthenticationFailure(provider, output)
 }
 
 type iterationClassification struct {

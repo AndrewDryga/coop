@@ -2,7 +2,9 @@ package agent
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Target is coop's single addressing scheme — WHO runs on WHAT: a provider, optionally a
@@ -27,6 +29,46 @@ type Target struct {
 	Model    string   // "" = the agent CLI's own default model
 	Effort   string   // "" = the agent CLI's own default; else a reasoning-effort level passed to the agent
 	Accounts []string // nil/empty = every signed-in account (the widest ladder); else the explicit subset, in order
+}
+
+// LoginCommand renders a copy-pasteable shell command for one provider@account target. Profile
+// directories can predate today's CLI validation or be created by hand, so quote an unsafe target
+// instead of letting its name become shell syntax in an actionable error.
+func LoginCommand(target string) string {
+	printable := true
+	for _, r := range target {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			strings.ContainsRune("_@.+-", r) {
+			continue
+		}
+		if !unicode.IsPrint(r) {
+			printable = false
+			break
+		}
+	}
+	if !printable {
+		quoted := strconv.QuoteToASCII(target)
+		return "coop login $'" + strings.ReplaceAll(quoted[1:len(quoted)-1], `'`, `\'`) + "'"
+	}
+	for _, r := range target {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			strings.ContainsRune("_@.+-", r) {
+			continue
+		}
+		return "coop login '" + strings.ReplaceAll(target, "'", `'"'"'`) + "'"
+	}
+	return "coop login " + target
+}
+
+// DisplayTarget keeps credential diagnostics one-line and terminal-safe even if a legacy profile
+// directory or hand-written preset contains control characters.
+func DisplayTarget(target string) string {
+	for _, r := range target {
+		if !unicode.IsPrint(r) {
+			return strconv.QuoteToASCII(target)
+		}
+	}
+	return target
 }
 
 // ParseTarget parses one target token, validating SYNTAX and that the provider is a

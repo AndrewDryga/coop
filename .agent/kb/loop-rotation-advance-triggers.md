@@ -1,17 +1,17 @@
 ---
 name: loop-rotation-advance-triggers
-description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); rungs are built from credential presence, not validity
+description: the loop rotation advances on rate limits (time-keyed, self-healing) and auth failures (sticky for the run); known-invalid credentials never become rungs
 subsystem: loop
-sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/agent/claude.go, internal/box/auth.go]
-updated: 2026-08-10
+sources: [internal/ladder/ladder.go, internal/ladder/limit.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/acpctl/control.go, internal/agent/agent.go, internal/agent/claude.go, internal/box/auth.go, internal/box/profiles.go]
+updated: 2026-08-17
 ---
-A loop's rotation is built from credential **presence**, never validity: `expandLadder` →
-`accountsFor` → `box.ProfileAuthed`, which `internal/box/auth.go:15` calls "a presence heuristic,
-not a live validity check". The adapter check that *can* tell a dead login from a refreshable one,
-`StoredCredentialStatus`, has exactly one non-test caller — the `coop credentials` display at
-`internal/cli/profiles.go:121`. So an account `coop credentials` already prints as
-`re-login required` is still built in as a rung, and often as rung #1 (the marked default sorts
-first). See [[credential-presence-is-adapter-declared]] and
+A loop's rotation starts from credential presence and then applies
+`box.ProfileCredentialReady`. A native marker that its adapter classifies as
+`StoredCredentialReauthRequired` is omitted before the provider launches; ready or refreshable
+markers remain eligible. Env-backed credentials and markers whose adapter returns `Unknown` retain
+presence behavior because Coop cannot safely prove them dead. `coop credentials` uses the same
+predicate, so a credential shown as `re-login required` cannot simultaneously become a rotation
+rung. See [[credential-presence-is-adapter-declared]] and
 [[credentials-expired-is-a-false-alarm]].
 
 Two triggers advance the rotation, and their lifetimes differ — don't reach for one map to hold
@@ -29,16 +29,20 @@ stops and names all of them — restoring only the last one tried would hit the 
 A single-rung run still fails fast, exactly as before.
 
 **The trap:** an auth failure only reaches this path if the provider adapter's `AuthSignals` match
-the CLI's actual wording. `iterationAuthentication` anchors each signal at line start (exact, or
+the CLI's actual wording. `agent.AuthenticationFailure` anchors each signal at line start (exact, or
 `signal:`/`signal.`, or inside an `error:`/`fatal:`/JSON line) — deliberately, so ordinary prose
-mentioning a signal isn't a terminal failure. The cost is that a provider rewords its message and
-the failure silently downgrades to a generic `process_failure`, which burns the loop's whole retry
-budget on a rung no retry can fix. That is exactly how an expired claude refresh token
+mentioning a signal isn't a terminal failure. The loop and ACP notice gate share that classifier;
+ACP terminal recovery separately requires its structured error shape. The cost is that a provider
+rewords its message and the loop failure silently downgrades to a generic `process_failure`, which
+burns the whole retry budget on a rung no retry can fix. That is exactly how an expired claude token
 ("Failed to authenticate: OAuth session expired and could not be refreshed", matched by none of the
 then-current signals) killed a 133-task overnight run while a signed-in second account sat idle in
 the same rotation. When a provider's auth wording changes, the signal list is the thing to update.
 
 ## Changelog
+- 2026-08-17 — changed rung membership to exclude adapter-inspectable re-login credentials before
+  launch; moved provider prose matching behind the shared adapter-owned classifier used by loop and
+  ACP notices; re-verified env/opaque fallbacks and replaced marker-only process fixtures
 - 2026-08-09 — re-verified; the CURSOR (both maps, `free`/`live`, `selectTarget`,
   `AdvanceOnTimeout`, `OnAuthFailure`) is now `internal/ladder` — a pure leaf the loop, the ACP
   control, and the sessions API share. Rung MEMBERSHIP is unchanged and still cli's:

@@ -182,7 +182,7 @@ func TestACPCredentialSourcesFollowProviderSelection(t *testing.T) {
 					if err := os.MkdirAll(dir, 0o700); err != nil {
 						t.Fatal(err)
 					}
-					if err := os.WriteFile(filepath.Join(dir, marker), []byte("token"), 0o600); err != nil {
+					if err := os.WriteFile(filepath.Join(dir, marker), credentialMatrixMarker(name), 0o600); err != nil {
 						t.Fatal(err)
 					}
 				} else if err := os.WriteFile(cfg.EnvFile(), []byte(source+"=token\n"), 0o600); err != nil {

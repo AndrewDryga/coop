@@ -223,7 +223,7 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 			if err := os.MkdirAll(profile, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(profile, marker), []byte("{}\n"), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(profile, marker), append(credentialMatrixMarker(provider), '\n'), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}

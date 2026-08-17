@@ -116,9 +116,7 @@ func (a *app) profileState(agent, p string) (label string, needsLogin bool) {
 	if !box.ProfileAuthed(a.cfg, agent, p) {
 		return "not signed in", false
 	}
-	ag, ok := agents.Get(agent)
-	if ok && box.ProfileMarkerPresent(a.cfg, agent, p) &&
-		ag.StoredCredentialStatus(a.cfg.AgentProfileDir(agent, p), time.Now()) == agents.StoredCredentialReauthRequired {
+	if !box.ProfileCredentialReady(a.cfg, agent, p, time.Now()) {
 		return "re-login required", true
 	}
 	return "signed in", false

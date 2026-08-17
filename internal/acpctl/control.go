@@ -79,12 +79,12 @@ type Control struct {
 	model        string                      // coop's resolved model for the lead ("" → leave the adapter's default)
 	target       agents.Target               // complete active box/session intent, including preset model + effort
 	plainTargets map[string]targetPreference // provider -> last accepted plain model/effort choice
-	creds        []string                    // the lead's credentials (accounts), in order
+	creds        []string                    // the lead's runnable credentials offered by the selector
 	presets      []string                    // the repo's presets, in order
 	Fusion       bool                        // a fusion governor session — the selector offers no provider switch
 	fusionPeers  []string                    // original explicit peer providers; self is re-evaluated after each lead rotation
 
-	accounts []string // the lead's signed-in accounts, for rate-limit auto-rotation (default first)
+	accounts []string // the lead's runnable accounts, for rate-limit auto-rotation (default first)
 
 	mu          sync.Mutex
 	sel         Selection                    // tagged plain lead or preset-owned selection
@@ -182,11 +182,12 @@ func New(cfg *config.Config, lead, model, effort, repo string, sel Selection, pr
 		effort = cfg.EffortFor(lead)
 	}
 	target := agents.Target{Provider: lead, Model: model, Effort: effort}
+	accounts := host.AccountsFor(cfg, lead)
 	return &Control{
 		cfg: cfg, host: host, repo: repo, Fusion: fusion, fusionPeers: fusionPeers,
-		lead: lead, model: model, target: target, creds: box.EffectiveProfiles(cfg, lead), presets: presets,
+		lead: lead, model: model, target: target, creds: slices.Clone(accounts), presets: presets,
 		plainTargets:   map[string]targetPreference{lead: {Model: model, Effort: effort}},
-		accounts:       host.AccountsFor(cfg, lead),
+		accounts:       accounts,
 		sel:            sel,
 		authFailed:     map[string]bool{},
 		cached:         map[string]json.RawMessage{},
@@ -451,8 +452,8 @@ func (c *Control) retargetLocked(provider string) {
 		return
 	}
 	c.lead = provider
-	c.creds = box.EffectiveProfiles(c.cfg, provider)
 	c.accounts = c.host.AccountsFor(c.cfg, provider)
+	c.creds = slices.Clone(c.accounts)
 	c.autoAccount = ""
 	if c.plainTargets == nil {
 		c.plainTargets = map[string]targetPreference{}
@@ -560,8 +561,8 @@ func (c *Control) toEditor(line []byte) (out []byte, restart bool) {
 	return out, false
 }
 
-// maybeRecoverAuthentication turns a terminal auth_required error into Coop's credential policy.
-// An automatic plain account advances once through the signed-in accounts. Presets and pinned plain
+// maybeRecoverAuthentication turns a terminal authentication failure into Coop's credential policy.
+// An automatic plain account advances once through the runnable accounts. Presets and pinned plain
 // accounts stay on their exact target: preset ladders are rate-limit fallbacks, so auth must never
 // silently change the answering provider. A correlated Auto prompt is resent after restart; every
 // non-rotating path names the exact `coop login provider@account` recovery command.
@@ -645,8 +646,9 @@ func (c *Control) maybeRecoverAuthentication(line []byte) (out []byte, restart, 
 				acpproxy.Trace("authentication failed on %s@%s: rotating to %s + auto-resending", provider, currentAccount, next)
 				return c.configOptionUpdate(session), true, true
 			}
-			msg := fmt.Sprintf("coop: authentication failed for %s@%s; switched to %s@%s. Retry the request. To repair the failed account, run: coop login %s",
-				provider, currentAccount, provider, next, loginTarget(provider, currentAccount))
+			currentTarget, nextTarget := loginTarget(provider, currentAccount), loginTarget(provider, next)
+			msg := fmt.Sprintf("coop: authentication failed for %s; switched to %s. Retry the request. Repair the failed credential with: %s",
+				agents.DisplayTarget(currentTarget), agents.DisplayTarget(nextTarget), agents.LoginCommand(currentTarget))
 			return rewriteErrorMessage(line, msg), true, true
 		}
 	}
@@ -661,9 +663,10 @@ func loginTarget(provider, account string) string {
 }
 
 func rewriteAuthenticationRecovery(line []byte, provider, account string) []byte {
+	target := loginTarget(provider, account)
 	return rewriteErrorMessage(line, fmt.Sprintf(
-		"coop: authentication failed for %s. Re-authenticate it with: coop login %s",
-		loginTarget(provider, account), loginTarget(provider, account),
+		"coop: authentication failed for %s — run: %s",
+		agents.DisplayTarget(target), agents.LoginCommand(target),
 	))
 }
 
@@ -1217,7 +1220,7 @@ func (c *Control) chunkGate(line []byte) (hold bool, flush []byte) {
 	gated := false
 	sel := c.selection()
 	c.mu.Lock()
-	hasAccounts := len(c.accounts) > 0
+	hasAccounts, provider := len(c.accounts) > 0, c.lead
 	c.mu.Unlock()
 	if sel.Preset == "" && (sel.Account != "" || hasAccounts) {
 		gated = true
@@ -1227,7 +1230,7 @@ func (c *Control) chunkGate(line []byte) (hold bool, flush []byte) {
 		}
 	}
 	if s, text, ok := agentChunk(line); ok {
-		if authenticationRequired(text) {
+		if authenticationRequired(text) || agents.AuthenticationFailure(provider, text) {
 			c.mu.Lock()
 			active := c.turnActive[s]
 			if active {
@@ -1280,6 +1283,7 @@ func (c *Control) chunkGate(line []byte) (hold bool, flush []byte) {
 func authenticationRequired(text string) bool {
 	compact := ladder.CompactJSONName(text)
 	return compact == "authrequired" ||
+		compact == "authenticationfailed" ||
 		strings.Contains(compact, "authenticationrequired") ||
 		strings.Contains(compact, "notauthenticated") ||
 		strings.Contains(compact, "signinrequired")
@@ -1297,7 +1301,8 @@ func authenticationError(line []byte) bool {
 		compactKey, compactValue := ladder.CompactJSONName(key), ladder.CompactJSONName(value)
 		switch compactKey {
 		case "reason", "errorkind", "type", "code":
-			foundExact = foundExact || compactValue == "authrequired" || compactValue == "authenticationrequired" || compactValue == "notauthenticated"
+			foundExact = foundExact || compactValue == "authrequired" || compactValue == "authenticationrequired" ||
+				compactValue == "authenticationfailed" || compactValue == "notauthenticated"
 		case "message":
 			foundMessage = foundMessage || authenticationRequired(value)
 		}
@@ -2421,22 +2426,22 @@ func cloneNativeOptionCache(src map[string]nativeOptionCache) map[string]nativeO
 }
 
 // leadProvider is the current lead's provider (the one the active box runs), read under the lock —
-// the warm pool warms the OTHER signed-in providers around it.
+// the warm pool warms the OTHER runnable providers around it.
 func (c *Control) LeadProvider() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.lead
 }
 
-// Creds is the lead's credentials (accounts), in order — race-safe copy for a caller outside the
-// package (e.g. the credential-matrix test) that needs to prove the selector offers them.
+// Creds is the lead's runnable credentials, in selector order — race-safe copy for a caller outside
+// the package (e.g. the credential-matrix test) that needs to prove the selector offers them.
 func (c *Control) Creds() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Clone(c.creds)
 }
 
-// Accounts is the lead's signed-in accounts in rate-limit auto-rotation order — race-safe copy,
+// Accounts is the lead's runnable accounts in rate-limit auto-rotation order — race-safe copy,
 // same shape as Creds.
 func (c *Control) Accounts() []string {
 	c.mu.Lock()
@@ -2444,7 +2449,7 @@ func (c *Control) Accounts() []string {
 	return slices.Clone(c.accounts)
 }
 
-// spawnableProviders lists the OTHER registered providers with at least one signed-in account —
+// spawnableProviders lists the OTHER registered providers with at least one runnable account —
 // the ones a provider switch could actually spawn. The current lead is excluded (its accounts
 // are offered by the Account selector).
 func (c *Control) SpawnableProviders(lead string) []string {
@@ -2693,7 +2698,7 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 	}
 	if h.Method == "authenticate" || h.Method == "logout" {
 		provider, account := c.authenticationTarget()
-		message := fmt.Sprintf("coop manages authentication per account. Re-authenticate with: coop login %s", loginTarget(provider, account))
+		message := fmt.Sprintf("coop manages authentication per credential — run: %s", agents.LoginCommand(loginTarget(provider, account)))
 		return true, rpcErrorResponse(h.ID, -32601, message), nil, false
 	}
 	// Remember each session's in-flight prompt so a rate-limit rotation/wait can re-send it, and

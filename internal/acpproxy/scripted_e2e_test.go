@@ -776,7 +776,13 @@ func signInScriptedProfile(t *testing.T, tmp, provider, profile string) {
 		t.Fatalf("unknown scripted ACP provider %q", provider)
 	}
 	marker, _ := ag.AuthMarker()
-	if err := os.WriteFile(filepath.Join(profileDir, marker), []byte("{}\n"), 0o600); err != nil {
+	body := map[string]string{
+		"claude": `{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`,
+		"codex":  `{"auth_mode":"chatgpt","tokens":{"refresh_token":"refresh"}}`,
+		"gemini": `{"encrypted":"opaque"}`,
+		"grok":   `{"issuer::id":{"key":"access","refresh_token":"refresh","expires_at":"2000-01-01T00:00:00Z","auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2000-01-01T00:00:00Z"}}`,
+	}[provider]
+	if err := os.WriteFile(filepath.Join(profileDir, marker), []byte(body+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

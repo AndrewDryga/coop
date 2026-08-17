@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Account failover no longer tries a credential Coop already knows cannot authenticate.** Rotation
+  now excludes native login files that their adapter classifies as requiring another login, while
+  retaining env-backed and opaque credentials whose validity Coop cannot inspect. Real ACP failures
+  such as `authentication_failed` and an expired OAuth session now advance an automatic account
+  ladder instead of leaking the provider's dead-end error, and known-dead accounts are omitted from
+  the editor selector. A pinned or exhausted ladder tells the user exactly which shell-safe
+  `coop login provider@account` command repairs it.
+
 - **A remote-session turn crawling inside a provider's own retry loop is now audible.** Coop emits
   `provider.alive` — cumulative `frames` and `bytes` counters — at most once a minute while ACP
   frames keep arriving and nothing higher-level has been narrated in that window. `provider.backoff`

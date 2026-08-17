@@ -443,6 +443,31 @@ func ClassifyCLIError(spec LiveCredentialSpec, output string) string {
 	return "process"
 }
 
+// AuthenticationFailure reports whether provider-owned output proves that provider's login failed.
+// Signals stay adapter-owned; anchoring them to an error-shaped line keeps ordinary narration about
+// authentication from killing a healthy credential or replaying work under another account.
+func AuthenticationFailure(provider, output string) bool {
+	agent, ok := Get(provider)
+	if !ok {
+		return false
+	}
+	for _, raw := range strings.Split(strings.ToLower(output), "\n") {
+		line := strings.TrimSpace(raw)
+		for _, signal := range agent.LiveCredentials().AuthSignals {
+			signal = strings.ToLower(strings.TrimSpace(signal))
+			if signal == "" {
+				continue
+			}
+			if line == signal || strings.HasPrefix(line, signal+".") || strings.HasPrefix(line, signal+":") ||
+				((strings.HasPrefix(line, "error:") || strings.HasPrefix(line, "fatal:") ||
+					strings.HasPrefix(line, "{") || strings.HasPrefix(line, "[")) && strings.Contains(line, signal)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // withModel applies a resolved model to cmd. A configured model outranks a model baked into
 // COOP_<AGENT>_CMD, so an existing --model/-m value is replaced in place; otherwise the common
 // `--model <model>` form is appended. Empty leaves a command override's own default untouched.

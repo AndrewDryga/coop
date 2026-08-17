@@ -121,6 +121,43 @@ func TestProfileAuthedCredentialMatrix(t *testing.T) {
 	}
 }
 
+func TestProfileCredentialReady(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	now := time.Now()
+	write := func(agent, profile, marker, body string) {
+		t.Helper()
+		dir := cfg.AgentProfileDir(agent, profile)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, marker), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if ProfileCredentialReady(cfg, "claude", "missing", now) {
+		t.Fatal("missing credential was runnable")
+	}
+	write("claude", "dead", ".credentials.json", `{"claudeAiOauth":{"scopes":["user:inference"]}}`)
+	if !ProfileAuthed(cfg, "claude", "dead") || ProfileCredentialReady(cfg, "claude", "dead", now) {
+		t.Fatal("present nonrenewable Claude credential was runnable")
+	}
+	write("claude", "ready", ".credentials.json", `{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`)
+	if !ProfileCredentialReady(cfg, "claude", "ready", now) {
+		t.Fatal("refreshable Claude credential was not runnable")
+	}
+	write("gemini", "opaque", "gemini-credentials.json", `{"encrypted":"opaque"}`)
+	if !ProfileCredentialReady(cfg, "gemini", "opaque", now) {
+		t.Fatal("adapter-opaque credential lost presence-based behavior")
+	}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !ProfileCredentialReady(cfg, "claude", "default", now) {
+		t.Fatal("env-backed credential lost presence-based behavior")
+	}
+}
+
 func TestGeminiProfileAuthFollowsSelectedAuthority(t *testing.T) {
 	tests := []struct {
 		name       string

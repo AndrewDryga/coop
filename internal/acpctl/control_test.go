@@ -28,12 +28,11 @@ func newTestControl(t *testing.T) *Control {
 func newTestControlWithHost(t *testing.T, host Host) *Control {
 	t.Helper()
 	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir}
 	for _, p := range []string{"personal", "work"} {
-		if err := os.MkdirAll(filepath.Join(dir, "claude", "profiles", p), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		signInCred(t, cfg, "claude", p)
 	}
-	return New(&config.Config{ConfigDir: dir}, "claude", "opus[1m]", "", dir, Selection{}, []string{"frontier"}, nil, false, nil, host)
+	return New(cfg, "claude", "opus[1m]", "", dir, Selection{}, []string{"frontier"}, nil, false, nil, host)
 }
 
 func configOptionIDs(t *testing.T, out []byte) ([]string, map[string]json.RawMessage) {
@@ -1204,6 +1203,7 @@ func TestACPChildResetClosesOnlyUnresumedPartial(t *testing.T) {
 
 func TestACPControlSuppressesAuthenticationChunkFromCarry(t *testing.T) {
 	c := newTestControl(t)
+	c.sel = Selection{Account: "personal"} // pinned: prove suppression without Auto failover
 	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hello"}]}}`+"\n"))
 	authChunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Authentication required"}}}}` + "\n")
 	if out, restart := c.toEditor(authChunk); out != nil || restart {
@@ -1256,13 +1256,13 @@ func TestACPControlAuthenticationRotatesAutomaticAccountAndResends(t *testing.T)
 	c.sel = Selection{} // Account Auto: personal is the current default, work is the fallback.
 	prompt := []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hello"}]}}` + "\n")
 	fromEditorPrompt(c, prompt)
-	authChunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Authentication required"}}}}` + "\n")
+	authChunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Failed to authenticate: OAuth session expired and could not be refreshed"}}}}` + "\n")
 	if out, restart := c.toEditor(authChunk); out != nil || restart {
 		t.Fatalf("auth chunk should be held for terminal recovery, out=%s restart=%v", out, restart)
 	}
-	authError := []byte(`{"jsonrpc":"2.0","id":"p1","error":{"code":-32000,"message":"auth_required"}}` + "\n")
+	authError := []byte(`{"jsonrpc":"2.0","id":"p1","error":{"code":-32603,"message":"Failed to authenticate: OAuth session expired and could not be refreshed","data":{"errorKind":"authentication_failed"}}}` + "\n")
 	out, restart := c.toEditor(authError)
-	if !restart || !bytes.Contains(out, []byte("config_option_update")) || !bytes.Contains(out, []byte(`"currentValue":"auto"`)) || bytes.Contains(out, []byte("auth_required")) {
+	if !restart || !bytes.Contains(out, []byte("config_option_update")) || !bytes.Contains(out, []byte(`"currentValue":"auto"`)) || bytes.Contains(out, []byte("OAuth session expired")) {
 		t.Fatalf("automatic auth recovery should rotate silently, out=%s restart=%v", out, restart)
 	}
 	if sel := c.selection(); sel.Account != "" {
@@ -1279,13 +1279,50 @@ func TestACPControlAuthenticationRotatesAutomaticAccountAndResends(t *testing.T)
 func TestACPControlAuthenticationGivesPinnedLoginRecovery(t *testing.T) {
 	c := newTestControl(t)
 	c.sel = Selection{Account: "personal"}
-	authError := []byte(`{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"Authentication required"}}` + "\n")
+	authError := []byte(`{"jsonrpc":"2.0","id":7,"error":{"code":-32603,"message":"Failed to authenticate: OAuth session expired and could not be refreshed","data":{"errorKind":"authentication_failed"}}}` + "\n")
 	out, restart := c.toEditor(authError)
 	if restart {
 		t.Fatal("a pinned account with no automatic fallback must not restart-loop")
 	}
-	if !bytes.Contains(out, []byte("coop login claude@personal")) || bytes.Contains(out, []byte(`"message":"Authentication required"`)) {
+	if !bytes.Contains(out, []byte("run: coop login claude@personal")) || bytes.Contains(out, []byte("OAuth session expired")) || !bytes.Contains(out, []byte(`"code":-32603`)) {
 		t.Fatalf("pinned account recovery is not actionable: %s", out)
+	}
+}
+
+func TestAuthenticationErrorRecognizesProviderFailureShapes(t *testing.T) {
+	for name, line := range map[string]string{
+		"structured adapter error": `{"error":{"message":"provider declined","data":{"errorKind":"authentication_failed"}}}`,
+		"existing required shape":  `{"error":{"message":"Authentication required"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !authenticationError([]byte(line)) {
+				t.Fatalf("authentication error was not recognized: %s", line)
+			}
+		})
+	}
+	if authenticationError([]byte(`{"result":{"message":"authentication_failed"}}`)) {
+		t.Fatal("successful result text was classified as an authentication error")
+	}
+	if authenticationError([]byte(`{"error":{"message":"Failed to authenticate to a third-party tool"}}`)) {
+		t.Fatal("unstructured tool authentication prose was classified as a provider credential failure")
+	}
+}
+
+func TestACPControlAccountSelectorOmitsCredentialThatNeedsRelogin(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	signInCred(t, cfg, "claude", "personal")
+	signInDeadCred(t, cfg, "claude", "personal_backup")
+	c := New(cfg, "claude", "", "", t.TempDir(), Selection{}, nil, nil, false, nil, testHost())
+
+	if got := c.Creds(); !slices.Equal(got, []string{"personal"}) {
+		t.Fatalf("account selector credentials = %v, want only runnable personal", got)
+	}
+	if next, recognized := c.SelectorSelection(CoopAccountID, "personal_backup"); !recognized || next.Account != "" {
+		t.Fatalf("known-dead account selection = (%+v, %v), want unchanged Auto", next, recognized)
+	}
+	encoded, _ := json.Marshal(c.coopOptions())
+	if bytes.Contains(encoded, []byte("personal_backup")) {
+		t.Fatalf("account selector advertised known-dead credential: %s", encoded)
 	}
 }
 
@@ -2644,13 +2681,7 @@ func TestACPHistoryToolNarration(t *testing.T) {
 func TestACPControlProviderSwitchAckShowsNewProvider(t *testing.T) {
 	c := newTestControl(t)
 	// A signed-in codex account, so the provider switch is spawnable (selectorSel refuses otherwise).
-	codexDir := filepath.Join(c.cfg.ConfigDir, "codex", "profiles", "personal")
-	if err := os.MkdirAll(codexDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	signInCred(t, c.cfg, "codex", "personal")
 	// Prime the cache as a claude session/new would — its NATIVE model menu is claude's.
 	toEd(c, []byte(`{"jsonrpc":"2.0","id":1,"result":{"sessionId":"s","configOptions":[{"id":"model","type":"select","currentValue":"default","options":[{"value":"opus[1m]","name":"Opus"}]}]}}`))
 	handled, resp, _, restart := c.fromEditor([]byte(`{"jsonrpc":"2.0","id":11,"method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_provider","value":"codex"}}`))

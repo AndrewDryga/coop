@@ -37,6 +37,21 @@ func ProfileAuthed(cfg *config.Config, agent, profile string) bool {
 	)
 }
 
+// ProfileCredentialReady refines credential presence only where a caller needs a runnable account.
+// Inspectable native markers that cannot recover without another login are excluded; opaque stores
+// and env-backed credentials preserve the presence-based behavior because the adapter cannot prove
+// them invalid locally.
+func ProfileCredentialReady(cfg *config.Config, agent, profile string, now time.Time) bool {
+	if !ProfileAuthed(cfg, agent, profile) {
+		return false
+	}
+	ag, ok := agents.Get(agent)
+	if !ok || !ProfileMarkerPresent(cfg, agent, profile) {
+		return true
+	}
+	return ag.StoredCredentialStatus(cfg.AgentProfileDir(agent, profile), now) != agents.StoredCredentialReauthRequired
+}
+
 // ProfileMarkerPresent reports whether this exact profile has the adapter's login marker. It lets
 // callers distinguish a file-backed account from an env-backed default even after Box has created
 // the profile directory for mounts and session state.
