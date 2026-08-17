@@ -111,6 +111,7 @@ updated: <YYYY-MM-DD>                # last edit
 
 **The loop**
 - [loop-failover-profiles](loop-failover-profiles.md) — in the loop, failover swaps the active credential and never a session; the session API is the one surface that rotates the session itself
+- [provider-reset-timezones-preserve-iana](provider-reset-timezones-preserve-iana.md) — preserve exact provider reset zones; parse safe IANA names and reject ambiguous abbreviations
 
 **Scaffolding**
 - [scaffold-fits-the-repo](scaffold-fits-the-repo.md) — `coop init` generates for the detected stack and stays neutral when it detects nothing

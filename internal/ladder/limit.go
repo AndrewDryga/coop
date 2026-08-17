@@ -28,8 +28,10 @@ var (
 	hitLimitRe = regexp.MustCompile(`(?i)(?:hit|reached) your (?:[\w.-]+ ){0,3}limit`)
 	// The "resets <when>" or "try again at <when>" clause that follows it, when present.
 	resetsRe = regexp.MustCompile(`(?i)(?:resets?|try again at)\s+([^\n·]+)`)
-	// A trailing timezone in parens at the end of that clause, e.g. "(UTC)".
-	tzParenRe = regexp.MustCompile(`\(([A-Za-z]{2,5})\)\s*$`)
+	// A trailing timezone in parens at the end of that clause, e.g. "(UTC)" or
+	// "(America/Merida)". Every path component starts alphanumeric so provider
+	// prose cannot turn time.LoadLocation into a filesystem traversal.
+	tzParenRe = regexp.MustCompile(`\(([A-Za-z][A-Za-z0-9_+.-]*(?:/[A-Za-z0-9][A-Za-z0-9_+.-]*)*)\)\s*$`)
 	// API-style hints carrying a delay: "retry-after: 30" (bare = seconds), "retry after 30s",
 	// "try again in 5 minutes", "retry after 2 hours". The unit is optional and scaled by its
 	// first letter (m→minutes, h→hours, else seconds) in the caller.
@@ -154,27 +156,40 @@ func ParseResetTime(output string, now time.Time) time.Time {
 	if m == nil {
 		return time.Time{}
 	}
-	s := strings.ToLower(strings.TrimSpace(m[1]))
-	// Strip spaces before AM/PM so "3:04 PM" becomes "3:04PM" matching Go's "3:04pm" layout
-	s = regexp.MustCompile(`(?i)\s+(am|pm)\b`).ReplaceAllString(s, "$1")
+	s := strings.TrimSpace(m[1])
 	loc := time.Local
 	if tz := tzParenRe.FindStringSubmatch(s); tz != nil {
-		switch strings.ToUpper(tz[1]) {
+		zone := tz[1]
+		switch strings.ToUpper(zone) {
 		case "UTC", "GMT", "Z":
 			loc = time.UTC
 		default:
-			// A stated but unrecognized zone (PST, ET, CET, …): don't silently reinterpret the
-			// time in the HOST's zone — on a UTC server that can be hours early, waking the loop
-			// before the real reset so it re-hits the limit. Fall back to backoff instead.
-			return time.Time{}
+			// Short abbreviations remain ambiguous. A slash-qualified IANA name is exact,
+			// including its historical offset rules; an unknown name still fails closed.
+			if !strings.Contains(zone, "/") {
+				return time.Time{}
+			}
+			loaded, err := time.LoadLocation(zone)
+			if err != nil {
+				return time.Time{}
+			}
+			loc = loaded
 		}
 		s = strings.TrimSpace(s[:len(s)-len(tz[0])])
 	}
+	s = strings.ToLower(s)
+	// Strip spaces before AM/PM and the optional prose "at" so both
+	// "Jun 18, 8pm" and "August 20 at 2 PM" reach the same layouts.
+	s = regexp.MustCompile(`(?i)\s+(am|pm)\b`).ReplaceAllString(s, "$1")
+	s = strings.ReplaceAll(s, " at ", " ")
 	s = strings.TrimRight(s, " .,")
 	// Date + time: "Jun 18, 8pm" / "Jun 18, 8:30pm" (comma optional). The layout
 	// carries no year, so rebuild with now's year and roll forward past a stale
 	// month (a December notice that resets in January).
-	for _, lay := range []string{"Jan 2, 3:04pm", "Jan 2, 3pm", "Jan 2 3:04pm", "Jan 2 3pm"} {
+	for _, lay := range []string{
+		"Jan 2, 3:04pm", "Jan 2, 3pm", "Jan 2 3:04pm", "Jan 2 3pm",
+		"January 2, 3:04pm", "January 2, 3pm", "January 2 3:04pm", "January 2 3pm",
+	} {
 		if t, err := time.ParseInLocation(lay, s, loc); err == nil {
 			r := time.Date(now.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 			if r.Before(now.Add(-24 * time.Hour)) {

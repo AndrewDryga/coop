@@ -114,6 +114,21 @@ func TestDetectIterationLimitRejectsNarration(t *testing.T) {
 	}
 }
 
+func TestDetectIterationLimitCarriesTheProviderIANAReset(t *testing.T) {
+	now := time.Date(2026, time.August, 17, 13, 0, 0, 0, time.UTC)
+	merida, err := time.LoadLocation("America/Merida")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := DetectIterationLimit(
+		"You've hit your weekly limit · resets August 20 at 2 PM (America/Merida)", now,
+	)
+	want := time.Date(2026, time.August, 20, 14, 0, 0, 0, merida)
+	if !got.Limited || !got.ResetAt.Equal(want) {
+		t.Fatalf("provider limit = %+v, want reset %v", got, want)
+	}
+}
+
 // LimitNotice is the stream decoder's narrower dedupe question: the notice prose itself, not
 // every output a limit could be inferred from.
 func TestLimitNotice(t *testing.T) {
@@ -134,6 +149,10 @@ func TestLimitNotice(t *testing.T) {
 
 func TestParseResetTime(t *testing.T) {
 	base := time.Date(2026, time.June, 16, 12, 0, 0, 0, time.UTC)
+	merida, err := time.LoadLocation("America/Merida")
+	if err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name string
 		now  time.Time
@@ -146,6 +165,11 @@ func TestParseResetTime(t *testing.T) {
 		{"date and time with minutes",
 			base, "resets Jun 18, 8:30pm (UTC)",
 			time.Date(2026, time.June, 18, 20, 30, 0, 0, time.UTC)},
+		// A weekly Claude limit blocked one Responder investigation for hours:
+		// losing this stated reset turned it into repeated generic backoffs.
+		{"full date and IANA timezone from provider notice",
+			base, "You've hit your weekly limit · resets August 20 at 2 PM (America/Merida)",
+			time.Date(2026, time.August, 20, 14, 0, 0, 0, merida)},
 		{"time only, later today",
 			base, "resets 5pm (UTC)",
 			time.Date(2026, time.June, 16, 17, 0, 0, 0, time.UTC)},
@@ -158,6 +182,8 @@ func TestParseResetTime(t *testing.T) {
 		{"no resets clause", base, "You've hit your weekly limit.", time.Time{}},
 		{"unparseable when", base, "resets soon, hang tight", time.Time{}},
 		{"unrecognized tz falls back to backoff", base, "resets Jun 18, 8pm (PST)", time.Time{}},
+		{"unknown IANA tz falls back to backoff", base, "resets Jun 18, 8pm (America/Unknown)", time.Time{}},
+		{"IANA path traversal falls back to backoff", base, "resets Jun 18, 8pm (America/../Merida)", time.Time{}},
 		{"try again at am time",
 			base, "try again at 1:26 AM",
 			time.Date(2026, time.June, 17, 1, 26, 0, 0, time.Local)},
