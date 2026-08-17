@@ -178,6 +178,7 @@ const (
 	CodeTurnInterrupted         ErrorCode = "turn_interrupted"
 	CodeEventPayloadTooLarge    ErrorCode = "event_payload_too_large"
 	CodeDiscardPlanStale        ErrorCode = "discard_plan_stale"
+	CodeRepositoryUnavailable   ErrorCode = "repository_unavailable"
 	CodeInternal                ErrorCode = "internal_error"
 )
 

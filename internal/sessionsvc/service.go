@@ -38,17 +38,18 @@ const (
 )
 
 const (
-	sessionPolicyVersion            = 1
-	sessionPolicyMaxCompanions      = 32
-	sessionPolicyMaxTargets         = 4
-	sessionTargetGrammar            = "provider[:model][/effort][@credential]"
-	sessionPolicyRemoteTimeout      = 30 * time.Second
-	sessionPolicyRemoteConcurrency  = 4
-	sessionPolicyMaxTurnTimeout     = 24 * time.Hour
-	sessionPolicyMaxWarmIdleTimeout = time.Hour
-	sessionServiceCleanupInterval   = time.Minute
-	sessionOperationStaleAfter      = 2 * time.Minute
-	sessionCreateConcurrency        = 2
+	sessionPolicyVersion             = 1
+	sessionPolicyMaxCompanions       = 32
+	sessionPolicyMaxTargets          = 4
+	sessionTargetGrammar             = "provider[:model][/effort][@credential]"
+	sessionPolicyRemoteLookupTimeout = 30 * time.Second
+	sessionPolicyRemoteFetchTimeout  = 2 * time.Minute
+	sessionPolicyRemoteConcurrency   = 4
+	sessionPolicyMaxTurnTimeout      = 24 * time.Hour
+	sessionPolicyMaxWarmIdleTimeout  = time.Hour
+	sessionServiceCleanupInterval    = time.Minute
+	sessionOperationStaleAfter       = 2 * time.Minute
+	sessionCreateConcurrency         = 2
 )
 
 // Policy is operator-owned authority for one remote session. It is intentionally small:
@@ -1697,10 +1698,17 @@ func (s *Service) failServiceOperation(ctx context.Context, id string, err error
 		code = session.CodeInternal
 	}
 	detail := s.operationalErrorDetail(err)
+	storedDetail := detail
+	if code == session.CodeRepositoryUnavailable {
+		var typed *session.Error
+		if errors.As(err, &typed) {
+			storedDetail = typed.Detail
+		}
+	}
 	receiptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	op, _ := s.store.GetOperationByID(receiptCtx, id)
-	failErr := s.store.FailOperation(receiptCtx, id, code, detail)
+	failErr := s.store.FailOperation(receiptCtx, id, code, storedDetail)
 	attributes := []any{
 		"operation_id", id, "method", op.Method,
 		"resource_type", op.ResourceType, "resource_id", op.ResourceID,

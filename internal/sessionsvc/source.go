@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/session"
 )
@@ -26,6 +27,8 @@ type sessionPolicyPins struct {
 	workspaceHead string
 	companions    []string
 }
+
+type sessionSourceGitRunner func(context.Context, string, ...string) ([]byte, error)
 
 func pinSessionPolicyRepositories(
 	ctx context.Context,
@@ -122,6 +125,19 @@ func pinSessionPolicyRepositories(
 }
 
 func pinSessionRepository(ctx context.Context, source sessionRepositorySource) (string, error) {
+	return pinSessionRepositoryWithTimeouts(
+		ctx, source, sessionPolicyRemoteLookupTimeout, sessionPolicyRemoteFetchTimeout,
+		runSessionSourceGit,
+	)
+}
+
+func pinSessionRepositoryWithTimeouts(
+	ctx context.Context,
+	source sessionRepositorySource,
+	lookupTimeout time.Duration,
+	fetchTimeout time.Duration,
+	runGit sessionSourceGitRunner,
+) (string, error) {
 	if source.remote == "" {
 		commit, err := sessionWorkspaceCommitContext(ctx, source.repository, "HEAD")
 		if err != nil {
@@ -130,14 +146,14 @@ func pinSessionRepository(ctx context.Context, source sessionRepositorySource) (
 		return commit, nil
 	}
 
-	remoteCtx, cancel := context.WithTimeout(ctx, sessionPolicyRemoteTimeout)
-	defer cancel()
+	lookupCtx, cancelLookup := context.WithTimeout(ctx, lookupTimeout)
 	ref := source.ref
 	if ref == "" {
 		ref = "refs/heads/" + source.branch
 	}
-	out, err := runSessionSourceGit(remoteCtx, source.repository,
+	out, err := runGit(lookupCtx, source.repository,
 		"ls-remote", "--exit-code", "--refs", "--", source.remote, ref)
+	cancelLookup()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if source.ref != "" && errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
@@ -153,10 +169,7 @@ func pinSessionRepository(ctx context.Context, source sessionRepositorySource) (
 		if source.ref != "" {
 			display = source.ref
 		}
-		return "", fmt.Errorf(
-			"refresh %s repository from %s/%s: %w; check the remote, branch, network, and Git credentials",
-			source.label, source.remote, display, err,
-		)
+		return "", repositoryUnavailable(source, display, "", err)
 	}
 	fields := strings.Fields(string(out))
 	if len(fields) != 2 || fields[1] != ref || !validSessionWorkspaceCommit(fields[0]) {
@@ -179,22 +192,44 @@ func pinSessionRepository(ctx context.Context, source sessionRepositorySource) (
 			),
 		}
 	}
-	if _, err := runSessionSourceGit(remoteCtx, source.repository,
-		"fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--", source.remote, commit); err != nil {
+	fetchCtx, cancelFetch := context.WithTimeout(ctx, fetchTimeout)
+	_, err = runGit(fetchCtx, source.repository,
+		"fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--", source.remote, commit)
+	cancelFetch()
+	if err != nil {
 		display := source.branch
 		if source.ref != "" {
 			display = source.ref
 		}
-		return "", fmt.Errorf(
-			"refresh %s repository from %s/%s at %s: %w; check the network and Git credentials",
-			source.label, source.remote, display, commit, err,
-		)
+		return "", repositoryUnavailable(source, display, commit, err)
 	}
 	resolved, err := sessionWorkspaceCommitContext(ctx, source.repository, commit)
 	if err != nil {
 		return "", fmt.Errorf("verify refreshed %s repository commit %s: %w", source.label, commit, err)
 	}
 	return resolved, nil
+}
+
+func repositoryUnavailable(
+	source sessionRepositorySource,
+	display string,
+	commit string,
+	cause error,
+) error {
+	public := fmt.Sprintf(
+		"workspace preparation could not refresh the configured %s repository from %s/%s; no model session was created",
+		source.label, source.remote, display,
+	)
+	internal := fmt.Sprintf("refresh %s repository from %s/%s", source.label, source.remote, display)
+	guidance := "check the remote, branch, network, and Git credentials"
+	if commit != "" {
+		internal += " at " + commit
+		guidance = "check the network and Git credentials"
+	}
+	return errors.Join(
+		&session.Error{Code: session.CodeRepositoryUnavailable, Detail: public},
+		fmt.Errorf("%s: %w; %s", internal, cause, guidance),
+	)
 }
 
 func (s *Service) pinCurrentSessionParent(
@@ -253,7 +288,7 @@ func runSessionSourceGit(ctx context.Context, dir string, args ...string) ([]byt
 		if ctx.Err() != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return nil, errors.Join(ctx.Err(), fmt.Errorf(
-					"git %s timed out after %s", strings.Join(args, " "), sessionPolicyRemoteTimeout,
+					"git %s exceeded its deadline", strings.Join(args, " "),
 				))
 			}
 			return nil, errors.Join(ctx.Err(), err)

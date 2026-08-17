@@ -225,6 +225,17 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	}
 }
 
+func TestRepositoryUnavailableIsPublicAndRetryable(t *testing.T) {
+	code, status, detail := sessionHTTPError(&session.Error{
+		Code:   session.ErrorCode("repository_unavailable"),
+		Detail: "workspace preparation could not refresh the configured blitz-core repository from origin/master; no model session was created",
+	})
+	if code != "repository_unavailable" || status != http.StatusServiceUnavailable ||
+		!strings.Contains(detail, "blitz-core") {
+		t.Fatalf("repository error = code %q status %d detail %q", code, status, detail)
+	}
+}
+
 func TestSessionHTTPAsyncCreateReturnsOperationAndCoalescesReplay(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))

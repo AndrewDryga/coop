@@ -1209,6 +1209,8 @@ func sessionHTTPError(err error) (string, int, string) {
 		status = http.StatusConflict
 	case session.CodeInternal:
 		status = http.StatusInternalServerError
+	case session.CodeRepositoryUnavailable:
+		status = http.StatusServiceUnavailable
 	}
 	var typed *session.Error
 	if errors.As(err, &typed) {
