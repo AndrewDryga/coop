@@ -50,6 +50,7 @@ const (
 	sessionServiceCleanupInterval    = time.Minute
 	sessionOperationStaleAfter       = 2 * time.Minute
 	sessionCreateConcurrency         = 2
+	parkedCleanupBatchSize           = 2
 )
 
 // Policy is operator-owned authority for one remote session. It is intentionally small:
@@ -610,6 +611,11 @@ type sessionOperationLock struct {
 	refs int
 }
 
+type parkedCleanupStamp struct {
+	revision  int64
+	updatedAt time.Time
+}
+
 type Service struct {
 	store               *session.Store
 	stateRoot           string
@@ -636,14 +642,20 @@ type Service struct {
 	pendingCancels map[string]*pendingSessionCancel
 	wg             sync.WaitGroup
 
-	operationMu         sync.Mutex
-	operationLocks      map[string]*sessionOperationLock
-	createActive        map[string]bool
-	createSlots         chan struct{}
-	testBeforeCreatePin func() error
-	testAfterTurnLease  func(session.Turn)
-	runtimeMu           sync.Mutex
-	runtimeLocks        map[string]*sessionOperationLock
+	operationMu          sync.Mutex
+	operationLocks       map[string]*sessionOperationLock
+	createActive         map[string]bool
+	createSlots          chan struct{}
+	testBeforeCreatePin  func() error
+	testAfterTurnLease   func(session.Turn)
+	runtimeMu            sync.Mutex
+	runtimeLocks         map[string]*sessionOperationLock
+	parkedCleanupMu      sync.Mutex
+	parkedCleanupCursor  int
+	parkedCleanupStampMu sync.Mutex
+	parkedCleanupDone    map[string]parkedCleanupStamp
+	historicalMu         sync.Mutex
+	historicalPending    map[string]struct{}
 }
 
 func NewService(cfg Config) (*Service, error) {
@@ -682,7 +694,9 @@ func NewService(cfg Config) (*Service, error) {
 		pendingCancels: make(map[string]*pendingSessionCancel),
 		operationLocks: make(map[string]*sessionOperationLock),
 		createActive:   make(map[string]bool), createSlots: make(chan struct{}, sessionCreateConcurrency),
-		runtimeLocks: make(map[string]*sessionOperationLock),
+		runtimeLocks:      make(map[string]*sessionOperationLock),
+		parkedCleanupDone: make(map[string]parkedCleanupStamp),
+		historicalPending: make(map[string]struct{}),
 	}
 	if service.stopTimeout <= 0 {
 		service.stopTimeout = DefaultStopTimeout
@@ -874,13 +888,6 @@ func (s *Service) Start(parent context.Context) error {
 			return fmt.Errorf("reap interrupted session turn %s: %w", turn.ID, err)
 		}
 	}
-	if cleaner, ok := s.runner.(sessionRunnerStartupCleaner); ok {
-		for _, sess := range sessions {
-			if err := cleaner.CleanupSession(parent, sess); err != nil {
-				s.host.warnf("could not clean historical session runtime state %s: %v", sess.ID, err)
-			}
-		}
-	}
 	if _, err := s.store.ReconcileInterruptedTurns(parent); err != nil {
 		s.mu.Lock()
 		s.starting = false
@@ -894,6 +901,17 @@ func (s *Service) Start(parent context.Context) error {
 		s.mu.Unlock()
 		return err
 	}
+	// Startup does not synchronously scan every historical runtime. Remember
+	// the exact pre-existing sessions instead: the janitor handles the idle
+	// backlog in bounded batches, while a recovered queued turn cleans its own
+	// session just before execution.
+	s.historicalMu.Lock()
+	for _, sess := range sessions {
+		if sess.State != session.SessionDiscarded {
+			s.historicalPending[sess.ID] = struct{}{}
+		}
+	}
+	s.historicalMu.Unlock()
 	ctx, cancel := context.WithCancel(parent)
 	s.mu.Lock()
 	if s.started {
@@ -944,8 +962,12 @@ func (s *Service) runSessionMaintenance(ctx context.Context) {
 }
 
 func (s *Service) cleanupParkedSessions(ctx context.Context) {
+	s.parkedCleanupMu.Lock()
+	defer s.parkedCleanupMu.Unlock()
+
 	parkedCleaner, parkedOK := s.runner.(sessionRunnerParkedCleaner)
 	cleaner, cleanupOK := s.runner.(sessionRunnerStartupCleaner)
+	warmInspector, canInspectWarm := s.runner.(sessionRunnerWarmInspector)
 	if !parkedOK && !cleanupOK {
 		return
 	}
@@ -956,14 +978,36 @@ func (s *Service) cleanupParkedSessions(ctx context.Context) {
 		}
 		return
 	}
+	candidates := make([]session.Session, 0, len(sessions))
+	eligible := make(map[string]struct{})
 	for _, candidate := range sessions {
 		if candidate.State == session.SessionDiscarded ||
 			candidate.Activity != session.ActivityParked || candidate.ActiveTurnID != "" {
 			continue
 		}
+		candidates = append(candidates, candidate)
+		eligible[candidate.ID] = struct{}{}
+	}
+	s.pruneParkedCleanupDone(eligible)
+	if len(candidates) == 0 {
+		s.parkedCleanupCursor = 0
+		return
+	}
+	start := s.parkedCleanupCursor % len(candidates)
+	scanned, attempts := 0, 0
+	for scanned < len(candidates) && attempts < parkedCleanupBatchSize {
+		candidate := candidates[(start+scanned)%len(candidates)]
+		scanned++
+		stamp := parkedCleanupStamp{revision: candidate.Revision, updatedAt: candidate.UpdatedAt}
+		if s.parkedCleanupMatches(candidate.ID, stamp) {
+			continue
+		}
+		attempts++
 		unlock := s.lockSessionRuntime(candidate.ID)
 		current, getErr := s.store.GetSession(ctx, candidate.ID)
+		warmReady := false
 		if getErr == nil && current.Activity == session.ActivityParked && current.ActiveTurnID == "" {
+			warmReady = canInspectWarm && warmInspector.WarmSessionReady(current)
 			if parkedOK {
 				getErr = parkedCleaner.CleanupParkedSession(ctx, current)
 			} else {
@@ -971,8 +1015,45 @@ func (s *Service) cleanupParkedSessions(ctx context.Context) {
 			}
 		}
 		unlock()
+		if getErr == nil && !warmReady &&
+			current.Activity == session.ActivityParked && current.ActiveTurnID == "" {
+			s.markParkedCleanupDone(current.ID, parkedCleanupStamp{
+				revision: current.Revision, updatedAt: current.UpdatedAt,
+			})
+			s.markHistoricalRuntimeClean(current.ID)
+		}
 		if getErr != nil && ctx.Err() == nil {
 			s.host.warnf("could not clean parked session runtime state %s: %v", candidate.ID, getErr)
+		}
+	}
+	s.parkedCleanupCursor = (start + scanned) % len(candidates)
+}
+
+func (s *Service) parkedCleanupMatches(sessionID string, stamp parkedCleanupStamp) bool {
+	s.parkedCleanupStampMu.Lock()
+	defer s.parkedCleanupStampMu.Unlock()
+	cleaned, ok := s.parkedCleanupDone[sessionID]
+	return ok && cleaned == stamp
+}
+
+func (s *Service) markParkedCleanupDone(sessionID string, stamp parkedCleanupStamp) {
+	s.parkedCleanupStampMu.Lock()
+	s.parkedCleanupDone[sessionID] = stamp
+	s.parkedCleanupStampMu.Unlock()
+}
+
+func (s *Service) invalidateParkedCleanup(sessionID string) {
+	s.parkedCleanupStampMu.Lock()
+	delete(s.parkedCleanupDone, sessionID)
+	s.parkedCleanupStampMu.Unlock()
+}
+
+func (s *Service) pruneParkedCleanupDone(eligible map[string]struct{}) {
+	s.parkedCleanupStampMu.Lock()
+	defer s.parkedCleanupStampMu.Unlock()
+	for sessionID := range s.parkedCleanupDone {
+		if _, ok := eligible[sessionID]; !ok {
+			delete(s.parkedCleanupDone, sessionID)
 		}
 	}
 }
@@ -980,7 +1061,28 @@ func (s *Service) cleanupParkedSessions(ctx context.Context) {
 func (s *Service) runBoundSessionTurn(ctx context.Context, bound session.Session, leased session.Turn) (session.Turn, error) {
 	unlock := s.lockSessionRuntime(bound.ID)
 	defer unlock()
+	if s.historicalRuntimeNeedsCleanup(bound.ID) {
+		if cleaner, ok := s.runner.(sessionRunnerStartupCleaner); ok {
+			if err := cleaner.CleanupSession(ctx, bound); err != nil {
+				return leased, fmt.Errorf("clean historical session runtime: %w", err)
+			}
+			s.markHistoricalRuntimeClean(bound.ID)
+		}
+	}
 	return s.runner.Run(s.sessionTurnContext(ctx, bound), bound, leased)
+}
+
+func (s *Service) historicalRuntimeNeedsCleanup(sessionID string) bool {
+	s.historicalMu.Lock()
+	defer s.historicalMu.Unlock()
+	_, pending := s.historicalPending[sessionID]
+	return pending
+}
+
+func (s *Service) markHistoricalRuntimeClean(sessionID string) {
+	s.historicalMu.Lock()
+	delete(s.historicalPending, sessionID)
+	s.historicalMu.Unlock()
 }
 
 // sessionTurnContext decorates a turn's context with what the operator policy still authorizes
@@ -1863,6 +1965,10 @@ func (s *Service) PrepareSession(ctx context.Context, id string, expectedRevisio
 	if err := preparer.PrepareSession(prepareCtx, bound, policy.WarmIdleTimeout); err != nil {
 		return session.Session{}, err
 	}
+	// Preparing a warm runtime changes host state without touching the durable
+	// session revision. Any earlier "runtime is clean" proof is now obsolete;
+	// after expiry the janitor must inspect and retry best-effort teardown.
+	s.invalidateParkedCleanup(id)
 	return s.store.GetSession(ctx, id)
 }
 

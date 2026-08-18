@@ -2964,6 +2964,63 @@ type startupCleaningRunner struct {
 	reapErr error
 }
 
+type recoveredTurnCleanupRunner struct {
+	cleaned          sync.Map
+	ran              chan struct{}
+	runBeforeCleanup atomic.Bool
+}
+
+func (r *recoveredTurnCleanupRunner) CleanupSession(_ context.Context, sess session.Session) error {
+	r.cleaned.Store(sess.ID, true)
+	return nil
+}
+
+func (r *recoveredTurnCleanupRunner) Run(_ context.Context, sess session.Session, turn session.Turn) (session.Turn, error) {
+	if _, cleaned := r.cleaned.Load(sess.ID); !cleaned {
+		r.runBeforeCleanup.Store(true)
+	}
+	close(r.ran)
+	return turn, errors.New("fixture stops after the ordering assertion")
+}
+
+func TestSessionServiceCleansHistoricalRuntimeBeforeFirstRecoveredTurn(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &recoveredTurnCleanupRunner{ran: make(chan struct{})}
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"),
+		Policies:  testSessionPolicies(repo),
+		Runner:    runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	ctx := context.Background()
+	sess, err := service.Store().CreateSession(ctx, "historical-runtime", session.CreateSessionRequest{
+		Target: "codex@work", MaxTurns: 2, MaxQueuedTurns: 2, MaxQueuedBytes: 1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SubmitTurn(ctx, "recovered-turn", session.SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "resume",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-runner.ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("recovered turn did not start")
+	}
+	if runner.runBeforeCleanup.Load() {
+		t.Fatal("recovered turn started before its historical runtime was cleaned")
+	}
+}
+
 func (*startupCleaningRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
 	return turn, nil
 }
@@ -2978,32 +3035,39 @@ func (r *startupCleaningRunner) ReapInterruptedTurn(_ context.Context, _ session
 	return r.reapErr
 }
 
-func TestSessionServiceRunsStartupCleanupBeforeWorkers(t *testing.T) {
+// Cleaning every historical session synchronously once made daemon restart
+// issue more than one hundred serial Docker inventory calls before the control
+// socket became useful. Interrupted turns have their exact reaper above; the
+// ordinary parked backlog must remain bounded janitor work.
+func TestSessionServiceDefersHistoricalParkedCleanupWithoutDelayingStartup(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &startupCleaningRunner{}
 	service, err := NewService(Config{
-		StateRoot: filepath.Join(t.TempDir(), "state"),
-		Policies:  testSessionPolicies(repo),
-		Runner:    runner,
+		StateRoot:       filepath.Join(t.TempDir(), "state"),
+		Policies:        testSessionPolicies(repo),
+		Runner:          runner,
+		CleanupInterval: time.Hour,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer service.Stop()
-	var newest string
-	for i := 0; i < 105; i++ {
-		sess, err := service.Store().CreateSession(context.Background(), fmt.Sprintf("create-%d", i), session.CreateSessionRequest{Target: "codex@work"})
+	for i := 0; i < 10; i++ {
+		_, err := service.Store().CreateSession(context.Background(), fmt.Sprintf("create-%d", i), session.CreateSessionRequest{Target: "codex@work"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		newest = sess.ID
 	}
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.cleaned) != 105 || runner.cleaned[len(runner.cleaned)-1] != newest {
-		t.Fatalf("startup cleanup count = %d newest=%q, want 105 and %q", len(runner.cleaned), runner.cleaned[len(runner.cleaned)-1], newest)
+	if len(runner.cleaned) != 0 {
+		t.Fatalf("startup synchronously cleaned %d historical parked sessions", len(runner.cleaned))
+	}
+	service.cleanupParkedSessions(context.Background())
+	if len(runner.cleaned) != 2 {
+		t.Fatalf("first deferred cleanup batch = %d, want 2", len(runner.cleaned))
 	}
 }
 
@@ -3086,6 +3150,8 @@ type periodicCleanupRunner struct {
 	calls   atomic.Int32
 	started chan struct{}
 	release chan struct{}
+	fail    bool
+	warm    atomic.Bool
 }
 
 func (r *periodicCleanupRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
@@ -3096,7 +3162,169 @@ func (r *periodicCleanupRunner) Run(_ context.Context, _ session.Session, turn s
 
 func (r *periodicCleanupRunner) CleanupSession(_ context.Context, _ session.Session) error {
 	r.calls.Add(1)
+	if r.fail {
+		return errors.New("runtime inventory unavailable")
+	}
 	return nil
+}
+
+func (r *periodicCleanupRunner) WarmSessionReady(session.Session) bool {
+	return r.warm.Load()
+}
+
+func (r *periodicCleanupRunner) PrepareSession(_ context.Context, _ session.Session, _ time.Duration) error {
+	r.warm.Store(true)
+	return nil
+}
+
+func TestPreparingWarmRuntimeInvalidatesEarlierCleanupProof(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &periodicCleanupRunner{started: make(chan struct{}), release: make(chan struct{})}
+	policies := testSessionPolicies(repo)
+	policy := policies["responder"]
+	policy.WarmIdleTimeout = time.Minute
+	policies["responder"] = policy
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"),
+		Policies:  policies,
+		Runner:    runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	ctx := context.Background()
+	sess, err := service.CreateRemoteSession(ctx, "prepared-warm-cleanup", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "prepared warm cleanup",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.cleanupParkedSessions(ctx)
+	service.cleanupParkedSessions(ctx)
+	if got := runner.calls.Load(); got != 1 {
+		t.Fatalf("initial clean runtime was not cached: calls=%d", got)
+	}
+	if _, err := service.PrepareSession(ctx, sess.ID, sess.Revision); err != nil {
+		t.Fatal(err)
+	}
+	// Model the warm-expiry timer removing its in-memory entry after its own
+	// best-effort runtime cleanup failed. The janitor must inspect the session
+	// again even though its durable revision did not change.
+	runner.warm.Store(false)
+	service.cleanupParkedSessions(ctx)
+	service.cleanupParkedSessions(ctx)
+	if got := runner.calls.Load(); got != 2 {
+		t.Fatalf("warm lifecycle remained hidden behind old cleanup proof: calls=%d, want 2", got)
+	}
+}
+
+func TestSessionMaintenanceRechecksWarmRuntimeAfterItsLeaseExpires(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &periodicCleanupRunner{started: make(chan struct{}), release: make(chan struct{})}
+	runner.warm.Store(true)
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"),
+		Policies:  testSessionPolicies(repo),
+		Runner:    runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	ctx := context.Background()
+	if _, err := service.CreateRemoteSession(ctx, "warm-parked-cleanup", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "warm parked cleanup",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	service.cleanupParkedSessions(ctx)
+	runner.warm.Store(false)
+	service.cleanupParkedSessions(ctx)
+	service.cleanupParkedSessions(ctx)
+	if got := runner.calls.Load(); got != 2 {
+		t.Fatalf("warm runtime was cached past expiry or clean runtime was rescanned: calls=%d, want 2", got)
+	}
+}
+
+// On 2026-08-18 both Responder daemons repeatedly scanned every historical
+// parked session. Each scan asks Docker for its container inventory; under host
+// load that amplified into binding and cleanup timeouts for a newly accepted
+// alert. An unchanged runtime that was already cleaned must not be rescanned,
+// and one maintenance tick must have a hard cleanup budget even when Docker is
+// failing.
+func TestSessionMaintenanceBoundsAndRemembersParkedRuntimeCleanup(t *testing.T) {
+	const cleanupBatchSize = 2
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &periodicCleanupRunner{started: make(chan struct{}), release: make(chan struct{})}
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"),
+		Policies:  testSessionPolicies(repo),
+		Runner:    runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	ctx := context.Background()
+	for i := 0; i < cleanupBatchSize+2; i++ {
+		if _, err := service.CreateRemoteSession(ctx, fmt.Sprintf("parked-cleanup-%02d", i), CreateRemoteSessionRequest{
+			Policy: "responder", Task: "bounded parked cleanup",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	service.cleanupParkedSessions(ctx)
+	if got := runner.calls.Load(); got != cleanupBatchSize {
+		t.Fatalf("first cleanup sweep calls = %d, want bounded batch %d", got, cleanupBatchSize)
+	}
+	service.cleanupParkedSessions(ctx)
+	if got := runner.calls.Load(); got != cleanupBatchSize+2 {
+		t.Fatalf("second cleanup sweep rescanned clean sessions: calls=%d, want %d",
+			got, cleanupBatchSize+2)
+	}
+	service.cleanupParkedSessions(ctx)
+	if got := runner.calls.Load(); got != cleanupBatchSize+2 {
+		t.Fatalf("unchanged clean sessions were rescanned: calls=%d", got)
+	}
+}
+
+func TestSessionMaintenanceAdvancesPastParkedCleanupFailures(t *testing.T) {
+	const cleanupBatchSize = 2
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &periodicCleanupRunner{
+		started: make(chan struct{}), release: make(chan struct{}), fail: true,
+	}
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"),
+		Policies:  testSessionPolicies(repo),
+		Runner:    runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	ctx := context.Background()
+	for i := 0; i < cleanupBatchSize+2; i++ {
+		if _, err := service.CreateRemoteSession(ctx, fmt.Sprintf("failing-parked-cleanup-%02d", i), CreateRemoteSessionRequest{
+			Policy: "responder", Task: "failing parked cleanup",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	service.cleanupParkedSessions(ctx)
+	service.cleanupParkedSessions(ctx)
+	if got := runner.calls.Load(); got != cleanupBatchSize*2 {
+		t.Fatalf("cleanup failure did not retain its per-sweep budget: calls=%d, want %d",
+			got, cleanupBatchSize*2)
+	}
 }
 
 func TestSessionServiceRetriesParkedCleanupWithoutRacingActiveTurn(t *testing.T) {
