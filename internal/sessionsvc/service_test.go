@@ -883,6 +883,8 @@ func TestSessionServiceCreateReplayRejectsInvalidLegacyTargetWithoutPanic(t *tes
 }
 
 func TestSessionServicePinsConfiguredRemoteWithoutChangingLocalCheckout(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	seed, seedGit := gitrepo.New(t)
 	if err := os.WriteFile(filepath.Join(seed, "version.txt"), []byte("v1\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -896,7 +898,7 @@ func TestSessionServicePinsConfiguredRemoteWithoutChangingLocalCheckout(t *testi
 	seedGit("push", "-q", "-u", "origin", "main")
 
 	checkout := filepath.Join(t.TempDir(), "checkout")
-	runGitTest(t, "", "clone", "-q", remote, checkout)
+	runGitTest(t, "", "clone", "-q", "-b", "main", remote, checkout)
 	runGitTest(t, checkout, "config", "user.email", "t@t")
 	runGitTest(t, checkout, "config", "user.name", "T")
 	localMain := gitOut(checkout, "rev-parse", "HEAD")
@@ -1082,7 +1084,8 @@ func TestSessionServicePinsExactPullRequestHeadOnBoundBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	sessionWorkspaceGit(t, sess.Workspace, "add", "task-change.txt")
-	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "task change")
+	sessionWorkspaceGit(t, sess.Workspace,
+		"-c", "user.email=t@t", "-c", "user.name=T", "commit", "-qm", "task change")
 	changes, err = service.GetChanges(context.Background(), sess.ID)
 	if err != nil || changes.ForkTree == changes.PullRequestTree {
 		t.Fatalf("changed PR trees = fork %q admitted %q err=%v", changes.ForkTree, changes.PullRequestTree, err)

@@ -190,10 +190,15 @@ func validateSessionPolicyAncestry(path string) error {
 		if !info.IsDir() {
 			return errors.New("session policy ancestry is not a directory")
 		}
-		if info.Mode().Perm()&0o022 != 0 {
+		owner, ownerOK := sessionFileOwner(info)
+		// A trusted sticky directory such as /tmp lets others create their own entries,
+		// but not replace this user's protected descendant.
+		trustedSticky := info.Mode()&os.ModeSticky != 0 && ownerOK &&
+			(owner == uint64(os.Geteuid()) || owner == 0)
+		if info.Mode().Perm()&0o022 != 0 && !trustedSticky {
 			return errors.New("session policy ancestry is group/world writable")
 		}
-		if owner, ok := sessionFileOwner(info); !ok {
+		if !ownerOK {
 			return errors.New("session policy ancestry owner is unavailable")
 		} else if owner != uint64(os.Geteuid()) && owner != 0 {
 			return errors.New("session policy ancestry is foreign-owned")
