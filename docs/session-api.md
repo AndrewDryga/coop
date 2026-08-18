@@ -58,6 +58,7 @@ policies:
     target: [codex:gpt-5.6/medium@oncall, claude@oncall]
     project_env: false
     project_mcp: false
+    repository_read_only: true
     max_turns: 100
     max_queued_turns: 20
     max_queued_bytes: 1048576
@@ -80,6 +81,11 @@ The parser rejects unknown fields and requires:
 - `project_env` and `project_mcp`: optional booleans, defaulting to `true`, that let a policy omit
   the daemon's shared environment or MCP configuration while retaining the selected provider
   credential and trusted instructions;
+- `repository_read_only`: optional boolean, defaulting to `false`. When true, the primary isolated
+  fork is mounted read-only for every provider turn. Use it for conversation, watch, and
+  investigation policies whose repository access is evidence-only; writable engineering policies
+  must leave it false. The value is bound into the policy digest and persisted with the session, so
+  changing the policy rotates rather than widening an existing session;
 - `max_turns`: `1..10000`;
 - `max_queued_turns`: `1..1000`;
 - `max_queued_bytes`: `1..67108864`;
@@ -712,4 +718,4 @@ turn. Explicit session discard remains responsible for deleting the workspace vo
 A completed turn is completed even when that teardown fails: the janitor's retry is the guarantee,
 and a slow container runtime must not convert a finished answer into an error. Cleanup failure is
 logged with its bounded cause; a turn that itself failed carries the cleanup cause joined with its
-own error.
+  own error.

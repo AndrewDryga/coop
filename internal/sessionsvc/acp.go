@@ -1400,7 +1400,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		return nil, acpFailure(sessionACPProcessError, "session run identity is invalid")
 	}
 	env := sessionACPChildEnvironment(
-		bound.Repository, bound.Companions, privateRoot, runID,
+		bound.Repository, bound.Companions, bound.RepositoryReadOnly, privateRoot, runID,
 		r.sourceCfg, r.rt.Name,
 	)
 	cmd := r.command(executable, "fork", bound.ForkName, "acp", bound.Target)
@@ -1470,6 +1470,7 @@ func sessionACPMCPServerParam(servers []map[string]any) any {
 func sessionACPChildEnvironment(
 	repo string,
 	companions []session.CompanionRepository,
+	repositoryReadOnly bool,
 	privateRoot, runID string,
 	cfg *config.Config,
 	runtimeName string,
@@ -1497,6 +1498,9 @@ func sessionACPChildEnvironment(
 		"COOP_HOMES=1",
 		"COOP_SESSION_RUN_ID="+runID,
 	)
+	if repositoryReadOnly {
+		env = append(env, "COOP_SESSION_REPOSITORY_READ_ONLY=1")
+	}
 	if len(companions) > 0 {
 		// CompanionRepository contains strings only, so this encoding cannot fail.
 		data, _ := json.Marshal(companions)

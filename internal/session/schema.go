@@ -163,6 +163,13 @@ const schemaV10 = `
 ALTER TABLE turns ADD COLUMN rewind_target INTEGER NOT NULL DEFAULT 0;
 `
 
+// Repository access is immutable session authority. It must survive daemon
+// restarts rather than being re-read from an operator policy that may have
+// changed while the session was open.
+const schemaV11 = `
+ALTER TABLE sessions ADD COLUMN repository_read_only INTEGER NOT NULL DEFAULT 0;
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -239,6 +246,12 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v10: %w", err)
 		}
 		version = 10
+	}
+	if version < 11 {
+		if _, err := tx.Exec(schemaV11); err != nil {
+			return fmt.Errorf("migrate schema v11: %w", err)
+		}
+		version = 11
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)

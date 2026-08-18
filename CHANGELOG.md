@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Remote-session read-only authority is now enforced by the repository mount.** A policy may set
+  `repository_read_only: true`; Coop binds the value into the immutable policy digest, persists it
+  across daemon restarts, and mounts the session's primary fork read-only for every ACP provider.
+  Prompt instructions are no longer the only barrier between a conversation or investigation and
+  an unconfirmed repository edit. Existing policies stay writable until they opt in.
+
 - **A provider-limited escalated session can explicitly fail back to its first healthy rung.**
   `POST /v1/sessions/{session_id}/turns` accepts `rewind_target: true` for one turn, durably moves
   the session to rung zero before delivery, and clears a foreign native transcript on a

@@ -654,12 +654,14 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	store := openTestStore(t, root)
 	sess, err := store.CreateSession(ctx, "policy-fields", CreateSessionRequest{
 		Target: "target", PolicyDigest: strings.Repeat("a", 64), OmitEnv: true, OmitMCP: true,
-		TurnTimeout: 3 * time.Minute, MaxPatchBytes: 1234,
+		RepositoryReadOnly: true,
+		TurnTimeout:        3 * time.Minute, MaxPatchBytes: 1234,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sess.PolicyDigest != strings.Repeat("a", 64) || sess.ProjectEnv || sess.ProjectMCP ||
+		!sess.RepositoryReadOnly ||
 		sess.TurnTimeout != 3*time.Minute || sess.MaxPatchBytes != 1234 {
 		t.Fatalf("created policy fields = %+v", sess)
 	}
@@ -670,6 +672,7 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	defer store.Close()
 	reopened, err := store.GetSession(ctx, sess.ID)
 	if err != nil || reopened.PolicyDigest != sess.PolicyDigest || reopened.ProjectEnv || reopened.ProjectMCP ||
+		!reopened.RepositoryReadOnly ||
 		reopened.TurnTimeout != sess.TurnTimeout || reopened.MaxPatchBytes != sess.MaxPatchBytes {
 		t.Fatalf("reopened policy fields = %+v, err=%v", reopened, err)
 	}

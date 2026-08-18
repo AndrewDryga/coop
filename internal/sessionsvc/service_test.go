@@ -53,13 +53,14 @@ func TestParseSessionPoliciesIsStrictAndPinsOneCredentialPerTarget(t *testing.T)
 		"\n    remote: origin\n    branch: main" +
 		"\n    companions:\n      - name: application\n        repository: " + companion +
 		"\n        remote: upstream\n        branch: master" +
-		"\n    target: codex:model/high@work\n    max_turns: 100\n    max_queued_turns: 20\n    max_queued_bytes: 1048576\n    max_patch_bytes: 1048576\n    turn_timeout: 1h\n    warm_idle_timeout: 15m\n")
+		"\n    repository_read_only: true\n    target: codex:model/high@work\n    max_turns: 100\n    max_queued_turns: 20\n    max_queued_bytes: 1048576\n    max_patch_bytes: 1048576\n    turn_timeout: 1h\n    warm_idle_timeout: 15m\n")
 	policies, err := parseSessionPolicies(valid, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := policies["responder"]; sessionTargetList(got.Targets) != "codex:model/high@work" ||
 		got.Repository != repo || got.Remote != "origin" || got.Branch != "main" ||
+		!got.RepositoryReadOnly ||
 		got.TurnTimeout != time.Hour ||
 		got.WarmIdleTimeout != 15*time.Minute ||
 		len(got.Companions) != 1 ||
@@ -206,6 +207,11 @@ func TestWarmIdleTimeoutIsBoundIntoPolicyDigest(t *testing.T) {
 		t.Fatal("MCP projection policy did not change the immutable policy digest")
 	}
 	policy.OmitMCP = false
+	policy.RepositoryReadOnly = true
+	if readOnly := resolvedSessionPolicyDigest(policy); readOnly == cold {
+		t.Fatal("repository access mode did not change the immutable policy digest")
+	}
+	policy.RepositoryReadOnly = false
 	policy.Remote, policy.Branch = "origin", "main"
 	if remote := resolvedSessionPolicyDigest(policy); remote == cold {
 		t.Fatal("remote repository source did not change the immutable policy digest")
@@ -356,6 +362,39 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 	replayed, err := service.CreateRemoteSession(context.Background(), "create-1", request)
 	if err != nil || replayed.ID != sess.ID || replayed.Workspace != sess.Workspace {
 		t.Fatalf("create replay = %+v, err=%v", replayed, err)
+	}
+}
+
+// Responder's first live engineering-confirmation acceptance on 2026-08-18
+// produced a real commit from an ordinary triage session. This holds the whole
+// operator-policy seam shut: the authority bit must survive async workspace
+// creation, durable session lookup, and the public API projection used by the
+// caller to audit the session it received.
+func TestAReadOnlyPolicyRemainsReadOnlyThroughSessionCreation(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	policies := testSessionPolicies(repo)
+	policy := policies["responder"]
+	policy.RepositoryReadOnly = true
+	policies["responder"] = policy
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+
+	created, err := service.CreateRemoteSession(
+		context.Background(), "read-only-create",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "triage"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := service.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.RepositoryReadOnly || !persisted.RepositoryReadOnly ||
+		!publicSession(persisted).RepositoryReadOnly {
+		t.Fatalf("read-only policy widened across creation: created=%+v persisted=%+v public=%+v",
+			created, persisted, publicSession(persisted))
 	}
 }
 

@@ -55,20 +55,21 @@ const (
 // Policy is operator-owned authority for one remote session. It is intentionally small:
 // repository, target, and resource bounds are not request fields.
 type Policy struct {
-	Name            string
-	Repository      string
-	Remote          string
-	Branch          string
-	Companions      []CompanionPolicy
-	Targets         []agents.Target
-	OmitEnv         bool
-	OmitMCP         bool
-	MaxTurns        int
-	MaxQueuedTurns  int
-	MaxQueuedBytes  int
-	TurnTimeout     time.Duration
-	WarmIdleTimeout time.Duration
-	MaxPatchBytes   int
+	Name               string
+	Repository         string
+	Remote             string
+	Branch             string
+	Companions         []CompanionPolicy
+	Targets            []agents.Target
+	OmitEnv            bool
+	OmitMCP            bool
+	RepositoryReadOnly bool
+	MaxTurns           int
+	MaxQueuedTurns     int
+	MaxQueuedBytes     int
+	TurnTimeout        time.Duration
+	WarmIdleTimeout    time.Duration
+	MaxPatchBytes      int
 }
 
 // UnmarshalJSON retains the write-ahead intent format written before target ladders. Policy
@@ -106,19 +107,20 @@ type rawSessionPolicyFile struct {
 }
 
 type rawSessionPolicy struct {
-	Repository      string                      `yaml:"repository"`
-	Remote          string                      `yaml:"remote"`
-	Branch          string                      `yaml:"branch"`
-	Companions      []rawSessionCompanionPolicy `yaml:"companions"`
-	Target          yaml.Node                   `yaml:"target"`
-	ProjectEnv      *bool                       `yaml:"project_env"`
-	ProjectMCP      *bool                       `yaml:"project_mcp"`
-	MaxTurns        int                         `yaml:"max_turns"`
-	MaxQueuedTurns  int                         `yaml:"max_queued_turns"`
-	MaxQueuedBytes  int                         `yaml:"max_queued_bytes"`
-	TurnTimeout     string                      `yaml:"turn_timeout"`
-	WarmIdleTimeout string                      `yaml:"warm_idle_timeout"`
-	MaxPatchBytes   int                         `yaml:"max_patch_bytes"`
+	Repository         string                      `yaml:"repository"`
+	Remote             string                      `yaml:"remote"`
+	Branch             string                      `yaml:"branch"`
+	Companions         []rawSessionCompanionPolicy `yaml:"companions"`
+	Target             yaml.Node                   `yaml:"target"`
+	ProjectEnv         *bool                       `yaml:"project_env"`
+	ProjectMCP         *bool                       `yaml:"project_mcp"`
+	RepositoryReadOnly bool                        `yaml:"repository_read_only"`
+	MaxTurns           int                         `yaml:"max_turns"`
+	MaxQueuedTurns     int                         `yaml:"max_queued_turns"`
+	MaxQueuedBytes     int                         `yaml:"max_queued_bytes"`
+	TurnTimeout        string                      `yaml:"turn_timeout"`
+	WarmIdleTimeout    string                      `yaml:"warm_idle_timeout"`
+	MaxPatchBytes      int                         `yaml:"max_patch_bytes"`
 }
 
 type rawSessionCompanionPolicy struct {
@@ -361,12 +363,13 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 	}
 	return Policy{
 		Name: name, Repository: realRepo, Remote: raw.Remote, Branch: raw.Branch,
-		Companions:     companions,
-		Targets:        ladder,
-		OmitEnv:        raw.ProjectEnv != nil && !*raw.ProjectEnv,
-		OmitMCP:        raw.ProjectMCP != nil && !*raw.ProjectMCP,
-		MaxTurns:       raw.MaxTurns,
-		MaxQueuedTurns: raw.MaxQueuedTurns, MaxQueuedBytes: raw.MaxQueuedBytes,
+		Companions:         companions,
+		Targets:            ladder,
+		OmitEnv:            raw.ProjectEnv != nil && !*raw.ProjectEnv,
+		OmitMCP:            raw.ProjectMCP != nil && !*raw.ProjectMCP,
+		RepositoryReadOnly: raw.RepositoryReadOnly,
+		MaxTurns:           raw.MaxTurns,
+		MaxQueuedTurns:     raw.MaxQueuedTurns, MaxQueuedBytes: raw.MaxQueuedBytes,
 		TurnTimeout: timeout, WarmIdleTimeout: warmIdleTimeout,
 		MaxPatchBytes: raw.MaxPatchBytes,
 	}, nil
@@ -713,26 +716,28 @@ func cloneSessionPolicies(in map[string]Policy) map[string]Policy {
 
 func resolvedSessionPolicyDigest(policy Policy) string {
 	canonical := struct {
-		Name            string            `json:"name"`
-		Repository      string            `json:"repository"`
-		Remote          string            `json:"remote,omitempty"`
-		Branch          string            `json:"branch,omitempty"`
-		Companions      []CompanionPolicy `json:"companions,omitempty"`
-		Target          string            `json:"target"`
-		OmitEnv         bool              `json:"omit_env,omitempty"`
-		OmitMCP         bool              `json:"omit_mcp,omitempty"`
-		MaxTurns        int               `json:"max_turns"`
-		MaxQueuedTurns  int               `json:"max_queued_turns"`
-		MaxQueuedBytes  int               `json:"max_queued_bytes"`
-		TurnTimeout     int64             `json:"turn_timeout_ns"`
-		WarmIdleTimeout int64             `json:"warm_idle_timeout_ns,omitempty"`
-		MaxPatchBytes   int               `json:"max_patch_bytes"`
+		Name               string            `json:"name"`
+		Repository         string            `json:"repository"`
+		Remote             string            `json:"remote,omitempty"`
+		Branch             string            `json:"branch,omitempty"`
+		Companions         []CompanionPolicy `json:"companions,omitempty"`
+		Target             string            `json:"target"`
+		OmitEnv            bool              `json:"omit_env,omitempty"`
+		OmitMCP            bool              `json:"omit_mcp,omitempty"`
+		RepositoryReadOnly bool              `json:"repository_read_only,omitempty"`
+		MaxTurns           int               `json:"max_turns"`
+		MaxQueuedTurns     int               `json:"max_queued_turns"`
+		MaxQueuedBytes     int               `json:"max_queued_bytes"`
+		TurnTimeout        int64             `json:"turn_timeout_ns"`
+		WarmIdleTimeout    int64             `json:"warm_idle_timeout_ns,omitempty"`
+		MaxPatchBytes      int               `json:"max_patch_bytes"`
 	}{
 		Name: policy.Name, Repository: policy.Repository,
 		Remote: policy.Remote, Branch: policy.Branch, Companions: policy.Companions,
 		Target:  sessionTargetList(policy.Targets),
 		OmitEnv: policy.OmitEnv, OmitMCP: policy.OmitMCP,
-		MaxTurns: policy.MaxTurns, MaxQueuedTurns: policy.MaxQueuedTurns,
+		RepositoryReadOnly: policy.RepositoryReadOnly,
+		MaxTurns:           policy.MaxTurns, MaxQueuedTurns: policy.MaxQueuedTurns,
 		MaxQueuedBytes: policy.MaxQueuedBytes, TurnTimeout: int64(policy.TurnTimeout),
 		WarmIdleTimeout: int64(policy.WarmIdleTimeout),
 		MaxPatchBytes:   policy.MaxPatchBytes,
@@ -1537,10 +1542,11 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 	createReq := session.CreateSessionRequest{
 		// A session starts on the ladder's first rung; a rate limit rotates it to the next.
 		ID: intent.SessionID, ExternalRef: intent.Task, Target: intent.Policy.Targets[0].String(), Policy: intent.Policy.Name,
-		PolicyDigest: resolvedSessionPolicyDigest(intent.Policy),
-		OmitEnv:      intent.Policy.OmitEnv,
-		OmitMCP:      intent.Policy.OmitMCP,
-		Repository:   intent.Policy.Repository, Workspace: workspace.Path, ForkName: intent.ForkName,
+		PolicyDigest:       resolvedSessionPolicyDigest(intent.Policy),
+		OmitEnv:            intent.Policy.OmitEnv,
+		OmitMCP:            intent.Policy.OmitMCP,
+		RepositoryReadOnly: intent.Policy.RepositoryReadOnly,
+		Repository:         intent.Policy.Repository, Workspace: workspace.Path, ForkName: intent.ForkName,
 		BaseCommit: intent.BaseCommit, PullRequest: intent.PullRequest, Companions: companions,
 		MaxTurns:       intent.Policy.MaxTurns,
 		MaxQueuedTurns: intent.Policy.MaxQueuedTurns, MaxQueuedBytes: intent.Policy.MaxQueuedBytes,

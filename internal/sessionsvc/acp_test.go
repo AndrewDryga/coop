@@ -1279,19 +1279,20 @@ func TestSessionACPChildEnvironmentForwardsOnlyResolvedBoxSettings(t *testing.T)
 		Workspace: "/snapshot", BaseCommit: strings.Repeat("a", 40),
 	}}
 	for _, item := range sessionACPChildEnvironment(
-		"/repo", companions, "/private", "session-000000000000000000000000",
+		"/repo", companions, true, "/private", "session-000000000000000000000000",
 		cfg, "docker",
 	) {
 		key, value, _ := strings.Cut(item, "=")
 		got[key] = value
 	}
 	for key, want := range map[string]string{
-		"COOP_REPO":       "/repo",
-		"COOP_CONFIG_DIR": "/private",
-		"COOP_HOMES":      "1",
-		"COOP_RUNTIME":    "docker",
-		"COOP_EGRESS":     "none",
-		"COOP_MEMORY":     "2g",
+		"COOP_REPO":                         "/repo",
+		"COOP_CONFIG_DIR":                   "/private",
+		"COOP_HOMES":                        "1",
+		"COOP_RUNTIME":                      "docker",
+		"COOP_EGRESS":                       "none",
+		"COOP_MEMORY":                       "2g",
+		"COOP_SESSION_REPOSITORY_READ_ONLY": "1",
 	} {
 		if got[key] != want {
 			t.Fatalf("%s = %q, want %q", key, got[key], want)
@@ -1307,6 +1308,17 @@ func TestSessionACPChildEnvironmentForwardsOnlyResolvedBoxSettings(t *testing.T)
 	for _, key := range []string{"COOP_RUN_ARGS", "OPENAI_API_KEY", "COOP_MCP_FILE"} {
 		if _, ok := got[key]; ok {
 			t.Fatalf("unsafe ambient %s reached child environment", key)
+		}
+	}
+
+	// Ambient COOP_* input is stripped; only the persisted session bit may add
+	// this mount authority to the trusted child environment.
+	for _, item := range sessionACPChildEnvironment(
+		"/repo", companions, false, "/private", "session-000000000000000000000000",
+		cfg, "docker",
+	) {
+		if strings.HasPrefix(item, "COOP_SESSION_REPOSITORY_READ_ONLY=") {
+			t.Fatalf("ambient read-only flag overrode the persisted session authority: %q", item)
 		}
 	}
 }

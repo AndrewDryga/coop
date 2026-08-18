@@ -495,6 +495,42 @@ func TestForkACPMountsSessionCompanionsReadOnly(t *testing.T) {
 	}
 }
 
+// A live Responder triage turn on 2026-08-18 committed a typo fix before the
+// engineering-task confirmation because its supposedly read-only session was
+// only constrained by prompt text. The trusted session bit must reach the
+// runtime mount: an answer from any provider is input, not an authority check.
+func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "repo")
+	workspace := forkspace.Workspace(repo, "readonly")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "1")
+	recorder := filepath.Join(root, "runtime-args")
+	a := &app{
+		cfg: &config.Config{
+			RepoOverride: repo, ConfigDir: filepath.Join(root, "config"),
+			BoxHome: filepath.Join(root, "box"), HomeInBox: "/home/node",
+			ImageOverride: "test-image", Egress: "none",
+		},
+		rt: fusionRecordingRuntime(t, recorder), rtSet: true,
+	}
+	if code, runErr := a.forkACP("readonly", []string{"codex"}); runErr != nil || code != 0 {
+		t.Fatalf("forkACP = (%d, %v), want a read-only mounted session", code, runErr)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), workspace+":"+workspace+":ro") {
+		t.Fatalf("read-only session repository was writable:\n%s", args)
+	}
+}
+
 func TestForkACPRejectsMalformedSessionCompanionsBeforeRuntime(t *testing.T) {
 	t.Setenv("COOP_SESSION_COMPANIONS", "{")
 	recorder := filepath.Join(t.TempDir(), "runtime-args")

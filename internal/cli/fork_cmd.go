@@ -620,6 +620,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	repositoryReadOnly := os.Getenv("COOP_SESSION_REPOSITORY_READ_ONLY") == "1"
 	peerVals, rest, err := extractPeer(rest)
 	if err != nil {
 		return 2, err
@@ -670,7 +671,8 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		lead = agent
 	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: ws, Workdir: ws, Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers,
+		Image: img, Repo: ws, Workdir: ws, RepoReadOnly: repositoryReadOnly,
+		Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name),
 		RunID: sessionsvc.RunIDFromEnv(), CompanionRepositories: companionRepositories,
