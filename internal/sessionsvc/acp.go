@@ -195,6 +195,43 @@ func (r *sessionTurnRunner) startAtLadderFloor(
 	return nil
 }
 
+// startAtLadderBeginning applies an explicit one-turn failback before the
+// ordinary floor logic. A zero floor cannot do this: it is intentionally
+// absent and an ordinary turn inherits the session's durable current rung.
+func (r *sessionTurnRunner) startAtLadderBeginning(
+	ctx context.Context, bound *session.Session, leased *session.Turn,
+	rungs []agents.Target, rot *ladder.Rotation,
+) error {
+	if !leased.RewindTarget {
+		return nil
+	}
+	if len(rungs) == 0 {
+		return acpFailure(sessionACPInvalidTarget,
+			"turn requires the first policy ladder rung, and this session has no ladder")
+	}
+	next := rungs[0]
+	if bound.Target == next.String() {
+		return nil
+	}
+	if rot == nil {
+		return acpFailure(sessionACPInvalidTarget,
+			"turn requires the first policy ladder rung, and this session's target is not on it")
+	}
+	current, err := agents.ParseTarget(bound.Target)
+	if err != nil {
+		return acpFailure(sessionACPInvalidTarget, "session target is unparseable")
+	}
+	rotated, rewound, err := r.store.RotateTurnTarget(
+		ctx, bound.ID, leased.ID, bound.Target, next.String(), current.Provider != next.Provider,
+	)
+	if err != nil {
+		return err
+	}
+	*bound, *leased = rotated, rewound
+	rot.Focus(next.String())
+	return nil
+}
+
 // sessionFloorLimitedUntil is the soonest cooldown to expire among the rungs a floored turn may
 // still use. Reaching it means every one of them is cooling — the ladder wraps below the floor
 // only when none is free — and the rung just marked is itself at or above the floor with a
@@ -446,6 +483,10 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 
 	rungs, _ := ctx.Value(sessionTargetLadderContextKey{}).([]agents.Target)
 	rot := r.sessionRotation(bound.ID, rungs, bound.Target)
+	if err := r.startAtLadderBeginning(ctx, &bound, &leased, rungs, rot); err != nil {
+		runErr = err
+		return result, runErr
+	}
 	if err := r.startAtLadderFloor(ctx, &bound, &leased, rungs, rot); err != nil {
 		runErr = err
 		return result, runErr

@@ -514,6 +514,52 @@ func TestATurnWithoutAnEscalationFloorStartsWhereTheSessionIs(t *testing.T) {
 	}
 }
 
+// Two live Responder investigations stayed queued after their escalated
+// Claude turns hit the weekly quota even though Codex was healthy. Omitting a
+// floor did not help because the session's durable target was still Claude.
+// A one-turn rewind must move the session to rung zero before any provider sees
+// the prompt, and a cross-provider move must discard the foreign transcript.
+func TestARewoundTurnStartsOnTheHealthyFirstRung(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal", "claude@work")
+	fixture.signIn(t, "codex", "work")
+	if _, err := fixture.store.BindNativeSession(
+		context.Background(), fixture.session.ID, "native-claude",
+	); err != nil {
+		t.Fatal(err)
+	}
+	leased := fixture.submitRequest(t, session.SubmitTurnRequest{
+		Prompt: "continue on the healthy fallback", RewindTarget: true,
+	})
+	ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "claude@work")
+	result, err := fixture.runner.Run(ctx, fixture.session, leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != session.TurnCompleted {
+		t.Fatalf("rewound turn = %+v", result)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Target != "codex@work" {
+		t.Fatalf("rewound turn ran on %q, want codex@work", bound.Target)
+	}
+	events, err := fixture.store.ListEvents(context.Background(), fixture.session.ID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type == session.EventSessionTargetRotated &&
+			strings.Contains(string(event.Payload), `"from":"claude@work"`) &&
+			strings.Contains(string(event.Payload), `"to":"codex@work"`) &&
+			strings.Contains(string(event.Payload), `"native_session_reset":true`) {
+			return
+		}
+	}
+	t.Fatal("rewind did not publish a cross-provider target rotation")
+}
+
 // The floor composes with the ordinary ladder: it says where the turn starts, and
 // a rate limit there still rotates UPWARD to the next free rung the way any other
 // turn's would.

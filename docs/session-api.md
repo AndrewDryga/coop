@@ -150,6 +150,26 @@ An index that names no rung of the session's current ladder is refused at admiss
 `invalid_request`, naming how many rungs there are. A policy edited between admission and delivery
 is caught at delivery instead, where the turn fails with `invalid_session_target`.
 
+### Rewinding one turn to the first rung
+
+An ordinary turn inherits the session's durable current target. That is normally the desired
+continuity, but it cannot recover an escalated session when every provider at or above that rung is
+limited and a lower rung is healthy. Such a retry can set `rewind_target: true`:
+
+```bash
+curl --unix-socket "$SOCKET" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: responder:turn:01J...:fallback' \
+  -d '{"expected_revision":5,"prompt":"Continue on the healthy fallback.","rewind_target":true}' \
+  http://localhost/v1/sessions/remote_.../turns
+```
+
+The turn starts on rung zero before any provider receives the prompt. The move becomes the
+session's durable target and publishes the ordinary `session.target_rotated` event; a
+cross-provider rewind clears the previous provider's native transcript. The field governs one
+admission decision and cannot be combined with a positive `min_target_index`. Omitting it preserves
+the existing behavior and request hash.
+
 A rejection that is not a rate limit still fails the turn as `acp_protocol_error`, but its detail
 now carries the adapter's own message — normalised to one bounded line — instead of a fixed
 "ACP request was rejected" that named neither the cause nor the fix.
@@ -375,14 +395,15 @@ curl --unix-socket "$SOCKET" \
 
 | Method | Path | Body/query |
 | --- | --- | --- |
-| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt`, optional `min_target_index` |
+| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt`, optional `min_target_index` or `rewind_target` |
 | `GET` | `/v1/sessions/{session_id}/turns?after=0&limit=100` | ordinal cursor |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}` | none |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}/artifacts/{artifact_id}` | raw generated image |
 | `POST` | `/v1/sessions/{session_id}/turns/{turn_id}/cancel` | `expected_revision` |
 
-A public turn excludes its prompt, its idempotency data, and its `min_target_index` — request data,
-whose effect is published as the session's `target` and its `session.target_rotated` event. A
+A public turn excludes its prompt, its idempotency data, `min_target_index`, and `rewind_target` —
+request data whose effect is published as the session's `target` and its
+`session.target_rotated` event. A
 completed turn's `assistant_message` is the user-facing response. Coop does not publish hidden
 reasoning, raw tool calls, raw ACP frames, or box logs.
 

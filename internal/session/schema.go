@@ -156,6 +156,13 @@ const schemaV9 = `
 ALTER TABLE turns ADD COLUMN min_target_index INTEGER NOT NULL DEFAULT 0;
 `
 
+// A turn may explicitly return a durably escalated session to its first policy
+// rung. This is request data like the escalation floor and must survive the
+// asynchronous admission/lease boundary.
+const schemaV10 = `
+ALTER TABLE turns ADD COLUMN rewind_target INTEGER NOT NULL DEFAULT 0;
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -226,6 +233,12 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v9: %w", err)
 		}
 		version = 9
+	}
+	if version < 10 {
+		if _, err := tx.Exec(schemaV10); err != nil {
+			return fmt.Errorf("migrate schema v10: %w", err)
+		}
+		version = 10
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)

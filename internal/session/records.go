@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 9
+	SchemaVersion = 10
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -310,6 +310,10 @@ type Turn struct {
 	// controller restart — the floor has to survive the crash the same way the
 	// prompt does.
 	MinTargetIndex int `json:"min_target_index,omitempty"`
+	// RewindTarget explicitly starts this turn on the first policy rung. An
+	// omitted floor cannot express that: ordinary turns inherit the session's
+	// durable current target, which may already be a higher rung.
+	RewindTarget bool `json:"rewind_target,omitempty"`
 }
 
 // Usage is what one turn cost the provider.
@@ -402,7 +406,8 @@ type SubmitTurnRequest struct {
 	ExpectedRevision int64
 	Prompt           string
 	Artifacts        []InputArtifact
-	MinTargetIndex   int `json:",omitempty"`
+	MinTargetIndex   int  `json:",omitempty"`
+	RewindTarget     bool `json:",omitempty"`
 }
 
 type CancelTurnRequest struct {

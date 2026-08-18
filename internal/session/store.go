@@ -1076,12 +1076,13 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 		Prompt:         req.Prompt,
 		QueuedAt:       now,
 		MinTargetIndex: req.MinTargetIndex,
+		RewindTarget:   req.RewindTarget,
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO turns (id, session_id, ordinal, idempotency_key, request_hash, state, send_state, prompt, queued_at, min_target_index)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.SessionID, turn.Ordinal, turn.IdempotencyKey,
+		INSERT INTO turns (id, session_id, ordinal, idempotency_key, request_hash, state, send_state, prompt, queued_at, min_target_index, rewind_target)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.SessionID, turn.Ordinal, turn.IdempotencyKey,
 		turn.RequestHash, string(turn.State), string(turn.SendState), turn.Prompt, now.UnixNano(),
-		turn.MinTargetIndex); err != nil {
+		turn.MinTargetIndex, turn.RewindTarget); err != nil {
 		return Turn{}, fmt.Errorf("insert turn: %w", err)
 	}
 	for ordinal, artifact := range req.Artifacts {
@@ -1128,6 +1129,9 @@ func validateSubmitRequest(req SubmitTurnRequest) error {
 	// the service checks it there, where the answer can name the ladder's size.
 	if req.MinTargetIndex < 0 {
 		return &Error{Code: CodeInvalidRequest, Detail: "min_target_index must not be negative"}
+	}
+	if req.RewindTarget && req.MinTargetIndex > 0 {
+		return &Error{Code: CodeInvalidRequest, Detail: "rewind_target cannot be combined with min_target_index"}
 	}
 	if len(req.Artifacts) > MaxTurnArtifacts {
 		return &Error{Code: CodeInvalidRequest, Detail: "turn has too many artifacts"}
@@ -1547,7 +1551,7 @@ func (s *Store) ReconcileInterruptedTurns(ctx context.Context) ([]Turn, error) {
 const turnSelect = `SELECT id, session_id, ordinal, idempotency_key, request_hash, state, send_state,
 	   prompt, queued_at, started_at, finished_at, stop_reason, assistant_message, error_code, error_detail,
 	   usage_input_tokens, usage_cached_input_tokens, usage_output_tokens, usage_reasoning_tokens,
-	   usage_cost_usd, usage_cost_recorded, min_target_index
+	   usage_cost_usd, usage_cost_recorded, min_target_index, rewind_target
 FROM turns`
 
 func (s *Store) GetTurn(ctx context.Context, sessionID, turnID string) (Turn, error) {
@@ -1661,7 +1665,8 @@ func scanTurn(row rowScanner) (Turn, error) {
 		&stopReason, &turn.AssistantMessage, &errorCode, &turn.ErrorDetail,
 		&turn.Usage.InputTokens, &turn.Usage.CachedInputTokens,
 		&turn.Usage.OutputTokens, &turn.Usage.ReasoningTokens,
-		&turn.Usage.CostUSD, &turn.Usage.CostRecorded, &turn.MinTargetIndex); err != nil {
+		&turn.Usage.CostUSD, &turn.Usage.CostRecorded, &turn.MinTargetIndex,
+		&turn.RewindTarget); err != nil {
 		return Turn{}, err
 	}
 	turn.State = TurnState(state)

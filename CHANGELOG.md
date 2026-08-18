@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A provider-limited escalated session can explicitly fail back to its first healthy rung.**
+  `POST /v1/sessions/{session_id}/turns` accepts `rewind_target: true` for one turn, durably moves
+  the session to rung zero before delivery, and clears a foreign native transcript on a
+  cross-provider move. Ordinary turns still inherit the current target and `min_target_index`
+  remains an upward-only floor, so the failback is explicit and cannot silently weaken an
+  escalated correction.
+
 - **Account failover no longer tries a credential Coop already knows cannot authenticate.** Rotation
   now excludes native login files that their adapter classifies as requiring another login, while
   retaining env-backed and opaque credentials whose validity Coop cannot inspect. Real ACP failures

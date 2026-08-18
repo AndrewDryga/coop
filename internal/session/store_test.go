@@ -333,6 +333,61 @@ func TestAnEscalationFloorSurvivesTheStoreItWasAdmittedThrough(t *testing.T) {
 	}
 }
 
+// Responder cannot recover a floor-one turn from a spent Claude quota by
+// submitting an ordinary floor-zero turn: a floor is not a seat assignment,
+// and the session remains durably parked on Claude. The explicit rewind must
+// survive the asynchronous store boundary so the runner can move that one
+// retry back to healthy Codex after a controller restart.
+func TestATargetRewindSurvivesTheStoreItWasAdmittedThrough(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "state")
+	store := openTestStore(t, root)
+	sess, err := store.CreateSession(ctx, "rewind-session", CreateSessionRequest{Target: "claude:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := store.SubmitTurn(ctx, "rewind-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "use the healthy fallback",
+		RewindTarget: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !turn.RewindTarget {
+		t.Fatal("admitted turn forgot its target rewind")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store = openTestStore(t, root)
+	defer store.Close()
+	leased, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("lease turn = %+v, ok=%v, err=%v", leased, ok, err)
+	}
+	if !leased.RewindTarget {
+		t.Fatal("leased turn forgot the persisted target rewind")
+	}
+}
+
+func TestATargetRewindCannotAlsoDemandAHigherFloor(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "contradictory-target", CreateSessionRequest{Target: "claude:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.SubmitTurn(ctx, "contradictory-target-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "go down and up",
+		MinTargetIndex: 1, RewindTarget: true,
+	})
+	if CodeOf(err) != CodeInvalidRequest || !strings.Contains(err.Error(), "rewind_target") {
+		t.Fatalf("contradictory target error = %v, want invalid_request naming rewind_target", err)
+	}
+}
+
 // A negative rung is not a rung. The store owns the shape of the index because
 // it is the layer that writes it; the ladder's size is the service's question.
 func TestANegativeEscalationFloorIsRefused(t *testing.T) {
@@ -384,6 +439,15 @@ func TestATurnWithoutAFloorHashesAsThePreFloorRequestDid(t *testing.T) {
 	}
 	if floored == want {
 		t.Fatal("a floored request hashes as an unfloored one; the same key would replay the wrong rung")
+	}
+	rewound, err := CanonicalRequestHash(SubmitTurnRequest{
+		SessionID: "sess-1", ExpectedRevision: 3, Prompt: "investigate", RewindTarget: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rewound == want {
+		t.Fatal("a rewound request hashes as an ordinary one; the same key would replay the wrong rung")
 	}
 }
 

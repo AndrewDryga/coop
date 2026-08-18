@@ -661,6 +661,39 @@ func TestATurnSubmittedWithAnEscalationFloorCarriesItOffTheWire(t *testing.T) {
 	}
 }
 
+func TestATurnSubmittedWithATargetRewindCarriesItOffTheWire(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t, "codex@work", "claude@work")
+	defer service.Stop()
+	handler := NewHTTPHandler(service)
+	createdResponse := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"fallback"}`,
+		"rewind-create", "application/json",
+	)
+	var created sessionMutationSessionResponse
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	turnResponse := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
+		`{"expected_revision":1,"prompt":"use codex","rewind_target":true}`,
+		"rewind-turn", "application/json",
+	)
+	if turnResponse.Code != http.StatusOK {
+		t.Fatalf("rewound turn status = %d body=%s", turnResponse.Code, turnResponse.Body.String())
+	}
+	var submitted sessionMutationTurnResponse
+	if err := json.Unmarshal(turnResponse.Body.Bytes(), &submitted); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := service.store.GetTurn(context.Background(), created.Session.ID, submitted.Turn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.RewindTarget {
+		t.Fatal("turn admitted over HTTP forgot its target rewind")
+	}
+}
+
 type preparingHTTPRunner struct{ calls atomic.Int32 }
 
 func (*preparingHTTPRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
