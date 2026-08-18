@@ -2,8 +2,8 @@
 name: session-companions-own-git-metadata
 description: companion boxes mount only the pinned workspace, so each snapshot must own usable Git metadata rather than point back to its source checkout
 subsystem: sessions
-sources: [internal/sessionsvc/companion.go, internal/cli/fork_cmd.go, internal/box/run.go]
-updated: 2026-08-11
+sources: [internal/sessionsvc/companion.go, internal/sessionsvc/service.go, internal/cli/fork_cmd.go, internal/box/run.go]
+updated: 2026-08-18
 ---
 
 # Session companions own their Git metadata
@@ -36,12 +36,19 @@ cannot rewrite snapshot bytes.
 
 Verification requires self-contained metadata, the exact persisted commit, mode-consistent history,
 detached HEAD, a clean tree, no refs, remotes, reflogs, or host-backed object alternate, and the
-commit-bound ownership marker before discard (`internal/sessionsvc/companion.go:470-825`). Cleanliness
+commit-bound ownership marker before discard (`internal/sessionsvc/companion.go:651-1245`). Cleanliness
 is computed with a private temporary Git directory, config, and index that reads only the verified
 companion object database and worktree. It ignores submodule recursion but separately streams the
 pinned index's gitlinks and requires each placeholder to remain a real empty directory. Legacy
 linked snapshots remain recognizable only so sessions created by older Coop binaries can be safely
-discarded during rollout.
+discarded during rollout. Those legacy worktrees may contain normal Git LFS smudges even though the
+pinned tree stores pointers. The isolated check never enables their filters; it treats a worktree
+file as the committed representation only when a canonical LFS v1 pointer in the pinned index names
+that exact byte count and SHA-256, the pinned attributes name the `lfs` filter, and the modes match.
+Pointer and attribute reads use the private metadata, so source replacement refs and filter config
+cannot change the verdict. Hashing observes request cancellation. Modern self-contained companions,
+malformed pointers, changed bytes or modes, non-regular files, and every other status record remain
+dirty.
 
 ## Changelog
 - 2026-08-11 — created after a live Responder companion mount exposed a host-only linked-worktree pointer; verified the mount, staged creation, object materialization, and discard checks against both sources
@@ -51,3 +58,4 @@ discarded during rollout.
 - 2026-08-11 — moved cleanliness checks into an isolated temporary Git repository and disabled host attribute files during checkout after review found mutable local config, info attributes, and operator attributes could execute filters or rewrite bytes
 - 2026-08-11 — retained gitlink cleanliness without submodule recursion after rules review found that ignoring submodules could otherwise hide populated or deleted submodule paths during discard
 - 2026-08-11 — documented and regression-tested the fork-ACP environment-to-RunSpec handoff after live repository-set sessions received companion metadata but launched boxes without the mounts
+- 2026-08-18 — reverified discard against a live legacy blitz-flutter companion; recorded the cryptographic LFS-smudge equivalence that lets old clean snapshots retire without executing their filters

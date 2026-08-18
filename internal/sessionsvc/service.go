@@ -2098,7 +2098,7 @@ func (s *Service) executePlanDiscard(ctx context.Context, op session.Operation, 
 	}
 	companions := make([]sessionCompanionDiscardPlan, 0, len(sess.Companions))
 	for _, companion := range sess.Companions {
-		companionPlan, err := planSessionCompanionDiscard(companion)
+		companionPlan, err := planSessionCompanionDiscardContext(ctx, companion)
 		if err != nil {
 			return PlanDiscardResult{}, s.failServiceOperation(
 				ctx, op.ID,
@@ -2235,7 +2235,7 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeDiscardPlanStale, Detail: boundedSessionServiceError(err)})
 	}
 	for _, companion := range planned.Plan.Companions {
-		if err := discardSessionCompanion(companion); err != nil {
+		if err := discardSessionCompanionContext(ctx, companion); err != nil {
 			return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 		}
 	}

@@ -1745,6 +1745,208 @@ func TestDiscardSessionCompanionNeutralizesLegacyEffectiveFilters(t *testing.T) 
 	}
 }
 
+// An expired Responder session retried cleanup thirteen times because its
+// legacy blitz-flutter companion held normal smudged LFS binaries. Ordinary
+// Git correctly called the checkout clean, but Coop's filter-free safety index
+// compared the bytes with their LFS pointers and parked the cleanup on a 500.
+func TestLegacySmudgedLFSCompanionIsCleanOnlyWhenPointerMatches(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	companion, companionGit := gitrepo.New(t)
+	payload := []byte("the real binary bytes\x00after smudge\n")
+	digest := sha256.Sum256(payload)
+	pointer := fmt.Sprintf(
+		"version https://git-lfs.github.com/spec/v1\noid sha256:%x\nsize %d\n",
+		digest, len(payload),
+	)
+	if err := os.WriteFile(
+		filepath.Join(companion, ".gitattributes"), []byte("*.bin filter=lfs -text\n"), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(companion, "asset.bin"), []byte(pointer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(companion, "ordinary.pointer"), []byte(pointer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	malformed := strings.Replace(pointer, "size ", "size nope-", 1)
+	if err := os.WriteFile(
+		filepath.Join(companion, "malformed.bin"), []byte(malformed), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	companionGit("add", ".gitattributes", "asset.bin", "malformed.bin", "ordinary.pointer")
+	companionGit("commit", "--quiet", "-m", "LFS pointer")
+	baseCommit := gitOut(companion, "rev-parse", "HEAD")
+	legacyRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Join(legacyRoot, "legacy-lfs")
+	runGitTest(
+		t, companion, "worktree", "add", "--quiet", "--detach", "--", workspace, baseCommit,
+	)
+	if err := os.WriteFile(filepath.Join(workspace, "asset.bin"), payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "malformed.bin"), payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	filterScript := filepath.Join(t.TempDir(), "hostile-lfs-clean")
+	filterMarker := filterScript + ".invoked"
+	if err := os.WriteFile(
+		filterScript, []byte("#!/bin/sh\n: > \"${0}.invoked\"\ncat\n"), 0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	companionGit("config", "filter.lfs.clean", strconv.Quote(filterScript))
+	companionGit("config", "filter.lfs.required", "true")
+	binding := session.CompanionRepository{
+		Name: "legacy-lfs", Repository: companion,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	status, truncated, err := sessionCompanionStatus(binding)
+	if err != nil || truncated || bytes.Contains(status, []byte("asset.bin")) ||
+		!bytes.Contains(status, []byte("malformed.bin")) {
+		t.Fatalf("verified smudged LFS object status = %q, truncated=%v, err=%v", status, truncated, err)
+	}
+	if pathExists(filterMarker) {
+		t.Fatal("companion status invoked the checkout's LFS filter")
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "ordinary.pointer"), payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status, truncated, err = sessionCompanionStatus(binding)
+	if err != nil || truncated || !bytes.Contains(status, []byte("ordinary.pointer")) {
+		t.Fatalf("non-LFS pointer payload status = %q, truncated=%v, err=%v", status, truncated, err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "ordinary.pointer"), []byte(pointer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(workspace, "asset.bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	status, truncated, err = sessionCompanionStatus(binding)
+	if err != nil || truncated || !bytes.Contains(status, []byte("asset.bin")) {
+		t.Fatalf("mode-changed LFS object status = %q, truncated=%v, err=%v", status, truncated, err)
+	}
+	if err := os.Chmod(filepath.Join(workspace, "asset.bin"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tampered := append([]byte(nil), payload...)
+	tampered[0] ^= 1
+	if err := os.WriteFile(filepath.Join(workspace, "asset.bin"), tampered, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status, truncated, err = sessionCompanionStatus(binding)
+	if err != nil || truncated || !bytes.Contains(status, []byte("asset.bin")) ||
+		!bytes.Contains(status, []byte("malformed.bin")) {
+		t.Fatalf("mismatched smudged LFS object status = %q, truncated=%v, err=%v", status, truncated, err)
+	}
+	if pathExists(filterMarker) {
+		t.Fatal("mismatch verification invoked the checkout's LFS filter")
+	}
+	forgedDigest := sha256.Sum256(tampered)
+	forgedPointer := fmt.Sprintf(
+		"version https://git-lfs.github.com/spec/v1\noid sha256:%x\nsize %d\n",
+		forgedDigest, len(tampered),
+	)
+	forgedPath := filepath.Join(companion, "forged.pointer")
+	if err := os.WriteFile(forgedPath, []byte(forgedPointer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalBlob := gitOut(companion, "rev-parse", baseCommit+":asset.bin")
+	forgedBlob := gitOut(companion, "hash-object", "-w", "--", forgedPath)
+	companionGit("replace", originalBlob, forgedBlob)
+	status, truncated, err = sessionCompanionStatus(binding)
+	if err != nil || truncated || !bytes.Contains(status, []byte("asset.bin")) {
+		t.Fatalf("replacement-forged LFS object status = %q, truncated=%v, err=%v", status, truncated, err)
+	}
+	companionGit("replace", "-d", originalBlob)
+	if err := os.WriteFile(filepath.Join(workspace, "asset.bin"), payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(workspace, "malformed.bin"), []byte(malformed), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planSessionCompanionDiscard(binding)
+	if err != nil {
+		t.Fatalf("plan verified LFS companion discard: %v", err)
+	}
+	if err := discardSessionCompanion(plan); err != nil {
+		t.Fatalf("discard verified LFS companion: %v", err)
+	}
+	if pathExists(workspace) {
+		t.Fatal("verified LFS companion survived discard")
+	}
+	if pathExists(filterMarker) {
+		t.Fatal("companion discard invoked the checkout's LFS filter")
+	}
+
+	stateRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	selfContainedWorkspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_11111111111111111111111111111111", "self-contained-lfs",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selfContained := session.CompanionRepository{
+		Name: "self-contained-lfs", Repository: companion,
+		Workspace: selfContainedWorkspace, BaseCommit: baseCommit,
+	}
+	if _, err := ensureSessionCompanion(stateRoot, "remote_11111111111111111111111111111111", selfContained); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(selfContainedWorkspace, "asset.bin"), payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status, truncated, err = sessionCompanionStatus(selfContained)
+	if err != nil || truncated || !bytes.Contains(status, []byte("asset.bin")) {
+		t.Fatalf("self-contained LFS object status = %q, truncated=%v, err=%v", status, truncated, err)
+	}
+}
+
+func TestLegacyLFSSmudgeHashStopsWhenDiscardIsCancelled(t *testing.T) {
+	payload := bytes.Repeat([]byte("cancel this hash"), 1<<16)
+	digest := sha256.Sum256(payload)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if sessionCompanionHashMatchesContext(
+		ctx, bytes.NewReader(payload), int64(len(payload)), fmt.Sprintf("%x", digest),
+	) {
+		t.Fatal("cancelled discard accepted an LFS payload hash")
+	}
+}
+
+func TestLFSPointerRequiresCanonicalDecimalSize(t *testing.T) {
+	for _, size := range []string{"+8", "-0", "08"} {
+		pointer := []byte(
+			"version https://git-lfs.github.com/spec/v1\n" +
+				"oid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" +
+				"size " + size + "\n",
+		)
+		if _, _, ok := sessionCompanionLFSPointer(pointer); ok {
+			t.Fatalf("noncanonical LFS size %q was accepted", size)
+		}
+	}
+	for _, size := range []string{"0", "8", "80"} {
+		pointer := []byte(
+			"version https://git-lfs.github.com/spec/v1\n" +
+				"oid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" +
+				"size " + size + "\n",
+		)
+		if _, _, ok := sessionCompanionLFSPointer(pointer); !ok {
+			t.Fatalf("canonical LFS size %q was rejected", size)
+		}
+	}
+}
+
 func TestSessionCompanionStatusIgnoresMutableInfoAttributes(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))

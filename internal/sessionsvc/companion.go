@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -642,10 +644,6 @@ func removeSessionCompanionStage(
 	return nil
 }
 
-func verifySessionCompanion(binding session.CompanionRepository) error {
-	return verifySessionCompanionContext(context.Background(), binding)
-}
-
 func verifySessionCompanionContext(ctx context.Context, binding session.CompanionRepository) error {
 	info, err := os.Lstat(binding.Workspace)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
@@ -910,6 +908,10 @@ func sessionCompanionStatusContext(
 	if err != nil {
 		return nil, false, fmt.Errorf("inspect isolated companion status: %w", err)
 	}
+	metadata, metadataErr := os.Lstat(filepath.Join(binding.Workspace, ".git"))
+	if metadataErr == nil && metadata.Mode().IsRegular() {
+		status = sessionCompanionStatusWithoutVerifiedLFSSmudges(ctx, binding, env, status)
+	}
 	gitlinksClean, err := sessionCompanionGitlinksCleanContext(ctx, binding.Workspace, env)
 	if err != nil {
 		return nil, false, err
@@ -918,6 +920,159 @@ func sessionCompanionStatusContext(
 		return nil, false, errors.New("companion gitlink worktree is modified")
 	}
 	return status, truncated, nil
+}
+
+// A legacy linked companion may have been checked out while Git LFS was
+// active. Its index then holds the committed pointer while the worktree holds
+// the smudged object. The isolated safety index intentionally executes no Git
+// filters, so recognize that one representation directly: the pointer itself
+// commits to both the byte count and SHA-256. Anything less exact stays dirty.
+func sessionCompanionStatusWithoutVerifiedLFSSmudges(
+	ctx context.Context,
+	binding session.CompanionRepository,
+	env []string,
+	status []byte,
+) []byte {
+	if len(status) == 0 {
+		return status
+	}
+	cleaned := make([]byte, 0, len(status))
+	for _, record := range bytes.Split(status, []byte{0}) {
+		if len(record) == 0 {
+			continue
+		}
+		if sessionCompanionStatusRecordIsVerifiedLFSSmudge(ctx, binding, env, record) {
+			continue
+		}
+		cleaned = append(cleaned, record...)
+		cleaned = append(cleaned, 0)
+	}
+	return cleaned
+}
+
+func sessionCompanionStatusRecordIsVerifiedLFSSmudge(
+	ctx context.Context,
+	binding session.CompanionRepository,
+	env []string,
+	record []byte,
+) bool {
+	fields := bytes.SplitN(record, []byte(" "), 9)
+	if len(fields) != 9 || string(fields[0]) != "1" || string(fields[1]) != ".M" ||
+		string(fields[2]) != "N..." || !bytes.Equal(fields[3], fields[4]) ||
+		!bytes.Equal(fields[4], fields[5]) {
+		return false
+	}
+	blobID := string(fields[7])
+	if !validSessionWorkspaceCommit(blobID) {
+		return false
+	}
+	relative := filepath.FromSlash(string(fields[8]))
+	if !filepath.IsLocal(relative) || relative == "." {
+		return false
+	}
+	attribute, truncated, err := runSessionWorkspaceGitWithEnvContext(
+		ctx, binding.Workspace, len(fields[8])+32, env,
+		"check-attr", "-z", "--cached", "filter", "--", string(fields[8]),
+	)
+	expectedAttribute := append(append(append([]byte{}, fields[8]...), 0), []byte("filter\x00lfs\x00")...)
+	if err != nil || truncated || !bytes.Equal(attribute, expectedAttribute) {
+		return false
+	}
+	pointer, truncated, err := runSessionWorkspaceGitWithEnvContext(
+		ctx, binding.Workspace, 512, env, "cat-file", "blob", blobID,
+	)
+	if err != nil || truncated {
+		return false
+	}
+	oid, size, ok := sessionCompanionLFSPointer(pointer)
+	if !ok {
+		return false
+	}
+	path := filepath.Join(binding.Workspace, relative)
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != size {
+		return false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || opened.Size() != size ||
+		!os.SameFile(info, opened) {
+		return false
+	}
+	if !sessionCompanionHashMatchesContext(ctx, file, size, oid) {
+		return false
+	}
+	finalPath, err := os.Lstat(path)
+	finalFile, finalErr := file.Stat()
+	return err == nil && finalErr == nil && finalPath.Mode().IsRegular() &&
+		finalFile.Mode().IsRegular() && os.SameFile(info, finalPath) &&
+		os.SameFile(opened, finalFile) && finalPath.Size() == size &&
+		finalFile.Size() == size && finalPath.Mode() == info.Mode() &&
+		finalFile.Mode() == opened.Mode() && finalPath.ModTime() == info.ModTime() &&
+		finalFile.ModTime() == opened.ModTime()
+}
+
+func sessionCompanionHashMatchesContext(
+	ctx context.Context, reader io.Reader, size int64, oid string,
+) bool {
+	digest := sha256.New()
+	written := int64(0)
+	buffer := make([]byte, 64<<10)
+	for {
+		if ctx.Err() != nil {
+			return false
+		}
+		read, err := reader.Read(buffer)
+		if read > 0 {
+			written += int64(read)
+			if written > size {
+				return false
+			}
+			_, _ = digest.Write(buffer[:read])
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil || read == 0 {
+			return false
+		}
+	}
+	return written == size && fmt.Sprintf("%x", digest.Sum(nil)) == oid
+}
+
+func sessionCompanionLFSPointer(pointer []byte) (string, int64, bool) {
+	if bytes.Contains(pointer, []byte{'\r'}) {
+		return "", 0, false
+	}
+	lines := strings.Split(string(pointer), "\n")
+	if len(lines) != 4 || lines[3] != "" ||
+		lines[0] != "version https://git-lfs.github.com/spec/v1" ||
+		!strings.HasPrefix(lines[1], "oid sha256:") ||
+		!strings.HasPrefix(lines[2], "size ") {
+		return "", 0, false
+	}
+	oid := strings.TrimPrefix(lines[1], "oid sha256:")
+	if len(oid) != 64 || !validSessionWorkspaceCommit(oid) {
+		return "", 0, false
+	}
+	sizeText := strings.TrimPrefix(lines[2], "size ")
+	if sizeText == "" || len(sizeText) > 1 && sizeText[0] == '0' {
+		return "", 0, false
+	}
+	for _, digit := range sizeText {
+		if digit < '0' || digit > '9' {
+			return "", 0, false
+		}
+	}
+	size, err := strconv.ParseInt(sizeText, 10, 64)
+	if err != nil || size < 0 {
+		return "", 0, false
+	}
+	return oid, size, true
 }
 
 func sessionCompanionGitlinksCleanContext(ctx context.Context, workspace string, env []string) (bool, error) {
@@ -1031,6 +1186,12 @@ func sessionCompanionCommitContext(ctx context.Context, dir, revision string) (s
 func planSessionCompanionDiscard(
 	binding session.CompanionRepository,
 ) (sessionCompanionDiscardPlan, error) {
+	return planSessionCompanionDiscardContext(context.Background(), binding)
+}
+
+func planSessionCompanionDiscardContext(
+	ctx context.Context, binding session.CompanionRepository,
+) (sessionCompanionDiscardPlan, error) {
 	// A companion snapshot that is already gone plans as absent, mirroring the
 	// primary workspace: discardSessionCompanion treats a missing workspace as
 	// removed, and a snapshot holds no unpublished work by construction.
@@ -1040,7 +1201,7 @@ func planSessionCompanionDiscard(
 			Head: binding.BaseCommit, StatusDigest: sessionWorkspaceStatusDigest(nil),
 		}, nil
 	}
-	if err := verifySessionCompanion(binding); err != nil {
+	if err := verifySessionCompanionContext(ctx, binding); err != nil {
 		return sessionCompanionDiscardPlan{}, err
 	}
 	info, err := os.Lstat(binding.Workspace)
@@ -1059,6 +1220,10 @@ func planSessionCompanionDiscard(
 }
 
 func discardSessionCompanion(plan sessionCompanionDiscardPlan) error {
+	return discardSessionCompanionContext(context.Background(), plan)
+}
+
+func discardSessionCompanionContext(ctx context.Context, plan sessionCompanionDiscardPlan) error {
 	info, err := os.Lstat(plan.Workspace)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1074,7 +1239,7 @@ func discardSessionCompanion(plan sessionCompanionDiscardPlan) error {
 		Name: plan.Name, Repository: plan.Repo,
 		Workspace: plan.Workspace, BaseCommit: plan.Head,
 	}
-	if err := verifySessionCompanion(binding); err != nil {
+	if err := verifySessionCompanionContext(ctx, binding); err != nil {
 		return fmt.Errorf("companion discard plan is stale: %w", err)
 	}
 	return removeSessionCompanion(binding)
