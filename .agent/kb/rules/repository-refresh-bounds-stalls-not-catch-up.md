@@ -3,8 +3,8 @@ name: repository-refresh-bounds-stalls-not-catch-up
 description: "bound a stalled repository refresh without treating a normal catch-up fetch like one remote lookup"
 scope: architecture
 sources: [internal/sessionsvc/source.go, internal/sessionsvc/source_test.go]
-check: "go test ./internal/sessionsvc -run 'TestRepositoryFetchMayOutliveRemoteIdentityLookup|TestRepositoryFetchRemainsCancellableAtItsOwnDeadline'"
-updated: 2026-08-17
+check: "go test ./internal/sessionsvc -run 'TestRepositoryFetchMayOutliveRemoteIdentityLookup|TestRepositoryRefreshUsesAnExistingVerifiedCommitWithoutFetching|TestRepositoryFetchRemainsCancellableAtItsOwnDeadline'"
+updated: 2026-08-20
 ---
 
 # Give repository identity lookup and object transfer separate bounds
@@ -24,6 +24,9 @@ tests; follow [[hermetic-git-tests]]. The caller must surface the bounded prepar
 retrying it silently.
 
 ## Changelog
+- 2026-08-20 — re-verified both source files after live watch sessions repeatedly fetched a remote
+  head object already present locally. Added the existing-object regression and kept the slow
+  transfer and stalled-transfer paths covered.
 - 2026-08-17 — created after sweeping both session-source files. The shared deadline was the one
   violation and is fixed here. The new positive test failed with `context deadline exceeded` before
   the split; the stalled-transfer test keeps the longer path bounded.

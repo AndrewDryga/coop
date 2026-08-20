@@ -192,6 +192,15 @@ func pinSessionRepositoryWithTimeouts(
 			),
 		}
 	}
+	// ls-remote already proved that this immutable object is the remote branch
+	// head. If it is present locally, fetching the same hash cannot make the
+	// session more exact; it only makes every new watch session wait on the
+	// network again.
+	if resolved, resolveErr := sessionWorkspaceCommitContext(ctx, source.repository, commit); resolveErr == nil {
+		return resolved, nil
+	} else if ctx.Err() != nil {
+		return "", resolveErr
+	}
 	fetchCtx, cancelFetch := context.WithTimeout(ctx, fetchTimeout)
 	_, err = runGit(fetchCtx, source.repository,
 		"fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--", source.remote, commit)

@@ -63,10 +63,39 @@ func TestRepositoryFetchMayOutliveRemoteIdentityLookup(t *testing.T) {
 	}
 }
 
-func TestRepositoryFetchRemainsCancellableAtItsOwnDeadline(t *testing.T) {
+// blitz-core was 265 commits behind its remote ref, but the exact remote head
+// object was already in the local object database. Every watch-session create
+// still fetched that same hash until its deadline, so ordinary alerts queued
+// behind workspace preparation even though no object transfer was necessary.
+func TestRepositoryRefreshUsesAnExistingVerifiedCommitWithoutFetching(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	commit := gitOut(repo, "rev-parse", "HEAD")
+	runner := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "ls-remote" {
+			return []byte(commit + "\trefs/heads/main\n"), nil
+		}
+		return nil, errors.New("fetch should not run for an object already present locally")
+	}
+	got, err := pinSessionRepositoryWithTimeouts(
+		context.Background(),
+		sessionRepositorySource{
+			label: "primary", repository: repo, remote: "origin", branch: "main",
+		},
+		time.Second, time.Second, runner,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != commit {
+		t.Fatalf("pinned commit = %s, want %s", got, commit)
+	}
+}
+
+func TestRepositoryFetchRemainsCancellableAtItsOwnDeadline(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	commit := strings.Repeat("a", 40)
 	runner := func(ctx context.Context, _ string, args ...string) ([]byte, error) {
 		if len(args) > 0 && args[0] == "ls-remote" {
 			return []byte(commit + "\trefs/heads/main\n"), nil
