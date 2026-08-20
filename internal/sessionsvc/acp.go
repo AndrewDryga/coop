@@ -39,6 +39,9 @@ const (
 	sessionACPTermGrace       = 250 * time.Millisecond
 	sessionACPKillGrace       = 750 * time.Millisecond
 	sessionACPCleanupTimeout  = 2 * time.Second
+	// A completed model result is irreversible work, not best-effort cleanup. Under a recovery
+	// burst Coop's single SQLite connection can legitimately queue this receipt for a few seconds.
+	sessionACPCompletionTimeout = 10 * time.Second
 	// sessionRuntimeReapTimeout bounds the docker-facing teardown (box removal, sidecar stop).
 	// Separate from the store-call timeout above because `docker rm -f` of a just-killed box on a
 	// contended daemon routinely needs more than two seconds — and a slow reap is retried by the
@@ -78,12 +81,17 @@ type sessionWarmExecution struct {
 	timer              *time.Timer
 }
 
+type turnCompletionStore interface {
+	CompleteTurn(context.Context, session.CompleteTurnRequest) (session.Turn, error)
+}
+
 // sessionTurnRunner owns boxed ACP children. Policy-opted sessions can retain one authenticated
 // child across serialized turns; the same Coop fork path still owns box assembly and labels.
 type sessionTurnRunner struct {
 	sourceCfg  *config.Config
 	stateRoot  string
 	store      *session.Store
+	completion turnCompletionStore
 	rt         runtime.Runtime
 	executable string
 	host       Host
@@ -115,7 +123,7 @@ func newSessionTurnRunner(sourceCfg *config.Config, stateRoot string, store *ses
 	}
 	return &sessionTurnRunner{
 		sourceCfg: sourceCfg, stateRoot: stateRoot,
-		store: store, rt: rt, executable: executable, command: start,
+		store: store, completion: store, rt: rt, executable: executable, command: start,
 		warm:      make(map[string]*sessionWarmExecution),
 		rotations: make(map[string]*sessionLadder),
 	}
@@ -661,11 +669,11 @@ func classifyContextFailure(err error) error {
 }
 
 func (r *sessionTurnRunner) completeTurn(bound session.Session, leased session.Turn, assistant string, artifacts []session.OutputArtifact, usage session.Usage) (session.Turn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
 	defer cancel()
 	cumulativeCost, costRecorded := usage.CostUSD, usage.CostRecorded
 	usage.CostUSD, usage.CostRecorded = 0, false
-	return r.store.CompleteTurn(ctx, session.CompleteTurnRequest{
+	return r.completion.CompleteTurn(ctx, session.CompleteTurnRequest{
 		SessionID: bound.ID, TurnID: leased.ID, Message: assistant,
 		Artifacts: artifacts, Usage: usage,
 		CumulativeCostUSD: cumulativeCost, CostRecorded: costRecorded,

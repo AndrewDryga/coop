@@ -92,6 +92,45 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	}
 }
 
+// One accepted production result was discarded after the recovery burst kept Coop's single
+// SQLite connection busy for just over two seconds. The model had finished, so local receipt
+// contention must wait longer than best-effort process cleanup instead of failing the turn.
+func TestCompletedModelResultSurvivesShortStoreContention(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	leased := fixture.submit(t, "completed answer")
+	if _, err := fixture.store.MarkTurnSendIntent(context.Background(), fixture.session.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.store.MarkTurnSent(context.Background(), fixture.session.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	fixture.runner.completion = delayedCompleteTurnStore{turnCompletionStore: fixture.store, delay: 2500 * time.Millisecond}
+
+	completed, completeErr := fixture.runner.completeTurn(fixture.session, leased, "durable answer", nil, session.Usage{})
+	if completeErr != nil {
+		t.Fatalf("completed result was lost behind short store contention: %v", completeErr)
+	}
+	if completed.State != session.TurnCompleted || completed.AssistantMessage != "durable answer" {
+		t.Fatalf("completed turn = %+v", completed)
+	}
+}
+
+type delayedCompleteTurnStore struct {
+	turnCompletionStore
+	delay time.Duration
+}
+
+func (s delayedCompleteTurnStore) CompleteTurn(ctx context.Context, req session.CompleteTurnRequest) (session.Turn, error) {
+	timer := time.NewTimer(s.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return session.Turn{}, ctx.Err()
+	case <-timer.C:
+		return s.turnCompletionStore.CompleteTurn(ctx, req)
+	}
+}
+
 // An ACP session's MCP servers arrive in the session/new parameter or not at all: the adapter
 // takes no flags, so the mounted mcp.json that --mcp-config points the claude CLI at is invisible
 // to it. Production ran that way — 706 tool calls from claude sessions, not one of them mcp.*.
