@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 8.1.0
 
 - **The base box now ships both `jq` and the `jv` JSON Schema validator.** `jq` remains available
   from Debian, while the independently versioned `jv` CLI is pinned and built as a static Go tool
