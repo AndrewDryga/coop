@@ -24,8 +24,9 @@ const (
 	// transport elision. Every ladder model accepts far larger inputs, and
 	// callers bound their sources independently, so the cap's job is to be
 	// a transport backstop, not the working ceiling of every turn.
-	MaxPromptBytes          = 256 << 10
-	MaxTurnArtifacts        = 4
+	MaxPromptBytes = 256 << 10
+	// Four customer files plus one caller-supplied machine-readable contract.
+	MaxTurnArtifacts        = 5
 	MaxArtifactBytes        = 8 << 20
 	MaxTurnArtifactBytes    = 8 << 20
 	MaxArtifactNameBytes    = 255

@@ -206,6 +206,40 @@ func TestTurnArtifactsAreDurableBoundAndRemovedAfterCompletion(t *testing.T) {
 	}
 }
 
+func TestAResponderTurnKeepsFourCustomerArtifactsAndItsContract(t *testing.T) {
+	// Responder already accepts four customer files. Its result schema is a
+	// required fifth input, so the transport must keep all five and still
+	// reject an unbounded sixth.
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "five-artifact-session", CreateSessionRequest{Target: "codex:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := make([]InputArtifact, 0, 6)
+	for index := 0; index < 6; index++ {
+		data := []byte(fmt.Sprintf("artifact-%d", index))
+		digest := sha256.Sum256(data)
+		artifacts = append(artifacts, InputArtifact{
+			Name: fmt.Sprintf("artifact-%d.txt", index), MediaType: "text/plain",
+			SHA256: hex.EncodeToString(digest[:]), Data: data,
+		})
+	}
+	if _, err := store.SubmitTurn(ctx, "five-artifacts", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "inspect",
+		Artifacts: artifacts[:5],
+	}); err != nil {
+		t.Fatalf("five bounded input artifacts were rejected: %v", err)
+	}
+	if _, err := store.SubmitTurn(ctx, "six-artifacts", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "inspect",
+		Artifacts: artifacts,
+	}); CodeOf(err) != CodeInvalidRequest {
+		t.Fatalf("six input artifacts error = %v", err)
+	}
+}
+
 func TestCompletedTurnOutputArtifactExposesMetadataAndExactBytes(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
