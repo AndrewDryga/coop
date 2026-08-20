@@ -185,7 +185,7 @@ func (r *sessionTurnRunner) startAtLadderFloor(
 	}
 	next := rungs[floor]
 	rotated, rewound, err := r.store.RotateTurnTarget(
-		ctx, bound.ID, leased.ID, bound.Target, next.String(), current.Provider != next.Provider,
+		ctx, bound.ID, leased.ID, bound.Target, next.String(), targetChangeResetsNativeSession(current, next),
 	)
 	if err != nil {
 		return err
@@ -222,7 +222,7 @@ func (r *sessionTurnRunner) startAtLadderBeginning(
 		return acpFailure(sessionACPInvalidTarget, "session target is unparseable")
 	}
 	rotated, rewound, err := r.store.RotateTurnTarget(
-		ctx, bound.ID, leased.ID, bound.Target, next.String(), current.Provider != next.Provider,
+		ctx, bound.ID, leased.ID, bound.Target, next.String(), targetChangeResetsNativeSession(current, next),
 	)
 	if err != nil {
 		return err
@@ -310,13 +310,19 @@ func (r *sessionTurnRunner) rotateOnLimit(
 	backoff.nextTarget = next.String()
 	r.narrateProviderBackoff(ctx, bound.ID, leased.ID, backoff)
 	rotated, rewound, err := r.store.RotateTurnTarget(
-		ctx, bound.ID, leased.ID, bound.Target, next.String(), current.Provider != next.Provider,
+		ctx, bound.ID, leased.ID, bound.Target, next.String(), targetChangeResetsNativeSession(current, next),
 	)
 	if err != nil {
 		return false, err
 	}
 	*bound, *leased = rotated, rewound
 	return true, nil
+}
+
+// Native provider sessions live inside one credential's profile directory. A model or effort
+// change on the same credential can resume its transcript; another credential cannot see it.
+func targetChangeResetsNativeSession(current, next agents.Target) bool {
+	return current.Provider != next.Provider || current.Account() != next.Account()
 }
 
 // providerBackoff is one rate-limit decision in the shape the event carries:

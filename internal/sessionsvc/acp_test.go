@@ -187,7 +187,11 @@ func TestSessionACPRejectionDetailIsUsefulAndBounded(t *testing.T) {
 	}
 }
 
-func TestSessionTurnRunnerRotatesToTheNextRungOnARateLimit(t *testing.T) {
+// A live Responder turn switched from codex@emisar to codex@oncall after the
+// first credential hit its limit, then tried to load emisar's native session
+// through oncall's credential store. Codex rejected it and the queue stayed
+// blocked even though oncall had 91% of its allowance left.
+func TestAProviderCredentialRotationStartsANewNativeSession(t *testing.T) {
 	fixture := newSessionACPFixture(t, "rate-limited-once")
 	fixture.signIn(t, "codex", "backup")
 	t.Setenv("COOP_TEST_SESSION_LIMIT_MARKER", filepath.Join(t.TempDir(), "limited"))
@@ -207,13 +211,13 @@ func TestSessionTurnRunnerRotatesToTheNextRungOnARateLimit(t *testing.T) {
 	if bound.Target != "codex@backup" {
 		t.Fatalf("session target = %q, want codex@backup", bound.Target)
 	}
-	// Same provider, so the transcript the limited rung opened still resolves and is reloaded
-	// rather than restarted.
+	// The new credential owns a different native-session store. Its child must
+	// start a session instead of trying to load the first account's binding.
 	if bound.NativeSessionID != "native-1" {
-		t.Fatalf("native session = %q, want the retained native-1", bound.NativeSessionID)
+		t.Fatalf("native session = %q, want the new account's native-1", bound.NativeSessionID)
 	}
 	methods := readSessionACPLog(t, fixture.childLog)
-	want := []string{"initialize", "session/new", "session/prompt", "initialize", "session/load", "session/prompt"}
+	want := []string{"initialize", "session/new", "session/prompt", "initialize", "session/new", "session/prompt"}
 	if fmt.Sprint(methods) != fmt.Sprint(want) {
 		t.Fatalf("ACP methods = %v, want %v", methods, want)
 	}
@@ -231,7 +235,7 @@ func TestSessionTurnRunnerRotatesToTheNextRungOnARateLimit(t *testing.T) {
 			backoff = string(event.Payload)
 		}
 	}
-	if rotated != `{"from":"codex@work","native_session_reset":false,"to":"codex@backup"}` {
+	if rotated != `{"from":"codex@work","native_session_reset":true,"to":"codex@backup"}` {
 		t.Fatalf("rotation event = %s", rotated)
 	}
 	// The limit is audible before the rotation: a client watching events can
