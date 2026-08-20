@@ -498,11 +498,51 @@ func (r Runtime) RemoveByLabels(ctx context.Context, labels map[string]string) (
 			if ctx.Err() != nil {
 				err = ctx.Err()
 			}
+			if runtimeRemovalInProgress(out) {
+				if waitErr := r.waitForContainerAbsence(ctx, id, filters); waitErr == nil {
+					n++
+					continue
+				}
+			}
 			return n, fmt.Errorf("run: %s rm -f %s: %w", r.Name, id, commandOutputError(err, out))
 		}
 		n++
 	}
 	return n, nil
+}
+
+func runtimeRemovalInProgress(output []byte) bool {
+	text := strings.ToLower(string(output))
+	return strings.Contains(text, "removal of container") && strings.Contains(text, "already in progress")
+}
+
+// waitForContainerAbsence resolves an ambiguous remove response against the same ownership
+// filters that selected the container. Success means this exact id disappeared; another owned
+// container with the same labels remains visible and is not mistaken for the one being removed.
+func (r Runtime) waitForContainerAbsence(ctx context.Context, id string, filters []string) error {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		ids, err := r.containerIDsContext(ctx, true, filters...)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, candidate := range ids {
+			if candidate == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // SupportsCIDFile reports whether this runtime understands `docker run --cidfile` — docker and

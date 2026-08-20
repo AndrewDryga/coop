@@ -526,3 +526,35 @@ fi
 		})
 	}
 }
+
+// Two live Responder turns rotated onto a healthy credential, then stopped
+// before launching it because Docker's --rm teardown and Coop's explicit reap
+// overlapped. "Removal already in progress" is ambiguous until a fresh owned
+// query proves the selected container has actually disappeared.
+func TestRemoveByLabelWaitsForAnAlreadyRemovingContainer(t *testing.T) {
+	dir := t.TempDir()
+	runtimeCLI := filepath.Join(dir, "runtime")
+	state := filepath.Join(dir, "state")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+if [ "$1" = ps ]; then
+	state=$(cat "$COOP_TEST_REMOVE_STATE" 2>/dev/null || true)
+	if [ "$state" != gone ]; then echo box-perf; fi
+	if [ "$state" = removing ]; then echo gone > "$COOP_TEST_REMOVE_STATE"; fi
+	exit 0
+fi
+if [ "$1" = rm ]; then
+	echo removing > "$COOP_TEST_REMOVE_STATE"
+	echo 'Error response from daemon: removal of container box-perf is already in progress' >&2
+	exit 1
+fi
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_REMOVE_STATE", state)
+	removed, err := (Runtime{Name: runtimeCLI}).RemoveByLabel(
+		context.Background(), "coop.run", "session-turn",
+	)
+	if err != nil || removed != 1 {
+		t.Fatalf("in-progress removal = %d, %v; want one proven-absent container", removed, err)
+	}
+}
