@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The base box now ships both `jq` and the `jv` JSON Schema validator.** `jq` remains available
+  from Debian, while the independently versioned `jv` CLI is pinned and built as a static Go tool
+  for the box architecture. Run `coop build` or `coop update` to add it to an existing base image.
+
 - **Remote-session read-only authority is now enforced by the repository mount.** A policy may set
   `repository_read_only: true`; Coop binds the value into the immutable policy digest, persists it
   across daemon restarts, and mounts the session's primary fork read-only for every ACP provider.

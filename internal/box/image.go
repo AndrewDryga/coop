@@ -57,13 +57,16 @@ const (
 const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
 ARG GO_IMAGE=golang:1.26.5-bookworm
 
-FROM ${GO_IMAGE} AS staticcheck-builder
+FROM ${GO_IMAGE} AS go-tools-builder
 ARG STATICCHECK_VERSION=v0.7.0
 RUN GOBIN=/out CGO_ENABLED=0 go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
+ARG JV_VERSION=v0.7.0
+RUN GOBIN=/out CGO_ENABLED=0 go install github.com/santhosh-tekuri/jsonschema/cmd/jv@${JV_VERSION}
 
 FROM ${NODE_IMAGE}
 
-COPY --from=staticcheck-builder /out/staticcheck /usr/local/bin/staticcheck
+COPY --from=go-tools-builder /out/staticcheck /usr/local/bin/staticcheck
+COPY --from=go-tools-builder /out/jv /usr/local/bin/jv
 
 ARG ASDF_VERSION=0.19.0
 ARG AGENT_PACKAGES="%s"
@@ -71,7 +74,7 @@ ARG AGENT_PACKAGES="%s"
 # Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or
 # compile toolchains a repo pins in .tool-versions at runtime. A Postgres client,
 # procps, and inotify-tools come along so the runtime path matches a baked image.
-# ripgrep/fd/jq/tree are the search + inspect tools agents reach for constantly
+# ripgrep/fd/jq/jv/tree are the search + inspect tools agents reach for constantly
 # (Debian ships fd as "fdfind", so it's symlinked to "fd"). ShellCheck rides along for the
 # same reason Staticcheck is copied in above: a repo's gate runs IN the box, and a non-root
 # agent can't apt-get a missing linter at gate time. python3 + pip with a bare
