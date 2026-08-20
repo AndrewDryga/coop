@@ -881,7 +881,10 @@ func TestSessionTurnRunnerSendsDurableImageArtifact(t *testing.T) {
 func TestSessionTurnRunnerCapturesGeneratedImageOutsideTranscript(t *testing.T) {
 	fixture := newSessionACPFixture(t, "image-output")
 	turn := fixture.submit(t, "generate a chart")
-	completed, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	// This fixture moves more than 4 MiB through base64 JSON and SQLite. Keep it
+	// bounded, but do not make package-parallel race-detector load a correctness
+	// failure: the ordinary 5-second fixture deadline is for small ACP frames.
+	completed, err := fixture.runner.Run(contextWithTurnTimeout(t, 15*time.Second), fixture.session, turn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -901,7 +904,7 @@ func TestSessionTurnRunnerCapturesGeneratedImageOutsideTranscript(t *testing.T) 
 func TestSessionTurnRunnerCapturesGeneratedImageFromToolUpdate(t *testing.T) {
 	fixture := newSessionACPFixture(t, "tool-image-output")
 	turn := fixture.submit(t, "generate a chart with an image tool")
-	completed, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	completed, err := fixture.runner.Run(contextWithTurnTimeout(t, 15*time.Second), fixture.session, turn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1553,8 +1556,12 @@ func (f *sessionACPFixture) submitRequest(t *testing.T, req session.SubmitTurnRe
 }
 
 func contextWithTurnDeadline(t *testing.T) context.Context {
+	return contextWithTurnTimeout(t, 5*time.Second)
+}
+
+func contextWithTurnTimeout(t *testing.T, timeout time.Duration) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	t.Cleanup(cancel)
 	return ctx
 }
