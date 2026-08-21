@@ -52,6 +52,11 @@ const (
 	sessionACPRejectionLimit  = 300
 )
 
+// One initial candidate plus two corrections keeps a broken model from
+// burning an unbounded turn while preserving the caller-visible invariant:
+// invalid structured output is never a completed turn.
+const sessionOutputContractMaxAttempts = 3
+
 const (
 	sessionACPProtocolError   session.ErrorCode = "acp_protocol_error"
 	sessionACPProcessError    session.ErrorCode = "acp_process_error"
@@ -390,6 +395,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 	var execution *sessionWarmExecution
 	var assistant string
 	var usage session.Usage
+	var candidateUsage session.Usage
 	var outputArtifacts []session.OutputArtifact
 	protocolComplete := false
 	parked := false
@@ -510,6 +516,17 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 	// per runner: a turn re-leased after a controller restart re-probes the ladder from scratch,
 	// and numbering that second pass on from the first would claim a continuity it does not have.
 	backoffs := 0
+	validator, err := session.CompileOutputContract(leased.OutputContract)
+	if err != nil {
+		runErr = acpFailure(session.CodeOutputContractFailed, "the durable output contract could not be compiled")
+		return result, runErr
+	}
+	contractAttempt := 0
+	prompt := leased.Prompt
+	checkpointSend := true
+	if leased.OutputContract != nil {
+		prompt = sessionOutputContractInitialPrompt(leased.Prompt, leased.OutputContract)
+	}
 
 	for {
 		target, err := agents.ParseTarget(bound.Target)
@@ -558,9 +575,33 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			execution = &sessionWarmExecution{bound: bound, child: child, projection: projection, credentialDeadline: credentialDeadline}
 		}
 
-		assistant, outputArtifacts, usage, err = r.runACP(ctx, execution.child, bound, leased)
+		assistant, outputArtifacts, candidateUsage, err = r.runACP(
+			ctx, execution.child, bound, leased, prompt, checkpointSend,
+		)
 		if err == nil {
-			break
+			usage = addSessionUsage(usage, candidateUsage)
+			if bound.NativeSessionID == "" {
+				bound.NativeSessionID = execution.child.nativeSessionID
+			}
+			if validator == nil {
+				break
+			}
+			validationErr := validator.Validate([]byte(assistant))
+			if validationErr == nil {
+				break
+			}
+			contractAttempt++
+			r.recordOutputContractRejection(ctx, bound.ID, leased.ID, leased.OutputContract.SHA256, contractAttempt, validationErr)
+			if contractAttempt >= sessionOutputContractMaxAttempts {
+				runErr = acpFailure(
+					session.CodeOutputContractFailed,
+					fmt.Sprintf("provider returned invalid structured output after %d attempts", contractAttempt),
+				)
+				return result, runErr
+			}
+			prompt = sessionOutputContractRepairPrompt(leased.OutputContract, contractAttempt+1, validationErr)
+			checkpointSend = false
+			continue
 		}
 		retry, rotateErr := r.rotateOnLimit(ctx, &bound, &leased, rot, err, &backoffs, floor)
 		if rotateErr != nil {
@@ -578,9 +619,88 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			return result, runErr
 		}
 		execution = nil
+		// Rotation rewinds the durable send checkpoint. A new provider cannot
+		// repair against another provider's native transcript, so regenerate from
+		// the admitted prompt and exact contract instead of sending only the last
+		// correction request.
+		prompt = leased.Prompt
+		if leased.OutputContract != nil {
+			prompt = sessionOutputContractInitialPrompt(leased.Prompt, leased.OutputContract)
+		}
+		checkpointSend = true
 	}
 	protocolComplete = true
 	return result, nil
+}
+
+func addSessionUsage(total, candidate session.Usage) session.Usage {
+	total.InputTokens += candidate.InputTokens
+	total.CachedInputTokens += candidate.CachedInputTokens
+	total.OutputTokens += candidate.OutputTokens
+	total.ReasoningTokens += candidate.ReasoningTokens
+	// ACP reports cost as a cumulative native-session value. The last observed
+	// value supersedes the earlier one; adding it would double-charge repairs.
+	if candidate.CostRecorded {
+		total.CostUSD = candidate.CostUSD
+		total.CostRecorded = true
+	}
+	return total
+}
+
+func sessionOutputContractInitialPrompt(prompt string, contract *session.OutputContract) string {
+	if contract == nil {
+		return prompt
+	}
+	return fmt.Sprintf(`%s
+
+<coop-output-contract sha256="%s">
+Your final assistant response must be exactly one JSON value that matches this schema.
+Before ending the response:
+1. Save the exact bytes inside the json-schema element to /tmp/coop-output-contract.schema.json.
+2. Save your final candidate to /tmp/coop-output-contract.candidate.json.
+3. Run: jv --assert-format --output detailed /tmp/coop-output-contract.schema.json /tmp/coop-output-contract.candidate.json
+4. Fix every error and run the command again. Return the candidate only after jv exits successfully.
+Do not wrap the candidate in Markdown.
+Coop independently validates the final bytes and rejects an invalid candidate.
+
+<json-schema>%s</json-schema>
+</coop-output-contract>`, prompt, contract.SHA256, contract.JSONSchema)
+}
+
+func sessionOutputContractRepairPrompt(contract *session.OutputContract, attempt int, validationErr error) string {
+	detail := sessionACPBoundedDetail("validation failed", validationErr.Error())
+	return fmt.Sprintf(`Your previous final response was rejected by output contract %s.
+%s
+Return a corrected replacement as exactly one JSON value. Do not include explanation or Markdown.
+This is correction attempt %d of %d.`, contract.SHA256, detail, attempt, sessionOutputContractMaxAttempts)
+}
+
+func (r *sessionTurnRunner) recordOutputContractRejection(
+	ctx context.Context,
+	sessionID, turnID, digest string,
+	attempt int,
+	validationErr error,
+) {
+	if r.store == nil {
+		return
+	}
+	payload, err := json.Marshal(map[string]any{
+		"attempt": attempt,
+		"sha256":  digest,
+		"error":   sessionACPBoundedDetail("validation failed", validationErr.Error()),
+	})
+	if err != nil {
+		return
+	}
+	appendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionACPCleanupTimeout)
+	defer cancel()
+	_, _ = r.store.AppendEvent(appendCtx, session.AppendEventRequest{
+		SessionID: sessionID,
+		TurnID:    turnID,
+		Type:      session.EventOutputContractRejected,
+		Version:   1,
+		Payload:   payload,
+	})
 }
 
 type sessionACPFailure struct {
@@ -894,7 +1014,7 @@ func (r *sessionTurnRunner) PrepareSession(ctx context.Context, bound session.Se
 		return err
 	}
 	execution := &sessionWarmExecution{bound: bound, child: child, projection: projection, credentialDeadline: credentialDeadline}
-	if _, _, _, err := r.runACP(ctx, child, bound, session.Turn{}); err != nil {
+	if _, _, _, err := r.runACP(ctx, child, bound, session.Turn{}, "", false); err != nil {
 		return errors.Join(err, r.cleanupWarmExecution(execution))
 	}
 	if current, err := r.store.GetSession(ctx, bound.ID); err == nil {
@@ -1820,7 +1940,14 @@ type sessionACPFrame struct {
 	err  error
 }
 
-func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProcess, bound session.Session, leased session.Turn) (string, []session.OutputArtifact, session.Usage, error) {
+func (r *sessionTurnRunner) runACP(
+	ctx context.Context,
+	process *sessionACPProcess,
+	bound session.Session,
+	leased session.Turn,
+	promptText string,
+	checkpointSend bool,
+) (string, []session.OutputArtifact, session.Usage, error) {
 	if process == nil || process.frames == nil {
 		return "", nil, session.Usage{}, acpFailure(sessionACPProcessError, "ACP child is unavailable")
 	}
@@ -2069,11 +2196,13 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 			return "", nil, session.Usage{}, err
 		}
 	}
-	checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
-	_, err := r.store.MarkTurnSendIntent(checkpointCtx, bound.ID, leased.ID)
-	checkpointCancel()
-	if err != nil {
-		return "", nil, session.Usage{}, acpFailure(session.CodeInternal, "turn sent checkpoint failed")
+	if checkpointSend {
+		checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
+		_, err := r.store.MarkTurnSendIntent(checkpointCtx, bound.ID, leased.ID)
+		checkpointCancel()
+		if err != nil {
+			return "", nil, session.Usage{}, acpFailure(session.CodeInternal, "turn sent checkpoint failed")
+		}
 	}
 	outputDir, outputRelative, err := prepareSessionOutputDir(bound.Workspace, leased.ID)
 	if err != nil {
@@ -2084,17 +2213,19 @@ func (r *sessionTurnRunner) runACP(ctx context.Context, process *sessionACPProce
 	if err != nil {
 		return "", nil, session.Usage{}, err
 	}
-	content[0]["text"] = fmt.Sprintf("<coop-output>Save only final generated images and charts in %s. Use PNG, JPEG, WebP, or GIF; at most %d files and %d bytes total. Keep source data, virtual environments, caches, and other scratch content outside this directory. Do not put image bytes or data URLs in your reply. Refer to saved filenames in the structured response when the caller requests visuals. Direct image outputs returned by tools are captured in order as generated-1.png (or the matching image extension), generated-2.png, and so on.</coop-output>\n\n%s", outputRelative, session.MaxTurnArtifacts, session.MaxTurnArtifactBytes, leased.Prompt)
+	content[0]["text"] = fmt.Sprintf("<coop-output>Save only final generated images and charts in %s. Use PNG, JPEG, WebP, or GIF; at most %d files and %d bytes total. Keep source data, virtual environments, caches, and other scratch content outside this directory. Do not put image bytes or data URLs in your reply. Refer to saved filenames in the structured response when the caller requests visuals. Direct image outputs returned by tools are captured in order as generated-1.png (or the matching image extension), generated-2.png, and so on.</coop-output>\n\n%s", outputRelative, session.MaxTurnArtifacts, session.MaxTurnArtifactBytes, promptText)
 	prompt := map[string]any{"sessionId": nativeID, "prompt": content}
 	id := next()
 	if err := writeRequest(id, "session/prompt", prompt); err != nil {
 		return "", nil, session.Usage{}, err
 	}
-	checkpointCtx, checkpointCancel = context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
-	_, err = r.store.MarkTurnSent(checkpointCtx, bound.ID, leased.ID)
-	checkpointCancel()
-	if err != nil {
-		return "", nil, session.Usage{}, err
+	if checkpointSend {
+		checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
+		_, err = r.store.MarkTurnSent(checkpointCtx, bound.ID, leased.ID)
+		checkpointCancel()
+		if err != nil {
+			return "", nil, session.Usage{}, err
+		}
 	}
 	collectAssistant = true
 	result, err := waitResponse(id, nativeID, true)

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 11
+	SchemaVersion = 12
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -25,6 +25,9 @@ const (
 	// callers bound their sources independently, so the cap's job is to be
 	// a transport backstop, not the working ceiling of every turn.
 	MaxPromptBytes = 256 << 10
+	// Output contracts are control data, not prompt text. Keep one exact schema
+	// beside the turn so the completion boundary can enforce it after a restart.
+	MaxOutputSchemaBytes = 256 << 10
 	// Four customer files plus one caller-supplied machine-readable contract.
 	MaxTurnArtifacts        = 5
 	MaxArtifactBytes        = 8 << 20
@@ -112,21 +115,22 @@ const (
 type EventType string
 
 const (
-	EventSessionCreated       EventType = "session.created"
-	EventSessionStateChanged  EventType = "session.state_changed"
-	EventTurnQueued           EventType = "turn.queued"
-	EventTurnStarted          EventType = "turn.started"
-	EventActivityChanged      EventType = "activity.changed"
-	EventAssistantMessage     EventType = "assistant.message"
-	EventTurnCompleted        EventType = "turn.completed"
-	EventTurnFailed           EventType = "turn.failed"
-	EventTurnCancelled        EventType = "turn.cancelled"
-	EventTurnInterrupted      EventType = "turn.interrupted"
-	EventBudgetExhausted      EventType = "budget.exhausted"
-	EventSessionTargetRotated EventType = "session.target_rotated"
-	EventSessionParked        EventType = "session.parked"
-	EventSessionClosed        EventType = "session.closed"
-	EventWorkspaceDiscarded   EventType = "workspace.discarded"
+	EventSessionCreated         EventType = "session.created"
+	EventSessionStateChanged    EventType = "session.state_changed"
+	EventTurnQueued             EventType = "turn.queued"
+	EventTurnStarted            EventType = "turn.started"
+	EventActivityChanged        EventType = "activity.changed"
+	EventAssistantMessage       EventType = "assistant.message"
+	EventTurnCompleted          EventType = "turn.completed"
+	EventTurnFailed             EventType = "turn.failed"
+	EventTurnCancelled          EventType = "turn.cancelled"
+	EventTurnInterrupted        EventType = "turn.interrupted"
+	EventBudgetExhausted        EventType = "budget.exhausted"
+	EventSessionTargetRotated   EventType = "session.target_rotated"
+	EventSessionParked          EventType = "session.parked"
+	EventSessionClosed          EventType = "session.closed"
+	EventWorkspaceDiscarded     EventType = "workspace.discarded"
+	EventOutputContractRejected EventType = "output_contract.rejected"
 
 	// Activity events narrate what the model did inside a turn. Everything
 	// above is a lifecycle fact Coop decided; these are observations of the
@@ -180,6 +184,7 @@ const (
 	CodeEventPayloadTooLarge    ErrorCode = "event_payload_too_large"
 	CodeDiscardPlanStale        ErrorCode = "discard_plan_stale"
 	CodeRepositoryUnavailable   ErrorCode = "repository_unavailable"
+	CodeOutputContractFailed    ErrorCode = "output_contract_failed"
 	CodeInternal                ErrorCode = "internal_error"
 )
 
@@ -316,6 +321,10 @@ type Turn struct {
 	// omitted floor cannot express that: ordinary turns inherit the session's
 	// durable current target, which may already be a higher rung.
 	RewindTarget bool `json:"rewind_target,omitempty"`
+	// OutputContract is durable execution control data. It is deliberately not
+	// serialized in public turn results; callers already hold the schema, while
+	// exposing it would turn every poll into a large response.
+	OutputContract *OutputContract `json:"-"`
 }
 
 // Usage is what one turn cost the provider.
@@ -409,8 +418,17 @@ type SubmitTurnRequest struct {
 	ExpectedRevision int64
 	Prompt           string
 	Artifacts        []InputArtifact
-	MinTargetIndex   int  `json:",omitempty"`
-	RewindTarget     bool `json:",omitempty"`
+	MinTargetIndex   int             `json:",omitempty"`
+	RewindTarget     bool            `json:",omitempty"`
+	OutputContract   *OutputContract `json:",omitempty"`
+}
+
+// OutputContract declares the exact JSON Schema a turn's final assistant
+// message must satisfy. SHA256 binds the caller's bytes through admission,
+// persistence, model prompting, and completion validation.
+type OutputContract struct {
+	JSONSchema json.RawMessage `json:"json_schema"`
+	SHA256     string          `json:"sha256"`
 }
 
 type CancelTurnRequest struct {

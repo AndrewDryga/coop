@@ -170,6 +170,14 @@ const schemaV11 = `
 ALTER TABLE sessions ADD COLUMN repository_read_only INTEGER NOT NULL DEFAULT 0;
 `
 
+// The output contract is execution authority for completion, not an input
+// artifact the runner may forget after admission. Persist the exact bytes and
+// their caller-supplied digest on the turn that must satisfy them.
+const schemaV12 = `
+ALTER TABLE turns ADD COLUMN output_schema BLOB NOT NULL DEFAULT '';
+ALTER TABLE turns ADD COLUMN output_schema_sha256 TEXT NOT NULL DEFAULT '';
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -252,6 +260,12 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v11: %w", err)
 		}
 		version = 11
+	}
+	if version < 12 {
+		if _, err := tx.Exec(schemaV12); err != nil {
+			return fmt.Errorf("migrate schema v12: %w", err)
+		}
+		version = 12
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)

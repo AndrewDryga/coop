@@ -1078,12 +1078,19 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 		QueuedAt:       now,
 		MinTargetIndex: req.MinTargetIndex,
 		RewindTarget:   req.RewindTarget,
+		OutputContract: cloneOutputContract(req.OutputContract),
+	}
+	outputSchema := []byte{}
+	var outputSchemaSHA256 string
+	if turn.OutputContract != nil {
+		outputSchema = turn.OutputContract.JSONSchema
+		outputSchemaSHA256 = turn.OutputContract.SHA256
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO turns (id, session_id, ordinal, idempotency_key, request_hash, state, send_state, prompt, queued_at, min_target_index, rewind_target)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.SessionID, turn.Ordinal, turn.IdempotencyKey,
+		INSERT INTO turns (id, session_id, ordinal, idempotency_key, request_hash, state, send_state, prompt, queued_at, min_target_index, rewind_target, output_schema, output_schema_sha256)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.SessionID, turn.Ordinal, turn.IdempotencyKey,
 		turn.RequestHash, string(turn.State), string(turn.SendState), turn.Prompt, now.UnixNano(),
-		turn.MinTargetIndex, turn.RewindTarget); err != nil {
+		turn.MinTargetIndex, turn.RewindTarget, outputSchema, outputSchemaSHA256); err != nil {
 		return Turn{}, fmt.Errorf("insert turn: %w", err)
 	}
 	for ordinal, artifact := range req.Artifacts {
@@ -1133,6 +1140,9 @@ func validateSubmitRequest(req SubmitTurnRequest) error {
 	}
 	if req.RewindTarget && req.MinTargetIndex > 0 {
 		return &Error{Code: CodeInvalidRequest, Detail: "rewind_target cannot be combined with min_target_index"}
+	}
+	if _, err := CompileOutputContract(req.OutputContract); err != nil {
+		return err
 	}
 	if len(req.Artifacts) > MaxTurnArtifacts {
 		return &Error{Code: CodeInvalidRequest, Detail: "turn has too many artifacts"}
@@ -1552,7 +1562,8 @@ func (s *Store) ReconcileInterruptedTurns(ctx context.Context) ([]Turn, error) {
 const turnSelect = `SELECT id, session_id, ordinal, idempotency_key, request_hash, state, send_state,
 	   prompt, queued_at, started_at, finished_at, stop_reason, assistant_message, error_code, error_detail,
 	   usage_input_tokens, usage_cached_input_tokens, usage_output_tokens, usage_reasoning_tokens,
-	   usage_cost_usd, usage_cost_recorded, min_target_index, rewind_target
+	   usage_cost_usd, usage_cost_recorded, min_target_index, rewind_target,
+	   output_schema, output_schema_sha256
 FROM turns`
 
 func (s *Store) GetTurn(ctx context.Context, sessionID, turnID string) (Turn, error) {
@@ -1661,14 +1672,22 @@ func scanTurn(row rowScanner) (Turn, error) {
 	var turn Turn
 	var state, sendState, stopReason, errorCode string
 	var queuedAt, startedAt, finishedAt sql.NullInt64
+	var outputSchema []byte
+	var outputSchemaSHA256 string
 	if err := row.Scan(&turn.ID, &turn.SessionID, &turn.Ordinal, &turn.IdempotencyKey,
 		&turn.RequestHash, &state, &sendState, &turn.Prompt, &queuedAt, &startedAt, &finishedAt,
 		&stopReason, &turn.AssistantMessage, &errorCode, &turn.ErrorDetail,
 		&turn.Usage.InputTokens, &turn.Usage.CachedInputTokens,
 		&turn.Usage.OutputTokens, &turn.Usage.ReasoningTokens,
 		&turn.Usage.CostUSD, &turn.Usage.CostRecorded, &turn.MinTargetIndex,
-		&turn.RewindTarget); err != nil {
+		&turn.RewindTarget, &outputSchema, &outputSchemaSHA256); err != nil {
 		return Turn{}, err
+	}
+	if len(outputSchema) > 0 || outputSchemaSHA256 != "" {
+		turn.OutputContract = &OutputContract{
+			JSONSchema: append(json.RawMessage(nil), outputSchema...),
+			SHA256:     outputSchemaSHA256,
+		}
 	}
 	turn.State = TurnState(state)
 	turn.SendState = SendState(sendState)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -203,6 +204,53 @@ func TestTurnArtifactsAreDurableBoundAndRemovedAfterCompletion(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("terminal artifact rows = %d, want 0", count)
+	}
+}
+
+func TestTurnOutputContractIsDurableAndRejectsTheWrongSchemaDigest(t *testing.T) {
+	// A malformed Responder result previously reached the caller because its schema
+	// was only an input artifact. The completion boundary needs the contract after a
+	// daemon restart, not merely while admitting the HTTP request.
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "state")
+	store := openTestStore(t, root)
+	sess, err := store.CreateSession(ctx, "contract-session", CreateSessionRequest{Target: "codex:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := json.RawMessage(`{"type":"object","properties":{"reply":{"type":"string"}},"required":["reply"],"additionalProperties":false}`)
+	digest := sha256.Sum256(schema)
+	contract := &OutputContract{JSONSchema: schema, SHA256: hex.EncodeToString(digest[:])}
+	turn, err := store.SubmitTurn(ctx, "contract-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
+		OutputContract: contract,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if turn.OutputContract == nil || turn.OutputContract.SHA256 != contract.SHA256 {
+		t.Fatalf("admitted output contract = %+v", turn.OutputContract)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = openTestStore(t, root)
+	defer store.Close()
+	leased, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok || leased.OutputContract == nil {
+		t.Fatalf("durable output contract lease = %+v, ok=%v, err=%v", leased.OutputContract, ok, err)
+	}
+	if got := string(leased.OutputContract.JSONSchema); got != string(schema) || leased.OutputContract.SHA256 != contract.SHA256 {
+		t.Fatalf("leased output contract = %+v", leased.OutputContract)
+	}
+
+	bad := *contract
+	bad.SHA256 = strings.Repeat("0", 64)
+	if _, err := store.SubmitTurn(ctx, "bad-contract-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
+		OutputContract: &bad,
+	}); CodeOf(err) != CodeInvalidRequest {
+		t.Fatalf("wrong output-contract digest error = %v", err)
 	}
 }
 

@@ -184,7 +184,12 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	if _, err := service.Store().BindNativeSession(context.Background(), created.Session.ID, "native-secret"); err != nil {
 		t.Fatal(err)
 	}
-	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns", `{"expected_revision":1,"prompt":"secret prompt"}`, "turn", "application/json")
+	contractSchema := []byte(`{"type":"object"}`)
+	contractDigest := sha256.Sum256(contractSchema)
+	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns", fmt.Sprintf(
+		`{"expected_revision":1,"prompt":"secret prompt","output_contract":{"json_schema":%s,"sha256":"%x"}}`,
+		contractSchema, contractDigest,
+	), "turn", "application/json")
 	if response.Code != http.StatusOK {
 		t.Fatalf("turn status = %d body=%s", response.Code, response.Body.String())
 	}
@@ -194,6 +199,13 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	var turnResponse sessionMutationTurnResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &turnResponse); err != nil {
 		t.Fatal(err)
+	}
+	durableTurn, err := service.Store().GetTurn(context.Background(), created.Session.ID, turnResponse.Turn.ID)
+	if err != nil || durableTurn.OutputContract == nil || durableTurn.OutputContract.SHA256 != fmt.Sprintf("%x", contractDigest) {
+		t.Fatalf("HTTP output contract was not durable: %+v, err=%v", durableTurn.OutputContract, err)
+	}
+	if strings.Contains(response.Body.String(), string(contractSchema)) || strings.Contains(response.Body.String(), fmt.Sprintf("%x", contractDigest)) {
+		t.Fatalf("turn response exposed output contract: %s", response.Body.String())
 	}
 	invalidTurn := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",

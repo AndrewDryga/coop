@@ -551,6 +551,7 @@ func (h *sessionHTTPHandler) submitTurn(w http.ResponseWriter, r *http.Request, 
 		Artifacts        []session.InputArtifact `json:"artifacts,omitempty"`
 		MinTargetIndex   int                     `json:"min_target_index,omitempty"`
 		RewindTarget     bool                    `json:"rewind_target,omitempty"`
+		OutputContract   *session.OutputContract `json:"output_contract,omitempty"`
 	}
 	if !decodeSessionJSONLimit(w, r, &body, sessionHTTPTurnMaxBody) {
 		return
@@ -558,7 +559,7 @@ func (h *sessionHTTPHandler) submitTurn(w http.ResponseWriter, r *http.Request, 
 	turn, err := h.service.SubmitTurn(r.Context(), sessionIdempotencyKey(r), session.SubmitTurnRequest{
 		SessionID: sessionID, ExpectedRevision: body.ExpectedRevision, Prompt: body.Prompt,
 		Artifacts: body.Artifacts, MinTargetIndex: body.MinTargetIndex,
-		RewindTarget: body.RewindTarget,
+		RewindTarget: body.RewindTarget, OutputContract: body.OutputContract,
 	})
 	if err != nil {
 		writeSessionServiceError(w, err)

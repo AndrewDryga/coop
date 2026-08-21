@@ -92,6 +92,59 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	}
 }
 
+func TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes(t *testing.T) {
+	// A production conversation emitted one extra closing brace three times. Coop
+	// marked every attempt complete, so Responder spent its correction budget and
+	// showed a generic failure even though the intended reply was recoverable.
+	fixture := newSessionACPFixture(t, "invalid-contract-once")
+	leased := fixture.submitContract(t, "return the result")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != session.TurnCompleted || result.AssistantMessage != `{"reply":"valid"}` {
+		t.Fatalf("completed contracted turn = %+v", result)
+	}
+	if result.Usage.InputTokens != 20 || result.Usage.OutputTokens != 4 {
+		t.Fatalf("repair usage = %+v, want both provider attempts", result.Usage)
+	}
+	methods := readSessionACPLog(t, fixture.childLog)
+	if got := countStrings(methods, "session/prompt"); got != 2 {
+		t.Fatalf("session/prompt calls = %d, want initial plus one repair; methods=%v", got, methods)
+	}
+	wire := readFile(t, fixture.childLog)
+	if !strings.Contains(wire, "jv --assert-format --output detailed") ||
+		!strings.Contains(wire, leased.OutputContract.SHA256) {
+		t.Fatalf("initial prompt did not require exact self-validation: %s", wire)
+	}
+}
+
+func TestRepeatedInvalidStructuredResultNeverCompletes(t *testing.T) {
+	fixture := newSessionACPFixture(t, "invalid-contract-always")
+	leased := fixture.submitContract(t, "return the result")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased)
+	if err == nil {
+		t.Fatal("repeated invalid structured output completed")
+	}
+	if result.State != session.TurnFailed || result.ErrorCode != session.CodeOutputContractFailed || result.AssistantMessage != "" {
+		t.Fatalf("failed contracted turn = %+v, err=%v", result, err)
+	}
+	methods := readSessionACPLog(t, fixture.childLog)
+	if got := countStrings(methods, "session/prompt"); got != 3 {
+		t.Fatalf("session/prompt calls = %d, want three bounded attempts; methods=%v", got, methods)
+	}
+}
+
+func countStrings(values []string, want string) int {
+	count := 0
+	for _, value := range values {
+		if value == want {
+			count++
+		}
+	}
+	return count
+}
+
 // One accepted production result was discarded after the recovery burst kept Coop's single
 // SQLite connection busy for just over two seconds. The model had finished, so local receipt
 // contention must wait longer than best-effort process cleanup instead of failing the turn.
@@ -1529,6 +1582,18 @@ func (f *sessionACPFixture) submitArtifacts(
 	return f.submitRequest(t, session.SubmitTurnRequest{Prompt: prompt, Artifacts: artifacts})
 }
 
+func (f *sessionACPFixture) submitContract(t *testing.T, prompt string) session.Turn {
+	schema := json.RawMessage(`{"type":"object","properties":{"reply":{"type":"string"}},"required":["reply"],"additionalProperties":false}`)
+	digest := sha256.Sum256(schema)
+	return f.submitRequest(t, session.SubmitTurnRequest{
+		Prompt: prompt,
+		OutputContract: &session.OutputContract{
+			JSONSchema: schema,
+			SHA256:     hex.EncodeToString(digest[:]),
+		},
+	})
+}
+
 // submitFromRung admits a turn the caller requires to be delivered no lower than
 // the named rung of the policy ladder — Responder's escalation path.
 func (f *sessionACPFixture) submitFromRung(t *testing.T, prompt string, floor int) session.Turn {
@@ -1681,6 +1746,7 @@ func TestSessionACPChildHelper(t *testing.T) {
 	}
 	pendingPermission := false
 	var promptID json.RawMessage
+	promptCount := 0
 	for reader.Scan() {
 		line := reader.Bytes()
 		_, _ = log.Write(append(append([]byte(nil), line...), '\n'))
@@ -1728,7 +1794,17 @@ func TestSessionACPChildHelper(t *testing.T) {
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{}})
 			}
 		case "session/prompt":
+			promptCount++
 			switch scenario {
+			case "invalid-contract-once", "invalid-contract-always":
+				message := `{"reply":"valid"}`
+				if scenario == "invalid-contract-always" || promptCount == 1 {
+					message = `{"reply":"invalid"}}`
+				}
+				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": message}}}})
+				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
+					"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 10, "outputTokens": 2},
+				}})
 			case "usage":
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
 					"sessionId": frame.Params.SessionID,
