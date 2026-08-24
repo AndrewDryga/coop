@@ -2,6 +2,7 @@ package loop
 
 import (
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -171,5 +172,26 @@ func TestLoopTaskLimitWithNoActionableTaskNeedsNoImage(t *testing.T) {
 	code, err := c.Run(RunSpec{Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, Preflight: true, MaxTasks: 3})
 	if err != nil || code != 0 {
 		t.Fatalf("idle task-limited loop = (%d, %v), want success without an image", code, err)
+	}
+}
+
+// A drain that dies on "run 'coop build'" when the daemon is what actually went away sends the
+// morning's debugging at a rebuild that changes nothing. The loop must name the daemon instead.
+func TestLoopBlamesTheDaemonNotTheImage(t *testing.T) {
+	repo := t.TempDir()
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
+	// Named "docker": EnsureDaemon probes only the Docker kind, which it reads off the binary.
+	shim := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := New(&config.Config{RepoOverride: repo}, runtime.Runtime{Name: shim}, "test", Host{})
+
+	_, err := c.Run(RunSpec{Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard})
+	if err == nil {
+		t.Fatal("loop succeeded with an unreachable daemon; want an error")
+	}
+	if !strings.Contains(err.Error(), "daemon isn't responding") {
+		t.Errorf("loop = %q, want it to name the unreachable daemon", err)
 	}
 }

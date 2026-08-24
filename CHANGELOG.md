@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A container runtime that stopped is now reported as a stopped runtime, not a missing image.**
+  `image inspect` fails identically whether the image is absent or the daemon is gone, so a runtime
+  that died mid-session told every box command to run `coop build` — a rebuild that could not have
+  helped, while the image was present the whole time. Box commands, `coop loop`, and the fork merge
+  gate now probe the daemon on that branch and surface the actionable "daemon isn't responding"
+  message instead. The probe runs only when the image already looks absent, so a normal launch pays
+  nothing for it.
+
 ## 8.1.0
 
 - **The base box now ships both `jq` and the `jv` JSON Schema validator.** `jq` remains available

@@ -38,6 +38,13 @@ func (a *app) resolveImage() (repo, img string, err error) {
 	}
 	img = box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	if !box.ImageExists(a.rt, img) {
+		// `image inspect` fails the same way whether the image is missing or the daemon is gone, so
+		// probe the daemon before blaming the image — a Docker restart otherwise tells every box
+		// command to run a build that would not have helped. Only on this branch: the happy path
+		// must not pay for an extra `docker info`.
+		if err := a.rt.EnsureDaemon(); err != nil {
+			return "", "", err
+		}
 		return "", "", fmt.Errorf("image %q not built — run 'coop build'", img)
 	}
 	return repo, img, nil

@@ -10,6 +10,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 // A missing <name> (without --all) is a usage error (exit 2), reported before the dirty-tree /
@@ -825,5 +826,41 @@ func TestMergeNeutralizesForkDrivers(t *testing.T) {
 	}
 	if pathExists(marker) {
 		t.Fatal("the fork's smudge filter executed on the host during the land rebase")
+	}
+}
+
+// `image inspect` fails the same way for a missing image and a dead daemon, so a merge gate blocked
+// by a stopped runtime used to demand a build that would not have helped. Name the daemon instead.
+func TestMergeGateBlamesTheDaemonNotTheImage(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		infoExit string
+		want     string
+	}{
+		{"daemon unreachable", "1", "daemon isn't responding"},
+		{"daemon up, image absent", "0", "isn't built"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Named "docker": EnsureDaemon probes only the Docker kind, which it reads off the binary.
+			shim := filepath.Join(t.TempDir(), "docker")
+			script := "#!/bin/sh\n" +
+				"case \"$1\" in info) exit " + tc.infoExit + " ;; esac\n" +
+				"case \"$1$2\" in imageinspect) exit 1 ;; esac\n" +
+				"exit 0\n"
+			if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			c := &Control{
+				cfg: &config.Config{Gate: []string{"true"}, BaseImage: "coop-box"},
+				rt:  runtime.Runtime{Name: shim},
+			}
+			_, err := c.MergeGate(t.TempDir())
+			if err == nil {
+				t.Fatal("MergeGate succeeded with no image; want an error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("MergeGate = %q, want it to mention %q", err, tc.want)
+			}
+		})
 	}
 }

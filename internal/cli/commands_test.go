@@ -1048,3 +1048,42 @@ func TestEnsureACPImageBuildsOnlyWhenMissing(t *testing.T) {
 		})
 	}
 }
+
+// A dead daemon and a missing image both fail `image inspect`, and reporting the wrong one costs
+// real debugging time: a Docker restart once filled an editor log with "run 'coop build'" while
+// the image was present the whole time. resolveImage must name the daemon when the daemon is why.
+func TestResolveImageBlamesTheDaemonNotTheImage(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		infoExit string
+		want     string
+	}{
+		{"daemon unreachable", "1", "daemon isn't responding"},
+		{"daemon up, image absent", "0", "not built"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			// Named "docker": EnsureDaemon probes only the Docker kind, which it reads off the binary.
+			shim := filepath.Join(t.TempDir(), "docker")
+			script := "#!/bin/sh\n" +
+				"case \"$1\" in info) exit " + tc.infoExit + " ;; esac\n" +
+				"case \"$1$2\" in imageinspect) exit 1 ;; esac\n" +
+				"exit 0\n"
+			if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			a := &app{
+				cfg:   &config.Config{BaseImage: "coop-box", ConfigDir: t.TempDir(), BoxHome: t.TempDir(), RepoOverride: repo},
+				rt:    runtime.Runtime{Name: shim},
+				rtSet: true,
+			}
+			_, _, err := a.resolveImage()
+			if err == nil {
+				t.Fatal("resolveImage succeeded with no image; want an error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("resolveImage = %q, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}

@@ -188,6 +188,11 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		}
 	}
 	if !box.ImageExists(c.rt, img) {
+		// Same rule as resolveImage: a dead daemon looks exactly like a missing image, and an
+		// overnight drain that dies on "run 'coop build'" hides the real cause until morning.
+		if err := c.rt.EnsureDaemon(); err != nil {
+			return -1, err
+		}
 		return -1, fmt.Errorf("image %q not built — run 'coop build'", img)
 	}
 	// A previous run of THIS checkout may have been killed with its box still up (--rm never fires
