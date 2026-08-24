@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -2676,6 +2677,60 @@ func sessionMessage(sid, text string) []byte {
 	return append(b, '\n')
 }
 
+// sessionCwdMethods are the editor requests that carry a cwd naming the repo to work in.
+var sessionCwdMethods = map[string]bool{"session/new": true, "session/load": true, "session/resume": true}
+
+// canonicalCwd rewrites a session request's cwd to the path coop actually mounted, when the editor
+// names that same directory under a different spelling. The host may be case-insensitive (macOS) or
+// route through a symlink, so an editor can legitimately hold /os/andrewdryga for a repo git reports
+// as /os/AndrewDryga; ResolveRepo always yields git's spelling, and that is the ONLY path inside the
+// box — which is Linux, and case-sensitive. Unrewritten, the adapter answers "cwd does not exist on
+// the machine running the agent" and the session never starts.
+//
+// Matching is by file IDENTITY, never by lowercasing: on a case-sensitive host /a/Foo and /a/foo are
+// two real, distinct directories, they stat to different files, and neither is rewritten into the
+// other. Returns line unchanged when there is nothing to fix.
+func canonicalCwd(line []byte, repo string) []byte {
+	if repo == "" {
+		return line
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal(line, &top) != nil || len(top["params"]) == 0 {
+		return line
+	}
+	var params map[string]json.RawMessage
+	if json.Unmarshal(top["params"], &params) != nil {
+		return line
+	}
+	var cwd string
+	if json.Unmarshal(params["cwd"], &cwd) != nil || cwd == "" || cwd == repo {
+		return line
+	}
+	given, err := os.Stat(cwd)
+	if err != nil {
+		return line // a cwd we cannot even stat is the adapter's error to report, not ours to guess at
+	}
+	mounted, err := os.Stat(repo)
+	if err != nil || !os.SameFile(given, mounted) {
+		return line
+	}
+	rawCwd, err := json.Marshal(repo)
+	if err != nil {
+		return line
+	}
+	params["cwd"] = rawCwd
+	rawParams, err := json.Marshal(params)
+	if err != nil {
+		return line
+	}
+	top["params"] = rawParams
+	out, err := json.Marshal(top)
+	if err != nil {
+		return line
+	}
+	return append(out, '\n') // every line the proxy writes is newline-framed; without it the adapter waits forever
+}
+
 // fromEditor intercepts the editor's set of coop's own selector: it updates the selection and asks
 // the proxy to restart the box on the new plain lead or preset, replying to the editor itself (the
 // adapter never sees coop-owned selectors). Provider/Account writes during a preset are acknowledged as no-ops.
@@ -2695,6 +2750,13 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 	}
 	if json.Unmarshal(line, &h) != nil {
 		return false, nil, nil, false
+	}
+	// The editor's spelling of the repo may differ from the one coop mounted; forward coop's, or the
+	// box (Linux, case-sensitive) rejects a cwd that is right there on a case-insensitive host.
+	if sessionCwdMethods[h.Method] {
+		if out := canonicalCwd(line, c.repo); !bytes.Equal(out, line) {
+			return false, nil, out, false
+		}
 	}
 	if h.Method == "authenticate" || h.Method == "logout" {
 		provider, account := c.authenticationTarget()

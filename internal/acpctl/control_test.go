@@ -2865,3 +2865,110 @@ func TestACPControlSessionEndedClearsPerSessionState(t *testing.T) {
 		t.Fatalf("closed session retained controller state: %+v", c)
 	}
 }
+
+// newCwdControl is a Control whose mounted repo is dir — the only thing the cwd rewrite reads.
+func newCwdControl(t *testing.T, dir string) *Control {
+	t.Helper()
+	return New(&config.Config{ConfigDir: t.TempDir()}, "claude", "opus", "", dir, Selection{}, nil, nil, false, nil, testHost())
+}
+
+func sessionLine(t *testing.T, method, cwd string) []byte {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": method,
+		"params": map[string]any{"cwd": cwd, "mcpServers": []any{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func cwdOf(t *testing.T, line []byte) string {
+	t.Helper()
+	var h struct {
+		Params struct {
+			CWD        string            `json:"cwd"`
+			MCPServers []json.RawMessage `json:"mcpServers"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(line, &h); err != nil {
+		t.Fatalf("rewritten line is not valid JSON: %v\n%s", err, line)
+	}
+	if h.Params.MCPServers == nil {
+		t.Errorf("the rewrite dropped mcpServers from params:\n%s", line)
+	}
+	// Framing, not just content: the adapter reads newline-delimited JSON, so a rewrite that drops
+	// the terminator does not fail loudly — it hangs the session forever waiting for the rest.
+	if !bytes.HasSuffix(line, []byte("\n")) {
+		t.Errorf("rewritten line is not newline-terminated:\n%q", line)
+	}
+	return h.Params.CWD
+}
+
+// coop mounts the repo at git's spelling, and inside the box — Linux, case-sensitive — that is the
+// ONLY path that exists. An editor holding a different spelling of the SAME directory (macOS is
+// case-insensitive; a worktree can sit behind a symlink) must still land in the mount, or the
+// adapter rejects a cwd that is plainly there on the host and the session never starts.
+func TestACPControlCanonicalizesSessionCwd(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "Repo")
+	other := filepath.Join(base, "other")
+	for _, dir := range []string{repo, other} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(repo, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	// Every session-creating method carries a cwd, so every one of them must be normalized.
+	for _, method := range []string{"session/new", "session/load", "session/resume"} {
+		t.Run(method, func(t *testing.T) {
+			c := newCwdControl(t, repo)
+			handled, resp, toAdapter, restart := c.fromEditor(sessionLine(t, method, alias))
+			if handled || restart || len(resp) != 0 {
+				t.Fatalf("a cwd rewrite must stay a pass-through rewrite (handled=%v restart=%v resp=%s)", handled, restart, resp)
+			}
+			if got := cwdOf(t, toAdapter); got != repo {
+				t.Errorf("cwd = %q, want the mounted spelling %q", got, repo)
+			}
+		})
+	}
+
+	// The real macOS case: same directory, different case. Skipped where the host disagrees.
+	t.Run("case variant", func(t *testing.T) {
+		variant := filepath.Join(base, "repo")
+		v, err := os.Stat(variant)
+		if err != nil {
+			t.Skip("host filesystem is case-sensitive; the case variant is not the same directory")
+		}
+		r, err := os.Stat(repo)
+		if err != nil || !os.SameFile(v, r) {
+			t.Skip("host filesystem is case-sensitive; the case variant is not the same directory")
+		}
+		c := newCwdControl(t, repo)
+		_, _, toAdapter, _ := c.fromEditor(sessionLine(t, "session/new", variant))
+		if got := cwdOf(t, toAdapter); got != repo {
+			t.Errorf("cwd = %q, want the mounted spelling %q", got, repo)
+		}
+	})
+
+	// Nothing to fix, nothing to rewrite: the proxy must forward the editor's own bytes.
+	for _, tc := range []struct{ name, cwd string }{
+		{"exact match", repo},
+		{"a genuinely different directory", other},
+		{"a path that does not exist", filepath.Join(base, "gone")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCwdControl(t, repo)
+			handled, resp, toAdapter, restart := c.fromEditor(sessionLine(t, "session/new", tc.cwd))
+			if handled || restart || len(resp) != 0 || toAdapter != nil {
+				t.Errorf("cwd %q must be forwarded untouched (handled=%v restart=%v resp=%s toAdapter=%s)",
+					tc.cwd, handled, restart, resp, toAdapter)
+			}
+		})
+	}
+}

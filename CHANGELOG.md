@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An ACP session now starts when the editor spells the repo path differently than git does.** Coop
+  mounts the repo at `git rev-parse --show-toplevel`'s spelling, and inside the box — Linux, and
+  case-sensitive — that is the only path there is. A macOS editor or shell holding
+  `/projects/andrewdryga` for a repo git calls `/projects/AndrewDryga` therefore got
+  `cwd does not exist on the machine running the agent` and no session at all. Coop now forwards its
+  own spelling when the editor's `cwd` names the same directory. The match is by file identity, so a
+  symlinked worktree path works too and two genuinely distinct directories on a case-sensitive host
+  are never confused for each other.
+
 - **A container runtime that stopped is now reported as a stopped runtime, not a missing image.**
   `image inspect` fails identically whether the image is absent or the daemon is gone, so a runtime
   that died mid-session told every box command to run `coop build` — a rebuild that could not have

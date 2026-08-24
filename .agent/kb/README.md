@@ -83,6 +83,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [acp-target-commit](acp-target-commit.md) — commit model/effort truth from the effective provider response, including Grok migrations
 - [acp-carry-echo](acp-carry-echo.md) — inject best-effort context once and hide only its exact provider echo from the editor
 - [acp-generated-output-boundary](acp-generated-output-boundary.md) — generated images bypass transcript bytes but remain bounded, immutable turn artifacts
+- [acp-rewrites-must-keep-line-framing](acp-rewrites-must-keep-line-framing.md) — an ACP line rewrite that drops the trailing newline hangs the session silently; parsing tests still pass
 - [codex-acp-agent-mode](codex-acp-agent-mode.md) — Codex ACP must select full-access mode explicitly because session config does not override its per-turn sandbox policy
 - [session-api-dto-is-a-second-projection](session-api-dto-is-a-second-projection.md) — a field on the durable session record stays invisible to API clients until the hand-written DTO and its public* copier carry it too
 - [session-operation-intents-cross-versions](session-operation-intents-cross-versions.md) — running session operations survive binary upgrades, so persisted intent JSON needs explicit compatibility normalization before replay
