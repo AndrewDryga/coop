@@ -309,7 +309,9 @@ State-changing requests carry `expected_revision`. Read the current session befo
 
 ```text
 create -> open/parked
-          -> queued -> starting -> running -> completed|failed|cancelled|interrupted
+          -> queued -> starting -> running -> awaiting_validation -> completed
+                                      |                 -> queued (rejected candidate)
+                                      -> failed|cancelled|interrupted
           -> parked
           -> exhausted when the turn budget is consumed
           -> closed
@@ -327,9 +329,27 @@ and reuse that exact process and native session across serialized turns. The dae
 process, removes its run-labeled box and services, and deletes projected credentials. Provider-native
 history remains durable, so the next cold child can load the exact session again.
 
-On restart, queued turns that were never sent remain eligible. A turn interrupted after send intent
-is terminalized as interrupted and is not silently replayed. Provider-declared projected credential
+On restart, queued turns that were never sent remain eligible. A turn waiting for semantic
+validation keeps its unpublished candidate and can still be accepted or rejected by digest. A turn
+interrupted after send intent is terminalized as interrupted and is not silently replayed. Provider-declared projected credential
 files left by a process crash are removed before workers start; provider-native history is retained.
+
+An `output_contract` may set `require_semantic_validation: true` when the caller owns checks that
+depend on external frozen state. Coop first enforces the persisted JSON Schema, then exposes the
+exact bytes and SHA-256 digest as `turn.candidate` with state `awaiting_validation`. The durable
+`validation_candidate_sha256` remains visible after the decision so a caller can reconcile a lost
+HTTP response. The caller sends
+one idempotent decision to:
+
+```text
+POST /v1/sessions/<session>/turns/<turn>/validation
+{"candidate_sha256":"<digest>","verdict":"accept"}
+```
+
+or rejects it with `verdict: "reject"` and one or more bounded `violations`. Acceptance copies only
+the stored candidate into `assistant_message` and returns a durable `validation_receipt`. Rejection
+re-prompts the same native session under the same logical turn. After three total candidates Coop
+fails the turn with `output_contract_failed` and publishes no assistant message.
 
 Close is non-destructive. It preserves the fork, conversation state, events, and reviews. Discard is
 a separate two-step compare-and-swap action available only for a closed, idle session.
@@ -461,6 +481,7 @@ session.created
 session.state_changed
 turn.queued
 turn.started
+turn.awaiting_validation
 activity.changed
 assistant.message
 turn.completed

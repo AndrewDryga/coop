@@ -2024,6 +2024,72 @@ func (s *Service) GetTurn(ctx context.Context, sessionID, turnID string) (sessio
 	return s.store.GetTurn(ctx, sessionID, turnID)
 }
 
+func (s *Service) AcceptTurnCandidate(ctx context.Context, key, sessionID, turnID, digest string) (session.Turn, error) {
+	request := struct {
+		SessionID, TurnID, Digest, Verdict string
+	}{sessionID, turnID, digest, "accept"}
+	return s.validateTurnCandidateOperation(ctx, key, request, func() (session.Turn, error) {
+		return s.store.CompleteTurn(ctx, session.CompleteTurnRequest{
+			SessionID: sessionID, TurnID: turnID, CandidateSHA256: digest,
+		})
+	})
+}
+
+func (s *Service) RejectTurnCandidate(ctx context.Context, key string, req session.RejectTurnCandidateRequest) (session.Turn, error) {
+	request := struct {
+		Request session.RejectTurnCandidateRequest
+		Verdict string
+	}{req, "reject"}
+	turn, err := s.validateTurnCandidateOperation(ctx, key, request, func() (session.Turn, error) {
+		return s.store.RejectTurnCandidate(ctx, req)
+	})
+	if err == nil && turn.State == session.TurnQueued {
+		s.schedule(req.SessionID)
+	}
+	return turn, err
+}
+
+func (s *Service) validateTurnCandidateOperation(
+	ctx context.Context,
+	key string,
+	request any,
+	apply func() (session.Turn, error),
+) (session.Turn, error) {
+	unlock := s.lockOperation(key)
+	defer unlock()
+	op, replay, err := s.store.ReserveOperation(ctx, "ValidateTurnCandidate", key, request)
+	if err != nil {
+		return session.Turn{}, err
+	}
+	if replay {
+		switch op.State {
+		case session.OperationSucceeded:
+			var turn session.Turn
+			if err := json.Unmarshal(op.Result, &turn); err != nil || turn.ID == "" {
+				return session.Turn{}, errors.New("decode semantic validation operation result")
+			}
+			return turn, nil
+		case session.OperationFailed:
+			return session.Turn{}, &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail}
+		}
+	}
+	turn, err := apply()
+	if err != nil {
+		if code := session.CodeOf(err); code != "" {
+			_ = s.store.FailOperation(ctx, op.ID, code, err.Error())
+		}
+		return session.Turn{}, err
+	}
+	result, err := json.Marshal(turn)
+	if err != nil {
+		return session.Turn{}, err
+	}
+	if err := s.store.CompleteOperation(ctx, op.ID, "turn_validation", turn.ID, result); err != nil {
+		return session.Turn{}, err
+	}
+	return turn, nil
+}
+
 func (s *Service) ListTurns(ctx context.Context, sessionID string, afterOrdinal int64, limit int) ([]session.Turn, error) {
 	return s.store.ListTurns(ctx, sessionID, afterOrdinal, limit)
 }
@@ -2489,7 +2555,7 @@ func (s *Service) CancelTurn(ctx context.Context, key string, req session.Cancel
 		err := &session.Error{Code: session.CodeRevisionConflict, Detail: "cancellation revision is stale"}
 		return session.Turn{}, s.failCancelOperation(ctx, op, err)
 	}
-	if turn.State == session.TurnQueued {
+	if turn.State == session.TurnQueued || turn.State == session.TurnAwaitingValidation {
 		cancelled, err := s.store.CancelTurn(ctx, key, req)
 		if err == nil {
 			s.schedule(req.SessionID)

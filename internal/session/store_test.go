@@ -254,6 +254,199 @@ func TestTurnOutputContractIsDurableAndRejectsTheWrongSchemaDigest(t *testing.T)
 	}
 }
 
+func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testing.T) {
+	// A schema-valid Responder result could still contradict the frozen episode.
+	// Once Coop completed it, the caller could only bolt on another correction
+	// turn. The candidate must stay unpublished and retryable until the caller
+	// accepts these exact bytes.
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "state")
+	store := openTestStore(t, root)
+	sess, err := store.CreateSession(ctx, "semantic-session", CreateSessionRequest{
+		Target: "codex:model", MaxTurns: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := json.RawMessage(`{"type":"object","properties":{"reply":{"type":"string"}},"required":["reply"],"additionalProperties":false}`)
+	digest := sha256.Sum256(schema)
+	turn, err := store.SubmitTurn(ctx, "semantic-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
+		OutputContract: &OutputContract{
+			JSONSchema: schema, SHA256: hex.EncodeToString(digest[:]),
+			RequireSemanticValidation: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("lease = %+v, ok=%v, err=%v", turn, ok, err)
+	}
+	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkTurnSent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteTurn(ctx, CompleteTurnRequest{
+		SessionID: sess.ID, TurnID: turn.ID, Message: `{"reply":"unsafe"}`,
+	}); CodeOf(err) != CodeTurnNotRunnable {
+		t.Fatalf("unaccepted semantic completion error = %v", err)
+	}
+
+	candidateBytes := `{"reply":"safe"}`
+	candidateDigest := sha256.Sum256([]byte(candidateBytes))
+	staged, err := store.StageTurnCandidate(ctx, StageTurnCandidateRequest{
+		SessionID: sess.ID, TurnID: turn.ID, Message: candidateBytes,
+		SHA256: hex.EncodeToString(candidateDigest[:]), Attempt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if staged.State != TurnAwaitingValidation || staged.AssistantMessage != "" ||
+		staged.Candidate == nil || staged.Candidate.Message != candidateBytes {
+		t.Fatalf("staged semantic candidate = %+v", staged)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = openTestStore(t, root)
+	defer store.Close()
+	staged, err = store.GetTurn(ctx, sess.ID, turn.ID)
+	if err != nil || staged.State != TurnAwaitingValidation || staged.Candidate == nil ||
+		staged.Candidate.Message != candidateBytes {
+		t.Fatalf("recovered semantic candidate = %+v, err=%v", staged, err)
+	}
+	if _, err := store.CompleteTurn(ctx, CompleteTurnRequest{
+		SessionID: sess.ID, TurnID: turn.ID,
+		CandidateSHA256: strings.Repeat("0", 64),
+	}); CodeOf(err) != CodeRevisionConflict {
+		t.Fatalf("stale candidate acceptance error = %v", err)
+	}
+	completed, err := store.CompleteTurn(ctx, CompleteTurnRequest{
+		SessionID: sess.ID, TurnID: turn.ID,
+		CandidateSHA256: staged.Candidate.SHA256,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State != TurnCompleted || completed.AssistantMessage != candidateBytes ||
+		completed.ValidationReceipt == "" {
+		t.Fatalf("accepted semantic turn = %+v", completed)
+	}
+}
+
+func TestRejectedSemanticCandidateRequeuesTheSameLogicalTurn(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "semantic-repair-session", CreateSessionRequest{Target: "codex:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := json.RawMessage(`{"type":"object"}`)
+	digest := sha256.Sum256(schema)
+	admitted, err := store.SubmitTurn(ctx, "semantic-repair-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
+		OutputContract: &OutputContract{
+			JSONSchema: schema, SHA256: hex.EncodeToString(digest[:]),
+			RequireSemanticValidation: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leased, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("lease = %+v, ok=%v, err=%v", leased, ok, err)
+	}
+	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkTurnSent(ctx, sess.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	message := `{"reply":"healthy"}`
+	messageDigest := sha256.Sum256([]byte(message))
+	staged, err := store.StageTurnCandidate(ctx, StageTurnCandidateRequest{
+		SessionID: sess.ID, TurnID: leased.ID, Message: message,
+		SHA256: hex.EncodeToString(messageDigest[:]), Attempt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requeued, err := store.RejectTurnCandidate(ctx, RejectTurnCandidateRequest{
+		SessionID: sess.ID, TurnID: leased.ID,
+		CandidateSHA256: staged.Candidate.SHA256,
+		Violations:      []string{"completion.status: contradicts current OOM evidence"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requeued.ID != admitted.ID || requeued.State != TurnQueued || requeued.Candidate != nil ||
+		requeued.ValidationAttempt != 1 || !strings.Contains(requeued.ValidationError, "contradicts current OOM evidence") {
+		t.Fatalf("requeued semantic turn = %+v", requeued)
+	}
+	leasedAgain, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok || leasedAgain.ID != admitted.ID || leasedAgain.ValidationAttempt != 1 {
+		t.Fatalf("re-leased semantic turn = %+v, ok=%v, err=%v", leasedAgain, ok, err)
+	}
+}
+
+func TestThirdRejectedSemanticCandidateFailsWithoutPublishingItsMessage(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "semantic-exhaustion-session", CreateSessionRequest{Target: "codex:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := json.RawMessage(`{"type":"object"}`)
+	digest := sha256.Sum256(schema)
+	_, err = store.SubmitTurn(ctx, "semantic-exhaustion-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
+		OutputContract: &OutputContract{
+			JSONSchema: schema, SHA256: hex.EncodeToString(digest[:]),
+			RequireSemanticValidation: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("lease = %+v, ok=%v, err=%v", turn, ok, err)
+	}
+	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkTurnSent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	message := `{"reply":"still unsafe"}`
+	messageDigest := sha256.Sum256([]byte(message))
+	staged, err := store.StageTurnCandidate(ctx, StageTurnCandidateRequest{
+		SessionID: sess.ID, TurnID: turn.ID, Message: message,
+		SHA256: hex.EncodeToString(messageDigest[:]), Attempt: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := store.RejectTurnCandidate(ctx, RejectTurnCandidateRequest{
+		SessionID: sess.ID, TurnID: turn.ID, CandidateSHA256: staged.Candidate.SHA256,
+		Violations: []string{"unsupported healthy completion"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.State != TurnFailed || failed.ErrorCode != CodeOutputContractFailed ||
+		failed.AssistantMessage != "" || failed.Candidate != nil {
+		t.Fatalf("exhausted semantic turn = %+v", failed)
+	}
+}
+
 func TestAResponderTurnKeepsFourCustomerArtifactsAndItsContract(t *testing.T) {
 	// Responder already accepts four customer files. Its result schema is a
 	// required fifth input, so the transport must keep all five and still

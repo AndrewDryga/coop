@@ -65,20 +65,25 @@ type SessionCompanionDTO struct {
 }
 
 type TurnDTO struct {
-	ID               string             `json:"id"`
-	SessionID        string             `json:"session_id"`
-	Ordinal          int64              `json:"ordinal"`
-	State            session.TurnState  `json:"state"`
-	SendState        session.SendState  `json:"send_state"`
-	AssistantMessage string             `json:"assistant_message,omitempty"`
-	StopReason       session.StopReason `json:"stop_reason,omitempty"`
-	ErrorCode        session.ErrorCode  `json:"error_code,omitempty"`
-	ErrorDetail      string             `json:"error_detail,omitempty"`
-	QueuedAt         time.Time          `json:"queued_at"`
-	StartedAt        time.Time          `json:"started_at,omitempty"`
-	FinishedAt       time.Time          `json:"finished_at,omitempty"`
-	OutputArtifacts  []TurnArtifactDTO  `json:"output_artifacts,omitempty"`
-	Usage            session.Usage      `json:"usage,omitzero"`
+	ID                        string                 `json:"id"`
+	SessionID                 string                 `json:"session_id"`
+	Ordinal                   int64                  `json:"ordinal"`
+	State                     session.TurnState      `json:"state"`
+	SendState                 session.SendState      `json:"send_state"`
+	AssistantMessage          string                 `json:"assistant_message,omitempty"`
+	StopReason                session.StopReason     `json:"stop_reason,omitempty"`
+	ErrorCode                 session.ErrorCode      `json:"error_code,omitempty"`
+	ErrorDetail               string                 `json:"error_detail,omitempty"`
+	QueuedAt                  time.Time              `json:"queued_at"`
+	StartedAt                 time.Time              `json:"started_at,omitempty"`
+	FinishedAt                time.Time              `json:"finished_at,omitempty"`
+	OutputArtifacts           []TurnArtifactDTO      `json:"output_artifacts,omitempty"`
+	Usage                     session.Usage          `json:"usage,omitzero"`
+	Candidate                 *session.TurnCandidate `json:"candidate,omitempty"`
+	ValidationCandidateSHA256 string                 `json:"validation_candidate_sha256,omitempty"`
+	ValidationAttempt         int                    `json:"validation_attempt,omitempty"`
+	ValidationError           string                 `json:"validation_error,omitempty"`
+	ValidationReceipt         string                 `json:"validation_receipt,omitempty"`
 }
 
 type TurnArtifactDTO struct {
@@ -409,6 +414,15 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 		if sessionHTTPMethod(w, r, http.MethodPost) {
 			h.cancelTurn(w, r, sessionID, turnID)
 		}
+	case len(parts) == 4 && parts[1] == "turns" && parts[3] == "validation" && parts[2] != "":
+		turnID := parts[2]
+		if !validSessionHTTPPathID(turnID) {
+			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "invalid turn id")
+			return
+		}
+		if sessionHTTPMethod(w, r, http.MethodPost) {
+			h.validateTurnCandidate(w, r, sessionID, turnID)
+		}
 	default:
 		writeSessionHTTPError(w, http.StatusNotFound, "not_found", "resource not found")
 	}
@@ -617,6 +631,49 @@ func (h *sessionHTTPHandler) getTurn(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 	writeSessionJSON(w, http.StatusOK, publicTurn(turn))
+}
+
+func (h *sessionHTTPHandler) validateTurnCandidate(w http.ResponseWriter, r *http.Request, sessionID, turnID string) {
+	if !h.requirePost(w, r) {
+		return
+	}
+	var body struct {
+		CandidateSHA256 string   `json:"candidate_sha256"`
+		Verdict         string   `json:"verdict"`
+		Violations      []string `json:"violations,omitempty"`
+	}
+	if !decodeSessionJSON(w, r, &body) {
+		return
+	}
+	var (
+		turn session.Turn
+		err  error
+	)
+	switch body.Verdict {
+	case "accept":
+		if len(body.Violations) != 0 {
+			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "accepted candidates cannot carry violations")
+			return
+		}
+		turn, err = h.service.AcceptTurnCandidate(r.Context(), sessionIdempotencyKey(r), sessionID, turnID, body.CandidateSHA256)
+	case "reject":
+		turn, err = h.service.RejectTurnCandidate(r.Context(), sessionIdempotencyKey(r), session.RejectTurnCandidateRequest{
+			SessionID: sessionID, TurnID: turnID,
+			CandidateSHA256: body.CandidateSHA256, Violations: body.Violations,
+		})
+	default:
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "validation verdict must be accept or reject")
+		return
+	}
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	op, ok := h.operationForKey(w, r, sessionIdempotencyKey(r))
+	if !ok {
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, sessionMutationTurnResponse{Operation: publicOperation(op), Turn: publicTurn(turn)})
 }
 
 func (h *sessionHTTPHandler) getTurnArtifact(w http.ResponseWriter, r *http.Request, sessionID, turnID, artifactID string) {
@@ -1078,7 +1135,11 @@ func publicTurn(value session.Turn) TurnDTO {
 		SendState: value.SendState, AssistantMessage: value.AssistantMessage, StopReason: value.StopReason,
 		ErrorCode: value.ErrorCode, ErrorDetail: publicSessionErrorDetail(value.ErrorCode, value.ErrorDetail), QueuedAt: value.QueuedAt,
 		StartedAt: value.StartedAt, FinishedAt: value.FinishedAt, OutputArtifacts: artifacts,
-		Usage: value.Usage,
+		Usage: value.Usage, Candidate: value.Candidate,
+		ValidationCandidateSHA256: value.CandidateSHA256,
+		ValidationAttempt:         value.ValidationAttempt,
+		ValidationError:           value.ValidationError,
+		ValidationReceipt:         value.ValidationReceipt,
 	}
 }
 

@@ -66,8 +66,9 @@ func cloneOutputContract(value *OutputContract) *OutputContract {
 		return nil
 	}
 	return &OutputContract{
-		JSONSchema: append(json.RawMessage(nil), value.JSONSchema...),
-		SHA256:     value.SHA256,
+		JSONSchema:                append(json.RawMessage(nil), value.JSONSchema...),
+		SHA256:                    value.SHA256,
+		RequireSemanticValidation: value.RequireSemanticValidation,
 	}
 }
 

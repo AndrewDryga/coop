@@ -135,6 +135,82 @@ func TestRepeatedInvalidStructuredResultNeverCompletes(t *testing.T) {
 	}
 }
 
+func TestSchemaValidSemanticResultWaitsForCallerAcceptance(t *testing.T) {
+	fixture := newSessionACPFixture(t, "valid-contract")
+	leased := fixture.submitSemanticContract(t, "return the result")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != session.TurnAwaitingValidation || result.AssistantMessage != "" ||
+		result.Candidate == nil || result.Candidate.Message != `{"reply":"valid"}` {
+		t.Fatalf("semantic candidate = %+v", result)
+	}
+	accepted, err := fixture.store.CompleteTurn(context.Background(), session.CompleteTurnRequest{
+		SessionID: fixture.session.ID, TurnID: leased.ID,
+		CandidateSHA256: result.Candidate.SHA256,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.State != session.TurnCompleted || accepted.AssistantMessage != `{"reply":"valid"}` ||
+		accepted.ValidationReceipt == "" {
+		t.Fatalf("accepted semantic result = %+v", accepted)
+	}
+}
+
+func TestEveryStructuredCandidateIsToldToSelfValidateBeforeReturning(t *testing.T) {
+	contract := &session.OutputContract{SHA256: strings.Repeat("a", 64), JSONSchema: json.RawMessage(`{"type":"object"}`)}
+	for name, prompt := range map[string]string{
+		"initial": sessionOutputContractInitialPrompt("answer", contract),
+		"repair":  sessionOutputContractRepairPrompt(contract, 2, errors.New("missing required field")),
+	} {
+		if !strings.Contains(prompt, "jv --assert-format") ||
+			!strings.Contains(prompt, "only after jv exits successfully") ||
+			!strings.Contains(prompt, `<json-schema>{"type":"object"}</json-schema>`) {
+			t.Fatalf("%s structured prompt does not require model-side validation:\n%s", name, prompt)
+		}
+	}
+}
+
+func TestRejectedSemanticResultRepromptsTheSameNativeTurn(t *testing.T) {
+	fixture := newSessionACPFixture(t, "valid-contract")
+	leased := fixture.submitSemanticContract(t, "return the result")
+	first, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Candidate == nil || first.Candidate.Attempt != 1 {
+		t.Fatalf("first candidate = %+v", first)
+	}
+	if _, err := fixture.store.RejectTurnCandidate(context.Background(), session.RejectTurnCandidateRequest{
+		SessionID: fixture.session.ID, TurnID: leased.ID,
+		CandidateSHA256: first.Candidate.SHA256,
+		Violations:      []string{"completion.status contradicts current evidence"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	leasedAgain, ok, err := fixture.store.LeaseNextTurn(context.Background(), fixture.session.ID)
+	if err != nil || !ok || leasedAgain.ID != leased.ID || leasedAgain.ValidationAttempt != 1 {
+		t.Fatalf("semantic repair lease = %+v, ok=%v, err=%v", leasedAgain, ok, err)
+	}
+	fixture.session, err = fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leasedAgain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != leased.ID || second.Candidate == nil || second.Candidate.Attempt != 2 {
+		t.Fatalf("second candidate = %+v", second)
+	}
+	methods := readSessionACPLog(t, fixture.childLog)
+	if got := countStrings(methods, "session/prompt"); got != 2 || countStrings(methods, "session/load") != 1 {
+		t.Fatalf("semantic repair did not resume the native session: methods=%v", methods)
+	}
+}
+
 func countStrings(values []string, want string) int {
 	count := 0
 	for _, value := range values {
@@ -1594,6 +1670,18 @@ func (f *sessionACPFixture) submitContract(t *testing.T, prompt string) session.
 	})
 }
 
+func (f *sessionACPFixture) submitSemanticContract(t *testing.T, prompt string) session.Turn {
+	schema := json.RawMessage(`{"type":"object","properties":{"reply":{"type":"string"}},"required":["reply"],"additionalProperties":false}`)
+	digest := sha256.Sum256(schema)
+	return f.submitRequest(t, session.SubmitTurnRequest{
+		Prompt: prompt,
+		OutputContract: &session.OutputContract{
+			JSONSchema: schema, SHA256: hex.EncodeToString(digest[:]),
+			RequireSemanticValidation: true,
+		},
+	})
+}
+
 // submitFromRung admits a turn the caller requires to be delivered no lower than
 // the named rung of the policy ladder — Responder's escalation path.
 func (f *sessionACPFixture) submitFromRung(t *testing.T, prompt string, floor int) session.Turn {
@@ -1796,9 +1884,9 @@ func TestSessionACPChildHelper(t *testing.T) {
 		case "session/prompt":
 			promptCount++
 			switch scenario {
-			case "invalid-contract-once", "invalid-contract-always":
+			case "invalid-contract-once", "invalid-contract-always", "valid-contract":
 				message := `{"reply":"valid"}`
-				if scenario == "invalid-contract-always" || promptCount == 1 {
+				if scenario != "valid-contract" && (scenario == "invalid-contract-always" || promptCount == 1) {
 					message = `{"reply":"invalid"}}`
 				}
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": message}}}})

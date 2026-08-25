@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 12
+	SchemaVersion = 13
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -27,7 +27,8 @@ const (
 	MaxPromptBytes = 256 << 10
 	// Output contracts are control data, not prompt text. Keep one exact schema
 	// beside the turn so the completion boundary can enforce it after a restart.
-	MaxOutputSchemaBytes = 256 << 10
+	MaxOutputSchemaBytes      = 256 << 10
+	MaxOutputContractAttempts = 3
 	// Four customer files plus one caller-supplied machine-readable contract.
 	MaxTurnArtifacts        = 5
 	MaxArtifactBytes        = 8 << 20
@@ -80,14 +81,15 @@ const (
 type TurnState string
 
 const (
-	TurnQueued          TurnState = "queued"
-	TurnStarting        TurnState = "starting"
-	TurnRunning         TurnState = "running"
-	TurnCompleted       TurnState = "completed"
-	TurnFailed          TurnState = "failed"
-	TurnCancelled       TurnState = "cancelled"
-	TurnInterrupted     TurnState = "interrupted"
-	TurnBudgetExhausted TurnState = "budget_exhausted"
+	TurnQueued             TurnState = "queued"
+	TurnStarting           TurnState = "starting"
+	TurnRunning            TurnState = "running"
+	TurnAwaitingValidation TurnState = "awaiting_validation"
+	TurnCompleted          TurnState = "completed"
+	TurnFailed             TurnState = "failed"
+	TurnCancelled          TurnState = "cancelled"
+	TurnInterrupted        TurnState = "interrupted"
+	TurnBudgetExhausted    TurnState = "budget_exhausted"
 )
 
 type SendState string
@@ -131,6 +133,7 @@ const (
 	EventSessionClosed          EventType = "session.closed"
 	EventWorkspaceDiscarded     EventType = "workspace.discarded"
 	EventOutputContractRejected EventType = "output_contract.rejected"
+	EventTurnAwaitingValidation EventType = "turn.awaiting_validation"
 
 	// Activity events narrate what the model did inside a turn. Everything
 	// above is a lifecycle fact Coop decided; these are observations of the
@@ -324,7 +327,21 @@ type Turn struct {
 	// OutputContract is durable execution control data. It is deliberately not
 	// serialized in public turn results; callers already hold the schema, while
 	// exposing it would turn every poll into a large response.
-	OutputContract *OutputContract `json:"-"`
+	OutputContract    *OutputContract `json:"-"`
+	Candidate         *TurnCandidate  `json:"candidate,omitempty"`
+	CandidateSHA256   string          `json:"-"`
+	ValidationAttempt int             `json:"validation_attempt,omitempty"`
+	ValidationError   string          `json:"validation_error,omitempty"`
+	ValidationReceipt string          `json:"validation_receipt,omitempty"`
+}
+
+// TurnCandidate is a schema-valid result that still needs caller-owned
+// semantic validation. It is never copied into AssistantMessage until the
+// caller accepts this exact digest.
+type TurnCandidate struct {
+	Message string `json:"message"`
+	SHA256  string `json:"sha256"`
+	Attempt int    `json:"attempt"`
 }
 
 // Usage is what one turn cost the provider.
@@ -427,8 +444,28 @@ type SubmitTurnRequest struct {
 // message must satisfy. SHA256 binds the caller's bytes through admission,
 // persistence, model prompting, and completion validation.
 type OutputContract struct {
-	JSONSchema json.RawMessage `json:"json_schema"`
-	SHA256     string          `json:"sha256"`
+	JSONSchema                json.RawMessage `json:"json_schema"`
+	SHA256                    string          `json:"sha256"`
+	RequireSemanticValidation bool            `json:"require_semantic_validation,omitempty"`
+}
+
+type StageTurnCandidateRequest struct {
+	SessionID         string
+	TurnID            string
+	Message           string
+	SHA256            string
+	Attempt           int
+	Artifacts         []OutputArtifact
+	Usage             Usage
+	CumulativeCostUSD float64
+	CostRecorded      bool
+}
+
+type RejectTurnCandidateRequest struct {
+	SessionID       string
+	TurnID          string
+	CandidateSHA256 string
+	Violations      []string
 }
 
 type CancelTurnRequest struct {
@@ -450,6 +487,7 @@ type CompleteTurnRequest struct {
 	Usage             Usage
 	CumulativeCostUSD float64
 	CostRecorded      bool
+	CandidateSHA256   string
 }
 
 type FailTurnRequest struct {

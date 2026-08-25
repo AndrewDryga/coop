@@ -237,6 +237,69 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	}
 }
 
+func TestSemanticCandidateIsAcceptedEndToEndByExactDigest(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	handler := NewHTTPHandler(service)
+	ctx := context.Background()
+	sess, err := service.Store().CreateSession(ctx, "semantic-http-session", session.CreateSessionRequest{Target: "codex:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := json.RawMessage(`{"type":"object"}`)
+	schemaDigest := sha256.Sum256(schema)
+	turn, err := service.Store().SubmitTurn(ctx, "semantic-http-turn", session.SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
+		OutputContract: &session.OutputContract{
+			JSONSchema: schema, SHA256: hex.EncodeToString(schemaDigest[:]),
+			RequireSemanticValidation: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, ok, err := service.Store().LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("lease = %+v, ok=%v, err=%v", turn, ok, err)
+	}
+	if _, err := service.Store().MarkTurnSendIntent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Store().MarkTurnSent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	message := `{"reply":"accepted"}`
+	messageDigest := sha256.Sum256([]byte(message))
+	staged, err := service.Store().StageTurnCandidate(ctx, session.StageTurnCandidateRequest{
+		SessionID: sess.ID, TurnID: turn.ID, Message: message,
+		SHA256: hex.EncodeToString(messageDigest[:]), Attempt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := sessionHTTPTestRequest(t, handler, http.MethodGet,
+		"/v1/sessions/"+sess.ID+"/turns/"+turn.ID, "", "", "")
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), `"state":"awaiting_validation"`) ||
+		!strings.Contains(get.Body.String(), `"candidate"`) || strings.Contains(get.Body.String(), `"assistant_message"`) {
+		t.Fatalf("candidate GET = %d %s", get.Code, get.Body.String())
+	}
+	body := fmt.Sprintf(`{"candidate_sha256":%q,"verdict":"accept"}`, staged.Candidate.SHA256)
+	accepted := sessionHTTPTestRequest(t, handler, http.MethodPost,
+		"/v1/sessions/"+sess.ID+"/turns/"+turn.ID+"/validation", body, "accept-candidate", "application/json")
+	if accepted.Code != http.StatusOK || !strings.Contains(accepted.Body.String(), `"state":"completed"`) ||
+		!strings.Contains(accepted.Body.String(), `"assistant_message":"{\"reply\":\"accepted\"}"`) ||
+		!strings.Contains(accepted.Body.String(), `"validation_receipt":"validation_`) {
+		t.Fatalf("candidate acceptance = %d %s", accepted.Code, accepted.Body.String())
+	}
+	// A transport retry after Coop committed the receipt returns the same
+	// accepted turn instead of turning a successful decision into a conflict.
+	retry := sessionHTTPTestRequest(t, handler, http.MethodPost,
+		"/v1/sessions/"+sess.ID+"/turns/"+turn.ID+"/validation", body, "accept-candidate", "application/json")
+	if retry.Code != http.StatusOK || !strings.Contains(retry.Body.String(), `"validation_receipt":"validation_`) {
+		t.Fatalf("candidate acceptance retry = %d %s", retry.Code, retry.Body.String())
+	}
+}
+
 func TestRepositoryUnavailableIsPublicAndRetryable(t *testing.T) {
 	code, status, detail := sessionHTTPError(&session.Error{
 		Code:   session.ErrorCode("repository_unavailable"),

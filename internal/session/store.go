@@ -1082,15 +1082,17 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 	}
 	outputSchema := []byte{}
 	var outputSchemaSHA256 string
+	var outputSemanticValidation bool
 	if turn.OutputContract != nil {
 		outputSchema = turn.OutputContract.JSONSchema
 		outputSchemaSHA256 = turn.OutputContract.SHA256
+		outputSemanticValidation = turn.OutputContract.RequireSemanticValidation
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO turns (id, session_id, ordinal, idempotency_key, request_hash, state, send_state, prompt, queued_at, min_target_index, rewind_target, output_schema, output_schema_sha256)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.SessionID, turn.Ordinal, turn.IdempotencyKey,
+		INSERT INTO turns (id, session_id, ordinal, idempotency_key, request_hash, state, send_state, prompt, queued_at, min_target_index, rewind_target, output_schema, output_schema_sha256, output_semantic_validation)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.SessionID, turn.Ordinal, turn.IdempotencyKey,
 		turn.RequestHash, string(turn.State), string(turn.SendState), turn.Prompt, now.UnixNano(),
-		turn.MinTargetIndex, turn.RewindTarget, outputSchema, outputSchemaSHA256); err != nil {
+		turn.MinTargetIndex, turn.RewindTarget, outputSchema, outputSchemaSHA256, outputSemanticValidation); err != nil {
 		return Turn{}, fmt.Errorf("insert turn: %w", err)
 	}
 	for ordinal, artifact := range req.Artifacts {
@@ -1279,17 +1281,21 @@ func (s *Store) LeaseNextTurn(ctx context.Context, sessionID string) (Turn, bool
 		return Turn{}, false, err
 	}
 	now := s.now()
-	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, send_state = ?, started_at = ? WHERE id = ?`, string(TurnStarting), string(SendStateNone), now.UnixNano(), turn.ID); err != nil {
+	nextState, nextSend, nextActivity := TurnStarting, SendStateNone, ActivityStarting
+	if turn.OutputContract != nil && turn.OutputContract.RequireSemanticValidation && turn.ValidationAttempt > 0 {
+		nextState, nextSend, nextActivity = TurnRunning, SendStateSent, ActivityRunning
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, send_state = ?, started_at = ? WHERE id = ?`, string(nextState), string(nextSend), now.UnixNano(), turn.ID); err != nil {
 		return Turn{}, false, fmt.Errorf("lease turn: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET active_turn_id = ?, activity = ?, queued_turn_count = queued_turn_count - 1, queued_prompt_bytes = queued_prompt_bytes - ?, updated_at = ? WHERE id = ?`, turn.ID, string(ActivityStarting), len(turn.Prompt), now.UnixNano(), sessionID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET active_turn_id = ?, activity = ?, queued_turn_count = queued_turn_count - 1, queued_prompt_bytes = queued_prompt_bytes - ?, updated_at = ? WHERE id = ?`, turn.ID, string(nextActivity), len(turn.Prompt), now.UnixNano(), sessionID); err != nil {
 		return Turn{}, false, fmt.Errorf("mark active turn: %w", err)
 	}
 	if _, err := s.appendEventTx(ctx, tx, sessionID, turn.ID, EventTurnStarted, 1, mustJSON(map[string]any{"ordinal": turn.Ordinal})); err != nil {
 		return Turn{}, false, fmt.Errorf("append turn.started: %w", err)
 	}
-	turn.State = TurnStarting
-	turn.SendState = SendStateNone
+	turn.State = nextState
+	turn.SendState = nextSend
 	turn.StartedAt = now
 	if err := tx.Commit(); err != nil {
 		return Turn{}, false, fmt.Errorf("commit turn lease: %w", err)
@@ -1563,7 +1569,8 @@ const turnSelect = `SELECT id, session_id, ordinal, idempotency_key, request_has
 	   prompt, queued_at, started_at, finished_at, stop_reason, assistant_message, error_code, error_detail,
 	   usage_input_tokens, usage_cached_input_tokens, usage_output_tokens, usage_reasoning_tokens,
 	   usage_cost_usd, usage_cost_recorded, min_target_index, rewind_target,
-	   output_schema, output_schema_sha256
+	   output_schema, output_schema_sha256, output_semantic_validation,
+	   candidate_message, candidate_sha256, validation_attempt, validation_error, validation_receipt
 FROM turns`
 
 func (s *Store) GetTurn(ctx context.Context, sessionID, turnID string) (Turn, error) {
@@ -1674,21 +1681,34 @@ func scanTurn(row rowScanner) (Turn, error) {
 	var queuedAt, startedAt, finishedAt sql.NullInt64
 	var outputSchema []byte
 	var outputSchemaSHA256 string
+	var outputSemanticValidation bool
+	var candidateMessage, candidateSHA256, validationError, validationReceipt string
 	if err := row.Scan(&turn.ID, &turn.SessionID, &turn.Ordinal, &turn.IdempotencyKey,
 		&turn.RequestHash, &state, &sendState, &turn.Prompt, &queuedAt, &startedAt, &finishedAt,
 		&stopReason, &turn.AssistantMessage, &errorCode, &turn.ErrorDetail,
 		&turn.Usage.InputTokens, &turn.Usage.CachedInputTokens,
 		&turn.Usage.OutputTokens, &turn.Usage.ReasoningTokens,
 		&turn.Usage.CostUSD, &turn.Usage.CostRecorded, &turn.MinTargetIndex,
-		&turn.RewindTarget, &outputSchema, &outputSchemaSHA256); err != nil {
+		&turn.RewindTarget, &outputSchema, &outputSchemaSHA256, &outputSemanticValidation,
+		&candidateMessage, &candidateSHA256, &turn.ValidationAttempt,
+		&validationError, &validationReceipt); err != nil {
 		return Turn{}, err
 	}
 	if len(outputSchema) > 0 || outputSchemaSHA256 != "" {
 		turn.OutputContract = &OutputContract{
-			JSONSchema: append(json.RawMessage(nil), outputSchema...),
-			SHA256:     outputSchemaSHA256,
+			JSONSchema:                append(json.RawMessage(nil), outputSchema...),
+			SHA256:                    outputSchemaSHA256,
+			RequireSemanticValidation: outputSemanticValidation,
 		}
 	}
+	if candidateSHA256 != "" {
+		turn.CandidateSHA256 = candidateSHA256
+		if TurnState(state) == TurnAwaitingValidation {
+			turn.Candidate = &TurnCandidate{Message: candidateMessage, SHA256: candidateSHA256, Attempt: turn.ValidationAttempt}
+		}
+	}
+	turn.ValidationError = validationError
+	turn.ValidationReceipt = validationReceipt
 	turn.State = TurnState(state)
 	turn.SendState = SendState(sendState)
 	turn.StopReason = StopReason(stopReason)
@@ -1808,6 +1828,224 @@ func isTerminal(state TurnState) bool {
 	}
 }
 
+// StageTurnCandidate durably separates a schema-valid model result from a
+// completed assistant message. Callers that own semantic rules can inspect the
+// candidate without any consumer mistaking it for an accepted answer.
+func (s *Store) StageTurnCandidate(ctx context.Context, req StageTurnCandidateRequest) (Turn, error) {
+	if !validBoundedText(req.SessionID, MaxIDBytes) || !validBoundedText(req.TurnID, MaxIDBytes) ||
+		req.Message == "" || len(req.Message) > MaxEventPayloadBytes || !utf8.ValidString(req.Message) ||
+		req.Attempt < 1 || req.Attempt > MaxOutputContractAttempts {
+		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "semantic candidate is outside bounds"}
+	}
+	digest := sha256.Sum256([]byte(req.Message))
+	if req.SHA256 != hex.EncodeToString(digest[:]) {
+		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "semantic candidate digest does not match its message"}
+	}
+	if req.CostRecorded && (req.CumulativeCostUSD < 0 || math.IsNaN(req.CumulativeCostUSD) || math.IsInf(req.CumulativeCostUSD, 0)) {
+		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "turn cost is outside bounds"}
+	}
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Turn{}, fmt.Errorf("begin semantic candidate staging: %w", err)
+	}
+	defer tx.Rollback()
+	sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", req.SessionID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Turn{}, ErrSessionNotFound
+	}
+	if err != nil {
+		return Turn{}, fmt.Errorf("read candidate session: %w", err)
+	}
+	turn, err := scanTurn(tx.QueryRowContext(ctx, turnSelect+" WHERE session_id = ? AND id = ?", req.SessionID, req.TurnID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Turn{}, ErrTurnNotFound
+	}
+	if err != nil {
+		return Turn{}, fmt.Errorf("read candidate turn: %w", err)
+	}
+	if turn.OutputContract == nil || !turn.OutputContract.RequireSemanticValidation ||
+		turn.State != TurnRunning || turn.SendState != SendStateSent ||
+		sess.ActiveTurnID != turn.ID || sess.Activity != ActivityRunning {
+		return Turn{}, &Error{Code: CodeTurnNotRunnable, Detail: "turn does not await semantic validation"}
+	}
+	validator, err := CompileOutputContract(turn.OutputContract)
+	if err != nil || validator.Validate([]byte(req.Message)) != nil {
+		return Turn{}, &Error{Code: CodeOutputContractFailed, Detail: "semantic candidate does not satisfy its durable schema"}
+	}
+	if err := replaceOutputArtifactsTx(ctx, tx, turn.ID, req.Artifacts); err != nil {
+		return Turn{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, candidate_message = ?, candidate_sha256 = ?,
+		validation_attempt = ?, validation_error = '', validation_receipt = '',
+		usage_input_tokens = ?, usage_cached_input_tokens = ?, usage_output_tokens = ?,
+		usage_reasoning_tokens = ?, usage_cost_usd = ?, usage_cost_recorded = ? WHERE id = ?`,
+		string(TurnAwaitingValidation), req.Message, req.SHA256, req.Attempt,
+		req.Usage.InputTokens, req.Usage.CachedInputTokens, req.Usage.OutputTokens,
+		req.Usage.ReasoningTokens, req.CumulativeCostUSD, req.CostRecorded, turn.ID); err != nil {
+		return Turn{}, fmt.Errorf("stage semantic candidate: %w", err)
+	}
+	turn.State = TurnAwaitingValidation
+	turn.Candidate = &TurnCandidate{Message: req.Message, SHA256: req.SHA256, Attempt: req.Attempt}
+	turn.CandidateSHA256 = req.SHA256
+	turn.ValidationAttempt = req.Attempt
+	turn.Usage = req.Usage
+	turn.Usage.CostUSD, turn.Usage.CostRecorded = req.CumulativeCostUSD, req.CostRecorded
+	turn.OutputArtifacts = outputArtifactMetadata(req.Artifacts)
+	if _, err := s.appendEventTx(ctx, tx, req.SessionID, req.TurnID, EventTurnAwaitingValidation, 1,
+		mustJSON(map[string]any{"candidate_sha256": req.SHA256, "attempt": req.Attempt})); err != nil {
+		return Turn{}, fmt.Errorf("append turn.awaiting_validation: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Turn{}, fmt.Errorf("commit semantic candidate: %w", err)
+	}
+	return turn, nil
+}
+
+func replaceOutputArtifactsTx(ctx context.Context, tx *sql.Tx, turnID string, artifacts []OutputArtifact) error {
+	if len(artifacts) > MaxTurnArtifacts {
+		return &Error{Code: CodeInvalidRequest, Detail: "turn has too many output artifacts"}
+	}
+	total := 0
+	seenIDs := make(map[string]bool, len(artifacts))
+	seenDigests := make(map[string]bool, len(artifacts))
+	for _, artifact := range artifacts {
+		if err := validateOutputArtifact(artifact); err != nil {
+			return err
+		}
+		if seenIDs[artifact.ID] || seenDigests[artifact.SHA256] {
+			return &Error{Code: CodeInvalidRequest, Detail: "turn has duplicate output artifacts"}
+		}
+		seenIDs[artifact.ID], seenDigests[artifact.SHA256] = true, true
+		if total > MaxTurnArtifactBytes-len(artifact.Data) {
+			return &Error{Code: CodeInvalidRequest, Detail: "turn output artifact content exceeds its bound"}
+		}
+		total += len(artifact.Data)
+	}
+	if err := deleteTurnArtifacts(ctx, tx, turnID); err != nil {
+		return err
+	}
+	for i, artifact := range artifacts {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO turn_output_artifacts(turn_id, ordinal, id, name, media_type, sha256, data)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`, turnID, i, artifact.ID, artifact.Name, artifact.MediaType, artifact.SHA256, artifact.Data); err != nil {
+			return fmt.Errorf("store output artifact: %w", err)
+		}
+	}
+	return nil
+}
+
+func outputArtifactMetadata(artifacts []OutputArtifact) []OutputArtifact {
+	result := make([]OutputArtifact, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		artifact.Bytes = int64(len(artifact.Data))
+		artifact.Data = nil
+		result = append(result, artifact)
+	}
+	return result
+}
+
+// RejectTurnCandidate records caller-owned semantic violations and either
+// requeues the same logical turn for repair or fails it at the shared
+// three-candidate bound. The rejected bytes never become an assistant message.
+func (s *Store) RejectTurnCandidate(ctx context.Context, req RejectTurnCandidateRequest) (Turn, error) {
+	if !validBoundedText(req.SessionID, MaxIDBytes) || !validBoundedText(req.TurnID, MaxIDBytes) ||
+		len(req.CandidateSHA256) != sha256.Size*2 || len(req.Violations) == 0 || len(req.Violations) > 20 {
+		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "semantic rejection is outside bounds"}
+	}
+	violations := make([]string, 0, len(req.Violations))
+	total := 0
+	for _, violation := range req.Violations {
+		violation = strings.TrimSpace(strings.ToValidUTF8(violation, "�"))
+		if violation == "" || len(violation) > MaxErrorDetailBytes || total > MaxErrorDetailBytes-len(violation)-1 {
+			return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "semantic violation is outside bounds"}
+		}
+		total += len(violation) + 1
+		violations = append(violations, violation)
+	}
+	detail := strings.Join(violations, "\n")
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Turn{}, fmt.Errorf("begin semantic candidate rejection: %w", err)
+	}
+	defer tx.Rollback()
+	sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", req.SessionID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Turn{}, ErrSessionNotFound
+	}
+	if err != nil {
+		return Turn{}, fmt.Errorf("read candidate session for rejection: %w", err)
+	}
+	turn, err := scanTurn(tx.QueryRowContext(ctx, turnSelect+" WHERE session_id = ? AND id = ?", req.SessionID, req.TurnID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Turn{}, ErrTurnNotFound
+	}
+	if err != nil {
+		return Turn{}, fmt.Errorf("read candidate turn for rejection: %w", err)
+	}
+	if turn.State == TurnQueued && turn.CandidateSHA256 == req.CandidateSHA256 && turn.ValidationError != "" {
+		return turn, nil
+	}
+	if turn.State != TurnAwaitingValidation || turn.Candidate == nil || sess.ActiveTurnID != turn.ID {
+		return Turn{}, &Error{Code: CodeTurnNotRunnable, Detail: "turn has no semantic candidate awaiting rejection"}
+	}
+	if turn.Candidate.SHA256 != req.CandidateSHA256 {
+		return Turn{}, &Error{Code: CodeRevisionConflict, Detail: "semantic candidate digest is stale"}
+	}
+	now := s.now()
+	if _, err := s.appendEventTx(ctx, tx, req.SessionID, req.TurnID, EventOutputContractRejected, 1, mustJSON(map[string]any{
+		"attempt": turn.ValidationAttempt, "candidate_sha256": req.CandidateSHA256,
+		"semantic": true, "violations": violations,
+	})); err != nil {
+		return Turn{}, fmt.Errorf("append semantic output rejection: %w", err)
+	}
+	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
+		return Turn{}, err
+	}
+	turn.Candidate = nil
+	turn.ValidationError = detail
+	turn.OutputArtifacts = nil
+	if turn.ValidationAttempt >= MaxOutputContractAttempts {
+		failureDetail := fmt.Sprintf("caller rejected semantic output after %d attempts", turn.ValidationAttempt)
+		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?,
+			assistant_message = '', candidate_message = '',
+			validation_error = ?, error_code = ?, error_detail = ? WHERE id = ?`,
+			string(TurnFailed), now.UnixNano(), string(StopError), detail,
+			string(CodeOutputContractFailed), failureDetail, turn.ID); err != nil {
+			return Turn{}, fmt.Errorf("fail rejected semantic turn: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET active_turn_id = '', activity = ?,
+			turns_used = turns_used + 1, updated_at = ? WHERE id = ?`,
+			string(ActivityParked), now.UnixNano(), sess.ID); err != nil {
+			return Turn{}, fmt.Errorf("park rejected semantic turn: %w", err)
+		}
+		turn.State, turn.FinishedAt, turn.StopReason = TurnFailed, now, StopError
+		turn.ErrorCode, turn.ErrorDetail = CodeOutputContractFailed, failureDetail
+		if _, err := s.appendEventTx(ctx, tx, req.SessionID, req.TurnID, EventTurnFailed, 1,
+			mustJSON(map[string]any{"error_code": string(turn.ErrorCode), "detail": failureDetail, "ordinal": turn.Ordinal})); err != nil {
+			return Turn{}, fmt.Errorf("append rejected semantic turn failure: %w", err)
+		}
+		if _, err := s.appendEventTx(ctx, tx, req.SessionID, "", EventSessionParked, 1,
+			mustJSON(map[string]any{"reason": string(StopError)})); err != nil {
+			return Turn{}, fmt.Errorf("append rejected semantic session parked: %w", err)
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, send_state = ?, started_at = NULL,
+			candidate_message = '', validation_error = ?, validation_receipt = '' WHERE id = ?`,
+			string(TurnQueued), string(SendStateNone), detail, turn.ID); err != nil {
+			return Turn{}, fmt.Errorf("requeue rejected semantic turn: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET active_turn_id = '', activity = ?,
+			queued_turn_count = queued_turn_count + 1, queued_prompt_bytes = queued_prompt_bytes + ?, updated_at = ? WHERE id = ?`,
+			string(ActivityParked), len(turn.Prompt), now.UnixNano(), sess.ID); err != nil {
+			return Turn{}, fmt.Errorf("requeue rejected semantic session: %w", err)
+		}
+		turn.State, turn.SendState, turn.StartedAt = TurnQueued, SendStateNone, time.Time{}
+	}
+	if err := tx.Commit(); err != nil {
+		return Turn{}, fmt.Errorf("commit semantic candidate rejection: %w", err)
+	}
+	return turn, nil
+}
+
 func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn, error) {
 	if req.SessionID == "" || req.TurnID == "" {
 		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "session and turn are required"}
@@ -1854,7 +2092,28 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	} else if err != nil {
 		return Turn{}, fmt.Errorf("read turn for completion: %w", err)
 	}
-	if turn.State != TurnRunning || turn.SendState != SendStateSent {
+	semanticAcceptance := turn.OutputContract != nil && turn.OutputContract.RequireSemanticValidation
+	if semanticAcceptance {
+		if turn.State == TurnCompleted && turn.ValidationReceipt != "" {
+			digest := sha256.Sum256([]byte(turn.AssistantMessage))
+			if req.CandidateSHA256 == hex.EncodeToString(digest[:]) {
+				return turn, nil
+			}
+			return Turn{}, &Error{Code: CodeRevisionConflict, Detail: "semantic candidate digest is stale"}
+		}
+		if turn.State != TurnAwaitingValidation || turn.Candidate == nil {
+			return Turn{}, &Error{Code: CodeTurnNotRunnable, Detail: "turn has no semantic candidate awaiting acceptance"}
+		}
+		if req.CandidateSHA256 == "" || req.CandidateSHA256 != turn.Candidate.SHA256 {
+			return Turn{}, &Error{Code: CodeRevisionConflict, Detail: "semantic candidate digest is stale"}
+		}
+		if req.Message != "" || len(req.Artifacts) != 0 {
+			return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "semantic acceptance uses the stored candidate"}
+		}
+		req.Message = turn.Candidate.Message
+		req.Usage = turn.Usage
+		req.CumulativeCostUSD, req.CostRecorded = turn.Usage.CostUSD, turn.Usage.CostRecorded
+	} else if turn.State != TurnRunning || turn.SendState != SendStateSent || req.CandidateSHA256 != "" {
 		return Turn{}, &Error{Code: CodeTurnNotRunnable, Detail: "turn is not running after send"}
 	}
 	if sess.ActiveTurnID != turn.ID || sess.Activity != ActivityRunning {
@@ -1865,6 +2124,9 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	turn.FinishedAt = now
 	turn.StopReason = StopEndTurn
 	turn.AssistantMessage = req.Message
+	if semanticAcceptance {
+		turn.ValidationReceipt = s.id("validation")
+	}
 	turn.Usage = req.Usage
 	turn.Usage.CostUSD, turn.Usage.CostRecorded = 0, false
 	if req.CostRecorded {
@@ -1883,15 +2145,17 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?,
 	    assistant_message = ?, usage_input_tokens = ?, usage_cached_input_tokens = ?,
 	    usage_output_tokens = ?, usage_reasoning_tokens = ?, usage_cost_usd = ?,
-	    usage_cost_recorded = ? WHERE id = ?`,
+	    usage_cost_recorded = ?, validation_receipt = ? WHERE id = ?`,
 		string(turn.State), now.UnixNano(), string(turn.StopReason), turn.AssistantMessage,
 		turn.Usage.InputTokens, turn.Usage.CachedInputTokens,
 		turn.Usage.OutputTokens, turn.Usage.ReasoningTokens,
-		turn.Usage.CostUSD, turn.Usage.CostRecorded, turn.ID); err != nil {
+		turn.Usage.CostUSD, turn.Usage.CostRecorded, turn.ValidationReceipt, turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("complete turn: %w", err)
 	}
-	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
-		return Turn{}, err
+	if !semanticAcceptance {
+		if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
+			return Turn{}, err
+		}
 	}
 	for i, artifact := range req.Artifacts {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO turn_output_artifacts(turn_id, ordinal, id, name, media_type, sha256, data)
@@ -1933,6 +2197,12 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	}
 	if err := tx.Commit(); err != nil {
 		return Turn{}, fmt.Errorf("commit turn completion: %w", err)
+	}
+	if semanticAcceptance {
+		turn.OutputArtifacts, err = readOutputArtifactMetadata(ctx, s.db, turn.ID)
+		if err != nil {
+			return Turn{}, err
+		}
 	}
 	return turn, nil
 }

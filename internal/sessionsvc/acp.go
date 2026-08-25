@@ -55,7 +55,7 @@ const (
 // One initial candidate plus two corrections keeps a broken model from
 // burning an unbounded turn while preserving the caller-visible invariant:
 // invalid structured output is never a completed turn.
-const sessionOutputContractMaxAttempts = 3
+const sessionOutputContractMaxAttempts = session.MaxOutputContractAttempts
 
 const (
 	sessionACPProtocolError   session.ErrorCode = "acp_protocol_error"
@@ -394,7 +394,7 @@ func (r *sessionTurnRunner) narrateProviderBackoff(
 func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leased session.Turn) (result session.Turn, runErr error) {
 	var execution *sessionWarmExecution
 	var assistant string
-	var usage session.Usage
+	usage := leased.Usage
 	var candidateUsage session.Usage
 	var outputArtifacts []session.OutputArtifact
 	protocolComplete := false
@@ -485,9 +485,11 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		runErr = acpFailure(sessionACPInvalidTurn, "runner is not configured")
 		return result, runErr
 	}
+	semanticResume := leased.OutputContract != nil && leased.OutputContract.RequireSemanticValidation &&
+		leased.ValidationAttempt > 0 && leased.State == session.TurnRunning && leased.SendState == session.SendStateSent
 	if bound.ID == "" || leased.ID == "" || bound.ID != leased.SessionID ||
 		(leased.State != session.TurnStarting && leased.State != session.TurnRunning) ||
-		leased.SendState != session.SendStateNone {
+		(leased.SendState != session.SendStateNone && !semanticResume) {
 		runErr = acpFailure(sessionACPInvalidTurn, "turn is not an un-sent leased turn")
 		return result, runErr
 	}
@@ -521,11 +523,17 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		runErr = acpFailure(session.CodeOutputContractFailed, "the durable output contract could not be compiled")
 		return result, runErr
 	}
-	contractAttempt := 0
+	contractAttempt := leased.ValidationAttempt
 	prompt := leased.Prompt
 	checkpointSend := true
 	if leased.OutputContract != nil {
 		prompt = sessionOutputContractInitialPrompt(leased.Prompt, leased.OutputContract)
+	}
+	if semanticResume {
+		prompt = sessionOutputContractRepairPrompt(
+			leased.OutputContract, contractAttempt+1, errors.New(leased.ValidationError),
+		)
+		checkpointSend = false
 	}
 
 	for {
@@ -586,11 +594,22 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			if validator == nil {
 				break
 			}
+			contractAttempt++
 			validationErr := validator.Validate([]byte(assistant))
 			if validationErr == nil {
+				if leased.OutputContract.RequireSemanticValidation {
+					staged, stageErr := r.stageTurnCandidate(
+						bound, leased, assistant, outputArtifacts, usage, contractAttempt,
+					)
+					if stageErr != nil {
+						runErr = stageErr
+						return result, runErr
+					}
+					result = staged
+					return result, nil
+				}
 				break
 			}
-			contractAttempt++
 			r.recordOutputContractRejection(ctx, bound.ID, leased.ID, leased.OutputContract.SHA256, contractAttempt, validationErr)
 			if contractAttempt >= sessionOutputContractMaxAttempts {
 				runErr = acpFailure(
@@ -671,8 +690,14 @@ func sessionOutputContractRepairPrompt(contract *session.OutputContract, attempt
 	detail := sessionACPBoundedDetail("validation failed", validationErr.Error())
 	return fmt.Sprintf(`Your previous final response was rejected by output contract %s.
 %s
-Return a corrected replacement as exactly one JSON value. Do not include explanation or Markdown.
-This is correction attempt %d of %d.`, contract.SHA256, detail, attempt, sessionOutputContractMaxAttempts)
+Save the exact bytes inside the json-schema element to /tmp/coop-output-contract.schema.json.
+Write the corrected replacement to /tmp/coop-output-contract.candidate.json, then run:
+jv --assert-format --output detailed /tmp/coop-output-contract.schema.json /tmp/coop-output-contract.candidate.json
+Fix every error and rerun that command. Return the candidate only after jv exits successfully.
+Return exactly one JSON value. Do not include explanation or Markdown.
+This is correction attempt %d of %d.
+
+<json-schema>%s</json-schema>`, contract.SHA256, detail, attempt, sessionOutputContractMaxAttempts, contract.JSONSchema)
 }
 
 func (r *sessionTurnRunner) recordOutputContractRejection(
@@ -795,6 +820,27 @@ func (r *sessionTurnRunner) completeTurn(bound session.Session, leased session.T
 	usage.CostUSD, usage.CostRecorded = 0, false
 	return r.completion.CompleteTurn(ctx, session.CompleteTurnRequest{
 		SessionID: bound.ID, TurnID: leased.ID, Message: assistant,
+		Artifacts: artifacts, Usage: usage,
+		CumulativeCostUSD: cumulativeCost, CostRecorded: costRecorded,
+	})
+}
+
+func (r *sessionTurnRunner) stageTurnCandidate(
+	bound session.Session,
+	leased session.Turn,
+	assistant string,
+	artifacts []session.OutputArtifact,
+	usage session.Usage,
+	attempt int,
+) (session.Turn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
+	defer cancel()
+	digest := sha256.Sum256([]byte(assistant))
+	cumulativeCost, costRecorded := usage.CostUSD, usage.CostRecorded
+	usage.CostUSD, usage.CostRecorded = 0, false
+	return r.store.StageTurnCandidate(ctx, session.StageTurnCandidateRequest{
+		SessionID: bound.ID, TurnID: leased.ID, Message: assistant,
+		SHA256: fmt.Sprintf("%x", digest[:]), Attempt: attempt,
 		Artifacts: artifacts, Usage: usage,
 		CumulativeCostUSD: cumulativeCost, CostRecorded: costRecorded,
 	})
