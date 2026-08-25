@@ -523,7 +523,12 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		runErr = acpFailure(session.CodeOutputContractFailed, "the durable output contract could not be compiled")
 		return result, runErr
 	}
-	contractAttempt := leased.ValidationAttempt
+	// Schema repair happens inside this runner invocation. Semantic repair is a
+	// caller-owned round resumed from durable ValidationAttempt. Sharing one
+	// counter meant malformed JSON spent a semantic candidate before the caller
+	// had inspected any candidate at all.
+	schemaAttempt := 0
+	semanticAttempt := leased.ValidationAttempt + 1
 	prompt := leased.Prompt
 	checkpointSend := true
 	if leased.OutputContract != nil {
@@ -531,7 +536,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 	}
 	if semanticResume {
 		prompt = sessionOutputContractRepairPrompt(
-			leased.OutputContract, contractAttempt+1, errors.New(leased.ValidationError),
+			leased.OutputContract, semanticAttempt, errors.New(leased.ValidationError),
 		)
 		checkpointSend = false
 	}
@@ -594,12 +599,12 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			if validator == nil {
 				break
 			}
-			contractAttempt++
+			schemaAttempt++
 			validationErr := validator.Validate([]byte(assistant))
 			if validationErr == nil {
 				if leased.OutputContract.RequireSemanticValidation {
 					staged, stageErr := r.stageTurnCandidate(
-						bound, leased, assistant, outputArtifacts, usage, contractAttempt,
+						bound, leased, assistant, outputArtifacts, usage, semanticAttempt,
 					)
 					if stageErr != nil {
 						runErr = stageErr
@@ -610,15 +615,15 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 				}
 				break
 			}
-			r.recordOutputContractRejection(ctx, bound.ID, leased.ID, leased.OutputContract.SHA256, contractAttempt, validationErr)
-			if contractAttempt >= sessionOutputContractMaxAttempts {
+			r.recordOutputContractRejection(ctx, bound.ID, leased.ID, leased.OutputContract.SHA256, schemaAttempt, validationErr)
+			if schemaAttempt >= sessionOutputContractMaxAttempts {
 				runErr = acpFailure(
 					session.CodeOutputContractFailed,
-					fmt.Sprintf("provider returned invalid structured output after %d attempts", contractAttempt),
+					fmt.Sprintf("provider returned invalid structured output after %d attempts", schemaAttempt),
 				)
 				return result, runErr
 			}
-			prompt = sessionOutputContractRepairPrompt(leased.OutputContract, contractAttempt+1, validationErr)
+			prompt = sessionOutputContractRepairPrompt(leased.OutputContract, schemaAttempt+1, validationErr)
 			checkpointSend = false
 			continue
 		}

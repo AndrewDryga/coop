@@ -159,6 +159,29 @@ func TestSchemaValidSemanticResultWaitsForCallerAcceptance(t *testing.T) {
 	}
 }
 
+// A production turn used its first shared attempt repairing malformed JSON,
+// leaving only two chances to satisfy caller-owned semantic rules. Schema
+// repair and semantic repair are different failure classes and must not spend
+// the same budget.
+func TestSchemaRepairDoesNotSpendASemanticCandidateAttempt(t *testing.T) {
+	fixture := newSessionACPFixture(t, "invalid-contract-once")
+	leased := fixture.submitSemanticContract(t, "return the result")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != session.TurnAwaitingValidation || result.Candidate == nil {
+		t.Fatalf("semantic candidate = %+v", result)
+	}
+	if result.Candidate.Attempt != 1 || result.ValidationAttempt != 1 {
+		t.Fatalf("semantic attempt = candidate %d, turn %d; want 1 after schema repair",
+			result.Candidate.Attempt, result.ValidationAttempt)
+	}
+	if got := countStrings(readSessionACPLog(t, fixture.childLog), "session/prompt"); got != 2 {
+		t.Fatalf("prompt calls = %d, want malformed JSON plus its schema repair", got)
+	}
+}
+
 func TestEveryStructuredCandidateIsToldToSelfValidateBeforeReturning(t *testing.T) {
 	contract := &session.OutputContract{SHA256: strings.Repeat("a", 64), JSONSchema: json.RawMessage(`{"type":"object"}`)}
 	for name, prompt := range map[string]string{
