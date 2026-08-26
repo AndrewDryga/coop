@@ -1021,6 +1021,30 @@ takes its model from codex's own `config.toml` — coop can't set it over ACP �
 > GUI apps don't always inherit your shell's `PATH`. If Zed can't find `coop`, use the
 > absolute path from step 1 as `command`.
 
+**Remote repository? Prefer Zed Remote Development.** Open the repository through Zed's SSH
+remote workflow and register the same `command: "coop"`, `args: ["acp", "<target>"]` there. The
+editor, terminal, repository, and ACP process then share one remote filesystem and its exact
+absolute paths.
+
+If the editor must stay local, its custom-agent command can be SSH itself:
+
+```jsonc
+{
+  "agent_servers": {
+    "coop · remote": {
+      "type": "custom",
+      "command": "ssh",
+      "args": ["-T", "dev@coop-host", "cd /srv/projects/my-repo && exec coop acp claude"]
+    }
+  }
+}
+```
+
+SSH supplies host identity, authentication, encryption, and process transport; Coop adds no ACP
+TCP listener. The command-over-SSH form is appropriate only when Zed can resolve the same absolute
+repository paths the remote ACP process reports. Native Remote Development is the reliable choice
+when the two hosts use different paths.
+
 **4. Use it.** Open the agent panel, pick coop from the dropdown, and start a
 thread. Zed launches `coop acp <agent>` with the project as cwd; the agent runs in the
 box and edits your files over ACP. Tool calls never prompt: coop runs every editor

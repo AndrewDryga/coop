@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Remote ACP uses the editor's existing SSH transport instead of a Coop TCP protocol.** Zed
+  Remote Development can run `coop acp <target>` beside the remote repository, while a custom
+  agent may invoke that same stdio command through `ssh -T`. Coop therefore adds no
+  unauthenticated listener, socket bridge, client lifecycle, or second network trust boundary.
+  The initial ACP target or preset is now required instead of guessing the first signed-in
+  provider; the live Provider and Account selectors remain available after connection.
+
 - **An ACP session now starts when the editor spells the repo path differently than git does.** Coop
   mounts the repo at `git rev-parse --show-toplevel`'s spelling, and inside the box — Linux, and
   case-sensitive — that is the only path there is. A macOS editor or shell holding

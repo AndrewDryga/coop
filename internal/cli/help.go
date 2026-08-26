@@ -401,11 +401,11 @@ var commandHelp = map[string]string{
          coop acp fusion <preset> [--peer <agent>...]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
-  command at e.g. ["acp","claude"] — one entry per agent or governor. A bare
-  ["acp"] (no agent) works too: it starts on your first signed-in provider and the
-  PROVIDER dropdown below switches it live; name one to pin it. coop always
-  proxies the session, so the editor stays connected across a box restart (a
-  rebuild/OOM) — it reconnects and replays the handshake, no lost session.
+  command at e.g. ["acp","claude"] — one entry per agent, governor, or preset.
+  The initial target is required; credential order is never launch intent. The
+  PROVIDER dropdown can still switch a plain session live. coop always proxies
+  the session, so the editor stays connected across a box restart (a rebuild/OOM)
+  — it reconnects and replays the handshake, no lost session.
 
   coop owns the editor's toolbar: it runs the agent in yolo mode (the box is the
   sandbox, so no permission prompts), defaults the model dropdown to coop's model,

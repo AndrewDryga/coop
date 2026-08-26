@@ -110,9 +110,6 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 					t.Errorf("ladder expansion = (%v, %v), want %s@%s", targets, err, name, profile)
 				}
 
-				if got := defaultACPProvider(cfg); got != name {
-					t.Errorf("ACP default provider = %q, want %q", got, name)
-				}
 				if !anyAgentSignedIn(cfg) {
 					t.Error("first-run help still reports no signed-in provider")
 				}

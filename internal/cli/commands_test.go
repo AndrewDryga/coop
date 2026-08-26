@@ -644,32 +644,22 @@ func TestRunProfileWiringRejectsUnknown(t *testing.T) {
 	}
 }
 
-// A bare `coop acp` (no provider) defaults to the first signed-in provider — the toolbar's provider
-// dropdown switches it live — and only errors when nothing is signed in.
-func TestDefaultACPProvider(t *testing.T) {
+// A bare `coop acp` never guesses from credential order. The initial provider or preset is part of
+// the editor's durable command configuration; the live toolbar may switch only after that explicit
+// session has started.
+func TestACPRequiresAnExplicitInitialTarget(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}
-	if got := defaultACPProvider(cfg); got != "" {
-		t.Errorf("no signed-in agent should default to \"\", got %q", got)
-	}
-	// Sign codex in (its credential file), the way box.AuthedAgents detects it.
+	// Sign Codex in to prove a usable credential is not treated as launch intent.
 	os.MkdirAll(filepath.Join(dir, "codex", "profiles", "default"), 0o755)
 	os.WriteFile(filepath.Join(dir, "codex", "profiles", "default", "auth.json"), []byte("{}"), 0o644)
-	if got := defaultACPProvider(cfg); got != "codex" {
-		t.Errorf("defaultACPProvider = %q, want codex (the only signed-in agent)", got)
-	}
-}
-
-// `coop acp` with no provider AND nothing signed in fails fast (exit 2) rather than hanging or
-// spawning — the fallback when the default has nothing to resolve to.
-func TestACPNoProviderNoneSignedIn(t *testing.T) {
-	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	a := &app{cfg: cfg}
 	code, err := a.cmdACP([]string{})
 	if code != 2 || err == nil {
-		t.Fatalf("bare cmdACP with nothing signed in = (%d, %v), want (2, error)", code, err)
+		t.Fatalf("bare cmdACP with a signed-in provider = (%d, %v), want (2, error)", code, err)
 	}
-	if !strings.Contains(err.Error(), "coop login") {
-		t.Errorf("error should point at signing in, got: %v", err)
+	if !strings.Contains(err.Error(), "name the agent") || !strings.Contains(err.Error(), "coop acp") {
+		t.Errorf("error should require an explicit ACP target, got: %v", err)
 	}
 }
 
