@@ -832,6 +832,84 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mustContain("-v", "coop-cache:/home/node/.cache")
 }
 
+func TestRunProjectsSharedMCPForNestedClaudeCommandsOnly(t *testing.T) {
+	configDir := t.TempDir()
+	mcpFile := filepath.Join(configDir, "mcp.json")
+	if err := os.WriteFile(mcpFile, []byte(`{"mcpServers":{"shared":{"command":"true"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "env"), []byte("COOP_CLAUDE_MCP_CONFIG=/tmp/untrusted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	claudeProfile := filepath.Join(configDir, "claude", "profiles", "default")
+	if err := os.MkdirAll(claudeProfile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeProfile, ".credentials.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newConfig := func() *config.Config {
+		return &config.Config{
+			ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile,
+			MCPInBox: "/home/node/.mcp.json", Egress: "none",
+		}
+	}
+	rolePreset := &preset.Preset{Name: "nested", LeadAgent: "codex", Roles: []preset.Role{{
+		Name: "fast", Mode: preset.ModeDelegate, Agent: "claude",
+	}}}
+	tests := []struct {
+		name       string
+		spec       RunSpec
+		wantNested bool
+	}{
+		{
+			name: "explicit peer",
+			spec: RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"codex"}, Agent: "codex",
+				AgentCommand: true, Homes: true, Batch: true, Quiet: true, ConsultLead: "codex",
+				Peers: []agents.Target{{Provider: "claude"}}},
+			wantNested: true,
+		},
+		{
+			name: "preset role",
+			spec: RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"codex"}, Agent: "codex",
+				AgentCommand: true, Homes: true, Batch: true, Quiet: true, ConsultLead: "codex",
+				Preset: rolePreset},
+			wantNested: true,
+		},
+		{
+			name: "plain Claude ACP",
+			spec: RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"claude-agent-acp"}, Agent: "claude",
+				Homes: true, Batch: true, Quiet: true, ForceNoTTY: true},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			if code, err := Run(newConfig(), recorderRuntime(t, recorder), tc.spec); err != nil || code != 0 {
+				t.Fatalf("Run = (%d, %v), want success", code, err)
+			}
+			args, err := os.ReadFile(recorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(args)
+			hasMount := strings.Contains(text, ":/home/node/.mcp.json:ro")
+			hasEnv := strings.Contains(text, "COOP_CLAUDE_MCP_CONFIG=/home/node/.mcp.json")
+			if hasMount != tc.wantNested || hasEnv != tc.wantNested {
+				t.Errorf("nested MCP projection = (mount %v, env %v), want both %v:\n%s", hasMount, hasEnv, tc.wantNested, text)
+			}
+			if tc.wantNested {
+				fields := strings.Fields(text)
+				envFileAt := slices.Index(fields, "--env-file")
+				trustedAt := slices.Index(fields, "COOP_CLAUDE_MCP_CONFIG=/home/node/.mcp.json")
+				if envFileAt < 0 || trustedAt < 0 || trustedAt < envFileAt {
+					t.Errorf("trusted nested MCP env must follow the user env file: %v", fields)
+				}
+			}
+		})
+	}
+}
+
 func TestRunRejectsAmbiguousMCPBeforeRuntime(t *testing.T) {
 	tests := []struct {
 		name string

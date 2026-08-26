@@ -412,6 +412,20 @@ func TestClaudeMCPConfig(t *testing.T) {
 	if want := []string{"--mcp-config", "/home/node/.mcp.json"}; !slices.Equal(wiring.CommandArgs, want) {
 		t.Errorf("claude MCP command args = %v, want %v", wiring.CommandArgs, want)
 	}
+	if want := []string{"COOP_CLAUDE_MCP_CONFIG=/home/node/.mcp.json"}; !slices.Equal(wiring.NestedCommandEnv, want) {
+		t.Errorf("claude nested MCP env = %v, want %v", wiring.NestedCommandEnv, want)
+	}
+	for name, command := range map[string]string{
+		"consult fresh":  a.ConsultFresh(),
+		"consult resume": a.ConsultResume(),
+		"delegate":       a.DelegateExec(),
+	} {
+		for _, want := range []string{"--mcp-config", "COOP_CLAUDE_MCP_CONFIG"} {
+			if !strings.Contains(command, want) {
+				t.Errorf("claude %s command missing nested MCP wiring %q: %s", name, want, command)
+			}
+		}
+	}
 }
 
 func TestResume(t *testing.T) {

@@ -37,6 +37,20 @@ func runPrimary(spec RunSpec) string {
 	}
 }
 
+// nestedAgentCommand reports whether name can be launched by an in-box consult/delegate wrapper.
+// The outer command is handled separately by AgentCommand; native roles hosted by the lead are
+// deliberately absent from RunnableRoleAgents because they do not spawn another provider CLI.
+func nestedAgentCommand(spec RunSpec, name string) bool {
+	if spec.ConsultLead != "" {
+		for _, peer := range spec.Peers {
+			if peer.Provider == name {
+				return true
+			}
+		}
+	}
+	return spec.Preset != nil && slices.Contains(spec.Preset.RunnableRoleAgents(runPrimary(spec)), name)
+}
+
 // credentialScope is the set of agents whose credential home (~/.<name>) and env-file API key a
 // run may mount. A plain agent run (spec.Agent set) gets only that agent; a consult lead ALSO gets
 // the EXPLICIT peers it was told to invoke (spec.Peers) — never a blanket

@@ -545,7 +545,10 @@ func requestClaudeCredentialRefresh(
 // MCP points Claude's ordinary CLI at the exact validated snapshot box.Run mounts. The ACP
 // adapter gets its servers through ACPMCPServers instead and never receives these arguments.
 func (claudeAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
-	return MCPConfig{CommandArgs: []string{"--mcp-config", cfg.MCPInBox}}, nil
+	return MCPConfig{
+		CommandArgs:      []string{"--mcp-config", cfg.MCPInBox},
+		NestedCommandEnv: []string{"COOP_CLAUDE_MCP_CONFIG=" + cfg.MCPInBox},
+	}, nil
 }
 
 // ACPMCPServers is how claude gets MCP in an ACP session, and the only way it can: claude-agent-acp
@@ -698,17 +701,19 @@ func (claudeAgent) HomeFallbacks() []HomeFallback {
 // arms (see internal/consult/wrapper.go, internal/preset/wrapper.go). They run against the
 // wrapper's $prompt/$id/$model/$candidate_idfile and its run/new_id helpers.
 
+const claudeNestedMCPArgs = `${COOP_CLAUDE_MCP_CONFIG:+--mcp-config "$COOP_CLAUDE_MCP_CONFIG"}`
+
 func (claudeAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
-		`run claude -p --permission-mode plan --session-id "$id" ${model:+--model "$model"} ${effort:+--effort "$effort"} "$prompt"`
+		`run claude -p --permission-mode plan --session-id "$id" ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` "$prompt"`
 }
 
 func (claudeAgent) ConsultResume() string {
-	return `run claude -p --permission-mode plan --resume "$id" ${model:+--model "$model"} ${effort:+--effort "$effort"} "$prompt"`
+	return `run claude -p --permission-mode plan --resume "$id" ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` "$prompt"`
 }
 
 func (claudeAgent) DelegateExec() string {
-	return `claude -p --dangerously-skip-permissions ${model:+--model "$model"} ${effort:+--effort "$effort"} "$prompt"`
+	return `claude -p --dangerously-skip-permissions ${model:+--model "$model"} ${effort:+--effort "$effort"} ` + claudeNestedMCPArgs + ` "$prompt"`
 }
 
 func (claudeAgent) ShellPrelude() string  { return "" }

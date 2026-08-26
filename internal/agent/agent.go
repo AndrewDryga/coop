@@ -674,10 +674,13 @@ func Packages() []string {
 	return pkgs
 }
 
-// MCPConfig is one adapter's complete ordinary-command wiring for the shared mcp.json.
+// MCPConfig is one adapter's complete native projection wiring for the shared mcp.json.
 type MCPConfig struct {
 	Mounts      []MCPMount
 	CommandArgs []string
+	// NestedCommandEnv is trusted KEY=value wiring consumed by this adapter's in-box wrapper
+	// commands. box.Run appends it after the user env file so the projected path stays authoritative.
+	NestedCommandEnv []string
 }
 
 // MCPMount is one generated config file an agent needs to see the shared mcp.json: its content and

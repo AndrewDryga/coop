@@ -372,7 +372,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}()
 	var mcpMounts []extraMount
-	directMCP := false
+	rawMCP := false
 	if mcpPresent {
 		path, err := artifacts.writeFile(string(mcpSnapshot))
 		if err != nil {
@@ -411,9 +411,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 
 	for _, item := range generated {
 		name, wiring := item.name, item.wiring
-		if mcpPresent && spec.AgentCommand && name == spec.Agent {
+		if mcpPresent && spec.AgentCommand && name == spec.Agent && len(wiring.CommandArgs) > 0 {
 			spec.Cmd = append(spec.Cmd, wiring.CommandArgs...)
-			directMCP = len(wiring.CommandArgs) > 0
+			rawMCP = true
+		}
+		if mcpPresent && nestedAgentCommand(spec, name) && len(wiring.NestedCommandEnv) > 0 {
+			for _, env := range wiring.NestedCommandEnv {
+				spec.ExtraArgs = append(spec.ExtraArgs, "-e", env)
+			}
+			rawMCP = true
 		}
 		for _, m := range wiring.Mounts {
 			p, err := artifacts.writeFile(m.Content)
@@ -671,7 +677,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return finish(-1, err)
 	}
 	limits := boxLimits(cfg, rt)
-	args := assembleArgs(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, directMCP, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
+	args := assembleArgs(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, rawMCP, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
 	// The launch boundary: everything above is host work, everything below is the provider's.
 	// A caller that clocks the provider starts counting HERE, never from Run's entry — an early
 	// return above launched nothing, so it signals nothing.
@@ -1629,7 +1635,7 @@ func acpSharedDir(cfg *config.Config, agent string) string {
 	return filepath.Join(cfg.ConfigDir, agent, "acp-sessions")
 }
 
-func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, directMCP bool, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
+func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, rawMCP bool, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
 	args := []string{"run", "--rm"}
 	if initProcess {
 		// Docker and Podman provide the same runtime-native contract: this PID 1 forwards
@@ -1742,7 +1748,7 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 		args = appendROMounts(args, consultMounts)
 		// Your git environment: identity + signing-off + global gitignore.
 		args = appendROMounts(args, gitMounts)
-		if directMCP {
+		if rawMCP {
 			args = append(args, "-v", cfg.MCPFile+":"+cfg.MCPInBox+":ro")
 		}
 		args = appendROMounts(args, mcpMounts)

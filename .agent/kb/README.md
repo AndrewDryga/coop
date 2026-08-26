@@ -64,6 +64,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [services-teardown-needs-the-workspace](services-teardown-needs-the-workspace.md) — sibling services persist across boxes on purpose, but teardown reads the workspace's compose file, so stopping them after deleting the workspace does nothing
 - [credentials-expired-is-a-false-alarm](credentials-expired-is-a-false-alarm.md) — refreshable OAuth stays signed in; re-login required means the stored login cannot recover
 - [credential-presence-is-adapter-declared](credential-presence-is-adapter-declared.md) — adapters own credential presence, selected env authority, and inspectable stored readiness
+- [mcp-authority-projection](mcp-authority-projection.md) — one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 - [provider-scripted-e2e](provider-scripted-e2e.md) — drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 - [provider-live-e2e](provider-live-e2e.md) — probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 - [provider-session-history](provider-session-history.md) — native session layouts, lookup bounds, and the large-history regression contract
