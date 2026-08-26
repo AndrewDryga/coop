@@ -192,7 +192,7 @@ func shellcheckPath(t *testing.T) string {
 }
 
 // A pre-existing broad .gitignore line (e.g. .agent/*.log) must NOT make coop init skip writing its
-// block — that would drop the !rules/!skills un-ignore and leave tracked dirs ignored. The block is
+// block — that would drop the !kb/!skills un-ignore and leave tracked dirs ignored. The block is
 // monorepo-aware: **/.agent/* (any depth) with !.agent/project.yaml.
 func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	repo := t.TempDir()
@@ -203,8 +203,8 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	// Knowledge (rules/skills) is un-ignored at any depth so a member may carry its own; only
-	// project.yaml is top-level.
+	// Knowledge (kb, including rules, plus skills) is un-ignored at any depth so a member may carry
+	// its own; only project.yaml is top-level.
 	for _, want := range []string{"**/.agent/*\n", "!**/.agent/kb/", "!**/.agent/skills/", "!**/.agent/claude/", "!**/.agent/Dockerfile", "!.agent/project.yaml"} {
 		if !strings.Contains(string(gi), want) {
 			t.Errorf("coop's block missing %q after a broad .agent/*.log line:\n%s", want, gi)
@@ -470,6 +470,16 @@ func TestInit(t *testing.T) {
 			t.Errorf("AGENTS.md missing agent-stack guidance %q:\n%s", want, agents)
 		}
 	}
+	for _, want := range []string{"Knowledge (`kb/`, including", "`kb/rules/`"} {
+		if !strings.Contains(string(agents), want) {
+			t.Errorf("AGENTS.md missing current knowledge-tree guidance %q:\n%s", want, agents)
+		}
+	}
+	for _, retired := range []string{"Knowledge (`rules/`", "\n- `rules/`"} {
+		if strings.Contains(string(agents), retired) {
+			t.Errorf("AGENTS.md still advertises retired sibling rules path %q:\n%s", retired, agents)
+		}
+	}
 	// Host-side commands stay out (an agent in the box can't run them). The in-box
 	// wrappers (coop-consult/coop-delegate) MAY be named, but only availability-gated —
 	// they exist only when a consult/preset run mounts them, so an unconditional
@@ -485,7 +495,7 @@ func TestInit(t *testing.T) {
 		}
 	}
 
-	// .gitignore ignores .agent/ state at any depth and tracks knowledge (rules/skills/presets and
+	// .gitignore ignores .agent/ state at any depth and tracks knowledge (kb/skills/presets and
 	// the loop.yaml config) at any depth; only project.yaml is top-level.
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	for _, want := range []string{"**/.agent/*", "!**/.agent/kb/", "!**/.agent/skills/", "!**/.agent/presets/", "!**/.agent/claude/", "!**/.agent/loop.yaml", "!.agent/project.yaml", "!.gemini/skills"} {

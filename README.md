@@ -1213,14 +1213,16 @@ leaves that project-owned set unchanged and links the other selected agents to i
 
 `init` creates a tool-neutral working folder the agent reads back on every boot (and
 after each compaction). Everything here is local working state and git-ignored —
-except the knowledge (`rules/`, `skills/`, `presets/`), Claude fallback adapter
+except the knowledge tree (`kb/`, including `kb/rules/`), workflow assets (`skills/`,
+`presets/`), Claude fallback adapter
 (`claude/`), and `project.yaml`, which are committed.
 
 | File | What it's for |
 |---|---|
 | `tasks/` | the work queue — one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`99_done/`; a task's state is its directory, and `coop tasks` moves it. Each folder carries its own `spec.md`/`log.md`/`state.md`/`decision.md` as needed. The loop reads `00_todo/`+`10_in_progress/`. |
 | the backlog | unscheduled ideas, as task folders in the `tasks/xx_backlog/` drawer (`coop backlog`) — outside the lifecycle, so never auto-worked and never nagged by the Stop hook; `coop backlog promote <id>` moves one into `tasks/00_todo/` when it's ready |
-| `rules/` | the taste knowledge base — corrections graduate into rules here (committed) |
+| `kb/` | the committed descriptive knowledge base — subsystem maps, cross-cutting traps, and gotchas the code does not carry |
+| `kb/rules/` | the normative part of the knowledge tree — corrections graduate into “do X, not Y” rules here |
 | `claude/` | fallback user-level Claude settings and hooks for repos without matching project `.claude/` artifacts (committed) |
 | `project.yaml` | the committed per-project config: a monorepo's [`subprojects:`](#monorepos), the [`serve:` ports](#see-the-dev-server-in-your-browser), the box **policy** (`box:` — egress, resource caps, `auto_up`/`network`), and the merge `gate:`. `box:` and `gate:` fall *below* an explicit `COOP_*` env/conf setting, and — being committed and host-read — can only ever *tighten* your posture (egress pins to `none`, never widens; `no_new_privileges` isn't settable here) |
 
@@ -1246,9 +1248,9 @@ for changes that span members.
 
 `coop init` at the root detects the members (direct child dirs that have a `.agent/`),
 writes the `project.yaml`, and scaffolds each member with just its own task queue —
-members share the root's AGENTS.md, skills, rules, and box, though a large member may
-commit its own `rules/` if it wants them. `coop tasks queues` prints the resolved queue
-paths when a script (such as the sweep queue guard) needs them.
+members share the root's AGENTS.md, `.agent/skills/`, `.agent/kb/`, and box, though a large
+member may commit its own `.agent/kb/rules/` if it wants them. `coop tasks queues` prints the
+resolved queue paths when a script (such as the sweep queue guard) needs them.
 
 ### Parallel forks
 

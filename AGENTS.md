@@ -60,9 +60,10 @@ think; you edit, gate, and commit.
 - **In `coop loop`, work one task per iteration, then stop.** The loop re-invokes a fresh agent until `00_todo/` and `10_in_progress/` are empty — finishing the queue is the *loop's* job across iterations, not one agent draining it in a single run. (Interactive `/sweep` is the exception: it drains the queue in one session. Never stop while `00_todo/` or `10_in_progress/` has a task during a /sweep)
 
 ## The .agent/ working state
-Durable working memory the BOOT protocol reads back. Knowledge (`rules/`, `skills/`,
-`presets/`) and `project.yaml` are committed; the working state (tasks, backlog) is
-local (git-ignored) so it never creates commit noise or merge churn.
+Durable working memory the BOOT protocol reads back. Knowledge (`kb/`, including
+`kb/rules/`, plus `skills/` and `presets/`) and `project.yaml` are committed; the
+working state (tasks, backlog) is local (git-ignored) so it never creates commit noise or merge
+churn.
 - `tasks/` — the work queue: one folder per task under `00_todo/`/`10_in_progress/`/`50_blocked/`/`99_done/`.
   See `tasks/README.md` for the layout and the per-task files (`task.md`, plus optional
   `spec.md`, `log.md`, `state.md`, `decision.md`, `screenshots/`, `artifacts/`, `tmp/`). `coop tasks`
@@ -88,8 +89,8 @@ local (git-ignored) so it never creates commit noise or merge churn.
   promote <id>` moves an item into `tasks/00_todo/` (a folder move, not a rewrite) once it's ready and
   fleshed into a spec. Shipped or cancelled? `coop backlog rm <id>` — a shipped idea's record is its
   commits. The loop reads the lifecycle states only; per-task reasoning lives in each task's own `log.md`.
-- `rules/` — the taste knowledge base, NORMATIVE ("do X, not Y") (committed). Same shape and
-  discipline as `kb/`: read `rules/README.md`'s index at boot, open a rule only when your change
+- `kb/rules/` — the taste knowledge base, NORMATIVE ("do X, not Y") (committed). Same shape and
+  discipline as `kb/`: read `kb/rules/README.md`'s index at boot, open a rule only when your change
   touches its `scope` (a full audit like `/review-board` is the deliberate exception). Every card
   carries `sources`, `updated`, and a `check:` — the command that fails on a violation, or `none`
   when only review catches it, so `grep -l 'check: none' .agent/kb/rules/*.md` is the standing list of

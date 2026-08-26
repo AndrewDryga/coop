@@ -593,8 +593,8 @@ coop init [--stack asdf] — scaffold coop's working set into the repo.
   (it shares the root's AGENTS.md/.claude); the member's queue is for its own work, the
   root's for changes spanning members. A single repo gets a project.yaml template with
   commented serve/subprojects examples. The .gitignore ignores .agent/ state at any
-  depth (**/.agent/*) and commits knowledge + adapters — rules/skills/presets/claude/
-  loop.yaml — at any depth too (a large member MAY add its own), keeping only project.yaml
+  depth (**/.agent/*) and commits kb/ (including kb/rules/), skills/, presets/, claude/,
+  and loop.yaml at any depth too (a large member MAY add its own), keeping only project.yaml
   top-level. Never clobbers existing files.
 
 coop doctor — prove the box's isolation: attack it, inside and from the host.
