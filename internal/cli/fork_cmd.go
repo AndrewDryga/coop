@@ -133,7 +133,7 @@ func (a *app) cmdFork(args []string) (int, error) {
 	case "stop":
 		return fc.ForkStop(args[1:])
 	default:
-		// `coop fork <name> acp [target]` — front the fork as an ACP agent (for Zed).
+		// `coop fork <name> acp <target>` — front the fork as an ACP agent (for Zed).
 		if len(args) >= 2 && args[1] == "acp" {
 			return a.forkACP(args[0], args[2:])
 		}
@@ -622,7 +622,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			}
 			effort = t.Effort
 		default:
-			return 2, fmt.Errorf("usage: coop fork %s acp [%s][:model][/effort][@account]", name, strings.Join(agents.Names(), "|"))
+			return 2, fmt.Errorf("usage: coop fork %s acp <%s>[:model][/effort][@account]", name, strings.Join(agents.Names(), "|"))
 		}
 	}
 	if agent == "" {

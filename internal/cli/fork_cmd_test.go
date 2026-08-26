@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -459,8 +460,10 @@ func TestForkACPAcceptsCredential(t *testing.T) {
 	if strings.Contains(err.Error(), "unexpected") || strings.Contains(err.Error(), "usage:") {
 		t.Errorf("a target's @account should be accepted, not rejected as an argument: %v", err)
 	}
-	if code, err := a.forkACP("myfork", []string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
-		t.Errorf("fork acp --credential = (%d, %v), want (2, error)", code, err)
+	code, err = a.forkACP("myfork", []string{"claude", "--credential", "ghost"})
+	wantUsage := fmt.Sprintf("usage: coop fork myfork acp <%s>[:model][/effort][@account]", strings.Join(agents.Names(), "|"))
+	if code != 2 || err == nil || err.Error() != wantUsage {
+		t.Errorf("fork acp --credential = (%d, %v), want (2, %q)", code, err, wantUsage)
 	}
 }
 
