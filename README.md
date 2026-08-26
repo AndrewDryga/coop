@@ -806,6 +806,10 @@ host's `.agent/` source.
 `{ "mcpServers": { ... } }` shape). An empty one wires up nothing, so drop your servers
 in and every agent picks them up:
 
+Keep this authority outside repositories, companion repositories, agent credential homes, and
+ACP session stores: Coop mounts those directories wholesale, so a `COOP_MCP_FILE` inside one is
+refused before launch even when it is empty or has not been created yet.
+
 ```json
 {
   "mcpServers": {
@@ -1609,7 +1613,7 @@ root-in-container (a repo `.agent/Dockerfile` that does `USER root`) from holdin
 | `COOP_<AGENT>_CMD` (e.g. `COOP_CLAUDE_CMD`) | autonomous default | override an agent's base command |
 | `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL`) | (CLI default) | agent-wide default model, everywhere that agent runs (see [Picking models](#picking-models)) |
 | `COOP_CONSULT_TIMEOUT` | `0` (unlimited) | per-peer `coop-consult` bound in seconds; unbounded by default because a clock can't tell a long answer from a wedged one, and killing a working peer loses its answer and costs the retry that follows — the parent attempt's own tool cap and ceiling already bound it from outside. Set a whole-second value (max `86400`) to opt back into a bound; a peer that then doesn't answer in time is skipped so the lead synthesizes from whoever did |
-| `COOP_MCP_FILE` | `<config>/mcp.json` | the one MCP source of truth |
+| `COOP_MCP_FILE` | `<config>/mcp.json` | the one MCP source of truth; must stay outside directories Coop mounts wholesale |
 | `COOP_SHELL` | `bash` | the shell `coop shell` opens |
 | `COOP_NO_UPDATE_CHECK` | (off) | set to opt out of the once-a-day "a newer coop/box is available" check |
 

@@ -18,10 +18,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // server is the typed view of one entry, sufficient to emit Codex TOML and the ACP parameter.
@@ -281,20 +283,70 @@ func loadServersTyped(path string) (map[string]server, error) {
 	return servers, err
 }
 
-// loadServerViews decodes the shared authority once into both shapes its consumers need. Gemini
-// gets the native JSON object while Codex and ACP get the typed projection, but all three cross the
-// same validation boundary before provider-specific rendering can interpret authentication.
-func loadServerViews(path string) (map[string]any, map[string]server, error) {
-	var f struct {
-		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+// ReadValidatedSnapshot captures the exact shared mcp.json bytes and validates the server views
+// every adapter relies on. Missing files and files with no servers are inert; a present malformed
+// or ambiguous authority fails closed before a box can mount or render it.
+func ReadValidatedSnapshot(path string) ([]byte, bool, error) {
+	if path == "" {
+		return nil, false, nil
 	}
-	if err := readMCP(path, &f); err != nil {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	_, servers, err := loadServerViewsData(path, data)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(servers) == 0 {
+		return nil, false, nil
+	}
+	return data, true, nil
+}
+
+// loadServerViews decodes the shared authority once into both shapes its consumers need. Gemini
+// gets the native JSON object while typed consumers get the projected servers, but every adapter
+// crosses the same validation boundary before provider-specific rendering can interpret auth.
+func loadServerViews(path string) (map[string]any, map[string]server, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return nil, nil, err
 	}
-	raw := make(map[string]any, len(f.MCPServers))
-	typed := make(map[string]server, len(f.MCPServers))
-	for _, name := range sortedKeys(f.MCPServers) {
-		definition := f.MCPServers[name]
+	return loadServerViewsData(path, data)
+}
+
+func loadServerViewsData(path string, data []byte) (map[string]any, map[string]server, error) {
+	if !utf8.Valid(data) {
+		return nil, nil, fmt.Errorf("parsing %s: invalid UTF-8", path)
+	}
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return nil, nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	for _, key := range sortedKeys(root) {
+		if strings.EqualFold(key, "mcpServers") && key != "mcpServers" {
+			return nil, nil, fmt.Errorf("parsing %s: MCP root key %q must use canonical spelling %q", path, key, "mcpServers")
+		}
+	}
+	var definitions map[string]json.RawMessage
+	if raw := root["mcpServers"]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &definitions); err != nil {
+			return nil, nil, fmt.Errorf("parsing %s mcpServers: %w", path, err)
+		}
+	}
+	raw := make(map[string]any, len(definitions))
+	typed := make(map[string]server, len(definitions))
+	for _, name := range sortedKeys(definitions) {
+		definition := definitions[name]
+		if err := validateCanonicalServerFields(name, definition); err != nil {
+			return nil, nil, fmt.Errorf("parsing %s: %w", path, err)
+		}
 		var native any
 		if err := json.Unmarshal(definition, &native); err != nil {
 			return nil, nil, fmt.Errorf("parsing %s MCP server %q: %w", path, name, err)
@@ -310,6 +362,88 @@ func loadServerViews(path string) (map[string]any, map[string]server, error) {
 		return nil, nil, err
 	}
 	return raw, typed, nil
+}
+
+var canonicalServerFields = []string{
+	"type", "command", "args", "env", "url", "headers", "bearer_token_env_var",
+}
+
+func validateCanonicalServerFields(name string, definition json.RawMessage) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(definition, &fields); err != nil {
+		return fmt.Errorf("MCP server %q: %w", name, err)
+	}
+	for _, key := range sortedKeys(fields) {
+		for _, canonical := range canonicalServerFields {
+			if strings.EqualFold(key, canonical) && key != canonical {
+				return fmt.Errorf("MCP server %q field %q must use canonical spelling %q", name, key, canonical)
+			}
+		}
+	}
+	return nil
+}
+
+// rejectDuplicateJSONKeys refuses an ambiguity encoding/json would otherwise resolve by silently
+// keeping the last value. Direct and translated consumers must see one authority, including inside
+// nested header and environment objects.
+func rejectDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := walkUniqueJSONValue(decoder, "root"); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func walkUniqueJSONValue(decoder *json.Decoder, location string) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := map[string]bool{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("non-string JSON object key at %s", location)
+			}
+			if seen[key] {
+				return fmt.Errorf("duplicate JSON object key %q at %s", key, location)
+			}
+			seen[key] = true
+			if err := walkUniqueJSONValue(decoder, location+"."+key); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	case '[':
+		for index := 0; decoder.More(); index++ {
+			if err := walkUniqueJSONValue(decoder, fmt.Sprintf("%s[%d]", location, index)); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q at %s", delim, location)
+	}
 }
 
 func validateServers(servers map[string]server) error {
@@ -330,21 +464,9 @@ func validateServers(servers map[string]server) error {
 	return nil
 }
 
-func readMCP(path string, v any) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if err := json.Unmarshal(data, v); err != nil {
-		return fmt.Errorf("parsing %s: %w", path, err)
-	}
-	return nil
-}
-
 // readJSONObject reads a JSON object from path. A missing or empty file (or "") yields an empty
-// object — there's nothing to merge onto. A present-but-malformed file is an ERROR: the caller
-// then skips MCP wiring (box.Run logs a notice and the agent runs on its own real config) rather
-// than silently overwriting the user's settings with a config that has only mcpServers.
+// object — there's nothing to merge onto. A present-but-malformed file is an error rather than an
+// excuse to overwrite the user's settings with a generated config containing only mcpServers.
 func readJSONObject(path string) (map[string]any, error) {
 	out := map[string]any{}
 	if path == "" {

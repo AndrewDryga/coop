@@ -499,7 +499,8 @@ func (a *app) forkCreate(args []string) (int, error) {
 	cmd := a.forkLaunchCmd(fa, ws, existed)
 	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: ws, Cmd: cmd, Agent: fa.agent, ConsultLead: fa.agent, Preset: a.preset,
-		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+		AgentCommand: true,
+		Homes:        a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
 	if err == nil {
 		if captureNewSession {

@@ -89,7 +89,7 @@ func TestRegistry(t *testing.T) {
 
 func TestCommands(t *testing.T) {
 	cleanCmdEnv(t)
-	cfg := &config.Config{} // no mcp.json → no --mcp-config
+	cfg := &config.Config{} // box.Run applies any MCP command args after these base commands
 	cases := []struct {
 		name                              string
 		interactive, headless, acp, csult []string
@@ -374,7 +374,7 @@ func TestWithEffort(t *testing.T) {
 }
 
 func TestEmptyCmdOverrideStillRunnable(t *testing.T) {
-	cfg := &config.Config{} // no mcp.json → no --mcp-config trailing claude's base
+	cfg := &config.Config{} // box.Run applies any MCP command args after these base commands
 	// An explicitly-empty override (COOP_<AGENT>_CMD="") must still produce a runnable command:
 	// base()[0] is the executable, and the headless/exec forms index it — an empty argv would
 	// otherwise try to exec the first flag (or run the image with no command).
@@ -402,9 +402,15 @@ func TestClaudeMCPConfig(t *testing.T) {
 	mustWrite(t, mcp, `{"mcpServers":{"fs":{"command":"npx","args":["-y","server"]}}}`) // a declared server → MCP active
 	cfg := &config.Config{MCPFile: mcp, MCPInBox: "/home/node/.mcp.json"}
 	a, _ := Get("claude")
-	want := []string{"claude", "--dangerously-skip-permissions", "--mcp-config", "/home/node/.mcp.json"}
-	if got := a.Interactive(cfg); !slices.Equal(got, want) {
-		t.Errorf("claude Interactive with mcp = %v, want %v", got, want)
+	wiring, err := a.MCP(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := a.Interactive(cfg), []string{"claude", "--dangerously-skip-permissions"}; !slices.Equal(got, want) {
+		t.Errorf("claude Interactive before snapshot wiring = %v, want %v", got, want)
+	}
+	if want := []string{"--mcp-config", "/home/node/.mcp.json"}; !slices.Equal(wiring.CommandArgs, want) {
+		t.Errorf("claude MCP command args = %v, want %v", wiring.CommandArgs, want)
 	}
 }
 
@@ -1613,10 +1619,10 @@ func TestMCP(t *testing.T) {
 	mustWrite(t, mcpFile, `{"mcpServers":{"x":{"command":"y"}}}`)
 	cfg := &config.Config{MCPFile: mcpFile, ConfigDir: dir, HomeInBox: "/home/node"}
 
-	// claude reads mcp.json raw (--mcp-config) → no generated mounts.
+	// Claude reads mcp.json raw (--mcp-config) → command args and no generated mounts.
 	claude, _ := Get("claude")
-	if m, err := claude.MCP(cfg); err != nil || len(m) != 0 {
-		t.Errorf("claude MCP = %v, %v; want none (reads mcp.json directly)", m, err)
+	if wiring, err := claude.MCP(cfg); err != nil || len(wiring.Mounts) != 0 || len(wiring.CommandArgs) != 2 {
+		t.Errorf("claude MCP = %v, %v; want command args only (reads mcp.json directly)", wiring, err)
 	}
 	// gemini/codex/grok generate a config file at their native path (grok reuses codex's
 	// [mcp_servers.*] TOML shape).
@@ -1626,9 +1632,9 @@ func TestMCP(t *testing.T) {
 		"grok":   "/home/node/.grok/config.toml",
 	} {
 		ag, _ := Get(name)
-		m, err := ag.MCP(cfg)
-		if err != nil || len(m) != 1 || m[0].BoxPath != boxPath || m[0].Content == "" {
-			t.Errorf("%s MCP = %v, %v; want one non-empty mount at %s", name, m, err, boxPath)
+		wiring, err := ag.MCP(cfg)
+		if err != nil || len(wiring.Mounts) != 1 || wiring.Mounts[0].BoxPath != boxPath || wiring.Mounts[0].Content == "" || len(wiring.CommandArgs) != 0 {
+			t.Errorf("%s MCP = %v, %v; want one non-empty mount at %s", name, wiring, err, boxPath)
 		}
 	}
 }
@@ -1644,7 +1650,7 @@ func TestEveryAgentReachesTheSharedServersByExactlyOneRoute(t *testing.T) {
 	cfg := &config.Config{MCPFile: mcpFile, ConfigDir: dir, HomeInBox: "/home/node"}
 	for _, name := range Names() {
 		ag, _ := Get(name)
-		mounts, err := ag.MCP(cfg)
+		wiring, err := ag.MCP(cfg)
 		if err != nil {
 			t.Fatalf("%s MCP = %v", name, err)
 		}
@@ -1652,9 +1658,9 @@ func TestEveryAgentReachesTheSharedServersByExactlyOneRoute(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s ACPMCPServers = %v", name, err)
 		}
-		if (len(mounts) > 0) == (len(servers) > 0) {
+		if (len(wiring.Mounts) > 0) == (len(servers) > 0) {
 			t.Errorf("%s: %d generated mount(s) and %d ACP server(s); want exactly one of the two",
-				name, len(mounts), len(servers))
+				name, len(wiring.Mounts), len(servers))
 		}
 	}
 }

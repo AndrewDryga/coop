@@ -510,12 +510,12 @@ func codexCredentialPortability(profileDir string, deadline time.Time) Credentia
 }
 
 // MCP emits the shared servers as [mcp_servers.*] in codex's config.toml.
-func (codexAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
+func (codexAgent) MCP(cfg *config.Config) (MCPConfig, error) {
 	cx, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))
 	if err != nil {
-		return nil, err
+		return MCPConfig{}, err
 	}
-	return []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}}, nil
+	return MCPConfig{Mounts: []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}}}, nil
 }
 
 // ACPMCPServers is nil: this agent's ACP adapter reads the [mcp_servers.*] config.toml MCP mounts,

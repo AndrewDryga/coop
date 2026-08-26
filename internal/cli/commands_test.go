@@ -647,11 +647,6 @@ func TestWriteMCPStub(t *testing.T) {
 	if f.MCPServers == nil || len(f.MCPServers) != 0 {
 		t.Errorf("stub should carry an empty mcpServers object, got %v", f.MCPServers)
 	}
-	// The stub is inactive end-to-end — it must not flip MCP on for runs.
-	if a.cfg.MCPActive() {
-		t.Error("the empty stub must leave MCPActive false")
-	}
-
 	// Idempotent: a user's filled-in config is never clobbered.
 	os.WriteFile(mcp, []byte(`{"mcpServers":{"fs":{"command":"x"}}}`), 0o600)
 	if err := a.writeMCPStub(); err != nil {

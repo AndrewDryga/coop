@@ -151,8 +151,8 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// loop.yaml `mcp: false` runs EVERY stage's box without the shared MCP config — the schemas
 	// ride at the front of each model request, so a drain that doesn't need those tools shouldn't
 	// pay for them each iteration. Sitting here (not cmdLoop) it covers fork loops too. Blanking
-	// MCPFile is the one switch everything downstream keys off (Config.MCPActive); the loop owns
-	// this process, so nothing else reads the config after it. Caveat: a verify: pass whose e2e
+	// MCPFile is the one switch the box snapshot boundary keys off; the loop owns this process, so
+	// nothing else reads the config after it. Caveat: a verify: pass whose e2e
 	// depends on MCP tooling needs mcp left on — repo-local e2e via bash is unaffected.
 	if lc.MCPDisabled() {
 		c.cfg.MCPFile = ""
@@ -254,7 +254,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// exactly once per box launch — work, pre-flight, and every review attempt — so it is also
 	// the stage-launch boundary where loop.yaml drift is announced (once per new digest); the
 	// run itself stays on its startup snapshot.
-	iterCmd := func(iterAgent, prompt string) ([]string, bool) {
+	iterCmd := func(iterAgent, prompt string) ([]string, bool, bool) {
 		if warning, drifted := cfgSnap.Drift(); drifted {
 			ui.Warn("%s", warning)
 		}
@@ -262,7 +262,8 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		if len(custom) == 0 {
 			cmd = c.agentLoopCmd(iterAgent, prompt)
 		}
-		return IterationCommand(iterAgent, cmd, custom)
+		command, streaming := IterationCommand(iterAgent, cmd, custom)
+		return command, streaming, len(custom) == 0
 	}
 	// Soft interrupt for any foreground loop that owns a terminal — a plain `coop loop` OR a
 	// foreground `coop fork <name> --loop`: the first Ctrl-C finishes the current iteration then
@@ -330,8 +331,8 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		// that need judgment. Best-effort like the signoff pass — a failure never blocks work.
 		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-			pfCmd, streaming := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
-			pfCode, _, _, pfClassification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, hosts, completionWindowReview, nil, false, sink, peers, "preflight", "")
+			pfCmd, streaming, agentCommand := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
+			pfCode, _, _, pfClassification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, agentCommand, hosts, completionWindowReview, nil, false, sink, peers, "preflight", "")
 			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 				return 1, runErr
 			}
@@ -475,8 +476,8 @@ reviewAgain:
 				iterWork = pre + "\n\n" + work
 			}
 			iterStart := time.Now()
-			cmd, streaming := iterCmd(agent, iterWork)
-			code, _, res, classification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowWork, []string{assigned.Item.ID}, false, sink, peers, active, assigned.Item.ID)
+			cmd, streaming, agentCommand := iterCmd(agent, iterWork)
+			code, _, res, classification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowWork, []string{assigned.Item.ID}, false, sink, peers, active, assigned.Item.ID)
 			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 				return 1, errors.Join(runErr, lease.Release())
 			}

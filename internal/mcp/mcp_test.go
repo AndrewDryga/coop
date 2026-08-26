@@ -201,6 +201,24 @@ func TestGenerateEmpty(t *testing.T) {
 	}
 }
 
+func TestReadValidatedSnapshotPreservesExactBytesAndInertStates(t *testing.T) {
+	raw := " \n{\"mcpServers\":{\"exact\":{\"command\":\"true\"}}}\n"
+	snapshot, active, err := ReadValidatedSnapshot(writeTmp(t, "mcp.json", raw))
+	if err != nil || !active || string(snapshot) != raw {
+		t.Fatalf("validated snapshot = (%q, %v, %v), want exact active bytes", snapshot, active, err)
+	}
+
+	for _, path := range []string{"", filepath.Join(t.TempDir(), "missing.json"), writeTmp(t, "empty.json", `{"mcpServers":{}}`)} {
+		snapshot, active, err := ReadValidatedSnapshot(path)
+		if err != nil || active || snapshot != nil {
+			t.Errorf("inert snapshot %q = (%q, %v, %v), want nil, false, nil", path, snapshot, active, err)
+		}
+	}
+	if _, _, err := ReadValidatedSnapshot(writeTmp(t, "malformed.json", "{not json")); err == nil {
+		t.Error("a present malformed MCP snapshot must fail closed")
+	}
+}
+
 // A present-but-malformed existing gemini settings file must error (so box.Run skips wiring and
 // gemini keeps its real config), not silently produce a settings.json containing only mcpServers.
 func TestGenerateGeminiMalformedExistingErrors(t *testing.T) {
@@ -301,6 +319,26 @@ func TestMCPConsumersRejectAmbiguousAuthorization(t *testing.T) {
 			src:  `{"mcpServers":{"auth":{"url":"https://example.test/mcp","headers":{"aUtHoRiZaTiOn":"Bearer inline"},"bearer_token_env_var":"TOKEN"}}}`,
 			want: []string{`MCP server "auth"`, `"aUtHoRiZaTiOn"`, "bearer_token_env_var", "one Authorization source"},
 		},
+		{
+			name: "duplicate exact JSON header",
+			src:  `{"mcpServers":{"auth":{"url":"https://example.test/mcp","headers":{"Authorization":"Bearer one","Authorization":"Bearer two"}}}}`,
+			want: []string{`duplicate JSON object key "Authorization"`, "root.mcpServers.auth.headers"},
+		},
+		{
+			name: "noncanonical field alias cannot overwrite auth",
+			src:  `{"mcpServers":{"auth":{"url":"https://example.test/mcp","headers":{"Authorization":"Bearer inline"},"bearer_token_env_var":"TOKEN","Headers":{}}}}`,
+			want: []string{`MCP server "auth" field "Headers"`, `canonical spelling "headers"`},
+		},
+		{
+			name: "noncanonical root alias",
+			src:  `{"MCPServers":{"auth":{"command":"true"}}}`,
+			want: []string{`MCP root key "MCPServers"`, `canonical spelling "mcpServers"`},
+		},
+		{
+			name: "invalid UTF-8",
+			src:  "{\"mcpServers\":{\"bad\":{\"command\":\"\xff\"}}}",
+			want: []string{"invalid UTF-8"},
+		},
 	}
 	consumers := []struct {
 		name string
@@ -309,6 +347,7 @@ func TestMCPConsumersRejectAmbiguousAuthorization(t *testing.T) {
 		{"Codex", func(path string) error { _, err := GenerateCodex(path, ""); return err }},
 		{"Gemini", func(path string) error { _, err := GenerateGemini(path, ""); return err }},
 		{"ACP", func(path string) error { _, err := ACPServers(path, os.LookupEnv); return err }},
+		{"box snapshot", func(path string) error { _, _, err := ReadValidatedSnapshot(path); return err }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

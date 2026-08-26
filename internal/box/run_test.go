@@ -832,6 +832,313 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mustContain("-v", "coop-cache:/home/node/.cache")
 }
 
+func TestRunRejectsAmbiguousMCPBeforeRuntime(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "case-insensitive duplicate headers",
+			body: `{"mcpServers":{"dupe":{"url":"https://example.test/mcp","headers":{"X-Api-Key":"one","x-api-key":"two"}}}}`,
+			want: "duplicate case-insensitive headers",
+		},
+		{
+			name: "competing authorization sources",
+			body: `{"mcpServers":{"auth":{"url":"https://example.test/mcp","headers":{"Authorization":"Bearer inline"},"bearer_token_env_var":"TOKEN"}}}`,
+			want: "one Authorization source",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			mcpFile := filepath.Join(configDir, "mcp.json")
+			if err := os.WriteFile(mcpFile, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &config.Config{
+				ConfigDir: configDir,
+				HomeInBox: "/home/node",
+				MCPFile:   mcpFile,
+				MCPInBox:  "/home/node/.mcp.json",
+				Egress:    "none",
+			}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			spec := RunSpec{
+				Image: "i", Repo: t.TempDir(), Cmd: []string{"claude"}, Agent: "claude",
+				AgentCommand: true, Homes: true, Batch: true, Quiet: true,
+			}
+			code, err := Run(cfg, recorderRuntime(t, recorder), spec)
+			if code != -1 || err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Run = (%d, %v), want -1 with %q", code, err, tc.want)
+			}
+			if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("ambiguous MCP reached the runtime; recorder error = %v", statErr)
+			}
+		})
+	}
+}
+
+func TestRunUsesOneValidatedMCPSnapshotAfterSourceMutation(t *testing.T) {
+	configDir := t.TempDir()
+	mcpFile := filepath.Join(configDir, "mcp.json")
+	before := `{"mcpServers":{"before":{"command":"true"}}}`
+	after := `{"mcpServers":{"after":{"command":"false"}}}`
+	if err := os.WriteFile(mcpFile, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		ConfigDir: configDir,
+		HomeInBox: "/home/node",
+		MCPFile:   mcpFile,
+		MCPInBox:  "/home/node/.mcp.json",
+		Egress:    "none",
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	claude, _ := agents.Get("claude")
+	spec := RunSpec{
+		Image: "i", Repo: t.TempDir(), Cmd: claude.Interactive(cfg), Agent: "claude",
+		AgentCommand: true, Homes: true, Batch: true, Quiet: true,
+		Peers: []agents.Target{{Provider: "codex"}, {Provider: "gemini"}, {Provider: "grok"}},
+	}
+	artifacts := defaultCompositionArtifactOps()
+	var snapshotPath string
+	var written []string
+	originalWrite := artifacts.writeFile
+	artifacts.writeFile = func(content string) (string, error) {
+		path, err := originalWrite(content)
+		if err != nil {
+			return "", err
+		}
+		written = append(written, content)
+		if snapshotPath == "" {
+			snapshotPath = path
+			if err := os.WriteFile(mcpFile, []byte(after), 0o600); err != nil {
+				return "", err
+			}
+		}
+		return path, nil
+	}
+
+	if code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), spec, artifacts); err != nil || code != 0 {
+		t.Fatalf("Run = (%d, %v), want 0, nil", code, err)
+	}
+	if len(written) < 2 {
+		t.Fatalf("MCP artifacts = %d writes, want the snapshot plus generated adapters", len(written))
+	}
+	if written[0] != before {
+		t.Fatalf("first MCP artifact = %q, want exact source snapshot", written[0])
+	}
+	for i, content := range written[1:] {
+		if strings.Contains(content, "after") || !strings.Contains(content, "before") {
+			t.Errorf("generated MCP artifact %d did not use the frozen snapshot:\n%s", i+1, content)
+		}
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(args), mcpFile+":"+cfg.MCPInBox) {
+		t.Fatalf("runtime mounted mutable MCP source:\n%s", args)
+	}
+	if !strings.Contains(string(args), snapshotPath+":"+cfg.MCPInBox+":ro") {
+		t.Fatalf("runtime did not mount the validated snapshot:\n%s", args)
+	}
+	if _, err := os.Stat(snapshotPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("MCP snapshot was not removed after the run: %v", err)
+	}
+}
+
+func TestRunClaudeMCPCommandUsesSnapshotPresence(t *testing.T) {
+	active := `{"mcpServers":{"active":{"command":"true"}}}`
+	inert := `{"mcpServers":{}}`
+	tests := []struct {
+		name          string
+		before, after string
+		wantMCP       bool
+	}{
+		{"empty to active", inert, active, true},
+		{"active to empty", active, inert, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			mcpFile := filepath.Join(configDir, "mcp.json")
+			if err := os.WriteFile(mcpFile, []byte(tc.before), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &config.Config{
+				ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile,
+				MCPInBox: "/home/node/.mcp.json", Egress: "none",
+			}
+			claude, _ := agents.Get("claude")
+			cmd := claude.Interactive(cfg) // deliberately built before the source changes
+			if err := os.WriteFile(mcpFile, []byte(tc.after), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			spec := RunSpec{
+				Image: "i", Repo: t.TempDir(), Cmd: cmd, Agent: "claude", AgentCommand: true,
+				Homes: true, Batch: true, Quiet: true,
+			}
+			if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+				t.Fatalf("Run = (%d, %v), want 0, nil", code, err)
+			}
+			args, err := os.ReadFile(recorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hasFlag := containsSeq(strings.Fields(string(args)), []string{"--mcp-config", cfg.MCPInBox})
+			hasMount := strings.Contains(string(args), ":"+cfg.MCPInBox+":ro")
+			if hasFlag != tc.wantMCP || hasMount != tc.wantMCP {
+				t.Fatalf("snapshot MCP command/mount = (%v, %v), want both %v:\n%s", hasFlag, hasMount, tc.wantMCP, args)
+			}
+		})
+	}
+}
+
+func TestRunRejectsConfiguredMCPSourceInsideBroadMount(t *testing.T) {
+	active := `{"mcpServers":{"x":{"command":"true"}}}`
+	inert := `{"mcpServers":{}}`
+	tests := []struct {
+		name    string
+		kind    string
+		body    string
+		missing bool
+		set     func(*testing.T, *config.Config, *RunSpec) string
+	}{
+		{
+			name: "active repository source",
+			kind: "mounted repository",
+			body: active,
+			set: func(t *testing.T, _ *config.Config, spec *RunSpec) string {
+				return filepath.Join(spec.Repo, "project-mcp.json")
+			},
+		},
+		{
+			name: "empty repository source",
+			kind: "mounted repository",
+			body: inert,
+			set: func(t *testing.T, _ *config.Config, spec *RunSpec) string {
+				return filepath.Join(spec.Repo, "empty-mcp.json")
+			},
+		},
+		{
+			name:    "missing repository source",
+			kind:    "mounted repository",
+			missing: true,
+			set: func(t *testing.T, _ *config.Config, spec *RunSpec) string {
+				return filepath.Join(spec.Repo, "future", "mcp.json")
+			},
+		},
+		{
+			name:    "missing repository target through outside symlink",
+			kind:    "mounted repository",
+			missing: true,
+			set: func(t *testing.T, cfg *config.Config, spec *RunSpec) string {
+				link := filepath.Join(cfg.ConfigDir, "future-mcp-link.json")
+				if err := os.Symlink(filepath.Join(spec.Repo, "future-mcp.json"), link); err != nil {
+					t.Fatal(err)
+				}
+				return link
+			},
+		},
+		{
+			name: "credential home",
+			kind: "mounted claude credential home",
+			body: active,
+			set: func(t *testing.T, cfg *config.Config, _ *RunSpec) string {
+				path := filepath.Join(cfg.AgentDir("claude"), "shared-mcp.json")
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+		},
+		{
+			name: "companion repository",
+			kind: "mounted companion repository",
+			body: active,
+			set: func(t *testing.T, _ *config.Config, spec *RunSpec) string {
+				companion := t.TempDir()
+				spec.CompanionRepositories = []CompanionRepository{{Name: "docs", HostPath: companion, BaseCommit: strings.Repeat("a", 40)}}
+				return filepath.Join(companion, "shared-mcp.json")
+			},
+		},
+		{
+			name: "ACP session store",
+			kind: "mounted claude ACP session store",
+			body: active,
+			set: func(t *testing.T, cfg *config.Config, spec *RunSpec) string {
+				spec.ShareACPSessions = true
+				path := filepath.Join(acpSharedDir(cfg, "claude"), "projects", "shared-mcp.json")
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+			spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"claude"}, Agent: "claude", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+			cfg.MCPFile = tc.set(t, cfg, &spec)
+			body := []byte(tc.body)
+			if !tc.missing {
+				if err := os.WriteFile(cfg.MCPFile, body, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			code, err := Run(cfg, recorderRuntime(t, recorder), spec)
+			if code != -1 || err == nil || !strings.Contains(err.Error(), tc.kind) || !strings.Contains(err.Error(), "move the file and set COOP_MCP_FILE") {
+				t.Fatalf("Run = (%d, %v), want isolated-source error naming %q", code, err, tc.kind)
+			}
+			if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("overlapping MCP source reached runtime; recorder error = %v", statErr)
+			}
+			got, readErr := os.ReadFile(cfg.MCPFile)
+			if tc.missing {
+				if !errors.Is(readErr, os.ErrNotExist) {
+					t.Fatalf("rejected missing MCP source was created: %v", readErr)
+				}
+			} else if readErr != nil || !slices.Equal(got, body) {
+				t.Fatalf("rejected MCP source changed = (%q, %v)", got, readErr)
+			}
+		})
+	}
+}
+
+func TestRunRejectsCaseVariantMCPSourceInsideRepository(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "RepoCase")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	variant := filepath.Join(base, "repocase")
+	repoInfo, repoErr := os.Stat(repo)
+	variantInfo, variantErr := os.Stat(variant)
+	if repoErr != nil || variantErr != nil || !os.SameFile(repoInfo, variantInfo) {
+		t.Skip("filesystem is case-sensitive")
+	}
+	mcpFile := filepath.Join(variant, "mcp.json")
+	body := []byte(`{"mcpServers":{"x":{"command":"true"}}}`)
+	if err := os.WriteFile(mcpFile, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"claude"}, Agent: "claude", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+	code, err := Run(cfg, recorderRuntime(t, recorder), spec)
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "inside mounted repository") {
+		t.Fatalf("Run = (%d, %v), want case-variant source refusal", code, err)
+	}
+	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("case-variant MCP source reached runtime; recorder error = %v", statErr)
+	}
+}
+
 func TestRunMountsGeminiSettingsForGeminiScope(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -1224,6 +1531,131 @@ func TestRunDeclaredCompositionArtifactFailuresStopBeforeProvider(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+func TestRunActiveMCPArtifactFailuresStopBeforeProvider(t *testing.T) {
+	sentinel := errors.New("fixture MCP artifact failure")
+	newConfig := func(t *testing.T) *config.Config {
+		t.Helper()
+		configDir := t.TempDir()
+		mcpFile := filepath.Join(configDir, "mcp.json")
+		if err := os.WriteFile(mcpFile, []byte(`{"mcpServers":{"x":{"command":"true"}}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return &config.Config{
+			ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile,
+			MCPInBox: "/home/node/.mcp.json", Egress: "none", AutoUp: false,
+		}
+	}
+	assertStopped := func(t *testing.T, cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps, want string, wantSentinel bool, created *[]string) {
+		t.Helper()
+		recorder := filepath.Join(t.TempDir(), "runtime-args")
+		code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), spec, artifacts)
+		if code != -1 || err == nil || !strings.Contains(err.Error(), want) || (wantSentinel && !errors.Is(err, sentinel)) {
+			t.Fatalf("Run = (%d, %v), want -1 with %q", code, err, want)
+		}
+		if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("container run started despite MCP assembly failure; recorder error = %v", statErr)
+		}
+		for _, path := range *created {
+			if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+				t.Errorf("temporary MCP artifact %s was not removed; stat error = %v", path, statErr)
+			}
+		}
+	}
+
+	t.Run("adapter generation", func(t *testing.T) {
+		cfg := newConfig(t)
+		settings := filepath.Join(cfg.AgentDir("gemini"), "settings.json")
+		if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(settings, []byte("{malformed"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		artifacts := defaultCompositionArtifactOps()
+		var created []string
+		originalWrite := artifacts.writeFile
+		artifacts.writeFile = func(content string) (string, error) {
+			path, err := originalWrite(content)
+			if err == nil {
+				created = append(created, path)
+			}
+			return path, err
+		}
+		spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"gemini"}, Agent: "gemini", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+		assertStopped(t, cfg, spec, artifacts, "assemble MCP config for gemini", false, &created)
+	})
+
+	t.Run("generated config write", func(t *testing.T) {
+		cfg := newConfig(t)
+		artifacts := defaultCompositionArtifactOps()
+		var created []string
+		originalWrite := artifacts.writeFile
+		writes := 0
+		artifacts.writeFile = func(content string) (string, error) {
+			writes++
+			if writes == 2 {
+				return "", sentinel
+			}
+			path, err := originalWrite(content)
+			if err == nil {
+				created = append(created, path)
+			}
+			return path, err
+		}
+		spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"codex"}, Agent: "codex", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+		assertStopped(t, cfg, spec, artifacts, "write MCP config for codex", true, &created)
+	})
+}
+
+func TestRunActiveMCPDoesNotInspectOutOfScopeAdapterConfig(t *testing.T) {
+	configDir := t.TempDir()
+	mcpFile := filepath.Join(configDir, "mcp.json")
+	if err := os.WriteFile(mcpFile, []byte(`{"mcpServers":{"x":{"command":"true"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+	settings := filepath.Join(cfg.AgentDir("gemini"), "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte("{malformed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	claude, _ := agents.Get("claude")
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	spec := RunSpec{
+		Image: "i", Repo: t.TempDir(), Cmd: claude.Interactive(cfg), Agent: "claude", AgentCommand: true,
+		Homes: true, Batch: true, Quiet: true,
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = (%d, %v), want scoped Claude run to ignore Gemini config", code, err)
+	}
+}
+
+func TestRunDoesNotMountDirectMCPForMaintenanceCommand(t *testing.T) {
+	configDir := t.TempDir()
+	mcpFile := filepath.Join(configDir, "mcp.json")
+	if err := os.WriteFile(mcpFile, []byte(`{"mcpServers":{"x":{"command":"true"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	spec := RunSpec{
+		Image: "i", Repo: t.TempDir(), Cmd: []string{"sh", "/probe.sh"}, Agent: "claude",
+		Homes: true, Batch: true, Quiet: true,
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = (%d, %v), want 0, nil", code, err)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(args), cfg.MCPInBox) || strings.Contains(string(args), mcpFile) {
+		t.Fatalf("maintenance command received MCP authority:\n%s", args)
 	}
 }
 

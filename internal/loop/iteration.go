@@ -101,7 +101,7 @@ func (p *claudePlainLimitProbe) limited(code int) bool {
 // live bar watches task counts while its explicit activity remains fixed. On interactive terminals
 // the agent's output is funneled into the scroll history above a sticky progress bar (a
 // Docker-build-style live view). Non-terminal output goes straight to the destination unchanged.
-func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {
+func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming, agentCommand bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {
 	if windowMode == completionWindowReview {
 		windows, err = tasks.BeginReviewCompletionWindows(hosts, reviewSubjects)
 	} else if windowMode == completionWindowWork {
@@ -230,6 +230,7 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 	}
 	code, err = box.Run(c.cfg, c.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: c.forkOwner, ConsultLead: lead, Peers: peers, Preset: c.preset, RunID: c.runID, AssignedTask: assignedTask,
+		AgentCommand:         agentCommand,
 		SuperviseDescendants: true,
 		RepoReadOnly:         repoReadOnly,
 		RepoReadOnlyPaths:    reviewReadOnlyPaths(windowMode, repoReadOnly, hosts),

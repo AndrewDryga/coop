@@ -19,6 +19,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
+	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -83,6 +84,10 @@ type RunSpec struct {
 	// EXPLICIT peers in Peers, since the lead is told to invoke them. See
 	// credentialScope. Ignored when Homes is false.
 	Agent string
+	// AgentCommand says Cmd is this registered agent's ordinary interactive/headless/session CLI,
+	// so box.Run may apply adapter-owned command wiring from the validated MCP snapshot. ACP and
+	// maintenance commands leave it false even when Agent scopes their credential home.
+	AgentCommand bool
 
 	ForceNoTTY   bool   // ACP: attach stdin (-i) but never allocate a tty
 	Serve        bool   // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
@@ -235,6 +240,20 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if (spec.ForkName == "") != (spec.ForkOwner == "") {
 		return -1, errors.New("fork box requires both name and scoped owner")
 	}
+	var mcpSnapshot []byte
+	mcpPresent := false
+	if spec.Homes {
+		var err error
+		mcpSnapshot, mcpPresent, err = mcp.ReadValidatedSnapshot(cfg.MCPFile)
+		if err != nil {
+			return -1, fmt.Errorf("mcp.json: %w", err)
+		}
+		if cfg.MCPFile != "" {
+			if err := validateMCPSourceIsolation(cfg, spec); err != nil {
+				return -1, err
+			}
+		}
+	}
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
@@ -370,30 +389,45 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}()
 	var mcpMounts []extraMount
-	mcpPresent := spec.Homes && cfg.MCPActive()
-	configAgents := agents.Names()
+	directMCP := false
+	if mcpPresent {
+		path, err := artifacts.writeFile(string(mcpSnapshot))
+		if err != nil {
+			return -1, fmt.Errorf("snapshot mcp.json: %w", err)
+		}
+		tmpFiles = append(tmpFiles, path)
+		snapshotConfig := *cfg
+		snapshotConfig.MCPFile = path
+		cfg = &snapshotConfig
+	}
+	configAgents := credentialScope(cfg, spec)
 	configForAgent := cfg
 	if !mcpPresent {
 		// Without shared MCP, ask only adapters whose homes this box mounts. Most return
 		// nothing (or require MCP); an adapter may still supply an always-on box config.
-		configAgents = credentialScope(cfg, spec)
 		withoutMCP := *cfg
 		withoutMCP.MCPFile = ""
 		configForAgent = &withoutMCP
 	}
 	for _, name := range configAgents {
 		ag, _ := agents.Get(name)
-		gen, genErr := ag.MCP(configForAgent)
+		wiring, genErr := ag.MCP(configForAgent)
 		if genErr != nil {
 			if mcpPresent {
-				ui.Info("mcp.json: skipped %s wiring: %v", name, genErr)
+				return -1, fmt.Errorf("assemble MCP config for %s: %w", name, genErr)
 			}
 			continue
 		}
-		for _, m := range gen {
-			p, err := writeTempFile(m.Content)
+		if mcpPresent && spec.AgentCommand && name == spec.Agent {
+			spec.Cmd = append(spec.Cmd, wiring.CommandArgs...)
+			directMCP = len(wiring.CommandArgs) > 0
+		}
+		for _, m := range wiring.Mounts {
+			p, err := artifacts.writeFile(m.Content)
 			if err != nil {
-				ui.Info("mcp.json: skipped %s wiring: %v", name, err)
+				if mcpPresent {
+					return -1, fmt.Errorf("write MCP config for %s: %w", name, err)
+				}
 				continue
 			}
 			tmpFiles = append(tmpFiles, p)
@@ -626,7 +660,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return finish(-1, err)
 	}
 	limits := boxLimits(cfg, rt)
-	args := assembleArgs(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
+	args := assembleArgs(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, directMCP, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
 	// The launch boundary: everything above is host work, everything below is the provider's.
 	// A caller that clocks the provider starts counting HERE, never from Run's entry — an early
 	// return above launched nothing, so it signals nothing.
@@ -647,6 +681,170 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	code, runErr := rt.Run(stdin, stdout, stderr, args...)
 	return finish(code, runErr)
+}
+
+// validateMCPSourceIsolation rejects a configured source nested below any directory this run mounts
+// wholesale. The box consumes a private snapshot; exposing the mutable or not-yet-created authority
+// again through the repository, a companion, or a credential home would defeat that boundary.
+func validateMCPSourceIsolation(cfg *config.Config, spec RunSpec) error {
+	type mountedRoot struct {
+		kind string
+		path string
+	}
+	roots := []mountedRoot{{kind: "repository", path: spec.Repo}}
+	for _, companion := range spec.CompanionRepositories {
+		roots = append(roots, mountedRoot{kind: "companion repository", path: companion.HostPath})
+	}
+	for _, name := range credentialScope(cfg, spec) {
+		roots = append(roots, mountedRoot{kind: name + " credential home", path: cfg.AgentDir(name)})
+	}
+	if spec.ShareACPSessions {
+		if primary := runPrimary(spec); primary != "" {
+			roots = append(roots, mountedRoot{kind: primary + " ACP session store", path: acpSharedDir(cfg, primary)})
+		}
+	}
+	source, err := resolveFuturePath(cfg.MCPFile)
+	if err != nil {
+		return fmt.Errorf("resolve configured mcp.json source: %w", err)
+	}
+	for _, root := range roots {
+		if root.path == "" {
+			continue
+		}
+		realRoot, err := resolveFuturePath(root.path)
+		if err != nil {
+			return fmt.Errorf("resolve mounted %s %q: %w", root.kind, root.path, err)
+		}
+		inside, err := futurePathWithin(realRoot, source)
+		if err != nil {
+			return fmt.Errorf("compare mcp.json source with mounted %s %q: %w", root.kind, root.path, err)
+		}
+		if inside {
+			return fmt.Errorf("mcp.json source %q is inside mounted %s %q; move the file and set COOP_MCP_FILE to a path outside directories mounted into the box", cfg.MCPFile, root.kind, root.path)
+		}
+	}
+	return nil
+}
+
+// futurePathWithin uses inode identity whenever the mounted root exists, so alternate casing on a
+// case-insensitive filesystem cannot evade containment. A future root has no inode yet; compare its
+// cleaned components case-insensitively, which is conservative on case-sensitive filesystems.
+func futurePathWithin(root, candidate string) (bool, error) {
+	rootInfo, err := os.Stat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return pathComponentPrefix(root, candidate), nil
+	}
+	if err != nil {
+		return false, err
+	}
+	probe := candidate
+	for {
+		info, statErr := os.Stat(probe)
+		if statErr == nil {
+			for {
+				if os.SameFile(rootInfo, info) {
+					return true, nil
+				}
+				parent := filepath.Dir(probe)
+				if parent == probe {
+					return false, nil
+				}
+				probe = parent
+				info, statErr = os.Stat(probe)
+				if statErr != nil {
+					return false, statErr
+				}
+			}
+		}
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return false, statErr
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return false, statErr
+		}
+		probe = parent
+	}
+}
+
+func pathComponentPrefix(root, candidate string) bool {
+	rootVolume := filepath.VolumeName(root)
+	candidateVolume := filepath.VolumeName(candidate)
+	if !strings.EqualFold(rootVolume, candidateVolume) {
+		return false
+	}
+	components := func(value, volume string) []string {
+		value = strings.TrimPrefix(filepath.Clean(value)[len(volume):], string(filepath.Separator))
+		if value == "" {
+			return nil
+		}
+		return strings.Split(value, string(filepath.Separator))
+	}
+	rootParts := components(root, rootVolume)
+	candidateParts := components(candidate, candidateVolume)
+	if len(candidateParts) < len(rootParts) {
+		return false
+	}
+	for index := range rootParts {
+		if !strings.EqualFold(rootParts[index], candidateParts[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveFuturePath resolves symlinks in the nearest existing ancestor, then rejoins any missing
+// suffix. That makes a not-yet-created mcp.json subject to the same containment check as an existing
+// one, without trusting lexical paths through a symlinked directory.
+func resolveFuturePath(value string) (string, error) {
+	probe, err := filepath.Abs(value)
+	if err != nil {
+		return "", err
+	}
+	return resolveFuturePathFrom(probe, 0)
+}
+
+func resolveFuturePathFrom(value string, depth int) (string, error) {
+	if depth > 255 {
+		return "", errors.New("too many symbolic links")
+	}
+	probe := value
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(probe)
+		if err == nil {
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if info, lstatErr := os.Lstat(probe); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			target, readErr := os.Readlink(probe)
+			if readErr != nil {
+				return "", readErr
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(probe), target)
+			}
+			resolved, resolveErr := resolveFuturePathFrom(filepath.Clean(target), depth+1)
+			if resolveErr != nil {
+				return "", resolveErr
+			}
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(probe))
+		probe = parent
+	}
 }
 
 func companionRepositoryMounts(
@@ -1420,7 +1618,7 @@ func acpSharedDir(cfg *config.Config, agent string) string {
 	return filepath.Join(cfg.ConfigDir, agent, "acp-sessions")
 }
 
-func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
+func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, directMCP bool, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
 	args := []string{"run", "--rm"}
 	if initProcess {
 		// Docker and Podman provide the same runtime-native contract: this PID 1 forwards
@@ -1533,7 +1731,7 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 		args = appendROMounts(args, consultMounts)
 		// Your git environment: identity + signing-off + global gitignore.
 		args = appendROMounts(args, gitMounts)
-		if mcpPresent {
+		if directMCP {
 			args = append(args, "-v", cfg.MCPFile+":"+cfg.MCPInBox+":ro")
 		}
 		args = appendROMounts(args, mcpMounts)

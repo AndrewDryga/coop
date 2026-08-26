@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-08-25
+updated: 2026-08-26
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,11 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-26 — **+1 edge: `box → mcp`.** Box assembly now captures and validates one immutable
+  per-run MCP snapshot before runtime inspection, then points every adapter renderer and Claude's
+  direct read-only mount at those same bytes. `mcp` remains a leaf; the direct edge keeps the
+  shared authority boundary in its owning package instead of hiding it behind an `agent` forwarding
+  wrapper.
 - 2026-08-25 — **no graph change:** collapsed the task lease from host plus task-local mirrors to
   the existing host authority; production imports and the frozen allowlist remain unchanged
 - 2026-08-25 — **no graph change:** removed Fleet's parser, lifecycle, status board, and launch

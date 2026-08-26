@@ -52,7 +52,7 @@ func (c *Control) reviewRotation(rungs []string, workAgent string, def *ladder.R
 }
 
 // iterationCmdBuilder builds one attempt's argv for a stage, given the rotation's active agent.
-type iterationCmdBuilder func(agent, prompt string) (cmd []string, streaming bool)
+type iterationCmdBuilder func(agent, prompt string) (cmd []string, streaming, agentCommand bool)
 
 var (
 	errReviewInterrupted      = errors.New("review interrupted")
@@ -149,9 +149,9 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 		}
 		agent := c.applyTarget(rev)
 		target := rev.Active()
-		cmd, streaming := iterCmd(agent, prompt) // build after rotation so argv matches this provider
+		cmd, streaming, agentCommand := iterCmd(agent, prompt) // build after rotation so argv matches this provider
 		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
-		code, out, usage, classification, windows, runErr := c.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, hosts, completionWindowReview, subjects, reviewRepoReadOnly(writes), sink, peers, activity, "")
+		code, out, usage, classification, windows, runErr := c.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowReview, subjects, reviewRepoReadOnly(writes), sink, peers, activity, "")
 		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target, concurrent: concurrent}
 		if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 			return last, runErr

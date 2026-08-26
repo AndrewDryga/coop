@@ -83,9 +83,9 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		return 2, err
 	}
 	// --no-mcp: this one run mounts no MCP anywhere (the committed form is loop.yaml `mcp: false`,
-	// honored inside loop.Control.Run so fork loops get it too). Blanking MCPFile is the single switch every
-	// downstream check keys off (Config.MCPActive) — claude's --mcp-config and the generated
-	// provider-native configs all stay out of the boxes.
+	// honored inside loop.Control.Run so fork loops get it too). Blanking MCPFile is the single switch
+	// the box snapshot boundary keys off, so Claude's direct args and every provider-native config
+	// all stay out of the boxes.
 	if noMCP {
 		a.cfg.MCPFile = ""
 	}

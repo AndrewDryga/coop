@@ -329,12 +329,12 @@ func grokCredentialPortability(profileDir string, deadline time.Time) Credential
 // MCP: grok reads [mcp_servers.*] TOML from ~/.grok/config.toml — the same schema codex
 // uses (artifacts/doc-05-configuration.md), so reuse the codex generator, preserving the
 // user's other config.toml settings and mounting the result at grok's config path.
-func (grokAgent) MCP(cfg *config.Config) ([]MCPMount, error) {
+func (grokAgent) MCP(cfg *config.Config) (MCPConfig, error) {
 	gx, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("grok"), "config.toml"))
 	if err != nil {
-		return nil, err
+		return MCPConfig{}, err
 	}
-	return []MCPMount{{Content: gx, BoxPath: cfg.HomeInBox + "/.grok/config.toml"}}, nil
+	return MCPConfig{Mounts: []MCPMount{{Content: gx, BoxPath: cfg.HomeInBox + "/.grok/config.toml"}}}, nil
 }
 
 // ACPMCPServers is nil: this agent's ACP adapter reads the config.toml MCP mounts,

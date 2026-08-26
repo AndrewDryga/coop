@@ -460,7 +460,7 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 	code, runErr = box.Run(cfg, rt, box.RunSpec{
 		Image: image, Repo: cfg.RepoOverride,
 		Cmd:   command,
-		Agent: target.Provider, Batch: true, RepoReadOnly: repoReadOnly, Quiet: true,
+		Agent: target.Provider, AgentCommand: true, Batch: true, RepoReadOnly: repoReadOnly, Quiet: true,
 		Homes: true, Network: false, Cache: false, SupervisorID: supervisor,
 		Stdout: stdout, Stderr: stderr, Ctx: promptCtx,
 		ExtraArgs: liveCIDArgs(rt, cidDir, "prompt"),

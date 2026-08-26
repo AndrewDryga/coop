@@ -36,8 +36,8 @@ func (claudeAgent) Stream() StreamSpec {
 	}
 }
 
-// base is claude's command plus the resolved model and --mcp-config when a shared
-// mcp.json exists — claude reads it directly, where gemini/codex get generated config files.
+// base is Claude's ordinary command plus the resolved model and effort. MCP presence is frozen
+// later by box.Run, which appends MCP.CommandArgs from the same validated snapshot it mounts.
 func (claudeAgent) base(cfg *config.Config) []string {
 	cmd := cfg.Cmd("COOP_CLAUDE_CMD", "claude --dangerously-skip-permissions")
 	if len(cmd) == 0 { // an explicitly-empty override would otherwise yield a no-executable argv
@@ -45,9 +45,6 @@ func (claudeAgent) base(cfg *config.Config) []string {
 	}
 	cmd = withModel(cmd, cfg.ModelFor("claude"))
 	cmd = withEffort(cmd, claudeAgent{}, cfg.EffortFor("claude"))
-	if cfg.MCPActive() {
-		cmd = append(cmd, "--mcp-config", cfg.MCPInBox)
-	}
 	return cmd
 }
 
@@ -545,12 +542,15 @@ func requestClaudeCredentialRefresh(
 	return result, nil
 }
 
-// MCP is nil: claude reads the shared mcp.json directly via --mcp-config (see base).
-func (claudeAgent) MCP(*config.Config) ([]MCPMount, error) { return nil, nil }
+// MCP points Claude's ordinary CLI at the exact validated snapshot box.Run mounts. The ACP
+// adapter gets its servers through ACPMCPServers instead and never receives these arguments.
+func (claudeAgent) MCP(cfg *config.Config) (MCPConfig, error) {
+	return MCPConfig{CommandArgs: []string{"--mcp-config", cfg.MCPInBox}}, nil
+}
 
 // ACPMCPServers is how claude gets MCP in an ACP session, and the only way it can: claude-agent-acp
-// takes no flags, so the --mcp-config base() passes the CLI never reaches it and the mounted
-// mcp.json goes unread. Production ran that way — 706 tool calls from claude sessions with not one
+// takes no flags, so the ordinary CLI's --mcp-config wiring never reaches it. Production ran that
+// way — 706 tool calls from claude sessions with not one
 // mcp.*, against 924 mcp.emisar.* from codex, which mounts a generated [mcp_servers.*] file — and
 // what the model did instead was curl the API by hand and collect 401s.
 func (claudeAgent) ACPMCPServers(mcpFile string, lookupEnv func(string) (string, bool)) ([]map[string]any, error) {

@@ -316,9 +316,10 @@ type Agent interface {
 	// (claude-agent-acp reads CLAUDE_CODE_EFFORT_LEVEL). box.Run exports it when an effort is
 	// resolved so that adapter still honors the chosen effort.
 	EffortEnv() string
-	// MCP returns the config files to mount so the agent sees the shared mcp.json — its
-	// native translation (gemini/codex) or none when it reads mcp.json directly (claude).
-	MCP(cfg *config.Config) ([]MCPMount, error)
+	// MCP returns how an ordinary agent command sees the shared mcp.json: generated config
+	// mounts, command arguments for a direct reader, or both. Box applies CommandArgs only to a
+	// command explicitly marked as the agent's own CLI, never to ACP or maintenance commands.
+	MCP(cfg *config.Config) (MCPConfig, error)
 	// ACPMCPServers is the same servers as the ACP session parameter, for an adapter that
 	// cannot be pointed at a file: it takes no flags, so a mount MCP already covers is no
 	// use to it. Nil for every agent whose adapter reads what MCP mounts — sending the list
@@ -671,8 +672,14 @@ func Packages() []string {
 	return pkgs
 }
 
-// MCPMount is one generated config file an agent needs to see the shared mcp.json: its
-// content and where it mounts inside the box.
+// MCPConfig is one adapter's complete ordinary-command wiring for the shared mcp.json.
+type MCPConfig struct {
+	Mounts      []MCPMount
+	CommandArgs []string
+}
+
+// MCPMount is one generated config file an agent needs to see the shared mcp.json: its content and
+// where it mounts inside the box.
 type MCPMount struct {
 	Content string
 	BoxPath string

@@ -150,7 +150,8 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	pre := gitOut(repo, "rev-parse", "HEAD")
 	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, ConsultLead: lead, Peers: peers, Preset: a.preset,
-		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
+		AgentCommand: agent != "",
+		Homes:        a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
 		CompanionRepositories: companionRepositories,
 	})
 	// An interactive/run box makes unsigned commits; sign what THIS session produced on exit so a
@@ -897,8 +898,8 @@ func initNextSteps(repo string, services []string) []string {
 
 // writeMCPStub seeds an empty shared mcp.json — coop's one MCP source of truth, translated to
 // each agent — at the global config path if absent, so there's an obvious, correctly-shaped file
-// to drop servers into. An empty (no-server) file is inactive (see Config.MCPActive), so the stub
-// changes no run until you add a server. Never clobbers an existing config.
+// to drop servers into. The validated snapshot boundary treats an empty (no-server) file as inert,
+// so the stub changes no run until you add a server. Never clobbers an existing config.
 func (a *app) writeMCPStub() error {
 	path := a.cfg.MCPFile
 	if path == "" {
