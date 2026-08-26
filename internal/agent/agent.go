@@ -273,10 +273,10 @@ type Agent interface {
 	// Login authenticates the agent (its token persists in its config dir).
 	Login(cfg *config.Config) []string
 	// ConsultCmd is the read-only, non-interactive command to ask this agent a
-	// question as a fusion peer — it returns analysis and never edits files.
+	// question as a consult peer — it returns analysis and never edits files.
 	ConsultCmd(question string) []string
 	// InstructionFile is the agent's native global instruction filename, e.g.
-	// "CLAUDE.md" — where coop writes the shared INSTRUCTIONS.md and fusion directive.
+	// "CLAUDE.md" — where coop writes the shared or consult-augmented instructions.
 	InstructionFile() string
 	// NativeSubagents owns this adapter's generated native-role format and in-home destination.
 	// A zero descriptor means native preset roles degrade to read-only consults.

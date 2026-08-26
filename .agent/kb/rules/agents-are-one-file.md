@@ -17,7 +17,7 @@ the registry — `agents.Get(name)`, `agents.Valid(name)`, `agents.Names()`,
 `agents.Default()`, `agents.Packages()`.
 
 **Why:** Go's `switch` isn't exhaustive, so a hard-coded provider switch
-in cli/box/fusion means adding an agent is a scavenger hunt and the compiler won't catch
+in cli/box/consult means adding an agent is a scavenger hunt and the compiler won't catch
 the case you miss (it just misbehaves silently — e.g. resume falls back to fresh). The
 interface makes "answer every question for every agent" a compile-time requirement, and
 adding an agent a single new file.

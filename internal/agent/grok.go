@@ -161,7 +161,7 @@ func (grokAgent) Login(*config.Config) []string {
 	return []string{"grok", "login", "--device-auth"}
 }
 
-// ConsultCmd is the read-only fusion-peer command — locked read-only via the tool allowlist
+// ConsultCmd is the read-only peer command — locked read-only via the tool allowlist
 // (see grokReadOnlyTools), NOT --permission-mode plan (a no-op in headless). -p takes the
 // prompt as its value, so the question goes last.
 func (grokAgent) ConsultCmd(question string) []string {

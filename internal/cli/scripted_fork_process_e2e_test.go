@@ -304,15 +304,15 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		if direct.Err != nil || direct.ExitCode != 1 || !strings.Contains(direct.Stderr, "another interactive codex session is active") {
 			t.Fatalf("direct contender = exit %d err %v\nstderr:\n%s", direct.ExitCode, direct.Err, direct.Stderr)
 		}
-		fusionEnv := replaceProcessEnv(secondEnv, "COOP_HOMES", "1")
-		fusionCtx, fusionCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		fusion := procharness.Run(fusionCtx, procharness.Command{
-			Path: override.coopBin, Args: []string{"fusion", target, "--peer", "claude"},
-			Dir: secondRepo, Env: fusionEnv, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+		consultEnv := replaceProcessEnv(secondEnv, "COOP_HOMES", "1")
+		consultCtx, consultCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		consult := procharness.Run(consultCtx, procharness.Command{
+			Path: override.coopBin, Args: []string{target, "--peer", "claude"},
+			Dir: secondRepo, Env: consultEnv, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
 		})
-		fusionCancel()
-		if fusion.Err != nil || fusion.ExitCode != 1 || !strings.Contains(fusion.Stderr, "another interactive codex session is active") {
-			t.Fatalf("fusion contender = exit %d err %v\nstderr:\n%s", fusion.ExitCode, fusion.Err, fusion.Stderr)
+		consultCancel()
+		if consult.Err != nil || consult.ExitCode != 1 || !strings.Contains(consult.Stderr, "another interactive codex session is active") {
+			t.Fatalf("consult contender = exit %d err %v\nstderr:\n%s", consult.ExitCode, consult.Err, consult.Stderr)
 		}
 
 		// Codex exec rollouts are source:"exec" and excluded from discovery, so a headless run

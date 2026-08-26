@@ -3,7 +3,7 @@ name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
 sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/supervise.go, internal/forkctl/fleet.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-08-10
+updated: 2026-08-25
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -80,17 +80,18 @@ ref, commit, and commit-reset mutations, dirty baselines, timeout, recursion, un
 a delegate calling its configured read-only consult. The single-role scenario shape is intentional;
 preset composition tests own interactions among multiple roles.
 
-Preset/Fusion composition uses four dense registry-derived runs: every lead gets one mounted
+Preset composition uses four dense registry-derived runs: every lead gets one mounted
 consult role on every provider, so the suite launches all 16 lead-provider x role-provider
 relationships while starting only four boxes. It proves distinct same-provider lead/role models,
-effective effort, exact ordered council labels, personas, wrapper cardinality, credential scope,
-and repository immutability. Focused rows cover explicit peers plus multiple roles on one provider,
-native-role degradation, terminal first-rung pinning, and missing role authentication. ACP's inner
+effective effort, personas, wrapper cardinality, credential scope, and repository immutability.
+Focused rows cover explicit peers plus multiple roles on one provider, native-role degradation,
+and terminal first-rung pinning. Missing role authentication remains owned by the consult matrix.
+ACP's inner
 child has a separate assembly test proving the supervisor-selected preset and concrete target
 replace stale launch state; the ACP supervisor matrix remains the owner of migration and rate-limit
 rotation.
 
-Declared orchestration artifacts fail closed. A Fusion/preset lead instruction, consult/delegate
+Declared orchestration artifacts fail closed. A preset lead instruction, consult/delegate
 wrapper, delegate contract, native-role directory, or nonempty consult persona that cannot be
 created returns before the box or provider starts; partial temp artifacts are removed. `internal/box`
 injects only these three filesystem operations in tests and leaves unrelated best-effort MCP,
@@ -114,6 +115,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-08-25 - removed the duplicate Fusion grammar from the composition matrix; the same dense
+  all-provider proof now launches presets directly, while explicit-peer and role wiring remain.
 - 2026-08-10 - sources repointed: `controller.go`/`tasklease.go` moved to `internal/tasks/audit.go`/
   `internal/tasks/lease.go` (the 2026-08 tasks/lease/completion-audit extraction; the two
   providere2e tests that reached their unexported symbols — `processLeaseAuthorityRoot` in

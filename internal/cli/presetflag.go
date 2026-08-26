@@ -1,7 +1,7 @@
 package cli
 
-// A preset is named in the WHO-RUNS positional slot (coop <preset>, loop <preset>, fusion
-// <preset>, acp <preset>, fork <name> <preset>) or a loop.yaml/fleet.yaml agent: rung — any
+// A preset is named in the WHO-RUNS positional slot (coop <preset>, loop <preset>,
+// acp <preset>, fork <name> <preset>) or a loop.yaml agent: rung — any
 // bare word there that isn't a target (see isTargetHead) is a preset name. loadRunPreset
 // resolves .agent/presets/<name>/preset.yaml and applies it: the preset's lead agent is the
 // run's agent, its lead/role models and credentials seed the run's selections (an explicit

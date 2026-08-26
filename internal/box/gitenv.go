@@ -108,9 +108,9 @@ func gitConfigForBox(coAuthor, hooksPath, excludesPath, assignedTask string) str
 
 // boxCommitTrailer is the coop co-author line for a box's commits — attributing coop and the exact
 // target that ran (provider:model@account). Empty for a raw/maintenance run (no agent session, no
-// attributed commits). The committing agent is the fusion governor when set, else the launched one.
+// attributed commits). The committing agent is the run's lead.
 func boxCommitTrailer(cfg *config.Config, spec RunSpec) string {
-	agent := acpPrimary(spec)
+	agent := runPrimary(spec)
 	if agent == "" {
 		return ""
 	}

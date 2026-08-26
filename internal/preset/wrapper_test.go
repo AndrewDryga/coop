@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/consult"
 )
 
 // TestDelegateWrapperShellcheck keeps the embedded coop-delegate script clean, like the
@@ -769,7 +769,7 @@ func TestDelegateWrapperRejectsRecursiveInvocationBeforeLock(t *testing.T) {
 
 func TestDelegateDepthDoesNotBlockReadOnlyConsult(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "coop-consult")
-	if err := os.WriteFile(script, []byte(fusion.ConsultWrapper()), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(consult.ConsultWrapper()), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(script)

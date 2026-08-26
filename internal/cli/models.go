@@ -63,7 +63,7 @@ func (a *app) cmdModels(args []string) (int, error) {
 	ex, _ := agents.Get(names[0])
 	model := ex.Models()[0] // the static list is always non-empty — a stable example id
 	rows := []struct{ label, cmd, note string }{
-		{"one run", "coop " + names[0] + ":" + model, "fusion, fork, loop, acp take it too"},
+		{"one run", "coop " + names[0] + ":" + model, "fork, loop, and acp take it too"},
 		{"standing", "a preset's agent: ladder", "coop help presets"},
 		{"loop steps", ".agent/loop.yaml agent: ladders", "coop help loop"},
 		{"everywhere", "COOP_" + strings.ToUpper(names[0]) + "_MODEL=" + model, "the agent-wide default"},

@@ -13,7 +13,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -972,26 +972,26 @@ func TestInstructionOverrideUsed(t *testing.T) {
 }
 
 // TestAssembleArgsMountsInstructions: assembleArgs read-only-mounts the per-agent instruction
-// mounts and the fusion/consult augmented mount it is given. The selection (which agents, lead
+// mounts and the consult/preset augmented mount it is given. The selection (which agents, lead
 // excluded) and the content live in instructionPlan/agentBaseInstructions, tested below.
 func TestAssembleArgsMountsInstructions(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node"}
 	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
-	fusionMounts := []extraMount{
-		{"/tmp/fusion", "/home/node/.codex/AGENTS.md"},
+	consultMounts := []extraMount{
+		{"/tmp/consult", "/home/node/.codex/AGENTS.md"},
 		// The coop-consult wrapper mounts at an absolute path on PATH, not under HOME.
-		{"/tmp/coop-consult", fusion.ConsultWrapperPath},
+		{"/tmp/coop-consult", consult.ConsultWrapperPath},
 	}
 	instructionMounts := []extraMount{
 		{"/tmp/claude-ins", "/home/node/.claude/CLAUDE.md"},
 		{"/tmp/gemini-ins", "/home/node/.gemini/GEMINI.md"},
 	}
-	got := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r", Homes: true, FusionGovernor: "codex"}, mounts,
-		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, fusionMounts, nil, instructionMounts, nil, "", "")
+	got := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r", Homes: true, Agent: "codex", ConsultLead: "codex"}, mounts,
+		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, consultMounts, nil, instructionMounts, nil, "", "")
 	for _, want := range [][]string{
 		{"-e", "COOP_PRIMARY=codex"},
-		{"-v", "/tmp/fusion:/home/node/.codex/AGENTS.md:ro"},
-		{"-v", "/tmp/coop-consult:" + fusion.ConsultWrapperPath + ":ro"},
+		{"-v", "/tmp/consult:/home/node/.codex/AGENTS.md:ro"},
+		{"-v", "/tmp/coop-consult:" + consult.ConsultWrapperPath + ":ro"},
 		{"-v", "/tmp/claude-ins:/home/node/.claude/CLAUDE.md:ro"},
 		{"-v", "/tmp/gemini-ins:/home/node/.gemini/GEMINI.md:ro"},
 	} {
@@ -1002,7 +1002,7 @@ func TestAssembleArgsMountsInstructions(t *testing.T) {
 }
 
 // TestInstructionPlan: every non-lead agent gets a plan item carrying the box env note; the
-// fusion governor and consult lead are excluded (they get their augmented file instead).
+// consult lead is excluded (it gets its augmented file instead).
 func TestInstructionPlan(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	if got := instructionPlan(cfg, RunSpec{}); got != nil {
@@ -1015,11 +1015,6 @@ func TestInstructionPlan(t *testing.T) {
 	for _, it := range plan {
 		if !strings.Contains(it.content, "Environment (coop box)") {
 			t.Errorf("%s plan content missing the box env note", it.agent)
-		}
-	}
-	for _, it := range instructionPlan(cfg, RunSpec{Homes: true, FusionGovernor: "codex"}) {
-		if it.agent == "codex" {
-			t.Error("fusion governor must be excluded from instructionPlan")
 		}
 	}
 	for _, it := range instructionPlan(cfg, RunSpec{Homes: true, ConsultLead: "claude"}) {
@@ -1054,7 +1049,7 @@ func TestEnsureAgentHomesScoped(t *testing.T) {
 
 // TestModelEnvArgs: a scoped agent's resolved model is exported into the box — its own env
 // var (claude's ANTHROPIC_MODEL, for the flagless ACP adapter) always, and COOP_PEER_MODEL_<AGENT>
-// only on a fusion/consult run (where the coop-consult wrapper expands it into each peer's
+// only on a consult-capable run (where the coop-consult wrapper expands it into each peer's
 // --model). No resolved model → nothing exported; codex has no ModelEnv, so only the wrapper var.
 func TestModelEnvArgs(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
@@ -1123,56 +1118,7 @@ func TestLeadInstructionMount(t *testing.T) {
 	}
 }
 
-func TestFusionInstructionMountConsumesResolvedMembers(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
-	p := &preset.Preset{Name: "council", LeadAgent: "codex", Roles: []preset.Role{
-		{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-role"},
-	}}
-	content, file, wired, ok := fusionInstructionMount(cfg, RunSpec{
-		Homes: true, FusionGovernor: "codex", FusionMembers: []string{"critic", "gemini"}, Preset: p,
-	})
-	if !ok || !wired || file != "AGENTS.md" {
-		t.Fatalf("fusionInstructionMount = (file=%q wired=%v ok=%v), want AGENTS.md/true/true", file, wired, ok)
-	}
-	for _, want := range []string{"coop-consult critic --fresh", "coop-consult gemini --fresh", "Orchestration preset"} {
-		if !strings.Contains(content, want) {
-			t.Errorf("resolved Fusion instruction missing %q:\n%s", want, content)
-		}
-	}
-	if fusionAt, presetAt := strings.Index(content, "# Fusion mode"), strings.Index(content, "# Orchestration preset"); fusionAt < 0 || presetAt < 0 || fusionAt > presetAt {
-		t.Errorf("Fusion mandate must precede the preset's optional role guidance: fusion=%d preset=%d\n%s", fusionAt, presetAt, content)
-	}
-}
-
-func TestValidateFusionSpecRejectsSplitCouncilState(t *testing.T) {
-	valid := RunSpec{
-		Homes: true, FusionGovernor: "claude", FusionMembers: []string{"codex"},
-		Peers: []agents.Target{{Provider: "codex"}},
-	}
-	if err := validateFusionSpec(valid); err != nil {
-		t.Fatalf("valid Fusion spec rejected: %v", err)
-	}
-	cases := []struct {
-		name string
-		spec RunSpec
-		want string
-	}{
-		{"members without governor", RunSpec{FusionMembers: []string{"codex"}}, "require a governor"},
-		{"governor without homes", RunSpec{FusionGovernor: "claude", FusionMembers: []string{"codex"}}, "requires agent homes"},
-		{"governor without council", RunSpec{Homes: true, FusionGovernor: "claude"}, "no resolved council"},
-		{"peer omitted from members", RunSpec{Homes: true, FusionGovernor: "claude", FusionMembers: []string{"critic"}, Peers: []agents.Target{{Provider: "codex"}}}, "missing from"},
-		{"duplicate member", RunSpec{Homes: true, FusionGovernor: "claude", FusionMembers: []string{"critic", "critic"}}, "duplicate"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := validateFusionSpec(tc.spec); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("validateFusionSpec error = %v, want %q", err, tc.want)
-			}
-		})
-	}
-}
-
-func TestRunFusionRoleOnlyMountsConsultWrapperAndRoleEnv(t *testing.T) {
+func TestRunPresetRoleMountsConsultWrapperAndRoleEnv(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node", Egress: "none"}
 	if err := os.WriteFile(cfg.EnvFile(), []byte("OPENAI_API_KEY=test\n"), 0o600); err != nil {
@@ -1184,7 +1130,7 @@ func TestRunFusionRoleOnlyMountsConsultWrapperAndRoleEnv(t *testing.T) {
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
 		Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: "claude", Homes: true, Batch: true, Quiet: true,
-		FusionGovernor: "claude", FusionMembers: []string{"critic"}, Preset: p,
+		ConsultLead: "claude", Preset: p,
 	})
 	if err != nil || code != 0 {
 		t.Fatalf("Run = (%d, %v), want success", code, err)
@@ -1194,12 +1140,12 @@ func TestRunFusionRoleOnlyMountsConsultWrapperAndRoleEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		":" + fusion.ConsultWrapperPath + ":ro",
+		":" + consult.ConsultWrapperPath + ":ro",
 		"COOP_CONSULT_CRITIC_TARGETS=codex:gpt-role",
 		cfg.AgentDir("codex") + ":/home/node/.codex",
 	} {
 		if !strings.Contains(string(args), want) {
-			t.Errorf("role-only Fusion runtime args missing %q:\n%s", want, args)
+			t.Errorf("preset role runtime args missing %q:\n%s", want, args)
 		}
 	}
 }
@@ -1224,14 +1170,6 @@ func TestRunDeclaredCompositionArtifactFailuresStopBeforeProvider(t *testing.T) 
 	normalSpec := func(p *preset.Preset) RunSpec {
 		return RunSpec{Image: "i", Cmd: []string{"true"}, Agent: "claude", Homes: true, Batch: true, Quiet: true, ConsultLead: "claude", Preset: p}
 	}
-	fusionSpec := func(p *preset.Preset) RunSpec {
-		spec := normalSpec(p)
-		spec.ConsultLead = ""
-		spec.FusionGovernor = "claude"
-		spec.FusionMembers = []string{"critic"}
-		return spec
-	}
-
 	tests := []struct {
 		name       string
 		spec       RunSpec
@@ -1240,9 +1178,8 @@ func TestRunDeclaredCompositionArtifactFailuresStopBeforeProvider(t *testing.T) 
 		failChmod  bool
 		failAgents bool
 	}{
-		{"fusion instruction", fusionSpec(consultPreset()), "assemble fusion instruction", func(content string) bool { return strings.HasPrefix(content, "# Fusion mode") }, false, false},
 		{"preset instruction", normalSpec(consultPreset()), "assemble lead instruction", func(content string) bool { return strings.HasPrefix(content, "# Orchestration preset") }, false, false},
-		{"consult wrapper write", normalSpec(consultPreset()), "assemble consult wrapper", func(content string) bool { return content == fusion.ConsultWrapper() }, false, false},
+		{"consult wrapper write", normalSpec(consultPreset()), "assemble consult wrapper", func(content string) bool { return content == consult.ConsultWrapper() }, false, false},
 		{"consult wrapper chmod", normalSpec(consultPreset()), "make consult wrapper executable", nil, true, false},
 		{"delegate wrapper write", normalSpec(delegatePreset()), "assemble delegate wrapper", func(content string) bool { return content == preset.DelegateWrapper() }, false, false},
 		{"delegate wrapper chmod", normalSpec(delegatePreset()), "make delegate wrapper executable", nil, true, false},
@@ -1328,7 +1265,7 @@ func TestPresetRoleTargetDefaultsDoNotInheritRawPeerOverride(t *testing.T) {
 	cfg.SetActiveModel("codex", "configured-default")
 	p := &preset.Preset{Roles: []preset.Role{{Name: "thinker", Mode: preset.ModeConsult, Agent: "codex"}}}
 	_, args, files, dirs, err := presetRoleMounts(cfg, RunSpec{
-		Homes: true, Preset: p, FusionGovernor: "claude", FusionMembers: []string{"codex", "thinker"},
+		Homes: true, Preset: p, ConsultLead: "claude",
 		Peers: []agents.Target{{Provider: "codex", Model: "raw-peer-model"}},
 	}, defaultCompositionArtifactOps())
 	if err != nil {
@@ -1592,8 +1529,8 @@ func frontierPreset() *preset.Preset {
 }
 
 // A preset lead's instruction file carries the generated routing contract (exact role
-// invocations) instead of the generic second-opinion directive, keeps the base, and
-// wires coop-consult only because a consult role exists.
+// invocations), keeps the base, and wires coop-consult only when a preset consult role
+// or an explicit peer needs it.
 func TestLeadInstructionMountPreset(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("BASE RULES"), 0o644)
@@ -1611,9 +1548,9 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 			t.Errorf("preset lead instructions missing %q:\n%s", want, content)
 		}
 	}
-	// The generic directive is replaced by the preset block, not stacked on top of it.
+	// With no explicit peers, the preset block needs no generic directive.
 	if strings.Contains(content, "second opinion is available") {
-		t.Error("preset should replace the generic consult directive")
+		t.Error("preset with no explicit peers should omit the generic consult directive")
 	}
 
 	// A delegate-only preset wires no consult (nothing read-only to call).
@@ -1621,6 +1558,18 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 		Roles: []preset.Role{{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini"}}}
 	if _, _, wired, _ := leadInstructionMount(cfg, "claude", delegateOnly, nil); wired {
 		t.Error("a delegate-only preset must not mount coop-consult")
+	}
+
+	// An explicit peer composes with a preset instead of disappearing behind it. This
+	// also wires coop-consult for a preset that has no consult roles of its own.
+	content, _, wired, _ = leadInstructionMount(cfg, "claude", delegateOnly, []string{"codex"})
+	if !wired {
+		t.Error("a delegate-only preset with an explicit peer must mount coop-consult")
+	}
+	for _, want := range []string{`preset "d"`, "coop-delegate fast", "coop-consult codex --fresh", "BASE RULES"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("preset plus explicit peer instructions missing %q:\n%s", want, content)
+		}
 	}
 }
 

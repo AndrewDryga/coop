@@ -10,8 +10,8 @@ import (
 
 // ACPRateSignals returns the structured limit markers to match for a session led by
 // lead: the adapter's own (each owns its wire format — see Agent.ACPRateLimitSignals),
-// or, for a lead that isn't a registered agent (fusion fronts whichever agent leads the
-// council), the union of every adapter's so no provider's limit goes unrecognized.
+// or, for an unknown lead, the union of every adapter's so no provider's limit goes
+// unrecognized.
 func ACPRateSignals(lead string) []agents.ACPSignal {
 	if a, ok := agents.Get(lead); ok {
 		return a.ACPRateLimitSignals()

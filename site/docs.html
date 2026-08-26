@@ -6,7 +6,7 @@
         <title>Docs — coop</title>
         <meta
             name="description"
-            content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, fleets, forks, fusion, and more."
+            content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, forks, presets, and more."
         />
         <link rel="canonical" href="https://coop.dryga.com/docs.html" />
         <meta name="theme-color" content="#0e1014" />
@@ -27,7 +27,7 @@
         />
         <meta
             property="og:description"
-            content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, fleets, forks, fusion, and more."
+            content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, forks, presets, and more."
         />
         <meta
             property="og:image"
@@ -50,7 +50,7 @@
         />
         <meta
             name="twitter:description"
-            content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, fleets, forks, fusion, and more."
+            content="A friendly guide to running coding agents you don't fully trust — safely, and at scale. The idea, install, the sandbox, the loop, forks, presets, and more."
         />
         <meta
             name="twitter:image"
@@ -105,7 +105,7 @@
                 <h5>Working with agents</h5>
                 <a href="#run">Run an agent</a>
                 <a href="#forks">Forks</a>
-                <a href="#fusion">Fusion</a>
+                <a href="#peers">Second opinions</a>
                 <a href="#credentials">Credentials &amp; failover</a>
                 <a href="#models">Pick the model</a>
                 <a href="#presets">Presets</a>
@@ -517,55 +517,34 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                     </figure>
                 </section>
 
-                <section class="doc-section" id="fusion">
-                    <h2>Fusion — a council of models</h2>
+                <section class="doc-section" id="peers">
+                    <h2>Second opinions — named, read-only peers</h2>
                     <p class="section-lead">
-                        Don't bet the run on one model's blind spots. Let one
-                        model lead while a configured council weighs in before
-                        every response or task.
+                        Give the lead a different model's blind spots for the hard calls,
+                        while keeping one writer in charge of the worktree.
                     </p>
                     <p>
-                        In <code>coop fusion</code>, one model is the
-                        <em>governor</em>: it does the real work — edits, runs
-                        the gate, commits. Explicit peers and preset consult
-                        roles form a one-or-many-member council, consulted
-                        read-only and in parallel where practical. The governor
-                        synthesizes their strongest conclusions.
-                        The combined answer reliably beats any single model
-                        working alone.
+                        Add <code>--peer &lt;agent&gt;</code> to an interactive run,
+                        loop, fork, or ACP entry. Only those peers' credentials mount;
+                        <code>coop-consult</code> runs them read-only, and the lead remains
+                        responsible for deciding, editing, gating, and committing. A preset's
+                        consult roles use the same wrapper with stable role names, model ladders,
+                        and personas.
                     </p>
                     <div class="why">
                         <span class="why-label"
                             >Why it stays simple</span
                         >
                         <p>
-                            There's no extra service or protocol — the leader
-                            simply asks each council member from its own shell
-                            before it answers or starts a task. Each consultation
-                            adds one read-only run per member, so cost scales with
-                            the council you configure.
+                            There's no extra service or protocol. Consultation is optional,
+                            reserved for genuinely hard or risky calls, and scoped to the lead
+                            so a peer never recurses or writes to the repository.
                         </p>
                     </div>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> fusion claude --peer codex --peer gemini  <span class="t"># a council: claude governs, peers weigh in</span>
-<span class="k">coop</span> claude --peer codex                       <span class="t"># lighter, opt-in: one peer on hard calls only</span></pre>
-                    <figure class="cast-figure">
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title">coop fusion claude --peer codex --peer gemini</span>
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/fusion.cast"
-                                ></div>
-                            </div>
-                        </div>
-                    </figure>
+                    ><span class="k">coop</span> claude --peer codex --peer gemini <span class="t"># optional second opinions on hard calls</span>
+<span class="k">coop</span> acp claude --peer codex           <span class="t"># the same pattern from an editor</span></pre>
                 </section>
 
                 <section class="doc-section" id="credentials">
@@ -704,15 +683,14 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         assembled from flags every time.
                     </p>
                     <p>
-                        The <a href="#fusion">fusion</a> and orchestrator
-                        patterns above are wired up by hand — a model here, a
+                        The orchestrator pattern above can be wired up by hand — a model here, a
                         <code>--peer codex</code> there. A <strong>preset</strong>
                         captures the whole recipe in
                         <code>.agent/presets/&lt;name&gt;/preset.yaml</code>:
                         who leads, on which models, and the named roles it can
                         hand work to. Run it by naming it in the who-runs slot —
                         <code>coop &lt;name&gt;</code>, <code>coop loop &lt;name&gt;</code>,
-                        <code>fusion</code>, <code>acp</code>, or a fork.
+                        <code>coop acp &lt;name&gt;</code>, or a fork.
                     </p>
                     <pre
                         class="code"
@@ -1123,10 +1101,10 @@ roles:
       <span class="s">"command"</span>: <span class="s">"coop"</span>,
       <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude"</span>]                      <span class="t">// one agent; pin the target: "claude:opus/xhigh@work"</span>
     },
-    <span class="s">"coop · fusion"</span>: {
+    <span class="s">"coop · second opinion"</span>: {
       <span class="s">"type"</span>: <span class="s">"custom"</span>,
       <span class="s">"command"</span>: <span class="s">"coop"</span>,
-      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"fusion"</span>, <span class="s">"claude:opus/xhigh"</span>, <span class="s">"--peer"</span>, <span class="s">"codex"</span>] <span class="t">// a council; governor's model/effort ride the target</span>
+      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude:opus/xhigh"</span>, <span class="s">"--peer"</span>, <span class="s">"codex"</span>] <span class="t">// named peer; the lead's model/effort ride the target</span>
     }
   }
 }</pre>

@@ -157,13 +157,6 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) > 1 {
 			return []string{"--tasks", "--peer", "--max-tasks", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"}
 		}
-	case "fusion":
-		if len(prev) == 1 {
-			return appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates(), []string{"--peer"})
-		}
-		if len(prev) > 1 && prev[len(prev)-1] == "--peer" {
-			return a.targetCandidates(cur, true, false)
-		}
 	case "acp":
 		if len(prev) == 1 {
 			return appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates(), []string{"--peer"})

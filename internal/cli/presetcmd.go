@@ -68,7 +68,7 @@ func (a *app) cmdPresets(args []string) (int, error) {
 		fmt.Printf("  %s  lead %s  %s\n", label, lead, summary)
 	}
 	fmt.Println()
-	fmt.Println(ui.Dim("  run one by naming it: coop <name> · coop loop <name> · coop fusion <name> · coop acp <name>   ·   format: coop help presets"))
+	fmt.Println(ui.Dim("  run one by naming it: coop <name> · coop loop <name> · coop acp <name>   ·   format: coop help presets"))
 	return 0, nil
 }
 

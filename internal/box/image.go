@@ -251,7 +251,7 @@ terminate_jobs() {
   for pid in $(live_jobs); do kill -KILL "$pid" 2>/dev/null || true; done
 }
 
-# coop's OWN detached consult, marked with COOP_CONSULT_OWNED=1 by internal/fusion/wrapper.go
+# coop's OWN detached consult, marked with COOP_CONSULT_OWNED=1 by internal/consult/wrapper.go
 # before it detaches (children inherit the environment).
 owned_jobs() {
   for pid in $1; do

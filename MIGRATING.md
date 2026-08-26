@@ -1,5 +1,23 @@
 # Migrating
 
+## v9: one composition model
+
+Fusion was a second command grammar over capabilities Coop already exposes directly. v9 removes
+the command and its mandatory "consult everyone before every action" governor prompt; it does not
+remove presets, named peers, roles, or consultation.
+
+| Retired | Use |
+| --- | --- |
+| `coop fusion <agent> --peer <peer>...` | `coop <agent> --peer <peer>...` — named peers remain read-only, explicit, and optional |
+| `coop fusion <preset>` | `coop <preset>` — the preset lead, native/consult/delegate roles, ladders, and personas are unchanged |
+| `coop acp fusion <agent> --peer <peer>...` | `coop acp <agent> --peer <peer>...` |
+| `coop acp fusion <preset>` | `coop acp <preset>` |
+
+ACP still requires an explicit initial target or preset. After connection, its live Preset,
+Provider, and Account selectors keep working; preset ladders still rotate across providers and
+accounts. `coop-consult` still provides read-only fresh/continue sessions and target fallback for
+named peers and preset consult roles.
+
 ## v4: the target grammar — one way to name a run
 
 Every launch names WHO runs with a single **target**: `provider[:model][/effort][@account]`

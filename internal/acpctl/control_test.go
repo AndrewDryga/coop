@@ -32,7 +32,7 @@ func newTestControlWithHost(t *testing.T, host Host) *Control {
 	for _, p := range []string{"personal", "work"} {
 		signInCred(t, cfg, "claude", p)
 	}
-	return New(cfg, "claude", "opus[1m]", "", dir, Selection{}, []string{"frontier"}, nil, false, nil, host)
+	return New(cfg, "claude", "opus[1m]", "", dir, Selection{}, []string{"frontier"}, nil, host)
 }
 
 func configOptionIDs(t *testing.T, out []byte) ([]string, map[string]json.RawMessage) {
@@ -205,7 +205,7 @@ func newGeminiControlWithHost(t *testing.T, model string, host Host) *Control {
 			t.Fatal(err)
 		}
 	}
-	return New(&config.Config{ConfigDir: dir}, "gemini", model, "", dir, Selection{}, []string{"frontier"}, nil, false, nil, host)
+	return New(&config.Config{ConfigDir: dir}, "gemini", model, "", dir, Selection{}, []string{"frontier"}, nil, host)
 }
 
 // modelOption is the subset of a synthesized `model` configOption the tests assert on.
@@ -682,7 +682,7 @@ func TestACPControlPresetSwallowsNativeSet(t *testing.T) {
 // TestACPControlSessionReadyNonClaude: mode=bypassPermissions is a claude option, so a non-claude lead
 // must NOT get it (yolo comes from autoReply instead); coop's model set still goes out.
 func TestACPControlSessionReadyNonClaude(t *testing.T) {
-	c := New(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", t.TempDir(), Selection{}, nil, nil, false, nil, testHost())
+	c := New(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", t.TempDir(), Selection{}, nil, nil, testHost())
 	c.target = agents.Target{Provider: "codex", Model: "gpt-5", Effort: "xhigh"}
 	joined := string(bytes.Join(c.sessionReady("s1"), nil))
 	if strings.Contains(joined, "bypassPermissions") {
@@ -696,7 +696,7 @@ func TestACPControlSessionReadyNonClaude(t *testing.T) {
 }
 
 func TestACPControlInjectedSettingFailureIsVisible(t *testing.T) {
-	c := New(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", t.TempDir(), Selection{}, nil, nil, false, nil, testHost())
+	c := New(&config.Config{ConfigDir: t.TempDir()}, "codex", "gpt-5", "", t.TempDir(), Selection{}, nil, nil, testHost())
 	c.target = agents.Target{Provider: "codex", Model: "gpt-5"}
 	msg := c.sessionReady("s1")[0]
 	var request struct {
@@ -763,7 +763,7 @@ func TestACPControlOlderAcceptedTargetWinsAfterNewerRejectsFirst(t *testing.T) {
 }
 
 func TestACPControlLocalTargetRejectionClearsReusedRequestID(t *testing.T) {
-	c := New(&config.Config{ConfigDir: t.TempDir()}, "grok", "grok-4.5", "high", t.TempDir(), Selection{}, nil, nil, false, nil, testHost())
+	c := New(&config.Config{ConfigDir: t.TempDir()}, "grok", "grok-4.5", "high", t.TempDir(), Selection{}, nil, nil, testHost())
 	c.leadUsesSetModel = true
 	c.cached["s1"] = json.RawMessage(`[{"id":"model","currentValue":"grok-4.5"}]`)
 	set := []byte(`{"jsonrpc":"2.0","id":9,"method":"session/set_config_option","params":{"sessionId":"s1","configId":"model","value":"grok-composer-2.5-fast"}}` + "\n")
@@ -1312,7 +1312,7 @@ func TestACPControlAccountSelectorOmitsCredentialThatNeedsRelogin(t *testing.T) 
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	signInCred(t, cfg, "claude", "personal")
 	signInDeadCred(t, cfg, "claude", "personal_backup")
-	c := New(cfg, "claude", "", "", t.TempDir(), Selection{}, nil, nil, false, nil, testHost())
+	c := New(cfg, "claude", "", "", t.TempDir(), Selection{}, nil, nil, testHost())
 
 	if got := c.Creds(); !slices.Equal(got, []string{"personal"}) {
 		t.Fatalf("account selector credentials = %v, want only runnable personal", got)
@@ -1578,7 +1578,7 @@ func presetControlFor(t *testing.T, lead string) *Control {
 			t.Fatal(err)
 		}
 	}
-	c := New(&config.Config{ConfigDir: dir}, lead, "m", "", dir, Selection{}, []string{"frontier"}, nil, false, nil, testHost())
+	c := New(&config.Config{ConfigDir: dir}, lead, "m", "", dir, Selection{}, []string{"frontier"}, nil, testHost())
 	c.sel = Selection{Preset: "frontier"}
 	c.rotFor = c.sel
 	c.rot = ladder.NewRotation([]agents.Target{
@@ -1830,7 +1830,7 @@ func TestACPSpawnTargetResolvesAutoAfterProviderRetarget(t *testing.T) {
 	cfg := &config.Config{ConfigDir: dir}
 	signInCred(t, cfg, "claude", "work")
 	signInCred(t, cfg, "codex", "default")
-	c := New(cfg, "claude", "", "", dir, Selection{}, nil, nil, false, nil, testHost())
+	c := New(cfg, "claude", "", "", dir, Selection{}, nil, nil, testHost())
 
 	first, _, ok := c.SpawnTarget()
 	if !ok || first.String() != "claude@work" {
@@ -1850,7 +1850,7 @@ func TestACPSpawnTargetAutoUsesSignedAccountWhenDefaultIsUnsigned(t *testing.T) 
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}
 	signInCred(t, cfg, "claude", "work")
-	c := New(cfg, "claude", "", "", dir, Selection{}, nil, nil, false, nil, testHost())
+	c := New(cfg, "claude", "", "", dir, Selection{}, nil, nil, testHost())
 
 	target, _, ok := c.SpawnTarget()
 	if !ok || target.String() != "claude@work" || c.autoAccount != "work" {
@@ -1863,7 +1863,7 @@ func TestACPSpawnTargetPreservesExplicitEffort(t *testing.T) {
 	c := New(
 		&config.Config{ConfigDir: dir},
 		"codex", "gpt-5.6-sol", "xhigh", dir,
-		Selection{Provider: "codex"}, nil, nil, false, nil, testHost(),
+		Selection{Provider: "codex"}, nil, nil, testHost(),
 	)
 	target, presetName, ok := c.SpawnTarget()
 	if !ok || presetName != "" || target.Provider != "codex" || target.Model != "gpt-5.6-sol" || target.Effort != "xhigh" {
@@ -2140,12 +2140,12 @@ func TestACPReplayNativeCacheIsProviderScopedPerSession(t *testing.T) {
 func TestACPSelectionNormalizesMixedState(t *testing.T) {
 	dir := t.TempDir()
 	mixed := Selection{Provider: "codex", Account: "work", Preset: "frontier"}
-	c := New(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, mixed, []string{"frontier"}, nil, false, nil, testHost())
+	c := New(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, mixed, []string{"frontier"}, nil, testHost())
 	if got := c.selection(); got != (Selection{Preset: "frontier"}) {
 		t.Fatalf("constructor normalized selection = %+v", got)
 	}
 
-	c2 := New(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, Selection{}, []string{"frontier"}, nil, false, nil, testHost())
+	c2 := New(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, Selection{}, []string{"frontier"}, nil, testHost())
 	c2.Restore(Snapshot{Selection: mixed, Lead: "codex"})
 	if got := c2.selection(); got != (Selection{Preset: "frontier"}) {
 		t.Fatalf("restored normalized selection = %+v", got)
@@ -2178,9 +2178,9 @@ func TestACPInitialPresetSelection(t *testing.T) {
 	}
 }
 
-// The Provider dropdown offers the current lead plus other SIGNED-IN providers (never
-// unsigned ones, absent under fusion); each plain dropdown changes its own selection field, and a
-// value that could never spawn is refused instead of sending the respawn loop chasing it.
+// The Provider dropdown offers the current lead plus other SIGNED-IN providers (never unsigned
+// ones); each plain dropdown changes its own selection field, and a value that could never spawn is
+// refused instead of sending the respawn loop chasing it.
 func TestACPProviderSelector(t *testing.T) {
 	c := newTestControl(t)
 	signInCred(t, c.cfg, "claude", "work")
@@ -2227,44 +2227,11 @@ roles:
 		t.Errorf("Account dropdown %v must offer auto + the lead's accounts", account)
 	}
 
-	// A fusion governor gets no Provider dropdown at all.
-	c.Fusion = true
-	if fus := c.coopOptions(); len(fus) != 2 {
-		t.Errorf("fusion must drop the Provider dropdown, got %d options", len(fus))
-	}
 	set := func(configID, value string) (bool, bool) {
 		line := []byte(`{"jsonrpc":"2.0","id":"sx","method":"session/set_config_option","params":{"sessionId":"sess1","configId":"` + configID + `","value":"` + value + `"}}` + "\n")
 		handled, _, _, restart := c.fromEditor(line)
 		return handled, restart
 	}
-	if handled, restart := set(CoopProviderID, "codex"); !handled || restart {
-		t.Errorf("fusion provider set should be a refused ack, got handled=%v restart=%v", handled, restart)
-	}
-	// A role-only Fusion session cannot clear its preset: doing so would leave no council.
-	c.sel = Selection{Preset: "frontier"}
-	c.fusionPeers = nil
-	if opts := optValues(c.coopOptions()[0]); slices.Contains(opts, "none") {
-		t.Errorf("role-only Fusion preset options must not offer None: %v", opts)
-	}
-	if handled, restart := set(CoopPresetID, "none"); !handled || restart || c.sel.Preset != "frontier" {
-		t.Errorf("role-only Fusion must refuse None: handled=%v restart=%v sel=%+v", handled, restart, c.sel)
-	}
-	// A non-self explicit peer makes None valid, but rotating onto that provider makes it self
-	// and removes None again.
-	c.fusionPeers = []string{"codex"}
-	c.lead = "claude"
-	if opts := optValues(c.coopOptions()[0]); !slices.Contains(opts, "none") {
-		t.Errorf("Fusion with an effective explicit peer must offer None: %v", opts)
-	}
-	c.lead = "codex"
-	if opts := optValues(c.coopOptions()[0]); slices.Contains(opts, "none") {
-		t.Errorf("after rotating onto the only peer, Fusion must remove None: %v", opts)
-	}
-	c.fusionPeers = nil
-	c.sel = Selection{}
-	c.Fusion = false
-	c.lead = "claude"
-
 	// A bogus provider is refused — acked, no restart, selection unchanged.
 	if handled, restart := set("coop_provider", "bogus"); !handled || restart || c.sel.Provider == "bogus" {
 		t.Errorf("bogus provider: handled=%v restart=%v sel=%+v, want a refused ack", handled, restart, c.sel)
@@ -2299,43 +2266,6 @@ roles:
 	}
 	if _, restart := set("coop_preset", "none"); !restart || c.sel != (Selection{Provider: "claude"}) {
 		t.Errorf("preset none: restart=%v sel=%+v, want effective preset lead claude + auto", restart, c.sel)
-	}
-}
-
-func TestACPFusionFiltersAndRefusesInvalidPresetSelection(t *testing.T) {
-	repo := t.TempDir()
-	cfg := &config.Config{ConfigDir: t.TempDir()}
-	signInCred(t, cfg, "claude", "work")
-	signInCred(t, cfg, "codex", "work")
-	cfg.SetActiveProfile("claude", "work")
-	cfg.SetActiveProfile("codex", "work")
-	writeACPTestPreset(t, repo, "valid", `lead: {agent: claude@work}
-roles:
-  critic: {mode: consult, agent: codex}
-  scout: {mode: consult, agent: gemini}
-`)
-	writeACPTestPreset(t, repo, "collision", `lead: {agent: claude@work}
-roles:
-  codex: {mode: consult, agent: claude}
-`)
-	c := New(cfg, "claude", "", "", repo, Selection{Preset: "valid"}, []string{"collision", "valid"}, nil, true, nil, testHost())
-	c.fusionPeers = []string{"codex"}
-
-	raw := string(c.coopOptions()[0])
-	if strings.Contains(raw, `"value":"collision"`) {
-		t.Fatalf("invalid Fusion preset must be absent from the toolbar:\n%s", raw)
-	}
-	if !strings.Contains(raw, `"value":"valid"`) || !strings.Contains(raw, "unavailable council roles: scout") {
-		t.Fatalf("valid preset and its unavailable-role warning must remain visible:\n%s", raw)
-	}
-
-	line := []byte(`{"jsonrpc":"2.0","id":"bad-preset","method":"session/set_config_option","params":{"sessionId":"s","configId":"coop_preset","value":"collision"}}` + "\n")
-	handled, response, _, restart := c.fromEditor(line)
-	if !handled || restart || c.selection().Preset != "valid" {
-		t.Fatalf("invalid selection = handled %v restart %v selection %+v, want refusal + current child", handled, restart, c.selection())
-	}
-	if !strings.Contains(string(response), `"error"`) || !strings.Contains(string(response), "conflicts with preset role") {
-		t.Fatalf("invalid selection response must explain the council collision:\n%s", response)
 	}
 }
 
@@ -2746,7 +2676,7 @@ func coopIDs(opts []json.RawMessage) []string {
 // non-default lead/model/set-model, restore into a fresh controller, assert it comes back.
 func TestACPControlSnapshotRestore(t *testing.T) {
 	dir := t.TempDir()
-	c := New(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, Selection{}, nil, nil, false, nil, testHost())
+	c := New(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, Selection{}, nil, nil, testHost())
 	c.sel, c.lead, c.model, c.leadUsesSetModel = Selection{Provider: "codex"}, "codex", "gpt-5.6-sol", true
 	c.target = agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"}
 	c.plainTargets = map[string]targetPreference{
@@ -2763,7 +2693,7 @@ func TestACPControlSnapshotRestore(t *testing.T) {
 	c.authFailed = map[string]bool{"codex@default": true}
 	snap := c.Snapshot()
 
-	c2 := New(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, Selection{}, nil, nil, false, nil, testHost())
+	c2 := New(&config.Config{ConfigDir: dir}, "claude", "opus", "", dir, Selection{}, nil, nil, testHost())
 	c2.Restore(snap)
 	if c2.sel != (Selection{Provider: "codex"}) || c2.lead != "codex" || c2.model != "gpt-5.6-sol" ||
 		c2.target.Provider != "codex" || c2.target.Model != "gpt-5.6-sol" || c2.target.Effort != "xhigh" || !c2.leadUsesSetModel ||
@@ -2788,7 +2718,7 @@ func TestACPControlSnapshotRestoreKeepsPresetRung(t *testing.T) {
 	signInCred(t, cfg, "codex", "default")
 	writeACPTestPreset(t, repo, "frontier", "lead:\n  agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]\n")
 
-	c := New(cfg, "codex", "gpt-5.6-sol", "xhigh", repo, Selection{Preset: "frontier"}, []string{"frontier"}, nil, false, nil, testHost())
+	c := New(cfg, "codex", "gpt-5.6-sol", "xhigh", repo, Selection{Preset: "frontier"}, []string{"frontier"}, nil, testHost())
 	c.target = agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"default"}}
 	rot := c.presetRotation()
 	rot.Focus(rot.Members()[1])
@@ -2797,7 +2727,7 @@ func TestACPControlSnapshotRestoreKeepsPresetRung(t *testing.T) {
 	c.limited[accountLimitKey("claude", "default")] = limitedUntil
 	snapshot := c.Snapshot()
 
-	restored := New(cfg, "claude", "claude-fable-5", "xhigh", repo, Selection{}, []string{"frontier"}, nil, false, nil, testHost())
+	restored := New(cfg, "claude", "claude-fable-5", "xhigh", repo, Selection{}, []string{"frontier"}, nil, testHost())
 	restored.Restore(snapshot)
 	target, presetName, ok := restored.SpawnTarget()
 	if !ok || presetName != "frontier" || target.String() != "codex:gpt-5.6-sol/xhigh@default" {
@@ -2869,7 +2799,7 @@ func TestACPControlSessionEndedClearsPerSessionState(t *testing.T) {
 // newCwdControl is a Control whose mounted repo is dir — the only thing the cwd rewrite reads.
 func newCwdControl(t *testing.T, dir string) *Control {
 	t.Helper()
-	return New(&config.Config{ConfigDir: t.TempDir()}, "claude", "opus", "", dir, Selection{}, nil, nil, false, nil, testHost())
+	return New(&config.Config{ConfigDir: t.TempDir()}, "claude", "opus", "", dir, Selection{}, nil, nil, testHost())
 }
 
 func sessionLine(t *testing.T, method, cwd string) []byte {

@@ -18,7 +18,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -79,8 +79,8 @@ type RunSpec struct {
 	// Agent names the launched registered agent whose credential home and
 	// env-file API key this run may mount — so a plain `coop claude` box can't read the
 	// other providers' credentials. Empty for a raw/maintenance run (no agent session), which
-	// mounts no agent credentials at all. FusionGovernor/ConsultLead (below) widen the
-	// scope to the EXPLICIT peers in Peers, since the lead is told to invoke them. See
+	// mounts no agent credentials at all. ConsultLead (below) widens the scope to the
+	// EXPLICIT peers in Peers, since the lead is told to invoke them. See
 	// credentialScope. Ignored when Homes is false.
 	Agent string
 
@@ -115,17 +115,7 @@ type RunSpec struct {
 	// waits on it. A nil hook is the ordinary run, signaling nothing.
 	OnRuntimeLaunch func()
 
-	// FusionGovernor, when set, marks this run as fusion mode: the named agent
-	// governs (fronts the session) and gets the fusion instruction merged into its
-	// instruction file; its peers are consulted read-only. Empty = not fusion.
-	FusionGovernor string
-
-	// FusionMembers is the ordered, already-resolved set of coop-consult invocation labels for
-	// a Fusion run. Explicit peers use provider names; preset members use role names. The CLI
-	// resolves this alongside Peers so box assembly never reconstructs a different council.
-	FusionMembers []string
-
-	// ConsultLead names the lead agent of a normal (non-fusion) run: it gets a
+	// ConsultLead names the lead agent of a consult-capable run: it gets a
 	// light, optional "second opinion" directive merged into its instruction file,
 	// naming the EXPLICIT peers (Peers) it may consult read-only on hard calls. Scoped
 	// to the lead so peers it spawns don't recurse. Empty = no consult directive.
@@ -137,7 +127,7 @@ type RunSpec struct {
 	AssignedTask string
 
 	// Peers is the EXPLICIT peer set for this run — the targets named by repeatable
-	// --peer (fusion, a normal run, or a loop run), each provider[:model] (no
+	// --peer (a normal run, ACP, or a loop run), each provider[:model] (no
 	// account: a peer runs on its default). It REPLACES the old implicit "every authed
 	// agent is a peer" policy: only these providers' credentials mount as peers, only
 	// they are named in the consult directive, and the in-box coop-consult refuses any
@@ -179,8 +169,8 @@ const (
 type extraMount struct{ host, box string }
 
 // instructionFile is the agent's native global instruction filename — where coop
-// mounts the shared INSTRUCTIONS.md (and, in fusion mode, the governor's augmented
-// instruction) — or "" for an unknown agent. Owned by each adapter.
+// mounts the shared INSTRUCTIONS.md or the lead's augmented instructions — or ""
+// for an unknown agent. Owned by each adapter.
 func instructionFile(name string) string {
 	if ag, ok := agents.Get(name); ok {
 		return ag.InstructionFile()
@@ -234,16 +224,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err := ctxStep(spec.Ctx, "filesystem projection"); err != nil {
 		return -1, err
 	}
-	if !spec.Homes && spec.FusionGovernor == "" {
+	if !spec.Homes {
 		if spec.Preset != nil {
 			return -1, fmt.Errorf("preset %q requires agent homes so its instructions, wrappers, and roles can mount", spec.Preset.Name)
 		}
 		if spec.ConsultLead != "" || len(spec.Peers) > 0 {
 			return -1, fmt.Errorf("consult requires agent homes so its instructions, wrapper, and peer credentials can mount")
 		}
-	}
-	if err := validateFusionSpec(spec); err != nil {
-		return -1, err
 	}
 	if (spec.ForkName == "") != (spec.ForkOwner == "") {
 		return -1, errors.New("fork box requires both name and scoped owner")
@@ -363,9 +350,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// An ACP box shares the lead's session transcripts across credentials (see assembleArgs), so
 		// ensure that shared store exists before it's mounted.
 		if spec.ShareACPSessions {
-			if ag, ok := agents.Get(acpPrimary(spec)); ok {
+			if ag, ok := agents.Get(runPrimary(spec)); ok {
 				for _, name := range ag.ACPSessionDirs() {
-					_ = os.MkdirAll(filepath.Join(acpSharedDir(cfg, acpPrimary(spec)), name), 0o700)
+					_ = os.MkdirAll(filepath.Join(acpSharedDir(cfg, runPrimary(spec)), name), 0o700)
 				}
 			}
 		}
@@ -414,52 +401,34 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 
-	// Fusion: the governor gets the fusion instruction (consult peers + synthesize)
-	// merged into its native instruction file — only the governor, so the peers it
-	// spawns read their normal instructions and never recurse into a council.
-	var fusionMounts []extraMount
-	consultWired := false // true once a fusion/consult directive is injected → mount coop-consult
-	if spec.Homes && spec.FusionGovernor != "" {
-		if content, file, wired, ok := fusionInstructionMount(cfg, spec); ok {
-			p, err := artifacts.writeFile(content)
-			if err != nil {
-				return -1, fmt.Errorf("assemble fusion instruction for %s: %w", spec.FusionGovernor, err)
-			}
-			tmpFiles = append(tmpFiles, p)
-			fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.FusionGovernor + "/" + file})
-			consultWired = wired
-		} else {
-			return -1, fmt.Errorf("assemble fusion instruction: provider %q has no instruction file", spec.FusionGovernor)
-		}
-	}
-
 	// Second opinions: a normal lead may consult its authenticated peers read-only
 	// on hard calls. The directive is merged into the lead's instruction file only
 	// (so peers it spawns read their normal instructions and never recurse), and
 	// only when a peer is actually authenticated. With NO authed peer the lead still
 	// gets its base instructions mounted here (the box env note + the user's) — it is
 	// excluded from instructionPlan as the lead, so mounting nothing would leave it
-	// running with no instructions at all. (Fusion's stronger directive takes over
-	// when FusionGovernor is set, so the two never both apply.)
-	if spec.Homes && spec.FusionGovernor == "" && spec.ConsultLead != "" {
+	// running with no instructions at all.
+	var consultMounts []extraMount
+	consultWired := false
+	if spec.Homes && spec.ConsultLead != "" {
 		if content, file, wired, ok := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers)); ok {
 			p, err := artifacts.writeFile(content)
 			if err != nil {
 				return -1, fmt.Errorf("assemble lead instruction for %s: %w", spec.ConsultLead, err)
 			}
 			tmpFiles = append(tmpFiles, p)
-			fusionMounts = append(fusionMounts, extraMount{p, cfg.HomeInBox + "/." + spec.ConsultLead + "/" + file})
+			consultMounts = append(consultMounts, extraMount{p, cfg.HomeInBox + "/." + spec.ConsultLead + "/" + file})
 			consultWired = wired
 		} else {
 			return -1, fmt.Errorf("assemble lead instruction: provider %q has no instruction file", spec.ConsultLead)
 		}
 	}
 
-	// coop-consult: mount the read-only consult wrapper (on PATH) whenever a fusion or
-	// --consult directive was injected, so the lead's `coop-consult <peer>` calls resolve.
+	// coop-consult: mount the read-only wrapper whenever a consult directive was injected, so the
+	// lead's `coop-consult <peer|role>` calls resolve.
 	// It carries the per-agent session-id mechanics for cross-turn continuity.
 	if consultWired {
-		p, err := artifacts.writeFile(fusion.ConsultWrapper())
+		p, err := artifacts.writeFile(consult.ConsultWrapper())
 		if err != nil {
 			return -1, fmt.Errorf("assemble consult wrapper: %w", err)
 		}
@@ -467,7 +436,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if err := artifacts.chmod(p, 0o755); err != nil {
 			return -1, fmt.Errorf("make consult wrapper executable: %w", err)
 		}
-		fusionMounts = append(fusionMounts, extraMount{p, fusion.ConsultWrapperPath})
+		consultMounts = append(consultMounts, extraMount{p, consult.ConsultWrapperPath})
 	}
 
 	// Preset roles — the coop-delegate wrapper + delegate role env, generated native
@@ -477,15 +446,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err != nil {
 		return -1, err
 	}
-	fusionMounts = append(fusionMounts, proleMounts...)
+	consultMounts = append(consultMounts, proleMounts...)
 	spec.ExtraArgs = append(spec.ExtraArgs, proleArgs...)
 	tmpFiles = append(tmpFiles, proleFiles...)
 	tmpDirs = append(tmpDirs, proleDirs...)
 
 	// Every agent gets the box environment note, then the user's instructions (a per-agent
 	// override if present, else the shared INSTRUCTIONS.md), mounted at its native global path
-	// — so it never burns a turn rediscovering the box. The lead (fusion governor / consult
-	// lead) is handled above, with its augmented file.
+	// — so it never burns a turn rediscovering the box. The consult lead is handled above, with its
+	// augmented file.
 	plan := instructionPlan(cfg, spec)
 	var instructionMounts []extraMount
 	for _, it := range plan {
@@ -573,7 +542,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return -1, err
 	}
 	// Bring sibling services up first, so the box can reach them by name. Every launch path —
-	// agent, fusion governor, acp, loop, fork — funnels through box.Run, so this one call covers
+	// agent, ACP, loop, and fork — funnels through box.Run, so this one call covers
 	// them all. Gated like the network join below (on the services net, online, compose-capable
 	// runtime) plus COOP_AUTO_UP. Idempotent; progress goes to stderr (never stdout, which may
 	// carry ACP/JSON) and only when not Quiet; a failure warns but never blocks the session.
@@ -657,7 +626,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return finish(-1, err)
 	}
 	limits := boxLimits(cfg, rt)
-	args := assembleArgs(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, fusionMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
+	args := assembleArgs(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, mcpPresent, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts, networkName, envFile, limits...)
 	// The launch boundary: everything above is host work, everything below is the provider's.
 	// A caller that clocks the provider starts counting HERE, never from Run's entry — an early
 	// return above launched nothing, so it signals nothing.
@@ -817,36 +786,6 @@ func repoReadOnlyPathMounts(repo, workdir string, paths []string) ([]Mount, erro
 	return mounts, nil
 }
 
-func validateFusionSpec(spec RunSpec) error {
-	if spec.FusionGovernor == "" {
-		if len(spec.FusionMembers) > 0 {
-			return fmt.Errorf("fusion members require a governor")
-		}
-		return nil
-	}
-	if !spec.Homes {
-		return fmt.Errorf("fusion requires agent homes so its instructions, wrapper, and credentials can mount")
-	}
-	if len(spec.FusionMembers) == 0 {
-		return fmt.Errorf("fusion governor %s has no resolved council members", spec.FusionGovernor)
-	}
-	seenMembers := map[string]bool{}
-	for _, member := range spec.FusionMembers {
-		if member == "" || seenMembers[member] {
-			return fmt.Errorf("fusion council contains an empty or duplicate member %q", member)
-		}
-		seenMembers[member] = true
-	}
-	seenPeers := map[string]bool{}
-	for _, peer := range spec.Peers {
-		if seenPeers[peer.Provider] || !seenMembers[peer.Provider] {
-			return fmt.Errorf("fusion explicit peer %q is duplicated or missing from the resolved council", peer.Provider)
-		}
-		seenPeers[peer.Provider] = true
-	}
-	return nil
-}
-
 func projectPolicyRepo(spec RunSpec) string {
 	if spec.PolicyRepo != "" {
 		return spec.PolicyRepo
@@ -918,9 +857,6 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 	// Explicit consult roles and natives degraded under another lead are wired role-addressed so
 	// `coop-consult <role>` runs the role's agent on its model, with its persona if any.
 	lead := spec.ConsultLead
-	if spec.FusionGovernor != "" {
-		lead = spec.FusionGovernor
-	}
 	if ag, ok := agents.Get(lead); ok {
 		support := ag.NativeSubagents()
 		// The adapter renders its native-role files and owns their in-home destination. They mount
@@ -977,8 +913,8 @@ func resolvedRoleTargetList(cfg *config.Config, role *preset.Role) string {
 }
 
 // ensureAgentHomes pre-creates the credential-home dir and first-run defaults for exactly
-// the agents this run MOUNTS (credentialScope: the launched agent, plus authed peers under
-// fusion/consult) — not every agent. Pre-creating all three was a husk factory: every box
+// the agents this run MOUNTS (credentialScope: the launched agent plus named consult peers)
+// — not every agent. Pre-creating all three was a husk factory: every box
 // run materialized each agent's active-profile dir, so a profile the user deleted (an empty
 // "default" showing "not signed in" in `coop credentials`) kept reappearing, seeded with
 // EnsureDefaults' settings files, recreated by runs that never involved that agent. An
@@ -1049,7 +985,7 @@ You run inside a coop container: a Debian box that IS your sandbox and security 
 
 // agentBaseInstructions is what an agent receives as its global instructions: the always-on
 // box environment note, followed by the user's instructions — a per-agent override if present,
-// else the shared INSTRUCTIONS.md. Fusion/consult augment this (they don't replace it).
+// else the shared INSTRUCTIONS.md. Consult and preset routing augment this; they do not replace it.
 func agentBaseInstructions(cfg *config.Config, agent, file string) string {
 	user := ""
 	if data, err := os.ReadFile(filepath.Join(cfg.AgentDir(agent), file)); err == nil {
@@ -1073,8 +1009,8 @@ type instructionItem struct{ agent, file, content string }
 // it's omitted (a mount there would be inert anyway).
 var skillsCapableAgents = map[string]bool{"claude": true, "codex": true, "gemini": true}
 
-// skillsAgentSet is the agents whose home a run mounts — the launched agent, a fusion governor, a
-// consult lead, and the peers — INCLUDING the lead (which instructionPlan deliberately omits, but
+// skillsAgentSet is the agents whose home a run mounts — the launched agent, consult lead, and
+// peers — INCLUDING the lead (which instructionPlan deliberately omits, but
 // which still needs its skills). De-duplicated, order-preserving.
 func skillsAgentSet(spec RunSpec) []string {
 	var out []string
@@ -1090,7 +1026,6 @@ func skillsAgentSet(spec RunSpec) []string {
 		out = append(out, a)
 	}
 	add(spec.Agent)
-	add(spec.FusionGovernor)
 	add(spec.ConsultLead)
 	for _, p := range spec.Peers {
 		add(p.Provider)
@@ -1185,8 +1120,8 @@ func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string) (mount
 }
 
 // instructionPlan is the global instruction each non-lead agent should receive: the box env
-// note plus the user's instructions (per agentBaseInstructions). The lead (fusion governor /
-// consult lead) is excluded — it gets its augmented file instead. Pure (no temp files / mounts),
+// note plus the user's instructions (per agentBaseInstructions). The consult lead is excluded —
+// it gets its augmented file instead. Pure (no temp files / mounts),
 // so the selection and content are unit-testable; Run writes + mounts the result.
 func instructionPlan(cfg *config.Config, spec RunSpec) []instructionItem {
 	if !spec.Homes {
@@ -1194,7 +1129,7 @@ func instructionPlan(cfg *config.Config, spec RunSpec) []instructionItem {
 	}
 	var out []instructionItem
 	for _, agent := range agents.Names() {
-		if agent == spec.FusionGovernor || agent == spec.ConsultLead {
+		if agent == spec.ConsultLead {
 			continue
 		}
 		if file := instructionFile(agent); file != "" {
@@ -1241,11 +1176,11 @@ func assembleAgentsDir(gen []genFile) (string, error) {
 }
 
 // leadInstructionMount builds the instruction file a consult lead receives: its base
-// instructions (the box env note + the user's) plus the optional second-opinion directive
-// naming the EXPLICIT peers (peers). content is ALWAYS at least the base — the lead is excluded
-// from instructionPlan (it is meant to get this augmented file instead), so returning nothing
-// would leave it running with no instructions at all. wired reports whether a consult directive
-// was actually injected, so the caller mounts coop-consult only when there is a peer to consult.
+// instructions (the box env note + the user's), the preset routing contract when selected,
+// and the optional second-opinion directive naming explicit peers. content is ALWAYS at least
+// the base — the lead is excluded from instructionPlan (it is meant to get this augmented file
+// instead), so returning nothing would leave it running with no instructions at all. wired
+// reports whether coop-consult is reachable through either a preset role or an explicit peer.
 // ok is false only when the agent has no native instruction file. Pure, so the "no named peer
 // still mounts the base" invariant is unit-tested without a container.
 func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, peers []string) (content, file string, wired, ok bool) {
@@ -1254,42 +1189,17 @@ func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, pee
 		return "", "", false, false
 	}
 	base := agentBaseInstructions(cfg, lead, file)
-	if p != nil {
-		// A preset's generated routing block replaces the generic second-opinion
-		// directive — it already names each consult/delegate role and its exact
-		// invocation. coop-consult is mounted when a consult role exists OR a native role
-		// degrades to a consult under this (non-Claude) lead.
-		content = preset.LeadContract(p, lead)
-		if base != "" {
-			content += "\n" + base + "\n"
-		}
-		return content, file, len(p.ConsultRoles(lead)) > 0, true
-	}
 	peers = excluding(peers, lead)
-	return fusion.LeadInstructions(base, peers), file, len(peers) > 0, true
-}
-
-// fusionInstructionMount builds the governor instruction file from the exact council labels the
-// CLI resolved. The mandatory Fusion directive comes first, then the preset routing contract,
-// then the user's/base instructions. wired controls the coop-consult executable mount.
-func fusionInstructionMount(cfg *config.Config, spec RunSpec) (content, file string, wired, ok bool) {
-	file = instructionFile(spec.FusionGovernor)
-	if file == "" {
-		return "", "", false, false
-	}
-	content = agentBaseInstructions(cfg, spec.FusionGovernor, file)
-	if spec.Preset != nil {
-		contract := preset.LeadContract(spec.Preset, spec.FusionGovernor)
-		if content != "" {
-			contract += "\n" + content + "\n"
+	if p != nil {
+		// The preset names its roles and exact invocations; explicit --peer values remain
+		// independent optional second opinions and are appended rather than discarded.
+		content = preset.LeadContract(p, lead)
+		if tail := consult.LeadInstructions(base, peers); tail != "" {
+			content += "\n" + tail + "\n"
 		}
-		content = contract
+		return content, file, len(p.ConsultRoles(lead)) > 0 || len(peers) > 0, true
 	}
-	wired = len(spec.FusionMembers) > 0
-	if wired {
-		content = fusion.GovernorInstructions(content, spec.FusionGovernor, spec.FusionMembers)
-	}
-	return content, file, wired, true
+	return consult.LeadInstructions(base, peers), file, len(peers) > 0, true
 }
 
 // decideTTY chooses the stdin/tty wiring. Stdin is attached only for an
@@ -1442,12 +1352,12 @@ func appendROMounts(args []string, ms []extraMount) []string {
 
 // modelEnvArgs exports each scoped agent's resolved model into the box, two ways: the agent's
 // own model env var (ModelEnv, e.g. claude's ANTHROPIC_MODEL) so a flagless adapter binary
-// (claude-agent-acp) still honors the choice, and — only on a fusion/consult run, where the
+// (claude-agent-acp) still honors the choice, and — only on a consult-capable run, where the
 // coop-consult wrapper exists — COOP_PEER_MODEL_<AGENT>, which the wrapper expands into each
 // peer's --model flag. Agents with no resolved model export nothing (the CLI's own default
 // runs); the primary agent's command already carries --model, which beats its env var.
 func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
-	consults := spec.FusionGovernor != "" || spec.ConsultLead != "" ||
+	consults := spec.ConsultLead != "" ||
 		(spec.Preset != nil && len(spec.Preset.ConsultRoles(runPrimary(spec))) > 0)
 	// An explicit peer target's :model pins that peer's model (COOP_PEER_MODEL_<X>); otherwise
 	// the peer runs the config default (cfg.ModelFor). The lead isn't in Peers, so it always
@@ -1503,15 +1413,6 @@ func modelEnvArgs(cfg *config.Config, spec RunSpec, scope []string) []string {
 // its inputs and the on-disk presence of the env/instruction files, so the whole
 // run plan can be unit-tested without a container daemon. limits is the runtime's
 // resource/privilege caps (see boxLimits).
-// acpPrimary is the lead agent of an ACP box — the one whose credential/preset coop's selector
-// switches (the fusion governor if set, else the launched agent).
-func acpPrimary(spec RunSpec) string {
-	if spec.FusionGovernor != "" {
-		return spec.FusionGovernor
-	}
-	return spec.Agent
-}
-
 // acpSharedDir is the credential-independent session-transcript store for an agent's ACP boxes: a
 // mid-session credential/preset switch keeps the conversation because every credential's box mounts
 // this same dir over its session store, so session/load still finds the transcript after the switch.
@@ -1519,7 +1420,7 @@ func acpSharedDir(cfg *config.Config, agent string) string {
 	return filepath.Join(cfg.ConfigDir, agent, "acp-sessions")
 }
 
-func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, fusionMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
+func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, mcpPresent bool, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
 	args := []string{"run", "--rm"}
 	if initProcess {
 		// Docker and Podman provide the same runtime-native contract: this PID 1 forwards
@@ -1569,8 +1470,8 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 	args = append(args, RenderMounts(mounts, decoy, decoyDir)...)
 
 	if spec.Homes {
-		// Only the launched agent's credential home (plus authenticated peers for
-		// fusion/consult) — never every agent's, so a plain run can't read the others'.
+		// Only the launched agent's credential home plus named consult peers — never every
+		// agent's, so a plain run can't read the others'.
 		scope := credentialScope(cfg, spec)
 		for _, agent := range scope {
 			args = append(args, "-v", cfg.AgentDir(agent)+":"+cfg.HomeInBox+"/."+agent)
@@ -1584,7 +1485,7 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 		// switching account/preset mid-session doesn't lose the conversation — session/load still finds
 		// the transcript. The shared dir is credential-independent and shadows the profile's own copy.
 		if spec.ShareACPSessions {
-			primary := acpPrimary(spec)
+			primary := runPrimary(spec)
 			if ag, ok := agents.Get(primary); ok {
 				for _, name := range ag.ACPSessionDirs() {
 					host := filepath.Join(acpSharedDir(cfg, primary), name)
@@ -1619,17 +1520,17 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 		}
 		// coop-consult reads COOP_CONSULT_TIMEOUT (seconds) for its per-peer timeout; forward an
 		// explicit, valid override so the knob works per-run. Empty/invalid falls back to the
-		// wrapper's built-in 30m default. (The wrapper exists only in fusion/consult boxes; the
+		// wrapper's built-in 30m default. (The wrapper exists only in consult-capable boxes; the
 		// var is inert elsewhere.)
 		if n, err := strconv.Atoi(cfg.ConsultTimeout); err == nil && n > 0 {
 			args = append(args, "-e", "COOP_CONSULT_TIMEOUT="+cfg.ConsultTimeout)
 		}
 		// Per-agent global instructions (the box env note + the user's, built in Run) at each
-		// agent's native path. The lead (fusion governor / consult lead) is excluded there; its
-		// augmented file is the fusion/consult mount just below.
+		// agent's native path. The consult lead is excluded there; its augmented file is the
+		// consult mount just below.
 		args = appendROMounts(args, instructionMounts)
-		// Fusion: the governor's augmented instruction file (peers + synthesis).
-		args = appendROMounts(args, fusionMounts)
+		// The lead's augmented instructions and role wrappers.
+		args = appendROMounts(args, consultMounts)
 		// Your git environment: identity + signing-off + global gitignore.
 		args = appendROMounts(args, gitMounts)
 		if mcpPresent {

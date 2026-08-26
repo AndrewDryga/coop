@@ -2,8 +2,8 @@
 name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
-sources: [Makefile, internal/fusion/wrapper.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
-updated: 2026-07-15
+sources: [Makefile, internal/consult/wrapper.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go]
+updated: 2026-08-25
 ---
 
 `make provider-scripted-e2e` is the blocking consult contract. A strict external Coop binary mounts
@@ -42,4 +42,5 @@ isolation failures and take precedence. Raw output is intentionally absent; repr
 syntax and faults in the deterministic fixture instead of retaining a live response.
 
 ## Changelog
+- 2026-08-25 - source path moved from `internal/fusion` to `internal/consult`; wrapper contract unchanged
 - 2026-07-15 - created with the complete deterministic matrix and isolated four-edge live ring

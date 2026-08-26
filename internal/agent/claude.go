@@ -696,7 +696,7 @@ func (claudeAgent) HomeFallbacks() []HomeFallback {
 }
 
 // coop-consult / coop-delegate shell — the wrapper generators concatenate these per-agent
-// arms (see internal/fusion/wrapper.go, internal/preset/wrapper.go). They run against the
+// arms (see internal/consult/wrapper.go, internal/preset/wrapper.go). They run against the
 // wrapper's $prompt/$id/$model/$candidate_idfile and its run/new_id helpers.
 
 func (claudeAgent) ConsultFresh() string {

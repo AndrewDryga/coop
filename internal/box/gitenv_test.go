@@ -23,9 +23,9 @@ func TestBoxCommitTrailer(t *testing.T) {
 	if want := "coop (codex:gpt-5.6-luna@personal) <noreply@coop.dev>"; got != want {
 		t.Errorf("trailer = %q, want %q", got, want)
 	}
-	// A fusion governor is the committing agent, not spec.Agent.
-	if got := boxCommitTrailer(cfg, RunSpec{Agent: "claude", FusionGovernor: "codex"}); !strings.Contains(got, "(codex:") {
-		t.Errorf("fusion trailer should attribute the governor, got %q", got)
+	// A declared consult lead is the committing agent, even if a lower-level caller supplied Agent.
+	if got := boxCommitTrailer(cfg, RunSpec{Agent: "claude", ConsultLead: "codex"}); !strings.Contains(got, "(codex:") {
+		t.Errorf("consult trailer should attribute the lead, got %q", got)
 	}
 }
 

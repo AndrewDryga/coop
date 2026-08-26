@@ -16,7 +16,7 @@ import (
 	"unicode/utf8"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -66,7 +66,7 @@ type consultCursor struct {
 }
 
 func validateConsultWrapperMount(root string, m mount) error {
-	return validateGeneratedWrapperMount(root, m, fusion.ConsultWrapperPath, fusion.ConsultWrapper(), "consult")
+	return validateGeneratedWrapperMount(root, m, consult.ConsultWrapperPath, consult.ConsultWrapper(), "consult")
 }
 
 func validateGeneratedWrapperMount(root string, m mount, target, want, label string) error {
@@ -125,7 +125,7 @@ func peerContractTarget(target string) bool {
 func serveConsultRuntime(root, image, trace, scenarioPath string, run runCommand, s scenario) (int, error) {
 	wrapper := ""
 	for _, m := range run.Mounts {
-		if m.Target != fusion.ConsultWrapperPath {
+		if m.Target != consult.ConsultWrapperPath {
 			continue
 		}
 		if wrapper != "" {

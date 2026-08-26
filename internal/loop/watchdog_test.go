@@ -11,7 +11,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/consult"
 )
 
 // activityRecorder captures the semantic events a decoder reports, for decoder-side tests.
@@ -656,7 +656,7 @@ func TestShippedProviderDeadlinesAreArmed(t *testing.T) {
 // runs as a child of a supervised attempt, so the attempt's tool cap and ceiling already bound it
 // from outside — it needs no guess of its own.
 func TestConsultWrapperDoesNotBoundAWorkingPeer(t *testing.T) {
-	cm := regexp.MustCompile(`COOP_CONSULT_TIMEOUT:-(\d+)`).FindStringSubmatch(fusion.ConsultWrapper())
+	cm := regexp.MustCompile(`COOP_CONSULT_TIMEOUT:-(\d+)`).FindStringSubmatch(consult.ConsultWrapper())
 	if cm == nil {
 		t.Fatal("could not find the consult timeout default in the generated wrapper")
 	}

@@ -132,56 +132,7 @@ func TestParseLoopArgs(t *testing.T) {
 	}
 }
 
-func TestParseGovernor(t *testing.T) {
-	a := &app{cfg: &config.Config{}}
-	cases := []struct {
-		name        string
-		args        []string
-		wantGov     string
-		wantModel   string
-		wantProfile string
-		wantPreset  string
-		wantRest    []string
-	}{
-		{"no governor named — empty, the caller requires one", nil, "", "", "", "", nil},
-		{"positional governor", []string{"claude"}, "claude", "", "", "", nil},
-		// The governor is a target: its model + account fold out for the one-off selection.
-		{"governor target model+account", []string{"claude:opus-4.8@work"}, "claude", "opus-4.8", "work", "", nil},
-		{"positional governor + passthrough", []string{"gemini", "exec"}, "gemini", "", "", "", []string{"exec"}},
-		// A leading non-target bare word is the PRESET NAME (the who slot); the rest passes through.
-		{"leading preset governs, rest passes through", []string{"frontier", "foo"}, "", "", "", "frontier", []string{"foo"}},
-		{"bare preset name", []string{"frontier"}, "", "", "", "frontier", nil},
-		{"-- passes the rest through verbatim", []string{"claude", "--", "-p", "hi"}, "claude", "", "", "", []string{"-p", "hi"}},
-		{"--governor is gone — treated as passthrough now", []string{"--governor", "claude"}, "", "", "", "", []string{"--governor", "claude"}},
-		// A SECOND agent token is NOT swallowed as the governor — only the first is; the rest passes through.
-		{"second agent token passes through", []string{"codex", "gemini"}, "codex", "", "", "", []string{"gemini"}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			gov, model, profile, _, ps, rest, _, err := a.parseGovernor(c.args)
-			if err != nil {
-				t.Fatalf("parseGovernor(%v) errored: %v", c.args, err)
-			}
-			if gov != c.wantGov {
-				t.Errorf("governor = %q, want %q", gov, c.wantGov)
-			}
-			if model != c.wantModel {
-				t.Errorf("model = %q, want %q", model, c.wantModel)
-			}
-			if profile != c.wantProfile {
-				t.Errorf("profile = %q, want %q", profile, c.wantProfile)
-			}
-			if ps != c.wantPreset {
-				t.Errorf("preset = %q, want %q", ps, c.wantPreset)
-			}
-			if !slices.Equal(rest, c.wantRest) {
-				t.Errorf("rest = %v, want %v", rest, c.wantRest)
-			}
-		})
-	}
-}
-
-func TestCmdFusionCrossProviderPresetPinsFirstRungAndWiresRoleCouncil(t *testing.T) {
+func TestLaunchPresetPinsFirstRungAndWiresConsultRole(t *testing.T) {
 	repo := t.TempDir()
 	presetDir := filepath.Join(repo, ".agent", "presets", "duo")
 	if err := os.MkdirAll(presetDir, 0o755); err != nil {
@@ -205,17 +156,14 @@ roles:
 		t.Fatal(err)
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
-	a := &app{cfg: cfg, rt: fusionRecordingRuntime(t, recorder), rtSet: true}
-	var code int
-	var runErr error
-	out := captureStderr(t, func() { code, runErr = a.cmdFusion([]string{"duo"}) })
-	if runErr != nil || code != 0 {
-		t.Fatalf("cmdFusion(duo) = (%d, %v), want success; stderr:\n%s", code, runErr, out)
+	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+	p, err := a.loadRunPreset("duo")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, want := range []string{"pins", "claude:one/high", "no fallback rotation"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("terminal Fusion pin notice missing %q:\n%s", want, out)
-		}
+	code, runErr := a.launchPreset(p, nil)
+	if runErr != nil || code != 0 {
+		t.Fatalf("launchPreset(duo) = (%d, %v), want success", code, runErr)
 	}
 	args, err := os.ReadFile(recorder)
 	if err != nil {
@@ -228,7 +176,7 @@ roles:
 	}
 }
 
-func fusionRecordingRuntime(t *testing.T, recorder string) runtime.Runtime {
+func recordingRuntime(t *testing.T, recorder string) runtime.Runtime {
 	t.Helper()
 	shim := filepath.Join(t.TempDir(), "runtime")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n"
@@ -340,8 +288,8 @@ func TestACPInnerEmptyPresetSelectionClearsPositionalPreset(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
-	a := &app{cfg: cfg, rt: fusionRecordingRuntime(t, recorder), rtSet: true}
-	code, err := a.cmdACP([]string{"fusion", "missing-positional-preset", "--peer", "gemini"})
+	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+	code, err := a.cmdACP([]string{"missing-positional-preset", "--peer", "gemini"})
 	if err != nil || code != 0 {
 		t.Fatalf("inner ACP clear = (%d, %v), want success without loading the positional preset", code, err)
 	}
@@ -377,8 +325,8 @@ roles:
 		signInCred(t, cfg, provider, "default")
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
-	a := &app{cfg: cfg, rt: fusionRecordingRuntime(t, recorder), rtSet: true}
-	code, err := a.cmdACP([]string{"fusion", "missing-positional-preset"})
+	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+	code, err := a.cmdACP([]string{"missing-positional-preset"})
 	if err != nil || code != 0 {
 		t.Fatalf("inner ACP selected migration = (%d, %v), want success", code, err)
 	}
@@ -402,7 +350,7 @@ roles:
 	}
 }
 
-func TestACPPlainInnerTargetDoesNotBecomeFusion(t *testing.T) {
+func TestACPPlainInnerTargetDoesNotLoadPreset(t *testing.T) {
 	t.Setenv("COOP_ACP_INNER", "1")
 	t.Setenv("COOP_ACP_TARGET", "claude")
 
@@ -412,10 +360,10 @@ func TestACPPlainInnerTargetDoesNotBecomeFusion(t *testing.T) {
 		BaseImage: "test-base", ImageOverride: "test-image", Homes: true, Egress: "none",
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
-	a := &app{cfg: cfg, rt: fusionRecordingRuntime(t, recorder), rtSet: true}
+	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
 	code, err := a.cmdACP([]string{"claude"})
 	if err != nil || code != 0 {
-		t.Fatalf("plain inner ACP target = (%d, %v), want a non-Fusion run", code, err)
+		t.Fatalf("plain inner ACP target = (%d, %v), want an ordinary run", code, err)
 	}
 	args, err := os.ReadFile(recorder)
 	if err != nil {
@@ -427,7 +375,7 @@ func TestACPPlainInnerTargetDoesNotBecomeFusion(t *testing.T) {
 	}
 }
 
-func TestACPFusionSupervisorDoesNotPinSkippedFirstAccount(t *testing.T) {
+func TestACPPresetSupervisorDoesNotPinSkippedFirstAccount(t *testing.T) {
 	repo := t.TempDir()
 	presetDir := filepath.Join(repo, ".agent", "presets", "rotate")
 	if err := os.MkdirAll(presetDir, 0o755); err != nil {
@@ -455,9 +403,9 @@ roles:
 		}
 		return 0, nil
 	}}
-	code, err := a.cmdACP([]string{"fusion", "rotate"})
+	code, err := a.cmdACP([]string{"rotate"})
 	if err != nil || code != 0 || !called {
-		t.Fatalf("ACP Fusion skipped-first launch = (%d, %v, supervise=%v), want success", code, err, called)
+		t.Fatalf("ACP preset skipped-first launch = (%d, %v, supervise=%v), want success", code, err, called)
 	}
 	if got := cfg.ActiveProfile("claude"); got != "default" {
 		t.Fatalf("outer ACP pinned skipped claude@ghost, active profile = %q", got)
@@ -472,7 +420,7 @@ func TestSpawnBoxExportsEmptyPresetSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{ConfigDir: t.TempDir()}
-	ctrl := acpctl.New(cfg, "claude", "", "", t.TempDir(), acpctl.Selection{}, nil, nil, true, nil, acpHost())
+	ctrl := acpctl.New(cfg, "claude", "", "", t.TempDir(), acpctl.Selection{}, nil, nil, acpHost())
 	a := &app{cfg: cfg}
 	child, err := a.spawnBox(context.Background(), shim, nil, "test-supervisor", ctrl,
 		agents.Target{Provider: "claude"}, "", true, io.Discard)
@@ -626,16 +574,10 @@ func TestSelectRunProfile(t *testing.T) {
 	}
 }
 
-// A nonexistent account in the target must fail fast (before any box/Docker work) on fusion and
-// acp too, not just a plain agent run; a stray --credential is a rejected arg on each surface.
+// A nonexistent account in the target must fail fast (before any box/Docker work) on ACP too,
+// not just a plain agent run; a stray --credential is rejected on each surface.
 func TestRunProfileWiringRejectsUnknown(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	if code, err := a.cmdFusion([]string{"claude@ghost"}); code != 2 || err == nil {
-		t.Errorf("cmdFusion claude@ghost = (%d, %v), want 2 + error", code, err)
-	}
-	if code, err := a.cmdFusion([]string{"claude", "--credential", "ghost"}); code != 2 || err == nil {
-		t.Errorf("cmdFusion --credential = (%d, %v), want 2 + error", code, err)
-	}
 	if code, err := a.cmdACP([]string{"claude@ghost"}); code != 2 || err == nil {
 		t.Errorf("cmdACP claude@ghost = (%d, %v), want 2 + error", code, err)
 	}
@@ -756,7 +698,7 @@ func TestInitNextSteps(t *testing.T) {
 	}
 }
 
-// `coop acp` takes an agent (or fusion [governor]) and coop flags only — a leftover token must be a
+// `coop acp` takes a target or preset and coop flags only — a leftover token must be a
 // usage error (exit 2), not silently ignored. Returns before any box/Docker work.
 func TestCmdACPRejectsExtraArgs(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
@@ -764,7 +706,7 @@ func TestCmdACPRejectsExtraArgs(t *testing.T) {
 		{"claude", "foo"},
 		{"claude", "--nope"},
 		{"claude", "--supervise"},
-		{"fusion", "claude", "junk"},
+		{"unknown-preset", "junk"},
 	} {
 		if code, err := a.cmdACP(args); code != 2 || err == nil {
 			t.Errorf("cmdACP(%v) = (%d, %v), want (2, usage error)", args, code, err)

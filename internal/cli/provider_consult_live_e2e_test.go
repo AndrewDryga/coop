@@ -20,7 +20,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -516,7 +516,7 @@ func runConsultLiveEdge(
 	edgePreset := consultLiveRingPreset(lead.Provider, peerScope)
 	code, runErr := box.Run(cfg, rt, box.RunSpec{
 		Image: image, Repo: cfg.RepoOverride,
-		Cmd:   []string{fusion.ConsultWrapperPath, "live-probe", "--fresh", prompt},
+		Cmd:   []string{consult.ConsultWrapperPath, "live-probe", "--fresh", prompt},
 		Agent: lead.Provider, ConsultLead: lead.Provider, Preset: edgePreset,
 		Batch: true, Quiet: true, Homes: true, Network: false, Cache: false,
 		SupervisorID: supervisor, Stdout: stdout, Stderr: stderr, Ctx: ctx,

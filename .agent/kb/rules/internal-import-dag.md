@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-08-10
+updated: 2026-08-25
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,11 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-25 — **package rename, edge rename, −1 cli edge:** `internal/fusion` became
+  `internal/consult` after the mandatory Fusion command/state was removed. `box → fusion` became
+  `box → consult`; the package keeps its single `consult → agent` edge; `cli → fusion` disappeared
+  because the CLI now reaches consultation only through `box.RunSpec`. `acpctl → box` also
+  disappeared with its council resolver. No new edge was introduced.
 - 2026-08-10 — **+1 package, +1 edge, +1 `uiPresentationOwners` grant: `internal/loop`**
   (`{"agent", "box", "config", "forkspace", "ladder", "loopcfg", "preset", "runtime", "tasks", "ui"}`);
   `cli` GAINED `loop` and **dropped nothing** — every edge on cli's line survives, `loopcfg` and

@@ -22,7 +22,6 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
@@ -43,21 +42,13 @@ func (a *app) acpPresetNames(repo string) []string {
 	return out
 }
 
-// acpHost builds the real acpctl.Host: the rotation/fusion-council/models-cache/wait policy the ACP
-// control needs but cannot own itself (see internal/acpctl's Host doc). Called by cmdACP for
-// production, and reused by this package's own tests so they construct a control with real (not
-// faked) behavior.
+// acpHost builds the real acpctl.Host: the rotation and models-cache policy the ACP control needs
+// but cannot own itself (see internal/acpctl's Host doc). Called by cmdACP for production, and
+// reused by this package's own tests so they construct a control with real behavior.
 func acpHost() acpctl.Host {
 	return acpctl.Host{
-		ExpandLadder: expandLadder,
-		AccountsFor:  accountsFor,
-		ResolveFusionCouncil: func(governor string, peers []agents.Target, p *preset.Preset, available []string, reachable []agents.Target) (acpctl.FusionCouncil, error) {
-			fc, err := resolveACPFusionCouncil(governor, peers, p, available, reachable)
-			if err != nil {
-				return acpctl.FusionCouncil{}, err
-			}
-			return acpctl.FusionCouncil{Peers: fc.Peers, Members: fc.Members, UnavailableRoles: fc.UnavailableRoles}, nil
-		},
+		ExpandLadder:     expandLadder,
+		AccountsFor:      accountsFor,
 		WriteModelsCache: writeModelsCache,
 	}
 }
@@ -74,11 +65,6 @@ func acpCommand(cfg *config.Config, tool string) []string {
 // host path (so the editor's absolute paths resolve, and the session history
 // matches `coop`/`coop loop` — see resolveWorkdir) and no tty is allocated. The
 // explicit Workdir forces the real path even if COOP_WORKDIR is set.
-//
-// `coop acp fusion [governor]` fronts the governor's adapter as a normal ACP
-// agent (so Zed drives it like any other) but wired for fusion: it consults its
-// peers read-only and synthesizes (see cmdFusion). Add one Zed agent_servers
-// entry per governor to switch which model leads.
 func (a *app) cmdACP(args []string) (int, error) {
 	// The ACP proxy is ALWAYS in the path: it's coop's control point for the editor session —
 	// restart resilience, plus rewriting the session so coop owns the toolbar (yolo, model default,
@@ -97,22 +83,18 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	allPeers := slices.Clone(peers) // Re-evaluate self exclusion after every ACP provider rotation.
 	// The positional who-runs slot pins the session: a TARGET (provider[:model][/effort][@account],
 	// so an editor's agent_servers entry runs ["acp","claude:opus@work"]) OR a PRESET NAME (routing +
-	// role wiring; its lead is the agent — or governor, under fusion). Parsed BEFORE the inner
+	// role wiring; its lead is the agent). Parsed BEFORE the inner
 	// env-override block so a preset-rotation rung (COOP_ACP_TARGET) still wins over the launch-time
-	// model/account. fusion is a keyword (a governor slot follows), not itself a provider/preset.
+	// model/account.
 	model, profile, effort := "", "", ""
 	tool, toolSet := "", false // no implicit default; an empty tool falls to the required-provider error below
-	governor := ""
 	presetName := ""
-	consumed := 0 // positional tokens accounted for (the agent, plus a governor under fusion)
-	isFusion := len(args) > 0 && args[0] == "fusion"
-	// takeWho classifies a positional who slot: a target folds its model/effort/account in and sets
-	// the provider; a preset name is captured for loadRunPreset below. Shared by the agent and the
-	// fusion-governor slot so both accept a preset.
-	takeWho := func(who string, provider *string) error {
+	consumed := 0
+	// takeWho classifies the positional who slot: a target folds its model/effort/account in and
+	// sets the provider; a bare word is a preset name resolved below.
+	takeWho := func(who string) error {
 		if !isTargetHead(who) {
 			presetName = who
 			return nil
@@ -121,7 +103,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if terr != nil {
 			return terr
 		}
-		*provider = t.Provider
+		tool = t.Provider
 		toolSet = true
 		if terr := foldTarget(t, &model, &profile); terr != nil {
 			return terr
@@ -129,18 +111,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 		effort = t.Effort
 		return nil
 	}
-	switch {
-	case isFusion:
-		consumed = 1
-		governor, toolSet = "", false // named explicitly (or via a preset lead) — no implicit default
-		if len(args) > 1 {
-			if terr := takeWho(args[1], &governor); terr != nil {
-				return 2, terr
-			}
-			consumed = 2
-		}
-	case len(args) > 0:
-		if terr := takeWho(args[0], &tool); terr != nil {
+	if len(args) > 0 {
+		if terr := takeWho(args[0]); terr != nil {
 			return 2, terr
 		}
 		consumed = 1
@@ -148,7 +120,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp <agent>[:model][/effort][@account] | fusion <agent>[:model][/effort][@account] | <preset>)", leftover[0])
+		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp <agent>[:model][/effort][@account] | <preset>)", leftover[0])
 	}
 	// A running ACP session can switch its credential/preset/provider via coop's selector; the
 	// supervisor re-execs the inner box with the resolved spawn target in the env
@@ -166,9 +138,6 @@ func (a *app) cmdACP(args []string) (int, error) {
 				return 2, fmt.Errorf("COOP_ACP_TARGET: %v", terr)
 			}
 			tool, toolSet = t.Provider, true
-			if isFusion {
-				governor = t.Provider // under Fusion the same switch retargets the governor
-			}
 			model, effort, profile = t.Model, t.Effort, t.Account()
 		}
 	}
@@ -176,19 +145,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	var council fusionCouncil
-	if isFusion {
-		governor = presetLeadAgent(p, governor, toolSet)
-		if governor == "" {
-			return 2, errors.New("coop acp fusion: name the governor — coop acp fusion <agent> (or a preset name, whose lead governs)")
-		}
-		if !fusion.Valid(governor, agents.Names()) {
-			return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
-		}
-		tool = governor
-	} else {
-		tool = presetLeadAgent(p, tool, toolSet)
-	}
+	tool = presetLeadAgent(p, tool, toolSet)
 	if !agents.Valid(tool) {
 		return 2, noProviderErr("acp")
 	}
@@ -204,20 +161,6 @@ func (a *app) cmdACP(args []string) (int, error) {
 		// credential truth intact while validating and expanding reachable targets; each inner
 		// child receives and applies the exact concrete target through COOP_ACP_TARGET.
 		a.preset = p
-	}
-	if isFusion {
-		var reachable []agents.Target
-		if p != nil {
-			reachable, err = expandLadder(a.cfg, p.LeadAgent, p.LeadLadder)
-			if err != nil {
-				return 2, err
-			}
-		}
-		council, err = resolveACPFusionCouncil(governor, peers, p, box.AuthedAgents(a.cfg), reachable)
-		if err != nil {
-			return 2, err
-		}
-		peers = council.Peers
 	}
 	// The outer process owns the editor stream via the proxy; it builds coop's control layer (the
 	// toolbar rewrite + preset/plain selectors) and re-execs `coop acp <inner>` (COOP_ACP_INNER
@@ -247,11 +190,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if toolSet {
 			sel.Provider = tool
 		}
-		fusionPeers := make([]string, 0, len(allPeers))
-		for _, peer := range allPeers {
-			fusionPeers = append(fusionPeers, peer.Provider)
-		}
-		ctrl := acpctl.New(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, a.acpPresetNames(repo), serveURLs, isFusion, fusionPeers, acpHost())
+		ctrl := acpctl.New(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, a.acpPresetNames(repo), serveURLs, acpHost())
 		if a.acpSupervise != nil {
 			return a.acpSupervise(inner, ctrl)
 		}
@@ -284,7 +223,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		// the box so build/update can restart it and the supervisor can kill exactly it.
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool, Serve: true,
 		SupervisorID: os.Getenv("COOP_ACP_SUPERVISOR"), ShareACPSessions: true,
-		FusionGovernor: governor, FusionMembers: council.Members, ConsultLead: lead, Peers: peers, Preset: a.preset, Quiet: true,
+		ConsultLead: lead, Peers: peers, Preset: a.preset, Quiet: true,
 		ExtraArgs: extra,
 		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	})
@@ -371,7 +310,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// Keep a box warm per OTHER signed-in provider so a provider switch swaps to a hot adapter
 	// (proxy replay only) instead of cold-booting one (~5s). Behind the factory: a miss cold-spawns,
 	// so correctness is unaffected. COOP_ACP_WARM=0 opts out (a low-RAM escape hatch).
-	warm := os.Getenv("COOP_ACP_WARM") != "0" && !ctrl.Fusion
+	warm := os.Getenv("COOP_ACP_WARM") != "0"
 	pool := acpctl.NewWarmPool(warm, func(provider string) (*acpproxy.Child, error) {
 		return a.spawnBox(context.Background(), self, inner, superID, ctrl, agents.Target{Provider: provider}, "", true, os.Stderr)
 	})

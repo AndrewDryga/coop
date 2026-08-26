@@ -34,23 +34,23 @@ const (
 //
 // This is the whole point of the file — read it as the architecture diagram it is. cli sits at the
 // top and wires the engines together, box and scaffold build on the provider spine
-// (agent/preset/fusion/loopcfg), and the rest are leaves. Changing a line here is changing the
+// (agent/preset/consult/loopcfg), and the rest are leaves. Changing a line here is changing the
 // architecture: do it deliberately, with the card.
 //
 // runtime→liveprocess is the one edge a default build won't show: it lives in
 // process_group_live.go, behind the `cooplivetest` tag. The scan is tag-agnostic on purpose, so the
 // frozen graph never depends on which tags or GOOS the gate happens to run under.
 var allowedEdges = map[string][]string{
-	"acpctl":                {"acpproxy", "agent", "box", "config", "ladder", "liveprocess", "preset", "processidentity"},
+	"acpctl":                {"acpproxy", "agent", "config", "ladder", "liveprocess", "preset", "processidentity"},
 	"acpproxy":              nil,
 	"agent":                 {"config", "mcp"},
-	"box":                   {"agent", "config", "fusion", "preset", "processidentity", "project", "runtime", "ui"},
-	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "forkctl", "forkspace", "fusion", "ladder", "liveprocess", "loop", "loopcfg", "preset", "project", "runtime", "scaffold", "sessionsvc", "tasks", "ui"},
+	"box":                   {"agent", "config", "consult", "preset", "processidentity", "project", "runtime", "ui"},
+	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "forkctl", "forkspace", "ladder", "liveprocess", "loop", "loopcfg", "preset", "project", "runtime", "scaffold", "sessionsvc", "tasks", "ui"},
 	"config":                nil,
 	"contextc":              {"project"},
 	"forkctl":               {"agent", "box", "config", "forkspace", "project", "runtime", "sessionsvc", "tasks", "ui"},
 	"forkspace":             {"processidentity"},
-	"fusion":                {"agent"},
+	"consult":               {"agent"},
 	"ladder":                {"agent"},
 	"liveprocess":           nil,
 	"loop":                  {"agent", "box", "config", "forkspace", "ladder", "loopcfg", "preset", "runtime", "tasks", "ui"},

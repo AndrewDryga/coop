@@ -40,7 +40,7 @@ It's the working tooling behind two write-ups:
 - [The sandbox](#the-sandbox) — what's mounted · secrets shadowed · git identity · `coop doctor`
 - [Forks](#forks-hand-off-work-like-a-pr) — open · review · land work like a contractor's PR
 - [Agents & config](#agents--config) — authentication · credentials · models · presets · instructions · MCP servers
-- [Fusion](#fusion-a-governed-council) — a council of models that argues before it commits
+- [Second opinions](#second-opinions---peer) — named read-only peers for hard calls
 - [Drive it from a local service](#drive-it-from-a-local-service)
 - [Drive it from Zed (ACP)](#drive-it-from-zed-acp)
 - [Run it unattended](#run-it-unattended) — the loop · the `.agent/` folder · monorepos · a fleet
@@ -131,7 +131,7 @@ Prefer to steer an agent yourself? Skip the queue and go interactive:
 coop claude                                   # sandboxed Claude — no permission prompts, secrets shadowed
 coop codex                                    # same box, Codex instead
 coop gemini                                   # ...or Gemini
-coop fusion claude --peer codex --peer gemini # a council: claude leads, named peers advise, then it synthesizes
+coop claude --peer codex --peer gemini        # named read-only peers are available for hard calls
 coop shell                                    # a shell in the box, to look around
 coop run -- npm test                          # run any command in the box
 ```
@@ -163,11 +163,10 @@ spelled out here (there's room to render them).
 | Command | What it does |
 |---|---|
 | `coop <agent>[:model][/effort][@account] [args]` | a sandboxed Claude, Codex, Gemini, or Grok agent — its autonomous flags, plus any args you add |
-| `coop fusion <agent> --peer <agent>...` · `coop fusion <preset>` | a [governed council](#fusion-a-governed-council): the governor leads, explicit peers and effective preset roles advise |
-| `coop acp <agent>[:model][/effort][@account]` · `coop acp <preset>` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the toolbar (credential/preset switch, yolo) and rides out box restarts and rate limits for you; pin a per-entry model/effort/account in the target (or name a preset in the same slot); name each peer with `--peer <agent>` (repeatable) to let it ask them read-only, or drive a council with `coop acp fusion <agent> --peer <agent>...` |
+| `coop acp <agent>[:model][/effort][@account]` · `coop acp <preset>` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the toolbar (credential/preset switch, yolo) and rides out box restarts and rate limits for you; pin a per-entry model/effort/account in the target (or name a preset in the same slot); name each peer with `--peer <agent>` (repeatable) to let it ask them read-only |
 | `coop <agent> --peer <peer>…` | [opt-in second opinion](#second-opinions---peer) — name each peer with `--peer <agent>` (repeatable); may ask those peers on hard calls |
 | `coop <preset>` | run an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file) interactively — its lead leads, its roles ride along (a preset name shares the who-runs slot with an agent target) |
-| `coop <agent>:<model>[/effort]` | [pick the model and reasoning effort](#picking-models) for that run — works on agent runs, fusion, forks, the loop, and acp |
+| `coop <agent>:<model>[/effort]` | [pick the model and reasoning effort](#picking-models) for that run — works on agent runs, forks, the loop, and acp |
 
 **Credentials, models & presets** ([details](#agents--config))
 
@@ -283,7 +282,7 @@ signed — see [Landing](#land-it-rebase-gate-sign).)
 
 Since box commits are unsigned, a remote that requires signed commits (a protected `main`)
 would reject them. If you sign by default (`commit.gpgsign=true`), coop re-signs on the HOST,
-where your key lives: `coop loop` signs each cycle's commits, an interactive/run/fusion box
+where your key lives: `coop loop` signs each cycle's commits, an interactive or raw-run box
 signs its session's commits on exit, and `coop sign` re-signs the unpushed range
 (`@{upstream}..HEAD`, or `--from <ref>`) anytime. Re-signing happens in a clean linked
 worktree and advances your branch with an old-SHA compare-and-swap, so staged, unstaged,
@@ -480,8 +479,8 @@ whole vault.
 
 Each run mounts only the launched agent's credentials: `coop claude` mounts
 `~/.claude` (and that agent's API key from the env file), never the Codex or Gemini ones.
-The exceptions are the modes where the lead is explicitly told to call its peers —
-`coop fusion <agent> --peer <agent>...` and `coop <agent> --peer <agent>...` (and forks) — which
+The exceptions are runs where the lead is explicitly told to call peers —
+`coop <agent> --peer <agent>...` (including loops and forks) — which
 also mount the named peers so they can be consulted read-only (only those you
 name, never everyone signed in). A preset is explicit too: every signed-in provider
 named by a consult/delegate role ladder is mounted for that role; unavailable rungs are
@@ -595,7 +594,7 @@ Every launch names its model in the target (`<agent>:<model>`) — pick the mode
 
 ```bash
 coop claude:opus                                    # one big-model interactive session
-coop fusion claude:fable --peer codex --peer gemini # the governor's model (peers keep their own)
+coop claude:fable --peer codex --peer gemini        # the lead's model (peers keep their own)
 coop loop claude:haiku                              # a cheap overnight grind
 coop fork risky claude:opus                         # a careful fork on the big model
 coop acp claude:sonnet                              # pin an editor entry's model
@@ -633,7 +632,7 @@ front. It mirrors the model's tiers, and one axis carries both — a target's `:
 `COOP_<AGENT>_MODEL`, and a loop.yaml step's `agent:` all take `model[/effort]` (e.g.
 `signoff.agent: [claude:opus/xhigh]` signs off at xhigh while the work loop grinds low).
 
-The chosen model reaches consult peers and fusion advisors too (each peer resolves its
+The chosen model reaches consult peers too (each peer resolves its
 own default), and `coop loop`'s live view prints the model each iteration actually ran —
 the agent's own init report, so it's ground truth, not coop's guess. coop never validates
 a model id: `coop models` shows *examples*, ids churn, and whatever the agent CLI accepts
@@ -659,13 +658,12 @@ For a *standing* arrangement (a lead model + its roles you don't retype), put it
   auto-delegates on their descriptions, each turn bills at *its* model, and the lead's
   context stays lean. `coop init` scaffolds none — a preset generates its own `coop-<role>`
   in the box, and your repo's roles are yours to write.
-- **Peer engineers, not reviewers** — with `--peer <peer>…` (or fusion), the lead can ask
+- **Peer engineers, not reviewers** — with `--peer <peer>…`, the lead can ask
   the named peers (e.g. codex, gemini) read-only via `coop-consult <peer>`: different training, different
   blind spots. **The `--peer` flag matters** — a plain `coop claude` deliberately
-  doesn't mount peer credentials, so peers only answer in a consult/fusion box.
+  doesn't mount peer credentials, so peers only answer in a consult-capable box.
 - **High-stakes calls** — task a native subagent *and* a peer on the same problem in
-  parallel, without showing either the other's answer, then synthesize. (This is the
-  move coop's fusion directive already teaches its governor.)
+  parallel, without showing either the other's answer, then synthesize.
 
 The same arrangement runs unattended: `coop loop claude:claude-fable-5 --peer codex --peer gemini`
 makes every iteration orchestrate this way — the pinned subagents ride along in the
@@ -720,12 +718,11 @@ slot (`<agent>[:model][/effort][@account]`) runs the agent directly instead:
 coop presets init                # scaffold the recipe + starter prompt files, ready to edit
 coop frontier                    # interactive lead with the full routing contract
 coop loop frontier               # unattended: lead credentials rotate, roles ride along
-coop fusion frontier             # council governed by the preset's lead + its consult roles
+coop acp frontier                # the same preset from an editor
 ```
 
-Terminal Fusion is deliberately non-rotating: for a multi-rung preset it pins and reports the
-first lead target. ACP Fusion keeps the complete ladder, re-evaluates self peers after each
-provider switch, and refuses a preset whose council would become empty on any reachable provider.
+A terminal preset run uses the first lead target. ACP keeps the complete ladder and can rotate
+across providers and accounts when the active rung is rate limited.
 
 Presets resolve from **two locations, repo wins**: the repo's `.agent/presets/<name>/`
 first, then a per-user global dir `~/.config/coop/presets/` (`COOP_PRESETS_DIR` overrides
@@ -853,41 +850,29 @@ The example's Playwright server works in the box out of the box: Chromium's syst
 libraries are baked into the image, the browser binary downloads to the cache volume on
 first use, and the server runs `--headless --no-sandbox` (the box is already the sandbox).
 
-## Fusion: a governed council
+## Second opinions (`--peer`)
 
-One model leads (the *governor*) and does the real work; explicit providers named with `--peer`
-and effective preset consult roles advise read-only; the leader synthesizes the best of the
-council. A council that argues
-before it commits beats any of its members working alone — the synthesized answer
-outperforms even the single strongest model on its own, Fable 5 included. You stop
-betting the run on one model's blind spots. It's a mode like any other agent —
-interactive, headless, or in Zed:
+Name read-only peers when a lead would benefit from a different model's blind spots. The lead
+may consult them on genuinely hard or risky calls, then weighs their answers and remains the sole
+writer. This composes with interactive runs, loops, forks, ACP, and preset consult roles:
 
 ```bash
-coop fusion codex --peer claude --peer gemini    # codex governs (named explicitly); named peers advise
-coop fusion claude --peer codex --peer gemini    # claude governs instead
-coop fusion claude --peer codex --peer gemini -- -p "Design the retry strategy"   # headless; args after -- pass to the leader
+coop codex --peer claude --peer gemini
+coop loop claude --peer codex --peer gemini
+coop acp claude --peer codex
 ```
 
-Explicit peers are unique signed-in providers; terminal Fusion rejects the governor as its own
-peer. Preset council members are addressed by role name, so several roles may use the same
-provider or even the governor provider on another model. A provider/role name collision is
-ambiguous and rejected. With no effective explicit peer or mounted preset role, Fusion exits
-before starting a box instead of silently becoming a normal solo session.
-
-No extra service or protocol behind it: the leader is just that agent running
-normally (it edits, runs the gate, streams), plus a fusion instruction injected into
-the leader's instruction file only. Before any response or task it consults every
-configured council member read-only, in parallel where practical, through a small mounted wrapper:
+There is no extra service or protocol: Coop mounts a small wrapper and gives only the lead the
+optional consultation instructions. Preset consult roles are addressed by role name, so several
+roles may use one provider with distinct models and personas. Inside the box the interface is:
 
 ```bash
 coop-consult claude --fresh    "<prompt>"   # new read-only session; never edits
 coop-consult gemini --continue "<prompt>"   # resume the peer's thread; send only the delta
 ```
 
-Council members are read-only advisors: they analyze and report, and the leader makes
-every change itself — even when the task *is* a change, it consults on the thinking
-and does the writing. A peer has none of the leader's conversation, so the leader
+Peers are read-only advisors: they analyze and report, and the leader makes every change itself.
+A peer has none of the leader's conversation, so the leader
 composes a self-contained prompt rather than forwarding your message verbatim — a
 follow-up like "fix the second one" means nothing to a peer that never saw the
 thread. `coop-consult` adds optional continuity: `--fresh` starts a new session,
@@ -912,32 +897,16 @@ after an unclean exit. A custom image without `flock` uses a fail-closed `mkdir`
 Inside `coop loop`, Codex is currently the only consult arm with structured token usage. At most one
 bounded row per successful Codex consult is appended to the active run's private ignored
 `.agent/runs/<run>.peers.jsonl`; an empty file is removed. Claude, Gemini, and Grok plain-output
-arms do not fabricate token counts, and failed or usage-less Codex replies append nothing. The
-leader then merges the strongest parts, resolves disagreements by
-verification, and proceeds. Because the instruction lands only on the leader, the
-members it spawns read their normal instructions and never recurse into a council of
-their own. Each consultation adds one read-only run per member, so account for the full
-council when choosing this mode.
+arms do not fabricate token counts, and failed or usage-less Codex replies append nothing.
+Because the instruction lands only on the lead, peers it spawns read their normal instructions
+and never recurse. Each consultation adds one read-only run, so account for it when choosing peers.
 
-**In Zed:** add one entry per leader and pick who governs from the agent dropdown:
-
-```json
-"agent_servers": {
-  "coop fusion (codex)":  { "command": "coop", "args": ["acp", "fusion", "codex", "--peer", "claude", "--peer", "gemini"] },
-  "coop fusion (claude)": { "command": "coop", "args": ["acp", "fusion", "claude", "--peer", "codex", "--peer", "gemini"] },
-  "coop fusion (gemini)": { "command": "coop", "args": ["acp", "fusion", "gemini", "--peer", "claude", "--peer", "codex"] },
-  "coop fusion (grok)":   { "command": "coop", "args": ["acp", "fusion", "grok", "--peer", "claude", "--peer", "codex"] }
-}
-```
-
-### Second opinions (`--peer`)
-
-Outside fusion, name peers with `--peer <agent>` (repeatable) on a normal run —
+Name peers with `--peer <agent>` (repeatable) on a normal run —
 `coop claude --peer codex --peer gemini` (or a `codex`/`gemini`/`grok` lead; in Zed,
 `coop acp claude --peer codex`) — for a lighter version of the same idea: on a
 genuinely hard or risky call the agent may consult those peers read-only and in
 parallel (through the same `coop-consult` wrapper) to catch blind spots, then decide.
-It's off by default and, unlike fusion, optional — no synthesis mandate, not for
+It's off by default and optional — no synthesis mandate, not for
 routine work; it defaults to `--fresh` so each hard call gets an independent second
 opinion. Only the peers you name are consulted — there's no implicit "consult
 everyone signed in", and only a named peer's credentials mount (read-only). And it's
@@ -1000,10 +969,10 @@ coop login claude    # or codex / gemini / grok
       "command": "coop",                                // absolute path if Zed's PATH lacks ~/.local/bin
       "args": ["acp", "claude"]                         // one agent; pin the target: "claude:opus/xhigh@work"
     },
-    "coop · fusion": {
+    "coop · second opinion": {
       "type": "custom",
       "command": "coop",
-      "args": ["acp", "fusion", "claude:opus/xhigh", "--peer", "codex"] // a council; the governor's model/effort ride the target
+      "args": ["acp", "claude:opus/xhigh", "--peer", "codex"] // named peer; the lead's model/effort ride the target
     }
   }
 }
@@ -1011,12 +980,12 @@ coop login claude    # or codex / gemini / grok
 
 **Pin the model, reasoning effort, and account in coop's target inside `args`** —
 `provider[:model][/effort][@account]` — *not* the editor's own per-option defaults. So a
-council led by Opus at extra-high reasoning effort is `["acp","fusion","claude:opus/xhigh","--peer","codex"]`,
+Claude session with a Codex peer is `["acp","claude:opus/xhigh","--peer","codex"]`,
 and a solo run is `["acp","claude:opus/xhigh@work"]`. The toolbar dropdowns come up reflecting the
 target and stay switchable mid-thread, and coop ignores any editor permission-`mode` setting —
-every session runs yolo (the box is the boundary). **One caveat:** a **codex** governor (or lead)
+every session runs yolo (the box is the boundary). **One caveat:** a **codex** lead
 takes its model from codex's own `config.toml` — coop can't set it over ACP — so choose a
-`claude`, `gemini`, or `grok` governor when you want coop to pick the model.
+`claude`, `gemini`, or `grok` lead when you want coop to pick the model.
 
 > GUI apps don't always inherit your shell's `PATH`. If Zed can't find `coop`, use the
 > absolute path from step 1 as `command`.
@@ -1051,7 +1020,7 @@ box and edits your files over ACP. Tool calls never prompt: coop runs every edit
 session in yolo, whatever the provider's own settings — the box is the boundary, so
 permission theater would only slow it down.
 
-Under the hood `coop acp [claude|codex|gemini|grok|fusion]` runs the matching adapter
+Under the hood `coop acp [claude|codex|gemini|grok]` runs the matching adapter
 (`@agentclientprotocol/claude-agent-acp`, `@agentclientprotocol/codex-acp`, `gemini --acp`,
 `grok agent stdio`)
 inside the box over stdio. The repo mounts at its real host path — the same path
@@ -1631,11 +1600,11 @@ turn them off.
 | `COOP_PIDS` | `4096` | box pids-limit (fork-bomb cap); `0`/`unlimited`/empty turns it off |
 | `COOP_MEMORY` · `COOP_CPUS` | — | box memory / CPU caps (e.g. `4g`, `2`); unset by default |
 | `COOP_NO_NEW_PRIVILEGES` | `1` | `--security-opt no-new-privileges` on the box |
-| `COOP_HOMES` | `1` | mount your per-agent home dirs (auth + settings) into the box; `0` keeps them out and therefore disables preset, consult, and Fusion runs because their routing contract cannot mount |
+| `COOP_HOMES` | `1` | mount your per-agent home dirs (auth + settings) into the box; `0` keeps them out and therefore disables preset and consult runs because their routing contract cannot mount |
 | `COOP_EGRESS` | `open` | `none` cuts the box off the network (`--network none`) — no outbound, so a prompt-injected agent can't exfiltrate the repo, secrets, or its credentials. Breaks installs / the model API, so it's opt-in; the default keeps full outbound. |
 | `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning; stale Node shim repair still runs. Read in the box — set it in `agents/env` (forwarded into the box), not your host shell |
 | `COOP_NETWORK` · `COOP_CACHE` | `1` | join the services network · mount the cache volume |
-| `COOP_AUTO_UP` | `1` | auto-start sibling services (`compose up`) before every box when a `.agent/compose.yml` is present, so any mode (agent, fusion, acp, loop, fork) can reach them; `0` to manage them with `coop up`/`coop down` yourself |
+| `COOP_AUTO_UP` | `1` | auto-start sibling services (`compose up`) before every box when a `.agent/compose.yml` is present, so any mode (agent, acp, loop, fork) can reach them; `0` to manage them with `coop up`/`coop down` yourself |
 | `COOP_SERVICES_NET` | (auto) | services network to join (let a fleet share one db) |
 
 The resource/privilege caps (`COOP_PIDS` / `COOP_MEMORY` / `COOP_CPUS` /
@@ -1724,7 +1693,7 @@ main.go               entrypoint
 internal/agent/       one file per coding agent (claude/codex/gemini/grok): commands, resume, MCP, defaults, packages
 internal/box/         the engine: secret-shadowing mounts, git env, image selection, container run
 internal/acpproxy/    the ACP session proxy: survives box restarts, replays the handshake, coop's editor hooks
-internal/fusion/      the council: peer commands + the governor instruction
+internal/consult/     read-only peer consultation instructions + wrapper
 internal/preset/      orchestration presets (.agent/presets/<name>/preset.yaml): roles, ladders, routing
 internal/project/     .agent/project.yaml — a monorepo's subprojects + the serve ports
 internal/mcp/         one mcp.json → Claude / Codex / Gemini / Grok native configs (pure Go, no Python)

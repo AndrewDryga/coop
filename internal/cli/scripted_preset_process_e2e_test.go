@@ -11,12 +11,12 @@ import (
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
 )
 
-func TestProviderScriptedFusionCompositionMatrix(t *testing.T) {
+func TestProviderScriptedPresetCompositionMatrix(t *testing.T) {
 	suite := newDirectProcessSuite(t)
 	providers := agents.Names()
 	for _, lead := range providers {
@@ -30,10 +30,10 @@ func TestProviderScriptedFusionCompositionMatrix(t *testing.T) {
 				roleTargets[provider] = target
 				roles = append(roles, preset.Role{
 					Name: compositionRole(provider), Mode: preset.ModeConsult, Ladder: []agents.Target{target},
-					PromptText: "You are " + compositionRole(provider) + " in the deterministic Fusion composition matrix.",
+					PromptText: "You are " + compositionRole(provider) + " in the deterministic preset composition matrix.",
 				})
 			}
-			personas := writeFusionRolePreset(t, suite.layout.Repo, presetName, leadTarget, roles)
+			personas := writePresetRolePreset(t, suite.layout.Repo, presetName, leadTarget, roles)
 			baseline, err := liveprovider.SnapshotRepository(suite.layout)
 			if err != nil {
 				t.Fatal(err)
@@ -52,44 +52,40 @@ func TestProviderScriptedFusionCompositionMatrix(t *testing.T) {
 				replies = append(replies, reply)
 			}
 
-			result, trace := suite.run(t, []string{"fusion", presetName}, consultProcessScenario(lead, providers, calls, steps))
+			result, trace := suite.run(t, []string{presetName}, consultProcessScenario(lead, providers, calls, steps))
 			if result.Err != nil || result.ExitCode != 0 {
-				t.Fatalf("fusion composition %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", lead, result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
+				t.Fatalf("preset composition %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", lead, result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
 			}
 			for _, reply := range replies {
 				if !strings.Contains(result.Stdout, reply) {
-					t.Errorf("fusion composition %s missing reply %q\nstdout:\n%s", lead, reply, result.Stdout)
+					t.Errorf("preset composition %s missing reply %q\nstdout:\n%s", lead, reply, result.Stdout)
 				}
-			}
-			wantCouncil := "fusion: " + lead + " governs; council " + strings.Join(members, " + ") + " (read-only)"
-			if !strings.Contains(result.Stderr, wantCouncil) {
-				t.Errorf("fusion council identity missing %q\nstderr:\n%s", wantCouncil, result.Stderr)
 			}
 			after, err := liveprovider.VerifyRepository(suite.layout, baseline)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !baseline.Equal(after) {
-				t.Fatal("fusion composition changed the writable repository")
+				t.Fatal("preset composition changed the writable repository")
 			}
 
 			run := oneProcessEvent(t, trace, "runtime", "run")
-			assertFusionCompositionRun(t, suite, run, leadTarget, roleTargets, members)
+			assertPresetCompositionRun(t, suite, run, leadTarget, roleTargets, members)
 			starts := processEvents(trace, "peer", "start")
 			if len(starts) != len(steps) {
-				t.Fatalf("fusion composition %s started %d roles, want %d", lead, len(starts), len(steps))
+				t.Fatalf("preset composition %s started %d roles, want %d", lead, len(starts), len(steps))
 			}
 			for index, start := range starts {
 				want := steps[index]
 				if start.Consult == nil || start.Consult.Step != index || start.Consult.Provider != want.Provider ||
 					start.Consult.Model != want.Model || start.Consult.Effort != want.Effort ||
 					start.Consult.PromptHash != processTraceValue(want.Prompt) {
-					t.Errorf("fusion role start %d = %#v, want %#v", index, start.Consult, want)
+					t.Errorf("preset role start %d = %#v, want %#v", index, start.Consult, want)
 					continue
 				}
 				wantArgv := consultFreshTraceArgv(want.Provider, want.Model, want.Effort, want.Prompt, start.Consult.SessionHash)
 				if !reflect.DeepEqual(start.Argv, wantArgv) {
-					t.Errorf("fusion role %d argv = %q, want %q", index, start.Argv, wantArgv)
+					t.Errorf("preset role %d argv = %q, want %q", index, start.Argv, wantArgv)
 				}
 			}
 			for _, member := range members {
@@ -104,7 +100,7 @@ func TestProviderScriptedFusionCompositionMatrix(t *testing.T) {
 	}
 }
 
-func TestProviderScriptedFusionExplicitPeerAndRoleIdentities(t *testing.T) {
+func TestProviderScriptedPresetExplicitPeerAndRoleIdentities(t *testing.T) {
 	suite := newDirectProcessSuite(t)
 	lead, peer := suite.providers[0], suite.providers[1]
 	name := "peer-and-roles"
@@ -114,7 +110,7 @@ func TestProviderScriptedFusionExplicitPeerAndRoleIdentities(t *testing.T) {
 		"analyst": compositionTarget(peer, "analyst"),
 		"critic":  compositionTarget(peer, "critic"),
 	}
-	personas := writeFusionRolePreset(t, suite.layout.Repo, name, leadTarget, []preset.Role{
+	personas := writePresetRolePreset(t, suite.layout.Repo, name, leadTarget, []preset.Role{
 		{Name: "analyst", Mode: preset.ModeConsult, Ladder: []agents.Target{roleTargets["analyst"]}, PromptText: "Deterministic analyst persona."},
 		{Name: "critic", Mode: preset.ModeConsult, Ladder: []agents.Target{roleTargets["critic"]}, PromptText: "Deterministic critic persona."},
 	})
@@ -128,27 +124,26 @@ func TestProviderScriptedFusionExplicitPeerAndRoleIdentities(t *testing.T) {
 		consultPairStep(roleTargets["analyst"], "fresh", "usable", consultPersonaPrompt(personas["analyst"], calls[1].Prompt), "analyst reply"),
 		consultPairStep(roleTargets["critic"], "fresh", "usable", consultPersonaPrompt(personas["critic"], calls[2].Prompt), "critic reply"),
 	}
-	result, trace := suite.run(t, []string{"fusion", name, "--peer", peerTarget.String()}, consultProcessScenario(lead, suite.providers, calls, steps))
-	wantCouncil := "fusion: " + lead + " governs; council " + peer + " + analyst + critic (read-only)"
-	if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, wantCouncil) {
-		t.Fatalf("mixed Fusion = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
+	result, trace := suite.run(t, []string{name, "--peer", peerTarget.String()}, consultProcessScenario(lead, suite.providers, calls, steps))
+	if result.Err != nil || result.ExitCode != 0 {
+		t.Fatalf("mixed preset = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
 	}
 	starts := processEvents(trace, "peer", "start")
 	if len(starts) != len(steps) {
-		t.Fatalf("mixed Fusion peer starts = %d, want %d", len(starts), len(steps))
+		t.Fatalf("mixed preset peer starts = %d, want %d", len(starts), len(steps))
 	}
 	for index, start := range starts {
 		want := steps[index]
 		if start.Consult == nil || start.Consult.Provider != peer || start.Consult.Model != want.Model ||
 			start.Consult.Effort != want.Effort || start.Consult.PromptHash != processTraceValue(want.Prompt) {
-			t.Errorf("mixed Fusion step %d = %#v, want %#v", index, start.Consult, want)
+			t.Errorf("mixed preset step %d = %#v, want %#v", index, start.Consult, want)
 		}
 	}
 	if peerTarget.Model == roleTargets["analyst"].Model || peerTarget.Model == roleTargets["critic"].Model || roleTargets["analyst"].Model == roleTargets["critic"].Model {
-		t.Fatal("mixed Fusion targets must use three distinct models on the shared provider")
+		t.Fatal("mixed preset targets must use three distinct models on the shared provider")
 	}
 	run := oneProcessEvent(t, trace, "runtime", "run")
-	assertFusionMixedRoleWiring(t, suite, run, leadTarget, peer, peerTarget, roleTargets)
+	assertPresetMixedRoleWiring(t, suite, run, leadTarget, peer, peerTarget, roleTargets)
 }
 
 func TestProviderScriptedNativeRoleDegradesUnderIncapableLead(t *testing.T) {
@@ -169,7 +164,7 @@ func TestProviderScriptedNativeRoleDegradesUnderIncapableLead(t *testing.T) {
 	name := "native-degradation"
 	leadTarget := compositionTarget(lead, "degraded-lead")
 	roleTarget := compositionTarget(nativeProvider, "native-role")
-	personas := writeFusionRolePreset(t, suite.layout.Repo, name, leadTarget, []preset.Role{{
+	personas := writePresetRolePreset(t, suite.layout.Repo, name, leadTarget, []preset.Role{{
 		Name: "thinker", Mode: preset.ModeNative, Ladder: []agents.Target{roleTarget}, PromptText: "Deterministic degraded native persona.",
 	}})
 	question := "degraded native question"
@@ -202,7 +197,7 @@ func TestProviderScriptedNativeRoleDegradesUnderIncapableLead(t *testing.T) {
 	}
 }
 
-func TestProviderScriptedFusionTerminalPinsFirstLeadRung(t *testing.T) {
+func TestProviderScriptedPresetTerminalPinsFirstLeadRung(t *testing.T) {
 	suite := newDirectProcessSuite(t)
 	first, second, roleProvider := suite.providers[0], suite.providers[1], suite.providers[2]
 	name := "terminal-first-rung"
@@ -219,9 +214,9 @@ func TestProviderScriptedFusionTerminalPinsFirstLeadRung(t *testing.T) {
 	}
 	question := "terminal rung question"
 	step := consultPairStep(roleTarget, "fresh", "usable", question, "terminal rung reply")
-	result, trace := suite.run(t, []string{"fusion", name}, consultProcessScenario(first, suite.providers,
+	result, trace := suite.run(t, []string{name}, consultProcessScenario(first, suite.providers,
 		[]consultCallSpec{{Target: "critic", Mode: "fresh", Prompt: question, ExitCode: 0}}, []consultStepSpec{step}))
-	if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, "pins this terminal session to first lead rung "+firstTarget.String()+" (no fallback rotation") {
+	if result.Err != nil || result.ExitCode != 0 {
 		t.Fatalf("terminal first rung = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
 	}
 	runs := processEvents(trace, "runtime", "run")
@@ -231,20 +226,6 @@ func TestProviderScriptedFusionTerminalPinsFirstLeadRung(t *testing.T) {
 	wantArgv := processTraceArgv(directExpectedArgv(directProviderContracts[first], firstTarget.Model, firstTarget.Effort, nil))
 	if !reflect.DeepEqual(runs[0].Run.ProviderArgv, wantArgv) {
 		t.Errorf("terminal first-rung argv = %q, want %q", runs[0].Run.ProviderArgv, wantArgv)
-	}
-}
-
-func TestProviderScriptedFusionMissingRoleAuthStopsBeforeRuntime(t *testing.T) {
-	suite := newDirectProcessSuite(t)
-	lead, roleProvider := suite.providers[0], suite.providers[1]
-	disableProcessCredential(t, suite, roleProvider)
-	name := "missing-role-auth"
-	writeSingleConsultPreset(t, suite.layout.Repo, name, lead, roleProvider)
-	result, trace := suite.run(t, []string{"fusion", name}, processScenario(lead, nil, 0, ""))
-	if result.Err != nil || result.ExitCode != 2 || len(processEvents(trace, "runtime", "run")) != 0 ||
-		len(processEvents(trace, "provider", "start")) != 0 || len(processEvents(trace, "peer", "start")) != 0 ||
-		!strings.Contains(result.Stderr, "preset council role(s) advisor have no target with mounted credentials") {
-		t.Fatalf("missing role auth = exit %d err %v\nstderr:\n%s\ntrace:\n%s", result.ExitCode, result.Err, result.Stderr, readProcessFile(t, suite.layout.Trace))
 	}
 }
 
@@ -262,7 +243,7 @@ func compositionTarget(provider, purpose string) agents.Target {
 	return target
 }
 
-func writeFusionRolePreset(t *testing.T, repo, name string, lead agents.Target, roles []preset.Role) map[string]string {
+func writePresetRolePreset(t *testing.T, repo, name string, lead agents.Target, roles []preset.Role) map[string]string {
 	t.Helper()
 	dir := filepath.Join(repo, ".agent", "presets", name)
 	rolesDir := filepath.Join(dir, "roles")
@@ -303,14 +284,14 @@ func processEnvironment(environment []processEnv) map[string]processEnv {
 	return values
 }
 
-func assertFusionMixedRoleWiring(t *testing.T, suite *directProcessSuite, event *processTrace, lead agents.Target, peer string, peerTarget agents.Target, roles map[string]agents.Target) {
+func assertPresetMixedRoleWiring(t *testing.T, suite *directProcessSuite, event *processTrace, lead agents.Target, peer string, peerTarget agents.Target, roles map[string]agents.Target) {
 	t.Helper()
 	if event.Run == nil {
-		t.Fatal("mixed Fusion runtime trace has no run")
+		t.Fatal("mixed preset runtime trace has no run")
 	}
 	wantLeadArgv := processTraceArgv(directExpectedArgv(directProviderContracts[lead.Provider], lead.Model, lead.Effort, nil))
 	if event.Run.Provider != lead.Provider || !reflect.DeepEqual(event.Run.ProviderArgv, wantLeadArgv) {
-		t.Fatalf("mixed Fusion lead = %s %q, want %s %q", event.Run.Provider, event.Run.ProviderArgv, lead.Provider, wantLeadArgv)
+		t.Fatalf("mixed preset lead = %s %q, want %s %q", event.Run.Provider, event.Run.ProviderArgv, lead.Provider, wantLeadArgv)
 	}
 	values := processEnvironment(event.Run.Environment)
 	peerKey := strings.ToUpper(strings.ReplaceAll(peer, "-", "_"))
@@ -333,33 +314,33 @@ func assertFusionMixedRoleWiring(t *testing.T, suite *directProcessSuite, event 
 		}
 	}
 	if credentials[lead.Provider] != 1 || credentials[peer] != 1 {
-		t.Fatalf("mixed Fusion credential scope = %#v, want only %s and %s once", credentials, lead.Provider, peer)
+		t.Fatalf("mixed preset credential scope = %#v, want only %s and %s once", credentials, lead.Provider, peer)
 	}
 	for _, provider := range suite.providers {
 		if provider != lead.Provider && provider != peer && credentials[provider] != 0 {
-			t.Errorf("mixed Fusion mounted out-of-scope %s credentials", provider)
+			t.Errorf("mixed preset mounted out-of-scope %s credentials", provider)
 		}
 	}
 }
 
-func assertFusionCompositionRun(t *testing.T, suite *directProcessSuite, event *processTrace, lead agents.Target, roles map[string]agents.Target, members []string) {
+func assertPresetCompositionRun(t *testing.T, suite *directProcessSuite, event *processTrace, lead agents.Target, roles map[string]agents.Target, members []string) {
 	t.Helper()
 	if event.Run == nil {
-		t.Fatal("fusion composition runtime trace has no run")
+		t.Fatal("preset composition runtime trace has no run")
 	}
 	wantLeadArgv := processTraceArgv(directExpectedArgv(directProviderContracts[lead.Provider], lead.Model, lead.Effort, nil))
 	if event.Run.Provider != lead.Provider || !reflect.DeepEqual(event.Run.ProviderArgv, wantLeadArgv) {
-		t.Fatalf("fusion lead = %s %q, want %s %q", event.Run.Provider, event.Run.ProviderArgv, lead.Provider, wantLeadArgv)
+		t.Fatalf("preset lead = %s %q, want %s %q", event.Run.Provider, event.Run.ProviderArgv, lead.Provider, wantLeadArgv)
 	}
 	values := processEnvironment(event.Run.Environment)
 	if values["COOP_PRIMARY"].Value != lead.Provider {
-		t.Fatalf("fusion primary = %#v, want %s", values["COOP_PRIMARY"], lead.Provider)
+		t.Fatalf("preset primary = %#v, want %s", values["COOP_PRIMARY"], lead.Provider)
 	}
 	wrapperCount := 0
 	personaCount := make(map[string]int, len(members))
 	credentialCount := make(map[string]int, len(suite.providers))
 	for _, mount := range event.Run.Mounts {
-		if mount.Target == "<container>"+fusion.ConsultWrapperPath && mount.ReadOnly {
+		if mount.Target == "<container>"+consult.ConsultWrapperPath && mount.ReadOnly {
 			wrapperCount++
 		}
 		for _, member := range members {
@@ -375,7 +356,7 @@ func assertFusionCompositionRun(t *testing.T, suite *directProcessSuite, event *
 		}
 	}
 	if wrapperCount != 1 {
-		t.Errorf("fusion consult wrapper mounts = %d, want 1", wrapperCount)
+		t.Errorf("preset consult wrapper mounts = %d, want 1", wrapperCount)
 	}
 	for _, provider := range suite.providers {
 		role := compositionRole(provider)

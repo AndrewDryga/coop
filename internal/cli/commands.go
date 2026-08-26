@@ -18,7 +18,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
-	"github.com/AndrewDryga/coop/internal/fusion"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/scaffold"
@@ -285,7 +284,7 @@ func (a *app) nudgeIfUnauthed(tool string) {
 // default — a typo otherwise silently creates an empty husk dir (box.Run pre-creates the active
 // profile), the very clutter `coop credentials rm` cleans up — and notes (without blocking) one
 // that isn't signed in.
-// Shared by every agent-launch path: launchAgent, cmdFusion, cmdACP.
+// Shared by every agent-launch path: launchAgent, launchPreset, cmdACP.
 func (a *app) selectRunProfile(tool, profile string) error {
 	if profile == "" {
 		return nil
@@ -303,7 +302,7 @@ func (a *app) selectRunProfile(tool, profile string) error {
 // selectRunModel points cfg at the model chosen with --model for a run of tool (a no-op when
 // model is ""). Deliberately unvalidated: model ids churn faster than coop releases, so the
 // agent CLI stays the source of truth — a bad id fails loudly in the agent's own error.
-// Shared by every agent-launch path: launchAgent, cmdFusion, cmdACP, and the fork paths.
+// Shared by every agent-launch path: launchAgent, launchPreset, cmdACP, and the fork paths.
 func (a *app) selectRunModel(tool, model string) {
 	if model != "" {
 		a.cfg.SetActiveModel(tool, model)
@@ -341,8 +340,7 @@ func (a *app) applyOneOff(tool, model, credential, effort string) error {
 }
 
 // extractPeer pulls every --peer <target> (repeatable) out of a run's args — each value is one
-// peer the lead may consult read-only on hard calls (fusion's whole council; the opt-in second
-// opinion on every other surface — see box.RunSpec.Peers). A valueless occurrence errors with
+// peer the lead may consult read-only on hard calls (see box.RunSpec.Peers). A valueless occurrence errors with
 // the repeatable form. `--`-aware. The one --peer parser for every command (the retired --consult
 // spelling is now just an unknown flag).
 func extractPeer(args []string) (peers, rest []string, err error) {
@@ -494,126 +492,6 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	}
 	ui.Info("logging in to %s%s — credentials persist in %s/", tool, where, a.cfg.AgentDir(tool))
 	return a.runInBox(ag.Login(a.cfg), tool, nil) // mounts only the agent being logged in to
-}
-
-// agentChoices lists the registered agents for a "use one of …" error, from the registry so a
-// new agent is offered without editing the string. Sorted (agents.Names()), comma-separated.
-func agentChoices() string { return strings.Join(agents.Names(), ", ") }
-
-// cmdFusion runs a council: the governor agent (a leading provider target, else
-// COOP_FUSION_GOVERNOR) runs normally — it edits and does the real work — while a fusion
-// instruction injected into its instruction file tells it to consult every resolved member
-// read-only and synthesize. It behaves like `coop <agent>`: `coop fusion claude` opens
-// claude interactively; trailing `<args>` pass through to the governor.
-func (a *app) cmdFusion(args []string) (int, error) {
-	// --model/--credential are retired — pin the governor in its target (coop fusion
-	// claude:opus@work); the peers keep their own defaults. `--`-aware, so the
-	// governor's OWN flags (codex's --profile) still pass through after a `--`.
-	// The council is named EXPLICITLY with --peer (repeatable).
-	peerVals, args, err := extractPeer(args)
-	if err != nil {
-		return 2, err
-	}
-	peers, err := a.resolvePeers("--peer", peerVals)
-	if err != nil {
-		return 2, err
-	}
-	// The governor slot is a target OR a preset name (parseGovernor classifies the leading
-	// positional). Its model + account fold into this run's one-off selection (the peers keep
-	// their own); a preset's lead governs when no target is named, and its role routing rides
-	// along with the council directive.
-	governor, model, profile, effort, presetName, rest, govSet, err := a.parseGovernor(args)
-	if err != nil {
-		return 2, err
-	}
-	p, err := a.loadRunPreset(presetName)
-	if err != nil {
-		return 2, err
-	}
-	governor = presetLeadAgent(p, governor, govSet)
-	if governor == "" {
-		return 2, errors.New("coop fusion: name the governor — coop fusion <agent> --peer <agent>... (or a preset name, whose lead governs)")
-	}
-	if !fusion.Valid(governor, agents.Names()) {
-		return 2, fmt.Errorf("unknown governor %q — use %s", governor, agentChoices())
-	}
-	if err := a.applyPinnedPreset(p, governor); err != nil {
-		return 2, err
-	}
-	if err := a.applyOneOff(governor, model, profile, effort); err != nil {
-		return 2, err
-	}
-	council, err := resolveFusionCouncil(governor, peers, p, fusionRejectSelf, box.AuthedAgents(a.cfg))
-	if err != nil {
-		return 2, err
-	}
-	peers = council.Peers
-	repo, img, err := a.resolveImage()
-	if err != nil {
-		return -1, err
-	}
-	// The governor's autonomous default command, plus any extra args you pass through.
-	providerArgs := dropDashDash(rest)
-	cmd := append(append([]string{}, a.defaultCmd(governor)...), providerArgs...)
-	if p != nil && governor == p.LeadAgent && len(p.LeadLadder) > 1 {
-		ui.Info("fusion: preset %s pins this terminal session to first lead rung %s (no fallback rotation; use ACP or loop to rotate)", p.Name, p.LeadLadder[0].String())
-	}
-	if len(council.UnavailableRoles) > 0 {
-		ui.Warn("fusion: preset role(s) %s are unavailable because none of their providers has mounted credentials", strings.Join(council.UnavailableRoles, ", "))
-	}
-	desc := strings.Join(council.Members, " + ")
-	ui.Info("fusion: %s governs; council %s (read-only)", governor, desc)
-	if agentCommandProducesInteractiveSession(governor, providerArgs) {
-		release, err := a.lockInteractiveSession(governor, repo)
-		if err != nil {
-			return 1, err
-		}
-		defer release()
-	}
-	pre := gitOut(repo, "rev-parse", "HEAD")
-	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: governor, FusionGovernor: governor, FusionMembers: council.Members, Peers: peers, Preset: a.preset,
-		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
-	})
-	a.signOnBoxExit(repo, pre, false)
-	return code, err
-}
-
-// parseGovernor classifies the leading who-runs positional: a TARGET
-// (provider[:model][/effort][@account]) is the governor, a non-target bare word is a PRESET NAME
-// (its lead governs — resolved by the caller's loadRunPreset). Only the FIRST leading positional
-// is the who; everything else passes through to the governor. explicit reports whether a governor
-// TARGET was named (so a preset's lead only fills the default); model/profile carry the governor
-// target's model + single account for the one-off selection.
-func (a *app) parseGovernor(args []string) (governor, model, profile, effort, presetName string, rest []string, explicit bool, err error) {
-	tookGov := false // no implicit default — the governor is named explicitly (or via a preset lead)
-	took := func() bool { return tookGov || presetName != "" || len(rest) > 0 }
-	for i := 0; i < len(args); i++ {
-		switch {
-		case args[i] == "--":
-			return governor, model, profile, effort, presetName, append(rest, args[i+1:]...), tookGov, nil // everything after passes through
-		case !took() && isTargetHead(args[i]):
-			// Only the FIRST leading target is the governor: `coop fusion claude:opus/high@work`
-			// (matches `coop acp fusion …`). A second agent token passes through to the governor
-			// (not silently swallowed as the governor).
-			t, terr := agents.ParseTarget(args[i])
-			if terr != nil {
-				return governor, model, profile, effort, presetName, rest, tookGov, terr
-			}
-			governor, tookGov = t.Provider, true
-			if terr := foldTarget(t, &model, &profile); terr != nil {
-				return governor, model, profile, effort, presetName, rest, tookGov, terr
-			}
-			effort = t.Effort
-		case !took() && !strings.HasPrefix(args[i], "-"):
-			// The FIRST leading non-target bare word is a preset name (the who slot). Its lead
-			// governs; loadRunPreset (the caller) validates it exists.
-			presetName = args[i]
-		default:
-			rest = append(rest, args[i])
-		}
-	}
-	return governor, model, profile, effort, presetName, rest, tookGov, nil
 }
 
 func (a *app) cmdBuild(args []string) (int, error) {

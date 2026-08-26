@@ -70,7 +70,7 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 				}
 				a := &app{cfg: cfg}
 				if err := a.selectRunProfile(name, profile); err != nil {
-					t.Errorf("direct/Fusion account selection rejected %s via %s: %v", name, source, err)
+					t.Errorf("direct account selection rejected %s via %s: %v", name, source, err)
 				}
 
 				out := captureStdout(t, func() {
@@ -117,7 +117,7 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 					t.Errorf("fleet rejected signed-in pinned account: %v", unsigned)
 				}
 
-				control := acpctl.New(cfg, name, "", "", t.TempDir(), acpctl.Selection{}, nil, nil, false, nil, acpHost())
+				control := acpctl.New(cfg, name, "", "", t.TempDir(), acpctl.Selection{}, nil, nil, acpHost())
 				if creds := control.Creds(); !slices.Contains(creds, profile) {
 					t.Errorf("ACP account selector omitted %s@%s via %s: %v", name, profile, source, creds)
 				}
@@ -189,7 +189,7 @@ func TestACPCredentialSourcesFollowProviderSelection(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				c := acpctl.New(cfg, base, "", "", t.TempDir(), acpctl.Selection{}, nil, nil, false, nil, acpHost())
+				c := acpctl.New(cfg, base, "", "", t.TempDir(), acpctl.Selection{}, nil, nil, acpHost())
 				if got := c.SpawnableProviders(base); !slices.Contains(got, name) {
 					t.Fatalf("ACP provider options omitted %s via %s: %v", name, source, got)
 				}

@@ -13,7 +13,6 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/preset"
@@ -74,7 +73,7 @@ func normalizeACPSelection(sel Selection) Selection {
 // because the transcript sits on a shared, credential-independent store.
 type Control struct {
 	cfg          *config.Config              // for expanding a selected preset's model ladder into rotation targets
-	host         Host                        // injected seams (rotation/fusion-council/models-cache/wait policy) — internal/cli owns the real implementations
+	host         Host                        // injected seams (rotation/models-cache/wait policy) — internal/cli owns the real implementations
 	repo         string                      // repo root, to load a preset selected from the toolbar
 	lead         string                      // the CURRENT lead agent — re-derived on a provider switch (see retarget)
 	model        string                      // coop's resolved model for the lead ("" → leave the adapter's default)
@@ -82,10 +81,7 @@ type Control struct {
 	plainTargets map[string]targetPreference // provider -> last accepted plain model/effort choice
 	creds        []string                    // the lead's runnable credentials offered by the selector
 	presets      []string                    // the repo's presets, in order
-	Fusion       bool                        // a fusion governor session — the selector offers no provider switch
-	fusionPeers  []string                    // original explicit peer providers; self is re-evaluated after each lead rotation
-
-	accounts []string // the lead's runnable accounts, for rate-limit auto-rotation (default first)
+	accounts     []string                    // the lead's runnable accounts, for rate-limit auto-rotation (default first)
 
 	mu          sync.Mutex
 	sel         Selection                    // tagged plain lead or preset-owned selection
@@ -177,7 +173,7 @@ type targetPreference struct {
 // enough for a best-effort carry. The per-session budget is cfg-owned (COOP_ACP_CARRY_TOKENS).
 const historyEntryBytes = 16 << 10
 
-func New(cfg *config.Config, lead, model, effort, repo string, sel Selection, presets, serveURLs []string, fusion bool, fusionPeers []string, host Host) *Control {
+func New(cfg *config.Config, lead, model, effort, repo string, sel Selection, presets, serveURLs []string, host Host) *Control {
 	sel = normalizeACPSelection(sel)
 	if effort == "" {
 		effort = cfg.EffortFor(lead)
@@ -185,7 +181,7 @@ func New(cfg *config.Config, lead, model, effort, repo string, sel Selection, pr
 	target := agents.Target{Provider: lead, Model: model, Effort: effort}
 	accounts := host.AccountsFor(cfg, lead)
 	return &Control{
-		cfg: cfg, host: host, repo: repo, Fusion: fusion, fusionPeers: fusionPeers,
+		cfg: cfg, host: host, repo: repo,
 		lead: lead, model: model, target: target, creds: slices.Clone(accounts), presets: presets,
 		plainTargets:   map[string]targetPreference{lead: {Model: model, Effort: effort}},
 		accounts:       accounts,
@@ -1983,13 +1979,11 @@ func (c *Control) cacheModels(models []Model) {
 	_ = c.host.WriteModelsCache(c.cfg, c.lead, models)
 }
 
-// coopOptions builds the toolbar: plain sessions show Preset, Provider (omitted for a fusion
-// governor), and Account; an active preset shows only Preset because its
-// ladder owns the full lead target.
+// coopOptions builds the toolbar: plain sessions show Preset, Provider, and Account; an active
+// preset shows only Preset because its ladder owns the full lead target.
 func (c *Control) coopOptions() []json.RawMessage {
 	c.mu.Lock()
-	sel, lead, creds, fusion, fusionPeers := c.sel, c.lead, c.creds, c.Fusion, slices.Clone(c.fusionPeers)
-	requiresPreset := fusionNeedsPreset(fusion, lead, fusionPeers)
+	sel, lead, creds := c.sel, c.lead, c.creds
 	sel = normalizeACPSelection(sel)
 	c.sel = sel
 	c.mu.Unlock()
@@ -2007,19 +2001,9 @@ func (c *Control) coopOptions() []json.RawMessage {
 		ps = sel.Preset
 	}
 	popts := make([]Option, 0, len(c.presets)+1)
-	if !requiresPreset {
-		popts = append(popts, Option{Value: "none", Name: "None", Description: "No preset — the plain lead"})
-	}
+	popts = append(popts, Option{Value: "none", Name: "None", Description: "No preset — the plain lead"})
 	for _, p := range c.presets {
 		option := Option{Value: p, Name: p, Description: "Run under preset " + p + " (its lead ladder + roles)"}
-		var unavailable []string
-		if fusion {
-			council, err := c.fusionPresetCouncil(p, fusionPeers)
-			if err != nil {
-				continue
-			}
-			unavailable = council.UnavailableRoles
-		}
 		headline := ""
 		if p == sel.Preset && presetTarget.Provider != "" {
 			option.Name += " · " + displayName(presetTarget.Provider)
@@ -2033,9 +2017,6 @@ func (c *Control) coopOptions() []json.RawMessage {
 		if desc := c.presetDescription(p, headline); desc != "" {
 			option.Description = desc
 		}
-		if len(unavailable) > 0 {
-			option.Description += "; unavailable council roles: " + strings.Join(unavailable, ", ")
-		}
 		popts = append(popts, option)
 	}
 	out = append(out, marshalSelect(CoopPresetID, "Preset",
@@ -2043,17 +2024,15 @@ func (c *Control) coopOptions() []json.RawMessage {
 	if sel.Preset != "" {
 		return out
 	}
-	if !fusion {
-		others := c.SpawnableProviders(lead)
-		opts := make([]Option, 0, len(others)+1)
-		opts = append(opts, Option{Value: lead, Name: displayName(lead), Description: "The current provider"})
-		for _, p := range others {
-			opts = append(opts, Option{Value: p, Name: displayName(p),
-				Description: "Switch the plain session to " + displayName(p) + " — context carried best-effort"})
-		}
-		out = append(out, marshalSelect(CoopProviderID, "Provider",
-			"Who runs a plain session — switching re-creates the thread and carries context best-effort", lead, opts))
+	others := c.SpawnableProviders(lead)
+	opts := make([]Option, 0, len(others)+1)
+	opts = append(opts, Option{Value: lead, Name: displayName(lead), Description: "The current provider"})
+	for _, p := range others {
+		opts = append(opts, Option{Value: p, Name: displayName(p),
+			Description: "Switch the plain session to " + displayName(p) + " — context carried best-effort"})
 	}
+	out = append(out, marshalSelect(CoopProviderID, "Provider",
+		"Who runs a plain session — switching re-creates the thread and carries context best-effort", lead, opts))
 	acct := "auto"
 	if sel.Account != "" {
 		acct = sel.Account
@@ -2165,8 +2144,7 @@ func marshalSelect(id, name, desc, current string, opts []Option) json.RawMessag
 // unspawnable plain values likewise return the unchanged selection.
 func (c *Control) SelectorSelection(configID, value string) (next Selection, recognized bool) {
 	c.mu.Lock()
-	next, lead, creds, fusion, fusionPeers := c.sel, c.lead, slices.Clone(c.creds), c.Fusion, slices.Clone(c.fusionPeers)
-	requiresPreset := fusionNeedsPreset(fusion, lead, fusionPeers)
+	next, lead, creds := c.sel, c.lead, slices.Clone(c.creds)
 	next = normalizeACPSelection(next)
 	c.mu.Unlock()
 	switch configID {
@@ -2174,7 +2152,7 @@ func (c *Control) SelectorSelection(configID, value string) (next Selection, rec
 		if next.Preset != "" {
 			return next, true
 		}
-		if value == lead || fusion || !agents.Valid(value) || len(c.host.AccountsFor(c.cfg, value)) == 0 {
+		if value == lead || !agents.Valid(value) || len(c.host.AccountsFor(c.cfg, value)) == 0 {
 			return next, true
 		}
 		next.Provider = value
@@ -2197,9 +2175,6 @@ func (c *Control) SelectorSelection(configID, value string) (next Selection, rec
 		return next, true
 	case CoopPresetID:
 		if value == "none" {
-			if requiresPreset {
-				return next, true
-			}
 			if next.Preset != "" {
 				next = Selection{Provider: lead}
 			} else {
@@ -2210,67 +2185,9 @@ func (c *Control) SelectorSelection(configID, value string) (next Selection, rec
 		if !slices.Contains(c.presets, value) {
 			return next, true
 		}
-		if fusion {
-			if _, err := c.fusionPresetCouncil(value, fusionPeers); err != nil {
-				return next, true
-			}
-		}
 		return Selection{Preset: value}, true
 	}
 	return next, false
-}
-
-// fusionNeedsPreset reports whether removing the active preset would leave the CURRENT governor
-// with no effective explicit peer. It is evaluated from the live lead because a cross-provider
-// preset rotation can turn yesterday's peer into today's self peer.
-func fusionNeedsPreset(fusion bool, lead string, peers []string) bool {
-	if !fusion {
-		return false
-	}
-	for _, peer := range peers {
-		if peer != lead {
-			return false
-		}
-	}
-	return true
-}
-
-func (c *Control) fusionPresetCouncil(name string, peerNames []string) (FusionCouncil, error) {
-	p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), name)
-	if err != nil {
-		return FusionCouncil{}, err
-	}
-	reachable, err := c.host.ExpandLadder(c.cfg, p.LeadAgent, p.LeadLadder)
-	if err != nil {
-		return FusionCouncil{}, err
-	}
-	peers := make([]agents.Target, len(peerNames))
-	for i, provider := range peerNames {
-		peers[i] = agents.Target{Provider: provider}
-	}
-	return c.host.ResolveFusionCouncil(reachable[0].Provider, peers, p, box.AuthedAgents(c.cfg), reachable)
-}
-
-func (c *Control) fusionPresetRefusal(value string) string {
-	c.mu.Lock()
-	fusion, lead, peers := c.Fusion, c.lead, slices.Clone(c.fusionPeers)
-	c.mu.Unlock()
-	if !fusion {
-		return ""
-	}
-	if value == "none" {
-		if fusionNeedsPreset(true, lead, peers) {
-			return "Fusion still needs a council; keep this preset or configure a non-self --peer"
-		}
-		return ""
-	}
-	if !slices.Contains(c.presets, value) {
-		return ""
-	}
-	if _, err := c.fusionPresetCouncil(value, peers); err != nil {
-		return fmt.Sprintf("cannot select Fusion preset %s: %v", value, err)
-	}
-	return ""
 }
 
 func (c *Control) presetLead(name, fallback string) string {
@@ -2814,11 +2731,6 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 		}
 		if field != "" && len(h.ID) > 0 {
 			c.registerNativeTarget(string(h.ID), field, h.Params.Value, h.Params.SessionID, false)
-		}
-	}
-	if h.Params.ConfigID == CoopPresetID {
-		if refusal := c.fusionPresetRefusal(h.Params.Value); refusal != "" {
-			return true, rpcErrorResponse(h.ID, -32602, refusal), nil, false
 		}
 	}
 	next, recognized := c.SelectorSelection(h.Params.ConfigID, h.Params.Value)

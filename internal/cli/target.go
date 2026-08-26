@@ -34,7 +34,7 @@ func isTargetHead(s string) bool {
 }
 
 // takeHeadWho pulls the leading "who runs" positional off args — the unified grammar shared by
-// loop/fork/fusion/acp: a TARGET (provider[:model][/effort][@account], detected by isTargetHead)
+// loop/fork/acp: a TARGET (provider[:model][/effort][@account], detected by isTargetHead)
 // OR a PRESET NAME (any other bare word — its existence is validated by the caller's loadRunPreset).
 // A run picks ONE, so exactly one of hasTarget / presetName!="" is set. ok=false with both empty
 // leaves args untouched when the first token is a flag or absent. A malformed target head still

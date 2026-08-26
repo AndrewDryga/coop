@@ -472,7 +472,7 @@ func TestForkACPMountsSessionCompanionsReadOnly(t *testing.T) {
 			BoxHome: filepath.Join(root, "box"), HomeInBox: "/home/node",
 			ImageOverride: "test-image", Egress: "none",
 		},
-		rt: fusionRecordingRuntime(t, recorder), rtSet: true,
+		rt: recordingRuntime(t, recorder), rtSet: true,
 	}
 	if code, runErr := a.forkACP("myfork", []string{"codex"}); runErr != nil || code != 0 {
 		t.Fatalf("forkACP = (%d, %v), want mounted companion", code, runErr)
@@ -517,7 +517,7 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 			BoxHome: filepath.Join(root, "box"), HomeInBox: "/home/node",
 			ImageOverride: "test-image", Egress: "none",
 		},
-		rt: fusionRecordingRuntime(t, recorder), rtSet: true,
+		rt: recordingRuntime(t, recorder), rtSet: true,
 	}
 	if code, runErr := a.forkACP("readonly", []string{"codex"}); runErr != nil || code != 0 {
 		t.Fatalf("forkACP = (%d, %v), want a read-only mounted session", code, runErr)
@@ -536,7 +536,7 @@ func TestForkACPRejectsMalformedSessionCompanionsBeforeRuntime(t *testing.T) {
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	a := &app{
 		cfg: &config.Config{RepoOverride: t.TempDir(), ImageOverride: "test-image"},
-		rt:  fusionRecordingRuntime(t, recorder), rtSet: true,
+		rt:  recordingRuntime(t, recorder), rtSet: true,
 	}
 	code, err := a.forkACP("myfork", []string{"codex"})
 	if code != -1 || err == nil || !strings.Contains(err.Error(), "malformed") {

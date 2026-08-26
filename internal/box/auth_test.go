@@ -129,7 +129,7 @@ func peerTargets(names ...string) []agents.Target {
 	return ts
 }
 
-// TestCredentialScope: a plain agent run mounts only its own home; a fusion/consult run ALSO
+// TestCredentialScope: a plain agent run mounts only its own home; a consult-capable run ALSO
 // mounts exactly the EXPLICIT peers it named (spec.Peers) plus a preset's role agents — never a
 // blanket "every authed agent". A raw run (no agent) and a homes-off run get nothing.
 func TestCredentialScope(t *testing.T) {
@@ -159,7 +159,7 @@ func TestCredentialScope(t *testing.T) {
 		// unnamed, so its credentials stay out (the old policy would have widened to it).
 		{"consult, no named peer → lead only", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude"}, []string{"claude"}},
 		{"consult names gemini", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Peers: peerTargets("gemini")}, []string{"claude", "gemini"}},
-		{"fusion names its council", RunSpec{Homes: true, Agent: "codex", FusionGovernor: "codex", Peers: peerTargets("claude", "gemini")}, []string{"codex", "claude", "gemini"}},
+		{"consult names two peers", RunSpec{Homes: true, Agent: "codex", ConsultLead: "codex", Peers: peerTargets("claude", "gemini")}, []string{"codex", "claude", "gemini"}},
 		{"claude lead keeps native in-session", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: nativePreset}, []string{"claude"}},
 		{"same-provider consult mounts one credential", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: sameProviderConsult}, []string{"claude"}},
 		{"codex lead degrades native to a claude consult", RunSpec{Homes: true, Agent: "codex", ConsultLead: "codex", Preset: nativePreset}, []string{"codex", "claude"}},

@@ -19,7 +19,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -219,7 +219,7 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		return errors.New("runtime invocation rejected")
 	}
 	if parsed.Kind == "run" {
-		if err := validateWrapperMountCardinality(parsed.Run, fusion.ConsultWrapperPath, activeScenario.Consult != nil || (activeScenario.Delegate != nil && activeScenario.Delegate.Consult != nil)); err != nil {
+		if err := validateWrapperMountCardinality(parsed.Run, consult.ConsultWrapperPath, activeScenario.Consult != nil || (activeScenario.Delegate != nil && activeScenario.Delegate.Consult != nil)); err != nil {
 			return errors.New("runtime invocation rejected")
 		}
 		if err := validateWrapperMountCardinality(parsed.Run, preset.DelegateWrapperPath, activeScenario.Delegate != nil); err != nil {
@@ -609,7 +609,7 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 			}
 			continue
 		}
-		if m.Target == fusion.ConsultWrapperPath {
+		if m.Target == consult.ConsultWrapperPath {
 			if err := validateConsultWrapperMount(root, m); err != nil {
 				return err
 			}

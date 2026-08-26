@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -737,10 +737,10 @@ func TestValidateConsultWrapperMountRequiresExactPrivateGeneratedFile(t *testing
 		t.Fatal(err)
 	}
 	path := filepath.Join(tmp, "coop-mcp-wrapper")
-	if err := os.WriteFile(path, []byte(fusion.ConsultWrapper()), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(consult.ConsultWrapper()), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	m := mount{Source: path, Target: fusion.ConsultWrapperPath, ReadOnly: true}
+	m := mount{Source: path, Target: consult.ConsultWrapperPath, ReadOnly: true}
 	if err := validateConsultWrapperMount(root, m); err != nil {
 		t.Fatalf("exact consult wrapper rejected: %v", err)
 	}
@@ -759,7 +759,7 @@ func TestValidateConsultWrapperMountRequiresExactPrivateGeneratedFile(t *testing
 	if err := validateConsultWrapperMount(root, m); err == nil {
 		t.Fatal("wrong consult wrapper bytes accepted")
 	}
-	if err := os.WriteFile(path, []byte(fusion.ConsultWrapper()), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(consult.ConsultWrapper()), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Link(path, filepath.Join(tmp, "second-link")); err != nil {

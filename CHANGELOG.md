@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fusion mode is removed; its useful pieces are the normal composition model.** Run a reusable
+  orchestration recipe directly with `coop <preset>` or `coop acp <preset>`. For an ad-hoc second
+  opinion, add repeatable `--peer <target>` flags to an agent, loop, fork, or ACP run. Preset
+  native/consult/delegate roles, role personas and ladders, read-only `coop-consult` continuity,
+  explicit peer credential scoping, and ACP preset/provider/account switching remain. Removing the
+  separate `fusion` grammar, mandatory governor prompt, council state, and duplicate resolution
+  paths leaves one lead-and-roles implementation.
+
 - **The security baseline is enforced locally and in CI.** Coop now builds with Go 1.26.6, runs a
   pinned `govulncheck` as part of the one `make check` recipe, and asks Dependabot to watch Go
   modules weekly. MCP configuration also rejects duplicate case-insensitive header names and

@@ -1,4 +1,4 @@
-package fusion
+package consult
 
 import (
 	"sort"
@@ -9,7 +9,7 @@ import (
 )
 
 // ConsultWrapperPath is where coop mounts the coop-consult script inside the box — on
-// PATH, so the governor/lead invokes it as a bare `coop-consult`.
+// PATH, so the lead invokes it as a bare `coop-consult`.
 const ConsultWrapperPath = "/usr/local/bin/coop-consult"
 
 const (
@@ -18,8 +18,8 @@ const (
 	consultContextLimitBytes = 512 << 10
 )
 
-// ConsultWrapper renders the `coop-consult` script coop mounts into every fusion and
-// --consult box. It gives the lead a uniform `coop-consult <peer> --fresh|--continue`
+// ConsultWrapper renders the `coop-consult` script coop mounts into every consult-capable
+// box. It gives the lead a uniform `coop-consult <peer> --fresh|--continue`
 // interface over each registered peer's read-only consult command, hiding the per-agent
 // session-id mechanics. Each adapter owns its fresh/resume commands and any stream prelude, so
 // provider-specific continuity stays out of this registry-derived wrapper.
@@ -100,7 +100,7 @@ func renderConsult(as []consultInput) string {
 # coop-consult — ask a peer read-only, with optional cross-turn continuity.
 # Generated and mounted by coop; do not edit.
 #   coop-consult <peer|role> <--fresh|--continue> [prompt]
-# <peer> is ` + peerList + ` (fusion / --peer ad-hoc). A preset CONSULT ROLE — or a
+# <peer> is ` + peerList + ` (an explicit --peer). A preset CONSULT ROLE — or a
 # native role degraded under a non-Claude lead — is addressed by its ROLE name. Its
 # COOP_CONSULT_<ROLE>_TARGETS value is an ordered fallback ladder; each target remains
 # READ-ONLY. --fresh starts at rung one. --continue resumes the successful rung and,

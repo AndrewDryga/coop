@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/testutil/liveprovider"
@@ -979,7 +979,7 @@ func assertConsultRoleWiring(t *testing.T, run *processRun, lead string, first, 
 	}
 	wrapper, persona := 0, 0
 	for _, mount := range run.Mounts {
-		if mount.Target == "<container>"+fusion.ConsultWrapperPath && mount.ReadOnly {
+		if mount.Target == "<container>"+consult.ConsultWrapperPath && mount.ReadOnly {
 			wrapper++
 		}
 		if mount.Target == "<container>/home/node/.coop/consult/advisor.md" && mount.ReadOnly && strings.HasPrefix(mount.Source, "<root>/tmp/coop-mcp-") {
@@ -1014,7 +1014,7 @@ func assertConsultMounts(t *testing.T, suite *directProcessSuite, run *processTr
 	credentials := map[string]bool{}
 	for _, m := range run.Run.Mounts {
 		switch {
-		case m.Target == "<container>"+fusion.ConsultWrapperPath:
+		case m.Target == "<container>"+consult.ConsultWrapperPath:
 			wrapper++
 			if !m.ReadOnly || !strings.HasPrefix(m.Source, "<root>/tmp/coop-mcp-") {
 				t.Errorf("unsafe consult wrapper mount: %#v", m)

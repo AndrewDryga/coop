@@ -164,7 +164,7 @@ func TestRenderManual(t *testing.T) {
 	}
 }
 
-// helpRequested stops at `--`: a flag after it is passthrough to the agent, so `coop fusion claude --
+// helpRequested stops at `--`: a flag after it is passthrough to the agent, so `coop claude --
 // --help` runs the agent's --help, not coop's page.
 func TestHelpRequestedStopsAtDashDash(t *testing.T) {
 	if helpRequested([]string{"claude", "--", "--help"}) {

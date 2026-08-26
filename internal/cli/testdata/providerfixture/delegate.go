@@ -15,7 +15,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/fusion"
+	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -665,7 +665,7 @@ func delegateEnvironment(root, image, trace, scenarioPath string, run runCommand
 	values["COOP_PROVIDER_FIXTURE_DELEGATE_ROLE"] = role
 	if run.Env["COOP_CONSULT_ADVISOR_TARGETS"] != "" {
 		for _, m := range run.Mounts {
-			if m.Target == fusion.ConsultWrapperPath {
+			if m.Target == consult.ConsultWrapperPath {
 				values["COOP_PROVIDER_FIXTURE_CONSULT_WRAPPER"] = m.Source
 			}
 		}

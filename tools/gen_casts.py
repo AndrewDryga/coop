@@ -10,7 +10,7 @@ No third-party dependencies — just the stdlib. There are two kinds of scene:
   • A scripted scene reconstructs coop's live output faithfully — every line, color,
     and glyph matches internal/ui/ui.go and internal/cli/streamjson.go. These cover
     the flows that need a container runtime and signed-in (paid) agents to run for
-    real: the loop, forks, fusion, the fleet, doctor, check-secrets. To capture a
+    real: the loop, forks, the fleet, doctor, check-secrets. To capture a
     real one instead, run e.g.  `asciinema rec -c "coop loop" site/casts/loop.cast`.
 
 Usage:  python3 tools/gen_casts.py              # (re)write every cast
@@ -453,28 +453,6 @@ def scene_fork():
     c.write()
 
 
-def scene_fusion():
-    """A governed council: the lead consults each peer read-only (via the mounted coop-consult), then
-    prints a decision that names what EACH advised and how it reconciled them — the fusion is visible
-    in the answer. Scripted to mirror a real `coop fusion claude -p` run; the 'fusion: … governs;
-    peers … consulted read-only' line is coop's real output (confirmed against a live run)."""
-    c = Cast("fusion", cols=96, rows=17, title="coop fusion — a council that argues before it commits")
-    c.command('coop fusion claude -p "Pick the concurrency control for inventory decrements — consult your peers, decide, document it"')
-    c.line(coop("fusion: claude governs; peers codex + gemini consulted read-only"), after=0.8)
-    c.line(coop("shadowed 2 secret path(s)"), after=0.7)
-    c.line(after=0.6)
-    c.line("Gate is green (gofmt clean, `go vet`/`go build`/`go test ./...` all pass).", after=1.1)
-    c.line(after=0.4)
-    c.line("I put it to both peers before deciding. **Codex** flagged that the naive read-modify-write", after=0.5)
-    c.line("oversells under contention and pushed for an atomic `UPDATE … SET stock = stock - $qty WHERE", after=0.5)
-    c.line("stock >= $qty` — one round-trip, no row lock across app logic, rows-affected tells you if it won.", after=0.5)
-    c.line("**Gemini** agreed it can't oversell, and added a `CHECK (stock >= 0)` as a DB-level backstop.", after=0.6)
-    c.line(after=0.3)
-    c.line("I shipped their consensus — the conditional UPDATE plus Gemini's CHECK — and documented on the", after=0.5)
-    c.line("function why it beats a `SELECT … FOR UPDATE` read-modify-write here.", after=1.3)
-    c.write()
-
-
 def scene_fleet():
     """Run several agents at once; `coop fleet watch` is the live board (alt-screen) that animates
     each fork's progress and auto-exits with a final summary once the fleet is done. The board
@@ -621,7 +599,6 @@ SCENES = {
     "loop": scene_loop,
     "doctor": scene_doctor,
     "fork": scene_fork,
-    "fusion": scene_fusion,
     "fleet": scene_fleet,
     "secrets": scene_secrets,
     "claude": scene_claude,

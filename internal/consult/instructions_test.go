@@ -1,4 +1,4 @@
-package fusion
+package consult
 
 import (
 	"bytes"
@@ -51,17 +51,6 @@ func shellcheckPath(t *testing.T) string {
 // 0.11.0 does not — so gate on real warnings and errors, not on style that varies by version.
 func shellcheckArgs(sc, f string) *exec.Cmd { return exec.Command(sc, "--severity=warning", f) }
 
-func TestValid(t *testing.T) {
-	for _, ok := range allAgents {
-		if !Valid(ok, allAgents) {
-			t.Errorf("Valid(%q) = false, want true", ok)
-		}
-	}
-	if Valid("gpt", allAgents) {
-		t.Error("Valid(\"gpt\") = true, want false")
-	}
-}
-
 // Each adapter owns its read-only consult command; assert the exact flags — they're the
 // sandbox that keeps a consulted peer from editing files.
 func TestConsultCmds(t *testing.T) {
@@ -84,64 +73,6 @@ func TestConsultCmds(t *testing.T) {
 	}
 	if _, ok := agents.Get("gpt"); ok {
 		t.Error("an unknown tool should not resolve to an agent")
-	}
-}
-
-func TestInstructionConsultsPeersNotGovernor(t *testing.T) {
-	ins := Instruction("codex", []string{"claude", "gemini", "grok"})
-	// Names every council member via the coop-consult wrapper.
-	for _, want := range []string{
-		"coop-consult claude --fresh",
-		"coop-consult gemini --fresh",
-	} {
-		if !strings.Contains(ins, want) {
-			t.Errorf("instruction missing peer consult %q", want)
-		}
-	}
-	// Must NOT tell codex (the governor) to consult itself.
-	if strings.Contains(ins, "coop-consult codex") {
-		t.Error("instruction tells the governor to consult itself")
-	}
-	// Has the synthesis guidance and names the governor.
-	for _, want := range []string{"Synthesize", "governor", "codex"} {
-		if !strings.Contains(ins, want) {
-			t.Errorf("instruction missing %q", want)
-		}
-	}
-}
-
-func TestInstructionGovernorActsPeersAdvise(t *testing.T) {
-	ins := Instruction("codex", []string{"claude", "gemini", "grok"})
-	// Peers are read-only advisors; the governor does the writing itself (concern 1:
-	// a write-task is not handed to a peer, it's split into consult + the governor's act).
-	for _, want := range []string{"READ-ONLY ADVISORS", ".agent/tasks/", "yourself"} {
-		if !strings.Contains(ins, want) {
-			t.Errorf("instruction missing read-only-advisor guidance %q", want)
-		}
-	}
-	// The fresh/continue session-mode contract: a full self-contained prompt on --fresh,
-	// only the delta on --continue, never forward the user's message verbatim, and trust
-	// the status line when a --continue falls back to fresh (concern 2: follow-up turns).
-	for _, want := range []string{
-		"--fresh", "--continue", "self-contained", "delta", "verbatim", "status line",
-		"not the member reply", "session handle", "same session to terminal exit", "complete output",
-		"FRESH from the saved transcript", "resend full context",
-	} {
-		if !strings.Contains(ins, want) {
-			t.Errorf("instruction missing session-mode guidance %q", want)
-		}
-	}
-}
-
-func TestInstructionKeepsPeerRepliesSeparateFromDiagnostics(t *testing.T) {
-	ins := Instruction("codex", []string{"claude"})
-	for _, want := range []string{"peer-claude.reply", "peer-claude.diagnostics", "claude reply", "claude diagnostics"} {
-		if !strings.Contains(ins, want) {
-			t.Errorf("parallel consult block missing %q:\n%s", want, ins)
-		}
-	}
-	if strings.Contains(ins, "2>&1") {
-		t.Fatalf("parallel consult block merges provider diagnostics into advisor replies:\n%s", ins)
 	}
 }
 
@@ -561,50 +492,6 @@ func waitForConsultTestFile(t *testing.T, path string, cmd *exec.Cmd) {
 	}
 }
 
-func TestGovernorInstructionsPreservesBase(t *testing.T) {
-	base := "# Project rules\nAlways run the gate."
-	out := GovernorInstructions(base, "codex", []string{"claude", "gemini", "grok"})
-	if !strings.Contains(out, base) {
-		t.Error("base instructions were dropped")
-	}
-	// Fusion block comes first (prominence), base after it.
-	if i, j := strings.Index(out, "Fusion mode"), strings.Index(out, "Project rules"); i < 0 || j < 0 || i > j {
-		t.Errorf("expected fusion block before base: fusion@%d base@%d", i, j)
-	}
-	// Empty base → just the block, no trailing junk.
-	if out := GovernorInstructions("  \n ", "claude", []string{"codex", "gemini", "grok"}); !strings.HasPrefix(out, "# Fusion mode") {
-		t.Errorf("empty base should yield just the block, got prefix %q", out[:min(20, len(out))])
-	}
-}
-
-// box.Run passes [governor] + authenticated peers, so the directive must name only those — never an
-// unauthenticated peer the governor can't actually consult.
-func TestGovernorInstructionsNamesOnlyGivenPeers(t *testing.T) {
-	out := GovernorInstructions("base", "codex", []string{"claude"}) // gemini omitted (unauthed)
-	if !strings.Contains(out, "claude") {
-		t.Errorf("should name the authed peer claude:\n%s", out)
-	}
-	if strings.Contains(out, "gemini") {
-		t.Errorf("must NOT name the omitted (unauthenticated) peer gemini:\n%s", out)
-	}
-}
-
-func TestInstructionIsCountNeutralAndKeepsRoleNamedLikeGovernor(t *testing.T) {
-	for _, members := range [][]string{{"critic"}, {"claude", "critic", "gemini"}} {
-		out := GovernorInstructions("base", "claude", members)
-		lower := strings.ToLower(out)
-		if strings.Contains(lower, "both peer") || strings.Contains(lower, "both member") ||
-			(len(members) == 1 && (strings.Contains(lower, "members are") || strings.Contains(lower, "other peer"))) {
-			t.Errorf("instruction for %v assumes exactly two members:\n%s", members, out)
-		}
-		for _, member := range members {
-			if !strings.Contains(out, "coop-consult "+member+" --fresh") {
-				t.Errorf("instruction for %v dropped member %q:\n%s", members, member, out)
-			}
-		}
-	}
-}
-
 func TestLeadInstructions(t *testing.T) {
 	// No peers → the base is returned unchanged (nothing to consult).
 	if got := LeadInstructions("BASE", nil); got != "BASE" {
@@ -622,13 +509,12 @@ func TestLeadInstructions(t *testing.T) {
 			t.Errorf("LeadInstructions missing %q in:\n%s", want, out)
 		}
 	}
-	// Names only the peers passed in, and stays optional — not the mandatory
-	// fusion directive ("you never answer alone").
+	// Names only the peers passed in and stays optional.
 	if strings.Contains(out, "claude") {
 		t.Error("consult should name only the peers passed in")
 	}
-	if strings.Contains(out, "never answer alone") {
-		t.Error("consult must stay optional, not the mandatory fusion directive")
+	if strings.Contains(out, "MUST consult") {
+		t.Error("consult guidance must stay optional")
 	}
 	if strings.Contains(out, "2>&1") {
 		t.Fatal("optional consult instructions merge provider diagnostics into advisor replies")

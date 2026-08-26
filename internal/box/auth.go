@@ -26,12 +26,10 @@ func AuthedAgents(cfg *config.Config) []string {
 	return authed
 }
 
-// runPrimary is the lead agent whose box this is: the fusion governor, else the consult lead,
-// else the launched agent. "" for a raw/maintenance run (no agent session).
+// runPrimary is the lead agent whose box this is: the consult lead when present, else the
+// launched agent. "" for a raw/maintenance run (no agent session).
 func runPrimary(spec RunSpec) string {
 	switch {
-	case spec.FusionGovernor != "":
-		return spec.FusionGovernor
 	case spec.ConsultLead != "":
 		return spec.ConsultLead
 	default:
@@ -40,8 +38,8 @@ func runPrimary(spec RunSpec) string {
 }
 
 // credentialScope is the set of agents whose credential home (~/.<name>) and env-file API key a
-// run may mount. A plain agent run (spec.Agent set) gets only that agent; a fusion governor or
-// consult lead ALSO gets the EXPLICIT peers it was told to invoke (spec.Peers) — never a blanket
+// run may mount. A plain agent run (spec.Agent set) gets only that agent; a consult lead ALSO gets
+// the EXPLICIT peers it was told to invoke (spec.Peers) — never a blanket
 // "every authed agent" widening — plus a preset's own role agents; a raw or maintenance run (no
 // agent) gets none. Homes off → none. Narrowing to the named peers is the security dividend: an
 // agent the run didn't name never has its credentials mounted.

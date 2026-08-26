@@ -18,7 +18,7 @@ imports the ambient value only when that variable exists. A present bare import 
 an unset bare import is omitted and therefore does not clear an earlier assignment. Credential keys
 must have one adapter owner because out-of-scope stripping is provider-based. `EffectiveProfiles`
 adds an authenticated env-only default even without a profile directory, so `coop credentials`,
-loop/fleet expansion, peer/Fusion discovery, ACP defaults, and scoped mounts cannot disagree about
+loop/fleet expansion, peer discovery, ACP defaults, and scoped mounts cannot disagree about
 the same login. The env key is provider-wide, so it authenticates exactly the configured default;
 other named profiles require their own marker file. Read, completion, and runnable-target paths use
 `EffectiveProfiles`; default-setting and removal keep using physical `Config.Profiles` entries. A

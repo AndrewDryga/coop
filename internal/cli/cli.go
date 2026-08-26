@@ -152,7 +152,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 	// (--self-only is local) — and every pure-local family detect lazily in their box-running paths
 	// (resolveImage, forkStop, mergeGate, cmdUpdate), so they work with no runtime.
 	switch sub {
-	case "run", "shell", "login", "acp", "fusion", "loop", "up", "down", "doctor", "build":
+	case "run", "shell", "login", "acp", "loop", "up", "down", "doctor", "build":
 		if err := a.ensureRuntime(); err != nil {
 			return -1, err
 		}
@@ -175,8 +175,6 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdModels(rest)
 	case "acp":
 		return a.cmdACP(rest)
-	case "fusion":
-		return a.cmdFusion(rest)
 	case "fork":
 		return a.cmdFork(rest)
 	case "fleet":
@@ -257,7 +255,7 @@ func (a *app) cmdBacklog(args []string) (int, error) {
 // topLevelCommands is coop's own subcommands, used only to suggest a correction on a
 // mistyped one. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
-	"run", "shell", "login", "credentials", "presets", "models", "acp", "fusion", "fork", "fleet", "tasks", "context", "backlog",
+	"run", "shell", "login", "credentials", "presets", "models", "acp", "fork", "fleet", "tasks", "context", "backlog",
 	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "completion", "prompt", "sessions", "help", "version",
 }
 
