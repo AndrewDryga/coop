@@ -2,7 +2,7 @@
 name: fork-lifecycle-state-file
 description: one owner-v1 file holds four fork lifecycle states; unsupported formats stay held and only pid+start-token — never file age — may decide a current owner is gone
 subsystem: fork
-sources: [internal/forkspace/state.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/processidentity/identity.go]
+sources: [internal/forkspace/state.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/processidentity/identity.go]
 updated: 2026-08-26
 ---
 Every fork's whole process lifecycle lives in ONE small file, `<repo>-forks/.coop/<name>.pid`, read
@@ -24,13 +24,14 @@ signal it: `forkStop` zeroes it and falls into the tombstone path, and `forkspac
 
 The FILE is `internal/forkspace`'s: paths (`StateDir`/`PidPath`/`LockPath`/`LogPath`), the flock
 (`LockState`/`TryLockState`), the wire format (`WorkerState`, `ParseWorkerState`, `Marshal`,
-`Read/WriteWorkerState`, `WritePid`, `ClaimState`, `ClearPidIfMine`), and the identity doctrine
+`Read/WriteWorkerState`, `WritePid`, `ClaimState`, `PublishReservedWorker`, `ClearPidIfMine`), and
+the identity doctrine
 (`ProcessIdentityOf`, `OwnerProvablyDead`, `StateOwner`, `RunningPid`, `NeedsStop`). It is a leaf —
 no runtime, no `ui` — so direct fork commands and the sessions service read one contract.
 
 SUPERVISION is `internal/forkctl`'s: `claimForkPid`/`claimForkPidUnlocked` and
-`clearForkClaimUnlocked` (the start protocol, which WARNS on a reclaim), `detachForkLoop`,
-`recordStartedFork`, `forkStop`'s signalling/`waitForExit`/box reap, and `forkContainerOwner`. Rule
+`clearForkClaimUnlocked` (the start protocol, which WARNS on a reclaim), `DetachForkLoop`,
+`recordStartedFork`, `ForkStop`'s signalling/`waitForExit`/box reap, and `ForkContainerOwner`. Rule
 of thumb: if it decides what to do to a PROCESS or a CONTAINER, or prints, it is supervision.
 
 ## Unsupported state never becomes an identity
@@ -45,14 +46,20 @@ The exact file remains authoritative: `RunningPid` returns 0, while `NeedsStop` 
 stay held. Recovery must never prepend a header; `MIGRATING.md` owns the stop-with-v8 and verified
 manual procedure.
 
-## The two crash windows, and why only one of them recovers
+## The two crash windows, and the child handoff
 
-`detachForkLoop` holds the per-fork flock across claim → fork → record, so a surviving reservation
-means its owner DIED holding it. That's still not enough to reclaim: the death may have happened
-after `cmd.Start()`, leaving a real worker out there that self-stamps its pid seconds later (it seeds
-the fork's queues before `forkspace.WritePid`). Reclaiming that would put two loops on one worktree —
-the exact disaster the O_EXCL claim exists to prevent. So the reservation is written in two phases,
-and only the pre-fork one is reclaimable; `start-launched` refuses and routes to `coop fork stop`.
+`DetachForkLoop` holds the per-fork flock across claim → fork → record, so a surviving reservation
+means its owner DIED holding it. The reservation is written in two phases, and only the pre-fork one
+is reclaimable. Before `cmd.Start`, the parent passes the canonical `start-launched` bytes to the
+re-exec child. If the parent survives, it publishes that child's exact PID/token while still holding
+the lock; the child later accepts that identity idempotently. If the parent dies first, child and
+`fork stop` contend on the same flock: `PublishReservedWorker` may replace only the byte-exact
+inherited reservation. A winning stop removes or replaces it and the child exits before metadata,
+queue, workspace, or runtime mutation; a winning child publishes a signalable identity that stop
+then observes. A launched reservation itself is never reclaimed by a new start and still routes to
+`coop fork stop`. The child skips ordinary update/temp housekeeping until publication and installs
+`ClearPidIfMine` immediately afterward; that cleanup removes only its byte-exact PID/token identity,
+never a pending, malformed, future-version, or same-PID/different-token replacement.
 
 ## The one liveness rule
 
@@ -80,6 +87,9 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-08-26 — made the launched-reservation handoff byte-exact and atomic. The re-exec child now
+  publishes before every host mutation and only while the inherited reservation still owns the
+  lifecycle file; stop-winning cleanup is terminal, while parent publication is idempotent.
 - 2026-08-26 — removed the pre-v8 parsed state model and its supervision branches. Only
   `owner-v1` is decoded; headerless and unknown-version records remain byte-exact, held, and
   side-effect-free behind the command preflight and merge lifecycle lock. Corrected the wire table

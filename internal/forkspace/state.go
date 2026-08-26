@@ -1,6 +1,7 @@
 package forkspace
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -31,6 +32,9 @@ var (
 	// ErrUnsupportedWorkerStateVersion keeps a future writer's state fail-closed until that version
 	// can interpret its own lifecycle contract.
 	ErrUnsupportedWorkerStateVersion = errors.New("unsupported detached-worker state version")
+	// ErrDetachedStartSuperseded means stop or another lifecycle owner changed the exact launch
+	// reservation before its re-exec child could publish itself. The child must exit without work.
+	ErrDetachedStartSuperseded = errors.New("detached fork start was superseded")
 )
 
 // SignalPID is the kill(2) the lifecycle probes and the supervisor share, as one seam so a test can
@@ -354,14 +358,61 @@ func WritePid(repo, name string, pid int) error {
 }
 
 func WritePidUnlocked(repo, name string, pid int) error {
+	state, err := workerStateForPID(pid)
+	if err != nil {
+		return err
+	}
+	return WriteWorkerState(repo, name, state)
+}
+
+func workerStateForPID(pid int) (WorkerState, error) {
 	if pid <= 1 {
-		return fmt.Errorf("refuse invalid detached worker pid %d", pid)
+		return WorkerState{}, fmt.Errorf("refuse invalid detached worker pid %d", pid)
 	}
 	token := ProcStartToken(pid)
 	if !StableProcToken(token) {
-		return fmt.Errorf("detached worker pid %d has no stable process identity", pid)
+		return WorkerState{}, fmt.Errorf("detached worker pid %d has no stable process identity", pid)
 	}
-	return WriteWorkerState(repo, name, WorkerState{Pid: pid, Token: token})
+	return WorkerState{Pid: pid, Token: token}, nil
+}
+
+// PublishReservedWorker atomically hands one launched reservation to its exact re-exec child. A
+// parent that already published this pid/token is idempotent; every missing, pending, malformed, or
+// replaced state is terminal so a stopped child can never recreate lifecycle authority.
+func PublishReservedWorker(repo, name string, expected []byte, pid int) error {
+	reservation, err := ParseWorkerState(string(expected))
+	if err != nil || !reservation.Claim || !reservation.Launched || reservation.Pending {
+		return fmt.Errorf("invalid detached launch reservation")
+	}
+	canonical, err := reservation.Marshal()
+	if err != nil || !bytes.Equal(canonical, expected) {
+		return fmt.Errorf("invalid noncanonical detached launch reservation")
+	}
+	worker, err := workerStateForPID(pid)
+	if err != nil {
+		return err
+	}
+	workerBytes, err := worker.Marshal()
+	if err != nil {
+		return err
+	}
+	unlock, err := LockState(repo, name)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current, err := os.ReadFile(PidPath(repo, name))
+	if err != nil {
+		return fmt.Errorf("%w: reservation is unavailable: %v", ErrDetachedStartSuperseded, err)
+	}
+	switch {
+	case bytes.Equal(current, workerBytes):
+		return nil
+	case !bytes.Equal(current, expected):
+		return fmt.Errorf("%w: reservation changed", ErrDetachedStartSuperseded)
+	default:
+		return writeState(repo, name, workerBytes)
+	}
 }
 
 // ClaimState is the reservation a detaching coop writes over the fork's pidfile: its OWN
@@ -373,8 +424,8 @@ func ClaimState(launched bool) WorkerState {
 	return WorkerState{Claim: true, Launched: launched, Pid: pid, Token: ProcStartToken(pid)}
 }
 
-// ClearPidIfMine removes the fork's pidfile only if it still names THIS process, so an exiting
-// worker (or a failed parent claim) never deletes a pidfile a different live worker owns.
+// ClearPidIfMine removes the fork's pidfile only if it still contains THIS process's exact current
+// PID/token bytes, so an exiting worker never deletes a replacement that reused its numeric PID.
 func ClearPidIfMine(repo, name string) {
 	unlock, ok := TryLockState(repo, name)
 	if !ok {
@@ -389,8 +440,12 @@ func clearPidIfMineUnlocked(repo, name string) {
 	if err != nil {
 		return
 	}
-	state, err := ParseWorkerState(string(data))
-	if err == nil && !state.Pending && !state.Claim && state.Pid == os.Getpid() {
+	mine, err := workerStateForPID(os.Getpid())
+	if err != nil {
+		return
+	}
+	expected, err := mine.Marshal()
+	if err == nil && bytes.Equal(data, expected) {
 		_ = os.Remove(PidPath(repo, name))
 	}
 }

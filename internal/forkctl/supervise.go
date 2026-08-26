@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -281,7 +282,12 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 			return failStart(err)
 		}
 	}
-	reExec := []string{"fork", name, who, "--loop", "--_detached"}
+	reservation := forkspace.ClaimState(true)
+	reservationData, err := reservation.Marshal()
+	if err != nil {
+		return failStart(fmt.Errorf("build fork %s worker launch reservation: %w", name, err))
+	}
+	reExec := []string{"fork", name, who, "--loop", "--_detached=" + base64.RawURLEncoding.EncodeToString(reservationData)}
 	if tasks != "" {
 		// An explicit --tasks is forwarded; the default (empty) is omitted so the worker re-derives
 		// the monorepo-aware queue set from project.TaskDirs itself.
@@ -298,7 +304,7 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 	// and recordStartedFork, the reservation alone cannot tell "nothing was started" from "a loop is
 	// out there unrecorded" — and a later start reclaiming the second case would put two loops on one
 	// worktree, exactly what the claim exists to prevent. Marked, that start refuses and asks for stop.
-	if err := forkspace.WriteWorkerState(repo, name, forkspace.ClaimState(true)); err != nil {
+	if err := forkspace.WriteWorkerState(repo, name, reservation); err != nil {
 		return failStart(fmt.Errorf("record fork %s worker launch: %w", name, err))
 	}
 	if err := cmd.Start(); err != nil {

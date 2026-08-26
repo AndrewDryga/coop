@@ -11,7 +11,9 @@
   with v8 before upgrading, or follow the verified process/container procedure in the
   [migration guide](MIGRATING.md#detached-worker-state); never fabricate current ownership by
   prepending the header. Current worker, cleanup-pending, reservation, stable-identity, exact-owner
-  reap, and atomic-write behavior is unchanged.
+  reap, and atomic-write wire behavior is unchanged. Detached startup now hands the exact launched
+  reservation from parent to child and publishes the child's PID/token before any child mutation,
+  so a successful concurrent stop cannot be undone by a delayed child.
 
 - **Task authority no longer carries an automatic pre-v8 cache migration.** V9 opens only the
   current durable registry at `~/.local/state/coop/task-leases/v1`; it removes the adoption flock,

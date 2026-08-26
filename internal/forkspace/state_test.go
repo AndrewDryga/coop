@@ -1,6 +1,7 @@
 package forkspace
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -187,6 +188,80 @@ func TestWriteForkPidRejectsMissingStableToken(t *testing.T) {
 	}
 }
 
+func TestPublishReservedWorkerRequiresExactReservation(t *testing.T) {
+	if !StableProcToken(ProcStartToken(os.Getpid())) {
+		t.Skip("kernel process identity unavailable")
+	}
+	reservation := WorkerState{Claim: true, Launched: true, Pid: os.Getpid(), Token: ProcStartToken(os.Getpid())}
+	expected, err := reservation.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("reservation and parent-published identity", func(t *testing.T) {
+		repo := filepath.Join(t.TempDir(), "repo")
+		if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(PidPath(repo, "perf"), expected, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := PublishReservedWorker(repo, "perf", expected, os.Getpid()); err != nil {
+			t.Fatalf("publish exact reservation: %v", err)
+		}
+		first, err := os.ReadFile(PidPath(repo, "perf"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state, err := ParseWorkerState(string(first)); err != nil || state.Claim || state.Pending || state.Pid != os.Getpid() || state.Token != ProcStartToken(os.Getpid()) {
+			t.Fatalf("published worker state = (%+v, %v)", state, err)
+		}
+		if err := PublishReservedWorker(repo, "perf", expected, os.Getpid()); err != nil {
+			t.Fatalf("accept parent-published exact worker: %v", err)
+		}
+		second, err := os.ReadFile(PidPath(repo, "perf"))
+		if err != nil || !bytes.Equal(second, first) {
+			t.Fatalf("idempotent publication changed state = (%q, %v), want %q", second, err, first)
+		}
+	})
+
+	tests := []struct {
+		name    string
+		current []byte
+		missing bool
+	}{
+		{name: "missing", missing: true},
+		{name: "pending", current: []byte(OwnerStateV1 + ReapPending)},
+		{name: "malformed", current: []byte(OwnerStateV1 + "broken\n")},
+		{name: "replaced", current: []byte(OwnerStateV1 + "2147483646\nlinux-proc-v1:1:2\n")},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := filepath.Join(t.TempDir(), "repo")
+			if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if !tc.missing {
+				if err := os.WriteFile(PidPath(repo, "perf"), tc.current, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := PublishReservedWorker(repo, "perf", expected, os.Getpid())
+			if !errors.Is(err, ErrDetachedStartSuperseded) {
+				t.Fatalf("PublishReservedWorker = %v, want superseded", err)
+			}
+			got, readErr := os.ReadFile(PidPath(repo, "perf"))
+			if tc.missing {
+				if !errors.Is(readErr, os.ErrNotExist) {
+					t.Fatalf("missing state was recreated: %q, %v", got, readErr)
+				}
+			} else if readErr != nil || !bytes.Equal(got, tc.current) {
+				t.Fatalf("denied state changed = (%q, %v), want %q", got, readErr, tc.current)
+			}
+		})
+	}
+}
+
 func TestProcStartTokenIgnoresCallerTimezoneAndLocale(t *testing.T) {
 	t.Setenv("TZ", "America/New_York")
 	t.Setenv("LC_ALL", "C")
@@ -254,5 +329,25 @@ func TestClearForkPidIfMine(t *testing.T) {
 	ClearPidIfMine(repo, "pending")
 	if !pathExists(PidPath(repo, "pending")) {
 		t.Error("ClearPidIfMine must leave an in-progress stop marker for forkStop")
+	}
+	for _, tc := range []struct {
+		name string
+		raw  []byte
+	}{
+		{name: "same pid different token", raw: []byte(fmt.Sprintf("%s%d\nlinux-proc-v1:replacement:1\n", OwnerStateV1, os.Getpid()))},
+		{name: "malformed", raw: []byte(OwnerStateV1 + "broken\n")},
+		{name: "unsupported", raw: []byte("owner-v2\nfuture\n")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := PidPath(repo, strings.ReplaceAll(tc.name, " ", "-"))
+			if err := os.WriteFile(path, tc.raw, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ClearPidIfMine(repo, strings.ReplaceAll(tc.name, " ", "-"))
+			got, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(got, tc.raw) {
+				t.Fatalf("replacement changed = (%q, %v), want %q", got, err, tc.raw)
+			}
+		})
 	}
 }

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -162,23 +164,24 @@ func forkVerbNearMiss(args []string, forkExists bool) (string, bool) {
 
 // forkArgs is the parsed form of `coop fork <name> [target|preset] [flags]`.
 type forkArgs struct {
-	name       string
-	agent      string
-	agentSet   bool // an agent was given explicitly (vs defaulted / remembered from the fork)
-	fresh      bool
-	force      bool // -f/--force: with --fresh, discard unmerged/dirty work when recreating
-	yes        bool // -y/--yes: with --fresh, skip the destructive confirmation
-	cont       bool // -c/--continue: force-resume the prior session (now the default on re-entry)
-	newSession bool // --new: start a fresh agent session even when re-entering a fork
-	loop       bool
-	detach     bool
-	tasks      string   // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
-	credential string   // the fork's account, from the positional target's @account (else the ladder default)
-	model      string   // the fork's model, from the positional target's :model (else the CLI/preset default)
-	effort     string   // the fork's reasoning effort, from the positional target's /effort (else the agent default)
-	peers      []string // --peer <target> (repeatable): the peers a loop iteration may ask read-only
-	preset     string   // the orchestration preset this fork runs under (named in the who-runs positional)
-	worker     bool     // internal: this process IS the detached loop worker (--_detached)
+	name        string
+	agent       string
+	agentSet    bool // an agent was given explicitly (vs defaulted / remembered from the fork)
+	fresh       bool
+	force       bool // -f/--force: with --fresh, discard unmerged/dirty work when recreating
+	yes         bool // -y/--yes: with --fresh, skip the destructive confirmation
+	cont        bool // -c/--continue: force-resume the prior session (now the default on re-entry)
+	newSession  bool // --new: start a fresh agent session even when re-entering a fork
+	loop        bool
+	detach      bool
+	tasks       string   // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
+	credential  string   // the fork's account, from the positional target's @account (else the ladder default)
+	model       string   // the fork's model, from the positional target's :model (else the CLI/preset default)
+	effort      string   // the fork's reasoning effort, from the positional target's /effort (else the agent default)
+	peers       []string // --peer <target> (repeatable): the peers a loop iteration may ask read-only
+	preset      string   // the orchestration preset this fork runs under (named in the who-runs positional)
+	worker      bool     // internal: this process IS the detached loop worker (--_detached=<reservation>)
+	reservation []byte   // exact launched reservation inherited from the detaching parent
 }
 
 func parseForkCreate(args []string) (forkArgs, error) {
@@ -248,9 +251,25 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			} else {
 				fa.peers = append(fa.peers, v)
 			}
-		case x == "--_detached": // hidden: re-exec target for a detached loop
+		case x == "--_detached":
+			return fa, errors.New("coop fork: internal --_detached needs its launch reservation")
+		case strings.HasPrefix(x, "--_detached="): // hidden: re-exec target for a detached loop
+			if fa.worker {
+				return fa, errors.New("coop fork: duplicate internal --_detached reservation")
+			}
+			encoded := strings.TrimPrefix(x, "--_detached=")
+			reservation, decodeErr := base64.RawURLEncoding.DecodeString(encoded)
+			if decodeErr != nil || encoded == "" || base64.RawURLEncoding.EncodeToString(reservation) != encoded {
+				return fa, errors.New("coop fork: invalid internal --_detached reservation")
+			}
+			state, stateErr := forkspace.ParseWorkerState(string(reservation))
+			canonical, marshalErr := state.Marshal()
+			if stateErr != nil || marshalErr != nil || !state.Claim || !state.Launched || state.Pending || !bytes.Equal(canonical, reservation) {
+				return fa, errors.New("coop fork: invalid internal --_detached reservation")
+			}
 			fa.worker = true
 			fa.loop = true
+			fa.reservation = reservation
 		default:
 			return fa, fmt.Errorf("coop fork: unexpected argument %q", x)
 		}
@@ -267,6 +286,12 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	if fa.yes && !fa.fresh {
 		return fa, errors.New("coop fork: --yes only applies with --fresh")
 	}
+	if fa.worker && (fa.fresh || fa.force || fa.yes || fa.detach || fa.cont || fa.newSession) {
+		return fa, errors.New("coop fork: internal detached worker received a parent-only lifecycle flag")
+	}
+	if fa.worker && !fa.agentSet && fa.preset == "" {
+		return fa, errors.New("coop fork: internal detached worker needs the parent's target or preset")
+	}
 	// --peer names loop peers; an interactive fork has no ad-hoc peer set (name them on a loop).
 	if len(fa.peers) > 0 && !fa.loop {
 		return fa, errors.New("coop fork --peer only applies with --loop (name each peer: --peer <agent>)")
@@ -281,6 +306,23 @@ func (a *app) forkCreate(args []string) (int, error) {
 	fa, err := parseForkCreate(args)
 	if err != nil {
 		return 2, err
+	}
+	var repo string
+	if fa.worker {
+		repo, err = box.ResolveRepo(a.cfg.RepoOverride)
+		if err != nil {
+			return -1, err
+		}
+		if err := forkctl.CheckWorkerStateFormat(repo, fa.name); err != nil {
+			return 1, err
+		}
+		if err := forkspace.PublishReservedWorker(repo, fa.name, fa.reservation, os.Getpid()); err != nil {
+			return 1, fmt.Errorf("fork %s detached worker will not start: %w", fa.name, err)
+		}
+		defer forkspace.ClearPidIfMine(repo, fa.name)
+		if a.afterDetachedPublish != nil {
+			a.afterDetachedPublish()
+		}
 	}
 	// The fork's preset (named in the positional who slot): load + fail fast (pure local reads),
 	// then default the fork's agent, credentials, and model from the preset's lead — a positional
@@ -303,12 +345,16 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if fa.credential != "" && !slices.Contains(box.EffectiveProfiles(a.cfg, fa.agent), fa.credential) {
 		return 2, fmt.Errorf("%s has no account %q — sign in first: coop login %s@%s", fa.agent, fa.credential, fa.agent, fa.credential)
 	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
-		return -1, err
+	if repo == "" {
+		repo, err = box.ResolveRepo(a.cfg.RepoOverride)
+		if err != nil {
+			return -1, err
+		}
 	}
-	if err := forkctl.CheckWorkerStateFormat(repo, fa.name); err != nil {
-		return 1, err
+	if !fa.worker {
+		if err := forkctl.CheckWorkerStateFormat(repo, fa.name); err != nil {
+			return 1, err
+		}
 	}
 	ws := forkspace.Workspace(repo, fa.name)
 	existed := pathExists(ws)
@@ -682,16 +728,7 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model, effor
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	var sink io.Writer
-	if detached {
-		// This process IS the worker: stamp our OWN pid + a start-token computed now (we're
-		// unambiguously alive, so pid-reuse detection is reliable — unlike the parent stamping us
-		// the instant after Start, when ps may not see us yet), and on a clean exit clear the
-		// pidfile only if it still names us.
-		if err := forkspace.WritePid(repo, name, os.Getpid()); err != nil {
-			return -1, fmt.Errorf("fork %s worker could not record its state: %w — run: coop fork stop %s; then restart the fork", name, err, name)
-		}
-		defer forkspace.ClearPidIfMine(repo, name)
-	} else {
+	if !detached {
 		// Foreground: tee to a log so `coop fork logs` works after the fact too.
 		if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err == nil {
 			if f, err := os.Create(forkspace.LogPath(repo, name)); err == nil {

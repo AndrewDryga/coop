@@ -8,6 +8,7 @@ package cli
 import (
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
@@ -38,14 +39,15 @@ func resolveVersion() string {
 }
 
 type app struct {
-	cfg                 *config.Config
-	rt                  runtime.Runtime
-	rtSet               bool                                         // whether rt has been detected yet (ensureRuntime is lazy — see below)
-	sweptRepos          map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
-	preset              *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
-	beforeSignRefUpdate func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
-	acpModels           func(agent string) ([]acpctl.Model, error)   // test seam for Claude/Gemini model refresh; nil → a real ACP box
-	acpSupervise        func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor
+	cfg                  *config.Config
+	rt                   runtime.Runtime
+	rtSet                bool                                         // whether rt has been detected yet (ensureRuntime is lazy — see below)
+	sweptRepos           map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
+	preset               *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
+	beforeSignRefUpdate  func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
+	afterDetachedPublish func()                                       // test seam for state replacement before repeated child validation
+	acpModels            func(agent string) ([]acpctl.Model, error)   // test seam for Claude/Gemini model refresh; nil → a real ACP box
+	acpSupervise         func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor
 }
 
 // ensureRuntime lazily detects and caches the container runtime the first time a box-running command
@@ -67,13 +69,15 @@ func (a *app) ensureRuntime() error {
 // Main is the process entry point. It returns the exit code to pass to os.Exit.
 func Main(argv []string) int {
 	cfg := config.Load()
-	// Once a day, check for a newer coop in the background and mention it as the command's
-	// parting line (deferred, so it runs on every return path). See startUpdateCheck.
-	defer startUpdateCheck(cfg, argv)()
-	// Sweep temp entries no box is using. Per-run cleanup is a deferred call
-	// and a killed process skips it, so what supervision and restarts leave
-	// behind accumulates until it fills the volume.
-	startTempReap(cfg)
+	if !detachedWorkerReexec(argv) {
+		// Once a day, check for a newer coop in the background and mention it as the command's
+		// parting line (deferred, so it runs on every return path). See startUpdateCheck.
+		defer startUpdateCheck(cfg, argv)()
+		// Sweep temp entries no box is using. Per-run cleanup is a deferred call
+		// and a killed process skips it, so what supervision and restarts leave
+		// behind accumulates until it fills the volume.
+		startTempReap(cfg)
+	}
 
 	// Bare `coop`, help, and version all work without a container runtime. Bare
 	// `coop` prints help rather than launching an agent — running one is explicit
@@ -139,6 +143,18 @@ func Main(argv []string) int {
 		code = 1
 	}
 	return code
+}
+
+// detachedWorkerReexec identifies the private child form before ordinary process housekeeping.
+// Its parent already ran that housekeeping, while the child must not mutate anything before it
+// proves that its exact launch reservation still owns the fork lifecycle.
+func detachedWorkerReexec(argv []string) bool {
+	if len(argv) < 2 || argv[0] != "fork" {
+		return false
+	}
+	return slices.ContainsFunc(argv[1:], func(arg string) bool {
+		return arg == "--_detached" || strings.HasPrefix(arg, "--_detached=")
+	})
 }
 
 func (a *app) dispatch(argv []string) (int, error) {
