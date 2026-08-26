@@ -3,7 +3,7 @@ name: task-authority-model
 description: four separate authorities decide who may act on a task/checkout — claim (durable, human-released), lease (kernel flock, one iteration), checkout (kernel flock, one loop run), ref (kernel flock, one validate-then-consume window) — never merge them
 subsystem: tasks
 sources: [internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/loop/lock.go]
-updated: 2026-08-10
+updated: 2026-08-25
 ---
 Coop has FOUR separate authorities over a task and its checkout. Each answers a different question,
 each is held a different length of time, and each fails differently — conflating any two of them is
@@ -30,9 +30,9 @@ folder-task model, the lease/authority registry, and the trusted completion audi
 `internal/cli` — one package, not the `internal/authority`+`internal/taskq` pair a first pass
 considered, because the audit half reads several of these types' unexported fields directly and a
 pair split would have forced a much larger export surface for no functional gain; see that task's
-`spec.md` if the pair is ever revisited). Authority 3 (checkout) and the two narrower locks stay in
-`internal/cli`'s `fork_loop.go`, deferred fork/loop-engine material — `lockLoopCheckout` has exactly
-one caller (`commands.go`) and no mover file ever called it, unlike `lockRefAuthority`, which
+`spec.md` if the pair is ever revisited). Authority 3 (checkout) lives in `internal/loop/lock.go`;
+the two narrower locks stay beside their owners. `lockLoopCheckout` has exactly one loop-engine
+caller, unlike `lockRefAuthority`, which
 `internal/tasks/queue.go`'s own `done` verb takes directly (the forcing fact that moved authority 4
 with the rest: leaving it in `cli` would have required the new package to import back into it, which
 `internal/importdag_test.go`'s invariant 1 forbids).
@@ -80,8 +80,8 @@ WHOLE run. `LockRefAuthority` is a narrower, MUCH shorter lock inside a single l
 covering only the gap between reading a validated `headAfter` and actually consuming task authority
 for it (finalizing, writing the receipt, clearing an audit-reopen record) — see
 [[loop-range-rejects-outside-commits]] for the full incident and mechanism. Widening either lock to
-cover the other's job would either serialize a fork fleet that must stay parallel (checkout is keyed
-per resolved WORKTREE path, never the repo name, exactly for this reason — see
+cover the other's job would either serialize parallel forks that must stay parallel (checkout is
+keyed per resolved WORKTREE path, never the repo name, exactly for this reason — see
 [[isolate-state-dont-serialize]]) or hold a lock for an entire box run when only a few filesystem
 operations actually need it exclusive.
 
@@ -117,6 +117,9 @@ these authorities sit beside but never replace — the folder is still the only 
 lifecycle STATE; these four decide who may act on it.
 
 ## Changelog
+- 2026-08-25 — replaced Fleet terminology with direct parallel forks and removed the stale claim
+  that checkout authority remained in `internal/cli`; it has lived in `internal/loop/lock.go` since
+  the loop-engine extraction already recorded below.
 - 2026-08-10 — **the 2026-08 authority-package extraction**: authorities 1 (claim), 2 (lease), and 4
   (ref) — plus the folder-task model and the trusted completion audit — moved out of `internal/cli`
   (`tasklease.go`, `taskcmd.go`, `tasks.go`, `taskwatch.go`, `backlog.go`, `completionwindow.go`,

@@ -3,7 +3,7 @@ name: loop-range-rejects-outside-commits
 description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
 sources: [internal/tasks/audit.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/loop/loop.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go]
-updated: 2026-08-10
+updated: 2026-08-25
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the
 proposed HEAD. That range is a *time* window on one branch, not a set of commits the agent authored
@@ -65,9 +65,9 @@ tasks, both rejected and reopened after they were finished.
 
 `lockLoopCheckout` (`internal/loop/lock.go`) now makes this impossible: `loop.Control.Run` takes an
 exclusive flock per checkout before touching any queue state, so the second loop fails fast and
-names the holding pid. It is keyed on the **resolved worktree path**, never the repo name — a fork
-fleet hands each loop its own `ws`, so concurrent forks keep separate locks and stay parallel.
-Serializing the fleet would defeat forks; isolate the state instead.
+names the holding pid. It is keyed on the **resolved worktree path**, never the repo name — each
+direct fork hands its loop its own `ws`, so concurrent forks keep separate locks and stay parallel.
+Serializing parallel forks would defeat them; isolate the state instead.
 
 Recovery is cheap and does not need history surgery: the rejected task is restored to
 `10_in_progress/` with its commit still in history, the loop's startup now warns that its commit is
@@ -89,8 +89,8 @@ generation could be consumed while unvalidated history was already current. The 
 
 The fix is `LockRefAuthority` (`internal/tasks/refauthority.go`), keyed and located exactly like
 `lockLoopCheckout` (the resolved worktree path, `$ConfigDir/.locks/ref-<sha>.lock`, never the repo
-name — a fork fleet stays parallel). It is held ONLY across the validate→finalize→consume window,
-never the box run — holding it for a whole iteration would serialize the fleet and defeat forks,
+name — parallel forks stay parallel). It is held ONLY across the validate→finalize→consume window,
+never the box run — holding it for a whole iteration would serialize parallel forks and defeat them,
 exactly the property `lockLoopCheckout`'s own per-worktree keying protects. `EnterRefAuthorityWindow`
 acquires it and, as the FIRST action inside, re-reads `HEAD` and compares it against the `headAfter` validation already
 trusted: a mismatch (or an unreadable HEAD) fails closed before anything is consumed — no receipt, no
@@ -121,6 +121,8 @@ See [[task-authority-model]] for the full four-authority map and the lock-orderi
 authority is acquired before lease authority, never the reverse) this ref-authority window is half of.
 
 ## Changelog
+- 2026-08-25 — replaced Fleet terminology in the current concurrency contract with direct parallel
+  forks; the per-worktree lock scope and ordering are unchanged.
 - 2026-08-01 — created: a host commit made during an iteration rejected that iteration's completed task; documents that the range is a time window and that single-writer covers commits.
 - 2026-08-03 — two concurrent loops in one checkout were observed rejecting each other's completions (the per-task lease cannot catch it); added `lockLoopCheckout` and recorded why the lock is keyed per worktree so fork fleets stay parallel.
 - 2026-08-09 — closed a separate race `lockLoopCheckout` doesn't cover: HEAD could move between an iteration's own validated `headAfter` and its much-later authority consumption. Added the per-worktree `lockRefAuthority` (short validate→finalize→consume window only) and made every host-side ref mutator — `signUnpushed`, fork-merge's parent fast-forward, and the audit-reopen completion path — take it too, documented the parallel-controller contract above.

@@ -4,7 +4,7 @@ description: "UPPERCASE headers, one command per line, no `·`, command cell und
 scope: cli-output
 sources: [internal/cli/help.go]
 check: "go test ./internal/cli -run TestHelpRowsAlign"
-updated: 2026-08-10
+updated: 2026-08-25
 ---
 
 # Help output: UPPERCASE section headers, one command per line, no "·"
@@ -26,9 +26,8 @@ updated: 2026-08-10
   explanation. Same for any row/error one-liner: prefer the real path/file/flag.
 - A row's command cell stays **≤ 32 runes** so every description starts at the same column
   (the table look breaks the moment one row pushes past the gap). Too long? Drop optional
-  flags from the cell — they live in the command's own help page. The one exception is a
-  full verb-list row (`coop fleet init|up|down|…`), where completeness beats alignment.
-  Enforced by `TestHelpRowsAlign`.
+  flags from the cell — they live in the command's own help page. Enforced by
+  `TestHelpRowsAlign`.
 - A group with more than ~6 rows is a wall — split it by what the user is doing (e.g.
   AGENTS / CREDENTIALS, MODELS & PRESETS / THE BOX), not by implementation.
 
@@ -47,6 +46,9 @@ services" hides the one thing that makes the row make sense.
   (`forkBrief`, the merge prompt) now live in `internal/forkctl/{review,merge}.go`.
 
 ## Changelog
+- 2026-08-25 — removed the Fleet-only long verb-list exception, shortened the direct-fork rows,
+  and extended `TestHelpRowsAlign` from the top-level index to `forkHelpText`; both surfaces now
+  enforce the 32-rune command-cell rule.
 - 2026-08-10 — path-only: `forkHelp`/`forkHelpText` stayed in cli as
   `internal/cli/fork_cmd.go` while the `·`-bearing runtime paths (`forkBrief`, the merge prompt)
   left for `internal/forkctl`. The guard is unchanged; its second half now points at two files.

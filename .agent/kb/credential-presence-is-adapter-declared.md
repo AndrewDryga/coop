@@ -3,7 +3,7 @@ name: credential-presence-is-adapter-declared
 description: adapters own credential presence, selected env authority, and inspectable stored readiness
 subsystem: credentials
 sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-08-17
+updated: 2026-08-25
 ---
 
 Adapters own four credential facts: `AuthMarker` names their login file and canonical primary env
@@ -18,7 +18,7 @@ imports the ambient value only when that variable exists. A present bare import 
 an unset bare import is omitted and therefore does not clear an earlier assignment. Credential keys
 must have one adapter owner because out-of-scope stripping is provider-based. `EffectiveProfiles`
 adds an authenticated env-only default even without a profile directory, so `coop credentials`,
-loop/fleet expansion, peer discovery, ACP defaults, and scoped mounts cannot disagree about
+loop rotation, peer discovery, ACP defaults, and scoped mounts cannot disagree about
 the same login. The env key is provider-wide, so it authenticates exactly the configured default;
 other named profiles require their own marker file. Read, completion, and runnable-target paths use
 `EffectiveProfiles`; default-setting and removal keep using physical `Config.Profiles` entries. A
@@ -43,6 +43,8 @@ source refreshability may make a stored login ready, but refresh authority is st
 projected box credential.
 
 ## Changelog
+- 2026-08-25 - removed Fleet from the current consumer inventory; direct fork launches reuse the
+  same target and profile resolution rather than owning a separate expansion path
 - 2026-08-17 - added the shared runnable-credential refinement used by listing, rotation, and the
   ACP selector; swept ACP, CLI, proxy, and provider-process fixtures and replaced marker-only
   placeholders with adapter-valid records without changing broad presence callers

@@ -9,7 +9,7 @@ import (
 
 // Target is coop's single addressing scheme — WHO runs on WHAT: a provider, optionally a
 // model, optionally a reasoning effort, optionally one or more accounts. It is the ONE spelling
-// used on the CLI, in preset `agent:` keys, and in fleet entries, parsed by ParseTarget. The
+// used on the CLI and in preset `agent:` keys, parsed by ParseTarget. The
 // wire grammar is
 //
 //	provider[:model][/effort][@account[,account…]]

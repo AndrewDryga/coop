@@ -148,7 +148,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 	}
 	sub, rest := argv[0], argv[1:]
 	// These commands always run a container, so detect the runtime up front (fail fast with the
-	// actionable "runtime not found"). The mixed commands — fork/fleet (ls/path are local) and update
+	// actionable "runtime not found"). The mixed command fork (ls/path are local) and update
 	// (--self-only is local) — and every pure-local family detect lazily in their box-running paths
 	// (resolveImage, forkStop, mergeGate, cmdUpdate), so they work with no runtime.
 	switch sub {
@@ -177,8 +177,6 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdACP(rest)
 	case "fork":
 		return a.cmdFork(rest)
-	case "fleet":
-		return a.cmdFleet(rest)
 	case "tasks":
 		return a.cmdTasks(rest)
 	case "context":
@@ -233,7 +231,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 
 // tasksHost builds the real tasks.Host: the command-help catalog and the live-board driver the
 // `coop tasks`/`coop backlog` verb family need but cannot own itself (see internal/tasks's Host
-// doc) — both cli-wide, not task-specific, shared with `coop fleet watch`'s own board.
+// doc) — both cli-wide, not task-specific.
 func tasksHost() tasks.Host {
 	return tasks.Host{
 		GroupHelp:    groupHelp,
@@ -255,7 +253,7 @@ func (a *app) cmdBacklog(args []string) (int, error) {
 // topLevelCommands is coop's own subcommands, used only to suggest a correction on a
 // mistyped one. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
-	"run", "shell", "login", "credentials", "presets", "models", "acp", "fork", "fleet", "tasks", "context", "backlog",
+	"run", "shell", "login", "credentials", "presets", "models", "acp", "fork", "tasks", "context", "backlog",
 	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "completion", "prompt", "sessions", "help", "version",
 }
 

@@ -133,7 +133,7 @@ func padRight(s string, w int) string {
 
 // unknownErr is the one shape for a rejected subcommand / agent / value: `unknown <noun>
 // "<token>" — use: a, b, c`, with a "did you mean X?" when the token is a near-miss. Shared by the
-// sub-command groups (tasks/fleet/pool/profiles) so a bad input reads the same everywhere.
+// subcommand groups so a bad input reads the same everywhere.
 func unknownErr(noun, token string, valid []string) error {
 	if guess, ok := nearestCommand(token, valid); ok {
 		return fmt.Errorf("unknown %s %q — use: %s (did you mean %q?)", noun, token, strings.Join(valid, ", "), guess)

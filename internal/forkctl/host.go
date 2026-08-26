@@ -1,6 +1,6 @@
-// Package forkctl is the fork/fleet control plane: everything a fork needs AFTER it exists —
+// Package forkctl is the fork control plane: everything a fork needs AFTER it exists —
 // supervision (claim, stop, reap, detach, logs), listing and status, the review dossier and gate,
-// the fast-forward-only land, the declarative fleet, and the live board.
+// and the fast-forward-only land.
 //
 // Opening a fork stays in internal/cli beside the other launch paths (`coop fork <name>` resolves a
 // preset, a one-off target, an image, and peers, then runs a box exactly as `coop run` and `coop
@@ -11,13 +11,11 @@ package forkctl
 import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// Host is what the fork/fleet commands need from the CLI that owns the process and cannot own
+// Host is what the fork commands need from the CLI that owns the process and cannot own
 // itself: the lazily-detected container runtime (internal/cli caches one per process, so forkctl
-// must ask rather than detect its own), the alternate-screen board driver `coop fleet watch` shares
-// with `coop tasks watch`, and the loop's usage accounting.
+// must ask rather than detect its own), and the loop's usage accounting.
 //
 // Every field is optional and a zero Host is usable — a test that drives a pure-local verb gets a
 // harmless no-op default, the same contract tasks.Host and sessionsvc.Host document.
@@ -25,11 +23,6 @@ type Host struct {
 	// EnsureRuntime detects (and process-wide caches) the container runtime, returning the
 	// detected one — the fork verbs that tear a box down need it, the pure-local ones never ask.
 	EnsureRuntime func() (runtime.Runtime, error)
-
-	// RunWatchLoop drives the alternate-screen live board (enter/leave, signal handling, the poll
-	// ticker, the settled-debounce auto-exit) that `coop fleet watch` shares with `coop tasks
-	// watch` — see internal/cli/watch.go's doc comment for the full contract.
-	RunWatchLoop func(screen *ui.AltScreen, tick func(spin int) (frame []string, settled bool), done func()) (int, error)
 
 	// ForkCost reports a workspace's total loop spend and its human summary, from the loop's own
 	// usage telemetry (internal/cli/telemetry.go). Both come from one read, because every caller
@@ -44,13 +37,6 @@ func (h Host) ensureRuntime() (runtime.Runtime, error) {
 	return h.EnsureRuntime()
 }
 
-func (h Host) runWatchLoop(screen *ui.AltScreen, tick func(spin int) (frame []string, settled bool), done func()) (int, error) {
-	if h.RunWatchLoop == nil {
-		return 0, nil
-	}
-	return h.RunWatchLoop(screen, tick, done)
-}
-
 func (h Host) forkCost(ws string) (float64, string) {
 	if h.ForkCost == nil {
 		return 0, ""
@@ -58,7 +44,7 @@ func (h Host) forkCost(ws string) (float64, string) {
 	return h.ForkCost(ws)
 }
 
-// Control is the fork/fleet control plane bound to one command's config and container runtime.
+// Control is the fork control plane bound to one command's config and container runtime.
 // internal/cli builds one per invocation and dispatches the whole verb family on it, so a step that
 // detects the runtime (a stop's reap) and a later step that reads it (the teardown's DownServices)
 // see the same runtime — the app-field lifetime this replaced.

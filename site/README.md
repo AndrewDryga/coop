@@ -49,7 +49,7 @@ make casts-check                      # validate the checked-in recordings
 ```
 
 `coop help` is captured live from the real binary. The dynamic flows (the loop,
-forks, the fleet, doctor, check-secrets) are **scripted reconstructions** —
+forks, doctor, check-secrets) are **scripted reconstructions** —
 their colors and glyphs match `internal/ui` and `internal/cli/streamjson.go` exactly,
 so the docs show coop's real terminal experience without needing a container runtime
 and signed-in (paid) agents to run for real. Real dogfood runs are retained with their

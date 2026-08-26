@@ -43,7 +43,7 @@ It's the working tooling behind two write-ups:
 - [Second opinions](#second-opinions---peer) — named read-only peers for hard calls
 - [Drive it from a local service](#drive-it-from-a-local-service)
 - [Drive it from Zed (ACP)](#drive-it-from-zed-acp)
-- [Run it unattended](#run-it-unattended) — the loop · the `.agent/` folder · monorepos · a fleet
+- [Run it unattended](#run-it-unattended) — the loop · the `.agent/` folder · monorepos · parallel forks
 - [Project toolchain & services](#project-toolchain--services) — `.tool-versions` · `.agent/Dockerfile` · services · dev-server ports
 - [Configuration](#configuration) · [Troubleshooting](#troubleshooting) · [Layout & development](#layout--development)
 
@@ -188,22 +188,21 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop fork <name> [agent] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent (re-entry resumes the session; `--new` resets) |
+| `coop fork <name> [target|preset] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent or preset (re-entry resumes the session; `--new` resets) |
 | `coop fork ls` | list this repo's forks: agent, branch, state, tasks done/total, change size, last activity |
 | `coop fork review <name> [--stat\|--tool\|--open] [--gate]` | dossier + diff; `--gate` previews the rebase and gate without touching either source repo |
-| `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` = the whole fleet; `--yes` confirms non-interactively) |
+| `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` lands every fork; `--yes` confirms non-interactively) |
 | `coop fork logs [name] [-f]` · `stop <name>` | tail a loop log (no name = all) · stop a detached loop |
 | `coop fork rm <name> [--force] [--yes]` | discard a fork — confirms first (`--yes` skips it; refuses unmerged/dirty work without `--force`) |
 | `coop fork open <name>` · `path <name>` | open the fork in your editor · print its filesystem path |
-| `coop fork <name> <agent> --loop [--tasks <path>] [-d]` | loop a tasks queue unattended in the fork (`-d` detaches) |
-| `coop fork <name> acp [agent]` | drive the fork's [sandboxed agent from Zed](#drive-it-from-zed-acp) over ACP |
+| `coop fork <name> <target|preset> --loop [--tasks <path>] [-d]` | loop a tasks queue unattended in the fork (`-d` detaches) |
+| `coop fork <name> acp <target>` | drive the fork's [sandboxed agent from Zed](#drive-it-from-zed-acp) over ACP |
 
 **Unattended** ([details](#run-it-unattended))
 
 | Command | What it does |
 |---|---|
 | `coop loop [<agent>[:model][/effort][@account] \| <preset>] [--tasks <path>] [--peer <peer>…] [--max-tasks <n>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then sign off (name the agent — `claude`/`codex`/`gemini`/`grok` — or a preset name in the same slot, whose lead supplies it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model/effort or the preset's ladder set the [rotation](#picking-models); name each peer with `--peer <agent>` (repeatable) so iterations may ask them read-only; `--max-tasks N` works a bounded batch through retries and immediate audits, then pauses before another task or final signoff; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
-| `coop fleet init` · `up` · `down` · `watch` · `prune` | scaffold then drive a [declared fleet](#a-fleet) from `.agent/fleet.yaml` (`init` writes a documented template; `watch` is the live board; `prune` clears merged forks; `coop tasks split <n>` bootstraps the file) |
 
 **Tasks** — a folder-per-task queue in `.agent/tasks/` ([details](#the-loop))
 
@@ -331,7 +330,7 @@ the parent — so the agent can commit *as you* and ignores the same noise you d
 coop fork api codex --loop -d   # loops the repo's task queue(s); -d detaches — tail with coop fork logs api -f
 ```
 
-See [the loop](#the-loop) for how iterations work, and [a fleet](#a-fleet) to run several at once.
+See [the loop](#the-loop) for how iterations work, and [parallel forks](#parallel-forks) to run several at once.
 
 ### Re-entry resumes the session
 
@@ -617,9 +616,9 @@ coop frontier                      # a standing lead model + roles, from the pre
 One env knob rounds it out: `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL=fable`) is the
 agent-wide default. For the loop, put the per-step model in
 [`.agent/loop.yaml`](#run-it-unattended) — `work.agent` for the iterations, `signoff.agent` for a
-stronger final reviewer over the cheaper work loop. In a fleet, give a fork its own with `agent:` (a
-target — `provider[:model][/effort][@account]`) in `.agent/fleet.yaml`. Precedence, most specific first: the
-target's `:model` › the preset ladder's active entry › `COOP_<AGENT>_MODEL` › a model baked into
+stronger final reviewer over the cheaper work loop. Give each fork its own target or preset in the
+`coop fork <name> <target|preset> --loop` command. Precedence, most specific first: the target's
+`:model` › the preset ladder's active entry › `COOP_<AGENT>_MODEL` › a model baked into
 `COOP_<AGENT>_CMD` › the agent CLI's own default.
 
 **Reasoning effort** is a sibling axis on the same target — `/effort` after the provider or
@@ -1058,7 +1057,7 @@ coop's proxy sits between the editor and the box and owns the session:
   [Troubleshooting](#troubleshooting).
 
 To steer a [**fork**](#forks-hand-off-work-like-a-pr) from Zed instead of your working tree,
-point the adapter at it: `coop fork <name> acp [agent]` — same ACP, but the agent works the
+point the adapter at it: `coop fork <name> acp <target>` — same ACP, but the agent works the
 throwaway clone (nothing to push, secrets never came along), and you still review and land it.
 
 > **Services** work too — if the repo has a `.agent/compose.yml`, run `coop up` first and
@@ -1248,7 +1247,7 @@ members share the root's AGENTS.md, skills, rules, and box, though a large membe
 commit its own `rules/` if it wants them. `coop tasks queues` prints the resolved queue
 paths when a script (such as the sweep queue guard) needs them.
 
-### A fleet
+### Parallel forks
 
 Run several models at once, each looping unattended in its own [fork](#forks-hand-off-work-like-a-pr).
 Split the work into separate task trees and hand each fork one with `--tasks`:
@@ -1258,8 +1257,8 @@ coop fork perf codex  --loop -d --tasks .agent/tasks.perf   # codex loops the pe
 coop fork deps gemini --loop -d --tasks .agent/tasks.deps   # gemini takes the deps slice
 coop fork docs claude --loop -d --tasks .agent/tasks.docs   # claude takes the docs
 
-coop fleet watch       # live board: every fork's progress (done/total), blockers, the task each is on
-coop fork ls           # snapshot: who's running, how big the diff, last activity
+coop tasks watch       # live board: all tasks, including active forks, merged by id
+coop fork ls           # snapshot: who's running, task progress, diff size, cost, last activity
 coop fork logs -f      # tail every fork at once (compose-style, prefixed)
 coop fork stop perf    # halt one; coop fork logs perf -f to watch just it
 ```
@@ -1274,46 +1273,28 @@ progress) and runs the loop with the chosen model; `-d` (`--detach`) backgrounds
 [review and land it](#forks-hand-off-work-like-a-pr) like a PR, then `git push`. Add
 agents until *review*, not generation, is your bottleneck.
 
-**Land the whole fleet at once** with `coop fork merge --all` — a revalidating rebase
+**Land all forks at once** with `coop fork merge --all` — a revalidating rebase
 *queue*: it rebases each fork onto the result of the last and re-runs `COOP_GATE`, so a
 "green" fork can't ride in against a base an earlier landing already changed. It stops at
 the first conflict or red gate, leaving the rest untouched.
 
-**Declare the fleet once** in `.agent/fleet.yaml` (run `coop fleet init` for a template
-with the format documented inline). Each fork needs `tasks:` (relative to the repo
-root) and `agent:` — the who-runs, either a target (`provider[:model][/effort][@account]`; give each fork a
-different account so they don't contend) or a preset name (an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file)
-— its lead + ladder drive the fork). A fork takes ONE account — for a full
-rotation ladder, point it at a preset. The old per-fork `model:`/`credential:` keys are
-retired (the model+account ride `agent:`), and so is the separate `preset:` key (a preset name
-goes in `agent:` now); a per-fork `consult: true` is refused for now (name peers explicitly — the
-fleet grammar for that is coming):
+To bootstrap independent queues, `coop tasks split <n>` mechanically round-robins the todo folders
+into `.agent/tasks.slice<n>/` copy-trees (use an agent for semantic slicing). The source queue is
+unchanged, so start one fork per slice and do not also loop the source:
 
-```yaml
-forks:
-  core:
-    tasks: .agent/tasks.core
-    agent: frontier                  # a preset name — claude/fable lead + critic/fast roles
-  perf:
-    agent: codex:gpt-5.5@work        # a target: provider, model, account
-    tasks: .agent/tasks.perf
-  deps:
-    agent: gemini:gemini-3.5-flash
-    tasks: .agent/tasks.deps
+```bash
+coop tasks split 3
+coop fork slice1 frontier --loop -d --tasks .agent/tasks.slice1
+coop fork slice2 codex:gpt-5.5@work --loop -d --tasks .agent/tasks.slice2
+coop fork slice3 gemini:gemini-3.5-flash --loop -d --tasks .agent/tasks.slice3
 ```
 
-Then `coop fleet up` starts them all detached, `coop fork ls` shows the board, and
-`coop fleet down` stops them. A stale or crashed worker appears as `cleanup` until
-`coop fork stop <name>` reaps only that fork's containers, even if another repository uses the
-same fork name; stopping twice is safe.
-`coop fleet prune` confirms before deleting eligible forks (`--yes` confirms non-interactively;
-`--force` separately permits dirty or unmerged deletion), and `up`/`down --prune` use the same
-flags. (The pre-v3 one-line `.agent/fleet` is not read — its
-presence is an error until you translate it to YAML and delete it; see MIGRATING.md.) To bootstrap the file, `coop tasks
-split <n>` mechanically round-robins your `.agent/tasks/` todo folders into per-fork
-`.agent/tasks.slice<n>/` slices and writes a matching `.agent/fleet.yaml` with each
-slice's explicit path (use an agent for *semantic* slicing). It won't clobber a fleet
-you've already written — it prints the entries to reconcile instead.
+Give simultaneous direct targets different accounts if you want them to avoid subscription
+contention; a preset can carry a full provider/account rotation. A stale or crashed worker appears
+as `cleanup` in `coop fork ls` until `coop fork stop <name>` reaps only that fork's containers,
+even if another repository uses the same fork name; stopping twice is safe. Remove an obsolete fork
+with `coop fork rm <name>` (`--yes` confirms non-interactively; `--force` separately permits dirty
+or unmerged deletion).
 
 ## Project toolchain & services
 
@@ -1605,7 +1586,7 @@ turn them off.
 | `COOP_NO_ASDF` | (off) | skip runtime `.tool-versions` provisioning; stale Node shim repair still runs. Read in the box — set it in `agents/env` (forwarded into the box), not your host shell |
 | `COOP_NETWORK` · `COOP_CACHE` | `1` | join the services network · mount the cache volume |
 | `COOP_AUTO_UP` | `1` | auto-start sibling services (`compose up`) before every box when a `.agent/compose.yml` is present, so any mode (agent, acp, loop, fork) can reach them; `0` to manage them with `coop up`/`coop down` yourself |
-| `COOP_SERVICES_NET` | (auto) | services network to join (let a fleet share one db) |
+| `COOP_SERVICES_NET` | (auto) | services network to join (let parallel forks share one db) |
 
 The resource/privilege caps (`COOP_PIDS` / `COOP_MEMORY` / `COOP_CPUS` /
 `COOP_NO_NEW_PRIVILEGES`) apply on docker and podman; Apple's `container` CLI differs,
@@ -1708,7 +1689,7 @@ install.sh            the curl one-liner: download the prebuilt binary onto PATH
 | Layer | Targets | What they prove |
 |---|---|---|
 | Blocking | `make check` | formatting, vet, Staticcheck, ShellCheck, `go build ./...`, unit tests plain and under `-race`, deterministic provider process E2E, tagged process-control races, generated docs, casts, rules cards, maintenance tools, and comment alignment; no runtime or credentials |
-| Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork/fleet policy, ACP switching/recovery, and live-harness ownership denials with fixtures |
+| Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI/loop/fork policy, ACP switching/recovery, and live-harness ownership denials with fixtures |
 | Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` | real box isolation, process reaping/signal forwarding, and report-only review mounts; requires Docker/Podman (or Apple `container` for doctor) |
 | Upstream compatibility | `make provider-live-e2e[-all]` · `make provider-resume-live-e2e[-all]` · `make provider-loop-live-e2e[-all]` · `make provider-consult-live-e2e[-all]` · `make acp-e2e` | installed CLIs plus isolated credentials; opt-in and quota-consuming |
 
@@ -1728,7 +1709,7 @@ doctor` proves the whole thing end-to-end against the real box.
 The deterministic provider suite crosses the real Coop CLI/box/runtime boundary with strict
 provider-native fixture oracles for Claude, Codex, Gemini, and Grok. It owns target/account/model/
 effort propagation, all directed fallback pairs, rate/auth/output failures, cancellation, loop audit
-stages, fork/fleet lifecycle, session lookup, telemetry, and cleanup. Its fake runtime validates
+stages, detached-fork lifecycle, session lookup, telemetry, and cleanup. Its fake runtime validates
 assembly, not container enforcement; `doctor` and `review-writes-e2e` own that boundary. On failure,
 rerun the printed subtest with `-v` and inspect its bounded, redacted trace.
 

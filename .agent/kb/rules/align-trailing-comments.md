@@ -4,7 +4,7 @@ description: "trailing `#` comments in an example line up in one column"
 scope: docs
 sources: [internal/cli/help.go, tools/align-comments.py, README.md]
 check: "make align"
-updated: 2026-07-14
+updated: 2026-08-25
 ---
 
 # Trailing `#` comments in an example line up in one column
@@ -24,7 +24,7 @@ Same failure as a help row pushing past the description gap — see
 **How to apply:**
 - One column per example. The preset YAML's blank-separated `lead:`/`thinker:`/`critic:`/
   `fast:` stanzas still share ONE column (all lines are comparable width). But two disparate
-  command lists in the same fence — long `coop fork … --tasks …` vs short `coop fleet watch`
+  command lists in the same fence — long `coop fork … --tasks …` vs short `coop tasks watch`
   — align *separately*; don't drag the short list out to the long one's column.
 - Exception, mirroring help-output-style's "completeness beats alignment" verb-row: a lone
   over-long line (a compound `-- -p "…"` invocation, ~28+ runes longer than the next) stands
@@ -44,6 +44,8 @@ and outlier calls are heuristic, so it's an aid, not a gate — confirm the resu
 See also [[help-output-style]], [[no-color-in-width-fields]], [[tag-exceptions-not-every-row]].
 
 ## Changelog
+- 2026-08-25 — replaced the retired Fleet watch example with task watch; the alignment rule is
+  unchanged.
 - 2026-07-10 — created
 - 2026-07-14 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged

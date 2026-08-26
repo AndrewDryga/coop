@@ -111,7 +111,7 @@
                 <a href="#presets">Presets</a>
                 <h5>Run unattended</h5>
                 <a href="#loop">The loop</a>
-                <a href="#fleet">A fleet</a>
+                <a href="#parallel-forks">Parallel forks</a>
                 <h5>Integrate</h5>
                 <a href="#editors">Editors</a>
                 <a href="#toolchain">Toolchain &amp; services</a>
@@ -158,9 +158,9 @@
                     </div>
                     <p>
                         Everything else is built on that one box. Run an agent
-                        interactively, hand work off like a pull request, point
-                        a whole fleet at a backlog overnight, or convene a
-                        council of models on a hard problem — it's the same cage
+                        interactively, hand work off like a pull request, run
+                        parallel forks against a backlog overnight, or compose
+                        specialist roles on a hard problem — it's the same cage
                         every time.
                     </p>
                 </section>
@@ -995,52 +995,42 @@ roles:
                                 own model ladder and prompt
                             </td>
                         </tr>
-                        <tr>
-                            <td><code>fleet.yaml</code></td>
-                            <td>
-                                declares a fleet of fork loops for
-                                <code>coop fleet</code> — one entry per fork
-                            </td>
-                        </tr>
                     </table>
                 </section>
 
-                <section class="doc-section" id="fleet">
-                    <h2>A fleet — many agents at once</h2>
+                <section class="doc-section" id="parallel-forks">
+                    <h2>Parallel forks — many agents at once</h2>
                     <p class="section-lead">
-                        One loop is one agent working one queue. A fleet is
-                        several — often different models — each on its own slice
-                        of the work, all running at the same time.
+                        One loop is one agent working one queue. Direct detached
+                        forks let several models work independent slices at the
+                        same time.
                     </p>
                     <p>
                         Split the backlog into separate task trees (<code>coop
                         tasks split 3</code> slices the queue into copy-trees),
-                        declare a fork per slice in <code>.agent/fleet.yaml</code>
-                        (<code>coop fleet init</code> writes the template), then
-                        <code>coop fleet up</code> starts them all in the
-                        background; <code>coop fleet watch</code> is the live
-                        board, showing each fork's progress, the task it's on,
-                        who's finished, and what each has cost.
+                        then start one detached fork loop per slice. Use
+                        <code>coop tasks watch</code> for the merged task view,
+                        <code>coop fork ls</code> for fork state and cost, and
+                        <code>coop fork logs -f</code> for their output.
                     </p>
                     <pre
                         class="code"
                     ><span class="k">coop</span> tasks split 3    <span class="t"># slice the todo queue 3 ways into copy-trees</span>
-<span class="k">coop</span> fleet init       <span class="t"># write .agent/fleet.yaml, then declare a fork per slice</span>
-<span class="k">coop</span> fleet up         <span class="t"># start every fork in .agent/fleet.yaml, detached</span>
-<span class="k">coop</span> fleet watch      <span class="t"># the live dashboard</span>
-<span class="k">coop</span> fork merge --all <span class="t"># land the whole fleet through a revalidating rebase</span></pre>
+<span class="k">coop</span> fork api frontier --loop -d --tasks .agent/tasks.slice1
+<span class="k">coop</span> fork web codex@work --loop -d --tasks .agent/tasks.slice2
+<span class="k">coop</span> fork deps gemini --loop -d --tasks .agent/tasks.slice3
+<span class="k">coop</span> tasks watch      <span class="t"># merged task progress across the forks</span>
+<span class="k">coop</span> fork merge --all <span class="t"># land all forks through a revalidating rebase</span></pre>
                     <p>
-                        Each fork in <code>.agent/fleet.yaml</code> takes two
-                        keys: <code>tasks:</code> points at its slice, and
-                        <code>agent:</code> is the who-runs — either a
+                        The positional who-runs value can be a
                         <a href="#models">target</a>
-                        (<code>provider:model@account</code>; give each fork a
-                        different account so they don't contend) or a
-                        <a href="#presets">preset</a> name, whose lead ladder the
-                        fork's loop rotates.
+                        (<code>provider:model@account</code>; give simultaneous
+                        direct targets different accounts so they don't contend)
+                        or a <a href="#presets">preset</a> name, whose lead
+                        ladder the fork's loop rotates.
                     </p>
                     <div class="why">
-                        <span class="why-label">Why run a fleet</span>
+                        <span class="why-label">Why run parallel forks</span>
                         <p>
                             Once generating code is cheap, <em>reviewing</em> it
                             becomes the bottleneck — so the move is to
@@ -1049,26 +1039,6 @@ roles:
                             what's keeping you busy.
                         </p>
                     </div>
-                    <figure class="cast-figure">
-                        <div class="term">
-                            <div class="term-bar">
-                                <span class="dot r"></span
-                                ><span class="dot y"></span
-                                ><span class="dot g"></span
-                                ><span class="title">coop fleet watch</span>
-                            </div>
-                            <div class="term-body">
-                                <div
-                                    class="cast"
-                                    data-cast="casts/fleet.cast"
-                                ></div>
-                            </div>
-                        </div>
-                        <figcaption>
-                            Three models working their own slices — watch them
-                            finish in real time.
-                        </figcaption>
-                    </figure>
                 </section>
 
                 <section class="doc-section" id="editors">

@@ -38,7 +38,7 @@ func TestLoopCheckoutLockRefusesASecondLoopInTheSameTree(t *testing.T) {
 	release2()
 }
 
-// The fleet is the reason this is keyed on the WORKTREE, not the repo: forks each run their own
+// Parallel forks are why this is keyed on the WORKTREE, not the repo: each runs its own
 // loop concurrently, and a lock that serialized them would defeat forks entirely.
 func TestLoopCheckoutLockKeepsSeparateWorktreesParallel(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}

@@ -41,8 +41,8 @@ func sweepEvents(t *testing.T, path string) string {
 	return string(data)
 }
 
-// `coop fleet up` starts N forks through one app, and each start would otherwise re-ask the runtime
-// for the same repo's boxes. One sweep per repo per process.
+// Multiple starts through one app would otherwise re-ask the runtime for the same repo's boxes.
+// One sweep per repo per process.
 func TestSweepOrphanBoxesRunsOncePerRepo(t *testing.T) {
 	rt, events := sweepRuntime(t)
 	repo, other := t.TempDir(), t.TempDir()

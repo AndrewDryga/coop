@@ -19,9 +19,9 @@ import (
 // lease in completionwindow.go cannot catch this; it stops two loops taking the SAME task, not
 // two loops working DIFFERENT tasks in the same tree.
 //
-// The key is the resolved checkout path, never the repo name: a fleet runs one loop per fork
-// WORKTREE (cli's fork command hands Run each fork's own worktree), so concurrent forks hold different
-// locks and stay fully parallel. Isolate the state, don't serialize the fleet.
+// The key is the resolved checkout path, never the repo name: parallel forks run one loop per
+// WORKTREE (cli's fork command hands Run each fork's own worktree), so concurrent forks hold
+// different locks. Isolate the state, don't serialize the workers.
 func lockLoopCheckout(cfg *config.Config, repo string) (func(), error) {
 	// Production always carries a ConfigDir; an in-process test app may not, and joining "" would
 	// drop a .locks/ directory into whatever the working directory happens to be.

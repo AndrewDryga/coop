@@ -107,7 +107,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop shell", "an interactive shell in the box")
 
 	group("FORKS — review and land work like a PR")
-	row("coop fork <name> [target]", "open or re-enter a fork and run an agent")
+	row("coop fork <name>", "open/re-enter; run a target or preset")
 	row("coop fork ls", "list this repo's forks")
 	row("coop fork review <name>", "show a fork's review dossier + diff")
 	row("coop fork merge <name>", "rebase the fork onto your branch and land it")
@@ -118,12 +118,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop fork path <name>", "print the fork's filesystem path")
 
 	group("UNATTENDED")
-	row("coop loop [agent]", "work the queue(s) until done, then sign off")
-	row("coop fleet init", "write the .agent/fleet.yaml template")
-	row("coop fleet up", "start every fork's loop, detached")
-	row("coop fleet down", "stop the fleet's running loops")
-	row("coop fleet watch", "live dashboard of every fork's progress")
-	row("coop fleet prune", "drop forks no longer in the fleet file")
+	row("coop loop [<target|preset>]", "work the queue(s) until done, then sign off")
 
 	group("TASKS — a folder-per-task queue in .agent/tasks/")
 	row("coop tasks ls", "show the queue, grouped by state")
@@ -474,8 +469,7 @@ var commandHelp = map[string]string{
     coop loop <name>
     coop acp <name>
     coop fork <fork> <name> --loop
-  A fleet can name it per fork in .agent/fleet.yaml (agent: <name>). A target
-  (claude:opus@work) in that same slot runs the agent directly instead.
+  A target (claude:opus@work) in that same slot runs the agent directly instead.
 
   .agent/presets/frontier/preset.yaml:
 
@@ -536,36 +530,6 @@ var commandHelp = map[string]string{
   no merging); coop presets tags a global-sourced one (global). init scaffolds into the
   repo — author a global preset by hand (or copy one there).`,
 
-	"fleet": `coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
-
-  Usage: coop fleet <init|up|down|watch|prune>
-
-  init           write a .agent/fleet.yaml template
-  up             start every fork in the fleet, looping its tasks, detached
-  down           stop the fleet's running loops
-  watch          live dashboard of every fork's progress (auto-exits when the fleet's
-                 done; Ctrl-C anytime). Task-centric view: coop tasks watch
-  prune          remove forks no longer in the fleet file (kept: running, dirty, or
-                 unmerged — pass --force to override that guard; deletion confirms)
-
-  prune requires --yes without a TTY. up and down take --prune, with optional
-  --force and --yes, to prune in the same step. --force never skips confirmation.
-
-  .agent/fleet.yaml is a forks: map — each fork needs tasks: (the tree that seeds its
-  loop) and agent: — the who-runs, either a TARGET (provider[:model][/effort][@account];
-  give each fork a DIFFERENT account so they run in parallel) or a PRESET NAME (its lead +
-  ladder drive the fork). A fork takes ONE account — a full rotation ladder lives in a preset:
-
-    forks:
-      core:
-        tasks: .agent/tasks.core
-        agent: frontier
-      perf:
-        agent: codex:gpt-5.5@work
-        tasks: .agent/tasks.perf
-
-  List forks: coop fork ls`,
-
 	"tasks": `coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 
   Usage: coop tasks [--tasks <path>]... <command>
@@ -573,8 +537,7 @@ var commandHelp = map[string]string{
   ls [--all] [--todo|--in-progress|--blocked|--done]
                    list tasks by state, with counts (recent done capped; --all shows all). Pass one
                    or more state flags to show only those. Task ids link to the folder — click to open.
-  watch            live board: the queue + any active forks, deduped by id (auto-exits when done).
-                   Per-fork fleet view: coop fleet watch
+  watch            live board: the queue + any active forks, deduped by id (auto-exits when done)
   add [--project <name>] "<title>"
                    scaffold a task folder in todo (or fill it inline: --context/--acceptance/--approach/--subtask)
   claim <id>       claim a task before you start it (todo -> in_progress)
@@ -665,7 +628,7 @@ var commandHelp = map[string]string{
   --include-ignored to scan the full visible tree too (deps/build dirs and
   shadowed files are still skipped).`,
 
-	"loop": `coop loop [agent] — work the task queue until done, then sign off.
+	"loop": `coop loop [<target|preset>] — work the task queue until done, then sign off.
 
   Usage: coop loop [<agent>[:model][/effort][@account,...] | <preset>] [--tasks <path>]... [--peer <peer>...] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail]
 

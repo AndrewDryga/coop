@@ -10,7 +10,7 @@ No third-party dependencies — just the stdlib. There are two kinds of scene:
   • A scripted scene reconstructs coop's live output faithfully — every line, color,
     and glyph matches internal/ui/ui.go and internal/cli/streamjson.go. These cover
     the flows that need a container runtime and signed-in (paid) agents to run for
-    real: the loop, forks, the fleet, doctor, check-secrets. To capture a
+    real: the loop, forks, doctor, check-secrets. To capture a
     real one instead, run e.g.  `asciinema rec -c "coop loop" site/casts/loop.cast`.
 
 Usage:  python3 tools/gen_casts.py              # (re)write every cast
@@ -84,13 +84,7 @@ def model_line(agent="claude", model="claude-opus-4-8[1m]", credential="personal
 
 
 ICON_LLM = magenta("✦")  # streamjson.go: the agent's own voice
-SPIN_WIDTH = 5  # ui.SpinnerWidth
 SPIN = [".[  ]", ">[  ]", "[.  ]", "[ * ]", "[  .]", "[  ]>", "[  ]."]  # ui.SpinFrames
-
-
-def live_mark(s):
-    """Pad a plain live-view mark before color, matching fleet_watch.go."""
-    return f"{s:<{SPIN_WIDTH}}"
 
 
 def cyan(s):
@@ -101,24 +95,6 @@ def bar(done, total, w=10):
     """ui.ProgressBar — [ cyan-filled ░-empty ]."""
     filled = round(done / total * w) if total else 0
     return "[" + _w("█" * filled, CYAN) + "░" * (w - filled) + "]"
-
-
-def badge(agent):
-    """agentBadge — a 1-cell colored initial (c/x/g)."""
-    return {"claude": _w("c", MAGENTA), "codex": _w("x", GREEN), "gemini": _w("g", YELLOW)}.get(agent, "?")
-
-
-def fleet_row(glyph, agent, name, done, total, doing, countw=3, log="", cost=""):
-    """One coop fleet watch row: glyph · badge · name · bar · count · doing · cost · last log.
-    The count is left-padded to countw (the frame-global max width) so counts line up one
-    space past the bar, and there are two spaces before `doing` — matching fleet_watch.go."""
-    count = f"{done}/{total}"
-    line = f"{glyph} {badge(agent)} {name:<14} {bar(done, total)} {count:<{countw}}  {doing}"
-    if cost:
-        line += "  " + dim(cost)
-    if log:
-        line += "  " + dim(log)
-    return line
 
 
 class Cast:
@@ -453,72 +429,6 @@ def scene_fork():
     c.write()
 
 
-def scene_fleet():
-    """Run several agents at once; `coop fleet watch` is the live board (alt-screen) that animates
-    each fork's progress and auto-exits with a final summary once the fleet is done. The board
-    format and the 'fleet idle' exit line are real coop output (captured from a real watch); the
-    three-fork scenario — each agent draining its own small queue — is a realistic run."""
-    c = Cast("fleet", cols=96, rows=12, title="coop fleet — many agents, one live board")
-    c.command("coop fleet up")
-    for name, agent in [("api", "claude"), ("web", "gemini"), ("deps", "codex")]:
-        c.line(coop(f"forking acme-api → ../acme-api-forks/{name} (secrets are gitignored, so they don't come along)"), after=0.3)
-        c.line(coop(f"started fork {name} ({agent}) in the background"), after=0.25)
-    c.line(green("✓") + " 3 forks detached — coop fork ls · coop fork logs -f", after=0.9)
-    c.command("coop fleet watch", think=0.4)
-
-    # api (claude, 3 tasks), web (gemini, 3 tasks), deps (codex, 2 tasks). Each frame advances the
-    # board as the agents ship tasks; the spinner cycles as it repaints in place. When the last fork
-    # finishes (0 running), the board settles on its finished state and watch auto-exits with the
-    # 'fleet idle' line printed just below it.
-    doing = {
-        "api": ["add per-tenant rate limiting", "retry failed captures w/ backoff", "cache the /health probe"],
-        "web": ["fix the checkout hydration bug", "lazy-load the dashboard route", "ship CSP (report-only)"],
-        "deps": ["patch the axios CVE (1.6→1.7)", "drop the unused moment.js"],
-    }
-    logs = {"api": "⚙ Bash go test", "web": "✎ Edit src/checkout.tsx", "deps": "⚙ Bash npm audit fix"}
-    forks = [("claude", "api", 3), ("gemini", "web", 3), ("codex", "deps", 2)]
-
-    def render(done, spin, final=False):
-        running = sum(1 for _, n, total in forks if done[n] < total)
-        head_glyph = green(live_mark("✓")) if running == 0 else SPIN[spin % len(SPIN)]
-        rows = [bold("acme-api fleet") + f" — {running} running, 0 blocked", ""]
-        for agent, n, total in forks:
-            d = done[n]
-            # Cost is captured for a claude-led fork (its result event carries it); the gemini/codex
-            # leads here don't report one, so their rows show no $ — the honest current behaviour.
-            cost = "$%.2f" % (0.14 * d) if n == "api" and d > 0 else ""
-            if d >= total:
-                glyph, what, log = green(live_mark("✓")), green("✓ done"), "✓ queue verified done — %d/%d" % (total, total)
-            else:
-                glyph, what, log = SPIN[spin % len(SPIN)], doing[n][d], logs[n]
-            rows.append(fleet_row(glyph, agent, n, d, total, what, countw=3, log=log, cost=cost))
-        tot_done = sum(done.values())
-        bar_line = f"{head_glyph} {bar(tot_done, 8, 27)} {tot_done}/8 tasks · {running} running · 0 blocked"
-        if done["api"] > 0:
-            bar_line += " · $%.2f" % (0.14 * done["api"])  # the fleet total (only the claude fork reports cost)
-        rows += ["", bar_line]
-        return rows
-
-    steps = [
-        {"api": 1, "web": 0, "deps": 0},
-        {"api": 1, "web": 1, "deps": 0},
-        {"api": 2, "web": 1, "deps": 1},
-        {"api": 2, "web": 2, "deps": 1},
-        {"api": 3, "web": 2, "deps": 2},  # api done, deps done
-        {"api": 3, "web": 3, "deps": 2},  # all done → auto-exit
-    ]
-    for spin, done in enumerate(steps):
-        c.raw("\x1b[H\x1b[2J")  # home + clear, repainting the board in place each tick
-        c.raw("\r\n".join(render(done, spin)) + "\r\n")
-        c.sleep(0.6)
-    # The last tick already shows the finished board; watch auto-exits with the 'fleet idle' line just
-    # below it. (Re-drawing the final frame here is what stacked a second board → overlapping bars.)
-    c.sleep(0.6)
-    c.line("", after=0.0)
-    c.line("fleet idle — every fork is done, stopped, or blocked; watch exited", after=1.3)
-    c.write()
-
-
 def scene_secrets():
     """Secrets never enter the box — shadowed by name, scanned by content before any agent runs."""
     c = Cast("secrets", rows=12, title="coop check-secrets — secrets stay out of the box")
@@ -599,7 +509,6 @@ SCENES = {
     "loop": scene_loop,
     "doctor": scene_doctor,
     "fork": scene_fork,
-    "fleet": scene_fleet,
     "secrets": scene_secrets,
     "claude": scene_claude,
     "help": scene_help,

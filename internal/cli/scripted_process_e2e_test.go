@@ -323,7 +323,7 @@ func readProcessTrace(t *testing.T, path string) []*processTrace {
 
 // One box run's whole trace: three runtime invocations (image probe, daemon probe, run), the parsed
 // run contract, provider start and exit, and the runtime's exit. A command that reaps orphaned boxes
-// on its way in (loop, fork, fleet up, build) adds exactly one runtime `ps` — and nothing else.
+// on its way in (loop, fork, build) adds exactly one runtime `ps` — and nothing else.
 const (
 	directTraceEvents = 7
 	sweptTraceEvents  = directTraceEvents + 1

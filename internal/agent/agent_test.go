@@ -76,20 +76,6 @@ func TestRegistry(t *testing.T) {
 			t.Errorf("%s: DisplayName() = %q, want a human product name (e.g. Codex)", n, d)
 		}
 	}
-	// Badge is PLAIN data: one printable ASCII cell, distinct per agent, with no terminal color
-	// baked in — the presentation layer paints it (internal/cli's agentBadgeColors).
-	badges := map[string]string{}
-	for _, n := range Names() {
-		a, _ := Get(n)
-		b := a.Badge()
-		if len(b) != 1 || b[0] <= ' ' || b[0] > '~' {
-			t.Errorf("%s: Badge() = %q, want a single plain ASCII cell (no color escapes)", n, b)
-		}
-		if prev, dup := badges[b]; dup {
-			t.Errorf("%s and %s share badge %q — a dashboard row can't name its agent", prev, n, b)
-		}
-		badges[b] = n
-	}
 	// Packages is the union across agents (claude 2 + codex 2 + gemini 1; grok is a native
 	// binary, not npm, so it adds none).
 	if got := Packages(); !slices.Contains(got, claudeCLIPackage) ||

@@ -335,8 +335,8 @@ func ScaffoldStateDirs(root string) error {
 // task trees — siblings of root named "tasks.<name>" — copying each task folder into that
 // slice's todo/. The source tree is left untouched (the slices are COPIES). Returns, per
 // name, the repo-relative slice dir written ("" when that bucket was empty) and its task
-// count, plus the total number of todo tasks. Shared by `coop tasks split` and `coop fleet
-// split` so they can't drift.
+// count, plus the total number of todo tasks. `coop tasks split` uses the named buckets to emit
+// one queue per direct fork loop.
 func splitTodoFolders(repo, root string, names []string) (written []string, counts []int, total int, err error) {
 	n := len(names)
 	written = make([]string, n)
@@ -405,14 +405,14 @@ func StateLabel(state string) string {
 }
 
 // queueCounts reads a task queue directory (.agent/tasks) and returns its counts and active
-// task — the one seam the status, loop, and fleet readers funnel through. A missing/empty dir
+// task — the one seam the status and loop readers funnel through. A missing/empty dir
 // reads as all-zero.
 func QueueCounts(dir string) (TaskCounts, string) {
 	return TaskTreeCounts(ReadTaskTree(dir))
 }
 
 // wsTaskSource returns a workspace's task queue directory (.agent/tasks). Used by the status
-// and fleet views, which read a fork's queue directly rather than through taskQueues.
+// view, which reads a fork's queue directly rather than through taskQueues.
 func WsTaskSource(ws string) string {
 	return filepath.Join(ws, TasksRoot)
 }
@@ -439,7 +439,7 @@ func LatestTaskLog(ws string, n int) string {
 
 // taskTreeCounts tallies a task tree into the shared taskCounts and returns the "active"
 // task title — the first in_progress task, or failing that the first todo — so the
-// status, loop, and fleet views all agree on what a queue is "working on".
+// status and loop views agree on what a queue is "working on".
 func TaskTreeCounts(items []Item) (TaskCounts, string) {
 	var c TaskCounts
 	active, firstTodo := "", ""

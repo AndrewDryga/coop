@@ -136,10 +136,6 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) == 2 && (prev[1] == "rm" || prev[1] == "promote") {
 			return a.backlogIDs()
 		}
-	case "fleet":
-		if len(prev) == 1 {
-			return []string{"init", "up", "down", "watch", "prune"}
-		}
 	case "loop":
 		if len(prev) == 1 {
 			return appendCompletionCandidates(

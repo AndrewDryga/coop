@@ -116,7 +116,7 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 	return 0, nil
 }
 
-// forkBranch / forkUpdated read a fork's state (for `coop fork ls` and `coop fleet watch`).
+// forkBranch / forkUpdated read a fork's state for `coop fork ls`.
 // They run against an agent-controlled tree (post-work), so they use the hardened
 // helpers — `diff`/`log` would otherwise fire a planted core.fsmonitor or diff.external.
 func forkBranch(ws string) string { return gitOut(ws, "rev-parse", "--abbrev-ref", "HEAD") }

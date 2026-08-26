@@ -38,7 +38,7 @@ import (
 // that -ldflags pins to internal/cli, so New takes it as a value instead.
 type Host struct {
 	// SweepOrphanBoxes reaps this repo's boxes whose supervising coop is dead. internal/cli owns
-	// the once-per-process cache that `fork start`, `fleet up` and `coop build` share, so the loop
+	// the once-per-process cache that fork starts and `coop build` share, so the loop
 	// asks rather than sweeping the same repo again.
 	SweepOrphanBoxes func(repo string)
 

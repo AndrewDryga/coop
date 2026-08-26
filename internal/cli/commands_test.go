@@ -854,17 +854,6 @@ func TestHelpDocumentsPeerAndAgentHelp(t *testing.T) {
 	}
 }
 
-// The top-level help lists every fleet verb on its own row (like the fork rows), so none
-// is hidden from the main help.
-func TestTopLevelListsAllGroupVerbs(t *testing.T) {
-	h := helpText(&config.Config{})
-	for _, verb := range []string{"init", "up", "down", "watch", "prune"} {
-		if !strings.Contains(h, "coop fleet "+verb) {
-			t.Errorf("top-level help should list `coop fleet %s` as its own row", verb)
-		}
-	}
-}
-
 // TestPromptLine: coop prompt's line shows non-zero segments only, "·"-separated, in a fixed
 // order (todo, doing, blocked, looping, forks); "" when idle so an embedding prompt stays clean.
 func TestPromptLine(t *testing.T) {

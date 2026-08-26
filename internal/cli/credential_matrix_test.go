@@ -12,7 +12,6 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/forkctl"
 )
 
 // selectorSet drives one coop-owned dropdown set through the FromEditor hook — the same wire path
@@ -113,10 +112,6 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 				if !anyAgentSignedIn(cfg) {
 					t.Error("first-run help still reports no signed-in provider")
 				}
-				if unsigned := forkctl.UnsignedFleetAccounts(cfg, []forkctl.FleetEntry{{Name: "matrix", Agent: name + "@" + profile}}); len(unsigned) != 0 {
-					t.Errorf("fleet rejected signed-in pinned account: %v", unsigned)
-				}
-
 				control := acpctl.New(cfg, name, "", "", t.TempDir(), acpctl.Selection{}, nil, nil, acpHost())
 				if creds := control.Creds(); !slices.Contains(creds, profile) {
 					t.Errorf("ACP account selector omitted %s@%s via %s: %v", name, profile, source, creds)
@@ -137,9 +132,6 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 					}
 					if box.ProfileAuthed(cfg, name, "personal") {
 						t.Errorf("env credential authenticated unrelated %s@personal", name)
-					}
-					if unsigned := forkctl.UnsignedFleetAccounts(cfg, []forkctl.FleetEntry{{Name: "typo", Agent: name + "@personal"}}); len(unsigned) != 1 {
-						t.Errorf("fleet accepted unrelated env-backed account: %v", unsigned)
 					}
 				}
 			})
@@ -207,13 +199,5 @@ func TestACPCredentialSourcesFollowProviderSelection(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func TestUnsignedFleetAccountsRejectsMissingCredential(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir()}
-	got := forkctl.UnsignedFleetAccounts(cfg, []forkctl.FleetEntry{{Name: "api", Agent: "grok@work"}})
-	if len(got) != 1 || !strings.Contains(got[0], "api/grok") || !strings.Contains(got[0], "work") {
-		t.Fatalf("unsigned fleet accounts = %v, want api/grok work", got)
 	}
 }

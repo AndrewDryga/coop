@@ -56,9 +56,6 @@ func TestCompletionCandidates(t *testing.T) {
 	if tk := a.completionCandidates([]string{"tasks"}); !hasCand(tk, "claim") || !hasCand(tk, "watch") {
 		t.Errorf("tasks completion missing verbs: %v", tk)
 	}
-	if fl := a.completionCandidates([]string{"fleet"}); !hasCand(fl, "up") || !hasCand(fl, "prune") {
-		t.Errorf("fleet completion missing verbs: %v", fl)
-	}
 	if !hasCand(a.completionCandidates([]string{"login"}), "claude") {
 		t.Error("login completion should offer agents")
 	}
@@ -110,7 +107,7 @@ func TestCompletionCandidates(t *testing.T) {
 	if got := a.completionCandidatesFor([]string{"fork", "work", "acp", "codex", "--peer"}, "grok:"); !hasCand(got, "grok:grok-4.5") {
 		t.Errorf("fork ACP peer completion missing Grok target: %v", got)
 	}
-	for _, reserved := range []string{"ls", "acp", "watch"} {
+	for _, reserved := range []string{"ls", "acp"} {
 		if got := a.completionCandidatesFor([]string{"fork", reserved}, ""); len(got) != 0 {
 			t.Errorf("fork reserved word %q offered invalid trailing candidates: %v", reserved, got)
 		}

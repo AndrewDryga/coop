@@ -273,7 +273,7 @@ func TestSplitTodoFolders(t *testing.T) {
 
 // A split slice is a self-contained queue carrying all four state dirs, and a fork seeded by copying
 // the slice inherits them — so the in-box "move a folder between states" protocol can't rename a task
-// into a missing dir. Regression: a 2026-07-01 fleet run lost a claimed task to a bare `mv` into a
+// into a missing dir. Regression: a concurrent fork run lost a claimed task to a bare `mv` into a
 // nonexistent 10_in_progress/ on a slice that only had 00_todo/.
 func TestSplitAndForkSeedScaffoldAllStateDirs(t *testing.T) {
 	repo := t.TempDir()

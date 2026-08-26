@@ -9,7 +9,7 @@ import (
 )
 
 // The loop prompts must name the queue AND AGENTS.md as absolute in-box paths: gemini's
-// read_file rejects a relative path, so a relative ".agent/tasks" left gemini/codex fleet forks
+// read_file rejects a relative path, so a relative ".agent/tasks" left gemini/codex fork loops
 // unable to read their own queue (claude resolved it against cwd and was fine).
 func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	repo := "/home/node/proj"

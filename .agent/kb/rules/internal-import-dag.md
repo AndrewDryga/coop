@@ -46,6 +46,11 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-25 — **no graph change:** removed Fleet's parser, lifecycle, status board, and launch
+  wiring from `internal/forkctl`/`internal/cli`. `forkctl` still needs every frozen edge for direct
+  fork supervision, listing, review, removal, and merge, including its presentation-owner grant;
+  `TestInternalImportDAG` remains green unchanged. Corrected the allowlist comment so only `tasks`
+  is described as owning a live board.
 - 2026-08-25 — **package rename, edge rename, −1 cli edge:** `internal/fusion` became
   `internal/consult` after the mandatory Fusion command/state was removed. `box → fusion` became
   `box → consult`; the package keeps its single `consult → agent` edge; `cli → fusion` disappeared

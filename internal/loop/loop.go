@@ -131,7 +131,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		return -1, fmt.Errorf("no task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(queues, ", "))
 	}
 	// One loop per checkout, claimed before ANY queue state is touched — the reconcilers just
-	// below already mutate it. Per-worktree, so a fork fleet stays parallel (see lockLoopCheckout).
+	// below already mutate it. Per-worktree, so parallel forks stay independent (see lockLoopCheckout).
 	releaseCheckout, err := lockLoopCheckout(c.cfg, repo)
 	if err != nil {
 		return 1, err

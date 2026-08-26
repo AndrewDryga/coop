@@ -3,7 +3,7 @@ name: services-teardown-needs-the-workspace
 description: sibling-service teardown is driven by the workspace's own compose file, so stopping services after deleting the workspace is a silent no-op
 subsystem: box/services
 sources: [internal/box/services.go, internal/box/repo.go, internal/forkctl/rm.go, internal/forkspace/create.go]
-updated: 2026-08-10
+updated: 2026-08-25
 ---
 Sibling services are brought up per box (`box.Run` → `EnsureServicesFile`) and are deliberately
 **not** brought down when a box exits: the stack is idempotent and reused across iterations, so a
@@ -23,7 +23,7 @@ nothing**. Observed 2026-08-03: a fork's `keycloak` + `postgres` were still runn
 
 **The rule: stop services BEFORE the workspace is deleted.** `forkctl.DestroyFork` (`internal/forkctl/rm.go`)
 does this at the single choke point every destroy path funnels through (`fork rm`, `fork merge`,
-`merge --all`, fleet prune, and the `fork create` rollback), with `volumes: true` — a fork is
+`merge --all`, and the `fork create` rollback), with `volumes: true` — a fork is
 disposable by definition, and leaked volumes were a real share of the disk growth. It is best-effort
 and logs rather than blocking: a service that won't stop must not veto the removal the operator
 asked for.
@@ -43,10 +43,13 @@ Two related seams behave correctly already and are worth copying rather than dup
 `runtime.Runtime` is a struct, not an interface: guard with `rt.Name != ""`, never `rt != nil`.
 
 ## Changelog
+- 2026-08-25 — removed the retired Fleet prune path from the current destroy-path inventory;
+  direct fork removal, merge, merge-all, and create rollback still share the same teardown-first
+  choke point.
 - 2026-08-10 — `destroyFork` moved out of `internal/cli` with the rest of the fork lifecycle and is
   now exported as `forkctl.DestroyFork` (`internal/forkctl/rm.go`); the ordering, the `volumes: true`,
   and the best-effort logging are byte-identical. Every destroy path still funnels through it —
-  `fork rm`/`fork merge`/`merge --all`/fleet prune are all inside `internal/forkctl` now, and
+  `fork rm`/`fork merge`/`merge --all`/fleet prune were all inside `internal/forkctl`, and
   `internal/cli`'s `--fresh` rollback calls the exported one.
 - 2026-08-09 — re-verified after the sessions extraction: the discard path is now `internal/sessionsvc/workspace.go` calling `forkspace.Destroy` DIRECTLY (its `destroyFork` call always passed a zero runtime, so the wrapper was doing nothing for it), which makes the ordering rule above explicit — the service downs the services itself, first.
 - 2026-08-09 — re-verified after the `internal/forkspace` extraction: the workspace removal moved to

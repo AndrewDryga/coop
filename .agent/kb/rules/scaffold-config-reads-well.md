@@ -4,13 +4,13 @@ description: "scaffolded config leads every field with its comment and works as-
 scope: scaffold
 sources: [internal/preset/template.go, .agent/presets/frontier/preset.yaml]
 check: "none"
-updated: 2026-08-09
+updated: 2026-08-25
 ---
 
 # Scaffolded, editable config reads top-down and works as-is
 
-Files that `coop <x> init` writes for a human to open and edit (preset.yaml,
-`.agent/fleet.yaml`, the prompt Markdown) follow two rules:
+Files that Coop scaffolds for a human to open and edit (preset YAML and prompt Markdown) follow
+two rules:
 
 **1. Comments LEAD their field — never trail it.** Put the note on its own line(s)
 *above* the field, not after it:
@@ -44,7 +44,7 @@ to read," and "the roles you generate should be good enough for generic projects
 not something you MUST fill in (even though it's recommended)."
 
 **How to apply:**
-- New `init` scaffold (or edit to `preset.Template` / `fleetTemplate`): leading
+- New scaffold (or edit to `preset.Template`): leading
   comments, usable defaults, every line ≤ 80 display columns (count runes — the
   comments use `—·→…`, which are multi-byte).
 - Terse REFERENCE illustrations are exempt — a `coop help` example is a compact
@@ -62,6 +62,8 @@ See [[scaffold-fits-the-repo]] (a scaffold suits the target repo) and
 [[help-output-style]].
 
 ## Changelog
+- 2026-08-25 — removed the retired Fleet manifest/template from the current scaffold inventory;
+  preset and prompt scaffolds retain the same readability rules.
 - 2026-07-03 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: read internal/preset/template.go's `Template` const

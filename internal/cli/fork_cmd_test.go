@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,12 +70,14 @@ func TestForkVerbNearMiss(t *testing.T) {
 		want      string
 		wantMatch bool
 	}{
-		{[]string{"lss"}, false, "ls", true},          // distance 1 from `ls` — the most-typed verb
-		{[]string{"stp"}, false, "stop", true},        // 3 runes, distance 1 from `stop`
-		{[]string{"lss", "claude"}, false, "", false}, // explicit agent → deliberate create of `lss`
-		{[]string{"lss"}, true, "", false},            // already a fork → open it, don't second-guess
-		{[]string{"ls"}, false, "", false},            // 2 runes → below the suggestion floor
-		{[]string{"api"}, false, "", false},           // a real new fork name, far from any verb
+		{[]string{"lss"}, false, "ls", true},               // distance 1 from `ls` — the most-typed verb
+		{[]string{"stp"}, false, "stop", true},             // 3 runes, distance 1 from `stop`
+		{[]string{"lss", "claude"}, false, "", false},      // explicit target → deliberate create of `lss`
+		{[]string{"lss", "codex:gpt-5"}, false, "", false}, // full target → deliberate create
+		{[]string{"lss", "frontier"}, false, "", false},    // preset → deliberate create
+		{[]string{"lss"}, true, "", false},                 // already a fork → open it, don't second-guess
+		{[]string{"ls"}, false, "", false},                 // 2 runes → below the suggestion floor
+		{[]string{"api"}, false, "", false},                // a real new fork name, far from any verb
 	}
 	for _, c := range cases {
 		if got, ok := forkVerbNearMiss(c.args, c.exists); ok != c.wantMatch || got != c.want {
@@ -870,48 +871,5 @@ func TestForkLoopDefaultNoQueueFailsFast(t *testing.T) {
 	}
 	if pathExists(forkspace.Workspace(repo, "x")) {
 		t.Error("a fork workspace was created despite the fast-fail")
-	}
-}
-
-// `coop fleet ls`/`list` has no fleet-level listing — it must point at the real views (fork ls / the
-// live board), not error blankly (rule: `ls` is the list verb, it must lead somewhere useful).
-func TestFleetLsRedirect(t *testing.T) {
-	a := &app{cfg: &config.Config{}}
-	code, err := a.cmdFleet([]string{"ls"}) // v3: only `ls` redirects; `list` is a plain unknown verb
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "coop fork ls") {
-		t.Errorf("cmdFleet([ls]) = (%d, %v), want (2, pointing at `coop fork ls`)", code, err)
-	}
-}
-
-// fleet up fails fast, but when forks already started the error must be loud about the partial fleet
-// and name the cleanup, so a half-started fleet isn't discovered later.
-func TestFleetAbortErr(t *testing.T) {
-	none := fleetAbortErr("api", errors.New("boom"), 0).Error()
-	if !strings.Contains(none, "api") || !strings.Contains(none, "boom") {
-		t.Errorf("abort err (none started) should name the fork and cause: %q", none)
-	}
-	if strings.Contains(none, "fleet down") {
-		t.Errorf("abort err with nothing started shouldn't mention cleanup: %q", none)
-	}
-	some := fleetAbortErr("web", errors.New("boom"), 2).Error()
-	for _, want := range []string{"web", "2 fork", "coop fleet down"} {
-		if !strings.Contains(some, want) {
-			t.Errorf("abort err (2 started) missing %q: %q", want, some)
-		}
-	}
-}
-func TestFleetPruneConfirmationFailsBeforeUpOrDownWork(t *testing.T) {
-	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
-	fc := a.forkctl()
-	for _, tc := range []struct {
-		name string
-		fn   func([]string) (int, error)
-	}{{"up", a.fleetUp}, {"down", fc.FleetDown}} {
-		t.Run(tc.name, func(t *testing.T) {
-			code, err := tc.fn([]string{"--prune"})
-			if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
-				t.Fatalf("fleet %s --prune = (%d, %v), want confirmation before fleet/config work", tc.name, code, err)
-			}
-		})
 	}
 }

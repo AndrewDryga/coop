@@ -1369,8 +1369,8 @@ func countDone(root string) int {
 }
 
 // tasksFolderSplit round-robins the todo tasks into n per-slice trees (.agent/tasks.slice1 …
-// .agent/tasks.slicen), as COPIES — the source is untouched. Loop one fork per slice
-// (`coop fork slice1 --loop --tasks .agent/tasks.slice1`).
+// .agent/tasks.slicen), as COPIES — the source is untouched — then prints one direct detached-fork
+// command per written slice.
 func tasksFolderSplit(repo, root string, args []string) (int, error) {
 	if len(args) < 1 {
 		return 2, errors.New("usage: coop tasks split <n>")
@@ -1405,7 +1405,12 @@ func tasksFolderSplit(repo, root string, args []string) (int, error) {
 	// The slices are COPIES; the source .agent/tasks is untouched. Say which to run so a
 	// later loop doesn't process every task twice.
 	ui.Note("the slices are copies — .agent/tasks is unchanged; loop one fork per slice")
-	ui.Note("e.g. coop fork slice1 --loop --tasks .agent/tasks.slice1 ; don't also loop .agent/tasks, or each task runs twice")
+	for i, rel := range written {
+		if rel != "" {
+			ui.Note("run: coop fork %s <target|preset> --loop -d --tasks %s", names[i], rel)
+		}
+	}
+	ui.Note("don't also loop .agent/tasks, or each task runs twice")
 	return 0, nil
 }
 

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
 
@@ -32,15 +31,15 @@ func TestEffortOnlyTargetHeadsReachTheSharedParser(t *testing.T) {
 }
 
 // One grammar, one error set: a malformed target reads the SAME on every surface — the CLI
-// positional, a preset's lead.agent, a preset role's agent:, and a fleet entry — because they
-// all funnel through agents.ParseTarget. Each surface's error must carry the parser's own
+// positional, a preset's lead.agent, and a preset role's agent: — because they all funnel through
+// agents.ParseTarget. Each surface's error must carry the parser's own
 // message verbatim, so a typo diagnoses identically wherever it was written.
 //
 // The cases are all TARGET-SHAPED (a known provider with a bad :model/@account) so they classify
 // as targets on every surface. A bare UNKNOWN word (e.g. "gpt4") is deliberately excluded: under
-// the unified who-runs grammar it's a PRESET NAME on the loop positional and the fleet agent:
-// (validated later by loadRunPreset), so it does NOT surface a ParseTarget error there — only on
-// lead.agent / role agent:, which take a target and never a preset name.
+// the unified who-runs grammar it's a PRESET NAME on the loop positional (validated later by
+// loadRunPreset), so it does NOT surface a ParseTarget error there — only on lead.agent / role
+// agent:, which take a target and never a preset name.
 func TestTargetErrorsAgreeAcrossSurfaces(t *testing.T) {
 	cases := []struct{ name, target string }{
 		{"empty model", "claude:"},
@@ -72,12 +71,6 @@ func TestTargetErrorsAgreeAcrossSurfaces(t *testing.T) {
 				if _, err := loadTempPreset(t, yaml); err == nil || !strings.Contains(err.Error(), want) {
 					t.Errorf("preset role agent: err = %v, want it to carry %q", err, want)
 				}
-			}
-
-			// Fleet entry agent:.
-			fleet := fmt.Sprintf("forks:\n  a:\n    tasks: .agent/tasks\n    agent: %q\n", c.target)
-			if _, err := forkctl.ParseFleetYAML(fleet); err == nil || !strings.Contains(err.Error(), want) {
-				t.Errorf("fleet agent: err = %v, want it to carry %q", err, want)
 			}
 		})
 	}

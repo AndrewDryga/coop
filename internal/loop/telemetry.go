@@ -318,7 +318,7 @@ func ReadPeerRecords(repo, run string) []PeerRecord {
 // WorkspaceCost reports a workspace's total loop spend and its compact human summary, from the
 // loop's own usage telemetry. Both come from ONE read because every caller is a display site that
 // already has the workspace — it feeds forkctl.Host.ForkCost, whose signature this mirrors, so the
-// fleet board and fork review/merge can price a fork without knowing how a stage record is stored.
+// fork listing and review/merge can price a fork without knowing how a stage record is stored.
 func WorkspaceCost(ws string) (usd float64, summary string) {
 	rc := costForRepo(ws)
 	return rc.total.usd, costSummary(rc)
@@ -326,7 +326,7 @@ func WorkspaceCost(ws string) (usd float64, summary string) {
 
 // costForRepo aggregates EVERY run's telemetry under repo (.agent/runs/*.jsonl + the matching
 // *.peers.jsonl) into one runCost — a fork/clone's total spend across all its loop runs, for the
-// fleet board and fork review/merge. Best-effort: no runs dir → a zero runCost.
+// fork listing and review/merge. Best-effort: no runs dir → a zero runCost.
 func costForRepo(repo string) runCost {
 	runsRoot, err := openRunsRoot(repo, false)
 	if err != nil {

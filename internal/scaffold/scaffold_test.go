@@ -521,7 +521,7 @@ func TestInit(t *testing.T) {
 	// wrappers (coop-consult/coop-delegate) MAY be named, but only availability-gated —
 	// they exist only when a consult/preset run mounts them, so an unconditional
 	// recommendation would send agents at a missing binary.
-	for _, bad := range []string{"coop fork", "coop fleet"} {
+	for _, bad := range []string{"coop fork"} {
 		if strings.Contains(string(agents), bad) {
 			t.Errorf("AGENTS.md should not recommend host-side orchestration %q:\n%s", bad, agents)
 		}

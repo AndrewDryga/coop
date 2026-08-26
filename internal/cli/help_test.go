@@ -108,28 +108,36 @@ func TestHelpTextWidth(t *testing.T) {
 }
 
 // Every command row's description starts at ONE column (a command cell ≤32 runes keeps the
-// 34-rune gap), so the two-column layout reads as a table. A row whose command is a full
-// verb list (it carries several `|`s, like fleet's) is the accepted exception — listing
-// every verb beats alignment there. Anything else over the column is a bug: shorten the
-// command cell (flag detail belongs in the command's own help page, not the overview).
+// 34-rune gap), so the two-column layout reads as a table. Anything over the column is a bug:
+// shorten the command cell (flag detail belongs in prose or the flags block, not the row).
 func TestHelpRowsAlign(t *testing.T) {
-	out := helpText(&config.Config{RepoOverride: t.TempDir(), ConfigDir: "/c", BoxHome: "/b"})
-	for _, line := range strings.Split(out, "\n") {
-		if !strings.HasPrefix(line, "  coop ") {
-			continue // headers, hints, footer — not command rows
-		}
-		runes := []rune(line)
-		cmdEnd := len(runes)
-		for i := 2; i < len(runes)-1; i++ {
-			if runes[i] == ' ' && runes[i+1] == ' ' {
-				cmdEnd = i
-				break
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"top level", helpText(&config.Config{RepoOverride: t.TempDir(), ConfigDir: "/c", BoxHome: "/b"})},
+		{"fork", forkHelpText(ui.Palette{})},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, line := range strings.Split(tc.text, "\n") {
+				if !strings.HasPrefix(line, "  coop ") {
+					continue // headers, hints, footer — not command rows
+				}
+				runes := []rune(line)
+				cmdEnd := len(runes)
+				for i := 2; i < len(runes)-1; i++ {
+					if runes[i] == ' ' && runes[i+1] == ' ' {
+						cmdEnd = i
+						break
+					}
+				}
+				cmd := strings.TrimRight(string(runes[2:cmdEnd]), " ")
+				if n := len([]rune(cmd)); n > 32 {
+					t.Errorf("help row command cell is %d runes (max 32, or the description column drifts): %q", n, cmd)
+				}
 			}
-		}
-		cmd := strings.TrimRight(string(runes[2:cmdEnd]), " ")
-		if n := len([]rune(cmd)); n > 32 {
-			t.Errorf("help row command cell is %d runes (max 32, or the description column drifts): %q", n, cmd)
-		}
+		})
 	}
 }
 

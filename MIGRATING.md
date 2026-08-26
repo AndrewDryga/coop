@@ -1,6 +1,6 @@
 # Migrating
 
-## v9: one composition model
+## v9: one composition model, direct fork loops
 
 Fusion was a second command grammar over capabilities Coop already exposes directly. v9 removes
 the command and its mandatory "consult everyone before every action" governor prompt; it does not
@@ -17,6 +17,20 @@ ACP still requires an explicit initial target or preset. After connection, its l
 Provider, and Account selectors keep working; preset ladders still rotate across providers and
 accounts. `coop-consult` still provides read-only fresh/continue sessions and target fallback for
 named peers and preset consult roles.
+
+Fleet was a declarative wrapper over the fork and loop commands. v9 removes its command family,
+live board, and `.agent/fleet.yaml` parser while keeping the direct primitives:
+
+| Retired | Use |
+| --- | --- |
+| `coop fleet init` / `.agent/fleet.yaml` | No manifest. Start each fork explicitly with `coop fork <name> <target|preset> --loop -d --tasks <path>`. Coop does not delete an existing ignored file; remove it manually after translating its entries. |
+| `coop fleet up` | Run the direct detached fork command once per queue. `coop tasks split <n>` can create `.agent/tasks.sliceN` copy-trees first. |
+| `coop fleet down` | `coop fork stop <name>` for each running fork. |
+| `coop fleet watch` | `coop tasks watch` for merged task progress; `coop fork ls` for fork state/cost; `coop fork logs -f` for output. |
+| `coop fleet prune` | `coop fork rm <name>` for each obsolete fork (`--yes` confirms non-interactively; `--force` separately overrides dirty/unmerged protection). |
+
+`coop fork merge --all` still lands every fork through a revalidating rebase queue. There is no
+replacement manifest or batch up/down command in v9; the smaller explicit surface is intentional.
 
 ## v4: the target grammar — one way to name a run
 
@@ -48,9 +62,7 @@ Claude lead you never asked to consult it.
 
 Name a preset in the positional who-runs slot — `coop <preset>` or `coop loop <preset>` — rather
 than with a flag (a preset is an orthogonal axis — role wiring — not another spelling of the
-target). A per-fork `consult: true` in `.agent/fleet.yaml` now refuses at `coop
-fleet up`; name peers explicitly (the fleet grammar for that lands with the preset/fleet
-unification).
+target).
 
 **Presets follow the same grammar** — `agent:` holds a target or target ladder (native roles
 remain one Claude target); the separate `model:`/`models:` keys retire:
@@ -83,34 +95,11 @@ v3 has a clean CLI — no backward-compat aliases. Each retired form is unknown/
 | `coop pool <add\|rm\|clear>` | Retired — there is no persistent pool. A loop rotates its preset lead's `agent:` target ladder (`coop help presets`); a bare `provider:model` rung in that ladder fans out across every signed-in account, which is what the pool used to do. A stray `pools.json` is ignored. |
 | `coop profiles <default\|rm> <agent> <name>` (verb-first) | `coop credentials <agent> <name> <default\|rm>` (a path) |
 | `coop profiles <name> model <m>` / a credential's model mark | Retired — a credential is just an account; the model is a separate axis. Set it inline in the target (`<agent>:<m>`) or in a preset lead's `agent:` target ladder (`coop help presets`). Both spellings of `coop credentials <cred> model` tombstone. |
-| `coop status` | `coop tasks watch` (the queue + any active forks) / `coop fleet watch` (the per-fork board) |
+| `coop status` | `coop tasks watch` (the queue + any active forks) / `coop fork ls` (fork state) |
 | `coop tasks start <id>` | `coop tasks claim <id>` |
 | `coop loop --debug` | `coop loop --debug-on-fail` |
 | `<any> list` (e.g. `coop tasks list`) | `<any> ls` — `ls` is the only list verb |
 | `<any> remove` (e.g. `coop tasks remove`) | `<any> rm` — `rm` is the only destructive verb |
-
-## The fleet file: `.agent/fleet` → `.agent/fleet.yaml`
-
-The fleet is YAML-only. The pre-v3 one-line `.agent/fleet` is **not read** — its presence
-(alone or alongside `fleet.yaml`) is an error until you translate and delete it. Each old line
-`<name> [agent] <tasks-path> [profile=a,b] [model=m] [consult=1]` becomes a `forks:` entry:
-
-```yaml
-forks:
-  <name>:
-    # A TARGET (was agent + profile=a,b + model=m); omit to take a preset's lead.
-    # e.g. gemini:gemini-3.5-flash@work
-    agent: <provider>[:model][/effort][@account]
-    tasks: <tasks-path>
-    preset: <name>                         # optional orchestration preset
-```
-
-Delete `.agent/fleet` once translated. The model + account ride `agent:` as one target
-(`model:`/`credential:` are retired); a fork takes ONE account, so for a full model-first
-rotation ladder set `preset: <name>` instead — an orchestration preset from `.agent/presets/`
-whose lead `agent:` ladder the fork's loop rotates (see `coop help presets`). The old
-`consult=1` has no fleet spelling yet — a fork's loop names its peers explicitly (coming to
-the fleet grammar); a bare `consult: true` refuses at `coop fleet up` until then.
 
 ## Monorepos: a hand-set `COOP_TASKS` → `.agent/project.yaml`
 

@@ -29,10 +29,10 @@ func TestValidForkName(t *testing.T) {
 	}
 }
 
-// Every fork subcommand + accepted alias + `watch` is a reserved name (can't be a fork), so no fork
-// shadows a subcommand; a real fork name is not reserved.
+// Every fork subcommand is a reserved name (can't be a fork), so no fork shadows a subcommand;
+// ordinary names are not reserved.
 func TestForkReserved(t *testing.T) {
-	for _, r := range []string{"ls", "review", "merge", "rm", "open", "logs", "stop", "path", "acp", "watch"} {
+	for _, r := range []string{"ls", "review", "merge", "rm", "open", "logs", "stop", "path", "acp"} {
 		if !Reserved(r) {
 			t.Errorf("Reserved(%q) = false, want true", r)
 		}
@@ -41,7 +41,7 @@ func TestForkReserved(t *testing.T) {
 		}
 	}
 	// v3 dropped the list/remove aliases, so they are ordinary (allowed) fork names now.
-	for _, ok := range []string{"api", "web", "feature-x", "wip2", "list", "remove"} {
+	for _, ok := range []string{"api", "web", "feature-x", "wip2", "list", "remove", "watch"} {
 		if Reserved(ok) {
 			t.Errorf("Reserved(%q) = true, want false", ok)
 		}

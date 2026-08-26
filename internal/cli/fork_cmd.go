@@ -44,13 +44,13 @@ func forkHelp() (int, error) {
 // byte-stable reference render that `coop help --all` and gendocs concatenate into the manual.
 func forkHelpText(p ui.Palette) string {
 	rows := []struct{ cmd, desc string }{
-		{"coop fork <name> [target|preset]", "open or re-enter a fork; run an agent (claude:opus@work) or a preset"},
-		{"coop fork <name> <target|preset> --loop", "loop the fork on a tasks folder (-d detaches)"},
+		{"coop fork <name> <target>", "open or re-enter a fork with an agent target"},
+		{"coop fork <name> <preset>", "open or re-enter a fork with an orchestration preset"},
 		{"coop fork ls [--json]", "list this repo's forks (--json adds per-workspace serve URLs)"},
-		{"coop fork logs [name]", "tail a fork's loop log (no name: all forks)"},
+		{"coop fork logs [<name>]", "tail a fork's loop log (no name: all forks)"},
 		{"coop fork review <name>", "dossier + diff (--stat, --tool, --open, --gate)"},
-		{"coop fork <name> acp [target]", "front the fork as an ACP agent (for editors)"},
-		{"coop fork merge <name>", "rebase onto your branch and land it (--all = fleet)"},
+		{"coop fork <name> acp <target>", "front the fork as an ACP agent (for editors)"},
+		{"coop fork merge <name>", "rebase onto your branch and land it (--all lands every fork)"},
 		{"coop fork rm <name>", "discard a fork (confirms; refuses unmerged/dirty without --force)"},
 		{"coop fork open <name>", "open the fork in your editor"},
 		{"coop fork path <name>", "print the fork's filesystem path"},
@@ -60,6 +60,7 @@ func forkHelpText(p ui.Palette) string {
 		{"-c, --continue", "resume the prior session (the default on re-entry)"},
 		{"    --new", "start a fresh agent session on re-entry"},
 		{"    --fresh", "recreate the fork from scratch (confirms; refuses unmerged/dirty without --force)"},
+		{"    --loop", "work the fork's task queue until done instead of opening an interactive session"},
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)"},
 		{"    --peer <agent>", "with --loop, a peer iterations may consult read-only (repeatable)"},
@@ -76,7 +77,7 @@ func forkHelpText(p ui.Palette) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s — a throwaway clone handed to an agent; review and land it like a PR.\n\n", p.Bold("coop fork"))
-	fmt.Fprint(&b, "  Usage: coop fork <name> [target] | ls | review | merge | logs | rm | stop | open | path\n\n")
+	fmt.Fprint(&b, "  Usage: coop fork <name> [<agent>[:model][/effort][@account]|<preset>] | ls | review | merge | logs | rm | stop | open | path\n\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "  %s%s\n", pad(r.cmd, 34), r.desc)
 	}
@@ -91,9 +92,8 @@ func forkHelpText(p ui.Palette) string {
 	return b.String()
 }
 
-// forkctl binds the fork/fleet control plane to this run: the config, the runtime as detected so
-// far (the zero value is the honest "not yet"), and the three things internal/forkctl needs from
-// the process — runtime detection, the shared live-board driver, and the loop's cost telemetry.
+// forkctl binds the fork control plane to this run: the config, the runtime as detected so far
+// (the zero value is the honest "not yet"), plus runtime detection and loop cost telemetry.
 // One Control per command, so a verb that detects the runtime and a later step that tears a box
 // down with it see the same one.
 func (a *app) forkctl() *forkctl.Control {
@@ -104,8 +104,7 @@ func (a *app) forkctl() *forkctl.Control {
 			}
 			return a.rt, nil
 		},
-		RunWatchLoop: runWatchLoop,
-		ForkCost:     loop.WorkspaceCost,
+		ForkCost: loop.WorkspaceCost,
 	})
 }
 
@@ -134,7 +133,7 @@ func (a *app) cmdFork(args []string) (int, error) {
 	case "stop":
 		return fc.ForkStop(args[1:])
 	default:
-		// `coop fork <name> acp [agent]` — front the fork as an ACP agent (for Zed).
+		// `coop fork <name> acp [target]` — front the fork as an ACP agent (for Zed).
 		if len(args) >= 2 && args[1] == "acp" {
 			return a.forkACP(args[0], args[2:])
 		}
@@ -142,7 +141,7 @@ func (a *app) cmdFork(args []string) (int, error) {
 		// launch an agent. Catch a near-miss of a real subcommand and suggest it instead of creating.
 		if repo, err := box.ResolveRepo(a.cfg.RepoOverride); err == nil {
 			if verb, ok := forkVerbNearMiss(args, pathExists(forkspace.Workspace(repo, args[0]))); ok {
-				return 2, fmt.Errorf("unknown fork command %q — did you mean 'coop fork %s'? (give an agent, e.g. 'coop fork %s claude', to make a fork by that name)", args[0], verb, args[0])
+				return 2, fmt.Errorf("unknown fork command %q — did you mean 'coop fork %s'? (give a target or preset, e.g. 'coop fork %s claude', to make a fork by that name)", args[0], verb, args[0])
 			}
 		}
 		return a.forkCreate(args)
@@ -151,16 +150,17 @@ func (a *app) cmdFork(args []string) (int, error) {
 
 // forkVerbNearMiss reports the fork verb that a would-be fork name is a likely typo of, so cmdFork
 // can refuse it (with a suggestion) instead of silently cloning a stray fork. It stays quiet when the
-// name is already an existing fork, or when an explicit agent follows it — an agent is the deliberate
-// signal that args[0] really is a new fork name (`coop fork lss claude` creates `lss` on purpose).
+// name is already an existing fork, or when an explicit target/preset follows it — that positional
+// is the deliberate signal that args[0] really is a new fork name (`coop fork lss claude` creates
+// `lss` on purpose).
 func forkVerbNearMiss(args []string, forkExists bool) (string, bool) {
-	if forkExists || (len(args) >= 2 && agents.Valid(args[1])) {
+	if forkExists || (len(args) >= 2 && !strings.HasPrefix(args[1], "-")) {
 		return "", false
 	}
 	return nearestCommand(args[0], forkspace.VerbList())
 }
 
-// forkArgs is the parsed form of `coop fork <name> [agent] [flags]`.
+// forkArgs is the parsed form of `coop fork <name> [target|preset] [flags]`.
 type forkArgs struct {
 	name       string
 	agent      string
@@ -184,7 +184,7 @@ type forkArgs struct {
 func parseForkCreate(args []string) (forkArgs, error) {
 	fa := forkArgs{} // no implicit default — provider required (positional target or the preset lead)
 	if len(args) == 0 || args[0] == "" {
-		return fa, errors.New("usage: coop fork <name> [<agent>[:model][/effort][@account]] [--loop --tasks <path> [-d]]")
+		return fa, errors.New("usage: coop fork <name> [<agent>[:model][/effort][@account]|<preset>] [--loop --tasks <path> [-d]]")
 	}
 	fa.name = args[0]
 	rest := args[1:]
@@ -677,105 +677,6 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name),
 		RunID: sessionsvc.RunIDFromEnv(), CompanionRepositories: companionRepositories,
 	})
-}
-
-// cmdFleet manages a declarative fleet of forks from .agent/fleet.
-func (a *app) cmdFleet(args []string) (int, error) {
-	fc := a.forkctl()
-	sub := ""
-	if len(args) > 0 {
-		sub = args[0]
-	}
-	switch sub {
-	case "":
-		return groupHelp("fleet") // bare `coop fleet` shows help, not an error (see rule)
-	case "init":
-		return fc.FleetInit()
-	case "up":
-		return a.fleetUp(args[1:])
-	case "down":
-		return fc.FleetDown(args[1:])
-	case "watch":
-		if err := rejectArgs("fleet watch", args[1:]); err != nil {
-			return 2, err
-		}
-		return fc.FleetWatch()
-	case "prune":
-		return fc.FleetPrune(args[1:])
-	case "ls":
-		// A fleet is its forks — there's no fleet-level listing. Point at the two real views instead of
-		// a bare "unknown command" (rule: `ls` is the list verb, so it must lead somewhere useful).
-		return 2, fmt.Errorf("coop fleet has no %q — list the forks with `coop fork ls`, or watch the live board with `coop fleet watch`", sub)
-	default:
-		return 2, unknownErr("fleet command", sub, []string{"init", "up", "down", "watch", "prune"})
-	}
-}
-
-// fleetAbortErr formats the error when `fleet up` fails fast partway through. Failing fast (over a
-// silent partial fleet) is the intended behavior — but when forks already started, the error must
-// be loud about it and name the cleanup, so a half-started fleet isn't discovered hours later.
-func fleetAbortErr(name string, err error, started int) error {
-	if started > 0 {
-		return fmt.Errorf("fleet up: %q failed to start (%w) — aborted with %d fork(s) already running; stop them with 'coop fleet down' (or inspect via 'coop fork ls')", name, err, started)
-	}
-	return fmt.Errorf("fleet up: %q failed to start: %w", name, err)
-}
-
-func (a *app) fleetUp(args []string) (int, error) {
-	fc := a.forkctl()
-	prune, force, yes, err := forkctl.ParseFleetActionFlags("up", args)
-	if err != nil {
-		return 2, err
-	}
-	if prune && !yes && !ui.IsTerminal(os.Stdin) {
-		return 2, errors.New("refusing to prune forks without confirmation — re-run with --yes (no terminal to prompt)")
-	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
-		return -1, err
-	}
-	fleet, err := fc.LoadFleet(repo)
-	if err != nil {
-		return -1, err
-	}
-	// Validate per-fork profiles up front, so a typo fails loud here instead of silently in a
-	// detached worker's log. (A fork with no profile= falls back to the repo pool / all signed-in.)
-	unsigned := forkctl.UnsignedFleetAccounts(a.cfg, fleet)
-	if len(unsigned) > 0 {
-		return 2, fmt.Errorf("fleet up: these accounts aren't signed in: %s — run: coop login <provider>@<account>", strings.Join(unsigned, ", "))
-	}
-	// Bringing the fleet up is a natural reap point: clear this repo's boxes left behind by a coop
-	// that was killed, once, before any fork starts (each fork's own start finds the sweep done).
-	a.sweepOrphanBoxes(repo)
-	started := 0
-	for _, e := range fleet {
-		if pid := forkspace.RunningPid(repo, e.Name); pid != 0 {
-			ui.Note("fork %s already running (pid %d) — skipping", e.Name, pid)
-			continue // idempotent: re-running `fleet up` leaves live loops alone
-		}
-		tasks := e.Tasks // fleet paths are repo-relative; make them absolute for the fork
-		if !filepath.IsAbs(tasks) {
-			tasks = filepath.Join(repo, tasks)
-		}
-		// The who-runs is the fork's positional: its target, or its preset name (forkctl.ParseFleetYAML
-		// set exactly one). A run picks one, so pass it in the single who slot.
-		who := e.Agent
-		if who == "" {
-			who = e.Preset
-		}
-		forkArgs := []string{e.Name, who, "--loop", "-d", "--tasks", tasks}
-		if code, err := a.cmdFork(forkArgs); err != nil {
-			return code, fleetAbortErr(e.Name, err, started)
-		}
-		started++
-	}
-	ui.OK("%s detached — coop fork ls · coop fork logs -f", ui.Count(started, "fork"))
-	if prune {
-		if code, err := fc.PruneFleet(repo, force, yes); err != nil {
-			return code, err
-		}
-	}
-	return 0, nil
 }
 
 // runForkLoop seeds the fork's queue(s) from the tasks tree(s) — an explicit --tasks source or,

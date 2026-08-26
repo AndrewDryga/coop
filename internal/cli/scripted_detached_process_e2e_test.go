@@ -5,7 +5,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,11 +67,9 @@ func TestProviderScriptedDetachedForkLifecycle(t *testing.T) {
 				t.Fatalf("detached runtime labels = %#v, missing %q", run.Run, label)
 			}
 		}
-		for _, args := range [][]string{{"fork", "ls"}, {"fleet", "watch"}} {
-			status := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, args...)
-			if status.Err != nil || status.ExitCode != 0 || !strings.Contains(status.Stdout, name) || !strings.Contains(status.Stdout, "running") {
-				t.Fatalf("%v status = exit %d err %v\nstdout:\n%s\nstderr:\n%s", args, status.ExitCode, status.Err, status.Stdout, status.Stderr)
-			}
+		status := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "ls")
+		if status.Err != nil || status.ExitCode != 0 || !strings.Contains(status.Stdout, name) || !strings.Contains(status.Stdout, "running") {
+			t.Fatalf("fork ls status = exit %d err %v\nstdout:\n%s\nstderr:\n%s", status.ExitCode, status.Err, status.Stdout, status.Stderr)
 		}
 
 		stopped := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "stop", name)
@@ -100,15 +97,15 @@ func TestProviderScriptedDetachedForkLifecycle(t *testing.T) {
 	})
 }
 
-func TestProviderScriptedFleetPresetLifecycle(t *testing.T) {
+func TestProviderScriptedDetachedPresetLifecycle(t *testing.T) {
 	suite := newDirectProcessSuite(t)
 	resetForkProcessRepo(t, suite)
-	name, taskID := "fleet-rotation", "fleet-rotation-task"
+	name, taskID := "preset-rotation", "preset-rotation-task"
 	seedLoopProcessTask(t, suite.layout.Repo, taskID)
 	var targets []string
 	var attempts []loopProcessAttempt
 	for i, provider := range suite.providers {
-		target := loopRecoveryTarget(provider, "fleet-model-"+provider, "work")
+		target := loopRecoveryTarget(provider, "preset-model-"+provider, "work")
 		targets = append(targets, target)
 		result := "rate-limit"
 		if i == len(suite.providers)-1 {
@@ -116,23 +113,20 @@ func TestProviderScriptedFleetPresetLifecycle(t *testing.T) {
 		}
 		attempts = append(attempts, loopProcessAttempt{Target: target, Stage: "work", Result: result})
 	}
-	writeLoopRecoveryPreset(t, suite.layout.Repo, "fleet-all", targets)
-	fleet := fmt.Sprintf("forks:\n  %s:\n    tasks: .agent/tasks\n    agent: fleet-all\n", name)
-	if err := os.WriteFile(forkctl.FleetYAMLFile(suite.layout.Repo), []byte(fleet), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeLoopRecoveryPreset(t, suite.layout.Repo, "rotation-all", targets)
 	suite.reset(t, loopProcessScenario{
 		Version: 6, Provider: suite.providers[0], ProviderHomes: agents.Names(),
 		Loop: loopProcessPlan{TaskID: taskID, Attempts: attempts},
 	})
 
-	up := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fleet", "up")
-	if up.Err != nil || up.ExitCode != 0 {
-		t.Fatalf("fleet up = exit %d err %v\nstdout:\n%s\nstderr:\n%s", up.ExitCode, up.Err, up.Stdout, up.Stderr)
+	startArgs := []string{"fork", name, "rotation-all", "--loop", "--detach", "--tasks", filepath.Join(suite.layout.Repo, tasksRoot)}
+	started := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, startArgs...)
+	if started.Err != nil || started.ExitCode != 0 {
+		t.Fatalf("detached preset start = exit %d err %v\nstdout:\n%s\nstderr:\n%s", started.ExitCode, started.Err, started.Stdout, started.Stderr)
 	}
 	t.Cleanup(func() {
 		if pathExists(forkspace.PidPath(suite.layout.Repo, name)) {
-			_ = runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fleet", "down")
+			_ = runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "stop", name)
 		}
 	})
 	ready := awaitProcessEventCount(t, suite.layout.Trace, "provider", "ready", 1, 10*time.Second)
@@ -146,30 +140,30 @@ func TestProviderScriptedFleetPresetLifecycle(t *testing.T) {
 		}
 	}
 	if !slices.Equal(gotProviders, suite.providers) {
-		t.Fatalf("fleet preset provider order = %v, want %v\ntrace:\n%s", gotProviders, suite.providers, readProcessFile(t, suite.layout.Trace))
+		t.Fatalf("detached preset provider order = %v, want %v\ntrace:\n%s", gotProviders, suite.providers, readProcessFile(t, suite.layout.Trace))
 	}
 
-	second := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fleet", "up")
-	if second.Err != nil || second.ExitCode != 0 || !strings.Contains(second.Stderr, "already running") {
-		t.Fatalf("second fleet up = exit %d err %v\nstdout:\n%s\nstderr:\n%s", second.ExitCode, second.Err, second.Stdout, second.Stderr)
+	second := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, startArgs...)
+	if second.ExitCode == 0 || !strings.Contains(second.Stderr, "already has a loop running") {
+		t.Fatalf("duplicate detached preset start = exit %d err %v\nstdout:\n%s\nstderr:\n%s", second.ExitCode, second.Err, second.Stdout, second.Stderr)
 	}
 	if got := countProcessEvents(readProcessTrace(t, suite.layout.Trace), "provider", "ready"); got != 1 {
-		t.Fatalf("second fleet up launched another terminal provider: %d ready events", got)
+		t.Fatalf("duplicate start launched another terminal provider: %d ready events", got)
 	}
-	watch := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fleet", "watch")
-	if watch.Err != nil || watch.ExitCode != 0 || !strings.Contains(watch.Stdout, name) || !strings.Contains(watch.Stdout, "running") {
-		t.Fatalf("fleet watch = exit %d err %v\nstdout:\n%s\nstderr:\n%s", watch.ExitCode, watch.Err, watch.Stdout, watch.Stderr)
+	status := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "ls")
+	if status.Err != nil || status.ExitCode != 0 || !strings.Contains(status.Stdout, name) || !strings.Contains(status.Stdout, "running") {
+		t.Fatalf("fork ls = exit %d err %v\nstdout:\n%s\nstderr:\n%s", status.ExitCode, status.Err, status.Stdout, status.Stderr)
 	}
-	down := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fleet", "down")
-	if down.Err != nil || down.ExitCode != 0 || !strings.Contains(down.Stderr, "stopped 1 fork") {
-		t.Fatalf("fleet down = exit %d err %v\nstdout:\n%s\nstderr:\n%s", down.ExitCode, down.Err, down.Stdout, down.Stderr)
+	stopped := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "stop", name)
+	if stopped.Err != nil || stopped.ExitCode != 0 {
+		t.Fatalf("fork stop = exit %d err %v\nstdout:\n%s\nstderr:\n%s", stopped.ExitCode, stopped.Err, stopped.Stdout, stopped.Stderr)
 	}
 	awaitPathState(t, forkspace.PidPath(suite.layout.Repo, name), false)
 	awaitProcessGone(t, ready.PID)
 	assertRuntimeRegistryEmpty(t, suite)
-	again := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fleet", "down")
-	if again.Err != nil || again.ExitCode != 0 || !strings.Contains(again.Stderr, "stopped 0 forks") {
-		t.Fatalf("second fleet down = exit %d err %v\nstdout:\n%s\nstderr:\n%s", again.ExitCode, again.Err, again.Stdout, again.Stderr)
+	again := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "stop", name)
+	if again.Err != nil || again.ExitCode != 0 {
+		t.Fatalf("second fork stop = exit %d err %v\nstdout:\n%s\nstderr:\n%s", again.ExitCode, again.Err, again.Stdout, again.Stderr)
 	}
 	assertRuntimeRegistryEmpty(t, suite)
 
@@ -180,13 +174,13 @@ func TestProviderScriptedFleetPresetLifecycle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(orphan, "dirty.txt"), []byte("discard\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	unconfirmed := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fleet", "prune", "--force")
+	unconfirmed := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "rm", "prune-orphan", "--force")
 	if unconfirmed.ExitCode != 2 || !strings.Contains(unconfirmed.Stderr, "--yes") || !pathExists(orphan) {
-		t.Fatalf("unconfirmed fleet prune = exit %d err %v exists %v\nstderr:\n%s", unconfirmed.ExitCode, unconfirmed.Err, pathExists(orphan), unconfirmed.Stderr)
+		t.Fatalf("unconfirmed fork rm = exit %d err %v exists %v\nstderr:\n%s", unconfirmed.ExitCode, unconfirmed.Err, pathExists(orphan), unconfirmed.Stderr)
 	}
-	confirmed := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fleet", "prune", "--force", "--yes")
+	confirmed := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "rm", "prune-orphan", "--force", "--yes")
 	if confirmed.Err != nil || confirmed.ExitCode != 0 || pathExists(orphan) {
-		t.Fatalf("confirmed fleet prune = exit %d err %v exists %v\nstdout:\n%s\nstderr:\n%s", confirmed.ExitCode, confirmed.Err, pathExists(orphan), confirmed.Stdout, confirmed.Stderr)
+		t.Fatalf("confirmed fork rm = exit %d err %v exists %v\nstdout:\n%s\nstderr:\n%s", confirmed.ExitCode, confirmed.Err, pathExists(orphan), confirmed.Stdout, confirmed.Stderr)
 	}
 }
 

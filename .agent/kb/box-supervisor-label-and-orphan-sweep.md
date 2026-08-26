@@ -3,7 +3,7 @@ name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
 sources: [internal/box/sweep.go, internal/box/run.go, internal/cli/boxsweep.go, internal/cli/doctor.go, internal/runtime/runtime.go]
-updated: 2026-08-09
+updated: 2026-08-25
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
 CLIENT's promise, no Go `defer` runs, and no PID 1 inside the box can help (that limit, and why a
@@ -38,15 +38,15 @@ sweep has no such input, and adding one would resurrect the bug the label exists
 
 `box.ReapOrphanBoxes` removes by the dead supervisor's own exact label (`RemoveByLabels`), the same
 plumbing `coop fork stop` uses, so the removal can only reach containers carrying that identity AND
-that scope. It runs from `app.sweepOrphanBoxes` (memoized once per repo per process, since
-`fleet up` starts N forks through one app) at the entry points that already reap: loop start, fork
-start, `fleet up`, `coop build`/`update`'s recycle. Failure there is deliberately silent — the
+that scope. It runs from `app.sweepOrphanBoxes` (memoized once per repo per process) at the entry
+points that already reap: loop start, fork start, and `coop build`/`update`'s recycle. Failure there
+is deliberately silent — the
 command's own box work reports a broken runtime loudly, and Apple's `container` CLI has no label
 inspection at all, so it would otherwise print on every start. `coop doctor` is the reporting
 surface: count, ids, and the label evidence, outside its pass/fail tally, reaping nothing.
 
 Traps:
-- The sweep adds ONE runtime `ps` to loop/fork/fleet/build. The scripted process E2Es pin exact
+- The sweep adds ONE runtime `ps` to loop/fork/build. The scripted process E2Es pin exact
   runtime call counts, so those suites pass `sweepsOrphanBoxes` (see `assertDirectRunContract`); a
   command that grows any OTHER runtime call still fails the count.
 - The scripted fixture must answer `inspect --format {{json .Config.Labels}}` (it does, as the
@@ -56,4 +56,6 @@ Traps:
   exact-owner reap.
 
 ## Changelog
+- 2026-08-25 — removed Fleet from the current sweep-entry and runtime-call inventory after the
+  command family was retired; direct loop/fork/build entry points keep the same scoped reap.
 - 2026-08-09 — created with the supervisor label + sweep (verified against `internal/box/sweep_test.go`'s decision table and the scripted loop/fork E2Es).

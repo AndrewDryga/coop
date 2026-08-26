@@ -16,8 +16,8 @@ const orphanSweepTimeout = 10 * time.Second
 // sweepOrphanBoxes removes the boxes of THIS repo whose supervising host process is provably dead —
 // a coop killed by SIGKILL (or a reboot mid-run) never fires `--rm`, and nothing else watches the
 // box, so an orphan keeps a provider session burning tokens with no host-side observer. Cleanup is
-// pull-only, so it rides the entry points that already reap: loop start, `fork start`, `fleet up`,
-// and `coop build`'s recycle.
+// pull-only, so it rides the entry points that already reap: loop start, fork start, and `coop
+// build`'s recycle.
 //
 // Failure is silent by design. This is not the command the user ran: a broken runtime is about to
 // be reported loudly by that command's own box work, and a runtime with no label inspection at all
@@ -25,7 +25,7 @@ const orphanSweepTimeout = 10 * time.Second
 // of the sweep is reported on demand.
 func (a *app) sweepOrphanBoxes(repo string) {
 	if repo == "" || a.sweptRepos[repo] {
-		return // one sweep per repo per process: `fleet up` starts N forks through the same app
+		return // one sweep per repo per process
 	}
 	if a.sweptRepos == nil {
 		a.sweptRepos = map[string]bool{}

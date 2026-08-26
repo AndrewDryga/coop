@@ -1,16 +1,16 @@
 ---
 name: agent-instructions-use-in-box-capabilities
-description: "agent-facing instructions name in-box capabilities, never host-side `coop fork`/`fleet`"
+description: "agent-facing instructions name in-box capabilities, never host-side lifecycle commands"
 scope: agent-workflow
 sources: [AGENTS.md, internal/scaffold/scaffold.go]
 check: "none"
-updated: 2026-08-09
+updated: 2026-08-25
 ---
 
 # Agent-facing instructions use in-box capabilities only
 
 Instructions mounted into Claude, Codex, and Gemini run inside the coop box. They must
-not tell the agent to run host-side Coop commands such as `coop fork` or `coop fleet`:
+not tell the agent to run host-side Coop lifecycle commands such as `coop fork`:
 those commands are operator controls outside the isolated container, not capabilities the
 boxed agent can rely on.
 
@@ -24,7 +24,7 @@ human/operator layer; the boxed agent should use only its runtime's native tools
   agent homes.
 - Recommend native/runtime capabilities: subagents, task workers, goal trackers, batch or
   parallel read-only tool calls, and the repo task/log files.
-- Do not recommend `coop fork`, `coop fleet`, or other host-side lifecycle commands to
+- Do not recommend `coop fork` or other host-side lifecycle commands to
   agents. Those can stay in user/operator docs such as README command references.
 - Naming a host-side command in order to PROHIBIT it is fine (AGENTS.md's hands-off
   destroyers list does exactly this): the rule bars recommending host commands as
@@ -33,6 +33,8 @@ human/operator layer; the boxed agent should use only its runtime's native tools
   the closest safe fallback instead of inventing slash commands or APIs.
 
 ## Changelog
+- 2026-08-25 — removed the retired Fleet command from current examples and the repo's hands-off
+  list; the host-versus-box capability boundary is unchanged.
 - 2026-06-26 — created
 - 2026-07-11 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged

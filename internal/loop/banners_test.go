@@ -33,7 +33,7 @@ func TestLoopClosingBanner(t *testing.T) {
 	}
 }
 
-// The loop's exit code lets cron/fleet/CI branch without parsing stderr: a review-reopened queue is
+// The loop's exit code lets cron/CI branch without parsing stderr: a review-reopened queue is
 // a failure, 3 means only human-blocked work remains, and 0 means verified done.
 func TestLoopExitCode(t *testing.T) {
 	cases := []struct {

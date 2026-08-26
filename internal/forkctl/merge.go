@@ -435,9 +435,9 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
 	// Rebasing/deleting a fork whose loop is still mid-iteration corrupts the in-flight work and
-	// orphans the worker — refuse, as prune does. Stop the loop first.
+	// orphans the worker. Stop the loop first.
 	if len(runningForkNames(repo, []string{name})) > 0 {
-		return 1, fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or coop fleet down)", name, name)
+		return 1, fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s", name, name)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return -1, fmt.Errorf("%s: git fetch: %w", name, err)
@@ -496,7 +496,7 @@ func (c *Control) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 	// in-flight work and orphans the worker. Skip those with a notice and land the rest.
 	skip := map[string]bool{}
 	if live := runningForkNames(repo, names); len(live) > 0 {
-		ui.Info("skipping %s: %s — stop them (coop fleet down) to land", ui.Count(len(live), "running/cleanup-pending fork"), strings.Join(live, ", "))
+		ui.Info("skipping %s: %s — stop each with 'coop fork stop <name>' to land", ui.Count(len(live), "running/cleanup-pending fork"), strings.Join(live, ", "))
 		for _, n := range live {
 			skip[n] = true
 		}

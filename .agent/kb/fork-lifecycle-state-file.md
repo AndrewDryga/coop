@@ -3,7 +3,7 @@ name: fork-lifecycle-state-file
 description: one file (<repo>-forks/.coop/<name>.pid) holds four fork lifecycle states, and only pid+start-token — never file age — may decide that its owner is gone
 subsystem: fork
 sources: [internal/forkspace/state.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/processidentity/identity.go]
-updated: 2026-08-10
+updated: 2026-08-25
 ---
 Every fork's whole process lifecycle lives in ONE small file, `<repo>-forks/.coop/<name>.pid`, read
 and written through `forkspace.WorkerState` (`internal/forkspace/state.go`) — never by hand. Four
@@ -27,9 +27,9 @@ The FILE is `internal/forkspace`'s: paths (`StateDir`/`PidPath`/`LockPath`/`LogP
 (`LockState`/`TryLockState`), the wire format (`WorkerState`, `ParseWorkerState`, `Marshal`,
 `Read/WriteWorkerState`, `WritePid`, `ClaimState`, `ClearPidIfMine`), and the identity doctrine
 (`ProcessIdentityOf`, `OwnerProvablyDead`, `StateOwner`, `RunningPid`, `NeedsStop`). It is a leaf —
-no runtime, no `ui` — so `coop fork`, the fleet, and the sessions service read one contract.
+no runtime, no `ui` — so direct fork commands and the sessions service read one contract.
 
-SUPERVISION is `internal/cli`'s and stays there: `claimForkPid`/`claimForkPidUnlocked` and
+SUPERVISION is `internal/forkctl`'s: `claimForkPid`/`claimForkPidUnlocked` and
 `clearForkClaimUnlocked` (the start protocol, which WARNS on a reclaim), `detachForkLoop`,
 `recordStartedFork`, `forkStop`'s signalling/`waitForExit`/box reap, and `forkContainerOwner`. Rule
 of thumb: if it decides what to do to a PROCESS or a CONTAINER, or prints, it is supervision.
@@ -69,6 +69,8 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-08-25 — removed Fleet from the current contract inventory and corrected the supervision
+  owner to `internal/forkctl`; direct fork commands and sessions still share the same leaf state.
 - 2026-08-10 — supervision and the land moved OUT of `internal/cli` into the new
   `internal/forkctl` control plane (`fork_loop.go` → `supervise.go`, `fork_merge.go` → `merge.go`);
   the contract itself is unchanged and still lives in `internal/forkspace`. The one cli residue that

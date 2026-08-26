@@ -7,7 +7,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// loopExitCode is the machine-readable companion to loopClosingBanner so cron/fleet/CI can branch on
+// loopExitCode is the machine-readable companion to loopClosingBanner so cron/CI can branch on
 // the loop's outcome without parsing stderr prose: 1 when a final review left work actionable, 3
 // when work is blocked on a human decision and nothing else is actionable, and 0 only when the
 // queue is verified done. Other failures (1) and usage errors (2) surface from their own call sites.
@@ -47,7 +47,7 @@ func loopClosingBanner(cf tasks.TaskCounts, completed int) string {
 }
 
 // LoopInterruptedExitCode is the conventional SIGINT status a Ctrl-C'd run exits with, so a
-// cron/fleet caller can tell "you stopped it" from the queue verdicts loopExitCode reports.
+// cron/CI caller can tell "you stopped it" from the queue verdicts loopExitCode reports.
 const LoopInterruptedExitCode = 130
 
 func loopInterruptedBanner(cf tasks.TaskCounts) string {

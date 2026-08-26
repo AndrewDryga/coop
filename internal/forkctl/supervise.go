@@ -38,7 +38,7 @@ func ForkContainerOwner(repo, name string) string {
 }
 
 // claimForkPid atomically reserves a fork's pidfile BEFORE its worker starts, so two concurrent
-// detach attempts (a hand-run `fork -d` racing `fleet up`, or two of either) can't both pass a
+// detach attempts racing for the same fork can't both pass a
 // check-then-write and leave two loops racing one worktree/branch. O_EXCL fails if the file exists;
 // a live loop is refused, while dead/reused/pending state requires ForkStop to reap labels before a
 // new start. On success the file holds this process's own reservation until the worker replaces it.

@@ -75,8 +75,8 @@ var allowedEdges = map[string][]string{
 // belongs at the edges: everything else returns data and lets its caller print it. cli owns the
 // terminal outright; box narrates image builds and runs (ui.Info, ui.IsTerminal) and scaffold
 // narrates what it generated (ui.Bold, ui.Detail). tasks and forkctl are whole CLI verb families
-// extracted OUT of cli — they print their own tables, prompts, and live boards, so the terminal
-// came with them. loop is the strongest case of all: its output IS a multi-hour streaming
+// extracted OUT of cli — they print their own tables and prompts, and tasks owns its live board,
+// so the terminal came with them. loop is the strongest case of all: its output IS a multi-hour streaming
 // interface — a sticky live bar (ui.Region/ui.SetLiveSink) with the agent's own stdout scrolling
 // above it — and "return data and let the caller print it" cannot express an incremental render
 // that runs for twelve hours.

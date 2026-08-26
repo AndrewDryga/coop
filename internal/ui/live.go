@@ -133,8 +133,8 @@ func (r *Region) eraseLocked() {
 }
 
 // AltScreen drives a full-screen live view on the terminal's alternate buffer — the model
-// behind `coop fleet watch`. A bottom-pinned Region scrolls its top lines into scrollback on
-// every repaint once the content is taller than the window (the "coop fleet — N running" spam);
+// behind `coop tasks watch`. A bottom-pinned Region scrolls its top lines into scrollback on every
+// repaint once the content is taller than the window;
 // the alternate buffer has no scrollback to pollute, and Frame repaints from the top-left rather
 // than doing cursor-up math from the bottom, so an over-tall dashboard degrades to "shows what
 // fits" instead of orphaning its header. Enter switches to the alt buffer and hides the cursor;

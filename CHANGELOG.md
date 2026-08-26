@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fleet is removed in favor of direct detached fork loops.** Start each worker with `coop fork
+  <name> <target|preset> --loop -d --tasks <path>`; use `coop tasks split <n>` for mechanical queue
+  slices, `coop tasks watch` for merged progress, `coop fork ls`/`logs -f` for fork state and output,
+  `coop fork stop <name>` to stop one, `coop fork rm <name>` to remove one, and `coop fork merge
+  --all` to land all forks. Coop no longer reads `.agent/fleet.yaml`. Removing its manifest parser,
+  batch lifecycle, live board, adapter badges, duplicated credential/target resolution, and cast
+  leaves fork/session lifecycle ownership and the useful direct primitives unchanged.
+
 - **Fusion mode is removed; its useful pieces are the normal composition model.** Run a reusable
   orchestration recipe directly with `coop <preset>` or `coop acp <preset>`. For an ad-hoc second
   opinion, add repeatable `--peer <target>` flags to an agent, loop, fork, or ACP run. Preset

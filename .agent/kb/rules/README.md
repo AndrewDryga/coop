@@ -135,5 +135,5 @@ updated: <YYYY-MM-DD>                # last edit
 - [gate-is-one-recipe](gate-is-one-recipe.md) — a new check goes in `make check`; CI installs the tools and calls that target, never its own step list
 - [small-work-to-the-queue](small-work-to-the-queue.md) — ready work goes to `00_todo/`; only the genuinely large or unscoped goes to the backlog
 - [static-bounded-supervision](static-bounded-supervision.md) — supervised long commands keep output static and only a bounded excerpt in context
-- [agent-instructions-use-in-box-capabilities](agent-instructions-use-in-box-capabilities.md) — agent-facing instructions name in-box capabilities, never host-side `coop fork`/`fleet`
+- [agent-instructions-use-in-box-capabilities](agent-instructions-use-in-box-capabilities.md) — agent-facing instructions name in-box capabilities, never host-side lifecycle commands
 - [shell-guards-fail-closed](shell-guards-fail-closed.md) — a shell guard checks every command's status and fails CLOSED on ambiguity; a script that fails open says so in its header

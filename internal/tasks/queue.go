@@ -274,8 +274,8 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 		sub = rest[0]
 	}
 	if sub == "watch" {
-		// The live board watches the queue(s) themselves draining — task-centric, across however
-		// many are configured — unlike the per-fork `coop fleet watch`.
+		// The live board watches the queue(s) themselves draining, task-centric across however many
+		// are configured and including active forks.
 		if len(rels) == 0 {
 			return 2, errors.New("coop tasks watch: no task queue configured — set COOP_TASKS or pass --tasks <path>")
 		}
@@ -302,7 +302,7 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	}
 	if len(rels) > 1 {
 		// A monorepo can configure several queues (COOP_TASKS, or repeated --tasks) — the same set
-		// `coop loop`/`coop fleet` drain. The roll-ups span them all (each under a header) and the
+		// `coop loop` drains. The roll-ups span them all (each under a header) and the
 		// id-addressed commands find their task in whichever queue holds it; only the commands that
 		// CREATE into a queue (add, split) need one unambiguous target.
 		switch sub {

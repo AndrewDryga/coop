@@ -5,9 +5,9 @@ import "github.com/AndrewDryga/coop/internal/ui"
 // Host is what the `coop tasks`/`coop backlog` verb family needs from the CLI that owns the
 // command catalog and cannot own itself: the full help text for every command group (GroupHelp)
 // lives in internal/cli/help.go alongside every OTHER command's help, and the live-board driver
-// (RunWatchLoop) is shared with `coop fleet watch`'s own board — internal/cli keeps both because
-// they're genuinely cli-wide, not task-specific, the same reasoning sessionsvc/acpctl apply to
-// their own injected Host functions.
+// (RunWatchLoop) owns terminal and signal handling. internal/cli keeps both because they're
+// genuinely cli-wide, not task-specific, the same reasoning sessionsvc/acpctl apply to their own
+// injected Host functions.
 //
 // Unlike sessionsvc's Host, both fields are direct 1:1 assignments of an existing cli function
 // (cli's groupHelp/runWatchLoop match these signatures exactly) — no policy decision happens at
@@ -23,8 +23,7 @@ type Host struct {
 	GroupHelp func(group string) (int, error)
 
 	// RunWatchLoop drives the alternate-screen live board (enter/leave, signal handling, the poll
-	// ticker, the settled-debounce auto-exit) that `coop tasks watch` shares with `coop fleet
-	// watch` — see internal/cli/watch.go's doc comment for the full contract.
+	// ticker, and settled-debounce auto-exit); see internal/cli/watch.go for the full contract.
 	RunWatchLoop func(screen *ui.AltScreen, tick func(spin int) (frame []string, settled bool), done func()) (int, error)
 }
 

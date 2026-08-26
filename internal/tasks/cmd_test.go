@@ -33,7 +33,7 @@ func TestSlugify(t *testing.T) {
 	}
 	// A long title is hard-capped to a clean ASCII slug — no "…" ellipsis in a path,
 	// no dangling dash, ≤ 48 runes.
-	long := slugify("Folder-mode fleet split: distribute task folders across forks and worktrees")
+	long := slugify("Folder-mode queue split: distribute task folders across forks and worktrees")
 	if n := len([]rune(long)); n > 48 {
 		t.Errorf("long slug %q is %d runes, want ≤ 48", long, n)
 	}
@@ -43,7 +43,7 @@ func TestSlugify(t *testing.T) {
 	if strings.HasPrefix(long, "-") || strings.HasSuffix(long, "-") {
 		t.Errorf("long slug has a dangling dash: %q", long)
 	}
-	if !strings.HasPrefix(long, "folder-mode-fleet-split") {
+	if !strings.HasPrefix(long, "folder-mode-queue-split") {
 		t.Errorf("long slug lost its prefix: %q", long)
 	}
 }
@@ -929,11 +929,25 @@ func TestTasksFolderSplitCommand(t *testing.T) {
 	root := filepath.Join(repo, ".agent", "tasks")
 	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-01-a", "task.md"), "# a\n")
 	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-02-b", "task.md"), "# b\n")
-	if code, err := tasksFolderSplit(repo, root, []string{"2"}); code != 0 || err != nil {
+	var code int
+	var err error
+	out := captureStderr(t, func() { code, err = tasksFolderSplit(repo, root, []string{"2"}) })
+	if code != 0 || err != nil {
 		t.Fatalf("split 2: code=%d err=%v", code, err)
 	}
 	if !IsTaskDir(filepath.Join(repo, ".agent", "tasks.slice1")) || !IsTaskDir(filepath.Join(repo, ".agent", "tasks.slice2")) {
 		t.Error("split did not create both slice dirs")
+	}
+	for _, want := range []string{
+		"coop fork slice1 <target|preset> --loop -d --tasks .agent/tasks.slice1",
+		"coop fork slice2 <target|preset> --loop -d --tasks .agent/tasks.slice2",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("split output missing %q:\n%s", want, out)
+		}
+	}
+	if got := strings.Count(out, "run: coop fork slice"); got != 2 {
+		t.Errorf("split output has %d direct fork commands, want one per written slice (2):\n%s", got, out)
 	}
 	if code, _ := tasksFolderSplit(repo, root, []string{"0"}); code != 2 {
 		t.Errorf("split 0 should be a usage error (2), got %d", code)

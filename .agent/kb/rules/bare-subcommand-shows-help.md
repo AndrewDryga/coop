@@ -4,7 +4,7 @@ description: "a bare group prints help or its default view, never an empty-token
 scope: cli-grammar
 sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/tasks/queue.go]
 check: "none"
-updated: 2026-08-10
+updated: 2026-08-25
 ---
 
 # A bare subcommand group shows help, never an "unknown command \"\"" error
@@ -24,12 +24,14 @@ Bare `coop` prints help; a bare group should match that.
   for a non-empty, unrecognized token.
 - A group that has a *useful default view* may show that instead of help — the
   invariant is "never the empty-token error," not "always help." Current sweep
-  (2026-08-09): `fleet` and `sessions` → group help; `fork` → `forkHelp`; `tasks`,
+  (2026-08-25): `sessions` → group help; `fork` → `forkHelp`; `tasks`,
   `backlog`, `credentials`, and `presets` → their list. None emits the empty-token error.
 - Not easily lintable (it needs flow analysis of each dispatcher), so this stays a
   reviewed rule; check it whenever you add or touch a subcommand group.
 
 ## Changelog
+- 2026-08-25 — removed the retired Fleet group from the current dispatcher inventory; every
+  surviving group still avoids an empty-token error.
 - 2026-08-10 — path-only: the fork/fleet extraction moved both group dispatchers into
   `internal/cli/fork_cmd.go` (`cmdFork` → `forkHelp`, `cmdFleet` → `groupHelp("fleet")`). Both
   dispatchers deliberately STAYED in cli when the rest of the family left, so this rule's subject is

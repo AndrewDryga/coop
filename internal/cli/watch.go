@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	watchPoll     = 400 * time.Millisecond // how often a live board (fleet or tasks) re-reads its state
+	watchPoll     = 400 * time.Millisecond // how often a live board re-reads its state
 	watchIdleExit = 3                      // consecutive settled ticks before a board auto-exits
 )
 
-// runWatchLoop drives the scaffolding shared by `coop fleet watch` and `coop tasks watch`: the
+// runWatchLoop drives `coop tasks watch`'s terminal scaffolding: the
 // alternate screen (enter/leave), signal handling, the poll ticker, and the settled-debounce
 // auto-exit — with the final frame printed on the NORMAL screen via the LIFO-defer trick (the
 // finalFrame printer is registered before screen.Leave, so it runs after it). Each board injects its

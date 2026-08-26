@@ -77,7 +77,7 @@ type Config struct {
 	activeProfiles  map[string]string // per-run selected credential profile; AgentDir resolves to it
 	defaultProfiles map[string]string // per-agent default profile (from DefaultsFile), used when none is selected
 
-	activeModels   map[string]string // per-run EXPLICIT model (--model / fleet model=) — the top tier
+	activeModels   map[string]string // per-run explicit one-off model — the top tier
 	targetModels   map[string]string // the active pool target's model (credential@model), below explicit
 	fallbackModels map[string]string // standing default (a preset lead's model), below a target
 
@@ -407,7 +407,7 @@ func (c *Config) SetActiveProfile(agent, name string) {
 }
 
 // SetActiveModel selects the model a run of agent uses, overriding every other tier —
-// only an EXPLICIT choice lands here: the CLI's --model flag or a fleet model=. Empty
+// only an explicit one-off choice lands here. Empty
 // clears the selection, falling back to the lower tiers.
 func (c *Config) SetActiveModel(agent, model string) {
 	if c.activeModels == nil {
@@ -471,7 +471,7 @@ func (c *Config) AgentModelDefault(agent string) string {
 }
 
 // ModelFor resolves the model a run of agent should use, most specific first:
-//  1. the explicit per-run choice (--model / fleet model:),
+//  1. the explicit per-run choice,
 //  2. the active rotation target's model (a loop's `opus@work` — re-set on each rotation),
 //  3. the run's standing default (a preset lead's model),
 //  4. the agent-wide COOP_<AGENT>_MODEL.

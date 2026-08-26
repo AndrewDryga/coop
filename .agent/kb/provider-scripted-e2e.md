@@ -2,7 +2,7 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/supervise.go, internal/forkctl/fleet.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
 updated: 2026-08-25
 ---
 
@@ -34,12 +34,12 @@ during a fresh run. Merge assertions use only the newly landed commit range so a
 task trailer cannot settle unrelated current work.
 
 Detached coverage re-execs a representative real fork worker, rejects duplicate starts, and proves
-`fork ls`, non-TTY fleet watch, idempotent stop, confirmation-gated removal, and complete
-process/state cleanup. The registry-derived preset row supplies the all-provider proof: it
-rate-limits through all four providers before its terminal waiter, then exercises idempotent fleet
-up/down and confirmation-gated forced prune. The crash row runs the same fork name in
-two parent repositories, kills one worker, substitutes an unrelated reused PID, removes its
-workspace, and requires cleanup to select only the repo-scoped runtime owner. The fixture's
+`fork ls`, idempotent stop, confirmation-gated removal, and complete process/state cleanup. The
+registry-derived preset row supplies the all-provider proof: it
+rate-limits through all four providers before its terminal waiter, then exercises duplicate-start
+refusal, listing, idempotent stop, and confirmation-gated forced removal. The crash row runs the
+same fork name in two parent repositories, kills one worker, substitutes an unrelated reused PID,
+removes its workspace, and requires cleanup to select only the repo-scoped runtime owner. The fixture's
 test-only active-run records implement only exact label `ps` and force removal; stable kernel
 identity and process-group checks prevent the fixture from signaling an unrelated process.
 
@@ -115,6 +115,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-08-25 - retargeted the all-provider detached lifecycle from Fleet to one direct preset fork;
+  duplicate-start, listing, stop, guarded removal, and process/state cleanup remain covered
 - 2026-08-25 - removed the duplicate Fusion grammar from the composition matrix; the same dense
   all-provider proof now launches presets directly, while explicit-peer and role wiring remain.
 - 2026-08-10 - sources repointed: `controller.go`/`tasklease.go` moved to `internal/tasks/audit.go`/

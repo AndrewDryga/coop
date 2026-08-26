@@ -202,7 +202,7 @@ func (a *app) doctorReportOrphanBoxes() {
 	if len(survey.Orphans) == 0 {
 		fmt.Printf("  %s no orphaned boxes for this repo (%s checked)\n", ui.Dim("·"), ui.Count(survey.Checked, "coop box", "coop boxes"))
 	} else {
-		fmt.Printf("  %s %s\n", ui.Yellow("!"), ui.Yellow(fmt.Sprintf("%s — the coop that launched them is gone; they are reaped at the next loop, fork, fleet up, or build", ui.Count(len(survey.Orphans), "orphaned box", "orphaned boxes"))))
+		fmt.Printf("  %s %s\n", ui.Yellow("!"), ui.Yellow(fmt.Sprintf("%s — the coop that launched them is gone; they are reaped at the next loop, fork start, or build", ui.Count(len(survey.Orphans), "orphaned box", "orphaned boxes"))))
 		for _, orphan := range survey.Orphans {
 			fmt.Printf("      %s\n", ui.Dim(fmt.Sprintf("%s  supervisor pid %d (%s=%s)", orphan.ID, orphan.PID, box.LabelHost, orphan.Evidence)))
 		}

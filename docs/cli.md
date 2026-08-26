@@ -23,7 +23,7 @@ THE BOX
   coop shell                        an interactive shell in the box
 
 FORKS — review and land work like a PR
-  coop fork <name> [target]         open or re-enter a fork and run an agent
+  coop fork <name>                  open/re-enter; run a target or preset
   coop fork ls                      list this repo's forks
   coop fork review <name>           show a fork's review dossier + diff
   coop fork merge <name>            rebase the fork onto your branch and land it
@@ -34,12 +34,7 @@ FORKS — review and land work like a PR
   coop fork path <name>             print the fork's filesystem path
 
 UNATTENDED
-  coop loop [agent]                 work the queue(s) until done, then sign off
-  coop fleet init                   write the .agent/fleet.yaml template
-  coop fleet up                     start every fork's loop, detached
-  coop fleet down                   stop the fleet's running loops
-  coop fleet watch                  live dashboard of every fork's progress
-  coop fleet prune                  drop forks no longer in the fleet file
+  coop loop [<target|preset>]       work the queue(s) until done, then sign off
 
 TASKS — a folder-per-task queue in .agent/tasks/
   coop tasks ls                     show the queue, grouped by state
@@ -82,15 +77,15 @@ Docs    https://coop.dryga.com
 
 coop fork — a throwaway clone handed to an agent; review and land it like a PR.
 
-  Usage: coop fork <name> [target] | ls | review | merge | logs | rm | stop | open | path
+  Usage: coop fork <name> [<agent>[:model][/effort][@account]|<preset>] | ls | review | merge | logs | rm | stop | open | path
 
-  coop fork <name> [target|preset]  open or re-enter a fork; run an agent (claude:opus@work) or a preset
-  coop fork <name> <target|preset> --loop  loop the fork on a tasks folder (-d detaches)
+  coop fork <name> <target>         open or re-enter a fork with an agent target
+  coop fork <name> <preset>         open or re-enter a fork with an orchestration preset
   coop fork ls [--json]             list this repo's forks (--json adds per-workspace serve URLs)
-  coop fork logs [name]             tail a fork's loop log (no name: all forks)
+  coop fork logs [<name>]           tail a fork's loop log (no name: all forks)
   coop fork review <name>           dossier + diff (--stat, --tool, --open, --gate)
-  coop fork <name> acp [target]     front the fork as an ACP agent (for editors)
-  coop fork merge <name>            rebase onto your branch and land it (--all = fleet)
+  coop fork <name> acp <target>     front the fork as an ACP agent (for editors)
+  coop fork merge <name>            rebase onto your branch and land it (--all lands every fork)
   coop fork rm <name>               discard a fork (confirms; refuses unmerged/dirty without --force)
   coop fork open <name>             open the fork in your editor
   coop fork path <name>             print the fork's filesystem path
@@ -100,6 +95,7 @@ FLAGS (every short flag has a long form):
   -c, --continue  resume the prior session (the default on re-entry)
       --new       start a fresh agent session on re-entry
       --fresh     recreate the fork from scratch (confirms; refuses unmerged/dirty without --force)
+      --loop      work the fork's task queue until done instead of opening an interactive session
   -d, --detach    with --loop, run it in the background
   -t, --tasks     with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)
       --peer <agent>  with --loop, a peer iterations may consult read-only (repeatable)
@@ -187,8 +183,7 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
     coop loop <name>
     coop acp <name>
     coop fork <fork> <name> --loop
-  A fleet can name it per fork in .agent/fleet.yaml (agent: <name>). A target
-  (claude:opus@work) in that same slot runs the agent directly instead.
+  A target (claude:opus@work) in that same slot runs the agent directly instead.
 
   .agent/presets/frontier/preset.yaml:
 
@@ -344,36 +339,6 @@ coop acp <target|preset> — serve as an ACP agent over stdio (for editors).
   The log is size-capped and auto-rotated so it can't grow unbounded; it holds prompts
   and file contents, so treat it as sensitive.
 
-coop fleet — run a declarative fleet of forks from .agent/fleet.yaml.
-
-  Usage: coop fleet <init|up|down|watch|prune>
-
-  init           write a .agent/fleet.yaml template
-  up             start every fork in the fleet, looping its tasks, detached
-  down           stop the fleet's running loops
-  watch          live dashboard of every fork's progress (auto-exits when the fleet's
-                 done; Ctrl-C anytime). Task-centric view: coop tasks watch
-  prune          remove forks no longer in the fleet file (kept: running, dirty, or
-                 unmerged — pass --force to override that guard; deletion confirms)
-
-  prune requires --yes without a TTY. up and down take --prune, with optional
-  --force and --yes, to prune in the same step. --force never skips confirmation.
-
-  .agent/fleet.yaml is a forks: map — each fork needs tasks: (the tree that seeds its
-  loop) and agent: — the who-runs, either a TARGET (provider[:model][/effort][@account];
-  give each fork a DIFFERENT account so they run in parallel) or a PRESET NAME (its lead +
-  ladder drive the fork). A fork takes ONE account — a full rotation ladder lives in a preset:
-
-    forks:
-      core:
-        tasks: .agent/tasks.core
-        agent: frontier
-      perf:
-        agent: codex:gpt-5.5@work
-        tasks: .agent/tasks.perf
-
-  List forks: coop fork ls
-
 coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 
   Usage: coop tasks [--tasks <path>]... <command>
@@ -381,8 +346,7 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   ls [--all] [--todo|--in-progress|--blocked|--done]
                    list tasks by state, with counts (recent done capped; --all shows all). Pass one
                    or more state flags to show only those. Task ids link to the folder — click to open.
-  watch            live board: the queue + any active forks, deduped by id (auto-exits when done).
-                   Per-fork fleet view: coop fleet watch
+  watch            live board: the queue + any active forks, deduped by id (auto-exits when done)
   add [--project <name>] "<title>"
                    scaffold a task folder in todo (or fill it inline: --context/--acceptance/--approach/--subtask)
   claim <id>       claim a task before you start it (todo -> in_progress)
@@ -459,7 +423,7 @@ coop backlog — park the genuinely LARGE as task folders (.agent/tasks/xx_backl
   coop tasks): ls rolls up across them and rm/promote find the item in whichever queue holds it,
   while add needs a single --tasks.
 
-coop loop [agent] — work the task queue until done, then sign off.
+coop loop [<target|preset>] — work the task queue until done, then sign off.
 
   Usage: coop loop [<agent>[:model][/effort][@account,...] | <preset>] [--tasks <path>]... [--peer <peer>...] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail]
 

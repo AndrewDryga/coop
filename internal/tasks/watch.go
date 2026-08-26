@@ -35,8 +35,8 @@ var stateRank = map[string]int{StateTodo: 0, StateBlocked: 1, StateInProgress: 2
 // TasksWatch is the live `coop tasks watch` board: every task across the configured queue(s) AND
 // any active fork, merged into one view and deduped by id — so you see the whole backlog and who's
 // on what (in progress with the fork that claimed it, then todo, blocked), refreshed in place.
-// Unlike the per-fork fleet board, this is task-centric. It auto-exits only when everything is
-// drained; without a TTY it prints the list once (pipe-safe).
+// It auto-exits only when everything is drained; without a TTY it prints the list once
+// (pipe-safe).
 func TasksWatch(host Host, repo string, rels []string) (int, error) {
 	read := func() ([]watchSource, []mergedTask, int, int) {
 		var sources []watchSource
@@ -96,7 +96,7 @@ func TasksWatch(host Host, repo string, rels []string) (int, error) {
 
 	width := func() int { return ui.TermWidth(os.Stdout) }
 	screen := ui.NewAltScreen(os.Stdout, width)
-	sawActive, sawFork := false, false // the fleet's startup guard — see tasksWatchSettling
+	sawActive, sawFork := false, false // concurrent-fork startup guard — see tasksWatchSettling
 	tick := func(spin int) ([]string, bool) {
 		sources, merged, running, nForks := read()
 		c := mergedCounts(merged)
@@ -106,10 +106,10 @@ func TasksWatch(host Host, repo string, rels []string) (int, error) {
 			sawActive = true // a fork/loop is on it — work has started
 		}
 		if nForks > 0 {
-			sawFork = true // a fleet is in play, so an idle tick may be its startup window
+			sawFork = true // a fork exists, so an idle tick may be its startup window
 		}
 		// tasksWatchSettling holds the auto-exit a few ticks against a torn read and adds the startup
-		// guard so a just-launched fleet doesn't conclude "drained" before it claims.
+		// guard so just-launched forks don't conclude "drained" before one claims.
 		return frame, tasksWatchSettling(c, running, sawActive, sawFork)
 	}
 	return host.runWatchLoop(screen, tick, func() {
@@ -135,9 +135,9 @@ func tasksDrained(c TaskCounts) bool {
 }
 
 // tasksWatchSettling reports whether this tick counts toward auto-exit: the queue is drained AND no
-// fork is running, AND — mirroring the fleet board's sawRunning guard — either work has already been
+// fork is running, AND either work has already been
 // seen (sawActive) or no fork ever appeared (a plain local watch, nothing to wait for). The guard
-// stops a just-launched fleet, whose boxes are still spawning and whose queue reads idle for a tick,
+// stops just-launched forks, whose boxes are still spawning and whose queues read idle for a tick,
 // from concluding "drained" and exiting in its startup window (watchIdleExit is only ~1s of ticks).
 func tasksWatchSettling(c TaskCounts, running int, sawActive, sawFork bool) bool {
 	return tasksDrained(c) && running == 0 && (sawActive || !sawFork)

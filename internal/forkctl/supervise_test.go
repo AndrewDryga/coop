@@ -22,6 +22,32 @@ import (
 	containerruntime "github.com/AndrewDryga/coop/internal/runtime"
 )
 
+func TestComposeTarget(t *testing.T) {
+	cases := []struct {
+		agent, model, effort, credential, want string
+		wantErr                                bool
+	}{
+		{agent: "claude", want: "claude"},
+		{agent: "claude", model: "opus-4.8", want: "claude:opus-4.8"},
+		{agent: "claude", effort: "high", credential: "work", want: "claude/high@work"},
+		{agent: "gemini", model: "gemini-3.5-flash@work", want: "gemini:gemini-3.5-flash@work"},
+		{agent: "gemini", model: "gemini-3.5-flash@work", credential: "work", want: "gemini:gemini-3.5-flash@work"},
+		{agent: "gemini", model: "gemini-3.5-flash@work", credential: "personal", wantErr: true},
+	}
+	for _, c := range cases {
+		got, err := composeTarget(c.agent, c.model, c.effort, c.credential)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("composeTarget(%q, %q, %q, %q) = %q, want error", c.agent, c.model, c.effort, c.credential, got)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("composeTarget(%q, %q, %q, %q) = (%q, %v), want %q", c.agent, c.model, c.effort, c.credential, got, err, c.want)
+		}
+	}
+}
+
 func TestForkStopMessages(t *testing.T) {
 	repo := t.TempDir()
 	a := &Control{cfg: &config.Config{RepoOverride: repo}}

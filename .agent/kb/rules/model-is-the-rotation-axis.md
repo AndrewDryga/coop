@@ -4,7 +4,7 @@ description: "rotation walks an `agent:` ladder of targets; accounts are a suffi
 scope: cli-grammar
 sources: [internal/cli/target.go, internal/preset/preset.go, internal/sessionsvc/service.go]
 check: "none"
-updated: 2026-08-10
+updated: 2026-08-25
 ---
 
 # Model is the one axis: rotation walks an `agent:` ladder of targets, not a pool
@@ -17,8 +17,8 @@ suffix on the model, never their own axis.
   first, then the rest); a pinned `provider:model@account` is one rung.
 - Roles carry a single `agent:` target and NO credentials — a role runs on its agent's
   default account.
-- A fleet fork takes a single `agent:` target (or a `preset:` for a full ladder) — never a
-  plural list inline.
+- A direct fork launch takes one positional target or preset; a preset supplies its full lead
+  ladder and roles. There is no fork-specific target schema.
 - `.agent/loop.yaml` steps (preflight/work/between/review) each take an `agent:` ladder whose
   rungs are targets **or preset names** (a preset rung brings its own lead ladder + roles).
 - The launch names the target positionally: `coop claude:opus@work`. The old `--model` and
@@ -49,6 +49,8 @@ bare model is marked-default account first, then the rest alphabetically (`accou
 [[credentials-not-profiles]] for the user-facing naming.
 
 ## Changelog
+- 2026-08-25 — removed the Fleet-only config rule; direct fork launches now reuse the positional
+  target-or-preset grammar instead of carrying an orchestration-specific schema.
 - 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).
 - 2026-07-03 — created
 - 2026-07-11 — revised

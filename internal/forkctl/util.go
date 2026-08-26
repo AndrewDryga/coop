@@ -3,12 +3,9 @@ package forkctl
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
-	agents "github.com/AndrewDryga/coop/internal/agent"
-	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -17,35 +14,33 @@ import (
 // make, and for the same reason: a `pathExists` or a `padRight` is not an API, and an export would
 // make internal/cli a dependency of everything that formats a table.
 
-func fileExists(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && !fi.IsDir()
-}
-
 func pathExists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
 }
 
-// isTargetHead reports whether s begins with a registered provider (so it names an agent run, not a
-// preset). internal/cli owns the full who-runs grammar; the fleet file only needs this one test, to
-// classify a fork's `agent:` as a target or a preset name.
-func isTargetHead(s string) bool {
-	head := strings.TrimSpace(s)
-	provider := head
-	if i := strings.IndexAny(head, ":/@"); i >= 0 {
-		provider = head[:i]
+// composeTarget rebuilds the positional target passed to a detached fork worker from the
+// pieces parsed by the parent. A model may carry the account itself; contradictory sources fail.
+func composeTarget(agent, model, effort, credential string) (string, error) {
+	modelPart, acctInModel, hasAt := strings.Cut(model, "@")
+	acct := credential
+	if hasAt && acctInModel != "" {
+		if credential != "" && credential != acctInModel {
+			return "", fmt.Errorf("account set twice: model %q pins @%s but credential is %q", model, acctInModel, credential)
+		}
+		acct = acctInModel
 	}
-	return agents.Valid(provider)
-}
-
-// paintCount renders a count, applying paint only when it's nonzero so a zero stays plain — a
-// "0 blocked" shouldn't read as an alarm.
-func paintCount(v int, paint func(string) string) string {
-	if v > 0 {
-		return paint(strconv.Itoa(v))
+	target := agent
+	if modelPart != "" {
+		target += ":" + modelPart
 	}
-	return strconv.Itoa(v)
+	if effort != "" {
+		target += "/" + effort
+	}
+	if acct != "" {
+		target += "@" + acct
+	}
+	return target, nil
 }
 
 // truncate shortens s to n runes, marking elision with an ellipsis.
@@ -145,18 +140,3 @@ func hasYes(args []string) bool {
 	}
 	return false
 }
-
-// progressLine is a queue's at-a-glance state: done/total (done greened when nonzero), a blocked
-// tally only when there is one, and the task being worked.
-func progressLine(c tasks.TaskCounts, activity string) string {
-	s := fmt.Sprintf("%s/%d done", paintCount(c.Done, ui.Green), c.Total())
-	if c.Blocked > 0 {
-		s += fmt.Sprintf(" · %s blocked", paintCount(c.Blocked, ui.Red))
-	}
-	if activity != "" {
-		s += " · now: " + truncate(activity, progressActivityWidth)
-	}
-	return s
-}
-
-const progressActivityWidth = 48

@@ -2,9 +2,9 @@
 name: usage-placeholder-style
 description: "one frozen `<angle>` lexicon for every usage string and error hint"
 scope: cli-grammar
-sources: [internal/cli/help.go]
+sources: [internal/cli/help.go, internal/cli/fork_cmd.go]
 check: "none"
-updated: 2026-08-09
+updated: 2026-08-25
 ---
 
 # One frozen lexicon for usage placeholders
@@ -17,6 +17,9 @@ using this fixed lexicon — so a value never reads `m` here and `<m>` there:
 | a coding agent | `<agent>` (or the literal `claude\|codex\|gemini\|grok`) |
 | a credential name | `<name>` (a bare arg) or `<credential>` (the slot in `coop credentials <agent> <credential> …`) |
 | a model | `<model>` |
+| a target | `<target>` |
+| a preset name | `<preset>` |
+| a target-or-preset slot | `<target|preset>` |
 | a filesystem path (dir or file) | `<path>` |
 | a task id | `<id>` |
 | a count | `<n>` |
@@ -37,6 +40,8 @@ the CLI read as several tools. A user shouldn't have to learn that `m` and `<mod
 See also [[help-output-style]].
 
 ## Changelog
+- 2026-08-25 — added the target/preset placeholders used by every launch surface and normalized
+  the changed fork/loop synopses to keep values inside angle brackets.
 - 2026-07-02 — created
 - 2026-07-11 — revised
 - 2026-08-06 — card metadata added; corrected the stale conformance claim — TestCLIConformance landed, but it covers ls/rm/help rows, NOT the placeholder lexicon

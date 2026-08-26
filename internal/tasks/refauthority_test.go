@@ -346,7 +346,7 @@ func TestLockRefAuthorityRefusesConcurrentHolder(t *testing.T) {
 	release2()
 }
 
-// The fleet property matters here too: a coordinated regression that pins a worktree's ref
+// The parallel-fork property matters here too: a coordinated regression that pins a worktree's ref
 // authority must never block a DIFFERENT fork's completion.
 func TestLockRefAuthorityKeepsSeparateWorktreesParallel(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}

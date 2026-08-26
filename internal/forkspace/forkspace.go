@@ -12,8 +12,8 @@
 // It is deliberately a leaf: paths, names, files, flock, git, and process identity — no
 // container runtime, no terminal output, no command wiring. Worker SUPERVISION (signalling a
 // worker, killing it, reaping its box, orchestrating a detach) reads this contract but lives in
-// internal/cli, so the fork commands, the fleet, and the sessions service can share one layout
-// without any of them owning it.
+// internal/forkctl, so the fork commands and sessions service can share one layout without either
+// owning it.
 package forkspace
 
 import (
@@ -36,14 +36,9 @@ var verbs = map[string]bool{
 	"logs": true, "stop": true, "path": true, "acp": true,
 }
 
-// Reserved reports whether name is off-limits for a fork (ValidName refuses it), so no fork
-// can shadow a subcommand. It's verbs plus "watch" (reserved so a fork can't be confused with the
-// fleet-level `coop fleet watch`). Kept separate from verbs so "watch" never leaks into a
-// did-you-mean suggestion for a command that doesn't exist on `coop fork`.
+// Reserved reports whether name is off-limits for a fork (ValidName refuses it), so no fork can
+// shadow a subcommand.
 func Reserved(name string) bool {
-	if name == "watch" {
-		return true
-	}
 	return verbs[name]
 }
 
