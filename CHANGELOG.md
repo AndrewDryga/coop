@@ -85,7 +85,10 @@
   semantically: Coop removes only
   byte-preservable canonical `[mcp_servers.*]` tables and refuses dotted, quoted, inline, or other
   alternate declarations before changing any scoped agent home, leaving the configured shared
-  `COOP_MCP_FILE` as the sole MCP authority.
+  `COOP_MCP_FILE` as the sole MCP authority. Remote sessions now cross the same canonical snapshot
+  boundary before changing private state and fail the turn before child launch when an active MCP
+  authority or adapter projection is invalid, instead of warning and silently answering without
+  tools.
 
 - **Remote ACP uses the editor's existing SSH transport instead of a Coop TCP protocol.** Zed
   Remote Development can run `coop acp <target>` beside the remote repository, while a custom

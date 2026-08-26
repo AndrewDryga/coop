@@ -221,7 +221,9 @@ provider credential. This lets an operator run
 the daemon under a dedicated least-privilege Coop configuration, for example an observe-only Emisar
 MCP credential, without mounting the shared provider home. These files apply to every policy served
 by that daemon; use a separate state root/socket and dedicated Coop configuration for a distinct
-authority tier. API callers cannot replace or select them.
+authority tier. API callers cannot replace or select them. MCP uses the same canonical-path,
+regular-file, 4 MiB, and ambiguity checks as an ordinary box; Coop captures it before changing
+private session state, and an unsafe active authority fails the turn before the ACP child starts.
 
 ## Run
 

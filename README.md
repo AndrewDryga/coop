@@ -849,7 +849,10 @@ them would require rewriting the rest of your config.
 A remote session is the exception: its ACP adapter takes no flags, so `--mcp-config`
 never reaches Claude there and coop hands the same servers to the session directly,
 resolving `bearer_token_env_var` into an `Authorization` header on the way (ACP carries
-headers, not env-var names). Nothing to configure — it is the same `mcp.json`.
+headers, not env-var names). Coop resolves and validates the source before changing private
+session state, then hands the adapter only the captured bytes; an unsafe or ambiguous active
+authority stops the turn before its child starts. Nothing to configure — it is the same
+`mcp.json`.
 
 An `env` block on a command server (`github` above) reaches that server under every
 agent, verbatim — values are literal strings, no `$VAR` substitution. To keep a token

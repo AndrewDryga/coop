@@ -46,6 +46,9 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-26 — **+1 edge: `sessionsvc → mcp`.** Remote-session credential projection now uses the
+  same validated immutable MCP snapshot as ordinary boxes; the direct leaf edge prevents
+  `sessionsvc` from reopening a mutable source or hiding validation behind an adapter.
 - 2026-08-26 — **+1 edge: `box → mcp`.** Box assembly now captures and validates one immutable
   per-run MCP snapshot before runtime inspection, then points every adapter renderer and Claude's
   direct read-only mount at those same bytes. `mcp` remains a leaf; the direct edge keeps the

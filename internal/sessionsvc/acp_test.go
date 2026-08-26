@@ -17,12 +17,14 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 )
@@ -327,6 +329,322 @@ func TestAnAgentWithAGeneratedMCPConfigIsHandedNoACPServers(t *testing.T) {
 	}
 	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != "[]" {
 		t.Fatalf("codex session/new mcpServers = %s, want an empty list", got)
+	}
+}
+
+func TestRemoteSessionMCPRejectsInvalidAuthorityBeforeProjectionOrChild(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "malformed", body: `{`, want: "parsing"},
+		{name: "duplicate", body: `{"mcpServers":{},"mcpServers":{"x":{"command":"true"}}}`, want: "duplicate JSON object key"},
+		{name: "case alias", body: `{"MCPServers":{"x":{"command":"true"}}}`, want: "canonical spelling"},
+		{name: "ambiguous auth", body: `{"mcpServers":{"x":{"url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer inline"},"bearer_token_env_var":"TOKEN"}}}`, want: "one Authorization source"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newSessionACPFixture(t, "normal", "claude@work")
+			source := filepath.Join(fixture.source, "mcp.json")
+			if err := os.WriteFile(source, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			turn := fixture.submit(t, "must not launch")
+			result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Run error = %v, want invalid MCP refusal containing %q", err, tc.want)
+			}
+			if result.State != session.TurnFailed || result.ErrorCode != sessionACPCredentialError {
+				t.Fatalf("failed MCP turn = %+v", result)
+			}
+			if result.ErrorDetail != "shared MCP config is invalid" || strings.Contains(result.ErrorDetail, fixture.source) {
+				t.Fatalf("durable MCP error detail = %q, want generic path-free detail", result.ErrorDetail)
+			}
+			assertNoSessionMCPLaunchOrProjection(t, fixture)
+			if after, readErr := os.ReadFile(source); readErr != nil || string(after) != tc.body {
+				t.Fatalf("rejected MCP source changed = (%q, %v), want %q", after, readErr, tc.body)
+			}
+		})
+	}
+}
+
+func TestRemoteSessionMCPRejectsFIFOAndCredentialHomeSource(t *testing.T) {
+	t.Run("fifo", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "normal", "claude@work")
+		source := filepath.Join(fixture.source, "mcp.json")
+		if err := os.Remove(source); err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Mkfifo(source, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		turn := fixture.submit(t, "must not block")
+		type runResult struct {
+			turn session.Turn
+			err  error
+		}
+		finished := make(chan runResult, 1)
+		ctx := contextWithTurnDeadline(t)
+		go func() {
+			result, err := fixture.runner.Run(ctx, fixture.session, turn)
+			finished <- runResult{turn: result, err: err}
+		}()
+		var outcome runResult
+		select {
+		case outcome = <-finished:
+		case <-time.After(2 * time.Second):
+			// If a regression changed the reader back to a blocking FIFO open, give it a writer so
+			// the test process can finish after reporting the bounded failure.
+			unblock, _ := os.OpenFile(source, os.O_RDWR|syscall.O_NONBLOCK, 0)
+			if unblock != nil {
+				_ = unblock.Close()
+			}
+			t.Fatal("FIFO MCP source blocked session startup")
+		}
+		result, err := outcome.turn, outcome.err
+		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("FIFO Run error = %v, want regular-file refusal", err)
+		}
+		if result.ErrorCode != sessionACPCredentialError {
+			t.Fatalf("FIFO turn error code = %s", result.ErrorCode)
+		}
+		assertNoSessionMCPLaunchOrProjection(t, fixture)
+	})
+
+	t.Run("selected credential home", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "normal", "claude@work")
+		source := filepath.Join(fixture.source, "claude", "profiles", "work", "shared-mcp.json")
+		body := []byte(`{"mcpServers":{"x":{"command":"true"}}}`)
+		if err := os.WriteFile(source, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fixture.runner.sourceCfg.MCPFile = source
+		turn := fixture.submit(t, "must not read agent-owned authority")
+		result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+		if err == nil || !strings.Contains(err.Error(), "inside selected credential home") {
+			t.Fatalf("credential-home Run error = %v", err)
+		}
+		if result.ErrorCode != sessionACPCredentialError {
+			t.Fatalf("credential-home turn error code = %s", result.ErrorCode)
+		}
+		if result.ErrorDetail != "shared MCP source is unsafe" || strings.Contains(result.ErrorDetail, fixture.source) {
+			t.Fatalf("durable MCP source error detail = %q, want generic path-free detail", result.ErrorDetail)
+		}
+		assertNoSessionMCPLaunchOrProjection(t, fixture)
+		if after, readErr := os.ReadFile(source); readErr != nil || !bytes.Equal(after, body) {
+			t.Fatalf("credential-home MCP source changed = (%q, %v)", after, readErr)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		kind string
+		set  func(*testing.T, *sessionACPFixture) string
+	}{
+		{
+			name: "session workspace",
+			kind: "inside session workspace",
+			set: func(_ *testing.T, fixture *sessionACPFixture) string {
+				return filepath.Join(fixture.session.Workspace, "shared-mcp.json")
+			},
+		},
+		{
+			name: "session workspace through parent symlink",
+			kind: "inside session workspace",
+			set: func(t *testing.T, fixture *sessionACPFixture) string {
+				link := filepath.Join(t.TempDir(), "workspace")
+				if err := os.Symlink(fixture.session.Workspace, link); err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Join(link, "shared-mcp.json")
+			},
+		},
+		{
+			name: "companion workspace",
+			kind: "inside session companion workspace",
+			set: func(t *testing.T, fixture *sessionACPFixture) string {
+				workspace := t.TempDir()
+				fixture.session.Companions = []session.CompanionRepository{{
+					Name: "docs", Workspace: workspace, BaseCommit: strings.Repeat("a", 40),
+				}}
+				return filepath.Join(workspace, "shared-mcp.json")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newSessionACPFixture(t, "normal", "claude@work")
+			source := tc.set(t, fixture)
+			body := []byte(`{"mcpServers":{"x":{"command":"true"}}}`)
+			if err := os.WriteFile(source, body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			fixture.runner.sourceCfg.MCPFile = source
+			turn := fixture.submit(t, "must not trust agent-writable MCP")
+			result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+			if err == nil || !strings.Contains(err.Error(), tc.kind) {
+				t.Fatalf("Run error = %v, want %q", err, tc.kind)
+			}
+			if result.ErrorCode != sessionACPCredentialError {
+				t.Fatalf("turn error code = %s", result.ErrorCode)
+			}
+			if result.ErrorDetail != "shared MCP source is unsafe" || strings.Contains(result.ErrorDetail, source) {
+				t.Fatalf("durable workspace MCP error detail = %q, want generic path-free detail", result.ErrorDetail)
+			}
+			assertNoSessionMCPLaunchOrProjection(t, fixture)
+			if after, readErr := os.ReadFile(source); readErr != nil || !bytes.Equal(after, body) {
+				t.Fatalf("workspace MCP source changed = (%q, %v)", after, readErr)
+			}
+		})
+	}
+}
+
+func TestRemoteSessionMCPUsesResolvedCapturedBytes(t *testing.T) {
+	t.Run("parent retarget", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "normal", "claude@work")
+		targetA, targetB := t.TempDir(), t.TempDir()
+		bodyA := []byte(`{"mcpServers":{"before":{"command":"true"}}}`)
+		bodyB := []byte(`{"mcpServers":{"after":{"command":"false"}}}`)
+		for path, body := range map[string][]byte{
+			filepath.Join(targetA, "mcp.json"): bodyA,
+			filepath.Join(targetB, "mcp.json"): bodyB,
+		} {
+			if err := os.WriteFile(path, body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		link := filepath.Join(t.TempDir(), "authority")
+		if err := os.Symlink(targetA, link); err != nil {
+			t.Fatal(err)
+		}
+		fixture.runner.sourceCfg.MCPFile = filepath.Join(link, "mcp.json")
+		fixture.runner.readMCPSnapshot = func(resolved string) ([]byte, bool, error) {
+			resolvedInfo, resolvedErr := os.Stat(resolved)
+			targetInfo, targetErr := os.Stat(filepath.Join(targetA, "mcp.json"))
+			if resolvedErr != nil || targetErr != nil || !os.SameFile(resolvedInfo, targetInfo) {
+				t.Fatalf("resolved MCP source = %q, want target A; errors=(%v, %v)", resolved, resolvedErr, targetErr)
+			}
+			if err := os.Remove(link); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(targetB, link); err != nil {
+				t.Fatal(err)
+			}
+			return mcp.ReadValidatedSnapshot(resolved)
+		}
+		projection := projectSessionTestCredentials(t, fixture)
+		defer projection.remove()
+		if got := readFile(t, filepath.Join(fixture.private, "mcp.json")); got != string(bodyA) {
+			t.Fatalf("projected MCP after parent retarget = %q, want target A", got)
+		}
+	})
+
+	t.Run("source mutation after capture", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "normal", "claude@work")
+		source := filepath.Join(fixture.source, "mcp.json")
+		before := []byte(`{"mcpServers":{"before":{"command":"true"}}}`)
+		after := []byte(`{"mcpServers":{"after":{"command":"false"}}}`)
+		if err := os.WriteFile(source, before, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fixture.runner.readMCPSnapshot = func(resolved string) ([]byte, bool, error) {
+			captured, active, err := mcp.ReadValidatedSnapshot(resolved)
+			if err == nil {
+				err = os.WriteFile(resolved, after, 0o600)
+			}
+			return captured, active, err
+		}
+		projection := projectSessionTestCredentials(t, fixture)
+		defer projection.remove()
+		if got := readFile(t, filepath.Join(fixture.private, "mcp.json")); got != string(before) {
+			t.Fatalf("projected MCP after source mutation = %q, want captured bytes", got)
+		}
+		if got := readFile(t, source); got != string(after) {
+			t.Fatalf("source mutation did not run = %q", got)
+		}
+	})
+}
+
+func TestRemoteSessionMCPMissingAndEmptyAreInert(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		missing bool
+	}{
+		{name: "missing", missing: true},
+		{name: "empty", body: `{"mcpServers":{}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newSessionACPFixture(t, "normal", "claude@work")
+			source := filepath.Join(fixture.source, "mcp.json")
+			if tc.missing {
+				if err := os.Remove(source); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(source, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			turn := fixture.submit(t, "run without tools")
+			if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn); err != nil {
+				t.Fatal(err)
+			}
+			if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != "[]" {
+				t.Fatalf("inert session/new mcpServers = %s, want []", got)
+			}
+		})
+	}
+}
+
+func TestRemoteSessionMCPAdapterErrorStopsBeforeChild(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal", "claude@work")
+	if err := os.MkdirAll(fixture.private, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.private, "mcp.json"), []byte(`{"mcpServers":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := fixture.runner.startChildWithRunID(
+		contextWithTurnDeadline(t), fixture.session, sessionTurnRunID(fixture.session.ID, "adapter-error"), fixture.private,
+	)
+	if err == nil || !strings.Contains(err.Error(), "private MCP projection is invalid") {
+		t.Fatalf("startChildWithRunID error = %v, want MCP projection refusal", err)
+	}
+	if pathExists(fixture.childLog) || pathExists(fixture.runtimeLog) {
+		t.Fatal("invalid private MCP reached the child or runtime")
+	}
+}
+
+func projectSessionTestCredentials(t *testing.T, fixture *sessionACPFixture) *sessionACPProjection {
+	t.Helper()
+	target, err := agents.ParseTarget(fixture.session.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, ok := agents.Get(target.Provider)
+	if !ok {
+		t.Fatalf("test target provider %q is unavailable", target.Provider)
+	}
+	projection, err := fixture.runner.projectCredentials(fixture.session, target, agent, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return projection
+}
+
+func assertNoSessionMCPLaunchOrProjection(t *testing.T, fixture *sessionACPFixture) {
+	t.Helper()
+	for _, path := range []string{fixture.childLog, fixture.envLog, fixture.runtimeLog} {
+		if pathExists(path) {
+			t.Fatalf("rejected MCP reached launch log %s", path)
+		}
+	}
+	if pathExists(fixture.private) {
+		t.Fatalf("rejected MCP created private session state %s", fixture.private)
+	}
+	for _, name := range []string{"env", "mcp.json", "INSTRUCTIONS.md"} {
+		if pathExists(filepath.Join(fixture.private, name)) {
+			t.Fatalf("rejected MCP mutated private projection %s", name)
+		}
 	}
 }
 

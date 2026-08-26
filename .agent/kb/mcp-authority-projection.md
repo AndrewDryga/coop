@@ -2,7 +2,7 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/box/auth.go, internal/box/run.go, internal/consult/wrapper.go, internal/preset/wrapper.go]
+sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/box/auth.go, internal/box/run.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
 updated: 2026-08-26
 ---
 
@@ -26,6 +26,13 @@ could change across a parent symlink; cleaning such a path before resolution is 
 proof. Snapshot capture uses the validated resolved path, so a later parent-symlink retarget cannot
 change which file the run reads.
 
+Remote-session projection crosses that boundary before changing its private config tree. It rejects
+an authority inside the agent-exposed primary/companion workspaces, selected credential profile, or
+private session state, copies only the captured bytes, and treats adapter rendering errors as
+credential-projection failures before the ACP child starts. Missing and server-empty authorities
+remain intentionally inert; malformed or ambiguous active configuration never degrades into a
+tool-free answer.
+
 Credential scope is not proof of command consumption. `credentialScope` answers whose login may be
 mounted, while `nestedAgentCommand` answers whether an explicit peer or consult/delegate/degraded
 native role can actually spawn that provider CLI. The raw snapshot mount exists only for an outer
@@ -40,6 +47,8 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-08-26 — routed remote ACP session projection through the same canonical snapshot and made
+  active-adapter errors fail before child launch
 - 2026-08-26 — centralized shared/native host reads behind the bounded regular-file boundary and
   moved box source-isolation validation before snapshot capture
 - 2026-08-26 — created after the v9 range review found that Claude's direct command received the

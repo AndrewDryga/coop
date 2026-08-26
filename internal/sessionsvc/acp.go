@@ -27,6 +27,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
+	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 )
@@ -101,9 +102,12 @@ type sessionTurnRunner struct {
 	executable string
 	host       Host
 	command    sessionACPCommand
-	warmMu     sync.Mutex
-	warm       map[string]*sessionWarmExecution
-	warming    int
+	// readMCPSnapshot is the shared authority boundary; nil uses mcp.ReadValidatedSnapshot.
+	// Tests replace it only to make source-retarget timing deterministic.
+	readMCPSnapshot func(string) ([]byte, bool, error)
+	warmMu          sync.Mutex
+	warm            map[string]*sessionWarmExecution
+	warming         int
 	// Rate-limit cooldowns per session, so a rung limited on one turn is still skipped on the
 	// next. Deliberately in memory: the durable Session.Target already says which rung a
 	// restarted controller resumes on, and re-probing a cooled rung once costs one turn.
@@ -1169,9 +1173,6 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	if err != nil || !filepath.IsAbs(privateRoot) {
 		return nil, acpFailure(sessionACPCredentialError, "private credential root is invalid")
 	}
-	if err := ensurePrivateDirectory(privateRoot); err != nil {
-		return nil, acpFailure(sessionACPCredentialError, "private credential root is unsafe")
-	}
 
 	account := target.Account()
 	if account == "" {
@@ -1194,12 +1195,19 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	if sameOrBelow(privateRoot, sourceRoot) || sameOrBelow(sourceRoot, privateRoot) {
 		return nil, acpFailure(sessionACPCredentialError, "private credential root overlaps source credentials")
 	}
-	projection := &sessionACPProjection{privateRoot: privateRoot}
-	if err := r.projectSessionConfigFiles(sourceRoot, bound, projection); err != nil {
-		return projection, err
-	}
 	sourceProfile := filepath.Join(sourceRoot, target.Provider, "profiles", account)
 	privateProfile := filepath.Join(privateRoot, target.Provider, "profiles", account)
+	mcpSnapshot, mcpActive, err := r.captureSessionMCP(sourceRoot, sourceProfile, privateRoot, bound)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensurePrivateDirectory(privateRoot); err != nil {
+		return nil, acpFailure(sessionACPCredentialError, "private credential root is unsafe")
+	}
+	projection := &sessionACPProjection{privateRoot: privateRoot}
+	if err := r.projectSessionConfigFiles(sourceRoot, bound, projection, mcpSnapshot, mcpActive); err != nil {
+		return projection, err
+	}
 	if err := ensurePrivateDirectory(privateProfile); err != nil {
 		return projection, acpFailure(sessionACPCredentialError, "private credential account is unsafe")
 	}
@@ -1287,21 +1295,54 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	return projection, nil
 }
 
-func (r *sessionTurnRunner) projectSessionConfigFiles(
+func (r *sessionTurnRunner) captureSessionMCP(
 	sourceRoot string,
+	sourceProfile string,
+	privateRoot string,
 	bound session.Session,
-	projection *sessionACPProjection,
-) error {
+) ([]byte, bool, error) {
+	if !bound.ProjectMCP {
+		return nil, false, nil
+	}
 	mcpFile := r.sourceCfg.MCPFile
 	if mcpFile == "" {
 		mcpFile = filepath.Join(sourceRoot, "mcp.json")
 	}
+	roots := []box.MCPSourceRoot{
+		{Kind: "selected credential home", Path: sourceProfile},
+		{Kind: "private session state", Path: privateRoot},
+		{Kind: "session workspace", Path: bound.Workspace},
+	}
+	for _, companion := range bound.Companions {
+		roots = append(roots, box.MCPSourceRoot{Kind: "session companion workspace", Path: companion.Workspace})
+	}
+	resolved, err := box.ResolveMCPSource(mcpFile, roots)
+	if err != nil {
+		return nil, false, errors.Join(acpFailure(sessionACPCredentialError, "shared MCP source is unsafe"), err)
+	}
+	readSnapshot := r.readMCPSnapshot
+	if readSnapshot == nil {
+		readSnapshot = mcp.ReadValidatedSnapshot
+	}
+	snapshot, active, err := readSnapshot(resolved)
+	if err != nil {
+		return nil, false, errors.Join(acpFailure(sessionACPCredentialError, "shared MCP config is invalid"), err)
+	}
+	return snapshot, active, nil
+}
+
+func (r *sessionTurnRunner) projectSessionConfigFiles(
+	sourceRoot string,
+	bound session.Session,
+	projection *sessionACPProjection,
+	mcpSnapshot []byte,
+	mcpActive bool,
+) error {
 	sources := []struct {
 		name string
 		path string
 	}{
 		{name: "env", path: filepath.Join(sourceRoot, "env")},
-		{name: "mcp.json", path: mcpFile},
 		{name: "INSTRUCTIONS.md", path: filepath.Join(sourceRoot, "INSTRUCTIONS.md")},
 	}
 	for _, source := range sources {
@@ -1309,8 +1350,7 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(
 		if err := removeProjectedSessionFile(destination); err != nil {
 			return acpFailure(sessionACPCredentialError, "stale private config is unsafe")
 		}
-		if source.name == "env" && !bound.ProjectEnv ||
-			source.name == "mcp.json" && !bound.ProjectMCP {
+		if source.name == "env" && !bound.ProjectEnv {
 			continue
 		}
 		sourcePath, err := filepath.Abs(filepath.Clean(source.path))
@@ -1335,6 +1375,16 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(
 		}
 		projection.files = append(projection.files, destination)
 		if err := writeCredentialArtifact(destination, data); err != nil {
+			return acpFailure(sessionACPCredentialError, "private config projection failed")
+		}
+	}
+	mcpDestination := filepath.Join(projection.privateRoot, "mcp.json")
+	if err := removeProjectedSessionFile(mcpDestination); err != nil {
+		return acpFailure(sessionACPCredentialError, "stale private config is unsafe")
+	}
+	if mcpActive {
+		projection.files = append(projection.files, mcpDestination)
+		if err := writeCredentialArtifact(mcpDestination, mcpSnapshot); err != nil {
 			return acpFailure(sessionACPCredentialError, "private config projection failed")
 		}
 	}
@@ -1597,7 +1647,10 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if err := ctx.Err(); err != nil {
 		return nil, classifyContextFailure(err)
 	}
-	mcpServers := r.sessionACPMCPServers(bound, privateRoot)
+	mcpServers, err := r.sessionACPMCPServers(bound, privateRoot)
+	if err != nil {
+		return nil, err
+	}
 	process, err := startSessionACPProcess(cmd)
 	if process != nil {
 		process.runID = runID
@@ -1613,14 +1666,14 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 // Both inputs come from the session's OWN private root rather than the shared config: a policy
 // that withheld env or mcp.json from this session withholds them here too, and that root is
 // exactly what the box is started from, so a token resolved here is one the box also has.
-func (r *sessionTurnRunner) sessionACPMCPServers(bound session.Session, privateRoot string) []map[string]any {
+func (r *sessionTurnRunner) sessionACPMCPServers(bound session.Session, privateRoot string) ([]map[string]any, error) {
 	target, err := agents.ParseTarget(bound.Target)
 	if err != nil {
-		return nil
+		return nil, acpFailure(sessionACPInvalidTarget, "session target must be one explicit provider and account")
 	}
 	agent, ok := agents.Get(target.Provider)
 	if !ok {
-		return nil
+		return nil, acpFailure(sessionACPInvalidTarget, "session target provider is unavailable")
 	}
 	values := box.EnvFileValues(filepath.Join(privateRoot, "env"))
 	servers, err := agent.ACPMCPServers(
@@ -1631,15 +1684,9 @@ func (r *sessionTurnRunner) sessionACPMCPServers(bound session.Session, privateR
 		},
 	)
 	if err != nil {
-		// A broken mcp.json costs the turn its tools, not the turn. Say so once, here, where
-		// the alternative is a session that silently answers from memory.
-		r.host.warnf(
-			"session %s starts without MCP tools: %s",
-			bound.ID, sessionACPBoundedDetail("cause", err.Error()),
-		)
-		return nil
+		return nil, errors.Join(acpFailure(sessionACPCredentialError, "private MCP projection is invalid"), err)
 	}
-	return servers
+	return servers, nil
 }
 
 // sessionACPMCPServerParam is the "mcpServers" value for session/new and session/load. The

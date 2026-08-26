@@ -705,28 +705,39 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 // or not-yet-created authority through a repository, companion, or credential home would defeat
 // that boundary; reopening the original spelling would reintroduce a parent-symlink race.
 func validateMCPSourceIsolation(cfg *config.Config, spec RunSpec) (string, error) {
-	type mountedRoot struct {
-		kind string
-		path string
-	}
-	roots := []mountedRoot{{kind: "repository", path: spec.Repo}}
+	roots := []MCPSourceRoot{{Kind: "mounted repository", Path: spec.Repo}}
 	for _, companion := range spec.CompanionRepositories {
-		roots = append(roots, mountedRoot{kind: "companion repository", path: companion.HostPath})
+		roots = append(roots, MCPSourceRoot{Kind: "mounted companion repository", Path: companion.HostPath})
 	}
 	for _, name := range credentialScope(cfg, spec) {
-		roots = append(roots, mountedRoot{kind: name + " credential home", path: cfg.AgentDir(name)})
+		roots = append(roots, MCPSourceRoot{Kind: "mounted " + name + " credential home", Path: cfg.AgentDir(name)})
 	}
 	if spec.ShareACPSessions {
 		if primary := runPrimary(spec); primary != "" {
-			roots = append(roots, mountedRoot{kind: primary + " ACP session store", path: acpSharedDir(cfg, primary)})
+			roots = append(roots, MCPSourceRoot{Kind: "mounted " + primary + " ACP session store", Path: acpSharedDir(cfg, primary)})
 		}
 	}
-	for _, component := range strings.Split(cfg.MCPFile, string(filepath.Separator)) {
+	return ResolveMCPSource(cfg.MCPFile, roots)
+}
+
+// MCPSourceRoot is a directory exposed wholesale to a less-trusted process. ResolveMCPSource rejects
+// a source that starts in or traverses one of these roots, including through symlink and case
+// aliases, so the authority can be neither changed nor disclosed through that exposure.
+type MCPSourceRoot struct {
+	Kind string
+	Path string
+}
+
+// ResolveMCPSource proves that source does not overlap any exposed root, then returns the canonical
+// endpoint that the caller must pass to mcp.ReadValidatedSnapshot. Reopening source itself would
+// reintroduce the parent-symlink race this resolution closes.
+func ResolveMCPSource(sourcePath string, roots []MCPSourceRoot) (string, error) {
+	for _, component := range strings.Split(sourcePath, string(filepath.Separator)) {
 		if component == ".." {
-			return "", fmt.Errorf("mcp.json source %q contains a parent path component; set COOP_MCP_FILE to a canonical path without '..'", cfg.MCPFile)
+			return "", fmt.Errorf("mcp.json source %q contains a parent path component; set COOP_MCP_FILE to a canonical path without '..'", sourcePath)
 		}
 	}
-	lexicalSource, err := filepath.Abs(cfg.MCPFile)
+	lexicalSource, err := filepath.Abs(sourcePath)
 	if err != nil {
 		return "", fmt.Errorf("resolve configured mcp.json source: %w", err)
 	}
@@ -737,31 +748,31 @@ func validateMCPSourceIsolation(cfg *config.Config, spec RunSpec) (string, error
 	}
 	candidates := append([]string{lexicalSource, source}, traversed...)
 	for _, root := range roots {
-		if root.path == "" {
+		if root.Path == "" {
 			continue
 		}
-		absoluteRoot, err := filepath.Abs(root.path)
+		absoluteRoot, err := filepath.Abs(root.Path)
 		if err != nil {
-			return "", fmt.Errorf("resolve mounted %s %q: %w", root.kind, root.path, err)
+			return "", fmt.Errorf("resolve %s %q: %w", root.Kind, root.Path, err)
 		}
 		realRoot, _, err := resolvePathTrace(absoluteRoot)
 		if err != nil {
-			return "", fmt.Errorf("resolve mounted %s %q: %w", root.kind, root.path, err)
+			return "", fmt.Errorf("resolve %s %q: %w", root.Kind, root.Path, err)
 		}
 		for _, candidate := range candidates {
 			inside, err := futurePathWithin(realRoot, candidate)
 			if err != nil {
-				return "", fmt.Errorf("compare mcp.json source with mounted %s %q: %w", root.kind, root.path, err)
+				return "", fmt.Errorf("compare mcp.json source with %s %q: %w", root.Kind, root.Path, err)
 			}
 			if inside {
-				return "", fmt.Errorf("mcp.json source %q is inside mounted %s %q; move the file and set COOP_MCP_FILE to a path outside directories mounted into the box", cfg.MCPFile, root.kind, root.path)
+				return "", fmt.Errorf("mcp.json source %q is inside %s %q; move the file and set COOP_MCP_FILE to a path outside directories exposed to agents", sourcePath, root.Kind, root.Path)
 			}
 		}
 	}
-	if info, err := os.Lstat(cfg.MCPFile); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("mcp.json source %q is a symbolic link; replace it with a private regular file and retry", cfg.MCPFile)
+	if info, err := os.Lstat(sourcePath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("mcp.json source %q is a symbolic link; replace it with a private regular file and retry", sourcePath)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("inspect configured mcp.json source %q: %w", cfg.MCPFile, err)
+		return "", fmt.Errorf("inspect configured mcp.json source %q: %w", sourcePath, err)
 	}
 	return source, nil
 }
