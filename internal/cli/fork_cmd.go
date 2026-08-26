@@ -651,29 +651,24 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	usage := fmt.Sprintf("usage: coop fork %s acp <target> [--peer <target>...]", name)
+	if len(rest) == 0 {
+		return 2, fmt.Errorf("name the target — coop fork %s acp <target>; sign in with 'coop login <agent>' or see 'coop credentials'", name)
+	}
+	if len(rest) != 1 || !isTargetHead(rest[0]) {
+		return 2, errors.New(usage)
+	}
 	// --model/--credential are retired — name the fork's ACP session in the positional target
 	// (coop fork <name> acp claude:opus@work), like plain `coop acp`.
-	agent, model, profile, effort := "", "", "", ""
-	for _, x := range rest {
-		switch {
-		case isTargetHead(x):
-			// provider[:model][/effort][@account]: model + single account fold into the session's one-off
-			// selection, applied before acpCommand so gemini's own-binary adapter takes the flag.
-			t, terr := agents.ParseTarget(x)
-			if terr != nil {
-				return 2, terr
-			}
-			agent = t.Provider
-			if terr := foldTarget(t, &model, &profile); terr != nil {
-				return 2, terr
-			}
-			effort = t.Effort
-		default:
-			return 2, fmt.Errorf("usage: coop fork %s acp <target> [--peer <target>...]", name)
-		}
+	t, err := agents.ParseTarget(rest[0])
+	if err != nil {
+		return 2, err
 	}
-	if agent == "" {
-		return 2, fmt.Errorf("name the target — coop fork %s acp <target>; sign in with 'coop login <agent>' or see 'coop credentials'", name)
+	agent, model, profile, effort := t.Provider, "", "", t.Effort
+	// provider[:model][/effort][@account]: model + single account fold into the session's one-off
+	// selection, applied before acpCommand so gemini's own-binary adapter takes the flag.
+	if err := foldTarget(t, &model, &profile); err != nil {
+		return 2, err
 	}
 	if err := a.applyOneOff(agent, model, profile, effort); err != nil {
 		return 2, err

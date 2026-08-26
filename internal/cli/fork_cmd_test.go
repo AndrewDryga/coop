@@ -448,10 +448,9 @@ func TestForkFreshRefusesReplacementAfterConfirmation(t *testing.T) {
 	}
 }
 
-// `coop fork <name> acp claude@ghost` pins the account in the positional target (like plain
-// `coop acp`); an unknown account errors on the account itself. A stray --credential is a
-// rejected arg.
-func TestForkACPAcceptsCredential(t *testing.T) {
+// Fork ACP accepts one positional target after peer extraction. Invalid account selection reaches
+// credential validation, while a retired flag, junk, or second target fails before run config changes.
+func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	if code, err := a.forkACP("myfork", nil); code != 2 || err == nil || strings.Contains(err.Error(), "preset") {
 		t.Errorf("fork acp without a target = (%d, %v), want provider-only guidance", code, err)
@@ -463,10 +462,29 @@ func TestForkACPAcceptsCredential(t *testing.T) {
 	if strings.Contains(err.Error(), "unexpected") || strings.Contains(err.Error(), "usage:") {
 		t.Errorf("a target's @account should be accepted, not rejected as an argument: %v", err)
 	}
+	code, err = a.forkACP("myfork", []string{"claude@ghost", "--peer", "codex", "--peer", "gemini"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "ghost") || strings.Contains(err.Error(), "usage:") {
+		t.Errorf("fork ACP with repeatable peers = (%d, %v), want target account validation after peer extraction", code, err)
+	}
 	code, err = a.forkACP("myfork", []string{"claude", "--credential", "ghost"})
 	wantUsage := "usage: coop fork myfork acp <target> [--peer <target>...]"
 	if code != 2 || err == nil || err.Error() != wantUsage {
 		t.Errorf("fork acp --credential = (%d, %v), want (2, %q)", code, err, wantUsage)
+	}
+	for _, args := range [][]string{
+		{"claude:opus", "codex:high"},
+		{"claude:opus", "junk"},
+	} {
+		code, err = a.forkACP("myfork", args)
+		if code != 2 || err == nil || err.Error() != wantUsage {
+			t.Errorf("fork acp %v = (%d, %v), want (2, %q)", args, code, err, wantUsage)
+		}
+	}
+	if got := a.cfg.ActiveModel("claude"); got != "" {
+		t.Errorf("rejected fork ACP arguments selected claude model %q", got)
+	}
+	if got := a.cfg.ActiveModel("codex"); got != "" {
+		t.Errorf("rejected fork ACP arguments selected codex model %q", got)
 	}
 }
 
