@@ -105,7 +105,7 @@ current and retired locations are:
 - retired on macOS: `$HOME/Library/Caches/coop/task-leases/v1`
 - retired on Linux: `${XDG_CACHE_HOME:-$HOME/.cache}/coop/task-leases/v1`
 
-Before the first v9 task or loop command, stop **every** older Coop process; an old binary does not
+Before the first v9 task or loop command, stop all older Coop processes; an old binary does not
 participate in v9's authority and can recreate the retired tree after it was checked. If the current
 directory already exists, it is authoritative and no migration is needed. If it is absent and the
 retired directory is missing or empty, v9 creates a fresh current directory. If the retired

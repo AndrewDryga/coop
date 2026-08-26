@@ -47,7 +47,7 @@ compose stack is now torn down with the fork — see [[services-teardown-needs-t
 ## Memory exhaustion does the same thing, and looks identical
 
 Observed 2026-08-24. Same `unexpected EOF`, same dead engine — but the disk was fine (53 GiB free).
-The host ran out of **memory**, and macOS's jetsam killed processes wholesale; OrbStack's VM went
+The host ran out of memory, and macOS's jetsam killed processes wholesale; OrbStack's VM went
 with them, one second before coop saw its first EOF:
 
 ```
@@ -58,7 +58,7 @@ with them, one second before coop saw its first EOF:
 ```
 
 `~/.orbstack/log/unified-kill.log` is the file that names it — mass `OS_REASON_JETSAM` exits at one
-timestamp is memory, not disk. Check it **before** reclaiming disk: the two causes share every
+timestamp is memory, not disk. Check it before reclaiming disk: the two causes share every
 downstream symptom, so the disk playbook above can "succeed" against a problem it never addressed.
 
 **Interactive sessions die differently from the loop.** Where the loop retries and gives up, an ACP
