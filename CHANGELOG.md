@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Audit reopen authority has one complete-history format.** Coop reads active v3 and
+  non-authorizing pending v4 records only. It removes support for the unshipped v1/v2 descendant
+  formats and the now-unused `tasks unblock --adopt-audit-head` adoption transaction; unsupported
+  versions and unknown fields remain fail-closed instead of being ignored. Current blocked-rewrite
+  rebasing, interrupted-unblock recovery, and single-use completion remain unchanged.
+
 - **`coop init` targets the current scaffold only.** Re-init still fills missing current files and
   preserves every existing hook, symlink, and custom hooks path, but it no longer recognizes and
   rewrites pre-v8 hook bytes, root-anchored `.agent` ignore rules, or the retired `.agent/rules/`

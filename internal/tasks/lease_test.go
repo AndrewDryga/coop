@@ -68,18 +68,61 @@ func testAuditReopenRecord(id, generation string) AuditReopenRecord {
 	}
 }
 
-func testLegacyAuditReopenRecord(id, generation string, pending bool) AuditReopenRecord {
-	version := AuditReopenLegacyVersion
-	if pending {
-		version = auditReopenLegacyPendingVersion
+func writeRawAuditReopenRecord(t *testing.T, root, id string, body []byte) []byte {
+	t.Helper()
+	name, err := auditReopenRecordName(root, id)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return AuditReopenRecord{
-		Version: version, Generation: generation, TaskID: id, UnblockPending: pending,
-		Subject: AuditReopenCommit{TaskID: id, ChangeTree: "legacy-subject-tree"},
-		Descendants: []AuditReopenCommit{{
-			TaskID: "legacy-descendant", ChangeTree: "legacy-descendant-tree",
-		}},
+	registry, err := OpenLeaseAuthorityRoot()
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer registry.Close()
+	body = append(append([]byte(nil), body...), '\n')
+	if err := AtomicWriteTaskFile(registry, name, body); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func leaseAuthorityBytes(t *testing.T, root, id string) []byte {
+	t.Helper()
+	authority, err := OpenLeaseAuthority(root, id, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer authority.Close()
+	if _, err := authority.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func seedCompletionReceiptBytes(t *testing.T, root string, task Item) []byte {
+	t.Helper()
+	authority, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := completionReceiptFor(task.Dir)
+	if err != nil {
+		_ = unlockLeaseFile(authority)
+		t.Fatal(err)
+	}
+	receipt.Nonce = "0123456789abcdef0123456789abcdef"
+	if err := writeLeaseCompletionReceiptValue(authority, receipt); err != nil {
+		_ = unlockLeaseFile(authority)
+		t.Fatal(err)
+	}
+	if err := unlockLeaseFile(authority); err != nil {
+		t.Fatal(err)
+	}
+	return leaseAuthorityBytes(t, root, task.ID)
 }
 
 func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
@@ -95,49 +138,114 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 			t.Fatal("new record without baseline HEAD was accepted")
 		}
 	})
-	t.Run("legacy versions decode but cannot lease", func(t *testing.T) {
-		for _, pending := range []bool{false, true} {
-			t.Run(fmt.Sprintf("pending=%v", pending), func(t *testing.T) {
+	t.Run("unsupported versions cannot authorize lifecycle changes", func(t *testing.T) {
+		for _, version := range []int{1, 2, 5} {
+			t.Run(fmt.Sprintf("version=%d", version), func(t *testing.T) {
 				root := t.TempDir()
-				task := taskForLease(t, root, StateInProgress, "legacy")
-				record := testLegacyAuditReopenRecord(task.ID, "legacy-generation", pending)
-				if err := WriteAuditReopenRecord(root, record); err != nil {
-					t.Fatal(err)
+				task := taskForLease(t, root, StateInProgress, fmt.Sprintf("unsupported-%d", version))
+				var body []byte
+				if version <= 2 {
+					pending := ""
+					if version == 2 {
+						pending = `,"unblock_pending":true`
+					}
+					body = []byte(fmt.Sprintf(
+						`{"version":%d,"generation":"unsupported-generation","task_id":%q,"subject":{"task_id":%q,"change_tree":"subject-tree"},"descendants":[]%s}`,
+						version, task.ID, task.ID, pending,
+					))
+				} else {
+					record := testAuditReopenRecord(task.ID, "unsupported-generation")
+					record.Version = version
+					var err error
+					body, err = json.Marshal(record)
+					if err != nil {
+						t.Fatal(err)
+					}
 				}
-				got, ok, err := ReadAuditReopenRecord(root, task.ID)
-				if err != nil || !ok || !reflect.DeepEqual(got, record) {
-					t.Fatalf("legacy decode = %#v, ok=%v err=%v", got, ok, err)
+				written := writeRawAuditReopenRecord(t, root, task.ID, body)
+				receiptBytes := seedCompletionReceiptBytes(t, root, task)
+				if _, ok, err := ReadAuditReopenRecord(root, task.ID); err == nil || ok ||
+					!strings.Contains(err.Error(), fmt.Sprintf("unsupported audit reopen record version %d", version)) {
+					t.Fatalf("unsupported read = ok=%v err=%v", ok, err)
 				}
 				lease, _, err := TryTaskLease(root, task, testLeaseOwner())
 				if lease != nil || err == nil ||
-					!strings.Contains(err.Error(), "legacy audit-reopen authority") ||
-					!strings.Contains(err.Error(), "--adopt-audit-head <full-sha>") {
-					t.Fatalf("legacy lease = %#v, %v", lease, err)
+					!strings.Contains(err.Error(), fmt.Sprintf("unsupported audit reopen record version %d", version)) {
+					t.Fatalf("unsupported lease = %#v, %v", lease, err)
+				}
+				if got := leaseAuthorityBytes(t, root, task.ID); !slices.Equal(got, receiptBytes) {
+					t.Fatalf("unsupported lease changed completion receipt: %q, want %q", got, receiptBytes)
+				}
+				if code, err := tasksFolderMove(root, []string{task.ID}, StateDone, "done", "completed"); code != -1 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("unsupported audit reopen record version %d", version)) {
+					t.Fatalf("unsupported completion = code %d err=%v", code, err)
+				}
+				if current, ok := CurrentTask(root, task.ID); !ok || current.State != StateInProgress {
+					t.Fatalf("unsupported authority moved task: %#v ok=%v", current, ok)
+				}
+				name, _ := auditReopenRecordName(root, task.ID)
+				registry, openErr := OpenLeaseAuthorityRoot()
+				if openErr != nil {
+					t.Fatal(openErr)
+				}
+				got, readErr := ReadTaskMetadataFile(registry, name)
+				_ = registry.Close()
+				if readErr != nil || !slices.Equal(got, written) {
+					t.Fatalf("unsupported authority changed: %q err=%v", got, readErr)
 				}
 			})
 		}
 	})
-	t.Run("legacy authority cannot complete", func(t *testing.T) {
+	t.Run("removed fields fail closed", func(t *testing.T) {
 		root := t.TempDir()
-		task := taskForLease(t, root, StateInProgress, "legacy-complete")
-		record := testLegacyAuditReopenRecord(task.ID, "legacy-generation", false)
-		if err := WriteAuditReopenRecord(root, record); err != nil {
+		task := taskForLease(t, root, StateInProgress, "unknown-field")
+		record := testAuditReopenRecord(task.ID, "unknown-field-generation")
+		body, err := json.Marshal(record)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := CompleteTrustedTask(root, task); err == nil ||
-			!strings.Contains(err.Error(), "legacy") {
-			t.Fatalf("legacy completion error = %v", err)
+		body = []byte(strings.Replace(string(body), `"version":3`, `"version":3,"descendants":[]`, 1))
+		writeRawAuditReopenRecord(t, root, task.ID, body)
+		if _, ok, err := ReadAuditReopenRecord(root, task.ID); err == nil || ok ||
+			!strings.Contains(err.Error(), `unknown field "descendants"`) {
+			t.Fatalf("removed field read = ok=%v err=%v", ok, err)
 		}
-		code, err := tasksFolderMove(root, []string{task.ID}, StateDone, "done", "completed")
-		if code != -1 || err == nil ||
-			!strings.Contains(err.Error(), "coop tasks block "+task.ID) ||
-			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID+" --adopt-audit-head <full-sha>") ||
-			strings.Contains(err.Error(), "retry: coop tasks done") {
-			t.Fatalf("legacy tasks done recovery = code %d err %v", code, err)
+		if lease, _, err := TryTaskLease(root, task, testLeaseOwner()); lease != nil || err == nil ||
+			!strings.Contains(err.Error(), `unknown field "descendants"`) {
+			t.Fatalf("removed field lease = %#v err=%v", lease, err)
 		}
-		current, ok := CurrentTask(root, task.ID)
-		if !ok || current.State != StateInProgress {
-			t.Fatalf("legacy completion moved task: %#v, ok=%v", current, ok)
+	})
+	t.Run("unsupported blocked authority cannot unblock", func(t *testing.T) {
+		root := t.TempDir()
+		task := taskForLease(t, root, StateBlocked, "unsupported-blocked")
+		decision := filepath.Join(task.Dir, "decision.md")
+		writeTaskFile(t, decision, "# Decision\n\n**Resolution:** <!-- unresolved -->\n")
+		beforeDecision := readFileString(decision)
+		record := testAuditReopenRecord(task.ID, "unsupported-blocked-generation")
+		record.Version = 1
+		body, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		written := writeRawAuditReopenRecord(t, root, task.ID, body)
+		code, err := tasksFolderUnblock(root, []string{task.ID, "must not be recorded"})
+		if code != -1 || err == nil || !strings.Contains(err.Error(), "unsupported audit reopen record version 1") {
+			t.Fatalf("unsupported unblock = code %d err=%v", code, err)
+		}
+		if current, ok := CurrentTask(root, task.ID); !ok || current.State != StateBlocked {
+			t.Fatalf("unsupported unblock moved task: %#v ok=%v", current, ok)
+		}
+		if after := readFileString(decision); after != beforeDecision {
+			t.Fatalf("unsupported unblock changed decision:\n%s", after)
+		}
+		name, _ := auditReopenRecordName(root, task.ID)
+		registry, openErr := OpenLeaseAuthorityRoot()
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		got, readErr := ReadTaskMetadataFile(registry, name)
+		_ = registry.Close()
+		if readErr != nil || !slices.Equal(got, written) {
+			t.Fatalf("unsupported unblock changed authority: %q err=%v", got, readErr)
 		}
 	})
 	t.Run("pending authority names activation before completion", func(t *testing.T) {
@@ -156,10 +264,17 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 		if err := WriteAuditReopenRecord(root, record); err != nil {
 			t.Fatal(err)
 		}
+		receiptBytes := seedCompletionReceiptBytes(t, root, task)
+		lease, _, leaseErr := TryTaskLease(root, task, testLeaseOwner())
+		if lease != nil || leaseErr == nil || !strings.Contains(leaseErr.Error(), "non-authorizing pending audit unblock") {
+			t.Fatalf("pending lease = %#v err=%v", lease, leaseErr)
+		}
+		if got := leaseAuthorityBytes(t, root, task.ID); !slices.Equal(got, receiptBytes) {
+			t.Fatalf("pending lease changed completion receipt: %q, want %q", got, receiptBytes)
+		}
 		err = CompleteTrustedTask(root, task)
 		if err == nil || !strings.Contains(err.Error(), "pending audit authority") ||
-			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID) ||
-			strings.Contains(err.Error(), "legacy adoption") {
+			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID) {
 			t.Fatalf("pending completion error = %v", err)
 		}
 		code, err := tasksFolderMove(root, []string{task.ID}, StateDone, "done", "completed")

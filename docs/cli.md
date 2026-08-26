@@ -363,9 +363,6 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
   numeric prefix just sorts 'ls' in lifecycle order — so each transition is a folder move.
-  A legacy audit-reopened task must first restore its exact audited pre-attempt HEAD, then use:
-    coop tasks unblock <id> --adopt-audit-head <full-sha> "<answer>"
-  The explicit full-SHA adoption replaces its task-only authority with complete ordered history.
   Removing tasks is a MANUAL step: the loop and skills only ever move a finished task to
   done, never delete it, so 'coop tasks rm --all-done' is how you prune the archive.
   Defaults to .agent/tasks/ — or, in a monorepo, every subproject's .agent/tasks listed under

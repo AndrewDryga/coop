@@ -1397,7 +1397,7 @@ func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
 }
 
 // `coop tasks unblock <id> <answer>` records the answer into decision.md's Resolution (replacing
-// the HUMAN placeholder) and moves the task to in_progress — deciding it in one command. The rest
+// the HUMAN placeholder) and moves the task to todo — deciding it in one command. The rest
 // of the decision.md survives the edit and the updated file rides along to the new state.
 func TestTasksFolderUnblockRecordsInlineAnswer(t *testing.T) {
 	root := t.TempDir()
@@ -1429,6 +1429,39 @@ func TestTasksFolderUnblockRecordsInlineAnswer(t *testing.T) {
 	// the resolved decision.md riding along must NOT make the todo task lint-dirty
 	if code, err := tasksFolderLint(root); code != 0 || err != nil {
 		t.Errorf("unblocked task with a resolved decision should lint clean, got code=%d err=%v", code, err)
+	}
+}
+
+func TestTasksFolderUnblockRejectsUnknownFlagBeforeMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name, flag string
+		args       []string
+	}{
+		{name: "retired long flag", flag: "--adopt-audit-head", args: []string{"--adopt-audit-head", strings.Repeat("a", 40), "answer"}},
+		{name: "short flag", flag: "-x", args: []string{"-x", "answer"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if code, err := tasksFolderAdd(root, []string{"pick the db"}, StateTodo, "tasks add"); code != 0 || err != nil {
+				t.Fatalf("add: code=%d err=%v", code, err)
+			}
+			id := ReadTaskTree(root)[0].ID
+			if code, err := tasksFolderBlock(root, []string{id}); code != 0 || err != nil {
+				t.Fatalf("block: code=%d err=%v", code, err)
+			}
+			decision := filepath.Join(root, StateBlocked, id, "decision.md")
+			before := readFileString(decision)
+			code, err := tasksFolderUnblock(root, append([]string{id}, tc.args...))
+			if code != 2 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("unknown flag %q", tc.flag)) {
+				t.Fatalf("unknown flag = code %d err=%v", code, err)
+			}
+			if current, ok := CurrentTask(root, id); !ok || current.State != StateBlocked {
+				t.Fatalf("unknown flag moved task: %#v ok=%v", current, ok)
+			}
+			if after := readFileString(decision); after != before {
+				t.Fatalf("unknown flag changed decision:\n%s", after)
+			}
+		})
 	}
 }
 

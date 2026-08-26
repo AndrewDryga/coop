@@ -3,7 +3,7 @@ name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
 sources: [internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/tasks/audit.go, internal/loop/changes.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
-updated: 2026-08-10
+updated: 2026-08-26
 ---
 
 `between`, `signoff`, and `verify` default to `writes: tasks`. The name is retained for
@@ -71,17 +71,14 @@ A mismatch launches no provider and parks the task blocked with manual guidance 
 audited pre-attempt history; cycling the task state alone cannot repair stale Git history.
 Complete active/pending records are versions 3/4. Their blocked recovery uses the exact persisted
 baseline HEAD as its only candidate, then validates the rewritten subject plus full replay before
-allowing a later host suffix. Versions 1/2 decode for diagnostics but authorize no lease,
-completion, activation, or automatic upgrade: they omitted an old HEAD anchor and all unbound
-history. After restoring the audited pre-attempt HEAD, a human must run
-`coop tasks unblock <id> --adopt-audit-head <full-sha> "<answer>"`; Coop requires that exact SHA and
-the legacy subject/bound projection, captures complete history, and retains the generation. The
-transaction first persists a non-authorizing v4 form, moves the folder, then activates v3. Both a
-pre-move blocked task and a post-move todo task require explicit host recovery; a lease never
-self-activates pending authority. Provider-written resolution prose cannot invoke adoption, and
-changed records, direct folder moves, overflow, or semantic mismatches remain inert.
-finalization copies it into the host completion receipt before consuming it, so crash replay can
-finish consumption and an accepted generation cannot be reused.
+allowing a later host suffix. The unblock transaction first persists a non-authorizing v4 form,
+moves the folder, then activates v3. Both a pre-move blocked task and a post-move todo task require
+explicit host recovery; a lease never self-activates pending authority. Unsupported versions,
+unknown fields, changed records, direct folder moves, overflow, and semantic mismatches fail
+closed without changing or discarding the host record. Provider-written resolution prose cannot
+invoke the host transition. Finalization copies the generation into the host completion receipt
+before consuming it, so crash replay can finish consumption and an accepted generation cannot be
+reused.
 
 `writes: repo` is the explicit escape hatch for a review stage that must repair source. It makes
 repository source writable, then overlays every real queue root with a nested read-only mount.
@@ -96,6 +93,9 @@ tasks this controller accepted as completed during the run and that remain archi
 
 ## Changelog
 
+- 2026-08-26 — removed support for the unshipped v1/v2 descendant formats and the now-unused
+  manual adoption bridge; active v3 and pending v4 are now the only accepted formats, with
+  unsupported versions and unknown fields rejected fail-closed.
 - 2026-08-10 — sources repointed: `controller.go`/`taskcmd.go`/`tasklease.go`/`tasks.go` moved to
   `internal/tasks/audit.go`/`internal/tasks/cmd.go`/`internal/tasks/lease.go`/`internal/tasks/queue.go`
   (the 2026-08 tasks/lease/completion-audit extraction); `internal/cli/util.go` unchanged (the moved

@@ -604,176 +604,100 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 	})
 
-	t.Run("blocked older audit rewrite retains authority for verification-only re-close", func(t *testing.T) {
-		cases := []struct {
-			name       string
-			preUpgrade bool
-		}{
-			{name: "current blocked record"},
-			{name: "pre-upgrade stale blocked record", preUpgrade: true},
+	t.Run("blocked current audit rewrite retains authority for verification-only re-close", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "blocked-older-audit-reopen"
+		descendantID := taskID + "-descendant"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		seedLoopProcessTaskIn(t, suite.layout.Repo, stateBlocked, descendantID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		between := loopRecoveryTarget("codex", "between-model", "work")
+		signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
+		writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, []string{signoff}, nil, 3)
+		blockAttempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "complete"},
+			{Target: between, Stage: "between", Result: "reopen-gated"},
+			{Target: work, Stage: "work", Result: "repair-older-binding-blocked"},
 		}
-		for _, tc := range cases {
-			t.Run(tc.name, func(t *testing.T) {
-				resetLoopProcessRepo(t, suite)
-				taskID := "blocked-older-audit-reopen"
-				if tc.preUpgrade {
-					taskID = "pre-upgrade-blocked-older-audit-reopen"
-					t.Setenv(tasks.TestLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
-				}
-				descendantID := taskID + "-descendant"
-				seedLoopProcessTask(t, suite.layout.Repo, taskID)
-				seedLoopProcessTaskIn(t, suite.layout.Repo, stateBlocked, descendantID)
-				work := loopRecoveryTarget("claude", "work-model", "personal")
-				between := loopRecoveryTarget("codex", "between-model", "work")
-				signoff := loopRecoveryTarget("gemini", "signoff-model", "work")
-				writeLoopReviewConfig(t, suite.layout.Repo, []string{between}, []string{signoff}, nil, 3)
-				blockResult := "repair-older-binding-blocked"
-				if tc.preUpgrade {
-					blockResult = "repair-older-binding-blocked-gated"
-				}
-				blockAttempts := []loopProcessAttempt{
-					{Target: work, Stage: "work", Result: "complete"},
-					{Target: between, Stage: "between", Result: "reopen-gated"},
-					{Target: work, Stage: "work", Result: blockResult},
-				}
-				suite.reset(t, loopRecoveryScenario(taskID, blockAttempts))
-				process := startLoopRecovery(t, suite, work)
-				defer process.Cleanup()
-				awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
-				var staleRecord, legacyRecord tasks.AuditReopenRecord
-
-				commitUnbound(t, taskID, "intervening")
-				descendantFile := filepath.Join(suite.layout.Repo, "descendant.txt")
-				if err := os.WriteFile(descendantFile, []byte("descendant\n"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				loopProcessGit(t, suite, "add", "descendant.txt")
-				loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: descendant", "-m", "Coop-Task: "+descendantID)
-				commitUnbound(t, taskID, "trailing")
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				hostCompletion := procharness.Run(ctx, procharness.Command{
-					Path: suite.coopBin, Args: []string{"tasks", "done", descendantID},
-					Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
-				})
-				cancel()
-				if hostCompletion.Err != nil || hostCompletion.ExitCode != 0 {
-					t.Fatalf("host descendant completion = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
-						hostCompletion.ExitCode, hostCompletion.Err, hostCompletion.Stdout, hostCompletion.Stderr)
-				}
-				if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
-					t.Fatal(err)
-				}
-				if tc.preUpgrade {
-					awaitLoopTraceEventCount(t, suite.layout.Trace, "provider", "ready", 2, 10*time.Second)
-					var ok bool
-					var err error
-					staleRecord, ok, err = tasks.ReadAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
-					if err != nil || !ok {
-						t.Fatalf("read pre-upgrade audit authority: ok=%v err=%v", ok, err)
-					}
-					legacyRecord = tasks.AuditReopenRecord{
-						Version: tasks.AuditReopenLegacyVersion, Generation: staleRecord.Generation,
-						TaskID: staleRecord.TaskID, Subject: staleRecord.Subject,
-					}
-					for _, commit := range staleRecord.History {
-						if commit.TaskID != "" {
-							legacyRecord.Descendants = append(legacyRecord.Descendants, commit)
-						}
-					}
-					if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-upgrade-release-"+taskID), nil, 0o600); err != nil {
-						t.Fatal(err)
-					}
-				}
-				ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
-				blockedResult := process.Wait(ctx)
-				cancel()
-				if blockedResult.Err != nil || blockedResult.ExitCode != 0 {
-					t.Fatalf("blocked audit rewrite = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
-						blockedResult.ExitCode, blockedResult.Err, blockedResult.Stdout, blockedResult.Stderr)
-				}
-				if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, taskID)) {
-					t.Fatal("rewritten audit task did not remain blocked")
-				}
-				assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, blockAttempts)
-				if tc.preUpgrade {
-					current, ok, err := tasks.ReadAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
-					if err != nil || !ok {
-						t.Fatalf("read current blocked audit authority: ok=%v err=%v", ok, err)
-					}
-					if current.Generation != staleRecord.Generation || current.Subject == staleRecord.Subject {
-						t.Fatalf("blocked fixture did not produce one rebased generation: stale=%#v current=%#v", staleRecord, current)
-					}
-					if err := tasks.WriteAuditReopenRecord(filepath.Join(suite.layout.Repo, tasksRoot), legacyRecord); err != nil {
-						t.Fatalf("restore legacy blocked audit authority: %v", err)
-					}
-					commitUnbound(t, taskID, "post-block")
-					ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-					automatic := procharness.Run(ctx, procharness.Command{
-						Path: suite.coopBin, Args: []string{"tasks", "unblock", taskID, "must not auto-upgrade"},
-						Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
-					})
-					cancel()
-					if automatic.ExitCode == 0 ||
-						!strings.Contains(automatic.Stderr, "legacy task-bound-only audit authority") ||
-						!strings.Contains(automatic.Stderr, "--adopt-audit-head <full-sha>") {
-						t.Fatalf("legacy automatic bridge = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
-							automatic.ExitCode, automatic.Err, automatic.Stdout, automatic.Stderr)
-					}
-					loopProcessGit(t, suite, "reset", "--hard", "-q", staleRecord.BaselineHead)
-				}
-
-				unblockArgs := []string{"tasks", "unblock", taskID, "external acceptance passed"}
-				if tc.preUpgrade {
-					unblockArgs = []string{
-						"tasks", "unblock", taskID,
-						"--adopt-audit-head", staleRecord.BaselineHead,
-						"external acceptance passed",
-					}
-				}
-				ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-				unblocked := procharness.Run(ctx, procharness.Command{
-					Path: suite.coopBin, Args: unblockArgs,
-					Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
-				})
-				cancel()
-				if unblocked.Err != nil || unblocked.ExitCode != 0 {
-					t.Fatalf("host unblock = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
-						unblocked.ExitCode, unblocked.Err, unblocked.Stdout, unblocked.Stderr)
-				}
-
-				recloseAttempts := []loopProcessAttempt{
-					{Target: work, Stage: "work", Result: "verify-only-after-block"},
-					{Target: between, Stage: "between", Result: "pass"},
-					{Target: signoff, Stage: "signoff", Result: "pass"},
-				}
-				suite.reset(t, loopRecoveryScenario(taskID, recloseAttempts))
-				recloseHead := loopProcessGit(t, suite, "rev-parse", "HEAD")
-				reclosed := runLoopReview(t, suite, work, 20*time.Second)
-				if reclosed.Err != nil || reclosed.ExitCode != 0 {
-					t.Fatalf("verification-only re-close after unblock = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
-						reclosed.ExitCode, reclosed.Err, reclosed.Stdout, reclosed.Stderr)
-				}
-				if got := loopProcessGit(t, suite, "rev-parse", "HEAD"); got != recloseHead {
-					t.Fatalf("verification-only re-close changed HEAD from %s to %s", recloseHead, got)
-				}
-				for _, id := range []string{taskID, descendantID} {
-					if got := tasks.CommitsForTask(suite.layout.Repo, "HEAD", id); len(got) != 1 {
-						t.Fatalf("reachable %s bindings = %v, want exactly one", id, got)
-					}
-					if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) {
-						t.Fatalf("task %s did not remain done", id)
-					}
-				}
-				key, err := tasks.LeaseAuthorityKey(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if pathExists(filepath.Join(processLeaseAuthorityRoot(suite.layout), key+".reopen.json")) {
-					t.Fatal("accepted audit generation remained reusable")
-				}
-				assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, recloseAttempts)
-			})
+		suite.reset(t, loopRecoveryScenario(taskID, blockAttempts))
+		process := startLoopRecovery(t, suite, work)
+		defer process.Cleanup()
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
+		commitUnbound(t, taskID, "intervening")
+		descendantFile := filepath.Join(suite.layout.Repo, "descendant.txt")
+		if err := os.WriteFile(descendantFile, []byte("descendant\n"), 0o600); err != nil {
+			t.Fatal(err)
 		}
+		loopProcessGit(t, suite, "add", "descendant.txt")
+		loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: descendant", "-m", "Coop-Task: "+descendantID)
+		commitUnbound(t, taskID, "trailing")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		hostCompletion := procharness.Run(ctx, procharness.Command{
+			Path: suite.coopBin, Args: []string{"tasks", "done", descendantID},
+			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
+		})
+		cancel()
+		if hostCompletion.Err != nil || hostCompletion.ExitCode != 0 {
+			t.Fatalf("host descendant completion = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+				hostCompletion.ExitCode, hostCompletion.Err, hostCompletion.Stdout, hostCompletion.Stderr)
+		}
+		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
+		blockedResult := process.Wait(ctx)
+		cancel()
+		if blockedResult.Err != nil || blockedResult.ExitCode != 0 {
+			t.Fatalf("blocked audit rewrite = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+				blockedResult.ExitCode, blockedResult.Err, blockedResult.Stdout, blockedResult.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, taskID)) {
+			t.Fatal("rewritten audit task did not remain blocked")
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, blockAttempts)
+		unblockArgs := []string{"tasks", "unblock", taskID, "external acceptance passed"}
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		unblocked := procharness.Run(ctx, procharness.Command{
+			Path: suite.coopBin, Args: unblockArgs,
+			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
+		})
+		cancel()
+		if unblocked.Err != nil || unblocked.ExitCode != 0 {
+			t.Fatalf("host unblock = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+				unblocked.ExitCode, unblocked.Err, unblocked.Stdout, unblocked.Stderr)
+		}
+
+		recloseAttempts := []loopProcessAttempt{
+			{Target: work, Stage: "work", Result: "verify-only-after-block"},
+			{Target: between, Stage: "between", Result: "pass"},
+			{Target: signoff, Stage: "signoff", Result: "pass"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, recloseAttempts))
+		recloseHead := loopProcessGit(t, suite, "rev-parse", "HEAD")
+		reclosed := runLoopReview(t, suite, work, 20*time.Second)
+		if reclosed.Err != nil || reclosed.ExitCode != 0 {
+			t.Fatalf("verification-only re-close after unblock = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
+				reclosed.ExitCode, reclosed.Err, reclosed.Stdout, reclosed.Stderr)
+		}
+		if got := loopProcessGit(t, suite, "rev-parse", "HEAD"); got != recloseHead {
+			t.Fatalf("verification-only re-close changed HEAD from %s to %s", recloseHead, got)
+		}
+		for _, id := range []string{taskID, descendantID} {
+			if got := tasks.CommitsForTask(suite.layout.Repo, "HEAD", id); len(got) != 1 {
+				t.Fatalf("reachable %s bindings = %v, want exactly one", id, got)
+			}
+			if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) {
+				t.Fatalf("task %s did not remain done", id)
+			}
+		}
+		key, err := tasks.LeaseAuthorityKey(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pathExists(filepath.Join(processLeaseAuthorityRoot(suite.layout), key+".reopen.json")) {
+			t.Fatal("accepted audit generation remained reusable")
+		}
+		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, recloseAttempts)
 	})
 
 	t.Run("stale active audit authority stops before provider launch", func(t *testing.T) {
@@ -1538,7 +1462,6 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			attempt.Result != "complete-forged-archive-binding" && attempt.Result != "repair-binding" &&
 			attempt.Result != "repair-review-binding" && attempt.Result != "repair-older-binding" &&
 			attempt.Result != "repair-older-binding-blocked" &&
-			attempt.Result != "repair-older-binding-blocked-gated" &&
 			attempt.Result != "repair-older-binding-changed-descendant" && attempt.Result != "verify-only" &&
 			attempt.Result != "verify-only-after-block" &&
 			attempt.Result != "second-binding" && attempt.Result != "pass" && attempt.Result != "pass-host-completion" &&

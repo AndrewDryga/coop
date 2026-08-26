@@ -33,9 +33,9 @@ type taskArgSpec struct {
 }
 
 // taskArgSpecs validates the structured `coop tasks` subcommands so an unsupported flag or a stray
-// argument fails loudly instead of being silently ignored or mistaken for an id. add/unblock take
-// free-form text (a title / a human's answer) that may start with "-", and decisions self-validates,
-// so they're intentionally absent.
+// argument fails loudly instead of being silently ignored or mistaken for an id. add takes a
+// free-form title that may start with "-"; unblock and decisions validate their own grammar, so
+// those commands are intentionally absent.
 var taskArgSpecs = map[string]taskArgSpec{
 	"ls":    {lsFlags, 0},
 	"lint":  {nil, 0},
@@ -590,33 +590,22 @@ func tasksFolderPath(root string, args []string) (int, error) {
 	return 0, nil
 }
 
-func parseTaskUnblockArgs(args []string) (id, answer, adoptionHead string, err error) {
+func parseTaskUnblockArgs(args []string) (id, answer string, err error) {
 	if len(args) < 1 {
-		return "", "", "", errors.New(`usage: coop tasks unblock <id> [--adopt-audit-head <full-sha>] ["<answer>"]`)
+		return "", "", errors.New(`usage: coop tasks unblock <id> ["<answer>"]`)
 	}
-	id = args[0]
-	var answerParts []string
-	for i := 1; i < len(args); i++ {
-		if args[i] != "--adopt-audit-head" {
-			answerParts = append(answerParts, args[i])
-			continue
+	for _, arg := range args[1:] {
+		if arg != "-" && strings.HasPrefix(arg, "-") {
+			return "", "", fmt.Errorf("coop tasks unblock: unknown flag %q", arg)
 		}
-		if adoptionHead != "" {
-			return "", "", "", errors.New("coop tasks unblock: --adopt-audit-head may be passed only once")
-		}
-		if i+1 >= len(args) {
-			return "", "", "", errors.New("coop tasks unblock: --adopt-audit-head needs a full commit SHA")
-		}
-		i++
-		adoptionHead = args[i]
 	}
-	return id, strings.TrimSpace(strings.Join(answerParts, " ")), adoptionHead, nil
+	return args[0], strings.TrimSpace(strings.Join(args[1:], " ")), nil
 }
 
 // tasksFolderUnblock moves a task out of 50_blocked/ back to 00_todo/ — but only if it's
 // actually blocked, so a fat-fingered id can't silently reopen a done (or todo) task.
 func tasksFolderUnblock(root string, args []string) (int, error) {
-	id, answer, adoptionHead, parseErr := parseTaskUnblockArgs(args)
+	id, answer, parseErr := parseTaskUnblockArgs(args)
 	if parseErr != nil {
 		return 2, parseErr
 	}
@@ -632,16 +621,7 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 				t.ID, readErr, t.ID,
 			)
 		}
-		if ok && auditReopenRecordLegacy(record) {
-			return 1, fmt.Errorf(
-				"%s has legacy audit-reopen authority but is already todo — block it without changing Git history, then retry with --adopt-audit-head <full-sha>",
-				t.ID,
-			)
-		}
 		if ok && record.UnblockPending {
-			if adoptionHead != "" {
-				return 2, fmt.Errorf("%s already has complete-history pending authority; --adopt-audit-head is only for legacy records", t.ID)
-			}
 			if answer != "" {
 				decision := filepath.Join(t.Dir, "decision.md")
 				if err := recordResolution(decision, answer); err != nil {
@@ -678,8 +658,8 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 	if answer == "" && t.HasDecision && !decisionResolved(filepath.Join(t.Dir, "decision.md")) {
 		return 2, fmt.Errorf("%s has no resolution yet — write the **Resolution:** in its decision.md, or pass it inline: coop tasks unblock %s \"<answer>\"", t.ID, args[0])
 	}
-	if err := resolveAndUnblockWithAdoption(root, t, answer, adoptionHead); err != nil {
-		return -1, unblockRetryErrorWithAdoption(t.ID, answer != "", adoptionHead, err)
+	if err := resolveAndUnblock(root, t, answer); err != nil {
+		return -1, unblockRetryError(t.ID, answer != "", err)
 	}
 	if answer != "" {
 		ui.OK("unblocked %s — recorded your answer in decision.md, back in todo (claim it to start)", t.ID)
@@ -736,10 +716,6 @@ func (e *unblockStageError) Error() string { return e.err.Error() }
 func (e *unblockStageError) Unwrap() error { return e.err }
 
 func unblockRetryError(id string, hasAnswer bool, err error) error {
-	return unblockRetryErrorWithAdoption(id, hasAnswer, "", err)
-}
-
-func unblockRetryErrorWithAdoption(id string, hasAnswer bool, adoptionHead string, err error) error {
 	var failure *unblockStageError
 	if errors.As(err, &failure) && failure.state == StateTodo {
 		return fmt.Errorf(
@@ -754,13 +730,6 @@ func unblockRetryErrorWithAdoption(id string, hasAnswer bool, adoptionHead strin
 		)
 	}
 	command := "coop tasks unblock " + id
-	var legacy *legacyAuditAdoptionRequiredError
-	if adoptionHead == "" && errors.As(err, &legacy) {
-		command += " --adopt-audit-head <full-sha>"
-	}
-	if adoptionHead != "" {
-		command += " --adopt-audit-head " + adoptionHead
-	}
 	if hasAnswer {
 		command += ` "<answer>"`
 	}
@@ -790,11 +759,7 @@ func unblockRetryErrorWithAdoption(id string, hasAnswer bool, adoptionHead strin
 // `claim`, so a just-unblocked task with nobody on it belongs in the queue as available work; the
 // resolved decision.md rides along as the audit trail. Shared by `unblock` and the -i browser.
 func resolveAndUnblock(root string, t Item, answer string) error {
-	return resolveAndUnblockWithAdoption(root, t, answer, "")
-}
-
-func resolveAndUnblockWithAdoption(root string, t Item, answer, adoptionHead string) error {
-	upgrade, err := prepareBlockedAuditReopenUnblockWithAdoption(root, t, adoptionHead)
+	transition, err := prepareBlockedAuditReopenUnblock(root, t)
 	if err != nil {
 		return &unblockStageError{stage: "audit authority validation", state: StateBlocked, err: err}
 	}
@@ -803,37 +768,37 @@ func resolveAndUnblockWithAdoption(root string, t Item, answer, adoptionHead str
 		if err := recordResolution(decision, answer); err != nil {
 			return &unblockStageError{
 				stage: "decision write", artifact: decision, state: StateBlocked,
-				err: upgrade.finish(err),
+				err: transition.finish(err),
 			}
 		}
 	}
-	return moveBlockedAuditUnblock(root, t, upgrade)
+	return moveBlockedAuditUnblock(root, t, transition)
 }
 
 // moveBlockedAuditUnblock writes a non-authorizing pending record, moves the folder, then activates
 // the replacement. A crash at either boundary remains fail-closed: blocked+pending is explicitly
 // retryable, while todo+pending requires the explicit host unblock recovery under the same lock.
-func moveBlockedAuditUnblock(root string, t Item, upgrade *blockedAuditUnblock) error {
-	if err := upgrade.markPending(); err != nil {
+func moveBlockedAuditUnblock(root string, t Item, transition *blockedAuditUnblock) error {
+	if err := transition.markPending(); err != nil {
 		return &unblockStageError{
 			stage: "audit authority persistence", state: StateBlocked,
-			err: upgrade.finish(err),
+			err: transition.finish(err),
 		}
 	}
 	if err := MoveTaskDir(root, t, StateTodo); err != nil {
 		return &unblockStageError{
 			stage: "task folder move", state: StateBlocked,
-			err: upgrade.finish(errors.Join(err, upgrade.restorePrevious())),
+			err: transition.finish(errors.Join(err, transition.restorePrevious())),
 		}
 	}
 	moved := t
 	moved.State = StateTodo
 	moved.Dir = filepath.Join(root, StateTodo, t.ID)
-	if err := upgrade.persist(); err != nil {
+	if err := transition.persist(); err != nil {
 		rollbackErr := MoveTaskDir(root, moved, StateBlocked)
 		var recordRollbackErr error
 		if rollbackErr == nil {
-			recordRollbackErr = upgrade.restorePrevious()
+			recordRollbackErr = transition.restorePrevious()
 		}
 		state := StateBlocked
 		if rollbackErr != nil {
@@ -841,10 +806,10 @@ func moveBlockedAuditUnblock(root string, t Item, upgrade *blockedAuditUnblock) 
 		}
 		return &unblockStageError{
 			stage: "audit authority persistence", state: state,
-			err: upgrade.finish(errors.Join(err, rollbackErr, recordRollbackErr)),
+			err: transition.finish(errors.Join(err, rollbackErr, recordRollbackErr)),
 		}
 	}
-	if err := upgrade.finish(nil); err != nil {
+	if err := transition.finish(nil); err != nil {
 		return &unblockStageError{stage: "host authority lock release", state: StateTodo, err: err}
 	}
 	// Defensive, not load-bearing: block() already clears any claim before a task can reach

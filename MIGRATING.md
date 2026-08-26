@@ -61,6 +61,14 @@ For a direct pre-v8-to-v9 upgrade:
 Existing project-owned hooks and custom hook paths remain protected; `init` will describe how to
 chain Coop's current hook instead of overwriting them.
 
+Audit-reopen authority is also current-only in v9: active records remain version 3 and
+non-authorizing pending records remain version 4. No tagged Coop release wrote the retired v1/v2
+formats, so released-version upgrades need no conversion. The now-unused
+`coop tasks unblock --adopt-audit-head` bridge has no replacement. If an untagged developer build
+left a v1/v2 record, reconcile that task with the originating pre-v9 build before upgrading; v9
+leaves the record intact and refuses to lease, complete, or unblock the task. Do not delete raw
+task-authority registry files to bypass that refusal.
+
 ## v4: the target grammar — one way to name a run
 
 Every launch names WHO runs with a single **target**: `provider[:model][/effort][@account]`

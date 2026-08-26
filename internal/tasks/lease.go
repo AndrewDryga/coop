@@ -18,16 +18,14 @@ import (
 )
 
 const (
-	LeaseAuthorityVersion           = "v1"
-	leaseAuthorityAdoptLockName     = ".adopt.lock"
-	leaseAuthorityIdentityAttempts  = 5
-	AuditReopenLegacyVersion        = 1
-	auditReopenLegacyPendingVersion = 2
-	auditReopenVersion              = 3
-	auditReopenPendingVersion       = 4
-	leaseHeartbeatInterval          = 10 * time.Second
-	leaseStaleAfter                 = time.Minute
-	leaseMetadataVersion            = 1
+	LeaseAuthorityVersion          = "v1"
+	leaseAuthorityAdoptLockName    = ".adopt.lock"
+	leaseAuthorityIdentityAttempts = 5
+	auditReopenVersion             = 3
+	auditReopenPendingVersion      = 4
+	leaseHeartbeatInterval         = 10 * time.Second
+	leaseStaleAfter                = time.Minute
+	leaseMetadataVersion           = 1
 )
 
 const (
@@ -64,7 +62,6 @@ type AuditReopenRecord struct {
 	BaselineHead   string              `json:"baseline_head,omitempty"`
 	Subject        AuditReopenCommit   `json:"subject"`
 	History        []AuditReopenCommit `json:"history"`
-	Descendants    []AuditReopenCommit `json:"descendants,omitempty"`
 	UnblockPending bool                `json:"unblock_pending,omitempty"`
 }
 
@@ -804,29 +801,14 @@ func auditReopenRecordName(root, id string) (string, error) {
 }
 
 func validateAuditReopenRecord(record AuditReopenRecord, id string) error {
-	legacy := record.Version == AuditReopenLegacyVersion && !record.UnblockPending ||
-		record.Version == auditReopenLegacyPendingVersion && record.UnblockPending
 	current := record.Version == auditReopenVersion && !record.UnblockPending ||
 		record.Version == auditReopenPendingVersion && record.UnblockPending
-	if (!legacy && !current) || record.Generation == "" || record.TaskID != id ||
+	if !current || record.Generation == "" || record.TaskID != id ||
 		record.Subject.TaskID != id || record.Subject.ChangeTree == "" {
 		return errors.New("invalid audit reopen record")
 	}
-	if legacy {
-		if record.BaselineHead != "" || record.History != nil {
-			return errors.New("invalid legacy audit reopen record")
-		}
-		seen := map[string]bool{id: true}
-		for _, commit := range record.Descendants {
-			if commit.TaskID == "" || seen[commit.TaskID] || commit.ChangeTree == "" {
-				return errors.New("invalid audit reopen descendant")
-			}
-			seen[commit.TaskID] = true
-		}
-		return nil
-	}
 	if !validAuditReopenHead(record.BaselineHead) || record.History == nil ||
-		len(record.History) > auditReopenHistoryLimit || len(record.Descendants) != 0 {
+		len(record.History) > auditReopenHistoryLimit {
 		return errors.New("invalid complete-history audit reopen record")
 	}
 	seen := map[string]bool{id: true}
@@ -849,11 +831,6 @@ func validAuditReopenHead(head string) bool {
 	return err == nil
 }
 
-func auditReopenRecordLegacy(record AuditReopenRecord) bool {
-	return record.Version == AuditReopenLegacyVersion ||
-		record.Version == auditReopenLegacyPendingVersion
-}
-
 func auditReopenRecordActive(record AuditReopenRecord) bool {
 	return record.Version == auditReopenVersion && !record.UnblockPending
 }
@@ -861,8 +838,7 @@ func auditReopenRecordActive(record AuditReopenRecord) bool {
 func AuditReopenRecordsEqual(a, b AuditReopenRecord) bool {
 	return a.Version == b.Version && a.Generation == b.Generation && a.TaskID == b.TaskID &&
 		a.BaselineHead == b.BaselineHead && a.Subject == b.Subject &&
-		slices.Equal(a.History, b.History) && slices.Equal(a.Descendants, b.Descendants) &&
-		a.UnblockPending == b.UnblockPending
+		slices.Equal(a.History, b.History) && a.UnblockPending == b.UnblockPending
 }
 
 func ReadAuditReopenRecord(root, id string) (AuditReopenRecord, bool, error) {
@@ -882,8 +858,19 @@ func ReadAuditReopenRecord(root, id string) (AuditReopenRecord, bool, error) {
 	if err != nil {
 		return AuditReopenRecord{}, false, err
 	}
+	var envelope struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return AuditReopenRecord{}, false, err
+	}
+	if envelope.Version != auditReopenVersion && envelope.Version != auditReopenPendingVersion {
+		return AuditReopenRecord{}, false, fmt.Errorf("unsupported audit reopen record version %d", envelope.Version)
+	}
 	var record AuditReopenRecord
-	if err := json.Unmarshal(data, &record); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&record); err != nil {
 		return AuditReopenRecord{}, false, err
 	}
 	if err := validateAuditReopenRecord(record, id); err != nil {
@@ -1227,6 +1214,29 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 		}
 		return nil, observed, nil
 	}
+	reject := func(cause error) (*TaskLease, TaskLeaseObservation, error) {
+		return nil, TaskLeaseObservation{}, errors.Join(cause, unlockLeaseFile(authority))
+	}
+	current, ok := CurrentTask(root, item.ID)
+	if !ok || current.State != item.State {
+		return reject(errLeaseCandidateGone)
+	}
+	var reopen *AuditReopenRecord
+	if record, reopened, err := ReadAuditReopenRecord(root, item.ID); err != nil {
+		return reject(fmt.Errorf("read audit reopen authority for task %s: %w", item.ID, err))
+	} else if reopened {
+		if record.UnblockPending {
+			recovery := "coop tasks unblock " + item.ID
+			if item.State != StateTodo {
+				recovery = "coop tasks block " + item.ID + " && " + recovery
+			}
+			return reject(fmt.Errorf(
+				"task %s has a non-authorizing pending audit unblock — no lease started; recover explicitly: %s",
+				item.ID, recovery,
+			))
+		}
+		reopen = &record
+	}
 	abort := func(cause error) (*TaskLease, TaskLeaseObservation, error) {
 		cleanup := errors.Join(
 			removeLeaseAuthorityMetadata(root, item.ID),
@@ -1250,6 +1260,7 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 		},
 		now:    owner.now,
 		ticker: owner.Ticker,
+		Reopen: reopen,
 		stop:   make(chan struct{}),
 		done:   make(chan struct{}),
 	}
@@ -1259,7 +1270,7 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 	if err := l.refresh(); err != nil {
 		return abort(err)
 	}
-	current, ok := CurrentTask(root, item.ID)
+	current, ok = CurrentTask(root, item.ID)
 	if !ok || current.State != item.State {
 		// Metadata follows the id across legitimate moves once an iteration owns the task, but a
 		// move DURING acquisition means this stale candidate must be rescanned, not launched.
@@ -1269,34 +1280,6 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 	// authority flock serializes this with concurrent completion scans.
 	if err := clearLeaseCompletionReceipt(authority); err != nil {
 		return abort(err)
-	}
-	if record, ok, err := ReadAuditReopenRecord(root, item.ID); err != nil {
-		return abort(fmt.Errorf("read audit reopen authority for task %s: %w", item.ID, err))
-	} else if ok {
-		if auditReopenRecordLegacy(record) {
-			recovery := fmt.Sprintf(
-				"restore the audited pre-attempt HEAD, then run coop tasks unblock %s --adopt-audit-head <full-sha> \"<answer>\"",
-				item.ID,
-			)
-			if item.State != StateBlocked {
-				recovery = "block the task without changing Git history, " + recovery
-			}
-			return abort(fmt.Errorf(
-				"task %s has legacy audit-reopen authority that protects only task-bound descendants — no lease started; %s",
-				item.ID, recovery,
-			))
-		}
-		if record.UnblockPending {
-			recovery := "coop tasks unblock " + item.ID
-			if item.State != StateTodo {
-				recovery = "coop tasks block " + item.ID + " && " + recovery
-			}
-			return abort(fmt.Errorf(
-				"task %s has a non-authorizing pending audit unblock — no lease started; recover explicitly: %s",
-				item.ID, recovery,
-			))
-		}
-		l.Reopen = &record
 	}
 	l.startHeartbeat()
 	return l, TaskLeaseObservation{}, nil

@@ -339,9 +339,6 @@ func CompleteTrustedTask(root string, task Item) (retErr error) {
 	if reopened {
 		repo := gitOut(root, "rev-parse", "--show-toplevel")
 		head := gitOut(root, "rev-parse", "--verify", "HEAD^{commit}")
-		if auditReopenRecordLegacy(reopen) {
-			return &legacyAuditAdoptionRequiredError{id: task.ID}
-		}
 		if reopen.UnblockPending {
 			return &auditCompletionStateError{message: fmt.Sprintf(
 				"task %s has non-authorizing pending audit authority from an interrupted unblock; "+
@@ -2039,19 +2036,6 @@ func rawAuditHistory(repo, head string, count int) ([]semanticHistoryCommit, str
 	return semantics, rawHistory[0].parent, nil
 }
 
-func rawAuditHistoryFromSubject(repo, head, subject string) ([]semanticHistoryCommit, error) {
-	rawHistory, err := rawAuditHistoryUntil(
-		repo,
-		head,
-		auditReopenHistoryLimit+1,
-		func(commit rawAuditCommit) bool { return commit.sha == subject },
-	)
-	if err != nil {
-		return nil, err
-	}
-	return semanticHistoryCommitsExact(repo, rawHistory)
-}
-
 func rawAuditRewriteHistory(repo, head, reviewedParent string, limit int) ([]rawAuditCommit, error) {
 	return rawAuditHistoryUntil(
 		repo,
@@ -2249,38 +2233,8 @@ func rebasedAuditReopenRecord(repo, base, head, id string, record AuditReopenRec
 	rebased.BaselineHead = baselineHead
 	rebased.Subject = replacement[0].semantic
 	rebased.History = history
-	rebased.Descendants = nil
 	rebased.UnblockPending = false
 	return rebased, nil
-}
-
-func auditReopenLegacyBaselineMatches(repo, head, id string, record AuditReopenRecord) bool {
-	if validateAuditReopenRecord(record, id) != nil || !auditReopenRecordLegacy(record) {
-		return false
-	}
-	bindings, ok := rawTaskBindings(repo, head)
-	if !ok || len(bindings[id]) != 1 {
-		return false
-	}
-	history, err := rawAuditHistoryFromSubject(repo, head, bindings[id][0])
-	if err != nil || len(history) == 0 || history[0].semantic != record.Subject {
-		return false
-	}
-	var descendants []AuditReopenCommit
-	for _, commit := range history[1:] {
-		if commit.semantic.TaskID != "" {
-			descendants = append(descendants, commit.semantic)
-		}
-	}
-	if len(descendants) != len(record.Descendants) {
-		return false
-	}
-	for i := range descendants {
-		if descendants[i] != record.Descendants[i] {
-			return false
-		}
-	}
-	return true
 }
 
 type auditCompletionRecoveryError interface {
@@ -2288,78 +2242,15 @@ type auditCompletionRecoveryError interface {
 	auditCompletionRecovery()
 }
 
-type legacyAuditAdoptionRequiredError struct{ id string }
-
-func (e *legacyAuditAdoptionRequiredError) Error() string {
-	return fmt.Sprintf(
-		"task %s has legacy task-bound-only audit authority; if it is not blocked, run "+
-			"`coop tasks block %s` without changing Git history; preserve wanted work, restore the "+
-			"audited pre-attempt HEAD, verify `git rev-parse HEAD`, then run "+
-			"`coop tasks unblock %s --adopt-audit-head <full-sha> \"<answer>\"`; "+
-			"do not retry completion until that authority is active",
-		e.id, e.id, e.id,
-	)
-}
-
-func (*legacyAuditAdoptionRequiredError) auditCompletionRecovery() {}
-
 type auditCompletionStateError struct{ message string }
 
 func (e *auditCompletionStateError) Error() string          { return e.message }
 func (*auditCompletionStateError) auditCompletionRecovery() {}
 
-func adoptLegacyAuditReopen(
-	repo, head, id string,
-	record AuditReopenRecord,
-	adoptionHead string,
-) (AuditReopenRecord, error) {
-	if !validAuditReopenHead(adoptionHead) || adoptionHead != head {
-		return AuditReopenRecord{}, fmt.Errorf(
-			"legacy audit adoption for task %s was authorized for %s, but current HEAD is %s; "+
-				"preserve wanted work, restore %s exactly, verify `git rev-parse HEAD` prints %s, "+
-				"then retry with the same --adopt-audit-head value",
-			id, adoptionHead, head, adoptionHead, adoptionHead,
-		)
-	}
-	if !auditReopenLegacyBaselineMatches(repo, head, id, record) {
-		return AuditReopenRecord{}, fmt.Errorf(
-			"current HEAD %s does not match task %s's legacy subject and task-bound descendant projection",
-			head, id,
-		)
-	}
-	bindings, ok := rawTaskBindings(repo, head)
-	if !ok || len(bindings[id]) != 1 {
-		return AuditReopenRecord{}, fmt.Errorf("read reachable task bindings before legacy adoption of %s", id)
-	}
-	complete, err := rawAuditHistoryFromSubject(repo, head, bindings[id][0])
-	if err != nil || len(complete) == 0 {
-		return AuditReopenRecord{}, fmt.Errorf("read complete legacy audit history for %s", id)
-	}
-	history := make([]AuditReopenCommit, len(complete)-1)
-	for i := range history {
-		history[i] = complete[i+1].semantic
-		if history[i].TaskID != "" && len(bindings[history[i].TaskID]) != 1 {
-			return AuditReopenRecord{}, fmt.Errorf(
-				"descendant task %s needs exactly one reachable %s binding before legacy adoption of %s",
-				history[i].TaskID, CoopTaskTrailer, id,
-			)
-		}
-	}
-	replacement := AuditReopenRecord{
-		Version: auditReopenVersion, Generation: record.Generation, TaskID: id,
-		BaselineHead: head, Subject: record.Subject, History: history,
-	}
-	if validateAuditReopenRecord(replacement, id) != nil ||
-		!AuditReopenCurrentValid(repo, head, id, replacement) {
-		return AuditReopenRecord{}, fmt.Errorf("capture complete legacy audit history for task %s", id)
-	}
-	return replacement, nil
-}
-
-// upgradeBlockedAuditReopen recovers a rewrite from the exact baseline recorded by the host.
+// rebaseBlockedAuditReopen recovers a rewrite from the exact baseline recorded by the host.
 // The complete replay must be the first sequence after the rewritten subject; unrelated work that
 // landed later may remain as a suffix, but no reflog guess or task-only projection can authorize it.
-func upgradeBlockedAuditReopen(repo, head, id string, record AuditReopenRecord) (AuditReopenRecord, error) {
+func rebaseBlockedAuditReopen(repo, head, id string, record AuditReopenRecord) (AuditReopenRecord, error) {
 	if validateAuditReopenRecord(record, id) != nil || !auditReopenRecordActive(record) {
 		return AuditReopenRecord{}, fmt.Errorf("invalid audit reopen authority for task %s", id)
 	}
@@ -2446,44 +2337,28 @@ func (u *blockedAuditUnblock) finish(operationErr error) error {
 	return errors.Join(operationErr, unlockLeaseFile(u.authority))
 }
 
-// prepareBlockedAuditReopenUnblock validates and, for a pre-upgrade blocked task, computes a rebase
+// prepareBlockedAuditReopenUnblock validates a blocked task and computes any required authority rebase
 // of the same host generation. The returned transaction holds the authority flock; before moving,
 // it persists a non-authorizing pending form that makes a crash safe and recoverable.
 func prepareBlockedAuditReopenUnblock(root string, task Item) (*blockedAuditUnblock, error) {
-	return prepareBlockedAuditReopenUnblockWithAdoption(root, task, "")
-}
-
-func prepareBlockedAuditReopenUnblockWithAdoption(root string, task Item, adoptionHead string) (*blockedAuditUnblock, error) {
 	observed, ok, err := ReadAuditReopenRecord(root, task.ID)
 	if err != nil {
 		return nil, fmt.Errorf("read blocked audit reopen authority for task %s: %w", task.ID, err)
 	}
 	if !ok {
-		if adoptionHead != "" {
-			return nil, fmt.Errorf("task %s has no legacy audit-reopen authority to adopt", task.ID)
-		}
 		return nil, nil
 	}
-	return lockBlockedAuditReopenUnblockWithAdoption(root, task, observed, adoptionHead)
+	return lockBlockedAuditReopenUnblock(root, task, observed)
 }
 
 func lockBlockedAuditReopenUnblock(root string, task Item, observed AuditReopenRecord) (*blockedAuditUnblock, error) {
-	return lockBlockedAuditReopenUnblockWithAdoption(root, task, observed, "")
-}
-
-func lockBlockedAuditReopenUnblockWithAdoption(
-	root string,
-	task Item,
-	observed AuditReopenRecord,
-	adoptionHead string,
-) (*blockedAuditUnblock, error) {
 	authority, err := lockLeaseAuthority(root, task.ID, false, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
 		return nil, fmt.Errorf("lock blocked audit reopen authority for task %s: %w", task.ID, err)
 	}
-	upgrade := &blockedAuditUnblock{authority: authority, root: root}
+	transition := &blockedAuditUnblock{authority: authority, root: root}
 	fail := func(err error) (*blockedAuditUnblock, error) {
-		return nil, upgrade.finish(err)
+		return nil, transition.finish(err)
 	}
 	record, ok, err := ReadAuditReopenRecord(root, task.ID)
 	if err != nil {
@@ -2501,25 +2376,6 @@ func lockBlockedAuditReopenUnblockWithAdoption(
 	if repo == "" || head == "" {
 		return fail(fmt.Errorf("resolve repository history for blocked audit task %s", task.ID))
 	}
-	if auditReopenRecordLegacy(record) {
-		if adoptionHead == "" {
-			return fail(&legacyAuditAdoptionRequiredError{id: task.ID})
-		}
-		replacement, err := adoptLegacyAuditReopen(repo, head, task.ID, record, adoptionHead)
-		if err != nil {
-			return fail(err)
-		}
-		pending := replacement
-		pending.Version = auditReopenPendingVersion
-		pending.UnblockPending = true
-		upgrade.previous = &record
-		upgrade.pending = &pending
-		upgrade.replacement = &replacement
-		return upgrade, nil
-	}
-	if adoptionHead != "" {
-		return fail(fmt.Errorf("task %s already has complete-history audit authority; --adopt-audit-head is only for legacy records", task.ID))
-	}
 	if record.UnblockPending {
 		replacement := record
 		replacement.Version = auditReopenVersion
@@ -2527,24 +2383,24 @@ func lockBlockedAuditReopenUnblockWithAdoption(
 		if !AuditReopenCurrentValid(repo, head, task.ID, replacement) {
 			return fail(fmt.Errorf("pending audit unblock for task %s no longer matches repository history", task.ID))
 		}
-		upgrade.previous = &record
-		upgrade.replacement = &replacement
-		return upgrade, nil
+		transition.previous = &record
+		transition.replacement = &replacement
+		return transition, nil
 	}
 	if auditReopenCompletionValid(repo, head, head, task.ID, record) {
-		return upgrade, nil
+		return transition, nil
 	}
-	replacement, err := upgradeBlockedAuditReopen(repo, head, task.ID, record)
+	replacement, err := rebaseBlockedAuditReopen(repo, head, task.ID, record)
 	if err != nil {
 		return fail(err)
 	}
 	pending := replacement
 	pending.Version = auditReopenPendingVersion
 	pending.UnblockPending = true
-	upgrade.previous = &record
-	upgrade.pending = &pending
-	upgrade.replacement = &replacement
-	return upgrade, nil
+	transition.previous = &record
+	transition.pending = &pending
+	transition.replacement = &replacement
+	return transition, nil
 }
 
 // finishPendingAuditUnblock is the explicit host recovery for a crash after the authorized folder
@@ -3548,7 +3404,7 @@ func ReconcileQueueAfterMerge(cfg *config.Config, repo, forkName, revRange strin
 // ordinary blocked task whose decision.md now carries a filled-in Resolution — the same bar
 // `coop tasks unblock` applies (decisionResolved) — moves back to 00_todo/ with a log note.
 // Audit-reopened tasks require an explicit host `coop tasks unblock`: provider-writable prose can
-// never invoke the host-authority upgrade path.
+// never invoke the host-authority rebase path.
 // A task with no decision.md, or one whose format decisionResolved can't read, stays parked:
 // never act on a file we can't parse confidently. Best-effort; a move failure warns and skips.
 // Returns the unblocked ids in readTaskTree order.
