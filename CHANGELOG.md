@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 9.0.0
 
 - **Remote-session structured output is enforced at the completion boundary.** A turn may carry a
   bounded JSON Schema plus the SHA-256 digest of its exact bytes; Coop persists and compiles that
