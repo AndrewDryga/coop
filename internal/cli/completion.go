@@ -142,7 +142,7 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 				a.targetCandidates(cur, true, true),
 				a.presetCandidates(),
 				[]string{"--tasks", "--peer", "--max-tasks", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"},
-			) // `coop loop [target|preset]`; `pool` is not a command, never completed
+			) // `coop loop [<target|preset>]`; `pool` is not a command, never completed
 		}
 		if len(prev) > 1 && prev[len(prev)-1] == "--max-tasks" {
 			return []string{"1", "2", "3", "5"}

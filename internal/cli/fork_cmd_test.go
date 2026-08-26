@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -179,7 +178,7 @@ func TestParseForkCreate(t *testing.T) {
 	}
 }
 
-// TestParseForkCreatePeer: --peer <peer> is repeatable and rides a loop fork's args; on a
+// TestParseForkCreatePeer: --peer <target> is repeatable and rides a loop fork's args; on a
 // non-loop fork it's rejected (an interactive fork has no ad-hoc peer set), a valueless --peer
 // errors (it takes a value), and the retired --consult is now just an unknown arg.
 func TestParseForkCreatePeer(t *testing.T) {
@@ -465,7 +464,7 @@ func TestForkACPAcceptsCredential(t *testing.T) {
 		t.Errorf("a target's @account should be accepted, not rejected as an argument: %v", err)
 	}
 	code, err = a.forkACP("myfork", []string{"claude", "--credential", "ghost"})
-	wantUsage := fmt.Sprintf("usage: coop fork myfork acp <%s>[:model][/effort][@account]", strings.Join(agents.Names(), "|"))
+	wantUsage := "usage: coop fork myfork acp <target> [--peer <target>...]"
 	if code != 2 || err == nil || err.Error() != wantUsage {
 		t.Errorf("fork acp --credential = (%d, %v), want (2, %q)", code, err, wantUsage)
 	}

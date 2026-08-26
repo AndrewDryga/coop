@@ -162,9 +162,9 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop <agent>[:model][/effort][@account] [args]` | a sandboxed Claude, Codex, Gemini, or Grok agent — its autonomous flags, plus any args you add |
-| `coop acp <agent>[:model][/effort][@account]` · `coop acp <preset>` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the Preset/Provider/Account selectors, runs yolo, and rides out box restarts and rate limits for you; pin a per-entry model/effort/account in the target (or name a preset in the same slot); name each peer with `--peer <agent>` (repeatable) to let it ask them read-only |
-| `coop <agent> --peer <peer>…` | [opt-in second opinion](#second-opinions---peer) — name each peer with `--peer <agent>` (repeatable); may ask those peers on hard calls |
+| `coop <target> [args]` | a sandboxed Claude, Codex, Gemini, or Grok target (`<agent>[:model][/effort][@account]`) — its autonomous flags, plus any args you add |
+| `coop acp <target|preset>` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the Preset/Provider/Account selectors, runs yolo, and rides out box restarts and rate limits for you; pin a per-entry model/effort/account in the target (or name a preset in the same slot); name each peer with `--peer <target>` (repeatable) to let it ask them read-only |
+| `coop <target> --peer <target>...` | [opt-in second opinion](#second-opinions---peer) — name each peer with `--peer <target>` (repeatable); may ask those peers on hard calls |
 | `coop <preset>` | run an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file) interactively — its lead leads, its roles ride along (a preset name shares the who-runs slot with an agent target) |
 | `coop <agent>:<model>[/effort]` | [pick the model and reasoning effort](#picking-models) for that run — works on agent runs, forks, the loop, and acp |
 
@@ -188,7 +188,7 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop fork <name> [target|preset] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent or preset (re-entry resumes the session; `--new` resets) |
+| `coop fork <name> [<target|preset>] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent or preset (re-entry resumes the session; `--new` resets) |
 | `coop fork ls` | list this repo's forks: agent, branch, state, tasks done/total, change size, last activity |
 | `coop fork review <name> [--stat\|--tool\|--open] [--gate]` | dossier + diff; `--gate` previews the rebase and gate without touching either source repo |
 | `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` lands every fork; `--yes` confirms non-interactively) |
@@ -202,7 +202,7 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop loop [<agent>[:model][/effort][@account] \| <preset>] [--tasks <path>] [--peer <peer>…] [--max-tasks <n>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then sign off (name the agent — `claude`/`codex`/`gemini`/`grok` — or a preset name in the same slot, whose lead supplies it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model/effort or the preset's ladder set the [rotation](#picking-models); name each peer with `--peer <agent>` (repeatable) so iterations may ask them read-only; `--max-tasks N` works a bounded batch through retries and immediate audits, then pauses before another task or final signoff; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
+| `coop loop [<target|preset>] [--tasks <path>] [--peer <target>...] [--max-tasks <n>] [--preflight] [--debug-on-fail]` | work the [`.agent/tasks/`](#the-loop) queue until done, then sign off (name an agent target — `claude`/`codex`/`gemini`/`grok`, with optional model/effort/account — or a preset in the same slot, whose lead supplies it); `--tasks` picks the queue (default `.agent/tasks`, repeatable); the target's model/effort or the preset's ladder set the [rotation](#picking-models); name each peer with `--peer <target>` (repeatable) so iterations may ask them read-only; `--max-tasks <n>` works a bounded batch through retries and immediate audits, then pauses before another task or final signoff; `--preflight` tidies `.agent/` state first; `--debug-on-fail` opens a box shell on a failure |
 
 **Tasks** — a folder-per-task queue in `.agent/tasks/` ([details](#the-loop))
 
@@ -457,12 +457,13 @@ non-interactive shell (CI, a pipe) there's no one to answer, and merge refuses
 rather than landing on the default — pass `--yes` (`-y`) to confirm landing and
 removal up front. `--yes` also skips the prompts interactively.
 
-Merging lands code, not queue state. A fork's loop works a *copy* of the task queue
-(`.agent/` is gitignored, seeded when the fork is created), so after a merge the parent's
-`.agent/tasks/00_todo/` still lists the tasks the fork finished. Mark them done or remove
-them — `coop tasks done <id>` / `coop tasks rm <id>` — so a later `coop loop` doesn't
-re-claim finished work (redoing a done task makes an empty commit, which fails). While forks
-run, `coop tasks watch` shows the deduped truth across the parent and its forks.
+A fork's loop works a *copy* of the task queue (`.agent/` is gitignored, seeded when the fork is
+created). After a successful merge, Coop scans the landed commit range for `Coop-Task` trailers and
+automatically moves matching unique parent tasks from todo/in-progress to done, so the parent loop
+does not redo landed work. A blocked task stays human-owned until its decision is reconciled; a
+duplicate ID must be disambiguated across queues. An obstructed completion warns with the exact
+`coop tasks done <id>` recovery command. Queue reconciliation never rolls back code that already
+landed. While forks run, `coop tasks watch` shows the deduped truth across the parent and its forks.
 
 ## Agents & config
 
@@ -479,7 +480,7 @@ whole vault.
 Each run mounts only the launched agent's credentials: `coop claude` mounts
 `~/.claude` (and that agent's API key from the env file), never the Codex or Gemini ones.
 The exceptions are runs where the lead is explicitly told to call peers —
-`coop <agent> --peer <agent>...` (including loops and forks) — which
+`coop <target> --peer <target>...` (including loops and forks) — which
 also mount the named peers so they can be consulted read-only (only those you
 name, never everyone signed in). A preset is explicit too: every signed-in provider
 named by a consult/delegate role ladder is mounted for that role; unavailable rungs are
@@ -657,7 +658,7 @@ For a *standing* arrangement (a lead model + its roles you don't retype), put it
   auto-delegates on their descriptions, each turn bills at *its* model, and the lead's
   context stays lean. `coop init` scaffolds none — a preset generates its own `coop-<role>`
   in the box, and your repo's roles are yours to write.
-- **Peer engineers, not reviewers** — with `--peer <peer>…`, the lead can ask
+- **Peer engineers, not reviewers** — with `--peer <target>...`, the lead can ask
   the named peers (e.g. codex, gemini) read-only via `coop-consult <peer>`: different training, different
   blind spots. **The `--peer` flag matters** — a plain `coop claude` deliberately
   doesn't mount peer credentials, so peers only answer in a consult-capable box.
@@ -674,7 +675,7 @@ scoping is already handled.
 
 ### Presets: the whole arrangement in one YAML file
 
-The orchestrator pattern above is assembled by hand — a `:model` here, a `--peer <peer>`
+The orchestrator pattern above is assembled by hand — a `:model` here, a `--peer <target>`
 there. A preset declares the whole arrangement once, as a runtime recipe under
 `.agent/presets/<name>/`: who leads, and which roles it routes work to. Three role
 modes cover the spectrum: `native` (a Claude subagent inside the lead's session),
@@ -908,7 +909,7 @@ arms do not fabricate token counts, and failed or usage-less Codex replies appen
 Because the instruction lands only on the lead, peers it spawns read their normal instructions
 and never recurse. Each consultation adds one read-only run, so account for it when choosing peers.
 
-Name peers with `--peer <agent>` (repeatable) on a normal run —
+Name peers with `--peer <target>` (repeatable) on a normal run —
 `coop claude --peer codex --peer gemini` (or a `codex`/`gemini`/`grok` lead; in Zed,
 `coop acp claude --peer codex`) — for a lighter version of the same idea: on a
 genuinely hard or risky call the agent may consult those peers read-only and in

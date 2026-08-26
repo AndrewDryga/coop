@@ -65,7 +65,7 @@ func forkHelpText(p ui.Palette) string {
 		{"    --loop", "work the fork's task queue until done instead of opening an interactive session"},
 		{"-d, --detach", "with --loop, run it in the background"},
 		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)"},
-		{"    --peer <agent>", "with --loop, a peer iterations may consult read-only (repeatable)"},
+		{"    --peer <target>", "with --loop, a peer iterations may consult read-only (repeatable)"},
 		{"-f, --force", "merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)"},
 		{"-y, --yes", "merge/rm/--fresh: skip the delete confirm (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
@@ -79,7 +79,7 @@ func forkHelpText(p ui.Palette) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s — a throwaway clone handed to an agent; review and land it like a PR.\n\n", p.Bold("coop fork"))
-	fmt.Fprint(&b, "  Usage: coop fork <name> [<agent>[:model][/effort][@account]|<preset>] | ls | review | merge | logs | rm | stop | open | path\n\n")
+	fmt.Fprint(&b, "  Usage: coop fork <name> [<target|preset>] | ls | review | merge | logs | rm | stop | open | path\n\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "  %s%s\n", pad(r.cmd, 34), r.desc)
 	}
@@ -162,7 +162,7 @@ func forkVerbNearMiss(args []string, forkExists bool) (string, bool) {
 	return nearestCommand(args[0], forkspace.VerbList())
 }
 
-// forkArgs is the parsed form of `coop fork <name> [target|preset] [flags]`.
+// forkArgs is the parsed form of `coop fork <name> [<target|preset>] [flags]`.
 type forkArgs struct {
 	name        string
 	agent       string
@@ -187,7 +187,7 @@ type forkArgs struct {
 func parseForkCreate(args []string) (forkArgs, error) {
 	fa := forkArgs{} // no implicit default — provider required (positional target or the preset lead)
 	if len(args) == 0 || args[0] == "" {
-		return fa, errors.New("usage: coop fork <name> [<agent>[:model][/effort][@account]|<preset>] [--loop --tasks <path> [-d]]")
+		return fa, errors.New("usage: coop fork <name> [<target|preset>] [--loop --tasks <path> [-d]]")
 	}
 	fa.name = args[0]
 	rest := args[1:]
@@ -241,13 +241,13 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			}
 		case x == "--peer":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
-				return fa, errors.New("coop fork --peer needs a peer: --peer <agent> (repeatable)")
+				return fa, errors.New("coop fork --peer needs a peer: --peer <target> (repeatable)")
 			}
 			i++
 			fa.peers = append(fa.peers, rest[i])
 		case strings.HasPrefix(x, "--peer="):
 			if v := strings.TrimPrefix(x, "--peer="); v == "" {
-				return fa, errors.New("coop fork --peer needs a peer: --peer <agent> (repeatable)")
+				return fa, errors.New("coop fork --peer needs a peer: --peer <target> (repeatable)")
 			} else {
 				fa.peers = append(fa.peers, v)
 			}
@@ -294,7 +294,7 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	}
 	// --peer names loop peers; an interactive fork has no ad-hoc peer set (name them on a loop).
 	if len(fa.peers) > 0 && !fa.loop {
-		return fa, errors.New("coop fork --peer only applies with --loop (name each peer: --peer <agent>)")
+		return fa, errors.New("coop fork --peer only applies with --loop (name each peer: --peer <target>)")
 	}
 	return fa, nil
 }
@@ -668,11 +668,11 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			}
 			effort = t.Effort
 		default:
-			return 2, fmt.Errorf("usage: coop fork %s acp <%s>[:model][/effort][@account]", name, strings.Join(agents.Names(), "|"))
+			return 2, fmt.Errorf("usage: coop fork %s acp <target> [--peer <target>...]", name)
 		}
 	}
 	if agent == "" {
-		return 2, fmt.Errorf("name the agent — coop fork <name> acp <%s>; sign in with 'coop login <agent>' or see 'coop credentials'", strings.Join(agents.Names(), "|"))
+		return 2, fmt.Errorf("name the target — coop fork %s acp <target>; sign in with 'coop login <agent>' or see 'coop credentials'", name)
 	}
 	if err := a.applyOneOff(agent, model, profile, effort); err != nil {
 		return 2, err

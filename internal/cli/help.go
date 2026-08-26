@@ -94,7 +94,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop <target>", "<agent>[:model][/effort][@account] in a box")
 	row("coop <preset>", "run a preset interactively (its lead leads)")
 	row("coop acp <target|preset>", "serve as an editor agent (ACP; e.g. Zed)")
-	row("coop <agent> --peer <peer>...", "a read-only second opinion, named peers")
+	row("coop <target> --peer <target>...", "a read-only second opinion, named peers")
 
 	group("CREDENTIALS, MODELS & PRESETS")
 	row("coop login <agent>", "sign in an agent (a subscription)")
@@ -237,9 +237,9 @@ const sourceTreeConformance = `SOURCE-TREE CONFORMANCE
 // agentHelp is `coop help <agent>`: it documents coop's OWN wrapper flags (the ones coop consumes
 // before a --), since `coop <agent> --help` forwards to the agent's real CLI. Kept short per
 // help-output-style — the detail is in coop credentials / coop models.
-const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex, gemini, or grok).
+const agentHelp = `coop <target> — run a sandboxed coding agent (claude, codex, gemini, or grok).
 
-  Usage: coop <agent>[:model][/effort][@account] [coop flags] [-- <agent args>]
+  Usage: coop <target> [coop flags] [-- <agent args>]
          coop <preset>   (run an orchestration preset interactively — its lead leads)
 
   The agent is a TARGET — a provider, an optional :model, an optional reasoning /effort,
@@ -249,8 +249,8 @@ const agentHelp = `coop <agent> — run a sandboxed coding agent (claude, codex,
   coop frontier (its lead + roles; see coop help presets). A run names one, never both.
 
   These flags are coop's own, read before a -- (everything after -- goes to the agent):
-    --peer <peer>...     a read-only second opinion from NAMED peers (repeatable); each
-                         <peer> is a target: --peer codex:gpt-5.5 --peer gemini
+    --peer <target>...   a read-only second opinion from NAMED peers (repeatable), e.g.
+                         --peer codex:gpt-5.5 --peer gemini
     --                   pass the rest verbatim to the agent, e.g. coop claude -- --help
 
   Sign in first with 'coop login <agent>'. For the agent's own flags: coop <agent> -- --help.`
@@ -389,8 +389,7 @@ var commandHelp = map[string]string{
 
 	"acp": `coop acp <target|preset> — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp <agent>[:model][/effort][@account] [--peer <target>...]
-         coop acp <preset> [--peer <agent>...]
+  Usage: coop acp <target|preset> [--peer <target>...]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per target or preset.
@@ -425,7 +424,7 @@ var commandHelp = map[string]string{
   A bare preset name in the who-runs slot runs the session under that orchestration
   preset (its lead is the agent; see 'coop help presets').
 
-  --peer <peer>... lets the session ask NAMED peers for a read-only second opinion
+  --peer <target>... lets the session ask NAMED peers for a read-only second opinion
   (repeatable; only those peers' credentials are mounted) — the orchestrator pattern,
   from your editor. Preset consult roles use the same read-only wrapper and keep their
   role names, target ladders, and personas.
@@ -627,7 +626,7 @@ var commandHelp = map[string]string{
 
 	"loop": `coop loop [<target|preset>] — work the task queue until done, then sign off.
 
-  Usage: coop loop [<agent>[:model][/effort][@account,...] | <preset>] [--tasks <path>]... [--peer <peer>...] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail]
+  Usage: coop loop [<target|preset>] [--tasks <path>]... [--peer <target>...] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
@@ -695,7 +694,7 @@ var commandHelp = map[string]string{
   the rungs on a rate limit. Below a rung's own model sits the account's marked default
   ('coop models'), then COOP_<AGENT>_MODEL — so overnight runs can grind on a cheaper model.
 
-  --peer <peer>... lets each iteration ask NAMED peers for a read-only second opinion
+  --peer <target>... lets each iteration ask NAMED peers for a read-only second opinion
   (repeatable; coop-consult on PATH, only those peers' credentials mounted) — the
   orchestrator pattern running unattended. Off by default: it widens each box's
   credential scope to exactly the named peers. Also on fork loops:

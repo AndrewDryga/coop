@@ -5,7 +5,7 @@ AGENTS
   coop <target>                     <agent>[:model][/effort][@account] in a box
   coop <preset>                     run a preset interactively (its lead leads)
   coop acp <target|preset>          serve as an editor agent (ACP; e.g. Zed)
-  coop <agent> --peer <peer>...     a read-only second opinion, named peers
+  coop <target> --peer <target>...  a read-only second opinion, named peers
 
 CREDENTIALS, MODELS & PRESETS
   coop login <agent>                sign in an agent (a subscription)
@@ -72,7 +72,7 @@ Docs    https://coop.dryga.com
 
 coop fork — a throwaway clone handed to an agent; review and land it like a PR.
 
-  Usage: coop fork <name> [<agent>[:model][/effort][@account]|<preset>] | ls | review | merge | logs | rm | stop | open | path
+  Usage: coop fork <name> [<target|preset>] | ls | review | merge | logs | rm | stop | open | path
 
   coop fork <name> <target>         open or re-enter a fork with an agent target
   coop fork <name> <preset>         open or re-enter a fork with an orchestration preset
@@ -93,7 +93,7 @@ FLAGS (every short flag has a long form):
       --loop      work the fork's task queue until done instead of opening an interactive session
   -d, --detach    with --loop, run it in the background
   -t, --tasks     with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)
-      --peer <agent>  with --loop, a peer iterations may consult read-only (repeatable)
+      --peer <target>  with --loop, a peer iterations may consult read-only (repeatable)
   -f, --force     merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)
   -y, --yes       merge/rm/--fresh: skip the delete confirm (required without a TTY)
   -f, --follow    logs: keep streaming new output
@@ -275,8 +275,7 @@ coop models [agent] — the model menu per agent.
 
 coop acp <target|preset> — serve as an ACP agent over stdio (for editors).
 
-  Usage: coop acp <agent>[:model][/effort][@account] [--peer <target>...]
-         coop acp <preset> [--peer <agent>...]
+  Usage: coop acp <target|preset> [--peer <target>...]
 
   Speaks the Agent Client Protocol on stdin/stdout. Point your editor's ACP
   command at e.g. ["acp","claude"] — one entry per target or preset.
@@ -311,7 +310,7 @@ coop acp <target|preset> — serve as an ACP agent over stdio (for editors).
   A bare preset name in the who-runs slot runs the session under that orchestration
   preset (its lead is the agent; see 'coop help presets').
 
-  --peer <peer>... lets the session ask NAMED peers for a read-only second opinion
+  --peer <target>... lets the session ask NAMED peers for a read-only second opinion
   (repeatable; only those peers' credentials are mounted) — the orchestrator pattern,
   from your editor. Preset consult roles use the same read-only wrapper and keep their
   role names, target ladders, and personas.
@@ -417,7 +416,7 @@ coop backlog — park the genuinely LARGE as task folders (.agent/tasks/xx_backl
 
 coop loop [<target|preset>] — work the task queue until done, then sign off.
 
-  Usage: coop loop [<agent>[:model][/effort][@account,...] | <preset>] [--tasks <path>]... [--peer <peer>...] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail]
+  Usage: coop loop [<target|preset>] [--tasks <path>]... [--peer <target>...] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail]
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
@@ -485,7 +484,7 @@ coop loop [<target|preset>] — work the task queue until done, then sign off.
   the rungs on a rate limit. Below a rung's own model sits the account's marked default
   ('coop models'), then COOP_<AGENT>_MODEL — so overnight runs can grind on a cheaper model.
 
-  --peer <peer>... lets each iteration ask NAMED peers for a read-only second opinion
+  --peer <target>... lets each iteration ask NAMED peers for a read-only second opinion
   (repeatable; coop-consult on PATH, only those peers' credentials mounted) — the
   orchestrator pattern running unattended. Off by default: it widens each box's
   credential scope to exactly the named peers. Also on fork loops:

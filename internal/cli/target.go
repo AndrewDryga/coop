@@ -9,17 +9,17 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 )
 
-// noProviderErr is coop's one actionable message when a launch names no provider (and no
+// noProviderErr is coop's one actionable message when a launch names no target (and no
 // preset supplies a lead) — the implicit claude default is gone, so every agent-launching
-// surface routes an empty agent here. cmd is the command word for the usage line
+// surface routes an empty selection here. cmd is the command word for the usage line
 // ("loop", "acp", "fork", "" for a bare `coop`).
 func noProviderErr(cmd string) error {
 	usage := "coop " + cmd
 	if cmd == "" {
 		usage = "coop"
 	}
-	return fmt.Errorf("name the agent — %s <%s> (or a preset name); sign in with 'coop login <agent>' or see 'coop credentials'",
-		strings.TrimSpace(usage), strings.Join(agents.Names(), "|"))
+	return fmt.Errorf("name the target or preset — %s <target|preset>; sign in with 'coop login <agent>' or see 'coop credentials'",
+		strings.TrimSpace(usage))
 }
 
 // isTargetHead reports whether s begins with a registered provider (so `coop <s>` names an

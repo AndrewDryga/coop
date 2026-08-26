@@ -120,7 +120,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp <agent>[:model][/effort][@account] | <preset>)", leftover[0])
+		return 2, fmt.Errorf("coop acp: unexpected argument %q (usage: coop acp <target|preset> [--peer <target>...])", leftover[0])
 	}
 	// A running ACP session can switch its credential/preset/provider via coop's selector; the
 	// supervisor re-execs the inner box with the resolved spawn target in the env

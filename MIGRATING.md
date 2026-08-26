@@ -8,12 +8,14 @@ remove presets, named peers, roles, or consultation.
 
 | Retired | Use |
 | --- | --- |
-| `coop fusion <agent> --peer <peer>...` | `coop <agent> --peer <peer>...` — named peers remain read-only, explicit, and optional |
+| `coop fusion <target> --peer <target>...` | `coop <target> --peer <target>...` — named peers remain read-only, explicit, and optional |
 | `coop fusion <preset>` | `coop <preset>` — the preset lead, native/consult/delegate roles, ladders, and personas are unchanged |
-| `coop acp fusion <agent> --peer <peer>...` | `coop acp <agent> --peer <peer>...` |
+| `coop acp fusion <target> --peer <target>...` | `coop acp <target> --peer <target>...` |
 | `coop acp fusion <preset>` | `coop acp <preset>` |
+| bare `coop acp` (v8.1 guessed the first signed-in provider) | `coop acp <target|preset>` |
 
-ACP still requires an explicit initial target or preset. After connection, its live Preset,
+V9 again requires an explicit ACP initial target or preset; it removes v8.1's credential-order
+shortcut because credential order is not launch intent. After connection, its live Preset,
 Provider, and Account selectors keep working; preset ladders still rotate across providers and
 accounts. `coop-consult` still provides read-only fresh/continue sessions and target fallback for
 named peers and preset consult roles.
@@ -134,13 +136,14 @@ none and rejects it), and the account are all optional. `--model`, `--credential
 | `coop <agent> --credential <acct>` | `coop <agent>@<acct>` — e.g. `coop claude@work` |
 | `coop login <agent> --credential <acct>` | `coop login <agent>@<acct>` |
 | `coop loop --model m@work` | `coop loop <agent>:m@work` (account ladder: `<agent>@work,personal`) |
-| bare `coop` / `loop` / `acp` / `fusion` (defaulted to claude) | name the agent — `coop claude`, `coop loop claude`, … (or positional `coop loop <preset>`, whose lead supplies it) |
-| `coop <agent> --consult` (boolean) | `coop <agent> --peer <peer>…` — name each peer (repeatable): `--peer codex:gpt-5.5 --peer gemini` |
-| `coop fusion <gov>` (consulted everyone signed in) | `coop fusion <gov> --peer <agent>…` — a council needs ≥1 named peer (repeatable) |
+| bare `coop` / `coop loop` (defaulted to claude) | name the target — `coop claude`, `coop loop claude` (or positional `coop loop <preset>`, whose lead supplies it) |
+| bare `coop acp` (v8.1 guessed the first signed-in provider) | `coop acp <target|preset>` |
+| `coop <agent> --consult` (boolean) | `coop <target> --peer <target>...` — name each peer (repeatable): `--peer codex:gpt-5.5 --peer gemini` |
+| `coop fusion <target>` (consulted every signed-in agent) | `coop <target> --peer <target>...` — name only the peers this run may consult |
 
-These apply on **every** launch surface — `coop <agent>`, `loop`, `acp`, `fusion`,
-`fork <name> [acp]`, and `login`. A Zed `agent_servers` entry names the agent as one token:
-`["acp","claude:opus@work"]` (a bare `["acp"]` now errors instead of defaulting).
+These apply on every current launch surface — `coop <target>`, `loop`, `acp`,
+`fork <name> [acp]`, and `login`. A Zed `agent_servers` entry names the target as one token:
+`["acp","claude:opus@work"]`; v9 rejects v8.1's bare `["acp"]` shortcut.
 
 Peers participate **only when named** — the old "every signed-in agent is a peer" policy is
 gone. A named peer's credentials are the only ones mounted for consultation (the box's
@@ -163,8 +166,7 @@ A lead ladder MAY be cross-provider (`agent: [claude:opus, codex:gpt-5.5]`) — 
 across vendors on a rate limit, running each rung's agent, and an ACP session does too (it
 re-creates the session on the new provider and carries the conversation best-effort as a labeled
 plain-text preamble). The lead (the default agent, and what a single run uses) is the first rung's
-provider. `coop fusion` refuses a cross-provider ladder (one governor for the whole council). A
-Consult and delegate ROLE ladders fail over inside their wrappers after a proven non-zero
+provider. Consult and delegate ROLE ladders fail over inside their wrappers after a proven non-zero
 rate-limit response. Native roles remain one target because subagent frontmatter has no runtime
 fallback hook. Role rungs always use each provider's default account; `@account` remains lead-only.
 Unsigned-in providers are skipped, while every available rung's credential home is mounted in

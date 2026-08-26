@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Remote-session structured output is enforced at the completion boundary.** A turn may carry a
+  bounded JSON Schema plus the SHA-256 digest of its exact bytes; Coop persists and compiles that
+  contract, instructs the model with it, and refuses to complete on malformed or schema-invalid
+  output. Schema repairs stay in the same native session and allow three provider responses per
+  semantic round. A caller that enables semantic validation receives up to three schema-valid,
+  unpublished, digest-bound candidates, then accepts or rejects those exact bytes through an
+  idempotent validation endpoint; schema repair does not spend that caller-review budget. Pending
+  candidates survive daemon restart, rejection re-prompts the same logical/native turn, acceptance
+  publishes only the stored candidate with a durable receipt, and exhaustion publishes no
+  assistant message.
+
 - **Detached forks have one repository-owned worker-state format.** Every current pidfile starts
   with `owner-v1`; Coop no longer decodes, signals, rewrites, or partially cleans up headerless
   pre-v8 records. Start/recreate, merge, remove, and stop reject unsupported state before runtime or

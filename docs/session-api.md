@@ -279,8 +279,9 @@ Idempotency-Key: <globally unique caller-owned key>
 ```
 
 The key and content type must each occur exactly once. Mutation URLs accept no query parameters.
-Bodies are limited to 128 KiB, must contain exactly one JSON value, and reject unknown fields.
-Prompts are further limited to 64 KiB of valid UTF-8 without NUL.
+Ordinary mutation bodies are limited to 128 KiB; turn-submission bodies are limited to 12 MiB so
+they can carry bounded input artifacts. Every body is decoded as exactly one JSON value with
+unknown fields rejected. Prompts are limited to 256 KiB of valid UTF-8 without NUL.
 
 Use a stable key for one logical action. Repeating the exact method, key, and canonical body returns
 the recorded result without repeating the action. Reusing a key with a different method or body
@@ -302,8 +303,10 @@ The create continues under the daemon lifetime if the client disconnects. An exa
 same key coalesces onto the same operation. Callers that omit the preference retain the synchronous
 response for compatibility.
 
-State-changing requests carry `expected_revision`. Read the current session before acting and treat
-`revision_conflict` as a request to reconcile, not as permission to guess a new action.
+Session lifecycle, budget, and cancellation requests carry `expected_revision`. Read the current
+session before acting and treat `revision_conflict` as a request to reconcile, not as permission to
+guess a new action. A validation decision instead compares `candidate_sha256`, because its authority
+is the exact unpublished candidate rather than the broader session revision.
 
 ## Lifecycle
 
@@ -334,22 +337,41 @@ validation keeps its unpublished candidate and can still be accepted or rejected
 interrupted after send intent is terminalized as interrupted and is not silently replayed. Provider-declared projected credential
 files left by a process crash are removed before workers start; provider-native history is retained.
 
-An `output_contract` may set `require_semantic_validation: true` when the caller owns checks that
-depend on external frozen state. Coop first enforces the persisted JSON Schema, then exposes the
-exact bytes and SHA-256 digest as `turn.candidate` with state `awaiting_validation`. The durable
+An optional `output_contract` carries the exact schema bytes and their digest:
+
+```json
+{
+  "json_schema": {"type":"object","required":["answer"]},
+  "sha256": "<lowercase SHA-256 hex of the exact json_schema bytes>",
+  "require_semantic_validation": true
+}
+```
+
+When `output_contract` is present, `json_schema` and `sha256` are required, the schema is capped at
+256 KiB, and admission compiles the schema only after the digest matches. Coop persists that exact
+contract, gives it to the model, and validates the final assistant bytes before completion. Invalid
+JSON or a schema mismatch is repaired in the same native session. Without semantic validation,
+three invalid provider responses fail the turn with `output_contract_failed` and publish no
+assistant message.
+
+Set `require_semantic_validation: true` when the caller also owns checks that depend on external
+frozen state. After schema validation, Coop exposes the exact unpublished bytes and SHA-256 digest
+as `turn.candidate` with state `awaiting_validation`. The durable
 `validation_candidate_sha256` remains visible after the decision so a caller can reconcile a lost
-HTTP response. The caller sends
-one idempotent decision to:
+HTTP response. The caller sends one idempotent decision to:
 
 ```text
 POST /v1/sessions/<session>/turns/<turn>/validation
 {"candidate_sha256":"<digest>","verdict":"accept"}
 ```
 
-or rejects it with `verdict: "reject"` and one or more bounded `violations`. Acceptance copies only
-the stored candidate into `assistant_message` and returns a durable `validation_receipt`. Rejection
-re-prompts the same native session under the same logical turn. After three total candidates Coop
-fails the turn with `output_contract_failed` and publishes no assistant message.
+or rejects it with `verdict: "reject"` and 1–20 `violations`; each violation and the combined list
+are capped at 4 KiB. Acceptance forbids violations,
+copies only the stored candidate into `assistant_message`, and returns a durable
+`validation_receipt`. Rejection re-prompts the same native session under the same logical turn.
+Semantic review allows up to three schema-valid candidates; each semantic round separately allows
+up to three provider responses to repair malformed or schema-invalid output, so a schema repair
+does not spend a caller-review attempt.
 
 Close is non-destructive. It preserves the fork, conversation state, events, and reviews. Discard is
 a separate two-step compare-and-swap action available only for a closed, idle session.
@@ -421,11 +443,15 @@ curl --unix-socket "$SOCKET" \
 
 | Method | Path | Body/query |
 | --- | --- | --- |
-| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt`, optional `min_target_index` or `rewind_target` |
+| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt`; optional `artifacts`, `min_target_index`, `rewind_target`, `output_contract` |
 | `GET` | `/v1/sessions/{session_id}/turns?after=0&limit=100` | ordinal cursor |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}` | none |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}/artifacts/{artifact_id}` | raw generated image |
 | `POST` | `/v1/sessions/{session_id}/turns/{turn_id}/cancel` | `expected_revision` |
+| `POST` | `/v1/sessions/{session_id}/turns/{turn_id}/validation` | `candidate_sha256`, `verdict`; `accept` forbids `violations`, `reject` requires 1–20 |
+
+Validation decisions do not carry `expected_revision`; `candidate_sha256` provides the optimistic
+concurrency check against the exact unpublished candidate being accepted or rejected.
 
 A public turn excludes its prompt, its idempotency data, `min_target_index`, and `rewind_target` —
 request data whose effect is published as the session's `target` and its
@@ -679,7 +705,7 @@ Common status mapping:
 | `400` | invalid or over-bounds request |
 | `404` | session, turn, or operation not found |
 | `409` | idempotency, revision, state, queue, budget, resume, uncertainty, or discard conflict |
-| `413` | request body exceeds 128 KiB |
+| `413` | ordinary request body exceeds 128 KiB, or turn submission exceeds 12 MiB |
 | `500` | internal failure; host paths and raw internal errors are suppressed |
 | `503` | readiness endpoint is not ready |
 

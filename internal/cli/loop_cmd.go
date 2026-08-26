@@ -49,7 +49,7 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, pr
 			}
 			maxTasks = n
 		default:
-			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<agent>[:model][/effort][@account,...] | <preset>] [--tasks <path>] [--peer <agent>]... [--max-tasks <n>] [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail])", x)
+			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<target|preset>] [--tasks <path>] [--peer <target>]... [--max-tasks <n>] [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail])", x)
 		}
 	}
 	return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, nil

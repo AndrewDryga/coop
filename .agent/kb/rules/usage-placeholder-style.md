@@ -2,9 +2,9 @@
 name: usage-placeholder-style
 description: "one frozen `<angle>` lexicon for every usage string and error hint"
 scope: cli-grammar
-sources: [internal/cli/help.go, internal/cli/fork_cmd.go]
-check: "none"
-updated: 2026-08-25
+sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/loop_cmd.go, internal/cli/target.go, internal/cli/conformance_test.go]
+check: none
+updated: 2026-08-26
 ---
 
 # One frozen lexicon for usage placeholders
@@ -32,14 +32,18 @@ the CLI read as several tools. A user shouldn't have to learn that `m` and `<mod
 **How to apply:**
 - A new usage/error string → use the placeholders above; wrap in `<…>`; ASCII `...` for repetition.
 - Never abbreviate to a single letter (`p`, `m`) and never use the Unicode ellipsis in a usage string.
-- NOT mechanically gated yet. `TestCLIConformance` (`internal/cli/conformance_test.go`) landed and
-  graduates [[list-verb-ls]], [[destructive-verb-rm]], and [[help-output-style]] — but it does not
-  read usage strings for this lexicon. Enforce in review until someone adds that arm, then put its
-  command in `check:`.
+- NOT comprehensively mechanically gated. `TestCLIConformance`
+  (`internal/cli/conformance_test.go`) locks the target-valued launch and peer subset across current
+  help plus parser errors, but it does not inspect every usage string for the full lexicon. Enforce
+  the remaining placeholders in review until one gate covers the whole card, then put that command
+  in `check:`.
 
 See also [[help-output-style]].
 
 ## Changelog
+- 2026-08-26 — added a focused target-valued launch and peer regression to `TestCLIConformance`:
+  current top-level, agent, ACP, loop, and fork help plus parser error hints must use `<target>` or
+  `<target|preset>`, never provider-only `<agent>`, undefined `<peer>`, or bare `[target|preset]`.
 - 2026-08-25 — added the target/preset placeholders used by every launch surface and normalized
   the changed fork/loop synopses to keep values inside angle brackets.
 - 2026-07-02 — created

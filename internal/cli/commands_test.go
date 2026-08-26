@@ -600,7 +600,7 @@ func TestACPRequiresAnExplicitInitialTarget(t *testing.T) {
 	if code != 2 || err == nil {
 		t.Fatalf("bare cmdACP with a signed-in provider = (%d, %v), want (2, error)", code, err)
 	}
-	if !strings.Contains(err.Error(), "name the agent") || !strings.Contains(err.Error(), "coop acp") {
+	if !strings.Contains(err.Error(), "name the target or preset") || !strings.Contains(err.Error(), "coop acp <target|preset>") {
 		t.Errorf("error should require an explicit ACP target, got: %v", err)
 	}
 }
@@ -837,7 +837,7 @@ func TestStrictFlagParsing(t *testing.T) {
 	}
 }
 
-// The top-level help documents coop's --peer wrapper flag and stops claiming `coop <agent>
+// The top-level help documents coop's --peer wrapper flag and stops claiming `coop <target>
 // --help` shows coop's flags (it forwards to the agent).
 func TestHelpDocumentsPeerAndAgentHelp(t *testing.T) {
 	h := helpText(&config.Config{})

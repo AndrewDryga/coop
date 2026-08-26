@@ -345,7 +345,7 @@ func (a *app) applyOneOff(tool, model, credential, effort string) error {
 // the repeatable form. `--`-aware. The one --peer parser for every command (the retired --consult
 // spelling is now just an unknown flag).
 func extractPeer(args []string) (peers, rest []string, err error) {
-	return extractRepeatable(args, "--peer", "name each peer: --peer <agent> [--peer <agent> ...]")
+	return extractRepeatable(args, "--peer", "name each peer: --peer <target> [--peer <target> ...]")
 }
 
 // extractRepeatable collects every `--flag <value>` occurrence (repeatable) out of args, in
