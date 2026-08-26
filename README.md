@@ -1675,7 +1675,7 @@ surface would just be a second, drifting copy. Branch on exit codes; read the fi
 | **Login hangs or "usage limit reached"** | `coop login <agent>` re-runs the sign-in (paste-code, no browser). Hit a subscription limit? It resets on a schedule — wait, or `coop login` into another account. The unattended loop waits out the reset on its own; a [Zed session](#drive-it-from-zed-acp) rotates to your next signed-in account and re-sends by itself. |
 | **Agent seems stuck / a detached loop won't quit** | `coop fork logs <name> -f` to watch it; `coop fork stop <name>` to stop a detached loop. A foreground run is just Ctrl-C. |
 | **"permission denied" writing `~/.cache` / build or test caches** | The shared cache volume initialized root-owned. Recreate it: `docker volume rm coop-cache` (or your runtime's equivalent), then `coop build`. |
-| **`go`/`gofmt`: "No version is set for command go"** | The box provisions toolchains from `.tool-versions` via asdf — add the toolchain there (e.g. `golang 1.26.4`) so it's installed and shimmed. Set `COOP_NO_ASDF=1` to skip provisioning. |
+| **`go`/`gofmt`: "No version is set for command go"** | The box provisions toolchains from `.tool-versions` via asdf — add the required `golang` version there so it's installed and shimmed. Set `COOP_NO_ASDF=1` to skip provisioning. |
 | **A pinned `.tool-versions` tool (`go`, `ruby`, …) is installed yet "not found" in a *login* shell** | asdf's shims sit on PATH via the image's `ENV`, which only reaches the agent process and non-login shells. A login shell (`sh -lc`, `bash -l`) sources `/etc/profile`, which resets PATH and drops the shims. The base box adds an `/etc/profile.d` drop-in to re-add them; rebuild an older box with `coop build` to pick it up. |
 | **Zed (ACP) can't find the agent** | Zed must launch `coop` from a shell where it's on `PATH` (the installer puts it in `~/.local/bin`). Point Zed's ACP command at the absolute path if needed, and confirm `coop acp <target|preset>` runs in a terminal first. |
 | **An editor (ACP) session misbehaves** | Turn on wire tracing: set `COOP_ACP_TRACE=1` in the agent server's `env`, or `touch ~/.config/coop/acp-debug` (works on an already-running server). coop appends the editor↔box traffic to `~/.config/coop/acp-trace-<pid>.log` (size-bounded, auto-pruned). It carries prompts and file contents — treat it as sensitive. |
@@ -1720,8 +1720,8 @@ container runtime). It needs `staticcheck` (pinned by `STATICCHECK_VERSION` in t
 which CI reads), `shellcheck`, and `python3`; a missing or wrong-version tool fails the gate with
 the command that installs it, never a silent skip.
 
-`.tool-versions` pins the Go toolchain (`golang 1.26.4`), so an asdf user — and coop's
-own box — gets the right `go`/`gofmt` automatically.
+`.tool-versions` is the exact Go-toolchain authority, so an asdf user — and coop's own box —
+gets the repository's required `go`/`gofmt` version automatically.
 
 The security-critical logic — secret enumeration (`internal/box/mounts.go`) and run-arg
 assembly (`internal/box/run.go`) — is pure and unit-tested without a runtime; `coop
