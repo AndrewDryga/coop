@@ -4,7 +4,7 @@ description: "`coop init` generates for the detected stack and stays neutral whe
 scope: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go]
 check: "none"
-updated: 2026-08-09
+updated: 2026-08-26
 ---
 
 # coop init scaffolds what the repo uses — it never imposes a stack
@@ -54,13 +54,16 @@ blocks. Guessing wrong is worse than doing nothing.
   gate the user has since customized.
 
 ## Changelog
+- 2026-08-26 — removed the pre-v8 byte-signature and gitignore rewrite migrations from re-init.
+  Fresh/current scaffold output and the `writeContentIfAbsent` non-clobber boundary are unchanged;
+  direct pre-v8 upgrades are now an explicit v9 migration step instead of permanent init branches.
 - 2026-06-19 — created
 - 2026-07-16 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: read internal/scaffold/gates.go and scaffold.go in
   full. Confirmed clean: `DetectStacks`/`knownStacks` marker files (go.mod/mix.exs/Cargo.toml) +
   `.tool-versions` + `*.tf` glob all current; `writeContentIfAbsent` (scaffold.go:249) guards
-  every gate write (pre-commit :355, prepare-commit-msg chain :378, Claude gate :388); the
+  every gate write (pre-commit :355, prepare-commit-msg chain :367, Claude gate :377); the
   interactive prompt lives in `cmdInit` gated on `ui.IsTerminal(os.Stdin)` (commands.go:1459-1465)
   and `internal/scaffold/*.go` never touches stdin. 1 violation found: `gateSnippets`' own comment
   (gates.go:85-86) says "Go and Terraform are list-based so a tool error fails open" — true for

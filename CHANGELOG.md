@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop init` targets the current scaffold only.** Re-init still fills missing current files and
+  preserves every existing hook, symlink, and custom hooks path, but it no longer recognizes and
+  rewrites pre-v8 hook bytes, root-anchored `.agent` ignore rules, or the retired `.agent/rules/`
+  un-ignore. `MIGRATING.md` gives the one-time manual replacements for a direct pre-v8-to-v9 jump.
+
 - **Fork session re-entry uses one exact hint.** Coop now reads only the current
   `.coop/session.<provider>.<account>` record. It no longer adopts provider-only fork records or
   guesses the latest Codex conversation by cwd; a missing or invalid hint starts fresh, and Codex

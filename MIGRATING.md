@@ -45,6 +45,22 @@ cwd. The first re-entry without a current exact hint starts a fresh conversation
 exact hint for later resumes when the provider creates one unambiguous session. Remove provider-only
 files when convenient; Coop will neither read nor rewrite them.
 
+`coop init` now maintains only the current scaffold and does not rewrite pre-v8 generated files.
+For a direct pre-v8-to-v9 upgrade:
+
+- In `.githooks/prepare-commit-msg`, replace
+  `$HOME/.config/coop/git-hooks/prepare-commit-msg` with
+  `$HOME/.coop-git-hooks/prepare-commit-msg`, then run `chmod +x .githooks/prepare-commit-msg`.
+- If `.agent/rules/` exists, run `mkdir -p .agent/kb` and
+  `git mv .agent/rules .agent/kb/rules` so the rule cards remain tracked at their current path,
+  then update project-owned instructions such as `AGENTS.md` to refer to `.agent/kb/rules/`.
+- In `.gitignore`, remove the old Coop stanza containing `.agent/*` or `**/.agent/*` together with
+  `!.agent/rules/` or `!**/.agent/rules/`, then run `coop init` once to append the current
+  monorepo-aware stanza.
+
+Existing project-owned hooks and custom hook paths remain protected; `init` will describe how to
+chain Coop's current hook instead of overwriting them.
+
 ## v4: the target grammar — one way to name a run
 
 Every launch names WHO runs with a single **target**: `provider[:model][/effort][@account]`

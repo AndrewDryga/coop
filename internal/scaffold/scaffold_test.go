@@ -218,17 +218,11 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	}
 }
 
-func TestUpdateGitignoreAddsClaudeFallbackToExistingBlock(t *testing.T) {
+func TestUpdateGitignoreCompletesMinimalCurrentBlock(t *testing.T) {
 	repo := t.TempDir()
-	oldBlock := "# coop working state (commit knowledge, ignore state)\n" +
-		"**/.agent/*\n" +
-		"!**/.agent/rules/\n" + // retired: the rules KB moved under kb/
-		"!**/.agent/skills/\n" +
-		"!**/.agent/presets/\n" +
-		"!**/.agent/loop.yaml\n" +
-		"!**/.agent/compose.yml\n" +
-		"!.agent/project.yaml\n"
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(oldBlock), 0o644); err != nil {
+	partialBlock := "# coop working state (commit knowledge, ignore state)\n" +
+		"**/.agent/*\n"
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(partialBlock), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -243,65 +237,22 @@ func TestUpdateGitignoreAddsClaudeFallbackToExistingBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(string(gi), "!**/.agent/claude/"); n != 1 {
-		t.Fatalf("Claude fallback allowlist appears %d times, want 1:\n%s", n, gi)
+	ordered := []string{
+		"**/.agent/*", "!**/.agent/kb/", "!**/.agent/skills/", "!**/.agent/presets/",
+		"!**/.agent/claude/", "!**/.agent/loop.yaml", "!**/.agent/compose.yml",
+		"!**/.agent/Dockerfile", "!.agent/project.yaml", "!**/.agent/tasks/",
+		"**/.agent/tasks/*", "!**/.agent/tasks/README.md",
 	}
-	if n := strings.Count(string(gi), "**/.agent/*\n"); n != 1 {
-		t.Fatalf("Coop block appears %d times, want 1:\n%s", n, gi)
-	}
-	// The .agent/Dockerfile move also un-ignores it, added to an older block exactly once.
-	if n := strings.Count(string(gi), "!**/.agent/Dockerfile"); n != 1 {
-		t.Fatalf("Dockerfile un-ignore appears %d times, want 1:\n%s", n, gi)
-	}
-	// The rules KB moved under kb/: the retired un-ignore is rewritten in place, exactly once,
-	// and never left beside its replacement (which would un-ignore a directory that isn't there).
-	if n := strings.Count(string(gi), "!**/.agent/kb/"); n != 1 {
-		t.Fatalf("kb un-ignore appears %d times, want 1:\n%s", n, gi)
-	}
-	if strings.Contains(string(gi), "!**/.agent/rules/") {
-		t.Fatalf("retired rules un-ignore survived the upgrade:\n%s", gi)
-	}
-}
-
-// TestInitSubproject: a member gets ONLY its own task queue — never the full scaffold (AGENTS.md,
-// .claude/, rules), a project.yaml (the root's alone), nor the retired BACKLOG.md.
-// A repo scaffolded by a pre-monorepo coop carries the same rules ROOT-anchored (".agent/*").
-// Re-init must upgrade those lines in place: probing only for the "**/" spelling appended a whole
-// second block, so the repo ended up with two coop stanzas and a duplicate of every stanza after it.
-func TestUpdateGitignoreUpgradesLegacyRootAnchoredBlock(t *testing.T) {
-	repo := t.TempDir()
-	legacy := "node_modules/\n\n" +
-		"# coop working state (commit knowledge, ignore state)\n" +
-		".agent/*\n!.agent/rules/\n!.agent/skills/\n\n" +
-		"# .gemini may be globally ignored (local Gemini state); keep just the skills symlink\n" +
-		"!.gemini/\n.gemini/*\n!.gemini/skills\n"
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(legacy), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := &scaffolder{repo: repo}
-	for range 2 { // twice: the upgrade must be idempotent too
-		if err := s.updateGitignore(true); err != nil {
-			t.Fatal(err)
+	last := -1
+	for _, line := range ordered {
+		if n := strings.Count(string(gi), line+"\n"); n != 1 {
+			t.Fatalf("current rule %q appears %d times, want 1:\n%s", line, n, gi)
 		}
-	}
-	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	for line, want := range map[string]int{
-		"\n**/.agent/*\n":        1,
-		"\n!.gemini/\n":          1, // the appended block used to bring a second copy of this stanza
-		"\n!.agent/rules/\n":     0, // legacy spelling is rewritten, not left beside the new one
-		"\n!**/.agent/rules/\n":  0, // and the rules KB's own move retires it entirely
-		"\n!**/.agent/kb/\n":     1, // exactly one replacement, never a duplicate
-		"\n!**/.agent/skills/\n": 1,
-	} {
-		if n := strings.Count(string(gi), line); n != want {
-			t.Errorf("%q appears %d times, want %d:\n%s", line, n, want, gi)
+		at := strings.Index(string(gi), line+"\n")
+		if at <= last {
+			t.Fatalf("current rule %q is out of load-bearing order:\n%s", line, gi)
 		}
-	}
-	// The upgrade splices the newer rules in at their load-bearing position, not at the end.
-	for _, want := range []string{"!**/.agent/kb/", "!**/.agent/claude/", "!**/.agent/Dockerfile", "!.agent/project.yaml", "!**/.agent/tasks/README.md"} {
-		if !strings.Contains(string(gi), want) {
-			t.Errorf("upgraded block missing %q:\n%s", want, gi)
-		}
+		last = at
 	}
 }
 
@@ -356,6 +307,8 @@ func TestInitRestoresEmptySkillDir(t *testing.T) {
 	}
 }
 
+// A member gets only its own task queue — never the full scaffold, root project.yaml, or retired
+// single-file backlog.
 func TestInitSubproject(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "member")
@@ -838,29 +791,8 @@ func TestInitGitHooks(t *testing.T) {
 		t.Fatalf("repo-local prepare-commit-msg did not chain the box hook:\n%s", msg)
 	}
 
-	// Re-init upgrades only Coop's exact legacy shim; old projects keep box attribution after the
-	// runtime mount moves out of ~/.config. A project-owned hook remains protected below.
-	legacyRepo := t.TempDir()
-	gitInit(legacyRepo)
-	legacyPrepare := filepath.Join(legacyRepo, ".githooks", "prepare-commit-msg")
-	if err := os.MkdirAll(filepath.Dir(legacyPrepare), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(legacyPrepare, []byte(legacyPrepareCommitMsgChainHook), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := captureInit(legacyRepo); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := os.ReadFile(legacyPrepare); err != nil || string(got) != prepareCommitMsgChainHook {
-		t.Fatalf("legacy prepare-commit-msg hook was not upgraded: %v\n%s", err, got)
-	}
-	if info, err := os.Stat(legacyPrepare); err != nil || info.Mode()&0o100 == 0 {
-		t.Fatalf("upgraded prepare-commit-msg hook is not executable: %v", err)
-	}
-
-	// A symlink is project-owned even when its target has the exact legacy bytes. Init must neither
-	// rewrite nor chmod a shared target outside the repository.
+	// A symlink is project-owned. Init must neither rewrite nor chmod a shared target outside the
+	// repository.
 	symlinkRepo := t.TempDir()
 	gitInit(symlinkRepo)
 	symlinkPrepare := filepath.Join(symlinkRepo, ".githooks", "prepare-commit-msg")
@@ -868,7 +800,8 @@ func TestInitGitHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	sharedHook := filepath.Join(t.TempDir(), "shared-prepare-commit-msg")
-	if err := os.WriteFile(sharedHook, []byte(legacyPrepareCommitMsgChainHook), 0o644); err != nil {
+	const sharedHookBody = "#!/bin/sh\n# project-owned shared hook\n"
+	if err := os.WriteFile(sharedHook, []byte(sharedHookBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(sharedHook, symlinkPrepare); err != nil {
@@ -881,7 +814,7 @@ func TestInitGitHooks(t *testing.T) {
 	if target, err := os.Readlink(symlinkPrepare); err != nil || target != sharedHook {
 		t.Fatalf("project-owned prepare hook symlink changed: target %q, err %v", target, err)
 	}
-	if got, err := os.ReadFile(sharedHook); err != nil || string(got) != legacyPrepareCommitMsgChainHook {
+	if got, err := os.ReadFile(sharedHook); err != nil || string(got) != sharedHookBody {
 		t.Fatalf("project-owned prepare hook target was rewritten: %v\n%s", err, got)
 	}
 	if info, err := os.Stat(sharedHook); err != nil || info.Mode().Perm() != 0o644 {

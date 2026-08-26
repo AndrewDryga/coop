@@ -356,24 +356,13 @@ func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 		return err
 	}
 	preparePath := filepath.Join(s.repo, ".githooks", "prepare-commit-msg")
-	prepareExists, prepareIsStock, prepareIsLegacy := false, false, false
+	prepareExists, prepareIsStock := false, false
 	if info, err := os.Lstat(preparePath); err == nil {
 		prepareExists = true
 		if info.Mode().IsRegular() {
 			data, readErr := os.ReadFile(preparePath)
 			prepareIsStock = readErr == nil && string(data) == prepareCommitMsgChainHook && info.Mode()&0o100 != 0
-			prepareIsLegacy = readErr == nil && string(data) == legacyPrepareCommitMsgChainHook
 		}
-	}
-	if prepareIsLegacy {
-		if err := os.WriteFile(preparePath, []byte(prepareCommitMsgChainHook), 0o755); err != nil {
-			return err
-		}
-		if err := os.Chmod(preparePath, 0o755); err != nil {
-			return err
-		}
-		prepareIsStock = true
-		ui.Detail("updated .githooks/prepare-commit-msg for the current coop box hook path")
 	}
 	if err := s.writeContentIfAbsent(preparePath, prepareCommitMsgChainHook, 0o755); err != nil {
 		return err
@@ -481,23 +470,6 @@ func (s *scaffolder) updateGitignore(wantGemini bool) error {
 		lines = strings.Split(strings.TrimSuffix(orig, "\n"), "\n")
 	}
 
-	// A pre-monorepo scaffold wrote these same rules root-anchored. Rewrite those lines in place:
-	// appending the modern stanza instead left the repo with TWO coop blocks and a second copy of
-	// every stanza below it — which is what a repo scaffolded by an older coop got on re-init.
-	for i, l := range lines {
-		switch strings.TrimSpace(l) {
-		case ".agent/*":
-			lines[i] = "**/.agent/*"
-		case "!.agent/skills/":
-			lines[i] = "!**/.agent/skills/"
-		case "!.agent/presets/":
-			lines[i] = "!**/.agent/presets/"
-		}
-	}
-	// The rules KB moved under kb/ (one committed knowledge tree, matching the sibling repos).
-	// An older scaffold un-ignored .agent/rules/ directly, at either anchoring.
-	lines = migrateRulesUnignore(lines)
-
 	if !hasIgnoreLine(lines, "**/.agent/*") {
 		lines = appendIgnoreStanza(lines, coopIgnoreStanza)
 	} else {
@@ -505,6 +477,7 @@ func (s *scaffolder) updateGitignore(wantGemini bool) error {
 		// order here is the stanza's own, so an anchor is always in place before the rule that needs it.
 		for _, up := range [][2]string{
 			{"!**/.agent/kb/", "**/.agent/*"},
+			{"!**/.agent/skills/", "!**/.agent/kb/"},
 			{"!**/.agent/presets/", "!**/.agent/skills/"},
 			{"!**/.agent/claude/", "!**/.agent/presets/"},
 			{"!**/.agent/loop.yaml", "!**/.agent/claude/"},
@@ -536,29 +509,6 @@ func (s *scaffolder) updateGitignore(wantGemini bool) error {
 	}
 	ui.Detail("updated .gitignore (.agent state ignored at any depth; kb/skills/presets/claude/loop + project.yaml + the tasks README tracked)")
 	return nil
-}
-
-// migrateRulesUnignore retires the standalone .agent/rules/ un-ignore now that the rules KB lives
-// under kb/. The first occurrence becomes the kb un-ignore in place, so it keeps its load-bearing
-// position right after **/.agent/*; any further one is dropped rather than rewritten, or a repo
-// that already carries the kb line would end up with two.
-func migrateRulesUnignore(lines []string) []string {
-	const kb = "!**/.agent/kb/"
-	have := hasIgnoreLine(lines, kb)
-	out := make([]string, 0, len(lines))
-	for _, l := range lines {
-		switch strings.TrimSpace(l) {
-		case "!.agent/rules/", "!**/.agent/rules/":
-			if have {
-				continue
-			}
-			have = true
-			out = append(out, kb)
-		default:
-			out = append(out, l)
-		}
-	}
-	return out
 }
 
 func hasIgnoreLine(lines []string, want string) bool {

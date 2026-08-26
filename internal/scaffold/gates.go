@@ -194,13 +194,6 @@ hook="$HOME/.coop-git-hooks/prepare-commit-msg"
 exec "$hook" "$@"
 `
 
-// legacyPrepareCommitMsgChainHook is only a byte-exact re-init migration marker for the old path.
-const legacyPrepareCommitMsgChainHook = `#!/bin/sh
-hook="$HOME/.config/coop/git-hooks/prepare-commit-msg"
-[ -x "$hook" ] || exit 0
-exec "$hook" "$@"
-`
-
 // claudeCommitGate is the .claude/hooks/commit-gate.sh gate (Claude only; a Claude hook
 // blocks the tool call on exit 2). Reads the tool call on stdin and acts only on git commit.
 func claudeCommitGate(langs []string) string {
