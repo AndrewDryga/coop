@@ -19,7 +19,6 @@ import (
 
 const (
 	LeaseAuthorityVersion          = "v1"
-	leaseAuthorityAdoptLockName    = ".adopt.lock"
 	leaseAuthorityIdentityAttempts = 5
 	auditReopenVersion             = 3
 	auditReopenPendingVersion      = 4
@@ -28,10 +27,7 @@ const (
 	leaseMetadataVersion           = 1
 )
 
-const (
-	TestLeaseAuthorityRootEnv       = "COOP_TEST_LEASE_AUTHORITY_ROOT"
-	testLeaseAuthorityLegacyRootEnv = "COOP_TEST_LEASE_AUTHORITY_LEGACY_ROOT"
-)
+const TestLeaseAuthorityRootEnv = "COOP_TEST_LEASE_AUTHORITY_ROOT"
 
 var (
 	errLeaseCandidateGone     = errors.New("lease candidate changed state")
@@ -194,45 +190,70 @@ func LeaseAuthorityKey(root, id string) (string, error) {
 	return fmt.Sprintf("%x", sum), nil
 }
 
-// leaseAuthorityRoots resolves where the host-global completion-trust registry lives, plus the
-// cache location it supersedes. Everything in this registry — lock-authority inodes, completion
-// receipts, audit-reopen authority, departure records, the completion-window journal — is DURABLE
-// TRUST STATE, so it lives with the session store's state root (see defaultSessionStateRoot in
-// session_cmd.go) and NOT under os.UserCacheDir(). A cache is OS-deletable BY CONTRACT: macOS
+// leaseAuthorityRoot resolves where the host-global completion-trust registry lives. Everything
+// in this registry — lock-authority inodes, completion receipts, audit-reopen authority, departure
+// records, and the completion-window journal are DURABLE TRUST STATE, so they live with the session
+// store's state root (see defaultSessionStateRoot in internal/sessionsvc/http.go), not under
+// os.UserCacheDir(). A cache is OS-deletable BY CONTRACT: macOS
 // purges ~/Library/Caches under pressure and cleaners empty it wholesale. A purge mid-run unlinks
 // lock files whose fds are still flocked, so the next open recreates the name as a new inode and
 // two controllers each hold an "exclusive" lock on a different one; a purge between runs erases the
 // receipts crash recovery reads, degrading it to restore-and-redo and stranding audit-reopened
 // tasks behind manual repair.
-func leaseAuthorityRoots() (dir, legacy string, err error) {
+func leaseAuthorityRoot() (string, error) {
 	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
 		if root := os.Getenv(TestLeaseAuthorityRootEnv); root != "" {
-			return root, os.Getenv(testLeaseAuthorityLegacyRootEnv), nil
+			return root, nil
 		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	dir = filepath.Join(home, ".local", "state", "coop", "task-leases", LeaseAuthorityVersion)
+	return filepath.Join(home, ".local", "state", "coop", "task-leases", LeaseAuthorityVersion), nil
+}
+
+func legacyLeaseAuthorityRoot() (string, error) {
 	cache, cacheErr := os.UserCacheDir()
 	if cacheErr != nil {
-		return dir, "", nil // no cache dir means there is nothing to adopt, not a broken install
+		return "", cacheErr
 	}
-	return dir, filepath.Join(cache, "coop", "task-leases", LeaseAuthorityVersion), nil
+	return filepath.Join(cache, "coop", "task-leases", LeaseAuthorityVersion), nil
 }
 
 func OpenLeaseAuthorityRoot() (*os.Root, error) {
-	dir, legacy, err := leaseAuthorityRoots()
+	dir, err := leaseAuthorityRoot()
 	if err != nil {
 		return nil, err
 	}
-	if err := adoptLegacyLeaseAuthorityRoot(dir, legacy); err != nil {
+	return openLeaseAuthorityRootAt(dir, legacyLeaseAuthorityRoot)
+}
+
+func openLeaseAuthorityRootAt(dir string, resolveLegacy func() (string, error)) (*os.Root, error) {
+	// Current authority wins without even resolving the retired cache path. Besides keeping the
+	// steady state small, this means a stale or unreadable cache cannot break a current install.
+	if _, err := os.Lstat(dir); err == nil {
+		return openLeaseAuthorityRoot(dir)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	legacy, err := resolveLegacy()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"resolve pre-v8 task lease authority from the OS cache before creating %q: %w; stop all older Coop processes and migrate the whole pre-v8 registry directory before retrying",
+			dir, err,
+		)
+	}
+	if err := rejectLegacyLeaseAuthorityRoot(dir, legacy); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
+	return openLeaseAuthorityRoot(dir)
+}
+
+func openLeaseAuthorityRoot(dir string) (*os.Root, error) {
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return nil, err
@@ -243,151 +264,38 @@ func OpenLeaseAuthorityRoot() (*os.Root, error) {
 	return os.OpenRoot(dir)
 }
 
-// adoptLegacyLeaseAuthorityRoot is the ONE-SHOT move of the registry off the cache path. It runs
-// only when the durable root does not exist yet and the cache root does; when it returns, the cache
-// root is gone and nothing reads it again. There is deliberately no compat reader — a permanent
-// fallback would keep the purgeable path load-bearing forever, which is the bug.
-//
-// A process still running an OLD binary during the upgrade keeps its locks on the OLD inodes: flock
-// binds an open file description, and adoption moves directory entries, not fds. So for as long as
-// such a process lives, it and a new binary are not mutually exclusive. That window is why adoption
-// is a single loud move rather than a lazy dual-read that would extend it indefinitely; the fix is
-// to let in-flight runs finish before upgrading.
-func adoptLegacyLeaseAuthorityRoot(dir, legacy string) (err error) {
-	if legacy == "" || filepath.Clean(legacy) == filepath.Clean(dir) {
+func rejectLegacyLeaseAuthorityRoot(dir, legacy string) error {
+	// Any entry may be trust state or evidence of an interrupted write. V9 does not interpret,
+	// merge, move, or delete it; the operator must migrate the whole directory while old Coop
+	// processes are stopped. This check cannot synchronize with binaries that still write there.
+	root, err := os.OpenFile(legacy, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	// The steady state must not pay for a lock: adoption happens once in the life of an install, so
-	// a stat is the gate and both conditions are re-proved under the lock before anything moves.
-	if adopted, statErr := leaseAuthorityRootAdopted(dir); adopted || statErr != nil {
-		return statErr
+	if err != nil {
+		return legacyLeaseAuthorityRefusal(
+			dir, legacy, fmt.Errorf("the retired path is not a readable real directory: %w", err),
+		)
 	}
-	if info, statErr := os.Lstat(legacy); statErr != nil || !info.IsDir() {
-		return nil // a fresh install, or the cache was already purged: nothing to adopt
+	_, readErr := root.Readdirnames(1)
+	closeErr := root.Close()
+	if errors.Is(readErr, io.EOF) && closeErr == nil {
+		return nil
 	}
-	parent := filepath.Dir(dir)
-	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return err
+	if readErr != nil {
+		return legacyLeaseAuthorityRefusal(dir, legacy, errors.Join(readErr, closeErr))
 	}
-	lock, err := os.OpenFile(
-		filepath.Join(parent, leaseAuthorityAdoptLockName),
-		os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600,
+	if closeErr != nil {
+		return legacyLeaseAuthorityRefusal(dir, legacy, closeErr)
+	}
+	return legacyLeaseAuthorityRefusal(dir, legacy, errors.New("the retired registry is not empty"))
+}
+
+func legacyLeaseAuthorityRefusal(dir, legacy string, cause error) error {
+	return fmt.Errorf(
+		"pre-v8 task lease authority at %q cannot be ignored before creating %q: %w; stop all older Coop processes and migrate the whole directory before retrying",
+		legacy, dir, cause,
 	)
-	if err != nil {
-		return err
-	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		return errors.Join(err, lock.Close())
-	}
-	defer func() { err = errors.Join(err, unlockLeaseFile(lock)) }()
-	if adopted, statErr := leaseAuthorityRootAdopted(dir); adopted || statErr != nil {
-		return statErr // a concurrent adopter finished while we waited for the lock
-	}
-	if info, statErr := os.Lstat(legacy); statErr != nil || !info.IsDir() {
-		return nil
-	}
-	if renameErr := os.Rename(legacy, dir); renameErr == nil {
-		return errors.Join(syncLeaseAuthorityDir(parent), syncLeaseAuthorityDir(filepath.Dir(legacy)))
-	} else if !errors.Is(renameErr, syscall.EXDEV) {
-		return fmt.Errorf("adopt task lease authority %q: %w", legacy, renameErr)
-	}
-	return copyLegacyLeaseAuthorityRoot(dir, legacy)
-}
-
-func leaseAuthorityRootAdopted(dir string) (bool, error) {
-	if _, err := os.Lstat(dir); err == nil {
-		return true, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, err
-	}
-	return false, nil
-}
-
-// copyLegacyLeaseAuthorityRoot adopts across a volume boundary, where rename cannot help. Records
-// are copied fsync-then-rename into a staging directory that is itself renamed into place, so a
-// crash at any point leaves either the untouched cache root or a COMPLETE durable root — never a
-// half-populated registry, which would read back as "these receipts never existed" and reopen
-// finished work.
-func copyLegacyLeaseAuthorityRoot(dir, legacy string) error {
-	parent := filepath.Dir(dir)
-	staging := filepath.Join(parent, "."+filepath.Base(dir)+".adopting")
-	// The adoption lock is held, so anything at the staging name is debris from a crashed adoption;
-	// a resumed copy must start clean rather than inherit a half-written tree.
-	if err := os.RemoveAll(staging); err != nil {
-		return err
-	}
-	if err := os.Mkdir(staging, 0o700); err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(legacy)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		// Every record is written as a single-link regular file under a sha-keyed name. Anything
-		// else — a stray directory, an atomicWriteTaskFile temp left by a crash — is not trust
-		// state, so it stays behind; skipping dot names also keeps the staging temps unambiguous.
-		if !info.Mode().IsRegular() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		if err := copyLeaseAuthorityRecord(filepath.Join(legacy, entry.Name()), staging, entry.Name(), info.Mode().Perm()); err != nil {
-			return err
-		}
-	}
-	if err := syncLeaseAuthorityDir(staging); err != nil {
-		return err
-	}
-	if err := os.Rename(staging, dir); err != nil {
-		return err
-	}
-	if err := syncLeaseAuthorityDir(parent); err != nil {
-		return err
-	}
-	// The durable root is in place, so the cache copy is dead weight a purge is welcome to take.
-	// Removing it here is what makes the adoption one-shot instead of repeating every run.
-	return os.RemoveAll(legacy)
-}
-
-func copyLeaseAuthorityRecord(srcPath, dstDir, name string, perm os.FileMode) error {
-	src, err := os.Open(srcPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-	tmp := filepath.Join(dstDir, "."+name+".partial")
-	dst, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(dst, src); err != nil {
-		return errors.Join(err, dst.Close())
-	}
-	if err := dst.Chmod(perm); err != nil {
-		return errors.Join(err, dst.Close())
-	}
-	// fsync BEFORE the rename: a receipt that reaches its final name without its bytes on disk
-	// reads back as an invalid record, which is exactly the loss this fallback exists to prevent.
-	if err := dst.Sync(); err != nil {
-		return errors.Join(err, dst.Close())
-	}
-	if err := dst.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(dstDir, name))
-}
-
-// syncLeaseAuthorityDir fsyncs a directory so a rename into it survives a power loss: the renamed
-// file's contents are already durable, but the directory entry pointing at them may not be.
-func syncLeaseAuthorityDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	return errors.Join(d.Sync(), d.Close())
 }
 
 // leaseAuthorityIsCurrent proves, with the kernel lock already held, that the locked inode is still

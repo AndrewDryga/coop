@@ -8,7 +8,7 @@ import (
 
 // TestMain gives ordinary package tests a fresh task-lease authority root. Lease helper subprocesses
 // deliberately inherit their parent's root so cross-process contention exercises the same host
-// authority. Without this setup, leaseAuthorityRoots falls through to the developer's real
+// authority. Without this setup, leaseAuthorityRoot falls through to the developer's real
 // ~/.local/state/coop/task-leases and `go test` would mutate durable completion-trust state.
 func TestMain(m *testing.M) {
 	if os.Getenv("COOP_LEASE_HELPER") != "" && os.Getenv(TestLeaseAuthorityRootEnv) != "" {

@@ -69,6 +69,29 @@ left a v1/v2 record, reconcile that task with the originating pre-v9 build befor
 leaves the record intact and refuses to lease, complete, or unblock the task. Do not delete raw
 task-authority registry files to bypass that refusal.
 
+V9 also removes the automatic move from the pre-v8 task-authority cache into durable state. The
+current and retired locations are:
+
+- current: `$HOME/.local/state/coop/task-leases/v1`
+- retired on macOS: `$HOME/Library/Caches/coop/task-leases/v1`
+- retired on Linux: `${XDG_CACHE_HOME:-$HOME/.cache}/coop/task-leases/v1`
+
+Before the first v9 task or loop command, stop **every** older Coop process; an old binary does not
+participate in v9's authority and can recreate the retired tree after it was checked. If the current
+directory already exists, it is authoritative and no migration is needed. If it is absent and the
+retired directory is missing or empty, v9 creates a fresh current directory. If the retired
+directory contains anything, v9 leaves both paths untouched and refuses until the whole directory
+is migrated—never merge individual records.
+
+For a same-filesystem move, require the final current path to be absent, create only its parent, then
+rename the entire retired `v1` directory to the current path; the intact tree is then at its new
+location. For a cross-filesystem move, copy the entire retired directory into a sibling such as
+`.v1.migrating` under the current parent, preserving file modes; recursively verify that staged copy
+against the retired tree; then atomically rename the staging directory to `v1`. In that copy case,
+keep the retired source until a v9 authority-using task or loop operation succeeds. Do not start v9
+with a partial `v1` destination: once the current root exists, it is the sole authority and the
+retired path is intentionally ignored.
+
 ## v4: the target grammar — one way to name a run
 
 Every launch names WHO runs with a single **target**: `provider[:model][/effort][@account]`

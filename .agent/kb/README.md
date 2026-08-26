@@ -91,6 +91,6 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [review-host-owned-verdicts](review-host-owned-verdicts.md) — review boxes report bounded evidence; Coop alone applies validated task lifecycle changes
 - [signoff-scope-is-run-anchored](signoff-scope-is-run-anchored.md) — signoff subjects are a run-anchored folder diff; re-anchor only on receipt-consistent rounds, from the post-review done set
 - [task-state-is-the-folder](task-state-is-the-folder.md) — a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
-- [task-authority-registry-is-durable-state](task-authority-registry-is-durable-state.md) — host-global completion trust lives in `~/.local/state/coop/task-leases`, never a cache dir; adoption off the old cache path is one-shot and every authority flock rechecks its inode
+- [task-authority-registry-is-durable-state](task-authority-registry-is-durable-state.md) — host-global completion trust lives in `~/.local/state/coop/task-leases`, never a cache dir; v9 refuses populated retired state and every authority flock rechecks its inode
 - [task-authority-model](task-authority-model.md) — four separate authorities decide who may act on a task/checkout: claim (durable, human-released), lease, checkout, and ref (all three kernel flocks); never conflate them
 - [task-tmp-lifetime](task-tmp-lifetime.md) — task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist

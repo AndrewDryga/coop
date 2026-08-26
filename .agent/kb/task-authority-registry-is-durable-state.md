@@ -1,9 +1,9 @@
 ---
 name: task-authority-registry-is-durable-state
-description: host-global completion trust lives in ~/.local/state/coop/task-leases, never a cache dir; adoption off the old cache path is one-shot and every authority flock rechecks its inode
+description: host-global completion trust lives in ~/.local/state/coop/task-leases, never a cache dir; v9 refuses populated retired state and every authority flock rechecks its inode
 subsystem: tasks
 sources: [internal/tasks/lease.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/sessionsvc/http.go]
-updated: 2026-08-25
+updated: 2026-08-26
 ---
 Everything that decides whether a task is *really* finished lives OUTSIDE the repo, in one
 host-global registry: the `<sha>.lock` files whose kernel flock makes one controller the single
@@ -21,21 +21,20 @@ A cache is OS-deletable by contract (macOS purges `~/Library/Caches` under press
 it), and a purge breaks trust two ways: mid-run it unlinks a lock file whose fd is still flocked, so
 the next `openLeaseAuthorityRecord` recreates the name as a NEW inode and two controllers each hold
 an "exclusive" lock on a different one — silently; between runs it erases receipts and reopen
-authority, degrading crash recovery to restore-and-redo. `leaseAuthorityRoots`
+authority, degrading crash recovery to restore-and-redo. `leaseAuthorityRoot`
 (`internal/tasks/lease.go`) now resolves `$HOME/.local/state/coop/task-leases/v1` on both darwin
 and linux, the same durable family as the session store's `defaultSessionStateRoot`
 (`internal/sessionsvc/http.go`) — NOT XDG-configurable, matching that precedent exactly.
 
-**Adoption is one-shot, never a fallback reader.** `adoptLegacyLeaseAuthorityRoot` runs only when
-the durable root is absent and the cache root is present, under a blocking flock on
-`.adopt.lock` in the new root's parent, re-proving both conditions after it gets the lock. Same
-volume: whole-dir `rename(2)`. Cross-volume (EXDEV): per-record fsync-then-rename into a
-`.v1.adopting` staging dir which is itself renamed into place, then the cache root is removed — so a
-crash leaves either the untouched cache root or a COMPLETE durable root, never half a registry.
-Non-regular and dot-prefixed entries are skipped: they are not records. The trap when upgrading: a
-process ALREADY RUNNING the old binary holds its locks on file descriptors, not paths, so it keeps
-the old inodes and is not mutually exclusive with a new-binary process until it exits. Let in-flight
-runs finish before upgrading.
+**V9 does not adopt or read retired authority.** When the durable root exists,
+`OpenLeaseAuthorityRoot` opens it without even resolving the old cache path. When it is absent, Coop
+checks the retired path before creating anything: missing or an empty real directory is safe, while
+any entry, path-shape anomaly, lookup failure, or read failure refuses without mutation. The guard
+does not interpret, merge, move, copy, or delete old records. Stop every older Coop process first:
+an old binary does not participate in the guard and can write the cache path after it was checked.
+Move the whole registry using the crash-safe same-filesystem or staged cross-filesystem procedure in
+`MIGRATING.md`; never expose a partial current `v1` directory, because once it exists it is the sole
+authority and the old path is intentionally ignored.
 
 **Every authority flock is proved after the fact.** Take authority locks through
 `lockLeaseAuthority` / `lockLeaseAuthorityForAudit` (`internal/tasks/lease.go`), never a bare `syscall.Flock`
@@ -47,6 +46,9 @@ INODE, never to a name; without the recheck a deleted-underfoot lock is silently
 for the repo-local queue, which did NOT move.
 
 ## Changelog
+- 2026-08-26 — v9 removed automatic cache-root adoption; current state is resolved first, and a
+  populated or unreadable retired root now refuses without mutation until an operator migrates the
+  whole directory with all older processes stopped
 - 2026-08-25 — made the registry the sole iteration-lease authority and heartbeat store; removed
   the provider-visible task-local lock/metadata mirror and its completion-audit fallback
 - 2026-08-10 — sources repointed again: `tasklease.go`/`completionwindow.go`/`controller.go` moved

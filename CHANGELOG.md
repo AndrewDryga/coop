@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Task authority no longer carries an automatic pre-v8 cache migration.** V9 opens only the
+  current durable registry at `~/.local/state/coop/task-leases/v1`; it removes the adoption flock,
+  cross-volume record copier, staging tree, and rename path from every authority open. If that
+  durable root is absent while the retired cache registry contains anything, Coop refuses before
+  creating or changing either tree. Stop every older Coop process and migrate the whole directory
+  using `MIGRATING.md`; a missing or empty retired root starts clean, while an existing durable root
+  is authoritative without consulting the cache. Record formats, inode rechecks, completion trust,
+  and current crash recovery are unchanged.
+
 - **Audit reopen authority has one complete-history format.** Coop reads active v3 and
   non-authorizing pending v4 records only. It removes support for the unshipped v1/v2 descendant
   formats and the now-unused `tasks unblock --adopt-audit-head` adoption transaction; unsupported

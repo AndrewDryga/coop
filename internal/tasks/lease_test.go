@@ -987,7 +987,7 @@ func TestLeaseAuthorityRootIsDurableStateNotCache(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv(TestLeaseAuthorityRootEnv, "")
-	dir, legacy, err := leaseAuthorityRoots()
+	dir, err := leaseAuthorityRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -996,6 +996,10 @@ func TestLeaseAuthorityRootIsDurableStateNotCache(t *testing.T) {
 		t.Fatalf("authority root = %q, want %q", dir, want)
 	}
 	sessions, err := defaultSessionStateRootForTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := legacyLeaseAuthorityRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1014,232 +1018,252 @@ func TestLeaseAuthorityRootIsDurableStateNotCache(t *testing.T) {
 	}
 }
 
-func snapshotLeaseAuthorityRegistry(t *testing.T, dir string) map[string]string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
+func TestLeaseAuthorityRefusesPopulatedLegacyRootWithoutMutation(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "state", "coop", "task-leases", LeaseAuthorityVersion)
+	legacy := filepath.Join(base, "cache", "coop", "task-leases", LeaseAuthorityVersion)
+	if err := os.MkdirAll(legacy, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	files := map[string]string{}
-	for _, entry := range entries {
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			t.Fatal(err)
+	record := filepath.Join(legacy, "receipt.lock")
+	want := []byte("durable receipt bytes\n")
+	if err := os.WriteFile(record, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	registry, err := openLeaseAuthorityRootAt(dir, func() (string, error) { return legacy, nil })
+	if registry != nil || err == nil {
+		t.Fatalf("open populated legacy root = (%v, %v), want refusal", registry, err)
+	}
+	for _, text := range []string{legacy, dir, "not empty", "stop all older Coop processes", "migrate the whole directory"} {
+		if !strings.Contains(err.Error(), text) {
+			t.Fatalf("refusal %q does not contain %q", err, text)
 		}
-		files[entry.Name()] = string(data)
 	}
-	if len(files) == 0 {
-		t.Fatalf("registry %s is empty", dir)
+	if pathExists(filepath.Dir(dir)) {
+		t.Fatalf("refusal created durable parent %s", filepath.Dir(dir))
 	}
-	return files
+	for _, artifact := range []string{".adopt.lock", ".v1.adopting"} {
+		if pathExists(filepath.Join(filepath.Dir(dir), artifact)) {
+			t.Fatalf("refusal created retired adoption artifact %s", artifact)
+		}
+	}
+	if got, readErr := os.ReadFile(record); readErr != nil || !slices.Equal(got, want) {
+		t.Fatalf("legacy record after refusal = %q, err=%v; want exact %q", got, readErr, want)
+	}
 }
 
-// seedLeaseAuthorityRegistry writes one of every record kind through the real writers, so adoption
-// is tested against sha-keyed names the production code produced rather than hand-built fixtures.
-func seedLeaseAuthorityRegistry(t *testing.T, root string, task Item) (nonce string) {
-	t.Helper()
-	authority, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeLeaseCompletionReceipt(authority, task.Dir); err != nil {
-		t.Fatal(err)
-	}
-	receipt, ok := readLeaseCompletionReceipt(authority, task.Dir)
-	if !ok {
-		t.Fatal("seeded completion receipt did not read back")
-	}
-	if err := unlockLeaseFile(authority); err != nil {
-		t.Fatal(err)
-	}
-	meta := taskLeaseMetadata{Version: leaseMetadataVersion, RunID: "seed-run", ControllerPID: 4242}
-	if err := writeLeaseAuthorityMetadata(root, task.ID, meta); err != nil {
-		t.Fatal(err)
-	}
-	if err := WriteAuditReopenRecord(root, testAuditReopenRecord(task.ID, "seed-generation")); err != nil {
-		t.Fatal(err)
-	}
-	if err := appendTrustedDoneDeparture(root, task.ID, strings.Repeat("ab", 16)); err != nil {
-		t.Fatal(err)
-	}
-	index := completionWindowIndex{
-		Version: completionWindowVersion,
-		Windows: map[string]CompletionWindowRecord{
-			"seed-window": {Baseline: map[string]CompletionFingerprint{}},
+func TestLeaseAuthorityRefusesEveryKindOfLegacyEntry(t *testing.T) {
+	cases := map[string]func(*testing.T, string){
+		"dotfile": func(t *testing.T, legacy string) {
+			t.Helper()
+			if err := os.WriteFile(filepath.Join(legacy, ".partial"), []byte("debris"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"subdirectory": func(t *testing.T, legacy string) {
+			t.Helper()
+			if err := os.Mkdir(filepath.Join(legacy, "unexpected"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"symlink": func(t *testing.T, legacy string) {
+			t.Helper()
+			if err := os.Symlink(t.TempDir(), filepath.Join(legacy, "pointer")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"fifo": func(t *testing.T, legacy string) {
+			t.Helper()
+			if err := syscall.Mkfifo(filepath.Join(legacy, "pipe"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 		},
 	}
-	if err := writeCompletionWindowIndex(root, index); err != nil {
-		t.Fatal(err)
-	}
-	return receipt.Nonce
-}
+	for name, seed := range cases {
+		t.Run(name, func(t *testing.T) {
+			base := t.TempDir()
+			dir := filepath.Join(base, "state", "task-leases", LeaseAuthorityVersion)
+			legacy := filepath.Join(base, "cache", "task-leases", LeaseAuthorityVersion)
+			if err := os.MkdirAll(legacy, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			seed(t, legacy)
 
-func TestLeaseAuthorityAdoptsPopulatedLegacyCacheRootOnce(t *testing.T) {
-	base := t.TempDir()
-	newRoot := filepath.Join(base, "state", "coop", "task-leases", LeaseAuthorityVersion)
-	legacyRoot := filepath.Join(base, "cache", "coop", "task-leases", LeaseAuthorityVersion)
-
-	// Write the registry exactly as the pre-upgrade binary left it, in the cache location.
-	t.Setenv(TestLeaseAuthorityRootEnv, legacyRoot)
-	if err := os.MkdirAll(legacyRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	task := taskForLease(t, root, StateDone, "adopted")
-	nonce := seedLeaseAuthorityRegistry(t, root, task)
-	before := snapshotLeaseAuthorityRegistry(t, legacyRoot)
-
-	// Upgrade: the durable root is absent and the cache root is populated.
-	t.Setenv(TestLeaseAuthorityRootEnv, newRoot)
-	t.Setenv(testLeaseAuthorityLegacyRootEnv, legacyRoot)
-
-	receipt, ok := taskCompletionReceipt(root, task)
-	if !ok || receipt.Nonce != nonce {
-		t.Fatalf("receipt after adoption = %#v, ok=%v; want nonce %s", receipt, ok, nonce)
-	}
-	if pathExists(legacyRoot) {
-		t.Fatalf("legacy cache root %s survived adoption", legacyRoot)
-	}
-	if got := snapshotLeaseAuthorityRegistry(t, newRoot); !reflect.DeepEqual(got, before) {
-		t.Fatalf("adopted registry = %v, want byte-identical %v", got, before)
-	}
-	if record, ok, err := ReadAuditReopenRecord(root, task.ID); err != nil || !ok ||
-		record.Generation != "seed-generation" {
-		t.Fatalf("audit reopen after adoption = %#v, ok=%v, err=%v", record, ok, err)
-	}
-	if departure, ok, err := readTrustedDoneDeparture(root, task.ID); err != nil || !ok ||
-		!slices.Contains(departure.Nonces, strings.Repeat("ab", 16)) {
-		t.Fatalf("departure after adoption = %#v, ok=%v, err=%v", departure, ok, err)
-	}
-	if meta, ok := readLeaseAuthorityMetadata(root, task.ID); !ok || meta.RunID != "seed-run" {
-		t.Fatalf("authority metadata after adoption = %#v, ok=%v", meta, ok)
-	}
-	index, err := ReadCompletionWindowIndex(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := index.Windows["seed-window"]; !ok {
-		t.Fatalf("completion window index after adoption = %#v", index)
-	}
-	// Adoption is one-shot: with the cache root gone, a later run must not resurrect or consult it.
-	if _, err := os.Stat(legacyRoot); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("stat legacy root after adoption = %v", err)
-	}
-	if got := snapshotLeaseAuthorityRegistry(t, newRoot); !reflect.DeepEqual(got, before) {
-		t.Fatalf("registry changed on the second open: %v", got)
+			registry, err := openLeaseAuthorityRootAt(dir, func() (string, error) { return legacy, nil })
+			if registry != nil || err == nil || !strings.Contains(err.Error(), "not empty") {
+				t.Fatalf("open legacy %s entry = (%v, %v), want not-empty refusal", name, registry, err)
+			}
+			if pathExists(filepath.Dir(dir)) {
+				t.Fatalf("refusal created durable parent %s", filepath.Dir(dir))
+			}
+		})
 	}
 }
 
-func TestLeaseAuthorityFreshInstallSkipsAdoption(t *testing.T) {
-	base := t.TempDir()
-	newRoot := filepath.Join(base, "state", "coop", "task-leases", LeaseAuthorityVersion)
-	legacyRoot := filepath.Join(base, "cache", "coop", "task-leases", LeaseAuthorityVersion)
-	t.Setenv(TestLeaseAuthorityRootEnv, newRoot)
-	t.Setenv(testLeaseAuthorityLegacyRootEnv, legacyRoot)
+func TestLeaseAuthorityRefusesMalformedLegacyRoot(t *testing.T) {
+	for _, kind := range []string{"regular-file", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			base := t.TempDir()
+			dir := filepath.Join(base, "state", "task-leases", LeaseAuthorityVersion)
+			legacy := filepath.Join(base, "cache", "task-leases", LeaseAuthorityVersion)
+			if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if kind == "regular-file" {
+				if err := os.WriteFile(legacy, []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Symlink(t.TempDir(), legacy); err != nil {
+				t.Fatal(err)
+			}
 
-	registry, err := OpenLeaseAuthorityRoot()
+			registry, err := openLeaseAuthorityRootAt(dir, func() (string, error) { return legacy, nil })
+			if registry != nil || err == nil || !strings.Contains(err.Error(), "real directory") {
+				t.Fatalf("open malformed legacy %s = (%v, %v), want refusal", kind, registry, err)
+			}
+			if pathExists(filepath.Dir(dir)) {
+				t.Fatalf("refusal created durable parent %s", filepath.Dir(dir))
+			}
+		})
+	}
+}
+
+func TestLeaseAuthorityRefusesUnreadableLegacyRoot(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "state", "task-leases", LeaseAuthorityVersion)
+	legacy := filepath.Join(base, "cache", "task-leases", LeaseAuthorityVersion)
+	if err := os.MkdirAll(legacy, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(legacy, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(legacy, 0o700) })
+	if _, err := os.ReadDir(legacy); err == nil {
+		t.Skip("test user can read a mode-000 directory")
+	}
+
+	registry, err := openLeaseAuthorityRootAt(dir, func() (string, error) { return legacy, nil })
+	if registry != nil || err == nil || !strings.Contains(err.Error(), legacy) {
+		t.Fatalf("open unreadable legacy root = (%v, %v), want refusal", registry, err)
+	}
+	if pathExists(filepath.Dir(dir)) {
+		t.Fatalf("refusal created durable parent %s", filepath.Dir(dir))
+	}
+}
+
+func TestLeaseAuthorityRefusesLegacyResolverFailure(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "state", "task-leases", LeaseAuthorityVersion)
+	wantErr := errors.New("cache root unavailable")
+	registry, err := openLeaseAuthorityRootAt(dir, func() (string, error) { return "", wantErr })
+	if registry != nil || !errors.Is(err, wantErr) {
+		t.Fatalf("open with legacy resolver failure = (%v, %v), want wrapped %v", registry, err, wantErr)
+	}
+	for _, text := range []string{dir, "OS cache", "stop all older Coop processes", "migrate"} {
+		if !strings.Contains(err.Error(), text) {
+			t.Fatalf("resolver refusal %q does not contain %q", err, text)
+		}
+	}
+	if pathExists(filepath.Dir(dir)) {
+		t.Fatalf("resolver refusal created durable parent %s", filepath.Dir(dir))
+	}
+}
+
+func TestLeaseAuthorityFreshRootAllowsMissingOrEmptyLegacy(t *testing.T) {
+	for _, kind := range []string{"missing", "empty"} {
+		t.Run(kind, func(t *testing.T) {
+			base := t.TempDir()
+			dir := filepath.Join(base, "state", "task-leases", LeaseAuthorityVersion)
+			legacy := filepath.Join(base, "cache", "task-leases", LeaseAuthorityVersion)
+			if kind == "empty" {
+				if err := os.MkdirAll(legacy, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			registry, err := openLeaseAuthorityRootAt(dir, func() (string, error) { return legacy, nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := registry.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if !pathExists(dir) {
+				t.Fatalf("fresh install did not create %s", dir)
+			}
+			if kind == "missing" && pathExists(filepath.Dir(legacy)) {
+				t.Fatalf("fresh install created retired cache parent %s", filepath.Dir(legacy))
+			}
+			if kind == "empty" {
+				entries, readErr := os.ReadDir(legacy)
+				if readErr != nil || len(entries) != 0 {
+					t.Fatalf("empty legacy root after open = %v, err=%v", entries, readErr)
+				}
+			}
+		})
+	}
+}
+
+func TestLeaseAuthorityExistingDurableRootNeverResolvesLegacy(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "state", "task-leases", LeaseAuthorityVersion)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(dir, "kept.json")
+	want := []byte("current authority\n")
+	if err := os.WriteFile(record, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	registry, err := openLeaseAuthorityRootAt(dir, func() (string, error) {
+		called = true
+		return "", errors.New("must not resolve retired state")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := registry.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if !pathExists(newRoot) {
-		t.Fatalf("fresh install did not create %s", newRoot)
+	if called {
+		t.Fatal("existing current authority resolved the retired cache path")
 	}
-	entries, err := os.ReadDir(newRoot)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("fresh registry = %v, err=%v; want empty", entries, err)
-	}
-	// The adoption lock is only ever created by the adoption path, so its absence is the proof
-	// that a fresh install never entered it.
-	if lock := filepath.Join(filepath.Dir(newRoot), leaseAuthorityAdoptLockName); pathExists(lock) {
-		t.Fatalf("fresh install created the adoption lock %s", lock)
-	}
-	if pathExists(filepath.Dir(legacyRoot)) {
-		t.Fatalf("fresh install created the legacy cache tree %s", filepath.Dir(legacyRoot))
+	if got, readErr := os.ReadFile(record); readErr != nil || !slices.Equal(got, want) {
+		t.Fatalf("current record after open = %q, err=%v; want exact %q", got, readErr, want)
 	}
 }
 
-// The cross-volume fallback cannot be reached with a rename, so exercise the copy directly: it is
-// the path that must not lose or truncate a receipt, including when it resumes over crash debris.
-func TestLeaseAuthorityCrossVolumeAdoptionCopiesEveryRecord(t *testing.T) {
+func TestLeaseAuthorityConcurrentFreshOpensConverge(t *testing.T) {
 	base := t.TempDir()
-	newRoot := filepath.Join(base, "state", "task-leases", LeaseAuthorityVersion)
-	legacyRoot := filepath.Join(base, "cache", "task-leases", LeaseAuthorityVersion)
-	if err := os.MkdirAll(filepath.Join(legacyRoot, "subdir"), 0o700); err != nil {
+	dir := filepath.Join(base, "state", "task-leases", LeaseAuthorityVersion)
+	legacy := filepath.Join(base, "cache", "task-leases", LeaseAuthorityVersion)
+	if err := os.MkdirAll(legacy, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	records := map[string]os.FileMode{"aaa.json": 0o644, "bbb.lock": 0o600}
-	for name, perm := range records {
-		if err := os.WriteFile(filepath.Join(legacyRoot, name), []byte("record "+name+"\n"), perm); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(legacyRoot, ".aaa.json-9-9-0"), []byte("debris"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Debris from an adoption that crashed mid-copy must not survive into the adopted registry.
-	staging := filepath.Join(filepath.Dir(newRoot), "."+filepath.Base(newRoot)+".adopting")
-	if err := os.MkdirAll(staging, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(staging, "half-copied.json"), []byte("truncated"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := copyLegacyLeaseAuthorityRoot(newRoot, legacyRoot); err != nil {
-		t.Fatal(err)
-	}
-	if pathExists(legacyRoot) || pathExists(staging) {
-		t.Fatalf("legacy %s / staging %s survived the copy", legacyRoot, staging)
-	}
-	got := snapshotLeaseAuthorityRegistry(t, newRoot)
-	want := map[string]string{"aaa.json": "record aaa.json\n", "bbb.lock": "record bbb.lock\n"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("copied registry = %v, want %v", got, want)
-	}
-	for name, perm := range records {
-		info, err := os.Lstat(filepath.Join(newRoot, name))
-		if err != nil || info.Mode().Perm() != perm {
-			t.Fatalf("copied %s mode = %v, err=%v; want %v", name, info.Mode().Perm(), err, perm)
-		}
-	}
-}
-
-func TestLeaseAuthorityAdoptionIsSerializedAcrossAdopters(t *testing.T) {
-	base := t.TempDir()
-	newRoot := filepath.Join(base, "state", "task-leases", LeaseAuthorityVersion)
-	legacyRoot := filepath.Join(base, "cache", "task-leases", LeaseAuthorityVersion)
-	if err := os.MkdirAll(legacyRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacyRoot, "receipt.lock"), []byte("receipt\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	const adopters = 8
-	errs := make([]error, adopters)
+	const openers = 8
+	errs := make([]error, openers)
 	var wg sync.WaitGroup
-	for i := range adopters {
+	for i := range openers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs[i] = adoptLegacyLeaseAuthorityRoot(newRoot, legacyRoot)
+			registry, err := openLeaseAuthorityRootAt(dir, func() (string, error) { return legacy, nil })
+			if err == nil {
+				err = registry.Close()
+			}
+			errs[i] = err
 		}()
 	}
 	wg.Wait()
 	for i, err := range errs {
 		if err != nil {
-			t.Fatalf("adopter %d = %v", i, err)
+			t.Fatalf("opener %d = %v", i, err)
 		}
 	}
-	if pathExists(legacyRoot) {
-		t.Fatalf("legacy root %s survived concurrent adoption", legacyRoot)
-	}
-	got := snapshotLeaseAuthorityRegistry(t, newRoot)
-	if !reflect.DeepEqual(got, map[string]string{"receipt.lock": "receipt\n"}) {
-		t.Fatalf("concurrently adopted registry = %v", got)
+	if !pathExists(dir) {
+		t.Fatalf("concurrent opens did not create %s", dir)
 	}
 }
 
