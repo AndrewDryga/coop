@@ -1,10 +1,14 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -65,6 +69,149 @@ func TestGenerateCodexPreservesExistingConfig(t *testing.T) {
 	if !strings.Contains(got, "[mcp_servers.ctx7]") {
 		t.Error("shared servers should be present")
 	}
+}
+
+func TestGenerateCodexRetainsNativeBytesAndRemovesCanonicalMCP(t *testing.T) {
+	retained := " \t# keep exact CRLF\r\nmodel = \"o3\"\r\n\r\n[other]\r\nthreshold = nan\r\nlimit = +inf\r\nwhen = 1979-05-27T07:32:00Z\r\n"
+	existingBody := " \t# keep exact CRLF\r\nmodel = \"o3\"\r\n\r\n[mcp_servers.\"stale.name\"]\r\ncommand = \"gone\"\r\n\r\n" +
+		"[mcp_servers.\"stale.name\".env]\r\nK = \"gone\"\r\n\r\n[other]\r\nthreshold = nan\r\nlimit = +inf\r\nwhen = 1979-05-27T07:32:00Z\r\n"
+	existing := writeTmp(t, "config.toml", existingBody)
+	got, err := GenerateCodex(writeTmp(t, "mcp.json", sample), existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(got, retained) {
+		t.Fatalf("retained native bytes changed:\n--- got ---\n%q\n--- prefix ---\n%q", got, retained)
+	}
+	if strings.Contains(got, "stale.name") || !strings.Contains(got, "[mcp_servers.ctx7]") {
+		t.Fatalf("canonical native MCP was not replaced by shared MCP:\n%s", got)
+	}
+	if after, err := os.ReadFile(existing); err != nil || !bytes.Equal(after, []byte(existingBody)) {
+		t.Fatalf("host native config changed = (%q, %v)", after, err)
+	}
+}
+
+func TestGenerateCodexRejectsAlternateNativeMCPForms(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "dotted bare key", body: `mcp_servers.stale.command = "gone"`},
+		{name: "dotted quoted key", body: `"mcp_servers".stale.command = "gone"`},
+		{name: "dotted literal key", body: `'mcp_servers'.stale.command = "gone"`},
+		{name: "inline table", body: `mcp_servers = { stale = { command = "gone" } }`},
+		{name: "quoted header", body: `["mcp_servers".stale]\ncommand = "gone"`},
+		{name: "spaced header", body: `[ mcp_servers . stale ]\ncommand = "gone"`},
+		{name: "array table", body: `[[mcp_servers.stale]]\ncommand = "gone"`},
+		{name: "header text inside multiline string", body: "note = '''\n[mcp_servers.fake]\nstill text\n'''\n\n[mcp_servers.stale]\ncommand = \"gone\"\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.ReplaceAll(tc.body, `\n`, "\n")
+			existing := writeTmp(t, "config.toml", body)
+			_, err := GenerateCodex(writeTmp(t, "mcp.json", sample), existing)
+			if err == nil || !strings.Contains(err.Error(), "cannot safely remove") || !strings.Contains(err.Error(), "COOP_MCP_FILE") {
+				t.Fatalf("GenerateCodex error = %v, want unsupported native MCP refusal", err)
+			}
+			if after, readErr := os.ReadFile(existing); readErr != nil || !bytes.Equal(after, []byte(body)) {
+				t.Fatalf("denied host config changed = (%q, %v), want %q", after, readErr, body)
+			}
+		})
+	}
+}
+
+func TestGenerateCodexPreservesMCPLookalikesVerbatim(t *testing.T) {
+	existingBody := "note = '''\n[mcp_servers.fake]\nstill text\n'''\n\nmcp_servers_backup = { command = \"keep\" }\n[mcp_serverssettings]\nnote = \"keep too\"\n"
+	got, err := GenerateCodex(writeTmp(t, "mcp.json", sample), writeTmp(t, "config.toml", existingBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(got, existingBody) {
+		t.Fatalf("lookalike native bytes changed:\n--- got ---\n%q\n--- prefix ---\n%q", got, existingBody)
+	}
+}
+
+func TestGenerateCodexRejectsInvalidNativeConfigEntries(t *testing.T) {
+	mcpFile := writeTmp(t, "mcp.json", sample)
+	t.Run("malformed", func(t *testing.T) {
+		path := writeTmp(t, "config.toml", `broken = {`)
+		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "not valid TOML") {
+			t.Fatalf("GenerateCodex malformed error = %v", err)
+		}
+	})
+	t.Run("directory", func(t *testing.T) {
+		path := t.TempDir()
+		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("GenerateCodex directory error = %v", err)
+		}
+	})
+	t.Run("dangling symlink", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), path); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "open native MCP config") {
+			t.Fatalf("GenerateCodex dangling symlink error = %v", err)
+		}
+	})
+	t.Run("readable symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "native.toml")
+		if err := os.WriteFile(target, []byte("model = \"o3\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, "config.toml")
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		got, err := GenerateCodex(mcpFile, path)
+		if err != nil || !strings.HasPrefix(got, "model = \"o3\"\n") {
+			t.Fatalf("GenerateCodex readable symlink = (%q, %v)", got, err)
+		}
+	})
+	t.Run("fifo does not block", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("GenerateCodex fifo error = %v", err)
+		}
+	})
+	t.Run("regular entry replaced before open", func(t *testing.T) {
+		path := writeTmp(t, "config.toml", "model = \"o3\"\n")
+		_, err := readNativeConfigWith(path, func(path string) (*os.File, error) {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(path, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		}, io.ReadAll)
+		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("readNativeConfigWith replacement error = %v, want descriptor refusal", err)
+		}
+	})
+	t.Run("opened regular file read error", func(t *testing.T) {
+		path := writeTmp(t, "config.toml", "model = \"o3\"\n")
+		sentinel := errors.New("fixture read failure")
+		_, err := readNativeConfigWith(path, func(path string) (*os.File, error) {
+			return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		}, func(io.Reader) ([]byte, error) {
+			return nil, sentinel
+		})
+		if !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "read native MCP config") {
+			t.Fatalf("readNativeConfigWith read error = %v, want wrapped sentinel", err)
+		}
+	})
+	t.Run("initially missing", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "missing.toml")
+		got, err := GenerateCodex(mcpFile, path)
+		if err != nil || !strings.Contains(got, "[mcp_servers.ctx7]") {
+			t.Fatalf("GenerateCodex missing = (%q, %v)", got, err)
+		}
+	})
 }
 
 // A numeric MCP env value (JSON numbers decode to float64) must render as plain digits, never

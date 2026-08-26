@@ -879,6 +879,127 @@ func TestRunRejectsAmbiguousMCPBeforeRuntime(t *testing.T) {
 	}
 }
 
+func TestRunRejectsAlternateNativeMCPBeforeHomeMutation(t *testing.T) {
+	tests := []struct {
+		name, agent string
+		peers       []agents.Target
+		configs     map[string]string
+		wantAgent   string
+	}{
+		{
+			name: "codex direct", agent: "codex", wantAgent: "codex",
+			configs: map[string]string{"codex": `mcp_servers.stale.command = "gone"`},
+		},
+		{
+			name: "grok direct", agent: "grok", wantAgent: "grok",
+			configs: map[string]string{"grok": `mcp_servers = { stale = { command = "gone" } }`},
+		},
+		{
+			name: "later grok peer cannot leak earlier codex defaults", agent: "codex", wantAgent: "grok",
+			peers: []agents.Target{{Provider: "grok"}},
+			configs: map[string]string{
+				"codex": "model = \"o3\"\n",
+				"grok":  `"mcp_servers".stale.command = "gone"`,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			mcpFile := filepath.Join(t.TempDir(), "mcp.json")
+			if err := os.WriteFile(mcpFile, []byte(`{"mcpServers":{"shared":{"command":"true"}}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+			paths := map[string]string{}
+			for agent, body := range tc.configs {
+				path := filepath.Join(cfg.AgentDir(agent), "config.toml")
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				paths[agent] = path
+			}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: tc.agent, AgentCommand: true, Homes: true, Batch: true, Quiet: true, Peers: tc.peers}
+			code, err := Run(cfg, recorderRuntime(t, recorder), spec)
+			if code != -1 || err == nil || !strings.Contains(err.Error(), "assemble MCP config for "+tc.wantAgent) || !strings.Contains(err.Error(), "cannot safely remove") {
+				t.Fatalf("Run = (%d, %v), want %s native MCP refusal", code, err, tc.wantAgent)
+			}
+			if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("denied native MCP reached container runtime; recorder error = %v", statErr)
+			}
+			for agent, path := range paths {
+				after, readErr := os.ReadFile(path)
+				if readErr != nil || string(after) != tc.configs[agent] {
+					t.Fatalf("%s config changed before denial = (%q, %v), want %q", agent, after, readErr, tc.configs[agent])
+				}
+			}
+		})
+	}
+}
+
+func TestRunKeepsAlternateNativeMCPInactiveWithoutSharedServers(t *testing.T) {
+	nativeCases := []struct {
+		name string
+		make func(*testing.T, string)
+	}{
+		{name: "alternate", make: func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte(`mcp_servers.stale.command = "native"`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "malformed", make: func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte(`broken = {`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "unreadable shape", make: func(t *testing.T, path string) {
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, shared := range []struct {
+		name, body string
+	}{
+		{name: "missing"},
+		{name: "empty", body: `{"mcpServers":{}}`},
+	} {
+		for _, native := range nativeCases {
+			t.Run(shared.name+" shared, "+native.name+" native", func(t *testing.T) {
+				configDir := t.TempDir()
+				mcpFile := filepath.Join(t.TempDir(), "mcp.json")
+				if shared.body != "" {
+					if err := os.WriteFile(mcpFile, []byte(shared.body), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+				nativePath := filepath.Join(cfg.AgentDir("codex"), "config.toml")
+				if err := os.MkdirAll(filepath.Dir(nativePath), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				native.make(t, nativePath)
+				recorder := filepath.Join(t.TempDir(), "runtime-args")
+				spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: "codex", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+				if code, err := Run(cfg, recorderRuntime(t, recorder), spec); code != 0 || err != nil {
+					t.Fatalf("Run = (%d, %v), want inactive shared MCP to preserve launch", code, err)
+				}
+				args, err := os.ReadFile(recorder)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(args), ":/home/node/.codex/config.toml:ro") {
+					t.Fatalf("inactive shared MCP generated a native overlay:\n%s", args)
+				}
+			})
+		}
+	}
+}
+
 func TestRunUsesOneValidatedMCPSnapshotAfterSourceMutation(t *testing.T) {
 	configDir := t.TempDir()
 	mcpFile := filepath.Join(configDir, "mcp.json")
@@ -1590,13 +1711,28 @@ func TestRunActiveMCPArtifactFailuresStopBeforeProvider(t *testing.T) {
 
 	t.Run("generated config write", func(t *testing.T) {
 		cfg := newConfig(t)
+		seeded := map[string]string{
+			"codex": "model = \"o3\"\n",
+			"grok":  "model = \"grok-4\"\n",
+		}
+		paths := map[string]string{}
+		for name, body := range seeded {
+			path := filepath.Join(cfg.AgentDir(name), "config.toml")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			paths[name] = path
+		}
 		artifacts := defaultCompositionArtifactOps()
 		var created []string
 		originalWrite := artifacts.writeFile
 		writes := 0
 		artifacts.writeFile = func(content string) (string, error) {
 			writes++
-			if writes == 2 {
+			if writes == 3 { // shared snapshot, Codex overlay, then Grok overlay
 				return "", sentinel
 			}
 			path, err := originalWrite(content)
@@ -1605,8 +1741,18 @@ func TestRunActiveMCPArtifactFailuresStopBeforeProvider(t *testing.T) {
 			}
 			return path, err
 		}
-		spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"codex"}, Agent: "codex", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
-		assertStopped(t, cfg, spec, artifacts, "write MCP config for codex", true, &created)
+		spec := RunSpec{
+			Image: "i", Repo: t.TempDir(), Cmd: []string{"codex"}, Agent: "codex",
+			AgentCommand: true, Homes: true, Batch: true, Quiet: true,
+			Peers: []agents.Target{{Provider: "grok"}},
+		}
+		assertStopped(t, cfg, spec, artifacts, "write MCP config for grok", true, &created)
+		for name, path := range paths {
+			after, err := os.ReadFile(path)
+			if err != nil || string(after) != seeded[name] {
+				t.Fatalf("%s config after later artifact failure = (%q, %v), want %q", name, after, err, seeded[name])
+			}
+		}
 	})
 }
 

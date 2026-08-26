@@ -360,23 +360,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		stderr = os.Stderr
 	}
 
-	// Ensure the mounted agents' home dirs exist and pre-answer first-run prompts —
-	// Claude's theme/trust/bypass and Codex's directory-trust — BEFORE generating
-	// MCP configs, so a fresh box is ready to work and the generated Codex config
-	// carries the trust entry on the very first run.
-	if spec.Homes {
-		ensureAgentHomes(cfg, spec, workdir)
-		// An ACP box shares the lead's session transcripts across credentials (see assembleArgs), so
-		// ensure that shared store exists before it's mounted.
-		if spec.ShareACPSessions {
-			if ag, ok := agents.Get(runPrimary(spec)); ok {
-				for _, name := range ag.ACPSessionDirs() {
-					_ = os.MkdirAll(filepath.Join(acpSharedDir(cfg, runPrimary(spec)), name), 0o700)
-				}
-			}
-		}
-	}
-
 	// Generate agent configs into temp files that live for the container's run.
 	var tmpFiles []string
 	var tmpDirs []string
@@ -409,15 +392,25 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		withoutMCP.MCPFile = ""
 		configForAgent = &withoutMCP
 	}
+	type generatedMCP struct {
+		name   string
+		wiring agents.MCPConfig
+	}
+	generated := make([]generatedMCP, 0, len(configAgents))
 	for _, name := range configAgents {
 		ag, _ := agents.Get(name)
-		wiring, genErr := ag.MCP(configForAgent)
+		wiring, genErr := ag.MCP(configForAgent, workdir)
 		if genErr != nil {
 			if mcpPresent {
 				return -1, fmt.Errorf("assemble MCP config for %s: %w", name, genErr)
 			}
 			continue
 		}
+		generated = append(generated, generatedMCP{name: name, wiring: wiring})
+	}
+
+	for _, item := range generated {
+		name, wiring := item.name, item.wiring
 		if mcpPresent && spec.AgentCommand && name == spec.Agent {
 			spec.Cmd = append(spec.Cmd, wiring.CommandArgs...)
 			directMCP = len(wiring.CommandArgs) > 0
@@ -432,6 +425,24 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			}
 			tmpFiles = append(tmpFiles, p)
 			mcpMounts = append(mcpMounts, extraMount{p, m.BoxPath})
+		}
+	}
+
+	// Every scoped native config is now immutable wiring and every generated artifact exists. Only
+	// after the whole set succeeds may first-run defaults mutate an agent home; neither a later peer
+	// denial nor a temporary-file failure can leave an earlier profile partially initialized.
+	// Codex/Gemini overlays carry the same defaults through pure transforms, so this stays
+	// prompt-free on a first run.
+	if spec.Homes {
+		ensureAgentHomes(cfg, spec, workdir)
+		// An ACP box shares the lead's session transcripts across credentials (see assembleArgs), so
+		// ensure that shared store exists before it's mounted.
+		if spec.ShareACPSessions {
+			if ag, ok := agents.Get(runPrimary(spec)); ok {
+				for _, name := range ag.ACPSessionDirs() {
+					_ = os.MkdirAll(filepath.Join(acpSharedDir(cfg, runPrimary(spec)), name), 0o700)
+				}
+			}
 		}
 	}
 

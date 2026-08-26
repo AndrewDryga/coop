@@ -510,11 +510,12 @@ func codexCredentialPortability(profileDir string, deadline time.Time) Credentia
 }
 
 // MCP emits the shared servers as [mcp_servers.*] in codex's config.toml.
-func (codexAgent) MCP(cfg *config.Config) (MCPConfig, error) {
+func (codexAgent) MCP(cfg *config.Config, workdir string) (MCPConfig, error) {
 	cx, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))
 	if err != nil {
 		return MCPConfig{}, err
 	}
+	cx, _ = ensureCodexTrust(cx, workdir)
 	return MCPConfig{Mounts: []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}}}, nil
 }
 
@@ -539,10 +540,18 @@ func (a codexAgent) EnsureDefaults(cfg *config.Config, workdir string) {
 	hardenCodexSQLiteFeedbackLog(dir)
 	path := filepath.Join(dir, "config.toml")
 	data, _ := os.ReadFile(path) // missing file → empty, which is fine
-	if strings.Contains(string(data), fmt.Sprintf("projects.%q", workdir)) {
-		return // leave any existing entry for this dir untouched
+	out, changed := ensureCodexTrust(string(data), workdir)
+	if !changed {
+		return
 	}
-	out := string(data)
+	os.WriteFile(path, []byte(out), 0o644)
+}
+
+func ensureCodexTrust(configTOML, workdir string) (string, bool) {
+	if workdir == "" || strings.Contains(configTOML, fmt.Sprintf("projects.%q", workdir)) {
+		return configTOML, false
+	}
+	out := configTOML
 	if out != "" && !strings.HasSuffix(out, "\n") {
 		out += "\n"
 	}
@@ -550,7 +559,7 @@ func (a codexAgent) EnsureDefaults(cfg *config.Config, workdir string) {
 		out += "\n"
 	}
 	out += fmt.Sprintf("[projects.%q]\ntrust_level = \"trusted\"\n", workdir)
-	os.WriteFile(path, []byte(out), 0o644)
+	return out, true
 }
 
 // hardenCodexSQLiteFeedbackLog applies the upstream issue's local workaround to

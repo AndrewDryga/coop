@@ -834,8 +834,12 @@ refused before launch even when it is empty or has not been created yet.
 `coop` wires that one file into each agent's native mechanism on launch: Claude via
 `--mcp-config`, Gemini merged into its `settings.json`, Codex — and Grok, same schema —
 converted to `[mcp_servers.*]` in its `config.toml`. The generated versions are laid
-read-only on top of your existing config (pure Go, no extra tooling) — your own files
-are never touched, and servers from `mcp.json` win on a name clash.
+read-only on top of your existing config (pure Go, no extra tooling), and generation never
+edits the source files. With shared MCP active, Coop omits native Codex/Grok
+`[mcp_servers.*]` tables so the shared file is the only server authority. Remove or migrate other
+native TOML spellings such as dotted, quoted, or inline `mcp_servers` into the configured shared
+file (`COOP_MCP_FILE`; `mcp.json` by default): Coop refuses them before launch because removing
+them would require rewriting the rest of your config.
 
 A remote session is the exception: its ACP adapter takes no flags, so `--mcp-config`
 never reaches Claude there and coop hands the same servers to the session directly,

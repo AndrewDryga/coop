@@ -319,7 +319,9 @@ type Agent interface {
 	// MCP returns how an ordinary agent command sees the shared mcp.json: generated config
 	// mounts, command arguments for a direct reader, or both. Box applies CommandArgs only to a
 	// command explicitly marked as the agent's own CLI, never to ACP or maintenance commands.
-	MCP(cfg *config.Config) (MCPConfig, error)
+	// workdir is the resolved box cwd so a generated native overlay can carry the same prompt-free
+	// defaults as EnsureDefaults without mutating the host before every scoped adapter validates.
+	MCP(cfg *config.Config, workdir string) (MCPConfig, error)
 	// ACPMCPServers is the same servers as the ACP session parameter, for an adapter that
 	// cannot be pointed at a file: it takes no flags, so a mount MCP already covers is no
 	// use to it. Nil for every agent whose adapter reads what MCP mounts — sending the list

@@ -402,7 +402,7 @@ func TestClaudeMCPConfig(t *testing.T) {
 	mustWrite(t, mcp, `{"mcpServers":{"fs":{"command":"npx","args":["-y","server"]}}}`) // a declared server → MCP active
 	cfg := &config.Config{MCPFile: mcp, MCPInBox: "/home/node/.mcp.json"}
 	a, _ := Get("claude")
-	wiring, err := a.MCP(cfg)
+	wiring, err := a.MCP(cfg, "/workspace")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1621,7 +1621,7 @@ func TestMCP(t *testing.T) {
 
 	// Claude reads mcp.json raw (--mcp-config) → command args and no generated mounts.
 	claude, _ := Get("claude")
-	if wiring, err := claude.MCP(cfg); err != nil || len(wiring.Mounts) != 0 || len(wiring.CommandArgs) != 2 {
+	if wiring, err := claude.MCP(cfg, "/workspace"); err != nil || len(wiring.Mounts) != 0 || len(wiring.CommandArgs) != 2 {
 		t.Errorf("claude MCP = %v, %v; want command args only (reads mcp.json directly)", wiring, err)
 	}
 	// gemini/codex/grok generate a config file at their native path (grok reuses codex's
@@ -1632,9 +1632,26 @@ func TestMCP(t *testing.T) {
 		"grok":   "/home/node/.grok/config.toml",
 	} {
 		ag, _ := Get(name)
-		wiring, err := ag.MCP(cfg)
+		wiring, err := ag.MCP(cfg, "/workspace")
 		if err != nil || len(wiring.Mounts) != 1 || wiring.Mounts[0].BoxPath != boxPath || wiring.Mounts[0].Content == "" || len(wiring.CommandArgs) != 0 {
 			t.Errorf("%s MCP = %v, %v; want one non-empty mount at %s", name, wiring, err, boxPath)
+			continue
+		}
+		switch name {
+		case "codex":
+			if !strings.Contains(wiring.Mounts[0].Content, `[projects."/workspace"]`) {
+				t.Errorf("generated Codex MCP overlay lacks workdir trust:\n%s", wiring.Mounts[0].Content)
+			}
+		case "gemini":
+			var settings map[string]any
+			if err := json.Unmarshal([]byte(wiring.Mounts[0].Content), &settings); err != nil {
+				t.Fatalf("generated Gemini settings: %v", err)
+			}
+			security, _ := settings["security"].(map[string]any)
+			folderTrust, _ := security["folderTrust"].(map[string]any)
+			if folderTrust["enabled"] != false {
+				t.Errorf("generated Gemini MCP overlay does not disable folder trust: %+v", settings)
+			}
 		}
 	}
 }
@@ -1650,7 +1667,7 @@ func TestEveryAgentReachesTheSharedServersByExactlyOneRoute(t *testing.T) {
 	cfg := &config.Config{MCPFile: mcpFile, ConfigDir: dir, HomeInBox: "/home/node"}
 	for _, name := range Names() {
 		ag, _ := Get(name)
-		wiring, err := ag.MCP(cfg)
+		wiring, err := ag.MCP(cfg, "/workspace")
 		if err != nil {
 			t.Fatalf("%s MCP = %v", name, err)
 		}

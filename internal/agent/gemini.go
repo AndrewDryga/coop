@@ -277,12 +277,31 @@ func (geminiAgent) StoredCredentialStatus(string, time.Time) StoredCredentialSta
 
 // MCP builds the settings mounted inside a gemini box: the host settings plus the
 // box-only file-filtering override, and shared servers only when MCP is active.
-func (geminiAgent) MCP(cfg *config.Config) (MCPConfig, error) {
+func (geminiAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 	gm, err := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))
 	if err != nil {
 		return MCPConfig{}, err
 	}
+	gm, err = ensureGeminiBoxDefaults(gm)
+	if err != nil {
+		return MCPConfig{}, err
+	}
 	return MCPConfig{Mounts: []MCPMount{{Content: gm, BoxPath: cfg.HomeInBox + "/.gemini/settings.json"}}}, nil
+}
+
+func ensureGeminiBoxDefaults(settingsJSON string) (string, error) {
+	settings := map[string]any{}
+	if err := json.Unmarshal([]byte(settingsJSON), &settings); err != nil {
+		return "", fmt.Errorf("assemble Gemini box defaults: %w", err)
+	}
+	if !disableGeminiFolderTrust(settings) {
+		return settingsJSON, nil
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("assemble Gemini box defaults: %w", err)
+	}
+	return string(append(data, '\n')), nil
 }
 
 // ACPMCPServers is nil: this agent's ACP adapter reads the settings.json MCP mounts,

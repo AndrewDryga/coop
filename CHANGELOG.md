@@ -68,7 +68,10 @@
   Every adapter, including Claude's direct mount, now consumes one validated immutable snapshot per
   run, so no consumer can bypass that policy or race a later edit to the shared source. A malformed
   or ambiguous file, or a `COOP_MCP_FILE` placed inside a directory Coop mounts wholesale, now fails
-  before provider launch.
+  before provider launch. Codex and Grok native TOML is also checked semantically: Coop removes only
+  byte-preservable canonical `[mcp_servers.*]` tables and refuses dotted, quoted, inline, or other
+  alternate declarations before changing any scoped agent home, leaving the configured shared
+  `COOP_MCP_FILE` as the sole MCP authority.
 
 - **Remote ACP uses the editor's existing SSH transport instead of a Coop TCP protocol.** Zed
   Remote Development can run `coop acp <target>` beside the remote repository, while a custom

@@ -8,9 +8,10 @@
 // An ACP adapter takes no flags, so a file it could be pointed at is no use to it. The claude
 // CLI needs no translation at all — it reads mcp.json directly via --mcp-config.
 //
-// The generated files are written on top of the user's existing config (never mutating it),
-// with servers from mcp.json winning on a name clash. Output is deterministic
-// (servers sorted by name) so it is stable across runs and easy to test.
+// The generated files are written on top of the user's existing config (never mutating it).
+// When shared MCP is active, native MCP declarations are removed or refused so mcp.json remains
+// the only server authority. Output is deterministic (servers sorted by name) so it is stable
+// across runs and easy to test.
 package mcp
 
 import (
@@ -19,11 +20,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"unicode/utf8"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // server is the typed view of one entry, sufficient to emit Codex TOML and the ACP parameter.
@@ -95,19 +101,35 @@ func GenerateCodex(mcpFile, existing string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	native, err := keepNonMCP(existing)
+	if err != nil {
+		return "", err
+	}
 	var b strings.Builder
-	b.WriteString(keepNonMCP(existing))
+	b.WriteString(native)
 	for _, name := range sortedKeys(servers) {
-		if b.Len() > 0 {
-			b.WriteString("\n")
+		server := servers[name]
+		if server.URL == "" && server.Command == "" {
+			continue
 		}
-		writeCodexServer(&b, name, servers[name])
+		separateTOMLBlock(&b)
+		writeCodexServer(&b, name, server)
 	}
-	out := strings.TrimSpace(b.String())
-	if out == "" {
-		return "", nil
+	return b.String(), nil
+}
+
+func separateTOMLBlock(b *strings.Builder) {
+	if b.Len() == 0 {
+		return
 	}
-	return out + "\n", nil
+	s := b.String()
+	switch {
+	case strings.HasSuffix(s, "\n\n"):
+	case strings.HasSuffix(s, "\n"):
+		b.WriteByte('\n')
+	default:
+		b.WriteString("\n\n")
+	}
 }
 
 // ACPServers renders the shared servers as the list an ACP session/new (and the identical
@@ -238,36 +260,145 @@ func writeCodexServer(b *strings.Builder, name string, s server) {
 	}
 }
 
-// keepNonMCP returns the user's config.toml with its [mcp_servers.*] tables
-// removed (and trailing blank lines trimmed), or "" if there is no such file.
-// Only real MCP tables are stripped — [mcp_servers.<name>...] and a bare [mcp_servers] —
-// NOT a lookalike like [mcp_servers_backup] or [mcp_serverssettings], which a too-broad
-// prefix used to silently drop from the box's config.
-func keepNonMCP(path string) string {
+// keepNonMCP returns the user's native TOML with its canonical bare [mcp_servers.*] tables
+// removed. Every retained byte stays verbatim; alternate semantic spellings fail closed instead of
+// surviving beside the generated authority. Only an initially absent path is an empty config.
+func keepNonMCP(path string) (string, error) {
 	if path == "" {
-		return ""
+		return "", nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := readNativeConfig(path)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	var kept []string
+	if data == nil {
+		return "", nil
+	}
+	original, err := parseTOML(path, data)
+	if err != nil {
+		return "", err
+	}
+	if _, hasMCP := original["mcp_servers"]; !hasMCP {
+		return string(data), nil
+	}
+	delete(original, "mcp_servers")
+	kept := stripCanonicalMCP(data)
+	remaining, err := parseTOML(path, kept)
+	if err != nil {
+		return "", unsupportedNativeMCP(path)
+	}
+	if _, stillPresent := remaining["mcp_servers"]; stillPresent || !tomlSemanticEqual(original, remaining) {
+		return "", unsupportedNativeMCP(path)
+	}
+	return string(kept), nil
+}
+
+func readNativeConfig(path string) ([]byte, error) {
+	return readNativeConfigWith(path, func(path string) (*os.File, error) {
+		return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	}, io.ReadAll)
+}
+
+// readNativeConfigWith makes the observation/open/read boundary deterministic in tests. The
+// production path opens once, validates that descriptor, and reads that same descriptor.
+func readNativeConfigWith(path string, open func(string) (*os.File, error), read func(io.Reader) ([]byte, error)) ([]byte, error) {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("inspect native MCP config %s: %w", path, err)
+	}
+	f, err := open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open native MCP config %s: %w", path, err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("inspect opened native MCP config %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("native MCP config %s is not a regular file", path)
+	}
+	data, err := read(f)
+	if err != nil {
+		return nil, fmt.Errorf("read native MCP config %s: %w", path, err)
+	}
+	return data, nil
+}
+
+func parseTOML(path string, data []byte) (map[string]any, error) {
+	root := map[string]any{}
+	if err := toml.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("existing %s is not valid TOML: %w", path, err)
+	}
+	return root, nil
+}
+
+func stripCanonicalMCP(data []byte) []byte {
+	var kept bytes.Buffer
 	skip := false
-	for _, line := range strings.Split(string(data), "\n") {
-		if s := strings.TrimSpace(line); strings.HasPrefix(s, "[") {
+	for len(data) > 0 {
+		n := bytes.IndexByte(data, '\n')
+		if n < 0 {
+			n = len(data)
+		} else {
+			n++
+		}
+		line := data[:n]
+		data = data[n:]
+		if s := strings.TrimSpace(string(line)); strings.HasPrefix(s, "[") {
 			skip = strings.HasPrefix(s, "[mcp_servers.") || strings.HasPrefix(s, "[mcp_servers]")
 		}
 		if !skip {
-			kept = append(kept, strings.TrimRight(line, "\r"))
+			kept.Write(line)
 		}
 	}
-	for len(kept) > 0 && strings.TrimSpace(kept[len(kept)-1]) == "" {
-		kept = kept[:len(kept)-1]
+	return kept.Bytes()
+}
+
+func unsupportedNativeMCP(path string) error {
+	return fmt.Errorf("native MCP config %s uses an mcp_servers form Coop cannot safely remove — move those servers to the active shared MCP file (COOP_MCP_FILE) and remove the native declaration", path)
+}
+
+func tomlSemanticEqual(a, b any) bool {
+	return tomlValueEqual(reflect.ValueOf(a), reflect.ValueOf(b))
+}
+
+func tomlValueEqual(a, b reflect.Value) bool {
+	if !a.IsValid() || !b.IsValid() {
+		return a.IsValid() == b.IsValid()
 	}
-	if len(kept) == 0 {
-		return ""
+	if a.Type() != b.Type() {
+		return false
 	}
-	return strings.Join(kept, "\n") + "\n"
+	switch a.Kind() {
+	case reflect.Interface:
+		return tomlValueEqual(a.Elem(), b.Elem())
+	case reflect.Map:
+		if a.Len() != b.Len() {
+			return false
+		}
+		for _, key := range a.MapKeys() {
+			if other := b.MapIndex(key); !other.IsValid() || !tomlValueEqual(a.MapIndex(key), other) {
+				return false
+			}
+		}
+		return true
+	case reflect.Slice, reflect.Array:
+		if a.Len() != b.Len() {
+			return false
+		}
+		for i := 0; i < a.Len(); i++ {
+			if !tomlValueEqual(a.Index(i), b.Index(i)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Float32, reflect.Float64:
+		return a.Float() == b.Float() || (math.IsNaN(a.Float()) && math.IsNaN(b.Float()))
+	default:
+		return reflect.DeepEqual(a.Interface(), b.Interface())
+	}
 }
 
 func loadServersAny(path string) (map[string]any, error) {
