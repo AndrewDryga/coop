@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Task leases now have one host-only authority.** Coop no longer mirrors its flock and heartbeat
+  into provider-visible `tmp/lease.lock` and `tmp/lease.json` files. Acquisition, contention,
+  `busy`/`stalled` observation, crash recovery, completion receipts, and audit reopen all use the
+  inode-verified registry under `~/.local/state/coop/task-leases/`; task `tmp/` is scratch only.
+
 - **Fleet is removed in favor of direct detached fork loops.** Start each worker with `coop fork
   <name> <target|preset> --loop -d --tasks <path>`; use `coop tasks split <n>` for mechanical queue
   slices, `coop tasks watch` for merged progress, `coop fork ls`/`logs -f` for fork state and output,

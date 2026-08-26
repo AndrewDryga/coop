@@ -360,50 +360,6 @@ func TestWorkCompletionWindowWaitsToInvalidateStaleReceipt(t *testing.T) {
 	}
 }
 
-func TestWorkCompletionWindowWaitsForTransientLocalLeaseReader(t *testing.T) {
-	root := t.TempDir()
-	rogue := taskForLease(t, root, StateInProgress, "local-reader-completion")
-	if _, err := taskLeaseDir(rogue.Dir); err != nil {
-		t.Fatal(err)
-	}
-	local, err := openLeaseLock(rogue.Dir, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := syscall.Flock(int(local.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		t.Fatal(err)
-	}
-	windows, err := BeginCompletionWindows([]string{root})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := MoveTaskDir(root, rogue, StateDone); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() {
-		_, _, err := windows.AuditDoneCandidates(QueuedTask{})
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		t.Fatalf("work audit returned while the local reader held its lock: %v", err)
-	case <-time.After(30 * time.Millisecond):
-	}
-	if err := unlockLeaseFile(local); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if !pathExists(filepath.Join(root, StateInProgress, rogue.ID)) {
-		t.Fatal("transient local lock let an unowned completion remain done")
-	}
-	if err := windows.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestWorkCompletionWindowRejectsArchivedTaskDeparture(t *testing.T) {
 	root := t.TempDir()
 	archived := taskForLease(t, root, StateDone, "raw-work-reopen")
@@ -2199,12 +2155,18 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 	}
 	seedDone := func(t *testing.T, repo, id string) string {
 		t.Helper()
-		dir := filepath.Join(repo, TasksRoot, StateDone, id)
+		host := filepath.Join(repo, TasksRoot)
+		dir := filepath.Join(host, StateDone, id)
 		writeTaskFile(t, filepath.Join(dir, "task.md"), "# task\n")
 		writeTaskFile(t, filepath.Join(dir, "log.md"), "# log\n")
 		writeTaskFile(t, filepath.Join(dir, "state.md"), "# state\n\n**Status:** in progress\n**Next action:** finish\n")
-		writeTaskFile(t, filepath.Join(dir, "tmp", "lease.lock"), "")
-		writeTaskFile(t, filepath.Join(dir, "tmp", "lease.json"), "{}\n")
+		now := time.Now().Add(-leaseStaleAfter - time.Second)
+		if err := writeLeaseAuthorityMetadata(host, id, taskLeaseMetadata{
+			Version: leaseMetadataVersion, RunID: "interrupted", ControllerPID: 999999,
+			Provider: "codex", Target: "codex", AcquiredAt: now, HeartbeatAt: now,
+		}); err != nil {
+			t.Fatal(err)
+		}
 		return dir
 	}
 
@@ -2327,25 +2289,27 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 	t.Run("active completion lease is untouched", func(t *testing.T) {
 		repo, _ := newRepo(t)
 		id := "active-completion"
-		dir := seedDone(t, repo, id)
-		lock, err := openLeaseLock(dir, false)
+		host := filepath.Join(repo, TasksRoot)
+		item := taskForLease(t, host, StateInProgress, id)
+		lease, _, err := TryTaskLease(host, item, testLeaseOwner())
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer lock.Close()
-		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if err := MoveTaskDir(host, item, StateDone); err != nil {
 			t.Fatal(err)
 		}
-		host := filepath.Join(repo, TasksRoot)
 		if err := ReconcileInterruptedCompletions([]string{host}); err != nil {
 			t.Fatal(err)
 		}
 		if !pathExists(filepath.Join(host, StateDone, id)) {
 			t.Fatal("startup reconciliation moved a completion while its lease was held")
 		}
-		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+		// Simulate process death: the kernel drops the host flock while crash metadata remains.
+		lease.Quiesce()
+		if err := unlockLeaseFile(lease.authority); err != nil {
 			t.Fatal(err)
 		}
+		lease.authority = nil
 		if err := ReconcileInterruptedCompletions([]string{host}); err != nil {
 			t.Fatal(err)
 		}
@@ -2375,9 +2339,10 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Simulate death after the receipt is durable but before release removes metadata.
-		if err := errors.Join(unlockLeaseFile(lease.local), unlockLeaseFile(lease.authority)); err != nil {
+		if err := unlockLeaseFile(lease.authority); err != nil {
 			t.Fatal(err)
 		}
+		lease.authority = nil
 		if !leaseAuthorityMetadataExists(host, id) {
 			t.Fatal("test did not retain crash-left authority metadata")
 		}
@@ -2403,7 +2368,7 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 	t.Run("recovery lock covers rename and bookkeeping window", func(t *testing.T) {
 		repo, _ := newRepo(t)
 		id := "serialized-recovery"
-		dir := seedDone(t, repo, id)
+		seedDone(t, repo, id)
 		host := filepath.Join(repo, TasksRoot)
 		item := ReadTaskTree(host)[0]
 		lock, current, acquired, err := lockCrashCompletion(host, item)
@@ -2423,8 +2388,12 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 		if err := lock.release(); err != nil {
 			t.Fatal(err)
 		}
-		if !fileExists(filepath.Join(dir, "tmp", leaseLockName)) && !fileExists(filepath.Join(moved.Dir, "tmp", leaseLockName)) {
-			t.Fatal("recovery lock inode disappeared")
+		lease, observed, err = TryTaskLease(host, moved, testLeaseOwner())
+		if err != nil || lease == nil || observed.State != leaseUnleased {
+			t.Fatalf("contender after recovery release = lease %v observed %+v err %v", lease, observed, err)
+		}
+		if err := lease.Release(); err != nil {
+			t.Fatal(err)
 		}
 	})
 }
@@ -2623,9 +2592,6 @@ func TestAssignLoopTaskSelectionAndClaim(t *testing.T) {
 		t.Fatalf("assignLoopTask resume = %+v, err %v", assignment, err)
 	}
 	defer assignment.Lease.Release()
-	if !assignment.Lease.Legacy {
-		t.Error("a legacy in-progress task with no lock should be marked as an adoption")
-	}
 	c, got := assignment.Counts, assignment.Task
 	if got.Item.ID != "resume" || got.Root != q2 || got.Item.State != StateInProgress {
 		t.Fatalf("assignLoopTask chose %+v, want the later queue's in_progress task", got)
@@ -2785,9 +2751,6 @@ func TestOwnerRecordGatesLoopAdoption(t *testing.T) {
 		if err != nil || first.Outcome != assignmentReady || first.Task.Item.ID != "loop-task" {
 			t.Fatalf("first adoption = %+v, err %v", first, err)
 		}
-		if first.Lease.Legacy {
-			t.Fatal("a task the loop itself just claimed via moveTaskDir must not be legacy")
-		}
 		if _, owned := taskOwned(t, root, "loop-task"); owned {
 			t.Fatal("the loop's own todo->in_progress adoption must never write an owner record")
 		}
@@ -2799,9 +2762,6 @@ func TestOwnerRecordGatesLoopAdoption(t *testing.T) {
 		if err != nil || second.Outcome != assignmentReady || second.Task.Item.ID != "loop-task" {
 			t.Fatalf("resumed adoption = %+v, err %v, want the loop to resume its own work", second, err)
 		}
-		if second.Lease.Legacy {
-			t.Error("resuming a task with an existing lease.lock file should not be legacy")
-		}
 		if err := second.Lease.Release(); err != nil {
 			t.Fatal(err)
 		}
@@ -2811,15 +2771,12 @@ func TestOwnerRecordGatesLoopAdoption(t *testing.T) {
 		root := filepath.Join(t.TempDir(), ".agent", "tasks")
 		// Simulates an agent INSIDE the box moving the folder directly (coop isn't installed there —
 		// AGENTS.md: "inside the box ... move the folder yourself"): the task lands in in_progress
-		// with no lease.lock ever created, and of course no owner record either.
+		// without a durable owner record.
 		writeTaskFile(t, filepath.Join(root, StateInProgress, "in-box-task", "task.md"), "# In box\n")
 
 		assignment, err := assignLoopTask([]string{root}, testLeaseOwner())
 		if err != nil || assignment.Outcome != assignmentReady || assignment.Task.Item.ID != "in-box-task" {
 			t.Fatalf("in-box adoption = %+v, err %v", assignment, err)
-		}
-		if !assignment.Lease.Legacy {
-			t.Error("a task moved without ever creating lease.lock should be adopted as a legacy candidate")
 		}
 		if err := assignment.Lease.Release(); err != nil {
 			t.Fatal(err)
@@ -2828,26 +2785,13 @@ func TestOwnerRecordGatesLoopAdoption(t *testing.T) {
 
 	t.Run("a crashed controller's stale lease metadata carries no record and is still adopted", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), ".agent", "tasks")
-		item := taskForLease(t, root, StateInProgress, "crashed-task")
-		if _, err := taskLeaseDir(item.Dir); err != nil {
-			t.Fatal(err)
-		}
-		lock, err := openLeaseLock(item.Dir, true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := lock.Close(); err != nil { // created, never held — the flock a crash would leave behind
-			t.Fatal(err)
-		}
+		taskForLease(t, root, StateInProgress, "crashed-task")
 		stale := taskLeaseMetadata{
 			Version: leaseMetadataVersion, RunID: "dead-run", ControllerPID: 999999,
 			Provider: "codex", Target: "codex:old",
 			AcquiredAt: time.Now().Add(-time.Hour), HeartbeatAt: time.Now().Add(-time.Hour),
 		}
-		if err := errors.Join(
-			writeLeaseAuthorityMetadata(root, "crashed-task", stale),
-			writeLeaseMetadata(root, "crashed-task", stale),
-		); err != nil {
+		if err := writeLeaseAuthorityMetadata(root, "crashed-task", stale); err != nil {
 			t.Fatal(err)
 		}
 

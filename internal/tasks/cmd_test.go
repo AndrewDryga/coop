@@ -615,9 +615,10 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	}
 	// Simulate a controller dying after durable completion but before releasing its claim.
 	lease.Quiesce()
-	if err := errors.Join(unlockLeaseFile(lease.local), unlockLeaseFile(lease.authority)); err != nil {
+	if err := unlockLeaseFile(lease.authority); err != nil {
 		t.Fatal(err)
 	}
+	lease.authority = nil
 	windows, err := BeginReviewCompletionWindows([]string{root}, []string{task.ID})
 	if err != nil {
 		t.Fatal(err)

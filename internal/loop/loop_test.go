@@ -97,10 +97,6 @@ func TestLoopTaskLimitRejectsLostSelection(t *testing.T) {
 }
 
 func TestLoopRejectsActionableDuplicateIDsAcrossQueues(t *testing.T) {
-	// "lease.lock"/"lease.json" mirror internal/tasks's own unexported leaseLockName/
-	// leaseMetadataName (lease.go) — inlined rather than exported, since this crash-recovery
-	// simulation is their only consumer outside that package.
-	const leaseLockName, leaseMetadataName = "lease.lock", "lease.json"
 	for _, tc := range []struct {
 		name      string
 		crashDone bool
@@ -110,6 +106,8 @@ func TestLoopRejectsActionableDuplicateIDsAcrossQueues(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := t.TempDir()
+			authorityRoot := t.TempDir()
+			t.Setenv(tasks.TestLeaseAuthorityRootEnv, authorityRoot)
 			queues := []string{"queue-a", "queue-b"}
 			for _, queue := range queues {
 				state := tasks.StateTodo
@@ -121,8 +119,12 @@ func TestLoopRejectsActionableDuplicateIDsAcrossQueues(t *testing.T) {
 				if tc.crashDone {
 					writeTaskFile(t, filepath.Join(dir, "log.md"), "# log\n")
 					writeTaskFile(t, filepath.Join(dir, "state.md"), "# state\n")
-					writeTaskFile(t, filepath.Join(dir, "tmp", leaseLockName), "")
-					writeTaskFile(t, filepath.Join(dir, "tmp", leaseMetadataName), "{}\n")
+					key, err := tasks.LeaseAuthorityKey(filepath.Join(repo, queue), "same-id")
+					if err != nil {
+						t.Fatal(err)
+					}
+					writeTaskFile(t, filepath.Join(authorityRoot, key+".json"),
+						"{\"version\":1,\"heartbeat_at\":\"2026-08-25T00:00:00Z\"}\n")
 				}
 			}
 			c := &Control{cfg: &config.Config{}}

@@ -388,6 +388,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		process := startLoopRecovery(t, suite, target)
 		defer process.Cleanup()
 		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 5*time.Second)
+		assertProcessLeaseHeld(t, suite.layout, taskID, "codex", target)
 		if err := process.SignalGroup(syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
@@ -579,8 +580,9 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				terminateOrphanedProviders(t, firstTrace)
 				assertLoopTraceProcessesGone(t, firstTrace)
 				done := filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)
-				if !fileExists(filepath.Join(done, "tmp", "lease.json")) {
-					t.Fatal("interrupted done task did not retain crash-identifying lease metadata")
+				_, metadataPath := processLeaseRecordPaths(t, suite.layout, taskID)
+				if !fileExists(metadataPath) {
+					t.Fatal("interrupted done task did not retain host lease metadata")
 				}
 				crashHead := loopProcessGit(t, suite, "rev-parse", "HEAD")
 
@@ -592,6 +594,9 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				}
 				if pathExists(filepath.Join(done, "tmp")) {
 					t.Fatal("resumed interrupted completion retained tmp")
+				}
+				if pathExists(metadataPath) {
+					t.Fatal("resumed interrupted completion retained host lease metadata")
 				}
 				parsed, _ := agents.ParseTarget(target)
 				assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), crashHead, 1, tc.name == "bound")

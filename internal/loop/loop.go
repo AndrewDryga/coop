@@ -440,9 +440,6 @@ reviewAgain:
 			}
 			counts, assigned, lease := assignment.Counts, assignment.Task, assignment.Lease
 			limit.assign(assigned.Item.ID)
-			if lease.Legacy {
-				ui.Info("adopting unleased in-progress task %s", assigned.Item.ID)
-			}
 			// The active profile is shown on the model line (streamjson) — don't repeat it on the banner.
 			active := assigned.Item.Title
 			owner := " · owned by " + agent

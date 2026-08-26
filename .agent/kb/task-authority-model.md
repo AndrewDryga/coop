@@ -12,8 +12,8 @@ own top-of-file comment (`audit.go`) points back here rather than repeating it.
 
 | # | Authority | Mechanism | Where | Held for | Kind |
 |---|-----------|-----------|-------|----------|------|
-| 1 | **Claim** | durable record, `<key>.owner.json` | `internal/tasks/lease.go` (`ReadTaskOwnerRecord`/`writeTaskOwnerRecord`/`removeTaskOwnerRecord`, :743-802); written by `claimTaskOwnerRecord`, `internal/tasks/cmd.go:466` | until a HUMAN releases it — never | record |
-| 2 | **Lease** | kernel flock, `<key>.lock` | `internal/tasks/lease.go` (`lockLeaseAuthority`, `TryTaskLease`, :1309) | one loop iteration | process lock |
+| 1 | **Claim** | durable record, `<key>.owner.json` | `internal/tasks/lease.go` (`ReadTaskOwnerRecord`/`writeTaskOwnerRecord`/`removeTaskOwnerRecord`, :733-795); written by `claimTaskOwnerRecord`, `internal/tasks/cmd.go:466` | until a HUMAN releases it — never | record |
+| 2 | **Lease** | kernel flock, `<key>.lock` | `internal/tasks/lease.go` (`lockLeaseAuthority`, :458; `TryTaskLease`, :1218) | one loop iteration | process lock |
 | 3 | **Checkout** | kernel flock, `.locks/loop-<sha>.lock` | `lockLoopCheckout`, `internal/loop/lock.go:25` | one whole `coop loop` run | process lock |
 | 4 | **Ref** | kernel flock, `.locks/ref-<sha>.lock` | `LockRefAuthority`/`EnterRefAuthorityWindow`, `internal/tasks/refauthority.go:36,134` | validate→finalize→consume only (short) | process lock |
 
@@ -41,10 +41,10 @@ with the rest: leaving it in `cli` would have required the new package to import
 
 Authorities 2-4 are **process locks**: a kernel flock, bound to an open file description, that dies
 with the process holding it. An unheld flock is definitionally unleased — `observeHeldTaskLease`
-(`internal/tasks/lease.go:1454`) states this outright: "An unlocked or missing lock is unleased even
+(`internal/tasks/lease.go:1312`) states this outright: "An unlocked or missing lock is unleased even
 if a crashed controller left stale metadata behind; only a HELD lock means another controller owns
 the work." PID, run-id, and heartbeat are recovery evidence and UI only, never authority
-(`internal/tasks/lease.go:73-74`).
+(`internal/tasks/lease.go:71-79`).
 
 Authority 1 (claim) is deliberately NOT a process lock, because `coop tasks claim` exits
 immediately — there is no process left to hold anything. A human's ownership has to outlive the
@@ -54,12 +54,12 @@ PID liveness, or heartbeat age (unlike a lease, which a heartbeat CAN mark `leas
 though even a stalled lease still blocks nobody but its own kernel lock) — a timeout can't distinguish
 "went quiet for a good reason" from "abandoned," and guessing wrong is the 2026-07-25 dogfood incident
 this authority exists to fix: the loop adopted a task a founder had claimed, because claim held no
-lease and left no record, so `AssignLoopTaskOnly` (`internal/tasks/audit.go:3379`) saw a free flock
+lease and left no record, so `AssignLoopTaskOnly` (`internal/tasks/audit.go:3329`) saw a free flock
 and took it.
 
 ## How claim and lease interact — claim wins unconditionally
 
-`skipOwnedCandidate` (`internal/tasks/audit.go:3360`) checks the claim record BEFORE `TryTaskLease`
+`skipOwnedCandidate` (`internal/tasks/audit.go:3310`) checks the claim record BEFORE `TryTaskLease`
 even runs, for every in-progress AND todo candidate: an owned task is skipped like a busy lease, never
 leased, regardless of whether its lease actually is free. This ordering matters for the race between a
 human claiming a todo task and the loop scanning the same instant: `tasksFolderMove`'s claim path
@@ -70,7 +70,7 @@ instant a claim begins, not from whenever its folder move happens to land. The r
 fork-merge reconciliation — gets it for free), `block` (`tasksFolderBlock`), `unblock`
 (`moveBlockedAuditUnblock`), and the explicit `coop tasks release <id>` (`tasksFolderRelease`,
 `internal/tasks/cmd.go:544`) — nothing else. `coop tasks ls` tags an owned in-progress row "claimed by
-`<user>`" in place of its lease label (`inProgressMarker`, `internal/tasks/cmd.go:1642`) — the label
+`<user>`" in place of its lease label (`inProgressMarker`, `internal/tasks/cmd.go:1647`) — the label
 the row would otherwise carry, "unleased," would be true but actively misleading for a claimed task.
 
 ## Why checkout and ref are separate short-lived locks, not one big one
@@ -117,6 +117,8 @@ these authorities sit beside but never replace — the folder is still the only 
 lifecycle STATE; these four decide who may act on it.
 
 ## Changelog
+- 2026-08-25 — removed the duplicate task-local lease flock and metadata; authority 2 is now exactly
+  one host-only, inode-rechecked flock, while unleased in-progress task adoption remains unchanged
 - 2026-08-25 — replaced Fleet terminology with direct parallel forks and removed the stale claim
   that checkout authority remained in `internal/cli`; it has lived in `internal/loop/lock.go` since
   the loop-engine extraction already recorded below.

@@ -33,16 +33,6 @@ type loopCursor struct {
 	Index int `json:"index"`
 }
 
-type loopLeaseMetadata struct {
-	Version       int       `json:"version"`
-	RunID         string    `json:"run_id"`
-	ControllerPID int       `json:"controller_pid"`
-	Provider      string    `json:"provider"`
-	Target        string    `json:"target"`
-	AcquiredAt    time.Time `json:"acquired_at"`
-	HeartbeatAt   time.Time `json:"heartbeat_at"`
-}
-
 func validateLoopScenario(provider string, homes map[string]bool, plan loopScenario) error {
 	if !safeLoopTaskID(plan.TaskID) {
 		return fmt.Errorf("unsafe loop task id %q", plan.TaskID)
@@ -1094,10 +1084,6 @@ func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 	if err != nil {
 		return fmt.Errorf("loop task: %w", err)
 	}
-	if err := verifyLoopLease(root, taskDir, provider, target); err != nil {
-		return err
-	}
-
 	change := "loop-" + provider + ".txt"
 	if outcome == "repair-binding" || outcome == "repair-review-binding" || outcome == "repair-older-binding" ||
 		outcome == "repair-older-binding-blocked" || outcome == "repair-older-binding-changed-descendant" ||
@@ -1337,40 +1323,6 @@ func loopRepo(root string) (string, error) {
 		return "", err
 	}
 	return procharness.CanonicalUnderRoot(root, repo)
-}
-
-func verifyLoopLease(root, taskDir, provider, target string) error {
-	lock, err := procharness.OpenRegularFile(root, filepath.Join(taskDir, "tmp", "lease.lock"), os.O_RDWR)
-	if err != nil {
-		return fmt.Errorf("loop lease lock: %w", err)
-	}
-	locked := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-	if locked == nil {
-		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-		lock.Close()
-		return errors.New("loop task lease is not held by the controller")
-	}
-	lock.Close()
-	if !errors.Is(locked, syscall.EWOULDBLOCK) && !errors.Is(locked, syscall.EAGAIN) {
-		return fmt.Errorf("probe loop task lease: %w", locked)
-	}
-	metaFile, err := procharness.OpenRegularFile(root, filepath.Join(taskDir, "tmp", "lease.json"), os.O_RDONLY)
-	if err != nil {
-		return fmt.Errorf("loop lease metadata: %w", err)
-	}
-	data, readErr := io.ReadAll(io.LimitReader(metaFile, 8<<10))
-	closeErr := metaFile.Close()
-	if readErr != nil || closeErr != nil {
-		return errors.Join(readErr, closeErr)
-	}
-	var meta loopLeaseMetadata
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return fmt.Errorf("decode loop lease metadata: %w", err)
-	}
-	if meta.Version != 1 || meta.RunID == "" || meta.ControllerPID <= 1 || meta.Provider != provider || meta.Target != target || meta.AcquiredAt.IsZero() || meta.HeartbeatAt.IsZero() {
-		return fmt.Errorf("loop lease metadata does not identify %s on %s", provider, target)
-	}
-	return nil
 }
 
 func writeLoopTaskFile(root, path, body string, appendOnly bool) error {

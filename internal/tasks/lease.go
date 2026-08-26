@@ -18,8 +18,6 @@ import (
 )
 
 const (
-	leaseLockName                   = "lease.lock"
-	leaseMetadataName               = "lease.json"
 	LeaseAuthorityVersion           = "v1"
 	leaseAuthorityAdoptLockName     = ".adopt.lock"
 	leaseAuthorityIdentityAttempts  = 5
@@ -98,18 +96,15 @@ type taskLeaseMetadata struct {
 	HeartbeatAt   time.Time `json:"heartbeat_at"`
 }
 
-// taskLease holds the host-only authoritative flock and a task-local compatibility flock for one
-// agent iteration. Metadata is resolved by id on every heartbeat because the worker can move its
-// folder while both descriptors remain valid across that rename.
+// TaskLease holds the host-only authoritative flock for one agent iteration. Metadata is keyed by
+// repository and task id, so heartbeats remain stable while the worker moves the task folder.
 type TaskLease struct {
 	root      string
 	id        string
-	local     *os.File
 	authority *os.File
 	meta      taskLeaseMetadata
 	now       func() time.Time
 	ticker    func(time.Duration) (<-chan time.Time, func())
-	Legacy    bool
 	Reopen    *AuditReopenRecord
 
 	releaseOnce sync.Once
@@ -144,10 +139,7 @@ func realLeaseTicker(interval time.Duration) (<-chan time.Time, func()) {
 
 func (l *TaskLease) refresh() error {
 	l.meta.HeartbeatAt = l.now()
-	return errors.Join(
-		writeLeaseAuthorityMetadata(l.root, l.id, l.meta),
-		writeLeaseMetadata(l.root, l.id, l.meta),
-	)
+	return writeLeaseAuthorityMetadata(l.root, l.id, l.meta)
 }
 
 // quiesce stops heartbeat writes while retaining the authoritative flock. Completion validation
@@ -179,15 +171,13 @@ func (l *TaskLease) ConsumeAuditReopen() error {
 	return removeAuditReopenRecordIfMatches(l.root, l.id, l.Reopen.Generation)
 }
 
-// release stops metadata mutation before removing the evidence while still holding both flocks.
-// Authority lock files persist in the host-only registry so every controller opens the same inode.
+// Release stops metadata mutation before removing the evidence and dropping the flock. Authority
+// lock files persist in the host-only registry so every controller opens the same inode.
 func (l *TaskLease) Release() error {
 	l.releaseOnce.Do(func() {
 		l.Quiesce()
 		l.releaseErr = errors.Join(
 			removeLeaseAuthorityMetadata(l.root, l.id),
-			removeLeaseMetadata(l.root, l.id),
-			unlockLeaseFile(l.local),
 			unlockLeaseFile(l.authority),
 		)
 	})
@@ -1214,32 +1204,6 @@ func (s TaskLeaseSummary) String() string {
 	return strings.Join(parts, " - ")
 }
 
-// taskLeaseDir creates only the literal task tmp child. In particular it never uses MkdirAll: a
-// contender that sees a task move must fail and rescan, not recreate an obsolete state directory.
-func taskLeaseDir(taskDir string) (string, error) {
-	root, err := OpenTaskMetadataRoot(taskDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", errLeaseCandidateGone
-	}
-	if err != nil {
-		return "", err
-	}
-	defer root.Close()
-	if _, err := root.Lstat("tmp"); errors.Is(err, os.ErrNotExist) {
-		if err := root.Mkdir("tmp", 0o755); err != nil && !errors.Is(err, os.ErrExist) {
-			return "", err
-		}
-	} else if err != nil {
-		return "", err
-	}
-	tmp, err := openTaskTmpRoot(taskDir)
-	if err != nil {
-		return "", err
-	}
-	_ = tmp.Close()
-	return filepath.Join(taskDir, "tmp"), nil
-}
-
 func CurrentTask(root, id string) (Item, bool) {
 	for _, t := range ReadTaskTree(root) {
 		if t.ID == id {
@@ -1249,74 +1213,9 @@ func CurrentTask(root, id string) (Item, bool) {
 	return Item{}, false
 }
 
-func openTaskTmpRoot(taskDir string) (*os.Root, error) {
-	taskRoot, err := OpenTaskMetadataRoot(taskDir)
-	if err != nil {
-		return nil, err
-	}
-	defer taskRoot.Close()
-	before, err := taskRoot.Lstat("tmp")
-	if err != nil {
-		return nil, err
-	}
-	if !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("task lease tmp %q is not a real directory", filepath.Join(taskDir, "tmp"))
-	}
-	root, err := taskRoot.OpenRoot("tmp")
-	if err != nil {
-		return nil, err
-	}
-	after, err := root.Stat(".")
-	if err != nil || !os.SameFile(before, after) {
-		_ = root.Close()
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("task lease tmp changed while opening")
-	}
-	return root, nil
-}
-
-func openLeaseLock(taskDir string, create bool) (*os.File, error) {
-	root, err := openTaskTmpRoot(taskDir)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	flags := os.O_RDWR | syscall.O_NOFOLLOW
-	if create {
-		flags |= os.O_CREATE
-	}
-	f, err := root.OpenFile(leaseLockName, flags, 0o644)
-	if err != nil {
-		return nil, err
-	}
-	fi, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	stat, ok := fi.Sys().(*syscall.Stat_t)
-	if !fi.Mode().IsRegular() || !ok || stat.Nlink != 1 {
-		_ = f.Close()
-		return nil, fmt.Errorf("task lease lock in %q is not a single-link regular file", taskDir)
-	}
-	return f, nil
-}
-
-// tryTaskLease locks a candidate without waiting. It records whether this was a legacy adoption
-// before creating lease.lock, then writes metadata only after the authoritative flock succeeds.
+// TryTaskLease locks a candidate without waiting, writes metadata only after the authoritative
+// flock succeeds, then rechecks that the candidate did not move during acquisition.
 func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, TaskLeaseObservation, error) {
-	dir, err := taskLeaseDir(item.Dir)
-	if err != nil {
-		return nil, TaskLeaseObservation{}, err
-	}
-	lockPath := filepath.Join(dir, leaseLockName)
-	_, statErr := os.Lstat(lockPath)
-	legacy := errors.Is(statErr, os.ErrNotExist)
-	if statErr != nil && !legacy {
-		return nil, TaskLeaseObservation{}, statErr
-	}
 	authority, err := lockLeaseAuthority(root, item.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
@@ -1328,34 +1227,17 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 		}
 		return nil, observed, nil
 	}
-	f, err := openLeaseLock(item.Dir, true)
-	if errors.Is(err, os.ErrNotExist) {
-		_ = unlockLeaseFile(authority)
-		return nil, TaskLeaseObservation{}, errLeaseCandidateGone
-	}
-	if err != nil {
-		_ = unlockLeaseFile(authority)
-		return nil, TaskLeaseObservation{}, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close()
-		_ = unlockLeaseFile(authority)
-		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
-			return nil, TaskLeaseObservation{}, err
-		}
-		observed := observeHeldTaskLease(item, owner.now())
-		if observed.State == leaseUnleased {
-			// The owner released between our failed flock and the status read. Rescan so this
-			// now-available task is adopted instead of reporting a false all-busy queue.
-			return nil, TaskLeaseObservation{}, errLeaseCandidateGone
-		}
-		return nil, observed, nil
+	abort := func(cause error) (*TaskLease, TaskLeaseObservation, error) {
+		cleanup := errors.Join(
+			removeLeaseAuthorityMetadata(root, item.ID),
+			unlockLeaseFile(authority),
+		)
+		return nil, TaskLeaseObservation{}, errors.Join(cause, cleanup)
 	}
 	now := owner.now()
 	l := &TaskLease{
 		root:      root,
 		id:        item.ID,
-		local:     f,
 		authority: authority,
 		meta: taskLeaseMetadata{
 			Version:       leaseMetadataVersion,
@@ -1368,7 +1250,6 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 		},
 		now:    owner.now,
 		ticker: owner.Ticker,
-		Legacy: legacy && item.State == StateInProgress,
 		stop:   make(chan struct{}),
 		done:   make(chan struct{}),
 	}
@@ -1376,42 +1257,23 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 		l.ticker = realLeaseTicker
 	}
 	if err := l.refresh(); err != nil {
-		_ = removeLeaseAuthorityMetadata(root, item.ID)
-		_ = unlockLeaseFile(f)
-		_ = unlockLeaseFile(authority)
-		return nil, TaskLeaseObservation{}, err
+		return abort(err)
 	}
 	current, ok := CurrentTask(root, item.ID)
 	if !ok || current.State != item.State {
 		// Metadata follows the id across legitimate moves once an iteration owns the task, but a
 		// move DURING acquisition means this stale candidate must be rescanned, not launched.
-		_ = removeLeaseMetadata(root, item.ID)
-		_ = removeLeaseAuthorityMetadata(root, item.ID)
-		_ = unlockLeaseFile(f)
-		_ = unlockLeaseFile(authority)
-		return nil, TaskLeaseObservation{}, errLeaseCandidateGone
+		return abort(errLeaseCandidateGone)
 	}
 	// A new owned attempt invalidates any receipt from an earlier accepted completion. The same
 	// authority flock serializes this with concurrent completion scans.
 	if err := clearLeaseCompletionReceipt(authority); err != nil {
-		_ = removeLeaseMetadata(root, item.ID)
-		_ = removeLeaseAuthorityMetadata(root, item.ID)
-		_ = unlockLeaseFile(f)
-		_ = unlockLeaseFile(authority)
-		return nil, TaskLeaseObservation{}, err
+		return abort(err)
 	}
 	if record, ok, err := ReadAuditReopenRecord(root, item.ID); err != nil {
-		_ = removeLeaseMetadata(root, item.ID)
-		_ = removeLeaseAuthorityMetadata(root, item.ID)
-		_ = unlockLeaseFile(f)
-		_ = unlockLeaseFile(authority)
-		return nil, TaskLeaseObservation{}, fmt.Errorf("read audit reopen authority for task %s: %w", item.ID, err)
+		return abort(fmt.Errorf("read audit reopen authority for task %s: %w", item.ID, err))
 	} else if ok {
 		if auditReopenRecordLegacy(record) {
-			_ = removeLeaseMetadata(root, item.ID)
-			_ = removeLeaseAuthorityMetadata(root, item.ID)
-			_ = unlockLeaseFile(f)
-			_ = unlockLeaseFile(authority)
 			recovery := fmt.Sprintf(
 				"restore the audited pre-attempt HEAD, then run coop tasks unblock %s --adopt-audit-head <full-sha> \"<answer>\"",
 				item.ID,
@@ -1419,24 +1281,20 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 			if item.State != StateBlocked {
 				recovery = "block the task without changing Git history, " + recovery
 			}
-			return nil, TaskLeaseObservation{}, fmt.Errorf(
+			return abort(fmt.Errorf(
 				"task %s has legacy audit-reopen authority that protects only task-bound descendants — no lease started; %s",
 				item.ID, recovery,
-			)
+			))
 		}
 		if record.UnblockPending {
-			_ = removeLeaseMetadata(root, item.ID)
-			_ = removeLeaseAuthorityMetadata(root, item.ID)
-			_ = unlockLeaseFile(f)
-			_ = unlockLeaseFile(authority)
 			recovery := "coop tasks unblock " + item.ID
 			if item.State != StateTodo {
 				recovery = "coop tasks block " + item.ID + " && " + recovery
 			}
-			return nil, TaskLeaseObservation{}, fmt.Errorf(
+			return abort(fmt.Errorf(
 				"task %s has a non-authorizing pending audit unblock — no lease started; recover explicitly: %s",
 				item.ID, recovery,
-			)
+			))
 		}
 		l.Reopen = &record
 	}
@@ -1463,23 +1321,7 @@ func observeHeldTaskLease(item Item, now time.Time) TaskLeaseObservation {
 	case !errors.Is(err, os.ErrNotExist):
 		return TaskLeaseObservation{State: leaseBusy, Provider: "unknown"}
 	}
-	// A task-local lock is retained for compatibility with older controllers and lets the in-box
-	// fixture verify that the host claimed the task. New controllers additionally require authority.
-	f, err := openLeaseLock(item.Dir, false)
-	if errors.Is(err, os.ErrNotExist) {
-		return TaskLeaseObservation{State: leaseUnleased}
-	}
-	if err != nil {
-		return TaskLeaseObservation{State: leaseBusy, Provider: "unknown"}
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		_ = f.Close()
-		return TaskLeaseObservation{State: leaseUnleased}
-	}
-	_ = f.Close()
-	meta, ok := readLeaseMetadata(item.Dir)
-	return leaseObservationFromMetadata(meta, ok, now)
+	return TaskLeaseObservation{State: leaseUnleased}
 }
 
 func leaseObservationFromMetadata(meta taskLeaseMetadata, ok bool, now time.Time) TaskLeaseObservation {
@@ -1504,60 +1346,4 @@ func leaseProvider(provider string) string {
 		}
 	}
 	return truncate(p, 20)
-}
-
-func readLeaseMetadata(taskDir string) (taskLeaseMetadata, bool) {
-	root, err := openTaskTmpRoot(taskDir)
-	if err != nil {
-		return taskLeaseMetadata{}, false
-	}
-	defer root.Close()
-	data, err := ReadTaskMetadataFile(root, leaseMetadataName)
-	if err != nil {
-		return taskLeaseMetadata{}, false
-	}
-	var meta taskLeaseMetadata
-	if err := json.Unmarshal(data, &meta); err != nil || meta.Version != leaseMetadataVersion || meta.HeartbeatAt.IsZero() {
-		return taskLeaseMetadata{}, false
-	}
-	return meta, true
-}
-
-func writeLeaseMetadata(root, id string, meta taskLeaseMetadata) error {
-	task, ok := CurrentTask(root, id)
-	if !ok {
-		return nil // the task was removed after completion; never recreate its previous path
-	}
-	tmpRoot, err := openTaskTmpRoot(task.Dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	defer tmpRoot.Close()
-	data, err := json.Marshal(meta)
-	if err != nil {
-		return err
-	}
-	return AtomicWriteTaskFile(tmpRoot, leaseMetadataName, append(data, '\n'))
-}
-
-func removeLeaseMetadata(root, id string) error {
-	task, ok := CurrentTask(root, id)
-	if !ok {
-		return nil
-	}
-	tmpRoot, err := openTaskTmpRoot(task.Dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	defer tmpRoot.Close()
-	if err := tmpRoot.Remove(leaseMetadataName); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
 }

@@ -3,7 +3,7 @@ name: task-authority-registry-is-durable-state
 description: host-global completion trust lives in ~/.local/state/coop/task-leases, never a cache dir; adoption off the old cache path is one-shot and every authority flock rechecks its inode
 subsystem: tasks
 sources: [internal/tasks/lease.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/sessionsvc/http.go]
-updated: 2026-08-10
+updated: 2026-08-25
 ---
 Everything that decides whether a task is *really* finished lives OUTSIDE the repo, in one
 host-global registry: the `<sha>.lock` files whose kernel flock makes one controller the single
@@ -12,6 +12,9 @@ metadata, `<sha>.reopen.json` audit-reopen authority, `<sha>.departure.json` tru
 departures, and `<sha>.windows.json`, the completion-window journal crash recovery replays.
 Filenames are `sha256(resolved-repo-queue-root + "\x00" + task-id)`, so the registry is
 location-independent: moving the registry itself never renames a record.
+
+The same registry is the sole iteration-lease store. Coop does not mirror its flock or heartbeat
+into a task's provider-writable `tmp/`; observation and recovery consult only the host records.
 
 **It must not be a cache dir.** It was `os.UserCacheDir()/coop/task-leases/v1` until 2026-08-09.
 A cache is OS-deletable by contract (macOS purges `~/Library/Caches` under pressure; cleaners empty
@@ -44,6 +47,8 @@ INODE, never to a name; without the recheck a deleted-underfoot lock is silently
 for the repo-local queue, which did NOT move.
 
 ## Changelog
+- 2026-08-25 — made the registry the sole iteration-lease authority and heartbeat store; removed
+  the provider-visible task-local lock/metadata mirror and its completion-audit fallback
 - 2026-08-10 — sources repointed again: `tasklease.go`/`completionwindow.go`/`controller.go` moved
   out of `internal/cli` into `internal/tasks` (`lease.go`/`completion.go`/`audit.go`) whole — the
   2026-08 tasks/lease/completion-audit extraction. The registry's on-disk format and every fact here

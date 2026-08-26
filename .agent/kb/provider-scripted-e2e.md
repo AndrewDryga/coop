@@ -44,8 +44,7 @@ test-only active-run records implement only exact label `ps` and force removal; 
 identity and process-group checks prevent the fixture from signaling an unrelated process.
 
 The registry-derived loop matrix runs the external `coop loop` binary once per provider against a
-closed fixture worker. It requires the host to claim and flock-lease the exact task before provider
-start, validates the canonical provider/model/account target in lease metadata and native argv,
+closed fixture worker. It validates the canonical provider/model/account target in native argv,
 then requires one task-bound commit, final state/log, done move, host cleanup of task scratch, a
 clean worktree, and one exact work-stage telemetry row. The fixture accepts no command, arbitrary
 path, or shell fragment; its v6 attempts are only closed semantic lifecycle outcomes. Provider-native
@@ -66,11 +65,12 @@ rejects success, extra prose, quotes, and overflow rather than trusting a trunca
 The fixture records exactly one expected provider/target/result per attempt and
 never selects the successor. Exact wait arithmetic remains in injected-clock unit tests. Telemetry
 asserts a closed outcome per attempt, and completion reconciliation returns both bound and unbound
-crash-left work to the normal range-validated resume path after its lease is released. The task-local
-lock is compatibility evidence; the authoritative flock and active marker live in a host-only cache
-registry, so replacing provider-writable `tmp` cannot create a second owner. The controller stops
-heartbeat writes while retaining that flock, then validates and finalizes only its assigned queue root
-and task ID. Unit tests own oversized stream and stderr bounds.
+crash-left work to the normal range-validated resume path after its lease is released. The
+authoritative flock and active marker live in the host-only durable registry; provider-writable
+`tmp` is never lease evidence. The representative interruption row probes that host lock from
+outside the provider and validates its provider/target metadata while the attempt is live. The
+controller stops heartbeat writes while retaining the flock, then validates and finalizes only its
+assigned queue root and task ID. Unit tests own oversized stream and stderr bounds.
 
 The delegate matrix crosses the corresponding write-capable boundary for all four provider arms
 and all 12 ordered distinct fallback pairs. It verifies the exact generated wrapper and one invoked
@@ -115,6 +115,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-08-25 - moved loop lease proof out of the provider fixture and onto the real host authority;
+  the fixture can no longer inspect or depend on provider-visible task-local lease files
 - 2026-08-25 - retargeted the all-provider detached lifecycle from Fleet to one direct preset fork;
   duplicate-start, listing, stop, guarded removal, and process/state cleanup remain covered
 - 2026-08-25 - removed the duplicate Fusion grammar from the composition matrix; the same dense

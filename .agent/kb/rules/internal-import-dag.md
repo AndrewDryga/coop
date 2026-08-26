@@ -46,6 +46,8 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-25 — **no graph change:** collapsed the task lease from host plus task-local mirrors to
+  the existing host authority; production imports and the frozen allowlist remain unchanged
 - 2026-08-25 — **no graph change:** removed Fleet's parser, lifecycle, status board, and launch
   wiring from `internal/forkctl`/`internal/cli`. `forkctl` still needs every frozen edge for direct
   fork supervision, listing, review, removal, and merge, including its presentation-owner grant;

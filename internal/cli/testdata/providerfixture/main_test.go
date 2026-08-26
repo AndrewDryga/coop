@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"slices"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -611,51 +610,6 @@ func TestVerifyLoopPromptRequiresStageMarkerAndTask(t *testing.T) {
 				t.Errorf("%s prompt accepted as %s", actual, expected)
 			}
 		}
-	}
-}
-
-func TestVerifyLoopLeaseRejectsUnheldAndMismatchedMetadata(t *testing.T) {
-	root := canonicalTemp(t)
-	task := filepath.Join(root, "task")
-	tmp := filepath.Join(task, "tmp")
-	if err := os.MkdirAll(tmp, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	lockPath := filepath.Join(tmp, "lease.lock")
-	if err := os.WriteFile(lockPath, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	meta := loopLeaseMetadata{
-		Version: 1, RunID: "run", ControllerPID: os.Getpid(), Provider: "codex",
-		Target: "codex:model@work", AcquiredAt: time.Now(), HeartbeatAt: time.Now(),
-	}
-	writeMeta := func() {
-		t.Helper()
-		data, err := json.Marshal(meta)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(tmp, "lease.json"), data, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	writeMeta()
-	if err := verifyLoopLease(root, task, "codex", meta.Target); err == nil {
-		t.Fatal("unheld loop lease accepted")
-	}
-	lock, err := os.OpenFile(lockPath, os.O_RDWR, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		t.Fatal(err)
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	meta.Provider = "claude"
-	writeMeta()
-	if err := verifyLoopLease(root, task, "codex", "codex:model@work"); err == nil {
-		t.Fatal("mismatched loop lease metadata accepted")
 	}
 }
 

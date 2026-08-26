@@ -6,12 +6,14 @@ import (
 	"testing"
 )
 
-// TestMain gives this package's own test binary a hermetic task-lease authority root — mirrors
-// internal/cli/main_test.go exactly (a separate test binary needs its own copy of this setup, the
-// same reason gitOut does; see git.go). Without it, leaseAuthorityRoots falls through to the real
-// ~/.local/state/coop/task-leases, and `go test` would read and write the developer's own durable
-// completion-trust state.
+// TestMain gives ordinary package tests a fresh task-lease authority root. Lease helper subprocesses
+// deliberately inherit their parent's root so cross-process contention exercises the same host
+// authority. Without this setup, leaseAuthorityRoots falls through to the developer's real
+// ~/.local/state/coop/task-leases and `go test` would mutate durable completion-trust state.
 func TestMain(m *testing.M) {
+	if os.Getenv("COOP_LEASE_HELPER") != "" && os.Getenv(TestLeaseAuthorityRootEnv) != "" {
+		os.Exit(m.Run())
+	}
 	root, err := os.MkdirTemp("", "coop-test-task-leases-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

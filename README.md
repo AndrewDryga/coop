@@ -1114,16 +1114,18 @@ review therefore amends or rewrites the existing task commit; adding a second bo
 rejected and the task is restored to in-progress. A worker also cannot bind another task in its
 iteration: verify subjects come only from tasks the host accepted as completed during this run.
 
-Each controller leases its exact task with a host-held lock in the task's `tmp/` directory while
-the agent runs. A second loop skips a held task and can take independent todo work; `coop tasks
-watch` shows concise `busy`, `stalled`, or `unleased` lease state without exposing run IDs or PIDs.
-A stale heartbeat is a diagnostic only — a task is adopted immediately only after its kernel lock
-is available, never by timeout. An older, unleased in-progress folder is adopted through that same
-lock acquisition and is called out once. A human's `coop tasks claim <id>` is different: the command
+Each controller leases its exact task with a host-only lock under
+`~/.local/state/coop/task-leases/` while the agent runs. A second loop skips a held task and can take
+independent todo work; `coop tasks watch` shows concise `busy`, `stalled`, or `unleased` state from
+metadata beside that lock without exposing run IDs or PIDs. A stale heartbeat is a diagnostic only
+— a task is adopted immediately only after its kernel lock is available, never by timeout. An
+unleased in-progress folder is adopted through that same lock acquisition. A human's
+`coop tasks claim <id>` is different: the command
 exits immediately and holds no lock, so it records durable ownership instead — the loop refuses that
 task, naming the owner and `coop tasks release <id>`, until an explicit `release`, `block`,
-`unblock`, or `done` clears it; nothing about a claim ever expires on its own. Stop pre-lease Coop controllers before upgrading: an old
-binary does not participate in this safety boundary. A completed task leaves a small host-only
+`unblock`, or `done` clears it; nothing about a claim ever expires on its own. Stop running Coop
+controllers before a major-version upgrade; mixed-major controllers do not share a supported
+authority contract. A completed task leaves a small host-only
 receipt on the persistent authority lock inode, so concurrent loops can recognize a released
 owner's finalized folder without trusting provider-writable task metadata. Before every writable
 agent or review box starts, the controller also journals the current done-folder fingerprints in

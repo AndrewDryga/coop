@@ -3,7 +3,7 @@ name: task-tmp-lifetime
 description: task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist
 subsystem: tasks
 sources: [internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/audit.go, internal/loop/loop.go, internal/scaffold/templates/agent/tasks/README.md]
-updated: 2026-08-10
+updated: 2026-08-25
 ---
 A task's `tmp/` is disposable but resumable: because it sits inside the task folder, ordinary
 todo/in-progress/blocked/reopen moves carry it along. `tasksFolderMove` removes only `tmp/` when a
@@ -16,13 +16,13 @@ removed without touching their targets. Cleanup errors fail completion/review lo
 retried with `coop tasks done <id>`. Anything a reviewer or future maintainer needs belongs in
 `artifacts/`, which survives done.
 
-The loop also uses `tmp/lease.lock` as the stable inode for one controller's task lease and
-`tmp/lease.json` as heartbeat evidence. The lock follows ordinary task-folder renames, is never
-unlinked by release, and is dropped by the kernel on controller death; metadata must resolve the
-task's current state folder before each write. Loop cleanup releases the lease before deleting a
-newly done task's `tmp/`, so that cleanup is the only normal path that removes the lock file.
+Task authority does not live in `tmp/`. The host-only registry under
+`~/.local/state/coop/task-leases/` owns its flock and heartbeat metadata, so provider-writable task
+scratch is never lease evidence and task-folder moves do not relocate authority.
 
 ## Changelog
+- 2026-08-25 — removed the task-local lease mirror; `tmp/` is scratch only, while the host registry
+  is the sole task-lease authority and heartbeat store
 - 2026-07-14 — documented loop lease lifetime and the release-before-done-cleanup boundary against `tasklease.go`, `controller.go`, and `commands.go`.
 - 2026-07-14 — created from the task-local temporary-workspace lifecycle implementation and tests.
 - 2026-08-10 — sources repointed: `taskcmd.go`/`tasklease.go`/`controller.go` moved to

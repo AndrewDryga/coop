@@ -776,7 +776,7 @@ func ReconcileInterruptedCompletions(hosts []string) error {
 			if !crashCompletionCandidate(host, task) {
 				continue
 			}
-			lock, current, acquired, err := lockInterruptedCompletion(host, task)
+			lock, current, acquired, err := lockCrashCompletion(host, task)
 			if err != nil {
 				restoreErrs = append(restoreErrs, fmt.Errorf("lock interrupted task %s: %w", task.ID, err))
 				continue
@@ -810,7 +810,6 @@ func ReconcileInterruptedCompletions(hosts []string) error {
 				cleanupErr := errors.Join(
 					removeAuditReopenRecordIfMatches(host, current.ID, receipt.AuditReopenGeneration),
 					removeLeaseAuthorityMetadata(host, current.ID),
-					removeLeaseMetadata(host, current.ID),
 					lock.release(),
 				)
 				if cleanupErr != nil {
@@ -842,7 +841,6 @@ func ReconcileInterruptedCompletions(hosts []string) error {
 
 type crashCompletionLock struct {
 	authority *os.File
-	files     []*os.File
 }
 
 func (l crashCompletionLock) completed(taskDir string) bool {
@@ -865,25 +863,13 @@ func (l crashCompletionLock) clearCompleted() error {
 }
 
 func (l crashCompletionLock) release() error {
-	var errs []error
-	for i := len(l.files) - 1; i >= 0; i-- {
-		errs = append(errs, unlockLeaseFile(l.files[i]))
+	if l.authority == nil {
+		return nil
 	}
-	return errors.Join(errs...)
+	return unlockLeaseFile(l.authority)
 }
 
 func lockCrashCompletion(root string, task Item) (crashCompletionLock, Item, bool, error) {
-	return lockCompletionForAudit(root, task, false)
-}
-
-// lockInterruptedCompletion preserves compatibility with a pre-authority controller whose held
-// task-local lock is still authoritative. Completion-window audits use lockCrashCompletion instead:
-// their journal must not be retired merely because a non-authoritative local reader was transient.
-func lockInterruptedCompletion(root string, task Item) (crashCompletionLock, Item, bool, error) {
-	return lockCompletionForAudit(root, task, true)
-}
-
-func lockCompletionForAudit(root string, task Item, allowLegacyLocalOwner bool) (crashCompletionLock, Item, bool, error) {
 	authority, err := lockLeaseAuthorityForAudit(root, task.ID, true, "task "+task.ID+" authority", func() bool {
 		return leaseAuthorityMetadataExists(root, task.ID)
 	})
@@ -893,40 +879,19 @@ func lockCompletionForAudit(root string, task Item, allowLegacyLocalOwner bool) 
 	if err != nil {
 		return crashCompletionLock{}, Item{}, false, err
 	}
-	locks := crashCompletionLock{authority: authority, files: []*os.File{authority}}
-	local, err := openLeaseLock(task.Dir, false)
-	if err == nil {
-		lockErr := syscall.Flock(int(local.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if allowLegacyLocalOwner && (errors.Is(lockErr, syscall.EWOULDBLOCK) || errors.Is(lockErr, syscall.EAGAIN)) {
-			_ = local.Close()
-			_ = locks.release()
-			return crashCompletionLock{}, Item{}, false, nil
-		}
-		if lockErr != nil {
-			lockErr = lockExclusiveForCompletionAudit(local, "task "+task.ID+" local lease", nil)
-		}
-		if lockErr != nil {
-			_ = local.Close()
-			_ = locks.release()
-			return crashCompletionLock{}, Item{}, false, lockErr
-		}
-		locks.files = append(locks.files, local)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		_ = locks.release()
-		return crashCompletionLock{}, Item{}, false, err
-	}
+	lock := crashCompletionLock{authority: authority}
 	current, ok := CurrentTask(root, task.ID)
 	if !ok || current.State != StateDone || current.Dir != task.Dir {
-		return crashCompletionLock{}, Item{}, false, locks.release()
+		return crashCompletionLock{}, Item{}, false, lock.release()
 	}
-	return locks, current, true, nil
+	return lock, current, true, nil
 }
 
 var errCompletionAuditLockOwned = errors.New("completion audit lock is owned")
 
-// lockExclusiveForCompletionAudit waits out short host-only receipt reads and compatibility-lock
-// observers. A real controller is identified by authority metadata; any other unresolved lock
-// fails the audit so its durable journal is retained instead of accepting uncertainty.
+// lockExclusiveForCompletionAudit waits out short host-only receipt readers. A real controller is
+// identified by authority metadata; any other unresolved lock fails the audit so its durable
+// journal is retained instead of accepting uncertainty.
 func lockExclusiveForCompletionAudit(file *os.File, label string, owned func() bool) error {
 	const (
 		pollInterval = 2 * time.Millisecond
@@ -956,22 +921,7 @@ func unlockLeaseFile(file *os.File) error {
 }
 
 func crashCompletionCandidate(root string, task Item) bool {
-	if leaseAuthorityMetadataExists(root, task.ID) {
-		return true
-	}
-	if auditReopenRecordExists(root, task.ID) {
-		return true
-	}
-	if info, err := os.Lstat(filepath.Join(task.Dir, "tmp")); err == nil &&
-		(info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
-		return true
-	}
-	for _, name := range []string{"lease.lock", "lease.json"} {
-		if info, err := os.Lstat(filepath.Join(task.Dir, "tmp", name)); err == nil && info.Mode().IsRegular() {
-			return true
-		}
-	}
-	return false
+	return leaseAuthorityMetadataExists(root, task.ID) || auditReopenRecordExists(root, task.ID)
 }
 
 // blockedTaskIDs returns the ids currently parked in 50_blocked/ across the hosts — what needs a

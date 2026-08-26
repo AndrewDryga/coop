@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -244,6 +246,60 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 // will never read.
 func processLeaseAuthorityRoot(layout procharness.Layout) string {
 	return filepath.Join(layout.Home, ".local", "state", "coop", "task-leases", tasks.LeaseAuthorityVersion)
+}
+
+type processLeaseMetadata struct {
+	Version       int       `json:"version"`
+	RunID         string    `json:"run_id"`
+	ControllerPID int       `json:"controller_pid"`
+	Provider      string    `json:"provider"`
+	Target        string    `json:"target"`
+	AcquiredAt    time.Time `json:"acquired_at"`
+	HeartbeatAt   time.Time `json:"heartbeat_at"`
+}
+
+func processLeaseRecordPaths(t *testing.T, layout procharness.Layout, taskID string) (string, string) {
+	t.Helper()
+	key, err := tasks.LeaseAuthorityKey(filepath.Join(layout.Repo, tasksRoot), taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(processLeaseAuthorityRoot(layout), key)
+	return base + ".lock", base + ".json"
+}
+
+func assertProcessLeaseHeld(t *testing.T, layout procharness.Layout, taskID, provider, target string) {
+	t.Helper()
+	lockPath, metadataPath := processLeaseRecordPaths(t, layout, taskID)
+	lock, err := os.OpenFile(lockPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if locked == nil {
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = lock.Close()
+		t.Fatal("loop task authority is not held by the controller")
+	}
+	if closeErr := lock.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if !errors.Is(locked, syscall.EWOULDBLOCK) && !errors.Is(locked, syscall.EAGAIN) {
+		t.Fatalf("probe loop task authority: %v", locked)
+	}
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var meta processLeaseMetadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta.Version != 1 || meta.RunID == "" || meta.ControllerPID <= 1 ||
+		meta.Provider != provider || meta.Target != target ||
+		meta.AcquiredAt.IsZero() || meta.HeartbeatAt.IsZero() {
+		t.Fatalf("loop authority metadata = %+v, want %s on %s", meta, provider, target)
+	}
 }
 
 func buildProcessBinary(t *testing.T, root, output, pkg string) {
