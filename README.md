@@ -1431,9 +1431,8 @@ Before startup, `coop up` asks Compose for the resolved service list; its final 
 those exact non-empty names in Compose order. If discovery fails, Coop does not start the
 project or print the success hint.
 Changing the configured Compose file is reconciled on the next `coop up` or box launch: services
-removed from the file are stopped. `coop down` does the same. Coop also removes a legacy
-basename-only stack when its container labels prove it belongs to this checkout; its old volumes
-are preserved because they do not carry equivalent ownership labels.
+removed from the file are stopped. `coop down` does the same. Every workspace uses its hashed
+Compose project name, so repositories with the same basename remain isolated.
 
 **Reaching a service at the same URL inside and out.** For something the *host browser* and the
 *app in the box* must both reach at one URL — an OIDC issuer like Keycloak — give the service an

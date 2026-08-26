@@ -379,8 +379,7 @@ type Container struct {
 }
 
 // ContainersByLabel returns every running or stopped container matching key=value, each with its
-// labels. A decision made PER CONTAINER — which host process supervises this box, and is it still
-// alive — needs the id next to the labels that answer it, which LabelsByLabel drops.
+// labels. A decision made per container needs the id next to the labels that answer it.
 func (r Runtime) ContainersByLabel(ctx context.Context, key, value string) ([]Container, error) {
 	if r.kind() == runtimeAppleContainer {
 		return nil, errors.New("label inspection is unsupported by Apple container")
@@ -406,21 +405,6 @@ func (r Runtime) ContainersByLabel(ctx context.Context, key, value string) ([]Co
 		containers = append(containers, Container{ID: id, Labels: labels})
 	}
 	return containers, nil
-}
-
-// LabelsByLabel returns the label maps for every running or stopped container matching key=value.
-// Compose migration cleanup uses this to prove workspace ownership before addressing a legacy
-// basename-only project. Query and inspect failures are errors, never an empty result.
-func (r Runtime) LabelsByLabel(ctx context.Context, key, value string) ([]map[string]string, error) {
-	containers, err := r.ContainersByLabel(ctx, key, value)
-	if err != nil {
-		return nil, err
-	}
-	labels := make([]map[string]string, 0, len(containers))
-	for _, container := range containers {
-		labels = append(labels, container.Labels)
-	}
-	return labels, nil
 }
 
 // KillByLabel sends SIGKILL to every running container whose label matches

@@ -32,6 +32,13 @@ live board, and `.agent/fleet.yaml` parser while keeping the direct primitives:
 `coop fork merge --all` still lands every fork through a revalidating rebase queue. There is no
 replacement manifest or batch up/down command in v9; the smaller explicit surface is intentional.
 
+Coop also no longer inspects or removes basename-only Compose projects created before per-workspace
+hashed project names. Finish or stop sibling services before upgrading. If one of those old stacks
+remains afterward, inspect it with `docker compose ls` (or `podman compose ls`), then run
+`docker compose -p <legacy-project> -f .agent/compose.yml down --remove-orphans` (substitute
+`podman compose` when applicable). v9 manages only projects named by the current
+`ComposeProject(workspace)` scheme.
+
 ## v4: the target grammar — one way to name a run
 
 Every launch names WHO runs with a single **target**: `provider[:model][/effort][@account]`

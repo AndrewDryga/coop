@@ -54,9 +54,6 @@ func EnsureServicesFile(rt runtime.Runtime, workspace, file string, stdout, stde
 	if err != nil {
 		return nil, err
 	}
-	if err := reconcileLegacyServices(rt, workspace, file, stdout, stderr); err != nil {
-		return nil, err
-	}
 	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait", "--remove-orphans")
 	if err := runCompose(rt, stdout, stderr, "up", upArgs); err != nil {
 		return nil, err
@@ -82,17 +79,13 @@ func resolvedComposeServices(rt runtime.Runtime, args []string, stderr io.Writer
 	return services, nil
 }
 
-// DownServices stops the current workspace's hashed Compose project and reconciles a positively
-// owned basename-era project. Volumes are optional for the current project only: legacy volumes
-// carry no workspace ownership label, so Coop never removes them automatically.
+// DownServices stops the current workspace's hashed Compose project. Volumes are optional.
 func DownServices(rt runtime.Runtime, workspace, policyRepo string, volumes bool, stdout, stderr io.Writer) error {
 	file := ComposeFile(workspace, policyRepo)
 	if file == "" {
 		return nil
 	}
-	currentErr := DownServicesFile(rt, workspace, file, volumes, stdout, stderr)
-	legacyErr := reconcileLegacyServices(rt, workspace, file, stdout, stderr)
-	return errors.Join(currentErr, legacyErr)
+	return DownServicesFile(rt, workspace, file, volumes, stdout, stderr)
 }
 
 // DownServicesFile is the explicit-file counterpart to EnsureServicesFile. Review runs use it to
@@ -130,69 +123,6 @@ func StopSessionServices(ctx context.Context, rt runtime.Runtime, workspace, pol
 		return fmt.Errorf("stop session services: %w", err)
 	}
 	return nil
-}
-
-// reconcileLegacyServices removes the old basename-only Compose project only after every one of
-// its containers proves it belongs to this workspace. The current validated file is enough for
-// `compose down --remove-orphans`; Compose addresses the legacy stack by project label and creates
-// nothing. Its volumes are intentionally retained because they have no path ownership labels.
-func reconcileLegacyServices(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer) error {
-	owned, reason, err := legacyComposeOwnership(rt, workspace)
-	if err != nil {
-		return fmt.Errorf("inspect legacy Compose project: %w", err)
-	}
-	if !owned {
-		if reason != "" && stderr != nil {
-			fmt.Fprintf(stderr, "legacy Compose project %s left unchanged: %s\n", ServicesProject(workspace), reason)
-		}
-		return nil
-	}
-	proj := ServicesProject(workspace)
-	args := []string{"compose", "-p", proj, "-f", file, "down", "--remove-orphans"}
-	if err := runCompose(rt, stdout, stderr, "legacy down", args); err != nil {
-		return err
-	}
-	if stdout != nil {
-		fmt.Fprintf(stdout, "removed legacy Compose project %s (volumes preserved)\n", proj)
-	}
-	return nil
-}
-
-// legacyComposeOwnership returns owned only for a non-empty, uniformly owned container set.
-// An ambiguous set is a warning reason, while runtime query/inspect failures are errors.
-func legacyComposeOwnership(rt runtime.Runtime, workspace string) (owned bool, reason string, err error) {
-	proj := ServicesProject(workspace)
-	items, err := rt.LabelsByLabel(context.Background(), composeProjectLabel, proj)
-	if err != nil {
-		return false, "", err
-	}
-	if len(items) == 0 {
-		return false, "", nil
-	}
-	for _, labels := range items {
-		if labels[composeProjectLabel] != proj {
-			return false, "a matching container has a different project label", nil
-		}
-		workingDir := labels[composeWorkingDirLabel]
-		if workingDir == "" {
-			return false, "a matching container has no Compose working-directory label", nil
-		}
-		if !pathInsideWorkspace(workspace, workingDir) {
-			return false, fmt.Sprintf("working directory %q is outside this workspace", workingDir), nil
-		}
-	}
-	return true, "", nil
-}
-
-func pathInsideWorkspace(workspace, candidate string) bool {
-	if !filepath.IsAbs(candidate) {
-		return false
-	}
-	root := canonicalWorkspace(workspace)
-	path := canonicalWorkspace(candidate)
-	rel, err := filepath.Rel(root, path)
-	return err == nil && rel != ".." && !filepath.IsAbs(rel) &&
-		!strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func runCompose(rt runtime.Runtime, stdout, stderr io.Writer, action string, args []string) error {
