@@ -341,11 +341,11 @@ persists too, so re-entry continues its last conversation instead of starting fr
 For Claude, Gemini, and Grok, Coop assigns each fork, provider, and account its own session ID.
 Codex cannot be handed a new ID, so Coop records the native ID Codex mints after the run. Those
 hints stay in the fork's git-excluded `.coop/`, and re-entry resumes that exact session for the
-active account and container-visible fork directory. Older Codex forks without a hint discover
-the most-recent interactive session for their exact cwd, skipping `codex exec` loop/consult runs;
-when `COOP_WORKDIR` makes that cwd shared, they start fresh once instead of guessing. Switching
-providers or accounts starts or resumes that target's separate native session; Coop does not
-splice one provider's transcript into another here.
+active account and container-visible fork directory. If that exact hint is absent or no longer
+exists in the provider's history, re-entry starts fresh; Coop never guesses from the latest
+conversation in a directory. Switching providers or accounts
+starts or resumes that target's separate native session; Coop does not splice one provider's
+transcript into another here.
 
 Coop allows only one Coop-owned interactive Codex process for the same account and container
 workdir at a time; a contender fails with a retryable error instead of risking the wrong native

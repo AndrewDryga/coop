@@ -84,7 +84,6 @@ type EffortSpec struct {
 // SessionDiscoverer is the optional capability for an adapter that cannot choose its new
 // session ID but can discover the native ID after a run. Forks persist it and resume exactly it.
 type SessionDiscoverer interface {
-	LatestSessionID(cfg *config.Config, cwd string) string
 	SessionIDs(cfg *config.Config, cwd string) []string
 	// ProducesSession reports whether launching the agent with these args creates a
 	// discoverable interactive session a concurrent producer could collide with — so it
@@ -256,8 +255,8 @@ type Agent interface {
 	// Resume re-enters a fork's interactive session, scoped to ws; the bool reports
 	// whether a session was found (else the caller starts fresh via StartSession). id
 	// is the persisted session id for this (fork, agent, account): preset-id agents resume the
-	// coop-owned id; codex resumes its previously discovered native id. Fork launch owns the
-	// one-time legacy Codex lookup, so ordinary adapter resumes remain exact-only.
+	// coop-owned id; codex resumes its previously recorded native id. Every adapter accepts only
+	// this exact persisted id.
 	Resume(cfg *config.Config, ws, id string) ([]string, bool)
 	// StartSession is the fresh interactive command under the coop-chosen session id:
 	// claude/gemini/grok stamp it via --session-id so a later Resume can pin exactly it;

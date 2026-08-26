@@ -50,9 +50,6 @@ func TestSessionLookupLargeHistory(t *testing.T) {
 				if got := discoverer.SessionIDs(cfg, ws); !slices.Equal(got, []string{largeHistoryHitID}) {
 					t.Fatalf("SessionIDs = %v, want only exact CLI/cwd/account session", got)
 				}
-				if got := discoverer.LatestSessionID(cfg, ws); got != largeHistoryHitID {
-					t.Fatalf("LatestSessionID = %q, want %q", got, largeHistoryHitID)
-				}
 			}
 
 			fdBefore := openSessionFDCount()

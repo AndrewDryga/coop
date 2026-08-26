@@ -25,12 +25,13 @@ boundary without a second emulator. It proves fresh, resume, and new sessions; a
 launch shapes; provider, account, cwd, and explicit-ID isolation; remembered-provider behavior
 across `--fresh`; task seeding; confirmation; merge; and parent queue reconciliation. Claude,
 Gemini, and Grok use Coop-owned IDs scoped by provider and account. Coop records Codex's native
-post-run ID and later requires that exact account/cwd match; a legacy hint under a shared
-`COOP_WORKDIR` starts fresh instead of guessing. All Coop-owned interactive Codex producers for
-one profile/cwd take the same host-only ConfigDir lock, even across parent repos; contention fails
-before provider launch because a TUI can remain open for hours. External Codex processes cannot
-participate, so native-ID attribution remains best-effort if one mutates the same profile/cwd
-during a fresh run. Merge assertions use only the newly landed commit range so an older reused
+post-run ID and later requires that exact account/cwd match; a missing hint starts fresh rather
+than adopting provider-only fork metadata or the latest conversation for a cwd. All Coop-owned
+interactive Codex producers for one profile/cwd take the same host-only ConfigDir lock, even across
+parent repos; contention fails before provider launch because a TUI can remain open for hours.
+External Codex processes cannot participate, so native-ID attribution remains best-effort if one
+mutates the same profile/cwd during a fresh run. Merge assertions use only the newly landed commit
+range so an older reused
 task trailer cannot settle unrelated current work.
 
 Detached coverage re-execs a representative real fork worker, rejects duplicate starts, and proves
@@ -115,6 +116,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-08-25 - removed provider-only and latest-by-cwd fork-session adoption; process coverage proves
+  both old paths are ignored while current per-account hints and post-run Codex attribution remain
 - 2026-08-25 - moved loop lease proof out of the provider fixture and onto the real host authority;
   the fixture can no longer inspect or depend on provider-visible task-local lease files
 - 2026-08-25 - retargeted the all-provider detached lifecycle from Fleet to one direct preset fork;

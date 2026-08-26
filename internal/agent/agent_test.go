@@ -561,8 +561,8 @@ func TestResume(t *testing.T) {
 		t.Errorf("grok Resume accepted an empty session directory: %v", cmd)
 	}
 
-	// Codex resumes only an exact persisted CLI session for the cwd. Empty-ID legacy discovery
-	// belongs to the fork launcher, and newer exec/editor/unknown records are not interactive CLI.
+	// Codex resumes only an exact persisted CLI session for the cwd. Newer
+	// exec/editor/unknown records are not interactive CLI sessions.
 	codex, _ := Get("codex")
 	sess := filepath.Join(cfg.AgentDir("codex"), "sessions", "2026", "06")
 	interactiveCodexID := "019f6a60-a28e-7d22-919c-81f43bef064f"
@@ -590,9 +590,6 @@ func TestResume(t *testing.T) {
 		t.Errorf("codex Resume accepted another native id: %v", cmd)
 	}
 	discoverer := codex.(SessionDiscoverer)
-	if got := discoverer.LatestSessionID(cfg, ws); got != interactiveCodexID {
-		t.Errorf("codex latest CLI session = %q, want %q", got, interactiveCodexID)
-	}
 	if got := discoverer.SessionIDs(cfg, ws); !slices.Equal(got, []string{interactiveCodexID}) {
 		t.Errorf("codex CLI session IDs = %v, want only %q", got, interactiveCodexID)
 	}

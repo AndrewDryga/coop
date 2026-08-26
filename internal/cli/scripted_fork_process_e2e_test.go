@@ -93,6 +93,9 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			id := forkctl.ReadForkSession(ws, provider, account)
 			if provider == "codex" {
 				id = "11111111-2222-4333-8444-000000000001"
+				forkctl.SaveForkSession(ws, provider, account, id)
+			} else if id == "" {
+				t.Fatalf("%s fresh run did not persist an exact session id", provider)
 			}
 			ids[provider] = id
 			assertForkProcessContract(t, suite, trace, ws, provider, account, forkStartArgv(provider, model, effort, id), model, effort)
@@ -169,6 +172,48 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			result, trace = runForkProcess(t, suite, []string{name, target}, provider)
 			assertForkProcessSuccess(t, result, provider)
 			assertForkProcessContract(t, suite, trace, ws, provider, row.account, forkResumeArgv(provider, model, effort, row.id), model, effort)
+		}
+	})
+
+	t.Run("pre-v9 session adoption is ignored", func(t *testing.T) {
+		resetForkProcessRepo(t, suite)
+		account := "work"
+
+		claudeWS, err := forkspace.Setup(suite.layout.Repo, "provider-only-hint")
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacyID := "11111111-2222-4333-8444-000000000010"
+		if err := os.MkdirAll(filepath.Join(claudeWS, ".coop"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(claudeWS, ".coop", "session.claude"), []byte(legacyID+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		writeForkProviderSession(t, suite, "claude", account, claudeWS, legacyID, "cli", time.Now())
+		claudeTarget := forkProcessTarget("claude", "fork-model-claude", "high", account)
+		result, trace := runForkProcess(t, suite, []string{"provider-only-hint", claudeTarget}, "claude")
+		currentID := forkctl.ReadForkSession(claudeWS, "claude", account)
+		assertForkProcessSuccess(t, result, "claude")
+		assertForkProcessContract(t, suite, trace, claudeWS, "claude", account,
+			forkStartArgv("claude", "fork-model-claude", "high", currentID), "fork-model-claude", "high")
+		if currentID == "" || currentID == legacyID {
+			t.Fatalf("provider-only hint selected %q, want a new account-scoped id", currentID)
+		}
+
+		codexWS, err := forkspace.Setup(suite.layout.Repo, "cwd-history")
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldCodexID := "11111111-2222-4333-8444-000000000011"
+		writeForkProviderSession(t, suite, "codex", account, codexWS, oldCodexID, "cli", time.Now())
+		codexTarget := forkProcessTarget("codex", "fork-model-codex", "high", account)
+		result, trace = runForkProcess(t, suite, []string{"cwd-history", codexTarget}, "codex")
+		assertForkProcessSuccess(t, result, "codex")
+		assertForkProcessContract(t, suite, trace, codexWS, "codex", account,
+			forkStartArgv("codex", "fork-model-codex", "high", ""), "fork-model-codex", "high")
+		if got := forkctl.ReadForkSession(codexWS, "codex", account); got != "" {
+			t.Fatalf("cwd history was adopted as exact hint %q", got)
 		}
 	})
 
@@ -489,6 +534,7 @@ func assertForkProcessSuccess(t *testing.T, result procharness.Result, provider 
 }
 
 func assertForkProcessContract(t *testing.T, suite *directProcessSuite, trace []*processTrace, ws, provider, account string, argv []string, model, effort string) {
+	t.Helper()
 	assertForkProcessContractWorkdir(t, suite, trace, ws, ws, provider, account, argv, model, effort)
 }
 

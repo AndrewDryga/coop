@@ -463,9 +463,8 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if err := a.applyOneOff(fa.agent, fa.model, fa.credential, fa.effort); err != nil {
 		return 2, err
 	}
-	// Codex mints its own IDs. Preserve an existing exact hint; migrate an old default-cwd
-	// fork to an exact hint before launch; otherwise snapshot IDs so the completed fresh run
-	// can claim only one uniquely new native session.
+	// Codex mints its own IDs. Preserve an existing exact hint; otherwise snapshot IDs so the
+	// completed fresh run can claim only one uniquely new native session.
 	var discoverer agents.SessionDiscoverer
 	var sessionsBefore []string
 	captureNewSession := false
@@ -482,12 +481,6 @@ func (a *app) forkCreate(args []string) (int, error) {
 
 			hint := forkctl.ReadForkSession(ws, fa.agent, account)
 			snapshot := discoverer.SessionIDs(a.cfg, sessionCWD)
-			if hint == "" && !fa.newSession && existed && !fa.fresh && a.cfg.Workdir == "" {
-				if legacy := discoverer.LatestSessionID(a.cfg, sessionCWD); agents.ValidSessionID(legacy) && slices.Contains(snapshot, legacy) {
-					forkctl.SaveForkSession(ws, fa.agent, account, legacy)
-					hint = legacy
-				}
-			}
 			captureNewSession = fa.newSession || hint == "" || !slices.Contains(snapshot, hint)
 			if captureNewSession {
 				sessionsBefore = snapshot
@@ -533,19 +526,6 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool) []string {
 		id = forkctl.ReadForkSession(ws, fa.agent, account)
 	}
 	if ag.PresetSessionID() {
-		if !fa.newSession {
-			// Old forks stored one provider-only id with no account metadata. Adopt it only
-			// when the selected account's adapter can prove that exact session exists.
-			if id == "" {
-				legacy := forkctl.ReadLegacyForkSession(ws, fa.agent)
-				if legacy != "" {
-					if _, resumed := ag.Resume(a.cfg, sessionCWD, legacy); resumed {
-						id = legacy
-						forkctl.SaveForkSession(ws, fa.agent, account, id)
-					}
-				}
-			}
-		}
 		if id == "" {
 			if sid, err := newSessionID(); err == nil {
 				id = sid
@@ -554,14 +534,9 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool) []string {
 		}
 	}
 	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
-		// A shared COOP_WORKDIR makes a legacy Codex cwd lookup ambiguous across forks. Start
-		// fresh once when no exact persisted native ID exists; the completed run records it.
-		ambiguousDiscovery := !ag.PresetSessionID() && id == "" && a.cfg.Workdir != ""
-		if !ambiguousDiscovery {
-			if rc, resumed := ag.Resume(a.cfg, sessionCWD, id); resumed {
-				ui.Info("continuing your last %s session in this fork", fa.agent)
-				return rc
-			}
+		if rc, resumed := ag.Resume(a.cfg, sessionCWD, id); resumed {
+			ui.Info("continuing your last %s session in this fork", fa.agent)
+			return rc
 		}
 	}
 	return ag.StartSession(a.cfg, id)

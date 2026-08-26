@@ -747,14 +747,16 @@ func TestForkLaunchCmd(t *testing.T) {
 		t.Errorf("invalid persisted id was not replaced: cmd %v id %q", cmd, safeID)
 	}
 
-	// A legacy provider-only hint is adopted only when the selected account contains that exact
-	// session; otherwise a new account-scoped id replaces the ambiguous hint.
+	// A provider-only pre-v9 hint is ignored even when the selected account contains that exact
+	// session. Only the current account-scoped hint may select a conversation.
 	legacyID := "77777777-2222-4333-8444-555555555555"
 	legacyWS := filepath.Join(t.TempDir(), "myrepo-forks", "legacy")
-	if err := os.MkdirAll(legacyWS, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(legacyWS, ".coop"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	forkctl.SaveForkMeta(legacyWS, forkctl.LegacyForkSessionFile(legacyWS, "claude"), legacyID)
+	if err := os.WriteFile(filepath.Join(legacyWS, ".coop", "session.claude"), []byte(legacyID+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	legacySession := filepath.Join(a.cfg.AgentDir("claude"), "projects", agents.ClaudeProjectKey(legacyWS), legacyID+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(legacySession), 0o755); err != nil {
 		t.Fatal(err)
@@ -763,20 +765,10 @@ func TestForkLaunchCmd(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd = a.forkLaunchCmd(forkArgs{name: "legacy", agent: "claude"}, legacyWS, true)
-	if got := forkctl.ReadForkSession(legacyWS, "claude", "work"); got != legacyID || !slices.Contains(cmd, "--resume") || !slices.Contains(cmd, legacyID) {
-		t.Errorf("legacy adoption = id %q cmd %v, want resume %q", got, cmd, legacyID)
-	}
-
-	missID := "88888888-2222-4333-8444-555555555555"
-	missWS := filepath.Join(t.TempDir(), "myrepo-forks", "legacy-miss")
-	if err := os.MkdirAll(missWS, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	forkctl.SaveForkMeta(missWS, forkctl.LegacyForkSessionFile(missWS, "claude"), missID)
-	cmd = a.forkLaunchCmd(forkArgs{name: "legacy-miss", agent: "claude"}, missWS, true)
-	got := forkctl.ReadForkSession(missWS, "claude", "work")
-	if got == "" || got == missID || !slices.Contains(cmd, "--session-id") || slices.Contains(cmd, "--resume") {
-		t.Errorf("ambiguous legacy miss = id %q cmd %v, want a new scoped session", got, cmd)
+	got := forkctl.ReadForkSession(legacyWS, "claude", "work")
+	if got == "" || got == legacyID || !slices.Contains(cmd, "--session-id") ||
+		slices.Contains(cmd, "--resume") || slices.Contains(cmd, legacyID) {
+		t.Errorf("provider-only hint = id %q cmd %v, want a new account-scoped session", got, cmd)
 	}
 }
 

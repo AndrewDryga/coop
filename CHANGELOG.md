@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fork session re-entry uses one exact hint.** Coop now reads only the current
+  `.coop/session.<provider>.<account>` record. It no longer adopts provider-only fork records or
+  guesses the latest Codex conversation by cwd; a missing or invalid hint starts fresh, and Codex
+  records the uniquely new native ID after the run. Exact per-account resume and `--new` remain.
+
 - **Task leases now have one host-only authority.** Coop no longer mirrors its flock and heartbeat
   into provider-visible `tmp/lease.lock` and `tmp/lease.json` files. Acquisition, contention,
   `busy`/`stalled` observation, crash recovery, completion receipts, and audit reopen all use the

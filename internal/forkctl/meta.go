@@ -31,7 +31,7 @@ func ReadForkAgent(ws string) string {
 	return ""
 }
 
-func SaveForkAgent(ws, agent string) { SaveForkMeta(ws, forkAgentFile(ws), agent) }
+func SaveForkAgent(ws, agent string) { saveForkMeta(ws, forkAgentFile(ws), agent) }
 
 const forkMetadataFileLimit = 4 << 10
 
@@ -55,7 +55,7 @@ func readForkMeta(ws, path string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func SaveForkMeta(ws, path, value string) {
+func saveForkMeta(ws, path, value string) {
 	meta := filepath.Join(ws, ".coop")
 	if value == "" || len(value) > forkMetadataFileLimit || filepath.Dir(path) != meta {
 		return
@@ -77,10 +77,6 @@ func ForkSessionFile(ws, agent, account string) string {
 	return filepath.Join(ws, ".coop", "session."+agent+"."+account)
 }
 
-func LegacyForkSessionFile(ws, agent string) string {
-	return filepath.Join(ws, ".coop", "session."+agent)
-}
-
 func ReadForkSession(ws, agent, account string) string {
 	id := readForkMeta(ws, ForkSessionFile(ws, agent, account))
 	if !agents.ValidSessionID(id) {
@@ -89,16 +85,8 @@ func ReadForkSession(ws, agent, account string) string {
 	return id
 }
 
-func ReadLegacyForkSession(ws, agent string) string {
-	id := readForkMeta(ws, LegacyForkSessionFile(ws, agent))
-	if !agents.ValidSessionID(id) {
-		return ""
-	}
-	return id
-}
-
 func SaveForkSession(ws, agent, account, id string) {
-	SaveForkMeta(ws, ForkSessionFile(ws, agent, account), id)
+	saveForkMeta(ws, ForkSessionFile(ws, agent, account), id)
 }
 
 func ClearForkSession(ws, agent, account string) {

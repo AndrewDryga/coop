@@ -76,8 +76,8 @@ func (codexAgent) ACP(*config.Config) []string {
 // story is weaker than claude's; sharing the dir is the most we can do without a preset-id).
 func (codexAgent) ACPSessionDirs() []string { return []string{"sessions"} }
 
-// PresetSessionID is false: codex has no flag to start a session under a caller-chosen
-// id (it mints its own UUIDv7), so coop allocates none and Resume scans instead.
+// PresetSessionID is false: codex has no flag to start a session under a caller-chosen id (it mints
+// its own UUIDv7), so coop records the uniquely new native ID after the run and validates it on resume.
 func (codexAgent) PresetSessionID() bool { return false }
 
 // StartSession ignores id (codex can't preset one) and just starts interactively.
@@ -86,8 +86,7 @@ func (a codexAgent) StartSession(cfg *config.Config, _ string) []string {
 }
 
 func (a codexAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) {
-	// `codex resume --last` is global. Fork launch owns legacy discovery explicitly, while
-	// the adapter accepts only a persisted exact native ID for ordinary resumes.
+	// `codex resume --last` is global, so accept only a persisted exact native ID.
 	if id = findCodexSession(cfg.AgentDir("codex"), ws, id); id != "" {
 		b := a.base(cfg)
 		return append([]string{b[0], "resume", id}, b[1:]...), true
@@ -101,15 +100,8 @@ func (codexAgent) ProducesSession(args []string) bool {
 	return len(args) == 0 || args[0] != "exec"
 }
 
-// LatestSessionID supports one-time adoption of an old fork that predates exact native-ID hints.
-func (codexAgent) LatestSessionID(cfg *config.Config, cwd string) string {
-	latest, _ := codexSessionSnapshot(cfg.AgentDir("codex"), cwd)
-	return latest
-}
-
 func (codexAgent) SessionIDs(cfg *config.Config, cwd string) []string {
-	_, ids := codexSessionSnapshot(cfg.AgentDir("codex"), cwd)
-	return ids
+	return codexSessionIDs(cfg.AgentDir("codex"), cwd)
 }
 
 func (codexAgent) Login(*config.Config) []string {
@@ -581,7 +573,7 @@ func hardenCodexSQLiteFeedbackLog(dir string) {
 // with first-line {type,payload:{id,cwd,source}} metadata.
 func findCodexSession(codexDir, cwd, id string) string {
 	if ValidSessionID(id) {
-		_, ids := codexSessionSnapshot(codexDir, cwd)
+		ids := codexSessionIDs(codexDir, cwd)
 		if slices.Contains(ids, id) {
 			return id
 		}
@@ -591,16 +583,14 @@ func findCodexSession(codexDir, cwd, id string) string {
 
 const codexSessionMetadataLimit = 64 << 10
 
-// codexSessionSnapshot returns newest-first identity plus the complete unique ID set for cwd.
-// Rollout metadata is provider-writable, so only bounded regular JSONL files are inspected.
-func codexSessionSnapshot(codexDir, cwd string) (string, []string) {
+// codexSessionIDs returns the complete unique CLI-session ID set for cwd. Rollout metadata is
+// provider-writable, so only bounded regular JSONL files are inspected.
+func codexSessionIDs(codexDir, cwd string) []string {
 	root, err := openSessionRoot(filepath.Join(codexDir, "sessions"))
 	if err != nil {
-		return "", nil
+		return nil
 	}
 	defer root.Close()
-	var latest string
-	var latestTime time.Time
 	ids := map[string]bool{}
 	_ = fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") || d.Type()&os.ModeSymlink != 0 {
@@ -630,9 +620,6 @@ func codexSessionSnapshot(codexDir, cwd string) (string, []string) {
 			return nil
 		}
 		ids[meta.Payload.ID] = true
-		if info.ModTime().After(latestTime) {
-			latestTime, latest = info.ModTime(), meta.Payload.ID
-		}
 		return nil
 	})
 	out := make([]string, 0, len(ids))
@@ -640,7 +627,7 @@ func codexSessionSnapshot(codexDir, cwd string) (string, []string) {
 		out = append(out, id)
 	}
 	slices.Sort(out)
-	return latest, out
+	return out
 }
 
 // ACPRateLimitSignals: codex-acp surfaces a limit as codexErrorInfo=usageLimitExceeded

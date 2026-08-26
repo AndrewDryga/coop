@@ -39,6 +39,12 @@ remains afterward, inspect it with `docker compose ls` (or `podman compose ls`),
 `podman compose` when applicable). v9 manages only projects named by the current
 `ComposeProject(workspace)` scheme.
 
+Fork session re-entry also has one v9 record: `.coop/session.<provider>.<account>`. Coop ignores the
+older provider-only `.coop/session.<provider>` file and no longer adopts the latest Codex session by
+cwd. The first re-entry without a current exact hint starts a fresh conversation. Coop records an
+exact hint for later resumes when the provider creates one unambiguous session. Remove provider-only
+files when convenient; Coop will neither read nor rewrite them.
+
 ## v4: the target grammar — one way to name a run
 
 Every launch names WHO runs with a single **target**: `provider[:model][/effort][@account]`
