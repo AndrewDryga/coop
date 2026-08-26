@@ -176,8 +176,8 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	return b.String()
 }
 
-// anyAgentSignedIn reports whether any agent has a signed-in credential — its default/flat login or a
-// named profile. Pure-local (reads the config dir + env file, no runtime), so `coop help` can key its
+// anyAgentSignedIn reports whether any agent has a signed-in default or named credential.
+// Pure-local (reads the config dir + env file, no runtime), so `coop help` can key its
 // FIRST RUN hint on it without breaking the runtime-free help path.
 func anyAgentSignedIn(cfg *config.Config) bool {
 	for _, agent := range agents.Names() {
@@ -333,8 +333,8 @@ var commandHelp = map[string]string{
          coop credentials <agent> <credential> default
          coop credentials <agent> <credential> rm
 
-  A CREDENTIAL is one stored account/login — a rate-limit slot. (Orchestration
-  recipes are PRESETS; see coop help presets. 'coop profiles' was the pre-v3 name.)
+  A CREDENTIAL is one stored account/login — a rate-limit slot. Orchestration
+  recipes are PRESETS; see coop help presets.
   Each token narrows: no args lists every agent, an agent lists its credentials
   (signed in? default? how long since its token last rotated?), a credential shows
   its detail, and a trailing attribute reads or writes one property of it. A credential is one subscription; add more

@@ -163,7 +163,7 @@ spelled out here (there's room to render them).
 | Command | What it does |
 |---|---|
 | `coop <agent>[:model][/effort][@account] [args]` | a sandboxed Claude, Codex, Gemini, or Grok agent — its autonomous flags, plus any args you add |
-| `coop acp <agent>[:model][/effort][@account]` · `coop acp <preset>` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the toolbar (credential/preset switch, yolo) and rides out box restarts and rate limits for you; pin a per-entry model/effort/account in the target (or name a preset in the same slot); name each peer with `--peer <agent>` (repeatable) to let it ask them read-only |
+| `coop acp <agent>[:model][/effort][@account]` · `coop acp <preset>` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the Preset/Provider/Account selectors, runs yolo, and rides out box restarts and rate limits for you; pin a per-entry model/effort/account in the target (or name a preset in the same slot); name each peer with `--peer <agent>` (repeatable) to let it ask them read-only |
 | `coop <agent> --peer <peer>…` | [opt-in second opinion](#second-opinions---peer) — name each peer with `--peer <agent>` (repeatable); may ask those peers on hard calls |
 | `coop <preset>` | run an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file) interactively — its lead leads, its roles ride along (a preset name shares the who-runs slot with an agent target) |
 | `coop <agent>:<model>[/effort]` | [pick the model and reasoning effort](#picking-models) for that run — works on agent runs, forks, the loop, and acp |
@@ -543,7 +543,7 @@ sandbox, so trusting the one mounted repo is the intended posture.)
 
 One agent can hold several accounts as named credentials — each a stored login and
 its own rate-limit pool — so a long unattended run can ride through a subscription's cap
-instead of parking on it (`coop profiles` was the pre-v3 name for the same thing):
+instead of parking on it:
 
 ```bash
 coop login claude@work        # a second account…
@@ -966,7 +966,7 @@ coop login claude    # or codex / gemini / grok
     "coop": {
       "type": "custom",
       "command": "coop",                                // absolute path if Zed's PATH lacks ~/.local/bin
-      "args": ["acp", "claude"]                         // one agent; pin the target: "claude:opus/xhigh@work"
+      "args": ["acp", "claude"]                         // one target; pin it: "claude:opus/xhigh@work"
     },
     "coop · second opinion": {
       "type": "custom",
@@ -1014,12 +1014,12 @@ repository paths the remote ACP process reports. Native Remote Development is th
 when the two hosts use different paths.
 
 **4. Use it.** Open the agent panel, pick coop from the dropdown, and start a
-thread. Zed launches `coop acp <agent>` with the project as cwd; the agent runs in the
+thread. Zed launches `coop acp <target|preset>` with the project as cwd; the selected provider runs in the
 box and edits your files over ACP. Tool calls never prompt: coop runs every editor
 session in yolo, whatever the provider's own settings — the box is the boundary, so
 permission theater would only slow it down.
 
-Under the hood `coop acp [claude|codex|gemini|grok]` runs the matching adapter
+Under the hood `coop acp <target|preset>` runs the selected provider's matching adapter
 (`@agentclientprotocol/claude-agent-acp`, `@agentclientprotocol/codex-acp`, `gemini --acp`,
 `grok agent stdio`)
 inside the box over stdio. The repo mounts at its real host path — the same path
@@ -1029,9 +1029,10 @@ lines up: a thread you started with `coop loop` is there to resume in Zed.
 coop's proxy sits between the editor and the box and owns the session:
 
 - **The toolbar has a normal and an active-preset shape.** A plain session shows Preset,
-  Provider, and Account. Switching a plain provider or account restarts the box on the new
-  identity and replays the session — the conversation survives, because ACP transcripts live
-  on a shared, credential-independent store; a switch made mid-turn re-sends the in-flight
+  Provider, and Account. An account or same-provider switch transparently preserves the
+  conversation through the shared, credential-independent session store. A provider switch
+  re-creates the session and carries the thread approximately and best-effort: message text plus
+  one-line tool narration, without tool payloads. A switch made mid-turn re-sends the in-flight
   prompt, so the turn completes on the new target instead of erroring. An active preset shows
   only Preset: its ladder owns provider, model, effort, account, and roles, while persisted
   Provider/Account sets are acknowledged and ignored. Selecting None returns Provider and
@@ -1523,7 +1524,7 @@ pinned base permanently, bump `pinnedNodeImage` in `internal/box/image.go`.
 (`@anthropic-ai/claude-code@latest`, `@openai/codex@latest`, `@google/gemini-cli@latest`,
 `@agentclientprotocol/claude-agent-acp@latest`, and `@agentclientprotocol/codex-acp@latest`),
 so `coop update` can pick up agent fixes without a coop source change. Coop also applies a
-best-effort SQLite trigger to the active Codex profile before launch so inserts into the
+best-effort SQLite trigger to the active Codex credential before launch so inserts into the
 `logs_2.sqlite` feedback-log table are ignored; session history, auth, MCP config, and
 memories are not touched.
 
@@ -1657,7 +1658,7 @@ surface would just be a second, drifting copy. Branch on exit codes; read the fi
 | **"permission denied" writing `~/.cache` / build or test caches** | The shared cache volume initialized root-owned. Recreate it: `docker volume rm coop-cache` (or your runtime's equivalent), then `coop build`. |
 | **`go`/`gofmt`: "No version is set for command go"** | The box provisions toolchains from `.tool-versions` via asdf — add the toolchain there (e.g. `golang 1.26.4`) so it's installed and shimmed. Set `COOP_NO_ASDF=1` to skip provisioning. |
 | **A pinned `.tool-versions` tool (`go`, `ruby`, …) is installed yet "not found" in a *login* shell** | asdf's shims sit on PATH via the image's `ENV`, which only reaches the agent process and non-login shells. A login shell (`sh -lc`, `bash -l`) sources `/etc/profile`, which resets PATH and drops the shims. The base box adds an `/etc/profile.d` drop-in to re-add them; rebuild an older box with `coop build` to pick it up. |
-| **Zed (ACP) can't find the agent** | Zed must launch `coop` from a shell where it's on `PATH` (the installer puts it in `~/.local/bin`). Point Zed's ACP command at the absolute path if needed, and confirm `coop acp <agent>` runs in a terminal first. |
+| **Zed (ACP) can't find the agent** | Zed must launch `coop` from a shell where it's on `PATH` (the installer puts it in `~/.local/bin`). Point Zed's ACP command at the absolute path if needed, and confirm `coop acp <target|preset>` runs in a terminal first. |
 | **An editor (ACP) session misbehaves** | Turn on wire tracing: set `COOP_ACP_TRACE=1` in the agent server's `env`, or `touch ~/.config/coop/acp-debug` (works on an already-running server). coop appends the editor↔box traffic to `~/.config/coop/acp-trace-<pid>.log` (size-bounded, auto-pruned). It carries prompts and file contents — treat it as sensitive. |
 | **A loop's live view misrenders provider activity** | Run it with `COOP_STREAM_TRACE=1`; each streaming attempt writes byte-exact raw JSONL plus Coop's rendered lines under `.agent/runs/<run>.streams/`. The files may contain prompts, tool inputs, and model output — treat them as sensitive. |
 | **A merge refuses** | Dirty tree → commit/stash first. Policy flagged a secret/large file → review, then `--force`. Non-interactive shell → pass `--yes`. Gate (`COOP_GATE`) went red on the rebased tree → it rolled back; fix and re-run. |

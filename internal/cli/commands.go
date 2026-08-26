@@ -478,8 +478,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	if !ui.IsTerminal(os.Stdin) {
 		return 2, errors.New("login needs an interactive terminal (it prompts for a paste code) — run it directly")
 	}
-	// A named profile needs the profiles/ layout; EnsureProfilesDir also migrates a
-	// pre-existing flat login into profiles/default the first time, so it isn't orphaned.
+	// Named credentials live under profiles/, so create that storage before activation.
 	if profile != config.DefaultProfile {
 		if err := box.EnsureProfilesDir(a.cfg, tool); err != nil {
 			return -1, err

@@ -1057,11 +1057,11 @@ roles:
                             >ACP</a
                         >
                         (the Agent Client Protocol) is an open, editor-agnostic
-                        standard. <code>coop acp [agent]</code> speaks it over
+                        standard. <code>coop acp &lt;target|preset&gt;</code> speaks it over
                         stdio, so you register coop as a custom agent in any
                         editor that supports ACP and steer it from there. Zed
                         ships ACP today and others are adding it; the setup is the
-                        same anywhere — point one entry at each agent you use. In
+                        same anywhere — point one entry at each target or preset you use. In
                         Zed's <code>settings.json</code>, for example:
                     </p>
                     <pre class="code">{
@@ -1069,7 +1069,7 @@ roles:
     <span class="s">"coop"</span>: {
       <span class="s">"type"</span>: <span class="s">"custom"</span>,
       <span class="s">"command"</span>: <span class="s">"coop"</span>,
-      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude"</span>]                      <span class="t">// one agent; pin the target: "claude:opus/xhigh@work"</span>
+      <span class="s">"args"</span>: [<span class="s">"acp"</span>, <span class="s">"claude"</span>]                      <span class="t">// one target; pin it: "claude:opus/xhigh@work"</span>
     },
     <span class="s">"coop · second opinion"</span>: {
       <span class="s">"type"</span>: <span class="s">"custom"</span>,
@@ -1085,10 +1085,10 @@ roles:
                         the editor's per-option defaults; the toolbar dropdowns
                         come up reflecting it and stay switchable, and coop always
                         runs yolo whatever the editor's permission-mode setting.
-                        One caveat: a <strong>codex</strong> governor takes its
+                        One caveat: a <strong>codex</strong> target takes its
                         model from codex's own <code>config.toml</code> (coop
                         can't set it over ACP), so pick a <code>claude</code>,
-                        <code>gemini</code>, or <code>grok</code> governor when
+                        <code>gemini</code>, or <code>grok</code> target when
                         you want coop to choose the model.
                     </p>
                     <p>
@@ -1098,10 +1098,12 @@ roles:
                         editor.
                     </p>
                     <p>
-                        coop's proxy owns the editor session. The toolbar grows
-                        a <code>coop</code> dropdown to switch the credential
-                        or preset mid-thread — the conversation survives the
-                        switch. Every session runs yolo (the box is the
+                        coop's proxy owns the editor session. A plain session's toolbar exposes
+                        Preset, Provider, and Account selectors; an active preset keeps the Preset
+                        selector. Account and same-provider switches preserve the conversation;
+                        a provider switch re-creates the session and carries message text plus
+                        one-line tool narration approximately and best-effort, without tool payloads.
+                        Every session runs yolo (the box is the
                         boundary, so there are no permission prompts to click).
                         A rate limit is handled for you: coop rotates to your
                         next signed-in account and re-sends your prompt — or,

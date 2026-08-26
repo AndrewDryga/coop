@@ -236,10 +236,9 @@ func (a *app) setProfileDefault(args []string) (int, error) {
 	return a.cmdCredentials([]string{agent})
 }
 
-// removeProfile deletes a stored credential profile's directory — its login token and that
-// profile's session history. It refuses to delete the agent's marked default (set another first,
-// so a run never lands on a profile that's gone) and never deletes the legacy flat layout's whole
-// agent dir. A preset ladder that still names the account is harmless: expandLadder skips a
+// removeProfile deletes a stored credential's login token and session history. It refuses to
+// delete the agent's marked default (set another first, so a run never lands on a credential
+// that's gone). A preset ladder that still names the account is harmless: expandLadder skips a
 // target that isn't signed in.
 func (a *app) removeProfile(args []string) (int, error) {
 	yes := hasYes(args)

@@ -2,15 +2,16 @@
 name: credentials-not-profiles
 description: "a stored account is publicly a \"credential\"; \"profile\" is retired, not aliased"
 scope: cli-grammar
-sources: [internal/cli/profiles.go, internal/cli/help.go]
+sources: [internal/cli/profiles.go, internal/cli/help.go, internal/cli/cli_test.go, README.md, site/docs.html, MIGRATING.md]
 check: "none"
-updated: 2026-08-09
+updated: 2026-08-26
 ---
 
 # The account concept is publicly named "credentials", never "profiles"
 
-**The rule:** Every user-facing surface — command names, flags, help, errors, hints, docs —
-says **credential(s)** for a stored account/login (a rate-limit slot). "Profile" is the
+**The rule:** Every current user-facing surface — command names, flags, help, errors, hints, docs —
+says **credential(s)** for a stored account/login (a rate-limit slot). Historical migration tables
+may name the retired form only to map it to the current command. "Profile" is the
 pre-v3 name and is RETIRED, not aliased: `coop profiles` resolves as a plain unknown
 command — no alias, no did-you-mean (the edit distance is past the threshold), and no
 special retired-form note either (`TestV3RetiredForms`: v3 carries no legacy, not even a
@@ -31,8 +32,8 @@ storage would force a data migration for zero user value. The boundary is what a
 reads.
 
 **Mechanical check:** grep new user-facing strings for `profile` before landing:
-`grep -rn '"' internal/cli --include='*.go' | grep -i profile` should surface only
-the `coop profiles` tombstone line and internal identifiers.
+`grep -rn '"' internal/cli --include='*.go' | grep -i profile` should surface only internal
+identifiers and tests, never current help, errors, or hints.
 
 ## Changelog
 - 2026-07-03 — created
@@ -49,3 +50,5 @@ the `coop profiles` tombstone line and internal identifiers.
   pointer, confirmed by internal/cli/cli_test.go's `TestV3RetiredForms` comment ("not a special
   'X is retired' note"). Card-vs-code drift, not a code bug — possibly-wrong, flagged for the lead.
 - 2026-08-09 — drift repair from the backfill sweep's findings: claim corrected — coop profiles is a plain unknown command, no tombstone hint (TestV3RetiredForms).
+- 2026-08-26 — removed retired-command history from current help and README guidance; kept the
+  historical migration mapping and exempt internal storage terminology.
