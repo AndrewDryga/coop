@@ -29,6 +29,7 @@ archives:
     name_template: "coop_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
+      - MIGRATING.md
       - LICENSE
       - CHANGELOG.md
       - completions/*

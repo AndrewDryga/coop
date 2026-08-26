@@ -13,6 +13,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -203,6 +204,62 @@ func (c *Control) ReviewGatePasses(gateRepo, treeDir, img string) (bool, error) 
 	return c.runGateMode(gateRepo, treeDir, img, true)
 }
 
+type forkMergeLifecycleError struct{ cause error }
+
+func (e *forkMergeLifecycleError) Error() string { return e.cause.Error() }
+func (e *forkMergeLifecycleError) Unwrap() error { return e.cause }
+
+func isForkMergeLifecycleError(err error) bool {
+	var target *forkMergeLifecycleError
+	return errors.As(err, &target)
+}
+
+// lockForkForMerge is the destructive merge authority. The early command preflight gives a useful
+// refusal before runtime work, but only this flock closes the check-to-rebase/delete race with a
+// concurrent detached start. Callers hold it for every host mutation of the fork or its workspace.
+func lockForkForMerge(repo, name string) (func(), error) {
+	unlock, err := forkspace.LockState(repo, name)
+	if err != nil {
+		return nil, fmt.Errorf("lock fork %s state: %w", name, err)
+	}
+	if err := CheckWorkerStateFormat(repo, name); err != nil {
+		unlock()
+		return nil, &forkMergeLifecycleError{cause: err}
+	}
+	if forkspace.NeedsStop(repo, name) {
+		unlock()
+		return nil, &forkMergeLifecycleError{cause: fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s", name, name)}
+	}
+	return unlock, nil
+}
+
+func fetchForkForMerge(repo, ws, name string) error {
+	unlock, err := lockForkForMerge(repo, name)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if !pathExists(ws) {
+		return fmt.Errorf("no such fork: %s", name)
+	}
+	if err := gitFetchInto(repo, ws, name); err != nil {
+		return fmt.Errorf("%s: git fetch: %w", name, err)
+	}
+	return nil
+}
+
+func destroyLandedFork(rt runtime.Runtime, repo, name string) error {
+	unlock, err := lockForkForMerge(repo, name)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if !pathExists(forkspace.Workspace(repo, name)) {
+		return fmt.Errorf("no such fork: %s", name)
+	}
+	return DestroyFork(rt, repo, name)
+}
+
 // mergeOne fetches a fork's branch, merges it into the parent's HEAD, and — when a
 // gate is configured — revalidates the merged result, rolling back on failure.
 // "green" thus means green against the tree as it stands now, not the stale base the
@@ -214,12 +271,13 @@ func (c *Control) mergeOne(repo, img, name string, force bool) (bool, error) {
 	if !pathExists(ws) {
 		return false, fmt.Errorf("no such fork: %s", name)
 	}
-	// Re-check running here, immediately before the land — the caller's check happened earlier
-	// (across an approve prompt, or once at the top of a --all queue), so a loop could have
-	// started in that gap, and landing onto a live worktree corrupts the in-flight iteration.
-	// This narrows the TOCTOU window to microseconds; it isn't a full lock.
-	if len(runningForkNames(repo, []string{name})) > 0 {
-		return false, fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s", name, name)
+	unlock, err := lockForkForMerge(repo, name)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	if !pathExists(ws) {
+		return false, fmt.Errorf("no such fork: %s", name)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return false, fmt.Errorf("%s: git fetch: %w", name, err)
@@ -414,6 +472,17 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	var names []string
+	if all {
+		names = forkspace.Names(repo)
+		for _, n := range names {
+			if err := CheckWorkerStateFormat(repo, n); err != nil {
+				return 1, err
+			}
+		}
+	} else if err := CheckWorkerStateFormat(repo, name); err != nil {
+		return 1, err
+	}
 	if gitDirty(repo) {
 		return 1, errors.New("your working tree has uncommitted changes — commit or stash before merging")
 	}
@@ -428,7 +497,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		return -1, err
 	}
 	if all {
-		return c.forkMergeAll(repo, img, force, yes)
+		return c.forkMergeAll(repo, names, img, force, yes)
 	}
 	ws := forkspace.Workspace(repo, name) // name is non-empty here (the !all && name=="" check above returned)
 	if !pathExists(ws) {
@@ -436,11 +505,11 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	}
 	// Rebasing/deleting a fork whose loop is still mid-iteration corrupts the in-flight work and
 	// orphans the worker. Stop the loop first.
-	if len(runningForkNames(repo, []string{name})) > 0 {
-		return 1, fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s", name, name)
-	}
-	if err := gitFetchInto(repo, ws, name); err != nil {
-		return -1, fmt.Errorf("%s: git fetch: %w", name, err)
+	if err := fetchForkForMerge(repo, ws, name); err != nil {
+		if isForkMergeLifecycleError(err) {
+			return 1, err
+		}
+		return -1, err
 	}
 	ref := "review/" + name
 	ahead := gitOut(repo, "rev-list", "--count", "HEAD.."+ref)
@@ -474,7 +543,10 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	// Default-No delete confirm (the land above was the default-Yes step); --yes is already required
 	// for a non-interactive run, so this only prompts at a TTY. Declining just keeps the landed fork.
 	if ui.DestroyGate("remove the landed fork "+name, yes) == nil {
-		if err := DestroyFork(c.rt, repo, name); err != nil {
+		if err := destroyLandedFork(c.rt, repo, name); err != nil {
+			if isForkMergeLifecycleError(err) {
+				return 1, err
+			}
 			return -1, err
 		}
 		ui.OK("removed fork %s", name)
@@ -486,8 +558,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 // the result of the previous one and re-gated, so a later fork can't ride in green
 // against a base that an earlier landing already changed. It stops at the first
 // conflict or gate failure, leaving the remaining forks untouched.
-func (c *Control) forkMergeAll(repo, img string, force, yes bool) (int, error) {
-	names := forkspace.Names(repo)
+func (c *Control) forkMergeAll(repo string, names []string, img string, force, yes bool) (int, error) {
 	if len(names) == 0 {
 		ui.Info("no forks to merge")
 		return 0, nil
@@ -517,8 +588,8 @@ func (c *Control) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 			continue
 		}
 		ws := forkspace.Workspace(repo, n)
-		if err := gitFetchInto(repo, ws, n); err != nil {
-			continue
+		if err := fetchForkForMerge(repo, ws, n); err != nil {
+			return 1, err
 		}
 		if gitOut(repo, "rev-list", "--count", "HEAD..review/"+n) == "0" {
 			continue // nothing to land
@@ -532,7 +603,9 @@ func (c *Control) forkMergeAll(repo, img string, force, yes bool) (int, error) {
 			if gitDirty(ws) {
 				ui.Warn("keeping fork %s — uncommitted changes; 'coop fork rm %s --force' after review", n, n)
 			} else if err == nil {
-				_ = DestroyFork(c.rt, repo, n)
+				if destroyErr := destroyLandedFork(c.rt, repo, n); destroyErr != nil {
+					ui.Warn("keeping landed fork %s — it changed before removal: %v", n, destroyErr)
+				}
 			}
 			landed = append(landed, n)
 		}

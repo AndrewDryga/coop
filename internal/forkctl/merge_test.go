@@ -1,6 +1,7 @@
 package forkctl
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,110 @@ func TestForkMergeRequiresName(t *testing.T) {
 	}
 	if code, err := c.ForkMerge([]string{"--nope"}); code != 2 || err == nil {
 		t.Errorf("ForkMerge(--nope) = (%d, %v), want (2, unknown-flag error)", code, err)
+	}
+}
+
+func TestForkMergePreflightsUnsupportedStateBeforeEnvironmentGates(t *testing.T) {
+	for _, args := range [][]string{{"old", "--yes"}, {"--all", "--yes"}} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			repo := initRepo(t)
+			if _, err := forkspace.Setup(repo, "old"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			raw := []byte("owner-v2\nopaque\n")
+			path := forkspace.PidPath(repo, "old")
+			if err := os.WriteFile(path, raw, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runtimeCalls := 0
+			c := &Control{
+				cfg: &config.Config{RepoOverride: repo, Gate: []string{"true"}},
+				host: Host{EnsureRuntime: func() (runtime.Runtime, error) {
+					runtimeCalls++
+					return runtime.Runtime{}, errors.New("runtime must not be consulted")
+				}},
+			}
+			code, err := c.ForkMerge(args) // --yes lets a missing preflight reach the configured runtime gate
+			if code != 1 || err == nil || !strings.Contains(err.Error(), "unsupported detached-worker state version") || strings.Contains(err.Error(), "--yes") {
+				t.Fatalf("ForkMerge(%v) unsupported state = (%d, %v), want pre-gate version refusal", args, code, err)
+			}
+			if got, readErr := os.ReadFile(path); readErr != nil || string(got) != string(raw) {
+				t.Fatalf("unsupported state changed = %q, %v; want exact %q", got, readErr, raw)
+			}
+			if runtimeCalls != 0 {
+				t.Fatalf("unsupported merge resolved its runtime %d time(s)", runtimeCalls)
+			}
+		})
+	}
+}
+
+func TestForkMergeRunningRefusalKeepsLifecycleExitClass(t *testing.T) {
+	repo := initRepo(t)
+	if _, err := forkspace.Setup(repo, "busy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := forkspace.WritePid(repo, "busy", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	code, err := c.ForkMerge([]string{"busy", "--yes"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "running or awaiting cleanup") {
+		t.Fatalf("ForkMerge(running) = (%d, %v), want lifecycle refusal class 1", code, err)
+	}
+}
+
+func TestForkMergeRechecksUnsupportedStateUnderLifecycleLock(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := gitOut(repo, "rev-parse", "HEAD")
+	raw := []byte("owner-v2\nopaque\n")
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
+		return c.ForkMerge([]string{"race", "--yes"})
+	}, func() {
+		if err := os.WriteFile(forkspace.PidPath(repo, "race"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got.code == 0 || got.err == nil || !strings.Contains(got.err.Error(), "unsupported detached-worker state version") {
+		t.Fatalf("ForkMerge after state replacement = (%d, %v), want locked version refusal", got.code, got.err)
+	}
+	if gitOut(repo, "rev-parse", "HEAD") != head || !pathExists(ws) {
+		t.Fatal("merge mutated the parent or workspace after unsupported state appeared")
+	}
+	if data, readErr := os.ReadFile(forkspace.PidPath(repo, "race")); readErr != nil || string(data) != string(raw) {
+		t.Fatalf("unsupported state changed = %q, %v; want exact %q", data, readErr, raw)
+	}
+}
+
+func TestDestroyLandedForkRechecksUnsupportedStateUnderLifecycleLock(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "landed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("owner-v2\nopaque\n")
+	got := runForkCommandAcrossLockedMutation(t, repo, "landed", func() (int, error) {
+		if err := destroyLandedFork(runtime.Runtime{}, repo, "landed"); err != nil {
+			return 1, err
+		}
+		return 0, nil
+	}, func() {
+		if err := os.WriteFile(forkspace.PidPath(repo, "landed"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got.code != 1 || got.err == nil || !strings.Contains(got.err.Error(), "unsupported detached-worker state version") {
+		t.Fatalf("destroy after state replacement = (%d, %v), want locked version refusal", got.code, got.err)
+	}
+	if !pathExists(ws) {
+		t.Fatal("post-land cleanup deleted a workspace with unsupported state")
 	}
 }
 
@@ -583,7 +688,7 @@ func TestForkMergeQueue(t *testing.T) {
 		git(t, ws, "add", "-A")
 		git(t, ws, "commit", "-qm", n)
 	}
-	if code, err := c.forkMergeAll(repo, "", false, true); err != nil || code != 0 { // yes=true: approve the bulk land
+	if code, err := c.forkMergeAll(repo, forkspace.Names(repo), "", false, true); err != nil || code != 0 { // yes=true: approve the bulk land
 		t.Fatalf("forkMergeAll = (%d, %v), want (0, nil)", code, err)
 	}
 	if !pathExists(filepath.Join(repo, "a.txt")) || !pathExists(filepath.Join(repo, "b.txt")) {
@@ -697,7 +802,7 @@ func TestForkMergeAllRefusesWithoutApproval(t *testing.T) {
 	c := &Control{cfg: &config.Config{}}
 	// Non-interactive stdin (go test) with yes=false → approve() returns false → bulk land is a
 	// no-op. Without the gate this path would fetch, land, and DELETE every fork unattended.
-	code, err := c.forkMergeAll(repo, "", false, false)
+	code, err := c.forkMergeAll(repo, forkspace.Names(repo), "", false, false)
 	if err != nil || code != 0 {
 		t.Fatalf("forkMergeAll = (%d, %v), want (0, nil)", code, err)
 	}

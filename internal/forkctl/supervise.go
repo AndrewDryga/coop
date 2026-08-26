@@ -37,6 +37,36 @@ func ForkContainerOwner(repo, name string) string {
 	return fmt.Sprintf("v1-%x", sum[:12])
 }
 
+func workerStateFormatError(repo, name string, err error) error {
+	path := forkspace.PidPath(repo, name)
+	const guide = "https://github.com/AndrewDryga/coop/blob/main/MIGRATING.md#detached-worker-state"
+	switch {
+	case errors.Is(err, forkspace.ErrPreV8WorkerState):
+		return fmt.Errorf("fork %s uses unsupported pre-v8 detached-worker state at %q — this Coop version left the exact file unchanged and will not signal its PID or reap a container; do not add an owner-v1 header. Stop it with Coop v8 before upgrading, or follow %s", name, path, guide)
+	case errors.Is(err, forkspace.ErrUnsupportedWorkerStateVersion):
+		return fmt.Errorf("fork %s uses an unsupported detached-worker state version at %q — this Coop version left the exact file unchanged; use the Coop version that wrote it, and do not edit its header or apply the pre-v8 recovery procedure: %s", name, path, guide)
+	default:
+		return fmt.Errorf("fork %s state at %q is malformed — Coop left the exact file unchanged and will not infer a process identity from it; inspect it with: sed -n '1,4p' %q; follow %s, then retry: coop fork stop %s", name, path, path, guide, name)
+	}
+}
+
+// CheckWorkerStateFormat rejects state this Coop cannot own without locking or touching it. Command
+// paths call it before runtime probes, prompts, or workspace/metadata changes; locked start and stop
+// still parse again so a state replacement after this read cannot bypass the lifecycle authority.
+func CheckWorkerStateFormat(repo, name string) error {
+	data, err := os.ReadFile(forkspace.PidPath(repo, name))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read fork %s state: %w", name, err)
+	}
+	if _, err := forkspace.ParseWorkerState(string(data)); err != nil {
+		return workerStateFormatError(repo, name, err)
+	}
+	return nil
+}
+
 // claimForkPid atomically reserves a fork's pidfile BEFORE its worker starts, so two concurrent
 // detach attempts racing for the same fork can't both pass a
 // check-then-write and leave two loops racing one worktree/branch. O_EXCL fails if the file exists;
@@ -77,6 +107,17 @@ func claimForkPidUnlocked(repo, name string) error {
 	if !errors.Is(err, os.ErrExist) {
 		return err
 	}
+	state, stateErr := forkspace.ReadWorkerState(repo, name)
+	if stateErr != nil {
+		if errors.Is(stateErr, os.ErrNotExist) {
+			return fmt.Errorf("fork %s state changed while reserving its detached start — retry the original coop fork command", name)
+		}
+		var pathErr *os.PathError
+		if errors.As(stateErr, &pathErr) {
+			return fmt.Errorf("read fork %s state: %w", name, stateErr)
+		}
+		return workerStateFormatError(repo, name, stateErr)
+	}
 	if pid := forkspace.RunningPid(repo, name); pid != 0 {
 		return fmt.Errorf("fork %s already has a loop running (pid %d) — stop it first: coop fork stop %s", name, pid, name)
 	}
@@ -84,7 +125,7 @@ func claimForkPidUnlocked(repo, name string) error {
 	// worker is recoverable: the owner is provably gone AND it never forked a worker, which together
 	// prove nothing is running and no box was ever started. Reclaim that; refuse everything else,
 	// because a live owner is mid-start and an unverifiable one could be either.
-	if state, err := forkspace.ReadWorkerState(repo, name); err == nil && state.Claim && !state.Legacy {
+	if state.Claim {
 		switch identity := forkspace.ProcessIdentityOf(state.Pid, state.Token); {
 		case identity == forkspace.ProcessIdentityMatch:
 			return fmt.Errorf("fork %s is already being started by coop pid %d — wait for it, or stop it first: coop fork stop %s", name, state.Pid, name)
@@ -110,7 +151,7 @@ func clearForkClaimUnlocked(repo, name string) error {
 	if err != nil {
 		return err
 	}
-	if !state.Claim || state.Legacy || state.Pid != os.Getpid() {
+	if !state.Claim || state.Pid != os.Getpid() {
 		return errors.New("fork reservation changed before startup failed")
 	}
 	return os.Remove(forkspace.PidPath(repo, name))
@@ -383,6 +424,9 @@ func (c *Control) ForkStop(args []string) (int, error) {
 	if !workspaceExists && !stateExists {
 		return 1, fmt.Errorf("no such fork: %s", name) // match ls/path/rm, not "not running"
 	}
+	if err := CheckWorkerStateFormat(repo, name); err != nil {
+		return 1, err
+	}
 	unlock, err := forkspace.LockState(repo, name)
 	if err != nil {
 		return -1, fmt.Errorf("lock fork %s state: %w — check permissions on %s, then retry: coop fork stop %s", name, err, forkspace.StateDir(repo), name)
@@ -398,7 +442,7 @@ func (c *Control) ForkStop(args []string) (int, error) {
 	}
 	state, err := forkspace.ParseWorkerState(string(data))
 	if err != nil {
-		return 1, fmt.Errorf("fork %s state is malformed — inspect it with: sed -n '1,3p' %q; restore a complete pid record or reap-pending marker, then retry: coop fork stop %s", name, forkspace.PidPath(repo, name), name)
+		return 1, workerStateFormatError(repo, name, err)
 	}
 	pid, token := state.Pid, state.Token
 	if state.Claim {
@@ -407,9 +451,6 @@ func (c *Control) ForkStop(args []string) (int, error) {
 		pid, token = 0, ""
 	}
 	identity := forkspace.ProcessIdentityOf(pid, token)
-	if pid > 0 && token != "" && !forkspace.StableProcToken(token) && identity != forkspace.ProcessGone {
-		return 1, fmt.Errorf("fork %s has legacy state for live pid %d, so coop will not signal an unverified process — %s", name, pid, forkWorkerRecovery(name, pid))
-	}
 	if identity == forkspace.ProcessIdentityUnknown {
 		return 1, fmt.Errorf("fork %s worker identity for pid %d could not be verified — %s", name, pid, forkWorkerRecovery(name, pid))
 	}
@@ -419,17 +460,15 @@ func (c *Control) ForkStop(args []string) (int, error) {
 	// Preserve a live worker's identity if runtime detection fails; stale/retry state becomes a
 	// tombstone so another start cannot strand the orphan before the operator retries stop.
 	if pid == 0 {
-		if err := forkspace.WriteWorkerState(repo, name, forkspace.WorkerState{Pending: true, Legacy: state.Legacy}); err != nil {
+		if err := forkspace.WriteWorkerState(repo, name, forkspace.WorkerState{Pending: true}); err != nil {
 			return -1, fmt.Errorf("mark fork %s cleanup pending: %w — check permissions on %s, then retry: coop fork stop %s", name, err, forkspace.PidPath(repo, name), name)
 		}
 	}
-	if !state.Legacy {
-		if err := c.ensureRuntime(); err != nil {
-			return -1, fmt.Errorf("fork %s cleanup needs its container runtime: %w — fix the runtime, then retry: coop fork stop %s", name, err, name)
-		}
+	if err := c.ensureRuntime(); err != nil {
+		return -1, fmt.Errorf("fork %s cleanup needs its container runtime: %w — fix the runtime, then retry: coop fork stop %s", name, err, name)
 	}
 	if pid > 0 {
-		if err := forkspace.WriteWorkerState(repo, name, forkspace.WorkerState{Pid: pid, Token: token, Pending: true, Legacy: state.Legacy}); err != nil {
+		if err := forkspace.WriteWorkerState(repo, name, forkspace.WorkerState{Pid: pid, Token: token, Pending: true}); err != nil {
 			return -1, fmt.Errorf("mark fork %s cleanup pending: %w — check permissions on %s, then retry: coop fork stop %s", name, err, forkspace.PidPath(repo, name), name)
 		}
 	}
@@ -471,9 +510,6 @@ func (c *Control) ForkStop(args []string) (int, error) {
 		if !exited {
 			return 1, fmt.Errorf("fork %s (pid %d) did not exit after SIGKILL — retry: coop fork stop %s", name, pid, name)
 		}
-	}
-	if state.Legacy {
-		return 1, fmt.Errorf("fork %s worker stopped, but its state predates repository-scoped container ownership — coop will not risk removing another repository's namesake container; inspect your runtime for label %s=%s, remove only this fork's container, then remove %q", name, box.LabelFork, name, forkspace.PidPath(repo, name))
 	}
 	// Tear down the loop's box if a SIGKILL'd `docker run` client orphaned it (--rm never fires on
 	// SIGKILL): the box has a repo-scoped owner label, so remove exactly this fork's container(s).

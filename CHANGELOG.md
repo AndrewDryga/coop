@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Detached forks have one repository-owned worker-state format.** Every current pidfile starts
+  with `owner-v1`; Coop no longer decodes, signals, rewrites, or partially cleans up headerless
+  pre-v8 records. Start/recreate, merge, remove, and stop reject unsupported state before runtime or
+  workspace effects while retaining the exact file as lifecycle authority. Stop detached forks
+  with v8 before upgrading, or follow the verified process/container procedure in the
+  [migration guide](MIGRATING.md#detached-worker-state); never fabricate current ownership by
+  prepending the header. Current worker, cleanup-pending, reservation, stable-identity, exact-owner
+  reap, and atomic-write behavior is unchanged.
+
 - **Task authority no longer carries an automatic pre-v8 cache migration.** V9 opens only the
   current durable registry at `~/.local/state/coop/task-leases/v1`; it removes the adoption flock,
   cross-volume record copier, staging tree, and rename path from every authority open. If that

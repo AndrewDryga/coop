@@ -1,6 +1,7 @@
 package forkspace
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,12 +34,22 @@ func TestForkRunningPid(t *testing.T) {
 	if got := RunningPid(repo, "perf"); got != 0 {
 		t.Errorf("RunningPid(no file) = %d, want 0", got)
 	}
-	// A legacy live pid without a stable token is not authoritative enough to call running.
-	if err := os.WriteFile(PidPath(repo, "perf"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+	// Unsupported state is retained as lifecycle authority but never decoded into a running PID.
+	unsupported := []byte(strconv.Itoa(os.Getpid()))
+	if err := os.WriteFile(PidPath(repo, "perf"), unsupported, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := RunningPid(repo, "perf"); got != 0 {
-		t.Errorf("RunningPid(pid-only live) = %d, want cleanup-pending 0", got)
+		t.Errorf("RunningPid(pre-v8 state) = %d, want 0", got)
+	}
+	if !NeedsStop(repo, "perf") {
+		t.Error("unsupported state must keep the destructive-operation guard held")
+	}
+	if pid, held := StateOwner(repo, "perf"); pid != 0 || !held {
+		t.Errorf("StateOwner(pre-v8 state) = (%d, %v), want (0, true)", pid, held)
+	}
+	if got, err := os.ReadFile(PidPath(repo, "perf")); err != nil || string(got) != string(unsupported) {
+		t.Fatalf("unsupported state changed = %q, %v; want exact %q", got, err, unsupported)
 	}
 	token := ProcStartToken(os.Getpid())
 	if err := WriteWorkerState(repo, "pending-live", WorkerState{Pid: os.Getpid(), Token: token, Pending: true}); err != nil {
@@ -48,7 +59,7 @@ func TestForkRunningPid(t *testing.T) {
 		t.Errorf("RunningPid(pending live) = %d, want %d", got, os.Getpid())
 	}
 	// A dead/out-of-range pid → 0, but its state remains until forkStop reaps any orphaned box.
-	if err := os.WriteFile(PidPath(repo, "dead"), []byte("2147483646"), 0o644); err != nil {
+	if err := os.WriteFile(PidPath(repo, "dead"), []byte(OwnerStateV1+"2147483646\nlinux-proc-v1:1:2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := RunningPid(repo, "dead"); got != 0 {
@@ -59,48 +70,56 @@ func TestForkRunningPid(t *testing.T) {
 	}
 }
 
-func TestParsePidfile(t *testing.T) {
-	if pid, tok := ParsePidfile("123\n"); pid != 123 || tok != "" { // legacy, pid-only
-		t.Errorf("ParsePidfile(legacy) = %d,%q want 123,\"\"", pid, tok)
+func TestParsePidfileBody(t *testing.T) {
+	if pid, tok := parsePidfile("123\n"); pid != 123 || tok != "" {
+		t.Errorf("parsePidfile(pid only) = %d,%q want 123,\"\"", pid, tok)
 	}
-	// Legacy start-time tokens may contain spaces; parsing keeps them intact for fail-closed recovery.
-	if pid, tok := ParsePidfile("456\nWed Jun 18 10:00:00 2026\n"); pid != 456 || tok != "Wed Jun 18 10:00:00 2026" {
-		t.Errorf("ParsePidfile(with token) = %d,%q", pid, tok)
+	if pid, tok := parsePidfile("456\nlinux-proc-v1:boot:123\n"); pid != 456 || tok != "linux-proc-v1:boot:123" {
+		t.Errorf("parsePidfile(with token) = %d,%q", pid, tok)
 	}
-	if pid, _ := ParsePidfile("nonsense"); pid != 0 {
-		t.Errorf("ParsePidfile(junk) pid = %d, want 0", pid)
+	if pid, _ := parsePidfile("nonsense"); pid != 0 {
+		t.Errorf("parsePidfile(junk) pid = %d, want 0", pid)
 	}
 }
 
 func TestForkWorkerStateWireFormat(t *testing.T) {
 	cases := []struct {
-		name    string
-		raw     string
-		want    WorkerState
-		wantErr bool
+		name   string
+		raw    string
+		want   WorkerState
+		wantIs error
+		bad    bool
 	}{
 		{name: "owner scoped running", raw: OwnerStateV1 + "42\nlinux-proc-v1:boot:123\n", want: WorkerState{Pid: 42, Token: "linux-proc-v1:boot:123"}},
-		{name: "legacy running", raw: "42\nlinux-proc-v1:boot:123\n", want: WorkerState{Pid: 42, Token: "linux-proc-v1:boot:123", Legacy: true}},
-		{name: "legacy token", raw: "42\nWed Jun 18 10:00:00 2026\n", want: WorkerState{Pid: 42, Token: "Wed Jun 18 10:00:00 2026", Legacy: true}},
+		{name: "pre-v8 running stable token", raw: "42\nlinux-proc-v1:boot:123\n", wantIs: ErrPreV8WorkerState},
+		{name: "pre-v8 running legacy token", raw: "42\nWed Jun 18 10:00:00 2026\n", wantIs: ErrPreV8WorkerState},
 		{name: "start reservation", raw: OwnerStateV1 + StartClaim + "42\nlinux-proc-v1:boot:123\n", want: WorkerState{Claim: true, Pid: 42, Token: "linux-proc-v1:boot:123"}},
 		{name: "start reservation with a launched worker", raw: OwnerStateV1 + StartLaunched + "42\nlinux-proc-v1:boot:123\n", want: WorkerState{Claim: true, Launched: true, Pid: 42, Token: "linux-proc-v1:boot:123"}},
-		{name: "reservation without an owner", raw: OwnerStateV1 + StartClaim, wantErr: true},
+		{name: "reservation without an owner", raw: OwnerStateV1 + StartClaim, bad: true},
 		{name: "owner scoped pending", raw: OwnerStateV1 + ReapPending, want: WorkerState{Pending: true}},
-		{name: "legacy bare pending", raw: ReapPending, want: WorkerState{Pending: true, Legacy: true}},
+		{name: "pre-v8 bare pending", raw: ReapPending, wantIs: ErrPreV8WorkerState},
+		{name: "pre-v8 pending stable token", raw: ReapPending + "42\nlinux-proc-v1:boot:123\n", wantIs: ErrPreV8WorkerState},
+		{name: "pre-v8 pending legacy token", raw: ReapPending + "42\nWed Jun 18 10:00:00 2026\n", wantIs: ErrPreV8WorkerState},
+		{name: "pre-v8 pending arbitrary body", raw: ReapPending + "not-a-pid\n", wantIs: ErrPreV8WorkerState},
 		{name: "identified pending", raw: OwnerStateV1 + ReapPending + "42\ndarwin-kinfo-v1:1:2\n", want: WorkerState{Pid: 42, Token: "darwin-kinfo-v1:1:2", Pending: true}},
-		{name: "empty", wantErr: true},
-		{name: "pid zero", raw: "0\ntoken\n", wantErr: true},
-		{name: "pid one", raw: "1\ntoken\n", wantErr: true},
-		{name: "pending pid one", raw: ReapPending + "1\ntoken\n", wantErr: true},
-		{name: "pending junk", raw: ReapPending + "not-a-pid\n", wantErr: true},
+		{name: "unknown owner version", raw: "owner-v2\n42\ntoken\n", wantIs: ErrUnsupportedWorkerStateVersion},
+		{name: "known header missing newline", raw: "owner-v1", bad: true},
+		{name: "empty", bad: true},
+		{name: "pre-v8 pid zero", raw: "0\ntoken\n", wantIs: ErrPreV8WorkerState},
+		{name: "pre-v8 pid one", raw: "1\ntoken\n", wantIs: ErrPreV8WorkerState},
+		{name: "current pending pid one", raw: OwnerStateV1 + ReapPending + "1\ntoken\n", bad: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ParseWorkerState(tc.raw)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("ParseWorkerState(%q) error = %v, wantErr %v", tc.raw, err, tc.wantErr)
+			wantErr := tc.bad || tc.wantIs != nil
+			if (err != nil) != wantErr {
+				t.Fatalf("ParseWorkerState(%q) error = %v, wantErr %v", tc.raw, err, wantErr)
 			}
-			if tc.wantErr {
+			if tc.wantIs != nil && !errors.Is(err, tc.wantIs) {
+				t.Fatalf("ParseWorkerState(%q) error = %v, want errors.Is(_, %v)", tc.raw, err, tc.wantIs)
+			}
+			if wantErr {
 				return
 			}
 			if !reflect.DeepEqual(got, tc.want) {
@@ -109,6 +128,9 @@ func TestForkWorkerStateWireFormat(t *testing.T) {
 			encoded, err := got.Marshal()
 			if err != nil {
 				t.Fatal(err)
+			}
+			if string(encoded) != tc.raw {
+				t.Fatalf("Marshal(%+v) = %q, want exact current bytes %q", got, encoded, tc.raw)
 			}
 			roundTrip, err := ParseWorkerState(string(encoded))
 			if err != nil || !reflect.DeepEqual(roundTrip, got) {
@@ -130,7 +152,7 @@ func TestForkRunningPidReusedPid(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Our own (live) pid, but recorded with a start time from a different process → reused → 0.
-	if err := os.WriteFile(PidPath(repo, "reused"), []byte(fmt.Sprintf("%d\nlinux-proc-v1:0\n", os.Getpid())), 0o644); err != nil {
+	if err := os.WriteFile(PidPath(repo, "reused"), []byte(fmt.Sprintf("%s%d\nlinux-proc-v1:0\n", OwnerStateV1, os.Getpid())), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := RunningPid(repo, "reused"); got != 0 {
@@ -219,7 +241,7 @@ func TestClearForkPidIfMine(t *testing.T) {
 		t.Error("ClearPidIfMine should remove a pidfile that names us")
 	}
 	// A pidfile owned by another pid must be left alone.
-	if err := os.WriteFile(PidPath(repo, "other"), []byte("424242\ntoken\n"), 0o644); err != nil {
+	if err := os.WriteFile(PidPath(repo, "other"), []byte(OwnerStateV1+"424242\nlinux-proc-v1:1:2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ClearPidIfMine(repo, "other")

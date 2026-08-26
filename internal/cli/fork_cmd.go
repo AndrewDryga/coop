@@ -307,6 +307,9 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	if err := forkctl.CheckWorkerStateFormat(repo, fa.name); err != nil {
+		return 1, err
+	}
 	ws := forkspace.Workspace(repo, fa.name)
 	existed := pathExists(ws)
 	// Read provider memory before --fresh destroys it, and reject a brand-new provider-less fork

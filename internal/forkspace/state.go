@@ -14,13 +14,23 @@ import (
 	"github.com/AndrewDryga/coop/internal/processidentity"
 )
 
-// The four shapes a fork's pidfile can hold. Every one is a line prefix, so the file stays readable
-// with `sed -n 1,3p` when an operator has to recover one by hand.
+// The current wire header and tagged state prefixes stay line-oriented, so the file remains
+// readable with `sed -n 1,4p` when an operator has to recover one by hand. A plain worker body has
+// no state prefix after the header.
 const (
 	ReapPending   = "reap-pending\n"
 	OwnerStateV1  = "owner-v1\n"
 	StartClaim    = "start-claim\n"    // a start reservation: its owner has launched no worker yet
 	StartLaunched = "start-launched\n" // that reservation forked a worker whose identity isn't recorded
+)
+
+var (
+	// ErrPreV8WorkerState identifies a headerless state file without decoding it into an identity.
+	// V9 cannot prove which repository owns any container that old state may have launched.
+	ErrPreV8WorkerState = errors.New("unsupported pre-v8 detached-worker state")
+	// ErrUnsupportedWorkerStateVersion keeps a future writer's state fail-closed until that version
+	// can interpret its own lifecycle contract.
+	ErrUnsupportedWorkerStateVersion = errors.New("unsupported detached-worker state version")
 )
 
 // SignalPID is the kill(2) the lifecycle probes and the supervisor share, as one seam so a test can
@@ -198,9 +208,8 @@ func NeedsStop(repo, name string) bool {
 	return pathExists(PidPath(repo, name))
 }
 
-// ParsePidfile reads a fork pidfile's "<pid>\n<start-token>" form. The token is optional, so an
-// older pid-only file still parses for fail-closed cleanup. pid 0 means unparseable.
-func ParsePidfile(s string) (int, string) {
+// parsePidfile reads the current state's "<pid>\n<start-token>" body. pid 0 means unparseable.
+func parsePidfile(s string) (int, string) {
 	lines := strings.SplitN(strings.TrimSpace(s), "\n", 2)
 	pid, err := strconv.Atoi(strings.TrimSpace(lines[0]))
 	if err != nil {
@@ -222,17 +231,24 @@ type WorkerState struct {
 	Pending  bool
 	Claim    bool // a start reservation held by the coop process at Pid
 	Launched bool // that reservation already forked a worker whose identity it never recorded
-	Legacy   bool
 }
 
 func ParseWorkerState(raw string) (WorkerState, error) {
-	state := WorkerState{}
-	body := raw
-	if strings.HasPrefix(body, OwnerStateV1) {
-		body = strings.TrimPrefix(body, OwnerStateV1)
-	} else {
-		state.Legacy = true
+	first, _, _ := strings.Cut(raw, "\n")
+	if !strings.HasPrefix(raw, OwnerStateV1) {
+		if first == strings.TrimSpace(ReapPending) {
+			return WorkerState{}, fmt.Errorf("%w: headerless %s record", ErrPreV8WorkerState, first)
+		}
+		if _, err := strconv.Atoi(strings.TrimSpace(first)); err == nil {
+			return WorkerState{}, fmt.Errorf("%w: headerless numeric pid record", ErrPreV8WorkerState)
+		}
+		if strings.HasPrefix(first, "owner-") && first != strings.TrimSpace(OwnerStateV1) {
+			return WorkerState{}, fmt.Errorf("%w %q", ErrUnsupportedWorkerStateVersion, first)
+		}
+		return WorkerState{}, errors.New("detached worker state is missing the owner-v1 header")
 	}
+	state := WorkerState{}
+	body := strings.TrimPrefix(raw, OwnerStateV1)
 	switch {
 	case strings.HasPrefix(body, StartClaim):
 		state.Claim = true
@@ -247,7 +263,7 @@ func ParseWorkerState(raw string) (WorkerState, error) {
 			return state, nil
 		}
 	}
-	state.Pid, state.Token = ParsePidfile(body)
+	state.Pid, state.Token = parsePidfile(body)
 	if state.Pid <= 1 {
 		return WorkerState{}, fmt.Errorf("invalid detached worker pid %d", state.Pid)
 	}
@@ -255,10 +271,7 @@ func ParseWorkerState(raw string) (WorkerState, error) {
 }
 
 func (state WorkerState) Marshal() ([]byte, error) {
-	prefix := ""
-	if !state.Legacy {
-		prefix = OwnerStateV1
-	}
+	prefix := OwnerStateV1
 	if state.Claim && state.Pending {
 		return nil, errors.New("invalid fork state: a start reservation is never cleanup-pending")
 	}

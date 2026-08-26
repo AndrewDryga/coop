@@ -142,6 +142,33 @@ func TestForkRmRefusesRunning(t *testing.T) {
 	}
 }
 
+func TestForkRmPreflightsUnsupportedStateBeforeConfirmation(t *testing.T) {
+	repo := initRepo(t)
+	a := &Control{cfg: &config.Config{RepoOverride: repo}}
+	ws, err := forkspace.Setup(repo, "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("reap-pending\n2147483646\nWed Jun 18 10:00:00 2026\n")
+	path := forkspace.PidPath(repo, "old")
+	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, err := a.ForkRm([]string{"old", "--force"}) // no --yes: format refusal must win
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "pre-v8") || strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("ForkRm unsupported state = (%d, %v), want pre-confirmation format refusal", code, err)
+	}
+	if !pathExists(ws) {
+		t.Fatal("unsupported state allowed fork removal")
+	}
+	if got, readErr := os.ReadFile(path); readErr != nil || string(got) != string(raw) {
+		t.Fatalf("unsupported state changed = %q, %v; want exact %q", got, readErr, raw)
+	}
+}
+
 func TestOneForkName(t *testing.T) {
 	if n, err := oneForkName("rm", []string{"x"}); n != "x" || err != nil {
 		t.Errorf("oneForkName(1) = (%q, %v), want (x, nil)", n, err)

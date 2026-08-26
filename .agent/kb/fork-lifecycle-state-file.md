@@ -1,21 +1,20 @@
 ---
 name: fork-lifecycle-state-file
-description: one file (<repo>-forks/.coop/<name>.pid) holds four fork lifecycle states, and only pid+start-token — never file age — may decide that its owner is gone
+description: one owner-v1 file holds four fork lifecycle states; unsupported formats stay held and only pid+start-token — never file age — may decide a current owner is gone
 subsystem: fork
 sources: [internal/forkspace/state.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/processidentity/identity.go]
-updated: 2026-08-25
+updated: 2026-08-26
 ---
 Every fork's whole process lifecycle lives in ONE small file, `<repo>-forks/.coop/<name>.pid`, read
 and written through `forkspace.WorkerState` (`internal/forkspace/state.go`) — never by hand. Four
-shapes, with a leading `owner-v1` header (a file without it is legacy state, refused for scoped
-container cleanup):
+current shapes. Every one has a leading `owner-v1` header:
 
 | state | wire form | means |
 | --- | --- | --- |
-| worker | `<pid>\n<token>` | a detached loop is running (or crashed); signalable |
-| reap-pending | `reap-pending` (± identity) | `fork stop` is mid-cleanup; its exact-label box reap still must run |
-| reservation | `start-claim\n<pid>\n<token>` | a coop process claimed the fork and has NOT forked a worker yet |
-| launched reservation | `start-launched\n<pid>\n<token>` | that coop forked a worker but has not yet recorded its identity |
+| worker | `owner-v1\n<pid>\n<token>` | a detached loop is running (or crashed); signalable |
+| reap-pending | `owner-v1\nreap-pending\n` (optionally followed by identity) | `fork stop` is mid-cleanup; its exact-owner box reap still must run |
+| reservation | `owner-v1\nstart-claim\n<pid>\n<token>` | a coop process claimed the fork and has NOT forked a worker yet |
+| launched reservation | `owner-v1\nstart-launched\n<pid>\n<token>` | that coop forked a worker but has not yet recorded its identity |
 
 The identity in a *reservation* is the **claiming coop process**, not a worker. Nothing may ever
 signal it: `forkStop` zeroes it and falls into the tombstone path, and `forkspace.RunningPid` returns
@@ -33,6 +32,18 @@ SUPERVISION is `internal/forkctl`'s: `claimForkPid`/`claimForkPidUnlocked` and
 `clearForkClaimUnlocked` (the start protocol, which WARNS on a reclaim), `detachForkLoop`,
 `recordStartedFork`, `forkStop`'s signalling/`waitForExit`/box reap, and `forkContainerOwner`. Rule
 of thumb: if it decides what to do to a PROCESS or a CONTAINER, or prints, it is supervision.
+
+## Unsupported state never becomes an identity
+
+`ParseWorkerState` classifies before body parsing. A headerless numeric PID or first-line
+`reap-pending` record is pre-v8 evidence; an unknown `owner-*` header belongs to another version.
+Neither becomes a `WorkerState`. `forkctl.CheckWorkerStateFormat` applies the user-facing refusal
+before start/recreate, merge, removal, or stop can probe the runtime or change workspace metadata,
+and locked start/stop parse again against races. Merge holds that same lifecycle flock across its
+final check, fetch, rebase, gate, land, and reconciliation, then reacquires it for post-land removal.
+The exact file remains authoritative: `RunningPid` returns 0, while `NeedsStop` and `StateOwner`
+stay held. Recovery must never prepend a header; `MIGRATING.md` owns the stop-with-v8 and verified
+manual procedure.
 
 ## The two crash windows, and why only one of them recovers
 
@@ -69,6 +80,10 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-08-26 — removed the pre-v8 parsed state model and its supervision branches. Only
+  `owner-v1` is decoded; headerless and unknown-version records remain byte-exact, held, and
+  side-effect-free behind the command preflight and merge lifecycle lock. Corrected the wire table
+  to include its header.
 - 2026-08-25 — removed Fleet from the current contract inventory and corrected the supervision
   owner to `internal/forkctl`; direct fork commands and sessions still share the same leaf state.
 - 2026-08-10 — supervision and the land moved OUT of `internal/cli` into the new

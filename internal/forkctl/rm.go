@@ -97,6 +97,9 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	if err := CheckWorkerStateFormat(repo, name); err != nil {
+		return 1, err
+	}
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)

@@ -45,6 +45,33 @@ cwd. The first re-entry without a current exact hint starts a fresh conversation
 exact hint for later resumes when the provider creates one unambiguous session. Remove provider-only
 files when convenient; Coop will neither read nor rewrite them.
 
+### Detached worker state
+
+Detached-worker state is also current-only: every `<repo>-forks/.coop/<name>.pid` file must start
+with `owner-v1`. Before installing v9, stop every detached fork with the latest v8 by running
+`coop fork stop <name>` for each one shown by `coop fork ls`. V9 does not decode, signal, rewrite, or
+reap a headerless pre-v8 record; it leaves the exact bytes in place and refuses start/recreate,
+merge, removal, and stop. Never make an old record look current by adding `owner-v1`: pre-v8 state
+does not prove which repository owns a namesake container.
+
+If v9 is already installed with a stranded headerless record, recover it in this order:
+
+1. Leave the pidfile in place so every destructive fork command remains blocked. Inspect its first
+   lines and identify any recorded PID; do not act on a PID alone.
+2. Verify that PID's start identity and command belong to this exact detached fork. If that cannot
+   be proved, stop and recover with the v8 binary that wrote the state.
+3. Inspect runtime containers with the old `coop.fork=<name>` label, then inspect each candidate's
+   mounts/workspace. That label is not repository-unique: remove only a container proven to mount
+   this fork under this repository, never a namesake from another checkout.
+4. Stop only the verified worker/process group and verified container. Recheck that both are gone.
+5. Delete `<repo>-forks/.coop/<name>.pid` last, after no process or container can still own the fork.
+
+An unknown future `owner-*` header is different: do not use the pre-v8 procedure or edit the file.
+Use the Coop version that wrote that state so it can interpret and clean up its own contract.
+Malformed state also remains byte-exact and held. Inspect only a bounded prefix, determine which
+version wrote it, and never reconstruct an identity from a PID alone; after its proven process and
+container ownership are resolved, retry `coop fork stop <name>`.
+
 `coop init` now maintains only the current scaffold and does not rewrite pre-v8 generated files.
 For a direct pre-v8-to-v9 upgrade:
 
