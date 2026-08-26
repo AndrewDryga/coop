@@ -8,12 +8,14 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
+	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -1019,6 +1021,96 @@ func TestRunRejectsAlternateNativeMCPBeforeHomeMutation(t *testing.T) {
 	}
 }
 
+func TestRunRejectsUnsafeGeminiSettingsWithoutSharedMCP(t *testing.T) {
+	tests := []struct {
+		name string
+		make func(*testing.T, string) func(*testing.T)
+		want string
+	}{
+		{
+			name: "outside-root symlink",
+			make: func(t *testing.T, path string) func(*testing.T) {
+				target := filepath.Join(t.TempDir(), "outside-settings.json")
+				body := []byte(`{"theme":"dark"}`)
+				if err := os.WriteFile(target, body, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+				return func(t *testing.T) {
+					info, err := os.Lstat(path)
+					if err != nil || info.Mode()&os.ModeSymlink == 0 {
+						t.Fatalf("denied Gemini symlink changed = (%v, %v)", info, err)
+					}
+					if after, err := os.ReadFile(target); err != nil || !slices.Equal(after, body) {
+						t.Fatalf("denied Gemini symlink target changed = (%q, %v)", after, err)
+					}
+				}
+			},
+			want: "symbolic link",
+		},
+		{
+			name: "fifo",
+			make: func(t *testing.T, path string) func(*testing.T) {
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return func(t *testing.T) {
+					info, err := os.Lstat(path)
+					if err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+						t.Fatalf("denied Gemini FIFO changed = (%v, %v)", info, err)
+					}
+				}
+			},
+			want: "not a regular file",
+		},
+		{
+			name: "oversized",
+			make: func(t *testing.T, path string) func(*testing.T) {
+				file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := file.Truncate((4 << 20) + 1); err != nil {
+					file.Close()
+					t.Fatal(err)
+				}
+				if err := file.Close(); err != nil {
+					t.Fatal(err)
+				}
+				return func(t *testing.T) {
+					info, err := os.Stat(path)
+					if err != nil || info.Size() != (4<<20)+1 {
+						t.Fatalf("denied oversized Gemini settings changed = (%v, %v)", info, err)
+					}
+				}
+			},
+			want: "exceeds the 4194304-byte limit",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+			settings := filepath.Join(cfg.AgentDir("gemini"), "settings.json")
+			if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			verify := tc.make(t, settings)
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"gemini"}, Agent: "gemini", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+			code, err := Run(cfg, recorderRuntime(t, recorder), spec)
+			if code != -1 || err == nil || !strings.Contains(err.Error(), "assemble MCP config for gemini") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Run = (%d, %v), want unsafe Gemini settings refusal containing %q", code, err, tc.want)
+			}
+			if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("unsafe Gemini settings reached runtime; recorder error = %v", statErr)
+			}
+			verify(t)
+		})
+	}
+}
+
 func TestRunKeepsAlternateNativeMCPInactiveWithoutSharedServers(t *testing.T) {
 	nativeCases := []struct {
 		name string
@@ -1243,6 +1335,19 @@ func TestRunRejectsConfiguredMCPSourceInsideBroadMount(t *testing.T) {
 			},
 		},
 		{
+			name: "repository parent symlink to outside target",
+			kind: "mounted repository",
+			body: active,
+			set: func(t *testing.T, _ *config.Config, spec *RunSpec) string {
+				outside := t.TempDir()
+				link := filepath.Join(spec.Repo, "outside-link")
+				if err := os.Symlink(outside, link); err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Join(link, "mcp.json")
+			},
+		},
+		{
 			name: "credential home",
 			kind: "mounted claude credential home",
 			body: active,
@@ -1309,6 +1414,85 @@ func TestRunRejectsConfiguredMCPSourceInsideBroadMount(t *testing.T) {
 	}
 }
 
+func TestRunRejectsRepositoryMCPSourceBeforeOpeningIt(t *testing.T) {
+	tests := []struct {
+		name string
+		make func(*testing.T, string)
+	}{
+		{
+			name: "fifo",
+			make: func(t *testing.T, path string) {
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "oversized regular file",
+			make: func(t *testing.T, path string) {
+				file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := file.Truncate(8 << 20); err != nil {
+					file.Close()
+					t.Fatal(err)
+				}
+				if err := file.Close(); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			mcpFile := filepath.Join(repo, "mcp.json")
+			tc.make(t, mcpFile)
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			rt := recorderRuntime(t, recorder)
+			spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"claude"}, Agent: "claude", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+			type result struct {
+				code int
+				err  error
+			}
+			resultCh := make(chan result, 1)
+			go func() {
+				code, err := Run(cfg, rt, spec)
+				resultCh <- result{code: code, err: err}
+			}()
+
+			var got result
+			select {
+			case got = <-resultCh:
+			case <-time.After(time.Second):
+				if tc.name == "fifo" {
+					writer, err := os.OpenFile(mcpFile, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+					if err == nil {
+						_, _ = writer.WriteString("{}")
+						_ = writer.Close()
+					}
+				}
+				select {
+				case <-resultCh:
+				case <-time.After(time.Second):
+				}
+				t.Fatal("Run blocked opening a repository-contained MCP source before isolation")
+			}
+			if got.code != -1 || got.err == nil || !strings.Contains(got.err.Error(), "inside mounted repository") {
+				t.Fatalf("Run = (%d, %v), want repository source refusal before file read", got.code, got.err)
+			}
+			if strings.Contains(got.err.Error(), "byte limit") || strings.Contains(got.err.Error(), "regular file") {
+				t.Fatalf("Run inspected repository source before isolation: %v", got.err)
+			}
+			if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("repository MCP source reached runtime; recorder error = %v", statErr)
+			}
+		})
+	}
+}
+
 func TestRunRejectsCaseVariantMCPSourceInsideRepository(t *testing.T) {
 	base := t.TempDir()
 	repo := filepath.Join(base, "RepoCase")
@@ -1335,6 +1519,263 @@ func TestRunRejectsCaseVariantMCPSourceInsideRepository(t *testing.T) {
 	}
 	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("case-variant MCP source reached runtime; recorder error = %v", statErr)
+	}
+}
+
+func TestRunRejectsMCPSourceWithParentComponentBeforeSymlinkResolution(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, "subdir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"mcpServers":{"inside":{"command":"true"}}}`)
+	if err := os.WriteFile(filepath.Join(repo, "mcp.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	link := filepath.Join(outside, "link")
+	if err := os.Symlink(filepath.Join(repo, "subdir"), link); err != nil {
+		t.Fatal(err)
+	}
+	// filepath.Join would clean the parent component before the OS can resolve link. Keep the raw
+	// spelling: open(link/../mcp.json) follows link into repo/subdir, then walks to repo/mcp.json.
+	mcpFile := link + string(filepath.Separator) + ".." + string(filepath.Separator) + "mcp.json"
+	if got, err := os.ReadFile(mcpFile); err != nil || !slices.Equal(got, body) {
+		t.Fatalf("fixture path does not resolve through symlink into repository = (%q, %v)", got, err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"claude"}, Agent: "claude", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+	code, err := Run(cfg, recorderRuntime(t, recorder), spec)
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "canonical path without '..'") {
+		t.Fatalf("Run = (%d, %v), want parent-component refusal", code, err)
+	}
+	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("parent-component MCP source reached runtime; recorder error = %v", statErr)
+	}
+	if after, err := os.ReadFile(filepath.Join(repo, "mcp.json")); err != nil || !slices.Equal(after, body) {
+		t.Fatalf("rejected in-repo MCP source changed = (%q, %v)", after, err)
+	}
+}
+
+func TestRunRejectsMCPSourceTraversingMountedSubdirectory(t *testing.T) {
+	repo := t.TempDir()
+	subdir := filepath.Join(repo, "subdir")
+	if err := os.Mkdir(subdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	body := []byte(`{"mcpServers":{"outside":{"command":"true"}}}`)
+	if err := os.WriteFile(filepath.Join(target, "mcp.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(subdir, "out")); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(subdir, alias); err != nil {
+		t.Fatal(err)
+	}
+	mcpFile := filepath.Join(alias, "out", "mcp.json")
+	if got, err := os.ReadFile(mcpFile); err != nil || !slices.Equal(got, body) {
+		t.Fatalf("fixture path does not traverse repository and return outside = (%q, %v)", got, err)
+	}
+
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"claude"}, Agent: "claude", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+	code, err := Run(cfg, recorderRuntime(t, recorder), spec)
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "inside mounted repository") {
+		t.Fatalf("Run = (%d, %v), want mounted-subdirectory traversal refusal", code, err)
+	}
+	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("traversing MCP source reached runtime; recorder error = %v", statErr)
+	}
+	if after, err := os.ReadFile(filepath.Join(target, "mcp.json")); err != nil || !slices.Equal(after, body) {
+		t.Fatalf("rejected outside MCP target changed = (%q, %v)", after, err)
+	}
+}
+
+func TestRunRejectsMCPSourceTraversingMountedSymlinkEntry(t *testing.T) {
+	repo := t.TempDir()
+	target := t.TempDir()
+	body := []byte(`{"mcpServers":{"outside":{"command":"true"}}}`)
+	if err := os.WriteFile(filepath.Join(target, "mcp.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bridge := filepath.Join(repo, "bridge")
+	if err := os.Symlink(target, bridge); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(bridge, alias); err != nil {
+		t.Fatal(err)
+	}
+	mcpFile := filepath.Join(alias, "mcp.json")
+	if got, err := os.ReadFile(mcpFile); err != nil || !slices.Equal(got, body) {
+		t.Fatalf("fixture double symlink does not resolve outside = (%q, %v)", got, err)
+	}
+
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"claude"}, Agent: "claude", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+	code, err := Run(cfg, recorderRuntime(t, recorder), spec)
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "inside mounted repository") {
+		t.Fatalf("Run = (%d, %v), want mounted symlink-entry refusal", code, err)
+	}
+	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("double-symlink MCP source reached runtime; recorder error = %v", statErr)
+	}
+	if after, err := os.ReadFile(filepath.Join(target, "mcp.json")); err != nil || !slices.Equal(after, body) {
+		t.Fatalf("rejected double-symlink target changed = (%q, %v)", after, err)
+	}
+}
+
+func TestValidatedMCPSourceCannotBeRetargetedThroughParentSymlink(t *testing.T) {
+	targetA := t.TempDir()
+	targetB := t.TempDir()
+	bodyA := []byte(`{"mcpServers":{"before":{"command":"true"}}}`)
+	bodyB := []byte(`{"mcpServers":{"after":{"command":"false"}}}`)
+	if err := os.WriteFile(filepath.Join(targetA, "mcp.json"), bodyA, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetB, "mcp.json"), bodyB, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "source")
+	if err := os.Symlink(targetA, link); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir(), MCPFile: filepath.Join(link, "mcp.json")}
+	spec := RunSpec{Repo: t.TempDir()}
+	validated, err := validateMCPSourceIsolation(cfg, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(targetB, link); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, active, err := mcp.ReadValidatedSnapshot(validated)
+	if err != nil || !active || !slices.Equal(snapshot, bodyA) {
+		t.Fatalf("validated snapshot after parent retarget = (%q, %v, %v), want original bytes", snapshot, active, err)
+	}
+}
+
+func TestResolvePathTrace(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(*testing.T, string) (input, endpoint string, trace []string)
+		wantErr string
+	}{
+		{
+			name: "relative symlink target",
+			setup: func(t *testing.T, base string) (string, string, []string) {
+				links := filepath.Join(base, "links")
+				target := filepath.Join(base, "target")
+				for _, dir := range []string{links, target} {
+					if err := os.Mkdir(dir, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				link := filepath.Join(links, "source")
+				if err := os.Symlink("../target", link); err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Join(link, "mcp.json"), filepath.Join(target, "mcp.json"), []string{link, target}
+			},
+		},
+		{
+			name: "parent component in symlink target",
+			setup: func(t *testing.T, base string) (string, string, []string) {
+				for _, dir := range []string{filepath.Join(base, "hop"), filepath.Join(base, "target")} {
+					if err := os.Mkdir(dir, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				link := filepath.Join(base, "source")
+				if err := os.Symlink("hop/../target", link); err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Join(link, "mcp.json"), filepath.Join(base, "target", "mcp.json"), []string{link, filepath.Join(base, "hop"), base}
+			},
+		},
+		{
+			name: "missing suffix behind parent symlink",
+			setup: func(t *testing.T, base string) (string, string, []string) {
+				target := filepath.Join(base, "target")
+				if err := os.Mkdir(target, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				link := filepath.Join(base, "source")
+				if err := os.Symlink("target", link); err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Join(link, "future", "mcp.json"), filepath.Join(target, "future", "mcp.json"), []string{link, filepath.Join(target, "future")}
+			},
+		},
+		{
+			name: "symlink loop",
+			setup: func(t *testing.T, base string) (string, string, []string) {
+				first := filepath.Join(base, "first")
+				second := filepath.Join(base, "second")
+				if err := os.Symlink("second", first); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("first", second); err != nil {
+					t.Fatal(err)
+				}
+				return first, "", nil
+			},
+			wantErr: "too many symbolic links",
+		},
+		{
+			name: "regular file is an intermediate component",
+			setup: func(t *testing.T, base string) (string, string, []string) {
+				file := filepath.Join(base, "file")
+				if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Join(file, "mcp.json"), "", nil
+			},
+			wantErr: "is not a directory",
+		},
+		{
+			name: "missing path before symlink parent component",
+			setup: func(t *testing.T, base string) (string, string, []string) {
+				link := filepath.Join(base, "source")
+				if err := os.Symlink("missing/../target", link); err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Join(link, "mcp.json"), "", nil
+			},
+			wantErr: "missing path",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			base, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			input, wantEndpoint, wantTrace := tc.setup(t, base)
+			endpoint, trace, err := resolvePathTrace(input)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("resolvePathTrace error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || endpoint != wantEndpoint {
+				t.Fatalf("resolvePathTrace = (%q, %v), want %q", endpoint, err, wantEndpoint)
+			}
+			for _, want := range wantTrace {
+				if !slices.Contains(trace, want) {
+					t.Errorf("trace %q does not contain %q", trace, want)
+				}
+			}
+		})
 	}
 }
 

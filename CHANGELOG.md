@@ -78,9 +78,11 @@
   competing inline/environment Authorization sources instead of producing provider-dependent auth.
   Every scoped adapter, including Claude as a direct command or nested peer/preset role, consumes
   one validated immutable snapshot per run, so no consumer can bypass that policy or race a later
-  edit to the shared source. A malformed or ambiguous file, or a `COOP_MCP_FILE` placed inside a
-  directory Coop mounts wholesale, now fails before provider launch. Codex and Grok native TOML is
-  also checked semantically: Coop removes only
+  edit to the shared source. Shared and native config reads reject symlinks and special files,
+  operate nonblocking on one validated descriptor, and stop at 4 MiB. A malformed, ambiguous,
+  unreadable, or oversized file, or a `COOP_MCP_FILE` placed inside a directory Coop mounts
+  wholesale, now fails before provider launch. Codex and Grok native TOML is also checked
+  semantically: Coop removes only
   byte-preservable canonical `[mcp_servers.*]` tables and refuses dotted, quoted, inline, or other
   alternate declarations before changing any scoped agent home, leaving the configured shared
   `COOP_MCP_FILE` as the sole MCP authority.

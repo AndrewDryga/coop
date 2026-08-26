@@ -1670,6 +1670,23 @@ func TestMCP(t *testing.T) {
 	}
 }
 
+func TestMCPWithoutSharedSourceOnlyBuildsAlwaysOnGeminiSettings(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}
+	for _, name := range []string{"claude", "codex", "grok"} {
+		ag, _ := Get(name)
+		wiring, err := ag.MCP(cfg, "/workspace")
+		if err != nil || len(wiring.Mounts) != 0 || len(wiring.CommandArgs) != 0 || len(wiring.NestedCommandEnv) != 0 {
+			t.Errorf("%s MCP without shared source = (%+v, %v), want empty success", name, wiring, err)
+		}
+	}
+	gemini, _ := Get("gemini")
+	wiring, err := gemini.MCP(cfg, "/workspace")
+	if err != nil || len(wiring.Mounts) != 1 || wiring.Mounts[0].BoxPath != "/home/node/.gemini/settings.json" {
+		t.Fatalf("gemini MCP without shared source = (%+v, %v), want always-on settings mount", wiring, err)
+	}
+}
+
 // Every registered agent reaches the shared servers by exactly one route: a generated config
 // file its adapter reads, or the ACP session parameter when it has no file to read. Both routes
 // at once registers every server twice; neither is how an ACP claude session ran with no MCP at

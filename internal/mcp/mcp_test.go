@@ -150,23 +150,24 @@ func TestGenerateCodexRejectsInvalidNativeConfigEntries(t *testing.T) {
 		if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), path); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "open native MCP config") {
+		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "symbolic link") {
 			t.Fatalf("GenerateCodex dangling symlink error = %v", err)
 		}
 	})
-	t.Run("readable symlink", func(t *testing.T) {
-		dir := t.TempDir()
-		target := filepath.Join(dir, "native.toml")
+	t.Run("outside-root readable symlink", func(t *testing.T) {
+		target := filepath.Join(t.TempDir(), "secret.toml")
 		if err := os.WriteFile(target, []byte("model = \"o3\"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		path := filepath.Join(dir, "config.toml")
+		path := filepath.Join(t.TempDir(), "config.toml")
 		if err := os.Symlink(target, path); err != nil {
 			t.Fatal(err)
 		}
-		got, err := GenerateCodex(mcpFile, path)
-		if err != nil || !strings.HasPrefix(got, "model = \"o3\"\n") {
-			t.Fatalf("GenerateCodex readable symlink = (%q, %v)", got, err)
+		if got, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+			t.Fatalf("GenerateCodex readable symlink = (%q, %v), want refusal", got, err)
+		}
+		if after, err := os.ReadFile(target); err != nil || string(after) != "model = \"o3\"\n" {
+			t.Fatalf("symlink target changed = (%q, %v)", after, err)
 		}
 	})
 	t.Run("fifo does not block", func(t *testing.T) {
@@ -187,22 +188,79 @@ func TestGenerateCodexRejectsInvalidNativeConfigEntries(t *testing.T) {
 			if err := syscall.Mkfifo(path, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+			return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 		}, io.ReadAll)
 		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
 			t.Fatalf("readNativeConfigWith replacement error = %v, want descriptor refusal", err)
+		}
+	})
+	t.Run("regular entry replaced by symlink before open", func(t *testing.T) {
+		path := writeTmp(t, "config.toml", "model = \"o3\"\n")
+		target := writeTmp(t, "secret.toml", "model = \"secret\"\n")
+		_, err := readNativeConfigWith(path, func(path string) (*os.File, error) {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
+			return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+		}, io.ReadAll)
+		if err == nil || !strings.Contains(err.Error(), "open native MCP config") {
+			t.Fatalf("readNativeConfigWith symlink replacement error = %v, want no-follow refusal", err)
 		}
 	})
 	t.Run("opened regular file read error", func(t *testing.T) {
 		path := writeTmp(t, "config.toml", "model = \"o3\"\n")
 		sentinel := errors.New("fixture read failure")
 		_, err := readNativeConfigWith(path, func(path string) (*os.File, error) {
-			return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+			return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 		}, func(io.Reader) ([]byte, error) {
 			return nil, sentinel
 		})
 		if !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "read native MCP config") {
 			t.Fatalf("readNativeConfigWith read error = %v, want wrapped sentinel", err)
+		}
+	})
+	t.Run("opened regular file exceeds limit", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, make([]byte, maxMCPConfigBytes+1), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := GenerateCodex(mcpFile, path); err == nil || !strings.Contains(err.Error(), "exceeds the 4194304-byte limit") {
+			t.Fatalf("GenerateCodex oversized native error = %v", err)
+		}
+	})
+	t.Run("regular file grows past limit after stat", func(t *testing.T) {
+		path := writeTmp(t, "config.toml", "model = \"o3\"\n")
+		_, err := readNativeConfigWith(path, func(path string) (*os.File, error) {
+			return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+		}, func(reader io.Reader) ([]byte, error) {
+			file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := file.Write(make([]byte, maxMCPConfigBytes)); err != nil {
+				file.Close()
+				return nil, err
+			}
+			if err := file.Close(); err != nil {
+				return nil, err
+			}
+			return io.ReadAll(reader)
+		})
+		if err == nil || !strings.Contains(err.Error(), "exceeds the 4194304-byte limit") {
+			t.Fatalf("readNativeConfigWith grown file error = %v", err)
+		}
+	})
+	t.Run("open failure", func(t *testing.T) {
+		path := writeTmp(t, "config.toml", "model = \"o3\"\n")
+		sentinel := errors.New("fixture permission failure")
+		_, err := readNativeConfigWith(path, func(string) (*os.File, error) {
+			return nil, sentinel
+		}, io.ReadAll)
+		if !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "open native MCP config") {
+			t.Fatalf("readNativeConfigWith open error = %v, want wrapped sentinel", err)
 		}
 	})
 	t.Run("initially missing", func(t *testing.T) {
@@ -366,6 +424,55 @@ func TestReadValidatedSnapshotPreservesExactBytesAndInertStates(t *testing.T) {
 	}
 }
 
+func TestReadValidatedSnapshotRejectsUnsafeHostFiles(t *testing.T) {
+	t.Run("symlink", func(t *testing.T) {
+		target := writeTmp(t, "secret.json", `{"mcpServers":{"secret":{"command":"true"}}}`)
+		path := filepath.Join(t.TempDir(), "mcp.json")
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := ReadValidatedSnapshot(path); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+			t.Fatalf("ReadValidatedSnapshot symlink error = %v", err)
+		}
+	})
+	t.Run("fifo", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "mcp.json")
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := ReadValidatedSnapshot(path); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("ReadValidatedSnapshot fifo error = %v", err)
+		}
+	})
+	t.Run("oversized", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "mcp.json")
+		if err := os.WriteFile(path, make([]byte, maxMCPConfigBytes+1), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := ReadValidatedSnapshot(path); err == nil || !strings.Contains(err.Error(), "exceeds the 4194304-byte limit") {
+			t.Fatalf("ReadValidatedSnapshot oversized error = %v", err)
+		}
+	})
+}
+
+func TestConfigReadDistinguishesInitialAbsenceFromPostObservationRemoval(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	if data, present, err := readConfigFile(missing, "shared MCP config"); err != nil || present || data != nil {
+		t.Fatalf("initial absence = (%q, %v, %v), want nil, false, nil", data, present, err)
+	}
+
+	path := writeTmp(t, "mcp.json", `{"mcpServers":{"x":{"command":"true"}}}`)
+	data, present, err := readConfigFileWith(path, "shared MCP config", func(path string) (*os.File, error) {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	}, io.ReadAll)
+	if err == nil || !errors.Is(err, os.ErrNotExist) || present || data != nil {
+		t.Fatalf("post-observation removal = (%q, %v, %v), want propagated not-exist error", data, present, err)
+	}
+}
+
 // A present-but-malformed existing gemini settings file must error (so box.Run skips wiring and
 // gemini keeps its real config), not silently produce a settings.json containing only mcpServers.
 func TestGenerateGeminiMalformedExistingErrors(t *testing.T) {
@@ -379,6 +486,41 @@ func TestGenerateGeminiMalformedExistingErrors(t *testing.T) {
 	}
 	if _, err := GenerateGemini(mcpFile, writeTmp(t, "empty.json", "  \n")); err != nil {
 		t.Errorf("empty existing settings should be ok, got %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		make func(*testing.T) string
+		want string
+	}{
+		{
+			name: "symlink",
+			make: func(t *testing.T) string {
+				target := writeTmp(t, "outside-settings.json", `{"theme":"dark"}`)
+				path := filepath.Join(t.TempDir(), "settings.json")
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+			want: "symbolic link",
+		},
+		{
+			name: "fifo",
+			make: func(t *testing.T) string {
+				path := filepath.Join(t.TempDir(), "settings.json")
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+			want: "not a regular file",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := GenerateGemini(mcpFile, tc.make(t)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("GenerateGemini existing %s error = %v, want %q", tc.name, err, tc.want)
+			}
+		})
 	}
 }
 

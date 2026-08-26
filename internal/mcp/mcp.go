@@ -32,6 +32,8 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+const maxMCPConfigBytes int64 = 4 << 20
+
 // server is the typed view of one entry, sufficient to emit Codex TOML and the ACP parameter.
 // Headers is the canonical HTTP-auth field claude + gemini read directly; codex can't use it (it
 // has no inline-header support, only bearer_token_env_var / OAuth), so for codex it's kept here
@@ -150,12 +152,12 @@ func ACPServers(mcpFile string, lookupEnv func(string) (string, bool)) ([]map[st
 	if mcpFile == "" {
 		return out, nil
 	}
-	servers, err := loadServersTyped(mcpFile)
+	_, servers, present, err := loadServerViewsOptional(mcpFile)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return out, nil
-		}
 		return nil, err
+	}
+	if !present {
+		return out, nil
 	}
 	for _, name := range sortedKeys(servers) {
 		if rendered := acpServer(name, servers[name], lookupEnv); rendered != nil {
@@ -294,36 +296,64 @@ func keepNonMCP(path string) (string, error) {
 }
 
 func readNativeConfig(path string) ([]byte, error) {
-	return readNativeConfigWith(path, func(path string) (*os.File, error) {
-		return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	}, io.ReadAll)
+	data, _, err := readConfigFile(path, "native MCP config")
+	return data, err
 }
 
 // readNativeConfigWith makes the observation/open/read boundary deterministic in tests. The
 // production path opens once, validates that descriptor, and reads that same descriptor.
 func readNativeConfigWith(path string, open func(string) (*os.File, error), read func(io.Reader) ([]byte, error)) ([]byte, error) {
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	} else if err != nil {
-		return nil, fmt.Errorf("inspect native MCP config %s: %w", path, err)
+	data, _, err := readConfigFileWith(path, "native MCP config", open, read)
+	return data, err
+}
+
+// readConfigFile is the one host-file boundary for shared MCP and native adapter configuration.
+// It does not follow the final symlink, never blocks on a special file, and bounds the exact bytes
+// captured from the descriptor it validated. Only a path missing at the initial observation is
+// inert; every other inspection, open, or read failure must stop projection.
+func readConfigFile(path, kind string) ([]byte, bool, error) {
+	return readConfigFileWith(path, kind, func(path string) (*os.File, error) {
+		return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	}, io.ReadAll)
+}
+
+func readConfigFileWith(path, kind string, open func(string) (*os.File, error), read func(io.Reader) ([]byte, error)) ([]byte, bool, error) {
+	initial, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("inspect %s %s: %w", kind, path, err)
+	}
+	if initial.Mode()&os.ModeSymlink != 0 {
+		return nil, false, fmt.Errorf("%s %s is a symbolic link", kind, path)
+	}
+	if !initial.Mode().IsRegular() {
+		return nil, false, fmt.Errorf("%s %s is not a regular file", kind, path)
 	}
 	f, err := open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open native MCP config %s: %w", path, err)
+		return nil, false, fmt.Errorf("open %s %s: %w", kind, path, err)
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("inspect opened native MCP config %s: %w", path, err)
+		return nil, false, fmt.Errorf("inspect opened %s %s: %w", kind, path, err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("native MCP config %s is not a regular file", path)
+		return nil, false, fmt.Errorf("%s %s is not a regular file", kind, path)
 	}
-	data, err := read(f)
+	if info.Size() > maxMCPConfigBytes {
+		return nil, false, fmt.Errorf("%s %s exceeds the %d-byte limit", kind, path, maxMCPConfigBytes)
+	}
+	data, err := read(io.LimitReader(f, maxMCPConfigBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read native MCP config %s: %w", path, err)
+		return nil, false, fmt.Errorf("read %s %s: %w", kind, path, err)
 	}
-	return data, nil
+	if int64(len(data)) > maxMCPConfigBytes {
+		return nil, false, fmt.Errorf("%s %s exceeds the %d-byte limit", kind, path, maxMCPConfigBytes)
+	}
+	return data, true, nil
 }
 
 func parseTOML(path string, data []byte) (map[string]any, error) {
@@ -421,12 +451,12 @@ func ReadValidatedSnapshot(path string) ([]byte, bool, error) {
 	if path == "" {
 		return nil, false, nil
 	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	}
+	data, present, err := readConfigFile(path, "shared MCP config")
 	if err != nil {
 		return nil, false, err
+	}
+	if !present {
+		return nil, false, nil
 	}
 	_, servers, err := loadServerViewsData(path, data)
 	if err != nil {
@@ -442,11 +472,26 @@ func ReadValidatedSnapshot(path string) ([]byte, bool, error) {
 // gets the native JSON object while typed consumers get the projected servers, but every adapter
 // crosses the same validation boundary before provider-specific rendering can interpret auth.
 func loadServerViews(path string) (map[string]any, map[string]server, error) {
-	data, err := os.ReadFile(path)
+	raw, typed, present, err := loadServerViewsOptional(path)
 	if err != nil {
 		return nil, nil, err
 	}
-	return loadServerViewsData(path, data)
+	if !present {
+		return nil, nil, &os.PathError{Op: "open", Path: path, Err: os.ErrNotExist}
+	}
+	return raw, typed, nil
+}
+
+func loadServerViewsOptional(path string) (map[string]any, map[string]server, bool, error) {
+	data, present, err := readConfigFile(path, "shared MCP config")
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if !present {
+		return nil, nil, false, nil
+	}
+	raw, typed, err := loadServerViewsData(path, data)
+	return raw, typed, true, err
 }
 
 func loadServerViewsData(path string, data []byte) (map[string]any, map[string]server, error) {
@@ -596,15 +641,18 @@ func validateServers(servers map[string]server) error {
 }
 
 // readJSONObject reads a JSON object from path. A missing or empty file (or "") yields an empty
-// object — there's nothing to merge onto. A present-but-malformed file is an error rather than an
-// excuse to overwrite the user's settings with a generated config containing only mcpServers.
+// object — there's nothing to merge onto. Every other read failure and a present-but-malformed file
+// are errors rather than excuses to overwrite the user's settings with generated defaults.
 func readJSONObject(path string) (map[string]any, error) {
 	out := map[string]any{}
 	if path == "" {
 		return out, nil
 	}
-	data, err := os.ReadFile(path)
+	data, present, err := readConfigFile(path, "native MCP config")
 	if err != nil {
+		return nil, err
+	}
+	if !present {
 		return out, nil // no existing settings → start fresh
 	}
 	if len(bytes.TrimSpace(data)) == 0 {

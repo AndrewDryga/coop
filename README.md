@@ -809,7 +809,11 @@ in and every agent picks them up:
 
 Keep this authority outside repositories, companion repositories, agent credential homes, and
 ACP session stores: Coop mounts those directories wholesale, so a `COOP_MCP_FILE` inside one is
-refused before launch even when it is empty or has not been created yet.
+refused before launch even when it is empty or has not been created yet. The authority must be a
+regular file, not a symlink or special file, is limited to 4 MiB, and needs a canonical path without
+`..`. Gemini's native `settings.json` is projected on every Gemini launch and follows the same file
+rules. Codex and Grok native configs are inspected only when the shared authority is active. An
+unsafe or unreadable input stops the affected launch instead of being ignored.
 
 ```json
 {
@@ -1618,7 +1622,7 @@ root-in-container (a repo `.agent/Dockerfile` that does `USER root`) from holdin
 | `COOP_<AGENT>_CMD` (e.g. `COOP_CLAUDE_CMD`) | autonomous default | override an agent's base command |
 | `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL`) | (CLI default) | agent-wide default model, everywhere that agent runs (see [Picking models](#picking-models)) |
 | `COOP_CONSULT_TIMEOUT` | `0` (unlimited) | per-peer `coop-consult` bound in seconds; unbounded by default because a clock can't tell a long answer from a wedged one, and killing a working peer loses its answer and costs the retry that follows — the parent attempt's own tool cap and ceiling already bound it from outside. Set a whole-second value (max `86400`) to opt back into a bound; a peer that then doesn't answer in time is skipped so the lead synthesizes from whoever did |
-| `COOP_MCP_FILE` | `<config>/mcp.json` | the one MCP source of truth; must stay outside directories Coop mounts wholesale |
+| `COOP_MCP_FILE` | `<config>/mcp.json` | the one MCP source of truth; a regular file up to 4 MiB, outside directories Coop mounts wholesale |
 | `COOP_SHELL` | `bash` | the shell `coop shell` opens |
 | `COOP_NO_UPDATE_CHECK` | (off) | set to opt out of the once-a-day "a newer coop/box is available" check |
 

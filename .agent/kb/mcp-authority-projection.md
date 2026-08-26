@@ -14,6 +14,18 @@ any agent home. Generated native configs are immutable mounts; an outer ordinary
 through `ACPMCPServers` during protocol initialization. These are projections of the same snapshot,
 not separate sources.
 
+Every projection crosses the same host-file boundary before parsing. Shared and native config must
+be regular files opened with nonblocking, no-follow semantics; Coop validates and reads the same
+descriptor and retains at most 4 MiB. Only a path absent at the initial observation is inert. A
+symlink, FIFO, directory, open/read failure, replacement with a special file, or content over the
+limit fails before home mutation or provider launch. `box.Run` proves the configured shared source
+is outside all wholesale mounts before opening it, so a provider-writable repo file cannot block or
+consume memory on the way to an overlap refusal. It checks both the configured spelling and the
+resolved target plus every resolved path prefix, and rejects raw `..` components whose meaning
+could change across a parent symlink; cleaning such a path before resolution is not a containment
+proof. Snapshot capture uses the validated resolved path, so a later parent-symlink retarget cannot
+change which file the run reads.
+
 Credential scope is not proof of command consumption. `credentialScope` answers whose login may be
 mounted, while `nestedAgentCommand` answers whether an explicit peer or consult/delegate/degraded
 native role can actually spawn that provider CLI. The raw snapshot mount exists only for an outer
@@ -28,5 +40,7 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-08-26 — centralized shared/native host reads behind the bounded regular-file boundary and
+  moved box source-isolation validation before snapshot capture
 - 2026-08-26 — created after the v9 range review found that Claude's direct command received the
   shared snapshot while Claude peers and preset roles silently did not

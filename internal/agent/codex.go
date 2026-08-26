@@ -511,6 +511,9 @@ func codexCredentialPortability(profileDir string, deadline time.Time) Credentia
 
 // MCP emits the shared servers as [mcp_servers.*] in codex's config.toml.
 func (codexAgent) MCP(cfg *config.Config, workdir string) (MCPConfig, error) {
+	if cfg.MCPFile == "" {
+		return MCPConfig{}, nil
+	}
 	cx, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))
 	if err != nil {
 		return MCPConfig{}, err

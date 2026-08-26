@@ -330,6 +330,9 @@ func grokCredentialPortability(profileDir string, deadline time.Time) Credential
 // uses (artifacts/doc-05-configuration.md), so reuse the codex generator, preserving the
 // user's other config.toml settings and mounting the result at grok's config path.
 func (grokAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
+	if cfg.MCPFile == "" {
+		return MCPConfig{}, nil
+	}
 	gx, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("grok"), "config.toml"))
 	if err != nil {
 		return MCPConfig{}, err

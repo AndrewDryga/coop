@@ -20,6 +20,16 @@ Provider, and Account selectors keep working; preset ladders still rotate across
 accounts. `coop-consult` still provides read-only fresh/continue sessions and target fallback for
 named peers and preset consult roles.
 
+Before the first MCP-enabled v9 launch, make the configured `COOP_MCP_FILE` a private readable
+regular file no larger than 4 MiB. Shared MCP also makes Coop inspect the selected Codex or Grok
+native config, so apply the same preparation there. Gemini's native `settings.json` is projected
+even without shared MCP and must be safe before any Gemini v9 launch. Replace a final symlink with a
+private regular copy rather than preserving the link, and keep the shared source outside
+repositories, companion repositories, credential homes, and ACP session stores that Coop mounts
+wholesale. Set `COOP_MCP_FILE` to a canonical path without `..`. V9 leaves an unsafe input untouched
+and refuses the affected launch; after correcting the file or source path, retry the original
+command.
+
 Fleet was a declarative wrapper over the fork and loop commands. v9 removes its command family,
 live board, and `.agent/fleet.yaml` parser while keeping the direct primitives:
 

@@ -545,6 +545,9 @@ func requestClaudeCredentialRefresh(
 // MCP points Claude's ordinary CLI at the exact validated snapshot box.Run mounts. The ACP
 // adapter gets its servers through ACPMCPServers instead and never receives these arguments.
 func (claudeAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
+	if cfg.MCPFile == "" {
+		return MCPConfig{}, nil
+	}
 	return MCPConfig{
 		CommandArgs:      []string{"--mcp-config", cfg.MCPInBox},
 		NestedCommandEnv: []string{"COOP_CLAUDE_MCP_CONFIG=" + cfg.MCPInBox},

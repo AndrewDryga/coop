@@ -243,15 +243,18 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	var mcpSnapshot []byte
 	mcpPresent := false
 	if spec.Homes {
-		var err error
-		mcpSnapshot, mcpPresent, err = mcp.ReadValidatedSnapshot(cfg.MCPFile)
-		if err != nil {
-			return -1, fmt.Errorf("mcp.json: %w", err)
-		}
+		mcpSource := cfg.MCPFile
 		if cfg.MCPFile != "" {
-			if err := validateMCPSourceIsolation(cfg, spec); err != nil {
+			var err error
+			mcpSource, err = validateMCPSourceIsolation(cfg, spec)
+			if err != nil {
 				return -1, err
 			}
+		}
+		var err error
+		mcpSnapshot, mcpPresent, err = mcp.ReadValidatedSnapshot(mcpSource)
+		if err != nil {
+			return -1, fmt.Errorf("mcp.json: %w", err)
 		}
 	}
 	if err := rt.EnsureDaemon(); err != nil {
@@ -401,10 +404,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		ag, _ := agents.Get(name)
 		wiring, genErr := ag.MCP(configForAgent, workdir)
 		if genErr != nil {
-			if mcpPresent {
-				return -1, fmt.Errorf("assemble MCP config for %s: %w", name, genErr)
-			}
-			continue
+			return -1, fmt.Errorf("assemble MCP config for %s: %w", name, genErr)
 		}
 		generated = append(generated, generatedMCP{name: name, wiring: wiring})
 	}
@@ -700,10 +700,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	return finish(code, runErr)
 }
 
-// validateMCPSourceIsolation rejects a configured source nested below any directory this run mounts
-// wholesale. The box consumes a private snapshot; exposing the mutable or not-yet-created authority
-// again through the repository, a companion, or a credential home would defeat that boundary.
-func validateMCPSourceIsolation(cfg *config.Config, spec RunSpec) error {
+// validateMCPSourceIsolation rejects a configured source that traverses any directory this run
+// mounts wholesale, then returns the resolved source the caller must snapshot. Exposing the mutable
+// or not-yet-created authority through a repository, companion, or credential home would defeat
+// that boundary; reopening the original spelling would reintroduce a parent-symlink race.
+func validateMCPSourceIsolation(cfg *config.Config, spec RunSpec) (string, error) {
 	type mountedRoot struct {
 		kind string
 		path string
@@ -720,27 +721,126 @@ func validateMCPSourceIsolation(cfg *config.Config, spec RunSpec) error {
 			roots = append(roots, mountedRoot{kind: primary + " ACP session store", path: acpSharedDir(cfg, primary)})
 		}
 	}
-	source, err := resolveFuturePath(cfg.MCPFile)
-	if err != nil {
-		return fmt.Errorf("resolve configured mcp.json source: %w", err)
+	for _, component := range strings.Split(cfg.MCPFile, string(filepath.Separator)) {
+		if component == ".." {
+			return "", fmt.Errorf("mcp.json source %q contains a parent path component; set COOP_MCP_FILE to a canonical path without '..'", cfg.MCPFile)
+		}
 	}
+	lexicalSource, err := filepath.Abs(cfg.MCPFile)
+	if err != nil {
+		return "", fmt.Errorf("resolve configured mcp.json source: %w", err)
+	}
+	lexicalSource = filepath.Clean(lexicalSource)
+	source, traversed, err := resolvePathTrace(lexicalSource)
+	if err != nil {
+		return "", fmt.Errorf("resolve configured mcp.json source: %w", err)
+	}
+	candidates := append([]string{lexicalSource, source}, traversed...)
 	for _, root := range roots {
 		if root.path == "" {
 			continue
 		}
-		realRoot, err := resolveFuturePath(root.path)
+		absoluteRoot, err := filepath.Abs(root.path)
 		if err != nil {
-			return fmt.Errorf("resolve mounted %s %q: %w", root.kind, root.path, err)
+			return "", fmt.Errorf("resolve mounted %s %q: %w", root.kind, root.path, err)
 		}
-		inside, err := futurePathWithin(realRoot, source)
+		realRoot, _, err := resolvePathTrace(absoluteRoot)
 		if err != nil {
-			return fmt.Errorf("compare mcp.json source with mounted %s %q: %w", root.kind, root.path, err)
+			return "", fmt.Errorf("resolve mounted %s %q: %w", root.kind, root.path, err)
 		}
-		if inside {
-			return fmt.Errorf("mcp.json source %q is inside mounted %s %q; move the file and set COOP_MCP_FILE to a path outside directories mounted into the box", cfg.MCPFile, root.kind, root.path)
+		for _, candidate := range candidates {
+			inside, err := futurePathWithin(realRoot, candidate)
+			if err != nil {
+				return "", fmt.Errorf("compare mcp.json source with mounted %s %q: %w", root.kind, root.path, err)
+			}
+			if inside {
+				return "", fmt.Errorf("mcp.json source %q is inside mounted %s %q; move the file and set COOP_MCP_FILE to a path outside directories mounted into the box", cfg.MCPFile, root.kind, root.path)
+			}
 		}
 	}
-	return nil
+	if info, err := os.Lstat(cfg.MCPFile); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("mcp.json source %q is a symbolic link; replace it with a private regular file and retry", cfg.MCPFile)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect configured mcp.json source %q: %w", cfg.MCPFile, err)
+	}
+	return source, nil
+}
+
+// resolvePathTrace walks one absolute Unix path component by component and records each entry
+// before following it. EvalSymlinks exposes only the endpoint; that loses an intermediate symlink
+// such as /repo/bridge -> /outside, even though a boxed agent can retarget the bridge. The trace is
+// therefore part of the containment proof, and the endpoint from this same walk is the only path
+// the caller may reopen.
+func resolvePathTrace(value string) (string, []string, error) {
+	if !filepath.IsAbs(value) {
+		return "", nil, fmt.Errorf("path %q is not absolute", value)
+	}
+	components := pathComponents(value)
+	resolved := filepath.VolumeName(value) + string(filepath.Separator)
+	traversed := make([]string, 0, len(components))
+	links := 0
+	for len(components) > 0 {
+		component := components[0]
+		components = components[1:]
+		switch component {
+		case "", ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			traversed = append(traversed, resolved)
+			continue
+		}
+
+		candidate := filepath.Join(resolved, component)
+		traversed = append(traversed, candidate)
+		info, err := os.Lstat(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			for _, remaining := range components {
+				if remaining == ".." {
+					return "", nil, fmt.Errorf("missing path %q is followed by a parent component", candidate)
+				}
+				if remaining == "" || remaining == "." {
+					continue
+				}
+				candidate = filepath.Join(candidate, remaining)
+				traversed = append(traversed, candidate)
+			}
+			return candidate, traversed, nil
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			if len(components) > 0 && !info.IsDir() {
+				return "", nil, fmt.Errorf("path component %q is not a directory", candidate)
+			}
+			resolved = candidate
+			continue
+		}
+
+		links++
+		if links > 255 {
+			return "", nil, errors.New("too many symbolic links")
+		}
+		target, err := os.Readlink(candidate)
+		if err != nil {
+			return "", nil, err
+		}
+		if filepath.IsAbs(target) {
+			resolved = filepath.VolumeName(target) + string(filepath.Separator)
+		} else {
+			resolved = filepath.Dir(candidate)
+		}
+		components = append(pathComponents(target), components...)
+	}
+	return filepath.Clean(resolved), traversed, nil
+}
+
+func pathComponents(value string) []string {
+	volume := filepath.VolumeName(value)
+	return strings.FieldsFunc(value[len(volume):], func(r rune) bool {
+		return r == filepath.Separator
+	})
 }
 
 // futurePathWithin uses inode identity whenever the mounted root exists, so alternate casing on a
@@ -808,60 +908,6 @@ func pathComponentPrefix(root, candidate string) bool {
 		}
 	}
 	return true
-}
-
-// resolveFuturePath resolves symlinks in the nearest existing ancestor, then rejoins any missing
-// suffix. That makes a not-yet-created mcp.json subject to the same containment check as an existing
-// one, without trusting lexical paths through a symlinked directory.
-func resolveFuturePath(value string) (string, error) {
-	probe, err := filepath.Abs(value)
-	if err != nil {
-		return "", err
-	}
-	return resolveFuturePathFrom(probe, 0)
-}
-
-func resolveFuturePathFrom(value string, depth int) (string, error) {
-	if depth > 255 {
-		return "", errors.New("too many symbolic links")
-	}
-	probe := value
-	var suffix []string
-	for {
-		resolved, err := filepath.EvalSymlinks(probe)
-		if err == nil {
-			for index := len(suffix) - 1; index >= 0; index-- {
-				resolved = filepath.Join(resolved, suffix[index])
-			}
-			return filepath.Clean(resolved), nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", err
-		}
-		if info, lstatErr := os.Lstat(probe); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
-			target, readErr := os.Readlink(probe)
-			if readErr != nil {
-				return "", readErr
-			}
-			if !filepath.IsAbs(target) {
-				target = filepath.Join(filepath.Dir(probe), target)
-			}
-			resolved, resolveErr := resolveFuturePathFrom(filepath.Clean(target), depth+1)
-			if resolveErr != nil {
-				return "", resolveErr
-			}
-			for index := len(suffix) - 1; index >= 0; index-- {
-				resolved = filepath.Join(resolved, suffix[index])
-			}
-			return filepath.Clean(resolved), nil
-		}
-		parent := filepath.Dir(probe)
-		if parent == probe {
-			return "", err
-		}
-		suffix = append(suffix, filepath.Base(probe))
-		probe = parent
-	}
 }
 
 func companionRepositoryMounts(
