@@ -282,6 +282,54 @@ func TestGenerateCodexHTTPHeaders(t *testing.T) {
 	}
 }
 
+// HTTP header names are case-insensitive. Allowing two spellings, or synthesizing an
+// Authorization header beside an inline one, gives providers different credentials for the same
+// server. The shared mcp.json boundary rejects both shapes before any renderer can diverge.
+func TestMCPConsumersRejectAmbiguousAuthorization(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{
+			name: "case-insensitive duplicate headers",
+			src:  `{"mcpServers":{"dupe":{"url":"https://example.test/mcp","headers":{"X-Api-Key":"one","x-api-key":"two"}}}}`,
+			want: []string{`MCP server "dupe"`, "duplicate case-insensitive headers", `"X-Api-Key"`, `"x-api-key"`},
+		},
+		{
+			name: "inline and environment authorization",
+			src:  `{"mcpServers":{"auth":{"url":"https://example.test/mcp","headers":{"aUtHoRiZaTiOn":"Bearer inline"},"bearer_token_env_var":"TOKEN"}}}`,
+			want: []string{`MCP server "auth"`, `"aUtHoRiZaTiOn"`, "bearer_token_env_var", "one Authorization source"},
+		},
+	}
+	consumers := []struct {
+		name string
+		run  func(string) error
+	}{
+		{"Codex", func(path string) error { _, err := GenerateCodex(path, ""); return err }},
+		{"Gemini", func(path string) error { _, err := GenerateGemini(path, ""); return err }},
+		{"ACP", func(path string) error { _, err := ACPServers(path, os.LookupEnv); return err }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeTmp(t, "mcp.json", test.src)
+			for _, consumer := range consumers {
+				t.Run(consumer.name, func(t *testing.T) {
+					err := consumer.run(path)
+					if err == nil {
+						t.Fatal("ambiguous authorization should be rejected")
+					}
+					for _, want := range test.want {
+						if !strings.Contains(err.Error(), want) {
+							t.Errorf("error %q does not contain %q", err, want)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
 // The ACP adapter reads a shape mcp.json does not have: name/value PAIR LISTS for headers and
 // env, "type" present on a remote server and ABSENT on a stdio one (it decides which arm to take
 // by that key alone, so a stdio server that declares "stdio" is dropped on the floor).

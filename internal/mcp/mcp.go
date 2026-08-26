@@ -269,26 +269,65 @@ func keepNonMCP(path string) string {
 }
 
 func loadServersAny(path string) (map[string]any, error) {
-	var f struct {
-		MCPServers map[string]any `json:"mcpServers"`
-	}
-	if err := readMCP(path, &f); err != nil {
+	servers, _, err := loadServerViews(path)
+	if err != nil {
 		return nil, err
 	}
-	if f.MCPServers == nil {
-		return map[string]any{}, nil
-	}
-	return f.MCPServers, nil
+	return servers, nil
 }
 
 func loadServersTyped(path string) (map[string]server, error) {
+	_, servers, err := loadServerViews(path)
+	return servers, err
+}
+
+// loadServerViews decodes the shared authority once into both shapes its consumers need. Gemini
+// gets the native JSON object while Codex and ACP get the typed projection, but all three cross the
+// same validation boundary before provider-specific rendering can interpret authentication.
+func loadServerViews(path string) (map[string]any, map[string]server, error) {
 	var f struct {
-		MCPServers map[string]server `json:"mcpServers"`
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
 	}
 	if err := readMCP(path, &f); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return f.MCPServers, nil
+	raw := make(map[string]any, len(f.MCPServers))
+	typed := make(map[string]server, len(f.MCPServers))
+	for _, name := range sortedKeys(f.MCPServers) {
+		definition := f.MCPServers[name]
+		var native any
+		if err := json.Unmarshal(definition, &native); err != nil {
+			return nil, nil, fmt.Errorf("parsing %s MCP server %q: %w", path, name, err)
+		}
+		var projected server
+		if err := json.Unmarshal(definition, &projected); err != nil {
+			return nil, nil, fmt.Errorf("parsing %s MCP server %q: %w", path, name, err)
+		}
+		raw[name] = native
+		typed[name] = projected
+	}
+	if err := validateServers(typed); err != nil {
+		return nil, nil, err
+	}
+	return raw, typed, nil
+}
+
+func validateServers(servers map[string]server) error {
+	for _, name := range sortedKeys(servers) {
+		s := servers[name]
+		seen := make(map[string]string, len(s.Headers))
+		for _, header := range sortedKeys(s.Headers) {
+			folded := strings.ToLower(header)
+			if prior, ok := seen[folded]; ok {
+				return fmt.Errorf("MCP server %q declares duplicate case-insensitive headers %q and %q", name, prior, header)
+			}
+			seen[folded] = header
+			if s.BearerTokenEnvVar != "" && strings.EqualFold(header, "Authorization") {
+				return fmt.Errorf("MCP server %q declares both %q and bearer_token_env_var; choose one Authorization source", name, header)
+			}
+		}
+	}
+	return nil
 }
 
 func readMCP(path string, v any) error {

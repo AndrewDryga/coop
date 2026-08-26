@@ -46,8 +46,8 @@ func installLayer() string {
 const (
 	pinnedNodeImage   = "node:24-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5" // node 24 (slim)
 	floatingNodeImage = "node:24-slim"
-	pinnedGoImage     = "golang:1.26.5-bookworm@sha256:18aedc16aa19b3fd7ded7245fc14b109e054d65d22ed53c355c899582bbb2113"
-	floatingGoImage   = "golang:1.26.5-bookworm"
+	pinnedGoImage     = "golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36"
+	floatingGoImage   = "golang:1.26.6-bookworm"
 )
 
 // baseDockerfileTemplate is BaseDockerfile with %s for the npm package list. The
@@ -55,17 +55,20 @@ const (
 // build args so a build can pin them; the defaults preserve the floating behavior for
 // a raw build.
 const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
-ARG GO_IMAGE=golang:1.26.5-bookworm
+ARG GO_IMAGE=golang:1.26.6-bookworm
 
 FROM ${GO_IMAGE} AS go-tools-builder
 ARG STATICCHECK_VERSION=v0.7.0
 RUN GOBIN=/out CGO_ENABLED=0 go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
+ARG GOVULNCHECK_VERSION=v1.7.0
+RUN GOBIN=/out CGO_ENABLED=0 go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
 ARG JV_VERSION=v0.7.0
 RUN GOBIN=/out CGO_ENABLED=0 go install github.com/santhosh-tekuri/jsonschema/cmd/jv@${JV_VERSION}
 
 FROM ${NODE_IMAGE}
 
 COPY --from=go-tools-builder /out/staticcheck /usr/local/bin/staticcheck
+COPY --from=go-tools-builder /out/govulncheck /usr/local/bin/govulncheck
 COPY --from=go-tools-builder /out/jv /usr/local/bin/jv
 
 ARG ASDF_VERSION=0.19.0

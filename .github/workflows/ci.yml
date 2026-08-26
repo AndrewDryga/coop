@@ -21,11 +21,13 @@ jobs:
         with:
           go-version-file: go.mod # pin the toolchain to the repo, not a floating "stable"
           cache: false # no Actions cache → no cache-poisoning surface (the build is zero-dep)
-      - name: install staticcheck at the repo's pin
-        # The Makefile owns the version (STATICCHECK_VERSION) and `make lint` rejects any other
-        # build, so CI and a laptop can never lint with two different Staticchecks. The gate's
-        # other required tools, shellcheck and python3, are preinstalled on the runner image.
-        run: go install honnef.co/go/tools/cmd/staticcheck@"$(make -s staticcheck-version)"
+      - name: install Go analyzers at the repo's pins
+        # The Makefile owns both versions and the gate rejects any other builds, so CI and a
+        # laptop cannot analyze with different rule or vulnerability sets. The other required
+        # tools, shellcheck and python3, are preinstalled on the runner image.
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@"$(make -s staticcheck-version)"
+          go install golang.org/x/vuln/cmd/govulncheck@"$(make -s govulncheck-version)"
       - name: gate
         # ONE recipe: everything this job checks is `make check` — the same target a laptop and a
         # box run — so the two can never drift again. A new check goes in the Makefile, never as a

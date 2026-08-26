@@ -133,11 +133,13 @@ func TestBaseDockerfileInstallsAgentPackages(t *testing.T) {
 	// them; the packages live in the AGENT_PACKAGES default.
 	for _, want := range []string{
 		"ARG NODE_IMAGE=node:24-slim", "FROM ${NODE_IMAGE}",
-		"ARG GO_IMAGE=golang:1.26.5-bookworm", "FROM ${GO_IMAGE} AS go-tools-builder",
+		"ARG GO_IMAGE=golang:1.26.6-bookworm", "FROM ${GO_IMAGE} AS go-tools-builder",
 		"go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}",
+		"go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}",
 		"ARG JV_VERSION=v0.7.0",
 		"go install github.com/santhosh-tekuri/jsonschema/cmd/jv@${JV_VERSION}",
 		"COPY --from=go-tools-builder /out/staticcheck /usr/local/bin/staticcheck",
+		"COPY --from=go-tools-builder /out/govulncheck /usr/local/bin/govulncheck",
 		"COPY --from=go-tools-builder /out/jv /usr/local/bin/jv",
 		`ARG AGENT_PACKAGES="@`, "npm install -g ${AGENT_PACKAGES}",
 		// ~/.cache pre-created node-owned so the coop-cache volume isn't root-owned.
@@ -192,6 +194,28 @@ func TestBaseDockerfileStaticcheckMatchesGatePin(t *testing.T) {
 	}
 	if want := "ARG STATICCHECK_VERSION=" + pin; !strings.Contains(BaseDockerfile(), want) {
 		t.Errorf("box ships a different Staticcheck than the gate pins — image.go needs %q", want)
+	}
+}
+
+// The vulnerability scan is part of that same in-box gate, so its binary and pin follow the
+// identical contract. A stale image scanner must fail here instead of giving the box a different
+// vulnerability baseline from the host and CI.
+func TestBaseDockerfileGovulncheckMatchesGatePin(t *testing.T) {
+	b, err := os.ReadFile("../../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := ""
+	for _, line := range strings.Split(string(b), "\n") {
+		if rest, ok := strings.CutPrefix(line, "GOVULNCHECK_VERSION := "); ok {
+			pin = strings.TrimSpace(rest)
+		}
+	}
+	if pin == "" {
+		t.Fatal("Makefile no longer pins GOVULNCHECK_VERSION — the gate's single govulncheck pin")
+	}
+	if want := "ARG GOVULNCHECK_VERSION=" + pin; !strings.Contains(BaseDockerfile(), want) {
+		t.Errorf("box ships a different govulncheck than the gate pins — image.go needs %q", want)
 	}
 }
 

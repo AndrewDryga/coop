@@ -4,11 +4,12 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/AndrewDryga/coop/internal/cli.Version=$(VERSION)
 
-# The ONE Staticcheck pin. CI installs exactly this version (it reads it from here, via
-# 'make -s staticcheck-version') and 'make lint' refuses any other build, so a laptop, a box,
-# and CI can never lint with three different rule sets. Bump it here AND in internal/box/image.go
-# (the box ships the same binary for the in-box gate); a test in internal/box holds the two together.
+# The gate tool pins. CI installs exactly these versions (it reads them from here), and the
+# corresponding targets refuse any other build, so a laptop, a box, and CI cannot silently use
+# different analyzers. Bump them here AND in internal/box/image.go (the box ships the same binaries
+# for the in-box gate); tests in internal/box hold the copies together.
 STATICCHECK_VERSION := v0.7.0
+GOVULNCHECK_VERSION := v1.7.0
 
 build: ## Build the coop binary to ./coop
 	@go build -trimpath -ldflags "$(LDFLAGS)" -o coop .
@@ -36,6 +37,16 @@ lint: ## gofmt check + go vet + Staticcheck at the pinned version
 # Plumbing for CI's install step, which reads the pin from here instead of repeating it.
 staticcheck-version:
 	@echo $(STATICCHECK_VERSION)
+
+govulncheck-version:
+	@echo $(GOVULNCHECK_VERSION)
+
+vuln: ## Report reachable Go vulnerabilities with the pinned govulncheck
+	@command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck is not installed — run: go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)"; exit 1; }
+	@version="$$(govulncheck -version)" || { echo "govulncheck version check failed — run: go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)"; exit 1; }; \
+		scanner="$$(printf '%s\n' "$$version" | sed -n 's/^Scanner: govulncheck@//p')"; \
+		[ "$$scanner" = "$(GOVULNCHECK_VERSION)" ] || { echo "govulncheck@$${scanner:-unknown} is not the pinned $(GOVULNCHECK_VERSION) — run: go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)"; exit 1; }
+	@govulncheck ./...
 
 shellcheck: ## ShellCheck every tracked .sh: the installer, both sweep queue guards, the commit hook
 	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck is not installed — run: brew install shellcheck (macOS) or apt-get install -y shellcheck (Debian)"; exit 1; }
@@ -99,7 +110,7 @@ race: ## Full unit suite under the race detector (the slowest gate step)
 # CI-only by necessity: the doctor runtime matrix and the review-writes job need a real container
 # runtime, so they stay separate CI jobs and this target stays runtime-independent. Run them by
 # hand with 'make doctor', 'make box-runtime-e2e', and 'make review-writes-e2e'.
-check: lint shellcheck build-all align docs-check casts-check tools-test rules-check test provider-scripted-e2e live-process-control race ## The gate, identical to CI's check job: lint + freshness + tests (plain, e2e, race) + build
+check: lint shellcheck build-all vuln align docs-check casts-check tools-test rules-check test provider-scripted-e2e live-process-control race ## The gate, identical to CI's check job: lint + vulnerability scan + freshness + tests (plain, e2e, race) + build
 
 provider-scripted-e2e: ## Deterministic all-provider process e2e (no runtime or credentials needed)
 	@go test ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
@@ -162,4 +173,4 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
-.PHONY: build install test cover lint staticcheck-version shellcheck require-python3 snapshot doctor docs docs-check align casts casts-check tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e box-runtime-e2e clean help
+.PHONY: build install test cover lint staticcheck-version govulncheck-version vuln shellcheck require-python3 snapshot doctor docs docs-check align casts casts-check tools-test rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e box-runtime-e2e clean help

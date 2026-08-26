@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The security baseline is enforced locally and in CI.** Coop now builds with Go 1.26.6, runs a
+  pinned `govulncheck` as part of the one `make check` recipe, and asks Dependabot to watch Go
+  modules weekly. MCP configuration also rejects duplicate case-insensitive header names and
+  competing inline/environment Authorization sources instead of producing provider-dependent auth.
+
 - **Remote ACP uses the editor's existing SSH transport instead of a Coop TCP protocol.** Zed
   Remote Development can run `coop acp <target>` beside the remote repository, while a custom
   agent may invoke that same stdio command through `ssh -T`. Coop therefore adds no
