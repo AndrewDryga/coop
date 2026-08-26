@@ -335,9 +335,11 @@ process, removes its run-labeled box and services, and deletes projected credent
 history remains durable, so the next cold child can load the exact session again.
 
 On restart, queued turns that were never sent remain eligible. A turn waiting for semantic
-validation keeps its unpublished candidate and can still be accepted or rejected by digest. A turn
-interrupted after send intent is terminalized as interrupted and is not silently replayed. Provider-declared projected credential
-files left by a process crash are removed before workers start; provider-native history is retained.
+validation keeps its unpublished candidate and can still be accepted or rejected by digest. Its
+provider process, run-labeled box, projected credentials, and services are disposable: startup and
+the bounded periodic cleaner reap them without accepting, rejecting, or changing the candidate. A
+turn interrupted after send intent is terminalized as interrupted and is not silently replayed.
+Provider-native history is retained.
 
 An optional `output_contract` carries the exact schema bytes and their digest:
 
@@ -453,7 +455,13 @@ curl --unix-socket "$SOCKET" \
 | `POST` | `/v1/sessions/{session_id}/turns/{turn_id}/validation` | `candidate_sha256`, `verdict`; `accept` forbids `violations`, `reject` requires 1–20 |
 
 Validation decisions do not carry `expected_revision`; `candidate_sha256` provides the optimistic
-concurrency check against the exact unpublished candidate being accepted or rejected.
+concurrency check against the exact unpublished candidate being accepted or rejected. Before an
+accept, reject, or awaiting-turn cancellation changes durable state, Coop reaps the provider
+runtime and projected credentials that produced the candidate. If that proof fails, the API returns
+`503 session_cleanup_error` and leaves the exact candidate `awaiting_validation`; it has not applied
+the verdict. The failed idempotent operation is terminal, so after the janitor or operator restores
+runtime cleanup, fetch the still-current candidate and submit the same decision with a fresh
+idempotency key. Replaying the failed key returns the same failure.
 
 A public turn excludes its prompt, its idempotency data, `min_target_index`, and `rewind_target` —
 request data whose effect is published as the session's `target` and its
@@ -709,7 +717,7 @@ Common status mapping:
 | `409` | idempotency, revision, state, queue, budget, resume, uncertainty, or discard conflict |
 | `413` | ordinary request body exceeds 128 KiB, or turn submission exceeds 12 MiB |
 | `500` | internal failure; host paths and raw internal errors are suppressed |
-| `503` | readiness endpoint is not ready |
+| `503` | readiness is not ready, or repository/runtime cleanup is temporarily unavailable |
 
 Treat `operation_uncertain` and `turn.interrupted` as reconciliation states. Never retry a mutation
 under a new key merely because its result is unknown.
@@ -761,10 +769,12 @@ landing authority into a Coop prompt or box.
 After every terminal turn, Coop removes the exact workspace-owned Compose service containers using
 their project and working-directory labels. Volumes remain so the next turn can restart services
 with durable development data. Daemon startup repeats this cleanup for historical sessions after a
-crash or upgrade, and a parked-session sweep retries cleanup every minute without racing an active
-turn. Explicit session discard remains responsible for deleting the workspace volumes and network.
+crash or upgrade, and a bounded idle-runtime sweep retries cleanup every minute without racing an
+active turn. The same sweep reaps an awaiting-validation turn's exact runtime and projected
+credentials without changing its candidate. Explicit session discard remains responsible for
+deleting the workspace volumes and network.
 
 A completed turn is completed even when that teardown fails: the janitor's retry is the guarantee,
 and a slow container runtime must not convert a finished answer into an error. Cleanup failure is
 logged with its bounded cause; a turn that itself failed carries the cleanup cause joined with its
-  own error.
+own error.

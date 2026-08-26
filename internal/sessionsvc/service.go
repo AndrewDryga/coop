@@ -50,7 +50,8 @@ const (
 	sessionServiceCleanupInterval    = time.Minute
 	sessionOperationStaleAfter       = 2 * time.Minute
 	sessionCreateConcurrency         = 2
-	parkedCleanupBatchSize           = 2
+	runtimeCleanupBatchSize          = 2
+	startupReapErrorLimit            = 8
 )
 
 // Policy is operator-owned authority for one remote session. It is intentionally small:
@@ -531,7 +532,7 @@ type Runner interface {
 	Run(context.Context, session.Session, session.Turn) (session.Turn, error)
 }
 
-type sessionRunnerStartupCleaner interface {
+type sessionRunnerRuntimeCleaner interface {
 	CleanupSession(context.Context, session.Session) error
 }
 
@@ -555,7 +556,7 @@ type sessionRunnerCloser interface {
 	CloseWarmSessions() error
 }
 
-type sessionRunnerStartupReaper interface {
+type sessionRunnerTurnReaper interface {
 	ReapInterruptedTurn(context.Context, session.Session, session.Turn) error
 }
 
@@ -611,9 +612,16 @@ type sessionOperationLock struct {
 	refs int
 }
 
-type parkedCleanupStamp struct {
-	revision  int64
-	updatedAt time.Time
+type runtimeCleanupStamp struct {
+	revision        int64
+	updatedAt       time.Time
+	turnID          string
+	candidateSHA256 string
+}
+
+type runtimeCleanupCandidate struct {
+	session session.Session
+	turn    *session.Turn
 }
 
 type Service struct {
@@ -642,20 +650,21 @@ type Service struct {
 	pendingCancels map[string]*pendingSessionCancel
 	wg             sync.WaitGroup
 
-	operationMu          sync.Mutex
-	operationLocks       map[string]*sessionOperationLock
-	createActive         map[string]bool
-	createSlots          chan struct{}
-	testBeforeCreatePin  func() error
-	testAfterTurnLease   func(session.Turn)
-	runtimeMu            sync.Mutex
-	runtimeLocks         map[string]*sessionOperationLock
-	parkedCleanupMu      sync.Mutex
-	parkedCleanupCursor  int
-	parkedCleanupStampMu sync.Mutex
-	parkedCleanupDone    map[string]parkedCleanupStamp
-	historicalMu         sync.Mutex
-	historicalPending    map[string]struct{}
+	operationMu            sync.Mutex
+	operationLocks         map[string]*sessionOperationLock
+	createActive           map[string]bool
+	createSlots            chan struct{}
+	testBeforeCreatePin    func() error
+	testAfterTurnLease     func(session.Turn)
+	runtimeMu              sync.Mutex
+	runtimeLocks           map[string]*sessionOperationLock
+	runtimeCleanupMu       sync.Mutex
+	runtimeCleanupCursor   int
+	runtimeCleanupStampMu  sync.Mutex
+	runtimeCleanupDone     map[string]runtimeCleanupStamp
+	testBeforeCleanupStamp func()
+	historicalMu           sync.Mutex
+	historicalPending      map[string]struct{}
 }
 
 func NewService(cfg Config) (*Service, error) {
@@ -694,9 +703,9 @@ func NewService(cfg Config) (*Service, error) {
 		pendingCancels: make(map[string]*pendingSessionCancel),
 		operationLocks: make(map[string]*sessionOperationLock),
 		createActive:   make(map[string]bool), createSlots: make(chan struct{}, sessionCreateConcurrency),
-		runtimeLocks:      make(map[string]*sessionOperationLock),
-		parkedCleanupDone: make(map[string]parkedCleanupStamp),
-		historicalPending: make(map[string]struct{}),
+		runtimeLocks:       make(map[string]*sessionOperationLock),
+		runtimeCleanupDone: make(map[string]runtimeCleanupStamp),
+		historicalPending:  make(map[string]struct{}),
 	}
 	if service.stopTimeout <= 0 {
 		service.stopTimeout = DefaultStopTimeout
@@ -855,38 +864,64 @@ func (s *Service) Start(parent context.Context) error {
 		s.mu.Unlock()
 		return err
 	}
-	interrupted, err := s.store.ListInterruptedTurns(parent)
+	cleanupTurns, err := s.store.ListRuntimeCleanupTurns(parent)
 	if err != nil {
 		s.mu.Lock()
 		s.starting = false
 		s.mu.Unlock()
 		return err
 	}
-	reaper, canReap := s.runner.(sessionRunnerStartupReaper)
+	reaper, canReap := s.runner.(sessionRunnerTurnReaper)
 	byID := make(map[string]session.Session, len(sessions))
+	startupAwaitingClean := make(map[string]session.Turn)
 	for _, sess := range sessions {
 		byID[sess.ID] = sess
 	}
-	for _, turn := range interrupted {
+	if len(cleanupTurns) > 0 && !canReap {
+		s.mu.Lock()
+		s.starting = false
+		s.mu.Unlock()
+		return errors.New("startup recovery cannot prove interrupted runtime cleanup")
+	}
+	var reapErrors []error
+	reapFailures := 0
+	recordReapError := func(turnID string, err error) {
+		reapFailures++
+		if len(reapErrors) < startupReapErrorLimit {
+			reapErrors = append(reapErrors, fmt.Errorf("turn %s: %s", turnID,
+				sessionACPBoundedDetail("runtime cleanup failed", err.Error())))
+		}
+	}
+	for _, turn := range cleanupTurns {
 		sess, ok := byID[turn.SessionID]
 		if !ok {
-			s.mu.Lock()
-			s.starting = false
-			s.mu.Unlock()
-			return fmt.Errorf("startup recovery session %s is missing for turn %s", turn.SessionID, turn.ID)
+			recordReapError(turn.ID, fmt.Errorf("session %s is missing", turn.SessionID))
+			continue
 		}
-		if !canReap {
-			s.mu.Lock()
-			s.starting = false
-			s.mu.Unlock()
-			return errors.New("startup recovery cannot prove interrupted runtime cleanup")
+		if turn.State == session.TurnAwaitingValidation {
+			stamp := runtimeCleanupStampFor(sess, &turn)
+			if s.runtimeCleanupMatches(sess.ID, stamp) {
+				startupAwaitingClean[turn.SessionID] = turn
+				continue
+			}
 		}
 		if err := reaper.ReapInterruptedTurn(parent, sess, turn); err != nil {
-			s.mu.Lock()
-			s.starting = false
-			s.mu.Unlock()
-			return fmt.Errorf("reap interrupted session turn %s: %w", turn.ID, err)
+			recordReapError(turn.ID, err)
+			continue
 		}
+		if turn.State == session.TurnAwaitingValidation {
+			startupAwaitingClean[turn.SessionID] = turn
+			s.markRuntimeCleanupDone(sess.ID, runtimeCleanupStampFor(sess, &turn))
+		}
+	}
+	if reapFailures > 0 {
+		if omitted := reapFailures - len(reapErrors); omitted > 0 {
+			reapErrors = append(reapErrors, fmt.Errorf("%d additional runtime cleanup failures", omitted))
+		}
+		s.mu.Lock()
+		s.starting = false
+		s.mu.Unlock()
+		return fmt.Errorf("startup runtime cleanup failed: %w", errors.Join(reapErrors...))
 	}
 	if _, err := s.store.ReconcileInterruptedTurns(parent); err != nil {
 		s.mu.Lock()
@@ -908,6 +943,11 @@ func (s *Service) Start(parent context.Context) error {
 	s.historicalMu.Lock()
 	for _, sess := range sessions {
 		if sess.State != session.SessionDiscarded {
+			if turn, ok := startupAwaitingClean[sess.ID]; ok &&
+				sess.Activity == session.ActivityRunning && sess.ActiveTurnID == turn.ID {
+				s.markRuntimeCleanupDone(sess.ID, runtimeCleanupStampFor(sess, &turn))
+				continue
+			}
 			s.historicalPending[sess.ID] = struct{}{}
 		}
 	}
@@ -953,7 +993,7 @@ func (s *Service) runSessionMaintenance(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.cleanupParkedSessions(ctx)
+			s.cleanupIdleSessionRuntimes(ctx)
 			if err := s.reconcileInterruptedOperations(ctx, false); err != nil && ctx.Err() == nil {
 				s.log.Error("session operation reconciliation failed", "error", err)
 			}
@@ -961,99 +1001,150 @@ func (s *Service) runSessionMaintenance(ctx context.Context) {
 	}
 }
 
-func (s *Service) cleanupParkedSessions(ctx context.Context) {
-	s.parkedCleanupMu.Lock()
-	defer s.parkedCleanupMu.Unlock()
+func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) {
+	s.runtimeCleanupMu.Lock()
+	defer s.runtimeCleanupMu.Unlock()
 
 	parkedCleaner, parkedOK := s.runner.(sessionRunnerParkedCleaner)
-	cleaner, cleanupOK := s.runner.(sessionRunnerStartupCleaner)
+	cleaner, cleanupOK := s.runner.(sessionRunnerRuntimeCleaner)
+	reaper, reapOK := s.runner.(sessionRunnerTurnReaper)
 	warmInspector, canInspectWarm := s.runner.(sessionRunnerWarmInspector)
-	if !parkedOK && !cleanupOK {
+	if !parkedOK && !cleanupOK && !reapOK {
 		return
 	}
 	sessions, err := s.store.ListSessionsForRecovery(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
-			s.host.warnf("could not list parked sessions for runtime cleanup: %v", err)
+			s.host.warnf("could not list sessions for runtime cleanup: %v", err)
 		}
 		return
 	}
-	candidates := make([]session.Session, 0, len(sessions))
+	awaiting := make(map[string]session.Turn)
+	if reapOK {
+		turns, listErr := s.store.ListRuntimeCleanupTurns(ctx)
+		if listErr != nil {
+			if ctx.Err() == nil {
+				s.host.warnf("could not list turns for runtime cleanup: %v", listErr)
+			}
+			return
+		}
+		for _, turn := range turns {
+			if turn.State == session.TurnAwaitingValidation {
+				awaiting[turn.SessionID] = turn
+			}
+		}
+	}
+	candidates := make([]runtimeCleanupCandidate, 0, len(sessions))
 	eligible := make(map[string]struct{})
 	for _, candidate := range sessions {
-		if candidate.State == session.SessionDiscarded ||
-			candidate.Activity != session.ActivityParked || candidate.ActiveTurnID != "" {
+		if candidate.State == session.SessionDiscarded {
 			continue
 		}
-		candidates = append(candidates, candidate)
+		var turn *session.Turn
+		if awaitingTurn, ok := awaiting[candidate.ID]; ok &&
+			candidate.Activity == session.ActivityRunning && candidate.ActiveTurnID == awaitingTurn.ID {
+			copy := awaitingTurn
+			turn = &copy
+		} else if !parkedOK && !cleanupOK {
+			continue
+		} else if candidate.Activity != session.ActivityParked || candidate.ActiveTurnID != "" {
+			continue
+		}
+		candidates = append(candidates, runtimeCleanupCandidate{session: candidate, turn: turn})
 		eligible[candidate.ID] = struct{}{}
 	}
-	s.pruneParkedCleanupDone(eligible)
+	s.pruneRuntimeCleanupDone(eligible)
 	if len(candidates) == 0 {
-		s.parkedCleanupCursor = 0
+		s.runtimeCleanupCursor = 0
 		return
 	}
-	start := s.parkedCleanupCursor % len(candidates)
+	start := s.runtimeCleanupCursor % len(candidates)
 	scanned, attempts := 0, 0
-	for scanned < len(candidates) && attempts < parkedCleanupBatchSize {
+	for scanned < len(candidates) && attempts < runtimeCleanupBatchSize {
 		candidate := candidates[(start+scanned)%len(candidates)]
 		scanned++
-		stamp := parkedCleanupStamp{revision: candidate.Revision, updatedAt: candidate.UpdatedAt}
-		if s.parkedCleanupMatches(candidate.ID, stamp) {
+		stamp := runtimeCleanupStampFor(candidate.session, candidate.turn)
+		if s.runtimeCleanupMatches(candidate.session.ID, stamp) {
 			continue
 		}
 		attempts++
-		unlock := s.lockSessionRuntime(candidate.ID)
-		current, getErr := s.store.GetSession(ctx, candidate.ID)
-		warmReady := false
-		if getErr == nil && current.Activity == session.ActivityParked && current.ActiveTurnID == "" {
+		unlock := s.lockSessionRuntime(candidate.session.ID)
+		current, getErr := s.store.GetSession(ctx, candidate.session.ID)
+		currentTurn := session.Turn{}
+		cleaned, warmReady := false, false
+		if getErr == nil && candidate.turn != nil {
+			currentTurn, getErr = s.store.GetTurn(ctx, current.ID, candidate.turn.ID)
+			if getErr == nil && current.Activity == session.ActivityRunning &&
+				current.ActiveTurnID == currentTurn.ID && currentTurn.State == session.TurnAwaitingValidation &&
+				currentTurn.Candidate != nil && currentTurn.CandidateSHA256 == candidate.turn.CandidateSHA256 {
+				getErr = reaper.ReapInterruptedTurn(ctx, current, currentTurn)
+				cleaned = getErr == nil
+			}
+		} else if getErr == nil && current.Activity == session.ActivityParked && current.ActiveTurnID == "" {
 			warmReady = canInspectWarm && warmInspector.WarmSessionReady(current)
+			ranCleanup := false
 			if parkedOK {
+				ranCleanup = true
 				getErr = parkedCleaner.CleanupParkedSession(ctx, current)
-			} else {
+			} else if cleanupOK {
+				ranCleanup = true
 				getErr = cleaner.CleanupSession(ctx, current)
 			}
+			cleaned = ranCleanup && getErr == nil && !warmReady
 		}
-		unlock()
-		if getErr == nil && !warmReady &&
-			current.Activity == session.ActivityParked && current.ActiveTurnID == "" {
-			s.markParkedCleanupDone(current.ID, parkedCleanupStamp{
-				revision: current.Revision, updatedAt: current.UpdatedAt,
-			})
+		if cleaned {
+			if s.testBeforeCleanupStamp != nil {
+				s.testBeforeCleanupStamp()
+			}
+			var turn *session.Turn
+			if currentTurn.ID != "" {
+				turn = &currentTurn
+			}
+			s.markRuntimeCleanupDone(current.ID, runtimeCleanupStampFor(current, turn))
 			s.markHistoricalRuntimeClean(current.ID)
 		}
+		unlock()
 		if getErr != nil && ctx.Err() == nil {
-			s.host.warnf("could not clean parked session runtime state %s: %v", candidate.ID, getErr)
+			s.host.warnf("could not clean session runtime state %s: %v", candidate.session.ID, getErr)
 		}
 	}
-	s.parkedCleanupCursor = (start + scanned) % len(candidates)
+	s.runtimeCleanupCursor = (start + scanned) % len(candidates)
 }
 
-func (s *Service) parkedCleanupMatches(sessionID string, stamp parkedCleanupStamp) bool {
-	s.parkedCleanupStampMu.Lock()
-	defer s.parkedCleanupStampMu.Unlock()
-	cleaned, ok := s.parkedCleanupDone[sessionID]
+func runtimeCleanupStampFor(sess session.Session, turn *session.Turn) runtimeCleanupStamp {
+	stamp := runtimeCleanupStamp{revision: sess.Revision, updatedAt: sess.UpdatedAt}
+	if turn != nil {
+		stamp.turnID = turn.ID
+		stamp.candidateSHA256 = turn.CandidateSHA256
+	}
+	return stamp
+}
+
+func (s *Service) runtimeCleanupMatches(sessionID string, stamp runtimeCleanupStamp) bool {
+	s.runtimeCleanupStampMu.Lock()
+	defer s.runtimeCleanupStampMu.Unlock()
+	cleaned, ok := s.runtimeCleanupDone[sessionID]
 	return ok && cleaned == stamp
 }
 
-func (s *Service) markParkedCleanupDone(sessionID string, stamp parkedCleanupStamp) {
-	s.parkedCleanupStampMu.Lock()
-	s.parkedCleanupDone[sessionID] = stamp
-	s.parkedCleanupStampMu.Unlock()
+func (s *Service) markRuntimeCleanupDone(sessionID string, stamp runtimeCleanupStamp) {
+	s.runtimeCleanupStampMu.Lock()
+	s.runtimeCleanupDone[sessionID] = stamp
+	s.runtimeCleanupStampMu.Unlock()
 }
 
-func (s *Service) invalidateParkedCleanup(sessionID string) {
-	s.parkedCleanupStampMu.Lock()
-	delete(s.parkedCleanupDone, sessionID)
-	s.parkedCleanupStampMu.Unlock()
+func (s *Service) invalidateRuntimeCleanup(sessionID string) {
+	s.runtimeCleanupStampMu.Lock()
+	delete(s.runtimeCleanupDone, sessionID)
+	s.runtimeCleanupStampMu.Unlock()
 }
 
-func (s *Service) pruneParkedCleanupDone(eligible map[string]struct{}) {
-	s.parkedCleanupStampMu.Lock()
-	defer s.parkedCleanupStampMu.Unlock()
-	for sessionID := range s.parkedCleanupDone {
+func (s *Service) pruneRuntimeCleanupDone(eligible map[string]struct{}) {
+	s.runtimeCleanupStampMu.Lock()
+	defer s.runtimeCleanupStampMu.Unlock()
+	for sessionID := range s.runtimeCleanupDone {
 		if _, ok := eligible[sessionID]; !ok {
-			delete(s.parkedCleanupDone, sessionID)
+			delete(s.runtimeCleanupDone, sessionID)
 		}
 	}
 }
@@ -1062,7 +1153,7 @@ func (s *Service) runBoundSessionTurn(ctx context.Context, bound session.Session
 	unlock := s.lockSessionRuntime(bound.ID)
 	defer unlock()
 	if s.historicalRuntimeNeedsCleanup(bound.ID) {
-		if cleaner, ok := s.runner.(sessionRunnerStartupCleaner); ok {
+		if cleaner, ok := s.runner.(sessionRunnerRuntimeCleaner); ok {
 			if err := cleaner.CleanupSession(ctx, bound); err != nil {
 				return leased, fmt.Errorf("clean historical session runtime: %w", err)
 			}
@@ -1968,7 +2059,7 @@ func (s *Service) PrepareSession(ctx context.Context, id string, expectedRevisio
 	// Preparing a warm runtime changes host state without touching the durable
 	// session revision. Any earlier "runtime is clean" proof is now obsolete;
 	// after expiry the janitor must inspect and retry best-effort teardown.
-	s.invalidateParkedCleanup(id)
+	s.invalidateRuntimeCleanup(id)
 	return s.store.GetSession(ctx, id)
 }
 
@@ -2029,6 +2120,11 @@ func (s *Service) AcceptTurnCandidate(ctx context.Context, key, sessionID, turnI
 		SessionID, TurnID, Digest, Verdict string
 	}{sessionID, turnID, digest, "accept"}
 	return s.validateTurnCandidateOperation(ctx, key, request, func() (session.Turn, error) {
+		unlock, err := s.lockAndReapAwaitingCandidateRuntime(ctx, sessionID, turnID, digest)
+		if err != nil {
+			return session.Turn{}, err
+		}
+		defer unlock()
 		return s.store.CompleteTurn(ctx, session.CompleteTurnRequest{
 			SessionID: sessionID, TurnID: turnID, CandidateSHA256: digest,
 		})
@@ -2041,6 +2137,11 @@ func (s *Service) RejectTurnCandidate(ctx context.Context, key string, req sessi
 		Verdict string
 	}{req, "reject"}
 	turn, err := s.validateTurnCandidateOperation(ctx, key, request, func() (session.Turn, error) {
+		unlock, err := s.lockAndReapAwaitingCandidateRuntime(ctx, req.SessionID, req.TurnID, req.CandidateSHA256)
+		if err != nil {
+			return session.Turn{}, err
+		}
+		defer unlock()
 		return s.store.RejectTurnCandidate(ctx, req)
 	})
 	if err == nil && turn.State == session.TurnQueued {
@@ -2070,15 +2171,13 @@ func (s *Service) validateTurnCandidateOperation(
 			}
 			return turn, nil
 		case session.OperationFailed:
-			return session.Turn{}, &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail}
+			return session.Turn{}, wrapServiceOperationError(op.ID,
+				&session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail})
 		}
 	}
 	turn, err := apply()
 	if err != nil {
-		if code := session.CodeOf(err); code != "" {
-			_ = s.store.FailOperation(ctx, op.ID, code, err.Error())
-		}
-		return session.Turn{}, err
+		return session.Turn{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	result, err := json.Marshal(turn)
 	if err != nil {
@@ -2088,6 +2187,52 @@ func (s *Service) validateTurnCandidateOperation(
 		return session.Turn{}, err
 	}
 	return turn, nil
+}
+
+// lockAndReapAwaitingCandidateRuntime serializes the caller's decision with
+// the provider runtime that produced the candidate. The durable transition is
+// allowed only after exact runtime cleanup succeeds; otherwise moving the turn
+// out of awaiting_validation would erase the janitor's last ownership signal.
+func (s *Service) lockAndReapAwaitingCandidateRuntime(
+	ctx context.Context,
+	sessionID, turnID, candidateSHA256 string,
+) (func(), error) {
+	unlock := s.lockSessionRuntime(sessionID)
+	fail := func(err error) (func(), error) {
+		unlock()
+		return nil, err
+	}
+	bound, err := s.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return fail(err)
+	}
+	turn, err := s.store.GetTurn(ctx, sessionID, turnID)
+	if err != nil {
+		return fail(err)
+	}
+	if bound.Activity != session.ActivityRunning || bound.ActiveTurnID != turn.ID ||
+		turn.State != session.TurnAwaitingValidation || turn.Candidate == nil {
+		return fail(&session.Error{Code: session.CodeTurnNotRunnable, Detail: "turn does not await semantic validation"})
+	}
+	if candidateSHA256 != "" && turn.CandidateSHA256 != candidateSHA256 {
+		return fail(&session.Error{Code: session.CodeRevisionConflict, Detail: "semantic candidate digest is stale"})
+	}
+	stamp := runtimeCleanupStampFor(bound, &turn)
+	if s.runtimeCleanupMatches(sessionID, stamp) {
+		return unlock, nil
+	}
+	reaper, ok := s.runner.(sessionRunnerTurnReaper)
+	if !ok {
+		return fail(&session.Error{Code: sessionACPCleanupError, Detail: "runtime cleanup is unavailable"})
+	}
+	if err := reaper.ReapInterruptedTurn(ctx, bound, turn); err != nil {
+		return fail(&session.Error{
+			Code:   sessionACPCleanupError,
+			Detail: sessionACPBoundedDetail("runtime cleanup failed", err.Error()),
+		})
+	}
+	s.markRuntimeCleanupDone(sessionID, stamp)
+	return unlock, nil
 }
 
 func (s *Service) ListTurns(ctx context.Context, sessionID string, afterOrdinal int64, limit int) ([]session.Turn, error) {
@@ -2125,7 +2270,7 @@ func (s *Service) Close(ctx context.Context, key string, req session.CloseSessio
 		if err := cleaner.CleanupClosedSession(ctx, current); err != nil {
 			return session.Session{}, err
 		}
-	} else if cleaner, ok := s.runner.(sessionRunnerStartupCleaner); ok {
+	} else if cleaner, ok := s.runner.(sessionRunnerRuntimeCleaner); ok {
 		if err := cleaner.CleanupSession(ctx, current); err != nil {
 			return session.Session{}, err
 		}
@@ -2556,6 +2701,14 @@ func (s *Service) CancelTurn(ctx context.Context, key string, req session.Cancel
 		return session.Turn{}, s.failCancelOperation(ctx, op, err)
 	}
 	if turn.State == session.TurnQueued || turn.State == session.TurnAwaitingValidation {
+		var unlockRuntime func()
+		if turn.State == session.TurnAwaitingValidation {
+			unlockRuntime, err = s.lockAndReapAwaitingCandidateRuntime(ctx, req.SessionID, req.TurnID, "")
+			if err != nil {
+				return session.Turn{}, s.failCancelOperation(ctx, op, err)
+			}
+			defer unlockRuntime()
+		}
 		cancelled, err := s.store.CancelTurn(ctx, key, req)
 		if err == nil {
 			s.schedule(req.SessionID)

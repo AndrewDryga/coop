@@ -2,8 +2,8 @@
 name: structured-output-is-runtime-enforced
 description: "a structured-output schema is durable execution control, validated before completion, never prompt-only advice"
 scope: architecture
-sources: [internal/session/output_contract.go, internal/session/store.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, docs/session-api.md]
-check: "go test ./internal/sessionsvc -run 'TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes|TestRepeatedInvalidStructuredResultNeverCompletes|TestSchemaValidSemanticResultWaitsForCallerAcceptance|TestRejectedSemanticResultRepromptsTheSameNativeTurn|TestSchemaRepairDoesNotSpendASemanticCandidateAttempt'"
+sources: [internal/session/output_contract.go, internal/session/store.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/sessionsvc/http.go, docs/session-api.md]
+check: "go test ./internal/sessionsvc -run 'TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes|TestRepeatedInvalidStructuredResultNeverCompletes|TestSchemaValidSemanticResultWaitsForCallerAcceptance|TestRejectedSemanticResultRepromptsTheSameNativeTurn|TestSchemaRepairDoesNotSpendASemanticCandidateAttempt|TestSessionTurnRunnerPublishesSemanticCandidateWhenCleanupFails|TestSessionServiceStartupReapsAwaitingValidationRuntimeWithoutChangingCandidate|TestSessionServiceCandidateDecisionsReapRuntimeBeforeTransition|TestSessionServiceAwaitingCancelRequiresFreshKeyAfterCleanupFailure|TestSessionServiceDoesNotRestartRejectedCandidateWhenRuntimeReapFails'"
 updated: 2026-08-26
 ---
 
@@ -27,9 +27,15 @@ candidate, exposes its digest, and accepts or rejects only that digest through a
 operation. Rejections are visible as events and resume the same logical/native turn. Semantic
 review permits three schema-valid candidates; each semantic round has its own three-response schema
 repair bound, so malformed JSON never spends a caller-review attempt. A restart preserves the
-candidate; acceptance returns a durable receipt.
+candidate and reaps its now-disposable provider runtime before serving. Teardown failures after
+staging are retryable janitor work, never a validation decision. Acceptance returns a durable
+receipt only after exact runtime cleanup succeeds; reject and cancel use the same barrier so a
+durable transition never erases the last cleanup signal.
 
 ## Changelog
+- 2026-08-26 — separated durable candidate authority from provider-runtime ownership: startup and
+  periodic recovery now reap awaiting-validation runtimes without changing the candidate, and a
+  post-staging teardown failure no longer hides the published candidate.
 - 2026-08-26 — added the public API guide to the rule's sources and corrected its stale 128/64 KiB
   limits plus the omitted contract shape, schema bound, digest, turn-body exception, and validation
   endpoint. Also gated the separate schema/semantic counters after review caught prose collapsing

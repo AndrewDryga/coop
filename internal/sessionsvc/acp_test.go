@@ -1704,6 +1704,40 @@ func TestSessionTurnRunnerStartupCleanupPreservesNativeHistory(t *testing.T) {
 	}
 }
 
+func TestSessionTurnRunnerInterruptedTurnReapRemovesProjectedCredentials(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	profile := filepath.Join(fixture.private, "codex", "profiles", "work")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	credential := filepath.Join(profile, "auth.json")
+	history := filepath.Join(profile, "native-history")
+	instructions := filepath.Join(fixture.private, "INSTRUCTIONS.md")
+	defaults := filepath.Join(fixture.private, "defaults")
+	for path, data := range map[string]string{
+		credential:   "crash-left credential",
+		history:      "keep native history",
+		instructions: "crash-left instructions",
+		defaults:     "codex=work\n",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	turn := fixture.submit(t, "reap crash-left runtime")
+	if err := fixture.runner.ReapInterruptedTurn(context.Background(), fixture.session, turn); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{credential, instructions, defaults} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("projected file %s remains after exact turn reap: %v", path, err)
+		}
+	}
+	if got := readFile(t, history); got != "keep native history" {
+		t.Fatalf("native history changed during exact turn reap: %q", got)
+	}
+}
+
 func TestSessionTurnRunnerDoesNotReapBeforeChildStarts(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	turn := fixture.submit(t, "bad binding")
@@ -1736,6 +1770,26 @@ func TestSessionTurnRunnerCompletesTheTurnWhenCleanupFails(t *testing.T) {
 	got, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
 	if err != nil || got.State != session.TurnCompleted || got.AssistantMessage != "hello world" {
 		t.Fatalf("stored turn after cleanup failure = state %q message %q, err=%v", got.State, got.AssistantMessage, err)
+	}
+}
+
+func TestSessionTurnRunnerPublishesSemanticCandidateWhenCleanupFails(t *testing.T) {
+	fixture := newSessionACPFixture(t, "valid-contract")
+	t.Setenv("COOP_TEST_SESSION_SERVICE_CLEANUP_FAIL", "1")
+	turn := fixture.submitSemanticContract(t, "preserve this candidate")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	if err != nil {
+		t.Fatalf("a published semantic candidate was hidden by cleanup failure: %v", err)
+	}
+	if result.State != session.TurnAwaitingValidation || result.Candidate == nil ||
+		result.Candidate.Message != `{"reply":"valid"}` || result.AssistantMessage != "" {
+		t.Fatalf("turn after semantic cleanup failure = %+v", result)
+	}
+	stored, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	if err != nil || stored.State != session.TurnAwaitingValidation || stored.Candidate == nil ||
+		stored.Candidate.Message != result.Candidate.Message || stored.Candidate.SHA256 != result.Candidate.SHA256 ||
+		stored.ValidationAttempt != result.ValidationAttempt || stored.AssistantMessage != "" {
+		t.Fatalf("stored candidate after cleanup failure = %+v, err=%v", stored, err)
 	}
 }
 

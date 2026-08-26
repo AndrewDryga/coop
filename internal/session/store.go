@@ -927,24 +927,32 @@ func (s *Store) ListSessionsForRecovery(ctx context.Context) ([]Session, error) 
 	return sessions, nil
 }
 
-// ListInterruptedTurns returns active turns that need runtime cleanup before startup can
-// reconcile their durable state. It intentionally does not mutate anything.
-func (s *Store) ListInterruptedTurns(ctx context.Context) ([]Turn, error) {
-	rows, err := s.db.QueryContext(ctx, turnSelect+` WHERE state IN (?, ?) ORDER BY session_id, ordinal`, string(TurnStarting), string(TurnRunning))
+// ListRuntimeCleanupTurns returns turns whose runtime may still exist after their durable work is
+// recoverable. Startup reaps all three before reconciliation; the periodic cleaner selects only
+// awaiting-validation turns because starting/running can still be live in this process.
+func (s *Store) ListRuntimeCleanupTurns(ctx context.Context) ([]Turn, error) {
+	// Runtime ownership needs identity, state, and the candidate digest only.
+	// Selecting the full turn here would read every durable schema and candidate
+	// on each janitor tick before the bounded cleaner chooses its two attempts.
+	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, state, candidate_sha256
+		FROM turns WHERE state IN (?, ?, ?) ORDER BY session_id, ordinal`,
+		string(TurnStarting), string(TurnRunning), string(TurnAwaitingValidation))
 	if err != nil {
-		return nil, fmt.Errorf("list interrupted turns: %w", err)
+		return nil, fmt.Errorf("list runtime cleanup turns: %w", err)
 	}
 	defer rows.Close()
 	var turns []Turn
 	for rows.Next() {
-		turn, err := scanTurn(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan interrupted turn: %w", err)
+		var turn Turn
+		var state string
+		if err := rows.Scan(&turn.ID, &turn.SessionID, &state, &turn.CandidateSHA256); err != nil {
+			return nil, fmt.Errorf("scan runtime cleanup turn: %w", err)
 		}
+		turn.State = TurnState(state)
 		turns = append(turns, turn)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read interrupted turns: %w", err)
+		return nil, fmt.Errorf("read runtime cleanup turns: %w", err)
 	}
 	return turns, nil
 }

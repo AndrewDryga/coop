@@ -2958,10 +2958,115 @@ func TestSessionServiceStopCancelsInFlightCreateGitAndRestartRecovers(t *testing
 }
 
 type startupCleaningRunner struct {
-	cleaned []string
-	reaped  []string
-	err     error
-	reapErr error
+	cleaned   []string
+	reaped    []string
+	err       error
+	reapErr   error
+	reapError map[string]error
+}
+
+type awaitingValidationSnapshot struct {
+	sessionJSON []byte
+	turnJSON    []byte
+	artifact    session.OutputArtifact
+}
+
+func stageAwaitingValidationTurn(t *testing.T, service *Service, key string) (session.Session, session.Turn, awaitingValidationSnapshot) {
+	t.Helper()
+	ctx := context.Background()
+	sess, err := service.Store().CreateSession(ctx, key+"-session", session.CreateSessionRequest{
+		ID:     "session_" + strings.NewReplacer("-", "_", ".", "_").Replace(key),
+		Target: "codex@work", MaxTurns: 3, MaxQueuedTurns: 3, MaxQueuedBytes: 4096,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess, err = service.Store().BindNativeSession(ctx, sess.ID, "native-"+key); err != nil {
+		t.Fatal(err)
+	}
+	schema := json.RawMessage(`{"type":"object","properties":{"reply":{"type":"string"}},"required":["reply"],"additionalProperties":false}`)
+	schemaDigest := sha256.Sum256(schema)
+	admitted, err := service.Store().SubmitTurn(ctx, key+"-turn", session.SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "preserve the candidate",
+		OutputContract: &session.OutputContract{
+			JSONSchema: schema, SHA256: fmt.Sprintf("%x", schemaDigest), RequireSemanticValidation: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leased, ok, err := service.Store().LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok || leased.ID != admitted.ID {
+		t.Fatalf("lease awaiting-validation turn = %+v, ok=%v, err=%v", leased, ok, err)
+	}
+	if _, err := service.Store().MarkTurnSendIntent(ctx, sess.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Store().MarkTurnSent(ctx, sess.ID, leased.ID); err != nil {
+		t.Fatal(err)
+	}
+	artifactData := []byte("\x89PNG\r\n\x1a\ncandidate artifact bytes")
+	artifactDigest := sha256.Sum256(artifactData)
+	artifact := session.OutputArtifact{
+		ID: "artifact_" + key, Name: "candidate.png", MediaType: "image/png",
+		SHA256: fmt.Sprintf("%x", artifactDigest), Bytes: int64(len(artifactData)), Data: artifactData,
+	}
+	message := `{"reply":"preserved"}`
+	messageDigest := sha256.Sum256([]byte(message))
+	staged, err := service.Store().StageTurnCandidate(ctx, session.StageTurnCandidateRequest{
+		SessionID: sess.ID, TurnID: leased.ID, Message: message,
+		SHA256: fmt.Sprintf("%x", messageDigest), Attempt: 2,
+		Artifacts: []session.OutputArtifact{artifact},
+		Usage: session.Usage{
+			InputTokens: 11, CachedInputTokens: 3, OutputTokens: 7, ReasoningTokens: 5,
+		},
+		CumulativeCostUSD: 0.125, CostRecorded: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err = service.Store().GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sess, staged, snapshotAwaitingValidation(t, service, sess, staged)
+}
+
+func snapshotAwaitingValidation(t *testing.T, service *Service, sess session.Session, turn session.Turn) awaitingValidationSnapshot {
+	t.Helper()
+	sessionJSON, err := json.Marshal(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turnJSON, err := json.Marshal(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := service.Store().GetOutputArtifact(context.Background(), sess.ID, turn.ID, turn.OutputArtifacts[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return awaitingValidationSnapshot{sessionJSON: sessionJSON, turnJSON: turnJSON, artifact: artifact}
+}
+
+func assertAwaitingValidationUnchanged(t *testing.T, service *Service, sess session.Session, turn session.Turn, want awaitingValidationSnapshot) {
+	t.Helper()
+	gotSession, err := service.Store().GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotTurn, err := service.Store().GetTurn(context.Background(), sess.ID, turn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := snapshotAwaitingValidation(t, service, gotSession, gotTurn)
+	if !bytes.Equal(got.sessionJSON, want.sessionJSON) || !bytes.Equal(got.turnJSON, want.turnJSON) ||
+		got.artifact.ID != want.artifact.ID || got.artifact.Name != want.artifact.Name ||
+		got.artifact.MediaType != want.artifact.MediaType || got.artifact.SHA256 != want.artifact.SHA256 ||
+		got.artifact.Bytes != want.artifact.Bytes || !bytes.Equal(got.artifact.Data, want.artifact.Data) {
+		t.Fatalf("awaiting-validation state changed during runtime cleanup:\nwant session=%s turn=%s artifact=%+v\n got session=%s turn=%s artifact=%+v",
+			want.sessionJSON, want.turnJSON, want.artifact, got.sessionJSON, got.turnJSON, got.artifact)
+	}
 }
 
 type recoveredTurnCleanupRunner struct {
@@ -3032,6 +3137,9 @@ func (r *startupCleaningRunner) CleanupSession(_ context.Context, sess session.S
 
 func (r *startupCleaningRunner) ReapInterruptedTurn(_ context.Context, _ session.Session, turn session.Turn) error {
 	r.reaped = append(r.reaped, turn.ID)
+	if err := r.reapError[turn.ID]; err != nil {
+		return err
+	}
 	return r.reapErr
 }
 
@@ -3065,7 +3173,7 @@ func TestSessionServiceDefersHistoricalParkedCleanupWithoutDelayingStartup(t *te
 	if len(runner.cleaned) != 0 {
 		t.Fatalf("startup synchronously cleaned %d historical parked sessions", len(runner.cleaned))
 	}
-	service.cleanupParkedSessions(context.Background())
+	service.cleanupIdleSessionRuntimes(context.Background())
 	if len(runner.cleaned) != 2 {
 		t.Fatalf("first deferred cleanup batch = %d, want 2", len(runner.cleaned))
 	}
@@ -3201,8 +3309,8 @@ func TestPreparingWarmRuntimeInvalidatesEarlierCleanupProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service.cleanupParkedSessions(ctx)
-	service.cleanupParkedSessions(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
 	if got := runner.calls.Load(); got != 1 {
 		t.Fatalf("initial clean runtime was not cached: calls=%d", got)
 	}
@@ -3213,10 +3321,71 @@ func TestPreparingWarmRuntimeInvalidatesEarlierCleanupProof(t *testing.T) {
 	// best-effort runtime cleanup failed. The janitor must inspect the session
 	// again even though its durable revision did not change.
 	runner.warm.Store(false)
-	service.cleanupParkedSessions(ctx)
-	service.cleanupParkedSessions(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
 	if got := runner.calls.Load(); got != 2 {
 		t.Fatalf("warm lifecycle remained hidden behind old cleanup proof: calls=%d, want 2", got)
+	}
+}
+
+func TestPreparingWarmRuntimeCannotRaceSuccessfulCleanupStamp(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &periodicCleanupRunner{started: make(chan struct{}), release: make(chan struct{})}
+	policies := testSessionPolicies(repo)
+	policy := policies["responder"]
+	policy.WarmIdleTimeout = time.Minute
+	policies["responder"] = policy
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies, Runner: runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	ctx := context.Background()
+	sess, err := service.CreateRemoteSession(ctx, "prepare-cleanup-stamp-race", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "serialize cleanup proof",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stampReady := make(chan struct{})
+	allowStamp := make(chan struct{})
+	service.testBeforeCleanupStamp = func() {
+		service.testBeforeCleanupStamp = nil
+		close(stampReady)
+		<-allowStamp
+	}
+	cleanupDone := make(chan struct{})
+	go func() {
+		service.cleanupIdleSessionRuntimes(ctx)
+		close(cleanupDone)
+	}()
+	<-stampReady
+	prepared := make(chan error, 1)
+	go func() {
+		_, err := service.PrepareSession(ctx, sess.ID, sess.Revision)
+		prepared <- err
+	}()
+	select {
+	case err := <-prepared:
+		t.Fatalf("warm prepare crossed an unstamped cleanup proof: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(allowStamp)
+	<-cleanupDone
+	if err := <-prepared; err != nil {
+		t.Fatal(err)
+	}
+
+	// The prepare invalidated the proof after cleanup stamped it under the same
+	// runtime lock. Once the warm entry expires, the janitor must clean again.
+	runner.warm.Store(false)
+	service.cleanupIdleSessionRuntimes(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
+	if got := runner.calls.Load(); got != 2 {
+		t.Fatalf("warm prepare invalidation was overwritten: cleanup calls=%d, want 2", got)
 	}
 }
 
@@ -3241,10 +3410,10 @@ func TestSessionMaintenanceRechecksWarmRuntimeAfterItsLeaseExpires(t *testing.T)
 		t.Fatal(err)
 	}
 
-	service.cleanupParkedSessions(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
 	runner.warm.Store(false)
-	service.cleanupParkedSessions(ctx)
-	service.cleanupParkedSessions(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
 	if got := runner.calls.Load(); got != 2 {
 		t.Fatalf("warm runtime was cached past expiry or clean runtime was rescanned: calls=%d, want 2", got)
 	}
@@ -3279,16 +3448,16 @@ func TestSessionMaintenanceBoundsAndRemembersParkedRuntimeCleanup(t *testing.T) 
 		}
 	}
 
-	service.cleanupParkedSessions(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
 	if got := runner.calls.Load(); got != cleanupBatchSize {
 		t.Fatalf("first cleanup sweep calls = %d, want bounded batch %d", got, cleanupBatchSize)
 	}
-	service.cleanupParkedSessions(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
 	if got := runner.calls.Load(); got != cleanupBatchSize+2 {
 		t.Fatalf("second cleanup sweep rescanned clean sessions: calls=%d, want %d",
 			got, cleanupBatchSize+2)
 	}
-	service.cleanupParkedSessions(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
 	if got := runner.calls.Load(); got != cleanupBatchSize+2 {
 		t.Fatalf("unchanged clean sessions were rescanned: calls=%d", got)
 	}
@@ -3319,8 +3488,8 @@ func TestSessionMaintenanceAdvancesPastParkedCleanupFailures(t *testing.T) {
 		}
 	}
 
-	service.cleanupParkedSessions(ctx)
-	service.cleanupParkedSessions(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
+	service.cleanupIdleSessionRuntimes(ctx)
 	if got := runner.calls.Load(); got != cleanupBatchSize*2 {
 		t.Fatalf("cleanup failure did not retain its per-sweep budget: calls=%d, want %d",
 			got, cleanupBatchSize*2)
@@ -3489,6 +3658,277 @@ func TestSessionServiceRecoveryCleanupFailureLeavesTurnActiveForRetry(t *testing
 	}
 	if len(runner.reaped) != 2 || runner.reaped[0] != turn.ID || runner.reaped[1] != turn.ID {
 		t.Fatalf("reaped turns = %v, want two retries for %s", runner.reaped, turn.ID)
+	}
+}
+
+func TestSessionServiceStartupReapsAwaitingValidationRuntimeWithoutChangingCandidate(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &startupCleaningRunner{}
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo), Runner: runner,
+		CleanupInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	sess, turn, before := stageAwaitingValidationTurn(t, service, "startup-candidate")
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertAwaitingValidationUnchanged(t, service, sess, turn, before)
+	if len(runner.reaped) != 1 || runner.reaped[0] != turn.ID {
+		t.Fatalf("startup reaped turns = %v, want %s", runner.reaped, turn.ID)
+	}
+	service.cleanupIdleSessionRuntimes(context.Background())
+	if len(runner.reaped) != 1 {
+		t.Fatalf("periodic cleanup repeated successful startup reap: %v", runner.reaped)
+	}
+}
+
+func TestSessionServiceStartupAttemptsEveryAwaitingRuntimeBeforeFailing(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &startupCleaningRunner{reapError: make(map[string]error)}
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo), Runner: runner,
+		CleanupInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	firstSession, firstTurn, firstBefore := stageAwaitingValidationTurn(t, service, "startup_a")
+	secondSession, secondTurn, secondBefore := stageAwaitingValidationTurn(t, service, "startup_b")
+	runner.reapError[firstTurn.ID] = errors.New("first runtime is unavailable")
+
+	if err := service.Start(context.Background()); err == nil {
+		t.Fatal("startup succeeded despite one awaiting-runtime cleanup failure")
+	}
+	if got, want := fmt.Sprint(runner.reaped), fmt.Sprint([]string{firstTurn.ID, secondTurn.ID}); got != want {
+		t.Fatalf("startup cleanup attempts = %s, want %s", got, want)
+	}
+	assertAwaitingValidationUnchanged(t, service, firstSession, firstTurn, firstBefore)
+	assertAwaitingValidationUnchanged(t, service, secondSession, secondTurn, secondBefore)
+
+	delete(runner.reapError, firstTurn.ID)
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatalf("startup cleanup retry = %v", err)
+	}
+	if got, want := fmt.Sprint(runner.reaped), fmt.Sprint([]string{firstTurn.ID, secondTurn.ID, firstTurn.ID}); got != want {
+		t.Fatalf("startup retry repeated an already-clean candidate: got %s, want %s", got, want)
+	}
+	assertAwaitingValidationUnchanged(t, service, firstSession, firstTurn, firstBefore)
+	assertAwaitingValidationUnchanged(t, service, secondSession, secondTurn, secondBefore)
+}
+
+func TestSessionServiceRetriesAwaitingValidationRuntimeCleanupWithoutChangingCandidate(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &startupCleaningRunner{reapErr: errors.New("runtime inventory unavailable")}
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo), Runner: runner,
+		CleanupInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	sess, turn, before := stageAwaitingValidationTurn(t, service, "retry-candidate")
+
+	if err := service.Start(context.Background()); err == nil {
+		t.Fatal("startup succeeded despite awaiting-validation runtime cleanup failure")
+	}
+	assertAwaitingValidationUnchanged(t, service, sess, turn, before)
+	if len(runner.reaped) != 1 {
+		t.Fatalf("startup cleanup attempts = %v, want one", runner.reaped)
+	}
+
+	service.cleanupIdleSessionRuntimes(context.Background())
+	if len(runner.reaped) != 2 {
+		t.Fatalf("failed periodic cleanup was not retried: %v", runner.reaped)
+	}
+	assertAwaitingValidationUnchanged(t, service, sess, turn, before)
+
+	runner.reapErr = nil
+	service.cleanupIdleSessionRuntimes(context.Background())
+	service.cleanupIdleSessionRuntimes(context.Background())
+	if len(runner.reaped) != 3 {
+		t.Fatalf("successful periodic cleanup was repeated: %v", runner.reaped)
+	}
+	assertAwaitingValidationUnchanged(t, service, sess, turn, before)
+}
+
+type candidateDecisionCleanupRunner struct {
+	mu         sync.Mutex
+	reapErr    error
+	reaped     []string
+	runOnce    sync.Once
+	runStarted chan struct{}
+}
+
+func (r *candidateDecisionCleanupRunner) ReapInterruptedTurn(_ context.Context, _ session.Session, turn session.Turn) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reaped = append(r.reaped, turn.ID)
+	return r.reapErr
+}
+
+func (r *candidateDecisionCleanupRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+	r.runOnce.Do(func() { close(r.runStarted) })
+	return turn, errors.New("fixture stops after runtime serialization assertion")
+}
+
+func (r *candidateDecisionCleanupRunner) setReapError(err error) {
+	r.mu.Lock()
+	r.reapErr = err
+	r.mu.Unlock()
+}
+
+func (r *candidateDecisionCleanupRunner) reapedCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.reaped)
+}
+
+func newCandidateDecisionService(t *testing.T, key string, runner *candidateDecisionCleanupRunner) (*Service, session.Session, session.Turn) {
+	t.Helper()
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo), Runner: runner,
+		CleanupInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Stop() })
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sess, turn, _ := stageAwaitingValidationTurn(t, service, key)
+	return service, sess, turn
+}
+
+func TestSessionServiceCandidateDecisionsReapRuntimeBeforeTransition(t *testing.T) {
+	for _, verdict := range []string{"accept", "cancel"} {
+		t.Run(verdict, func(t *testing.T) {
+			runner := &candidateDecisionCleanupRunner{runStarted: make(chan struct{})}
+			service, sess, turn := newCandidateDecisionService(t, verdict+"-candidate", runner)
+			var got session.Turn
+			var err error
+			switch verdict {
+			case "accept":
+				got, err = service.AcceptTurnCandidate(
+					context.Background(), "accept-candidate", sess.ID, turn.ID, turn.Candidate.SHA256,
+				)
+				if err == nil && got.State != session.TurnCompleted {
+					t.Fatalf("accepted candidate state = %q", got.State)
+				}
+			case "cancel":
+				got, err = service.CancelTurn(context.Background(), "cancel-candidate", session.CancelTurnRequest{
+					SessionID: sess.ID, TurnID: turn.ID, ExpectedRevision: sess.Revision,
+				})
+				if err == nil && got.State != session.TurnCancelled {
+					t.Fatalf("cancelled candidate state = %q", got.State)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := runner.reapedCount(); got != 1 {
+				t.Fatalf("%s cleanup calls = %d, want 1", verdict, got)
+			}
+		})
+	}
+}
+
+func TestSessionServiceAwaitingCancelRequiresFreshKeyAfterCleanupFailure(t *testing.T) {
+	runner := &candidateDecisionCleanupRunner{runStarted: make(chan struct{})}
+	runner.setReapError(acpFailure(sessionACPCleanupError, "runtime inventory unavailable"))
+	service, sess, turn := newCandidateDecisionService(t, "failed-cancel-candidate", runner)
+	request := session.CancelTurnRequest{
+		SessionID: sess.ID, TurnID: turn.ID, ExpectedRevision: sess.Revision,
+	}
+	const failedKey = "cancel-before-cleanup"
+	if _, err := service.CancelTurn(context.Background(), failedKey, request); err == nil {
+		t.Fatal("awaiting candidate cancelled despite failed prior-runtime cleanup")
+	}
+	got, err := service.GetTurn(context.Background(), sess.ID, turn.ID)
+	if err != nil || got.State != session.TurnAwaitingValidation || got.Candidate == nil ||
+		got.Candidate.SHA256 != turn.Candidate.SHA256 {
+		t.Fatalf("candidate after failed cancel cleanup = %+v, err=%v", got, err)
+	}
+	runner.setReapError(nil)
+	if _, err := service.CancelTurn(context.Background(), failedKey, request); err == nil {
+		t.Fatal("terminal cancel cleanup failure did not replay for the same idempotency key")
+	}
+	if got := runner.reapedCount(); got != 1 {
+		t.Fatalf("failed cancel replay repeated runtime cleanup: calls=%d", got)
+	}
+	cancelled, err := service.CancelTurn(context.Background(), "cancel-after-cleanup", request)
+	if err != nil || cancelled.State != session.TurnCancelled {
+		t.Fatalf("cancel after runtime recovery = %+v, err=%v", cancelled, err)
+	}
+	if got := runner.reapedCount(); got != 2 {
+		t.Fatalf("cancel cleanup calls = %d, want failed attempt plus retry", got)
+	}
+}
+
+func TestSessionServiceDoesNotRestartRejectedCandidateWhenRuntimeReapFails(t *testing.T) {
+	runner := &candidateDecisionCleanupRunner{runStarted: make(chan struct{})}
+	runner.setReapError(acpFailure(sessionACPCleanupError, "runtime inventory unavailable"))
+	service, sess, turn := newCandidateDecisionService(t, "failed-reject-candidate", runner)
+	request := session.RejectTurnCandidateRequest{
+		SessionID: sess.ID, TurnID: turn.ID, CandidateSHA256: turn.Candidate.SHA256,
+		Violations: []string{"candidate requires repair"},
+	}
+	const failedKey = "reject-before-cleanup"
+	if _, err := service.RejectTurnCandidate(context.Background(), failedKey, request); err == nil {
+		t.Fatal("candidate rejection succeeded despite failed prior-runtime cleanup")
+	}
+	got, err := service.GetTurn(context.Background(), sess.ID, turn.ID)
+	if err != nil || got.State != session.TurnAwaitingValidation || got.Candidate == nil ||
+		got.Candidate.SHA256 != turn.Candidate.SHA256 {
+		t.Fatalf("candidate after rejected cleanup = %+v, err=%v", got, err)
+	}
+	service.mu.Lock()
+	workers := len(service.workers)
+	service.mu.Unlock()
+	if workers != 0 {
+		t.Fatalf("failed cleanup scheduled %d replacement workers", workers)
+	}
+
+	runner.setReapError(nil)
+	if _, err := service.RejectTurnCandidate(context.Background(), failedKey, request); err == nil {
+		t.Fatal("terminal cleanup failure did not replay for the same idempotency key")
+	}
+	if got := runner.reapedCount(); got != 1 {
+		t.Fatalf("failed decision replay repeated runtime cleanup: calls=%d", got)
+	}
+
+	replacementLeased := make(chan struct{})
+	service.testAfterTurnLease = func(leased session.Turn) {
+		if leased.ID == turn.ID {
+			close(replacementLeased)
+		}
+	}
+	if _, err := service.RejectTurnCandidate(context.Background(), "reject-after-cleanup", request); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-replacementLeased:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleaned rejected candidate was not re-leased")
+	}
+	select {
+	case <-runner.runStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleaned rejected candidate did not restart")
+	}
+	if got := runner.reapedCount(); got != 2 {
+		t.Fatalf("candidate cleanup calls = %d, want failed attempt plus retry", got)
 	}
 }
 

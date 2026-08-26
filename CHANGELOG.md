@@ -13,7 +13,13 @@
   idempotent validation endpoint; schema repair does not spend that caller-review budget. Pending
   candidates survive daemon restart, rejection re-prompts the same logical/native turn, acceptance
   publishes only the stored candidate with a durable receipt, and exhaustion publishes no
-  assistant message.
+  assistant message. Once a candidate is staged, provider-runtime teardown is separate retryable
+  cleanup: a teardown error cannot hide the candidate, and startup plus the bounded janitor reap
+  any leftover process, box, projected credentials, and services without making a validation
+  decision or changing the candidate. Accept, reject, and awaiting-turn cancellation likewise reap
+  before changing state; a cleanup failure returns a retryable service error while preserving the
+  candidate, and the caller retries the still-current decision with a fresh idempotency key after
+  runtime recovery.
 
 - **Detached forks have one repository-owned worker-state format.** Every current pidfile starts
   with `owner-v1`; Coop no longer decodes, signals, rewrites, or partially cleans up headerless

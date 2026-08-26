@@ -402,6 +402,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 	var candidateUsage session.Usage
 	var outputArtifacts []session.OutputArtifact
 	protocolComplete := false
+	candidatePublished := false
 	parked := false
 	warmIdleTimeout, _ := ctx.Value(sessionWarmIdleTimeoutContextKey{}).(time.Duration)
 
@@ -432,18 +433,20 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			}
 		}
 		if cleanupFailed {
-			if protocolComplete && baseErr == nil {
+			if (protocolComplete || candidatePublished) && baseErr == nil {
 				// The answer outranks the janitorial proof. Failing here converted
 				// finished multi-minute investigations into errors over a slow
-				// `docker rm`, and bought nothing: the per-minute parked-session
+				// `docker rm`, and bought nothing: the per-minute idle-runtime
 				// sweep retries exactly this teardown, and the projection sits in
 				// the owner-private state root either way until it does. The
 				// failure still surfaces — loudly, with its cause — where an
 				// operator reads, instead of destroying what the model produced.
-				r.host.warnf(
-					"turn %s completed but its runtime cleanup failed; the janitor retries it: %s",
-					leased.ID, sessionACPBoundedDetail("cause", cleanupCause.Error()),
-				)
+				state := "completed"
+				if candidatePublished {
+					state = "published a semantic candidate"
+				}
+				r.host.warnf("turn %s %s but its runtime cleanup failed; the janitor retries it: %s",
+					leased.ID, state, sessionACPBoundedDetail("cause", cleanupCause.Error()))
 			} else {
 				if baseErr == nil {
 					baseErr = acpFailure(
@@ -614,6 +617,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 						runErr = stageErr
 						return result, runErr
 					}
+					candidatePublished = true
 					result = staged
 					return result, nil
 				}
@@ -907,6 +911,7 @@ func (r *sessionTurnRunner) ReapInterruptedTurn(ctx context.Context, bound sessi
 	return errors.Join(
 		r.removeTurnBox(sessionTurnRunID(turn.SessionID, turn.ID)),
 		r.stopSessionServices(ctx, bound),
+		r.cleanupSessionCredentials(bound),
 	)
 }
 

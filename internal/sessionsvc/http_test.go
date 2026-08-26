@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -300,6 +301,79 @@ func TestSemanticCandidateIsAcceptedEndToEndByExactDigest(t *testing.T) {
 	}
 }
 
+func TestSemanticCandidateCleanupFailureHasCorrelatedRetryGuidance(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &httpTestSessionRunner{}
+	var logs bytes.Buffer
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo), Runner: runner,
+		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	sess, turn, _ := stageAwaitingValidationTurn(t, service, "http_cleanup_failure")
+	runner.reapErr = fmt.Errorf("runtime inventory under %s is unavailable", service.stateRoot)
+	handler := NewHTTPHandler(service)
+	body := fmt.Sprintf(`{"candidate_sha256":%q,"verdict":"accept"}`, turn.Candidate.SHA256)
+
+	request := func(key string) (*httptest.ResponseRecorder, string) {
+		response := sessionHTTPTestRequest(t, handler, http.MethodPost,
+			"/v1/sessions/"+sess.ID+"/turns/"+turn.ID+"/validation",
+			body, key, "application/json")
+		var decoded struct {
+			Error struct {
+				Code        string `json:"code"`
+				Detail      string `json:"detail"`
+				OperationID string `json:"operation_id"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusServiceUnavailable ||
+			decoded.Error.Code != string(sessionACPCleanupError) ||
+			decoded.Error.Detail != "session runtime cleanup is temporarily unavailable" ||
+			decoded.Error.OperationID == "" || strings.Contains(response.Body.String(), service.stateRoot) {
+			t.Fatalf("cleanup response = %d %s", response.Code, response.Body.String())
+		}
+		return response, decoded.Error.OperationID
+	}
+
+	_, operationID := request("accept-before-runtime-cleanup")
+	if runner.reapCalls != 1 {
+		t.Fatalf("initial cleanup calls = %d, want 1", runner.reapCalls)
+	}
+	if !strings.Contains(logs.String(), operationID) || !strings.Contains(logs.String(), "<state-root>") ||
+		strings.Contains(logs.String(), service.stateRoot) {
+		t.Fatalf("cleanup diagnostic was not correlated and sanitized: %s", logs.String())
+	}
+	operation := sessionHTTPTestRequest(t, handler, http.MethodGet,
+		"/v1/operations/"+operationID, "", "", "")
+	if operation.Code != http.StatusOK ||
+		!strings.Contains(operation.Body.String(), `"error_code":"session_cleanup_error"`) ||
+		!strings.Contains(operation.Body.String(), `"error_detail":"session runtime cleanup is temporarily unavailable"`) ||
+		strings.Contains(operation.Body.String(), service.stateRoot) {
+		t.Fatalf("cleanup operation projection = %d %s", operation.Code, operation.Body.String())
+	}
+
+	runner.reapErr = nil
+	_, replayOperationID := request("accept-before-runtime-cleanup")
+	if replayOperationID != operationID || runner.reapCalls != 1 {
+		t.Fatalf("failed decision replay = operation %q calls %d; want %q and 1",
+			replayOperationID, runner.reapCalls, operationID)
+	}
+	recovered := sessionHTTPTestRequest(t, handler, http.MethodPost,
+		"/v1/sessions/"+sess.ID+"/turns/"+turn.ID+"/validation",
+		body, "accept-after-runtime-cleanup", "application/json")
+	if recovered.Code != http.StatusOK || !strings.Contains(recovered.Body.String(), `"state":"completed"`) ||
+		runner.reapCalls != 2 {
+		t.Fatalf("candidate recovery = %d %s calls=%d", recovered.Code, recovered.Body.String(), runner.reapCalls)
+	}
+}
+
 func TestRepositoryUnavailableIsPublicAndRetryable(t *testing.T) {
 	code, status, detail := sessionHTTPError(&session.Error{
 		Code:   session.ErrorCode("repository_unavailable"),
@@ -308,6 +382,16 @@ func TestRepositoryUnavailableIsPublicAndRetryable(t *testing.T) {
 	if code != "repository_unavailable" || status != http.StatusServiceUnavailable ||
 		!strings.Contains(detail, "blitz-core") {
 		t.Fatalf("repository error = code %q status %d detail %q", code, status, detail)
+	}
+}
+
+func TestSessionCleanupUnavailableIsPublicAndRetryable(t *testing.T) {
+	code, status, detail := sessionHTTPError(&session.Error{
+		Code: sessionACPCleanupError, Detail: "runtime cleanup failed: /secret/runtime/path",
+	})
+	if code != string(sessionACPCleanupError) || status != http.StatusServiceUnavailable ||
+		detail != "session runtime cleanup is temporarily unavailable" || strings.Contains(detail, "/secret/") {
+		t.Fatalf("cleanup error = code %q status %d detail %q", code, status, detail)
 	}
 }
 
@@ -828,9 +912,7 @@ func newHTTPTestSessionService(t *testing.T, ladder ...string) (*Service, string
 	}
 	service, err := NewService(Config{
 		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies,
-		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
-			return turn, nil
-		}),
+		Runner: &httpTestSessionRunner{},
 		ReviewGate: ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
 			return ReviewGateResult{Configured: true, Passed: true}, nil
 		}),
@@ -839,6 +921,20 @@ func newHTTPTestSessionService(t *testing.T, ladder ...string) (*Service, string
 		t.Fatal(err)
 	}
 	return service, repo
+}
+
+type httpTestSessionRunner struct {
+	reapErr   error
+	reapCalls int
+}
+
+func (*httpTestSessionRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+	return turn, nil
+}
+
+func (r *httpTestSessionRunner) ReapInterruptedTurn(context.Context, session.Session, session.Turn) error {
+	r.reapCalls++
+	return r.reapErr
 }
 
 func sessionHTTPTestRequest(t *testing.T, handler http.Handler, method, path, body, key, contentType string) *httptest.ResponseRecorder {

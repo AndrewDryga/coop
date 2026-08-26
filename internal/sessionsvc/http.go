@@ -1207,6 +1207,8 @@ func publicSessionErrorDetail(code session.ErrorCode, detail string) string {
 		return "internal operation failure"
 	case session.CodeDiscardPlanStale:
 		return "discard plan no longer matches workspace state"
+	case sessionACPCleanupError:
+		return "session runtime cleanup is temporarily unavailable"
 	default:
 		return BoundedDetail(detail)
 	}
@@ -1275,7 +1277,7 @@ func sessionHTTPError(err error) (string, int, string) {
 		status = http.StatusConflict
 	case session.CodeInternal:
 		status = http.StatusInternalServerError
-	case session.CodeRepositoryUnavailable:
+	case session.CodeRepositoryUnavailable, sessionACPCleanupError:
 		status = http.StatusServiceUnavailable
 	}
 	var typed *session.Error

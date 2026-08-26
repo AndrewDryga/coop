@@ -319,6 +319,11 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 		staged.Candidate.Message != candidateBytes {
 		t.Fatalf("recovered semantic candidate = %+v, err=%v", staged, err)
 	}
+	cleanupTurns, err := store.ListRuntimeCleanupTurns(ctx)
+	if err != nil || len(cleanupTurns) != 1 || cleanupTurns[0].ID != turn.ID ||
+		cleanupTurns[0].State != TurnAwaitingValidation {
+		t.Fatalf("runtime cleanup turns = %+v, err=%v", cleanupTurns, err)
+	}
 	if _, err := store.CompleteTurn(ctx, CompleteTurnRequest{
 		SessionID: sess.ID, TurnID: turn.ID,
 		CandidateSHA256: strings.Repeat("0", 64),
@@ -335,6 +340,9 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 	if completed.State != TurnCompleted || completed.AssistantMessage != candidateBytes ||
 		completed.ValidationReceipt == "" {
 		t.Fatalf("accepted semantic turn = %+v", completed)
+	}
+	if cleanupTurns, err := store.ListRuntimeCleanupTurns(ctx); err != nil || len(cleanupTurns) != 0 {
+		t.Fatalf("runtime cleanup turns after acceptance = %+v, err=%v", cleanupTurns, err)
 	}
 }
 
