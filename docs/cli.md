@@ -27,6 +27,7 @@ FORKS — review and land work like a PR
   coop fork ls                      list this repo's forks
   coop fork review <name>           show a fork's review dossier + diff
   coop fork merge <name>            rebase the fork onto your branch and land it
+  coop fork merge --all             rebase and land every fork
   coop fork logs [name]             tail a fork's loop log (no name: every fork)
   coop fork rm <name>               discard a fork
   coop fork stop <name>             stop a detached loop
@@ -85,7 +86,8 @@ coop fork — a throwaway clone handed to an agent; review and land it like a PR
   coop fork logs [<name>]           tail a fork's loop log (no name: all forks)
   coop fork review <name>           dossier + diff (--stat, --tool, --open, --gate)
   coop fork <name> acp <target>     front the fork as an ACP agent (for editors)
-  coop fork merge <name>            rebase onto your branch and land it (--all lands every fork)
+  coop fork merge <name>            rebase onto your branch and land one fork
+  coop fork merge --all             rebase and land every fork
   coop fork rm <name>               discard a fork (confirms; refuses unmerged/dirty without --force)
   coop fork open <name>             open the fork in your editor
   coop fork path <name>             print the fork's filesystem path

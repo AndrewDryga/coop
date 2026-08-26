@@ -111,6 +111,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop fork ls", "list this repo's forks")
 	row("coop fork review <name>", "show a fork's review dossier + diff")
 	row("coop fork merge <name>", "rebase the fork onto your branch and land it")
+	row("coop fork merge --all", "rebase and land every fork")
 	row("coop fork logs [name]", "tail a fork's loop log (no name: every fork)")
 	row("coop fork rm <name>", "discard a fork")
 	row("coop fork stop <name>", "stop a detached loop")

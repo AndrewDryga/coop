@@ -24,6 +24,9 @@ func TestForkMergeRequiresName(t *testing.T) {
 	if code, err := c.ForkMerge([]string{"--nope"}); code != 2 || err == nil {
 		t.Errorf("ForkMerge(--nope) = (%d, %v), want (2, unknown-flag error)", code, err)
 	}
+	if code, err := c.ForkMerge([]string{"perf", "--all", "--yes"}); code != 2 || err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("ForkMerge(perf --all --yes) = (%d, %v), want (2, mutually-exclusive error)", code, err)
+	}
 }
 
 func TestForkMergePreflightsUnsupportedStateBeforeEnvironmentGates(t *testing.T) {

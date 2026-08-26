@@ -463,7 +463,10 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	// Validate the static args before the environment: a missing <name> (without --all) is a usage
 	// error (exit 2), not the dirty-tree / non-interactive error (exit 1) the env gates below report.
 	if !all && name == "" {
-		return 2, errors.New("usage: coop fork merge <name> [--all] [--yes]")
+		return 2, errors.New("usage: coop fork merge <name> [--force] [--yes] | coop fork merge --all [--force] [--yes]")
+	}
+	if all && name != "" {
+		return 2, errors.New("coop fork merge: <name> and --all are mutually exclusive")
 	}
 	if !all && !forkspace.ValidName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)

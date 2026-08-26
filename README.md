@@ -191,7 +191,8 @@ spelled out here (there's room to render them).
 | `coop fork <name> [<target|preset>] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent or preset (re-entry resumes the session; `--new` resets) |
 | `coop fork ls` | list this repo's forks: agent, branch, state, tasks done/total, change size, last activity |
 | `coop fork review <name> [--stat\|--tool\|--open] [--gate]` | dossier + diff; `--gate` previews the rebase and gate without touching either source repo |
-| `coop fork merge <name> [--all] [--yes]` | rebase the fork onto your branch and land it (`--all` lands every fork; `--yes` confirms non-interactively) |
+| `coop fork merge <name> [--force] [--yes]` | rebase one fork onto your branch and land it (`--yes` confirms non-interactively) |
+| `coop fork merge --all [--force] [--yes]` | rebase and land every fork (`--yes` confirms non-interactively; cannot be combined with a name) |
 | `coop fork logs [name] [-f]` · `stop <name>` | tail a loop log (no name = all) · stop a detached loop |
 | `coop fork rm <name> [--force] [--yes]` | discard a fork — confirms first (`--yes` skips it; refuses unmerged/dirty work without `--force`) |
 | `coop fork open <name>` · `path <name>` | open the fork in your editor · print its filesystem path |
