@@ -1,6 +1,7 @@
 package sessionsvc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,10 +21,11 @@ import (
 )
 
 const (
-	sessionHTTPMaxBody     = 128 << 10
-	sessionHTTPTurnMaxBody = 12 << 20
-	sessionHTTPDefaultMax  = 100
-	sessionHTTPMaxList     = 1000
+	sessionHTTPMaxBody      = 128 << 10
+	sessionHTTPTurnMaxBody  = 12 << 20
+	sessionHTTPFenceMaxBody = sessionHTTPTurnMaxBody + sessionHTTPMaxBody
+	sessionHTTPDefaultMax   = 100
+	sessionHTTPMaxList      = 1000
 	// sessionEventPageBytes caps the payload bytes one event page may carry.
 	// Chosen well under the 3 MiB a client reasonably allows for a whole
 	// response, since the DTO envelope and JSON escaping both add to it.
@@ -119,6 +121,21 @@ type OperationDTO struct {
 	ErrorDetail  string                 `json:"error_detail,omitempty"`
 	CreatedAt    time.Time              `json:"created_at"`
 	UpdatedAt    time.Time              `json:"updated_at"`
+}
+
+type operationFenceEnvelope struct {
+	Method  string          `json:"method"`
+	Request json.RawMessage `json:"request"`
+}
+
+type operationFenceSubmitTurnRequest struct {
+	SessionID        string                  `json:"session_id"`
+	ExpectedRevision int64                   `json:"expected_revision"`
+	Prompt           string                  `json:"prompt"`
+	Artifacts        []session.InputArtifact `json:"artifacts,omitempty"`
+	MinTargetIndex   int                     `json:"min_target_index,omitempty"`
+	RewindTarget     bool                    `json:"rewind_target,omitempty"`
+	OutputContract   *session.OutputContract `json:"output_contract,omitempty"`
 }
 
 type SessionChangeDTO struct {
@@ -290,6 +307,10 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveSessionPath(w, r)
 		return
 	}
+	if r.URL.Path == "/v1/operations/fence" {
+		h.fenceOperation(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/v1/operations/") {
 		h.serveOperationPath(w, r)
 		return
@@ -299,6 +320,52 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeSessionHTTPError(w, http.StatusNotFound, "not_found", "resource not found")
+}
+
+func (h *sessionHTTPHandler) fenceOperation(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePost(w, r) {
+		return
+	}
+	var envelope operationFenceEnvelope
+	if !decodeSessionJSONLimit(w, r, &envelope, sessionHTTPFenceMaxBody) {
+		return
+	}
+	var (
+		op  session.Operation
+		err error
+	)
+	switch envelope.Method {
+	case "CreateRemoteSession":
+		var request CreateRemoteSessionRequest
+		if err = decodeSessionJSONValue(envelope.Request, &request); err == nil {
+			op, err = h.service.FenceCreateRemoteSession(
+				r.Context(), sessionIdempotencyKey(r), request,
+			)
+		}
+	case "SubmitTurn":
+		var request operationFenceSubmitTurnRequest
+		if err = decodeSessionJSONValue(envelope.Request, &request); err == nil {
+			op, err = h.service.FenceSubmitTurn(
+				r.Context(), sessionIdempotencyKey(r), session.SubmitTurnRequest{
+					SessionID: request.SessionID, ExpectedRevision: request.ExpectedRevision,
+					Prompt: request.Prompt, Artifacts: request.Artifacts,
+					MinTargetIndex: request.MinTargetIndex, RewindTarget: request.RewindTarget,
+					OutputContract: request.OutputContract,
+				},
+			)
+		}
+	default:
+		err = &session.Error{Code: session.CodeInvalidRequest, Detail: "operation method cannot be fenced"}
+	}
+	if err != nil {
+		if session.CodeOf(err) == "" {
+			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "fenced request is invalid")
+		} else {
+			writeSessionServiceError(w, err)
+		}
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, publicOperation(op))
 }
 
 func (h *sessionHTTPHandler) getOperationByKey(w http.ResponseWriter, r *http.Request) {
@@ -1005,6 +1072,22 @@ func decodeSessionJSONLimit(w http.ResponseWriter, r *http.Request, value any, l
 	return true
 }
 
+func decodeSessionJSONValue(data []byte, value any) error {
+	if len(data) == 0 {
+		return errors.New("request value is required")
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(value); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return errors.New("request value must contain exactly one JSON value")
+	}
+	return nil
+}
+
 func isSessionBodyTooLarge(err error) bool {
 	var maxErr *http.MaxBytesError
 	return errors.As(err, &maxErr)
@@ -1271,6 +1354,7 @@ func sessionHTTPError(err error) (string, int, string) {
 	case session.CodeSessionNotFound, session.CodeTurnNotFound, session.CodeOperationNotFound:
 		status = http.StatusNotFound
 	case session.CodeIdempotencyConflict, session.CodeOperationIntentConflict, session.CodeOperationUncertain,
+		session.CodeOperationFenced,
 		session.CodeRevisionConflict, session.CodeInvalidSessionState, session.CodeQueueFull,
 		session.CodeBudgetExhausted, session.CodeTurnNotRunnable, session.CodeNativeSessionConflict,
 		session.CodeDiscardPlanStale:

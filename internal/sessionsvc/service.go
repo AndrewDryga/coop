@@ -2868,3 +2868,22 @@ func (s *Service) GetOperation(ctx context.Context, key string) (session.Operati
 func (s *Service) GetOperationByID(ctx context.Context, id string) (session.Operation, error) {
 	return s.store.GetOperationByID(ctx, id)
 }
+
+// FenceCreateRemoteSession and FenceSubmitTurn occupy the target mutation's
+// exact ledger identity when host authority is revoked before execution. They
+// intentionally return the target operation, not a second cleanup operation.
+func (s *Service) FenceCreateRemoteSession(
+	ctx context.Context,
+	key string,
+	req CreateRemoteSessionRequest,
+) (session.Operation, error) {
+	return s.store.FenceOperation(ctx, "CreateRemoteSession", key, req)
+}
+
+func (s *Service) FenceSubmitTurn(
+	ctx context.Context,
+	key string,
+	req session.SubmitTurnRequest,
+) (session.Operation, error) {
+	return s.store.FenceOperation(ctx, "SubmitTurn", key, req)
+}

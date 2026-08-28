@@ -297,6 +297,28 @@ one `key` only and never returns the key, request hash, private intent, or resul
 Operation lookup deliberately omits the stored request, private result, prompts, native provider
 IDs, and host paths.
 
+When an owner revokes authority after durably preparing a session create or turn submit but cannot
+know whether the request crossed the socket, it must not replay the mutation merely to discover a
+resource to stop. `POST /v1/operations/fence` uses the **target mutation's** idempotency key and a
+strict envelope containing its exact typed request:
+
+```json
+{
+  "method": "SubmitTurn",
+  "request": {
+    "session_id": "remote_...",
+    "expected_revision": 3,
+    "prompt": "the exact frozen prompt"
+  }
+}
+```
+
+Only `CreateRemoteSession` and `SubmitTurn` are fenceable. If the target operation is absent or only
+reserved, Coop records it as failed with `operation_fenced`; an exact later mutation therefore cannot
+execute. If admission already won, the fence returns that existing operation and its resource for
+ordinary close/cancel reconciliation. The target request may be as large as a turn submission plus
+the bounded envelope. A lookup miss or elapsed client timeout is never absence proof.
+
 Session creation can be admitted without holding the HTTP request open. Send
 `Prefer: respond-async` on `POST /v1/sessions`; Coop durably records the create intent and returns
 `202 Accepted` with an `operation` in `running` or terminal state. Poll
@@ -714,7 +736,7 @@ Common status mapping:
 | --- | --- |
 | `400` | invalid or over-bounds request |
 | `404` | session, turn, or operation not found |
-| `409` | idempotency, revision, state, queue, budget, resume, uncertainty, or discard conflict |
+| `409` | idempotency, operation fence, revision, state, queue, budget, resume, uncertainty, or discard conflict |
 | `413` | ordinary request body exceeds 128 KiB, or turn submission exceeds 12 MiB |
 | `500` | internal failure; host paths and raw internal errors are suppressed |
 | `503` | readiness is not ready, or repository/runtime cleanup is temporarily unavailable |
@@ -732,6 +754,7 @@ intent remains `operation_uncertain`.
 | Situation | Action |
 | --- | --- |
 | Client response lost | Replay the exact mutation with the same idempotency key |
+| Stop races a prepared create/submit | Fence the exact operation; close/cancel only if admission already won |
 | Socket reconnect | Resume event polling after the last committed sequence |
 | Daemon already owns state | Stop or inspect that daemon; do not remove the lock |
 | Stale socket after crash | Start the daemon with the same state root; it removes only a socket after acquiring the state lock |

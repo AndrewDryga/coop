@@ -173,6 +173,7 @@ const (
 	CodeInvalidRequest          ErrorCode = "invalid_request"
 	CodeIdempotencyConflict     ErrorCode = "idempotency_conflict"
 	CodeOperationNotFound       ErrorCode = "operation_not_found"
+	CodeOperationFenced         ErrorCode = "operation_fenced"
 	CodeOperationUncertain      ErrorCode = "operation_uncertain"
 	CodeOperationIntentConflict ErrorCode = "operation_intent_conflict"
 	CodeSessionNotFound         ErrorCode = "session_not_found"
@@ -219,6 +220,7 @@ func CodeOf(err error) ErrorCode {
 var (
 	ErrIdempotencyConflict     = &Error{Code: CodeIdempotencyConflict}
 	ErrOperationNotFound       = &Error{Code: CodeOperationNotFound}
+	ErrOperationFenced         = &Error{Code: CodeOperationFenced}
 	ErrOperationUncertain      = &Error{Code: CodeOperationUncertain}
 	ErrOperationIntentConflict = &Error{Code: CodeOperationIntentConflict}
 	ErrSessionNotFound         = &Error{Code: CodeSessionNotFound}

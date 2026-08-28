@@ -238,6 +238,111 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	}
 }
 
+// Responder records remote mutation intent before the socket send. If Stop
+// wins in that gap, the owner-only fence must occupy the exact Coop operation
+// key without creating the session or model turn it is trying to stop.
+func TestSessionHTTPOperationFenceLinearizesStopAgainstAdmission(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	handler := NewHTTPHandler(service)
+
+	createBody := `{"method":"CreateRemoteSession","request":{"policy":"responder","task":"stopped before send"}}`
+	fencedCreate := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/operations/fence", createBody,
+		"fenced-http-create", "application/json",
+	)
+	if fencedCreate.Code != http.StatusOK ||
+		!strings.Contains(fencedCreate.Body.String(), `"method":"CreateRemoteSession"`) ||
+		!strings.Contains(fencedCreate.Body.String(), `"state":"failed"`) ||
+		!strings.Contains(fencedCreate.Body.String(), `"error_code":"operation_fenced"`) {
+		t.Fatalf("fenced create = %d %s", fencedCreate.Code, fencedCreate.Body.String())
+	}
+	staleCreate := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions",
+		`{"policy":"responder","task":"stopped before send"}`,
+		"fenced-http-create", "application/json",
+	)
+	if staleCreate.Code != http.StatusConflict ||
+		!strings.Contains(staleCreate.Body.String(), `"code":"operation_fenced"`) {
+		t.Fatalf("create after fence = %d %s", staleCreate.Code, staleCreate.Body.String())
+	}
+
+	createdResponse := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions",
+		`{"policy":"responder","task":"turn fence owner"}`,
+		"turn-fence-session", "application/json",
+	)
+	if createdResponse.Code != http.StatusOK {
+		t.Fatalf("create turn-fence session = %d %s", createdResponse.Code, createdResponse.Body.String())
+	}
+	var created sessionMutationSessionResponse
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	winningCreate := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/operations/fence",
+		`{"method":"CreateRemoteSession","request":{"policy":"responder","task":"turn fence owner"}}`,
+		"turn-fence-session", "application/json",
+	)
+	if winningCreate.Code != http.StatusOK ||
+		!strings.Contains(winningCreate.Body.String(), `"state":"succeeded"`) ||
+		!strings.Contains(winningCreate.Body.String(), `"resource_type":"session"`) ||
+		!strings.Contains(winningCreate.Body.String(), created.Session.ID) {
+		t.Fatalf("winning create fence = %d %s", winningCreate.Code, winningCreate.Body.String())
+	}
+	turnRequest := fmt.Sprintf(
+		`{"method":"SubmitTurn","request":{"session_id":%q,"expected_revision":%d,"prompt":"stopped prompt"}}`,
+		created.Session.ID, created.Session.Revision,
+	)
+	fencedTurn := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/operations/fence", turnRequest,
+		"fenced-http-turn", "application/json",
+	)
+	if fencedTurn.Code != http.StatusOK ||
+		!strings.Contains(fencedTurn.Body.String(), `"method":"SubmitTurn"`) ||
+		!strings.Contains(fencedTurn.Body.String(), `"state":"failed"`) {
+		t.Fatalf("fenced turn = %d %s", fencedTurn.Code, fencedTurn.Body.String())
+	}
+	staleTurn := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
+		fmt.Sprintf(`{"expected_revision":%d,"prompt":"stopped prompt"}`, created.Session.Revision),
+		"fenced-http-turn", "application/json",
+	)
+	if staleTurn.Code != http.StatusConflict ||
+		!strings.Contains(staleTurn.Body.String(), `"code":"operation_fenced"`) {
+		t.Fatalf("turn after fence = %d %s", staleTurn.Code, staleTurn.Body.String())
+	}
+	turns, err := service.Store().ListTurns(context.Background(), created.Session.ID, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 0 {
+		t.Fatalf("turns after HTTP fence = %+v", turns)
+	}
+
+	winningBody := fmt.Sprintf(`{"expected_revision":%d,"prompt":"admitted first"}`, created.Session.Revision)
+	winning := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
+		winningBody, "winning-http-turn", "application/json",
+	)
+	if winning.Code != http.StatusOK {
+		t.Fatalf("winning turn = %d %s", winning.Code, winning.Body.String())
+	}
+	winningFenceBody := fmt.Sprintf(
+		`{"method":"SubmitTurn","request":{"session_id":%q,"expected_revision":%d,"prompt":"admitted first"}}`,
+		created.Session.ID, created.Session.Revision,
+	)
+	winningFence := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/operations/fence", winningFenceBody,
+		"winning-http-turn", "application/json",
+	)
+	if winningFence.Code != http.StatusOK ||
+		!strings.Contains(winningFence.Body.String(), `"state":"succeeded"`) ||
+		!strings.Contains(winningFence.Body.String(), `"resource_type":"turn"`) {
+		t.Fatalf("winning fence = %d %s", winningFence.Code, winningFence.Body.String())
+	}
+}
+
 func TestSemanticCandidateIsAcceptedEndToEndByExactDigest(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()

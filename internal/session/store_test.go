@@ -836,6 +836,98 @@ func TestReplaceOperationIntentAndListIncompleteOperations(t *testing.T) {
 	}
 }
 
+// A stopped host may have persisted a SubmitTurn intent before it sent any
+// bytes. Cleanup must not create the privileged turn merely to discover that
+// there was nothing to cancel. Claiming the exact operation identity as fenced
+// makes the later stale submit replay a terminal fact instead.
+func TestFenceOperationBeforeSubmitPreventsTheTurnFromStarting(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "fence-submit-session", CreateSessionRequest{
+		ID: "session-fence-submit", Target: "codex:model", Policy: "test",
+		PolicyDigest: strings.Repeat("a", 64), Repository: "/repo", Workspace: "/work",
+		ForkName: "fork-fence-submit", BaseCommit: strings.Repeat("b", 40),
+		MaxTurns: 3, MaxQueuedTurns: 3, MaxQueuedBytes: 1 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "do not start"}
+	op, err := store.FenceOperation(ctx, "SubmitTurn", "fenced-submit", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.State != OperationFailed || op.Method != "SubmitTurn" || op.ErrorCode != CodeOperationFenced {
+		t.Fatalf("fenced operation = %+v", op)
+	}
+	if _, err := store.SubmitTurn(ctx, "fenced-submit", req); CodeOf(err) != CodeOperationFenced {
+		t.Fatalf("submit after fence error = %v, want %s", err, CodeOperationFenced)
+	}
+	turns, err := store.ListTurns(ctx, sess.ID, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 0 {
+		t.Fatalf("turns after fenced submit = %+v", turns)
+	}
+}
+
+// If admission wins the operation-key race, Stop must receive the exact
+// resource rather than overwriting history with an absence claim.
+func TestFenceOperationAfterSubmitReturnsTheWinningResource(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "fence-race-session", CreateSessionRequest{
+		ID: "session-fence-race", Target: "codex:model", Policy: "test",
+		PolicyDigest: strings.Repeat("a", 64), Repository: "/repo", Workspace: "/work",
+		ForkName: "fork-fence-race", BaseCommit: strings.Repeat("b", 40),
+		MaxTurns: 3, MaxQueuedTurns: 3, MaxQueuedBytes: 1 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "already admitted"}
+	turn, err := store.SubmitTurn(ctx, "winning-submit", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := store.FenceOperation(ctx, "SubmitTurn", "winning-submit", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.State != OperationSucceeded || op.ResourceType != "turn" || op.ResourceID != turn.ID {
+		t.Fatalf("winning operation = %+v, turn = %+v", op, turn)
+	}
+}
+
+// Async creation commits a reserved operation before doing slow workspace
+// work. The fence must still terminalize that pre-execution reservation, while
+// refusing to confuse a changed request with the target that was stopped.
+func TestFenceOperationStopsAnExactReservedCreateOnly(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	req := map[string]string{"policy": "responder", "task": "do not create"}
+	reserved, replay, err := store.ReserveOperation(ctx, "CreateRemoteSession", "fenced-create", req)
+	if err != nil || replay {
+		t.Fatalf("reserve create = %+v, replay=%v, err=%v", reserved, replay, err)
+	}
+	fenced, err := store.FenceOperation(ctx, "CreateRemoteSession", "fenced-create", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fenced.ID != reserved.ID || fenced.State != OperationFailed || fenced.ErrorCode != CodeOperationFenced {
+		t.Fatalf("fenced reserved create = %+v", fenced)
+	}
+	if _, err := store.FenceOperation(ctx, "CreateRemoteSession", "fenced-create", map[string]string{
+		"policy": "responder", "task": "different",
+	}); CodeOf(err) != CodeIdempotencyConflict {
+		t.Fatalf("changed fence error = %v, want %s", err, CodeIdempotencyConflict)
+	}
+}
+
 func TestReconcileOperationRejectsAStaleSnapshotWithTheSameClock(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))

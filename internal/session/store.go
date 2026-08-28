@@ -319,6 +319,42 @@ func (s *Store) ReserveOperation(ctx context.Context, method, key string, reques
 	return op, replay, nil
 }
 
+// FenceOperation linearizes a caller revoking authority against an exact
+// mutation that may or may not have reached Coop. An absent or merely reserved
+// operation is made terminal before execution. Once an operation is running or
+// terminal, its existing state and resource remain the only source of truth.
+func (s *Store) FenceOperation(ctx context.Context, method, key string, request any) (Operation, error) {
+	hash, err := CanonicalRequestHash(request)
+	if err != nil {
+		return Operation{}, err
+	}
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Operation{}, fmt.Errorf("begin operation fence: %w", err)
+	}
+	defer tx.Rollback()
+	op, _, err := s.reserveOperationTx(ctx, tx, method, key, hash)
+	if err != nil {
+		return Operation{}, err
+	}
+	if op.State == OperationReserved {
+		if err := s.completeFailureTx(tx, op.ID, CodeOperationFenced, "operation was fenced before execution"); err != nil {
+			return Operation{}, err
+		}
+		op, err = scanOperation(tx.QueryRowContext(ctx, `
+			SELECT id, method, idempotency_key, request_hash, state, resource_type,
+			       resource_id, result, error_code, error_detail, created_at, updated_at
+			FROM operations WHERE id = ?`, op.ID))
+		if err != nil {
+			return Operation{}, fmt.Errorf("read fenced operation: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Operation{}, fmt.Errorf("commit operation fence: %w", err)
+	}
+	return op, nil
+}
+
 // MarkOperationRunning durably records the intent that makes a cross-process operation
 // recoverable. The result column is deliberately reused so the reservation and its intent
 // commit in one small transaction; a retry must present the exact same bytes.
