@@ -640,13 +640,21 @@ func (a *app) cmdUpdateCheck() (int, error) {
 		return -1, err // latestReleaseTag's message already says what to do
 	}
 	c, l := normalizeVersion(cur), normalizeVersion(latest)
-	switch {
-	case !releaseVersion(cur):
-		ui.Note("coop %s is a dev/source build (self-update doesn't apply); the latest release is v%s", cur, l)
-	case versionLess(c, l):
+	switch relation := compareReleaseVersions(cur, latest); relation {
+	case releaseInvalid:
+		if releaseVersion(latest) {
+			ui.Note("coop %s is a dev/source build (self-update doesn't apply); the latest release is v%s", cur, l)
+			break
+		}
+		return -1, fmt.Errorf("GitHub returned an invalid latest release tag %q", latest)
+	case releaseBehind:
 		ui.Note("coop v%s → v%s available — run 'coop update'", c, l)
-	default:
+	case releaseEqual:
 		ui.OK("coop v%s is up to date", c)
+	case releaseAhead:
+		ui.OK("coop v%s is newer than GitHub's latest release v%s; leaving it unchanged", c, l)
+	default:
+		ui.Note("coop %s is a dev/source build (self-update doesn't apply); the latest release is v%s", cur, l)
 	}
 
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)

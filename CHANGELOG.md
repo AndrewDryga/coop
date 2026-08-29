@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Self-update is local and monotonic.** `coop update` now uses one strict release comparison
+  shared with passive and explicit update checks, so a checkout newer than GitHub's latest release
+  is never downgraded. An actual upgrade downloads the tagged platform archive and
+  `checksums.txt`, verifies SHA-256 in-process, extracts only the release binary, and atomically
+  replaces the resolved executable without executing a downloaded installer script.
+
 - **Isolated forks now share the project's canonical task queue.** The host gives each fork an
   immutable workspace generation and one durable task assignment at a time, then exposes only that
   task through a bounded execution projection. Parallel forks claim distinct canonical tasks

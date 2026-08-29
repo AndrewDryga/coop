@@ -59,22 +59,21 @@ func TestCacheLatestRoundtrip(t *testing.T) {
 	}
 }
 
-func TestVersionLess(t *testing.T) {
+func TestCompareReleaseVersions(t *testing.T) {
 	cases := []struct {
 		a, b string
-		want bool
+		want releaseRelation
 	}{
-		{"2.10.1", "3.0.0", true},
-		{"9.9", "10.0", true}, // numeric, not lexicographic
-		{"3.0.0", "3.0.0", false},
-		{"3.1.0", "3.0.9", false},
-		{"3.0", "3.0.1", true},    // shorter version pads with zeros
-		{"3.0.x", "3.0.9", false}, // decision reaches a non-numeric part → a guess → not-less
-		{"3.0.x", "4.0", true},    // ...but an earlier numeric part can still decide
+		{"2.10.1", "3.0.0", releaseBehind},
+		{"9.9.0", "10.0.0", releaseBehind}, // numeric, not lexicographic
+		{"3.0.0", "3.0.0", releaseEqual},
+		{"3.1.0", "3.0.9", releaseAhead},
+		{"3.0", "3.0.1", releaseInvalid},
+		{"3.0.x", "4.0.0", releaseInvalid},
 	}
 	for _, c := range cases {
-		if got := versionLess(c.a, c.b); got != c.want {
-			t.Errorf("versionLess(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		if got := compareReleaseVersions(c.a, c.b); got != c.want {
+			t.Errorf("compareReleaseVersions(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
 		}
 	}
 }
@@ -88,6 +87,8 @@ func TestReleaseVersion(t *testing.T) {
 		"":                          false,
 		"2.10.1-254-g3d300c7-dirty": false, // a source build ahead of the release
 		"3.0.0+dirty":               false,
+		"3.0":                       false,
+		"banana":                    false,
 	} {
 		if got := releaseVersion(v); got != want {
 			t.Errorf("releaseVersion(%q) = %v, want %v", v, got, want)
@@ -163,5 +164,43 @@ func TestCmdUpdateCheck(t *testing.T) {
 	srv.Close()
 	if code, err := a.cmdUpdateCheck(); code == 0 || err == nil {
 		t.Errorf("unreachable GitHub: want a non-zero exit + error, got code=%d err=%v", code, err)
+	}
+}
+
+func TestCmdUpdateCheckVersionRelations(t *testing.T) {
+	for name, tc := range map[string]struct {
+		current, latest string
+		want            string
+		wantErr         bool
+	}{
+		"equal":            {"3.0.0", "v3.0.0", "up to date", false},
+		"ahead":            {"3.1.0", "v3.0.0", "newer than GitHub's latest", false},
+		"dev":              {"dev", "v3.0.0", "dev/source build", false},
+		"malformed latest": {"3.0.0", "latest", "invalid latest release tag", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				fmt.Fprintf(w, `{"tag_name":%q}`, tc.latest)
+			}))
+			defer srv.Close()
+			defer stub(&githubLatestURL, srv.URL)()
+			defer stub(&Version, tc.current)()
+			var lines []string
+			ui.SetLiveSink(func(s string) { lines = append(lines, s) })
+			defer ui.SetLiveSink(nil)
+
+			a := &app{cfg: &config.Config{BoxHome: t.TempDir(), RepoOverride: filepath.Join(t.TempDir(), "missing")}}
+			code, err := a.cmdUpdateCheck()
+			if (err != nil) != tc.wantErr || (code != 0) != tc.wantErr {
+				t.Fatalf("code=%d err=%v, wantErr=%v", code, err, tc.wantErr)
+			}
+			got := strings.Join(lines, "\n")
+			if err != nil {
+				got += "\n" + err.Error()
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("output/error missing %q:\n%s", tc.want, got)
+			}
+		})
 	}
 }

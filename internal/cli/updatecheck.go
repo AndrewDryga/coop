@@ -19,6 +19,15 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
+type releaseRelation uint8
+
+const (
+	releaseInvalid releaseRelation = iota
+	releaseBehind
+	releaseEqual
+	releaseAhead
+)
+
 func updateCheckPath(cfg *config.Config) string {
 	return filepath.Join(cfg.BoxHome, "update-check")
 }
@@ -70,48 +79,58 @@ func cachedLatest(path string) string {
 	return strings.TrimSpace(string(data))
 }
 
-// releaseVersion reports whether v is a clean release build — the only kind the notice
-// compares. A dev build, or a git-describe/+dirty suffix (a source build AHEAD of the
-// latest release), must never be told to "update".
+// releaseVersion reports whether v is a clean x.y.z release. A dev build or a
+// git-describe/+dirty suffix must never be guessed older than a published release.
 func releaseVersion(v string) bool {
-	return !isDevBuild(v) && !strings.ContainsAny(v, "-+")
+	_, ok := releaseParts(v)
+	return ok
 }
 
-// versionLess reports whether a < b as dotted numeric versions ("2.10.1" < "3.0.0",
-// and "9.9" < "10.0" — which a string compare gets wrong). When the deciding part is
-// non-numeric the comparison is a guess, so it reads as not-less (no notice on a guess).
-func versionLess(a, b string) bool {
-	as, bs := strings.Split(a, "."), strings.Split(b, ".")
-	for i := 0; i < len(as) || i < len(bs); i++ {
-		an, bn := 0, 0
-		var err error
-		if i < len(as) {
-			if an, err = strconv.Atoi(as[i]); err != nil {
-				return false
-			}
+func releaseParts(v string) ([3]int, bool) {
+	var out [3]int
+	parts := strings.Split(normalizeVersion(v), ".")
+	if len(parts) != len(out) {
+		return out, false
+	}
+	for i, part := range parts {
+		if part == "" {
+			return out, false
 		}
-		if i < len(bs) {
-			if bn, err = strconv.Atoi(bs[i]); err != nil {
-				return false
-			}
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 {
+			return out, false
 		}
-		if an != bn {
-			return an < bn
+		out[i] = n
+	}
+	return out, true
+}
+
+// compareReleaseVersions is the one ordering decision used by passive notices,
+// explicit checks, and installation. An invalid side is never ordered by guess.
+func compareReleaseVersions(current, latest string) releaseRelation {
+	c, cok := releaseParts(current)
+	l, lok := releaseParts(latest)
+	if !cok || !lok {
+		return releaseInvalid
+	}
+	for i := range c {
+		switch {
+		case c[i] < l[i]:
+			return releaseBehind
+		case c[i] > l[i]:
+			return releaseAhead
 		}
 	}
-	return false
+	return releaseEqual
 }
 
 // updateNotice is the parting line for a newer release, or "" when there's nothing to
 // say (no cached/fetched tag, a non-release build, or already current-or-ahead).
 func updateNotice(cur, latest string) string {
-	if latest == "" || !releaseVersion(cur) {
+	if compareReleaseVersions(cur, latest) != releaseBehind {
 		return ""
 	}
 	c, l := normalizeVersion(cur), normalizeVersion(latest)
-	if !versionLess(c, l) {
-		return ""
-	}
 	return "a newer coop is available: v" + c + " → v" + l + " — run 'coop update' (or set COOP_NO_UPDATE_CHECK=1)"
 }
 

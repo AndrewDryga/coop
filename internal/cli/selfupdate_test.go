@@ -1,15 +1,18 @@
 package cli
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -28,16 +31,23 @@ func TestVersionHelpers(t *testing.T) {
 			t.Errorf("isDevBuild(%q) = false, want true", v)
 		}
 	}
-	for _, v := range []string{"2.7.2", "v2.7.2"} {
-		if isDevBuild(v) {
-			t.Errorf("isDevBuild(%q) = true, want false", v)
-		}
-	}
-	if !sameVersion("2.7.2", "v2.7.2") {
-		t.Error(`sameVersion("2.7.2","v2.7.2") = false, want true (leading v normalized)`)
-	}
-	if sameVersion("2.7.1", "v2.7.2") {
-		t.Error("sameVersion of different versions = true, want false")
+	for name, tc := range map[string]struct {
+		current, latest string
+		want            releaseRelation
+	}{
+		"behind":           {"2.7.2", "v2.7.3", releaseBehind},
+		"equal":            {"2.7.3", "v2.7.3", releaseEqual},
+		"ahead":            {"3.1.0", "v3.0.0", releaseAhead},
+		"dev current":      {"dev", "v3.0.0", releaseInvalid},
+		"dirty current":    {"3.0.0+dirty", "v3.0.0", releaseInvalid},
+		"malformed latest": {"3.0.0", "latest", releaseInvalid},
+		"short version":    {"3.0", "3.0.1", releaseInvalid},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := compareReleaseVersions(tc.current, tc.latest); got != tc.want {
+				t.Errorf("compareReleaseVersions(%q, %q) = %v, want %v", tc.current, tc.latest, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -78,57 +88,121 @@ func TestLatestReleaseTag(t *testing.T) {
 	})
 }
 
-// TestRunInstaller proves runInstaller fetches the installer and runs it with the
-// pinned version, target bin dir, and box-build skip — by serving a fake install.sh
-// that records the env it saw.
-func TestRunInstaller(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("sh not available")
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		// %s here is shell (printf), not Go — write raw so vet doesn't read it as a directive.
-		io.WriteString(w, "#!/bin/sh\nprintf '%s|%s|%s' \"$COOP_BIN_DIR\" \"$COOP_VERSION\" \"$COOP_NO_BUILD\" > \"$COOP_BIN_DIR/marker\"\n")
-	}))
+func TestInstallRelease(t *testing.T) {
+	archive := testReleaseArchive(t, "new binary", "coop")
+	asset := fmt.Sprintf("coop_9.9.9_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	sum := fmt.Sprintf("%x  %s\n", sha256.Sum256(archive), asset)
+	var paths []string
+	srv := testReleaseServer(t, archive, []byte(sum), &paths)
 	defer srv.Close()
-	defer stub(&installScriptURLFor, func(tag string) string { return srv.URL + "/" + tag })()
+	defer stub(&releaseFileURLFor, func(tag, name string) string {
+		return srv.URL + "/" + tag + "/" + name
+	})()
 
-	binDir := t.TempDir()
-	var out bytes.Buffer
-	if err := runInstaller(&out, binDir, "v9.9.9"); err != nil {
-		t.Fatalf("runInstaller: %v (out=%s)", err, out.String())
-	}
-	got, err := os.ReadFile(filepath.Join(binDir, "marker"))
+	exe := filepath.Join(t.TempDir(), "renamed-coop")
+	mustWrite(t, exe, "old binary")
+	before, err := os.Stat(exe)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := binDir + "|v9.9.9|1"; string(got) != want {
-		t.Errorf("installer env = %q, want %q", got, want)
+	if err := installRelease(exe, "v9.9.9"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new binary" {
+		t.Errorf("installed bytes = %q", got)
+	}
+	after, err := os.Stat(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Error("replacement reused the old executable inode; want atomic rename")
+	}
+	if after.Mode().Perm() != 0o755 {
+		t.Errorf("installed mode = %o, want 755", after.Mode().Perm())
+	}
+	wantPaths := []string{"/v9.9.9/checksums.txt", "/v9.9.9/" + asset}
+	if fmt.Sprint(paths) != fmt.Sprint(wantPaths) {
+		t.Errorf("release requests = %v, want %v", paths, wantPaths)
+	}
+}
+
+func TestInstallReleaseFailuresKeepExecutable(t *testing.T) {
+	good := testReleaseArchive(t, "new binary", "coop")
+	missingBinary := testReleaseArchive(t, "readme", "README.md")
+	asset := fmt.Sprintf("coop_9.9.9_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	for name, tc := range map[string]struct {
+		archive   []byte
+		checksums func([]byte) []byte
+	}{
+		"missing checksum":  {good, func([]byte) []byte { return []byte("deadbeef  other.tar.gz\n") }},
+		"checksum mismatch": {good, func([]byte) []byte { return []byte(strings.Repeat("0", 64) + "  " + asset + "\n") }},
+		"corrupt archive":   {[]byte("not a tarball"), releaseChecksum(asset)},
+		"missing binary":    {missingBinary, releaseChecksum(asset)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := testReleaseServer(t, tc.archive, tc.checksums(tc.archive), nil)
+			defer srv.Close()
+			defer stub(&releaseFileURLFor, func(tag, name string) string {
+				return srv.URL + "/" + tag + "/" + name
+			})()
+			exe := filepath.Join(t.TempDir(), "coop")
+			mustWrite(t, exe, "old binary")
+			before, err := os.Stat(exe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := installRelease(exe, "v9.9.9"); err == nil {
+				t.Fatal("want install failure")
+			}
+			got, err := os.ReadFile(exe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, err := os.Stat(exe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != "old binary" || !os.SameFile(before, after) {
+				t.Errorf("failed install changed executable: bytes=%q same_inode=%v", got, os.SameFile(before, after))
+			}
+		})
 	}
 }
 
 func TestSelfUpdate(t *testing.T) {
-	t.Run("dev build is a no-op without network", func(t *testing.T) {
-		defer stub(&Version, "dev")()
-		defer stub(&githubLatestURL, "http://127.0.0.1:1/must-not-be-called")()
-		var out bytes.Buffer
-		changed, err := selfUpdate(&out)
-		if changed || err != nil {
-			t.Fatalf("dev build: changed=%v err=%v", changed, err)
-		}
-		if !strings.Contains(out.String(), "dev/source build") {
-			t.Errorf("missing dev note, got %q", out.String())
-		}
-	})
+	for name, version := range map[string]string{
+		"dev build":       "dev",
+		"dirty build":     "2.7.2+dirty",
+		"malformed build": "banana",
+	} {
+		t.Run(name+" is a no-op without network", func(t *testing.T) {
+			defer stub(&Version, version)()
+			defer stub(&githubLatestURL, "http://127.0.0.1:1/must-not-be-called")()
+			var out bytes.Buffer
+			changed, err := selfUpdate(&out)
+			if changed || err != nil {
+				t.Fatalf("source build: changed=%v err=%v", changed, err)
+			}
+			if !strings.Contains(out.String(), "dev/source build") {
+				t.Errorf("missing dev note, got %q", out.String())
+			}
+		})
+	}
 
-	t.Run("already current does not run the installer", func(t *testing.T) {
+	t.Run("already current does not fetch artifacts", func(t *testing.T) {
 		defer stub(&Version, "2.7.3")()
 		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			fmt.Fprint(w, `{"tag_name":"v2.7.3"}`)
 		}))
 		defer api.Close()
 		defer stub(&githubLatestURL, api.URL)()
-		defer stub(&installScriptURLFor, func(string) string {
-			t.Error("installer must not run when already current")
+		defer stub(&releaseFileURLFor, func(string, string) string {
+			t.Error("release artifacts must not be fetched when already current")
 			return ""
 		})()
 		exe := filepath.Join(t.TempDir(), "coop")
@@ -145,21 +219,49 @@ func TestSelfUpdate(t *testing.T) {
 		}
 	})
 
-	t.Run("newer release runs the installer", func(t *testing.T) {
-		if _, err := exec.LookPath("sh"); err != nil {
-			t.Skip("sh not available")
+	t.Run("ahead build is not downgraded", func(t *testing.T) {
+		defer stub(&Version, "3.1.0")()
+		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprint(w, `{"tag_name":"v3.0.0"}`)
+		}))
+		defer api.Close()
+		defer stub(&githubLatestURL, api.URL)()
+		defer stub(&releaseFileURLFor, func(string, string) string {
+			t.Error("release artifacts must not be fetched for an ahead build")
+			return ""
+		})()
+		exe := filepath.Join(t.TempDir(), "coop")
+		mustWrite(t, exe, "ahead")
+		defer stub(&executablePath, func() (string, error) { return exe, nil })()
+
+		var out bytes.Buffer
+		changed, err := selfUpdate(&out)
+		if changed || err != nil {
+			t.Fatalf("ahead: changed=%v err=%v", changed, err)
 		}
+		if got, err := os.ReadFile(exe); err != nil || string(got) != "ahead" {
+			t.Fatalf("ahead executable changed: bytes=%q err=%v", got, err)
+		}
+		if !strings.Contains(out.String(), "newer than") || !strings.Contains(out.String(), "unchanged") {
+			t.Errorf("missing ahead note, got %q", out.String())
+		}
+	})
+
+	t.Run("newer release installs verified archive", func(t *testing.T) {
 		defer stub(&Version, "2.7.2")()
 		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			fmt.Fprint(w, `{"tag_name":"v2.7.3"}`)
 		}))
 		defer api.Close()
 		defer stub(&githubLatestURL, api.URL)()
-		script := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			fmt.Fprint(w, "#!/bin/sh\nprintf done > \"$COOP_BIN_DIR/marker\"\n")
-		}))
-		defer script.Close()
-		defer stub(&installScriptURLFor, func(tag string) string { return script.URL + "/" + tag })()
+		archive := testReleaseArchive(t, "new", "coop")
+		asset := fmt.Sprintf("coop_2.7.3_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+		sums := releaseChecksum(asset)(archive)
+		release := testReleaseServer(t, archive, sums, nil)
+		defer release.Close()
+		defer stub(&releaseFileURLFor, func(tag, name string) string {
+			return release.URL + "/" + tag + "/" + name
+		})()
 		exeDir := t.TempDir()
 		exe := filepath.Join(exeDir, "coop")
 		mustWrite(t, exe, "old")
@@ -170,8 +272,8 @@ func TestSelfUpdate(t *testing.T) {
 		if !changed || err != nil {
 			t.Fatalf("newer: changed=%v err=%v out=%s", changed, err, out.String())
 		}
-		if _, err := os.Stat(filepath.Join(exeDir, "marker")); err != nil {
-			t.Errorf("installer did not run: %v", err)
+		if got, err := os.ReadFile(exe); err != nil || string(got) != "new" {
+			t.Errorf("verified release was not installed: bytes=%q err=%v", got, err)
 		}
 		if !strings.Contains(out.String(), "updating 2.7.2 → 2.7.3") {
 			t.Errorf("missing update note, got %q", out.String())
@@ -185,6 +287,25 @@ func TestSelfUpdate(t *testing.T) {
 		}))
 		defer api.Close()
 		defer stub(&githubLatestURL, api.URL)()
+		var out bytes.Buffer
+		_, err := selfUpdate(&out)
+		var ce checkError
+		if !errors.As(err, &ce) {
+			t.Fatalf("want a checkError (soft), got %v", err)
+		}
+	})
+
+	t.Run("malformed latest tag is a soft check failure", func(t *testing.T) {
+		defer stub(&Version, "2.7.2")()
+		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprint(w, `{"tag_name":"latest"}`)
+		}))
+		defer api.Close()
+		defer stub(&githubLatestURL, api.URL)()
+		defer stub(&releaseFileURLFor, func(string, string) string {
+			t.Error("invalid release tag must not fetch artifacts")
+			return ""
+		})()
 		var out bytes.Buffer
 		_, err := selfUpdate(&out)
 		var ce checkError
@@ -262,4 +383,48 @@ func mustWrite(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func testReleaseArchive(t *testing.T, content, name string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(tw, content); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func releaseChecksum(asset string) func([]byte) []byte {
+	return func(archive []byte) []byte {
+		return []byte(fmt.Sprintf("%x  %s\n", sha256.Sum256(archive), asset))
+	}
+}
+
+func testReleaseServer(t *testing.T, archive, checksums []byte, paths *[]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if paths != nil {
+			*paths = append(*paths, r.URL.Path)
+		}
+		switch filepath.Base(r.URL.Path) {
+		case "checksums.txt":
+			_, _ = w.Write(checksums)
+		case fmt.Sprintf("coop_9.9.9_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH),
+			fmt.Sprintf("coop_2.7.3_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH):
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
 }

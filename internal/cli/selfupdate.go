@@ -1,20 +1,21 @@
 package cli
 
-// Self-update replaces the running coop binary with the latest GitHub release. It
-// deliberately reuses install.sh — download + checksum + cosign verification,
-// os/arch detection, and the atomic running-binary-safe install — instead of
-// re-implementing that security-critical chain in Go. There is one place that
-// knows how to put a verified coop on disk; this fetches it (pinned to the target
-// tag) and runs it.
+// Self-update replaces the running coop binary with a newer GitHub release. It
+// downloads the versioned GoReleaser archive and checksum as data, verifies them
+// locally, and never executes a downloaded installer.
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -23,8 +24,8 @@ import (
 var (
 	githubLatestURL = "https://api.github.com/repos/AndrewDryga/coop/releases/latest"
 
-	installScriptURLFor = func(tag string) string {
-		return "https://raw.githubusercontent.com/AndrewDryga/coop/" + tag + "/install.sh"
+	releaseFileURLFor = func(tag, name string) string {
+		return "https://github.com/AndrewDryga/coop/releases/download/" + tag + "/" + name
 	}
 
 	// executablePath resolves the running binary; a var so tests can stub it.
@@ -56,8 +57,6 @@ func isDevBuild(v string) bool {
 func normalizeVersion(v string) string {
 	return strings.TrimPrefix(strings.TrimSpace(v), "v")
 }
-
-func sameVersion(a, b string) bool { return normalizeVersion(a) == normalizeVersion(b) }
 
 // latestReleaseTag returns the tag_name of the newest GitHub release (e.g. "v2.7.3").
 func latestReleaseTag() (string, error) {
@@ -93,7 +92,7 @@ func latestReleaseTag() (string, error) {
 // cmdUpdate runs in this (pre-update) process; the new binary takes effect next run.
 func selfUpdate(out io.Writer) (bool, error) {
 	cur := resolveVersion()
-	if isDevBuild(cur) {
+	if !releaseVersion(cur) {
 		fmt.Fprintln(out, "coop: self-update skipped — this is a dev/source build (install a release first)")
 		return false, nil
 	}
@@ -110,9 +109,17 @@ func selfUpdate(out io.Writer) (bool, error) {
 	if err != nil {
 		return false, checkError{err}
 	}
-	if sameVersion(cur, latest) {
+	switch compareReleaseVersions(cur, latest) {
+	case releaseInvalid:
+		return false, checkError{fmt.Errorf("GitHub returned an invalid latest release tag %q", latest)}
+	case releaseEqual:
 		fmt.Fprintf(out, "coop: already up to date (%s)\n", normalizeVersion(cur))
 		return false, nil
+	case releaseAhead:
+		fmt.Fprintf(out, "coop: %s is newer than GitHub's latest release %s; leaving it unchanged\n", normalizeVersion(cur), normalizeVersion(latest))
+		return false, nil
+	case releaseBehind:
+		// Continue to the verified install below.
 	}
 
 	binDir := filepath.Dir(exe)
@@ -121,7 +128,7 @@ func selfUpdate(out io.Writer) (bool, error) {
 	}
 
 	fmt.Fprintf(out, "coop: updating %s → %s\n", normalizeVersion(cur), normalizeVersion(latest))
-	if err := runInstaller(out, binDir, latest); err != nil {
+	if err := installRelease(exe, latest); err != nil {
 		return false, fmt.Errorf("install %s: %w", latest, err)
 	}
 	return true, nil
@@ -139,40 +146,128 @@ func dirWritable(dir string) error {
 	return os.Remove(name)
 }
 
-// runInstaller fetches install.sh at the target tag and runs it pointed at binDir,
-// pinned to that version and skipping the box build (coop update does that itself).
-// install.sh performs the verified download and the atomic, running-binary-safe replace.
-func runInstaller(out io.Writer, binDir, tag string) error {
-	resp, err := updateHTTPClient.Get(installScriptURLFor(tag))
+// installRelease downloads the exact GoReleaser archive and checksums for tag,
+// verifies the archive locally, then atomically replaces exe.
+func installRelease(exe, tag string) error {
+	version := normalizeVersion(tag)
+	asset := fmt.Sprintf("coop_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
+	checksums, err := fetchReleaseFile(tag, "checksums.txt")
 	if err != nil {
+		return fmt.Errorf("fetch checksums.txt: %w", err)
+	}
+	archive, err := fetchReleaseFile(tag, asset)
+	if err != nil {
+		return fmt.Errorf("fetch %s: %w", asset, err)
+	}
+	if err := verifyReleaseChecksum(asset, archive, checksums); err != nil {
 		return err
+	}
+	binary, err := releaseBinary(archive)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", asset, err)
+	}
+	return replaceExecutable(exe, binary)
+}
+
+func fetchReleaseFile(tag, name string) ([]byte, error) {
+	resp, err := updateHTTPClient.Get(releaseFileURLFor(tag, name))
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("fetch installer for %s: %s", tag, resp.Status)
+		return nil, fmt.Errorf("GitHub returned %s", resp.Status)
 	}
-	script, err := io.ReadAll(resp.Body)
+	return io.ReadAll(resp.Body)
+}
+
+func verifyReleaseChecksum(asset string, archive, checksums []byte) error {
+	want := ""
+	for _, line := range strings.Split(string(checksums), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || strings.TrimPrefix(fields[1], "*") != asset {
+			continue
+		}
+		if want != "" {
+			return fmt.Errorf("checksums.txt has more than one entry for %s", asset)
+		}
+		want = fields[0]
+	}
+	if len(want) != sha256.Size*2 {
+		return fmt.Errorf("checksums.txt has no valid SHA-256 entry for %s", asset)
+	}
+	got := fmt.Sprintf("%x", sha256.Sum256(archive))
+	if !strings.EqualFold(want, got) {
+		return fmt.Errorf("checksum mismatch for %s", asset)
+	}
+	return nil
+}
+
+func releaseBinary(archive []byte) ([]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+
+	var binary []byte
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if hdr.Name != "coop" {
+			continue
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			return nil, fmt.Errorf("archive member coop is not a regular file")
+		}
+		if binary != nil {
+			return nil, fmt.Errorf("archive contains coop more than once")
+		}
+		binary, err = io.ReadAll(tr)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if binary == nil {
+		return nil, fmt.Errorf("archive has no coop binary")
+	}
+	return binary, nil
+}
+
+func replaceExecutable(exe string, binary []byte) (retErr error) {
+	f, err := os.CreateTemp(filepath.Dir(exe), ".coop-new-*")
 	if err != nil {
 		return err
 	}
-
-	dir, err := os.MkdirTemp("", "coop-selfupdate-")
-	if err != nil {
+	name := f.Name()
+	defer func() {
+		if err := os.Remove(name); err != nil && !os.IsNotExist(err) && retErr == nil {
+			retErr = err
+		}
+	}()
+	if _, err := f.Write(binary); err != nil {
+		_ = f.Close()
 		return err
 	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "install.sh")
-	if err := os.WriteFile(path, script, 0o755); err != nil {
+	if err := f.Chmod(0o755); err != nil {
+		_ = f.Close()
 		return err
 	}
-
-	cmd := exec.Command("sh", path)
-	cmd.Env = append(os.Environ(),
-		"COOP_BIN_DIR="+binDir,
-		"COOP_VERSION="+tag,
-		"COOP_NO_BUILD=1",
-	)
-	cmd.Stdout = out
-	cmd.Stderr = out
-	return cmd.Run()
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(name, exe); err != nil {
+		return err
+	}
+	return nil
 }

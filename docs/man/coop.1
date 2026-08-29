@@ -649,8 +649,8 @@ coop update — self-update coop, then rebuild the box image fresh.
 
   Usage: coop update [--self-only | --box-only | --check]
 
-  First replaces the coop binary with the latest GitHub release — fetched and
-  verified the same way the installer does (checksum + cosign), then swapped in
+  First replaces the coop binary when GitHub has a newer release — its versioned
+  archive is verified against the release checksum locally, then swapped in
   atomically so replacing the running binary is safe. Then rebuilds the image like
   coop build but --pull --no-cache and unpinned, so the node base and agent CLIs
   jump to latest. Use coop build for a reproducible image. Supervised editor
@@ -661,8 +661,8 @@ coop update — self-update coop, then rebuild the box image fresh.
     --check       dry-run: report the binary vs the latest release and the box
                   image's build age/staleness, changing nothing (no runtime needed)
 
-  A dev/source build, an already-current binary, or a coop installed somewhere
-  unwritable (a package-manager prefix) skips the self-update with a note.
+  A dev/source build, an already-current or newer binary, or a coop installed
+  somewhere unwritable (a package-manager prefix) skips the self-update with a note.
 
   Once a day, any TTY command also checks for a newer release in the background
   and mentions it after the command's output; COOP_NO_UPDATE_CHECK=1 turns that

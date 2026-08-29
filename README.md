@@ -1530,12 +1530,12 @@ coop update --self-only  # just upgrade the coop binary
 coop update --box-only   # just rebuild the image (the old behavior)
 ```
 
-`coop update` first replaces the `coop` binary with the latest GitHub release —
-fetched and verified exactly as `install.sh` does (checksum + cosign signature),
-then swapped in atomically so replacing the running binary is safe — then rebuilds the
-box image. A dev/source build, an already-current binary, or a coop installed somewhere
-unwritable (a package-manager prefix) skips the self-update with a note and still
-rebuilds the image. The binary swap takes effect on your next `coop` run.
+`coop update` first replaces the `coop` binary when GitHub has a newer release. It
+downloads that release's versioned archive and checksum, verifies the archive locally,
+then swaps it in atomically so replacing the running binary is safe. A dev/source build,
+an already-current or newer binary, or a coop installed somewhere unwritable (a
+package-manager prefix) skips the self-update with a note and still rebuilds the image.
+The binary swap takes effect on your next `coop` run.
 
 **Stable vs fresh.** `coop build` is the *stable* path: it pins the base image to a
 specific Node digest, so a rebuild gets the same OS/runtime every time, and the cache
