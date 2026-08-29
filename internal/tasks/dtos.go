@@ -1,7 +1,12 @@
 package tasks
 
 // TaskCounts tallies a task queue by state (todo/in_progress/blocked/done).
-type TaskCounts struct{ Todo, Doing, Done, Blocked int }
+type TaskCounts struct {
+	Todo    int `json:"todo"`
+	Doing   int `json:"in_progress"`
+	Done    int `json:"done"`
+	Blocked int `json:"blocked"`
+}
 
 // Total sums every state's count.
 func (c TaskCounts) Total() int { return c.Todo + c.Doing + c.Done + c.Blocked }

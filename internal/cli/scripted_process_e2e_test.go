@@ -206,7 +206,7 @@ func TestProviderScriptedProcessSmoke(t *testing.T) {
 			if !reflect.DeepEqual(run.Run.ProviderArgv, traceArgv) {
 				t.Fatalf("provider argv = %q, want %q", run.Run.ProviderArgv, traceArgv)
 			}
-			if run.Run.Network != "none" || !reflect.DeepEqual(boxLabelsWithoutSupervisor(t, run.Run.Labels), []string{"coop=box"}) || !run.Run.Init || run.Run.Interactive || run.Run.TTY {
+			if run.Run.Network != "none" || !reflect.DeepEqual(boxLabelsWithoutDynamicAuthorities(t, run.Run.Labels), []string{"coop=box"}) || !run.Run.Init || run.Run.Interactive || run.Run.TTY {
 				t.Fatalf("runtime boundary = network %q labels %q init %v interactive/tty %v/%v", run.Run.Network, run.Run.Labels, run.Run.Init, run.Run.Interactive, run.Run.TTY)
 			}
 			assertProcessMounts(t, layout, provider, "default", run.Run.Mounts)
@@ -422,22 +422,35 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, sweep b
 	}
 }
 
-// boxLabelsWithoutSupervisor drops the supervisor-identity label — its value is the launching coop's
-// own pid and start token, which a test cannot predict — after proving every box carries one. A box
-// without it could never be shown orphaned, so its absence is a failure, not a detail.
-func boxLabelsWithoutSupervisor(t *testing.T, labels []string) []string {
+// boxLabelsWithoutDynamicAuthorities drops the two runtime-generated authority labels after
+// proving every box carries exactly one non-empty value for each. Their values are deliberately
+// unpredictable, but their absence would make either orphan cleanup or project activity incomplete.
+func boxLabelsWithoutDynamicAuthorities(t *testing.T, labels []string) []string {
 	t.Helper()
 	var kept []string
-	supervised := false
+	counts := map[string]int{box.LabelHost: 0, box.LabelExecution: 0}
 	for _, label := range labels {
-		if strings.HasPrefix(label, box.LabelHost+"=") {
-			supervised = true
+		dynamic := false
+		for key := range counts {
+			prefix := key + "="
+			if strings.HasPrefix(label, prefix) {
+				if strings.TrimPrefix(label, prefix) == "" {
+					t.Fatalf("box labels %q carry an empty %s", labels, key)
+				}
+				counts[key]++
+				dynamic = true
+				break
+			}
+		}
+		if dynamic {
 			continue
 		}
 		kept = append(kept, label)
 	}
-	if !supervised {
-		t.Fatalf("box labels %q carry no %s — nothing could ever prove the box orphaned", labels, box.LabelHost)
+	for key, count := range counts {
+		if count != 1 {
+			t.Fatalf("box labels %q carry %d %s labels, want exactly one", labels, count, key)
+		}
 	}
 	return kept
 }

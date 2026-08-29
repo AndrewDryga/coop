@@ -1,6 +1,7 @@
 package forkctl
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 func TestForkAgentMemory(t *testing.T) {
@@ -114,6 +116,15 @@ func TestForkRmSafe(t *testing.T) {
 			t.Errorf("ForkRmSafe(unmerged=%v dirty=%v force=%v) err = %v, wantErr %v",
 				tc.unmerged, tc.dirty, tc.force, err, tc.wantErr)
 		}
+	}
+}
+
+func TestForkRmUnknownDoesNotPromptForOrphanCleanup(t *testing.T) {
+	repo := t.TempDir()
+	control := &Control{cfg: &config.Config{RepoOverride: repo}}
+	code, err := control.ForkRm([]string{"missing"})
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "no such fork") || strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("unknown fork rm = (%d, %v), want immediate no-such-fork", code, err)
 	}
 }
 
@@ -319,6 +330,55 @@ func TestForkRmRefusesSymlinkReplacementAfterConfirmation(t *testing.T) {
 	}
 	if !pathExists(marker) {
 		t.Fatal("fork rm followed and deleted the symlink replacement")
+	}
+}
+
+func TestForkRmRefusesTaskAuthorityAddedAfterConfirmation(t *testing.T) {
+	repo, ws, _, identity, control := prepareForkTaskCandidate(t, "authority-race")
+	control.cfg.RepoOverride = repo
+	assignments, err := tasks.ForkAssignments(repo, identity)
+	if err != nil || len(assignments) != 1 || assignments[0].Record.Fork == nil {
+		t.Fatalf("candidate assignments = %+v, err=%v", assignments, err)
+	}
+	owner := *assignments[0].Record.Fork
+	got := runForkCommandAcrossLockedMutation(t, repo, identity.Name, func() (int, error) {
+		return control.ForkRm([]string{identity.Name, "--force", "--yes"})
+	}, func() {
+		proposal := tasks.ForkTaskProposal{
+			Version: 1, ID: strings.Repeat("d", 32), Kind: tasks.ForkProposalTask,
+			Title: "Late discovered work", Context: "Found after the deletion confirmation was rendered.",
+			Acceptance: "The late work remains visible and is never silently discarded.",
+			Approach:   "Retry deletion only after reviewing the updated blast radius.",
+			Subtasks:   []string{"review the late proposal"},
+		}
+		body, marshalErr := json.Marshal(proposal)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if writeErr := os.WriteFile(filepath.Join(tasks.ForkProposalOutbox(owner), proposal.ID+".json"), append(body, '\n'), 0o644); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	})
+	if got.code != 1 || got.err == nil || !strings.Contains(got.err.Error(), "task authority changed") {
+		t.Fatalf("fork rm after proposal race = (%d, %v)", got.code, got.err)
+	}
+	if !pathExists(ws) {
+		t.Fatal("fork rm discarded task authority added after confirmation")
+	}
+}
+
+func TestForkDestroyDescriptionNamesTaskBlastRadius(t *testing.T) {
+	description := ForkDestroyDescription("worker", true, true, tasks.ForkTaskStateSummary{
+		Assignments: 2, Candidate: true, PreparedProposals: 1, PendingProposals: 2, ImportedReceipts: 3,
+	})
+	for _, want := range []string{
+		"discard uncommitted files", "discard unmerged commits", "return 2 canonical task assignment(s)",
+		"discard its reviewed merge candidate", "discard 3 not-yet-imported task proposal(s)",
+		"retain 3 imported canonical task(s)",
+	} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("destroy description lost %q: %s", want, description)
+		}
 	}
 }
 
@@ -653,5 +713,49 @@ func TestDestroyForkStopsServicesBeforeRemovingTheWorktree(t *testing.T) {
 	}
 	if pathExists(ws) {
 		t.Error("workspace was not removed")
+	}
+}
+
+func TestRecoverOrphanedGenerationAfterWorkspaceDestroy(t *testing.T) {
+	repo := initRepo(t)
+	if _, err := forkspace.Setup(repo, "orphaned"); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "orphaned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldIdentity, err := forkspace.EnsureGenerationLocked(repo, "orphaned")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate process death after Destroy completed but before generation cleanup.
+	if err := forkspace.Destroy(repo, "orphaned"); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err = forkspace.LockState(repo, "orphaned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := RecoverOrphanedGenerationLocked(repo, "orphaned")
+	unlock()
+	if err != nil || !recovered {
+		t.Fatalf("orphaned generation recovery = %v, %v", recovered, err)
+	}
+	if _, ok, err := forkspace.ReadGeneration(repo, "orphaned"); err != nil || ok {
+		t.Fatalf("old generation survives: ok=%v err=%v", ok, err)
+	}
+	if _, err := forkspace.Setup(repo, "orphaned"); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err = forkspace.LockState(repo, "orphaned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newIdentity, err := forkspace.EnsureGenerationLocked(repo, "orphaned")
+	unlock()
+	if err != nil || newIdentity == oldIdentity {
+		t.Fatalf("recreated generation = %+v, err=%v, old=%+v", newIdentity, err, oldIdentity)
 	}
 }

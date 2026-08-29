@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 13
+	SchemaVersion = 15
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -257,6 +257,7 @@ type Session struct {
 	Repository         string                `json:"repository"`
 	Workspace          string                `json:"workspace"`
 	ForkName           string                `json:"fork_name"`
+	ForkGeneration     string                `json:"fork_generation,omitempty"`
 	BaseCommit         string                `json:"base_commit"`
 	PullRequest        *PullRequestBinding   `json:"pull_request,omitempty"`
 	Companions         []CompanionRepository `json:"companions,omitempty"`
@@ -335,6 +336,11 @@ type Turn struct {
 	ValidationAttempt int             `json:"validation_attempt,omitempty"`
 	ValidationError   string          `json:"validation_error,omitempty"`
 	ValidationReceipt string          `json:"validation_receipt,omitempty"`
+	// RuntimeRunID is the exact host runtime that last executed this turn. It is
+	// internal cleanup authority, not part of the remote API. The runner clears
+	// it only after that runtime and its private state have been reaped, so a
+	// terminal turn cannot erase the janitor's retry target.
+	RuntimeRunID string `json:"-"`
 }
 
 // TurnCandidate is a schema-valid result that still needs caller-owned
@@ -416,6 +422,7 @@ type CreateSessionRequest struct {
 	Repository         string                `json:"repository"`
 	Workspace          string                `json:"workspace"`
 	ForkName           string                `json:"fork_name"`
+	ForkGeneration     string                `json:"fork_generation,omitempty"`
 	BaseCommit         string                `json:"base_commit"`
 	PullRequest        *PullRequestBinding   `json:"pull_request,omitempty"`
 	Companions         []CompanionRepository `json:"companions,omitempty"`

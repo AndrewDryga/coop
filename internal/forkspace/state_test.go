@@ -103,7 +103,7 @@ func TestForkWorkerStateWireFormat(t *testing.T) {
 		{name: "pre-v8 pending legacy token", raw: ReapPending + "42\nWed Jun 18 10:00:00 2026\n", wantIs: ErrPreV8WorkerState},
 		{name: "pre-v8 pending arbitrary body", raw: ReapPending + "not-a-pid\n", wantIs: ErrPreV8WorkerState},
 		{name: "identified pending", raw: OwnerStateV1 + ReapPending + "42\ndarwin-kinfo-v1:1:2\n", want: WorkerState{Pid: 42, Token: "darwin-kinfo-v1:1:2", Pending: true}},
-		{name: "unknown owner version", raw: "owner-v2\n42\ntoken\n", wantIs: ErrUnsupportedWorkerStateVersion},
+		{name: "unknown owner version", raw: "owner-v3\n42\ntoken\n", wantIs: ErrUnsupportedWorkerStateVersion},
 		{name: "known header missing newline", raw: "owner-v1", bad: true},
 		{name: "empty", bad: true},
 		{name: "pre-v8 pid zero", raw: "0\ntoken\n", wantIs: ErrPreV8WorkerState},
@@ -336,7 +336,7 @@ func TestClearForkPidIfMine(t *testing.T) {
 	}{
 		{name: "same pid different token", raw: []byte(fmt.Sprintf("%s%d\nlinux-proc-v1:replacement:1\n", OwnerStateV1, os.Getpid()))},
 		{name: "malformed", raw: []byte(OwnerStateV1 + "broken\n")},
-		{name: "unsupported", raw: []byte("owner-v2\nfuture\n")},
+		{name: "unsupported", raw: []byte("owner-v3\nfuture\n")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := PidPath(repo, strings.ReplaceAll(tc.name, " ", "-"))

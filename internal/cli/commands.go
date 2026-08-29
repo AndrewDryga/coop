@@ -17,6 +17,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
@@ -148,12 +149,24 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 		lead = agent // a preset makes the agent a lead too: its routing contract mounts via ConsultLead
 	}
 	pre := gitOut(repo, "rev-parse", "HEAD")
-	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
+	activityRepo, forkIdentity, err := forkspace.ResolveProjectBinding(repo)
+	if err != nil {
+		return 1, err
+	}
+	spec := box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, ConsultLead: lead, Peers: peers, Preset: a.preset,
+		ActivityRepo: activityRepo, ActivityKind: forkspace.ExecutionInteractive,
 		AgentCommand: agent != "",
 		Homes:        a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, Serve: true,
 		CompanionRepositories: companionRepositories,
-	})
+	}
+	if forkIdentity != nil {
+		spec.ActivityKind = forkspace.ExecutionForkInteractive
+		spec.ForkName = forkIdentity.Name
+		spec.ForkGeneration = string(forkIdentity.Generation)
+		spec.ForkOwner = forkctl.ForkContainerOwner(activityRepo, forkIdentity.Name, forkIdentity.Generation)
+	}
+	code, err := box.Run(a.cfg, a.rt, spec)
 	// An interactive/run box makes unsigned commits; sign what THIS session produced on exit so a
 	// protected remote accepts them. Best-effort, session-scoped, skipped for a dirty tree.
 	a.signOnBoxExit(repo, pre, false)

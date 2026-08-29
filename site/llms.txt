@@ -34,7 +34,7 @@ UNATTENDED
 
 TASKS — a folder-per-task queue in .agent/tasks/
   coop tasks ls                     show the queue, grouped by state
-  coop tasks watch                  live board of the queue + active forks
+  coop tasks watch [--json]         canonical tasks + every sandbox, live
   coop tasks add "<title>"          add a task (then claim/block/unblock/done)
   coop tasks decisions              what's blocked on a decision (-i to answer)
   coop context                      compile the docs relevant to touched paths
@@ -77,32 +77,35 @@ coop fork — a throwaway clone handed to an agent; review and land it like a PR
 
   coop fork <name> <target>         open or re-enter a fork with an agent target
   coop fork <name> <preset>         open or re-enter a fork with an orchestration preset
-  coop fork ls [--json]             list this repo's forks (--json adds per-workspace serve URLs)
+  coop fork ls [--json]             list fork workers, sandboxes, task progress, and problems
   coop fork logs [<name>]           tail a fork's loop log (no name: all forks)
   coop fork review <name>           dossier + diff (--stat, --tool, --open, --gate)
   coop fork <name> acp <target>     front the fork as an ACP agent (for editors)
   coop fork merge <name>            rebase onto your branch and land one fork
   coop fork merge --all             rebase and land every fork
-  coop fork rm <name>               discard a fork (confirms; refuses unmerged/dirty without --force)
+  coop fork rm <name>               discard a fork (confirms; --force may stop it and return/discard task authority)
   coop fork open <name>             open the fork in your editor
   coop fork path <name>             print the fork's filesystem path
   coop fork stop <name>             stop a detached loop
 
 FLAGS (every short flag has a long form):
-  -c, --continue  resume the prior session (the default on re-entry)
-      --new       start a fresh agent session on re-entry
-      --fresh     recreate the fork from scratch (confirms; refuses unmerged/dirty without --force)
-      --loop      work the fork's task queue until done instead of opening an interactive session
-  -d, --detach    with --loop, run it in the background
-  -t, --tasks     with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)
-      --peer <target>  with --loop, a peer iterations may consult read-only (repeatable)
-  -f, --force     merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)
-  -y, --yes       merge/rm/--fresh: skip the delete confirm (required without a TTY)
-  -f, --follow    logs: keep streaming new output
+  -c, --continue            resume the prior session (the default on re-entry)
+      --new                 start a fresh agent session on re-entry
+      --fresh               recreate the fork (confirms; --force may stop it and discard Git/task work)
+      --loop                work the fork's task queue until done instead of opening an interactive session
+  -d, --detach              with --loop, run it in the background
+  -t, --tasks               with --loop, select one canonical task queue (default: every project queue)
+      --peer <target>       with --loop, a peer iterations may consult read-only (repeatable)
+  -f, --force (merge)       bypass the risky-file policy; the rebase gate still must pass
+  -f, --force (rm/fresh)    stop the worker; discard Git work, assignments, candidates, and pending proposals
+  -y, --yes                 merge/rm/--fresh: skip the delete confirm (required without a TTY)
+  -f, --follow              logs: keep streaming new output
 
 REVIEW  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.
         --gate rebases in an isolated scratch clone and runs the parent's gate; source mutations fail review.
 NAMES   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.
+TASKS   fork loops share the project's canonical queue; the host assigns one task at a time.
+        Stop keeps its assignment; merge alone completes that canonical task. Copied queues are retired.
 
 Run 'coop help' for all commands.
 
@@ -342,7 +345,8 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   ls [--all] [--todo|--in-progress|--blocked|--done]
                    list tasks by state, with counts (recent done capped; --all shows all). Pass one
                    or more state flags to show only those. Task ids link to the folder — click to open.
-  watch            live board: the queue + any active forks, deduped by id (auto-exits when done)
+  watch [--json]   live board: canonical tasks + every active sandbox (auto-exits when done);
+                   --json prints the same project snapshot once for automation
   add [--project <name>] "<title>"
                    scaffold a task folder in todo (or fill it inline: --context/--acceptance/--approach/--subtask)
   claim <id>       claim a task before you start it (todo -> in_progress)
@@ -354,7 +358,6 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   rm <id>          delete a task folder; --all-done (alias: clear) clears the done archive
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
   lint             check the tree (blocked<->decision.md, no status field, ...; exits 1)
-  split <n>        slice the todo tasks into n copy-trees (.agent/tasks.sliceN); loop one fork per slice
   queues           print each configured queue's path, one per line (for scripts and the sweep guard)
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
@@ -366,11 +369,12 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   --tasks or COOP_TASKS. Paths are repo-relative. With several queues (a monorepo), ls, lint, and decisions
   (including -i) roll up across all of them, and the id commands (claim/block/unblock/done/
   rm) find their task in whichever queue holds it — erroring only when an id matches in
-  more than one queue (split slices share ids with their source). In a monorepo, add requires
+  more than one queue. In a monorepo, add requires
   --project root|<subproject> so creation picks an explicit queue; a nested member takes its
   full path (terraform/environments/va1) or just its last segment (va1) when no other member
-  ends in the same one. With raw --tasks overrides, add and split still need a single --tasks
-  because they create into a queue.
+  ends in the same one. With raw --tasks overrides, add still needs a single --tasks because it
+  creates into one queue. Copied queue slicing is retired: parallel fork loops schedule distinct
+  tasks directly from the same canonical queue.
 
 coop context — compile the committed docs relevant to a scope (instructions + rules + KB).
 
@@ -519,6 +523,13 @@ coop loop [<target|preset>] — work the task queue until done, then sign off.
   components' work with no setup. Repeat --tasks (or set COOP_TASKS) to override the
   set; the loop keeps going while any queue has unfinished work. The whole repo is
   mounted either way.
+
+  A fork loop does not copy or mount those queues. The host assigns one canonical task at a
+  time and exposes only that task through an execution projection. Stop/crash keeps the exact
+  assignment resumable; projected done becomes a reviewed fork candidate, and the canonical
+  task reaches done only when that exact candidate lands. Multiple forks may therefore share
+  the same queue without duplicate work. --tasks on a fork selects one canonical queue; it does
+  not create a fork-local queue.
 
   --max-tasks <n>   work at most N selected tasks, counting each only after it reaches done
                     or blocked following retries and its immediate audit; then pause

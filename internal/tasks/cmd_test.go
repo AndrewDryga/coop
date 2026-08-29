@@ -923,38 +923,9 @@ func TestCmdTasksFolderDispatch(t *testing.T) {
 	if code, _ := CmdTasksFolder(root, root, []string{"bogus"}); code != 2 {
 		t.Errorf("unknown sub should return code 2, got %d", code)
 	}
-}
-
-func TestTasksFolderSplitCommand(t *testing.T) {
-	repo := t.TempDir()
-	root := filepath.Join(repo, ".agent", "tasks")
-	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-01-a", "task.md"), "# a\n")
-	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-02-b", "task.md"), "# b\n")
-	var code int
-	var err error
-	out := captureStderr(t, func() { code, err = tasksFolderSplit(repo, root, []string{"2"}) })
-	if code != 0 || err != nil {
-		t.Fatalf("split 2: code=%d err=%v", code, err)
-	}
-	if !IsTaskDir(filepath.Join(repo, ".agent", "tasks.slice1")) || !IsTaskDir(filepath.Join(repo, ".agent", "tasks.slice2")) {
-		t.Error("split did not create both slice dirs")
-	}
-	for _, want := range []string{
-		"coop fork slice1 <target|preset> --loop -d --tasks .agent/tasks.slice1",
-		"coop fork slice2 <target|preset> --loop -d --tasks .agent/tasks.slice2",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("split output missing %q:\n%s", want, out)
-		}
-	}
-	if got := strings.Count(out, "run: coop fork slice"); got != 2 {
-		t.Errorf("split output has %d direct fork commands, want one per written slice (2):\n%s", got, out)
-	}
-	if code, _ := tasksFolderSplit(repo, root, []string{"0"}); code != 2 {
-		t.Errorf("split 0 should be a usage error (2), got %d", code)
-	}
-	if code, _ := tasksFolderSplit(repo, root, nil); code != 2 {
-		t.Errorf("split with no n should be a usage error (2), got %d", code)
+	if code, err := CmdTasksFolder(root, root, []string{"split", "2"}); code != 2 || err == nil ||
+		!strings.Contains(err.Error(), "unknown tasks command") {
+		t.Fatalf("retired split command = (%d, %v), want unknown command", code, err)
 	}
 }
 
@@ -973,8 +944,8 @@ func TestTasksVerbsIncludeWatch(t *testing.T) {
 	if isTasksSubcommand("bogus") {
 		t.Error("isTasksSubcommand(bogus) = true, want false")
 	}
-	// v3 keeps no compat aliases: start→claim, list→ls, remove→rm are all retired.
-	for _, s := range []string{"start", "list", "remove"} {
+	// Retired aliases and copied-queue slicing stay outside the canonical grammar.
+	for _, s := range []string{"start", "list", "remove", "split"} {
 		if isTasksSubcommand(s) {
 			t.Errorf("isTasksSubcommand(%q) = true, want false (retired in v3)", s)
 		}

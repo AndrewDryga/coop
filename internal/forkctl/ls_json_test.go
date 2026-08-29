@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 )
 
@@ -38,11 +39,95 @@ func TestForkLsJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("bad json: %v\n%s", err, out)
 	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := envelope["problems"]; present {
+		t.Fatalf("healthy fork list emitted a null/empty problems field: %s", out)
+	}
 	if len(got.Workspaces) != 1 || got.Workspaces[0].Name != "root" {
 		t.Fatalf("want a single root workspace, got %+v", got.Workspaces)
 	}
 	want := fmt.Sprintf("http://localhost:%d", project.HostPort(repo, 4000))
 	if got.Workspaces[0].Serve["4000"] != want {
 		t.Errorf("serve URL for 4000 = %q, want %q", got.Workspaces[0].Serve["4000"], want)
+	}
+}
+
+func TestForkLsJSONIncludesLiveSandboxCounts(t *testing.T) {
+	repo := t.TempDir()
+	workspace := forkspace.Workspace(repo, "active")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "active")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{
+		Kind: forkspace.ExecutionForkACP, Role: forkspace.ExecutionRoleActive,
+		Workspace: workspace, Fork: &identity, SourceID: "live-sandbox",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = forkspace.EndExecution(repo, execution) })
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	out := captureStdout(t, func() {
+		if code, err := c.ForkLs([]string{"--json"}); code != 0 || err != nil {
+			t.Fatalf("fork ls --json: (%d, %v)", code, err)
+		}
+	})
+	var got struct {
+		Workspaces []struct {
+			Name   string `json:"name"`
+			Status *struct {
+				State           string `json:"state"`
+				ActiveSandboxes int    `json:"active_sandboxes"`
+			} `json:"status"`
+		} `json:"workspaces"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Workspaces) != 2 || got.Workspaces[1].Name != "active" || got.Workspaces[1].Status == nil ||
+		got.Workspaces[1].Status.State != "active" || got.Workspaces[1].Status.ActiveSandboxes != 1 {
+		t.Fatalf("active fork JSON status = %+v", got.Workspaces)
+	}
+}
+
+func TestForkLsJSONIncludesForkStatus(t *testing.T) {
+	repo := t.TempDir()
+	workspace := forkspace.Workspace(repo, "legacy")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	out := captureStdout(t, func() {
+		if code, err := c.ForkLs([]string{"--json"}); code != 0 || err != nil {
+			t.Fatalf("fork ls --json: (%d, %v)", code, err)
+		}
+	})
+	var got struct {
+		Workspaces []struct {
+			Name   string `json:"name"`
+			Status *struct {
+				State  string `json:"state"`
+				Legacy bool   `json:"legacy_generation"`
+			} `json:"status"`
+		} `json:"workspaces"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Workspaces) != 2 || got.Workspaces[1].Name != "legacy" || got.Workspaces[1].Status == nil ||
+		got.Workspaces[1].Status.State != "legacy" || !got.Workspaces[1].Status.Legacy {
+		t.Fatalf("legacy fork JSON status = %+v", got.Workspaces)
 	}
 }

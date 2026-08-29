@@ -1,9 +1,9 @@
 ---
 name: task-authority-registry-is-durable-state
-description: host-global completion trust lives in ~/.local/state/coop/task-leases, never a cache dir; v9 refuses populated retired state and every authority flock rechecks its inode
+description: host-global task ownership and completion trust live in ~/.local/state/coop/task-leases, never a cache dir; every authority flock rechecks its inode
 subsystem: tasks
-sources: [internal/tasks/lease.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/sessionsvc/http.go]
-updated: 2026-08-26
+sources: [internal/tasks/lease.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/tasks/owner.go, internal/tasks/assignment_registry.go, internal/sessionsvc/http.go]
+updated: 2026-08-28
 ---
 Everything that decides whether a task is *really* finished lives OUTSIDE the repo, in one
 host-global registry: the `<sha>.lock` files whose kernel flock makes one controller the single
@@ -12,6 +12,12 @@ metadata, `<sha>.reopen.json` audit-reopen authority, `<sha>.departure.json` tru
 departures, and `<sha>.windows.json`, the completion-window journal crash recovery replays.
 Filenames are `sha256(resolved-repo-queue-root + "\x00" + task-id)`, so the registry is
 location-independent: moving the registry itself never renames a record.
+
+Typed v2 owner records and their generation reverse indexes now live in this same authority root.
+A human claim and a fork assignment are two kinds of the same durable ownership boundary; an old
+binary rejects v2 instead of treating a sandbox-owned task as free. Reverse indexes retain the
+canonical root (including an explicit external `--tasks` queue), exact task instance, projection,
+assignment, and generation even if the folder later moves or a configured queue disappears.
 
 The same registry is the sole iteration-lease store. Coop does not mirror its flock or heartbeat
 into a task's provider-writable `tmp/`; observation and recovery consult only the host records.
@@ -46,6 +52,8 @@ INODE, never to a name; without the recheck a deleted-underfoot lock is silently
 for the repo-local queue, which did NOT move.
 
 ## Changelog
+- 2026-08-28 — added typed human/fork owner v2 records and generation reverse indexes so isolated
+  assignments survive process exit, external queue selection, and task folder moves.
 - 2026-08-26 — v9 removed automatic cache-root adoption; current state is resolved first, and a
   populated or unreadable retired root now refuses without mutation until an operator migrates the
   whole directory with all older processes stopped

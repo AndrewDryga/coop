@@ -117,13 +117,34 @@ func (l *loopTaskLimit) observe(snapshot map[string]string) (bool, error) {
 // on hard calls — the orchestrator pattern running headless. Off by default: it widens the
 // credential scope, so mounting peers into every loop box stays a deliberate choice.
 func (c *Control) Run(spec RunSpec) (int, error) {
-	c.preset, c.forkOwner = spec.Preset, spec.ForkOwner
+	c.preset, c.forkOwner, c.forkGeneration = spec.Preset, spec.ForkOwner, spec.ForkGeneration
+	c.activityRepo, c.activityKind, c.activityTask, c.forkWorker = spec.ActivityRepo, spec.ActivityKind, spec.ActivityTask, spec.ForkWorker
+	c.proposalOutbox = spec.ProposalOutbox
 	repo, img, agent, forkName := spec.Repo, spec.Image, spec.Agent, spec.ForkName
+	if c.activityRepo == "" {
+		c.activityRepo = repo
+	}
+	if c.activityKind == "" {
+		if forkName == "" {
+			c.activityKind = forkspace.ExecutionLocalLoop
+		} else {
+			c.activityKind = forkspace.ExecutionForkLoop
+		}
+	}
 	rot, queues, sink, peers := spec.Rotation, spec.Queues, spec.Sink, spec.Peers
 	debugOnFail, preflight, maxTasks := spec.DebugOnFail, spec.Preflight, spec.MaxTasks
 	hosts := make([]string, len(queues)) // the queues' absolute host paths
 	for i, q := range queues {
 		hosts[i] = filepath.Join(repo, q)
+	}
+	if c.proposalOutbox != "" {
+		proposalRoot := filepath.Join(repo, c.proposalOutbox)
+		rel, relErr := filepath.Rel(repo, proposalRoot)
+		info, statErr := os.Lstat(proposalRoot)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
+			statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return 1, errors.Join(relErr, statErr, errors.New("fork task proposal outbox is outside the checkout or not a real directory"))
+		}
 	}
 	// A queue is a directory (.agent/tasks), so check for one with tasks.IsTaskDir — fileExists is
 	// false for a directory and used to reject every folder queue, so the loop never ran.
@@ -470,7 +491,7 @@ reviewAgain:
 					releaseErr,
 				)
 			}
-			work := LoopWorkPrompt(repo, assigned.Root, assigned.Item.ID, agent, peers, c.preset, lease.Reopen != nil)
+			work := LoopWorkPromptWithProposalOutbox(repo, assigned.Root, assigned.Item.ID, agent, peers, c.preset, lease.Reopen != nil, c.proposalOutbox)
 			iterWork := work
 			if pre := tasks.ResumePrefixFor(repo, assigned.Item.ID, assigned.Item.State, lease.Reopen); pre != "" {
 				iterWork = pre + "\n\n" + work
@@ -820,7 +841,7 @@ reviewAgain:
 			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
 			if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
 				ui.Info("iteration failed — opening a debug shell in the box (exit it to retry; Ctrl-C to stop)")
-				c.debugShell(repo, img, agent)
+				c.debugShell(repo, img, agent, spec.ForkName)
 				fails = 0 // the developer intervened; don't count this toward the stop cap
 				continue
 			}

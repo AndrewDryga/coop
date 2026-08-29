@@ -22,6 +22,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/loop"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -438,6 +439,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 
 func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	suite := newDirectProcessSuite(t)
+	t.Setenv(tasks.TestLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
 	resetForkProcessRepo(t, suite)
 	name, provider, taskID := "merge-flow", "codex", "fork-merge-task"
 	seedLoopProcessTask(t, suite.layout.Repo, taskID)
@@ -459,21 +461,44 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "fixture-loop-complete-"+provider) {
 		t.Fatalf("fork loop = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
 	}
-	if !pathExists(filepath.Join(ws, tasksRoot, stateDone, taskID)) || !pathExists(filepath.Join(ws, "loop-codex.txt")) {
-		t.Fatal("foreground fork loop did not retain its completed queue and committed work")
+	identity := readProcessForkIdentity(t, suite.layout.Repo, name)
+	assignments, err := tasks.ForkAssignments(suite.layout.Repo, identity)
+	if err != nil || len(assignments) != 1 || assignments[0].Record.Fork == nil {
+		t.Fatalf("ready fork assignments = %#v, %v; want one exact owner", assignments, err)
 	}
-	if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateTodo, taskID)) {
-		t.Fatal("fork loop changed the parent queue before merge")
+	assignment := assignments[0]
+	owner := *assignment.Record.Fork
+	if owner.Phase != tasks.ForkAssignmentReady || owner.Projection != assignment.Index.Projection ||
+		!pathExists(filepath.Join(owner.Projection, stateDone, taskID)) || !pathExists(filepath.Join(ws, "loop-codex.txt")) {
+		t.Fatalf("foreground fork loop did not retain one ready projection: owner %+v index %+v", owner, assignment.Index)
+	}
+	canonicalTask := filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)
+	if !pathExists(canonicalTask) || pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateTodo, taskID)) ||
+		pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+		t.Fatal("fork loop did not retain canonical ownership in progress until merge")
+	}
+	candidate, candidateExists, err := tasks.ReadForkCandidate(suite.layout.Repo, identity)
+	if err != nil || !candidateExists || len(candidate.Assignments) != 1 ||
+		candidate.Assignments[0].Index.AssignmentID != owner.AssignmentID || candidate.Fork != identity {
+		t.Fatalf("published fork candidate = %+v, %v, %v", candidate, candidateExists, err)
+	}
+	projectionRel, err := tasks.ProjectionQueueRel(ws, owner.Projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalRel, err := tasks.ForkProposalOutboxRel(ws, owner)
+	if err != nil {
+		t.Fatal(err)
 	}
 	forkLoopArgv, forkLoopStreaming := loop.IterationCommand(provider,
-		loopProcessArgv(provider, model, effort, loop.LoopWorkPrompt(ws, tasksRoot, taskID, provider, nil, nil, false)), nil)
+		loopProcessArgv(provider, model, effort, loop.LoopWorkPromptWithProposalOutbox(ws, projectionRel, taskID, provider, nil, nil, false, proposalRel)), nil)
 	if !forkLoopStreaming {
 		t.Fatalf("provider %s has no streaming loop command", provider)
 	}
 	assertForkProcessContract(t, suite, firstForkRunTrace(trace), ws, provider, account, forkLoopArgv, model, effort)
 
 	result, trace = suite.run(t, []string{"fork", "merge", name}, processScenario(provider, nil, 0, ""))
-	if result.Err != nil || result.ExitCode != 1 || len(trace) != 0 || !pathExists(ws) || !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateTodo, taskID)) {
+	if result.Err != nil || result.ExitCode != 1 || len(trace) != 0 || !pathExists(ws) || !pathExists(canonicalTask) {
 		t.Fatalf("unconfirmed merge = exit %d err %v trace %d fork %v\n%s", result.ExitCode, result.Err, len(trace), pathExists(ws), result.Stderr)
 	}
 
@@ -488,8 +513,21 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	done := filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)
 	state, stateErr := os.ReadFile(filepath.Join(done, "state.md"))
 	log, logErr := os.ReadFile(filepath.Join(done, "log.md"))
-	if stateErr != nil || logErr != nil || !strings.Contains(string(state), "**Status:** complete") || !strings.Contains(string(state), "**Next action:** none") || !strings.Contains(string(log), "reconciled: landed by fork "+name) || pathExists(filepath.Join(done, "tmp")) {
+	if stateErr != nil || logErr != nil || !strings.Contains(string(state), "**Status:** complete") || !strings.Contains(string(state), "**Next action:** none") || !strings.Contains(string(log), "codex completed the closed loop lifecycle") || pathExists(filepath.Join(done, "tmp")) {
 		t.Fatalf("parent task was not reconciled: state %q (%v), log %q (%v)", state, stateErr, log, logErr)
+	}
+	if _, exists, err := forkspace.ReadGeneration(suite.layout.Repo, name); err != nil || exists {
+		t.Fatalf("landed fork generation survived merge: exists %v, err %v", exists, err)
+	}
+	if _, exists, err := tasks.ReadForkCandidate(suite.layout.Repo, identity); err != nil || exists {
+		t.Fatalf("landed fork candidate survived merge: exists %v, err %v", exists, err)
+	}
+	indexes, problems := tasks.IndexedForkAssignments(suite.layout.Repo, identity)
+	if len(indexes) != 0 || len(problems) != 0 {
+		t.Fatalf("landed fork assignment registry survived merge: %#v, %v", indexes, problems)
+	}
+	if _, owned, err := tasks.ReadTaskOwnerRecord(filepath.Join(suite.layout.Repo, tasksRoot), taskID); err != nil || owned {
+		t.Fatalf("landed canonical task retained sandbox owner: owned %v, err %v", owned, err)
 	}
 }
 

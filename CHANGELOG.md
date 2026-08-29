@@ -4,6 +4,38 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Isolated forks now share the project's canonical task queue.** The host gives each fork an
+  immutable workspace generation and one durable task assignment at a time, then exposes only that
+  task through a bounded execution projection. Parallel forks claim distinct canonical tasks
+  exactly once; stop/crash preserves a resumable assignment; blocked/progress artifacts sync back
+  under host authority; and projected completion remains `reviewing`/`ready` until final signoff,
+  signing, and the exact generation candidate land. Merge uses a replayable intent to bind the
+  parent fast-forward to canonical task completion, while rm/fresh/session discard journal or
+  refuse unresolved task authority. `Coop-Task` trailers remain consistency labels, never sole
+  completion authority.
+
+- **`coop tasks watch` is the project-wide activity view.** One bounded snapshot joins configured
+  and externally selected canonical queues with assignments, fork generations, candidates, land
+  intents, detached workers, foreground/interactive/ACP boxes, and remote-session reservations.
+  Corrupt, stale, replacement-generation, and unverifiable evidence stays visible as a problem but
+  cannot authorize mutation or keep a drained watch alive. `coop fork ls` consumes the same model
+  while preserving the distinction between a detached worker and another active sandbox.
+
+- **Copied task authorities are retired.** `coop tasks split` is no longer a command, and fork loops
+  neither seed nor mount a full `.agent/tasks` tree. A fork's `--tasks <path>` now filters the
+  canonical scheduler to that one queue. Existing fork workspaces containing copied task work fail
+  closed until their notes/code are reconciled and the fork is recreated; see
+  [MIGRATING.md](MIGRATING.md#canonical-tasks-across-isolated-forks).
+
+- **Remote sessions and sandboxes carry exact cleanup authority.** Every sandbox execution is
+  generation-scoped in the project control plane; remote sessions reserve their exact workspace
+  generation through review/discard. Session schema v15 also keeps the exact ordinary or
+  borrowed-warm runtime ID after a turn becomes terminal when teardown fails, so bounded cleanup
+  retries the right process without changing a successful answer or semantic candidate. A legacy
+  session without an exact same-session reservation is quarantined instead of adopting whichever
+  same-named fork happens to exist; its durable history and workspace remain untouched for manual
+  recovery.
+
 ## 9.0.0
 
 - **Remote-session structured output is enforced at the completion boundary.** A turn may carry a

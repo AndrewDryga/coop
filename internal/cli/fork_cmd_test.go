@@ -334,6 +334,37 @@ func TestForkStartPreflightsUnsupportedStateBeforeWorkspaceMutation(t *testing.T
 	}
 }
 
+func TestOrdinaryForkLaunchCannotEnterRemoteSessionWorkspace(t *testing.T) {
+	repo := initRepo(t)
+	if _, err := forkspace.Setup(repo, "remote"); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "remote")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "remote")
+	if err == nil {
+		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
+			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "session-owner", CreatedAt: time.Now().UTC(),
+		})
+	}
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeCLI := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: runtimeCLI}, rtSet: true}
+	code, err := a.forkCreate([]string{"remote", "claude"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "owned by remote-session session-owner") {
+		t.Fatalf("ordinary launch into reserved fork = (%d, %v), want session-owner refusal", code, err)
+	}
+}
+
 func TestForkFreshConfirmsBeforeRuntimeWork(t *testing.T) {
 	repo := initRepo(t)
 	ws, err := forkspace.Setup(repo, "perf")

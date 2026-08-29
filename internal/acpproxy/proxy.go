@@ -36,11 +36,12 @@ import (
 // Child is one run of the agent adapter (one container). The proxy writes ACP to In
 // and reads ACP from Out; Stop force-terminates it.
 type Child struct {
-	In       io.WriteCloser
-	Out      io.Reader
-	Stop     func()
-	Provider string // native session ids are scoped to this provider
-	Account  string // successful authentication is scoped to this concrete credential too
+	In        io.WriteCloser
+	Out       io.Reader
+	Stop      func()
+	SetActive func(bool) // optional host activity transition for parked warm boxes
+	Provider  string     // native session ids are scoped to this provider
+	Account   string     // successful authentication is scoped to this concrete credential too
 }
 
 // Factory starts a fresh child. ctx is cancelled when the proxy is shutting down.

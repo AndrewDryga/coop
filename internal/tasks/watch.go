@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,73 +24,81 @@ type watchSource struct {
 // it), or "" when it lives in the local queue. Sources are deduped by task id.
 type mergedTask struct {
 	Item
-	fork  string
-	lease TaskLeaseObservation
+	fork       string
+	queue      string
+	phase      ForkAssignmentPhase
+	owner      string
+	executions []forkspace.ExecutionObservation
+	lease      TaskLeaseObservation
 }
-
-// stateRank orders task states by advancement, so deduping by id keeps the truest state when the
-// same task shows up in several sources (a fork's live copy vs the local seed): done > in progress
-// > blocked > todo.
-var stateRank = map[string]int{StateTodo: 0, StateBlocked: 1, StateInProgress: 2, StateDone: 3}
 
 // TasksWatch is the live `coop tasks watch` board: every task across the configured queue(s) AND
 // any active fork, merged into one view and deduped by id — so you see the whole backlog and who's
 // on what (in progress with the fork that claimed it, then todo, blocked), refreshed in place.
 // It auto-exits only when everything is drained; without a TTY it prints the list once
 // (pipe-safe).
-func TasksWatch(host Host, repo string, rels []string) (int, error) {
-	read := func() ([]watchSource, []mergedTask, int, int) {
+func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int, error) {
+	roots := make([]string, len(rels))
+	for i, rel := range rels {
+		if filepath.IsAbs(rel) {
+			roots[i] = filepath.Clean(rel)
+		} else {
+			roots[i] = filepath.Join(repo, rel)
+		}
+	}
+	read := func() (ProjectSnapshot, []watchSource, []mergedTask, int, bool) {
+		snapshot := ReadProjectSnapshot(repo, roots)
 		var sources []watchSource
-		merged := map[string]mergedTask{}
-		// add merges a source's tasks, keeping the most-advanced state per id; processed in order
-		// (configured queues, then forks) so a fork's live copy wins ties over the local seed.
-		add := func(label string, items []Item, fork string) {
-			c, _ := TaskTreeCounts(items)
-			sources = append(sources, watchSource{label: label, counts: c})
-			for _, t := range items {
-				if ex, ok := merged[t.ID]; !ok || stateRank[t.State] >= stateRank[ex.State] {
-					m := mergedTask{Item: t, fork: fork}
-					if t.State == StateInProgress {
-						m.lease = observeTaskLease(t, time.Now())
-					}
-					merged[t.ID] = m
-				}
-			}
+		for _, queue := range snapshot.Queues {
+			sources = append(sources, watchSource{label: queue.Label, counts: queue.Counts})
 		}
-		for _, rel := range rels {
-			if items := ReadTaskTree(filepath.Join(repo, rel)); len(items) > 0 {
-				add(rel, items, "")
+		merged := make([]mergedTask, 0, len(snapshot.Tasks))
+		showQueues := len(snapshot.Queues) > 1
+		for _, task := range snapshot.Tasks {
+			m := mergedTask{Item: task.Item, owner: task.Owner, phase: task.Phase, executions: task.Executions}
+			if showQueues {
+				m.queue = task.QueueLabel
 			}
+			if task.Fork != nil {
+				m.fork = task.Fork.Name
+			} else if task.State == StateInProgress {
+				m.lease = observeTaskLease(task.Item, time.Now())
+			}
+			merged = append(merged, m)
 		}
-		names := forkspace.Names(repo)
-		running := 0
-		for _, name := range names {
-			pid := forkspace.RunningPid(repo, name)
-			if pid != 0 {
+		sort.Slice(merged, func(i, j int) bool {
+			if merged[i].ID != merged[j].ID {
+				return merged[i].ID < merged[j].ID
+			}
+			return merged[i].Dir < merged[j].Dir
+		})
+		running := snapshot.ActiveExecutions()
+		starting := false
+		for _, fork := range snapshot.Forks {
+			if fork.DetachedRunning {
 				running++
 			}
-			items := ReadTaskTree(filepath.Join(forkspace.Workspace(repo, name), TasksRoot))
-			if len(items) == 0 && pid == 0 {
-				continue // a dead, empty fork isn't part of the picture
-			}
-			add(name, items, name)
+			starting = starting || fork.Starting
 		}
-		out := make([]mergedTask, 0, len(merged))
-		for _, m := range merged {
-			out = append(out, m)
-		}
-		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-		return sources, out, running, len(names)
+		return snapshot, sources, merged, running, starting
+	}
+
+	if len(jsonOutput) > 0 && jsonOutput[0] {
+		snapshot, _, _, _, _ := read()
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return 0, enc.Encode(snapshot)
 	}
 
 	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) {
-		// Not a terminal: one-shot list, pipe-safe — exactly what `coop tasks ls` prints.
-		if len(rels) == 1 {
-			return tasksFolderList(filepath.Join(repo, rels[0]), false)
+		// Pipe output is the same snapshot and renderer as the live view, sampled once.
+		snapshot, sources, merged, _, _ := read()
+		for _, line := range tasksWatchFrameWithSnapshot(sources, merged, snapshot, 0, 120) {
+			fmt.Println(line)
 		}
-		return tasksListAll(repo, rels, nil)
+		return 0, nil
 	}
-	if _, merged, _, _ := read(); len(merged) == 0 {
+	if snapshot, _, merged, _, _ := read(); len(merged) == 0 && !snapshotHasVisibleActivity(snapshot) {
 		ui.Note("no tasks yet — add one with 'coop tasks add \"<title>\"'")
 		return 0, nil
 	}
@@ -98,15 +107,15 @@ func TasksWatch(host Host, repo string, rels []string) (int, error) {
 	screen := ui.NewAltScreen(os.Stdout, width)
 	sawActive, sawFork := false, false // concurrent-fork startup guard — see tasksWatchSettling
 	tick := func(spin int) ([]string, bool) {
-		sources, merged, running, nForks := read()
+		snapshot, sources, merged, running, starting := read()
 		c := mergedCounts(merged)
-		frame := tasksWatchFrame(sources, merged, spin, width())
+		frame := tasksWatchFrameWithSnapshot(sources, merged, snapshot, spin, width())
 		screen.Frame(frame)
 		if running > 0 || c.Doing > 0 {
 			sawActive = true // a fork/loop is on it — work has started
 		}
-		if nForks > 0 {
-			sawFork = true // a fork exists, so an idle tick may be its startup window
+		if starting {
+			sawFork = true // a detached launch reservation is the one real startup window
 		}
 		// tasksWatchSettling holds the auto-exit a few ticks against a torn read and adds the startup
 		// guard so just-launched forks don't conclude "drained" before one claims.
@@ -115,6 +124,88 @@ func TasksWatch(host Host, repo string, rels []string) (int, error) {
 	return host.runWatchLoop(screen, tick, func() {
 		ui.OK("queue drained — every task is done")
 	})
+}
+
+func snapshotHasVisibleActivity(snapshot ProjectSnapshot) bool {
+	if len(snapshot.Executions) > 0 || len(snapshot.Problems) > 0 {
+		return true
+	}
+	for _, fork := range snapshot.Forks {
+		if fork.Starting || fork.DetachedRunning || fork.CleanupPending || fork.Assignments > 0 ||
+			fork.Candidate || fork.PendingLand || fork.Reservation != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func tasksWatchFrameWithSnapshot(sources []watchSource, merged []mergedTask, snapshot ProjectSnapshot, spin, width int) []string {
+	frame := tasksWatchFrame(sources, merged, spin, width)
+	if len(snapshot.Executions) > 0 {
+		frame = append(frame, "", "sandboxes")
+	}
+	for _, execution := range snapshot.Executions {
+		state := "running"
+		if execution.Stale {
+			state = "cleanup-pending"
+		} else if !execution.Running {
+			state = "unverified"
+		} else if !execution.Active {
+			state = "parked"
+		}
+		where := filepath.Base(execution.Record.Workspace)
+		if execution.Record.Fork != nil {
+			where = "fork " + execution.Record.Fork.Name
+		}
+		details := []string{"role: " + string(execution.Record.Role), "workspace: " + where}
+		if execution.Record.Task != nil {
+			details = append(details, "task: "+execution.Record.Task.ID)
+		}
+		if execution.Record.SourceID != "" {
+			details = append(details, "source: "+execution.Record.SourceID)
+		}
+		frame = append(frame,
+			fmt.Sprintf("  %s · %s", execution.Record.Kind, state),
+			"    "+strings.Join(details, " · "),
+		)
+	}
+	var visibleForks []ProjectForkSnapshot
+	for _, fork := range snapshot.Forks {
+		if len(fork.Executions) == 0 && (fork.Starting || fork.DetachedRunning || fork.CleanupPending ||
+			fork.Assignments > 0 || fork.Candidate || fork.PendingLand || fork.Reservation != nil) {
+			visibleForks = append(visibleForks, fork)
+		}
+	}
+	if len(visibleForks) > 0 {
+		frame = append(frame, "", "forks")
+	}
+	for _, fork := range visibleForks {
+		state := "idle"
+		switch {
+		case fork.Starting:
+			state = "starting"
+		case fork.DetachedRunning:
+			state = "detached loop running"
+		case fork.CleanupPending:
+			state = "cleanup-pending"
+		case fork.PendingLand:
+			state = "landing"
+		case fork.Candidate:
+			state = "ready"
+		case fork.Reservation != nil:
+			state = string(fork.Reservation.Kind) + " " + fork.Reservation.OwnerID
+		case fork.Assignments > 0:
+			state = fmt.Sprintf("%d assignment(s)", fork.Assignments)
+		}
+		frame = append(frame, "  "+fork.Name+" · "+state)
+	}
+	if len(snapshot.Problems) > 0 {
+		frame = append(frame, "", "problems")
+		for _, problem := range snapshot.Problems {
+			frame = append(frame, "  "+truncate(oneLineTitle(problem), width-3))
+		}
+	}
+	return frame
 }
 
 // mergedCounts tallies the deduped task set — each task counted once, by its winning state.
@@ -222,11 +313,25 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
 	var out []string
 	emit := func(m mergedTask) {
 		suffix := ""
-		if m.fork != "" && m.State == StateInProgress {
+		if m.fork != "" {
 			suffix += "  ← " + m.fork
+			if m.phase != "" {
+				suffix += " (" + string(m.phase) + ")"
+			} else if m.State == StateInProgress {
+				suffix += " · " + m.lease.label()
+			}
+		} else if m.owner != "" {
+			suffix += "  ← " + m.owner
 		}
-		if m.State == StateInProgress {
-			suffix += " · " + m.lease.label()
+		if m.queue != "" {
+			suffix += " · queue " + m.queue
+		}
+		if m.State == StateInProgress && m.fork == "" {
+			if suffix == "" {
+				suffix = " · " + m.lease.label()
+			} else {
+				suffix += " · " + m.lease.label()
+			}
 		}
 		// AltScreen leaves the terminal's final column empty so a full row cannot auto-wrap. Give
 		// the title everything before that safety column and the row's fixed prefix/suffix.

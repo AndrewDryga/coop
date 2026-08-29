@@ -22,6 +22,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/mcp"
@@ -1229,6 +1230,9 @@ func TestSessionTurnRunnerReusesWarmACPProcessAcrossTurns(t *testing.T) {
 	if _, err := fixture.runner.Run(warmContext(), fixture.session, first); err != nil {
 		t.Fatal(err)
 	}
+	if got, want := readFile(t, fixture.envLog), "run="+sessionWarmRunID(fixture.session.ID); !strings.Contains(got, want) {
+		t.Fatalf("cold-to-warm ACP run identity = %q, want %q", got, want)
+	}
 	if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); err != nil {
 		t.Fatalf("warm credential projection was not retained: %v", err)
 	}
@@ -1254,6 +1258,35 @@ func TestSessionTurnRunnerReusesWarmACPProcessAcrossTurns(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); !os.IsNotExist(err) {
 		t.Fatalf("warm credential remains after shutdown: %v", err)
+	}
+}
+
+func TestSessionTurnRunnerPersistsBorrowedWarmRuntimeUntilCleanupRetry(t *testing.T) {
+	fixture := newSessionACPFixture(t, "hang")
+	if err := fixture.runner.PrepareSession(contextWithTurnDeadline(t), fixture.session, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_SESSION_SERVICE_CLEANUP_FAIL", "1")
+	turn := fixture.submit(t, "borrow warm runtime")
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	result, err := fixture.runner.Run(context.WithValue(ctx, sessionWarmIdleTimeoutContextKey{}, time.Minute), fixture.session, turn)
+	if err == nil || result.State != session.TurnFailed {
+		t.Fatalf("failed warm turn = %+v, err=%v", result, err)
+	}
+	stored, getErr := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	wantRunID := sessionWarmRunID(fixture.session.ID)
+	if getErr != nil || stored.RuntimeRunID != wantRunID {
+		t.Fatalf("warm runtime cleanup receipt = %q, want %q, err=%v", stored.RuntimeRunID, wantRunID, getErr)
+	}
+
+	t.Setenv("COOP_TEST_SESSION_SERVICE_CLEANUP_FAIL", "")
+	if err := fixture.runner.CleanupSession(context.Background(), fixture.session); err != nil {
+		t.Fatalf("retry exact warm runtime cleanup: %v", err)
+	}
+	stored, getErr = fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	if getErr != nil || stored.RuntimeRunID != "" {
+		t.Fatalf("warm runtime receipt after retry = %q, err=%v", stored.RuntimeRunID, getErr)
 	}
 }
 
@@ -1738,6 +1771,61 @@ func TestSessionTurnRunnerInterruptedTurnReapRemovesProjectedCredentials(t *test
 	}
 }
 
+func TestSessionTurnRunnerInterruptedTurnRejectsForeignRuntimeReceiptBeforeCleanup(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	turn := fixture.submit(t, "forged cleanup receipt")
+	turn.RuntimeRunID = sessionTurnRunID("another-session", "another-turn")
+	if err := fixture.runner.ReapInterruptedTurn(context.Background(), fixture.session, turn); err == nil {
+		t.Fatal("foreign runtime receipt was accepted")
+	}
+	if _, err := os.Stat(fixture.runtimeLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("foreign runtime receipt touched the runtime: %v", err)
+	}
+}
+
+func TestSessionTurnRunnerInterruptedTurnUsesExactExecutionAuthority(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	turn := fixture.submit(t, "exact cleanup receipt")
+	runID := sessionTurnRunID(fixture.session.ID, turn.ID)
+	if err := fixture.store.BindTurnRuntime(context.Background(), fixture.session.ID, turn.ID, "", runID); err != nil {
+		t.Fatal(err)
+	}
+	turn.RuntimeRunID = runID
+	identity := forkspace.Identity{
+		Name: fixture.session.ForkName, Generation: forkspace.Generation(fixture.session.ForkGeneration),
+	}
+	record := forkspace.ExecutionRecord{
+		Version: 1, ID: strings.Repeat("1", 32), Kind: forkspace.ExecutionRemoteSession,
+		Role: forkspace.ExecutionRoleActiveTurn, Workspace: fixture.session.Workspace,
+		Fork: &identity, SourceID: runID, PID: 1 << 30,
+		Token: "darwin-kinfo-v1:1:1", StartedAt: time.Now().UTC(),
+	}
+	body, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(forkspace.StateDir(fixture.repo), "executions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, record.ID+".json"), append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.runner.ReapInterruptedTurn(context.Background(), fixture.session, turn); err != nil {
+		t.Fatal(err)
+	}
+	log := readFile(t, fixture.runtimeLog)
+	if !strings.Contains(log, box.LabelExecution+"="+record.ID) {
+		t.Fatalf("runtime cleanup did not use exact execution authority: %s", log)
+	}
+	if strings.Contains(log, box.LabelRun+"="+runID) {
+		t.Fatalf("runtime cleanup fell back to the broad run label: %s", log)
+	}
+	if _, err := os.Stat(filepath.Join(dir, record.ID+".json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale execution authority remains: %v", err)
+	}
+}
+
 func TestSessionTurnRunnerDoesNotReapBeforeChildStarts(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	turn := fixture.submit(t, "bad binding")
@@ -1770,6 +1858,18 @@ func TestSessionTurnRunnerCompletesTheTurnWhenCleanupFails(t *testing.T) {
 	got, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
 	if err != nil || got.State != session.TurnCompleted || got.AssistantMessage != "hello world" {
 		t.Fatalf("stored turn after cleanup failure = state %q message %q, err=%v", got.State, got.AssistantMessage, err)
+	}
+	wantRunID := sessionTurnRunID(fixture.session.ID, turn.ID)
+	if got.RuntimeRunID != wantRunID {
+		t.Fatalf("runtime cleanup receipt = %q, want %q", got.RuntimeRunID, wantRunID)
+	}
+	t.Setenv("COOP_TEST_SESSION_SERVICE_CLEANUP_FAIL", "")
+	if err := fixture.runner.CleanupSession(context.Background(), fixture.session); err != nil {
+		t.Fatalf("retry exact completed-turn cleanup: %v", err)
+	}
+	got, err = fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	if err != nil || got.RuntimeRunID != "" {
+		t.Fatalf("runtime cleanup receipt after retry = %q, err=%v", got.RuntimeRunID, err)
 	}
 }
 
@@ -1977,6 +2077,25 @@ func newSessionACPFixture(t *testing.T, scenario string, target ...string) *sess
 	sess, err := store.CreateSession(context.Background(), "create", session.CreateSessionRequest{
 		Target: sessionTarget, Policy: "policy", Repository: repo, Workspace: workspace, ForkName: "fork", BaseCommit: strings.Repeat("a", 40),
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlockGeneration, err := forkspace.LockState(repo, "fork")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "fork")
+	if err == nil {
+		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
+			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: sess.ID, CreatedAt: time.Now().UTC(),
+		})
+	}
+	unlockGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err = store.AdoptSessionForkGeneration(context.Background(), sess.ID, string(identity.Generation))
 	if err != nil {
 		t.Fatal(err)
 	}

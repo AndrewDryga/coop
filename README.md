@@ -194,9 +194,9 @@ spelled out here (there's room to render them).
 | `coop fork merge <name> [--force] [--yes]` | rebase one fork onto your branch and land it (`--yes` confirms non-interactively) |
 | `coop fork merge --all [--force] [--yes]` | rebase and land every fork (`--yes` confirms non-interactively; cannot be combined with a name) |
 | `coop fork logs [name] [-f]` · `stop <name>` | tail a loop log (no name = all) · stop a detached loop |
-| `coop fork rm <name> [--force] [--yes]` | discard a fork — confirms first (`--yes` skips it; refuses unmerged/dirty work without `--force`) |
+| `coop fork rm <name> [--force] [--yes]` | discard a fork — confirms first; `--force` may stop its detached worker and return/discard Git plus canonical task authority |
 | `coop fork open <name>` · `path <name>` | open the fork in your editor · print its filesystem path |
-| `coop fork <name> <target|preset> --loop [--tasks <path>] [-d]` | loop a tasks queue unattended in the fork (`-d` detaches) |
+| `coop fork <name> <target|preset> --loop [--tasks <path>] [-d]` | claim canonical project tasks one at a time in an isolated fork (`--tasks` selects one queue; `-d` detaches) |
 | `coop fork <name> acp <target>` | drive the fork's [sandboxed agent from Zed](#drive-it-from-zed-acp) over ACP |
 
 **Unattended** ([details](#run-it-unattended))
@@ -210,9 +210,9 @@ spelled out here (there's room to render them).
 | Command | What it does |
 |---|---|
 | `coop tasks ls` | show the queue, grouped by state (a folder per task; its directory *is* its state) |
-| `coop tasks watch` | live board of the queue + any active forks, merged and deduped by id (auto-exits when every task's done; Ctrl-C anytime) |
+| `coop tasks watch` | one live board for canonical tasks and every local/fork/ACP/session sandbox (auto-exits when work drains; Ctrl-C anytime) |
 | `coop tasks add "<title>"` · `claim` · `release` · `block` · `unblock` · `done` · `rm` | move one task through its states (moving its folder is the state change); `release` hands a claim back without finishing it |
-| `coop tasks decisions [-i]` · `lint` · `split <n>` | what's blocked on a decision (`-i` to answer) · check the tree · carve todo tasks into per-fork slices |
+| `coop tasks decisions [-i]` · `lint` | what's blocked on a decision (`-i` to answer) · check the canonical tree |
 | `coop backlog` · `add "<title>"` · `promote <id>` · `rm <id>` | park unscheduled ideas in the `xx_backlog/` drawer — same folder format, but outside the lifecycle (never auto-worked, never nagged); `promote` moves one into `00_todo/` when it's ready |
 
 **Services** — the box's `.agent/compose.yml` sidecars ([details](#services))
@@ -317,7 +317,7 @@ coop fork perf           # re-enter: continues codex's last session by default
 coop fork ls             # list your forks (branch, changes, state, last activity)
 coop fork review perf    # review: the dossier, then the diff
 coop fork merge perf     # land: rebase onto your branch, then close the fork
-coop fork rm perf        # or discard it (confirms first; refuses unmerged/dirty work without --force)
+coop fork rm perf        # or discard it (confirms first; inspect task/Git impact before --force)
 ```
 
 `coop fork <name>` opens a new fork or re-enters an existing one. Name the agent as a
@@ -355,7 +355,11 @@ the same account and cwd while a fresh fork session is being established.
 
 `--new` starts a new session for the selected provider/account while keeping the fork's files.
 `--fresh` recreates the whole fork but remembers its selected provider. It confirms before deletion
-(`--yes` is required without a TTY) and refuses to discard unmerged/dirty work without `--force`.
+(`--yes` is required without a TTY). On `rm` and `--fresh`, `--force` can stop the detached worker,
+discard unmerged or dirty Git work, return owned canonical assignments to the queue, discard the
+reviewed generation candidate, and discard pending fork proposals; blocked tasks and already
+imported canonical proposals remain canonical. Inspect `coop fork ls` and `coop fork review` first.
+For merge, `--force` bypasses only the risky-file policy; the rebased merge gate still must pass.
 
 ### Review — in your terminal or your IDE
 
@@ -458,13 +462,18 @@ non-interactive shell (CI, a pipe) there's no one to answer, and merge refuses
 rather than landing on the default — pass `--yes` (`-y`) to confirm landing and
 removal up front. `--yes` also skips the prompts interactively.
 
-A fork's loop works a *copy* of the task queue (`.agent/` is gitignored, seeded when the fork is
-created). After a successful merge, Coop scans the landed commit range for `Coop-Task` trailers and
-automatically moves matching unique parent tasks from todo/in-progress to done, so the parent loop
-does not redo landed work. A blocked task stays human-owned until its decision is reconciled; a
-duplicate ID must be disambiguated across queues. An obstructed completion warns with the exact
-`coop tasks done <id>` recovery command. Queue reconciliation never rolls back code that already
-landed. While forks run, `coop tasks watch` shows the deduped truth across the parent and its forks.
+A fork loop schedules from the project's canonical queue but never mounts that whole queue into its
+sandbox. The host records an immutable fork generation and exact task assignment, then projects only
+that task into the fork. The normal in-box lifecycle, artifacts, reviews, and signoff operate on the
+projection; canonical state remains `in_progress` while the fork is `reviewing` or `ready`.
+
+After final signoff and signing, Coop publishes one generation-wide candidate binding its exact
+HEAD/tree and every completed assignment. Merge revalidates that candidate, rebases and gates it,
+then advances the parent and completes only those exact canonical tasks through a replayable land
+journal. A `Coop-Task` trailer remains a consistency/search label, not completion authority. Stop or
+a crash keeps assignments resumable by the same generation; rm/fresh/discard refuse unresolved
+task authority unless the explicit destructive path journals its disposition. `coop tasks watch`
+shows this canonical lifecycle together with every sandbox and any stale/unknown control evidence.
 
 ## Agents & config
 
@@ -1272,51 +1281,47 @@ resolved queue paths when a script (such as the sweep queue guard) needs them.
 ### Parallel forks
 
 Run several models at once, each looping unattended in its own [fork](#forks-hand-off-work-like-a-pr).
-Split the work into separate task trees and hand each fork one with `--tasks`:
+Point them at the same canonical project queue; host assignment makes every claim exact-once:
 
 ```bash
-coop fork perf codex  --loop -d --tasks .agent/tasks.perf   # codex loops the perf slice, detached
-coop fork deps gemini --loop -d --tasks .agent/tasks.deps   # gemini takes the deps slice
-coop fork docs claude --loop -d --tasks .agent/tasks.docs   # claude takes the docs
+coop fork perf codex  --loop -d # each worker claims a different canonical task
+coop fork deps gemini --loop -d
+coop fork docs claude --loop -d
 
-coop tasks watch       # live board: all tasks, including active forks, merged by id
-coop fork ls           # snapshot: who's running, task progress, diff size, cost, last activity
-coop fork logs -f      # tail every fork at once (compose-style, prefixed)
-coop fork stop perf    # halt one; coop fork logs perf -f to watch just it
+coop tasks watch                # canonical queue + assignments + every active sandbox
+coop fork ls                    # worker state, sandbox activity, candidate/task progress, diff, cost
+coop fork logs -f               # tail every fork at once (compose-style, prefixed)
+coop fork stop perf             # halt one; coop fork logs perf -f to watch just it
 ```
 
-`--tasks <path>` is optional — with none, the fork seeds *every* queue coop knows about:
-the repo's own `.agent/tasks`, plus each [monorepo](#monorepos) subproject's queue, each at
-its own relative path, so the in-fork loop aggregates them just like `coop loop` does. Pass
-`--tasks` (as above) to hand each fork one separate slice instead, named independently from
-the fork. It seeds the fork's queue from that tree (once — a resumed loop keeps its own
-progress) and runs the loop with the chosen model; `-d` (`--detach`) backgrounds it, capturing output to
-`../<repo>-forks/.coop/<name>.log`. When one finishes,
-[review and land it](#forks-hand-off-work-like-a-pr) like a PR, then `git push`. Add
-agents until *review*, not generation, is your bottleneck.
+With no `--tasks`, a fork schedules from every queue Coop knows about: the repo's own
+`.agent/tasks` plus each [monorepo](#monorepos) member. `--tasks <path>` narrows that scheduler to
+one canonical queue, including an explicit absolute queue outside the project; it never copies or
+remaps that queue. At any moment the fork receives only its assigned task under
+`.coop/task-executions/`. A same-generation restart resumes it; another fork cannot claim it.
+
+`-d` (`--detach`) backgrounds the worker and captures output in
+`../<repo>-forks/.coop/<name>.log`. When a fork drains its available work, review and
+[land it](#forks-hand-off-work-like-a-pr) like a PR, then `git push`. Add agents until *review*,
+not generation, is your bottleneck.
 
 **Land all forks at once** with `coop fork merge --all` — a revalidating rebase
 *queue*: it rebases each fork onto the result of the last and re-runs `COOP_GATE`, so a
 "green" fork can't ride in against a base an earlier landing already changed. It stops at
 the first conflict or red gate, leaving the rest untouched.
 
-To bootstrap independent queues, `coop tasks split <n>` mechanically round-robins the todo folders
-into `.agent/tasks.slice<n>/` copy-trees (use an agent for semantic slicing). The source queue is
-unchanged, so start one fork per slice and do not also loop the source:
-
-```bash
-coop tasks split 3
-coop fork slice1 frontier --loop -d --tasks .agent/tasks.slice1
-coop fork slice2 codex:gpt-5.5@work --loop -d --tasks .agent/tasks.slice2
-coop fork slice3 gemini:gemini-3.5-flash --loop -d --tasks .agent/tasks.slice3
-```
+`coop tasks split` and whole-queue fork seeding are retired. Those copies could each move the same
+task independently and no merged dashboard could make them one authority. Keep semantic grouping
+as separate *canonical* queues only when the project truly owns separate queues; use `--tasks` as a
+filter, not as a slicing mechanism.
 
 Give simultaneous direct targets different accounts if you want them to avoid subscription
 contention; a preset can carry a full provider/account rotation. A stale or crashed worker appears
 as `cleanup` in `coop fork ls` until `coop fork stop <name>` reaps only that fork's containers,
 even if another repository uses the same fork name; stopping twice is safe. Remove an obsolete fork
-with `coop fork rm <name>` (`--yes` confirms non-interactively; `--force` separately permits dirty
-or unmerged deletion).
+with `coop fork rm <name>` (`--yes` confirms non-interactively; `--force` may stop its detached
+worker, discard dirty/unmerged Git work and the reviewed candidate/pending proposals, and return its
+canonical assignments to the queue).
 
 ## Project toolchain & services
 
@@ -1661,10 +1666,11 @@ blocked on a human decision and `130` when Ctrl-C interrupted it before queue ve
 intentional `--max-tasks N` pause is successful without claiming the whole queue was verified (see
 [Exit codes](#the-loop) above).
 
-**Why no `--json`?** coop's stdout is for a human at a terminal; its *exit codes* are the machine
-contract. The structured data a script would want already lives in files it can read directly — the
-task queue is folders under `.agent/tasks/`, a fork's state is its git worktree — so a `--json`
-surface would just be a second, drifting copy. Branch on exit codes; read the files.
+**Why is `--json` uncommon?** Mutating commands use exit codes as their machine contract instead
+of growing a second control API. Two read-only views deliberately expose JSON: `coop tasks watch
+--json` is the canonical project task/activity snapshot, and `coop fork ls --json` discovers
+workspace URLs plus fork status. Branch on exit codes for mutations; use those host-owned snapshots
+when a tool needs current joined state.
 
 ## Troubleshooting
 

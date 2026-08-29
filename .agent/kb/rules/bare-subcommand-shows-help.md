@@ -4,7 +4,7 @@ description: "a bare group prints help or its default view, never an empty-token
 scope: cli-grammar
 sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/tasks/queue.go]
 check: "none"
-updated: 2026-08-25
+updated: 2026-08-28
 ---
 
 # A bare subcommand group shows help, never an "unknown command \"\"" error
@@ -14,7 +14,7 @@ updated: 2026-08-25
 options," which is exactly what help is for; `unknownErr` (with its did-you-mean) is
 for a *mistyped* subcommand, not a *missing* one.
 
-**Why:** `coop tasks` → `unknown tasks command "" — use: list, lint, add, split`
+**Why:** `coop tasks` → `unknown tasks command "" — use: ls, lint, add, claim`
 reads as an error for doing nothing wrong, and buries the options in a one-line scold.
 Bare `coop` prints help; a bare group should match that.
 
@@ -30,6 +30,8 @@ Bare `coop` prints help; a bare group should match that.
   reviewed rule; check it whenever you add or touch a subcommand group.
 
 ## Changelog
+- 2026-08-28 — refreshed the illustrative task grammar after copied-queue `split` was retired; the
+  empty-token rule and all dispatchers remain unchanged.
 - 2026-08-25 — removed the retired Fleet group from the current dispatcher inventory; every
   surviving group still avoids an empty-token error.
 - 2026-08-10 — path-only: the fork/fleet extraction moved both group dispatchers into

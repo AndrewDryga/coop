@@ -21,11 +21,7 @@ const (
 	stateDone = tasks.StateDone
 )
 
-var (
-	latestTaskLog = tasks.LatestTaskLog
-	isTaskDir     = tasks.IsTaskDir
-	taskStates    = tasks.TaskStates
-)
+var latestTaskLog = tasks.LatestTaskLog
 
 // lastLines returns the last n lines of s (trailing blank lines trimmed first).
 func lastLines(s string, n int) string {

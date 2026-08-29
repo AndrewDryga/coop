@@ -191,6 +191,18 @@ ALTER TABLE turns ADD COLUMN validation_error TEXT NOT NULL DEFAULT '';
 ALTER TABLE turns ADD COLUMN validation_receipt TEXT NOT NULL DEFAULT '';
 `
 
+// Fork names are reusable; a durable remote session owns one exact workspace incarnation.
+const schemaV14 = `
+ALTER TABLE sessions ADD COLUMN fork_generation TEXT NOT NULL DEFAULT '';
+`
+
+// A turn can finish successfully before its container cleanup succeeds. Keep
+// the exact runtime identity independently of turn state until teardown is
+// proven, including when the turn borrowed a session's warm container.
+const schemaV15 = `
+ALTER TABLE turns ADD COLUMN runtime_run_id TEXT NOT NULL DEFAULT '';
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -285,6 +297,18 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v13: %w", err)
 		}
 		version = 13
+	}
+	if version < 14 {
+		if _, err := tx.Exec(schemaV14); err != nil {
+			return fmt.Errorf("migrate schema v14: %w", err)
+		}
+		version = 14
+	}
+	if version < 15 {
+		if _, err := tx.Exec(schemaV15); err != nil {
+			return fmt.Errorf("migrate schema v15: %w", err)
+		}
+		version = 15
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)

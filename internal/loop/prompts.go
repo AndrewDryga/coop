@@ -23,6 +23,12 @@ import (
 // each iteration re-read ~2K tokens already in its context and burn a tool turn doing it — the
 // conditional keeps the fallback for a repo where the auto-load didn't happen.
 func LoopWorkPrompt(repo, assignedRoot, assignedID, agent string, peers []agents.Target, p *preset.Preset, auditReopen bool) string {
+	return LoopWorkPromptWithProposalOutbox(repo, assignedRoot, assignedID, agent, peers, p, auditReopen, "")
+}
+
+// LoopWorkPromptWithProposalOutbox preserves the ordinary canonical-loop contract while replacing
+// direct queue writes in an isolated fork with a bounded host-imported proposal channel.
+func LoopWorkPromptWithProposalOutbox(repo, assignedRoot, assignedID, agent string, peers []agents.Target, p *preset.Preset, auditReopen bool, proposalOutbox string) string {
 	commitPolicy := "Do the work, run the gate, then commit your work — END the commit message with a trailer line `Coop-Task: <task-id>` (the task id is its folder name), so the harness can bind the commit to the task, resume correctly if interrupted, and reconcile the queue after a fork merge."
 	citationPolicy := "When you cite that commit in state.md or log.md, name it by its `Coop-Task: <task-id>` trailer (or the task id), NOT its SHA — coop re-signs your commit on the host after this run, which rewrites its SHA, so a written-down SHA goes stale."
 	completionPolicy := "AFTER the commit, refresh state.md one last time while the task is still in 10_in_progress/: preserve the useful Done so far and Traps, set Status to complete, and set Next action to none. Then move its folder into 99_done/ as the final filesystem action; write nothing more inside that task folder after the move. Coop also enforces those lifecycle fields host-side before review."
@@ -30,6 +36,10 @@ func LoopWorkPrompt(repo, assignedRoot, assignedID, agent string, peers []agents
 		commitPolicy = "Do the work and run the gate. This task is host-authorized audit rework: if independent verification shows the finding is false, do NOT create, amend, or rewrite any commit — complete it with zero new commits. If the finding is real, amend or rewrite the already-bound implementation commit with a real tree change while keeping exactly one reachable `Coop-Task: <task-id>` binding and semantically unchanged later commits, including commits with no task binding."
 		citationPolicy = "If you cite the existing or rewritten implementation commit in state.md or log.md, name it by its `Coop-Task: <task-id>` trailer (or the task id), NOT its SHA — coop re-signs rewritten commits on the host after this run, which changes their SHA."
 		completionPolicy = "AFTER the gate — and after rewriting the existing implementation commit only when a real fix was required — refresh state.md one last time while the task is still in 10_in_progress/: preserve the useful Done so far and Traps, set Status to complete, and set Next action to none. Then move its folder into 99_done/ as the final filesystem action; write nothing more inside that task folder after the move. Coop also enforces those lifecycle fields host-side before review."
+	}
+	discoveryPolicy := "If you SPOT a SEPARATE task while working (not part of this one), do NOT fold it into your commit: create its folder under %[3]s/00_todo/ with a task.md whose acceptance you can state in a line, and a later iteration works it. Only the genuinely LARGE goes under %[3]s/xx_backlog/ instead — work no single iteration could finish, or a spec-sized idea a human must scope first. \"It needs a design\" is not a reason to park something you could state in a line; when the call is close, file it in 00_todo/."
+	if proposalOutbox != "" {
+		discoveryPolicy = fmt.Sprintf("If you SPOT separate work, do NOT add another folder to this one-task execution queue and do NOT fold it into your commit. Generate a fresh 32-character lowercase hexadecimal id and write one JSON file to %s named <id>.json. Its exact object keys are version (1), id, kind (task for ready work or backlog for a genuinely large idea requiring human scoping), title, context, acceptance, approach, and subtasks (a non-empty string array). The host validates and imports it into the assigned task's canonical queue after this iteration.", absQueuePath(repo, proposalOutbox))
 	}
 	instructions := strings.Join([]string{
 		"The project contract is your instruction file, normally already loaded in your context — read %s only if its content is not.",
@@ -45,7 +55,7 @@ func LoopWorkPrompt(repo, assignedRoot, assignedID, agent string, peers []agents
 		citationPolicy,
 		completionPolicy,
 		"If you hit a one-way-door decision, move its folder into 50_blocked/ and fill in its decision.md.",
-		"If you SPOT a SEPARATE task while working (not part of this one), do NOT fold it into your commit: create its folder under %[3]s/00_todo/ with a task.md whose acceptance you can state in a line, and a later iteration works it. Only the genuinely LARGE goes under %[3]s/xx_backlog/ instead — work no single iteration could finish, or a spec-sized idea a human must scope first. \"It needs a design\" is not a reason to park something you could state in a line; when the call is close, file it in 00_todo/.",
+		discoveryPolicy,
 		"Work exactly ONE task per run: take the assigned task to done — or to blocked — then STOP without claiming or starting another, even if 00_todo/ still has tasks. The loop re-invokes you in a fresh box with fresh context for the next one; draining the whole queue in a single run is the loop's job, not yours.", "Move ONLY your assigned task's folder. Leave every other task where it is — including one sitting in 10_in_progress/ whose work already looks committed and finished. Tidying it is an UNLEASED completion: the host rejects it AND rejects your own completion along with it, so your finished work is discarded and re-run. If a task looks stale or already done, say so in your task's log.md and move on; the host reconciles it.",
 	}, " ")
 	return loopPeerCapabilities(agent, peers, p) + "\n\n" + fmt.Sprintf(instructions,

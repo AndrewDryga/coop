@@ -11,7 +11,6 @@ import (
 	osuser "os/user"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -40,7 +39,7 @@ var taskArgSpecs = map[string]taskArgSpec{
 	"ls":    {lsFlags, 0},
 	"lint":  {nil, 0},
 	"claim": {nil, 1}, "release": {nil, 1}, "path": {nil, 1},
-	"block": {nil, 1}, "done": {nil, 1}, "split": {nil, 1},
+	"block": {nil, 1}, "done": {nil, 1},
 	"rm": {[]string{"--all-done", "--yes", "-y"}, 1},
 }
 
@@ -148,8 +147,6 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderRemove(root, args)
 	case "clear": // bulk-delete idiom: clear the done archive (like `rm --all-done`)
 		return tasksFolderRemove(root, append([]string{"--all-done"}, args...))
-	case "split":
-		return tasksFolderSplit(repo, root, args)
 	case "decisions":
 		return tasksFolderDecisions(root, args)
 	default:
@@ -160,7 +157,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 // tasksVerbs are the canonical `coop tasks` subcommands (primary spellings, no aliases): the single
 // source for the unknown-subcommand suggester and isTasksSubcommand, so the two can't drift. `watch`
 // belongs here even though cmdTasks (not cmdTasksFolder) handles it — a mistype of it should suggest it.
-var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "block", "unblock", "done", "watch", "queues", "path", "rm", "clear", "split", "decisions"}
+var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "block", "unblock", "done", "watch", "queues", "path", "rm", "clear", "decisions"}
 
 // isTasksSubcommand reports whether s names a `coop tasks` subcommand. cmdTasks uses it to catch
 // `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path. v3 keeps no
@@ -401,7 +398,7 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 	}
 	// Ensure all four state dirs exist (the queue may be fresh, or predate the four-state scaffold), so
 	// the move-a-folder-between-states protocol always has a real dir to move into — same guarantee as
-	// `coop init` and the split producers. Then the task's own todo dir.
+	// `coop init`. Then the task's own todo dir.
 	if err := ScaffoldStateDirs(root); err != nil {
 		return -1, err
 	}
@@ -464,10 +461,30 @@ func taskOwnerIdentity() (user, host string) {
 // loop's own todo->in_progress adoption (assignLoopTaskOnly -> moveTaskDir) must never call this, or
 // the loop would lock itself out of its own resumed work.
 func claimTaskOwnerRecord(root, id string) error {
+	lock, err := lockTaskOwner(root, id)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if record, ok, err := lock.Read(); err != nil {
+		return err
+	} else if ok && record.Kind == TaskOwnerFork {
+		return fmt.Errorf("%w: %s", ErrTaskSandboxOwned, TaskOwnerLabel(record))
+	}
+	item, ok := CurrentTask(root, id)
+	if !ok {
+		return errors.New("task changed before its claim could be recorded")
+	}
+	instance, err := EnsureTaskInstance(root, item)
+	if err != nil {
+		return err
+	}
 	user, host := taskOwnerIdentity()
-	return writeTaskOwnerRecord(root, TaskOwnerRecord{
-		Version:   taskOwnerRecordVersion,
+	return lock.Write(TaskOwnerRecord{
+		Version:   taskOwnershipRecordVersion,
 		TaskID:    id,
+		Kind:      TaskOwnerHuman,
+		Task:      &instance,
 		Source:    taskOwnerSourceInteractiveClaim,
 		User:      user,
 		Host:      host,
@@ -647,6 +664,12 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 			ui.OK("finished interrupted unblock for %s — pending audit authority activated, task remains in todo", t.ID)
 			return 0, nil
 		}
+		if recovered, recoverErr := finishInterruptedForkUnblock(root, t); recoverErr != nil {
+			return -1, fmt.Errorf("finish interrupted fork unblock for %s: %w", t.ID, recoverErr)
+		} else if recovered {
+			ui.OK("finished interrupted unblock for %s — fork assignment paused, task remains in todo", t.ID)
+			return 0, nil
+		}
 	}
 	if t.State != StateBlocked {
 		return 1, fmt.Errorf("%s is not blocked (it's %s) — nothing to unblock", t.ID, StateLabel(t.State))
@@ -785,10 +808,61 @@ func moveBlockedAuditUnblock(root string, t Item, transition *blockedAuditUnbloc
 			err: transition.finish(err),
 		}
 	}
+	ownerLock, err := lockTaskOwner(root, t.ID)
+	if err != nil {
+		return &unblockStageError{
+			stage: "owner record lock", state: StateBlocked,
+			err: transition.finish(errors.Join(err, transition.restorePrevious())),
+		}
+	}
+	ownerRecord, owned, err := ownerLock.Read()
+	if err != nil {
+		return &unblockStageError{
+			stage: "owner record inspection", state: StateBlocked,
+			err: transition.finish(errors.Join(err, ownerLock.Close(), transition.restorePrevious())),
+		}
+	}
+	ownerChanged := false
+	rollbackOwner := func() error {
+		if !ownerChanged {
+			return nil
+		}
+		return ownerLock.Write(ownerRecord)
+	}
+	if owned && ownerRecord.Kind == TaskOwnerFork {
+		if ownerRecord.Fork == nil || (ownerRecord.Fork.Phase != ForkAssignmentBlocked && ownerRecord.Fork.Phase != ForkAssignmentPaused) {
+			return &unblockStageError{
+				stage: "owner record validation", state: StateBlocked,
+				err: transition.finish(errors.Join(fmt.Errorf("fork assignment is not blocked or paused"), ownerLock.Close(), transition.restorePrevious())),
+			}
+		}
+		if ownerRecord.Fork.Phase == ForkAssignmentBlocked {
+			next := ownerRecord
+			next.Fork.Phase = ForkAssignmentPaused
+			next.Fork.CandidateID = ""
+			next.Fork.ProjectionDigest = ""
+			next.Fork.UpdatedAt = time.Now().UTC()
+			if err := ownerLock.Write(next); err != nil {
+				return &unblockStageError{
+					stage: "fork assignment resume", state: StateBlocked,
+					err: transition.finish(errors.Join(err, ownerLock.Close(), transition.restorePrevious())),
+				}
+			}
+			ownerChanged = true
+		}
+	} else if owned {
+		if err := removeTaskOwnerRecordFile(root, t.ID); err != nil {
+			return &unblockStageError{
+				stage: "owner record cleanup", state: StateBlocked,
+				err: transition.finish(errors.Join(err, ownerLock.Close(), transition.restorePrevious())),
+			}
+		}
+		ownerChanged = true
+	}
 	if err := MoveTaskDir(root, t, StateTodo); err != nil {
 		return &unblockStageError{
 			stage: "task folder move", state: StateBlocked,
-			err: transition.finish(errors.Join(err, transition.restorePrevious())),
+			err: transition.finish(errors.Join(err, rollbackOwner(), ownerLock.Close(), transition.restorePrevious())),
 		}
 	}
 	moved := t
@@ -798,7 +872,7 @@ func moveBlockedAuditUnblock(root string, t Item, transition *blockedAuditUnbloc
 		rollbackErr := MoveTaskDir(root, moved, StateBlocked)
 		var recordRollbackErr error
 		if rollbackErr == nil {
-			recordRollbackErr = transition.restorePrevious()
+			recordRollbackErr = errors.Join(rollbackOwner(), transition.restorePrevious())
 		}
 		state := StateBlocked
 		if rollbackErr != nil {
@@ -806,17 +880,14 @@ func moveBlockedAuditUnblock(root string, t Item, transition *blockedAuditUnbloc
 		}
 		return &unblockStageError{
 			stage: "audit authority persistence", state: state,
-			err: transition.finish(errors.Join(err, rollbackErr, recordRollbackErr)),
+			err: transition.finish(errors.Join(err, rollbackErr, recordRollbackErr, ownerLock.Close())),
 		}
+	}
+	if err := ownerLock.Close(); err != nil {
+		return &unblockStageError{stage: "owner record lock release", state: StateTodo, err: transition.finish(err)}
 	}
 	if err := transition.finish(nil); err != nil {
 		return &unblockStageError{stage: "host authority lock release", state: StateTodo, err: err}
-	}
-	// Defensive, not load-bearing: block() already clears any claim before a task can reach
-	// 50_blocked/, so a blocked task should never carry one — but unblock is the last lifecycle verb
-	// that ends a claim, so it closes the loop if that invariant is ever violated. Idempotent.
-	if err := removeTaskOwnerRecord(root, t.ID); err != nil {
-		return &unblockStageError{stage: "owner record cleanup", state: StateTodo, err: err}
 	}
 	return nil
 }
@@ -927,11 +998,16 @@ func NormalizeTaskState(id, taskDir, statusValue, nextValue, doneFallback, traps
 		return err
 	}
 	defer root.Close()
+	if err := normalizeTaskStateRoot(id, root, statusValue, nextValue, doneFallback, trapsFallback); err != nil {
+		return fmt.Errorf("normalize %q: %w", filepath.Join(taskDir, "state.md"), err)
+	}
+	return nil
+}
 
-	statePath := filepath.Join(taskDir, "state.md")
+func normalizeTaskStateRoot(id string, root *os.Root, statusValue, nextValue, doneFallback, trapsFallback string) error {
 	body, err := ReadTaskMetadataFile(root, "state.md")
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read %q: %w", statePath, err)
+		return fmt.Errorf("read state.md: %w", err)
 	}
 	lines := strings.Split(string(body), "\n")
 	status := labeledLineIndexes(lines, taskStateStatus)
@@ -953,7 +1029,7 @@ func NormalizeTaskState(id, taskDir, statusValue, nextValue, doneFallback, traps
 		return nil
 	}
 	if err := AtomicWriteTaskFile(root, "state.md", []byte(out)); err != nil {
-		return fmt.Errorf("write %q: %w", statePath, err)
+		return fmt.Errorf("write state.md: %w", err)
 	}
 	return nil
 }
@@ -1102,22 +1178,55 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	if t.State != StateBlocked {
-		var err error
-		if t.State == StateDone {
-			err = moveTrustedTaskFromDone(root, t, StateBlocked)
-		} else {
-			err = MoveTaskDir(root, t, StateBlocked)
+	if t.State == StateDone {
+		if err := refuseForkTaskOwner(root, t.ID, "block"); err != nil {
+			return 1, err
 		}
-		if err != nil {
+		if err := moveTrustedTaskFromDone(root, t, StateBlocked); err != nil {
 			return -1, err
 		}
-	}
-	// Blocking ends a human claim same as done/unblock/release: the task leaves 10_in_progress/ (or
-	// was never there) to wait on a decision, so any durable claim on it is now stale. Idempotent — a
-	// loop-owned task legitimately has none.
-	if err := removeTaskOwnerRecord(root, t.ID); err != nil {
-		return -1, fmt.Errorf("task %s is now blocked, but clearing its owner record failed: %w", t.ID, err)
+	} else {
+		// Assignment and human block contend on the same task authority. Hold it together with the
+		// owner lock through check, move, and owner removal so preparing cannot appear after a stale
+		// precheck and become stranded in blocked.
+		authority, err := lockLeaseAuthority(root, t.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
+		if err != nil {
+			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+				return 1, fmt.Errorf("task %s is leased by another controller", t.ID)
+			}
+			return -1, err
+		}
+		ownerLock, err := lockTaskOwner(root, t.ID)
+		if err != nil {
+			return -1, errors.Join(err, unlockLeaseFile(authority))
+		}
+		current, ok := CurrentTask(root, t.ID)
+		if !ok || current.State != t.State || current.Dir != t.Dir {
+			return 1, errors.Join(errors.New("task changed before it could be blocked"), ownerLock.Close(), unlockLeaseFile(authority))
+		}
+		record, owned, err := ownerLock.Read()
+		if err != nil {
+			return -1, errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
+		}
+		if owned && record.Kind == TaskOwnerFork {
+			return 1, errors.Join(
+				fmt.Errorf("%w: cannot block %s while it is %s", ErrTaskSandboxOwned, t.ID, TaskOwnerLabel(record)),
+				ownerLock.Close(), unlockLeaseFile(authority),
+			)
+		}
+		if current.State != StateBlocked {
+			if err := MoveTaskDir(root, current, StateBlocked); err != nil {
+				return -1, errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
+			}
+		}
+		if owned {
+			if err := removeTaskOwnerRecordFile(root, t.ID); err != nil {
+				return -1, errors.Join(fmt.Errorf("task %s is now blocked, but clearing its owner record failed: %w", t.ID, err), ownerLock.Close(), unlockLeaseFile(authority))
+			}
+		}
+		if err := errors.Join(ownerLock.Close(), unlockLeaseFile(authority)); err != nil {
+			return -1, err
+		}
 	}
 	dec := filepath.Join(root, StateBlocked, t.ID, "decision.md")
 	if !fileExists(dec) {
@@ -1203,6 +1312,9 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 // inode, so holding both through RemoveAll makes the folder and its host records disappear as one
 // serialized operation. A box-side deletion bypasses this helper and still fails closed at replay.
 func removeTaskFolderAndRecords(root string, task Item) (removed bool, err error) {
+	if err := refuseForkTaskOwner(root, task.ID, "remove"); err != nil {
+		return false, err
+	}
 	indexFile, index, err := lockCompletionWindowIndex(root)
 	if err != nil {
 		return false, err
@@ -1331,52 +1443,6 @@ func countDone(root string) int {
 		}
 	}
 	return n
-}
-
-// tasksFolderSplit round-robins the todo tasks into n per-slice trees (.agent/tasks.slice1 …
-// .agent/tasks.slicen), as COPIES — the source is untouched — then prints one direct detached-fork
-// command per written slice.
-func tasksFolderSplit(repo, root string, args []string) (int, error) {
-	if len(args) < 1 {
-		return 2, errors.New("usage: coop tasks split <n>")
-	}
-	n, err := strconv.Atoi(args[0])
-	if err != nil || n <= 0 {
-		return 2, errors.New("usage: coop tasks split <n>")
-	}
-	names := make([]string, n)
-	for i := range names {
-		names[i] = "slice" + strconv.Itoa(i+1)
-	}
-	written, counts, total, err := splitTodoFolders(repo, root, names)
-	if err != nil {
-		return -1, err
-	}
-	if total == 0 {
-		ui.Note("no todo tasks to split")
-		return 0, nil
-	}
-	wrote := 0
-	for i, rel := range written {
-		if rel == "" {
-			continue
-		}
-		ui.Note("wrote %s (%s)", rel, ui.Count(counts[i], "task"))
-		wrote++
-	}
-	if wrote < n {
-		ui.Warn("only %s — wrote %s, not the %d requested", ui.Count(total, "todo task"), ui.Count(wrote, "slice"), n)
-	}
-	// The slices are COPIES; the source .agent/tasks is untouched. Say which to run so a
-	// later loop doesn't process every task twice.
-	ui.Note("the slices are copies — .agent/tasks is unchanged; loop one fork per slice")
-	for i, rel := range written {
-		if rel != "" {
-			ui.Note("run: coop fork %s <target|preset> --loop -d --tasks %s", names[i], rel)
-		}
-	}
-	ui.Note("don't also loop .agent/tasks, or each task runs twice")
-	return 0, nil
 }
 
 // doneListCap caps how many of the (oldest-first sorted) done tasks `coop tasks ls` shows — the
@@ -1612,7 +1678,7 @@ func listMarkers(p ui.Palette, t Item) string {
 func inProgressMarker(t Item) string {
 	root := filepath.Dir(filepath.Dir(t.Dir))
 	if rec, owned, err := ReadTaskOwnerRecord(root, t.ID); err == nil && owned {
-		return "claimed by " + rec.User
+		return TaskOwnerLabel(rec)
 	}
 	return observeTaskLease(t, time.Now()).label()
 }
@@ -1859,12 +1925,12 @@ func tasksFolderLint(root string) (int, error) {
 	var findings []string
 	add := func(id, msg string) { findings = append(findings, fmt.Sprintf("  %s: %s", id, msg)) }
 	// Every queue needs all four state dirs, or the move-a-folder-between-states protocol renames a
-	// task into a missing dir and silently corrupts the queue (see scaffoldStateDirs). Split slices and
-	// seeded fork queues now scaffold them up front; flag any older tree that predates the fix.
+	// task into a missing dir and silently corrupts the queue (see scaffoldStateDirs). Flag any older
+	// tree that predates the fix.
 	if fi, err := os.Stat(root); err == nil && fi.IsDir() {
 		for _, st := range TaskStates {
 			if s, e := os.Stat(filepath.Join(root, st)); e != nil || !s.IsDir() {
-				add(st, "state dir is missing — the move protocol will corrupt the queue; run 'coop init' (or re-run split)")
+				add(st, "state dir is missing — the move protocol will corrupt the queue; run 'coop init'")
 			}
 		}
 	}

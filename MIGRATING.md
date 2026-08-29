@@ -1,5 +1,50 @@
 # Migrating
 
+## Canonical tasks across isolated forks
+
+Fork loops now schedule from the project's canonical task queue. They no longer copy a complete
+`.agent/tasks` tree into each fork, and `coop tasks split` has been retired. Before upgrading, stop
+every detached fork loop with the Coop version that started it, then inspect each fork's Git work
+and copied task folders. Preserve any fork-only notes, decisions, artifacts, or unfinished changes
+before starting the new loop; the new controller deliberately does not choose which of two copied
+folders is true.
+
+The first new loop on a fork refuses when that workspace still contains tasks under its own
+`.agent/tasks` (including configured subproject queues). Review and reconcile those copies, then
+recreate the fork with `coop fork <name> <target> --fresh --loop`; add `--force` only after reviewing
+and intentionally disposing of unmerged Git work. Old `.agent/tasks.sliceN` directories in the
+canonical checkout are not imported or deleted. Convert genuinely distinct work into canonical
+tasks explicitly, and archive the old slice only after verifying every note and change has a home.
+
+After migration, start any number of forks against the same queue:
+
+```sh
+coop fork perf codex --loop -d
+coop fork docs claude --loop -d
+coop tasks watch
+```
+
+`--tasks <path>` is now a canonical queue selector, not a copy destination. The host gives each
+fork one durable assignment and exposes only that task in `.coop/task-executions/`. Stopping or a
+crash retains the assignment; only the exact reviewed generation candidate landing through
+`coop fork merge` completes the canonical task. Do not run an older copied-queue worker beside the
+new scheduler.
+
+Current detached workers use `owner-v2` state carrying an immutable fork generation. `owner-v1`
+remains readable only so an older stopped/cleanup-pending worker can be handled safely; it cannot
+claim current task work or attach to a replacement workspace. Never edit a pidfile to add a
+generation. Stop the old worker, let Coop bind a fresh generation, and restart it.
+
+Remote sessions created before their fork generation was persisted need the same care. Before
+upgrading, finish or discard them with the version that created them and preserve any Git work you
+intend to keep. On first start, new Coop adopts a generationless session only when an exact
+host-owned reservation already names that same session (the crash-safe partial-upgrade case).
+Otherwise it quarantines the record: session/turn history remains readable, but Coop does not run
+turns, inspect or review the workspace, clean its runtime or services, close it, or discard it.
+This prevents a deleted and recreated same-named fork from being mistaken for the old session.
+Inspect and preserve the quarantined workspace directly, then create a new remote session; never
+fabricate a generation or reservation file to make the old record attach.
+
 ## v9: one composition model, direct fork loops
 
 Fusion was a second command grammar over capabilities Coop already exposes directly. v9 removes
@@ -36,7 +81,7 @@ live board, and `.agent/fleet.yaml` parser while keeping the direct primitives:
 | Retired | Use |
 | --- | --- |
 | `coop fleet init` / `.agent/fleet.yaml` | No manifest. Start each fork explicitly with `coop fork <name> <target|preset> --loop -d --tasks <path>`. Coop does not delete an existing ignored file; remove it manually after translating its entries. |
-| `coop fleet up` | Run the direct detached fork command once per queue. `coop tasks split <n>` can create `.agent/tasks.sliceN` copy-trees first. |
+| `coop fleet up` | Run the direct detached fork command once per worker. Point workers at the same canonical queue, or use `--tasks <path>` only to select a genuinely separate canonical queue. |
 | `coop fleet down` | `coop fork stop <name>` for each running fork. |
 | `coop fleet watch` | `coop tasks watch` for merged task progress; `coop fork ls` for fork state/cost; `coop fork logs -f` for output. |
 | `coop fleet prune` | `coop fork rm <name>` for each obsolete fork (`--yes` confirms non-interactively; `--force` separately overrides dirty/unmerged protection). |

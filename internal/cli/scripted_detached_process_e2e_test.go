@@ -15,6 +15,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
@@ -58,9 +59,12 @@ func TestProviderScriptedDetachedForkLifecycle(t *testing.T) {
 
 		trace := readProcessTrace(t, suite.layout.Trace)
 		run := oneProcessEvent(t, trace, "runtime", "run")
+		identity := readProcessForkIdentity(t, suite.layout.Repo, name)
 		wantLabels := []string{
-			"coop.fork=" + processTraceValue(name),
-			"coop.fork-owner=" + processTraceValue(forkctl.ForkContainerOwner(suite.layout.Repo, name)),
+			box.LabelFork + "=" + processTraceValue(name),
+			box.LabelForkOwner + "=" + processTraceValue(forkctl.ForkContainerOwner(suite.layout.Repo, name, identity.Generation)),
+			box.LabelForkGeneration + "=" + processTraceValue(string(identity.Generation)),
+			box.LabelForkWorker + "=" + processTraceValue(box.LabelOn),
 		}
 		for _, label := range wantLabels {
 			if run.Run == nil || !slices.Contains(run.Run.Labels, label) {
@@ -246,11 +250,16 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 	if len(runs) != 2 {
 		t.Fatalf("runtime runs = %d, want 2", len(runs))
 	}
-	readable := "coop.fork=" + processTraceValue(name)
-	firstOwner := "coop.fork-owner=" + processTraceValue(forkctl.ForkContainerOwner(suite.layout.Repo, name))
-	secondOwner := "coop.fork-owner=" + processTraceValue(forkctl.ForkContainerOwner(secondRepo, name))
+	firstIdentity := readProcessForkIdentity(t, suite.layout.Repo, name)
+	secondIdentity := readProcessForkIdentity(t, secondRepo, name)
+	readable := box.LabelFork + "=" + processTraceValue(name)
+	firstOwner := box.LabelForkOwner + "=" + processTraceValue(forkctl.ForkContainerOwner(suite.layout.Repo, name, firstIdentity.Generation))
+	secondOwner := box.LabelForkOwner + "=" + processTraceValue(forkctl.ForkContainerOwner(secondRepo, name, secondIdentity.Generation))
+	firstGeneration := box.LabelForkGeneration + "=" + processTraceValue(string(firstIdentity.Generation))
+	secondGeneration := box.LabelForkGeneration + "=" + processTraceValue(string(secondIdentity.Generation))
 	if firstOwner == secondOwner || !slices.Contains(runs[0].Labels, readable) || !slices.Contains(runs[1].Labels, readable) ||
-		!slices.Contains(runs[0].Labels, firstOwner) || !slices.Contains(runs[1].Labels, secondOwner) {
+		!slices.Contains(runs[0].Labels, firstOwner) || !slices.Contains(runs[1].Labels, secondOwner) ||
+		!slices.Contains(runs[0].Labels, firstGeneration) || !slices.Contains(runs[1].Labels, secondGeneration) {
 		t.Fatalf("repo-scoped labels = %#v / %#v, want readable %q and owners %q / %q", runs[0].Labels, runs[1].Labels, readable, firstOwner, secondOwner)
 	}
 
@@ -275,7 +284,7 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 		_ = unrelated.Process.Kill()
 		_ = unrelated.Wait()
 	})
-	reused, err := (forkspace.WorkerState{Pid: unrelated.Process.Pid, Token: workerState.Token}).Marshal()
+	reused, err := (forkspace.WorkerState{Pid: unrelated.Process.Pid, Token: workerState.Token, Generation: workerState.Generation}).Marshal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,6 +316,15 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 	}
 	awaitProcessGone(t, secondReady.PID)
 	assertRuntimeRegistryEmpty(t, suite)
+}
+
+func readProcessForkIdentity(t *testing.T, repo, name string) forkspace.Identity {
+	t.Helper()
+	identity, ok, err := forkspace.ReadGeneration(repo, name)
+	if err != nil || !ok {
+		t.Fatalf("read fork generation %s/%s = (%+v, %v, %v)", repo, name, identity, ok, err)
+	}
+	return identity
 }
 
 func runDetachedCLI(t *testing.T, suite *directProcessSuite, repo string, env []string, args ...string) procharness.Result {

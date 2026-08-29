@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -253,6 +254,56 @@ func TestTasksWatchSettling(t *testing.T) {
 	for _, tc := range cases {
 		if got := tasksWatchSettling(tc.c, tc.running, tc.sawActive, tc.sawFork); got != tc.want {
 			t.Errorf("%s: tasksWatchSettling = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestIdlePersistentForkIsNotAWatcherStartupReservation(t *testing.T) {
+	snapshot := ProjectSnapshot{Forks: []ProjectForkSnapshot{{Name: "idle", WorkspaceValid: true}}}
+	if snapshotHasVisibleActivity(snapshot) {
+		t.Fatal("an idle persistent fork was presented as current work")
+	}
+	if !tasksWatchSettling(TaskCounts{Done: 1}, 0, false, false) {
+		t.Fatal("an idle persistent fork would keep a drained watcher open forever")
+	}
+}
+
+func TestForkAttributionRemainsVisibleOutsideInProgress(t *testing.T) {
+	line := mergedQueue(ui.Palette{}, []mergedTask{{
+		Item: Item{Title: "Needs a decision", State: StateBlocked}, fork: "worker", phase: ForkAssignmentBlocked,
+	}}, 0, 80)[0]
+	if !strings.Contains(line, "← worker (blocked)") {
+		t.Fatalf("blocked fork-owned row lost attribution: %q", line)
+	}
+}
+
+func TestTaskWatchNamesHumanOwnerAndCanonicalQueue(t *testing.T) {
+	line := mergedQueue(ui.Palette{}, []mergedTask{{
+		Item:  Item{Title: "Apply schema", State: StateInProgress},
+		owner: "claimed by alice", queue: "api/.agent/tasks",
+	}}, 0, 100)[0]
+	for _, want := range []string{"claimed by alice", "queue api/.agent/tasks", "unleased"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("human-owned multi-queue row lost %q: %q", want, line)
+		}
+	}
+}
+
+func TestTaskWatchRendersSandboxAsLabeledBlock(t *testing.T) {
+	snapshot := ProjectSnapshot{Executions: []forkspace.ExecutionObservation{{
+		Record: forkspace.ExecutionRecord{
+			Kind: forkspace.ExecutionRemoteSession, Role: forkspace.ExecutionRoleActiveTurn,
+			Workspace: "/project-forks/api", SourceID: "session-run",
+			Task: &forkspace.ExecutionTaskRef{ID: "wire-auth"},
+		},
+		Running: true, Active: true,
+	}}}
+	joined := strings.Join(tasksWatchFrameWithSnapshot(nil, nil, snapshot, 0, 120), "\n")
+	for _, want := range []string{
+		"remote-session · running", "role: active-turn", "workspace: api", "task: wire-auth", "source: session-run",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("sandbox block lost %q:\n%s", want, joined)
 		}
 	}
 }

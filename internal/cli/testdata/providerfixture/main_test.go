@@ -44,6 +44,47 @@ func TestParseRuntimeAcceptsTheNarrowRunDialect(t *testing.T) {
 	}
 }
 
+func TestLoopTaskQueueFindsOneCanonicalOrProjectedSlice(t *testing.T) {
+	root := canonicalTemp(t)
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	taskID := "projected-task"
+	scaffold := func(queue, state string) {
+		t.Helper()
+		for _, name := range []string{"00_todo", "10_in_progress", "50_blocked", "99_done"} {
+			if err := os.MkdirAll(filepath.Join(queue, name), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Mkdir(filepath.Join(queue, state, taskID), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	canonical := filepath.Join(repo, ".agent", "tasks")
+	scaffold(canonical, "10_in_progress")
+	if got, err := loopTaskQueue(root, repo, taskID); err != nil || got != canonical {
+		t.Fatalf("canonical loop queue = %q, %v; want %q", got, err, canonical)
+	}
+	if err := os.Remove(filepath.Join(canonical, "10_in_progress", taskID)); err != nil {
+		t.Fatal(err)
+	}
+
+	projection := filepath.Join(repo, ".coop", "task-executions", strings.Repeat("a", 32), strings.Repeat("b", 32), "tasks")
+	scaffold(projection, "99_done")
+	if got, err := loopTaskQueue(root, repo, taskID); err != nil || got != projection {
+		t.Fatalf("projected loop queue = %q, %v; want %q", got, err, projection)
+	}
+	if err := os.Mkdir(filepath.Join(canonical, "00_todo", taskID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loopTaskQueue(root, repo, taskID); err == nil || !strings.Contains(err.Error(), "2 execution queues") {
+		t.Fatalf("ambiguous loop queue error = %v", err)
+	}
+}
+
 func TestParseRuntimeKeepsLogicalProviderSeparateFromExecutable(t *testing.T) {
 	root := canonicalTemp(t)
 	repo := filepath.Join(root, "repo")

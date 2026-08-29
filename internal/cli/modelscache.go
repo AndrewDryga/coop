@@ -20,6 +20,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
 // modelsCacheTTL is how long a fetched model list counts as "live" for `coop models`. Past
@@ -178,7 +179,7 @@ func (a *app) fetchACPModelCatalog(agent string) ([]acpctl.Model, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), modelFetchTimeout)
 	defer cancel()
-	child, err := a.spawnBox(ctx, self, []string{"acp", agent}, superID, nil, agents.Target{Provider: agent}, "", true, io.Discard)
+	child, err := a.spawnBox(ctx, self, []string{"acp", agent}, superID, nil, agents.Target{Provider: agent}, "", true, io.Discard, forkspace.ExecutionRoleProbe)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +188,13 @@ func (a *app) fetchACPModelCatalog(agent string) ([]acpctl.Model, error) {
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
 	_, cleanupErr := a.rt.RemoveByLabel(cleanupCtx, box.LabelSupervisor, superID)
 	cleanupCancel()
+	if cleanupErr == nil {
+		if authorityRepo, _, bindingErr := forkspace.ResolveProjectBinding(repo); bindingErr != nil {
+			cleanupErr = bindingErr
+		} else {
+			cleanupErr = forkspace.RemoveDeadExecutionsBySource(authorityRepo, superID)
+		}
+	}
 	if fetchErr != nil {
 		if cleanupErr != nil {
 			return nil, errors.Join(fetchErr, cleanupErr)

@@ -16,6 +16,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -86,11 +87,17 @@ type Control struct {
 	// The run in flight, bound by Run. preset and forkOwner are RunSpec values the iteration
 	// needs deep in the call graph; runID/streamSeq/streamOff are the engine's own stream-trace
 	// bookkeeping.
-	preset    *preset.Preset
-	forkOwner string
-	runID     string // COOP_RUN_ID, so a consult peer's usage lands in this run's cost digest
-	streamSeq int    // streaming box attempt sequence within runID
-	streamOff bool   // an open failure disables best-effort tracing for the rest of the run
+	preset         *preset.Preset
+	forkOwner      string
+	forkGeneration string
+	activityRepo   string
+	activityKind   forkspace.ExecutionKind
+	activityTask   *forkspace.ExecutionTaskRef
+	forkWorker     bool
+	proposalOutbox string
+	runID          string // COOP_RUN_ID, so a consult peer's usage lands in this run's cost digest
+	streamSeq      int    // streaming box attempt sequence within runID
+	streamOff      bool   // an open failure disables best-effort tracing for the rest of the run
 }
 
 // New binds the engine to the caller's config, its runtime as detected so far, the running coop's
@@ -108,8 +115,19 @@ type RunSpec struct {
 	Image string // the box image, already resolved for Repo
 	Agent string // the lead provider for the first iteration; a rotation may swap it
 
-	ForkName  string // the fork's name, "" for a local loop
-	ForkOwner string // repo-scoped runtime owner label for a fork's boxes, "" for a local loop
+	ForkName       string // the fork's name, "" for a local loop
+	ForkOwner      string // repo-scoped runtime owner label for a fork's boxes, "" for a local loop
+	ForkGeneration string // immutable fork incarnation, "" for a local/legacy loop
+	ForkWorker     bool   // true only in the detached fork worker process
+
+	// ActivityRepo remains the canonical project when Repo is an isolated fork checkout. The
+	// optional exact task binding lets the project-wide snapshot join this box to its assignment.
+	ActivityRepo string
+	ActivityKind forkspace.ExecutionKind
+	ActivityTask *forkspace.ExecutionTaskRef
+	// ProposalOutbox is a repo-relative, execution-local JSON outbox for discovered work. It is
+	// empty for ordinary loops, whose assigned queue remains canonical and directly writable.
+	ProposalOutbox string
 
 	Rotation *ladder.Rotation // the work stage's target ladder, already expanded
 	Queues   []string         // repo-relative task queue dirs to drain

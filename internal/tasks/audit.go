@@ -328,6 +328,12 @@ func CompleteTrustedTask(root string, task Item) (retErr error) {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, unlockLeaseFile(authority)) }()
+	// A projected completion is only candidate-ready. Ordinary completion/reconciliation must
+	// refuse it before moving or normalizing the canonical folder; exact fork landing owns that
+	// transition through its generation-bound journal.
+	if err := refuseForkTaskOwner(root, task.ID, "complete"); err != nil {
+		return err
+	}
 	current, ok := CurrentTask(root, task.ID)
 	if !ok || current.Dir != task.Dir || current.State != task.State {
 		return errLeaseCandidateGone
@@ -2346,7 +2352,16 @@ func prepareBlockedAuditReopenUnblock(root string, task Item) (*blockedAuditUnbl
 		return nil, fmt.Errorf("read blocked audit reopen authority for task %s: %w", task.ID, err)
 	}
 	if !ok {
-		return nil, nil
+		authority, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
+		if err != nil {
+			return nil, fmt.Errorf("lock blocked task authority for task %s: %w", task.ID, err)
+		}
+		transition := &blockedAuditUnblock{authority: authority, root: root}
+		current, currentOK := CurrentTask(root, task.ID)
+		if !currentOK || current.State != StateBlocked || current.Dir != task.Dir {
+			return nil, transition.finish(fmt.Errorf("task %s changed state while its blocked authority was locked", task.ID))
+		}
+		return transition, nil
 	}
 	return lockBlockedAuditReopenUnblock(root, task, observed)
 }
@@ -2432,6 +2447,9 @@ func finishPendingAuditUnblock(root string, task Item, observed AuditReopenRecor
 	if repo == "" || head == "" || !AuditReopenCurrentValid(repo, head, task.ID, replacement) {
 		return fail(fmt.Errorf("pending audit unblock for task %s no longer matches repository history", task.ID))
 	}
+	if _, err := reconcileTodoUnblockOwnerLocked(root, task, true); err != nil {
+		return fail(err)
+	}
 	if err := replaceAuditReopenRecordIfMatches(root, record, replacement); err != nil {
 		return fail(err)
 	}
@@ -2439,6 +2457,56 @@ func finishPendingAuditUnblock(root string, task Item, observed AuditReopenRecor
 		return true, err
 	}
 	return true, nil
+}
+
+// reconcileTodoUnblockOwnerLocked completes the owner half of a crash-interrupted unblock while
+// the caller holds the canonical task-authority flock. Fork ownership is retained but paused;
+// human ownership is removed only when an audit-pending record proves this really is an unblock.
+func reconcileTodoUnblockOwnerLocked(root string, task Item, allowHuman bool) (bool, error) {
+	current, ok := CurrentTask(root, task.ID)
+	if !ok || current.State != StateTodo || current.Dir != task.Dir {
+		return false, fmt.Errorf("task %s changed while recovering its unblock owner", task.ID)
+	}
+	ownerLock, err := lockTaskOwner(root, task.ID)
+	if err != nil {
+		return false, err
+	}
+	defer ownerLock.Close()
+	record, owned, err := ownerLock.Read()
+	if err != nil || !owned {
+		return false, err
+	}
+	if record.Kind != TaskOwnerFork {
+		if !allowHuman {
+			return false, nil
+		}
+		return true, removeTaskOwnerRecordFile(root, task.ID)
+	}
+	if record.Fork == nil || (record.Fork.Phase != ForkAssignmentBlocked && record.Fork.Phase != ForkAssignmentPaused) {
+		return false, fmt.Errorf("fork assignment for task %s is %s, not a recoverable unblock", task.ID, func() ForkAssignmentPhase {
+			if record.Fork == nil {
+				return ""
+			}
+			return record.Fork.Phase
+		}())
+	}
+	if record.Fork.Phase == ForkAssignmentPaused {
+		return true, nil
+	}
+	record.Fork.Phase = ForkAssignmentPaused
+	record.Fork.CandidateID = ""
+	record.Fork.ProjectionDigest = ""
+	record.Fork.UpdatedAt = time.Now().UTC()
+	return true, ownerLock.Write(record)
+}
+
+func finishInterruptedForkUnblock(root string, task Item) (bool, error) {
+	authority, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil {
+		return false, err
+	}
+	committed, reconcileErr := reconcileTodoUnblockOwnerLocked(root, task, false)
+	return committed, errors.Join(reconcileErr, unlockLeaseFile(authority))
 }
 
 // preserveBlockedAuditReopen rebases an accepted review rewrite without consuming its single-use
@@ -3173,8 +3241,12 @@ func skipOwnedCandidate(root, id string, noted map[string]bool) (bool, error) {
 	}
 	if !noted[id] {
 		noted[id] = true
-		ui.Info("%s is claimed by %s@%s — the loop will not adopt it; release it first: coop tasks release %s",
-			id, rec.User, rec.Host, id)
+		if rec.Kind == TaskOwnerFork {
+			ui.Info("%s is %s — the local loop will not adopt it", id, TaskOwnerLabel(rec))
+		} else {
+			ui.Info("%s is claimed by %s@%s — the loop will not adopt it; release it first: coop tasks release %s",
+				id, rec.User, rec.Host, id)
+		}
 	}
 	return true, nil
 }

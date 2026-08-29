@@ -8,10 +8,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 // A missing <name> (without --all) is a usage error (exit 2), reported before the dirty-tree /
@@ -39,7 +41,7 @@ func TestForkMergePreflightsUnsupportedStateBeforeEnvironmentGates(t *testing.T)
 			if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			raw := []byte("owner-v2\nopaque\n")
+			raw := []byte("owner-v3\nopaque\n")
 			path := forkspace.PidPath(repo, "old")
 			if err := os.WriteFile(path, raw, 0o644); err != nil {
 				t.Fatal(err)
@@ -81,6 +83,63 @@ func TestForkMergeRunningRefusalKeepsLifecycleExitClass(t *testing.T) {
 	}
 }
 
+func TestForkMergeRefusesLegacyCopiedTaskQueue(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "legacy-tasks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(ws, tasks.TasksRoot, tasks.StateTodo, "copied", "task.md"), "# Copied task\n")
+	parentBefore := gitOut(repo, "rev-parse", "HEAD")
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	landed, err := c.mergeOne(repo, "", "legacy-tasks", false)
+	if err == nil || landed || !strings.Contains(err.Error(), "legacy copied task queue") {
+		t.Fatalf("legacy copied queue merge = landed %v err %v", landed, err)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD"); got != parentBefore {
+		t.Fatalf("legacy copied queue moved parent from %s to %s", parentBefore, got)
+	}
+	if !pathExists(filepath.Join(ws, tasks.TasksRoot, tasks.StateTodo, "copied", "task.md")) {
+		t.Fatal("legacy merge refusal removed copied task evidence")
+	}
+}
+
+func TestRemoteSessionReservationBlocksMergeAndRemovalEvenWithForce(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "session-owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "session-owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "session-owned")
+	if err == nil {
+		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
+			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "remote_session_test", CreatedAt: time.Now().UTC(),
+		})
+	}
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mergeUnlock, err := lockForkForMerge(repo, "session-owned"); err == nil {
+		mergeUnlock()
+		t.Fatal("merge acquired a remote-session-owned workspace")
+	} else if !strings.Contains(err.Error(), "remote-session") {
+		t.Fatalf("merge reservation refusal = %v", err)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	if code, err := c.ForkRm([]string{"session-owned", "--force", "--yes"}); code != 1 || err == nil || !strings.Contains(err.Error(), "remote-session") {
+		t.Fatalf("forced rm of reserved workspace = (%d, %v)", code, err)
+	}
+	if !pathExists(ws) {
+		t.Fatal("forced rm deleted a remote-session-owned workspace")
+	}
+}
+
 func TestForkMergeRechecksUnsupportedStateUnderLifecycleLock(t *testing.T) {
 	repo := initRepo(t)
 	ws, err := forkspace.Setup(repo, "race")
@@ -88,7 +147,7 @@ func TestForkMergeRechecksUnsupportedStateUnderLifecycleLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	head := gitOut(repo, "rev-parse", "HEAD")
-	raw := []byte("owner-v2\nopaque\n")
+	raw := []byte("owner-v3\nopaque\n")
 	c := &Control{cfg: &config.Config{RepoOverride: repo}}
 	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
 		return c.ForkMerge([]string{"race", "--yes"})
@@ -114,7 +173,7 @@ func TestDestroyLandedForkRechecksUnsupportedStateUnderLifecycleLock(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := []byte("owner-v2\nopaque\n")
+	raw := []byte("owner-v3\nopaque\n")
 	got := runForkCommandAcrossLockedMutation(t, repo, "landed", func() (int, error) {
 		if err := destroyLandedFork(runtime.Runtime{}, repo, "landed"); err != nil {
 			return 1, err
@@ -159,10 +218,10 @@ func TestMergeOneNoGate(t *testing.T) {
 	}
 }
 
-// TestMergeOneSurfacesReconcileFailure: when the parent queue can't be reconciled after a land, the
-// merge is NOT rolled back — the fork's commits are in the parent — but the failure travels back with
-// it, so `coop fork merge` reports it and exits nonzero instead of leaving the loop to redo the work.
-func TestMergeOneSurfacesReconcileFailure(t *testing.T) {
+// A legacy Coop-Task trailer is not canonical task authority. New fork assignments land only from
+// an exact generation candidate, so a Git-only fork remains a Git-only merge even if config points
+// at an unusable task path.
+func TestMergeOneDoesNotInferTaskCompletionFromTrailer(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -180,16 +239,188 @@ func TestMergeOneSurfacesReconcileFailure(t *testing.T) {
 	git(t, ws, "commit", "-qm", "work\n\nCoop-Task: t1")
 
 	landed, err := c.mergeOne(repo, "", "perf", false)
-	if !landed || err == nil {
-		t.Fatalf("mergeOne = (%v, %v), want (true, a surfaced reconcile failure)", landed, err)
+	if !landed || err != nil {
+		t.Fatalf("mergeOne = (%v, %v), want Git-only land", landed, err)
 	}
 	if !pathExists(filepath.Join(repo, "feature.txt")) {
-		t.Error("a reconcile failure rolled the landed merge back — the land already stuck, only bookkeeping failed")
+		t.Error("Git-only trailer merge did not land")
 	}
-	for _, want := range []string{"perf", "coop tasks done"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("reconcile failure %q does not name %q", err, want)
+}
+
+func prepareForkTaskCandidate(t *testing.T, name string) (string, string, string, forkspace.Identity, *Control) {
+	t.Helper()
+	repo := initRepo(t)
+	root := filepath.Join(repo, tasks.TasksRoot)
+	if err := tasks.ScaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	taskDir := filepath.Join(root, tasks.StateTodo, "canonical-task")
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte("# Canonical task\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := forkspace.Setup(repo, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, name)
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment, err := tasks.AssignForkTask([]string{root}, tasks.ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws,
+		BaselineHead: gitOut(ws, "rev-parse", "HEAD"),
+		LeaseOwner:   tasks.TaskLeaseOwner{RunID: "test", PID: os.Getpid(), Provider: "codex", Target: "codex"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("landed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "feature.txt")
+	git(t, ws, "commit", "-qm", "implement canonical task\n\nCoop-Task: canonical-task")
+	projected, ok := tasks.CurrentTask(assignment.Owner.Projection, "canonical-task")
+	if !ok {
+		t.Fatal("projected task missing")
+	}
+	if err := tasks.MoveTaskDir(assignment.Owner.Projection, projected, tasks.StateDone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.AcceptForkProjection(repo, root, "canonical-task", assignment.Owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, published, err := tasks.PublishForkCandidate(repo, identity, gitOut(ws, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD^{tree}")); err != nil || !published {
+		t.Fatalf("publish task candidate: published=%v err=%v", published, err)
+	}
+	c := &Control{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	return repo, ws, root, identity, c
+}
+
+func TestMergeOneLandsExactCandidateAndCanonicalTask(t *testing.T) {
+	repo, _, root, identity, c := prepareForkTaskCandidate(t, "task-land")
+	landed, err := c.mergeOne(repo, "", identity.Name, false)
+	if err != nil || !landed {
+		t.Fatalf("mergeOne = (%v, %v)", landed, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(repo, "feature.txt")); err != nil || string(data) != "landed\n" {
+		t.Fatalf("landed Git content = %q, %v", data, err)
+	}
+	item, ok := tasks.CurrentTask(root, "canonical-task")
+	if !ok || item.State != tasks.StateDone {
+		t.Fatalf("canonical task after land = %+v, ok=%v", item, ok)
+	}
+	if active, err := tasks.ForkTaskState(repo, identity); err != nil || active {
+		t.Fatalf("fork task authority after land = %v, %v", active, err)
+	}
+	if _, ok, err := readLandIntent(repo, identity); err != nil || ok {
+		t.Fatalf("land intent after completion = ok %v err %v", ok, err)
+	}
+}
+
+func TestMergeOneReplaysCrashAfterParentFastForward(t *testing.T) {
+	repo, _, root, identity, c := prepareForkTaskCandidate(t, "task-crash")
+	c.afterLandFastForward = func() error { return errors.New("injected crash after parent fast-forward") }
+	landed, err := c.mergeOne(repo, "", identity.Name, false)
+	if !landed || err == nil || !strings.Contains(err.Error(), "injected crash") {
+		t.Fatalf("first merge = (%v, %v), want landed crash", landed, err)
+	}
+	item, _ := tasks.CurrentTask(root, "canonical-task")
+	if item.State != tasks.StateInProgress {
+		t.Fatalf("canonical task finalized before journal replay: %s", item.State)
+	}
+	c.afterLandFastForward = nil
+	landed, err = c.mergeOne(repo, "", identity.Name, false)
+	if err != nil || !landed {
+		t.Fatalf("replayed merge = (%v, %v)", landed, err)
+	}
+	item, _ = tasks.CurrentTask(root, "canonical-task")
+	if item.State != tasks.StateDone {
+		t.Fatalf("canonical task after replay = %s", item.State)
+	}
+}
+
+func TestTaskCandidateMergeRecoversWhenParentMovesDuringGate(t *testing.T) {
+	repo, ws, root, identity, c := prepareForkTaskCandidate(t, "task-parent-move")
+	c.gateOK = func(_, _, _ string) bool {
+		if err := os.WriteFile(filepath.Join(repo, "hotfix.txt"), []byte("urgent\n"), 0o644); err != nil {
+			t.Fatal(err)
 		}
+		git(t, repo, "add", "hotfix.txt")
+		git(t, repo, "commit", "-qm", "concurrent hotfix")
+		return true
+	}
+	landed, err := c.mergeOne(repo, "gate-img", identity.Name, false)
+	if landed || err == nil || !strings.Contains(err.Error(), "candidate restored") {
+		t.Fatalf("merge across moved parent = (%v, %v)", landed, err)
+	}
+	if gitOut(ws, "rev-parse", "HEAD") == "" {
+		t.Fatal("candidate workspace was not restored")
+	}
+	intent, ok, err := readLandIntent(repo, identity)
+	if err != nil || !ok || intent.Phase != landPreparing || intent.RebasedHead != "" || intent.ParentBefore != gitOut(repo, "rev-parse", "HEAD") {
+		t.Fatalf("retryable land intent = %+v, ok=%v err=%v", intent, ok, err)
+	}
+	item, _ := tasks.CurrentTask(root, "canonical-task")
+	if item.State != tasks.StateInProgress {
+		t.Fatalf("canonical task finalized before retry: %s", item.State)
+	}
+	c.gateOK = func(_, _, _ string) bool { return true }
+	landed, err = c.mergeOne(repo, "gate-img", identity.Name, false)
+	if !landed || err != nil {
+		t.Fatalf("retried merge = (%v, %v)", landed, err)
+	}
+	item, _ = tasks.CurrentTask(root, "canonical-task")
+	if item.State != tasks.StateDone || !pathExists(filepath.Join(repo, "hotfix.txt")) || !pathExists(filepath.Join(repo, "feature.txt")) {
+		t.Fatalf("retried land lost work: task=%s", item.State)
+	}
+}
+
+func TestTaskCandidateMergeReplaysCrashAfterRedGateRestoresWorkspace(t *testing.T) {
+	repo, ws, root, identity, c := prepareForkTaskCandidate(t, "task-red-gate-crash")
+	candidate, ok, err := tasks.ReadForkCandidate(repo, identity)
+	if err != nil || !ok {
+		t.Fatalf("read candidate: ok=%v err=%v", ok, err)
+	}
+	c.gateOK = func(_, _, _ string) bool { return false }
+	c.afterLandCandidateRestore = func() error { return errors.New("injected crash after candidate restore") }
+	landed, err := c.mergeOne(repo, "gate-img", identity.Name, false)
+	if landed || err == nil || !strings.Contains(err.Error(), "injected crash") {
+		t.Fatalf("crashed red-gate merge = (%v, %v)", landed, err)
+	}
+	if got := gitOut(ws, "rev-parse", "HEAD"); got != candidate.Head {
+		t.Fatalf("workspace HEAD after restore = %s, want %s", got, candidate.Head)
+	}
+	intent, pending, err := readLandIntent(repo, identity)
+	if err != nil || !pending || intent.Phase != landRestoring {
+		t.Fatalf("restoring journal = %+v, pending=%v err=%v", intent, pending, err)
+	}
+	c.afterLandCandidateRestore = nil
+	landed, err = c.mergeOne(repo, "gate-img", identity.Name, false)
+	if landed || err == nil || !strings.Contains(err.Error(), "candidate restored") {
+		t.Fatalf("restored red-gate replay = (%v, %v)", landed, err)
+	}
+	if _, pending, err := readLandIntent(repo, identity); err != nil || pending {
+		t.Fatalf("restored red-gate journal remains: pending=%v err=%v", pending, err)
+	}
+	item, _ := tasks.CurrentTask(root, "canonical-task")
+	if item.State != tasks.StateInProgress {
+		t.Fatalf("red-gate replay finalized canonical task: %s", item.State)
+	}
+	c.gateOK = func(_, _, _ string) bool { return true }
+	landed, err = c.mergeOne(repo, "gate-img", identity.Name, false)
+	if !landed || err != nil {
+		t.Fatalf("green retry after restored red gate = (%v, %v)", landed, err)
 	}
 }
 

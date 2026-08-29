@@ -397,6 +397,7 @@ func (r *sessionTurnRunner) narrateProviderBackoff(
 // Run executes exactly one turn returned by Store.LeaseNextTurn. It never leases another turn.
 func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leased session.Turn) (result session.Turn, runErr error) {
 	var execution *sessionWarmExecution
+	runtimeRunID := leased.RuntimeRunID
 	var assistant string
 	usage := leased.Usage
 	var candidateUsage session.Usage
@@ -418,7 +419,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		}
 		if execution != nil && execution.child != nil {
 			cleanup = append(cleanup, execution.child.stop())
-			cleanup = append(cleanup, r.removeTurnBox(execution.child.runID))
+			cleanup = append(cleanup, r.removeTurnBox(bound.Repository, execution.child.runID))
 			cleanup = append(cleanup, r.stopSessionServices(context.Background(), bound))
 		}
 		if execution != nil && execution.projection != nil {
@@ -484,6 +485,26 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		}
 		if baseErr != nil {
 			result = r.failTurn(bound, leased, baseErr, result)
+		}
+		settled := result.ID == leased.ID && result.SessionID == bound.ID &&
+			result.State != session.TurnStarting && result.State != session.TurnRunning
+		if !cleanupFailed && settled && runtimeRunID != "" {
+			clearCtx, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
+			clearErr := r.store.ClearTurnRuntime(clearCtx, bound.ID, leased.ID, runtimeRunID)
+			cancel()
+			if clearErr == nil {
+				result.RuntimeRunID = ""
+			} else {
+				// A parked warm process must not remain live under an uncleared
+				// terminal turn receipt: the janitor would correctly interpret that
+				// receipt as cleanup authority. Evict it now and leave the receipt for
+				// an idempotent retry.
+				if parked {
+					clearErr = errors.Join(clearErr, r.evictWarmExecution(bound.ID))
+				}
+				r.host.warnf("turn %s settled but its runtime cleanup receipt could not be retired; the janitor retries it: %s",
+					leased.ID, sessionACPBoundedDetail("cause", clearErr.Error()))
+			}
 		}
 		runErr = baseErr
 	}()
@@ -561,6 +582,12 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		}
 
 		if warmIdleTimeout > 0 {
+			warmRunID := sessionWarmRunID(bound.ID)
+			if err := r.bindTurnRuntime(bound, leased, runtimeRunID, warmRunID); err != nil {
+				runErr = err
+				return result, runErr
+			}
+			runtimeRunID = warmRunID
 			execution = r.takeWarmExecution(bound)
 		} else {
 			_ = r.evictWarmExecution(bound.ID)
@@ -586,7 +613,19 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 				runErr = err
 				return result, runErr
 			}
-			child, err := r.startChild(ctx, bound, leased, projection.privateRoot)
+			desiredRunID := sessionTurnRunID(bound.ID, leased.ID)
+			if warmIdleTimeout > 0 {
+				desiredRunID = sessionWarmRunID(bound.ID)
+			}
+			if runtimeRunID != desiredRunID {
+				if err := r.bindTurnRuntime(bound, leased, runtimeRunID, desiredRunID); err != nil {
+					_ = projection.remove()
+					runErr = err
+					return result, runErr
+				}
+				runtimeRunID = desiredRunID
+			}
+			child, err := r.startChildWithRunID(ctx, bound, desiredRunID, projection.privateRoot)
 			if err != nil {
 				_ = projection.remove()
 				runErr = err
@@ -663,6 +702,23 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 	}
 	protocolComplete = true
 	return result, nil
+}
+
+func (r *sessionTurnRunner) bindTurnRuntime(
+	bound session.Session,
+	leased session.Turn,
+	expectedRunID, runtimeRunID string,
+) error {
+	if r.store == nil {
+		return acpFailure(sessionACPCleanupError, "turn runtime authority is unavailable")
+	}
+	bindCtx, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
+	defer cancel()
+	if err := r.store.BindTurnRuntime(bindCtx, bound.ID, leased.ID, expectedRunID, runtimeRunID); err != nil {
+		return acpFailure(sessionACPCleanupError,
+			sessionACPBoundedDetail("record turn runtime authority", err.Error()))
+	}
+	return nil
 }
 
 func addSessionUsage(total, candidate session.Usage) session.Usage {
@@ -882,7 +938,7 @@ func (r *sessionTurnRunner) failTurn(bound session.Session, leased session.Turn,
 	return failed
 }
 
-func (r *sessionTurnRunner) removeTurnBox(runID string) error {
+func (r *sessionTurnRunner) removeTurnBox(repo, runID string) error {
 	if runID == "" || r.rt.Name == "" {
 		if runID != "" {
 			return acpFailure(sessionACPCleanupError, "runtime cleanup is unavailable")
@@ -901,18 +957,100 @@ func (r *sessionTurnRunner) removeTurnBox(runID string) error {
 			sessionACPBoundedDetail("runtime cleanup failed", err.Error()),
 		)
 	}
+	if err := forkspace.RemoveDeadExecutionsBySource(repo, runID); err != nil {
+		return acpFailure(sessionACPCleanupError, sessionACPBoundedDetail("activity cleanup failed", err.Error()))
+	}
+	return nil
+}
+
+// removeInterruptedTurnBoxes resolves a persisted session receipt back to the exact host activity
+// records that launched its sandbox. A stale receipt may never become a caller-controlled runtime
+// label: every matching record must belong to this session's immutable fork generation and
+// workspace before any removal starts. The deterministic run label remains only as a migration
+// path when no execution record exists (pre-registry launches cannot have an execution label).
+func (r *sessionTurnRunner) removeInterruptedTurnBoxes(bound session.Session, runID string) error {
+	if r.rt.Name == "" {
+		return acpFailure(sessionACPCleanupError, "runtime cleanup is unavailable")
+	}
+	identity := forkspace.Identity{Name: bound.ForkName, Generation: forkspace.Generation(bound.ForkGeneration)}
+	if bound.ID == "" || !forkspace.ValidExistingName(identity.Name) || !forkspace.ValidGeneration(identity.Generation) ||
+		bound.Workspace != forkspace.Workspace(bound.Repository, bound.ForkName) {
+		return acpFailure(sessionACPCleanupError, "session runtime binding is invalid")
+	}
+	current, present, err := forkspace.ReadGeneration(bound.Repository, bound.ForkName)
+	if err != nil || !present || current != identity {
+		return errors.Join(acpFailure(sessionACPCleanupError, "session runtime generation changed"), err)
+	}
+	reservation, reserved, err := forkspace.ReadWorkspaceReservation(bound.Repository, identity)
+	if err != nil || !reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession ||
+		reservation.OwnerID != bound.ID {
+		return errors.Join(acpFailure(sessionACPCleanupError, "session runtime reservation changed"), err)
+	}
+	observations, problems := forkspace.Executions(bound.Repository)
+	if len(problems) > 0 {
+		return errors.Join(append([]error{acpFailure(sessionACPCleanupError, "sandbox activity registry is unreadable")}, problems...)...)
+	}
+	var records []forkspace.ExecutionRecord
+	for _, observation := range observations {
+		if observation.Record.SourceID != runID {
+			continue
+		}
+		if observation.Record.Kind != forkspace.ExecutionRemoteSession || observation.Record.Fork == nil ||
+			*observation.Record.Fork != identity || observation.Record.Workspace != bound.Workspace {
+			return acpFailure(sessionACPCleanupError, "runtime receipt resolves to foreign sandbox activity")
+		}
+		if !observation.Stale {
+			return acpFailure(sessionACPCleanupError, "runtime receipt still has live or unverifiable sandbox activity")
+		}
+		records = append(records, observation.Record)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), sessionRuntimeReapTimeout)
+	defer cancel()
+	if len(records) == 0 {
+		if _, err := r.rt.RemoveByLabel(ctx, box.LabelRun, runID); err != nil {
+			return acpFailure(sessionACPCleanupError, sessionACPBoundedDetail("runtime cleanup failed", err.Error()))
+		}
+		return nil
+	}
+	for _, record := range records {
+		if _, err := r.rt.RemoveByLabel(ctx, box.LabelExecution, record.ID); err != nil {
+			return acpFailure(sessionACPCleanupError, sessionACPBoundedDetail("runtime cleanup failed", err.Error()))
+		}
+	}
+	if err := forkspace.RemoveDeadExecutionsBySource(bound.Repository, runID); err != nil {
+		return acpFailure(sessionACPCleanupError, sessionACPBoundedDetail("activity cleanup failed", err.Error()))
+	}
 	return nil
 }
 
 func (r *sessionTurnRunner) ReapInterruptedTurn(ctx context.Context, bound session.Session, turn session.Turn) error {
-	if turn.SessionID == "" || turn.ID == "" {
+	if turn.SessionID == "" || turn.SessionID != bound.ID || turn.ID == "" {
 		return acpFailure(sessionACPCleanupError, "interrupted turn identity is unavailable")
 	}
-	return errors.Join(
-		r.removeTurnBox(sessionTurnRunID(turn.SessionID, turn.ID)),
-		r.stopSessionServices(ctx, bound),
-		r.cleanupSessionCredentials(bound),
-	)
+	runID := turn.RuntimeRunID
+	if runID == "" {
+		// Pre-v15 active turns used the deterministic per-turn identity without
+		// persisting it. Preserve that one-way migration path.
+		runID = sessionTurnRunID(bound.ID, turn.ID)
+	} else if runID != sessionTurnRunID(bound.ID, turn.ID) && runID != sessionWarmRunID(bound.ID) {
+		return acpFailure(sessionACPCleanupError, "interrupted turn runtime identity is invalid")
+	}
+	if err := r.removeInterruptedTurnBoxes(bound, runID); err != nil {
+		return err
+	}
+	if err := errors.Join(r.stopSessionServices(ctx, bound), r.cleanupSessionCredentials(bound)); err != nil {
+		return err
+	}
+	if turn.RuntimeRunID == "" {
+		return nil
+	}
+	clearCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionACPCleanupTimeout)
+	defer cancel()
+	if err := r.store.ClearTurnRuntime(clearCtx, turn.SessionID, turn.ID, turn.RuntimeRunID); err != nil {
+		return acpFailure(sessionACPCleanupError,
+			sessionACPBoundedDetail("retire runtime cleanup receipt", err.Error()))
+	}
+	return nil
 }
 
 func sessionWarmExecutionMatches(execution *sessionWarmExecution, bound session.Session) bool {
@@ -925,7 +1063,8 @@ func sessionWarmExecutionMatches(execution *sessionWarmExecution, bound session.
 		execution.bound.PolicyDigest == bound.PolicyDigest &&
 		execution.bound.Repository == bound.Repository &&
 		execution.bound.Workspace == bound.Workspace &&
-		execution.bound.ForkName == bound.ForkName
+		execution.bound.ForkName == bound.ForkName &&
+		execution.bound.ForkGeneration == bound.ForkGeneration
 }
 
 func (r *sessionTurnRunner) takeWarmExecution(bound session.Session) *sessionWarmExecution {
@@ -943,6 +1082,7 @@ func (r *sessionTurnRunner) takeWarmExecution(bound session.Session) *sessionWar
 		return nil
 	}
 	if time.Now().Before(execution.expiresAt) && sessionWarmExecutionMatches(execution, bound) {
+		_ = forkspace.UpdateExecutionRoleBySource(bound.Repository, execution.child.runID, forkspace.ExecutionRoleActiveTurn)
 		return execution
 	}
 	_ = r.cleanupWarmExecution(execution)
@@ -973,6 +1113,7 @@ func (r *sessionTurnRunner) parkWarmExecution(execution *sessionWarmExecution, i
 	})
 	r.warm[execution.bound.ID] = execution
 	r.warmMu.Unlock()
+	_ = forkspace.UpdateExecutionRoleBySource(execution.bound.Repository, execution.child.runID, forkspace.ExecutionRoleWarm)
 	if previous != nil && previous != execution {
 		_ = r.cleanupWarmExecution(previous)
 	}
@@ -1003,6 +1144,12 @@ func (r *sessionTurnRunner) evictWarmExecution(sessionID string) error {
 	return r.cleanupWarmExecution(execution)
 }
 
+// EvictWarmSession proves that a parked session has no writable warm sandbox before review
+// captures the immutable Git source identity.
+func (r *sessionTurnRunner) EvictWarmSession(sessionID string) error {
+	return r.evictWarmExecution(sessionID)
+}
+
 func (r *sessionTurnRunner) cleanupWarmExecution(execution *sessionWarmExecution) error {
 	if execution == nil {
 		return nil
@@ -1010,7 +1157,7 @@ func (r *sessionTurnRunner) cleanupWarmExecution(execution *sessionWarmExecution
 	var errs []error
 	if execution.child != nil {
 		errs = append(errs, execution.child.stop())
-		errs = append(errs, r.removeTurnBox(execution.child.runID))
+		errs = append(errs, r.removeTurnBox(execution.bound.Repository, execution.child.runID))
 		errs = append(errs, r.stopSessionServices(context.Background(), execution.bound))
 	}
 	if execution.projection != nil {
@@ -1097,6 +1244,9 @@ func (r *sessionTurnRunner) WarmSessionReady(bound session.Session) bool {
 }
 
 func (r *sessionTurnRunner) CleanupParkedSession(ctx context.Context, bound session.Session) error {
+	if err := r.cleanupPendingTurnRuntimes(ctx, bound); err != nil {
+		return err
+	}
 	r.warmMu.Lock()
 	execution := r.warm[bound.ID]
 	ready := execution != nil && time.Now().Before(execution.expiresAt) && sessionWarmExecutionMatches(execution, bound)
@@ -1108,7 +1258,7 @@ func (r *sessionTurnRunner) CleanupParkedSession(ctx context.Context, bound sess
 }
 
 func (r *sessionTurnRunner) CleanupClosedSession(ctx context.Context, bound session.Session) error {
-	return r.cleanupKnownSessionRuntime(ctx, bound)
+	return errors.Join(r.cleanupPendingTurnRuntimes(ctx, bound), r.cleanupKnownSessionRuntime(ctx, bound))
 }
 
 func (r *sessionTurnRunner) CloseWarmSessions() error {
@@ -1400,9 +1550,28 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(
 // session history and Compose volumes are deliberately preserved.
 func (r *sessionTurnRunner) CleanupSession(ctx context.Context, bound session.Session) error {
 	return errors.Join(
+		r.cleanupPendingTurnRuntimes(ctx, bound),
 		r.cleanupKnownSessionRuntime(ctx, bound),
-		r.removeTurnBox(sessionWarmRunID(bound.ID)),
+		r.removeTurnBox(bound.Repository, sessionWarmRunID(bound.ID)),
 	)
+}
+
+func (r *sessionTurnRunner) cleanupPendingTurnRuntimes(ctx context.Context, bound session.Session) error {
+	if r == nil || r.store == nil {
+		return acpFailure(sessionACPCleanupError, "turn runtime authority is unavailable")
+	}
+	turns, err := r.store.ListSessionRuntimeCleanupTurns(ctx, bound.ID)
+	if err != nil {
+		return acpFailure(sessionACPCleanupError,
+			sessionACPBoundedDetail("list runtime cleanup receipts", err.Error()))
+	}
+	var errs []error
+	for _, turn := range turns {
+		if err := r.ReapInterruptedTurn(ctx, bound, turn); err != nil {
+			errs = append(errs, fmt.Errorf("turn %s: %w", turn.ID, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (r *sessionTurnRunner) cleanupKnownSessionRuntime(ctx context.Context, bound session.Session) error {
@@ -1618,10 +1787,6 @@ func writePrivateConfig(path string, data []byte) error {
 	return file.Close()
 }
 
-func (r *sessionTurnRunner) startChild(ctx context.Context, bound session.Session, leased session.Turn, privateRoot string) (*sessionACPProcess, error) {
-	return r.startChildWithRunID(ctx, bound, sessionTurnRunID(bound.ID, leased.ID), privateRoot)
-}
-
 func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound session.Session, runID, privateRoot string) (*sessionACPProcess, error) {
 	executable := r.executable
 	if executable == "" {
@@ -1636,6 +1801,17 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		!forkspace.ValidExistingName(bound.ForkName) || bound.Target == "" {
 		return nil, acpFailure(sessionACPProcessError, "bound fork identity is invalid")
 	}
+	identity, ok, generationErr := forkspace.ReadGeneration(bound.Repository, bound.ForkName)
+	if generationErr != nil || !ok || bound.ForkGeneration != "" && string(identity.Generation) != bound.ForkGeneration {
+		return nil, acpFailure(sessionACPProcessError, "bound fork generation is invalid")
+	}
+	if generationErr := forkspace.ValidateGenerationWorkspace(bound.Repository, identity); generationErr != nil {
+		return nil, acpFailure(sessionACPProcessError, "bound fork workspace was replaced")
+	}
+	if reservation, reserved, reserveErr := forkspace.ReadWorkspaceReservation(bound.Repository, identity); reserveErr != nil ||
+		!reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession || reservation.OwnerID != bound.ID {
+		return nil, acpFailure(sessionACPProcessError, "bound session workspace reservation is invalid")
+	}
 	if !validSessionRunID(runID) {
 		return nil, acpFailure(sessionACPProcessError, "session run identity is invalid")
 	}
@@ -1643,6 +1819,11 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		bound.Repository, bound.Companions, bound.RepositoryReadOnly, privateRoot, runID,
 		r.sourceCfg, r.rt.Name,
 	)
+	activityRole := forkspace.ExecutionRoleActiveTurn
+	if runID == sessionWarmRunID(bound.ID) {
+		activityRole = forkspace.ExecutionRoleWarm
+	}
+	env = append(env, "COOP_ACP_ACTIVITY_ROLE="+string(activityRole))
 	cmd := r.command(executable, "fork", bound.ForkName, "acp", bound.Target)
 	if cmd == nil {
 		return nil, acpFailure(sessionACPProcessError, "Coop child could not be constructed")

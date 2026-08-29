@@ -1,9 +1,9 @@
 ---
 name: task-authority-model
-description: four separate authorities decide who may act on a task/checkout — claim (durable, human-released), lease (kernel flock, one iteration), checkout (kernel flock, one loop run), ref (kernel flock, one validate-then-consume window) — never merge them
+description: four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 subsystem: tasks
-sources: [internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/loop/lock.go]
-updated: 2026-08-25
+sources: [internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/loop/lock.go]
+updated: 2026-08-28
 ---
 Coop has FOUR separate authorities over a task and its checkout. Each answers a different question,
 each is held a different length of time, and each fails differently — conflating any two of them is
@@ -12,7 +12,7 @@ own top-of-file comment (`audit.go`) points back here rather than repeating it.
 
 | # | Authority | Mechanism | Where | Held for | Kind |
 |---|-----------|-----------|-------|----------|------|
-| 1 | **Claim** | durable record, `<key>.owner.json` | `internal/tasks/lease.go` (`ReadTaskOwnerRecord`/`writeTaskOwnerRecord`/`removeTaskOwnerRecord`, :733-795); written by `claimTaskOwnerRecord`, `internal/tasks/cmd.go:466` | until a HUMAN releases it — never | record |
+| 1 | **Owner** | typed durable record, `<key>.owner.json` | `internal/tasks/owner.go`; human claim or exact fork assignment | until human release, exact land, or journaled discard | record |
 | 2 | **Lease** | kernel flock, `<key>.lock` | `internal/tasks/lease.go` (`lockLeaseAuthority`, :458; `TryTaskLease`, :1218) | one loop iteration | process lock |
 | 3 | **Checkout** | kernel flock, `.locks/loop-<sha>.lock` | `lockLoopCheckout`, `internal/loop/lock.go:25` | one whole `coop loop` run | process lock |
 | 4 | **Ref** | kernel flock, `.locks/ref-<sha>.lock` | `LockRefAuthority`/`EnterRefAuthorityWindow`, `internal/tasks/refauthority.go:36,134` | validate→finalize→consume only (short) | process lock |
@@ -46,9 +46,10 @@ if a crashed controller left stale metadata behind; only a HELD lock means anoth
 the work." PID, run-id, and heartbeat are recovery evidence and UI only, never authority
 (`internal/tasks/lease.go:71-79`).
 
-Authority 1 (claim) is deliberately NOT a process lock, because `coop tasks claim` exits
+Authority 1 (owner) is deliberately NOT a process lock, because `coop tasks claim` exits
 immediately — there is no process left to hold anything. A human's ownership has to outlive the
-command that asserted it, so it is a **durable record** instead: written once, read by every future
+command that asserted it, and a sandbox assignment must likewise survive stop/crash. It is a
+**durable typed record**: written once, read by every future
 scan, and cleared only by an explicit act. This is why a claim can NEVER be inferred stale by mtime,
 PID liveness, or heartbeat age (unlike a lease, which a heartbeat CAN mark `leaseStalled` for display,
 though even a stalled lease still blocks nobody but its own kernel lock) — a timeout can't distinguish
@@ -117,6 +118,9 @@ these authorities sit beside but never replace — the folder is still the only 
 lifecycle STATE; these four decide who may act on it.
 
 ## Changelog
+- 2026-08-28 — generalized durable claim authority into typed human-or-fork ownership. A fork
+  assignment survives process exit and clears only through exact candidate land or journaled discard;
+  the short iteration lease, checkout lock, and ref window keep their existing scopes.
 - 2026-08-25 — removed the duplicate task-local lease flock and metadata; authority 2 is now exactly
   one host-only, inode-rechecked flock, while unleased in-progress task adoption remains unchanged
 - 2026-08-25 — replaced Fleet terminology with direct parallel forks and removed the stale claim

@@ -12,6 +12,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -19,10 +20,17 @@ import (
 // debugShell opens an interactive shell in the box against the same repo/image as the
 // loop iteration, so --debug-on-fail can inspect the failed state. The box is disposable
 // per iteration, so this is a fresh shell in the same context, not the failed container.
-func (c *Control) debugShell(repo, img, agent string) {
+func (c *Control) debugShell(repo, img, agent, forkName string) {
+	kind := forkspace.ExecutionInteractive
+	if forkName != "" {
+		kind = forkspace.ExecutionForkInteractive
+	}
 	_, _ = box.Run(c.cfg, c.rt, box.RunSpec{
 		Image: img, Repo: repo, Cmd: []string{c.cfg.Shell}, Agent: agent,
 		Homes: c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
+		ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration,
+		ForkWorker: c.forkWorker, ActivityRepo: c.activityRepo, ActivityKind: kind,
+		ActivityTask: c.activityTask, ActivitySource: c.runID,
 	})
 }
 
@@ -229,7 +237,9 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 		boxCtx = childCtx
 	}
 	code, err = box.Run(c.cfg, c.rt, box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: c.forkOwner, ConsultLead: lead, Peers: peers, Preset: c.preset, RunID: c.runID, AssignedTask: assignedTask,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: peers, Preset: c.preset, RunID: c.runID, AssignedTask: assignedTask,
+		ForkWorker: c.forkWorker, ActivityRepo: c.activityRepo, ActivityKind: c.activityKind,
+		ActivityTask: c.iterationActivityTask(assignedTask), ActivitySource: c.runID,
 		AgentCommand:         agentCommand,
 		SuperviseDescendants: true,
 		RepoReadOnly:         repoReadOnly,
@@ -291,6 +301,17 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 		}
 	}
 	return code, output, res, classification, windows, err
+}
+
+func (c *Control) iterationActivityTask(id string) *forkspace.ExecutionTaskRef {
+	if id == "" {
+		return nil
+	}
+	if c.activityTask != nil {
+		copy := *c.activityTask
+		return &copy
+	}
+	return &forkspace.ExecutionTaskRef{ID: id}
 }
 
 // monitorProgress watches the queue while an iteration runs and pushes count changes into the live

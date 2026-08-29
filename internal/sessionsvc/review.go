@@ -113,6 +113,7 @@ type sessionReviewIntent struct {
 	SessionRevision    int64                       `json:"session_revision"`
 	Repository         string                      `json:"repository"`
 	Workspace          string                      `json:"workspace"`
+	ForkGeneration     string                      `json:"fork_generation"`
 	CreationBase       string                      `json:"creation_base"`
 	SourceHead         string                      `json:"source_head"`
 	SourceTree         string                      `json:"source_tree"`
@@ -207,6 +208,29 @@ func (s *Service) resumeReview(
 }
 
 func (s *Service) executeReview(ctx context.Context, op session.Operation, req RunReviewRequest) (ReviewDossier, error) {
+	unlock := s.lockSessionRuntime(req.SessionID)
+	defer unlock()
+	// Turn admission takes the same lock. Check the cheap durable preconditions before evicting a
+	// healthy warm child, then remove that last possible workspace writer before reading Git.
+	bound, err := s.store.GetSession(ctx, req.SessionID)
+	if err != nil {
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	if err := validateSessionForkAuthority(ctx, bound); err != nil {
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID,
+			&session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()})
+	}
+	if bound.Revision == req.ExpectedRevision &&
+		(bound.State == session.SessionOpen || bound.State == session.SessionExhausted) &&
+		bound.Activity == session.ActivityParked && bound.ActiveTurnID == "" &&
+		bound.QueuedTurnCount == 0 && bound.QueuedPromptBytes == 0 {
+		if evicter, ok := s.runner.(sessionRunnerWarmEvicter); ok {
+			if err := evicter.EvictWarmSession(bound.ID); err != nil {
+				return ReviewDossier{}, s.failServiceOperation(ctx, op.ID,
+					fmt.Errorf("stop warm session before review: %w", err))
+			}
+		}
+	}
 	intent, err := s.captureReviewIntent(ctx, op.ID, req)
 	if err != nil {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)
@@ -238,6 +262,9 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 	if err != nil {
 		return sessionReviewIntent{}, err
 	}
+	if err := validateSessionForkAuthority(ctx, sess); err != nil {
+		return sessionReviewIntent{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
+	}
 	if sess.Revision != req.ExpectedRevision {
 		return sessionReviewIntent{}, &session.Error{Code: session.CodeRevisionConflict, Detail: fmt.Sprintf("expected revision %d, current revision %d", req.ExpectedRevision, sess.Revision)}
 	}
@@ -252,6 +279,35 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 	}
 	if forkspace.NeedsStop(sess.Repository, sess.ForkName) {
 		return sessionReviewIntent{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: "fork is running or cleanup-pending"}
+	}
+	unlockFork, err := forkspace.LockStateContext(ctx, sess.Repository, sess.ForkName)
+	if err != nil {
+		return sessionReviewIntent{}, err
+	}
+	identity, hasGeneration, authorityErr := forkspace.ReadGeneration(sess.Repository, sess.ForkName)
+	if authorityErr == nil && (!hasGeneration || sess.ForkGeneration == "" ||
+		identity.Generation != forkspace.Generation(sess.ForkGeneration)) {
+		authorityErr = errors.New("session workspace generation changed")
+	}
+	if authorityErr == nil {
+		authorityErr = forkspace.ValidateGenerationWorkspace(sess.Repository, identity)
+	}
+	if authorityErr == nil {
+		reservation, reserved, readErr := forkspace.ReadWorkspaceReservation(sess.Repository, identity)
+		if readErr != nil {
+			authorityErr = readErr
+		} else if !reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession || reservation.OwnerID != sess.ID {
+			authorityErr = errors.New("session workspace reservation changed")
+		}
+	}
+	if authorityErr == nil {
+		authorityErr = forkspace.RequireNoForkExecutionsLocked(sess.Repository, identity)
+	}
+	unlockFork()
+	if authorityErr != nil {
+		return sessionReviewIntent{}, &session.Error{
+			Code: session.CodeInvalidSessionState, Detail: "session workspace authority is not idle and exact",
+		}
 	}
 	base, err := sessionWorkspaceCommit(sess.Repository, sess.BaseCommit)
 	if err != nil {
@@ -333,7 +389,8 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 	return sessionReviewIntent{
 		OperationID: operationID, SessionID: sess.ID, SessionRevision: sess.Revision,
 		Repository: sess.Repository, Workspace: sess.Workspace,
-		CreationBase: base, SourceHead: source.Head, SourceTree: source.Tree,
+		ForkGeneration: sess.ForkGeneration,
+		CreationBase:   base, SourceHead: source.Head, SourceTree: source.Tree,
 		SourceBranch: source.Branch, SourceStatusDigest: source.StatusDigest,
 		ParentHead: parent.Head, ParentTree: parent.Tree,
 		PolicyDigest: sess.PolicyDigest, PullRequest: cloneSessionPullRequestBinding(sess.PullRequest),
@@ -427,13 +484,26 @@ func sessionReviewIsAncestor(dir, base, head string) (bool, error) {
 }
 
 func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation, intent sessionReviewIntent) (ReviewDossier, error) {
-	if intent.OperationID != op.ID || intent.SessionID == "" || intent.Repository == "" || intent.Workspace == "" || intent.SessionRevision <= 0 || !validSessionReviewObject(intent.CreationBase) || !validSessionReviewObject(intent.SourceHead) || !validSessionReviewObject(intent.SourceTree) || !validSessionReviewObject(intent.ParentHead) || !validSessionReviewObject(intent.ParentTree) || intent.MaxPatchBytes <= 0 || intent.MaxPatchBytes > session.MaxPatchBytesLimit {
+	if intent.OperationID != op.ID || intent.SessionID == "" || intent.Repository == "" || intent.Workspace == "" ||
+		!forkspace.ValidGeneration(forkspace.Generation(intent.ForkGeneration)) || intent.SessionRevision <= 0 ||
+		!validSessionReviewObject(intent.CreationBase) || !validSessionReviewObject(intent.SourceHead) ||
+		!validSessionReviewObject(intent.SourceTree) || !validSessionReviewObject(intent.ParentHead) ||
+		!validSessionReviewObject(intent.ParentTree) || intent.MaxPatchBytes <= 0 || intent.MaxPatchBytes > session.MaxPatchBytesLimit {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review operation intent is invalid")
 	}
 	if intent.PullRequest != nil && (intent.PullRequest.Number < 1 ||
 		intent.PullRequest.Ref != fmt.Sprintf("refs/pull/%d/head", intent.PullRequest.Number) ||
 		!validSessionReviewObject(intent.PullRequest.HeadCommit)) {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review pull request binding is invalid")
+	}
+	bound, err := s.store.GetSession(ctx, intent.SessionID)
+	if err != nil || bound.Revision != intent.SessionRevision || bound.Repository != intent.Repository ||
+		bound.Workspace != intent.Workspace || bound.ForkName != intent.SourceBranch ||
+		bound.ForkGeneration != intent.ForkGeneration {
+		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review workspace authority changed")
+	}
+	if err := validateSessionForkAuthority(ctx, bound); err != nil {
+		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review workspace authority changed")
 	}
 	candidate, err := prepareForkReviewCandidateFromIntent(intent)
 	if err != nil {

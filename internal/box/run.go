@@ -19,6 +19,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
@@ -30,14 +31,17 @@ import (
 // sites (assembleArgs, below) and the cli QUERY sites (CountByLabel/KillByLabel) MUST agree —
 // a label renamed on only one side would orphan running containers — so both reference these.
 const (
-	LabelKey        = "coop"            // every coop box: coop=box
-	LabelBox        = "box"             //   (its value)
-	LabelSupervised = "coop.supervised" // a supervised inner box (build/update restart it): =1
-	LabelOn         = "1"               //   (its value)
-	LabelSupervisor = "coop.sup"        // value=<supervisor id>, so a supervisor kills only its own
-	LabelFork       = "coop.fork"       // readable value=<fork name> for runtime diagnostics
-	LabelForkOwner  = "coop.fork-owner" // repo-scoped value, so stop never reaps another repo's namesake
-	LabelRun        = "coop.run"        // value=<loop run id>, so cancellation reaps the daemon-owned box
+	LabelKey            = "coop"                 // every coop box: coop=box
+	LabelBox            = "box"                  //   (its value)
+	LabelSupervised     = "coop.supervised"      // a supervised inner box (build/update restart it): =1
+	LabelOn             = "1"                    //   (its value)
+	LabelSupervisor     = "coop.sup"             // value=<supervisor id>, so a supervisor kills only its own
+	LabelFork           = "coop.fork"            // readable value=<fork name> for runtime diagnostics
+	LabelForkOwner      = "coop.fork-owner"      // repo-scoped value, so stop never reaps another repo's namesake
+	LabelForkGeneration = "coop.fork-generation" // immutable workspace incarnation; fences reused names
+	LabelForkWorker     = "coop.fork-worker"     // detached loop only; foreground/ACP boxes are never stopped with it
+	LabelRun            = "coop.run"             // value=<loop run id>, so cancellation reaps the daemon-owned box
+	LabelExecution      = "coop.execution"       // exact host activity record; runtime cleanup never guesses by kind/name
 	// LabelHost records the HOST PROCESS supervising this box, as
 	// v1:<workspace-scope>:<pid>:<start-token> — the versioned form parseSupervisorLabel reads
 	// back. Every other label above names a LOGICAL owner (a run, a supervisor id, a fork); none of
@@ -96,8 +100,19 @@ type RunSpec struct {
 	ShareACPSessions bool   // mount credential-independent ACP transcript dirs across account switches
 	ForkName         string // non-empty for a detached fork loop's box: readable runtime label
 	ForkOwner        string // repo-scoped label used by `coop fork stop`; required with ForkName
-	RunID            string // the loop run's id; when set, injected as COOP_RUN_ID so a consult peer can append its usage to .agent/runs/<id>.peers.jsonl
-	Batch            bool   // loop/doctor: no tty, stdin from /dev/null
+	ForkGeneration   string // immutable host-owned generation; empty only for legacy callers
+	ForkWorker       bool   // this box belongs to the detached worker stopped by `coop fork stop`
+	// ActivityRepo is the canonical project whose host-owned execution registry receives this
+	// sandbox. ActivityKind empty preserves the ordinary unregistered maintenance-box behavior.
+	ActivityRepo             string
+	ActivityKind             forkspace.ExecutionKind
+	ActivityRole             forkspace.ExecutionRole
+	ActivityTask             *forkspace.ExecutionTaskRef
+	ActivitySource           string
+	ActivityReservationOwner string
+	activityID               string
+	RunID                    string // the loop run's id; when set, injected as COOP_RUN_ID so a consult peer can append its usage to .agent/runs/<id>.peers.jsonl
+	Batch                    bool   // loop/doctor: no tty, stdin from /dev/null
 	// SuperviseDescendants keeps coop-entry alive after a successful provider exit long enough to
 	// drain agent-owned background jobs. It is intentionally opt-in: an interactive box retains
 	// the ordinary exec contract and never waits for a shell job the user started.
@@ -239,6 +254,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	if (spec.ForkName == "") != (spec.ForkOwner == "") {
 		return -1, errors.New("fork box requires both name and scoped owner")
+	}
+	if spec.ForkGeneration != "" && spec.ForkName == "" {
+		return -1, errors.New("fork generation requires a fork name")
+	}
+	if spec.ForkWorker && spec.ForkGeneration == "" {
+		return -1, errors.New("detached fork worker label requires a fork generation")
 	}
 	var mcpSnapshot []byte
 	mcpPresent := false
@@ -592,12 +613,48 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err := ctxStep(spec.Ctx, "sibling services"); err != nil {
 		return -1, err
 	}
+	// Publish before any sibling service or runtime side effect. Fork-bound publication takes the
+	// same lifecycle lock as rm/fresh/merge and validates the exact workspace generation, so either
+	// the reservation wins and mutation refuses, or mutation wins and this launch fails closed.
+	var execution forkspace.ExecutionRecord
+	reviewServicesAttempted := false
+	finish := func(code int, runErr error) (int, error) {
+		if execution.ID != "" {
+			if cleanupErr := forkspace.EndExecution(spec.ActivityRepo, execution); cleanupErr != nil {
+				ui.Warn("sandbox activity %s cleanup failed: %v — work result preserved; inspect 'coop tasks watch --json'", execution.ID, cleanupErr)
+			}
+			execution = forkspace.ExecutionRecord{}
+		}
+		if reviewServicesAttempted {
+			cleanupErr := DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard)
+			runErr = errors.Join(runErr, cleanupErr)
+		}
+		return code, runErr
+	}
+	if spec.ActivityKind != "" {
+		if !filepath.IsAbs(spec.ActivityRepo) || filepath.Clean(spec.ActivityRepo) != spec.ActivityRepo {
+			return finish(-1, errors.New("sandbox activity requires a clean absolute canonical project repo"))
+		}
+		activity := forkspace.ExecutionSpec{
+			Kind: spec.ActivityKind, Role: spec.ActivityRole, Workspace: spec.Repo,
+			Task: spec.ActivityTask, SourceID: spec.ActivitySource,
+			ReservationOwner: spec.ActivityReservationOwner,
+		}
+		if spec.ForkName != "" {
+			activity.Fork = &forkspace.Identity{Name: spec.ForkName, Generation: forkspace.Generation(spec.ForkGeneration)}
+		}
+		var err error
+		execution, err = forkspace.BeginExecution(spec.ActivityRepo, activity)
+		if err != nil {
+			return finish(-1, fmt.Errorf("publish sandbox activity: %w", err))
+		}
+		spec.activityID = execution.ID
+	}
 	// Bring sibling services up first, so the box can reach them by name. Every launch path —
 	// agent, ACP, loop, and fork — funnels through box.Run, so this one call covers
 	// them all. Gated like the network join below (on the services net, online, compose-capable
 	// runtime) plus COOP_AUTO_UP. Idempotent; progress goes to stderr (never stdout, which may
 	// carry ACP/JSON) and only when not Quiet; a failure warns but never blocks the session.
-	reviewServicesAttempted := false
 	if autoUpServices(cfg, spec, rt.Name) {
 		if cf := composeFile; cf != "" {
 			reviewServicesAttempted = spec.Review
@@ -612,29 +669,17 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			var composeStderr bytes.Buffer
 			if _, err := EnsureServicesFile(rt, spec.Repo, cf, io.Discard, &composeStderr); err != nil {
 				if spec.Review {
-					cleanupErr := DownServicesFile(rt, spec.Repo, cf, true, io.Discard, io.Discard)
 					detail := strings.TrimSpace(composeStderr.String())
 					if detail != "" {
 						err = fmt.Errorf("%w: %s", err, detail)
 					}
-					return -1, errors.Join(fmt.Errorf("start review services: %w", err), cleanupErr)
+					return finish(-1, fmt.Errorf("start review services: %w", err))
 				}
 				ui.Info("services: %v — continuing without them (run 'coop up' to retry)", err)
 			}
 		}
 	}
 
-	// finish releases the review-only Compose project's disposable state on every return from here
-	// on — success, a runtime error, or a step-boundary cancellation below — so an aborted setup
-	// leaves nothing running that a normal completion wouldn't also have torn down. Defined here,
-	// right after reviewServicesAttempted's last write, so the cancellation checks below can use it.
-	finish := func(code int, runErr error) (int, error) {
-		if reviewServicesAttempted {
-			cleanupErr := DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard)
-			runErr = errors.Join(runErr, cleanupErr)
-		}
-		return code, runErr
-	}
 	if err := ctxStep(spec.Ctx, "network inspection"); err != nil {
 		return finish(-1, err)
 	}
@@ -1711,6 +1756,9 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 	if spec.RunID != "" {
 		args = append(args, "--label", LabelRun+"="+spec.RunID)
 	}
+	if spec.activityID != "" {
+		args = append(args, "--label", LabelExecution+"="+spec.activityID)
+	}
 	if spec.SupervisorID != "" {
 		// A supervised inner box: coop.supervised=1 lets build/update restart it (the
 		// editor reconnects); coop.sup=<id> lets its own supervisor kill exactly its
@@ -1721,6 +1769,12 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 		// Keep the human name inspectable, but reap by the repo-scoped owner. Fork names are local to
 		// a repo; using the readable label for cleanup would kill a namesake in another repository.
 		args = append(args, "--label", LabelFork+"="+spec.ForkName, "--label", LabelForkOwner+"="+spec.ForkOwner)
+		if spec.ForkGeneration != "" {
+			args = append(args, "--label", LabelForkGeneration+"="+spec.ForkGeneration)
+		}
+		if spec.ForkWorker {
+			args = append(args, "--label", LabelForkWorker+"="+LabelOn)
+		}
 	}
 	switch mode {
 	case ttyInteractive:

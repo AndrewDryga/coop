@@ -1,7 +1,6 @@
 package tasks
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/taskstate"
 )
 
@@ -301,27 +301,12 @@ func ReadBacklog(root string) []Item {
 	return items
 }
 
-// copyTree recursively copies directory src into dst (creating dst and parents). Used to
-// seed a fork worktree with a folder-mode task tree, and to write per-fork task slices.
-func CopyTree(src, dst string) error {
-	return fs.WalkDir(os.DirFS(src), ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, p) // p is "." for the root, then forward-slash rel paths
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		return copyFile(filepath.Join(src, p), target)
-	})
-}
-
 // scaffoldStateDirs creates the four task-state dirs (00_todo/10_in_progress/50_blocked/99_done)
 // under root. The move-a-folder-between-states protocol relies on every target dir existing: a bare
 // `mv 00_todo/x 10_in_progress/` with no 10_in_progress/ *renames* the task folder to a file called
-// 10_in_progress, silently corrupting the queue. Split producers and fork seeding call this so a
-// slice or seeded fork queue is safe to move within (`coop init` scaffolds the same four its own
-// way). Idempotent — MkdirAll on an existing dir is a no-op.
+// 10_in_progress, silently corrupting the queue. Canonical queue and one-task projection producers
+// call this before any move (`coop init` scaffolds the same four its own way). Idempotent — MkdirAll
+// on an existing dir is a no-op.
 func ScaffoldStateDirs(root string) error {
 	for _, st := range TaskStates {
 		if err := os.MkdirAll(filepath.Join(root, st), 0o755); err != nil {
@@ -329,59 +314,6 @@ func ScaffoldStateDirs(root string) error {
 		}
 	}
 	return nil
-}
-
-// splitTodoFolders round-robins the todo task folders under root into len(names) per-fork
-// task trees — siblings of root named "tasks.<name>" — copying each task folder into that
-// slice's todo/. The source tree is left untouched (the slices are COPIES). Returns, per
-// name, the repo-relative slice dir written ("" when that bucket was empty) and its task
-// count, plus the total number of todo tasks. `coop tasks split` uses the named buckets to emit
-// one queue per direct fork loop.
-func splitTodoFolders(repo, root string, names []string) (written []string, counts []int, total int, err error) {
-	n := len(names)
-	written = make([]string, n)
-	counts = make([]int, n)
-	if n == 0 {
-		return written, counts, 0, nil
-	}
-	var todo []Item
-	for _, it := range ReadTaskTree(root) {
-		if it.State == StateTodo {
-			todo = append(todo, it)
-		}
-	}
-	parent := filepath.Dir(root)
-	// Pre-clean each slice so a RE-split regenerates from the current source instead of merging into
-	// a stale one: without this, a task already worked in a slice (moved to its 99_done/) plus a fresh
-	// todo copy of the same id would leave the id in two states in one slice — and a loop on it would
-	// re-run completed work. Slices are disposable copies of the (untouched) source, safe to rebuild.
-	for _, name := range names {
-		if e := os.RemoveAll(filepath.Join(parent, "tasks."+name)); e != nil {
-			return nil, nil, 0, e
-		}
-	}
-	for i, it := range todo {
-		b := i % n // deterministic round-robin over the sorted todo list
-		if e := CopyTree(it.Dir, filepath.Join(parent, "tasks."+names[b], StateTodo, it.ID)); e != nil {
-			return nil, nil, 0, e
-		}
-		counts[b]++
-	}
-	for i := range names {
-		if counts[i] == 0 {
-			continue
-		}
-		sliceDir := filepath.Join(parent, "tasks."+names[i])
-		if e := ScaffoldStateDirs(sliceDir); e != nil { // all four states, so an in-box `mv` between them can't corrupt the slice
-			return nil, nil, 0, e
-		}
-		if rel, e := filepath.Rel(repo, sliceDir); e == nil {
-			written[i] = rel
-		} else {
-			written[i] = sliceDir
-		}
-	}
-	return written, counts, len(todo), nil
 }
 
 // stateOrder maps a state to its lifecycle index for sorting (unknown states sort last).
@@ -411,19 +343,11 @@ func QueueCounts(dir string) (TaskCounts, string) {
 	return TaskTreeCounts(ReadTaskTree(dir))
 }
 
-// wsTaskSource returns a workspace's task queue directory (.agent/tasks). Used by the status
-// view, which reads a fork's queue directly rather than through taskQueues.
-func WsTaskSource(ws string) string {
-	return filepath.Join(ws, TasksRoot)
-}
-
 // latestTaskLog returns the last n lines of the most-recently-modified per-task log.md under
 // ws's .agent/tasks tree (the agent's "why") — surfaced by `coop fork review`; "" if none.
 func LatestTaskLog(ws string, n int) string {
-	// Only COMPLETED tasks (99_done): a fork's "why" is what it FINISHED. Scanning every state also
-	// picked up seeded 00_todo templates copied from the parent, whose mtimes can tie or beat the
-	// fork's own work — so a fresh fork's brief showed a pristine template. A seeded fork's 99_done is
-	// its own (slices seed only todo); empty means the fork hasn't finished anything (caller says so).
+	// Only COMPLETED tasks (99_done): a review's "why" is what this queue FINISHED. Scanning every
+	// state can select a newer todo template instead; empty means the queue has finished nothing.
 	matches, _ := filepath.Glob(filepath.Join(ws, TasksRoot, StateDone, "*", "log.md"))
 	newest, newestMod := "", time.Time{}
 	for _, m := range matches {
@@ -435,6 +359,47 @@ func LatestTaskLog(ws string, n int) string {
 		return ""
 	}
 	return lastLines(readFileString(newest), n)
+}
+
+// LatestForkTaskLog reads reviewed execution projections through the generation registry. It
+// replaces review's old assumption that a fork owns a copied .agent/tasks tree.
+func LatestForkTaskLog(repo, name string, n int) string {
+	identity, ok, err := forkspace.ReadGeneration(repo, name)
+	if err != nil || !ok {
+		return ""
+	}
+	assignments, err := ForkAssignments(repo, identity)
+	if err != nil {
+		return ""
+	}
+	newest, newestMod := "", time.Time{}
+	for _, assignment := range assignments {
+		owner := assignment.Record.Fork
+		if owner.Phase != ForkAssignmentReviewing && owner.Phase != ForkAssignmentReady {
+			continue
+		}
+		item, ok := CurrentTask(owner.Projection, assignment.Item.ID)
+		if !ok || item.State != StateDone {
+			continue
+		}
+		path := filepath.Join(item.Dir, "log.md")
+		info, err := os.Lstat(path)
+		if err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.ModTime().After(newestMod) {
+			opened, openErr := OpenTaskMetadataRoot(item.Dir)
+			if openErr != nil {
+				continue
+			}
+			data, readErr := ReadTaskMetadataFile(opened, "log.md")
+			_ = opened.Close()
+			if readErr == nil {
+				newest, newestMod = string(data), info.ModTime()
+			}
+		}
+	}
+	if newest == "" {
+		return ""
+	}
+	return lastLines(newest, n)
 }
 
 // taskTreeCounts tallies a task tree into the shared taskCounts and returns the "active"

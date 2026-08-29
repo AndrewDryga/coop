@@ -794,7 +794,11 @@ func verifyLoopTaskDone(root, taskID string) error {
 	if err != nil {
 		return err
 	}
-	task, err := procharness.CanonicalUnderRoot(root, filepath.Join(repo, ".agent", "tasks", "99_done", taskID))
+	tasks, err := loopTaskQueue(root, repo, taskID)
+	if err != nil {
+		return err
+	}
+	task, err := procharness.CanonicalUnderRoot(root, filepath.Join(tasks, "99_done", taskID))
 	if err != nil {
 		return fmt.Errorf("loop review task is not done: %w", err)
 	}
@@ -810,7 +814,11 @@ func verifyBackgroundHandoffState(root, taskID string) error {
 	if err != nil {
 		return err
 	}
-	statePath, err := procharness.CanonicalUnderRoot(root, filepath.Join(repo, ".agent", "tasks", "10_in_progress", taskID, "state.md"))
+	tasks, err := loopTaskQueue(root, repo, taskID)
+	if err != nil {
+		return err
+	}
+	statePath, err := procharness.CanonicalUnderRoot(root, filepath.Join(tasks, "10_in_progress", taskID, "state.md"))
 	if err != nil {
 		return fmt.Errorf("background handoff task is not in progress: %w", err)
 	}
@@ -890,7 +898,10 @@ func reopenLoopTask(root, taskID, stage string) error {
 	if err != nil {
 		return fmt.Errorf("loop repo: %w", err)
 	}
-	tasks := filepath.Join(repo, ".agent", "tasks")
+	tasks, err := loopTaskQueue(root, repo, taskID)
+	if err != nil {
+		return err
+	}
 	source, err := procharness.CanonicalUnderRoot(root, filepath.Join(tasks, "99_done", taskID))
 	if err != nil {
 		return fmt.Errorf("loop review source: %w", err)
@@ -1047,7 +1058,10 @@ func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 	if err != nil {
 		return fmt.Errorf("loop repo: %w", err)
 	}
-	tasks := filepath.Join(repo, ".agent", "tasks")
+	tasks, err := loopTaskQueue(root, repo, taskID)
+	if err != nil {
+		return err
+	}
 	inProgress, err := procharness.CanonicalUnderRoot(root, filepath.Join(tasks, "10_in_progress"))
 	if err != nil {
 		return fmt.Errorf("loop in-progress queue: %w", err)
@@ -1310,6 +1324,80 @@ func loopRepo(root string) (string, error) {
 		return "", err
 	}
 	return procharness.CanonicalUnderRoot(root, repo)
+}
+
+// loopTaskQueue resolves the one queue slice exposed to this provider. Ordinary loops use the
+// repository queue; isolated fork loops use one generation/assignment projection. Finding the
+// task twice is an authority failure, not a reason to pick whichever directory sorts first.
+func loopTaskQueue(root, repo, taskID string) (string, error) {
+	if !safeLoopTaskID(taskID) {
+		return "", fmt.Errorf("unsafe loop task id %q", taskID)
+	}
+	queueRoots := []string{filepath.Join(repo, ".agent", "tasks")}
+	executions := filepath.Join(repo, ".coop", "task-executions")
+	generations, err := os.ReadDir(executions)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read loop execution generations: %w", err)
+	}
+	for _, generation := range generations {
+		if !generation.IsDir() || generation.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		generationRoot := filepath.Join(executions, generation.Name())
+		assignments, err := os.ReadDir(generationRoot)
+		if err != nil {
+			return "", fmt.Errorf("read loop execution assignments: %w", err)
+		}
+		for _, assignment := range assignments {
+			if !assignment.IsDir() || assignment.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			queueRoots = append(queueRoots, filepath.Join(generationRoot, assignment.Name(), "tasks"))
+		}
+	}
+
+	var matches []string
+	for _, candidate := range queueRoots {
+		info, err := os.Lstat(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("loop task queue %q is not a real directory", candidate)
+		}
+		candidate, err = procharness.CanonicalUnderRoot(root, candidate)
+		if err != nil {
+			return "", err
+		}
+		states := 0
+		for _, state := range []string{"00_todo", "10_in_progress", "50_blocked", "99_done"} {
+			item := filepath.Join(candidate, state, taskID)
+			itemInfo, err := os.Lstat(item)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return "", err
+			}
+			if !itemInfo.IsDir() || itemInfo.Mode()&os.ModeSymlink != 0 {
+				return "", fmt.Errorf("loop task %q is not a real directory", item)
+			}
+			states++
+		}
+		if states > 1 {
+			return "", fmt.Errorf("loop task %q exists in multiple states under %q", taskID, candidate)
+		}
+		if states == 1 {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) != 1 {
+		return "", fmt.Errorf("loop task %q is present in %d execution queues, want exactly one", taskID, len(matches))
+	}
+	return matches[0], nil
 }
 
 func writeLoopTaskFile(root, path, body string, appendOnly bool) error {

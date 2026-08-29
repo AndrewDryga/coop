@@ -37,6 +37,28 @@ func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	}
 }
 
+func TestForkLoopPromptUsesProposalOutboxInsteadOfExecutionQueue(t *testing.T) {
+	work := LoopWorkPromptWithProposalOutbox(
+		"/repo-forks/a", ".coop/task-executions/generation/assignment/tasks", "task-42",
+		"codex", nil, nil, false, ".coop/task-executions/generation/assignment/proposals",
+	)
+	for _, want := range []string{
+		"/repo-forks/a/.coop/task-executions/generation/assignment/proposals",
+		"one JSON file", "<id>.json", "32-character lowercase hexadecimal id", "version (1)",
+		"kind (task for ready work or backlog", "title, context, acceptance, approach, and subtasks",
+		"host validates and imports it", "assigned task's canonical queue",
+	} {
+		if !strings.Contains(work, want) {
+			t.Errorf("fork work prompt missing %q:\n%s", want, work)
+		}
+	}
+	for _, forbidden := range []string{"create its folder under", "/00_todo/", "xx_backlog/"} {
+		if strings.Contains(work, forbidden) {
+			t.Errorf("fork work prompt tells the sandbox to mutate queue authority with %q:\n%s", forbidden, work)
+		}
+	}
+}
+
 func TestLoopWorkPromptPeerCapabilities(t *testing.T) {
 	withoutPeers := LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, false)
 	for _, want := range []string{"no peer wrappers are mounted", "`coop-consult` and `coop-delegate` are unavailable", "do not invoke or probe them"} {

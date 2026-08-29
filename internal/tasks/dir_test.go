@@ -189,15 +189,11 @@ func TestReadTaskTreeDedupesTornMove(t *testing.T) {
 	}
 }
 
-func TestQueueCountsAndSource(t *testing.T) {
-	// queueCounts and wsTaskSource both read the .agent/tasks tree.
+func TestQueueCounts(t *testing.T) {
 	ws := t.TempDir()
 	dir := filepath.Join(ws, TasksRoot)
 	writeTaskFile(t, filepath.Join(dir, StateTodo, "2026-01-01-a", "task.md"), "# one\n")
 	writeTaskFile(t, filepath.Join(dir, StateInProgress, "2026-01-02-b", "task.md"), "# two\n")
-	if got := WsTaskSource(ws); got != dir {
-		t.Fatalf("wsTaskSource = %q, want %q", got, dir)
-	}
 	c, active := QueueCounts(dir)
 	if c.Todo != 1 || c.Doing != 1 {
 		t.Errorf("counts = %+v", c)
@@ -208,126 +204,6 @@ func TestQueueCountsAndSource(t *testing.T) {
 	// A missing/empty tree reads as all-zero, no panic.
 	if c0, a0 := QueueCounts(filepath.Join(t.TempDir(), "nope")); c0.Total() != 0 || a0 != "" {
 		t.Errorf("missing tree = %+v %q, want zero/empty", c0, a0)
-	}
-}
-
-func TestCopyTree(t *testing.T) {
-	src := t.TempDir()
-	writeTaskFile(t, filepath.Join(src, "a", "x.md"), "hello")
-	writeTaskFile(t, filepath.Join(src, "b.txt"), "world")
-	dst := filepath.Join(t.TempDir(), "out")
-	if err := CopyTree(src, dst); err != nil {
-		t.Fatal(err)
-	}
-	if got := readFileString(filepath.Join(dst, "a", "x.md")); got != "hello" {
-		t.Errorf("nested file = %q", got)
-	}
-	if got := readFileString(filepath.Join(dst, "b.txt")); got != "world" {
-		t.Errorf("top file = %q", got)
-	}
-}
-
-func TestSplitTodoFolders(t *testing.T) {
-	repo := t.TempDir()
-	root := filepath.Join(repo, ".agent", "tasks")
-	for _, id := range []string{"2026-01-01-a", "2026-01-02-b", "2026-01-03-c", "2026-01-04-d", "2026-01-05-e"} {
-		writeTaskFile(t, filepath.Join(root, StateTodo, id, "task.md"), "# "+id+"\n")
-	}
-	// an in_progress task must be excluded from the split
-	writeTaskFile(t, filepath.Join(root, StateInProgress, "2026-01-06-active", "task.md"), "# active\n")
-
-	written, counts, total, err := splitTodoFolders(repo, root, []string{"1", "2"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if total != 5 {
-		t.Fatalf("total = %d, want 5 (in_progress excluded)", total)
-	}
-	if counts[0] != 3 || counts[1] != 2 {
-		t.Errorf("round-robin counts = %v, want [3 2]", counts)
-	}
-	if written[0] != filepath.Join(".agent", "tasks.1") || written[1] != filepath.Join(".agent", "tasks.2") {
-		t.Errorf("written slice dirs = %v", written)
-	}
-	if !fileExists(filepath.Join(repo, ".agent", "tasks.1", StateTodo, "2026-01-01-a", "task.md")) {
-		t.Error("slice 1 missing the first round-robin task's copied task.md")
-	}
-	// source is untouched (the slices are copies)
-	if c, _ := TaskTreeCounts(ReadTaskTree(root)); c.Todo != 5 || c.Doing != 1 {
-		t.Errorf("source tree changed by split: %+v", c)
-	}
-	// each slice is itself a valid folder-mode queue
-	if c, _ := TaskTreeCounts(ReadTaskTree(filepath.Join(repo, ".agent", "tasks.1"))); c.Todo != 3 {
-		t.Errorf("slice 1 todo = %d, want 3", c.Todo)
-	}
-
-	// more slices than tasks → the trailing bucket is empty (written == "")
-	repo2 := t.TempDir()
-	root2 := filepath.Join(repo2, ".agent", "tasks")
-	writeTaskFile(t, filepath.Join(root2, StateTodo, "only", "task.md"), "# only\n")
-	w, c, tot, _ := splitTodoFolders(repo2, root2, []string{"1", "2"})
-	if tot != 1 || c[0] != 1 || c[1] != 0 || w[0] == "" || w[1] != "" {
-		t.Errorf("uneven split: written=%v counts=%v total=%d", w, c, tot)
-	}
-}
-
-// A split slice is a self-contained queue carrying all four state dirs, and a fork seeded by copying
-// the slice inherits them — so the in-box "move a folder between states" protocol can't rename a task
-// into a missing dir. Regression: a concurrent fork run lost a claimed task to a bare `mv` into a
-// nonexistent 10_in_progress/ on a slice that only had 00_todo/.
-func TestSplitAndForkSeedScaffoldAllStateDirs(t *testing.T) {
-	repo := t.TempDir()
-	root := filepath.Join(repo, ".agent", "tasks")
-	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-01-a", "task.md"), "# a\n")
-	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-02-b", "task.md"), "# b\n")
-	if _, _, _, err := splitTodoFolders(repo, root, []string{"x", "y"}); err != nil {
-		t.Fatal(err)
-	}
-	allFour := func(where, dir string) {
-		t.Helper()
-		for _, st := range TaskStates {
-			if fi, err := os.Stat(filepath.Join(dir, st)); err != nil || !fi.IsDir() {
-				t.Errorf("%s missing state dir %s/: %v", where, st, err)
-			}
-		}
-	}
-	for _, name := range []string{"x", "y"} {
-		slice := filepath.Join(repo, ".agent", "tasks."+name)
-		allFour("slice "+name, slice) // (1) every split slice has all four
-		// (2) a fork seeded by copyTree'ing the slice inherits all four (copyTree preserves empty dirs)
-		seed := filepath.Join(t.TempDir(), ".agent", "tasks")
-		if err := CopyTree(slice, seed); err != nil {
-			t.Fatal(err)
-		}
-		allFour("fork seeded from slice "+name, seed)
-	}
-}
-
-// A RE-split must regenerate each slice from the (unchanged) source, not merge into a stale one —
-// else a task already worked in a slice (moved to 99_done) plus a fresh todo copy of the same id
-// would leave it in two states and a loop on the slice would re-run completed work.
-func TestSplitTodoFoldersRecleansSlices(t *testing.T) {
-	repo := t.TempDir()
-	root := filepath.Join(repo, ".agent", "tasks")
-	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-01-a", "task.md"), "# a\n")
-	if _, _, _, err := splitTodoFolders(repo, root, []string{"1"}); err != nil {
-		t.Fatal(err)
-	}
-	// Simulate the slice being worked in place: a task moved to 99_done + a stale todo not in source.
-	writeTaskFile(t, filepath.Join(repo, ".agent", "tasks.1", StateDone, "2026-01-01-a", "task.md"), "# a (done)\n")
-	writeTaskFile(t, filepath.Join(repo, ".agent", "tasks.1", StateTodo, "2026-01-09-stale", "task.md"), "# stale\n")
-
-	if _, _, _, err := splitTodoFolders(repo, root, []string{"1"}); err != nil {
-		t.Fatal(err)
-	}
-	if IsTaskDir(filepath.Join(repo, ".agent", "tasks.1", StateDone, "2026-01-01-a")) {
-		t.Error("re-split must clear the slice's stale 99_done copy (else the loop re-runs done work)")
-	}
-	if IsTaskDir(filepath.Join(repo, ".agent", "tasks.1", StateTodo, "2026-01-09-stale")) {
-		t.Error("re-split must clear a stale todo not present in the source")
-	}
-	if !IsTaskDir(filepath.Join(repo, ".agent", "tasks.1", StateTodo, "2026-01-01-a")) {
-		t.Error("re-split should re-copy the source's current todo")
 	}
 }
 

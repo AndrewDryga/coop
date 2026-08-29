@@ -21,6 +21,8 @@ import (
 const (
 	ReapPending   = "reap-pending\n"
 	OwnerStateV1  = "owner-v1\n"
+	OwnerStateV2  = "owner-v2\n"
+	GenerationTag = "generation="
 	StartClaim    = "start-claim\n"    // a start reservation: its owner has launched no worker yet
 	StartLaunched = "start-launched\n" // that reservation forked a worker whose identity isn't recorded
 )
@@ -230,29 +232,48 @@ func parsePidfile(s string) (int, string) {
 // A claim is the start reservation, and its identity is the coop process that MADE it, not a worker:
 // nothing may ever signal it, and only its owner's death makes it reclaimable.
 type WorkerState struct {
-	Pid      int
-	Token    string
-	Pending  bool
-	Claim    bool // a start reservation held by the coop process at Pid
-	Launched bool // that reservation already forked a worker whose identity it never recorded
+	Pid        int
+	Token      string
+	Generation Generation
+	Pending    bool
+	Claim      bool // a start reservation held by the coop process at Pid
+	Launched   bool // that reservation already forked a worker whose identity it never recorded
 }
 
 func ParseWorkerState(raw string) (WorkerState, error) {
 	first, _, _ := strings.Cut(raw, "\n")
-	if !strings.HasPrefix(raw, OwnerStateV1) {
+	version := 0
+	body := raw
+	switch {
+	case strings.HasPrefix(raw, OwnerStateV1):
+		version, body = 1, strings.TrimPrefix(raw, OwnerStateV1)
+	case strings.HasPrefix(raw, OwnerStateV2):
+		version, body = 2, strings.TrimPrefix(raw, OwnerStateV2)
+	}
+	if version == 0 {
 		if first == strings.TrimSpace(ReapPending) {
 			return WorkerState{}, fmt.Errorf("%w: headerless %s record", ErrPreV8WorkerState, first)
 		}
 		if _, err := strconv.Atoi(strings.TrimSpace(first)); err == nil {
 			return WorkerState{}, fmt.Errorf("%w: headerless numeric pid record", ErrPreV8WorkerState)
 		}
-		if strings.HasPrefix(first, "owner-") && first != strings.TrimSpace(OwnerStateV1) {
+		if strings.HasPrefix(first, "owner-") {
 			return WorkerState{}, fmt.Errorf("%w %q", ErrUnsupportedWorkerStateVersion, first)
 		}
-		return WorkerState{}, errors.New("detached worker state is missing the owner-v1 header")
+		return WorkerState{}, errors.New("detached worker state is missing a supported owner header")
 	}
 	state := WorkerState{}
-	body := strings.TrimPrefix(raw, OwnerStateV1)
+	if version == 2 {
+		line, rest, ok := strings.Cut(body, "\n")
+		if !ok || !strings.HasPrefix(line, GenerationTag) {
+			return WorkerState{}, errors.New("detached worker state is missing its fork generation")
+		}
+		state.Generation = Generation(strings.TrimPrefix(line, GenerationTag))
+		if !ValidGeneration(state.Generation) {
+			return WorkerState{}, errors.New("detached worker state has an invalid fork generation")
+		}
+		body = rest
+	}
 	switch {
 	case strings.HasPrefix(body, StartClaim):
 		state.Claim = true
@@ -276,6 +297,12 @@ func ParseWorkerState(raw string) (WorkerState, error) {
 
 func (state WorkerState) Marshal() ([]byte, error) {
 	prefix := OwnerStateV1
+	if state.Generation != "" {
+		if !ValidGeneration(state.Generation) {
+			return nil, errors.New("invalid fork state: malformed generation")
+		}
+		prefix = OwnerStateV2 + GenerationTag + string(state.Generation) + "\n"
+	}
 	if state.Claim && state.Pending {
 		return nil, errors.New("invalid fork state: a start reservation is never cleanup-pending")
 	}
@@ -358,22 +385,33 @@ func WritePid(repo, name string, pid int) error {
 }
 
 func WritePidUnlocked(repo, name string, pid int) error {
-	state, err := workerStateForPID(pid)
+	state, err := workerStateForPID(pid, "")
 	if err != nil {
 		return err
 	}
 	return WriteWorkerState(repo, name, state)
 }
 
-func workerStateForPID(pid int) (WorkerState, error) {
+func WritePidUnlockedGeneration(repo, name string, pid int, generation Generation) error {
+	state, err := workerStateForPID(pid, generation)
+	if err != nil {
+		return err
+	}
+	return WriteWorkerState(repo, name, state)
+}
+
+func workerStateForPID(pid int, generation Generation) (WorkerState, error) {
 	if pid <= 1 {
 		return WorkerState{}, fmt.Errorf("refuse invalid detached worker pid %d", pid)
+	}
+	if generation != "" && !ValidGeneration(generation) {
+		return WorkerState{}, errors.New("refuse invalid detached worker generation")
 	}
 	token := ProcStartToken(pid)
 	if !StableProcToken(token) {
 		return WorkerState{}, fmt.Errorf("detached worker pid %d has no stable process identity", pid)
 	}
-	return WorkerState{Pid: pid, Token: token}, nil
+	return WorkerState{Pid: pid, Token: token, Generation: generation}, nil
 }
 
 // PublishReservedWorker atomically hands one launched reservation to its exact re-exec child. A
@@ -388,7 +426,7 @@ func PublishReservedWorker(repo, name string, expected []byte, pid int) error {
 	if err != nil || !bytes.Equal(canonical, expected) {
 		return fmt.Errorf("invalid noncanonical detached launch reservation")
 	}
-	worker, err := workerStateForPID(pid)
+	worker, err := workerStateForPID(pid, reservation.Generation)
 	if err != nil {
 		return err
 	}
@@ -420,27 +458,35 @@ func PublishReservedWorker(repo, name string, expected []byte, pid int) error {
 // owner died holding it. launched marks the instant a worker has been forked but not yet recorded —
 // the one window where a dead owner does NOT prove that nothing is running.
 func ClaimState(launched bool) WorkerState {
+	return ClaimStateFor("", launched)
+}
+
+func ClaimStateFor(generation Generation, launched bool) WorkerState {
 	pid := os.Getpid()
-	return WorkerState{Claim: true, Launched: launched, Pid: pid, Token: ProcStartToken(pid)}
+	return WorkerState{Claim: true, Launched: launched, Pid: pid, Token: ProcStartToken(pid), Generation: generation}
 }
 
 // ClearPidIfMine removes the fork's pidfile only if it still contains THIS process's exact current
 // PID/token bytes, so an exiting worker never deletes a replacement that reused its numeric PID.
 func ClearPidIfMine(repo, name string) {
+	ClearPidIfMineGeneration(repo, name, "")
+}
+
+func ClearPidIfMineGeneration(repo, name string, generation Generation) {
 	unlock, ok := TryLockState(repo, name)
 	if !ok {
 		return
 	}
 	defer unlock()
-	clearPidIfMineUnlocked(repo, name)
+	clearPidIfMineUnlocked(repo, name, generation)
 }
 
-func clearPidIfMineUnlocked(repo, name string) {
+func clearPidIfMineUnlocked(repo, name string, generation Generation) {
 	data, err := os.ReadFile(PidPath(repo, name))
 	if err != nil {
 		return
 	}
-	mine, err := workerStateForPID(os.Getpid())
+	mine, err := workerStateForPID(os.Getpid(), generation)
 	if err != nil {
 		return
 	}

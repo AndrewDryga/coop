@@ -57,6 +57,12 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 	if version >= 12 {
 		ddl += schemaV12
 	}
+	if version >= 13 {
+		ddl += schemaV13
+	}
+	if version >= 14 {
+		ddl += schemaV14
+	}
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("build v%d schema: %v", version, err)
 	}
@@ -146,7 +152,7 @@ func TestMigrationFromEachHistoricalVersionReachesCurrentSchema(t *testing.T) {
 			if err != nil {
 				t.Fatalf("legacy turn after v%d migration: %v", version, err)
 			}
-			if turn.Prompt != "legacy prompt" || turn.Usage.Recorded() {
+			if turn.Prompt != "legacy prompt" || turn.Usage.Recorded() || turn.RuntimeRunID != "" {
 				t.Fatalf("legacy turn after v%d migration = %+v", version, turn)
 			}
 

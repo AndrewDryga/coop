@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -125,23 +124,6 @@ func hasYes(args []string) bool {
 		}
 	}
 	return false
-}
-
-// copyFile copies src to dst, both regular files. Used to seed a fork worktree with a folder-mode
-// task tree (copyTree) and to write per-fork task slices.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
 }
 
 // lastLines returns the last n lines of s (trailing blank lines trimmed first).

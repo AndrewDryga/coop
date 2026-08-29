@@ -23,6 +23,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
@@ -359,9 +360,440 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 	if got := gitOut(sess.Workspace, "rev-parse", "HEAD"); got != base {
 		t.Fatalf("workspace HEAD = %s, want persisted base %s", got, base)
 	}
+	if !forkspace.ValidGeneration(forkspace.Generation(sess.ForkGeneration)) {
+		t.Fatalf("created session has no immutable fork generation: %+v", sess)
+	}
+	identity, ok, err := forkspace.ReadGeneration(repo, sess.ForkName)
+	if err != nil || !ok || string(identity.Generation) != sess.ForkGeneration {
+		t.Fatalf("session generation authority = %+v, ok=%v err=%v", identity, ok, err)
+	}
+	reservation, reserved, err := forkspace.ReadWorkspaceReservation(repo, identity)
+	if err != nil || !reserved || reservation.OwnerID != sess.ID || reservation.Kind != forkspace.WorkspaceReservationRemoteSession {
+		t.Fatalf("session workspace reservation = %+v, reserved=%v err=%v", reservation, reserved, err)
+	}
 	replayed, err := service.CreateRemoteSession(context.Background(), "create-1", request)
 	if err != nil || replayed.ID != sess.ID || replayed.Workspace != sess.Workspace {
 		t.Fatalf("create replay = %+v, err=%v", replayed, err)
+	}
+}
+
+func createLegacyBoundSession(
+	t *testing.T,
+	service *Service,
+	repo, forkName, sessionID, reservationOwner string,
+) (session.Session, forkspace.Identity) {
+	t.Helper()
+	workspace, err := forkspace.Setup(repo, forkName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, forkName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, forkName)
+	if err == nil && reservationOwner != "" {
+		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
+			Version: forkspace.WorkspaceReservationVersion,
+			Fork:    identity, Kind: forkspace.WorkspaceReservationRemoteSession,
+			OwnerID: reservationOwner, CreatedAt: time.Now().UTC(),
+		})
+	}
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := service.Store().CreateSession(context.Background(), sessionID+"-create", session.CreateSessionRequest{
+		ID: sessionID, Target: "codex@work", Policy: "responder",
+		Repository: repo, Workspace: workspace, ForkName: forkName, BaseCommit: gitOut(repo, "rev-parse", "HEAD"),
+		MaxTurns: 3, MaxQueuedTurns: 3, MaxQueuedBytes: 4096,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ForkGeneration != "" {
+		t.Fatalf("legacy fixture unexpectedly has generation %q", sess.ForkGeneration)
+	}
+	return sess, identity
+}
+
+func mustSession(t *testing.T, service *Service, sessionID string) session.Session {
+	t.Helper()
+	sess, err := service.Store().GetSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sess
+}
+
+func TestLegacySessionForkAuthorityRejectsSameNameReplacement(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	sess, identity := createLegacyBoundSession(t, service, repo, "legacy-replaced", "legacy-session", "foreign-session")
+
+	if _, err := service.ensureSessionForkAuthority(context.Background(), sess); !errors.Is(err, errLegacySessionForkUnproven) {
+		t.Fatalf("legacy replacement authority error = %v", err)
+	}
+	persisted, err := service.Store().GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ForkGeneration != "" {
+		t.Fatalf("replacement generation was adopted: %+v", persisted)
+	}
+	reservation, ok, err := forkspace.ReadWorkspaceReservation(repo, identity)
+	if err != nil || !ok || reservation.OwnerID != "foreign-session" {
+		t.Fatalf("foreign reservation changed: %+v, ok=%v, err=%v", reservation, ok, err)
+	}
+}
+
+func TestLegacySessionForkAuthorityAdoptsExactReservation(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	sess, identity := createLegacyBoundSession(t, service, repo, "legacy-exact", "legacy-session", "legacy-session")
+
+	bound, err := service.ensureSessionForkAuthority(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.ForkGeneration != string(identity.Generation) {
+		t.Fatalf("adopted generation = %q, want %q", bound.ForkGeneration, identity.Generation)
+	}
+	persisted, err := service.Store().GetSession(context.Background(), sess.ID)
+	if err != nil || persisted.ForkGeneration != string(identity.Generation) {
+		t.Fatalf("persisted generation = %+v, err=%v", persisted, err)
+	}
+	if err := validateSessionForkAuthority(context.Background(), persisted); err != nil {
+		t.Fatalf("adopted authority does not validate: %v", err)
+	}
+}
+
+func TestSessionServiceStartupQuarantinesUnprovenLegacySession(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	var runs atomic.Int32
+	service, err := NewService(Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Policies: testSessionPolicies(repo),
+		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+			runs.Add(1)
+			return turn, nil
+		}),
+		CleanupInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	sess, identity := createLegacyBoundSession(t, service, repo, "legacy-quarantine", "legacy-session", "")
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "preserve.txt"), []byte("do not touch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := service.Store().SubmitTurn(context.Background(), "legacy-turn", session.SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "do not run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leased, ok, err := service.Store().LeaseNextTurn(context.Background(), sess.ID)
+	if err != nil || !ok || leased.ID != turn.ID {
+		t.Fatalf("lease legacy turn = %+v, ok=%v, err=%v", leased, ok, err)
+	}
+	wantSession, err := json.Marshal(mustSession(t, service, sess.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTurn, err := json.Marshal(leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHead := gitOut(sess.Workspace, "rev-parse", "HEAD")
+	wantStatus := gitOut(sess.Workspace, "status", "--porcelain=v1", "--untracked-files=all")
+
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if runs.Load() != 0 {
+		t.Fatalf("quarantined session ran %d turns", runs.Load())
+	}
+	gotSession, err := json.Marshal(mustSession(t, service, sess.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotStoredTurn, err := service.Store().GetTurn(context.Background(), sess.ID, turn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotTurn, err := json.Marshal(gotStoredTurn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotSession, wantSession) || !bytes.Equal(gotTurn, wantTurn) {
+		t.Fatalf("quarantined durable state changed:\nwant session=%s turn=%s\n got session=%s turn=%s",
+			wantSession, wantTurn, gotSession, gotTurn)
+	}
+	if got := gitOut(sess.Workspace, "rev-parse", "HEAD"); got != wantHead {
+		t.Fatalf("quarantined workspace HEAD = %s, want %s", got, wantHead)
+	}
+	if got := gitOut(sess.Workspace, "status", "--porcelain=v1", "--untracked-files=all"); got != wantStatus {
+		t.Fatalf("quarantined workspace status = %q, want %q", got, wantStatus)
+	}
+	if _, reserved, err := forkspace.ReadWorkspaceReservation(repo, identity); err != nil || reserved {
+		t.Fatalf("quarantine synthesized ownership: reserved=%v err=%v", reserved, err)
+	}
+	for name, call := range map[string]func() error{
+		"submit": func() error {
+			_, err := service.SubmitTurn(context.Background(), "legacy-rejected-turn", session.SubmitTurnRequest{
+				SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "must fail",
+			})
+			return err
+		},
+		"changes": func() error { _, err := service.GetChanges(context.Background(), sess.ID); return err },
+		"close": func() error {
+			_, err := service.Close(context.Background(), "legacy-close", session.CloseSessionRequest{
+				SessionID: sess.ID, ExpectedRevision: sess.Revision,
+			})
+			return err
+		},
+	} {
+		if err := call(); session.CodeOf(err) != session.CodeInvalidSessionState ||
+			!strings.Contains(err.Error(), "legacy remote session") {
+			t.Fatalf("%s quarantine error = %v", name, err)
+		}
+	}
+}
+
+func TestSessionServiceStartupDoesNotResumeCreateIntoQuarantinedLegacySession(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	req := CreateRemoteSessionRequest{Policy: "responder", Task: "legacy create crash"}
+	op, replay, err := service.Store().ReserveOperation(context.Background(), "CreateRemoteSession", "legacy-create-crash", req)
+	if err != nil || replay {
+		t.Fatalf("reserve legacy create = %+v, replay=%v, err=%v", op, replay, err)
+	}
+	intent, err := service.captureCreateIntent(op, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.BaseCommit = gitOut(repo, "rev-parse", "HEAD")
+	intent.WorkspaceCommit = intent.BaseCommit
+	intentData, err := json.Marshal(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Store().MarkOperationRunning(context.Background(), op.ID, intentData); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := forkspace.Setup(repo, intent.ForkName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := service.Store().CreateSession(context.Background(), "create-session-"+op.ID, session.CreateSessionRequest{
+		ID: intent.SessionID, ExternalRef: intent.Task, Target: "codex@work", Policy: "responder",
+		Repository: repo, Workspace: workspace, ForkName: intent.ForkName, BaseCommit: intent.BaseCommit,
+		MaxTurns: 3, MaxQueuedTurns: 3, MaxQueuedBytes: 4096,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(workspace, "preserve-create.txt")
+	if err := os.WriteFile(marker, []byte("legacy workspace\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	service.operationMu.Lock()
+	activeCreates := len(service.createActive)
+	service.operationMu.Unlock()
+	if activeCreates != 0 {
+		t.Fatalf("quarantined create recovery started %d workers", activeCreates)
+	}
+	current, err := service.Store().GetOperationByID(context.Background(), op.ID)
+	if err != nil || current.State != session.OperationRunning {
+		t.Fatalf("quarantined create operation = %+v, err=%v", current, err)
+	}
+	persisted, err := service.Store().GetSession(context.Background(), legacy.ID)
+	if err != nil || persisted.ForkGeneration != "" {
+		t.Fatalf("quarantined created session = %+v, err=%v", persisted, err)
+	}
+	if identity, ok, err := forkspace.ReadGeneration(repo, intent.ForkName); err != nil || ok {
+		t.Fatalf("quarantined create synthesized generation %+v, ok=%v, err=%v", identity, ok, err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "legacy workspace\n" {
+		t.Fatalf("quarantined create workspace marker = %q, err=%v", data, err)
+	}
+}
+
+func TestSessionServiceStartupUsesOperationIdentityToQuarantineCorruptCreateIntent(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	req := CreateRemoteSessionRequest{Policy: "responder", Task: "corrupt legacy create crash"}
+	op, replay, err := service.Store().ReserveOperation(context.Background(), "CreateRemoteSession", "corrupt-legacy-create-crash", req)
+	if err != nil || replay {
+		t.Fatalf("reserve corrupt legacy create = %+v, replay=%v, err=%v", op, replay, err)
+	}
+	intent, err := service.captureCreateIntent(op, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacySessionID := intent.SessionID
+	intent.BaseCommit = gitOut(repo, "rev-parse", "HEAD")
+	intent.WorkspaceCommit = intent.BaseCommit
+	intent.SessionID = "substituted-session"
+	intentData, err := json.Marshal(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Store().MarkOperationRunning(context.Background(), op.ID, intentData); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := forkspace.Setup(repo, intent.ForkName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := service.Store().CreateSession(context.Background(), "corrupt-create-session-"+op.ID, session.CreateSessionRequest{
+		ID: legacySessionID, ExternalRef: intent.Task, Target: "codex@work", Policy: "responder",
+		Repository: repo, Workspace: workspace, ForkName: intent.ForkName, BaseCommit: intent.BaseCommit,
+		MaxTurns: 3, MaxQueuedTurns: 3, MaxQueuedBytes: 4096,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(workspace, "preserve-corrupt-create.txt")
+	if err := os.WriteFile(marker, []byte("legacy workspace\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	service.operationMu.Lock()
+	activeCreates := len(service.createActive)
+	service.operationMu.Unlock()
+	if activeCreates != 0 {
+		t.Fatalf("corrupt quarantined create recovery started %d workers", activeCreates)
+	}
+	current, err := service.Store().GetOperationByID(context.Background(), op.ID)
+	if err != nil || current.State != session.OperationRunning {
+		t.Fatalf("corrupt quarantined create operation = %+v, err=%v", current, err)
+	}
+	persisted, err := service.Store().GetSession(context.Background(), legacy.ID)
+	if err != nil || persisted.ForkGeneration != "" {
+		t.Fatalf("corrupt quarantined created session = %+v, err=%v", persisted, err)
+	}
+	if identity, ok, err := forkspace.ReadGeneration(repo, intent.ForkName); err != nil || ok {
+		t.Fatalf("corrupt quarantined create synthesized generation %+v, ok=%v, err=%v", identity, ok, err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "legacy workspace\n" {
+		t.Fatalf("corrupt quarantined create workspace marker = %q, err=%v", data, err)
+	}
+}
+
+func TestSessionServiceCreateReplayRejectsSubstitutedIdentityBeforeWorkspaceMutation(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	req := CreateRemoteSessionRequest{Policy: "responder", Task: "corrupt create replay"}
+	op, replay, err := service.Store().ReserveOperation(context.Background(), "CreateRemoteSession", "corrupt-create-replay", req)
+	if err != nil || replay {
+		t.Fatalf("reserve corrupt create replay = %+v, replay=%v, err=%v", op, replay, err)
+	}
+	intent, err := service.captureCreateIntent(op, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.BaseCommit = gitOut(repo, "rev-parse", "HEAD")
+	intent.WorkspaceCommit = intent.BaseCommit
+	workspace, err := forkspace.Setup(repo, intent.ForkName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(workspace, "preserve-substituted-create.txt")
+	if err := os.WriteFile(marker, []byte("untouched\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	intent.SessionID = "substituted-session"
+	intentData, err := json.Marshal(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Store().MarkOperationRunning(context.Background(), op.ID, intentData); err != nil {
+		t.Fatal(err)
+	}
+	current, err := service.Store().GetOperationByID(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.executeCreateIntent(context.Background(), current, intent); session.CodeOf(err) != session.CodeOperationUncertain {
+		t.Fatalf("substituted create identity error = %v", err)
+	}
+	rejected, err := service.Store().GetOperationByID(context.Background(), op.ID)
+	if err != nil || rejected.State != session.OperationUncertain {
+		t.Fatalf("substituted create operation = %+v, err=%v", rejected, err)
+	}
+	if identity, ok, err := forkspace.ReadGeneration(repo, intent.ForkName); err != nil || ok {
+		t.Fatalf("substituted create synthesized generation %+v, ok=%v, err=%v", identity, ok, err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "untouched\n" {
+		t.Fatalf("substituted create workspace marker = %q, err=%v", data, err)
+	}
+}
+
+func TestLegacySessionDiscardReplayCannotTouchReplacementWorkspace(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	sess, _ := createLegacyBoundSession(t, service, repo, "legacy-discard", "legacy-session", "")
+	closed, err := service.Store().CloseSession(context.Background(), "legacy-store-close", session.CloseSessionRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeLog := filepath.Join(t.TempDir(), "runtime.log")
+	runtimePath := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(runtimePath, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_DISCARD_RUNTIME_LOG\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_DISCARD_RUNTIME_LOG", runtimeLog)
+	service.rt = runtime.Runtime{Name: runtimePath}
+	planned := PlanDiscardResult{Plan: DiscardPlan{
+		SessionID: closed.ID, Revision: closed.Revision,
+		Workspace: WorkspaceDiscardPlan{Repo: repo, Name: closed.ForkName, Workspace: closed.Workspace},
+	}}
+	op, replay, err := service.Store().ReserveOperation(context.Background(), "Discard", "legacy-discard-replay", DiscardRequest{PlanOperationID: "legacy-plan"})
+	if err != nil || replay {
+		t.Fatalf("reserve discard = %+v, replay=%v, err=%v", op, replay, err)
+	}
+	if _, err := service.executeDiscard(context.Background(), op, planned); session.CodeOf(err) != session.CodeInvalidSessionState {
+		t.Fatalf("legacy discard error = %v", err)
+	}
+	if _, err := os.Stat(runtimeLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy discard touched services: %v", err)
+	}
+	if !pathExists(closed.Workspace) {
+		t.Fatal("legacy discard removed the replacement workspace")
+	}
+	stored, err := service.Store().GetSession(context.Background(), closed.ID)
+	if err != nil || stored.State != session.SessionClosed || stored.ForkGeneration != "" {
+		t.Fatalf("legacy session changed = %+v, err=%v", stored, err)
+	}
+	operation, err := service.Store().GetOperationByID(context.Background(), op.ID)
+	if err != nil || operation.State != session.OperationFailed {
+		t.Fatalf("legacy discard operation = %+v, err=%v", operation, err)
 	}
 }
 
@@ -3970,6 +4402,92 @@ func TestSessionServiceDiscardPlanAndReplay(t *testing.T) {
 	replayed, err := service.Discard(context.Background(), "discard", DiscardRequest{PlanOperationID: plan.OperationID})
 	if err != nil || replayed.ID != discarded.ID || pathExists(plan.Plan.Workspace.Workspace) {
 		t.Fatalf("discard replay = %+v, err=%v", replayed, err)
+	}
+}
+
+func TestSessionDiscardRejectsSubstitutedWorkspaceBeforeServiceTeardown(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	sess, err := service.CreateRemoteSession(context.Background(), "create-substitution", CreateRemoteSessionRequest{Policy: "responder", Task: "discard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := service.Close(context.Background(), "close-substitution", session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned, err := service.PlanDiscard(context.Background(), "plan-substitution", PlanDiscardRequest{SessionID: sess.ID, ExpectedRevision: closed.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.MkdirAll(filepath.Join(victim, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(victim, ".agent", "compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runtimeLog := filepath.Join(t.TempDir(), "runtime.log")
+	runtimePath := filepath.Join(t.TempDir(), "runtime")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_DISCARD_RUNTIME_LOG\"\n"
+	if err := os.WriteFile(runtimePath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_DISCARD_RUNTIME_LOG", runtimeLog)
+	service.rt = runtime.Runtime{Name: runtimePath}
+
+	planned.Plan.Workspace.Workspace = victim
+	op, replay, err := service.Store().ReserveOperation(context.Background(), "Discard", "discard-substitution", DiscardRequest{PlanOperationID: planned.OperationID})
+	if err != nil || replay {
+		t.Fatalf("reserve forged discard = %+v, replay=%v, err=%v", op, replay, err)
+	}
+	if _, err := service.executeDiscard(context.Background(), op, planned); session.CodeOf(err) != session.CodeDiscardPlanStale {
+		t.Fatalf("substituted discard error = %v", err)
+	}
+	if _, err := os.Stat(runtimeLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("substituted discard touched victim services: %v", err)
+	}
+	if !pathExists(sess.Workspace) || !pathExists(victim) {
+		t.Fatal("substituted discard removed a workspace")
+	}
+}
+
+func TestSessionDiscardRejectsChangedWorkspaceBeforeServiceTeardown(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	sess, err := service.CreateRemoteSession(context.Background(), "create-stale-services", CreateRemoteSessionRequest{Policy: "responder", Task: "discard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := service.Close(context.Background(), "close-stale-services", session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned, err := service.PlanDiscard(context.Background(), "plan-stale-services", PlanDiscardRequest{SessionID: sess.ID, ExpectedRevision: closed.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeLog := filepath.Join(t.TempDir(), "runtime.log")
+	runtimePath := filepath.Join(t.TempDir(), "runtime")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_DISCARD_RUNTIME_LOG\"\n"
+	if err := os.WriteFile(runtimePath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_DISCARD_RUNTIME_LOG", runtimeLog)
+	service.rt = runtime.Runtime{Name: runtimePath}
+	sessionWorkspaceGit(t, planned.Plan.Workspace.Workspace, "commit", "--allow-empty", "-qm", "changed after plan")
+	if _, err := service.Discard(context.Background(), "discard-stale-services", DiscardRequest{PlanOperationID: planned.OperationID}); session.CodeOf(err) != session.CodeDiscardPlanStale {
+		t.Fatalf("stale discard error = %v", err)
+	}
+	if _, err := os.Stat(runtimeLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale discard touched services: %v", err)
+	}
+	if !pathExists(sess.Workspace) {
+		t.Fatal("stale discard removed the workspace")
 	}
 }
 

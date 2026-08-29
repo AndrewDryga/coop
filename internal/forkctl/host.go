@@ -55,6 +55,12 @@ type Control struct {
 
 	// gateOK is the merge-gate test seam: nil runs the real gate in the box.
 	gateOK func(gateRepo, treeDir, img string) bool
+	// afterLandFastForward injects a crash-shaped failure after parent Git authority moved but
+	// before the land journal advances. Production leaves it nil; replay tests prove exact recovery.
+	afterLandFastForward func() error
+	// afterLandCandidateRestore injects a crash after a red gate restored the reviewed workspace
+	// but before its restoring journal is retired.
+	afterLandCandidateRestore func() error
 }
 
 // New binds a control plane to the caller's config and its runtime as detected SO FAR — the zero

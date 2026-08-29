@@ -2,6 +2,7 @@ package forkctl
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,9 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
-	"github.com/AndrewDryga/coop/internal/project"
 	containerruntime "github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -124,7 +125,7 @@ func TestForkStopRejectsUnsupportedStateWithoutSideEffects(t *testing.T) {
 		{name: "pre-v8 worker", raw: stable, want: []string{"pre-v8", "left the exact file unchanged", "will not signal", "do not add an owner-v1 header", "https://github.com/AndrewDryga/coop/"}},
 		{name: "pre-v8 pending stable token", raw: forkspace.ReapPending + stable, want: []string{"pre-v8", "MIGRATING.md#detached-worker-state"}},
 		{name: "pre-v8 pending legacy token", raw: forkspace.ReapPending + fmt.Sprintf("%d\nWed Jun 18 10:00:00 2026\n", os.Getpid()), want: []string{"pre-v8", "MIGRATING.md#detached-worker-state"}},
-		{name: "future owner", raw: "owner-v2\nopaque\n", want: []string{"unsupported detached-worker state version", "use the Coop version that wrote it", "do not edit its header"}},
+		{name: "future owner", raw: "owner-v3\nopaque\n", want: []string{"unsupported detached-worker state version", "use the Coop version that wrote it", "do not edit its header"}},
 	}
 	oldSignal := forkspace.SignalPID
 	signalCalls := 0
@@ -324,6 +325,129 @@ if [ "$1" = ps ]; then printf '%s\n' box-perf; fi
 	}
 	if pathExists(forkspace.PidPath(repo, "perf")) {
 		t.Fatal("successful crash cleanup should remove worker state")
+	}
+}
+
+func TestForkStopReapsPidlessDetachedWorkerWithoutTouchingForegroundActivity(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	workspace := forkspace.Workspace(repo, "perf")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "perf")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreground, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{
+		Kind: forkspace.ExecutionForkInteractive, Role: forkspace.ExecutionRoleSandbox,
+		Workspace: workspace, Fork: &identity, SourceID: "foreground",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = forkspace.EndExecution(repo, foreground) })
+	stale := forkspace.ExecutionRecord{
+		Version: 1, ID: strings.Repeat("a", 32), Kind: forkspace.ExecutionForkLoop,
+		Role: forkspace.ExecutionRoleDetachedWorker, Workspace: workspace, Fork: &identity,
+		SourceID: "dead-worker", PID: 2147483646, Token: "linux-proc-v1:1:2", StartedAt: time.Now().UTC(),
+	}
+	body, err := json.Marshal(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executionDir := filepath.Join(forkspace.StateDir(repo), "executions")
+	if err := os.MkdirAll(executionDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(executionDir, stale.ID+".json"), append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtimeCLI := filepath.Join(dir, "runtime")
+	events := filepath.Join(dir, "events")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
+if [ "$1" = ps ]; then printf '%s\n' detached-box; fi
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_EVENTS", events)
+	c := &Control{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}}
+	if code, err := c.ForkStop([]string{"perf"}); code != 0 || err != nil {
+		t.Fatalf("pidless detached cleanup = (%d, %v)", code, err)
+	}
+	data, err := os.ReadFile(events)
+	if err != nil || !strings.Contains(string(data), "label=coop.fork-worker="+box.LabelOn) {
+		t.Fatalf("runtime cleanup was not worker-scoped: %q, err=%v", data, err)
+	}
+	observations, problems := forkspace.Executions(repo)
+	if len(problems) != 0 || len(observations) != 1 || observations[0].Record.ID != foreground.ID {
+		t.Fatalf("stop changed foreground activity: %+v, problems=%v", observations, problems)
+	}
+}
+
+func TestForkStopRetiresProvablyDeadForegroundExecution(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	workspace := forkspace.Workspace(repo, "stale-foreground")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "stale-foreground")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "stale-foreground")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := forkspace.ExecutionRecord{
+		Version: 1, ID: strings.Repeat("b", 32), Kind: forkspace.ExecutionForkInteractive,
+		Role: forkspace.ExecutionRoleSandbox, Workspace: workspace, Fork: &identity,
+		SourceID: "dead-foreground", PID: 2147483646, Token: "linux-proc-v1:1:2", StartedAt: time.Now().UTC(),
+	}
+	body, err := json.Marshal(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executionDir := filepath.Join(forkspace.StateDir(repo), "executions")
+	if err := os.MkdirAll(executionDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(executionDir, stale.ID+".json"), append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtimeCLI := filepath.Join(dir, "runtime")
+	events := filepath.Join(dir, "events")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
+if [ "$1" = ps ]; then printf '%s\n' stale-box; fi
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_EVENTS", events)
+	c := &Control{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}}
+	if code, err := c.ForkStop([]string{"stale-foreground"}); code != 0 || err != nil {
+		t.Fatalf("stale foreground cleanup = (%d, %v)", code, err)
+	}
+	data, err := os.ReadFile(events)
+	if err != nil || !strings.Contains(string(data), "label="+box.LabelExecution+"="+stale.ID) ||
+		strings.Contains(string(data), "label="+box.LabelForkWorker+"=") {
+		t.Fatalf("stale foreground cleanup labels = %q, err=%v", data, err)
+	}
+	unlock, err = forkspace.LockState(repo, identity.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if err := forkspace.RequireNoForkExecutionsLocked(repo, identity); err != nil {
+		t.Fatalf("stale foreground still blocks lifecycle: %v", err)
 	}
 }
 
@@ -760,94 +884,4 @@ func TestStreamLog(t *testing.T) {
 	if buf.Len() != 0 {
 		t.Errorf("missing log produced %q", buf.String())
 	}
-}
-
-// TestSeedForkQueuesSingleRepo: the default (empty --tasks) in a single repo seeds exactly the
-// one .agent/tasks tree and returns [.agent/tasks] — byte-identical to the old single-queue path.
-func TestSeedForkQueuesSingleRepo(t *testing.T) {
-	repo := t.TempDir()
-	ws := t.TempDir()
-	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-a", "task.md"), "# a\n")
-
-	queues, err := SeedForkQueues(repo, ws, "", nil)
-	if err != nil {
-		t.Fatalf("SeedForkQueues: %v", err)
-	}
-	if len(queues) != 1 || queues[0] != filepath.FromSlash(tasksRoot) {
-		t.Fatalf("queues = %v, want [%s]", queues, tasksRoot)
-	}
-	if !isTaskDir(filepath.Join(ws, tasksRoot, stateTodo, "2026-01-01-a")) {
-		t.Error("the fork's .agent/tasks was not seeded")
-	}
-	// All four state dirs are scaffolded so the in-box move protocol is safe.
-	for _, st := range taskStates {
-		if !isDirTest(filepath.Join(ws, tasksRoot, st)) {
-			t.Errorf("state dir %s missing in the seeded queue", st)
-		}
-	}
-}
-
-// TestSeedForkQueuesMonorepo: the default seeds EVERY project.TaskDirs queue at its own relative
-// path (root + each subproject), so a monorepo fork carries all its subprojects' queues, and the
-// returned queue list spans them.
-func TestSeedForkQueuesMonorepo(t *testing.T) {
-	repo := t.TempDir()
-	ws := t.TempDir()
-	writeTaskFile(t, filepath.Join(repo, project.File), "subprojects:\n  - api\n  - web\n")
-	// The root carries its own queue alongside the members' (TaskDirs includes it when present).
-	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-root", "task.md"), "# root\n")
-	writeTaskFile(t, filepath.Join(repo, "api", tasksRoot, stateTodo, "2026-01-02-api", "task.md"), "# api\n")
-	writeTaskFile(t, filepath.Join(repo, "web", tasksRoot, stateTodo, "2026-01-03-web", "task.md"), "# web\n")
-
-	queues, err := SeedForkQueues(repo, ws, "", nil)
-	if err != nil {
-		t.Fatalf("SeedForkQueues: %v", err)
-	}
-	want := []string{
-		filepath.FromSlash(tasksRoot),
-		filepath.Join("api", tasksRoot),
-		filepath.Join("web", tasksRoot),
-	}
-	if strings.Join(queues, "|") != strings.Join(want, "|") {
-		t.Fatalf("queues = %v, want %v", queues, want)
-	}
-	// Each queue's task rode along at its own relative path — a task never left its home tree.
-	for _, p := range []string{
-		filepath.Join(ws, tasksRoot, stateTodo, "2026-01-01-root"),
-		filepath.Join(ws, "api", tasksRoot, stateTodo, "2026-01-02-api"),
-		filepath.Join(ws, "web", tasksRoot, stateTodo, "2026-01-03-web"),
-	} {
-		if !isTaskDir(p) {
-			t.Errorf("missing seeded task: %s", p)
-		}
-	}
-}
-
-// TestSeedForkQueuesExplicitKeepsProgress: an explicit --tasks seeds one tree into .agent/tasks,
-// and a resumed fork (dst already present) is NOT re-seeded — onKept fires so the caller can say so.
-func TestSeedForkQueuesExplicitKeepsProgress(t *testing.T) {
-	repo := t.TempDir()
-	ws := t.TempDir()
-	src := filepath.Join(repo, "src-queue")
-	writeTaskFile(t, filepath.Join(src, stateTodo, "2026-01-01-a", "task.md"), "# a\n")
-
-	if _, err := SeedForkQueues(repo, ws, src, nil); err != nil {
-		t.Fatalf("first seed: %v", err)
-	}
-	if !isTaskDir(filepath.Join(ws, tasksRoot, stateTodo, "2026-01-01-a")) {
-		t.Fatal("explicit --tasks was not seeded into .agent/tasks")
-	}
-	// Second call: the fork already has a queue → onKept fires, source not re-applied.
-	kept := false
-	if _, err := SeedForkQueues(repo, ws, src, func() { kept = true }); err != nil {
-		t.Fatalf("resumed seed: %v", err)
-	}
-	if !kept {
-		t.Error("onKept should fire when the fork already has its queue")
-	}
-}
-
-func isDirTest(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.IsDir()
 }

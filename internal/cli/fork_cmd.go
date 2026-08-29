@@ -20,6 +20,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -48,13 +49,13 @@ func forkHelpText(p ui.Palette) string {
 	rows := []struct{ cmd, desc string }{
 		{"coop fork <name> <target>", "open or re-enter a fork with an agent target"},
 		{"coop fork <name> <preset>", "open or re-enter a fork with an orchestration preset"},
-		{"coop fork ls [--json]", "list this repo's forks (--json adds per-workspace serve URLs)"},
+		{"coop fork ls [--json]", "list fork workers, sandboxes, task progress, and problems"},
 		{"coop fork logs [<name>]", "tail a fork's loop log (no name: all forks)"},
 		{"coop fork review <name>", "dossier + diff (--stat, --tool, --open, --gate)"},
 		{"coop fork <name> acp <target>", "front the fork as an ACP agent (for editors)"},
 		{"coop fork merge <name>", "rebase onto your branch and land one fork"},
 		{"coop fork merge --all", "rebase and land every fork"},
-		{"coop fork rm <name>", "discard a fork (confirms; refuses unmerged/dirty without --force)"},
+		{"coop fork rm <name>", "discard a fork (confirms; --force may stop it and return/discard task authority)"},
 		{"coop fork open <name>", "open the fork in your editor"},
 		{"coop fork path <name>", "print the fork's filesystem path"},
 		{"coop fork stop <name>", "stop a detached loop"},
@@ -62,12 +63,13 @@ func forkHelpText(p ui.Palette) string {
 	flags := []struct{ flag, desc string }{
 		{"-c, --continue", "resume the prior session (the default on re-entry)"},
 		{"    --new", "start a fresh agent session on re-entry"},
-		{"    --fresh", "recreate the fork from scratch (confirms; refuses unmerged/dirty without --force)"},
+		{"    --fresh", "recreate the fork (confirms; --force may stop it and discard Git/task work)"},
 		{"    --loop", "work the fork's task queue until done instead of opening an interactive session"},
 		{"-d, --detach", "with --loop, run it in the background"},
-		{"-t, --tasks", "with --loop, the tasks folder that seeds the queue (default: every .agent/tasks queue, incl. a monorepo's subprojects)"},
+		{"-t, --tasks", "with --loop, select one canonical task queue (default: every project queue)"},
 		{"    --peer <target>", "with --loop, a peer iterations may consult read-only (repeatable)"},
-		{"-f, --force", "merge/rm/--fresh: override the gate/policy/unmerged-dirty guard (not the confirm)"},
+		{"-f, --force (merge)", "bypass the risky-file policy; the rebase gate still must pass"},
+		{"-f, --force (rm/fresh)", "stop the worker; discard Git work, assignments, candidates, and pending proposals"},
 		{"-y, --yes", "merge/rm/--fresh: skip the delete confirm (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
 	}
@@ -86,11 +88,13 @@ func forkHelpText(p ui.Palette) string {
 	}
 	fmt.Fprintf(&b, "\n%s (every short flag has a long form):\n", p.Bold("FLAGS"))
 	for _, f := range flags {
-		fmt.Fprintf(&b, "  %s%s\n", pad(f.flag, 16), f.desc)
+		fmt.Fprintf(&b, "  %s%s\n", pad(f.flag, 26), f.desc)
 	}
 	fmt.Fprintf(&b, "\n%s  --open opens $COOP_EDITOR (else your global git core.editor); --tool uses your global git diff.tool.\n", p.Bold("REVIEW"))
 	fmt.Fprint(&b, "        --gate rebases in an isolated scratch clone and runs the parent's gate; source mutations fail review.\n")
 	fmt.Fprintf(&b, "%s   new fork actions are verb-first (coop fork <verb> <name>); a fork can't be named a reserved verb.\n", p.Bold("NAMES"))
+	fmt.Fprintf(&b, "%s   fork loops share the project's canonical queue; the host assigns one task at a time.\n", p.Bold("TASKS"))
+	fmt.Fprint(&b, "        Stop keeps its assignment; merge alone completes that canonical task. Copied queues are retired.\n")
 	fmt.Fprint(&b, "\nRun 'coop help' for all commands.\n") // match every other command's help footer
 	return b.String()
 }
@@ -175,7 +179,7 @@ type forkArgs struct {
 	newSession  bool // --new: start a fresh agent session even when re-entering a fork
 	loop        bool
 	detach      bool
-	tasks       string   // --tasks <path>: the tasks folder to seed the loop's queue (defaults to .agent/tasks with --loop)
+	tasks       string   // --tasks <path>: one canonical queue to schedule (defaults to every project queue with --loop)
 	credential  string   // the fork's account, from the positional target's @account (else the ladder default)
 	model       string   // the fork's model, from the positional target's :model (else the CLI/preset default)
 	effort      string   // the fork's reasoning effort, from the positional target's /effort (else the agent default)
@@ -309,6 +313,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 		return 2, err
 	}
 	var repo string
+	var forkIdentity forkspace.Identity
 	if fa.worker {
 		repo, err = box.ResolveRepo(a.cfg.RepoOverride)
 		if err != nil {
@@ -317,10 +322,24 @@ func (a *app) forkCreate(args []string) (int, error) {
 		if err := forkctl.CheckWorkerStateFormat(repo, fa.name); err != nil {
 			return 1, err
 		}
+		reservationState, parseErr := forkspace.ParseWorkerState(string(fa.reservation))
+		if parseErr != nil {
+			return 1, fmt.Errorf("fork %s detached worker has an invalid launch reservation: %w", fa.name, parseErr)
+		}
+		if reservationState.Generation != "" {
+			current, ok, readErr := forkspace.ReadGeneration(repo, fa.name)
+			if readErr != nil || !ok || current.Name != fa.name || current.Generation != reservationState.Generation {
+				return 1, fmt.Errorf("fork %s detached worker generation no longer matches host authority", fa.name)
+			}
+			if err := forkspace.ValidateGenerationWorkspace(repo, current); err != nil {
+				return 1, fmt.Errorf("fork %s detached worker generation is stale: %w", fa.name, err)
+			}
+			forkIdentity = current
+		}
 		if err := forkspace.PublishReservedWorker(repo, fa.name, fa.reservation, os.Getpid()); err != nil {
 			return 1, fmt.Errorf("fork %s detached worker will not start: %w", fa.name, err)
 		}
-		defer forkspace.ClearPidIfMine(repo, fa.name)
+		defer forkspace.ClearPidIfMineGeneration(repo, fa.name, reservationState.Generation)
 		if a.afterDetachedPublish != nil {
 			a.afterDetachedPublish()
 		}
@@ -369,10 +388,10 @@ func (a *app) forkCreate(args []string) (int, error) {
 			fa.agent = remembered
 		}
 	}
-	// --loop with no --tasks is the monorepo-aware default: runForkLoop seeds every
-	// project.TaskDirs queue (just .agent/tasks in a single repo) at its own path. Leaving
-	// fa.tasks empty is the signal for that; an explicit --tasks is the single-queue override,
-	// resolved+validated just below. Fail fast HERE if the repo has no queue at all — before any
+	// --loop with no --tasks is the monorepo-aware default: runForkLoop schedules every
+	// project.TaskDirs queue (just .agent/tasks in a single repo). Leaving fa.tasks empty is the
+	// signal for that; an explicit --tasks is the single canonical-queue filter, resolved+validated
+	// just below. Fail fast HERE if the repo has no queue at all — before any
 	// clone — so a queue-less repo can't leave a stray fork behind and its worker error in a log.
 	if fa.loop && fa.tasks == "" {
 		dirs, err := project.TaskDirs(repo)
@@ -398,6 +417,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// BEFORE resolveImage (like parseForkCreate's flag checks): fail fast, never spin up an image to refuse.
 	var originalHandle *os.File
 	var originalWS os.FileInfo
+	var originalGeneration forkspace.Identity
+	var hadGeneration bool
+	var generationErr error
+	var originalUnmerged, originalDirty bool
+	var originalTaskState tasks.ForkTaskStateSummary
 	defer func() {
 		if originalHandle != nil {
 			_ = originalHandle.Close()
@@ -417,10 +441,25 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return 1, fmt.Errorf("--fresh: fork %q is running or awaiting cleanup — stop it first: coop fork stop %s (or add --force to stop it automatically)", fa.name, fa.name)
 		}
 		if existed {
-			if err := forkctl.ForkRmSafe(forkctl.ForkUnmerged(repo, ws), gitDirty(ws), fa.force); err != nil {
+			originalGeneration, hadGeneration, generationErr = forkspace.ReadGeneration(repo, fa.name)
+			if generationErr != nil {
+				return 1, fmt.Errorf("--fresh: read fork %q generation: %w", fa.name, generationErr)
+			}
+			originalUnmerged, originalDirty = forkctl.ForkUnmerged(repo, ws), gitDirty(ws)
+			if err := forkctl.ForkRmSafe(originalUnmerged, originalDirty, fa.force); err != nil {
 				return 1, fmt.Errorf("--fresh: %w (add --force to recreate anyway)", err)
 			}
-			if err := ui.DestroyGate("delete fork "+fa.name+" before recreating it", fa.yes); err != nil {
+			if hadGeneration {
+				originalTaskState, err = tasks.ReadForkTaskStateSummary(repo, originalGeneration)
+				if err != nil {
+					return 1, err
+				}
+				if originalTaskState.Active() && !fa.force {
+					return 1, fmt.Errorf("--fresh: fork %q owns canonical task assignments, a reviewed candidate, proposals, or cleanup state — merge it, or add --force to resolve them before recreation", fa.name)
+				}
+			}
+			description := forkctl.ForkDestroyDescription(fa.name, originalDirty, originalUnmerged, originalTaskState) + "; recreate it from the current parent"
+			if err := ui.DestroyGate(description, fa.yes); err != nil {
 				return 2, err
 			}
 		}
@@ -446,10 +485,17 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if !fa.worker {
 		a.sweepOrphanBoxes(repo)
 	}
+	workspaceBound := false
 	if fa.fresh {
 		unlock, err := forkspace.LockState(repo, fa.name)
 		if err != nil {
 			return -1, fmt.Errorf("lock fork %s state: %w", fa.name, err)
+		}
+		if !pathExists(ws) {
+			if _, recoverErr := forkctl.RecoverOrphanedGenerationLocked(repo, fa.name); recoverErr != nil {
+				unlock()
+				return 1, fmt.Errorf("--fresh: recover missing fork %q before recreation: %w", fa.name, recoverErr)
+			}
 		}
 		existsNow := pathExists(ws)
 		if existsNow != existed {
@@ -467,28 +513,118 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return 1, fmt.Errorf("--fresh: fork %q started or entered cleanup while awaiting recreation — stop it first: coop fork stop %s", fa.name, fa.name)
 		}
 		if existed {
-			if err := forkctl.ForkRmSafe(forkctl.ForkUnmerged(repo, ws), gitDirty(ws), fa.force); err != nil {
+			currentUnmerged, currentDirty := forkctl.ForkUnmerged(repo, ws), gitDirty(ws)
+			if currentUnmerged != originalUnmerged || currentDirty != originalDirty {
+				unlock()
+				return 1, fmt.Errorf("--fresh: fork %q Git work changed while awaiting recreation — retry to review the new impact", fa.name)
+			}
+			if err := forkctl.ForkRmSafe(currentUnmerged, currentDirty, fa.force); err != nil {
 				unlock()
 				return 1, fmt.Errorf("--fresh: fork %q changed while awaiting recreation: %w", fa.name, err)
+			}
+			currentGeneration, hasCurrentGeneration, err := forkspace.ReadGeneration(repo, fa.name)
+			if err != nil {
+				unlock()
+				return 1, err
+			}
+			if hasCurrentGeneration && (!hadGeneration || currentGeneration != originalGeneration) {
+				unlock()
+				return 1, fmt.Errorf("--fresh: fork %q generation changed while awaiting recreation", fa.name)
+			}
+			if hasCurrentGeneration {
+				if pending, err := forkctl.ForkHasPendingLand(repo, currentGeneration); err != nil {
+					unlock()
+					return 1, err
+				} else if pending {
+					unlock()
+					return 1, fmt.Errorf("--fresh: fork %q has an interrupted land — rerun merge before recreation", fa.name)
+				}
+				if err := forkspace.RequireNoForkExecutionsLocked(repo, currentGeneration); err != nil {
+					unlock()
+					return 1, fmt.Errorf("--fresh: fork %q has sandbox activity: %w", fa.name, err)
+				}
+				if err := forkspace.RequireNoWorkspaceReservationLocked(repo, currentGeneration); err != nil {
+					unlock()
+					return 1, fmt.Errorf("--fresh: %w", err)
+				}
+				currentTaskState, err := tasks.ReadForkTaskStateSummary(repo, currentGeneration)
+				if err != nil {
+					unlock()
+					return 1, err
+				}
+				if currentTaskState.Fingerprint != originalTaskState.Fingerprint {
+					unlock()
+					return 1, fmt.Errorf("--fresh: fork %q task authority changed while awaiting confirmation — retry to review the new recreation impact", fa.name)
+				}
+				if currentTaskState.Active() {
+					if !fa.force {
+						unlock()
+						return 1, fmt.Errorf("--fresh: fork %q acquired canonical task work while awaiting recreation", fa.name)
+					}
+					if err := tasks.DiscardForkTaskStateLocked(repo, currentGeneration); err != nil {
+						unlock()
+						return 1, err
+					}
+				}
 			}
 			if err := forkctl.DestroyFork(a.rt, repo, fa.name); err != nil {
 				unlock()
 				return -1, err
 			}
+			if hasCurrentGeneration {
+				if err := forkspace.RemoveGenerationIfMatchesLocked(repo, currentGeneration); err != nil {
+					unlock()
+					return -1, fmt.Errorf("remove fork %s generation after recreation teardown: %w", fa.name, err)
+				}
+			}
 		}
+		ui.Info("forking %s → %s (secrets are gitignored, so they don't come along)", filepath.Base(repo), ws)
+		if _, err := forkspace.Setup(repo, fa.name); err != nil {
+			unlock()
+			return -1, err
+		}
+		forkIdentity, err = forkspace.EnsureGenerationLocked(repo, fa.name)
+		if err != nil {
+			unlock()
+			return 1, fmt.Errorf("bind fork %s generation: %w", fa.name, err)
+		}
+		workspaceBound = true
 		unlock()
 		if originalHandle != nil {
 			_ = originalHandle.Close()
 			originalHandle = nil
 		}
 	}
-	if !pathExists(ws) {
-		ui.Info("forking %s → %s (secrets are gitignored, so they don't come along)", filepath.Base(repo), ws)
-		if _, err := forkspace.Setup(repo, fa.name); err != nil {
-			return -1, err
+	if !fa.worker && !workspaceBound {
+		unlock, err := forkspace.LockState(repo, fa.name)
+		if err != nil {
+			return -1, fmt.Errorf("lock fork %s generation: %w", fa.name, err)
 		}
-	} else if !fa.worker {
-		ui.Info("resuming fork %s (%s)", fa.name, ws)
+		if !pathExists(ws) {
+			if _, recoverErr := forkctl.RecoverOrphanedGenerationLocked(repo, fa.name); recoverErr != nil {
+				unlock()
+				return 1, fmt.Errorf("recover missing fork %q before creation: %w", fa.name, recoverErr)
+			}
+			ui.Info("forking %s → %s (secrets are gitignored, so they don't come along)", filepath.Base(repo), ws)
+			if _, err := forkspace.Setup(repo, fa.name); err != nil {
+				unlock()
+				return -1, err
+			}
+		} else {
+			ui.Info("resuming fork %s (%s)", fa.name, ws)
+		}
+		forkIdentity, err = forkspace.EnsureGenerationLocked(repo, fa.name)
+		if err == nil {
+			err = forkspace.RequireNoWorkspaceReservationLocked(repo, forkIdentity)
+		}
+		unlock()
+		if err != nil {
+			return 1, fmt.Errorf("bind fork %s for an ordinary launch: %w", fa.name, err)
+		}
+	} else if forkIdentity.Generation == "" {
+		// Legacy detached reservations remain stoppable, but new task authority is unavailable until
+		// the old worker is stopped and the workspace is adopted into a generation.
+		return 1, fmt.Errorf("fork %s detached worker has legacy state without a generation — stop it and restart", fa.name)
 	}
 	forkctl.SaveForkAgent(ws, fa.agent)
 	if fa.loop {
@@ -501,11 +637,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 		}
 		switch {
 		case fa.worker:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, true)
+			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, true)
 		case fa.detach:
-			return fc.DetachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, fa.preset, fa.peers)
+			return fc.DetachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, fa.preset, fa.peers, forkIdentity)
 		default:
-			return a.runForkLoop(repo, ws, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, false)
+			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, false)
 		}
 	}
 	// Pin this interactive session's account/model/effort from the positional target, below any
@@ -546,8 +682,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 	cmd := a.forkLaunchCmd(fa, ws, existed)
 	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: ws, Cmd: cmd, Agent: fa.agent, ConsultLead: fa.agent, Preset: a.preset,
+		ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkInteractive,
 		AgentCommand: true,
 		Homes:        a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+		ForkName: forkIdentity.Name, ForkOwner: forkctl.ForkContainerOwner(repo, forkIdentity.Name, forkIdentity.Generation),
+		ForkGeneration: string(forkIdentity.Generation),
 	})
 	if err == nil {
 		if captureNewSession {
@@ -683,6 +822,15 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
 	}
+	unlock, err := forkspace.LockState(repo, name)
+	if err != nil {
+		return -1, fmt.Errorf("lock fork %s generation: %w", name, err)
+	}
+	identity, identityErr := forkspace.EnsureGenerationLocked(repo, name)
+	unlock()
+	if identityErr != nil {
+		return 1, fmt.Errorf("bind fork %s generation: %w", name, identityErr)
+	}
 	peers, err := a.resolvePeers("--peer", peerVals)
 	if err != nil {
 		return 2, err
@@ -691,36 +839,68 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if len(peers) > 0 {
 		lead = agent
 	}
+	activityKind := forkspace.ExecutionForkACP
+	reservationOwner := ""
+	if sessionsvc.RunIDFromEnv() != "" {
+		activityKind = forkspace.ExecutionRemoteSession
+		reservation, reserved, reservationErr := forkspace.ReadWorkspaceReservation(repo, identity)
+		if reservationErr != nil || !reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession {
+			return 1, errors.Join(reservationErr, errors.New("bound session workspace reservation is absent or invalid"))
+		}
+		reservationOwner = reservation.OwnerID
+	}
 	return box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: ws, Workdir: ws, RepoReadOnly: repositoryReadOnly,
 		Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
-		ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name),
+		ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name, identity.Generation),
+		ForkGeneration: string(identity.Generation),
+		ActivityRepo:   repo, ActivityKind: activityKind,
+		ActivityRole:             forkspace.ExecutionRole(os.Getenv("COOP_ACP_ACTIVITY_ROLE")),
+		ActivityReservationOwner: reservationOwner,
+		ActivitySource: func() string {
+			if runID := sessionsvc.RunIDFromEnv(); runID != "" {
+				return runID
+			}
+			return os.Getenv("COOP_ACP_SUPERVISOR")
+		}(),
 		RunID: sessionsvc.RunIDFromEnv(), CompanionRepositories: companionRepositories,
 	})
 }
 
-// runForkLoop seeds the fork's queue(s) from the tasks tree(s) — an explicit --tasks source or,
-// by default, every project.TaskDirs queue (only queues the fork doesn't yet have, so a resumed
-// loop keeps its own progress) — then runs the unattended loop with the chosen agent, capturing
-// output to the fork's log.
+// runForkLoop schedules against the parent project's canonical queue and materializes only its one
+// assigned task inside the fork. The projection runs through the ordinary loop lifecycle, while
+// canonical completion remains host-owned until an exact reviewed generation candidate lands.
 // detached=true means this process IS the background worker (its stdio is already the
 // log, and it owns the pidfile). tasks is an absolute path resolved by the caller
 // (empty = the monorepo-aware default);
 // credential/model are the fork target's decomposed one-off (model@account allowed);
 // the fork's preset (already loaded into a.preset by forkCreate) supplies the rotation
 // ladder when neither flag is given; consult opts each iteration into peer consultation.
-func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model, effort string, peers []agents.Target, detached bool) (int, error) {
-	// Seed the fork's queue(s) from the source tree(s) into the worktree and get back the
-	// repo-relative queue list the in-fork loop works. An explicit --tasks seeds that one tree
-	// into .agent/tasks (the single-queue rule); the default (no --tasks) seeds every
-	// project.TaskDirs queue at its own relative path, so a monorepo fork carries all its
-	// subprojects' queues. A queue the fork already has is kept (a resumed loop keeps its progress).
-	forkQueue, err := forkctl.SeedForkQueues(repo, ws, tasks, func() {
-		ui.Info("%s already has a queue — keeping its progress; --tasks not re-applied (use --fresh to reseed)", name)
+func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, tasksPath, credential, model, effort string, peers []agents.Target, detached bool) (int, error) {
+	name := identity.Name
+	controllerRole := forkspace.ExecutionRoleController
+	if detached {
+		controllerRole = forkspace.ExecutionRoleDetachedWorker
+	}
+	controller, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{
+		Kind: forkspace.ExecutionForkLoop, Role: controllerRole, Workspace: ws, Fork: &identity,
+		SourceID: "fork-loop-" + name + "-" + string(identity.Generation),
 	})
 	if err != nil {
+		return 1, fmt.Errorf("reserve fork %s loop activity: %w", name, err)
+	}
+	defer func() {
+		if err := forkspace.EndExecution(repo, controller); err != nil {
+			ui.Warn("fork %s loop ended but activity cleanup failed: %v", name, err)
+		}
+	}()
+	authorityQueues, err := forkCanonicalQueues(repo, tasksPath)
+	if err != nil {
 		return -1, err
+	}
+	if legacy := tasks.LegacyForkQueueWithWork(ws); legacy != "" {
+		return 1, fmt.Errorf("fork %s contains a legacy copied task queue at %s; Coop will not guess between duplicate authorities — preserve any fork-only notes, then recreate this fork with --fresh (use --force only after reviewing its Git work)", name, legacy)
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	var sink io.Writer
@@ -748,16 +928,172 @@ func (a *app) runForkLoop(repo, ws, name, agent, tasks, credential, model, effor
 	if err != nil {
 		return -1, fmt.Errorf("fork %s: %w", name, err)
 	}
-	// A fork works its own seeded queue(s) in the worktree, and its boxes carry the fork's own
-	// runtime owner label so `coop fork stop` can find them.
-	code, err := a.loopctl().Run(loop.RunSpec{
-		Repo: ws, Image: img, Agent: agent,
-		ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name),
-		Rotation: rot, Queues: forkQueue, Preset: a.preset, Peers: peers, Sink: sink,
-		// Detached/fork loops aren't interactive: no debug shell, no pre-flight, no task limit.
-	})
-	if err == nil && !detached {
-		forkctl.ForkNextSteps(name)
+	for {
+		head := gitOut(ws, "rev-parse", "HEAD")
+		tree := gitOut(ws, "rev-parse", "HEAD^{tree}")
+		if head == "" || tree == "" {
+			return 1, fmt.Errorf("fork %s has no exact HEAD/tree for task assignment", name)
+		}
+		if _, exists, err := tasks.ReadForkCandidate(repo, identity); err != nil {
+			return 1, err
+		} else if exists {
+			if _, _, err := tasks.PublishForkCandidate(repo, identity, head, tree); err != nil {
+				return 1, err
+			}
+			if !detached {
+				forkctl.ForkNextSteps(name)
+			}
+			return 0, nil
+		}
+		assignment, err := tasks.AssignForkTask(authorityQueues, tasks.ForkAssignmentRequest{
+			AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws, BaselineHead: head,
+			LeaseOwner: tasks.TaskLeaseOwner{
+				RunID: "fork-" + name + "-" + string(identity.Generation), PID: os.Getpid(),
+				Provider: agent, Target: rot.Active().String(),
+			},
+		})
+		if err != nil {
+			return 1, err
+		}
+		switch assignment.Outcome {
+		case tasks.ForkAssignmentUnavailable:
+			ui.Info("no canonical task lease available — %s; stopping this executor", assignment.Busy)
+			return 0, nil
+		case tasks.ForkAssignmentExecutorDrained:
+			imported, importErr := tasks.ImportForkProposals(repo, identity)
+			if importErr != nil {
+				return 1, fmt.Errorf("import fork task proposals: %w", importErr)
+			}
+			for _, proposal := range imported {
+				ui.OK("imported discovered task %s into %s", proposal.TaskID, proposal.Root)
+			}
+			if importedForkTask(imported) {
+				continue
+			}
+			assignments, inspectErr := tasks.ForkAssignments(repo, identity)
+			if inspectErr != nil {
+				return 1, inspectErr
+			}
+			if forkAssignmentsBlocked(assignments) {
+				ui.Note("fork %s is paused on blocked canonical work; unblock it, then resume this same fork", name)
+				return 0, nil
+			}
+			head = gitOut(ws, "rev-parse", "HEAD")
+			tree = gitOut(ws, "rev-parse", "HEAD^{tree}")
+			if _, published, err := tasks.PublishForkCandidate(repo, identity, head, tree); err != nil {
+				return 1, err
+			} else if published {
+				ui.OK("fork %s candidate is reviewed and ready to merge", name)
+			}
+			if !detached {
+				forkctl.ForkNextSteps(name)
+			}
+			return 0, nil
+		case tasks.ForkAssignmentSelected:
+		default:
+			return 1, errors.New("fork scheduler returned an unknown assignment outcome")
+		}
+		if err := tasks.PrepareForkProjectionForRun(repo, assignment.Task.Root, assignment.Task.Item.ID, assignment.Owner); err != nil {
+			return 1, errors.Join(err, assignment.Lease.Release())
+		}
+		if err := assignment.Lease.Release(); err != nil {
+			return 1, err
+		}
+		queueRel, err := tasks.ProjectionQueueRel(ws, assignment.Owner.Projection)
+		if err != nil {
+			return 1, err
+		}
+		proposalRel, err := tasks.ForkProposalOutboxRel(ws, assignment.Owner)
+		if err != nil {
+			return 1, err
+		}
+		record, owned, err := tasks.ReadTaskOwnerRecord(assignment.Task.Root, assignment.Task.Item.ID)
+		if err != nil || !owned || record.Task == nil {
+			return 1, errors.Join(err, errors.New("fork assignment lost its canonical task identity"))
+		}
+		activityTask := &forkspace.ExecutionTaskRef{
+			QueueID: record.Task.Ref.QueueID, TaskID: record.Task.Ref.TaskID, ID: record.Task.Ref.ID,
+			Assignment: assignment.Owner.AssignmentID,
+		}
+		code, runErr := a.loopctl().Run(loop.RunSpec{
+			Repo: ws, Image: img, Agent: agent,
+			ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name, identity.Generation),
+			ForkGeneration: string(identity.Generation), ForkWorker: detached,
+			ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkLoop, ActivityTask: activityTask,
+			ProposalOutbox: proposalRel,
+			Rotation:       rot, Queues: []string{queueRel}, Preset: a.preset, Peers: peers, Sink: sink,
+		})
+		if runErr != nil || code != 0 {
+			// A provider or final-signoff failure is never review authority. If the execution-local
+			// queue reached done before the failure surfaced, restore it to in-progress first; then
+			// accept only the paused/blocked metadata so the exact generation can resume safely.
+			prepareErr := tasks.PrepareForkProjectionForRun(repo, assignment.Task.Root, assignment.Task.Item.ID, assignment.Owner)
+			var acceptErr error
+			if prepareErr == nil {
+				_, acceptErr = tasks.AcceptForkProjection(repo, assignment.Task.Root, assignment.Task.Item.ID, assignment.Owner)
+			}
+			return code, errors.Join(runErr, prepareErr, acceptErr)
+		}
+		result, acceptErr := tasks.AcceptForkProjection(repo, assignment.Task.Root, assignment.Task.Item.ID, assignment.Owner)
+		if acceptErr != nil {
+			return 1, acceptErr
+		}
+		imported, err := tasks.ImportForkProposals(repo, identity)
+		if err != nil {
+			return 1, fmt.Errorf("import fork task proposals: %w", err)
+		}
+		for _, proposal := range imported {
+			ui.OK("imported discovered task %s into %s", proposal.TaskID, proposal.Root)
+		}
+		if result.State == tasks.StateInProgress {
+			return 0, nil
+		}
 	}
-	return code, err
+}
+
+func importedForkTask(proposals []tasks.ImportedForkProposal) bool {
+	for _, proposal := range proposals {
+		if proposal.Kind == tasks.ForkProposalTask {
+			return true
+		}
+	}
+	return false
+}
+
+func forkCanonicalQueues(repo, override string) ([]string, error) {
+	if override != "" {
+		root, err := filepath.Abs(override)
+		if err != nil {
+			return nil, err
+		}
+		root = filepath.Clean(root)
+		if !tasks.IsTaskDir(root) {
+			return nil, fmt.Errorf("coop fork --tasks: %s is not a task queue", override)
+		}
+		return []string{root}, nil
+	}
+	rels, err := project.TaskDirs(repo)
+	if err != nil {
+		return nil, err
+	}
+	var roots []string
+	for _, rel := range rels {
+		root := filepath.Join(repo, rel)
+		if tasks.IsTaskDir(root) {
+			roots = append(roots, filepath.Clean(root))
+		}
+	}
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("no canonical task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(rels, ", "))
+	}
+	return roots, nil
+}
+
+func forkAssignmentsBlocked(assignments []tasks.LocatedForkAssignment) bool {
+	for _, assignment := range assignments {
+		if assignment.Record.Fork != nil && assignment.Record.Fork.Phase == tasks.ForkAssignmentBlocked {
+			return true
+		}
+	}
+	return false
 }

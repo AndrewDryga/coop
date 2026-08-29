@@ -14,8 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 const (
@@ -29,12 +31,13 @@ var errSessionWorkspaceDetachedHead = errors.New("workspace HEAD is detached")
 // sessionWorkspace is the host-owned identity captured when a remote session fork is created.
 // The fields are exported so the unexported boundary remains directly JSON-marshalable.
 type sessionWorkspace struct {
-	Repo       string `json:"repo"`
-	Name       string `json:"name"`
-	Path       string `json:"path"`
-	Branch     string `json:"branch"`
-	BaseCommit string `json:"base_commit"`
-	ForkHead   string `json:"fork_head"`
+	Repo       string             `json:"repo"`
+	Name       string             `json:"name"`
+	Path       string             `json:"path"`
+	Branch     string             `json:"branch"`
+	BaseCommit string             `json:"base_commit"`
+	ForkHead   string             `json:"fork_head"`
+	Fork       forkspace.Identity `json:"fork"`
 }
 
 type sessionWorkspaceChange struct {
@@ -80,19 +83,21 @@ type sessionWorkspaceIdentity struct {
 }
 
 type WorkspaceDiscardPlan struct {
-	Repo              string                   `json:"repo"`
-	Name              string                   `json:"name"`
-	Workspace         string                   `json:"workspace"`
-	WorkspaceIdentity sessionWorkspaceIdentity `json:"workspace_identity"`
-	Branch            string                   `json:"branch"`
-	Head              string                   `json:"head"`
-	ParentHead        string                   `json:"parent_head"`
-	StatusDigest      string                   `json:"status_digest"`
-	Dirty             bool                     `json:"dirty"`
-	Unmerged          bool                     `json:"unmerged"`
-	Running           bool                     `json:"running"`
-	AcceptedDirty     bool                     `json:"accepted_dirty,omitempty"`
-	AcceptedUnmerged  bool                     `json:"accepted_unmerged,omitempty"`
+	Repo              string                          `json:"repo"`
+	Name              string                          `json:"name"`
+	Workspace         string                          `json:"workspace"`
+	WorkspaceIdentity sessionWorkspaceIdentity        `json:"workspace_identity"`
+	Branch            string                          `json:"branch"`
+	Head              string                          `json:"head"`
+	ParentHead        string                          `json:"parent_head"`
+	StatusDigest      string                          `json:"status_digest"`
+	Dirty             bool                            `json:"dirty"`
+	Unmerged          bool                            `json:"unmerged"`
+	Running           bool                            `json:"running"`
+	AcceptedDirty     bool                            `json:"accepted_dirty,omitempty"`
+	AcceptedUnmerged  bool                            `json:"accepted_unmerged,omitempty"`
+	Fork              *forkspace.Identity             `json:"fork,omitempty"`
+	Reservation       *forkspace.WorkspaceReservation `json:"reservation,omitempty"`
 }
 
 type sessionWorkspaceLimitedWriter struct {
@@ -318,9 +323,12 @@ func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace,
 	return ensureSessionWorkspaceContext(context.Background(), repo, generatedName, base)
 }
 
-func ensureSessionWorkspaceContext(ctx context.Context, repo, generatedName, base string) (sessionWorkspace, error) {
+func ensureSessionWorkspaceContext(ctx context.Context, repo, generatedName, base string, reservationIDs ...string) (sessionWorkspace, error) {
 	if repo == "" || !filepath.IsAbs(repo) || !forkspace.ValidName(generatedName) || !validSessionWorkspaceCommit(base) {
 		return sessionWorkspace{}, errors.New("invalid session workspace binding")
+	}
+	if len(reservationIDs) > 1 || len(reservationIDs) == 1 && reservationIDs[0] == "" {
+		return sessionWorkspace{}, errors.New("invalid session workspace reservation")
 	}
 	ws := forkspace.Workspace(repo, generatedName)
 	unlock, err := forkspace.LockStateContext(ctx, repo, generatedName)
@@ -376,6 +384,28 @@ func ensureSessionWorkspaceContext(ctx context.Context, repo, generatedName, bas
 			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, err)
 		}
 		return sessionWorkspace{}, fmt.Errorf("refusing to adopt existing session workspace: %w", err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, generatedName)
+	if err != nil {
+		if created {
+			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, fmt.Errorf("bind new session workspace generation: %w", err))
+		}
+		return sessionWorkspace{}, fmt.Errorf("bind session workspace generation: %w", err)
+	}
+	workspace.Fork = identity
+	if len(reservationIDs) == 1 {
+		reservation := forkspace.WorkspaceReservation{
+			Version: forkspace.WorkspaceReservationVersion, Fork: identity, Kind: forkspace.WorkspaceReservationRemoteSession,
+			OwnerID: reservationIDs[0], CreatedAt: time.Now().UTC(),
+		}
+		if err := forkspace.ReserveWorkspaceLocked(repo, reservation); err != nil {
+			if created {
+				cleanupErr := removeCreatedSessionWorkspace(ws, fmt.Errorf("reserve new session workspace: %w", err))
+				cleanupErr = errors.Join(cleanupErr, forkspace.RemoveGenerationIfMatchesLocked(repo, identity))
+				return sessionWorkspace{}, cleanupErr
+			}
+			return sessionWorkspace{}, fmt.Errorf("reserve session workspace: %w", err)
+		}
 	}
 	return workspace, nil
 }
@@ -774,6 +804,24 @@ func planSessionWorkspaceDiscardAtParent(
 	if err != nil {
 		return WorkspaceDiscardPlan{}, err
 	}
+	generation, hasGeneration, err := forkspace.ReadGeneration(repo, name)
+	if err != nil {
+		return WorkspaceDiscardPlan{}, fmt.Errorf("read session workspace generation: %w", err)
+	}
+	var plannedFork *forkspace.Identity
+	var plannedReservation *forkspace.WorkspaceReservation
+	if hasGeneration {
+		copy := generation
+		plannedFork = &copy
+		reservation, reserved, reserveErr := forkspace.ReadWorkspaceReservation(repo, generation)
+		if reserveErr != nil {
+			return WorkspaceDiscardPlan{}, fmt.Errorf("read session workspace reservation: %w", reserveErr)
+		}
+		if reserved {
+			copyReservation := reservation
+			plannedReservation = &copyReservation
+		}
+	}
 	handle, info, err := forkspace.Pin(workspace)
 	if errors.Is(err, os.ErrNotExist) {
 		// The workspace is already gone — crashed teardown, manual removal, a
@@ -786,13 +834,18 @@ func planSessionWorkspaceDiscardAtParent(
 		// still fails loudly, because that one may hold work.
 		return WorkspaceDiscardPlan{
 			Repo: repo, Name: name, Workspace: workspace,
-			StatusDigest: sessionWorkspaceStatusDigest(nil),
+			StatusDigest: sessionWorkspaceStatusDigest(nil), Fork: plannedFork, Reservation: plannedReservation,
 		}, nil
 	}
 	if err != nil {
 		return WorkspaceDiscardPlan{}, fmt.Errorf("pin session workspace for discard: %w", err)
 	}
 	defer handle.Close()
+	if hasGeneration {
+		if err := forkspace.ValidateGenerationWorkspace(repo, generation); err != nil {
+			return WorkspaceDiscardPlan{}, fmt.Errorf("validate session workspace generation: %w", err)
+		}
+	}
 	identity, err := sessionWorkspaceIdentityFor(info)
 	if err != nil {
 		return WorkspaceDiscardPlan{}, err
@@ -844,6 +897,8 @@ func planSessionWorkspaceDiscardAtParent(
 		Running:           forkspace.NeedsStop(repo, name),
 		AcceptedDirty:     dirty && acceptDirty,
 		AcceptedUnmerged:  unmerged && acceptUnmerged,
+		Fork:              plannedFork,
+		Reservation:       plannedReservation,
 	}, nil
 }
 
@@ -860,73 +915,198 @@ func discardSessionWorkspace(plan WorkspaceDiscardPlan) error {
 		return fmt.Errorf("lock session workspace discard: %w", err)
 	}
 	defer unlock()
+	return discardSessionWorkspaceLocked(plan)
+}
+
+type validatedSessionWorkspaceDiscard struct {
+	currentFork      forkspace.Identity
+	hasGeneration    bool
+	workspacePresent bool
+	handle           *os.File
+	info             os.FileInfo
+}
+
+func (validated *validatedSessionWorkspaceDiscard) close() error {
+	if validated == nil || validated.handle == nil {
+		return nil
+	}
+	err := validated.handle.Close()
+	validated.handle = nil
+	return err
+}
+
+// validateSessionWorkspaceDiscardLocked proves the complete destructive plan without changing
+// services, workspace state, or lifecycle authority. The service runs it before DownServices and
+// then runs the same validation again immediately before destruction, all under LockState.
+func validateSessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan) (*validatedSessionWorkspaceDiscard, error) {
+	name, err := sessionWorkspaceName(plan.Repo, plan.Workspace)
+	if err != nil || name != plan.Name {
+		if err != nil {
+			return nil, fmt.Errorf("invalid discard plan: %w", err)
+		}
+		return nil, errors.New("invalid discard plan: workspace name changed")
+	}
 	if plan.Running || forkspace.NeedsStop(plan.Repo, plan.Name) {
-		return errors.New("refusing to discard a running or cleanup-pending workspace")
+		return nil, errors.New("refusing to discard a running or cleanup-pending workspace")
+	}
+	currentFork, hasGeneration, err := forkspace.ReadGeneration(plan.Repo, plan.Name)
+	if err != nil {
+		return nil, fmt.Errorf("read session workspace generation during discard: %w", err)
+	}
+	_, workspaceErr := os.Lstat(plan.Workspace)
+	workspacePresent := workspaceErr == nil
+	if workspaceErr != nil && !errors.Is(workspaceErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("inspect session workspace during discard: %w", workspaceErr)
+	}
+	if plan.Fork != nil && !hasGeneration && !workspacePresent && !forkspace.NeedsStop(plan.Repo, plan.Name) {
+		// A prior attempt completed the on-disk destruction and exact generation cleanup, then a
+		// later session-private cleanup failed. Replaying that same plan is idempotent.
+		return &validatedSessionWorkspaceDiscard{}, nil
+	}
+	if (plan.Fork == nil) != !hasGeneration || plan.Fork != nil && *plan.Fork != currentFork {
+		return nil, errors.New("discard plan is stale: fork generation changed")
+	}
+	if hasGeneration {
+		currentReservation, reserved, err := forkspace.ReadWorkspaceReservation(plan.Repo, currentFork)
+		if err != nil {
+			return nil, err
+		}
+		if (plan.Reservation == nil) != !reserved || plan.Reservation != nil && currentReservation != *plan.Reservation {
+			return nil, errors.New("discard plan is stale: workspace reservation changed")
+		}
+		if _, err := os.Lstat(forkspace.LandIntentPath(plan.Repo, currentFork)); err == nil {
+			return nil, errors.New("refusing to discard a workspace with an interrupted fork land")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if active, err := tasks.ForkTaskState(plan.Repo, currentFork); err != nil {
+			return nil, err
+		} else if active {
+			return nil, errors.New("refusing to discard a session workspace that owns canonical task authority")
+		}
+		if err := forkspace.RequireNoForkExecutionsLocked(plan.Repo, currentFork); err != nil {
+			return nil, fmt.Errorf("refusing to discard a session workspace with sandbox activity: %w", err)
+		}
 	}
 	handle, info, err := forkspace.Pin(plan.Workspace)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			if plan.Running || forkspace.NeedsStop(plan.Repo, plan.Name) {
-				return errors.New("refusing to discard a missing workspace with active or pending work")
+				return nil, errors.New("refusing to discard a missing workspace with active or pending work")
 			}
-			return nil
+			return &validatedSessionWorkspaceDiscard{
+				currentFork: currentFork, hasGeneration: hasGeneration,
+			}, nil
 		}
-		return fmt.Errorf("discard plan is stale: pin workspace: %w", err)
+		return nil, fmt.Errorf("discard plan is stale: pin workspace: %w", err)
 	}
-	defer handle.Close()
+	validated := &validatedSessionWorkspaceDiscard{
+		currentFork: currentFork, hasGeneration: hasGeneration, workspacePresent: true,
+		handle: handle, info: info,
+	}
+	fail := func(err error) (*validatedSessionWorkspaceDiscard, error) {
+		return nil, errors.Join(err, validated.close())
+	}
 	identity, err := sessionWorkspaceIdentityFor(info)
 	if err != nil {
-		return fmt.Errorf("discard plan is stale: %w", err)
+		return fail(fmt.Errorf("discard plan is stale: %w", err))
 	}
 	if identity != plan.WorkspaceIdentity || !forkspace.SamePinned(plan.Workspace, info) {
-		return errors.New("discard plan is stale: workspace was replaced")
+		return fail(errors.New("discard plan is stale: workspace was replaced"))
 	}
 	branch, err := sessionWorkspaceBranch(plan.Workspace)
 	if err != nil {
-		return fmt.Errorf("discard plan is stale: branch: %w", err)
+		return fail(fmt.Errorf("discard plan is stale: branch: %w", err))
 	}
 	head, err := sessionWorkspaceCommit(plan.Workspace, "HEAD")
 	if err != nil {
-		return fmt.Errorf("discard plan is stale: HEAD: %w", err)
+		return fail(fmt.Errorf("discard plan is stale: HEAD: %w", err))
 	}
 	statusRaw, truncated, err := runSessionWorkspaceGit(plan.Workspace, sessionWorkspaceGitOutputLimit,
 		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z")
 	if err != nil {
-		return fmt.Errorf("discard plan is stale: status: %w", err)
+		return fail(fmt.Errorf("discard plan is stale: status: %w", err))
 	}
 	if truncated {
-		return fmt.Errorf("discard plan is stale: status exceeds %d bytes", sessionWorkspaceGitOutputLimit)
+		return fail(fmt.Errorf("discard plan is stale: status exceeds %d bytes", sessionWorkspaceGitOutputLimit))
 	}
 	if _, err := parseSessionWorkspaceStatus(statusRaw); err != nil {
-		return fmt.Errorf("discard plan is stale: parse status: %w", err)
+		return fail(fmt.Errorf("discard plan is stale: parse status: %w", err))
 	}
 	dirty := len(statusRaw) > 0
 	unmerged, err := sessionWorkspaceUnmergedFromParent(plan.Repo, plan.Workspace, plan.ParentHead)
 	if err != nil {
-		return fmt.Errorf("discard plan is stale: compare parent: %w", err)
+		return fail(fmt.Errorf("discard plan is stale: compare parent: %w", err))
 	}
 	if branch != plan.Branch || head != plan.Head || sessionWorkspaceStatusDigest(statusRaw) != plan.StatusDigest || dirty != plan.Dirty || unmerged != plan.Unmerged {
-		return errors.New("discard plan is stale: workspace HEAD, branch, or status changed")
+		return fail(errors.New("discard plan is stale: workspace HEAD, branch, or status changed"))
 	}
 	if dirty && !plan.AcceptedDirty {
-		return errors.New("refusing to discard dirty workspace without exact dirty-loss acknowledgement")
+		return fail(errors.New("refusing to discard dirty workspace without exact dirty-loss acknowledgement"))
 	}
 	if unmerged && !plan.AcceptedUnmerged {
-		return errors.New("refusing to discard unmerged workspace without exact unmerged-loss acknowledgement")
+		return fail(errors.New("refusing to discard unmerged workspace without exact unmerged-loss acknowledgement"))
+	}
+	if plan.Running || forkspace.NeedsStop(plan.Repo, plan.Name) {
+		return fail(errors.New("refusing to discard a workspace that started running"))
+	}
+	if !forkspace.SamePinned(plan.Workspace, info) {
+		return fail(errors.New("discard plan is stale: workspace was replaced before removal"))
+	}
+	return validated, nil
+}
+
+func applySessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan, validated *validatedSessionWorkspaceDiscard) error {
+	if validated == nil {
+		return errors.New("session workspace discard was not validated")
+	}
+	if !validated.workspacePresent {
+		if validated.hasGeneration {
+			if plan.Reservation != nil {
+				if err := forkspace.RemoveWorkspaceReservationIfMatchesLocked(plan.Repo, *plan.Reservation); err != nil {
+					return err
+				}
+			}
+			return forkspace.RemoveGenerationIfMatchesLocked(plan.Repo, validated.currentFork)
+		}
+		return nil
 	}
 	if plan.Running || forkspace.NeedsStop(plan.Repo, plan.Name) {
 		return errors.New("refusing to discard a workspace that started running")
 	}
-	if !forkspace.SamePinned(plan.Workspace, info) {
+	if !forkspace.SamePinned(plan.Workspace, validated.info) {
 		return errors.New("discard plan is stale: workspace was replaced before removal")
 	}
 	// The on-disk removal only: the session service already brought this workspace's sibling
-	// services down (with their volumes) before planning the discard, so nothing here may do it
-	// a second time.
+	// services down (with their volumes) before applying the discard, so nothing here may do it a
+	// second time.
 	if err := forkspace.Destroy(plan.Repo, plan.Name); err != nil {
 		return fmt.Errorf("discard session workspace: %w", err)
 	}
+	if validated.hasGeneration {
+		if plan.Reservation != nil {
+			if err := forkspace.RemoveWorkspaceReservationIfMatchesLocked(plan.Repo, *plan.Reservation); err != nil {
+				return fmt.Errorf("remove discarded session workspace reservation: %w", err)
+			}
+		}
+		if err := forkspace.RemoveGenerationIfMatchesLocked(plan.Repo, validated.currentFork); err != nil {
+			return fmt.Errorf("remove discarded session workspace generation: %w", err)
+		}
+	}
 	return nil
+}
+
+// discardSessionWorkspaceLocked performs the exact-plan revalidation and removal while its caller
+// holds the fork lifecycle lock. The service uses this form after its preflight so service teardown
+// and workspace destruction share one reservation/generation window; direct tests use the locking
+// wrapper above.
+func discardSessionWorkspaceLocked(plan WorkspaceDiscardPlan) error {
+	validated, err := validateSessionWorkspaceDiscardLocked(plan)
+	if err != nil {
+		return err
+	}
+	defer validated.close()
+	return applySessionWorkspaceDiscardLocked(plan, validated)
 }
 
 func sessionWorkspaceUnmergedFromParent(repo, workspace, parentHead string) (bool, error) {

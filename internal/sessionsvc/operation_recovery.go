@@ -3,6 +3,7 @@ package sessionsvc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/session"
@@ -91,6 +92,16 @@ func (s *Service) reconcileCancelOperation(ctx context.Context, op session.Opera
 	if err := json.Unmarshal(op.Result, &req); err != nil || req.SessionID == "" || req.TurnID == "" {
 		return false, nil
 	}
+	bound, err := s.store.GetSession(ctx, req.SessionID)
+	if err != nil {
+		return false, err
+	}
+	if err := requireSessionForkAuthority(bound); err != nil {
+		if errors.Is(err, errLegacySessionForkUnproven) {
+			return true, nil
+		}
+		return false, err
+	}
 	turn, err := s.store.GetTurn(ctx, req.SessionID, req.TurnID)
 	if err != nil {
 		return false, err
@@ -111,6 +122,11 @@ func (s *Service) reconcileCancelOperation(ctx context.Context, op session.Opera
 }
 
 func (s *Service) scheduleCreateOperation(operationID string) {
+	op, err := s.store.GetOperationByID(context.Background(), operationID)
+	if err == nil && op.Method == "CreateRemoteSession" && op.State == session.OperationRunning &&
+		s.sessionQuarantined(deterministicSessionID(op.ID)) {
+		return
+	}
 	s.mu.Lock()
 	if !s.started || s.ctx == nil {
 		s.mu.Unlock()

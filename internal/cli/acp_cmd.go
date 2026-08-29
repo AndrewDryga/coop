@@ -22,6 +22,8 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkctl"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
@@ -218,15 +220,29 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if cid := os.Getenv("COOP_ACP_CIDFILE"); cid != "" {
 		extra = append(extra, "--cidfile", cid)
 	}
-	return box.Run(a.cfg, a.rt, box.RunSpec{
+	activityRepo, forkIdentity, err := forkspace.ResolveProjectBinding(repo)
+	if err != nil {
+		return 1, err
+	}
+	spec := box.RunSpec{
 		// A supervisor (which reconnects the box) passes COOP_ACP_SUPERVISOR; that tags
 		// the box so build/update can restart it and the supervisor can kill exactly it.
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool, Serve: true,
 		SupervisorID: os.Getenv("COOP_ACP_SUPERVISOR"), ShareACPSessions: true,
 		ConsultLead: lead, Peers: peers, Preset: a.preset, Quiet: true,
-		ExtraArgs: extra,
-		Homes:     a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
-	})
+		ExtraArgs:    extra,
+		ActivityRepo: activityRepo, ActivityKind: forkspace.ExecutionACP,
+		ActivityRole:   forkspace.ExecutionRole(os.Getenv("COOP_ACP_ACTIVITY_ROLE")),
+		ActivitySource: os.Getenv("COOP_ACP_SUPERVISOR"),
+		Homes:          a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+	}
+	if forkIdentity != nil {
+		spec.ActivityKind = forkspace.ExecutionForkACP
+		spec.ForkName = forkIdentity.Name
+		spec.ForkGeneration = string(forkIdentity.Generation)
+		spec.ForkOwner = forkctl.ForkContainerOwner(activityRepo, forkIdentity.Name, forkIdentity.Generation)
+	}
+	return box.Run(a.cfg, a.rt, spec)
 }
 
 // ensureACPImage builds the box image when it is missing, so a pruned or never-built image is a
@@ -312,7 +328,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// so correctness is unaffected. COOP_ACP_WARM=0 opts out (a low-RAM escape hatch).
 	warm := os.Getenv("COOP_ACP_WARM") != "0"
 	pool := acpctl.NewWarmPool(warm, func(provider string) (*acpproxy.Child, error) {
-		return a.spawnBox(context.Background(), self, inner, superID, ctrl, agents.Target{Provider: provider}, "", true, os.Stderr)
+		return a.spawnBox(context.Background(), self, inner, superID, ctrl, agents.Target{Provider: provider}, "", true, os.Stderr, forkspace.ExecutionRoleWarm)
 	})
 	factory := func(ctx context.Context) (*acpproxy.Child, error) {
 		t, psName, ok := ctrl.SpawnTarget()
@@ -322,7 +338,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 				return c, nil
 			}
 		}
-		child, cerr := a.spawnBox(ctx, self, inner, superID, ctrl, t, psName, ok, os.Stderr)
+		child, cerr := a.spawnBox(ctx, self, inner, superID, ctrl, t, psName, ok, os.Stderr, forkspace.ExecutionRoleActive)
 		if acpctl.BareProviderSwitch(t, psName, ok) && cerr == nil {
 			go pool.Refill(t.Provider)
 		}
@@ -354,7 +370,9 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		// (reap only stops boxes already parked) would otherwise reparent to init and never be reaped
 		// (the re-exec'd process uses a fresh superID). Safe here: Run already stopped the active box
 		// and no new box is spawned until after exec, so nothing we need is swept.
-		a.rt.KillByLabel(box.LabelSupervisor, superID)
+		if reapErr := a.reapACPBoxes(superID); reapErr != nil {
+			return 1, fmt.Errorf("acp reload cleanup: %w", reapErr)
+		}
 		path, werr := acpctl.WriteResumeState(acpctl.ResumeState{Proxy: *snap, Ctrl: ctrl.Snapshot()})
 		if werr != nil {
 			return 1, fmt.Errorf("acp reload: %w", werr)
@@ -375,11 +393,28 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// removes only its own box (by cidfile), so the last live generation — or a box orphaned by a
 	// swap — is cleaned up here by this supervisor's id. (Doing this per-generation would kill the
 	// just-spawned next box, which shares the id, fork-bombing the supervisor on the first resume.)
-	a.rt.KillByLabel(box.LabelSupervisor, superID)
+	cleanupErr := a.reapACPBoxes(superID)
 	if err != nil && !errors.Is(err, context.Canceled) {
-		return 1, err
+		return 1, errors.Join(err, cleanupErr)
 	}
-	return 0, nil
+	return 0, cleanupErr
+}
+
+func (a *app) reapACPBoxes(superID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
+	defer cancel()
+	if _, err := a.rt.RemoveByLabel(ctx, box.LabelSupervisor, superID); err != nil {
+		return err
+	}
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return err
+	}
+	authorityRepo, _, err := forkspace.ResolveProjectBinding(repo)
+	if err != nil {
+		return err
+	}
+	return forkspace.RemoveDeadExecutionsBySource(authorityRepo, superID)
 }
 
 func newSupervisorID() (string, error) {
@@ -397,7 +432,7 @@ func cleanACPChildEnv(env []string) []string {
 	for _, item := range env {
 		key, _, _ := strings.Cut(item, "=")
 		switch key {
-		case "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE",
+		case "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE",
 			liveprocess.ControlFDEnv, liveprocess.ProcessDirEnv, liveprocess.CleanupIDEnv, liveprocess.RevokePathEnv:
 			continue
 		}
@@ -409,7 +444,7 @@ func cleanACPChildEnv(env []string) []string {
 // spawnBox execs a `coop acp` inner box for the given spawn target and wraps it as an acpproxy.Child
 // — the ONE spawn path for the live factory, warm-pool prewarm, and short-lived model probe, so each
 // gets the same credentials, process isolation, and teardown.
-func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID string, ctrl *acpctl.Control, t agents.Target, psName string, hasTarget bool, stderr io.Writer) (*acpproxy.Child, error) {
+func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID string, ctrl *acpctl.Control, t agents.Target, psName string, hasTarget bool, stderr io.Writer, activityRoles ...forkspace.ExecutionRole) (*acpproxy.Child, error) {
 	provider := t.Provider
 	if provider == "" && ctrl != nil {
 		provider = ctrl.LeadProvider()
@@ -429,7 +464,12 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		return nil, err
 	}
 	cidDir, cidPath := "", ""
-	env := append(cleanACPChildEnv(os.Environ()), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID)
+	activityRole := forkspace.ExecutionRoleActive
+	if len(activityRoles) > 0 && activityRoles[0] != "" {
+		activityRole = activityRoles[0]
+	}
+	env := append(cleanACPChildEnv(os.Environ()), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID,
+		"COOP_ACP_ACTIVITY_ROLE="+string(activityRole))
 	if hasTarget {
 		if ctrl != nil { // model probes use a bare provider target and need no reset/preset wait
 			if psName != "" {
@@ -473,6 +513,12 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	outW.Close() // ...and the write end; outR sees EOF when the child exits
 	pid := cmd.Process.Pid
 	go func() { _ = cmd.Wait() }()
+	activityRepo := ""
+	if currentRepo, resolveErr := box.ResolveRepo(a.cfg.RepoOverride); resolveErr == nil {
+		if canonical, _, bindingErr := forkspace.ResolveProjectBinding(currentRepo); bindingErr == nil {
+			activityRepo = canonical
+		}
+	}
 	var stopOnce sync.Once
 	stop := func() {
 		stopOnce.Do(func() {
@@ -481,20 +527,63 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
 			inW.Close()
 			outR.Close()
-			waitACPProcessGroupGone(pid, acpCleanupTimeout)
+			groupGone := waitACPProcessGroupGone(pid, acpCleanupTimeout)
+			runtimeGone := false
 			if cidPath != "" {
 				if cid, rerr := os.ReadFile(cidPath); rerr == nil {
 					cleanupCtx, cancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
-					_ = a.rt.RemoveContainerContext(cleanupCtx, strings.TrimSpace(string(cid)))
+					runtimeGone = a.rt.RemoveContainerContext(cleanupCtx, strings.TrimSpace(string(cid))) == nil
 					cancel()
 				}
+			}
+			// Apple's container CLI has no cidfile support. The execution record is published before
+			// runtime launch and its id is also a unique container label, so after the supervising
+			// process is gone it is the exact fallback cleanup authority. Never use the shared ACP
+			// supervisor label here: a provider swap may already have published its replacement box.
+			if groupGone && !runtimeGone && activityRepo != "" {
+				runtimeGone = a.reapACPChildBoxes(activityRepo, superID, pid)
+			}
+			if groupGone && runtimeGone && activityRepo != "" {
+				_ = forkspace.RemoveDeadExecutionsBySource(activityRepo, superID)
 			}
 			if cidDir != "" {
 				os.RemoveAll(cidDir)
 			}
 		})
 	}
-	return &acpproxy.Child{In: inW, Out: outR, Stop: stop, Provider: provider, Account: account}, nil
+	setActive := func(active bool) {
+		if activityRepo == "" {
+			return
+		}
+		role := forkspace.ExecutionRoleWarm
+		if active {
+			role = forkspace.ExecutionRoleActive
+		}
+		_ = forkspace.UpdateExecutionRoleByPID(activityRepo, pid, role)
+	}
+	return &acpproxy.Child{In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account}, nil
+}
+
+// reapACPChildBoxes removes only containers carrying the execution IDs published by one stopped
+// inner ACP process. An empty, readable set is proof that the child never reached runtime launch or
+// already completed cleanup; an unreadable registry remains cleanup-pending for the final sweep.
+func (a *app) reapACPChildBoxes(repo, superID string, pid int) bool {
+	observations, problems := forkspace.Executions(repo)
+	if len(problems) > 0 {
+		return false
+	}
+	for _, observation := range observations {
+		if observation.Record.PID != pid || observation.Record.SourceID != superID {
+			continue
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), acpCleanupTimeout)
+		_, err := a.rt.RemoveByLabel(cleanupCtx, box.LabelExecution, observation.Record.ID)
+		cancel()
+		if err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func waitACPProcessGroupGone(pgid int, timeout time.Duration) bool {

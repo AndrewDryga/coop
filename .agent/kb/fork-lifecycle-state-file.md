@@ -1,20 +1,26 @@
 ---
 name: fork-lifecycle-state-file
-description: one owner-v1 file holds four fork lifecycle states; unsupported formats stay held and only pid+start-token — never file age — may decide a current owner is gone
+description: one generation-bound owner-v2 file holds four fork lifecycle states; unsupported formats stay held and only pid+start-token — never file age — may decide a current owner is gone
 subsystem: fork
-sources: [internal/forkspace/state.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/processidentity/identity.go]
-updated: 2026-08-26
+sources: [internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/processidentity/identity.go]
+updated: 2026-08-28
 ---
 Every fork's whole process lifecycle lives in ONE small file, `<repo>-forks/.coop/<name>.pid`, read
 and written through `forkspace.WorkerState` (`internal/forkspace/state.go`) — never by hand. Four
-current shapes. Every one has a leading `owner-v1` header:
+current shapes. Every one has an `owner-v2` header followed by the immutable generation record:
 
 | state | wire form | means |
 | --- | --- | --- |
-| worker | `owner-v1\n<pid>\n<token>` | a detached loop is running (or crashed); signalable |
-| reap-pending | `owner-v1\nreap-pending\n` (optionally followed by identity) | `fork stop` is mid-cleanup; its exact-owner box reap still must run |
-| reservation | `owner-v1\nstart-claim\n<pid>\n<token>` | a coop process claimed the fork and has NOT forked a worker yet |
-| launched reservation | `owner-v1\nstart-launched\n<pid>\n<token>` | that coop forked a worker but has not yet recorded its identity |
+| worker | `owner-v2\ngeneration=<id>\n<pid>\n<token>` | a detached loop is running (or crashed); signalable |
+| reap-pending | `owner-v2\ngeneration=<id>\nreap-pending\n` (optionally followed by identity) | `fork stop` is mid-cleanup; its exact-owner box reap still must run |
+| reservation | `owner-v2\ngeneration=<id>\nstart-claim\n<pid>\n<token>` | a coop process claimed the fork and has NOT forked a worker yet |
+| launched reservation | `owner-v2\ngeneration=<id>\nstart-launched\n<pid>\n<token>` | that coop forked a worker but has not yet recorded its identity |
+
+`owner-v1` remains parseable only for stop/migration compatibility. It has no generation, cannot
+start or claim current work beside a generation record, and must never be upgraded by editing its
+bytes. The host-owned `<name>.generation.json` binds name+generation to the workspace device/inode;
+workers, runtime labels, executions, assignments, candidates, and cleanup all carry that exact
+identity, so `--fresh` cannot rebind a stale namesake.
 
 The identity in a *reservation* is the **claiming coop process**, not a worker. Nothing may ever
 signal it: `forkStop` zeroes it and falls into the tombstone path, and `forkspace.RunningPid` returns
@@ -87,6 +93,8 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-08-28 — current workers moved to owner-v2 and carry the immutable workspace generation;
+  added exact-generation execution publication and clarified owner-v1 as stop-only migration state.
 - 2026-08-26 — made the launched-reservation handoff byte-exact and atomic. The re-exec child now
   publishes before every host mutation and only while the inherited reservation still owns the
   lifecycle file; stop-winning cleanup is terminal, while parent publication is idempotent.

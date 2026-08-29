@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -148,6 +149,67 @@ func TestPersistenceAndOperationReplayBeforeRevisionValidation(t *testing.T) {
 	}
 	if op, err := store.GetOperation(ctx, "turn-1"); err != nil || op.State != OperationSucceeded || op.ResourceID != turn.ID {
 		t.Fatalf("turn operation = %+v, %v", op, err)
+	}
+}
+
+func TestTurnRuntimeBindingSurvivesCompletionUntilExactCleanup(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	sess, err := store.CreateSession(ctx, "runtime-session", CreateSessionRequest{Target: "codex:model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := store.SubmitTurn(ctx, "runtime-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("lease = %+v, ok=%v, err=%v", turn, ok, err)
+	}
+	first, second := "session-111111111111111111111111", "session-222222222222222222222222"
+	if err := store.BindTurnRuntime(ctx, sess.ID, turn.ID, "", first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BindTurnRuntime(ctx, sess.ID, turn.ID, "", second); CodeOf(err) != CodeRevisionConflict {
+		t.Fatalf("stale runtime replacement error = %v", err)
+	}
+	if err := store.BindTurnRuntime(ctx, sess.ID, turn.ID, first, second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkTurnSent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.CompleteTurn(ctx, CompleteTurnRequest{
+		SessionID: sess.ID, TurnID: turn.ID, Message: "done",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.RuntimeRunID != second {
+		t.Fatalf("completed runtime receipt = %q, want %q", completed.RuntimeRunID, second)
+	}
+	cleanup, err := store.ListRuntimeCleanupTurns(ctx)
+	if err != nil || len(cleanup) != 1 || cleanup[0].State != TurnCompleted || cleanup[0].RuntimeRunID != second {
+		t.Fatalf("terminal runtime cleanup = %+v, err=%v", cleanup, err)
+	}
+	if err := store.ClearTurnRuntime(ctx, sess.ID, turn.ID, first); CodeOf(err) != CodeRevisionConflict {
+		t.Fatalf("stale runtime clear error = %v", err)
+	}
+	if err := store.ClearTurnRuntime(ctx, sess.ID, turn.ID, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClearTurnRuntime(ctx, sess.ID, turn.ID, second); err != nil {
+		t.Fatalf("idempotent runtime clear: %v", err)
+	}
+	if cleanup, err := store.ListRuntimeCleanupTurns(ctx); err != nil || len(cleanup) != 0 {
+		t.Fatalf("runtime cleanup after receipt retirement = %+v, err=%v", cleanup, err)
 	}
 }
 
@@ -1558,6 +1620,65 @@ func TestReconcileInterruptedTurnsRetainsSendEvidenceAndFIFO(t *testing.T) {
 	}
 	if !containsEvent(events, EventTurnInterrupted) || !containsEvent(events, EventSessionParked) {
 		t.Fatalf("reconciliation events = %+v", events)
+	}
+}
+
+func TestReconcileInterruptedTurnsLeavesExcludedSessionUntouched(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer store.Close()
+	makeInterrupted := func(key string) (Session, Turn) {
+		t.Helper()
+		sess, err := store.CreateSession(ctx, key+"-create", CreateSessionRequest{Target: "target"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		turn, err := store.SubmitTurn(ctx, key+"-turn", SubmitTurnRequest{
+			SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: key,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		leased, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+		if err != nil || !ok || leased.ID != turn.ID {
+			t.Fatalf("lease %s = %+v, ok=%v, err=%v", key, leased, ok, err)
+		}
+		return mustGetSession(t, store, ctx, sess.ID), leased
+	}
+	excludedSession, excludedTurn := makeInterrupted("excluded")
+	recoveredSession, recoveredTurn := makeInterrupted("recovered")
+	wantSession, err := json.Marshal(excludedSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTurn, err := json.Marshal(excludedTurn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	affected, err := store.ReconcileInterruptedTurns(ctx, excludedSession.ID)
+	if err != nil || len(affected) != 1 || affected[0].ID != recoveredTurn.ID {
+		t.Fatalf("reconciled turns = %+v, err=%v", affected, err)
+	}
+	gotSession, err := json.Marshal(mustGetSession(t, store, ctx, excludedSession.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotExcludedTurn, err := store.GetTurn(ctx, excludedSession.ID, excludedTurn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotTurn, err := json.Marshal(gotExcludedTurn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotSession, wantSession) || !bytes.Equal(gotTurn, wantTurn) {
+		t.Fatalf("excluded session changed:\nwant session=%s turn=%s\n got session=%s turn=%s",
+			wantSession, wantTurn, gotSession, gotTurn)
+	}
+	gotRecovered, err := store.GetTurn(ctx, recoveredSession.ID, recoveredTurn.ID)
+	if err != nil || gotRecovered.State != TurnQueued {
+		t.Fatalf("independent recovery = %+v, err=%v", gotRecovered, err)
 	}
 }
 

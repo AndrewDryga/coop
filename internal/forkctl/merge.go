@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -166,6 +167,10 @@ func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool,
 	if reviewBase == "" {
 		return false, errors.New("resolve trusted review base commit")
 	}
+	activityKind := forkspace.ExecutionGate
+	if review {
+		activityKind = forkspace.ExecutionReview
+	}
 	code, err := box.Run(c.cfg, c.rt, box.RunSpec{
 		Image: img, Repo: treeDir, Cmd: gate, Batch: true,
 		PolicyRepo: gateRepo,
@@ -173,6 +178,7 @@ func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool,
 		Serve:      review,
 		ExtraArgs:  []string{"-e", "COOP_REVIEW_BASE=" + reviewBase},
 		Homes:      c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
+		ActivityRepo: gateRepo, ActivityKind: activityKind,
 	})
 	if err != nil {
 		return false, err
@@ -230,6 +236,19 @@ func lockForkForMerge(repo, name string) (func(), error) {
 		unlock()
 		return nil, &forkMergeLifecycleError{cause: fmt.Errorf("fork %q is running or awaiting cleanup — stop it first: coop fork stop %s", name, name)}
 	}
+	if identity, ok, readErr := forkspace.ReadGeneration(repo, name); readErr != nil {
+		unlock()
+		return nil, &forkMergeLifecycleError{cause: fmt.Errorf("read fork %s generation: %w", name, readErr)}
+	} else if ok {
+		if activityErr := forkspace.RequireNoForkExecutionsLocked(repo, identity); activityErr != nil {
+			unlock()
+			return nil, &forkMergeLifecycleError{cause: activityErr}
+		}
+		if reservationErr := forkspace.RequireNoWorkspaceReservationLocked(repo, identity); reservationErr != nil {
+			unlock()
+			return nil, &forkMergeLifecycleError{cause: reservationErr}
+		}
+	}
 	return unlock, nil
 }
 
@@ -257,7 +276,29 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string) error {
 	if !pathExists(forkspace.Workspace(repo, name)) {
 		return fmt.Errorf("no such fork: %s", name)
 	}
-	return DestroyFork(rt, repo, name)
+	identity, hasGeneration, err := forkspace.ReadGeneration(repo, name)
+	if err != nil {
+		return err
+	}
+	if hasGeneration {
+		if _, pending, err := readLandIntent(repo, identity); err != nil {
+			return err
+		} else if pending {
+			return errors.New("land finalization is still pending; rerun merge before destroying the fork")
+		}
+		if active, err := tasks.ForkTaskState(repo, identity); err != nil {
+			return err
+		} else if active {
+			return errors.New("landed fork still owns canonical task authority")
+		}
+	}
+	if err := DestroyFork(rt, repo, name); err != nil {
+		return err
+	}
+	if hasGeneration {
+		return forkspace.RemoveGenerationIfMatchesLocked(repo, identity)
+	}
+	return nil
 }
 
 // mergeOne fetches a fork's branch, merges it into the parent's HEAD, and — when a
@@ -279,8 +320,23 @@ func (c *Control) mergeOne(repo, img, name string, force bool) (bool, error) {
 	if !pathExists(ws) {
 		return false, fmt.Errorf("no such fork: %s", name)
 	}
+	if legacy := tasks.LegacyForkQueueWithWork(ws); legacy != "" {
+		return false, fmt.Errorf("%s contains a legacy copied task queue at %s; refusing a Git-only merge because it could duplicate or lose canonical work — preserve any fork-only task notes, recreate the fork with --fresh, and rerun the canonical task loop", name, legacy)
+	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return false, fmt.Errorf("%s: git fetch: %w", name, err)
+	}
+	identity, hasGeneration, err := forkspace.ReadGeneration(repo, name)
+	if err != nil {
+		return false, err
+	}
+	if hasGeneration {
+		if intent, ok, err := readLandIntent(repo, identity); err != nil {
+			return false, err
+		} else if ok {
+			_, landed, err := c.advanceTaskLand(repo, ws, name, img, intent)
+			return landed, err
+		}
 	}
 	ref := "review/" + name
 	if warns := PolicyScan(repo, ref); len(warns) > 0 && !force {
@@ -293,12 +349,42 @@ func (c *Control) mergeOne(repo, img, name string, force bool) (bool, error) {
 		target = "the current commit (detached HEAD)"
 	}
 	ui.Info("landing %s onto %s", name, target)
+	if hasGeneration {
+		candidate, hasCandidate, err := tasks.ReadForkCandidate(repo, identity)
+		if err != nil {
+			return false, err
+		}
+		indexes, problems := tasks.IndexedForkAssignments(repo, identity)
+		if len(problems) > 0 {
+			return false, errors.Join(problems...)
+		}
+		if len(indexes) > 0 && !hasCandidate {
+			return false, fmt.Errorf("%s has sandbox-assigned tasks but no final reviewed candidate — resume its loop before merge", name)
+		}
+		if hasCandidate {
+			if err := forkspace.ValidateGenerationWorkspace(repo, identity); err != nil {
+				return false, err
+			}
+			head, tree := gitOut(ws, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD^{tree}")
+			if err := tasks.ValidateForkCandidateLocked(repo, candidate, head, tree); err != nil {
+				return false, fmt.Errorf("%s reviewed candidate is stale: %w", name, err)
+			}
+			intent := landIntent{
+				Version: landIntentVersion, Candidate: candidate,
+				ParentBefore: gitOut(repo, "rev-parse", "HEAD"), Phase: landPreparing, CreatedAt: time.Now().UTC(),
+			}
+			if err := writeLandIntent(repo, intent); err != nil {
+				return false, err
+			}
+			_, landed, err := c.advanceTaskLand(repo, ws, name, img, intent)
+			return landed, err
+		}
+	}
 	// Rebase the fork onto the parent's HEAD inside the fork's OWN clone — an isolated candidate.
 	// The parent tree is NOT touched here, so a red gate below has nothing to roll back.
 	if err := c.rebaseForkOntoParent(repo, ws, name); err != nil {
 		return false, err
 	}
-	parentBeforeLand := gitOut(repo, "rev-parse", "HEAD")
 	// Gate the CANDIDATE (the rebased fork), never the live parent — with the parent's own gate
 	// policy. A red gate leaves the parent exactly as it was: no reset --hard of a shared tree.
 	if img != "" && !c.gatePasses(repo, ws, img) {
@@ -310,12 +396,8 @@ func (c *Control) mergeOne(repo, img, name string, force bool) (bool, error) {
 	if err := c.FastForwardParent(repo, ws, name); err != nil {
 		return false, err
 	}
-	// Reconcile the parent queue: a task whose Coop-Task trailer just landed moves to done/, so the
-	// parent loop doesn't redo work this fork already completed. The land already stuck, so a
-	// reconcile that couldn't run comes back as landed-with-an-error, never as a rollback.
-	if err := tasks.ReconcileQueueAfterMerge(c.cfg, repo, name, parentBeforeLand+"..HEAD"); err != nil {
-		return true, err
-	}
+	// Legacy/non-task forks land Git only. Canonical task completion is never inferred from a
+	// trailer; generation candidates above carry exact task and projection authority.
 	return true, nil
 }
 

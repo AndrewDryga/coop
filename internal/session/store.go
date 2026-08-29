@@ -724,6 +724,7 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 		Repository:         req.Repository,
 		Workspace:          req.Workspace,
 		ForkName:           req.ForkName,
+		ForkGeneration:     req.ForkGeneration,
 		BaseCommit:         req.BaseCommit,
 		PullRequest:        clonePullRequestBinding(req.PullRequest),
 		Companions:         append([]CompanionRepository(nil), req.Companions...),
@@ -747,11 +748,11 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
-		(id, external_ref, target, policy, policy_digest, project_env, project_mcp, repository_read_only, repository, workspace, fork_name, base_commit, companions,
+		(id, external_ref, target, policy, policy_digest, project_env, project_mcp, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions,
 		 pull_request_number, pull_request_ref, pull_request_head_commit,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
-		sess.Policy, sess.PolicyDigest, sess.ProjectEnv, sess.ProjectMCP, sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.BaseCommit,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		sess.Policy, sess.PolicyDigest, sess.ProjectEnv, sess.ProjectMCP, sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
 		string(companions), pullRequestNumber(sess.PullRequest), pullRequestRef(sess.PullRequest), pullRequestHead(sess.PullRequest),
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
 		sess.MaxQueuedTurns, sess.MaxQueuedBytes, now.UnixNano(), now.UnixNano()); err != nil {
@@ -810,6 +811,9 @@ func normalizeCreateRequest(req CreateSessionRequest) CreateSessionRequest {
 			pullRequestRef(req.PullRequest), pullRequestHead(req.PullRequest),
 			fmt.Sprintf("%d", req.TurnTimeout), fmt.Sprintf("%d", req.MaxPatchBytes),
 		}
+		if req.ForkGeneration != "" {
+			bindings = append(bindings, "fork-generation="+req.ForkGeneration)
+		}
 		if req.OmitEnv || req.OmitMCP {
 			bindings = append(bindings, fmt.Sprintf("omit-env=%t", req.OmitEnv), fmt.Sprintf("omit-mcp=%t", req.OmitMCP))
 		}
@@ -853,6 +857,17 @@ func validateCreateRequest(req CreateSessionRequest) error {
 	}
 	if boundCount != 0 && boundCount != len(bindings) {
 		return &Error{Code: CodeInvalidRequest, Detail: "session bindings must be all-or-none"}
+	}
+	if req.ForkGeneration != "" {
+		if len(req.ForkGeneration) != 32 {
+			return &Error{Code: CodeInvalidRequest, Detail: "fork generation is invalid"}
+		}
+		if _, err := hex.DecodeString(req.ForkGeneration); err != nil || strings.ToLower(req.ForkGeneration) != req.ForkGeneration {
+			return &Error{Code: CodeInvalidRequest, Detail: "fork generation is invalid"}
+		}
+		if boundCount != len(bindings) {
+			return &Error{Code: CodeInvalidRequest, Detail: "fork generation requires complete session bindings"}
+		}
 	}
 	if req.PullRequest != nil {
 		if req.PullRequest.Number < 1 || req.PullRequest.Ref == "" || req.PullRequest.HeadCommit == "" ||
@@ -914,6 +929,43 @@ func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	return sess, nil
 }
 
+// AdoptSessionForkGeneration is a one-time migration for sessions created before immutable fork
+// generations were persisted. It does not change the public revision: the workspace identity was
+// already immutable session authority, and this only records the host proof for that same path.
+func (s *Store) AdoptSessionForkGeneration(ctx context.Context, id, generation string) (Session, error) {
+	if !validBoundedText(id, MaxIDBytes) || len(generation) != 32 || strings.ToLower(generation) != generation {
+		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "session fork generation is invalid"}
+	}
+	if _, err := hex.DecodeString(generation); err != nil {
+		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "session fork generation is invalid"}
+	}
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Session{}, err
+	}
+	defer tx.Rollback()
+	sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrSessionNotFound
+	}
+	if err != nil {
+		return Session{}, err
+	}
+	if sess.ForkGeneration != "" && sess.ForkGeneration != generation {
+		return Session{}, &Error{Code: CodeInvalidSessionState, Detail: "session fork generation already differs"}
+	}
+	if sess.ForkGeneration == "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET fork_generation = ? WHERE id = ? AND fork_generation = ''`, generation, id); err != nil {
+			return Session{}, err
+		}
+		sess.ForkGeneration = generation
+	}
+	if err := tx.Commit(); err != nil {
+		return Session{}, err
+	}
+	return sess, nil
+}
+
 func (s *Store) ListSessions(ctx context.Context, limit int) ([]Session, error) {
 	if limit == 0 {
 		limit = 100
@@ -964,14 +1016,14 @@ func (s *Store) ListSessionsForRecovery(ctx context.Context) ([]Session, error) 
 }
 
 // ListRuntimeCleanupTurns returns turns whose runtime may still exist after their durable work is
-// recoverable. Startup reaps all three before reconciliation; the periodic cleaner selects only
-// awaiting-validation turns because starting/running can still be live in this process.
+// recoverable. An exact runtime receipt outlives a terminal turn until teardown succeeds. Legacy
+// active turns without a receipt remain eligible through their deterministic turn runtime ID.
 func (s *Store) ListRuntimeCleanupTurns(ctx context.Context) ([]Turn, error) {
 	// Runtime ownership needs identity, state, and the candidate digest only.
 	// Selecting the full turn here would read every durable schema and candidate
 	// on each janitor tick before the bounded cleaner chooses its two attempts.
-	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, state, candidate_sha256
-		FROM turns WHERE state IN (?, ?, ?) ORDER BY session_id, ordinal`,
+	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, state, candidate_sha256, runtime_run_id
+		FROM turns WHERE runtime_run_id <> '' OR state IN (?, ?, ?) ORDER BY session_id, ordinal`,
 		string(TurnStarting), string(TurnRunning), string(TurnAwaitingValidation))
 	if err != nil {
 		return nil, fmt.Errorf("list runtime cleanup turns: %w", err)
@@ -981,7 +1033,7 @@ func (s *Store) ListRuntimeCleanupTurns(ctx context.Context) ([]Turn, error) {
 	for rows.Next() {
 		var turn Turn
 		var state string
-		if err := rows.Scan(&turn.ID, &turn.SessionID, &state, &turn.CandidateSHA256); err != nil {
+		if err := rows.Scan(&turn.ID, &turn.SessionID, &state, &turn.CandidateSHA256, &turn.RuntimeRunID); err != nil {
 			return nil, fmt.Errorf("scan runtime cleanup turn: %w", err)
 		}
 		turn.State = TurnState(state)
@@ -993,7 +1045,37 @@ func (s *Store) ListRuntimeCleanupTurns(ctx context.Context) ([]Turn, error) {
 	return turns, nil
 }
 
-const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, project_env, project_mcp, repository_read_only, repository, workspace, fork_name,
+// ListSessionRuntimeCleanupTurns is the owner-scoped form used while the service holds that
+// session's runtime lock. It prevents an idle-session cleanup from scanning or touching another
+// session's live turn.
+func (s *Store) ListSessionRuntimeCleanupTurns(ctx context.Context, sessionID string) ([]Turn, error) {
+	if sessionID == "" || !validBoundedText(sessionID, MaxIDBytes) {
+		return nil, &Error{Code: CodeInvalidRequest, Detail: "session id is required"}
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, state, candidate_sha256, runtime_run_id
+		FROM turns WHERE session_id = ? AND (runtime_run_id <> '' OR state IN (?, ?, ?))
+		ORDER BY ordinal`, sessionID, string(TurnStarting), string(TurnRunning), string(TurnAwaitingValidation))
+	if err != nil {
+		return nil, fmt.Errorf("list session runtime cleanup turns: %w", err)
+	}
+	defer rows.Close()
+	var turns []Turn
+	for rows.Next() {
+		var turn Turn
+		var state string
+		if err := rows.Scan(&turn.ID, &turn.SessionID, &state, &turn.CandidateSHA256, &turn.RuntimeRunID); err != nil {
+			return nil, fmt.Errorf("scan session runtime cleanup turn: %w", err)
+		}
+		turn.State = TurnState(state)
+		turns = append(turns, turn)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read session runtime cleanup turns: %w", err)
+	}
+	return turns, nil
+}
+
+const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, project_env, project_mcp, repository_read_only, repository, workspace, fork_name, fork_generation,
 	   base_commit, companions, pull_request_number, pull_request_ref, pull_request_head_commit,
 	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
 	   max_turns, max_queued_turns, max_queued_bytes, turns_used, queued_turn_count,
@@ -1011,7 +1093,7 @@ func scanSession(row rowScanner) (Session, error) {
 	var turnTimeout int64
 	var createdAt, updatedAt int64
 	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest,
-		&sess.ProjectEnv, &sess.ProjectMCP, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.BaseCommit, &companions,
+		&sess.ProjectEnv, &sess.ProjectMCP, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions,
 		&pullRequestNumber, &pullRequestRef, &pullRequestHead, &sess.NativeSessionID,
 		&turnTimeout, &sess.MaxPatchBytes, &sess.Revision, &state, &activity, &sess.MaxTurns,
 		&sess.MaxQueuedTurns, &sess.MaxQueuedBytes, &sess.TurnsUsed, &sess.QueuedTurnCount,
@@ -1355,6 +1437,77 @@ func (s *Store) MarkTurnSent(ctx context.Context, sessionID, turnID string) (Tur
 	return s.markTurnSendState(ctx, sessionID, turnID, SendStateSent)
 }
 
+// BindTurnRuntime records the exact runtime that owns an in-flight turn. expectedRunID is a
+// compare-and-swap guard: rotation may replace only the runtime it just reaped, while a first
+// launch must still observe an empty receipt.
+func (s *Store) BindTurnRuntime(ctx context.Context, sessionID, turnID, expectedRunID, runtimeRunID string) error {
+	if !validRuntimeBinding(sessionID, turnID, runtimeRunID) ||
+		expectedRunID != "" && !validBoundedText(expectedRunID, MaxIDBytes) {
+		return &Error{Code: CodeInvalidRequest, Detail: "invalid turn runtime binding"}
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE turns SET runtime_run_id = ?
+		WHERE session_id = ? AND id = ? AND runtime_run_id = ? AND state IN (?, ?)`,
+		runtimeRunID, sessionID, turnID, expectedRunID, string(TurnStarting), string(TurnRunning))
+	if err != nil {
+		return fmt.Errorf("bind turn runtime: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect turn runtime binding: %w", err)
+	}
+	if changed == 1 {
+		return nil
+	}
+	var current, state string
+	if err := s.db.QueryRowContext(ctx, `SELECT runtime_run_id, state FROM turns WHERE session_id = ? AND id = ?`,
+		sessionID, turnID).Scan(&current, &state); errors.Is(err, sql.ErrNoRows) {
+		return ErrTurnNotFound
+	} else if err != nil {
+		return fmt.Errorf("read turn runtime binding: %w", err)
+	}
+	if current == runtimeRunID && (TurnState(state) == TurnStarting || TurnState(state) == TurnRunning) {
+		return nil
+	}
+	return &Error{Code: CodeRevisionConflict, Detail: "turn runtime binding changed"}
+}
+
+// ClearTurnRuntime retires one exact cleanup receipt. It is intentionally valid in every turn
+// state: process teardown can fail after the answer has already become terminal.
+func (s *Store) ClearTurnRuntime(ctx context.Context, sessionID, turnID, expectedRunID string) error {
+	if !validRuntimeBinding(sessionID, turnID, expectedRunID) {
+		return &Error{Code: CodeInvalidRequest, Detail: "invalid turn runtime binding"}
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE turns SET runtime_run_id = ''
+		WHERE session_id = ? AND id = ? AND runtime_run_id = ?`, sessionID, turnID, expectedRunID)
+	if err != nil {
+		return fmt.Errorf("clear turn runtime: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect cleared turn runtime: %w", err)
+	}
+	if changed == 1 {
+		return nil
+	}
+	var current string
+	if err := s.db.QueryRowContext(ctx, `SELECT runtime_run_id FROM turns WHERE session_id = ? AND id = ?`,
+		sessionID, turnID).Scan(&current); errors.Is(err, sql.ErrNoRows) {
+		return ErrTurnNotFound
+	} else if err != nil {
+		return fmt.Errorf("read cleared turn runtime: %w", err)
+	}
+	if current == "" {
+		return nil
+	}
+	return &Error{Code: CodeRevisionConflict, Detail: "turn runtime binding changed"}
+}
+
+func validRuntimeBinding(sessionID, turnID, runtimeRunID string) bool {
+	return sessionID != "" && turnID != "" && runtimeRunID != "" &&
+		validBoundedText(sessionID, MaxIDBytes) && validBoundedText(turnID, MaxIDBytes) &&
+		validBoundedText(runtimeRunID, MaxIDBytes)
+}
+
 func (s *Store) markTurnSendState(ctx context.Context, sessionID, turnID string, next SendState) (Turn, error) {
 	if sessionID == "" || turnID == "" || !validBoundedText(sessionID, MaxIDBytes) || !validBoundedText(turnID, MaxIDBytes) {
 		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "session and turn are required"}
@@ -1526,7 +1679,18 @@ func (s *Store) RotateTurnTarget(ctx context.Context, sessionID, turnID, from, t
 	return sess, turn, nil
 }
 
-func (s *Store) ReconcileInterruptedTurns(ctx context.Context) ([]Turn, error) {
+// ReconcileInterruptedTurns recovers interrupted turns except for sessions whose external
+// workspace authority is deliberately quarantined by the caller. Exclusion happens inside the
+// same transaction as reconciliation, so startup can leave an unproven legacy session byte-for-
+// byte intact while continuing to recover every independently-authorized session.
+func (s *Store) ReconcileInterruptedTurns(ctx context.Context, excludedSessionIDs ...string) ([]Turn, error) {
+	excluded := make(map[string]struct{}, len(excludedSessionIDs))
+	for _, sessionID := range excludedSessionIDs {
+		if !validBoundedText(sessionID, MaxIDBytes) || sessionID == "" {
+			return nil, &Error{Code: CodeInvalidRequest, Detail: "excluded session id is invalid"}
+		}
+		excluded[sessionID] = struct{}{}
+	}
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin interrupted turn reconciliation: %w", err)
@@ -1544,6 +1708,9 @@ func (s *Store) ReconcileInterruptedTurns(ctx context.Context) ([]Turn, error) {
 		if scanErr != nil {
 			rows.Close()
 			return nil, fmt.Errorf("scan interrupted turn: %w", scanErr)
+		}
+		if _, skip := excluded[turn.SessionID]; skip {
+			continue
 		}
 		turns = append(turns, turn)
 		if !seenSessions[turn.SessionID] {
@@ -1614,7 +1781,8 @@ const turnSelect = `SELECT id, session_id, ordinal, idempotency_key, request_has
 	   usage_input_tokens, usage_cached_input_tokens, usage_output_tokens, usage_reasoning_tokens,
 	   usage_cost_usd, usage_cost_recorded, min_target_index, rewind_target,
 	   output_schema, output_schema_sha256, output_semantic_validation,
-	   candidate_message, candidate_sha256, validation_attempt, validation_error, validation_receipt
+	   candidate_message, candidate_sha256, validation_attempt, validation_error, validation_receipt,
+	   runtime_run_id
 FROM turns`
 
 func (s *Store) GetTurn(ctx context.Context, sessionID, turnID string) (Turn, error) {
@@ -1735,7 +1903,7 @@ func scanTurn(row rowScanner) (Turn, error) {
 		&turn.Usage.CostUSD, &turn.Usage.CostRecorded, &turn.MinTargetIndex,
 		&turn.RewindTarget, &outputSchema, &outputSchemaSHA256, &outputSemanticValidation,
 		&candidateMessage, &candidateSHA256, &turn.ValidationAttempt,
-		&validationError, &validationReceipt); err != nil {
+		&validationError, &validationReceipt, &turn.RuntimeRunID); err != nil {
 		return Turn{}, err
 	}
 	if len(outputSchema) > 0 || outputSchemaSHA256 != "" {

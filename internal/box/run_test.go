@@ -15,6 +15,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
@@ -294,6 +295,28 @@ func TestRunSignalsTheRuntimeLaunchAfterHostSetup(t *testing.T) {
 	}
 	if runInvocations(string(args)) != 1 {
 		t.Fatalf("run invocations = %d, want one:\n%s", runInvocations(string(args)), args)
+	}
+}
+
+func TestRunPreservesSuccessfulProviderResultWhenActivityCleanupCannotBeProven(t *testing.T) {
+	repo := t.TempDir()
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		Batch: true, Quiet: true, ActivityRepo: repo, ActivityKind: forkspace.ExecutionInteractive,
+		OnRuntimeLaunch: func() {
+			entries, err := os.ReadDir(filepath.Join(forkspace.StateDir(repo), "executions"))
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("published activity = %v, err=%v", entries, err)
+			}
+			if err := os.WriteFile(filepath.Join(forkspace.StateDir(repo), "executions", entries[0].Name()), []byte("corrupt\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("successful runtime result was rewritten by activity cleanup: code=%d err=%v", code, err)
 	}
 }
 

@@ -1,9 +1,9 @@
 ---
 name: session-awaiting-validation-runtime-cleanup
-description: awaiting-validation owns durable candidate authority but no live provider runtime; startup and the bounded janitor reap runtime state without deciding the candidate
+description: every started turn retains its exact runtime receipt through teardown; awaiting-validation owns durable candidate authority but no live provider runtime
 subsystem: sessions
-sources: [internal/session/store.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go]
-updated: 2026-08-26
+sources: [internal/session/store.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/forkspace/generation.go, internal/forkspace/reservation.go]
+updated: 2026-08-28
 ---
 
 # Awaiting validation is durable authority, not runtime authority
@@ -29,7 +29,25 @@ recovery the caller rereads the candidate and submits its still-current decision
 Cleanup is host-runtime work only. It must not call the validation operation, change the candidate,
 publish the assistant message, alter usage/cost or artifacts, or clear the native session binding.
 
+Schema v15 stores `turns.runtime_run_id` before an ordinary or borrowed-warm child starts. The
+receipt survives terminal success and candidate staging until exact process/box cleanup succeeds;
+the terminal turn therefore remains discoverable by cleanup even though it has left the ordinary
+running-turn query. A cleanup failure is warned and retained—it never rewrites a successful answer
+or semantic candidate into provider failure. Cleanup clears only the same exact runtime ID, so a
+replacement child cannot lose its ownership evidence.
+
+A generationless bound session from an older schema is not enough authority to clean anything.
+Startup may adopt it only when the current generation already has an exact remote-session
+reservation for that session ID, proving a partial upgrade rather than path reuse. Without that
+proof the session is quarantined: interrupted-turn reconciliation excludes it transactionally,
+workers and janitors skip it, and every workspace/runtime/destructive API fails before touching the
+fork. Read-only durable session and turn history remains available for manual recovery.
+
 ## Changelog
+- 2026-08-28 — made legacy generation adoption require an exact pre-existing session reservation;
+  unproven sessions remain byte-stable and quarantined from runtime and workspace operations.
+- 2026-08-28 — persisted exact ordinary and borrowed-warm runtime IDs through terminal transitions;
+  successful answers remain successful while session cleanup retries the exact leftover runtime.
 - 2026-08-26 — made candidate decisions themselves a cleanup barrier so an immediate accept,
   reject, or cancel cannot erase the janitor's only ownership signal or race a replacement worker.
 - 2026-08-26 — created after closing the gap where a crash or teardown failure after candidate

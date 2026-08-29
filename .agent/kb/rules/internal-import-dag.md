@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-08-26
+updated: 2026-08-28
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,14 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-28 — **+2 lifecycle-authority edges: `box → forkspace`, `sessionsvc → tasks`.** Every
+  sandbox now publishes its exact execution generation at the runtime boundary, so `box` reaches
+  the leaf host-control records directly instead of relying on callers to remember publication.
+  Remote-session discard must refuse a workspace that owns canonical task authority, so
+  `sessionsvc` queries the task assignment registry while holding the same fork lifecycle lock.
+  Both directions remain acyclic (`forkspace` is a leaf; `tasks` does not import `sessionsvc`).
+  Swept the full production import graph with `TestInternalImportDAG`; these were the only two new
+  edges and neither grants presentation authority.
 - 2026-08-26 — **+1 edge: `sessionsvc → mcp`.** Remote-session credential projection now uses the
   same validated immutable MCP snapshot as ordinary boxes; the direct leaf edge prevents
   `sessionsvc` from reopening a mutable source or hiding validation behind an adapter.

@@ -74,6 +74,45 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 	}
 }
 
+type reviewWarmRunner struct {
+	evicted atomic.Bool
+	err     error
+}
+
+func (*reviewWarmRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
+	return turn, nil
+}
+
+func (r *reviewWarmRunner) EvictWarmSession(string) error {
+	r.evicted.Store(true)
+	return r.err
+}
+
+func TestSessionServiceRunReviewEvictsWarmWriterBeforeGate(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &reviewWarmRunner{}
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, string, string) (ReviewGateResult, error) {
+		if !runner.evicted.Load() {
+			t.Fatal("review gate started before the warm writer was evicted")
+		}
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	service.runner = runner
+	defer service.Stop()
+	sess := createReviewSession(t, service, "warm-writer")
+	if _, err := service.RunReview(context.Background(), "review-warm-writer", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision}); err != nil {
+		t.Fatal(err)
+	}
+
+	failing := &reviewWarmRunner{err: errors.New("runtime reap unavailable")}
+	service.runner = failing
+	second := createReviewSession(t, service, "warm-writer-failure")
+	if _, err := service.RunReview(context.Background(), "review-warm-writer-failure", RunReviewRequest{SessionID: second.ID, ExpectedRevision: second.Revision}); err == nil {
+		t.Fatal("review proceeded without proving warm writer cleanup")
+	}
+}
+
 func TestSessionServiceRunReviewRejectsDetachedHeadWithoutRetry(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))

@@ -15,8 +15,8 @@ import (
 )
 
 // End-to-end tests for the folder task system: they drive the real `coop tasks` dispatcher
-// and the shared readers across the full feature set (lifecycle, ordered dirs, remove,
-// multiple queues, splitting) and assert the cross-cutting invariants the unit tests don't:
+// and the shared readers across the full feature set (lifecycle, ordered dirs, remove, and
+// multiple queues) and assert the cross-cutting invariants the unit tests don't:
 // the on-disk dirs are the numeric-prefixed ones, they sort in lifecycle order, and a finished
 // task is MOVED (never deleted) by any automated path.
 

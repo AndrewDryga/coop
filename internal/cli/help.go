@@ -123,7 +123,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 
 	group("TASKS — a folder-per-task queue in .agent/tasks/")
 	row("coop tasks ls", "show the queue, grouped by state")
-	row("coop tasks watch", "live board of the queue + active forks")
+	row("coop tasks watch [--json]", "canonical tasks + every sandbox, live")
 	row("coop tasks add \"<title>\"", "add a task (then claim/block/unblock/done)")
 	row("coop tasks decisions", "what's blocked on a decision (-i to answer)")
 	row("coop context", "compile the docs relevant to touched paths")
@@ -537,7 +537,8 @@ var commandHelp = map[string]string{
   ls [--all] [--todo|--in-progress|--blocked|--done]
                    list tasks by state, with counts (recent done capped; --all shows all). Pass one
                    or more state flags to show only those. Task ids link to the folder — click to open.
-  watch            live board: the queue + any active forks, deduped by id (auto-exits when done)
+  watch [--json]   live board: canonical tasks + every active sandbox (auto-exits when done);
+                   --json prints the same project snapshot once for automation
   add [--project <name>] "<title>"
                    scaffold a task folder in todo (or fill it inline: --context/--acceptance/--approach/--subtask)
   claim <id>       claim a task before you start it (todo -> in_progress)
@@ -549,7 +550,6 @@ var commandHelp = map[string]string{
   rm <id>          delete a task folder; --all-done (alias: clear) clears the done archive
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
   lint             check the tree (blocked<->decision.md, no status field, ...; exits 1)
-  split <n>        slice the todo tasks into n copy-trees (.agent/tasks.sliceN); loop one fork per slice
   queues           print each configured queue's path, one per line (for scripts and the sweep guard)
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
@@ -561,11 +561,12 @@ var commandHelp = map[string]string{
   --tasks or COOP_TASKS. Paths are repo-relative. With several queues (a monorepo), ls, lint, and decisions
   (including -i) roll up across all of them, and the id commands (claim/block/unblock/done/
   rm) find their task in whichever queue holds it — erroring only when an id matches in
-  more than one queue (split slices share ids with their source). In a monorepo, add requires
+  more than one queue. In a monorepo, add requires
   --project root|<subproject> so creation picks an explicit queue; a nested member takes its
   full path (terraform/environments/va1) or just its last segment (va1) when no other member
-  ends in the same one. With raw --tasks overrides, add and split still need a single --tasks
-  because they create into a queue.`,
+  ends in the same one. With raw --tasks overrides, add still needs a single --tasks because it
+  creates into one queue. Copied queue slicing is retired: parallel fork loops schedule distinct
+  tasks directly from the same canonical queue.`,
 
 	"backlog": `coop backlog — park the genuinely LARGE as task folders (.agent/tasks/xx_backlog/).
 
@@ -728,6 +729,13 @@ var commandHelp = map[string]string{
   components' work with no setup. Repeat --tasks (or set COOP_TASKS) to override the
   set; the loop keeps going while any queue has unfinished work. The whole repo is
   mounted either way.
+
+  A fork loop does not copy or mount those queues. The host assigns one canonical task at a
+  time and exposes only that task through an execution projection. Stop/crash keeps the exact
+  assignment resumable; projected done becomes a reviewed fork candidate, and the canonical
+  task reaches done only when that exact candidate lands. Multiple forks may therefore share
+  the same queue without duplicate work. --tasks on a fork selects one canonical queue; it does
+  not create a fork-local queue.
 
   --max-tasks <n>   work at most N selected tasks, counting each only after it reaches done
                     or blocked following retries and its immediate audit; then pause

@@ -34,6 +34,9 @@ func (p *WarmPool) Checkout(provider string) *acpproxy.Child {
 	defer p.mu.Unlock()
 	c := p.boxes[provider]
 	delete(p.boxes, provider)
+	if c != nil && c.SetActive != nil {
+		c.SetActive(true)
+	}
 	return c
 }
 
@@ -63,6 +66,9 @@ func (p *WarmPool) Refill(provider string) {
 	case !p.enabled:
 		p.stop(child) // reaped while we were spawning — don't leak it
 	default:
+		if child.SetActive != nil {
+			child.SetActive(false)
+		}
 		p.boxes[provider] = child
 	}
 	p.mu.Unlock()

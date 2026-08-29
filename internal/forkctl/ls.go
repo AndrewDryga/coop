@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -33,7 +35,19 @@ func (c *Control) ForkLs(args []string) (int, error) {
 	if asJSON {
 		return c.forkLsJSON(repo)
 	}
-	names := forkspace.LifecycleNames(repo)
+	projectSnapshot := tasks.ReadProjectSnapshot(repo, nil)
+	nameSet := map[string]bool{}
+	for _, name := range forkspace.LifecycleNames(repo) {
+		nameSet[name] = true
+	}
+	for _, fork := range projectSnapshot.Forks {
+		nameSet[fork.Name] = true
+	}
+	names := make([]string, 0, len(nameSet))
+	for name := range nameSet {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	if len(names) == 0 {
 		ui.Note("no forks yet — open one with 'coop fork <name>'")
 		return 0, nil
@@ -42,12 +56,15 @@ func (c *Control) ForkLs(args []string) (int, error) {
 	// than %-Ns: a glyph like ⚠/⚑ in TASKS/CHANGES (or a "…" in a truncated name) is multi-byte, so
 	// %-Ns would count bytes, short-pad, and shove later columns out from under their headers.
 	nw := colWidth(names, len("NAME"), 24)
+	statuses := make([]forkStatus, 0, len(names))
+	for _, name := range names {
+		statuses = append(statuses, c.gatherForkStatus(repo, name))
+	}
 	const format = "  %s %s %s %s %s %s %s %s\n"
 	// Bold the whole rendered line, not each cell: bolding a cell first would put ANSI
 	// escape bytes inside the width count and misalign the header against the rows.
 	fmt.Print(ui.For(os.Stdout).Bold(fmt.Sprintf(format, padRight("NAME", nw), padRight("AGENT", 8), padRight("BRANCH", 12), padRight("STATE", 9), padRight("TASKS", 8), padRight("CHANGES", 15), padRight("COST", 8), "UPDATED")))
-	for _, n := range names {
-		s := c.gatherForkStatus(repo, n)
+	for _, s := range statuses {
 		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), padRight(s.Agent, 8), padRight(s.Branch, 12), padRight(s.stateCell(), 9), padRight(s.tasksCell(), 8), padRight(s.changesCell(), 15), padRight(s.costCell(), 8), s.Updated)
 	}
 	// A fork whose name is (or became) a reserved verb is unreachable by `coop fork <name>` — that
@@ -57,6 +74,22 @@ func (c *Control) ForkLs(args []string) (int, error) {
 	for _, n := range names {
 		if forkspace.Reserved(n) {
 			ui.Warn("fork %q shadows the '%s' subcommand — reach it via 'coop fork path %s' or 'coop fork rm %s'", n, n, n, n)
+		}
+	}
+	seenProblems := map[string]bool{}
+	for _, status := range statuses {
+		for _, problem := range status.Problems {
+			message := "fork " + status.Name + ": " + problem
+			if !seenProblems[message] {
+				ui.Warn("%s", message)
+				seenProblems[message] = true
+			}
+		}
+	}
+	for _, problem := range projectSnapshot.Problems {
+		if !seenProblems[problem] {
+			ui.Warn("project activity: %s", problem)
+			seenProblems[problem] = true
 		}
 	}
 	return 0, nil
@@ -97,18 +130,64 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 		}
 		return m
 	}
+	type forkJSONStatus struct {
+		State               string           `json:"state"`
+		Tasks               tasks.TaskCounts `json:"tasks"`
+		ActiveSandboxes     int              `json:"active_sandboxes"`
+		ParkedSandboxes     int              `json:"parked_sandboxes"`
+		CleanupSandboxes    int              `json:"cleanup_sandboxes"`
+		UnverifiedSandboxes int              `json:"unverified_sandboxes"`
+		DetachedRunning     bool             `json:"detached_running"`
+		WorkspaceReserved   bool             `json:"workspace_reserved"`
+		Candidate           bool             `json:"candidate"`
+		Landing             bool             `json:"landing"`
+		CleanupPending      bool             `json:"cleanup_pending"`
+		Legacy              bool             `json:"legacy_generation"`
+		Problems            []string         `json:"problems,omitempty"`
+	}
 	type workspace struct {
 		Name     string            `json:"name"`
 		Path     string            `json:"path"`
 		Serve    map[string]string `json:"serve,omitempty"`
 		Services map[string]string `json:"services,omitempty"`
+		Status   *forkJSONStatus   `json:"status,omitempty"`
 	}
 	out := []workspace{{Name: "root", Path: repo, Serve: serveURLs(repo), Services: svcURLs(repo)}}
-	for _, n := range forkspace.LifecycleNames(repo) {
-		ws := forkspace.Workspace(repo, n)
-		out = append(out, workspace{Name: n, Path: ws, Serve: serveURLs(ws), Services: svcURLs(ws)})
+	var problems []string
+	projectSnapshot := tasks.ReadProjectSnapshot(repo, nil)
+	nameSet := map[string]bool{}
+	for _, name := range forkspace.LifecycleNames(repo) {
+		nameSet[name] = true
 	}
-	b, err := json.MarshalIndent(map[string]any{"workspaces": out}, "", "  ")
+	for _, fork := range projectSnapshot.Forks {
+		nameSet[fork.Name] = true
+	}
+	names := make([]string, 0, len(nameSet))
+	for name := range nameSet {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		ws := forkspace.Workspace(repo, n)
+		s := c.gatherForkStatus(repo, n)
+		status := &forkJSONStatus{
+			State: s.stateCell(), Tasks: s.Counts, ActiveSandboxes: s.Active,
+			ParkedSandboxes: s.Parked, CleanupSandboxes: s.CleanupSandboxes,
+			UnverifiedSandboxes: s.UnverifiedSandboxes,
+			DetachedRunning:     s.Running, WorkspaceReserved: s.Reserved, Candidate: s.Ready,
+			Landing: s.Landing, CleanupPending: s.Cleanup, Legacy: s.Legacy, Problems: s.Problems,
+		}
+		out = append(out, workspace{Name: n, Path: ws, Serve: serveURLs(ws), Services: svcURLs(ws), Status: status})
+		for _, problem := range s.Problems {
+			problems = append(problems, "fork "+n+": "+problem)
+		}
+	}
+	problems = append(problems, projectSnapshot.Problems...)
+	payload := map[string]any{"workspaces": out}
+	if len(problems) > 0 {
+		payload["problems"] = problems
+	}
+	b, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return 1, err
 	}

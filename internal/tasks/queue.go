@@ -15,6 +15,32 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
+// LegacyForkQueueWithWork detects the retired pre-projection design, where a fork carried a copied
+// task queue. Those folders are duplicate authority and must never be merged or scheduled as if
+// they were canonical. Empty scaffolds are harmless; any lifecycle task requires explicit human
+// migration before the fork may proceed.
+func LegacyForkQueueWithWork(workspace string) string {
+	candidates := []string{filepath.Join(workspace, TasksRoot)}
+	if rels, err := project.TaskDirs(workspace); err == nil {
+		for _, rel := range rels {
+			candidate := filepath.Join(workspace, rel)
+			if !slices.Contains(candidates, candidate) {
+				candidates = append(candidates, candidate)
+			}
+		}
+	}
+	for _, root := range candidates {
+		if len(ReadTaskTree(root)) == 0 {
+			continue
+		}
+		if rel, err := filepath.Rel(workspace, root); err == nil {
+			return rel
+		}
+		return root
+	}
+	return ""
+}
+
 // extractTasksFlags pulls every `--tasks <path>` (or `--tasks=<path>`) out of args,
 // returning the collected paths and the remaining args. Shared by `coop tasks` and
 // `coop loop` so they accept the same repeatable flag. A trailing `--tasks` with no path
@@ -215,7 +241,7 @@ func TaskQueues(cfg *config.Config, repo string, flags []string) ([]string, erro
 }
 
 // CmdTasks drives the folder task queue (.agent/tasks): one folder per task, its state the
-// parent directory. The subcommands (list/lint/add/claim/block/unblock/done/remove/split/
+// parent directory. The subcommands (list/lint/add/claim/block/unblock/done/remove/
 // decisions) live in cmd.go; a bare `coop tasks` shows help.
 func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	flags, rest, err := ExtractTasksFlags(args)
@@ -279,7 +305,14 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 		if len(rels) == 0 {
 			return 2, errors.New("coop tasks watch: no task queue configured — set COOP_TASKS or pass --tasks <path>")
 		}
-		return TasksWatch(host, repo, rels)
+		jsonOutput := false
+		for _, arg := range rest[1:] {
+			if arg != "--json" || jsonOutput {
+				return 2, fmt.Errorf("coop tasks watch: unknown or repeated flag %q (only --json is supported)", arg)
+			}
+			jsonOutput = true
+		}
+		return TasksWatch(host, repo, rels, jsonOutput)
 	}
 	if sub == "queues" {
 		// Print each configured queue's absolute path, one per line — a stable primitive for scripts
@@ -304,7 +337,7 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 		// A monorepo can configure several queues (COOP_TASKS, or repeated --tasks) — the same set
 		// `coop loop` drains. The roll-ups span them all (each under a header) and the
 		// id-addressed commands find their task in whichever queue holds it; only the commands that
-		// CREATE into a queue (add, split) need one unambiguous target.
+		// CREATE into a queue (add) needs one unambiguous target.
 		switch sub {
 		case "ls":
 			return tasksListAll(repo, rels, rest[1:])
@@ -447,9 +480,8 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 
 // queueOfTask finds which configured queue holds the task id — the multi-queue analog of
 // findTask, with the same precedence (an exact id match beats substring matches). It errors when
-// the id is absent everywhere, or matches in more than one queue: `coop tasks split` copies tasks
-// into slices WITH their ids, so duplicates across queues are real — acting on an arbitrary one
-// would silently touch the wrong tree.
+// the id is absent everywhere, or matches in more than one queue. Explicit or monorepo queues may
+// still contain duplicate ids, so acting on an arbitrary one would silently touch the wrong tree.
 func queueOfTask(repo string, rels []string, id string) (string, error) {
 	return queueOfTaskWith(repo, rels, id, ReadTaskTree)
 }
