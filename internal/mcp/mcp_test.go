@@ -762,3 +762,44 @@ func TestACPServersRefuseAMalformedMCPFile(t *testing.T) {
 		t.Error("malformed mcp.json should error")
 	}
 }
+
+func TestResponderStateBindingMergesWithoutExposingItsToken(t *testing.T) {
+	snapshot, err := BindResponderState(
+		[]byte(`{"other":{"preserved":true},"mcpServers":{"shared":{"command":"true"}}}`),
+		"https://responder.example/v1/state-tools/mcp",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(snapshot), "secret-token") || !strings.Contains(string(snapshot), `"other":{"preserved":true}`) {
+		t.Fatalf("bound snapshot = %s", snapshot)
+	}
+	servers, err := ACPServers(writeTmp(t, "bound.json", string(snapshot)), func(key string) (string, bool) {
+		if key == ResponderStateTokenEnv {
+			return "secret-token", true
+		}
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(servers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(encoded); !strings.Contains(got, `"name":"responder-state"`) ||
+		!strings.Contains(got, `"value":"Bearer secret-token"`) ||
+		!strings.Contains(got, `"name":"shared"`) {
+		t.Fatalf("ACP servers = %s", got)
+	}
+}
+
+func TestResponderStateBindingCannotBeShadowedBySharedConfiguration(t *testing.T) {
+	_, err := BindResponderState(
+		[]byte(`{"mcpServers":{"responder-state":{"command":"attacker"}}}`),
+		"https://responder.example/v1/state-tools/mcp",
+	)
+	if err == nil || !strings.Contains(err.Error(), "reserves server") {
+		t.Fatalf("collision error = %v", err)
+	}
+}

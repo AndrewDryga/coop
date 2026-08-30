@@ -1093,13 +1093,18 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 		Target: "target", PolicyDigest: strings.Repeat("a", 64), OmitEnv: true, OmitMCP: true,
 		RepositoryReadOnly: true,
 		TurnTimeout:        3 * time.Minute, MaxPatchBytes: 1234,
+		ResponderBinding: &ResponderBinding{
+			Endpoint: "https://responder.example/v1/state-tools/mcp",
+			Token:    strings.Repeat("t", 48),
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sess.PolicyDigest != strings.Repeat("a", 64) || sess.ProjectEnv || sess.ProjectMCP ||
 		!sess.RepositoryReadOnly ||
-		sess.TurnTimeout != 3*time.Minute || sess.MaxPatchBytes != 1234 {
+		sess.TurnTimeout != 3*time.Minute || sess.MaxPatchBytes != 1234 ||
+		sess.ResponderBinding == nil || sess.ResponderBinding.Token != strings.Repeat("t", 48) {
 		t.Fatalf("created policy fields = %+v", sess)
 	}
 	if err := store.Close(); err != nil {
@@ -1110,7 +1115,9 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	reopened, err := store.GetSession(ctx, sess.ID)
 	if err != nil || reopened.PolicyDigest != sess.PolicyDigest || reopened.ProjectEnv || reopened.ProjectMCP ||
 		!reopened.RepositoryReadOnly ||
-		reopened.TurnTimeout != sess.TurnTimeout || reopened.MaxPatchBytes != sess.MaxPatchBytes {
+		reopened.TurnTimeout != sess.TurnTimeout || reopened.MaxPatchBytes != sess.MaxPatchBytes ||
+		reopened.ResponderBinding == nil || reopened.ResponderBinding.Endpoint != sess.ResponderBinding.Endpoint ||
+		reopened.ResponderBinding.Token != sess.ResponderBinding.Token {
 		t.Fatalf("reopened policy fields = %+v, err=%v", reopened, err)
 	}
 
@@ -1135,6 +1142,71 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	}
 	if _, err := store.SubmitTurn(ctx, "malformed-turn-result", turnReq); err == nil {
 		t.Fatal("empty turn replay unexpectedly succeeded")
+	}
+}
+
+func TestEachTurnPersistsItsOwnPrivateResponderBinding(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "state")
+	store := openTestStore(t, root)
+
+	sess, err := store.CreateSession(ctx, "turn-bindings", CreateSessionRequest{Target: "target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstBinding := &ResponderBinding{
+		Endpoint: "https://responder.example/v1/state-tools/mcp",
+		Token:    strings.Repeat("a", 48),
+	}
+	secondBinding := &ResponderBinding{
+		Endpoint: "https://responder.example/v1/state-tools/mcp",
+		Token:    strings.Repeat("b", 48),
+	}
+	first, err := store.SubmitTurn(ctx, "turn-binding-1", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "first",
+		ResponderBinding: firstBinding,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.SubmitTurn(ctx, "turn-binding-2", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "second",
+		ResponderBinding: secondBinding,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ResponderBinding == nil || first.ResponderBinding.Token != firstBinding.Token ||
+		second.ResponderBinding == nil || second.ResponderBinding.Token != secondBinding.Token {
+		t.Fatalf("submitted turn bindings = first:%+v second:%+v", first.ResponderBinding, second.ResponderBinding)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = openTestStore(t, root)
+	defer store.Close()
+
+	first, err = store.GetTurn(ctx, sess.ID, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err = store.GetTurn(ctx, sess.ID, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ResponderBinding == nil || first.ResponderBinding.Token != firstBinding.Token ||
+		second.ResponderBinding == nil || second.ResponderBinding.Token != secondBinding.Token {
+		t.Fatalf("reopened turn bindings = first:%+v second:%+v", first.ResponderBinding, second.ResponderBinding)
+	}
+	for _, turn := range []Turn{first, second} {
+		public, err := json.Marshal(turn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(public, []byte(turn.ResponderBinding.Token)) || bytes.Contains(public, []byte("responder_binding")) {
+			t.Fatalf("private turn binding leaked through durable JSON: %s", public)
+		}
 	}
 }
 

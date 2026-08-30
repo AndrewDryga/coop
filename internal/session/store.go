@@ -720,6 +720,7 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 		PolicyDigest:       req.PolicyDigest,
 		ProjectEnv:         !req.OmitEnv,
 		ProjectMCP:         !req.OmitMCP,
+		ResponderBinding:   cloneResponderBinding(req.ResponderBinding),
 		RepositoryReadOnly: req.RepositoryReadOnly,
 		Repository:         req.Repository,
 		Workspace:          req.Workspace,
@@ -748,11 +749,11 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
-		(id, external_ref, target, policy, policy_digest, project_env, project_mcp, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions,
+		(id, external_ref, target, policy, policy_digest, project_env, project_mcp, responder_endpoint, responder_token, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions,
 		 pull_request_number, pull_request_ref, pull_request_head_commit,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
-		sess.Policy, sess.PolicyDigest, sess.ProjectEnv, sess.ProjectMCP, sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		sess.Policy, sess.PolicyDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ResponderBinding), responderToken(sess.ResponderBinding), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
 		string(companions), pullRequestNumber(sess.PullRequest), pullRequestRef(sess.PullRequest), pullRequestHead(sess.PullRequest),
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
 		sess.MaxQueuedTurns, sess.MaxQueuedBytes, now.UnixNano(), now.UnixNano()); err != nil {
@@ -844,6 +845,9 @@ func validateCreateRequest(req CreateSessionRequest) error {
 	}
 	if req.TurnTimeout <= 0 || req.TurnTimeout > MaxTurnTimeout || req.MaxPatchBytes <= 0 || req.MaxPatchBytes > MaxPatchBytesLimit {
 		return &Error{Code: CodeInvalidRequest, Detail: "session policy bounds are outside limits"}
+	}
+	if err := ValidateResponderBinding(req.ResponderBinding); err != nil {
+		return err
 	}
 	bindings := []string{req.Policy, req.Repository, req.Workspace, req.ForkName, req.BaseCommit}
 	boundCount := 0
@@ -1075,7 +1079,7 @@ func (s *Store) ListSessionRuntimeCleanupTurns(ctx context.Context, sessionID st
 	return turns, nil
 }
 
-const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, project_env, project_mcp, repository_read_only, repository, workspace, fork_name, fork_generation,
+const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, repository_read_only, repository, workspace, fork_name, fork_generation,
 	   base_commit, companions, pull_request_number, pull_request_ref, pull_request_head_commit,
 	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
 	   max_turns, max_queued_turns, max_queued_bytes, turns_used, queued_turn_count,
@@ -1089,11 +1093,11 @@ func scanSession(row rowScanner) (Session, error) {
 	var state, activity, active string
 	var companions string
 	var pullRequestNumber int
-	var pullRequestRef, pullRequestHead string
+	var pullRequestRef, pullRequestHead, responderEndpointValue, responderTokenValue, workspaceTaskValue string
 	var turnTimeout int64
 	var createdAt, updatedAt int64
 	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest,
-		&sess.ProjectEnv, &sess.ProjectMCP, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions,
+		&sess.ProjectEnv, &sess.ProjectMCP, &responderEndpointValue, &responderTokenValue, &workspaceTaskValue, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions,
 		&pullRequestNumber, &pullRequestRef, &pullRequestHead, &sess.NativeSessionID,
 		&turnTimeout, &sess.MaxPatchBytes, &sess.Revision, &state, &activity, &sess.MaxTurns,
 		&sess.MaxQueuedTurns, &sess.MaxQueuedBytes, &sess.TurnsUsed, &sess.QueuedTurnCount,
@@ -1106,6 +1110,16 @@ func scanSession(row rowScanner) (Session, error) {
 	}
 	if pullRequestNumber > 0 {
 		sess.PullRequest = &PullRequestBinding{Number: pullRequestNumber, Ref: pullRequestRef, HeadCommit: pullRequestHead}
+	}
+	if responderEndpointValue != "" {
+		sess.ResponderBinding = &ResponderBinding{Endpoint: responderEndpointValue, Token: responderTokenValue}
+	}
+	if workspaceTaskValue != "" {
+		var binding WorkspaceTaskBinding
+		if err := json.Unmarshal([]byte(workspaceTaskValue), &binding); err != nil {
+			return Session{}, fmt.Errorf("decode workspace task binding: %w", err)
+		}
+		sess.WorkspaceTask = &binding
 	}
 	sess.State = SessionState(state)
 	sess.Activity = ActivityState(activity)
@@ -1122,6 +1136,59 @@ func clonePullRequestBinding(value *PullRequestBinding) *PullRequestBinding {
 	}
 	clone := *value
 	return &clone
+}
+
+func cloneResponderBinding(value *ResponderBinding) *ResponderBinding {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
+func responderEndpoint(value *ResponderBinding) string {
+	if value == nil {
+		return ""
+	}
+	return value.Endpoint
+}
+
+func responderToken(value *ResponderBinding) string {
+	if value == nil {
+		return ""
+	}
+	return value.Token
+}
+
+// ValidateResponderBinding validates the one controller-owned MCP binding a
+// session may carry. The service layer calls this before doing repository work;
+// the store repeats it as the final durable boundary.
+func ValidateResponderBinding(value *ResponderBinding) error {
+	if value == nil {
+		return nil
+	}
+	if !validBoundedText(value.Endpoint, 2048) || !validResponderToken(value.Token) {
+		return &Error{Code: CodeInvalidRequest, Detail: "Responder binding is outside bounds"}
+	}
+	endpoint, err := url.Parse(value.Endpoint)
+	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil ||
+		endpoint.RawQuery != "" || endpoint.Fragment != "" || endpoint.Path != "/v1/state-tools/mcp" {
+		return &Error{Code: CodeInvalidRequest, Detail: "Responder binding endpoint is invalid"}
+	}
+	return nil
+}
+
+func validResponderToken(value string) bool {
+	if len(value) < 32 || len(value) > 256 {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '-' && char != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func pullRequestNumber(value *PullRequestBinding) int {
@@ -1193,18 +1260,19 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 		return Turn{}, fmt.Errorf("reserve turn ordinal: %w", err)
 	}
 	turn := Turn{
-		ID:             s.id("turn"),
-		SessionID:      req.SessionID,
-		Ordinal:        ordinal,
-		IdempotencyKey: key,
-		RequestHash:    hash,
-		State:          TurnQueued,
-		SendState:      SendStateNone,
-		Prompt:         req.Prompt,
-		QueuedAt:       now,
-		MinTargetIndex: req.MinTargetIndex,
-		RewindTarget:   req.RewindTarget,
-		OutputContract: cloneOutputContract(req.OutputContract),
+		ID:               s.id("turn"),
+		SessionID:        req.SessionID,
+		Ordinal:          ordinal,
+		IdempotencyKey:   key,
+		RequestHash:      hash,
+		State:            TurnQueued,
+		SendState:        SendStateNone,
+		Prompt:           req.Prompt,
+		QueuedAt:         now,
+		MinTargetIndex:   req.MinTargetIndex,
+		RewindTarget:     req.RewindTarget,
+		OutputContract:   cloneOutputContract(req.OutputContract),
+		ResponderBinding: cloneResponderBinding(req.ResponderBinding),
 	}
 	outputSchema := []byte{}
 	var outputSchemaSHA256 string
@@ -1215,10 +1283,11 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 		outputSemanticValidation = turn.OutputContract.RequireSemanticValidation
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO turns (id, session_id, ordinal, idempotency_key, request_hash, state, send_state, prompt, queued_at, min_target_index, rewind_target, output_schema, output_schema_sha256, output_semantic_validation)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.SessionID, turn.Ordinal, turn.IdempotencyKey,
+		INSERT INTO turns (id, session_id, ordinal, idempotency_key, request_hash, state, send_state, prompt, queued_at, min_target_index, rewind_target, output_schema, output_schema_sha256, output_semantic_validation, responder_endpoint, responder_token)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.SessionID, turn.Ordinal, turn.IdempotencyKey,
 		turn.RequestHash, string(turn.State), string(turn.SendState), turn.Prompt, now.UnixNano(),
-		turn.MinTargetIndex, turn.RewindTarget, outputSchema, outputSchemaSHA256, outputSemanticValidation); err != nil {
+		turn.MinTargetIndex, turn.RewindTarget, outputSchema, outputSchemaSHA256, outputSemanticValidation,
+		responderEndpoint(turn.ResponderBinding), responderToken(turn.ResponderBinding)); err != nil {
 		return Turn{}, fmt.Errorf("insert turn: %w", err)
 	}
 	for ordinal, artifact := range req.Artifacts {
@@ -1270,6 +1339,9 @@ func validateSubmitRequest(req SubmitTurnRequest) error {
 		return &Error{Code: CodeInvalidRequest, Detail: "rewind_target cannot be combined with min_target_index"}
 	}
 	if _, err := CompileOutputContract(req.OutputContract); err != nil {
+		return err
+	}
+	if err := ValidateResponderBinding(req.ResponderBinding); err != nil {
 		return err
 	}
 	if len(req.Artifacts) > MaxTurnArtifacts {
@@ -1405,6 +1477,12 @@ func (s *Store) LeaseNextTurn(ctx context.Context, sessionID string) (Turn, bool
 	turn.Artifacts, err = loadTurnArtifacts(ctx, tx, turn.ID)
 	if err != nil {
 		return Turn{}, false, err
+	}
+	if turn.OutputContract != nil && turn.OutputContract.RequireSemanticValidation && turn.ValidationAttempt > 0 {
+		turn.OutputArtifacts, err = readOutputArtifacts(ctx, tx, turn.ID)
+		if err != nil {
+			return Turn{}, false, err
+		}
 	}
 	now := s.now()
 	nextState, nextSend, nextActivity := TurnStarting, SendStateNone, ActivityStarting
@@ -1597,6 +1675,172 @@ func (s *Store) BindNativeSession(ctx context.Context, sessionID, nativeID strin
 	return sess, nil
 }
 
+// BindWorkspaceTask immutably attaches one host-approved durable task to a session before any
+// model turn is admitted. An exact existing binding is the crash-recovery path after the
+// filesystem projection and session update committed but the outer operation receipt did not.
+func (s *Store) BindWorkspaceTask(
+	ctx context.Context,
+	sessionID string,
+	expectedRevision int64,
+	binding WorkspaceTaskBinding,
+) (Session, error) {
+	if sessionID == "" || expectedRevision <= 0 || validateWorkspaceTaskBinding(binding) != nil {
+		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "workspace task binding is invalid"}
+	}
+	encoded, err := json.Marshal(binding)
+	if err != nil {
+		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "workspace task binding cannot be encoded"}
+	}
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Session{}, fmt.Errorf("begin workspace task binding: %w", err)
+	}
+	defer tx.Rollback()
+	sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", sessionID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrSessionNotFound
+	}
+	if err != nil {
+		return Session{}, fmt.Errorf("read session for workspace task binding: %w", err)
+	}
+	if sess.WorkspaceTask != nil {
+		if *sess.WorkspaceTask != binding {
+			return Session{}, &Error{Code: CodeInvalidRequest, Detail: "session is already bound to another workspace task"}
+		}
+		if err := tx.Commit(); err != nil {
+			return Session{}, fmt.Errorf("commit workspace task replay: %w", err)
+		}
+		return sess, nil
+	}
+	if err := validateRevision(sess, expectedRevision); err != nil {
+		return Session{}, err
+	}
+	if sess.State != SessionOpen || sess.RepositoryReadOnly || sess.Activity != ActivityParked ||
+		sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 || sess.TurnsUsed != 0 {
+		return Session{}, &Error{Code: CodeInvalidSessionState, Detail: "workspace task requires an unused writable open session"}
+	}
+	now := s.now()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sessions SET workspace_task = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
+		string(encoded), now.UnixNano(), sessionID); err != nil {
+		return Session{}, fmt.Errorf("bind workspace task: %w", err)
+	}
+	payload := mustJSON(map[string]any{
+		"draft_sha256": binding.DraftSHA256,
+		"id":           binding.ID,
+		"offer_ref":    binding.OfferRef,
+		"queue_id":     binding.QueueID,
+		"task_id":      binding.TaskID,
+	})
+	event, err := s.appendEventTx(ctx, tx, sessionID, "", EventWorkspaceTaskBound, 1, payload)
+	if err != nil {
+		return Session{}, fmt.Errorf("append workspace task binding: %w", err)
+	}
+	sess.WorkspaceTask = &binding
+	sess.Revision++
+	sess.LastEventSequence = event.Sequence
+	sess.UpdatedAt = event.OccurredAt
+	if err := tx.Commit(); err != nil {
+		return Session{}, fmt.Errorf("commit workspace task binding: %w", err)
+	}
+	return sess, nil
+}
+
+// RestoreWorkspaceTask atomically binds a verified portable task projection and its captured
+// repository base to an otherwise-unused replacement session. An exact existing binding is the
+// crash-recovery path after the filesystem restore and row update committed but the outer service
+// operation receipt did not.
+func (s *Store) RestoreWorkspaceTask(
+	ctx context.Context,
+	sessionID string,
+	expectedRevision int64,
+	baseCommit string,
+	binding WorkspaceTaskBinding,
+) (Session, error) {
+	if sessionID == "" || expectedRevision <= 0 || validateWorkspaceTaskBinding(binding) != nil ||
+		!validWorkspaceCommitIdentity(baseCommit) {
+		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "restored workspace task binding is invalid"}
+	}
+	encoded, err := json.Marshal(binding)
+	if err != nil {
+		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "restored workspace task binding cannot be encoded"}
+	}
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Session{}, fmt.Errorf("begin restored workspace task binding: %w", err)
+	}
+	defer tx.Rollback()
+	sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", sessionID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrSessionNotFound
+	}
+	if err != nil {
+		return Session{}, fmt.Errorf("read session for restored workspace task binding: %w", err)
+	}
+	if sess.WorkspaceTask != nil {
+		if *sess.WorkspaceTask != binding || sess.BaseCommit != baseCommit {
+			return Session{}, &Error{Code: CodeInvalidRequest, Detail: "session is already bound to another restored workspace task"}
+		}
+		if err := tx.Commit(); err != nil {
+			return Session{}, fmt.Errorf("commit restored workspace task replay: %w", err)
+		}
+		return sess, nil
+	}
+	if err := validateRevision(sess, expectedRevision); err != nil {
+		return Session{}, err
+	}
+	if sess.State != SessionOpen || sess.RepositoryReadOnly || sess.Activity != ActivityParked ||
+		sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 || sess.TurnsUsed != 0 {
+		return Session{}, &Error{Code: CodeInvalidSessionState, Detail: "restored workspace task requires an unused writable open session"}
+	}
+	now := s.now()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sessions SET base_commit = ?, workspace_task = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
+		baseCommit, string(encoded), now.UnixNano(), sessionID); err != nil {
+		return Session{}, fmt.Errorf("bind restored workspace task: %w", err)
+	}
+	payload := mustJSON(map[string]any{
+		"base_commit": baseCommit, "draft_sha256": binding.DraftSHA256, "id": binding.ID,
+		"offer_ref": binding.OfferRef, "queue_id": binding.QueueID, "restored": true,
+		"task_id": binding.TaskID,
+	})
+	event, err := s.appendEventTx(ctx, tx, sessionID, "", EventWorkspaceTaskBound, 1, payload)
+	if err != nil {
+		return Session{}, fmt.Errorf("append restored workspace task binding: %w", err)
+	}
+	sess.BaseCommit = baseCommit
+	sess.WorkspaceTask = &binding
+	sess.Revision++
+	sess.LastEventSequence = event.Sequence
+	sess.UpdatedAt = event.OccurredAt
+	if err := tx.Commit(); err != nil {
+		return Session{}, fmt.Errorf("commit restored workspace task binding: %w", err)
+	}
+	return sess, nil
+}
+
+func validWorkspaceCommitIdentity(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded)*2 == len(value) && strings.ToLower(value) == value
+}
+
+func validateWorkspaceTaskBinding(binding WorkspaceTaskBinding) error {
+	if len(binding.QueueID) != 32 || len(binding.TaskID) != 32 ||
+		len(binding.DraftSHA256) != 64 || !validBoundedText(binding.ID, MaxIDBytes) ||
+		!validBoundedText(binding.OfferRef, MaxBindingBytes) {
+		return errors.New("workspace task binding is outside bounds")
+	}
+	for _, value := range []string{binding.QueueID, binding.TaskID, binding.DraftSHA256} {
+		if _, err := hex.DecodeString(value); err != nil {
+			return errors.New("workspace task binding digest is invalid")
+		}
+	}
+	return nil
+}
+
 // RotateTurnTarget moves a session onto another rung of its policy's target ladder — because the
 // active rung rate limited the in-flight turn, or because that turn was admitted with an
 // escalation floor above it — and rewinds the turn so it can be delivered again. It
@@ -1782,7 +2026,7 @@ const turnSelect = `SELECT id, session_id, ordinal, idempotency_key, request_has
 	   usage_cost_usd, usage_cost_recorded, min_target_index, rewind_target,
 	   output_schema, output_schema_sha256, output_semantic_validation,
 	   candidate_message, candidate_sha256, validation_attempt, validation_error, validation_receipt,
-	   runtime_run_id
+	   runtime_run_id, responder_endpoint, responder_token
 FROM turns`
 
 func (s *Store) GetTurn(ctx context.Context, sessionID, turnID string) (Turn, error) {
@@ -1887,6 +2131,27 @@ func readOutputArtifactMetadata(ctx context.Context, db queryContexter, turnID s
 	return artifacts, nil
 }
 
+func readOutputArtifacts(ctx context.Context, db queryContexter, turnID string) ([]OutputArtifact, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id, name, media_type, sha256, length(data), data
+		FROM turn_output_artifacts WHERE turn_id = ? ORDER BY ordinal`, turnID)
+	if err != nil {
+		return nil, fmt.Errorf("read output artifact content: %w", err)
+	}
+	defer rows.Close()
+	var artifacts []OutputArtifact
+	for rows.Next() {
+		var artifact OutputArtifact
+		if err := rows.Scan(&artifact.ID, &artifact.Name, &artifact.MediaType, &artifact.SHA256, &artifact.Bytes, &artifact.Data); err != nil {
+			return nil, fmt.Errorf("scan output artifact content: %w", err)
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read output artifact content: %w", err)
+	}
+	return artifacts, nil
+}
+
 func scanTurn(row rowScanner) (Turn, error) {
 	var turn Turn
 	var state, sendState, stopReason, errorCode string
@@ -1895,6 +2160,7 @@ func scanTurn(row rowScanner) (Turn, error) {
 	var outputSchemaSHA256 string
 	var outputSemanticValidation bool
 	var candidateMessage, candidateSHA256, validationError, validationReceipt string
+	var responderEndpointValue, responderTokenValue string
 	if err := row.Scan(&turn.ID, &turn.SessionID, &turn.Ordinal, &turn.IdempotencyKey,
 		&turn.RequestHash, &state, &sendState, &turn.Prompt, &queuedAt, &startedAt, &finishedAt,
 		&stopReason, &turn.AssistantMessage, &errorCode, &turn.ErrorDetail,
@@ -1903,8 +2169,12 @@ func scanTurn(row rowScanner) (Turn, error) {
 		&turn.Usage.CostUSD, &turn.Usage.CostRecorded, &turn.MinTargetIndex,
 		&turn.RewindTarget, &outputSchema, &outputSchemaSHA256, &outputSemanticValidation,
 		&candidateMessage, &candidateSHA256, &turn.ValidationAttempt,
-		&validationError, &validationReceipt, &turn.RuntimeRunID); err != nil {
+		&validationError, &validationReceipt, &turn.RuntimeRunID,
+		&responderEndpointValue, &responderTokenValue); err != nil {
 		return Turn{}, err
+	}
+	if responderEndpointValue != "" || responderTokenValue != "" {
+		turn.ResponderBinding = &ResponderBinding{Endpoint: responderEndpointValue, Token: responderTokenValue}
 	}
 	if len(outputSchema) > 0 || outputSchemaSHA256 != "" {
 		turn.OutputContract = &OutputContract{
@@ -2133,7 +2403,7 @@ func replaceOutputArtifactsTx(ctx context.Context, tx *sql.Tx, turnID string, ar
 		}
 		total += len(artifact.Data)
 	}
-	if err := deleteTurnArtifacts(ctx, tx, turnID); err != nil {
+	if err := deleteTurnOutputArtifacts(ctx, tx, turnID); err != nil {
 		return err
 	}
 	for i, artifact := range artifacts {
@@ -2209,13 +2479,16 @@ func (s *Store) RejectTurnCandidate(ctx context.Context, req RejectTurnCandidate
 	})); err != nil {
 		return Turn{}, fmt.Errorf("append semantic output rejection: %w", err)
 	}
-	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
-		return Turn{}, err
-	}
 	turn.Candidate = nil
 	turn.ValidationError = detail
-	turn.OutputArtifacts = nil
 	if turn.ValidationAttempt >= MaxOutputContractAttempts {
+		if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
+			return Turn{}, err
+		}
+		if err := deleteTurnOutputArtifacts(ctx, tx, turn.ID); err != nil {
+			return Turn{}, err
+		}
+		turn.OutputArtifacts = nil
 		failureDetail := fmt.Sprintf("caller rejected semantic output after %d attempts", turn.ValidationAttempt)
 		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?,
 			assistant_message = '', candidate_message = '',
@@ -2240,6 +2513,10 @@ func (s *Store) RejectTurnCandidate(ctx context.Context, req RejectTurnCandidate
 			return Turn{}, fmt.Errorf("append rejected semantic session parked: %w", err)
 		}
 	} else {
+		turn.OutputArtifacts, err = readOutputArtifactMetadata(ctx, tx, turn.ID)
+		if err != nil {
+			return Turn{}, err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, send_state = ?, started_at = NULL,
 			candidate_message = '', validation_error = ?, validation_receipt = '' WHERE id = ?`,
 			string(TurnQueued), string(SendStateNone), detail, turn.ID); err != nil {
@@ -2805,6 +3082,13 @@ func loadTurnArtifacts(ctx context.Context, tx *sql.Tx, turnID string) ([]InputA
 func deleteTurnArtifacts(ctx context.Context, tx *sql.Tx, turnID string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM turn_artifacts WHERE turn_id = ?`, turnID); err != nil {
 		return fmt.Errorf("delete terminal turn artifacts: %w", err)
+	}
+	return nil
+}
+
+func deleteTurnOutputArtifacts(ctx context.Context, tx *sql.Tx, turnID string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM turn_output_artifacts WHERE turn_id = ?`, turnID); err != nil {
+		return fmt.Errorf("delete turn output artifacts: %w", err)
 	}
 	return nil
 }

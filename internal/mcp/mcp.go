@@ -34,6 +34,15 @@ import (
 
 const maxMCPConfigBytes int64 = 4 << 20
 
+const (
+	// ResponderStateServer is reserved for the controller-owned state-tools
+	// binding. Operator MCP configuration cannot shadow it.
+	ResponderStateServer = "responder-state"
+	// ResponderStateTokenEnv is projected only into the session-private
+	// credential environment. The shared MCP file never contains the token.
+	ResponderStateTokenEnv = "COOP_RESPONDER_STATE_TOKEN"
+)
+
 // server is the typed view of one entry, sufficient to emit Codex TOML and the ACP parameter.
 // Headers is the canonical HTTP-auth field claude + gemini read directly; codex can't use it (it
 // has no inline-header support, only bearer_token_env_var / OAuth), so for codex it's kept here
@@ -466,6 +475,56 @@ func ReadValidatedSnapshot(path string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 	return data, true, nil
+}
+
+// BindResponderState merges Coop's one dedicated Responder state-tools server
+// into an already validated shared MCP snapshot. It preserves unrelated root
+// fields, rejects an operator-owned collision, and returns canonical bytes so
+// every provider projection sees the same immutable server authority.
+func BindResponderState(snapshot []byte, endpoint string) ([]byte, error) {
+	root := map[string]json.RawMessage{}
+	if len(bytes.TrimSpace(snapshot)) > 0 {
+		if _, _, err := loadServerViewsData("session MCP snapshot", snapshot); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(snapshot, &root); err != nil {
+			return nil, fmt.Errorf("parsing session MCP snapshot: %w", err)
+		}
+	}
+
+	definitions := map[string]json.RawMessage{}
+	if raw := root["mcpServers"]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &definitions); err != nil {
+			return nil, fmt.Errorf("parsing session MCP snapshot mcpServers: %w", err)
+		}
+	}
+	if _, exists := definitions[ResponderStateServer]; exists {
+		return nil, fmt.Errorf("shared MCP config reserves server %q", ResponderStateServer)
+	}
+	definition, err := json.Marshal(map[string]any{
+		"type": "http", "url": endpoint,
+		"bearer_token_env_var": ResponderStateTokenEnv,
+	})
+	if err != nil {
+		return nil, err
+	}
+	definitions[ResponderStateServer] = definition
+	encodedDefinitions, err := json.Marshal(definitions)
+	if err != nil {
+		return nil, err
+	}
+	root["mcpServers"] = encodedDefinitions
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(encoded)) > maxMCPConfigBytes {
+		return nil, fmt.Errorf("session MCP snapshot exceeds %d bytes", maxMCPConfigBytes)
+	}
+	if _, _, err := loadServerViewsData("session MCP snapshot", encoded); err != nil {
+		return nil, err
+	}
+	return append(encoded, '\n'), nil
 }
 
 // loadServerViews decodes the shared authority once into both shapes its consumers need. Gemini

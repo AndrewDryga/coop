@@ -449,8 +449,9 @@ operation-plus-session response.
 | `GET` | `/v1/sessions/{session_id}` | none |
 | `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; policy must enable warm execution |
 
-The public session includes IDs, target, policy digest, primary base commit, optional immutable
-pull-request number/ref/head binding, companion aliases,
+The public session includes IDs, target, policy digest, the exact `project_env`, `project_mcp`, and
+`repository_read_only` authority flags, primary base commit, optional immutable pull-request
+number/ref/head binding, companion aliases,
 in-box paths and pinned commits, generated fork name, revision, state, activity, queue/budget
 counters, event cursor, and timestamps. It excludes host repository and workspace paths, native
 session ID, prompts, credentials, environment, caller-defined mounts, and runtime data.

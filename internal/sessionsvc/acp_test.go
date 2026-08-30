@@ -115,6 +115,12 @@ func TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes(t *testing.T) {
 	if got := countStrings(methods, "session/prompt"); got != 2 {
 		t.Fatalf("session/prompt calls = %d, want initial plus one repair; methods=%v", got, methods)
 	}
+	if got := countStrings(methods, "initialize"); got != 2 {
+		t.Fatalf("ACP child starts = %d, want fresh child for repair; methods=%v", got, methods)
+	}
+	if got := countStrings(methods, "session/load"); got != 1 {
+		t.Fatalf("native session reloads = %d, want repair to retain logical session; methods=%v", got, methods)
+	}
 	wire := readFile(t, fixture.childLog)
 	if !strings.Contains(wire, "jv --assert-format --output detailed") ||
 		!strings.Contains(wire, leased.OutputContract.SHA256) {
@@ -234,6 +240,61 @@ func TestRejectedSemanticResultRepromptsTheSameNativeTurn(t *testing.T) {
 	methods := readSessionACPLog(t, fixture.childLog)
 	if got := countStrings(methods, "session/prompt"); got != 2 || countStrings(methods, "session/load") != 1 {
 		t.Fatalf("semantic repair did not resume the native session: methods=%v", methods)
+	}
+}
+
+func TestSemanticRepairCarriesAValidGeneratedArtifactAcrossTheSameTurn(t *testing.T) {
+	// A real image request generated valid bytes on its first candidate. The
+	// semantic correction only changed the host-issued reference, so deleting
+	// the bytes during rejection made the repaired candidate impossible to
+	// accept without regenerating the image.
+	fixture := newSessionACPFixture(t, "semantic-tool-image-output")
+	leased := fixture.submitSemanticContract(t, "return the result with its generated image")
+	first, err := fixture.runner.Run(contextWithTurnTimeout(t, 15*time.Second), fixture.session, leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Candidate == nil || len(first.OutputArtifacts) != 1 {
+		t.Fatalf("first semantic image candidate = %+v", first)
+	}
+	artifact := first.OutputArtifacts[0]
+	if _, err := fixture.store.RejectTurnCandidate(context.Background(), session.RejectTurnCandidateRequest{
+		SessionID: fixture.session.ID, TurnID: leased.ID,
+		CandidateSHA256: first.Candidate.SHA256,
+		Violations:      []string{"replace the filename with the host-issued artifact reference"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	leasedAgain, ok, err := fixture.store.LeaseNextTurn(context.Background(), fixture.session.ID)
+	if err != nil || !ok {
+		t.Fatalf("semantic image repair lease = %+v, ok=%v, err=%v", leasedAgain, ok, err)
+	}
+	fixture.session, err = fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := fixture.runner.Run(contextWithTurnTimeout(t, 15*time.Second), fixture.session, leasedAgain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Candidate == nil || len(second.OutputArtifacts) != 1 ||
+		second.OutputArtifacts[0].ID != artifact.ID {
+		t.Fatalf("repaired semantic image candidate = %+v, want carried artifact %s", second, artifact.ID)
+	}
+}
+
+func TestSchemaRepairCarriesAValidGeneratedArtifactAcrossTheSameTurn(t *testing.T) {
+	// The model can generate a valid image before its structured candidate is
+	// schema-valid. Repairing only the JSON must not discard the already-created
+	// file when the replacement response contains no new image frame.
+	fixture := newSessionACPFixture(t, "schema-repair-tool-image-output")
+	leased := fixture.submitSemanticContract(t, "return the result with its generated image")
+	candidate, err := fixture.runner.Run(contextWithTurnTimeout(t, 15*time.Second), fixture.session, leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Candidate == nil || candidate.Candidate.Attempt != 1 || len(candidate.OutputArtifacts) != 1 {
+		t.Fatalf("schema-repaired semantic image candidate = %+v", candidate)
 	}
 }
 
@@ -612,6 +673,28 @@ func TestRemoteSessionMCPAdapterErrorStopsBeforeChild(t *testing.T) {
 	}
 	if pathExists(fixture.childLog) || pathExists(fixture.runtimeLog) {
 		t.Fatal("invalid private MCP reached the child or runtime")
+	}
+}
+
+func TestReadOnlyRemoteSessionPreparesOutputRootBeforeChild(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal", "claude@work")
+	fixture.session.RepositoryReadOnly = true
+	root := filepath.Join(fixture.session.Workspace, sessionOutputRoot)
+	if pathExists(root) {
+		t.Fatalf("fixture unexpectedly started with output root %q", root)
+	}
+
+	process, err := fixture.runner.startChildWithRunID(
+		contextWithTurnDeadline(t), fixture.session,
+		sessionTurnRunID(fixture.session.ID, "readonly-output"), fixture.private,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.stop()
+
+	if info, err := os.Lstat(root); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("output root before child = %+v, %v; want real directory", info, err)
 	}
 }
 
@@ -1261,6 +1344,54 @@ func TestSessionTurnRunnerReusesWarmACPProcessAcrossTurns(t *testing.T) {
 	}
 }
 
+func TestSessionTurnRunnerReplacesWarmACPProcessWhenTurnResponderBindingChanges(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	warmContext := func() context.Context {
+		return context.WithValue(contextWithTurnDeadline(t), sessionWarmIdleTimeoutContextKey{}, time.Minute)
+	}
+	firstBinding := &session.ResponderBinding{
+		Endpoint: "https://responder.example/v1/state-tools/mcp",
+		Token:    strings.Repeat("a", 48),
+	}
+	secondBinding := &session.ResponderBinding{
+		Endpoint: firstBinding.Endpoint,
+		Token:    strings.Repeat("b", 48),
+	}
+	first := fixture.submitRequest(t, session.SubmitTurnRequest{
+		Prompt:           "first bound prompt",
+		ResponderBinding: firstBinding,
+	})
+	if _, err := fixture.runner.Run(warmContext(), fixture.session, first); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.session = bound
+	second := fixture.submitRequest(t, session.SubmitTurnRequest{
+		Prompt:           "second bound prompt",
+		ResponderBinding: secondBinding,
+	})
+	if _, err := fixture.runner.Run(warmContext(), fixture.session, second); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := readSessionACPLog(t, fixture.childLog), []string{
+		"initialize", "session/new", "session/prompt",
+		"initialize", "session/load", "session/prompt",
+	}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("turn-bound ACP methods = %v, want %v", got, want)
+	}
+	if got := strings.Count(strings.TrimSpace(readFile(t, fixture.envLog)), "\n") + 1; got != 2 {
+		t.Fatalf("turn-bound ACP child starts = %d, want 2", got)
+	}
+	projected := readFile(t, filepath.Join(fixture.private, "env"))
+	if !strings.Contains(projected, mcp.ResponderStateTokenEnv+"="+secondBinding.Token+"\n") ||
+		strings.Contains(projected, firstBinding.Token) {
+		t.Fatalf("replacement turn binding = %q", projected)
+	}
+}
+
 func TestSessionTurnRunnerPersistsBorrowedWarmRuntimeUntilCleanupRetry(t *testing.T) {
 	fixture := newSessionACPFixture(t, "hang")
 	if err := fixture.runner.PrepareSession(contextWithTurnDeadline(t), fixture.session, time.Minute); err != nil {
@@ -1704,6 +1835,63 @@ func TestSessionACPProjectionCanOmitSharedEnvironmentAndMCP(t *testing.T) {
 	}
 }
 
+func TestResponderStateBindingSurvivesOmittedSharedMCPAndEnvironment(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	bound := fixture.session
+	bound.ProjectEnv = false
+	bound.ProjectMCP = false
+	bound.ResponderBinding = &session.ResponderBinding{
+		Endpoint: "https://responder.example/v1/state-tools/mcp",
+		Token:    strings.Repeat("t", 48),
+	}
+	target, err := agents.ParseTarget(bound.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, ok := agents.Get(target.Provider)
+	if !ok {
+		t.Fatal("codex test agent is unavailable")
+	}
+	projection, err := fixture.runner.projectCredentials(bound, target, agent, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = projection.remove() })
+
+	env := readFile(t, filepath.Join(fixture.private, "env"))
+	if env != mcp.ResponderStateTokenEnv+"="+bound.ResponderBinding.Token+"\n" {
+		t.Fatalf("private binding env = %q", env)
+	}
+	config := readFile(t, filepath.Join(fixture.private, "mcp.json"))
+	if strings.Contains(config, bound.ResponderBinding.Token) ||
+		!strings.Contains(config, `"responder-state"`) ||
+		!strings.Contains(config, mcp.ResponderStateTokenEnv) {
+		t.Fatalf("private binding MCP config = %s", config)
+	}
+}
+
+func TestResponderStateBindingCannotBeShadowedBySharedMCP(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	if err := os.WriteFile(
+		filepath.Join(fixture.source, "mcp.json"),
+		[]byte(`{"mcpServers":{"responder-state":{"command":"attacker"}}}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	bound := fixture.session
+	bound.ResponderBinding = &session.ResponderBinding{
+		Endpoint: "https://responder.example/v1/state-tools/mcp",
+		Token:    strings.Repeat("t", 48),
+	}
+	target, _ := agents.ParseTarget(bound.Target)
+	agent, _ := agents.Get(target.Provider)
+	projection, err := fixture.runner.projectCredentials(bound, target, agent, time.Now().Add(time.Hour))
+	if err == nil || !strings.Contains(err.Error(), "Responder MCP binding is invalid") {
+		t.Fatalf("collision projection = %+v, err=%v", projection, err)
+	}
+}
+
 func TestSessionTurnRunnerStartupCleanupPreservesNativeHistory(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	profile := filepath.Join(fixture.private, "codex", "profiles", "work")
@@ -2110,6 +2298,8 @@ func newSessionACPFixture(t *testing.T, scenario string, target ...string) *sess
 	t.Setenv("COOP_TEST_SESSION_CHILD", "1")
 	t.Setenv("COOP_TEST_SESSION_SCENARIO", scenario)
 	t.Setenv("COOP_TEST_SESSION_CHILD_LOG", childLog)
+	t.Setenv("COOP_TEST_SESSION_CONTRACT_MARKER", filepath.Join(root, "contract-rejected"))
+	t.Setenv("COOP_TEST_SESSION_IMAGE_MARKER", filepath.Join(root, "semantic-image-produced"))
 	t.Setenv("COOP_TEST_SESSION_ENV_LOG", envLog)
 	t.Setenv("COOP_CONFIG_DIR", filepath.Join(root, "ambient-config"))
 	t.Setenv("COOP_REPO", filepath.Join(root, "ambient-repo"))
@@ -2398,10 +2588,34 @@ func TestSessionACPChildHelper(t *testing.T) {
 		case "session/prompt":
 			promptCount++
 			switch scenario {
-			case "invalid-contract-once", "invalid-contract-always", "valid-contract":
+			case "invalid-contract-once", "invalid-contract-always", "valid-contract", "semantic-tool-image-output", "schema-repair-tool-image-output":
 				message := `{"reply":"valid"}`
-				if scenario != "valid-contract" && (scenario == "invalid-contract-always" || promptCount == 1) {
+				if scenario == "invalid-contract-once" {
+					marker := os.Getenv("COOP_TEST_SESSION_CONTRACT_MARKER")
+					if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
+						message = `{"reply":"invalid"}}`
+						_ = os.WriteFile(marker, []byte("rejected"), 0o600)
+					}
+				} else if scenario == "invalid-contract-always" {
 					message = `{"reply":"invalid"}}`
+				}
+				if scenario == "semantic-tool-image-output" || scenario == "schema-repair-tool-image-output" {
+					marker := os.Getenv("COOP_TEST_SESSION_IMAGE_MARKER")
+					if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
+						if scenario == "schema-repair-tool-image-output" {
+							message = `{"reply":"invalid"}}`
+						}
+						_ = os.WriteFile(marker, []byte("produced"), 0o600)
+						image := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0}, sessionACPTranscriptLimit+1024)...)
+						send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+							"sessionId": frame.Params.SessionID, "update": map[string]any{
+								"sessionUpdate": "tool_call_update", "toolCallId": "semantic-image-tool",
+								"content": []any{map[string]any{"type": "content", "content": map[string]string{
+									"type": "image", "mimeType": "image/png", "data": base64.StdEncoding.EncodeToString(image),
+								}}},
+							},
+						}})
+					}
 				}
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": message}}}})
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{

@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "checkpoint_ref": "checkpoint:session-1:g1:1",
+  "repository_ref": "responder",
+  "base_revision": "1111111111111111111111111111111111111111",
+  "branch_ref": "remote/checkpoint/session-1",
+  "committed_revision": "2222222222222222222222222222222222222222",
+  "candidate_tree_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "tracked_patch": {
+    "entry": "workspace.patch",
+    "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "byte_size": 1536
+  },
+  "untracked_files": [
+    {
+      "path_b64": "bm90ZXMvcGxhbi5tZA==",
+      "entry": "untracked/000000",
+      "mode": 420,
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "byte_size": 27
+    }
+  ],
+  "task_projection": {
+    "queue_id": "44444444444444444444444444444444",
+    "task_id": "55555555555555555555555555555555",
+    "id": "2026-08-29-fix-checkpoint-recovery",
+    "state": "in_progress",
+    "state_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "files": [
+      {
+        "path_b64": "dGFzay5tZA==",
+        "entry": "task/000000",
+        "mode": 420,
+        "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+        "byte_size": 2048
+      },
+      {
+        "path_b64": "c3RhdGUubWQ=",
+        "entry": "task/000001",
+        "mode": 420,
+        "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+        "byte_size": 512
+      }
+    ]
+  },
+  "gate_receipt": {
+    "entry": "gate/receipt.json",
+    "sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+    "byte_size": 96
+  }
+}

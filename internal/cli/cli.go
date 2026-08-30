@@ -221,6 +221,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdPrompt(rest)
 	case "sessions": // host-local: the owner-private remote session controller
 		return a.cmdSessions(rest)
+	case "worker": // host-local: outbound mTLS connector for one private Coop daemon
+		return a.cmdWorker(rest)
 	case "completion": // pure-local: print a shell completion script
 		return cmdCompletion(rest)
 	case "__complete": // hidden: dynamic completion candidates for the shell scripts
@@ -270,7 +272,7 @@ func (a *app) cmdBacklog(args []string) (int, error) {
 // mistyped one. Keep in sync with the dispatch switch above.
 var topLevelCommands = []string{
 	"run", "shell", "login", "credentials", "presets", "models", "acp", "fork", "tasks", "context", "backlog",
-	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "completion", "prompt", "sessions", "help", "version",
+	"loop", "up", "down", "init", "doctor", "check-secrets", "build", "update", "completion", "prompt", "sessions", "worker", "help", "version",
 }
 
 // helpForCommand prints one command's help for `coop help <cmd>`, matching `coop <cmd> --help`:

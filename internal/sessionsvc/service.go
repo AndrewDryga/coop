@@ -25,6 +25,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"gopkg.in/yaml.v3"
 )
 
@@ -507,9 +508,91 @@ func realGitRepository(path string) (string, error) {
 }
 
 type CreateRemoteSessionRequest struct {
-	Policy      string                    `json:"policy"`
-	Task        string                    `json:"task"`
-	PullRequest *RemotePullRequestBinding `json:"pull_request,omitempty"`
+	Policy           string                    `json:"policy"`
+	Task             string                    `json:"task"`
+	PullRequest      *RemotePullRequestBinding `json:"pull_request,omitempty"`
+	ResponderBinding *session.ResponderBinding `json:"responder_binding,omitempty"`
+}
+
+type EnsureWorkspaceTaskRequest struct {
+	SessionID        string                    `json:"session_id"`
+	ExpectedRevision int64                     `json:"expected_revision"`
+	Task             tasks.ControllerTaskDraft `json:"task"`
+}
+
+// EnsureWorkspaceTask projects the exact controller-approved task into a writable session before
+// its first turn. The filesystem projection is deterministic and the session binding is immutable,
+// so a crash between either write and the operation receipt is reconciled by the same request.
+func (s *Service) EnsureWorkspaceTask(
+	ctx context.Context,
+	key string,
+	req EnsureWorkspaceTaskRequest,
+) (session.Session, error) {
+	unlock := s.lockOperation(key)
+	defer unlock()
+	op, replay, err := s.store.ReserveOperation(ctx, "EnsureWorkspaceTask", key, req)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if replay && op.State != session.OperationReserved && op.State != session.OperationRunning {
+		return replaySessionOperation(op)
+	}
+	return s.executeEnsureWorkspaceTask(ctx, op, req)
+}
+
+func (s *Service) executeEnsureWorkspaceTask(
+	ctx context.Context,
+	op session.Operation,
+	req EnsureWorkspaceTaskRequest,
+) (session.Session, error) {
+	if req.SessionID == "" || req.ExpectedRevision <= 0 {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code: session.CodeInvalidRequest, Detail: "session and revision are required",
+		})
+	}
+	digest, err := tasks.ControllerTaskDraftSHA256(req.Task)
+	if err != nil {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code: session.CodeInvalidRequest, Detail: err.Error(),
+		})
+	}
+	intent, _ := json.Marshal(req)
+	if op.State == session.OperationReserved {
+		if err := s.store.MarkOperationRunning(ctx, op.ID, intent); err != nil {
+			return session.Session{}, err
+		}
+	}
+	sess, err := s.store.GetSession(ctx, req.SessionID)
+	if err != nil {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	if err := validateSessionForkAuthority(ctx, sess); err != nil {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code: session.CodeInvalidSessionState, Detail: err.Error(),
+		})
+	}
+	instance, err := tasks.EnsureControllerTask(sess.Workspace, req.Task)
+	if err != nil {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code: session.CodeInvalidSessionState, Detail: err.Error(),
+		})
+	}
+	binding := session.WorkspaceTaskBinding{
+		QueueID: instance.Ref.QueueID, TaskID: instance.Ref.TaskID, ID: instance.Ref.ID,
+		OfferRef: req.Task.OfferRef, DraftSHA256: digest,
+	}
+	bound, err := s.store.BindWorkspaceTask(ctx, req.SessionID, req.ExpectedRevision, binding)
+	if err != nil {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	result, err := json.Marshal(bound)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if err := s.store.CompleteOperation(ctx, op.ID, "session", bound.ID, result); err != nil {
+		return session.Session{}, err
+	}
+	return bound, nil
 }
 
 // RemotePullRequestBinding selects one GitHub pull-request head through the
@@ -523,6 +606,14 @@ type RemotePullRequestBinding struct {
 }
 
 func cloneSessionPullRequestBinding(value *session.PullRequestBinding) *session.PullRequestBinding {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
+func cloneResponderBinding(value *session.ResponderBinding) *session.ResponderBinding {
 	if value == nil {
 		return nil
 	}
@@ -1726,6 +1817,9 @@ func (s *Service) beginCreateOperation(
 			Code: session.CodeInvalidRequest, Detail: "pull request number and exact head commit are required",
 		}
 	}
+	if err := session.ValidateResponderBinding(req.ResponderBinding); err != nil {
+		return session.Operation{}, err
+	}
 	op, replay, err := s.store.ReserveOperation(ctx, "CreateRemoteSession", key, req)
 	if err != nil {
 		return session.Operation{}, err
@@ -1788,15 +1882,16 @@ func (s *Service) replayCreateOperation(ctx context.Context, op session.Operatio
 }
 
 type sessionCreateIntent struct {
-	OperationID     string                        `json:"operation_id"`
-	Policy          Policy                        `json:"policy"`
-	Task            string                        `json:"task"`
-	SessionID       string                        `json:"session_id"`
-	ForkName        string                        `json:"fork_name"`
-	BaseCommit      string                        `json:"base_commit"`
-	WorkspaceCommit string                        `json:"workspace_commit"`
-	PullRequest     *session.PullRequestBinding   `json:"pull_request,omitempty"`
-	Companions      []session.CompanionRepository `json:"companions,omitempty"`
+	OperationID      string                        `json:"operation_id"`
+	Policy           Policy                        `json:"policy"`
+	Task             string                        `json:"task"`
+	SessionID        string                        `json:"session_id"`
+	ForkName         string                        `json:"fork_name"`
+	BaseCommit       string                        `json:"base_commit"`
+	WorkspaceCommit  string                        `json:"workspace_commit"`
+	PullRequest      *session.PullRequestBinding   `json:"pull_request,omitempty"`
+	ResponderBinding *session.ResponderBinding     `json:"responder_binding,omitempty"`
+	Companions       []session.CompanionRepository `json:"companions,omitempty"`
 }
 
 func (s *Service) captureCreateIntent(op session.Operation, req CreateRemoteSessionRequest) (sessionCreateIntent, error) {
@@ -1821,6 +1916,7 @@ func (s *Service) captureCreateIntent(op session.Operation, req CreateRemoteSess
 	intent := sessionCreateIntent{
 		OperationID: op.ID, Policy: policy, Task: req.Task,
 		SessionID: sessionID, ForkName: deterministicForkName(op.ID), Companions: companions,
+		ResponderBinding: cloneResponderBinding(req.ResponderBinding),
 	}
 	if req.PullRequest != nil {
 		intent.PullRequest = &session.PullRequestBinding{
@@ -1934,6 +2030,7 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		PolicyDigest:       resolvedSessionPolicyDigest(intent.Policy),
 		OmitEnv:            intent.Policy.OmitEnv,
 		OmitMCP:            intent.Policy.OmitMCP,
+		ResponderBinding:   cloneResponderBinding(intent.ResponderBinding),
 		RepositoryReadOnly: intent.Policy.RepositoryReadOnly,
 		Repository:         intent.Policy.Repository, Workspace: workspace.Path, ForkName: intent.ForkName,
 		ForkGeneration: string(workspace.Fork.Generation),

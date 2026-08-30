@@ -3,6 +3,7 @@ package sessionsvc
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,8 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 const (
@@ -35,29 +38,41 @@ const (
 // These DTOs are the public v1 wire types. They deliberately do not mirror the durable records:
 // the latter contain prompts, operation secrets, native provider identities, and host paths.
 type SessionDTO struct {
-	ID                 string                      `json:"id"`
-	ExternalRef        string                      `json:"external_ref"`
-	Target             string                      `json:"target"`
-	Policy             string                      `json:"policy"`
-	PolicyDigest       string                      `json:"policy_digest"`
-	RepositoryReadOnly bool                        `json:"repository_read_only"`
-	BaseCommit         string                      `json:"base_commit"`
-	PullRequest        *session.PullRequestBinding `json:"pull_request,omitempty"`
-	Companions         []SessionCompanionDTO       `json:"companions,omitempty"`
-	ForkName           string                      `json:"fork_name"`
-	Revision           int64                       `json:"revision"`
-	State              session.SessionState        `json:"state"`
-	Activity           session.ActivityState       `json:"activity"`
-	MaxTurns           int                         `json:"max_turns"`
-	MaxQueuedTurns     int                         `json:"max_queued_turns"`
-	MaxQueuedBytes     int                         `json:"max_queued_bytes"`
-	TurnsUsed          int                         `json:"turns_used"`
-	QueuedTurnCount    int                         `json:"queued_turn_count"`
-	QueuedPromptBytes  int                         `json:"queued_prompt_bytes"`
-	ActiveTurnID       string                      `json:"active_turn_id,omitempty"`
-	LastEventSequence  int64                       `json:"last_event_sequence"`
-	CreatedAt          time.Time                   `json:"created_at"`
-	UpdatedAt          time.Time                   `json:"updated_at"`
+	ID                     string                      `json:"id"`
+	ExternalRef            string                      `json:"external_ref"`
+	Target                 string                      `json:"target"`
+	Policy                 string                      `json:"policy"`
+	PolicyDigest           string                      `json:"policy_digest"`
+	ProjectEnv             bool                        `json:"project_env"`
+	ProjectMCP             bool                        `json:"project_mcp"`
+	ResponderBindingDigest string                      `json:"responder_binding_digest,omitempty"`
+	WorkspaceTask          *SessionWorkspaceTaskDTO    `json:"workspace_task,omitempty"`
+	RepositoryReadOnly     bool                        `json:"repository_read_only"`
+	BaseCommit             string                      `json:"base_commit"`
+	PullRequest            *session.PullRequestBinding `json:"pull_request,omitempty"`
+	Companions             []SessionCompanionDTO       `json:"companions,omitempty"`
+	ForkName               string                      `json:"fork_name"`
+	Revision               int64                       `json:"revision"`
+	State                  session.SessionState        `json:"state"`
+	Activity               session.ActivityState       `json:"activity"`
+	MaxTurns               int                         `json:"max_turns"`
+	MaxQueuedTurns         int                         `json:"max_queued_turns"`
+	MaxQueuedBytes         int                         `json:"max_queued_bytes"`
+	TurnsUsed              int                         `json:"turns_used"`
+	QueuedTurnCount        int                         `json:"queued_turn_count"`
+	QueuedPromptBytes      int                         `json:"queued_prompt_bytes"`
+	ActiveTurnID           string                      `json:"active_turn_id,omitempty"`
+	LastEventSequence      int64                       `json:"last_event_sequence"`
+	CreatedAt              time.Time                   `json:"created_at"`
+	UpdatedAt              time.Time                   `json:"updated_at"`
+}
+
+type SessionWorkspaceTaskDTO struct {
+	QueueID     string `json:"queue_id"`
+	TaskID      string `json:"task_id"`
+	ID          string `json:"id"`
+	OfferRef    string `json:"offer_ref"`
+	DraftSHA256 string `json:"draft_sha256"`
 }
 
 type SessionCompanionDTO struct {
@@ -86,6 +101,7 @@ type TurnDTO struct {
 	ValidationAttempt         int                    `json:"validation_attempt,omitempty"`
 	ValidationError           string                 `json:"validation_error,omitempty"`
 	ValidationReceipt         string                 `json:"validation_receipt,omitempty"`
+	ResponderBindingDigest    string                 `json:"responder_binding_digest,omitempty"`
 }
 
 type TurnArtifactDTO struct {
@@ -129,13 +145,14 @@ type operationFenceEnvelope struct {
 }
 
 type operationFenceSubmitTurnRequest struct {
-	SessionID        string                  `json:"session_id"`
-	ExpectedRevision int64                   `json:"expected_revision"`
-	Prompt           string                  `json:"prompt"`
-	Artifacts        []session.InputArtifact `json:"artifacts,omitempty"`
-	MinTargetIndex   int                     `json:"min_target_index,omitempty"`
-	RewindTarget     bool                    `json:"rewind_target,omitempty"`
-	OutputContract   *session.OutputContract `json:"output_contract,omitempty"`
+	SessionID        string                    `json:"session_id"`
+	ExpectedRevision int64                     `json:"expected_revision"`
+	Prompt           string                    `json:"prompt"`
+	Artifacts        []session.InputArtifact   `json:"artifacts,omitempty"`
+	MinTargetIndex   int                       `json:"min_target_index,omitempty"`
+	RewindTarget     bool                      `json:"rewind_target,omitempty"`
+	OutputContract   *session.OutputContract   `json:"output_contract,omitempty"`
+	ResponderBinding *session.ResponderBinding `json:"responder_binding,omitempty"`
 }
 
 type SessionChangeDTO struct {
@@ -226,6 +243,11 @@ type SessionPlanDiscardDTO struct {
 type sessionMutationSessionResponse struct {
 	Operation OperationDTO `json:"operation"`
 	Session   SessionDTO   `json:"session"`
+}
+
+type sessionMutationCheckpointResponse struct {
+	Operation  OperationDTO                    `json:"operation"`
+	Checkpoint workerproto.WorkspaceCheckpoint `json:"checkpoint"`
 }
 
 type sessionAsyncOperationResponse struct {
@@ -350,7 +372,7 @@ func (h *sessionHTTPHandler) fenceOperation(w http.ResponseWriter, r *http.Reque
 					SessionID: request.SessionID, ExpectedRevision: request.ExpectedRevision,
 					Prompt: request.Prompt, Artifacts: request.Artifacts,
 					MinTargetIndex: request.MinTargetIndex, RewindTarget: request.RewindTarget,
-					OutputContract: request.OutputContract,
+					OutputContract: request.OutputContract, ResponderBinding: request.ResponderBinding,
 				},
 			)
 		}
@@ -438,6 +460,18 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 		if sessionHTTPMethod(w, r, http.MethodPost) {
 			h.prepareSession(w, r, sessionID)
 		}
+	case len(parts) == 2 && parts[1] == "workspace":
+		if sessionHTTPMethod(w, r, http.MethodPost) {
+			h.ensureWorkspaceTask(w, r, sessionID)
+		}
+	case len(parts) == 3 && parts[1] == "workspace" && parts[2] == "restore":
+		if sessionHTTPMethod(w, r, http.MethodPost) {
+			h.restoreWorkspaceCheckpoint(w, r, sessionID)
+		}
+	case len(parts) == 2 && parts[1] == "checkpoint":
+		if sessionHTTPMethod(w, r, http.MethodPost) {
+			h.checkpointWorkspace(w, r, sessionID)
+		}
 	case len(parts) == 2 && parts[1] == "review":
 		if sessionHTTPMethod(w, r, http.MethodPost) {
 			h.review(w, r, sessionID)
@@ -495,6 +529,113 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 	}
 }
 
+func (h *sessionHTTPHandler) checkpointWorkspace(w http.ResponseWriter, r *http.Request, sessionID string) {
+	var body struct {
+		SessionRef          string `json:"session_ref"`
+		ExpectedRevision    int64  `json:"expected_revision"`
+		PlacementGeneration int    `json:"placement_generation"`
+		RepositoryRef       string `json:"repository_ref"`
+	}
+	if !decodeSessionJSON(w, r, &body) {
+		return
+	}
+	result, err := h.service.CheckpointWorkspace(
+		r.Context(), sessionIdempotencyKey(r),
+		CheckpointWorkspaceRequest{
+			SessionID: sessionID, SessionRef: body.SessionRef,
+			ExpectedRevision:    body.ExpectedRevision,
+			PlacementGeneration: body.PlacementGeneration, RepositoryRef: body.RepositoryRef,
+		},
+	)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	op, ok := h.operationForKey(w, r, sessionIdempotencyKey(r))
+	if !ok {
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, sessionMutationCheckpointResponse{
+		Operation: publicOperation(op), Checkpoint: result.Checkpoint,
+	})
+}
+
+func (h *sessionHTTPHandler) restoreWorkspaceCheckpoint(w http.ResponseWriter, r *http.Request, sessionID string) {
+	key := sessionIdempotencyKey(r)
+	if key == "" {
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "idempotency key is required")
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != workerproto.WorkspaceCheckpointBundleMediaType {
+		writeSessionHTTPError(w, http.StatusUnsupportedMediaType, "invalid_request", "workspace checkpoint media type is invalid")
+		return
+	}
+	revision, err := strconv.ParseInt(r.Header.Get("X-Coop-Expected-Revision"), 10, 64)
+	if err != nil || revision <= 0 {
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "workspace checkpoint revision is invalid")
+		return
+	}
+	descriptor, err := base64.StdEncoding.DecodeString(r.Header.Get("X-Coop-Workspace-Checkpoint"))
+	if err != nil || len(descriptor) == 0 || len(descriptor) > sessionHTTPMaxBody {
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "workspace checkpoint descriptor is invalid")
+		return
+	}
+	checkpoint, err := workerproto.DecodeWorkspaceCheckpoint(descriptor)
+	if err != nil {
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "workspace checkpoint descriptor is invalid")
+		return
+	}
+	if r.ContentLength <= 0 || r.ContentLength > workerproto.MaxWorkspaceCheckpointBundleBytes {
+		writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "invalid_request", "workspace checkpoint bundle length is invalid")
+		return
+	}
+	bundle, err := io.ReadAll(io.LimitReader(r.Body, workerproto.MaxWorkspaceCheckpointBundleBytes+1))
+	if err != nil || int64(len(bundle)) != r.ContentLength || len(bundle) > workerproto.MaxWorkspaceCheckpointBundleBytes {
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "workspace checkpoint bundle is invalid")
+		return
+	}
+	sess, err := h.service.RestoreWorkspaceCheckpoint(r.Context(), key, RestoreWorkspaceCheckpointRequest{
+		SessionID: sessionID, ExpectedRevision: revision, Checkpoint: checkpoint, Bundle: bundle,
+	})
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	op, ok := h.operationForKey(w, r, key)
+	if !ok {
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, sessionMutationSessionResponse{
+		Operation: publicOperation(op), Session: publicSession(sess),
+	})
+}
+
+func (h *sessionHTTPHandler) ensureWorkspaceTask(w http.ResponseWriter, r *http.Request, sessionID string) {
+	var body struct {
+		ExpectedRevision int64                     `json:"expected_revision"`
+		Task             tasks.ControllerTaskDraft `json:"task"`
+	}
+	if !decodeSessionJSON(w, r, &body) {
+		return
+	}
+	sess, err := h.service.EnsureWorkspaceTask(
+		r.Context(), sessionIdempotencyKey(r),
+		EnsureWorkspaceTaskRequest{SessionID: sessionID, ExpectedRevision: body.ExpectedRevision, Task: body.Task},
+	)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	op, ok := h.operationForKey(w, r, sessionIdempotencyKey(r))
+	if !ok {
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, sessionMutationSessionResponse{
+		Operation: publicOperation(op), Session: publicSession(sess),
+	})
+}
+
 func (h *sessionHTTPHandler) serveOperationPath(w http.ResponseWriter, r *http.Request) {
 	if !sessionHTTPMethod(w, r, http.MethodGet) {
 		return
@@ -508,6 +649,11 @@ func (h *sessionHTTPHandler) serveOperationPath(w http.ResponseWriter, r *http.R
 		h.reviewPatch(w, r, parts[0])
 		return
 	}
+	if len(parts) == 2 && parts[1] == "checkpoint-bundle" &&
+		validSessionHTTPPathID(parts[0]) {
+		h.workspaceCheckpointBundle(w, r, parts[0])
+		return
+	}
 	if len(parts) != 1 || !validSessionHTTPPathID(parts[0]) {
 		writeSessionHTTPError(w, http.StatusNotFound, "not_found", "operation not found")
 		return
@@ -518,6 +664,24 @@ func (h *sessionHTTPHandler) serveOperationPath(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeSessionJSON(w, http.StatusOK, publicOperation(op))
+}
+
+func (h *sessionHTTPHandler) workspaceCheckpointBundle(
+	w http.ResponseWriter,
+	r *http.Request,
+	operationID string,
+) {
+	bundle, err := h.service.OpenWorkspaceCheckpointBundle(r.Context(), operationID)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", workerproto.WorkspaceCheckpointBundleMediaType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(bundle)))
+	w.Header().Set("ETag", `"`+checkpointSHA256(bundle)+`"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="workspace-checkpoint.tar"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(bundle)
 }
 
 func (h *sessionHTTPHandler) reviewPatch(
@@ -544,15 +708,17 @@ func (h *sessionHTTPHandler) createSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		Policy      string                    `json:"policy"`
-		Task        string                    `json:"task"`
-		PullRequest *RemotePullRequestBinding `json:"pull_request,omitempty"`
+		Policy           string                    `json:"policy"`
+		Task             string                    `json:"task"`
+		PullRequest      *RemotePullRequestBinding `json:"pull_request,omitempty"`
+		ResponderBinding *session.ResponderBinding `json:"responder_binding,omitempty"`
 	}
 	if !decodeSessionJSON(w, r, &body) {
 		return
 	}
 	request := CreateRemoteSessionRequest{
 		Policy: body.Policy, Task: body.Task, PullRequest: body.PullRequest,
+		ResponderBinding: body.ResponderBinding,
 	}
 	if sessionPreferAsync(r) {
 		op, err := h.service.CreateRemoteSessionAsync(
@@ -627,12 +793,13 @@ func (h *sessionHTTPHandler) submitTurn(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	var body struct {
-		ExpectedRevision int64                   `json:"expected_revision"`
-		Prompt           string                  `json:"prompt"`
-		Artifacts        []session.InputArtifact `json:"artifacts,omitempty"`
-		MinTargetIndex   int                     `json:"min_target_index,omitempty"`
-		RewindTarget     bool                    `json:"rewind_target,omitempty"`
-		OutputContract   *session.OutputContract `json:"output_contract,omitempty"`
+		ExpectedRevision int64                     `json:"expected_revision"`
+		Prompt           string                    `json:"prompt"`
+		Artifacts        []session.InputArtifact   `json:"artifacts,omitempty"`
+		MinTargetIndex   int                       `json:"min_target_index,omitempty"`
+		RewindTarget     bool                      `json:"rewind_target,omitempty"`
+		OutputContract   *session.OutputContract   `json:"output_contract,omitempty"`
+		ResponderBinding *session.ResponderBinding `json:"responder_binding,omitempty"`
 	}
 	if !decodeSessionJSONLimit(w, r, &body, sessionHTTPTurnMaxBody) {
 		return
@@ -641,6 +808,7 @@ func (h *sessionHTTPHandler) submitTurn(w http.ResponseWriter, r *http.Request, 
 		SessionID: sessionID, ExpectedRevision: body.ExpectedRevision, Prompt: body.Prompt,
 		Artifacts: body.Artifacts, MinTargetIndex: body.MinTargetIndex,
 		RewindTarget: body.RewindTarget, OutputContract: body.OutputContract,
+		ResponderBinding: body.ResponderBinding,
 	})
 	if err != nil {
 		writeSessionServiceError(w, err)
@@ -1193,15 +1361,28 @@ func publicSession(value session.Session) SessionDTO {
 	}
 	return SessionDTO{
 		ID: value.ID, ExternalRef: value.ExternalRef, Target: value.Target, Policy: value.Policy,
-		PolicyDigest: value.PolicyDigest, RepositoryReadOnly: value.RepositoryReadOnly,
-		BaseCommit:  value.BaseCommit,
-		PullRequest: cloneSessionPullRequestBinding(value.PullRequest),
-		Companions:  companions, ForkName: value.ForkName,
+		PolicyDigest: value.PolicyDigest, ProjectEnv: value.ProjectEnv, ProjectMCP: value.ProjectMCP,
+		RepositoryReadOnly:     value.RepositoryReadOnly,
+		ResponderBindingDigest: session.ResponderBindingDigest(value.ResponderBinding),
+		WorkspaceTask:          publicWorkspaceTask(value.WorkspaceTask),
+		BaseCommit:             value.BaseCommit,
+		PullRequest:            cloneSessionPullRequestBinding(value.PullRequest),
+		Companions:             companions, ForkName: value.ForkName,
 		Revision: value.Revision, State: value.State, Activity: value.Activity, MaxTurns: value.MaxTurns,
 		MaxQueuedTurns: value.MaxQueuedTurns, MaxQueuedBytes: value.MaxQueuedBytes, TurnsUsed: value.TurnsUsed,
 		QueuedTurnCount: value.QueuedTurnCount, QueuedPromptBytes: value.QueuedPromptBytes,
 		ActiveTurnID: value.ActiveTurnID, LastEventSequence: value.LastEventSequence,
 		CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
+	}
+}
+
+func publicWorkspaceTask(value *session.WorkspaceTaskBinding) *SessionWorkspaceTaskDTO {
+	if value == nil {
+		return nil
+	}
+	return &SessionWorkspaceTaskDTO{
+		QueueID: value.QueueID, TaskID: value.TaskID, ID: value.ID,
+		OfferRef: value.OfferRef, DraftSHA256: value.DraftSHA256,
 	}
 }
 
@@ -1223,6 +1404,7 @@ func publicTurn(value session.Turn) TurnDTO {
 		ValidationAttempt:         value.ValidationAttempt,
 		ValidationError:           value.ValidationError,
 		ValidationReceipt:         value.ValidationReceipt,
+		ResponderBindingDigest:    session.ResponderBindingDigest(value.ResponderBinding),
 	}
 }
 
@@ -1366,7 +1548,11 @@ func sessionHTTPError(err error) (string, int, string) {
 	}
 	var typed *session.Error
 	if errors.As(err, &typed) {
-		return string(code), status, publicSessionErrorDetail(code, typed.Detail)
+		detail := publicSessionErrorDetail(code, typed.Detail)
+		if detail == "" {
+			detail = strings.ReplaceAll(string(code), "_", " ")
+		}
+		return string(code), status, detail
 	}
 	return string(code), status, "request failed"
 }

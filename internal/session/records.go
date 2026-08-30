@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 15
+	SchemaVersion = 18
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -132,6 +132,7 @@ const (
 	EventSessionParked          EventType = "session.parked"
 	EventSessionClosed          EventType = "session.closed"
 	EventWorkspaceDiscarded     EventType = "workspace.discarded"
+	EventWorkspaceTaskBound     EventType = "workspace.task_bound"
 	EventOutputContractRejected EventType = "output_contract.rejected"
 	EventTurnAwaitingValidation EventType = "turn.awaiting_validation"
 
@@ -253,6 +254,8 @@ type Session struct {
 	PolicyDigest       string                `json:"policy_digest"`
 	ProjectEnv         bool                  `json:"project_env"`
 	ProjectMCP         bool                  `json:"project_mcp"`
+	ResponderBinding   *ResponderBinding     `json:"responder_binding,omitempty"`
+	WorkspaceTask      *WorkspaceTaskBinding `json:"workspace_task,omitempty"`
 	RepositoryReadOnly bool                  `json:"repository_read_only"`
 	Repository         string                `json:"repository"`
 	Workspace          string                `json:"workspace"`
@@ -277,6 +280,37 @@ type Session struct {
 	LastEventSequence  int64                 `json:"last_event_sequence"`
 	CreatedAt          time.Time             `json:"created_at"`
 	UpdatedAt          time.Time             `json:"updated_at"`
+}
+
+// WorkspaceTaskBinding is the immutable durable identity of the host-approved task projected
+// into this session workspace. State and checkbox completion remain filesystem facts and travel
+// in checkpoints; the session row binds those facts to one exact approved draft.
+type WorkspaceTaskBinding struct {
+	QueueID     string `json:"queue_id"`
+	TaskID      string `json:"task_id"`
+	ID          string `json:"id"`
+	OfferRef    string `json:"offer_ref"`
+	DraftSHA256 string `json:"draft_sha256"`
+}
+
+// ResponderBinding is one controller-owned MCP endpoint bound at session
+// creation. It is not arbitrary MCP configuration: the caller cannot name a
+// command, environment variable, or local path, and the endpoint shape is
+// validated before persistence.
+type ResponderBinding struct {
+	Endpoint string `json:"endpoint"`
+	Token    string `json:"token"`
+}
+
+// ResponderBindingDigest is safe to expose in the public session projection:
+// it proves the exact endpoint and bearer digest without revealing the bearer.
+func ResponderBindingDigest(value *ResponderBinding) string {
+	if value == nil {
+		return ""
+	}
+	token := sha256.Sum256([]byte(value.Token))
+	combined := sha256.Sum256([]byte(value.Endpoint + "\x00" + hex.EncodeToString(token[:])))
+	return hex.EncodeToString(combined[:])
 }
 
 // PullRequestBinding is the immutable source identity for a session created
@@ -341,6 +375,10 @@ type Turn struct {
 	// it only after that runtime and its private state have been reaped, so a
 	// terminal turn cannot erase the janitor's retry target.
 	RuntimeRunID string `json:"-"`
+	// ResponderBinding is controller-owned authority for exactly this logical
+	// turn. It stays private, survives admission/restart, and may differ between
+	// turns that reuse one native provider session.
+	ResponderBinding *ResponderBinding `json:"-"`
 }
 
 // TurnCandidate is a schema-valid result that still needs caller-owned
@@ -418,6 +456,7 @@ type CreateSessionRequest struct {
 	PolicyDigest       string                `json:"policy_digest"`
 	OmitEnv            bool                  `json:"omit_env,omitempty"`
 	OmitMCP            bool                  `json:"omit_mcp,omitempty"`
+	ResponderBinding   *ResponderBinding     `json:"responder_binding,omitempty"`
 	RepositoryReadOnly bool                  `json:"repository_read_only,omitempty"`
 	Repository         string                `json:"repository"`
 	Workspace          string                `json:"workspace"`
@@ -444,9 +483,10 @@ type SubmitTurnRequest struct {
 	ExpectedRevision int64
 	Prompt           string
 	Artifacts        []InputArtifact
-	MinTargetIndex   int             `json:",omitempty"`
-	RewindTarget     bool            `json:",omitempty"`
-	OutputContract   *OutputContract `json:",omitempty"`
+	MinTargetIndex   int               `json:",omitempty"`
+	RewindTarget     bool              `json:",omitempty"`
+	OutputContract   *OutputContract   `json:",omitempty"`
+	ResponderBinding *ResponderBinding `json:"responder_binding,omitempty"`
 }
 
 // OutputContract declares the exact JSON Schema a turn's final assistant

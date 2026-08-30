@@ -21,18 +21,29 @@ import (
 
 const sessionOutputRoot = ".coop-output"
 
+func prepareSessionOutputRoot(workspace string) (string, error) {
+	if !filepath.IsAbs(workspace) {
+		return "", errors.New("invalid turn output workspace")
+	}
+	root := filepath.Join(workspace, sessionOutputRoot)
+	if err := os.Mkdir(root, 0o750); err != nil && !errors.Is(err, os.ErrExist) {
+		return "", fmt.Errorf("create turn output root: %w", err)
+	}
+	if info, err := os.Lstat(root); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("turn output root is unsafe")
+	}
+	return root, nil
+}
+
 func prepareSessionOutputDir(workspace, turnID string) (string, string, error) {
 	if !filepath.IsAbs(workspace) || !validSessionHTTPPathID(turnID) {
 		return "", "", errors.New("invalid turn output identity")
 	}
-	root := filepath.Join(workspace, sessionOutputRoot)
+	root, err := prepareSessionOutputRoot(workspace)
+	if err != nil {
+		return "", "", err
+	}
 	dir := filepath.Join(root, turnID)
-	if err := os.Mkdir(root, 0o750); err != nil && !errors.Is(err, os.ErrExist) {
-		return "", "", fmt.Errorf("create turn output root: %w", err)
-	}
-	if info, err := os.Lstat(root); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return "", "", errors.New("turn output root is unsafe")
-	}
 	if err := os.Mkdir(dir, 0o750); err != nil {
 		return "", "", fmt.Errorf("create turn output directory: %w", err)
 	}

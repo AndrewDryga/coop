@@ -232,6 +232,14 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 		strings.Contains(operationByKey.Body.String(), "idempotency_key") {
 		t.Fatalf("operation-by-key status=%d body=%s", operationByKey.Code, operationByKey.Body.String())
 	}
+	missingOperation := sessionHTTPTestRequest(
+		t, handler, http.MethodGet, "/v1/operations?key=missing-operation", "", "", "",
+	)
+	if missingOperation.Code != http.StatusNotFound ||
+		!strings.Contains(missingOperation.Body.String(), `"code":"operation_not_found"`) ||
+		!strings.Contains(missingOperation.Body.String(), `"detail":"operation not found"`) {
+		t.Fatalf("missing operation status=%d body=%s", missingOperation.Code, missingOperation.Body.String())
+	}
 	getResponse := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+created.Session.ID, "", "", "")
 	if getResponse.Code != http.StatusOK || strings.Contains(getResponse.Body.String(), repo) || strings.Contains(getResponse.Body.String(), "native-secret") {
 		t.Fatalf("session response leaked private data: %d %s", getResponse.Code, getResponse.Body.String())
@@ -340,6 +348,82 @@ func TestSessionHTTPOperationFenceLinearizesStopAgainstAdmission(t *testing.T) {
 		!strings.Contains(winningFence.Body.String(), `"state":"succeeded"`) ||
 		!strings.Contains(winningFence.Body.String(), `"resource_type":"turn"`) {
 		t.Fatalf("winning fence = %d %s", winningFence.Code, winningFence.Body.String())
+	}
+}
+
+func TestSessionHTTPTurnBindingIsPrivateAndBoundToTheExactTurn(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	handler := NewHTTPHandler(service)
+
+	createdResponse := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions",
+		`{"policy":"responder","task":"turn-bound authority"}`,
+		"turn-binding-session", "application/json",
+	)
+	if createdResponse.Code != http.StatusOK {
+		t.Fatalf("create session = %d %s", createdResponse.Code, createdResponse.Body.String())
+	}
+	var created sessionMutationSessionResponse
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	binding := session.ResponderBinding{
+		Endpoint: "https://responder.example/v1/state-tools/mcp",
+		Token:    strings.Repeat("t", 48),
+	}
+	body := fmt.Sprintf(
+		`{"expected_revision":%d,"prompt":"bound turn","responder_binding":{"endpoint":%q,"token":%q}}`,
+		created.Session.Revision, binding.Endpoint, binding.Token,
+	)
+	submitted := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
+		body, "turn-binding-submit", "application/json",
+	)
+	wantDigest := session.ResponderBindingDigest(&binding)
+	if submitted.Code != http.StatusOK ||
+		!strings.Contains(submitted.Body.String(), `"responder_binding_digest":"`+wantDigest+`"`) ||
+		strings.Contains(submitted.Body.String(), binding.Token) ||
+		strings.Contains(submitted.Body.String(), `"responder_binding"`) {
+		t.Fatalf("submit turn binding response = %d %s", submitted.Code, submitted.Body.String())
+	}
+	var turnResponse sessionMutationTurnResponse
+	if err := json.Unmarshal(submitted.Body.Bytes(), &turnResponse); err != nil {
+		t.Fatal(err)
+	}
+	get := sessionHTTPTestRequest(
+		t, handler, http.MethodGet,
+		"/v1/sessions/"+created.Session.ID+"/turns/"+turnResponse.Turn.ID,
+		"", "", "",
+	)
+	if get.Code != http.StatusOK ||
+		!strings.Contains(get.Body.String(), `"responder_binding_digest":"`+wantDigest+`"`) ||
+		strings.Contains(get.Body.String(), binding.Token) ||
+		strings.Contains(get.Body.String(), `"responder_binding"`) {
+		t.Fatalf("get turn binding response = %d %s", get.Code, get.Body.String())
+	}
+	fenceBody := fmt.Sprintf(
+		`{"method":"SubmitTurn","request":{"session_id":%q,"expected_revision":%d,"prompt":"bound turn","responder_binding":{"endpoint":%q,"token":%q}}}`,
+		created.Session.ID, created.Session.Revision, binding.Endpoint, binding.Token,
+	)
+	fenced := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/operations/fence", fenceBody,
+		"turn-binding-submit", "application/json",
+	)
+	if fenced.Code != http.StatusOK ||
+		!strings.Contains(fenced.Body.String(), `"resource_type":"turn"`) ||
+		!strings.Contains(fenced.Body.String(), turnResponse.Turn.ID) ||
+		strings.Contains(fenced.Body.String(), binding.Token) {
+		t.Fatalf("fence turn binding response = %d %s", fenced.Code, fenced.Body.String())
+	}
+
+	malformed := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/turns",
+		fmt.Sprintf(`{"expected_revision":%d,"prompt":"bad binding","responder_binding":{"endpoint":"http://localhost/v1/state-tools/mcp","token":%q}}`, created.Session.Revision, binding.Token),
+		"turn-binding-invalid", "application/json",
+	)
+	if malformed.Code != http.StatusBadRequest || !strings.Contains(malformed.Body.String(), `"code":"invalid_request"`) {
+		t.Fatalf("malformed turn binding = %d %s", malformed.Code, malformed.Body.String())
 	}
 }
 
@@ -665,8 +749,21 @@ func TestSessionHTTPRouteWiring(t *testing.T) {
 	if response := get("/v1/sessions/" + sessionID); response.Code != http.StatusOK {
 		t.Fatalf("get session status = %d body=%s", response.Code, response.Body.String())
 	}
+	workspaceResponse := post(
+		"/v1/sessions/"+sessionID+"/workspace",
+		`{"expected_revision":1,"task":{"offer_ref":"record:task_offer:routes","title":"Route task","prompt":"Exercise every route.","success_checks":["route passes"],"authority_limits":[],"source_refs":[]}}`,
+		"route-workspace",
+	)
+	if workspaceResponse.Code != http.StatusOK {
+		t.Fatalf("workspace status = %d body=%s", workspaceResponse.Code, workspaceResponse.Body.String())
+	}
+	var workspace sessionMutationSessionResponse
+	if err := json.Unmarshal(workspaceResponse.Body.Bytes(), &workspace); err != nil ||
+		workspace.Session.WorkspaceTask == nil || workspace.Session.Revision != 2 {
+		t.Fatalf("workspace response = %+v, err=%v", workspace, err)
+	}
 
-	turnResponse := post("/v1/sessions/"+sessionID+"/turns", `{"expected_revision":1,"prompt":"queued"}`, "route-turn")
+	turnResponse := post("/v1/sessions/"+sessionID+"/turns", `{"expected_revision":2,"prompt":"queued"}`, "route-turn")
 	var turnCreated sessionMutationTurnResponse
 	if err := json.Unmarshal(turnResponse.Body.Bytes(), &turnCreated); err != nil {
 		t.Fatal(err)
@@ -682,22 +779,22 @@ func TestSessionHTTPRouteWiring(t *testing.T) {
 		t.Fatalf("list events status = %d body=%s", response.Code, response.Body.String())
 	}
 
-	cancelResponse := post("/v1/sessions/"+sessionID+"/turns/"+turnID+"/cancel", `{"expected_revision":1}`, "route-cancel")
+	cancelResponse := post("/v1/sessions/"+sessionID+"/turns/"+turnID+"/cancel", `{"expected_revision":2}`, "route-cancel")
 	if cancelResponse.Code != http.StatusOK {
 		t.Fatalf("cancel status = %d body=%s", cancelResponse.Code, cancelResponse.Body.String())
 	}
-	budgetResponse := post("/v1/sessions/"+sessionID+"/budget", `{"expected_revision":2,"additional_turns":1}`, "route-budget")
+	budgetResponse := post("/v1/sessions/"+sessionID+"/budget", `{"expected_revision":3,"additional_turns":1}`, "route-budget")
 	if budgetResponse.Code != http.StatusOK {
 		t.Fatalf("budget status = %d body=%s", budgetResponse.Code, budgetResponse.Body.String())
 	}
 	if response := get("/v1/sessions/" + sessionID + "/changes"); response.Code != http.StatusOK {
 		t.Fatalf("changes status = %d body=%s", response.Code, response.Body.String())
 	}
-	reviewResponse := post("/v1/sessions/"+sessionID+"/review", `{"expected_revision":3}`, "route-review")
+	reviewResponse := post("/v1/sessions/"+sessionID+"/review", `{"expected_revision":4}`, "route-review")
 	if reviewResponse.Code != http.StatusOK {
 		t.Fatalf("review status = %d body=%s", reviewResponse.Code, reviewResponse.Body.String())
 	}
-	closeResponse := post("/v1/sessions/"+sessionID+"/close", `{"expected_revision":3}`, "route-close")
+	closeResponse := post("/v1/sessions/"+sessionID+"/close", `{"expected_revision":4}`, "route-close")
 	if closeResponse.Code != http.StatusOK {
 		t.Fatalf("close status = %d body=%s", closeResponse.Code, closeResponse.Body.String())
 	}
@@ -705,7 +802,7 @@ func TestSessionHTTPRouteWiring(t *testing.T) {
 	if err := json.Unmarshal(closeResponse.Body.Bytes(), &closed); err != nil {
 		t.Fatal(err)
 	}
-	planResponse := post("/v1/sessions/"+sessionID+"/discard-plan", `{"expected_revision":4}`, "route-plan")
+	planResponse := post("/v1/sessions/"+sessionID+"/discard-plan", `{"expected_revision":5}`, "route-plan")
 	if planResponse.Code != http.StatusOK {
 		t.Fatalf("discard plan status = %d body=%s", planResponse.Code, planResponse.Body.String())
 	}
@@ -1008,7 +1105,11 @@ func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
 func newHTTPTestSessionService(t *testing.T, ladder ...string) (*Service, string) {
 	t.Helper()
 	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/tasks/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitignore")
+	git("commit", "-q", "-m", "base")
 	policies := testSessionPolicies(repo)
 	if len(ladder) > 0 {
 		policy := policies["responder"]

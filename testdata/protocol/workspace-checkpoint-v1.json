@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "checkpoint_ref": "checkpoint:session-1:g1:1",
+  "session_ref": "session-1",
+  "placement_generation": 1,
+  "repository_ref": "responder",
+  "base_revision": "1111111111111111111111111111111111111111",
+  "branch_ref": "remote/checkpoint/session-1",
+  "committed_revision": "2222222222222222222222222222222222222222",
+  "candidate_tree_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "task": {
+    "queue_id": "44444444444444444444444444444444",
+    "task_id": "55555555555555555555555555555555",
+    "id": "2026-08-29-fix-checkpoint-recovery",
+    "state": "in_progress",
+    "subtasks": [true, false],
+    "state_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  "gate": {
+    "status": "passed",
+    "revision": "2222222222222222222222222222222222222222",
+    "receipt_ref": "gate:session-1:2222222"
+  },
+  "bundle": {
+    "media_type": "application/vnd.coop.workspace-checkpoint.v1+tar",
+    "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "byte_size": 16384
+  },
+  "created_at": "2026-08-29T12:00:00Z"
+}

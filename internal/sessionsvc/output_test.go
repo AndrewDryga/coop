@@ -83,3 +83,26 @@ func TestPrepareSessionOutputDirDoesNotReplaceExistingContent(t *testing.T) {
 		t.Fatalf("existing turn output directory was removed: %v", err)
 	}
 }
+
+func TestPrepareSessionOutputRootCreatesOnlyAnExactDirectory(t *testing.T) {
+	workspace := t.TempDir()
+	root, err := prepareSessionOutputRoot(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != filepath.Join(workspace, sessionOutputRoot) {
+		t.Fatalf("output root = %q, want exact workspace child", root)
+	}
+	if info, err := os.Lstat(root); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("output root info = %+v, %v; want a real directory", info, err)
+	}
+
+	unsafeWorkspace := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(unsafeWorkspace, sessionOutputRoot)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareSessionOutputRoot(unsafeWorkspace); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("symlink output root error = %v, want unsafe refusal", err)
+	}
+}

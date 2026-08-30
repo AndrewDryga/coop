@@ -706,6 +706,16 @@ coop sessions — serve and inspect local remote sessions.
     policies ~/.config/coop/session-policies.yaml
     socket   <state>/control.sock
 
+coop worker — connect one private Coop daemon to Responder.
+
+  Usage: coop worker connect --config <absolute-path>
+
+  The connector opens one outbound mutual-TLS HTTPS poll stream and maps only
+  versioned Responder commands to the owner-private Coop Unix API. It journals
+  each command before execution and resends terminal results until Responder
+  durably acknowledges them. It never opens an inbound TCP port or accepts a
+  generic shell command.
+
 coop version — print coop's version and exit.
 
   Usage: coop version

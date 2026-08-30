@@ -260,6 +260,15 @@ const agentHelp = `coop <target> — run a sandboxed coding agent (claude, codex
 // own richer forkHelp, run has runHelp, and the agents use agentHelp (their `--help` forwards to
 // the agent's own CLI). Each value's first line is the synopsis.
 var commandHelp = map[string]string{
+	"worker": `coop worker — connect one private Coop daemon to Responder.
+
+  Usage: coop worker connect --config <absolute-path>
+
+  The connector opens one outbound mutual-TLS HTTPS poll stream and maps only
+  versioned Responder commands to the owner-private Coop Unix API. It journals
+  each command before execution and resends terminal results until Responder
+  durably acknowledges them. It never opens an inbound TCP port or accepts a
+  generic shell command.`,
 	"sessions": `coop sessions — serve and inspect local remote sessions.
 
   Usage: coop sessions serve [--state <path>] [--policies <path>] [--socket <path>]

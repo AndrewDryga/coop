@@ -44,8 +44,8 @@ var allowedEdges = map[string][]string{
 	"acpctl":                {"acpproxy", "agent", "config", "ladder", "liveprocess", "preset", "processidentity"},
 	"acpproxy":              nil,
 	"agent":                 {"config", "mcp"},
-	"box":                   {"agent", "config", "consult", "forkspace", "mcp", "preset", "processidentity", "project", "runtime", "ui"},
-	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "forkctl", "forkspace", "ladder", "liveprocess", "loop", "loopcfg", "preset", "project", "runtime", "scaffold", "sessionsvc", "tasks", "ui"},
+	"box":                   {"agent", "config", "consult", "forkspace", "mcp", "preset", "processidentity", "project", "runtime", "secretscan", "ui"},
+	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "forkctl", "forkspace", "ladder", "liveprocess", "loop", "loopcfg", "preset", "project", "runtime", "scaffold", "sessionsvc", "tasks", "ui", "workerconnector", "workerproto"},
 	"config":                nil,
 	"contextc":              {"project"},
 	"forkctl":               {"agent", "box", "config", "forkspace", "project", "runtime", "sessionsvc", "tasks", "ui"},
@@ -62,13 +62,16 @@ var allowedEdges = map[string][]string{
 	"runtime":               {"liveprocess"},
 	"scaffold":              {"agent", "project", "taskstate", "ui"},
 	"session":               nil,
-	"sessionsvc":            {"agent", "box", "config", "forkspace", "ladder", "mcp", "runtime", "session", "tasks"},
+	"sessionsvc":            {"agent", "box", "config", "forkspace", "ladder", "mcp", "runtime", "session", "tasks", "workerproto"},
+	"secretscan":            {},
 	"tasks":                 {"box", "config", "forkspace", "project", "taskstate", "ui"},
 	"taskstate":             nil,
 	"testutil/gitrepo":      nil,
 	"testutil/liveprovider": {"agent", "config", "liveprocess", "processidentity", "testutil/procharness"},
 	"testutil/procharness":  nil,
 	"ui":                    nil,
+	"workerconnector":       {"secretscan", "workerproto"},
+	"workerproto":           nil,
 }
 
 // uiPresentationOwners are the only packages allowed to import internal/ui. Terminal rendering

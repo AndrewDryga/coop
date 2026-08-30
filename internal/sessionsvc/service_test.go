@@ -1,6 +1,7 @@
 package sessionsvc
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -25,7 +27,9 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 func TestParseSessionPoliciesIsStrictAndPinsOneCredentialPerTarget(t *testing.T) {
@@ -374,6 +378,344 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 	replayed, err := service.CreateRemoteSession(context.Background(), "create-1", request)
 	if err != nil || replayed.ID != sess.ID || replayed.Workspace != sess.Workspace {
 		t.Fatalf("create replay = %+v, err=%v", replayed, err)
+	}
+}
+
+func TestConfirmedEngineeringSessionEnsuresOneDurableWorkspaceTask(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	sess, err := service.CreateRemoteSession(context.Background(), "create-task-session", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "record:task_offer:0123456789abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := tasks.ControllerTaskDraft{
+		OfferRef: "record:task_offer:0123456789abcdef", Title: "Fix parser retries",
+		Prompt:          "Change the parser and preserve idempotency.",
+		SuccessChecks:   []string{"focused tests pass", "retry remains idempotent"},
+		AuthorityLimits: []string{"must not deploy"}, InstructionRef: "input:trusted:1",
+	}
+	bound, err := service.EnsureWorkspaceTask(context.Background(), "ensure-workspace-task", EnsureWorkspaceTaskRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Task: draft,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Revision != sess.Revision+1 || bound.WorkspaceTask == nil ||
+		bound.WorkspaceTask.QueueID == "" || bound.WorkspaceTask.TaskID == "" ||
+		bound.WorkspaceTask.ID == "" || bound.WorkspaceTask.DraftSHA256 == "" {
+		t.Fatalf("workspace task binding = %+v", bound)
+	}
+	item, ok := tasks.CurrentTask(filepath.Join(bound.Workspace, tasks.TasksRoot), bound.WorkspaceTask.ID)
+	if !ok || item.State != tasks.StateTodo || len(item.Subtasks) != 2 {
+		t.Fatalf("workspace task = %+v, ok=%v", item, ok)
+	}
+	replayed, err := service.EnsureWorkspaceTask(context.Background(), "ensure-workspace-task", EnsureWorkspaceTaskRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Task: draft,
+	})
+	if err != nil || replayed.WorkspaceTask == nil || *replayed.WorkspaceTask != *bound.WorkspaceTask {
+		t.Fatalf("workspace task replay = %+v, err=%v", replayed, err)
+	}
+	changed := draft
+	changed.Prompt = "Different task bytes."
+	if _, err := service.EnsureWorkspaceTask(context.Background(), "ensure-workspace-task", EnsureWorkspaceTaskRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Task: changed,
+	}); err == nil {
+		t.Fatal("changed ensure-workspace replay was accepted")
+	}
+}
+
+func TestParkedEngineeringWorkspaceCheckpointCapturesExactCodeAndTaskState(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/tasks/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitignore", "tracked.txt")
+	git("commit", "-qm", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	sess, err := service.CreateRemoteSession(context.Background(), "checkpoint-create", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "record:task_offer:checkpoint",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := tasks.ControllerTaskDraft{
+		OfferRef: "record:task_offer:checkpoint", Title: "Checkpoint exact workspace",
+		Prompt: "Preserve code and task state.", SuccessChecks: []string{"focused tests pass"},
+	}
+	sess, err = service.EnsureWorkspaceTask(context.Background(), "checkpoint-ensure", EnsureWorkspaceTaskRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Task: draft,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "tracked.txt"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "helper.sh"), []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	queue := filepath.Join(sess.Workspace, tasks.TasksRoot)
+	item, ok := tasks.CurrentTask(queue, sess.WorkspaceTask.ID)
+	if !ok {
+		t.Fatal("workspace task disappeared")
+	}
+	body, err := os.ReadFile(filepath.Join(item.Dir, "task.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(item.Dir, "task.md"), bytes.Replace(body, []byte("- [ ]"), []byte("- [x]"), 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	item, _ = tasks.CurrentTask(queue, item.ID)
+	if err := tasks.MoveTaskDir(queue, item, tasks.StateInProgress); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := service.CheckpointWorkspace(context.Background(), "checkpoint-once", CheckpointWorkspaceRequest{
+		SessionID: sess.ID, SessionRef: "session-work-1", ExpectedRevision: sess.Revision,
+		PlacementGeneration: 3, RepositoryRef: "responder",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := result.Checkpoint
+	if checkpoint.PlacementGeneration != 3 || checkpoint.RepositoryRef != "responder" ||
+		checkpoint.Task.State != "in_progress" || len(checkpoint.Task.Subtasks) != 1 || !checkpoint.Task.Subtasks[0] {
+		t.Fatalf("checkpoint = %+v", checkpoint)
+	}
+	bundle, err := service.OpenWorkspaceCheckpointBundle(context.Background(), result.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleSHA := fmt.Sprintf("%x", sha256.Sum256(bundle))
+	if int64(len(bundle)) != checkpoint.Bundle.ByteSize || bundleSHA != checkpoint.Bundle.SHA256 {
+		t.Fatalf("bundle identity = bytes=%d sha=%s descriptor=%+v", len(bundle), bundleSHA, checkpoint.Bundle)
+	}
+	if _, err := workerproto.ValidateWorkspaceCheckpointBundle(checkpoint, bundle); err != nil {
+		t.Fatal(err)
+	}
+	reader := tar.NewReader(bytes.NewReader(bundle))
+	var names []string
+	var manifest workerproto.WorkspaceCheckpointBundleManifest
+	for {
+		header, nextErr := reader.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			t.Fatal(nextErr)
+		}
+		names = append(names, header.Name)
+		member, readErr := io.ReadAll(reader)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if header.Name == "manifest.json" {
+			manifest, err = workerproto.DecodeWorkspaceCheckpointBundleManifest(member)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if len(names) < 4 || names[0] != "manifest.json" || names[1] != "workspace.patch" ||
+		names[2] != "untracked/000000" || !strings.HasPrefix(names[3], "task/") {
+		t.Fatalf("bundle order = %+v", names)
+	}
+	if err := workerproto.ValidateWorkspaceCheckpointPair(checkpoint, manifest); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := service.CheckpointWorkspace(context.Background(), "checkpoint-once", CheckpointWorkspaceRequest{
+		SessionID: sess.ID, SessionRef: "session-work-1", ExpectedRevision: sess.Revision,
+		PlacementGeneration: 3, RepositoryRef: "responder",
+	})
+	if err != nil || replayed.Checkpoint.CheckpointRef != checkpoint.CheckpointRef ||
+		replayed.Checkpoint.Bundle != checkpoint.Bundle {
+		t.Fatalf("checkpoint replay = %+v, err=%v", replayed, err)
+	}
+}
+
+func TestExhaustedOneTurnEngineeringSessionStillCapturesItsWorkspaceCheckpoint(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/tasks/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitignore")
+	git("commit", "-qm", "base")
+	policies := testSessionPolicies(repo)
+	policy := policies["responder"]
+	policy.MaxTurns = 1
+	policies["responder"] = policy
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+
+	sess, err := service.CreateRemoteSession(context.Background(), "checkpoint-exhausted-create", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "record:task_offer:checkpoint-exhausted",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err = service.EnsureWorkspaceTask(context.Background(), "checkpoint-exhausted-ensure", EnsureWorkspaceTaskRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision,
+		Task: tasks.ControllerTaskDraft{
+			OfferRef: "record:task_offer:checkpoint-exhausted", Title: "Checkpoint exhausted workspace",
+			Prompt: "Preserve the final writable state.", SuccessChecks: []string{"focused tests pass"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := service.Store().SubmitTurn(context.Background(), "checkpoint-exhausted-turn", session.SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "Finish the task.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leased, ok, err := service.Store().LeaseNextTurn(context.Background(), sess.ID)
+	if err != nil || !ok || leased.ID != turn.ID {
+		t.Fatalf("leased turn = %+v, ok=%v, err=%v", leased, ok, err)
+	}
+	if _, err := service.Store().MarkTurnSendIntent(context.Background(), sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Store().MarkTurnSent(context.Background(), sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Store().CompleteTurn(context.Background(), session.CompleteTurnRequest{
+		SessionID: sess.ID, TurnID: turn.ID, Message: "done",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	exhausted, err := service.Store().GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exhausted.State != session.SessionExhausted || exhausted.Activity != session.ActivityParked {
+		t.Fatalf("completed session = %+v", exhausted)
+	}
+
+	captured, err := service.CheckpointWorkspace(context.Background(), "checkpoint-exhausted-capture", CheckpointWorkspaceRequest{
+		SessionID: exhausted.ID, SessionRef: "work-session-exhausted", ExpectedRevision: exhausted.Revision,
+		PlacementGeneration: 2, RepositoryRef: "responder",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured.Checkpoint.SessionRef != "work-session-exhausted" || captured.Checkpoint.Task.ID != exhausted.WorkspaceTask.ID {
+		t.Fatalf("captured checkpoint = %+v", captured.Checkpoint)
+	}
+}
+
+func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/tasks/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitignore", "tracked.txt")
+	git("commit", "-qm", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+
+	source, err := service.CreateRemoteSession(context.Background(), "restore-source-create", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "record:task_offer:restore",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := tasks.ControllerTaskDraft{
+		OfferRef: "record:task_offer:restore", Title: "Restore exact workspace",
+		Prompt: "Move this writable task without losing work.", SuccessChecks: []string{"focused tests pass"},
+	}
+	source, err = service.EnsureWorkspaceTask(context.Background(), "restore-source-ensure", EnsureWorkspaceTaskRequest{
+		SessionID: source.ID, ExpectedRevision: source.Revision, Task: draft,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source.Workspace, "tracked.txt"), []byte("restored change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source.Workspace, "helper.sh"), []byte("#!/bin/sh\necho restored\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	queue := filepath.Join(source.Workspace, tasks.TasksRoot)
+	item, ok := tasks.CurrentTask(queue, source.WorkspaceTask.ID)
+	if !ok {
+		t.Fatal("source workspace task disappeared")
+	}
+	body, err := os.ReadFile(filepath.Join(item.Dir, "task.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(item.Dir, "task.md"), bytes.Replace(body, []byte("- [ ]"), []byte("- [x]"), 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	item, _ = tasks.CurrentTask(queue, item.ID)
+	if err := tasks.MoveTaskDir(queue, item, tasks.StateInProgress); err != nil {
+		t.Fatal(err)
+	}
+
+	captured, err := service.CheckpointWorkspace(context.Background(), "restore-source-checkpoint", CheckpointWorkspaceRequest{
+		SessionID: source.ID, SessionRef: "work-session-source", ExpectedRevision: source.Revision,
+		PlacementGeneration: 4, RepositoryRef: "responder",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := service.OpenWorkspaceCheckpointBundle(context.Background(), captured.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := service.CreateRemoteSession(context.Background(), "restore-target-create", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "record:task_offer:restore",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := service.RestoreWorkspaceCheckpoint(context.Background(), "restore-target-once", RestoreWorkspaceCheckpointRequest{
+		SessionID: target.ID, ExpectedRevision: target.Revision,
+		Checkpoint: captured.Checkpoint, Bundle: bundle,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.WorkspaceTask == nil || *restored.WorkspaceTask != *source.WorkspaceTask ||
+		restored.BaseCommit != captured.Checkpoint.BaseRevision {
+		t.Fatalf("restored session = %+v, source task = %+v", restored, source.WorkspaceTask)
+	}
+	wantPatch, _, err := runSessionWorkspaceGit(source.Workspace, workerproto.MaxWorkspaceCheckpointBundleBytes+1,
+		"diff", "--no-ext-diff", "--no-textconv", "--binary", captured.Checkpoint.BaseRevision, "--")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotPatch, _, err := runSessionWorkspaceGit(restored.Workspace, workerproto.MaxWorkspaceCheckpointBundleBytes+1,
+		"diff", "--no-ext-diff", "--no-textconv", "--binary", captured.Checkpoint.BaseRevision, "--")
+	if err != nil || !bytes.Equal(gotPatch, wantPatch) {
+		t.Fatalf("restored tracked patch differs: err=%v\nwant=%q\n got=%q", err, wantPatch, gotPatch)
+	}
+	if got, err := os.ReadFile(filepath.Join(restored.Workspace, "helper.sh")); err != nil || string(got) != "#!/bin/sh\necho restored\n" {
+		t.Fatalf("restored untracked file = %q, err=%v", got, err)
+	}
+	restoredItem, ok := tasks.CurrentTask(filepath.Join(restored.Workspace, tasks.TasksRoot), source.WorkspaceTask.ID)
+	if !ok || restoredItem.State != tasks.StateInProgress || len(restoredItem.Subtasks) != 1 || !restoredItem.Subtasks[0] {
+		t.Fatalf("restored task = %+v, ok=%v", restoredItem, ok)
+	}
+	replayed, err := service.RestoreWorkspaceCheckpoint(context.Background(), "restore-target-once", RestoreWorkspaceCheckpointRequest{
+		SessionID: target.ID, ExpectedRevision: target.Revision,
+		Checkpoint: captured.Checkpoint, Bundle: bundle,
+	})
+	if err != nil || replayed.ID != restored.ID || replayed.Revision != restored.Revision {
+		t.Fatalf("restore replay = %+v, err=%v", replayed, err)
 	}
 }
 
@@ -827,6 +1169,85 @@ func TestAReadOnlyPolicyRemainsReadOnlyThroughSessionCreation(t *testing.T) {
 		!publicSession(persisted).RepositoryReadOnly {
 		t.Fatalf("read-only policy widened across creation: created=%+v persisted=%+v public=%+v",
 			created, persisted, publicSession(persisted))
+	}
+}
+
+// Responder model evals must fail closed unless the public Coop resource proves that
+// neither project environment nor project MCP authority reached the model session. The
+// policy already enforced and persisted these bits, but omitting them from SessionDTO
+// made an isolated real session indistinguishable from an ambient-authority session.
+func TestProjectIsolationRemainsPublicThroughSessionCreation(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	policies := testSessionPolicies(repo)
+	policy := policies["responder"]
+	policy.OmitEnv = true
+	policy.OmitMCP = true
+	policies["responder"] = policy
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+
+	created, err := service.CreateRemoteSession(
+		context.Background(), "isolated-create",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "safe eval"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := service.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := publicSession(persisted)
+	if created.ProjectEnv || created.ProjectMCP || persisted.ProjectEnv || persisted.ProjectMCP ||
+		public.ProjectEnv || public.ProjectMCP {
+		t.Fatalf("project authority widened across creation: created=%+v persisted=%+v public=%+v",
+			created, persisted, public)
+	}
+	wire, err := json.Marshal(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(wire, []byte(`"project_env":false`)) ||
+		!bytes.Contains(wire, []byte(`"project_mcp":false`)) {
+		t.Fatalf("public session omitted isolation proof: %s", wire)
+	}
+}
+
+func TestResponderStateBindingSurvivesAsyncCreationButStaysPrivate(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	binding := &session.ResponderBinding{
+		Endpoint: "https://responder.example/v1/state-tools/mcp",
+		Token:    strings.Repeat("b", 48),
+	}
+
+	created, err := service.CreateRemoteSession(
+		context.Background(), "bound-create",
+		CreateRemoteSessionRequest{Policy: "responder", Task: "stateful work", ResponderBinding: binding},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := service.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ResponderBinding == nil || persisted.ResponderBinding.Endpoint != binding.Endpoint ||
+		persisted.ResponderBinding.Token != binding.Token {
+		t.Fatalf("persisted binding = %+v", persisted.ResponderBinding)
+	}
+	public, err := json.Marshal(publicSession(persisted))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(public, []byte(binding.Token)) || bytes.Contains(public, []byte(`"responder_binding":`)) {
+		t.Fatalf("public session exposed private binding: %s", public)
+	}
+	if !bytes.Contains(public, []byte(session.ResponderBindingDigest(binding))) {
+		t.Fatalf("public session omitted binding proof: %s", public)
 	}
 }
 

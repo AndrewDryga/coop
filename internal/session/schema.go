@@ -203,6 +203,28 @@ const schemaV15 = `
 ALTER TABLE turns ADD COLUMN runtime_run_id TEXT NOT NULL DEFAULT '';
 `
 
+// The controller may bind exactly one HTTPS Responder state MCP endpoint to a
+// session. This is separate from the operator-owned shared MCP catalog and
+// survives daemon restarts and provider-native session resets.
+const schemaV16 = `
+ALTER TABLE sessions ADD COLUMN responder_endpoint TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN responder_token TEXT NOT NULL DEFAULT '';
+`
+
+// A remote engineering session binds one controller-approved task projection. The JSON is a
+// compact immutable identity, not a mirror of the task files or their mutable lifecycle state.
+const schemaV17 = `
+ALTER TABLE sessions ADD COLUMN workspace_task TEXT NOT NULL DEFAULT '';
+`
+
+// Responder state-tool authority is logical-turn scoped. A native session may
+// continue across many turns, but a completed or replaced turn's bearer must
+// not authorize its successor.
+const schemaV18 = `
+ALTER TABLE turns ADD COLUMN responder_endpoint TEXT NOT NULL DEFAULT '';
+ALTER TABLE turns ADD COLUMN responder_token TEXT NOT NULL DEFAULT '';
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -309,6 +331,24 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v15: %w", err)
 		}
 		version = 15
+	}
+	if version < 16 {
+		if _, err := tx.Exec(schemaV16); err != nil {
+			return fmt.Errorf("migrate schema v16: %w", err)
+		}
+		version = 16
+	}
+	if version < 17 {
+		if _, err := tx.Exec(schemaV17); err != nil {
+			return fmt.Errorf("migrate schema v17: %w", err)
+		}
+		version = 17
+	}
+	if version < 18 {
+		if _, err := tx.Exec(schemaV18); err != nil {
+			return fmt.Errorf("migrate schema v18: %w", err)
+		}
+		version = 18
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
