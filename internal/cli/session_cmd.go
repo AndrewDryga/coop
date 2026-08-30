@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -81,9 +82,9 @@ func sessionCLIPaths(state, policy, socket string) (string, string, string, erro
 func parseSessionsFlags(args []string, command string) (state, policy, socket string, jsonOutput bool, err error) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if arg == "--json" && command == "doctor" {
+		if arg == "--json" && (command == "doctor" || command == "policies") {
 			if jsonOutput {
-				return "", "", "", false, errors.New("sessions doctor: --json may be specified once")
+				return "", "", "", false, fmt.Errorf("sessions %s: --json may be specified once", command)
 			}
 			jsonOutput = true
 			continue
@@ -108,8 +109,15 @@ func parseSessionsFlags(args []string, command string) (state, policy, socket st
 		}
 		*target = args[i]
 	}
-	if command == "doctor" && (state != "" || policy != "") {
-		return "", "", "", false, errors.New("sessions doctor: only --socket and --json are supported")
+	switch command {
+	case "doctor":
+		if state != "" || policy != "" {
+			return "", "", "", false, errors.New("sessions doctor: only --socket and --json are supported")
+		}
+	case "policies":
+		if state != "" || socket != "" {
+			return "", "", "", false, errors.New("sessions policies: only --policies and --json are supported")
+		}
 	}
 	return state, policy, socket, jsonOutput, nil
 }
@@ -131,9 +139,52 @@ func (a *app) cmdSessions(args []string) (int, error) {
 			return 2, err
 		}
 		return runSessionDoctor(socket, jsonOutput)
+	case "policies":
+		_, policy, _, jsonOutput, err := parseSessionsFlags(args[1:], "policies")
+		if err != nil {
+			return 2, err
+		}
+		return runSessionPolicies(policy, jsonOutput)
 	default:
 		return 2, fmt.Errorf("sessions: unknown command %q", args[0])
 	}
+}
+
+type sessionPoliciesResult struct {
+	PolicyFile    string            `json:"policy_file"`
+	PolicyDigests map[string]string `json:"policy_digests"`
+}
+
+func runSessionPolicies(policyPath string, jsonOutput bool) (int, error) {
+	_, policyPath, _, err := sessionCLIPaths("", policyPath, "")
+	if err != nil {
+		return 2, err
+	}
+	policies, err := sessionsvc.LoadPolicies(policyPath, config.Load())
+	if err != nil {
+		return 1, err
+	}
+	result := sessionPoliciesResult{
+		PolicyFile:    policyPath,
+		PolicyDigests: make(map[string]string, len(policies)),
+	}
+	names := make([]string, 0, len(policies))
+	for name, policy := range policies {
+		names = append(names, name)
+		result.PolicyDigests[name] = sessionsvc.ResolvedPolicyDigest(policy)
+	}
+	if jsonOutput {
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			return 1, err
+		}
+		return 0, nil
+	}
+	sort.Strings(names)
+	fmt.Fprintf(os.Stdout, "Policy file: %s\n", result.PolicyFile)
+	for _, name := range names {
+		fmt.Fprintf(os.Stdout, "%s\t%s\n", name, result.PolicyDigests[name])
+	}
+	return 0, nil
 }
 
 func runSessionServe(state, policy, socket string) (int, error) {

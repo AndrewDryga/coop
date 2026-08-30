@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 // sessionHealthDTO decodes /healthz, like sessionReadyDTO decodes /readyz — the doctor is a client
@@ -109,5 +111,87 @@ func TestSessionCLIPathsUseRealHomeDefaults(t *testing.T) {
 	}
 	if !strings.HasPrefix(state, filepath.Join(home, ".local", "state", "coop", "sessions")) || policy != filepath.Join(home, ".config", "coop", "session-policies.yaml") || socket != filepath.Join(state, "control.sock") {
 		t.Fatalf("defaults = state %q policy %q socket %q", state, policy, socket)
+	}
+}
+
+func TestSessionPoliciesFlagsAreNarrow(t *testing.T) {
+	_, policy, _, jsonOutput, err := parseSessionsFlags(
+		[]string{"--policies", "/etc/coop/session-policies.yaml", "--json"},
+		"policies",
+	)
+	if err != nil || policy != "/etc/coop/session-policies.yaml" || !jsonOutput {
+		t.Fatalf("sessions policies flags = policy %q json %v err %v", policy, jsonOutput, err)
+	}
+	for _, args := range [][]string{
+		{"--state", "/tmp/state"},
+		{"--socket", "/tmp/control.sock"},
+	} {
+		if _, _, _, _, err := parseSessionsFlags(args, "policies"); err == nil {
+			t.Fatalf("sessions policies unexpectedly accepted %v", args)
+		}
+	}
+	if _, _, _, _, err := parseSessionsFlags([]string{"--json", "--json"}, "policies"); err == nil ||
+		!strings.Contains(err.Error(), "sessions policies") {
+		t.Fatalf("duplicate policies --json error = %v", err)
+	}
+}
+
+func TestSessionPoliciesPrintsDigestsFromTheTrustedPolicyFile(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	repo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configRoot := t.TempDir()
+	profile := filepath.Join(configRoot, "codex", "profiles", "work")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profile, "auth.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONFIG_DIR", configRoot)
+	t.Setenv("COOP_CONF", filepath.Join(t.TempDir(), "absent.conf"))
+
+	policyRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyPath := filepath.Join(policyRoot, "session-policies.yaml")
+	body := "version: 1\npolicies:\n" +
+		"  write:\n    repository: " + repo + "\n    target: codex@work\n" +
+		"    max_turns: 20\n    max_queued_turns: 10\n    max_queued_bytes: 4096\n" +
+		"    max_patch_bytes: 8192\n    turn_timeout: 1h\n" +
+		"  read:\n    repository: " + repo + "\n    repository_read_only: true\n" +
+		"    target: codex@work\n    max_turns: 5\n    max_queued_turns: 2\n" +
+		"    max_queued_bytes: 2048\n    max_patch_bytes: 4096\n    turn_timeout: 30m\n"
+	if err := os.WriteFile(policyPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var code int
+	var runErr error
+	output := captureStdout(t, func() {
+		code, runErr = (&app{}).cmdSessions([]string{"policies", "--policies", policyPath, "--json"})
+	})
+	if runErr != nil || code != 0 {
+		t.Fatalf("sessions policies = code %d err %v output %q", code, runErr, output)
+	}
+	var result sessionPoliciesResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("decode sessions policies output %q: %v", output, err)
+	}
+	loaded, err := sessionsvc.LoadPolicies(policyPath, config.Load())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.PolicyFile != policyPath || len(result.PolicyDigests) != len(loaded) {
+		t.Fatalf("sessions policies result = %+v", result)
+	}
+	for name, policy := range loaded {
+		if got, want := result.PolicyDigests[name], sessionsvc.ResolvedPolicyDigest(policy); got != want {
+			t.Errorf("policy %q digest = %q, want %q", name, got, want)
+		}
 	}
 }

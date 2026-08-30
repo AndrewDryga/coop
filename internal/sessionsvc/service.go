@@ -869,6 +869,13 @@ func resolvedSessionPolicyDigest(policy Policy) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// ResolvedPolicyDigest returns the immutable digest bound into a remote session. Operators use
+// the same value when authorizing a fleet worker, so the worker cannot advertise a policy name
+// whose repository, target, or authority differs from the controller's trusted policy file.
+func ResolvedPolicyDigest(policy Policy) string {
+	return resolvedSessionPolicyDigest(policy)
+}
+
 func (s *Service) Store() *session.Store { return s.store }
 
 func (s *Service) lockOperation(key string) func() {

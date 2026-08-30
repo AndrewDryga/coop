@@ -50,6 +50,7 @@ TASKS — a folder-per-task queue in .agent/tasks/
 SESSIONS — LOCAL REMOTE-SESSION CONTROLLER
   coop sessions serve               run the session controller on Unix
   coop sessions doctor              check the session controller Unix socket
+  coop sessions policies            print trusted policy digests for workers
 
 SERVICES — the box's .agent/compose.yml sidecars
   coop up                           start the .agent/compose.yml services
@@ -698,10 +699,13 @@ coop sessions — serve and inspect local remote sessions.
 
   Usage: coop sessions serve [--state <path>] [--policies <path>] [--socket <path>]
          coop sessions doctor [--socket <path>] [--json]
+         coop sessions policies [--policies <path>] [--json]
 
   'serve' owns the state root and exposes the v1 JSON API over an owner-only Unix
   socket. It never listens on TCP. 'doctor' checks only that Unix socket and exits
-  nonzero when the service is unavailable or unready.
+  nonzero when the service is unavailable or unready. 'policies' validates the
+  trusted policy file and prints the immutable policy digests a fleet worker must
+  advertise; JSON output contains policy_file and policy_digests.
 
   A policy's target: takes one target or a LIST of up to 4 — a fallback ladder, and
   it may cross providers: [codex:gpt-5.6-sol/xhigh@oncall, claude@oncall]. A rate
