@@ -68,7 +68,7 @@ func NewLayout(root string) (Layout, error) {
 			return Layout{}, fmt.Errorf("secure process-test state %s: %w", dir, err)
 		}
 	}
-	for _, path := range []string{l.Trace, l.GitConfig} {
+	for _, path := range []string{l.Trace, l.GitConfig, filepath.Join(l.Config, "missing.conf")} {
 		if err := os.WriteFile(path, nil, 0o600); err != nil {
 			return Layout{}, fmt.Errorf("create process-test file %s: %w", path, err)
 		}

@@ -38,8 +38,7 @@ func groupHelp(cmd string) (int, error) {
 		printCommandHelp(h)
 		return 0, nil
 	}
-	printHelp(config.Load())
-	return 0, nil
+	return 2, fmt.Errorf("no help registered for command group %q", cmd)
 }
 
 // helpText renders the top-level command reference: one command per line, grouped, with a

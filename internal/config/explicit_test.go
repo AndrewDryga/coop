@@ -5,8 +5,10 @@ import "testing"
 // Explicit distinguishes "the user set this" (env/conf) from "this is the built-in default" — the
 // seam the .agent/project.yaml box: overlay keys off (an explicit setting always beats the file).
 func TestExplicit(t *testing.T) {
+	clearAgentEnv(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("COOP_EGRESS", "open")
-	c := Load()
+	c := mustLoad(t)
 	if !c.Explicit("COOP_EGRESS") {
 		t.Error("an env-set key must be explicit")
 	}

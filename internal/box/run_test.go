@@ -1945,9 +1945,9 @@ func TestAssembleArgsEgressFailsClosed(t *testing.T) {
 	}
 }
 
-// TestAssembleArgsConsultTimeout: a valid COOP_CONSULT_TIMEOUT is forwarded into the box so the
-// coop-consult wrapper's per-peer timeout is tunable per-run; empty/invalid is dropped so the
-// wrapper's built-in default applies.
+// TestAssembleArgsConsultTimeout: config.Load canonicalizes a validated positive timeout for the
+// box and represents the unlimited default as empty. assembleArgs only has to preserve those two
+// states; malformed user input is rejected before a Config exists (internal/config tests).
 func TestAssembleArgsConsultTimeout(t *testing.T) {
 	mk := func(timeout string) []string {
 		cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir(), ConsultTimeout: timeout}
@@ -1958,10 +1958,8 @@ func TestAssembleArgsConsultTimeout(t *testing.T) {
 	if !containsSeq(mk("3600"), []string{"-e", "COOP_CONSULT_TIMEOUT=3600"}) {
 		t.Error("valid timeout should be forwarded as -e COOP_CONSULT_TIMEOUT")
 	}
-	for _, bad := range []string{"", "0", "-5", "30m", "abc"} {
-		if containsSeq(mk(bad), []string{"-e", "COOP_CONSULT_TIMEOUT=" + bad}) {
-			t.Errorf("invalid timeout %q should not be forwarded", bad)
-		}
+	if containsSeq(mk(""), []string{"-e", "COOP_CONSULT_TIMEOUT="}) {
+		t.Error("unlimited timeout should not be forwarded")
 	}
 }
 
@@ -2969,9 +2967,17 @@ func TestApplyProjectPolicy(t *testing.T) {
 	}
 
 	// An EXPLICIT env setting beats the file — the repo can't override the user's own choice.
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", conf)
 	t.Setenv("COOP_EGRESS", "open")
 	t.Setenv("COOP_MEMORY", "8g")
-	expl := config.Load() // Egress=open, Memory=8g, both explicit
+	expl, err := config.Load() // Egress=open, Memory=8g, both explicit
+	if err != nil {
+		t.Fatal(err)
+	}
 	got2 := applyProjectPolicy(expl, &project.Project{Box: project.Box{Egress: "none", Memory: "2g"}}, &RunSpec{})
 	if got2.Egress != "open" {
 		t.Errorf("explicit COOP_EGRESS=open must beat box.egress:none, got %q", got2.Egress)

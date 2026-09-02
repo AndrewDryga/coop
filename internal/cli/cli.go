@@ -68,7 +68,11 @@ func (a *app) ensureRuntime() error {
 
 // Main is the process entry point. It returns the exit code to pass to os.Exit.
 func Main(argv []string) int {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		ui.Error("%v", err)
+		return 1
+	}
 	if !detachedWorkerReexec(argv) {
 		// Once a day, check for a newer coop in the background and mention it as the command's
 		// parting line (deferred, so it runs on every return path). See startUpdateCheck.
@@ -95,13 +99,13 @@ func Main(argv []string) int {
 				fmt.Print(RenderManual(cfg))
 				return 0
 			}
-			return helpForCommand(argv[1])
+			return helpForCommand(argv[1], cfg)
 		}
 		printHelp(cfg)
 		return 0
 	case "version", "-v", "--version":
 		if helpRequested(argv[1:]) { // `coop version --help` prints its help, not a self-referential error
-			return helpForCommand("version")
+			return helpForCommand("version", cfg)
 		}
 		if err := rejectArgs("version", argv[1:]); err != nil { // reject extras like every no-arg command
 			ui.Error("%v", err)
@@ -126,9 +130,6 @@ func Main(argv []string) int {
 		}
 	}
 
-	for _, w := range cfg.Warnings { // non-fatal config problems (e.g. an unrecognized COOP_EGRESS)
-		ui.Warn("%s", w)
-	}
 	// The runtime is detected lazily (a.ensureRuntime), only by box-running commands — so pure-local
 	// families work with no container runtime installed. See dispatch and resolveImage.
 	a := &app{cfg: cfg}
@@ -285,7 +286,7 @@ var topLevelCommands = []string{
 // helpForCommand prints one command's help for `coop help <cmd>`, matching `coop <cmd> --help`:
 // fork's family help, a static commandHelp entry, a pointer for the agent/raw commands whose
 // --help forwards to the underlying CLI, or an unknown-command error (exit 2) for anything else.
-func helpForCommand(cmd string) int {
+func helpForCommand(cmd string, cfg *config.Config) int {
 	switch {
 	case cmd == "fork":
 		code, _ := forkHelp()
@@ -296,7 +297,7 @@ func helpForCommand(cmd string) int {
 	case cmd == "help":
 		// `coop help help` — help IS the top-level reference, so print it (not a broken pointer
 		// to `coop help --help`, which these have no underlying CLI for).
-		printHelp(config.Load())
+		printHelp(cfg)
 		return 0
 	case commandHelp[cmd] != "":
 		printCommandHelp(commandHelp[cmd])

@@ -327,7 +327,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// Keep a box warm per OTHER signed-in provider so a provider switch swaps to a hot adapter
 	// (proxy replay only) instead of cold-booting one (~5s). Behind the factory: a miss cold-spawns,
 	// so correctness is unaffected. COOP_ACP_WARM=0 opts out (a low-RAM escape hatch).
-	warm := os.Getenv("COOP_ACP_WARM") != "0"
+	warm := a.cfg.ACPWarm
 	pool := acpctl.NewWarmPool(warm, func(provider string) (*acpproxy.Child, error) {
 		return a.spawnBox(context.Background(), self, inner, superID, ctrl, agents.Target{Provider: provider}, "", true, os.Stderr, forkspace.ExecutionRoleWarm)
 	})

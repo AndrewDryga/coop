@@ -132,7 +132,7 @@ func (a *app) cmdSessions(args []string) (int, error) {
 		if err != nil {
 			return 2, err
 		}
-		return runSessionServe(state, policy, socket)
+		return runSessionServe(a.cfg, state, policy, socket)
 	case "doctor":
 		_, _, socket, jsonOutput, err := parseSessionsFlags(args[1:], "doctor")
 		if err != nil {
@@ -144,7 +144,7 @@ func (a *app) cmdSessions(args []string) (int, error) {
 		if err != nil {
 			return 2, err
 		}
-		return runSessionPolicies(policy, jsonOutput)
+		return runSessionPolicies(a.cfg, policy, jsonOutput)
 	default:
 		return 2, fmt.Errorf("sessions: unknown command %q", args[0])
 	}
@@ -155,12 +155,12 @@ type sessionPoliciesResult struct {
 	PolicyDigests map[string]string `json:"policy_digests"`
 }
 
-func runSessionPolicies(policyPath string, jsonOutput bool) (int, error) {
+func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) (int, error) {
 	_, policyPath, _, err := sessionCLIPaths("", policyPath, "")
 	if err != nil {
 		return 2, err
 	}
-	policies, err := sessionsvc.LoadPolicies(policyPath, config.Load())
+	policies, err := sessionsvc.LoadPolicies(policyPath, cfg)
 	if err != nil {
 		return 1, err
 	}
@@ -187,7 +187,7 @@ func runSessionPolicies(policyPath string, jsonOutput bool) (int, error) {
 	return 0, nil
 }
 
-func runSessionServe(state, policy, socket string) (int, error) {
+func runSessionServe(cfg *config.Config, state, policy, socket string) (int, error) {
 	state, policy, socket, err := sessionCLIPaths(state, policy, socket)
 	if err != nil {
 		return 2, err
@@ -196,7 +196,7 @@ func runSessionServe(state, policy, socket string) (int, error) {
 		return 1, err
 	}
 	service, err := sessionsvc.NewService(sessionsvc.Config{
-		StateRoot: state, PolicyPath: policy, SourceConfig: config.Load(), Executable: os.Args[0],
+		StateRoot: state, PolicyPath: policy, SourceConfig: cfg, Executable: os.Args[0],
 		Host: sessionHost(), Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
 	})
 	if err != nil {

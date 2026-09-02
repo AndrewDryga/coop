@@ -52,7 +52,7 @@ func TestSpinFramesAndFreeze(t *testing.T) {
 		}
 	}
 
-	for _, value := range []string{"0", "false"} {
+	for _, value := range []string{"0", "false", "no", "off", "invalid"} {
 		t.Run("COOP_SPINNER="+value, func(t *testing.T) {
 			t.Setenv("COOP_SPINNER", value)
 			if SpinnerEnabled() {
@@ -81,6 +81,12 @@ func TestSpinFramesAndFreeze(t *testing.T) {
 	}
 	if got := CompactSpinFrame(-1); got != compactWant[0] {
 		t.Errorf("negative CompactSpinFrame = %q, want %q", got, compactWant[0])
+	}
+	for _, value := range []string{"true", "yes", "on"} {
+		t.Setenv("COOP_SPINNER", value)
+		if !SpinnerEnabled() {
+			t.Errorf("COOP_SPINNER=%s should animate", value)
+		}
 	}
 }
 

@@ -43,7 +43,10 @@ func TestProviderConsultLiveCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	realConfig := config.Load()
+	realConfig, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 	rt, err := runtime.Detect(realConfig.RuntimeName)
 	if err != nil {
 		emitConsultLiveSummary(t, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))
@@ -371,7 +374,10 @@ func executeProviderConsultLiveChild(
 	preflight map[string]string,
 ) []liveprovider.ProviderResult {
 	results := consultLiveResultSkeleton(targets)
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return failedConsultLiveResults(targets, liveprovider.ReasonHarnessFailed, "config")
+	}
 	rt, err := runtime.Detect(cfg.RuntimeName)
 	if err != nil {
 		return skippedLiveResults(targets, liveprovider.ReasonMissingRuntime)

@@ -23,7 +23,14 @@ var CompactSpinFrames = []string{"◰", "◳", "◲", "◱"}
 // progress updates while avoiding high-frequency terminal redraws in recordings and debuggers.
 func SpinnerEnabled() bool {
 	v := strings.TrimSpace(strings.ToLower(os.Getenv("COOP_SPINNER")))
-	return v != "0" && v != "false"
+	switch v {
+	case "", "1", "true", "yes", "on":
+		return true
+	default:
+		// CLI startup rejects invalid values. A direct library caller still freezes rather
+		// than silently treating a typo as permission for high-frequency repainting.
+		return false
+	}
 }
 
 // SpinFrame returns the shared Box Run frame, pinned to its first frame when animation is disabled.

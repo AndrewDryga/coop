@@ -3,11 +3,48 @@ package cli
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
+
+func useEmptyMainConfig(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", path)
+}
+
+func TestMainRejectsInvalidConfigBeforeRuntime(t *testing.T) {
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(conf, []byte("COOP_HOMES=flase\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "runtime-called")
+	runtime := filepath.Join(t.TempDir(), "runtime")
+	script := "#!/bin/sh\n: > \"" + marker + "\"\n"
+	if err := os.WriteFile(runtime, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", conf)
+	t.Setenv("COOP_RUNTIME", runtime)
+
+	stderr := captureStderr(t, func() {
+		if code := Main([]string{"build"}); code != 1 {
+			t.Errorf("Main invalid config exit = %d, want 1", code)
+		}
+	})
+	if !strings.Contains(stderr, conf+":1") || !strings.Contains(stderr, "COOP_HOMES") {
+		t.Fatalf("invalid config stderr = %q, want path:line and key", stderr)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("runtime marker stat = %v, want runtime untouched", err)
+	}
+}
 
 func TestRejectArgs(t *testing.T) {
 	if err := rejectArgs("build", nil); err != nil {
@@ -55,6 +92,7 @@ func TestStdoutViewsNoANSI(t *testing.T) {
 }
 
 func TestMainCommandHelpArg(t *testing.T) {
+	useEmptyMainConfig(t)
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
@@ -74,6 +112,7 @@ func TestMainCommandHelpArg(t *testing.T) {
 // container runtime (it returns before runtime detection) — so a stray `coop`
 // never launches an agent; running one is explicit (`coop claude`).
 func TestMainBarePrintsHelp(t *testing.T) {
+	useEmptyMainConfig(t)
 	old := os.Stdout
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -96,13 +135,15 @@ func TestMainBarePrintsHelp(t *testing.T) {
 // `coop help <cmd>` shows that command's help (≡ `coop <cmd> --help`), and `coop help <unknown>`
 // is a usage error (exit 2) — the help arg used to be ignored, always printing the top-level help.
 func TestMainHelpSubcommand(t *testing.T) {
+	useEmptyMainConfig(t)
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 	codeBuild := Main([]string{"help", "build"}) // == coop build --help, no runtime needed
-	codeFork := helpForCommand("fork")           // the fork family help
-	codeClaude := helpForCommand("claude")       // a known agent → points at its own --help
-	codeBogus := helpForCommand("bogus")         // unknown → usage error (to stderr)
+	cfg := &config.Config{}
+	codeFork := helpForCommand("fork", cfg)     // the fork family help
+	codeClaude := helpForCommand("claude", cfg) // a known agent → points at its own --help
+	codeBogus := helpForCommand("bogus", cfg)   // unknown → usage error (to stderr)
 	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
@@ -124,6 +165,7 @@ func TestMainHelpSubcommand(t *testing.T) {
 // `coop version` takes no arguments — extras are a usage error (exit 2), like every other no-arg
 // command, not silently ignored.
 func TestVersionRejectsExtraArgs(t *testing.T) {
+	useEmptyMainConfig(t)
 	oo, oe := os.Stdout, os.Stderr
 	_, w, _ := os.Pipe()
 	os.Stdout, os.Stderr = w, w
@@ -146,8 +188,9 @@ func TestHelpForHelpAndVersion(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	codeHelp := helpForCommand("help")
-	codeVer := helpForCommand("version")
+	cfg := &config.Config{}
+	codeHelp := helpForCommand("help", cfg)
+	codeVer := helpForCommand("version", cfg)
 	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
@@ -256,7 +299,7 @@ func TestHelpForAgentShowsWrapperFlags(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	code := helpForCommand("claude")
+	code := helpForCommand("claude", &config.Config{})
 	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)

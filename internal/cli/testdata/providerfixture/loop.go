@@ -644,6 +644,10 @@ func hostCompleteLoopTask(root, taskID string) error {
 	if err != nil {
 		return err
 	}
+	conf := filepath.Join(root, "config", "coop.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		return err
+	}
 	cmd := exec.Command("coop", "tasks", "done", taskID)
 	cmd.Dir = repo
 	cmd.Env = []string{
@@ -655,7 +659,7 @@ func hostCompleteLoopTask(root, taskID string) error {
 		"XDG_STATE_HOME=" + filepath.Join(root, "xdg", "state"),
 		"GIT_CONFIG_GLOBAL=" + filepath.Join(root, "state", "gitconfig"),
 		"GIT_CONFIG_NOSYSTEM=1",
-		"COOP_CONF=" + filepath.Join(root, "config", "missing.conf"),
+		"COOP_CONF=" + conf,
 		"COOP_CONFIG_DIR=" + filepath.Join(root, "config"),
 		"COOP_REPO=" + repo,
 		"COOP_NO_UPDATE_CHECK=1",
@@ -671,6 +675,10 @@ func hostClaimLoopTask(root, taskID string) error {
 	if err != nil {
 		return err
 	}
+	conf := filepath.Join(root, "config", "coop.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		return err
+	}
 	cmd := exec.Command("coop", "tasks", "claim", taskID)
 	cmd.Dir = repo
 	cmd.Env = []string{
@@ -682,7 +690,7 @@ func hostClaimLoopTask(root, taskID string) error {
 		"XDG_STATE_HOME=" + filepath.Join(root, "xdg", "state"),
 		"GIT_CONFIG_GLOBAL=" + filepath.Join(root, "state", "gitconfig"),
 		"GIT_CONFIG_NOSYSTEM=1",
-		"COOP_CONF=" + filepath.Join(root, "config", "missing.conf"),
+		"COOP_CONF=" + conf,
 		"COOP_CONFIG_DIR=" + filepath.Join(root, "config"),
 		"COOP_REPO=" + repo,
 		"COOP_NO_UPDATE_CHECK=1",

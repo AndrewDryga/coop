@@ -774,7 +774,11 @@ func NewService(cfg Config) (*Service, error) {
 		sourceCfg = cfg.Config
 	}
 	if sourceCfg == nil {
-		sourceCfg = config.Load()
+		var err error
+		sourceCfg, err = config.Load()
+		if err != nil {
+			return nil, err
+		}
 	}
 	policies := cfg.Policies
 	if len(policies) == 0 {

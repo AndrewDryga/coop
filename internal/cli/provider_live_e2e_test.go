@@ -63,7 +63,10 @@ func testProviderLiveCompatibility(t *testing.T, workflow string) {
 	if err := liveprovider.ValidateStrictTargets(strict, targets); err != nil {
 		t.Fatal(err)
 	}
-	realConfig := config.Load()
+	realConfig, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 	rt, err := runtime.Detect(realConfig.RuntimeName)
 	if err != nil {
 		emitLiveSummary(t, workflow, strict, targets, skippedLiveResults(targets, liveprovider.ReasonMissingRuntime))
@@ -356,7 +359,10 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 		result.Status, result.ReasonCode = liveprovider.StatusSkipped, reason
 		return result
 	}
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return harnessFail(false, "config")
+	}
 	account := target.Account()
 	if account == "" {
 		account = cfg.DefaultProfileOf(target.Provider)

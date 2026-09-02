@@ -711,7 +711,10 @@ type ACPSignal struct {
 var registry = map[string]Agent{}
 
 // register adds an agent to the registry; called from each adapter's init().
-func register(a Agent) { registry[a.Name()] = a }
+func register(a Agent) {
+	registry[a.Name()] = a
+	config.RegisterAdapterConfig(a.Name())
+}
 
 // Get returns the agent registered under name.
 func Get(name string) (Agent, bool) { a, ok := registry[name]; return a, ok }

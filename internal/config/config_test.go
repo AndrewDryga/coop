@@ -3,13 +3,23 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func init() {
+	// Config is a leaf package, so its unit tests register representative adapters just as the
+	// production agent registry does during process initialization.
+	for _, name := range []string{"claude", "codex", "foo", "bar"} {
+		RegisterAdapterConfig(name)
+	}
+}
 
 // clearAgentEnv unsets every COOP_* var for the duration of the test and
 // restores them afterward, so the host's environment can't skew the defaults.
@@ -25,12 +35,30 @@ func clearAgentEnv(t *testing.T) {
 	}
 }
 
+func mustLoad(t *testing.T) *Config {
+	t.Helper()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+func writeMainConf(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestDefaults(t *testing.T) {
 	clearAgentEnv(t)
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
-	c := Load()
+	c := mustLoad(t)
 	if c.BaseImage != "coop-box" {
 		t.Errorf("BaseImage = %q, want coop-box", c.BaseImage)
 	}
@@ -43,8 +71,8 @@ func TestDefaults(t *testing.T) {
 	if c.ConfigDir != wantDir {
 		t.Errorf("ConfigDir = %q, want %q", c.ConfigDir, wantDir)
 	}
-	if !c.Homes || !c.Network || !c.Cache || !c.Caffeinate {
-		t.Errorf("toggles default on: Homes=%v Network=%v Cache=%v Caffeinate=%v", c.Homes, c.Network, c.Cache, c.Caffeinate)
+	if !c.Homes || !c.Network || !c.Cache || !c.Caffeinate || !c.ACPWarm {
+		t.Errorf("toggles default on: Homes=%v Network=%v Cache=%v Caffeinate=%v ACPWarm=%v", c.Homes, c.Network, c.Cache, c.Caffeinate, c.ACPWarm)
 	}
 	if c.NoUpdateCheck {
 		t.Error("NoUpdateCheck is opt-in — must default off (the daily check runs by default)")
@@ -71,8 +99,9 @@ func TestEnvOverrides(t *testing.T) {
 	t.Setenv("COOP_CAFFEINATE", "off")
 	t.Setenv("COOP_NO_UPDATE_CHECK", "1")
 	t.Setenv("COOP_STREAM_TRACE", "yes")
+	t.Setenv("COOP_ACP_WARM", "off")
 
-	c := Load()
+	c := mustLoad(t)
 	if c.BaseImage != "custom-box" || c.Workdir != "/code" {
 		t.Errorf("env overrides not applied: %q %q", c.BaseImage, c.Workdir)
 	}
@@ -85,6 +114,9 @@ func TestEnvOverrides(t *testing.T) {
 	if !c.StreamTrace {
 		t.Error("COOP_STREAM_TRACE=yes should enable stream tracing")
 	}
+	if c.ACPWarm {
+		t.Error("COOP_ACP_WARM=off should disable editor warm boxes")
+	}
 }
 
 func TestConfFilePrecedence(t *testing.T) {
@@ -94,7 +126,7 @@ func TestConfFilePrecedence(t *testing.T) {
 	os.WriteFile(conf, []byte("# comment\nexport COOP_BASE_IMAGE=\"from-conf\"\nCOOP_WORKDIR=/from/conf\n"), 0o644)
 	t.Setenv("COOP_CONF", conf)
 
-	c := Load()
+	c := mustLoad(t)
 	if c.BaseImage != "from-conf" {
 		t.Errorf("conf value not used: BaseImage=%q", c.BaseImage)
 	}
@@ -104,8 +136,218 @@ func TestConfFilePrecedence(t *testing.T) {
 
 	// Environment must win over the conf file.
 	t.Setenv("COOP_BASE_IMAGE", "from-env")
-	if c := Load(); c.BaseImage != "from-env" {
+	if c := mustLoad(t); c.BaseImage != "from-env" {
 		t.Errorf("env should beat conf: BaseImage=%q", c.BaseImage)
+	}
+}
+
+func TestMainConfAbsentVersusInvalid(t *testing.T) {
+	t.Run("implicit missing is optional", func(t *testing.T) {
+		clearAgentEnv(t)
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		if _, err := Load(); err != nil {
+			t.Fatalf("implicit missing config: %v", err)
+		}
+	})
+	t.Run("explicit missing is an error", func(t *testing.T) {
+		clearAgentEnv(t)
+		path := filepath.Join(t.TempDir(), "missing.conf")
+		t.Setenv("COOP_CONF", path)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), path) ||
+			!strings.Contains(err.Error(), "unset or repoint COOP_CONF") {
+			t.Fatalf("explicit missing config error = %v, want path and recovery", err)
+		}
+	})
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"missing equals", "COOP_HOMES\n", "expected KEY=VALUE"},
+		{"empty key", "=true\n", "key is empty"},
+		{"unmatched quote", "COOP_GATE='make check\n", "unmatched outer quote"},
+		{"duplicate key", "COOP_HOMES=true\nCOOP_HOMES=true\n", "duplicate"},
+		{"unknown key", "COOP_HOEMS=false\n", "unknown configuration key"},
+		{"relocation key", "COOP_CONF=/tmp/elsewhere\n", "unknown configuration key"},
+		{"environment-only spinner", "COOP_SPINNER=0\n", "unknown configuration key"},
+		{"environment-only ACP warm", "COOP_ACP_WARM=0\n", "unknown configuration key"},
+		{"retired key", "COOP_LOOP_MODEL=old\n", "retired"},
+		{"misspelled adapter", "COOP_CLUADE_CMD=claude\n", "unknown configuration key"},
+		{"misspelled adapter suffix", "COOP_CODEX_MODLE=gpt\n", "unknown configuration key"},
+		{"overlong line", "COOP_GATE=" + strings.Repeat("x", maxMainConfLineBytes) + "\n", "read line"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearAgentEnv(t)
+			path := writeMainConf(t, tc.body)
+			t.Setenv("COOP_CONF", path)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), path+":") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Load error = %v, want path:line and %q", err, tc.want)
+			}
+		})
+	}
+	t.Run("non-regular file", func(t *testing.T) {
+		clearAgentEnv(t)
+		path := t.TempDir()
+		t.Setenv("COOP_CONF", path)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "regular file") {
+			t.Fatalf("directory config error = %v", err)
+		}
+	})
+	t.Run("symlink", func(t *testing.T) {
+		clearAgentEnv(t)
+		target := writeMainConf(t, "")
+		path := filepath.Join(t.TempDir(), "coop.conf")
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("COOP_CONF", path)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "regular file") {
+			t.Fatalf("symlink config error = %v", err)
+		}
+	})
+	t.Run("unreadable file", func(t *testing.T) {
+		clearAgentEnv(t)
+		path := writeMainConf(t, "COOP_HOMES=false\n")
+		if err := os.Chmod(path, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+		t.Setenv("COOP_CONF", path)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), path) {
+			t.Fatalf("unreadable config error = %v, want path", err)
+		}
+	})
+}
+
+func TestMainConfSyntaxAndDynamicKeys(t *testing.T) {
+	clearAgentEnv(t)
+	path := writeMainConf(t, "\n# comment\nexport COOP_BASE_IMAGE='from conf'\nCOOP_CLAUDE_CMD=claude --flag\nCOOP_CODEX_MODEL=gpt-5.6/medium\n")
+	t.Setenv("COOP_CONF", path)
+	cfg := mustLoad(t)
+	if cfg.BaseImage != "from conf" || !slices.Equal(cfg.Cmd("COOP_CLAUDE_CMD", ""), []string{"claude", "--flag"}) {
+		t.Fatalf("valid config was not preserved: image=%q cmd=%v", cfg.BaseImage, cfg.Cmd("COOP_CLAUDE_CMD", ""))
+	}
+	if got := cfg.ModelFor("codex"); got != "gpt-5.6" {
+		t.Fatalf("dynamic model = %q", got)
+	}
+}
+
+func TestInvalidFileValueIsNotHiddenByEnvironment(t *testing.T) {
+	clearAgentEnv(t)
+	path := writeMainConf(t, "COOP_HOMES=flase\n")
+	t.Setenv("COOP_CONF", path)
+	t.Setenv("COOP_HOMES", "true")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), path+":1") {
+		t.Fatalf("invalid overridden file value error = %v", err)
+	}
+}
+
+func TestTypedConfigValuesFromEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		name, key, value string
+		check            func(*Config) bool
+	}{
+		{"boolean true", "COOP_HOMES", " YeS ", func(c *Config) bool { return c.Homes }},
+		{"boolean false", "COOP_HOMES", " OFF ", func(c *Config) bool { return !c.Homes }},
+		{"ACP warm false", "COOP_ACP_WARM", " no ", func(c *Config) bool { return !c.ACPWarm }},
+		{"spinner true", "COOP_SPINNER", " ON ", func(*Config) bool { return true }},
+		{"carry tokens", "COOP_ACP_CARRY_TOKENS", " 42 ", func(c *Config) bool { return c.ACPCarryTokens == 42 }},
+		{"pids empty", "COOP_PIDS", "", func(c *Config) bool { return c.Pids == "" }},
+		{"pids zero", "COOP_PIDS", "0", func(c *Config) bool { return c.Pids == "0" }},
+		{"pids off", "COOP_PIDS", " Unlimited ", func(c *Config) bool { return c.Pids == "unlimited" }},
+		{"pids cap", "COOP_PIDS", " 42 ", func(c *Config) bool { return c.Pids == "42" }},
+		{"timeout unlimited", "COOP_CONSULT_TIMEOUT", "0", func(c *Config) bool { return c.ConsultTimeout == "" }},
+		{"timeout bounded minimum", "COOP_CONSULT_TIMEOUT", "1", func(c *Config) bool { return c.ConsultTimeout == "1" }},
+		{"timeout bounded", "COOP_CONSULT_TIMEOUT", " 86400 ", func(c *Config) bool { return c.ConsultTimeout == "86400" }},
+		{"egress", "COOP_EGRESS", " none ", func(c *Config) bool { return c.Egress == "none" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearAgentEnv(t)
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv(tc.key, tc.value)
+			cfg := mustLoad(t)
+			if !tc.check(cfg) {
+				t.Fatalf("%s=%q produced %+v", tc.key, tc.value, cfg)
+			}
+		})
+	}
+}
+
+func TestTypedConfigValuesFromFile(t *testing.T) {
+	clearAgentEnv(t)
+	path := writeMainConf(t, strings.Join([]string{
+		"COOP_HOMES=no",
+		"COOP_NO_UPDATE_CHECK=YES",
+		"COOP_ACP_CARRY_TOKENS=42",
+		"COOP_PIDS=0",
+		"COOP_CONSULT_TIMEOUT=10",
+		"COOP_EGRESS=none",
+		"",
+	}, "\n"))
+	t.Setenv("COOP_CONF", path)
+	cfg := mustLoad(t)
+	if cfg.Homes || !cfg.NoUpdateCheck || cfg.ACPCarryTokens != 42 || cfg.Pids != "0" ||
+		cfg.ConsultTimeout != "10" || cfg.Egress != "none" {
+		t.Fatalf("typed file config = %+v", cfg)
+	}
+}
+
+func TestParseBoolVocabulary(t *testing.T) {
+	for _, value := range []string{"1", "true", "yes", "on", " TRUE ", "YeS"} {
+		if got, err := parseBool(value); err != nil || !got {
+			t.Errorf("parseBool(%q) = %v, %v; want true", value, got, err)
+		}
+	}
+	for _, value := range []string{"0", "false", "no", "off", " FALSE ", "OfF"} {
+		if got, err := parseBool(value); err != nil || got {
+			t.Errorf("parseBool(%q) = %v, %v; want false", value, got, err)
+		}
+	}
+	for _, value := range []string{"", "flase", "enabled", "2"} {
+		if _, err := parseBool(value); err == nil {
+			t.Errorf("parseBool(%q) accepted an invalid value", value)
+		}
+	}
+}
+
+func TestInvalidTypedConfigValues(t *testing.T) {
+	overflow := strconv.Itoa(math.MaxInt/4 + 1)
+	for _, tc := range []struct {
+		key, value string
+	}{
+		{"COOP_HOMES", "flase"},
+		{"COOP_NO_UPDATE_CHECK", "ture"},
+		{"COOP_STREAM_TRACE", ""},
+		{"COOP_ACP_WARM", "sometimes"},
+		{"COOP_SPINNER", "sometimes"},
+		{"COOP_ACP_CARRY_TOKENS", "0"},
+		{"COOP_ACP_CARRY_TOKENS", "-1"},
+		{"COOP_ACP_CARRY_TOKENS", "lots"},
+		{"COOP_ACP_CARRY_TOKENS", overflow},
+		{"COOP_PIDS", "-1"},
+		{"COOP_PIDS", "many"},
+		{"COOP_CONSULT_TIMEOUT", ""},
+		{"COOP_CONSULT_TIMEOUT", "-1"},
+		{"COOP_CONSULT_TIMEOUT", "86401"},
+		{"COOP_CONSULT_TIMEOUT", "1.5"},
+		{"COOP_EGRESS", "None"},
+	} {
+		for _, source := range []string{"environment", "file"} {
+			t.Run(tc.key+"_"+tc.value+"_"+source, func(t *testing.T) {
+				clearAgentEnv(t)
+				t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+				if source == "environment" {
+					t.Setenv(tc.key, tc.value)
+				} else {
+					path := writeMainConf(t, tc.key+"="+tc.value+"\n")
+					t.Setenv("COOP_CONF", path)
+				}
+				if _, err := Load(); err == nil || !strings.Contains(err.Error(), tc.key) {
+					t.Fatalf("Load %s %s=%q error = %v", source, tc.key, tc.value, err)
+				}
+			})
+		}
 	}
 }
 
@@ -116,7 +358,7 @@ func TestGlobalPresetsDir(t *testing.T) {
 
 	// Default: <BoxHome>/presets = <XDG_CONFIG_HOME>/coop/presets.
 	want := filepath.Join(home, "coop", "presets")
-	if got := Load().GlobalPresetsDir(); got != want {
+	if got := mustLoad(t).GlobalPresetsDir(); got != want {
 		t.Errorf("default GlobalPresetsDir = %q, want %q", got, want)
 	}
 
@@ -124,13 +366,13 @@ func TestGlobalPresetsDir(t *testing.T) {
 	conf := filepath.Join(t.TempDir(), "coop.conf")
 	os.WriteFile(conf, []byte("COOP_PRESETS_DIR=/from/conf/presets\n"), 0o644)
 	t.Setenv("COOP_CONF", conf)
-	if got := Load().GlobalPresetsDir(); got != "/from/conf/presets" {
+	if got := mustLoad(t).GlobalPresetsDir(); got != "/from/conf/presets" {
 		t.Errorf("conf GlobalPresetsDir = %q, want /from/conf/presets", got)
 	}
 
 	// Environment beats the conf file.
 	t.Setenv("COOP_PRESETS_DIR", "/from/env/presets")
-	if got := Load().GlobalPresetsDir(); got != "/from/env/presets" {
+	if got := mustLoad(t).GlobalPresetsDir(); got != "/from/env/presets" {
 		t.Errorf("env GlobalPresetsDir = %q, want /from/env/presets", got)
 	}
 }
@@ -141,7 +383,7 @@ func TestCmd(t *testing.T) {
 	conf := filepath.Join(t.TempDir(), "coop.conf")
 	os.WriteFile(conf, []byte("COOP_FOO_CMD=foo --from-conf\n"), 0o644)
 	t.Setenv("COOP_CONF", conf)
-	c := Load()
+	c := mustLoad(t)
 
 	// default → split into words
 	if got := c.Cmd("COOP_BAR_CMD", "bar --baz"); !slices.Equal(got, []string{"bar", "--baz"}) {
@@ -153,7 +395,7 @@ func TestCmd(t *testing.T) {
 	}
 	// env beats conf
 	t.Setenv("COOP_FOO_CMD", "foo --from-env")
-	if got := Load().Cmd("COOP_FOO_CMD", "ignored"); !slices.Equal(got, []string{"foo", "--from-env"}) {
+	if got := mustLoad(t).Cmd("COOP_FOO_CMD", "ignored"); !slices.Equal(got, []string{"foo", "--from-env"}) {
 		t.Errorf("env: Cmd = %v", got)
 	}
 }
@@ -192,11 +434,11 @@ func TestCommandQuoting(t *testing.T) {
 	os.WriteFile(conf, []byte(`COOP_GATE=bash -lc "make check"`+"\n"), 0o644)
 	t.Setenv("COOP_CONF", conf)
 
-	if got := Load().Gate; !slices.Equal(got, []string{"bash", "-lc", "make check"}) {
+	if got := mustLoad(t).Gate; !slices.Equal(got, []string{"bash", "-lc", "make check"}) {
 		t.Errorf("conf gate = %#v", got)
 	}
 	t.Setenv("COOP_GATE", `bash -lc "npm test && npm run lint"`)
-	if got := Load().Gate; !slices.Equal(got, []string{"bash", "-lc", "npm test && npm run lint"}) {
+	if got := mustLoad(t).Gate; !slices.Equal(got, []string{"bash", "-lc", "npm test && npm run lint"}) {
 		t.Errorf("env gate = %#v", got)
 	}
 }
@@ -282,7 +524,7 @@ func TestDefaultProfileMark(t *testing.T) {
 		t.Errorf("AgentDir = %q, want the override's dir %q", got, want)
 	}
 	// The mark is persisted to DefaultsFile (read back by a fresh load).
-	if m := loadConfFile(c.DefaultsFile()); m["claude"] != "personal" {
+	if m := loadDefaultsFile(c.DefaultsFile()); m["claude"] != "personal" {
 		t.Errorf("DefaultsFile not persisted: %v", m)
 	}
 }
@@ -495,47 +737,46 @@ func TestTasksFiles(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// Default is EMPTY: the queue set is derived downstream (taskQueues → .agent/project.yaml, else
 	// .agent/tasks), so a monorepo needn't hand-maintain COOP_TASKS. An explicit COOP_TASKS overrides.
-	if got := Load().TasksFiles; len(got) != 0 {
+	if got := mustLoad(t).TasksFiles; len(got) != 0 {
 		t.Errorf("default TasksFiles = %v, want [] (derived downstream)", got)
 	}
 	t.Setenv("COOP_TASKS", "portal/.agent/tasks runner/.agent/tasks")
-	if got := Load().TasksFiles; !slices.Equal(got, []string{"portal/.agent/tasks", "runner/.agent/tasks"}) {
+	if got := mustLoad(t).TasksFiles; !slices.Equal(got, []string{"portal/.agent/tasks", "runner/.agent/tasks"}) {
 		t.Errorf("COOP_TASKS list = %v", got)
 	}
 }
 
-func TestNormalizeEgress(t *testing.T) {
+func TestParseEgress(t *testing.T) {
 	for _, tc := range []struct {
-		in     string
-		want   string
-		wantOk bool
+		in      string
+		want    string
+		wantErr bool
 	}{
-		{"open", "open", true},
-		{"none", "none", true},
-		{" open ", "open", true}, // stray whitespace is trimmed, not a fail-closed foot-gun
-		{"\tnone\n", "none", true},
-		{"None", "none", false}, // a case typo of the security toggle must fail CLOSED
-		{"off", "none", false},
-		{"disabled", "none", false},
-		{"", "none", false},
-		{"   ", "none", false}, // whitespace-only is empty → fail closed
+		{"open", "open", false},
+		{"none", "none", false},
+		{" open ", "open", false},
+		{"\tnone\n", "none", false},
+		{"None", "", true},
+		{"off", "", true},
+		{"", "", true},
 	} {
-		if got, ok := normalizeEgress(tc.in); got != tc.want || ok != tc.wantOk {
-			t.Errorf("normalizeEgress(%q) = (%q,%v), want (%q,%v)", tc.in, got, ok, tc.want, tc.wantOk)
+		got, err := parseEgress(tc.in)
+		if got != tc.want || (err != nil) != tc.wantErr {
+			t.Errorf("parseEgress(%q) = (%q,%v), want (%q, err=%v)", tc.in, got, err, tc.want, tc.wantErr)
 		}
 	}
 }
 
-func TestLoadEgressFailsClosed(t *testing.T) {
+func TestLoadRejectsInvalidEgress(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("COOP_EGRESS", "None") // a typo of "none"
-	if c := Load(); c.Egress != "none" || len(c.Warnings) == 0 {
-		t.Errorf("typo'd COOP_EGRESS: Egress=%q warnings=%v, want none (fail closed) + a warning", c.Egress, c.Warnings)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "COOP_EGRESS") {
+		t.Fatalf("Load typo'd COOP_EGRESS error = %v, want a named error", err)
 	}
 	t.Setenv("COOP_EGRESS", "open")
-	if c := Load(); c.Egress != "open" || len(c.Warnings) != 0 {
-		t.Errorf("open: Egress=%q warnings=%v, want open + no warnings", c.Egress, c.Warnings)
+	if c := mustLoad(t); c.Egress != "open" {
+		t.Errorf("open: Egress=%q, want open", c.Egress)
 	}
 }
 

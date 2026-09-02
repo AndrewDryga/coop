@@ -152,7 +152,15 @@ func TestSessionPoliciesPrintsDigestsFromTheTrustedPolicyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("COOP_CONFIG_DIR", configRoot)
-	t.Setenv("COOP_CONF", filepath.Join(t.TempDir(), "absent.conf"))
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", conf)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	policyRoot, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -173,7 +181,7 @@ func TestSessionPoliciesPrintsDigestsFromTheTrustedPolicyFile(t *testing.T) {
 	var code int
 	var runErr error
 	output := captureStdout(t, func() {
-		code, runErr = (&app{}).cmdSessions([]string{"policies", "--policies", policyPath, "--json"})
+		code, runErr = (&app{cfg: cfg}).cmdSessions([]string{"policies", "--policies", policyPath, "--json"})
 	})
 	if runErr != nil || code != 0 {
 		t.Fatalf("sessions policies = code %d err %v output %q", code, runErr, output)
@@ -182,7 +190,7 @@ func TestSessionPoliciesPrintsDigestsFromTheTrustedPolicyFile(t *testing.T) {
 	if err := json.Unmarshal([]byte(output), &result); err != nil {
 		t.Fatalf("decode sessions policies output %q: %v", output, err)
 	}
-	loaded, err := sessionsvc.LoadPolicies(policyPath, config.Load())
+	loaded, err := sessionsvc.LoadPolicies(policyPath, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

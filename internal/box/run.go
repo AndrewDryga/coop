@@ -12,7 +12,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -1591,7 +1590,7 @@ func boxLimits(cfg *config.Config, rt runtime.Runtime) []string {
 	// CAP_MKNOD / CAP_SYS_CHROOT to abuse. Add one back only if a concrete need appears.
 	a = append(a, "--cap-drop", "ALL")
 	switch cfg.Pids {
-	case "", "0", "-1", "unlimited": // pids cap off
+	case "", "0", "unlimited": // pids cap off
 	default:
 		a = append(a, "--pids-limit", cfg.Pids)
 	}
@@ -1835,11 +1834,9 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 				}
 			}
 		}
-		// coop-consult reads COOP_CONSULT_TIMEOUT (seconds) for its per-peer timeout; forward an
-		// explicit, valid override so the knob works per-run. Empty/invalid falls back to the
-		// wrapper's built-in 30m default. (The wrapper exists only in consult-capable boxes; the
-		// var is inert elsewhere.)
-		if n, err := strconv.Atoi(cfg.ConsultTimeout); err == nil && n > 0 {
+		// coop-consult reads COOP_CONSULT_TIMEOUT (seconds) for its per-peer timeout. Load has
+		// already validated it; empty means the wrapper's unlimited default.
+		if cfg.ConsultTimeout != "" {
 			args = append(args, "-e", "COOP_CONSULT_TIMEOUT="+cfg.ConsultTimeout)
 		}
 		// Per-agent global instructions (the box env note + the user's, built in Run) at each

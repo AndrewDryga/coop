@@ -203,7 +203,7 @@ func (a *app) cmdSign(args []string) (int, error) {
 			}
 			from, i = args[i+1], i+1
 		case "-h", "--help":
-			return helpForCommand("sign"), nil
+			return helpForCommand("sign", a.cfg), nil
 		default:
 			return 2, fmt.Errorf("coop sign: unexpected argument %q", args[i])
 		}

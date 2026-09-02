@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Configuration mistakes stop before Coop does work.** A present or explicitly selected
+  `coop.conf` must now be a readable, well-formed file with known, non-duplicate settings, and
+  booleans, PID limits, carry budgets, egress, and consult timeouts use closed validated values.
+  Errors name the source before housekeeping or runtime discovery; the absent default file remains
+  optional and environment values still take precedence.
+
 - **Invalid project policy now stops before box and fork work.** A present malformed, unknown-key,
   unreadable, symlinked, or non-regular `.agent/project.yaml` now returns a clear error before box
   runtime access, `coop up`/`down`, fork merge/review, or JSON output. A genuinely missing file

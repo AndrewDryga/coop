@@ -722,11 +722,15 @@ func startScriptedACP(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target
 		signInScriptedProfile(t, tmp, provider, "default")
 	}
 	configDir := filepath.Join(tmp, "config")
+	conf := filepath.Join(tmp, "coop.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command(coopBin, "acp", target)
 	cmd.Env = testEnv(os.Environ(), map[string]string{
 		"HOME":                   filepath.Join(tmp, "home"),
 		"XDG_CONFIG_HOME":        filepath.Join(tmp, "xdg"),
-		"COOP_CONF":              filepath.Join(tmp, "missing.conf"),
+		"COOP_CONF":              conf,
 		"COOP_CONFIG_DIR":        configDir,
 		"COOP_REPO":              repo,
 		"COOP_RUNTIME":           fixtureBin,

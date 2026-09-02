@@ -1386,6 +1386,11 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 		return nil, acpFailure(sessionACPCredentialError, "private credential root is unsafe")
 	}
 	projection := &sessionACPProjection{privateRoot: privateRoot}
+	conf := filepath.Join(privateRoot, ".coop-conf-disabled")
+	projection.files = append(projection.files, conf)
+	if err := writeCredentialArtifact(conf, nil); err != nil {
+		return projection, acpFailure(sessionACPCredentialError, "private config isolation could not be written")
+	}
 	if err := r.projectSessionConfigFiles(sourceRoot, bound, projection, mcpSnapshot, mcpActive); err != nil {
 		return projection, err
 	}
@@ -1702,7 +1707,7 @@ func (r *sessionTurnRunner) cleanupSessionCredentials(bound session.Session) err
 	if instructionFile := agent.InstructionFile(); validArtifactName(instructionFile) {
 		paths = append(paths, filepath.Join(profile, instructionFile))
 	}
-	for _, name := range []string{"defaults", "env", "mcp.json", "INSTRUCTIONS.md"} {
+	for _, name := range []string{"defaults", "env", "mcp.json", "INSTRUCTIONS.md", ".coop-conf-disabled"} {
 		paths = append(paths, filepath.Join(privateRoot, name))
 	}
 	if err := (&sessionACPProjection{files: paths}).remove(); err != nil {

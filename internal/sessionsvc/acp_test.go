@@ -57,7 +57,7 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); !os.IsNotExist(err) {
 		t.Fatalf("projected credential remains after success: %v", err)
 	}
-	for _, name := range []string{"env", "mcp.json", "INSTRUCTIONS.md"} {
+	for _, name := range []string{"env", "mcp.json", "INSTRUCTIONS.md", ".coop-conf-disabled"} {
 		if _, err := os.Stat(filepath.Join(fixture.private, name)); !os.IsNotExist(err) {
 			t.Fatalf("projected %s remains after success: %v", name, err)
 		}
@@ -80,7 +80,7 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	}
 	if got := readFile(t, fixture.envLog); !strings.Contains(got, "config="+fixture.private) ||
 		!strings.Contains(got, "repo="+fixture.repo) || !strings.Contains(got, "run=session-") ||
-		!strings.Contains(got, "files=env,mcp.json,INSTRUCTIONS.md") ||
+		!strings.Contains(got, "files=env,mcp.json,INSTRUCTIONS.md,.coop-conf-disabled") ||
 		strings.Contains(got, "secret") || !strings.Contains(got, "mcp= openai=") {
 		t.Fatalf("child environment was not private: %q", got)
 	}
@@ -725,7 +725,7 @@ func assertNoSessionMCPLaunchOrProjection(t *testing.T, fixture *sessionACPFixtu
 	if pathExists(fixture.private) {
 		t.Fatalf("rejected MCP created private session state %s", fixture.private)
 	}
-	for _, name := range []string{"env", "mcp.json", "INSTRUCTIONS.md"} {
+	for _, name := range []string{"env", "mcp.json", "INSTRUCTIONS.md", ".coop-conf-disabled"} {
 		if pathExists(filepath.Join(fixture.private, name)) {
 			t.Fatalf("rejected MCP mutated private projection %s", name)
 		}
@@ -1902,11 +1902,13 @@ func TestSessionTurnRunnerStartupCleanupPreservesNativeHistory(t *testing.T) {
 	history := filepath.Join(profile, "native-history")
 	instructions := filepath.Join(profile, "AGENTS.md")
 	defaults := filepath.Join(fixture.private, "defaults")
+	conf := filepath.Join(fixture.private, ".coop-conf-disabled")
 	for path, data := range map[string]string{
 		credential:   "stale credential",
 		history:      "keep native history",
 		instructions: "untrusted future instructions",
 		defaults:     "codex=work\n",
+		conf:         "crash-left config isolation",
 	} {
 		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
@@ -1915,7 +1917,7 @@ func TestSessionTurnRunnerStartupCleanupPreservesNativeHistory(t *testing.T) {
 	if err := fixture.runner.CleanupSession(context.Background(), fixture.session); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{credential, instructions, defaults} {
+	for _, path := range []string{credential, instructions, defaults, conf} {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("projected file %s remains after startup cleanup: %v", path, err)
 		}
@@ -1935,11 +1937,13 @@ func TestSessionTurnRunnerInterruptedTurnReapRemovesProjectedCredentials(t *test
 	history := filepath.Join(profile, "native-history")
 	instructions := filepath.Join(fixture.private, "INSTRUCTIONS.md")
 	defaults := filepath.Join(fixture.private, "defaults")
+	conf := filepath.Join(fixture.private, ".coop-conf-disabled")
 	for path, data := range map[string]string{
 		credential:   "crash-left credential",
 		history:      "keep native history",
 		instructions: "crash-left instructions",
 		defaults:     "codex=work\n",
+		conf:         "crash-left config isolation",
 	} {
 		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
@@ -1949,7 +1953,7 @@ func TestSessionTurnRunnerInterruptedTurnReapRemovesProjectedCredentials(t *test
 	if err := fixture.runner.ReapInterruptedTurn(context.Background(), fixture.session, turn); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{credential, instructions, defaults} {
+	for _, path := range []string{credential, instructions, defaults, conf} {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("projected file %s remains after exact turn reap: %v", path, err)
 		}
@@ -2125,12 +2129,20 @@ func TestSessionRunIDFromEnv(t *testing.T) {
 }
 
 func TestSessionACPChildEnvironmentForwardsOnlyResolvedBoxSettings(t *testing.T) {
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", conf)
 	t.Setenv("COOP_CONFIG_DIR", t.TempDir())
 	t.Setenv("COOP_EGRESS", "none")
 	t.Setenv("COOP_MEMORY", "2g")
 	t.Setenv("COOP_RUN_ARGS", "--privileged")
 	t.Setenv("OPENAI_API_KEY", "ambient-secret")
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 	got := map[string]string{}
 	companions := []session.CompanionRepository{{
 		Name: "topology", Repository: "/source",
@@ -2513,7 +2525,7 @@ func TestSessionACPChildHelper(t *testing.T) {
 		os.Exit(2)
 	}
 	var projected []string
-	for _, name := range []string{"env", "mcp.json", "INSTRUCTIONS.md"} {
+	for _, name := range []string{"env", "mcp.json", "INSTRUCTIONS.md", ".coop-conf-disabled"} {
 		if info, err := os.Stat(filepath.Join(os.Getenv("COOP_CONFIG_DIR"), name)); err == nil && info.Mode().IsRegular() {
 			projected = append(projected, name)
 		}

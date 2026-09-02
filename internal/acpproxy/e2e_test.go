@@ -70,7 +70,11 @@ func runLiveACPTests(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, "ACP E2E setup failed: phase=repository_root error_class=harness")
 		return 1
 	}
-	coopE2ERealConfig = config.Load()
+	coopE2ERealConfig, err = config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ACP E2E setup failed: phase=config error_class=prerequisite")
+		return 1
+	}
 	coopE2ERuntime, err = runtime.Detect(coopE2ERealConfig.RuntimeName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ACP E2E setup failed: phase=runtime error_class=prerequisite")
@@ -527,7 +531,11 @@ func TestCodexTargetRolloutTruth(t *testing.T) {
 		live.fail(t, "prompt", err)
 	}
 
-	rollouts := filepath.Join(config.Load().ConfigDir, "codex", "acp-sessions", "sessions")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollouts := filepath.Join(cfg.ConfigDir, "codex", "acp-sessions", "sessions")
 	model, effort, err := waitForCodexRolloutTarget(ctx, rollouts, sessionID)
 	if err != nil {
 		live.fail(t, "rollout_read", err)
@@ -583,7 +591,11 @@ func TestFrontierStoredTargetTruth(t *testing.T) {
 	}); err != nil {
 		live.fail(t, "prompt", err)
 	}
-	provider, model, effort, err := waitForFrontierStoredTarget(ctx, config.Load().ConfigDir, sessionID, marker)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, model, effort, err := waitForFrontierStoredTarget(ctx, cfg.ConfigDir, sessionID, marker)
 	if err != nil {
 		live.fail(t, "provider_storage", err)
 	}

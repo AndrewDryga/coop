@@ -1207,7 +1207,7 @@ queue is verified done; `1` a failure; `2` a usage error; `3` the loop stopped w
 on a human decision — including one the review kept reopening past the round cap (resolve with `coop
 tasks decisions`, then re-run).
 
-Add `--preflight` (or set `COOP_PREFLIGHT=1`) to run one cleanup pass *before* the loop
+Add `--preflight` to run one cleanup pass *before* the loop
 starts working: it unblocks any `50_blocked/` task whose `decision.md` now has an answer —
 so a fresh run starts from a tidy queue. It works no
 task and makes no commits, and it's the symmetric front bookend to the review pass. Off
@@ -1592,9 +1592,14 @@ own tree.
 
 ## Configuration
 
-Set via environment variables, or `~/.config/coop/coop.conf` (`KEY=VALUE` lines, same
-names — the environment wins over the file). Toggles default on; set `0`/`false` to
-turn them off.
+Set via environment variables, or `~/.config/coop/coop.conf` (`KEY=VALUE` lines; the
+environment wins over the file). The default file is optional, but an explicitly selected
+`COOP_CONF` must exist. A file access error names its path; a content error names its path and
+line. Malformed, duplicate, retired, and unknown settings are errors, and an environment override
+never hides a broken file. Boolean settings accept `1`/`true`/`yes`/`on` and
+`0`/`false`/`no`/`off`, case-insensitively; any other explicit value is an error.
+`COOP_CONF`, `NO_COLOR`, `COOP_ACP_WARM`, and `COOP_SPINNER` are process-environment
+controls and cannot be set inside `coop.conf`.
 
 **Box & runtime**
 
@@ -1631,8 +1636,8 @@ root-in-container (a repo `.agent/Dockerfile` that does `USER root`) from holdin
 | Var | Default | |
 |---|---|---|
 | `COOP_CONFIG_DIR` | `~/.config/coop/agents` | per-agent auth + settings folder |
-| `COOP_CONF` | `<config>/coop.conf` | relocate the `coop.conf` file coop reads its `COOP_*` defaults from |
-| `NO_COLOR` | — | present at any value (even empty) disables ANSI color everywhere ([no-color.org](https://no-color.org)) |
+| `COOP_CONF` | `<config>/coop.conf` | environment only; relocate `coop.conf`; unlike the optional default path, an explicit path must name a readable regular file |
+| `NO_COLOR` | — | environment only; present at any value (even empty) disables ANSI color everywhere ([no-color.org](https://no-color.org)) |
 | `COOP_<AGENT>_CMD` (e.g. `COOP_CLAUDE_CMD`) | autonomous default | override an agent's base command |
 | `COOP_<AGENT>_MODEL` (e.g. `COOP_CLAUDE_MODEL`) | (CLI default) | agent-wide default model, everywhere that agent runs (see [Picking models](#picking-models)) |
 | `COOP_CONSULT_TIMEOUT` | `0` (unlimited) | per-peer `coop-consult` bound in seconds; unbounded by default because a clock can't tell a long answer from a wedged one, and killing a working peer loses its answer and costs the retry that follows — the parent attempt's own tool cap and ceiling already bound it from outside. Set a whole-second value (max `86400`) to opt back into a bound; a peer that then doesn't answer in time is skipped so the lead synthesizes from whoever did |
@@ -1647,17 +1652,18 @@ root-in-container (a repo `.agent/Dockerfile` that does `USER root`) from holdin
 | `COOP_GATE` | — | gate re-run in the box before a fork merge lands (e.g. `make check`) |
 | `COOP_EDITOR` | (detected) | editor for `coop fork review --open` |
 | `COOP_REVIEW_CMD` | — | full override for `coop fork review` (`sh -c`) |
-| `COOP_LOOP_CMD` | — | override the loop's per-iteration command |
-| `COOP_LOOP_MODEL` | — | `model[/effort]` for loop iterations (e.g. `opus/low` — overnight runs on a cheaper/lighter setting than interactive) |
-| `COOP_REVIEW_MODEL` | — | `model[/effort]` for `coop loop`'s review pass + between-tasks audit — a stronger model/effort reviews the cheaper loop's work (unset = the loop's) |
-| `COOP_MAX_REVIEW_ROUNDS` | `5` | the ceiling for `coop loop`'s work→review rounds before blocking a task the review keeps reopening; the actual cap scales with the batch (`clamp(tasks/2, 3, this)`) |
 | `COOP_TASKS` | (derived) | explicit task queue dir(s) for `coop tasks` and the loop (space-separated for several). Unset, the queues come from `.agent/project.yaml` — a [monorepo's](#monorepos) subproject queues — else `.agent/tasks`. `--tasks` replaces this for a run (it doesn't merge) |
-| `COOP_PREFLIGHT` | `0` | run a cleanup pass (log/tasks/decisions) before `coop loop` (like `--preflight`) |
 | `COOP_CAFFEINATE` | `1` | while a loop runs, hold a system sleep inhibitor so the machine doesn't idle-sleep mid-drain (macOS `caffeinate`; released when the loop ends). `0`/`false` to disable |
-| `COOP_SPINNER` | `1` | animate Coop's live-view spinners: five-column Box Run beside progress bars and one-column Corner Run (`◰ ◳ ◲ ◱`) in dense task rows. `0`/`false` freezes them and suppresses the loop's fast repaint ticker, useful for debugging and terminal recording |
+| `COOP_ACP_WARM` | `1` | environment only; keep alternate editor ACP providers warm for fast switching; `0`/`false` disables the warm pool on low-memory hosts |
+| `COOP_SPINNER` | `1` | environment only; animate Coop's live-view spinners: five-column Box Run beside progress bars and one-column Corner Run (`◰ ◳ ◲ ◱`) in dense task rows. `0`/`false` freezes them and suppresses the loop's fast repaint ticker, useful for debugging and terminal recording |
 | `COOP_STREAM_TRACE` | (off) | set to persist each streaming loop attempt's raw provider JSONL and rendered output under `.agent/runs/<run>.streams/` |
 
-Command-valued settings — `COOP_GATE`, `COOP_LOOP_CMD`, `COOP_RUN_ARGS`, and the
+Loop behavior is configured in `.agent/loop.yaml`: `work.command` replaces the retired loop
+command variable; `work.agent`, `between.agent`, and `signoff.agent` select targets;
+`signoff.rounds` caps review rounds; and `preflight.enabled` makes cleanup the default for that
+repository. The `--preflight` flag enables the same cleanup for one invocation.
+
+Command-valued settings — `COOP_GATE`, `COOP_RUN_ARGS`, and the
 `COOP_<AGENT>_CMD` overrides — are split into `argv` with shell quoting (single/double
 quotes group, `\` escapes), but no shell runs them (no globbing or `$VAR`). So quotes
 group as you'd expect — `COOP_GATE='bash -lc "make check && make lint"'` is three args, not

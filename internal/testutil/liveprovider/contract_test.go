@@ -648,7 +648,10 @@ func TestRuntimeConnectionEnvChild(t *testing.T) {
 	if os.Getenv("COOP_TEST_LIVE_CHILD") != "1" {
 		t.Skip("helper runs only in the scrubbed runtime environment child")
 	}
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 	rt, err := coopruntime.Detect(cfg.RuntimeName)
 	if err != nil {
 		t.Fatal("detect fake runtime")
