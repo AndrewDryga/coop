@@ -1027,7 +1027,7 @@ func (a *app) cmdPrompt(args []string) (int, error) {
 		c, _, _ = tasks.QueueProgress(hosts)
 	}
 	// Fork activity from a dir listing + pidfiles — no git, so it stays prompt-cheap.
-	names := forkspace.Names(repo)
+	names, _ := forkspace.Names(repo) // prompt decoration is deliberately best-effort
 	looping := 0
 	for _, n := range names {
 		if forkspace.RunningPid(repo, n) > 0 {

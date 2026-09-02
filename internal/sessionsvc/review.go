@@ -666,7 +666,9 @@ func prepareForkReviewCandidateFromIntent(intent sessionReviewIntent) (c reviewS
 	if !forkspace.ValidExistingName(intent.SourceBranch) {
 		return c, errors.New("review intent has an invalid source branch")
 	}
-	forkspace.PropagateGitIdentity(intent.Repository, c.dir)
+	if err := forkspace.PropagateGitIdentity(intent.Repository, c.dir); err != nil {
+		return c, fmt.Errorf("prepare session review Git identity: %w", err)
+	}
 	const capturedParentRef = "refs/coop/session-parent"
 	if err := gitRun(c.dir, "fetch", "--quiet", intent.Repository, "+"+intent.ParentHead+":"+capturedParentRef); err != nil {
 		return c, fmt.Errorf("fetch captured review parent: %w", err)

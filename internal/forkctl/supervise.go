@@ -355,7 +355,10 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 		}
 		return 0, streamLog(forkspace.LogPath(repo, name), "", follow, os.Stdout, &mu)
 	}
-	names := forkspace.Names(repo)
+	names, err := forkspace.Names(repo)
+	if err != nil {
+		return -1, err
+	}
 	if len(names) == 0 {
 		ui.Note("no forks yet")
 		return 0, nil

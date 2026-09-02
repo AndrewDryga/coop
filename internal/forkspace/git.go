@@ -63,11 +63,7 @@ func GitCloneContext(ctx context.Context, src, dst string) error {
 }
 
 func gitCheckoutNewBranchContext(ctx context.Context, repo, branch string) error {
-	err := exec.CommandContext(ctx, "git", "-C", repo, "checkout", "--quiet", "-b", branch).Run()
-	if ctx.Err() != nil {
-		return errors.Join(ctx.Err(), err)
-	}
-	return err
+	return gitRunContext(ctx, repo, "checkout", "--quiet", "-b", branch)
 }
 
 // gitArgs builds `git -C dir <hardening> <args>`, the same shape internal/cli uses.
@@ -81,11 +77,31 @@ func gitOut(dir string, args ...string) string {
 }
 
 func gitOutContext(ctx context.Context, dir string, args ...string) string {
+	out, _ := gitOutputContext(ctx, dir, args...)
+	return out
+}
+
+func gitOutputContext(ctx context.Context, dir string, args ...string) (string, error) {
 	out, err := exec.CommandContext(ctx, "git", gitArgs(dir, args)...).Output()
-	if err != nil {
-		return ""
+	if ctx.Err() != nil {
+		return "", errors.Join(ctx.Err(), err)
 	}
-	return strings.TrimSpace(string(out))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func gitConfigContext(ctx context.Context, dir, key string) (string, bool, error) {
+	out, err := gitOutputContext(ctx, dir, "config", "--get", key)
+	if err == nil {
+		return out, true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return "", false, nil
+	}
+	return "", false, err
 }
 
 // gitRun runs `git -C dir <args>` hardened, for effect, returning its error.

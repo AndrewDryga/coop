@@ -2,6 +2,7 @@ package forkspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,20 +15,44 @@ func Setup(repo, name string) (string, error) {
 	return SetupContext(context.Background(), repo, name)
 }
 
-func SetupContext(ctx context.Context, repo, name string) (string, error) {
-	ws := Workspace(repo, name)
+func SetupContext(ctx context.Context, repo, name string) (ws string, err error) {
+	ws = Workspace(repo, name)
 	if err := os.MkdirAll(Home(repo), 0o755); err != nil {
 		return ws, err
 	}
 	if err := GitCloneContext(ctx, repo, ws); err != nil {
 		return ws, fmt.Errorf("couldn't clone the repo into the fork workspace: %w", err)
 	}
-	_ = gitCheckoutNewBranchContext(ctx, ws, name) // branch may already exist in origin; fine
-	if err := ctx.Err(); err != nil {
+	complete := false
+	defer func() {
+		if complete {
+			return
+		}
+		if cleanupErr := os.RemoveAll(ws); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove incomplete fork workspace %s: %w", ws, cleanupErr))
+		}
+	}()
+	checkoutErr := gitCheckoutNewBranchContext(ctx, ws, name)
+	if ctx.Err() != nil {
+		return ws, errors.Join(ctx.Err(), checkoutErr)
+	}
+	branch, branchErr := gitOutputContext(ctx, ws, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if branchErr != nil {
+		return ws, fmt.Errorf("verify fork branch %q: %w", name, branchErr)
+	}
+	if branch != name {
+		if checkoutErr != nil {
+			return ws, fmt.Errorf("check out fork branch %q: %w", name, checkoutErr)
+		}
+		return ws, fmt.Errorf("check out fork branch %q: HEAD is on %q", name, branch)
+	}
+	if err := propagateGitEnvContext(ctx, repo, ws); err != nil {
 		return ws, err
 	}
-	propagateGitEnvContext(ctx, repo, ws)
-	Exclude(ws, ".coop/") // trusted setup only; never re-open agent-writable .git metadata later
+	if err := Exclude(ws, ".coop/"); err != nil { // trusted setup only; never re-open agent-writable .git metadata later
+		return ws, fmt.Errorf("exclude fork bookkeeping: %w", err)
+	}
+	complete = true
 	return ws, nil
 }
 
@@ -37,14 +62,22 @@ func SetupContext(ctx context.Context, repo, name string) (string, error) {
 //   - user.name / user.email — so the agent's commits have an author;
 //   - the global gitignore (core.excludesfile) content into .git/info/exclude — git's
 //     local, uncommitted ignore file, so no host config path dangles inside the box.
-func propagateGitEnvContext(ctx context.Context, repo, ws string) {
-	PropagateGitIdentityContext(ctx, repo, ws)
+func propagateGitEnvContext(ctx context.Context, repo, ws string) error {
+	if err := PropagateGitIdentityContext(ctx, repo, ws); err != nil {
+		return err
+	}
 	// Signing materials (key + format) travel to the fork so commits can be signed
 	// with your key when they're rebased on land — on the host, where the key lives.
 	// commit.gpgsign is deliberately NOT copied: the keyless box must commit unsigned.
 	for _, k := range []string{"user.signingkey", "gpg.format"} {
-		if v := gitOutContext(ctx, repo, "config", "--get", k); v != "" {
-			_ = gitRunContext(ctx, ws, "config", k, v)
+		v, ok, err := gitConfigContext(ctx, repo, k)
+		if err != nil {
+			return fmt.Errorf("read parent Git %s: %w", k, err)
+		}
+		if ok && v != "" {
+			if err := gitRunContext(ctx, ws, "config", k, v); err != nil {
+				return fmt.Errorf("set fork Git %s: %w", k, err)
+			}
 		}
 	}
 	// Read core.excludesfile from your GLOBAL config, never the agent-writable repo: a poisoned
@@ -53,46 +86,62 @@ func propagateGitEnvContext(ctx context.Context, repo, ws string) {
 	if gi := gitGlobalOutContext(ctx, "--path", "core.excludesfile"); gi != "" {
 		if data, err := os.ReadFile(gi); err == nil && len(data) > 0 {
 			excl := filepath.Join(ws, ".git", "info", "exclude")
-			if f, err := os.OpenFile(excl, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-				_, _ = f.WriteString("\n# carried from your global core.excludesfile\n")
-				_, _ = f.Write(data)
-				_ = f.Close()
+			if err := appendFile(excl, append([]byte("\n# carried from your global core.excludesfile\n"), data...)); err != nil {
+				return fmt.Errorf("carry global Git excludes into fork: %w", err)
 			}
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // PropagateGitIdentity gives a clone the trusted parent's resolved commit identity. Git clone does
 // not copy local config, and a preview rebase must work even when the host has no global identity.
-func PropagateGitIdentity(repo, ws string) {
-	PropagateGitIdentityContext(context.Background(), repo, ws)
+func PropagateGitIdentity(repo, ws string) error {
+	return PropagateGitIdentityContext(context.Background(), repo, ws)
 }
 
-func PropagateGitIdentityContext(ctx context.Context, repo, ws string) {
-	if email := gitOutContext(ctx, repo, "config", "user.email"); email != "" {
-		_ = gitRunContext(ctx, ws, "config", "user.email", email)
+func PropagateGitIdentityContext(ctx context.Context, repo, ws string) error {
+	for _, key := range []string{"user.email", "user.name"} {
+		value, ok, err := gitConfigContext(ctx, repo, key)
+		if err != nil {
+			return fmt.Errorf("read parent Git %s: %w", key, err)
+		}
+		if ok && value != "" {
+			if err := gitRunContext(ctx, ws, "config", key, value); err != nil {
+				return fmt.Errorf("set fork Git %s: %w", key, err)
+			}
+		}
 	}
-	if name := gitOutContext(ctx, repo, "config", "user.name"); name != "" {
-		_ = gitRunContext(ctx, ws, "config", "user.name", name)
-	}
+	return nil
 }
 
 // Exclude appends a pattern to the fork's local .git/info/exclude (git's uncommitted
 // ignore file) if absent, so coop's per-fork bookkeeping never shows in a review diff or
 // lands on merge.
-func Exclude(ws, pattern string) {
+func Exclude(ws, pattern string) error {
 	excl := filepath.Join(ws, ".git", "info", "exclude")
 	if data, err := os.ReadFile(excl); err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
 			if strings.TrimSpace(line) == pattern {
-				return
+				return nil
 			}
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	if f, err := os.OpenFile(excl, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-		_, _ = f.WriteString("\n# coop: per-fork state, never committed\n" + pattern + "\n")
-		_ = f.Close()
+	return appendFile(excl, []byte("\n# coop: per-fork state, never committed\n"+pattern+"\n"))
+}
+
+func appendFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
 	}
+	_, writeErr := f.Write(data)
+	return errors.Join(writeErr, f.Close())
 }
 
 // Destroy removes a fork's workspace and its review/<name> ref, then prunes an empty forks home.

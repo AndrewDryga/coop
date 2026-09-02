@@ -87,6 +87,23 @@ func TestForkLsJSONRejectsInvalidProjectWithoutOutputOrRuntime(t *testing.T) {
 	}
 }
 
+func TestForkLsJSONRejectsBrokenForkRootWithoutOutput(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(forkspace.Home(repo), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	var code int
+	var runErr error
+	out := captureStdout(t, func() { code, runErr = c.ForkLs([]string{"--json"}) })
+	if code != -1 || runErr == nil || !strings.Contains(runErr.Error(), forkspace.Home(repo)) {
+		t.Fatalf("fork ls --json = (%d, %v), want fork discovery error", code, runErr)
+	}
+	if out != "" {
+		t.Fatalf("broken fork discovery emitted partial JSON: %q", out)
+	}
+}
+
 func TestForkLsJSONIncludesLiveSandboxCounts(t *testing.T) {
 	repo := t.TempDir()
 	workspace := forkspace.Workspace(repo, "active")

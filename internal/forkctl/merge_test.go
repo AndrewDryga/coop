@@ -69,6 +69,28 @@ func TestForkMergePreflightsUnsupportedStateBeforeEnvironmentGates(t *testing.T)
 	}
 }
 
+func TestForkMergeAllRejectsBrokenForkRootBeforeRuntime(t *testing.T) {
+	repo := initRepo(t)
+	if err := os.WriteFile(forkspace.Home(repo), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runtimeCalls := 0
+	c := &Control{
+		cfg: &config.Config{RepoOverride: repo, Gate: []string{"true"}},
+		host: Host{EnsureRuntime: func() (runtime.Runtime, error) {
+			runtimeCalls++
+			return runtime.Runtime{}, nil
+		}},
+	}
+	code, err := c.ForkMerge([]string{"--all", "--yes"})
+	if code != -1 || err == nil || !strings.Contains(err.Error(), forkspace.Home(repo)) {
+		t.Fatalf("ForkMerge(--all) = (%d, %v), want fork discovery error", code, err)
+	}
+	if runtimeCalls != 0 {
+		t.Fatalf("broken fork discovery resolved runtime %d time(s)", runtimeCalls)
+	}
+}
+
 func TestForkMergeRunningRefusalKeepsLifecycleExitClass(t *testing.T) {
 	repo := initRepo(t)
 	if _, err := forkspace.Setup(repo, "busy"); err != nil {
@@ -961,13 +983,17 @@ func TestForkMergeQueue(t *testing.T) {
 		git(t, ws, "add", "-A")
 		git(t, ws, "commit", "-qm", n)
 	}
-	if code, err := c.forkMergeAll(repo, forkspace.Names(repo), "", false, true); err != nil || code != 0 { // yes=true: approve the bulk land
+	names, err := forkspace.Names(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, err := c.forkMergeAll(repo, names, "", false, true); err != nil || code != 0 { // yes=true: approve the bulk land
 		t.Fatalf("forkMergeAll = (%d, %v), want (0, nil)", code, err)
 	}
 	if !pathExists(filepath.Join(repo, "a.txt")) || !pathExists(filepath.Join(repo, "b.txt")) {
 		t.Error("merge queue did not land both forks")
 	}
-	if got := forkspace.Names(repo); len(got) != 0 {
+	if got, err := forkspace.Names(repo); err != nil || len(got) != 0 {
 		t.Errorf("forks remain after the queue closed them: %v", got)
 	}
 	// Rebasing must keep history linear — no merge commits.
@@ -1075,7 +1101,11 @@ func TestForkMergeAllRefusesWithoutApproval(t *testing.T) {
 	c := &Control{cfg: &config.Config{}}
 	// Non-interactive stdin (go test) with yes=false → approve() returns false → bulk land is a
 	// no-op. Without the gate this path would fetch, land, and DELETE every fork unattended.
-	code, err := c.forkMergeAll(repo, forkspace.Names(repo), "", false, false)
+	names, err := forkspace.Names(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := c.forkMergeAll(repo, names, "", false, false)
 	if err != nil || code != 0 {
 		t.Fatalf("forkMergeAll = (%d, %v), want (0, nil)", code, err)
 	}

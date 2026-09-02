@@ -1,7 +1,10 @@
 package forkspace
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -56,5 +59,18 @@ func TestForkReserved(t *testing.T) {
 func TestVerbList(t *testing.T) {
 	if got := VerbList(); !slices.Equal(got, []string{"acp", "logs", "ls", "merge", "open", "path", "review", "rm", "stop"}) {
 		t.Errorf("VerbList = %v", got)
+	}
+}
+
+func TestForkDiscoveryDistinguishesMissingAndBrokenRoots(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	if names, err := Names(repo); err != nil || len(names) != 0 {
+		t.Fatalf("Names with missing root = %v, %v; want empty", names, err)
+	}
+	if err := os.WriteFile(Home(repo), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Names(repo); err == nil || !strings.Contains(err.Error(), Home(repo)) {
+		t.Fatalf("Names with broken root error = %v", err)
 	}
 }

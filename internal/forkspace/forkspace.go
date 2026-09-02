@@ -18,6 +18,7 @@ package forkspace
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -121,8 +122,14 @@ func ValidName(name string) bool {
 
 // Names lists the forks of repo (subdirectories of the forks home, skipping
 // the hidden state dir).
-func Names(repo string) []string {
-	entries, _ := os.ReadDir(Home(repo))
+func Names(repo string) ([]string, error) {
+	entries, err := os.ReadDir(Home(repo))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read fork workspace root %s: %w", Home(repo), err)
+	}
 	var names []string
 	for _, e := range entries {
 		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
@@ -130,29 +137,36 @@ func Names(repo string) []string {
 		}
 	}
 	sort.Strings(names)
-	return names
+	return names, nil
 }
 
 // LifecycleNames includes pidfile-only forks whose workspace was removed after a worker crash.
 // They remain visible until `coop fork stop` can finish exact-owner runtime cleanup.
-func LifecycleNames(repo string) []string {
+func LifecycleNames(repo string) ([]string, error) {
 	seen := map[string]bool{}
-	for _, name := range Names(repo) {
+	names, err := Names(repo)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
 		seen[name] = true
 	}
-	entries, _ := os.ReadDir(StateDir(repo))
+	entries, err := os.ReadDir(StateDir(repo))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read fork lifecycle root %s: %w", StateDir(repo), err)
+	}
 	for _, entry := range entries {
 		name, ok := strings.CutSuffix(entry.Name(), ".pid")
 		if ok && !entry.IsDir() && ValidExistingName(name) {
 			seen[name] = true
 		}
 	}
-	names := make([]string, 0, len(seen))
+	names = make([]string, 0, len(seen))
 	for name := range seen {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return names
+	return names, nil
 }
 
 // pathExists is forkspace's own three-line existence check, so the leaf owes internal/cli nothing.

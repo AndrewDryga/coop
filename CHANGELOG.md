@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fork setup and discovery now fail cleanly.** A new fork is kept only after its requested branch,
+  Git identity, and bookkeeping exclusion are ready; failed setup removes the incomplete clone.
+  Fork listing, logs, snapshots, and bulk merge now distinguish a missing fork root from a root
+  that could not be read, so a discovery failure cannot masquerade as no work.
+
 - **Host-side credentials and fork control state are private by default.** Coop now tightens its
   credential/profile ancestors and per-project fork state to owner-only directories before use,
   keeps shared secrets, worker records, locks, and logs at `0600`, and refuses linked or

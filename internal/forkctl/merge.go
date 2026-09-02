@@ -572,7 +572,10 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	}
 	var names []string
 	if all {
-		names = forkspace.Names(repo)
+		names, err = forkspace.Names(repo)
+		if err != nil {
+			return -1, err
+		}
 		for _, n := range names {
 			if err := CheckWorkerStateFormat(repo, n); err != nil {
 				return 1, err

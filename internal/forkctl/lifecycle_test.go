@@ -20,7 +20,9 @@ func TestForkAgentMemory(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(ws, ".git", "info"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	forkspace.Exclude(ws, ".coop/") // forkspace.Setup establishes this before the first provider run
+	if err := forkspace.Exclude(ws, ".coop/"); err != nil { // forkspace.Setup establishes this before the first provider run
+		t.Fatal(err)
+	}
 	// A fork with no memory yet.
 	if got := ReadForkAgent(ws); got != "" {
 		t.Errorf("ReadForkAgent(fresh) = %q, want empty", got)

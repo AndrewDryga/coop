@@ -101,11 +101,13 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 	case "fork":
 		if len(prev) == 1 { // a verb, or a fork to re-enter
 			repo, _ := box.ResolveRepo(a.cfg.RepoOverride)
-			return append(forkspace.VerbList(), forkspace.Names(repo)...)
+			names, _ := forkspace.Names(repo) // shell completion is deliberately best-effort
+			return append(forkspace.VerbList(), names...)
 		}
 		if len(prev) == 2 && forkVerbList2(prev[1]) { // coop fork <verb> <name> — an existing fork
 			repo, _ := box.ResolveRepo(a.cfg.RepoOverride)
-			return forkspace.Names(repo)
+			names, _ := forkspace.Names(repo) // shell completion is deliberately best-effort
+			return names
 		}
 		if len(prev) == 2 && forkspace.Reserved(prev[1]) {
 			return nil

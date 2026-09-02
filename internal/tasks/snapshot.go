@@ -236,7 +236,11 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 	}
 
 	nameSet := map[string]bool{}
-	for _, name := range forkspace.LifecycleNames(repo) {
+	lifecycleNames, err := forkspace.LifecycleNames(repo)
+	if err != nil {
+		appendSnapshotProblem(&snapshot, "fork discovery", err)
+	}
+	for _, name := range lifecycleNames {
 		nameSet[name] = true
 	}
 	for identity := range identitySet {

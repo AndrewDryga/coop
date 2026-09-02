@@ -76,7 +76,9 @@ func prepareForkReviewCandidate(repo, ws, name string) (c forkReviewCandidate, e
 	if err = forkspace.GitClone(repo, c.dir); err != nil {
 		return c, fmt.Errorf("clone parent into review scratch: %w", err)
 	}
-	forkspace.PropagateGitIdentity(repo, c.dir)
+	if err = forkspace.PropagateGitIdentity(repo, c.dir); err != nil {
+		return c, fmt.Errorf("prepare review scratch Git identity: %w", err)
+	}
 	c.base = gitOut(c.dir, "rev-parse", "HEAD")
 	if c.base == "" {
 		return c, errors.New("review scratch has no parent HEAD")

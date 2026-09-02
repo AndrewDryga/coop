@@ -37,7 +37,11 @@ func (c *Control) ForkLs(args []string) (int, error) {
 	}
 	projectSnapshot := tasks.ReadProjectSnapshot(repo, nil)
 	nameSet := map[string]bool{}
-	for _, name := range forkspace.LifecycleNames(repo) {
+	lifecycleNames, err := forkspace.LifecycleNames(repo)
+	if err != nil {
+		return -1, err
+	}
+	for _, name := range lifecycleNames {
 		nameSet[name] = true
 	}
 	for _, fork := range projectSnapshot.Forks {
@@ -159,7 +163,11 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 	var problems []string
 	projectSnapshot := tasks.ReadProjectSnapshot(repo, nil)
 	nameSet := map[string]bool{}
-	for _, name := range forkspace.LifecycleNames(repo) {
+	lifecycleNames, err := forkspace.LifecycleNames(repo)
+	if err != nil {
+		return -1, err
+	}
+	for _, name := range lifecycleNames {
 		nameSet[name] = true
 	}
 	for _, fork := range projectSnapshot.Forks {

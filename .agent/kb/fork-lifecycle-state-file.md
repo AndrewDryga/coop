@@ -2,7 +2,7 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file holds four fork lifecycle states; unsupported formats stay held and only pid+start-token — never file age — may decide a current owner is gone
 subsystem: fork
-sources: [internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/processidentity/identity.go]
+sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/processidentity/identity.go]
 updated: 2026-09-03
 ---
 Every fork's whole process lifecycle lives in ONE small file, `<repo>-forks/.coop/<name>.pid`, read
@@ -30,6 +30,13 @@ signal it: `forkStop` zeroes it and falls into the tombstone path, and `forkspac
 `0700` directory. Newly written lifecycle, generation, execution, reservation, assignment,
 candidate, proposal, land, discard, lock, and log records are `0600`; opening an existing lock or
 log also tightens its mode. The private parent protects older leaf records until they are rewritten.
+
+Creating the workspace is all-or-nothing before generation authority exists. `SetupContext` keeps
+the clone only after hardened checkout leaves `HEAD` on the exact requested branch, required Git
+identity/signing settings have propagated, and `.coop/` is excluded. A failed step removes that
+incomplete clone. Fork discovery treats a missing workspace/state root as empty, but returns any
+other directory error to lifecycle callers; only prompt decoration and shell completion suppress
+that diagnostic deliberately.
 
 ## Who owns which half
 
@@ -98,6 +105,8 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-09-03 — documented and re-verified all-or-nothing workspace setup and fail-closed fork
+  discovery; prompt/completion remain the explicit best-effort display exceptions
 - 2026-09-03 — documented and re-verified owner-only fork control roots and records across
   forkspace, forkctl, and canonical task-authority writers
 - 2026-08-28 — current workers moved to owner-v2 and carry the immutable workspace generation;

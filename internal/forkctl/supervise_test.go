@@ -234,7 +234,7 @@ func TestForkStopFindsPendingNameWithoutWorkspace(t *testing.T) {
 	if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if names := forkspace.LifecycleNames(repo); !slices.Contains(names, "stop") {
+	if names, err := forkspace.LifecycleNames(repo); err != nil || !slices.Contains(names, "stop") {
 		t.Fatalf("lifecycle names = %v, want pending name", names)
 	}
 	a := &Control{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}}
