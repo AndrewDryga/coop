@@ -268,6 +268,72 @@ func TestIdlePersistentForkIsNotAWatcherStartupReservation(t *testing.T) {
 	}
 }
 
+func TestReservationOnlyForkIsNotTaskWatchActivity(t *testing.T) {
+	snapshot := ProjectSnapshot{Forks: []ProjectForkSnapshot{{
+		Name: "idle-session",
+		Reservation: &forkspace.WorkspaceReservation{
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "session-owner",
+		},
+	}}}
+	if snapshotHasVisibleActivity(snapshot) {
+		t.Fatal("durable session ownership was presented as current task work")
+	}
+	frame := strings.Join(tasksWatchFrameWithSnapshot(nil, nil, snapshot, 0, 120), "\n")
+	for _, unwanted := range []string{"forks", "idle-session", "session-owner"} {
+		if strings.Contains(frame, unwanted) {
+			t.Fatalf("reservation-only fork rendered %q:\n%s", unwanted, frame)
+		}
+	}
+}
+
+func TestReservedForkWithAssignmentRendersTaskActivity(t *testing.T) {
+	snapshot := ProjectSnapshot{Forks: []ProjectForkSnapshot{{
+		Name: "worker", Assignments: 1,
+		Reservation: &forkspace.WorkspaceReservation{
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "session-owner",
+		},
+	}}}
+	if !snapshotHasVisibleActivity(snapshot) {
+		t.Fatal("a fork assignment was hidden by its session reservation")
+	}
+	frame := strings.Join(tasksWatchFrameWithSnapshot(nil, nil, snapshot, 0, 120), "\n")
+	if !strings.Contains(frame, "worker · 1 assignment(s)") {
+		t.Fatalf("assigned fork did not render its task activity:\n%s", frame)
+	}
+	for _, unwanted := range []string{"remote-session", "session-owner"} {
+		if strings.Contains(frame, unwanted) {
+			t.Fatalf("assigned fork exposed reservation detail %q:\n%s", unwanted, frame)
+		}
+	}
+}
+
+func TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution(t *testing.T) {
+	tests := []struct {
+		name string
+		fork ProjectForkSnapshot
+		want string
+	}{
+		{name: "starting", fork: ProjectForkSnapshot{Name: "worker", Starting: true}, want: "starting"},
+		{name: "detached loop", fork: ProjectForkSnapshot{Name: "worker", DetachedRunning: true}, want: "detached loop running"},
+		{name: "cleanup", fork: ProjectForkSnapshot{Name: "worker", CleanupPending: true}, want: "cleanup-pending"},
+		{name: "assignment", fork: ProjectForkSnapshot{Name: "worker", Assignments: 2}, want: "2 assignment(s)"},
+		{name: "candidate", fork: ProjectForkSnapshot{Name: "worker", Candidate: true}, want: "ready"},
+		{name: "landing", fork: ProjectForkSnapshot{Name: "worker", PendingLand: true}, want: "landing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := ProjectSnapshot{Forks: []ProjectForkSnapshot{tt.fork}}
+			if !snapshotHasVisibleActivity(snapshot) {
+				t.Fatal("fork work was not treated as visible activity")
+			}
+			frame := strings.Join(tasksWatchFrameWithSnapshot(nil, nil, snapshot, 0, 120), "\n")
+			if !strings.Contains(frame, "worker · "+tt.want) {
+				t.Fatalf("fork work did not render %q:\n%s", tt.want, frame)
+			}
+		})
+	}
+}
+
 func TestForkAttributionRemainsVisibleOutsideInProgress(t *testing.T) {
 	line := mergedQueue(ui.Palette{}, []mergedTask{{
 		Item: Item{Title: "Needs a decision", State: StateBlocked}, fork: "worker", phase: ForkAssignmentBlocked,

@@ -93,6 +93,7 @@ updated: <YYYY-MM-DD>                # last edit
 **CLI output** — what the terminal shows
 - [help-output-style](help-output-style.md) — UPPERCASE headers, one command per line, no `·`, command cell ≤ 32 runes
 - [command-output-tiers](command-output-tiers.md) — dim progress log, one `coop:` anchor, a bright next-steps block; standalone results use ✓/⚠/✗
+- [task-watch-shows-work-not-workspace-ownership](task-watch-shows-work-not-workspace-ownership.md) — tasks watch renders task-affecting activity, never an idle workspace reservation by itself
 - [no-color-in-width-fields](no-color-in-width-fields.md) — pad plain text to the column width, then style; never style inside `%-16s`
 - [entity-blocks-with-labeled-fields](entity-blocks-with-labeled-fields.md) — multi-fact listings get one labeled block per entity, not one dense row
 - [tag-exceptions-not-every-row](tag-exceptions-not-every-row.md) — tag only the exceptional row; explain the scheme once in a dim caption

@@ -131,12 +131,18 @@ func snapshotHasVisibleActivity(snapshot ProjectSnapshot) bool {
 		return true
 	}
 	for _, fork := range snapshot.Forks {
-		if fork.Starting || fork.DetachedRunning || fork.CleanupPending || fork.Assignments > 0 ||
-			fork.Candidate || fork.PendingLand || fork.Reservation != nil {
+		if forkHasVisibleActivity(fork) {
 			return true
 		}
 	}
 	return false
+}
+
+func forkHasVisibleActivity(fork ProjectForkSnapshot) bool {
+	// A reservation protects a persistent remote workspace; by itself it says nothing about
+	// current task work and stays available in the JSON snapshot instead of filling the board.
+	return fork.Starting || fork.DetachedRunning || fork.CleanupPending || fork.Assignments > 0 ||
+		fork.Candidate || fork.PendingLand
 }
 
 func tasksWatchFrameWithSnapshot(sources []watchSource, merged []mergedTask, snapshot ProjectSnapshot, spin, width int) []string {
@@ -171,8 +177,7 @@ func tasksWatchFrameWithSnapshot(sources []watchSource, merged []mergedTask, sna
 	}
 	var visibleForks []ProjectForkSnapshot
 	for _, fork := range snapshot.Forks {
-		if len(fork.Executions) == 0 && (fork.Starting || fork.DetachedRunning || fork.CleanupPending ||
-			fork.Assignments > 0 || fork.Candidate || fork.PendingLand || fork.Reservation != nil) {
+		if len(fork.Executions) == 0 && forkHasVisibleActivity(fork) {
 			visibleForks = append(visibleForks, fork)
 		}
 	}
@@ -192,8 +197,6 @@ func tasksWatchFrameWithSnapshot(sources []watchSource, merged []mergedTask, sna
 			state = "landing"
 		case fork.Candidate:
 			state = "ready"
-		case fork.Reservation != nil:
-			state = string(fork.Reservation.Kind) + " " + fork.Reservation.OwnerID
 		case fork.Assignments > 0:
 			state = fmt.Sprintf("%d assignment(s)", fork.Assignments)
 		}
