@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Required box setup no longer disappears silently.** A selected provider's instructions,
+  synthesized skills/settings, assigned-task Git hook, and generated Git config must be readable
+  and prepared before Coop touches the container runtime. Unused providers remain out of scope,
+  and a failed optional global-ignore copy warns and continues without that mount.
+
 - **Changed-file context is exact and hardened.** `coop context --changed` now disables
   repository-controlled Git execution hooks, reports Git failures, includes nested untracked
   files, and preserves unusual filenames and rename targets through NUL-delimited status parsing.

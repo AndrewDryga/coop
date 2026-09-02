@@ -21,6 +21,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func TestDecideTTY(t *testing.T) {
@@ -1293,15 +1294,25 @@ func TestRunUsesOneValidatedMCPSnapshotAfterSourceMutation(t *testing.T) {
 		t.Fatalf("Run = (%d, %v), want 0, nil", code, err)
 	}
 	if len(written) < 2 {
-		t.Fatalf("MCP artifacts = %d writes, want the snapshot plus generated adapters", len(written))
+		t.Fatalf("composition artifacts = %d writes, want the snapshot plus generated adapters", len(written))
 	}
 	if written[0] != before {
 		t.Fatalf("first MCP artifact = %q, want exact source snapshot", written[0])
 	}
+	generated := 0
 	for i, content := range written[1:] {
+		// Required instruction and Git artifacts now use the same failure-injection seam. This
+		// assertion concerns only adapter configs, identifiable by either MCP server name.
+		if !strings.Contains(content, "before") && !strings.Contains(content, "after") {
+			continue
+		}
+		generated++
 		if strings.Contains(content, "after") || !strings.Contains(content, "before") {
 			t.Errorf("generated MCP artifact %d did not use the frozen snapshot:\n%s", i+1, content)
 		}
+	}
+	if generated == 0 {
+		t.Fatal("no generated adapter config contained the frozen MCP server")
 	}
 	args, err := os.ReadFile(recorder)
 	if err != nil {
@@ -1986,10 +1997,10 @@ func TestInstructionOverrideUsed(t *testing.T) {
 	os.MkdirAll(cfg.AgentDir("claude"), 0o755)
 	os.WriteFile(filepath.Join(cfg.AgentDir("claude"), "CLAUDE.md"), []byte("OVERRIDE"), 0o644)
 
-	if c := agentBaseInstructions(cfg, "claude", "CLAUDE.md"); !strings.Contains(c, "OVERRIDE") || strings.Contains(c, "SHARED") {
+	if c, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md"); err != nil || !strings.Contains(c, "OVERRIDE") || strings.Contains(c, "SHARED") {
 		t.Errorf("claude should use its per-agent override, not the shared file:\n%s", c)
 	}
-	if x := agentBaseInstructions(cfg, "codex", "AGENTS.md"); !strings.Contains(x, "SHARED") {
+	if x, err := agentBaseInstructions(cfg, "codex", "AGENTS.md"); err != nil || !strings.Contains(x, "SHARED") {
 		t.Errorf("codex (no override) should use the shared file:\n%s", x)
 	}
 }
@@ -2024,26 +2035,39 @@ func TestAssembleArgsMountsInstructions(t *testing.T) {
 	}
 }
 
-// TestInstructionPlan: every non-lead agent gets a plan item carrying the box env note; the
-// consult lead is excluded (it gets its augmented file instead).
+// TestInstructionPlan: only scoped non-lead agents get a plan item carrying the box env note;
+// the consult lead is excluded (it gets its augmented file instead).
 func TestInstructionPlan(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
-	if got := instructionPlan(cfg, RunSpec{}); got != nil {
+	if got, err := instructionPlan(cfg, RunSpec{}); err != nil || got != nil {
 		t.Errorf("no homes → no plan, got %v", got)
 	}
-	plan := instructionPlan(cfg, RunSpec{Homes: true})
-	if len(plan) != len(agents.Names()) {
-		t.Fatalf("plan has %d items, want one per agent (%d)", len(plan), len(agents.Names()))
+	if got, err := instructionPlan(cfg, RunSpec{Homes: true}); err != nil || got != nil {
+		t.Errorf("raw run has no selected providers, got %v, %v", got, err)
+	}
+	plan, err := instructionPlan(cfg, RunSpec{Homes: true, Agent: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan) != 1 || plan[0].agent != "claude" {
+		t.Fatalf("plan = %v, want only selected claude", plan)
 	}
 	for _, it := range plan {
 		if !strings.Contains(it.content, "Environment (coop box)") {
 			t.Errorf("%s plan content missing the box env note", it.agent)
 		}
 	}
-	for _, it := range instructionPlan(cfg, RunSpec{Homes: true, ConsultLead: "claude"}) {
+	plan, err = instructionPlan(cfg, RunSpec{Homes: true, ConsultLead: "claude", Peers: []agents.Target{{Provider: "codex"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range plan {
 		if it.agent == "claude" {
 			t.Error("consult lead must be excluded from instructionPlan")
 		}
+	}
+	if len(plan) != 1 || plan[0].agent != "codex" {
+		t.Fatalf("consult plan = %v, want only selected non-lead codex", plan)
 	}
 }
 
@@ -2120,7 +2144,10 @@ func TestLeadInstructionMount(t *testing.T) {
 	}
 	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}
 
-	content, file, wired, ok := leadInstructionMount(cfg, "claude", nil, nil)
+	content, file, wired, ok, err := leadInstructionMount(cfg, "claude", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok || file != "CLAUDE.md" {
 		t.Fatalf("leadInstructionMount ok=%v file=%q, want true CLAUDE.md", ok, file)
 	}
@@ -2132,7 +2159,10 @@ func TestLeadInstructionMount(t *testing.T) {
 	}
 
 	// With a peer NAMED, the directive is injected and coop-consult is wired.
-	content, _, wired, _ = leadInstructionMount(cfg, "claude", nil, []string{"codex"})
+	content, _, wired, _, err = leadInstructionMount(cfg, "claude", nil, []string{"codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !wired {
 		t.Error("with a named peer, expected the consult directive to be wired")
 	}
@@ -2247,6 +2277,173 @@ func TestRunDeclaredCompositionArtifactFailuresStopBeforeProvider(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
+	sentinel := errors.New("fixture required artifact failure")
+	newFixture := func(t *testing.T, agent string) (*config.Config, RunSpec, compositionArtifactOps, string, runtime.Runtime) {
+		t.Helper()
+		cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none", AutoUp: false}
+		spec := RunSpec{
+			Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: agent,
+			Homes: true, Batch: true, Quiet: true,
+		}
+		recorder := filepath.Join(t.TempDir(), "runtime-args")
+		runtimeDir := t.TempDir()
+		runtimePath := filepath.Join(runtimeDir, "docker")
+		script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n"
+		if err := os.WriteFile(runtimePath, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return cfg, spec, defaultCompositionArtifactOps(), recorder, runtime.Runtime{Name: runtimePath}
+	}
+	assertStopped := func(t *testing.T, cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps, recorder string, rt runtime.Runtime, want string, wantSentinel bool) {
+		t.Helper()
+		code, err := runWithCompositionArtifacts(cfg, rt, spec, artifacts)
+		if code != -1 || err == nil || !strings.Contains(err.Error(), want) || (wantSentinel && !errors.Is(err, sentinel)) {
+			t.Fatalf("Run = (%d, %v), want -1 with %q", code, err, want)
+		}
+		if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("container runtime was touched despite required artifact failure; recorder error = %v", statErr)
+		}
+	}
+
+	t.Run("selected provider instruction read", func(t *testing.T) {
+		cfg, spec, artifacts, recorder, rt := newFixture(t, "claude")
+		path := filepath.Join(cfg.AgentDir("claude"), "CLAUDE.md")
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		assertStopped(t, cfg, spec, artifacts, recorder, rt, "read claude instructions", false)
+	})
+
+	t.Run("shared instruction read", func(t *testing.T) {
+		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
+		if err := os.Mkdir(cfg.Instructions(), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		assertStopped(t, cfg, spec, artifacts, recorder, rt, "read shared instructions", false)
+	})
+
+	t.Run("selected provider instruction write", func(t *testing.T) {
+		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
+		originalWrite := artifacts.writeFile
+		artifacts.writeFile = func(content string) (string, error) {
+			if strings.HasPrefix(content, boxEnvNote) {
+				return "", sentinel
+			}
+			return originalWrite(content)
+		}
+		assertStopped(t, cfg, spec, artifacts, recorder, rt, "assemble instruction for codex", true)
+	})
+
+	t.Run("selected provider skills source", func(t *testing.T) {
+		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
+		path := filepath.Join(spec.Repo, ".agent", "skills")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("not a directory"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		assertStopped(t, cfg, spec, artifacts, recorder, rt, "inspect shared skills source", false)
+	})
+
+	t.Run("selected provider skills copy", func(t *testing.T) {
+		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
+		source := filepath.Join(spec.Repo, ".agent", "skills")
+		if err := os.MkdirAll(source, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Mkfifo(filepath.Join(source, "broken-pipe"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		assertStopped(t, cfg, spec, artifacts, recorder, rt, "copy skills for codex", false)
+	})
+
+	t.Run("selected provider fallback settings", func(t *testing.T) {
+		cfg, spec, artifacts, recorder, rt := newFixture(t, "claude")
+		path := filepath.Join(spec.Repo, ".agent", "claude", "settings.json")
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		assertStopped(t, cfg, spec, artifacts, recorder, rt, "inspect fallback .agent/claude/settings.json for claude", false)
+	})
+
+	t.Run("assigned task Git hook", func(t *testing.T) {
+		cfg, spec, artifacts, recorder, rt := newFixture(t, "")
+		spec.AssignedTask = "2026-09-02-required-hook"
+		artifacts.gitHookDir = func() (string, error) { return "", sentinel }
+		assertStopped(t, cfg, spec, artifacts, recorder, rt, "prepare box Git hook", true)
+	})
+
+	t.Run("box Git config", func(t *testing.T) {
+		cfg, spec, artifacts, recorder, rt := newFixture(t, "")
+		originalWrite := artifacts.writeFile
+		artifacts.writeFile = func(content string) (string, error) {
+			if strings.Contains(content, "[commit]\n\tgpgsign = false") {
+				return "", sentinel
+			}
+			return originalWrite(content)
+		}
+		assertStopped(t, cfg, spec, artifacts, recorder, rt, "prepare box Git config", true)
+	})
+}
+
+func TestRunUnusedProviderArtifactsAndOptionalGitIgnoreDoNotBlock(t *testing.T) {
+	repo := t.TempDir()
+	settings := filepath.Join(repo, ".agent", "claude", "settings.json")
+	if err := os.MkdirAll(settings, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none", AutoUp: false}
+	unusedInstruction := filepath.Join(cfg.AgentDir("claude"), "CLAUDE.md")
+	if err := os.MkdirAll(unusedInstruction, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	const ignoreBody = "optional-global-ignore-sentinel\n"
+	ignore := filepath.Join(t.TempDir(), "global-ignore")
+	if err := os.WriteFile(ignore, []byte(ignoreBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(global, []byte("[core]\n\texcludesFile = "+ignore+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "system"))
+
+	artifacts := defaultCompositionArtifactOps()
+	originalWrite := artifacts.writeFile
+	artifacts.writeFile = func(content string) (string, error) {
+		if content == ignoreBody {
+			return "", errors.New("fixture optional ignore failure")
+		}
+		return originalWrite(content)
+	}
+	var notices []string
+	ui.SetLiveSink(func(line string) { notices = append(notices, line) })
+	t.Cleanup(func() { ui.SetLiveSink(nil) })
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	spec := RunSpec{
+		Image: "i", Repo: repo, Cmd: []string{"true"}, Agent: "codex",
+		Homes: true, Batch: true, Quiet: true,
+	}
+	code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), spec, artifacts)
+	if err != nil || code != 0 {
+		t.Fatalf("Run = (%d, %v), want success despite unused/optional artifacts", code, err)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(args), boxGitIgnoreName) {
+		t.Fatalf("failed optional global ignore was still wired into runtime args:\n%s", args)
+	}
+	if !slices.ContainsFunc(notices, func(line string) bool { return strings.Contains(line, "global Git ignore") }) {
+		t.Fatalf("optional ignore failure had no warning: %v", notices)
 	}
 }
 
@@ -2462,7 +2659,10 @@ func TestPresetRoleTargetDefaultsDoNotInheritRawPeerOverride(t *testing.T) {
 func TestAgentBaseInstructions(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
-	got := agentBaseInstructions(cfg, "claude", "CLAUDE.md")
+	got, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(got, "Environment (coop box)") || !strings.Contains(got, "python (= python3)") {
 		t.Errorf("box note missing/incomplete with no user file:\n%s", got)
 	}
@@ -2476,7 +2676,10 @@ func TestAgentBaseInstructions(t *testing.T) {
 		}
 	}
 	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("MY RULE"), 0o644)
-	got = agentBaseInstructions(cfg, "claude", "CLAUDE.md")
+	got, err = agentBaseInstructions(cfg, "claude", "CLAUDE.md")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if i, j := strings.Index(got, "Environment (coop box)"), strings.Index(got, "MY RULE"); i < 0 || j < 0 || i > j {
 		t.Errorf("want box note then the user rule, got:\n%s", got)
 	}
@@ -2709,7 +2912,10 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("BASE RULES"), 0o644)
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: dir}
 
-	content, file, wired, ok := leadInstructionMount(cfg, "claude", frontierPreset(), nil)
+	content, file, wired, ok, err := leadInstructionMount(cfg, "claude", frontierPreset(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok || file != "CLAUDE.md" {
 		t.Fatalf("mount = (file=%q, ok=%v)", file, ok)
 	}
@@ -2729,13 +2935,18 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 	// A delegate-only preset wires no consult (nothing read-only to call).
 	delegateOnly := &preset.Preset{Name: "d", LeadAgent: "claude",
 		Roles: []preset.Role{{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini"}}}
-	if _, _, wired, _ := leadInstructionMount(cfg, "claude", delegateOnly, nil); wired {
+	if _, _, wired, _, err := leadInstructionMount(cfg, "claude", delegateOnly, nil); err != nil {
+		t.Fatal(err)
+	} else if wired {
 		t.Error("a delegate-only preset must not mount coop-consult")
 	}
 
 	// An explicit peer composes with a preset instead of disappearing behind it. This
 	// also wires coop-consult for a preset that has no consult roles of its own.
-	content, _, wired, _ = leadInstructionMount(cfg, "claude", delegateOnly, []string{"codex"})
+	content, _, wired, _, err = leadInstructionMount(cfg, "claude", delegateOnly, []string{"codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !wired {
 		t.Error("a delegate-only preset with an explicit peer must mount coop-consult")
 	}
@@ -2996,12 +3207,15 @@ func TestSynthSkillsMounts(t *testing.T) {
 	}
 	// No .agent/skills → nothing to synthesize.
 	names := []string{"claude", "codex", "gemini", "grok"}
-	if got, _ := synthSkillsMounts(repo, "/home/node", names); got != nil {
+	if got, _, err := synthSkillsMounts(repo, "/home/node", names); err != nil || got != nil {
 		t.Errorf("no .agent/skills → no mounts, got %v", got)
 	}
 	// .agent/skills present, no per-agent skills dirs → synthesize for skills-capable agents only.
 	mkdir(".agent/skills")
-	got, _ := synthSkillsMounts(repo, "/home/node", names)
+	got, _, err := synthSkillsMounts(repo, "/home/node", names)
+	if err != nil {
+		t.Fatal(err)
+	}
 	boxPaths := map[string]bool{}
 	for _, m := range got {
 		boxPaths[m.box] = true
@@ -3014,7 +3228,10 @@ func TestSynthSkillsMounts(t *testing.T) {
 	}
 	// The repo's OWN skills dir wins — no synthesis for that agent (project beats user).
 	mkdir(".claude/skills")
-	got, _ = synthSkillsMounts(repo, "/home/node", names)
+	got, _, err = synthSkillsMounts(repo, "/home/node", names)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, m := range got {
 		if m.box == "/home/node/.claude/skills" {
 			t.Errorf("repo has .claude/skills → must not synthesize a user-level one: %v", got)
@@ -3053,7 +3270,10 @@ func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
 	}
 
 	writeSkill(".claude/skills", "claude-only")
-	mounts, temps := synthSkillsMounts(repo, "/home/node", []string{"claude", "codex", "gemini"})
+	mounts, temps, err := synthSkillsMounts(repo, "/home/node", []string{"claude", "codex", "gemini"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, agent := range []string{"codex", "gemini"} {
 		skills := findMount(mounts, "/home/node/."+agent+"/skills")
 		if skills == "" {
@@ -3069,7 +3289,10 @@ func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
 	removeTemps(temps)
 
 	writeSkill(".agent/skills", "agent-first")
-	mounts, temps = synthSkillsMounts(repo, "/home/node", []string{"codex"})
+	mounts, temps, err = synthSkillsMounts(repo, "/home/node", []string{"codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	codexSkills := findMount(mounts, "/home/node/.codex/skills")
 	if codexSkills == "" {
 		t.Fatalf("Codex skills were not synthesized from .agent/skills: %v", mounts)
@@ -3092,7 +3315,7 @@ func TestSynthSkillsMountsFallsBackToClaudeSource(t *testing.T) {
 	if err := os.Symlink("../.project-skills", filepath.Join(symlinkRepo, ".claude", "skills")); err != nil {
 		t.Fatal(err)
 	}
-	if mounts, _ := synthSkillsMounts(symlinkRepo, "/home/node", []string{"codex"}); mounts != nil {
+	if mounts, _, err := synthSkillsMounts(symlinkRepo, "/home/node", []string{"codex"}); err != nil || mounts != nil {
 		t.Errorf("symlinked .claude/skills should not become the shared source: %v", mounts)
 	}
 }
@@ -3138,13 +3361,13 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 	t.Run("non-Claude scope skips synthesis", func(t *testing.T) {
 		repo := t.TempDir()
 		writeSource(t, repo)
-		if got, dirs := synthHomeFallbackMounts(repo, home, []string{"codex", "gemini"}); got != nil || dirs != nil {
+		if got, dirs, err := synthHomeFallbackMounts(repo, home, []string{"codex", "gemini"}); err != nil || got != nil || dirs != nil {
 			t.Fatalf("non-Claude run synthesized mounts=%v dirs=%v", got, dirs)
 		}
 	})
 
 	t.Run("absent source skips synthesis", func(t *testing.T) {
-		if got, dirs := synthHomeFallbackMounts(t.TempDir(), home, []string{"claude"}); got != nil || dirs != nil {
+		if got, dirs, err := synthHomeFallbackMounts(t.TempDir(), home, []string{"claude"}); err != nil || got != nil || dirs != nil {
 			t.Fatalf("absent source synthesized mounts=%v dirs=%v", got, dirs)
 		}
 	})
@@ -3152,7 +3375,10 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 	t.Run("source artifacts synthesize isolated user-level copies", func(t *testing.T) {
 		repo := t.TempDir()
 		writeSource(t, repo)
-		mounts, dirs := synthHomeFallbackMounts(repo, home, []string{"claude"})
+		mounts, dirs, err := synthHomeFallbackMounts(repo, home, []string{"claude"})
+		if err != nil {
+			t.Fatal(err)
+		}
 		cleanup(t, dirs)
 
 		byTarget := targets(mounts)
@@ -3200,14 +3426,17 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 		writeSource(t, repo)
 		write(t, repo, ".claude/settings.json", `{"project":true}`, 0o644)
 		write(t, repo, ".claude/hooks/commit-gate.sh", hookBody, 0o755)
-		if got, dirs := synthHomeFallbackMounts(repo, home, []string{"claude"}); got != nil || dirs != nil {
+		if got, dirs, err := synthHomeFallbackMounts(repo, home, []string{"claude"}); err != nil || got != nil || dirs != nil {
 			t.Fatalf("project artifacts should suppress synthesis, got mounts=%v dirs=%v", got, dirs)
 		}
 
 		settingsOnly := t.TempDir()
 		writeSource(t, settingsOnly)
 		write(t, settingsOnly, ".claude/settings.json", `{"project":true}`, 0o644)
-		got, dirs := synthHomeFallbackMounts(settingsOnly, home, []string{"claude"})
+		got, dirs, err := synthHomeFallbackMounts(settingsOnly, home, []string{"claude"})
+		if err != nil {
+			t.Fatal(err)
+		}
 		cleanup(t, dirs)
 		byTarget := targets(got)
 		if _, ok := byTarget[home+"/.claude/settings.json"]; ok {
@@ -3220,7 +3449,10 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 		hooksOnly := t.TempDir()
 		writeSource(t, hooksOnly)
 		write(t, hooksOnly, ".claude/hooks/commit-gate.sh", hookBody, 0o755)
-		got, dirs = synthHomeFallbackMounts(hooksOnly, home, []string{"claude"})
+		got, dirs, err = synthHomeFallbackMounts(hooksOnly, home, []string{"claude"})
+		if err != nil {
+			t.Fatal(err)
+		}
 		cleanup(t, dirs)
 		byTarget = targets(got)
 		if _, ok := byTarget[home+"/.claude/hooks"]; ok {
@@ -3234,7 +3466,10 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 	t.Run("each source artifact can synthesize alone", func(t *testing.T) {
 		settingsOnly := t.TempDir()
 		write(t, settingsOnly, ".agent/claude/settings.json", settingsBody, 0o644)
-		got, dirs := synthHomeFallbackMounts(settingsOnly, home, []string{"claude"})
+		got, dirs, err := synthHomeFallbackMounts(settingsOnly, home, []string{"claude"})
+		if err != nil {
+			t.Fatal(err)
+		}
 		cleanup(t, dirs)
 		byTarget := targets(got)
 		if _, ok := byTarget[home+"/.claude/settings.json"]; !ok {
@@ -3246,7 +3481,10 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 
 		hooksOnly := t.TempDir()
 		write(t, hooksOnly, ".agent/claude/hooks/commit-gate.sh", hookBody, 0o755)
-		got, dirs = synthHomeFallbackMounts(hooksOnly, home, []string{"claude"})
+		got, dirs, err = synthHomeFallbackMounts(hooksOnly, home, []string{"claude"})
+		if err != nil {
+			t.Fatal(err)
+		}
 		cleanup(t, dirs)
 		byTarget = targets(got)
 		if _, ok := byTarget[home+"/.claude/hooks"]; !ok {

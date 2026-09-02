@@ -202,11 +202,13 @@ type compositionArtifactOps struct {
 	writeFile         func(string) (string, error)
 	chmod             func(string, os.FileMode) error
 	assembleAgentsDir func([]genFile) (string, error)
+	gitHookDir        func() (string, error)
 }
 
 func defaultCompositionArtifactOps() compositionArtifactOps {
 	return compositionArtifactOps{
 		writeFile: writeTempFile, chmod: os.Chmod, assembleAgentsDir: assembleAgentsDir,
+		gitHookDir: gitHookDir,
 	}
 }
 
@@ -302,9 +304,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if err != nil {
 			return -1, fmt.Errorf("mcp.json: %w", err)
 		}
-	}
-	if err := rt.EnsureDaemon(); err != nil {
-		return -1, err
 	}
 	workdir := resolveWorkdir(spec, cfg)
 
@@ -451,24 +450,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 
-	// Every scoped native config is now immutable wiring and every generated artifact exists. Only
-	// after the whole set succeeds may first-run defaults mutate an agent home; neither a later peer
-	// denial nor a temporary-file failure can leave an earlier profile partially initialized.
-	// Codex/Gemini overlays carry the same defaults through pure transforms, so this stays
-	// prompt-free on a first run.
-	if spec.Homes {
-		ensureAgentHomes(cfg, spec, workdir)
-		// An ACP box shares the lead's session transcripts across credentials (see assembleArgs), so
-		// ensure that shared store exists before it's mounted.
-		if spec.ShareACPSessions {
-			if ag, ok := agents.Get(runPrimary(spec)); ok {
-				for _, name := range ag.ACPSessionDirs() {
-					_ = os.MkdirAll(filepath.Join(acpSharedDir(cfg, runPrimary(spec)), name), 0o700)
-				}
-			}
-		}
-	}
-
 	// Second opinions: a normal lead may consult its authenticated peers read-only
 	// on hard calls. The directive is merged into the lead's instruction file only
 	// (so peers it spawns read their normal instructions and never recurse), and
@@ -479,7 +460,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	var consultMounts []extraMount
 	consultWired := false
 	if spec.Homes && spec.ConsultLead != "" {
-		if content, file, wired, ok := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers)); ok {
+		content, file, wired, ok, err := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers))
+		if err != nil {
+			return -1, fmt.Errorf("assemble lead instruction for %s: %w", spec.ConsultLead, err)
+		}
+		if ok {
 			p, err := artifacts.writeFile(content)
 			if err != nil {
 				return -1, fmt.Errorf("assemble lead instruction for %s: %w", spec.ConsultLead, err)
@@ -523,22 +508,33 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// override if present, else the shared INSTRUCTIONS.md), mounted at its native global path
 	// — so it never burns a turn rediscovering the box. The consult lead is handled above, with its
 	// augmented file.
-	plan := instructionPlan(cfg, spec)
+	plan, err := instructionPlan(cfg, spec)
+	if err != nil {
+		return -1, err
+	}
 	var instructionMounts []extraMount
 	for _, it := range plan {
-		if p, err := writeTempFile(it.content); err == nil {
-			tmpFiles = append(tmpFiles, p)
-			instructionMounts = append(instructionMounts, extraMount{p, cfg.HomeInBox + "/." + it.agent + "/" + it.file})
+		p, err := artifacts.writeFile(it.content)
+		if err != nil {
+			return -1, fmt.Errorf("assemble instruction for %s: %w", it.agent, err)
 		}
+		tmpFiles = append(tmpFiles, p)
+		instructionMounts = append(instructionMounts, extraMount{p, cfg.HomeInBox + "/." + it.agent + "/" + it.file})
 	}
 	// Synthesize workflow skills from the repo's shared source when it has no per-agent skills dir —
 	// so a repo can omit committed adapter directories and still give each agent its skills, mounted
 	// USER-level at ~/.<agent>/skills (writable copy, dies with the box). A project skills dir wins,
 	// like the subagents mount.
-	synthMounts, synthDirs := synthSkillsMounts(spec.Repo, cfg.HomeInBox, skillsAgentSet(spec))
+	synthMounts, synthDirs, err := synthSkillsMounts(spec.Repo, cfg.HomeInBox, configAgents)
+	if err != nil {
+		return -1, err
+	}
 	tmpDirs = append(tmpDirs, synthDirs...)
 	if spec.Homes {
-		homeMounts, homeDirs := synthHomeFallbackMounts(spec.Repo, cfg.HomeInBox, skillsAgentSet(spec))
+		homeMounts, homeDirs, err := synthHomeFallbackMounts(spec.Repo, cfg.HomeInBox, configAgents)
+		if err != nil {
+			return -1, err
+		}
 		synthMounts = append(synthMounts, homeMounts...)
 		tmpDirs = append(tmpDirs, homeDirs...)
 	}
@@ -554,23 +550,48 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		coAuthor := boxCommitTrailer(cfg, spec)
 		hooksPath := ""
 		if coAuthor != "" || spec.AssignedTask != "" {
-			if dir, err := gitHookDir(); err == nil {
-				tmpDirs = append(tmpDirs, dir)
-				hooksPath = filepath.Join(cfg.HomeInBox, boxGitHooksName)
-				gitMounts = append(gitMounts, extraMount{dir, hooksPath})
+			dir, err := artifacts.gitHookDir()
+			if err != nil {
+				return -1, fmt.Errorf("prepare box Git hook: %w", err)
 			}
+			tmpDirs = append(tmpDirs, dir)
+			hooksPath = filepath.Join(cfg.HomeInBox, boxGitHooksName)
+			gitMounts = append(gitMounts, extraMount{dir, hooksPath})
 		}
 		excludesPath := ""
 		if gi := hostGlobalGitignore(); gi != "" {
-			if p, err := writeTempFile(gi); err == nil {
+			if p, err := artifacts.writeFile(gi); err == nil {
 				tmpFiles = append(tmpFiles, p)
 				excludesPath = filepath.Join(cfg.HomeInBox, boxGitIgnoreName)
 				gitMounts = append(gitMounts, extraMount{p, excludesPath})
+			} else {
+				ui.Warn("global Git ignore: could not copy into box; continuing without it: %v", err)
 			}
 		}
-		if p, err := writeTempFile(gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask)); err == nil {
-			tmpFiles = append(tmpFiles, p)
-			gitMounts = append(gitMounts, extraMount{p, cfg.HomeInBox + "/.gitconfig"})
+		p, err := artifacts.writeFile(gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask))
+		if err != nil {
+			return -1, fmt.Errorf("prepare box Git config: %w", err)
+		}
+		tmpFiles = append(tmpFiles, p)
+		gitMounts = append(gitMounts, extraMount{p, cfg.HomeInBox + "/.gitconfig"})
+	}
+
+	// All required host artifacts now exist. Only after the whole set succeeds may the runtime or
+	// first-run defaults have side effects; a broken selected-provider file must never start Docker
+	// or leave an earlier provider home partially initialized.
+	if err := rt.EnsureDaemon(); err != nil {
+		return -1, err
+	}
+	if spec.Homes {
+		ensureAgentHomes(cfg, spec, workdir)
+		// An ACP box shares the lead's session transcripts across credentials (see assembleArgs), so
+		// ensure that shared store exists before it's mounted.
+		if spec.ShareACPSessions {
+			if ag, ok := agents.Get(runPrimary(spec)); ok {
+				for _, name := range ag.ACPSessionDirs() {
+					_ = os.MkdirAll(filepath.Join(acpSharedDir(cfg, runPrimary(spec)), name), 0o700)
+				}
+			}
 		}
 	}
 
@@ -1299,19 +1320,52 @@ You run inside a coop container: a Debian box that IS your sandbox and security 
 // agentBaseInstructions is what an agent receives as its global instructions: the always-on
 // box environment note, followed by the user's instructions — a per-agent override if present,
 // else the shared INSTRUCTIONS.md. Consult and preset routing augment this; they do not replace it.
-func agentBaseInstructions(cfg *config.Config, agent, file string) string {
+func agentBaseInstructions(cfg *config.Config, agent, file string) (string, error) {
 	user := ""
-	if data, err := os.ReadFile(filepath.Join(cfg.AgentDir(agent), file)); err == nil {
+	data, present, err := readOptionalRegularFile(filepath.Join(cfg.AgentDir(agent), file))
+	if err != nil {
+		return "", fmt.Errorf("read %s instructions: %w", agent, err)
+	}
+	if present {
 		user = string(data)
-	} else if ins := cfg.Instructions(); fileExists(ins) {
-		if data, err := os.ReadFile(ins); err == nil {
+	} else {
+		data, present, err = readOptionalRegularFile(cfg.Instructions())
+		if err != nil {
+			return "", fmt.Errorf("read shared instructions: %w", err)
+		}
+		if present {
 			user = string(data)
 		}
 	}
 	if strings.TrimSpace(user) == "" {
-		return boxEnvNote
+		return boxEnvNote, nil
 	}
-	return boxEnvNote + "\n" + user
+	return boxEnvNote + "\n" + user, nil
+}
+
+// readOptionalRegularFile distinguishes a missing override from a present file Coop could not
+// read. Symlinks to regular files retain their existing behavior; dangling links and special files
+// are errors rather than silently erasing selected-provider instructions.
+func readOptionalRegularFile(path string) ([]byte, bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if _, linkErr := os.Lstat(path); errors.Is(linkErr, os.ErrNotExist) {
+				return nil, false, nil
+			} else if linkErr != nil {
+				return nil, false, linkErr
+			}
+		}
+		return nil, false, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, false, fmt.Errorf("%s is not a regular file", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
 }
 
 // instructionItem is one agent's global instruction file and the content it should hold.
@@ -1322,72 +1376,82 @@ type instructionItem struct{ agent, file, content string }
 // it's omitted (a mount there would be inert anyway).
 var skillsCapableAgents = map[string]bool{"claude": true, "codex": true, "gemini": true}
 
-// skillsAgentSet is the agents whose home a run mounts — the launched agent, consult lead, and
-// peers — INCLUDING the lead (which instructionPlan deliberately omits, but
-// which still needs its skills). De-duplicated, order-preserving.
-func skillsAgentSet(spec RunSpec) []string {
-	var out []string
-	add := func(a string) {
-		if a == "" {
-			return
-		}
-		for _, x := range out {
-			if x == a {
-				return
-			}
-		}
-		out = append(out, a)
-	}
-	add(spec.Agent)
-	add(spec.ConsultLead)
-	for _, p := range spec.Peers {
-		add(p.Provider)
-	}
-	return out
-}
-
 // synthSkillsMounts returns the user-level ~/.<agent>/skills mounts to synthesize from the repo's
 // shared skills source — .agent/skills, or an established .claude/skills fallback — one per
 // skills-capable agent whose repo has NO per-agent skills dir of its own. Each mount is a WRITABLE
 // COPY, not a read-only bind of the host dir:
 // some CLIs (codex) install their own system skills INTO the skills dir, which a :ro mount breaks —
 // and the copy keeps the host's source pristine. The copies die with the box.
-func synthSkillsMounts(repo, homeInBox string, agentNames []string) (mounts []extraMount, tmpdirs []string) {
-	src := filepath.Join(repo, ".agent", "skills")
-	if !dirExists(src) {
-		src = filepath.Join(repo, ".claude", "skills")
-		info, err := os.Lstat(src)
-		if err != nil || !info.IsDir() {
-			return nil, nil
-		}
-	}
+func synthSkillsMounts(repo, homeInBox string, agentNames []string) (mounts []extraMount, tmpdirs []string, retErr error) {
 	seen := map[string]bool{}
+	var selected []string
 	for _, ag := range agentNames {
 		if ag == "" || seen[ag] || !skillsCapableAgents[ag] {
 			continue
 		}
 		seen[ag] = true
-		if dirExists(filepath.Join(repo, "."+ag, "skills")) {
+		present, err := existingArtifact(filepath.Join(repo, "."+ag, "skills"), true)
+		if err != nil {
+			return nil, nil, fmt.Errorf("inspect project skills for %s: %w", ag, err)
+		}
+		if present {
 			continue // the repo's own skills dir wins — synthesize nothing
 		}
+		selected = append(selected, ag)
+	}
+	if len(selected) == 0 {
+		return nil, nil, nil
+	}
+
+	src := filepath.Join(repo, ".agent", "skills")
+	present, err := existingArtifact(src, true)
+	if err != nil {
+		return nil, nil, fmt.Errorf("inspect shared skills source: %w", err)
+	}
+	if !present {
+		// The old .claude source is only a compatibility fallback. Invalid links and other
+		// unusable legacy shapes remain equivalent to absence.
+		src = filepath.Join(repo, ".claude", "skills")
+		info, legacyErr := os.Lstat(src)
+		if legacyErr != nil || !info.IsDir() {
+			return nil, nil, nil
+		}
+	}
+	defer func() {
+		if retErr != nil {
+			for _, dir := range tmpdirs {
+				_ = os.RemoveAll(dir)
+			}
+			mounts, tmpdirs = nil, nil
+		}
+	}()
+	for _, ag := range selected {
 		dst, err := os.MkdirTemp("", "coop-skills-"+ag+"-")
 		if err != nil {
-			continue
+			return nil, nil, fmt.Errorf("prepare skills for %s: %w", ag, err)
 		}
 		if err := os.CopyFS(dst, os.DirFS(src)); err != nil {
-			os.RemoveAll(dst)
-			continue
+			_ = os.RemoveAll(dst)
+			return nil, nil, fmt.Errorf("copy skills for %s from %s: %w", ag, src, err)
 		}
 		tmpdirs = append(tmpdirs, dst)
 		mounts = append(mounts, extraMount{dst, homeInBox + "/." + ag + "/skills"})
 	}
-	return mounts, tmpdirs
+	return mounts, tmpdirs, nil
 }
 
 // synthHomeFallbackMounts copies each active adapter's declared fallback artifacts into
 // ephemeral user-level mounts. Project artifacts suppress matching fallbacks independently;
 // writable copies keep both the committed source and host credential profile untouched.
-func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string) (mounts []extraMount, tmpdirs []string) {
+func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string) (mounts []extraMount, tmpdirs []string, retErr error) {
+	defer func() {
+		if retErr != nil {
+			for _, dir := range tmpdirs {
+				_ = os.RemoveAll(dir)
+			}
+			mounts, tmpdirs = nil, nil
+		}
+	}()
 	seen := map[string]bool{}
 	for _, name := range agentNames {
 		ag, ok := agents.Get(name)
@@ -1398,17 +1462,24 @@ func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string) (mount
 		for _, artifact := range ag.HomeFallbacks() {
 			source := filepath.Join(repo, filepath.FromSlash(artifact.Source))
 			projectArtifact := filepath.Join(repo, filepath.FromSlash(artifact.Project))
-			if artifact.Dir {
-				if !dirExists(source) || dirExists(projectArtifact) {
-					continue
-				}
-			} else if !fileExists(source) || fileExists(projectArtifact) {
+			projectPresent, err := existingArtifact(projectArtifact, artifact.Dir)
+			if err != nil {
+				return nil, nil, fmt.Errorf("inspect project %s artifact for %s: %w", artifact.Project, name, err)
+			}
+			if projectPresent {
+				continue
+			}
+			sourcePresent, err := existingArtifact(source, artifact.Dir)
+			if err != nil {
+				return nil, nil, fmt.Errorf("inspect fallback %s for %s: %w", artifact.Source, name, err)
+			}
+			if !sourcePresent {
 				continue
 			}
 
 			dst, err := os.MkdirTemp("", "coop-home-"+name+"-")
 			if err != nil {
-				continue
+				return nil, nil, fmt.Errorf("prepare fallback %s for %s: %w", artifact.Source, name, err)
 			}
 			host := dst
 			if artifact.Dir {
@@ -1422,34 +1493,65 @@ func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string) (mount
 				}
 			}
 			if err != nil {
-				os.RemoveAll(dst)
-				continue
+				_ = os.RemoveAll(dst)
+				return nil, nil, fmt.Errorf("copy fallback %s for %s: %w", artifact.Source, name, err)
 			}
 			tmpdirs = append(tmpdirs, dst)
 			mounts = append(mounts, extraMount{host, filepath.Join(homeInBox, filepath.FromSlash(artifact.Target))})
 		}
 	}
-	return mounts, tmpdirs
+	return mounts, tmpdirs, nil
+}
+
+// existingArtifact reports whether path exists with the declared shape. Missing is the normal
+// optional case; a present selected-provider artifact with the wrong shape or an unreadable parent
+// is an error. Symlinks to the declared shape retain their existing behavior.
+func existingArtifact(path string, wantDir bool) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if _, linkErr := os.Lstat(path); errors.Is(linkErr, os.ErrNotExist) {
+				return false, nil
+			} else if linkErr != nil {
+				return false, linkErr
+			}
+		}
+		return false, err
+	}
+	if wantDir {
+		if !info.IsDir() {
+			return false, fmt.Errorf("%s is not a directory", path)
+		}
+		return true, nil
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("%s is not a regular file", path)
+	}
+	return true, nil
 }
 
 // instructionPlan is the global instruction each non-lead agent should receive: the box env
 // note plus the user's instructions (per agentBaseInstructions). The consult lead is excluded —
 // it gets its augmented file instead. Pure (no temp files / mounts),
 // so the selection and content are unit-testable; Run writes + mounts the result.
-func instructionPlan(cfg *config.Config, spec RunSpec) []instructionItem {
+func instructionPlan(cfg *config.Config, spec RunSpec) ([]instructionItem, error) {
 	if !spec.Homes {
-		return nil
+		return nil, nil
 	}
 	var out []instructionItem
-	for _, agent := range agents.Names() {
+	for _, agent := range credentialScope(cfg, spec) {
 		if agent == spec.ConsultLead {
 			continue
 		}
 		if file := instructionFile(agent); file != "" {
-			out = append(out, instructionItem{agent, file, agentBaseInstructions(cfg, agent, file)})
+			content, err := agentBaseInstructions(cfg, agent, file)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, instructionItem{agent, file, content})
 		}
 	}
-	return out
+	return out, nil
 }
 
 // genFile is a coop-generated file: its base name and content.
@@ -1496,12 +1598,15 @@ func assembleAgentsDir(gen []genFile) (string, error) {
 // reports whether coop-consult is reachable through either a preset role or an explicit peer.
 // ok is false only when the agent has no native instruction file. Pure, so the "no named peer
 // still mounts the base" invariant is unit-tested without a container.
-func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, peers []string) (content, file string, wired, ok bool) {
+func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, peers []string) (content, file string, wired, ok bool, err error) {
 	file = instructionFile(lead)
 	if file == "" {
-		return "", "", false, false
+		return "", "", false, false, nil
 	}
-	base := agentBaseInstructions(cfg, lead, file)
+	base, err := agentBaseInstructions(cfg, lead, file)
+	if err != nil {
+		return "", "", false, false, err
+	}
 	peers = excluding(peers, lead)
 	if p != nil {
 		// The preset names its roles and exact invocations; explicit --peer values remain
@@ -1510,9 +1615,9 @@ func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, pee
 		if tail := consult.LeadInstructions(base, peers); tail != "" {
 			content += "\n" + tail + "\n"
 		}
-		return content, file, len(p.ConsultRoles(lead)) > 0 || len(peers) > 0, true
+		return content, file, len(p.ConsultRoles(lead)) > 0 || len(peers) > 0, true, nil
 	}
-	return consult.LeadInstructions(base, peers), file, len(peers) > 0, true
+	return consult.LeadInstructions(base, peers), file, len(peers) > 0, true, nil
 }
 
 // decideTTY chooses the stdin/tty wiring. Stdin is attached only for an
