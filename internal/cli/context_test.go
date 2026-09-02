@@ -3,11 +3,15 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 func ctxWrite(t *testing.T, path, body string) {
@@ -86,5 +90,99 @@ func TestCmdContext(t *testing.T) {
 	}
 	if code, err := a.cmdContext([]string{"../outside"}); code == 0 || err == nil {
 		t.Errorf("escaping path must be rejected, got (%d, %v)", code, err)
+	}
+}
+
+func TestParseGitStatusPaths(t *testing.T) {
+	out := []byte(" M plain.txt\x00R  renamed \"ü\" .txt \x00old -> name.txt\x00C  copied.txt\x00source.txt\x00?? nested/untracked file.txt\x00")
+	got, err := parseGitStatusPaths(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"plain.txt", "renamed \"ü\" .txt ", "copied.txt", "nested/untracked file.txt"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("parsed paths = %#v, want %#v", got, want)
+	}
+
+	for _, malformed := range [][]byte{
+		[]byte(" M missing-nul"),
+		[]byte("short\x00"),
+		[]byte("R  target\x00"),
+	} {
+		if _, err := parseGitStatusPaths(malformed); err == nil {
+			t.Fatalf("malformed status %q was accepted", malformed)
+		}
+	}
+}
+
+func TestContextChangedPreservesGitPaths(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	pinGitConfig(t)
+	repo, run := gitrepo.New(t)
+	ctxWrite(t, filepath.Join(repo, "plain.txt"), "base\n")
+	ctxWrite(t, filepath.Join(repo, "old name.txt"), "rename me\n")
+	run("add", ".")
+	run("commit", "-qm", "base")
+
+	ctxWrite(t, filepath.Join(repo, "plain.txt"), "changed\n")
+	target := " renamed ü .txt "
+	run("mv", "old name.txt", target)
+	run("add", "-A")
+	ctxWrite(t, filepath.Join(repo, "nested", "untracked file.txt"), "new\n")
+
+	a := &app{}
+	got, err := a.contextScope(repo, &project.Project{}, nil, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"plain.txt": true, target: true, "nested/untracked file.txt": true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("changed scope = %#v, want exactly %#v", got, want)
+	}
+	for _, path := range got {
+		if !want[path] {
+			t.Errorf("unexpected changed path %q in %#v", path, got)
+		}
+	}
+}
+
+func TestContextChangedPropagatesGitFailure(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nprintf 'fatal: status broke\\n' >&2\nexit 128\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	a := &app{}
+	if _, err := a.contextScope(t.TempDir(), &project.Project{}, nil, true, ""); err == nil || !strings.Contains(err.Error(), "fatal: status broke") {
+		t.Fatalf("contextScope Git error = %v, want captured stderr", err)
+	}
+}
+
+func TestContextChangedGitStatusIsHardened(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	pinGitConfig(t)
+	repo, run := gitrepo.New(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
+	marker := filepath.Join(t.TempDir(), "PWNED")
+	evil := filepath.Join(repo, ".git", "evil.sh")
+	if err := os.WriteFile(evil, []byte("#!/bin/sh\necho pwned >> "+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run("config", "core.fsmonitor", evil)
+	if _, err := gitChangedPaths(repo); err != nil {
+		t.Fatalf("gitChangedPaths: %v", err)
+	}
+	if pathExists(marker) {
+		t.Fatal("gitChangedPaths ran the repository's core.fsmonitor on the host")
+	}
+	_ = exec.Command("git", "-C", repo, "status", "--porcelain=v1", "-z", "--untracked-files=all").Run()
+	if !pathExists(marker) {
+		t.Fatal("positive control failed: raw git status did not fire the planted fsmonitor")
 	}
 }

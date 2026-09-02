@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Changed-file context is exact and hardened.** `coop context --changed` now disables
+  repository-controlled Git execution hooks, reports Git failures, includes nested untracked
+  files, and preserves unusual filenames and rename targets through NUL-delimited status parsing.
+
 - **Unreadable task queues fail closed.** Task and backlog enumeration now reports unsafe or
   unreadable lifecycle directories and metadata instead of treating hidden work as an empty queue.
   Listing, assignment, loop completion, fork-candidate publication, audit, and deletion stop on

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/contextc"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -85,7 +87,7 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 	var scope []string
 	seen := map[string]bool{}
 	add := func(rel string) {
-		rel = filepath.ToSlash(strings.TrimSpace(rel))
+		rel = filepath.ToSlash(rel)
 		if rel == "" || rel == "." || seen[rel] {
 			return
 		}
@@ -114,7 +116,11 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 		add(clean)
 	}
 	if changed {
-		for _, c := range gitChangedPaths(repo) {
+		changedPaths, err := gitChangedPaths(repo)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range changedPaths {
 			add(c)
 		}
 	}
@@ -131,24 +137,46 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 }
 
 // gitChangedPaths returns the repo-relative paths git reports as changed (staged, unstaged, or
-// untracked). Best-effort: a non-repo or git error yields none, not a failure.
-func gitChangedPaths(repo string) []string {
-	out, err := exec.Command("git", "-C", repo, "status", "--porcelain").Output()
+// untracked). A requested --changed scope must not look empty when Git actually failed.
+func gitChangedPaths(repo string) ([]string, error) {
+	args := append([]string{"-C", repo}, forkspace.GitHardening...)
+	args = append(args, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	out, err := exec.Command("git", args...).Output()
 	if err != nil {
-		return nil
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if detail := strings.TrimSpace(string(exitErr.Stderr)); detail != "" {
+				return nil, fmt.Errorf("git status: %w: %s", err, detail)
+			}
+		}
+		return nil, fmt.Errorf("git status: %w", err)
 	}
+	return parseGitStatusPaths(out)
+}
+
+func parseGitStatusPaths(out []byte) ([]string, error) {
+	if len(out) == 0 {
+		return nil, nil
+	}
+	if out[len(out)-1] != 0 {
+		return nil, errors.New("git status returned a malformed non-NUL-terminated record")
+	}
+	records := bytes.Split(out[:len(out)-1], []byte{0})
 	var paths []string
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-		if len(line) < 4 {
-			continue
+	for i := 0; i < len(records); i++ {
+		record := records[i]
+		if len(record) < 4 || record[2] != ' ' {
+			return nil, errors.New("git status returned a malformed porcelain record")
 		}
-		pth := strings.TrimSpace(line[3:])
-		if i := strings.Index(pth, " -> "); i >= 0 { // a rename: take the new path
-			pth = pth[i+4:]
+		paths = append(paths, filepath.ToSlash(string(record[3:])))
+		if record[0] == 'R' || record[0] == 'C' || record[1] == 'R' || record[1] == 'C' {
+			i++ // -z emits the source path as the next bare record; scope keeps the target path.
+			if i >= len(records) || len(records[i]) == 0 {
+				return nil, errors.New("git status returned a rename without its source path")
+			}
 		}
-		paths = append(paths, filepath.ToSlash(strings.Trim(pth, `"`)))
 	}
-	return paths
+	return paths, nil
 }
 
 // taskScopePaths reads a task's declared scope: a `paths:` frontmatter field in its task.md, split
