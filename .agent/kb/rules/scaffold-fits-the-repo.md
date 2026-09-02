@@ -2,9 +2,9 @@
 name: scaffold-fits-the-repo
 description: "`coop init` generates for the detected stack and stays neutral when it detects nothing"
 scope: scaffold
-sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go]
+sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go, internal/scaffold/projectfile.go]
 check: "none"
-updated: 2026-08-26
+updated: 2026-09-03
 ---
 
 # coop init scaffolds what the repo uses — it never imposes a stack
@@ -50,10 +50,18 @@ blocks. Guessing wrong is worse than doing nothing.
 - Keep the scaffold pure: detection lives in `scaffold`, any interactive prompt lives in
   the CLI (`cmdInit`) so `scaffold.Init` never reads stdin (a prompt there would hang
   `go test`, whose stdin is often a tty).
-- A no-clobber write (`writeContentIfAbsent`) so re-running `coop init` never overwrites a
-  gate the user has since customized.
+- A repository-anchored, exclusive no-clobber write (`writeContentIfAbsent`) so re-running
+  `coop init` never overwrites a gate the user has since customized or follows a repository-owned
+  link. The documented project-owned `prepare-commit-msg` composition path is the deliberate
+  exception: preserve it and print chaining guidance.
 
 ## Changelog
+- 2026-09-03 — replaced scaffold check-then-write calls with one `os.Root`-anchored exclusive
+  creator. Existing regular files remain the supported re-init no-op; links and unsupported
+  entries fail before any outside target can change. `RegisterSubprojects` now validates the exact
+  opened bytes, stages a synced sibling file, rechecks identity and content, and retries a
+  concurrent valid edit before atomic replacement. Kept the explicit project-owned prepare-hook
+  symlink contract rather than weakening it under the general file rule.
 - 2026-08-26 — removed the pre-v8 byte-signature and gitignore rewrite migrations from re-init.
   Fresh/current scaffold output and the `writeContentIfAbsent` non-clobber boundary are unchanged;
   direct pre-v8 upgrades are now an explicit v9 migration step instead of permanent init branches.

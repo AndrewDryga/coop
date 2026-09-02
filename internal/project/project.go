@@ -132,7 +132,14 @@ func Load(repo string) (*Project, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	return Parse(data)
+}
+
+// Parse validates one exact project.yaml byte sequence. Load owns filesystem policy; callers that
+// already hold a checked file descriptor use Parse so validation cannot race a second path read.
+func Parse(data []byte) (*Project, error) {
 	var p Project
+	var err error
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)                                             // an unknown key is a typo doing nothing — fail loudly instead
 	if err := dec.Decode(&p); err != nil && !errors.Is(err, io.EOF) { // EOF = an all-comments/empty file

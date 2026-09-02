@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/taskstate"
@@ -61,7 +62,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 	for _, st := range taskstate.All {
 		dirs = append(dirs, filepath.Join(repo, ".agent", "tasks", st))
 	}
-	if err := mkdirs(dirs...); err != nil {
+	if err := mkdirs(repo, dirs...); err != nil {
 		return err
 	}
 
@@ -233,10 +234,6 @@ func (s *scaffolder) rel(p string) string {
 }
 
 func (s *scaffolder) writeIfAbsent(dest, embedPath string, perm os.FileMode) error {
-	if _, err := os.Lstat(dest); err == nil {
-		s.keep()
-		return nil // present: don't even read the template
-	}
 	data, err := templates.ReadFile(embedPath)
 	if err != nil {
 		return err
@@ -254,19 +251,93 @@ func (s *scaffolder) writeContentIfAbsent(dest, content string, perm os.FileMode
 // exists — then it's left untouched. Either way it reports what it did. Shared tail of the
 // two IfAbsent wrappers, which differ only in their byte source.
 func (s *scaffolder) writeNewFile(dest string, data []byte, perm os.FileMode) error {
-	if _, err := os.Lstat(dest); err == nil {
+	created, err := writeNewRepoFile(s.repo, dest, data, perm, writeAndSync)
+	if err != nil {
+		return err
+	}
+	if !created {
 		s.keep()
 		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(dest, data, perm); err != nil {
-		return err
 	}
 	s.changed = true
 	ui.Detail("wrote %s", s.rel(dest))
 	return nil
+}
+
+type scaffoldFileWrite func(*os.File, []byte) error
+
+func writeAndSync(file *os.File, data []byte) error {
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+// writeNewRepoFile is the one create-only boundary for scaffolded repository files. os.Root keeps
+// parent traversal inside repo; O_EXCL and O_NOFOLLOW make the final entry no-clobber. Existing
+// regular files are the supported re-init no-op, while links and unsupported entries are errors.
+func writeNewRepoFile(repo, dest string, data []byte, perm os.FileMode, write scaffoldFileWrite) (bool, error) {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return false, fmt.Errorf("open scaffold root %s: %w", repo, err)
+	}
+	defer root.Close()
+	rel, err := repoRelativePath(repo, dest)
+	if err != nil {
+		return false, err
+	}
+	if parent := filepath.Dir(rel); parent != "." {
+		if err := root.MkdirAll(parent, 0o755); err != nil {
+			return false, fmt.Errorf("create scaffold parent for %s: %w", dest, err)
+		}
+	}
+	file, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, perm)
+	if err != nil {
+		if info, statErr := root.Lstat(rel); statErr == nil {
+			if info.Mode().IsRegular() {
+				return false, nil
+			}
+			return false, fmt.Errorf("refusing to replace scaffold path %s: existing entry is not a regular file", dest)
+		}
+		return false, fmt.Errorf("create scaffold file %s: %w", dest, err)
+	}
+	created, statErr := file.Stat()
+	if statErr != nil {
+		_ = file.Close()
+		_ = root.Remove(rel)
+		return false, fmt.Errorf("inspect new scaffold file %s: %w", dest, statErr)
+	}
+	removePartial := func() {
+		if current, currentErr := root.Lstat(rel); currentErr == nil && os.SameFile(created, current) {
+			_ = root.Remove(rel)
+		}
+	}
+	if err := write(file, data); err != nil {
+		_ = file.Close()
+		removePartial()
+		return false, fmt.Errorf("write scaffold file %s: %w", dest, err)
+	}
+	if err := file.Close(); err != nil {
+		removePartial()
+		return false, fmt.Errorf("close scaffold file %s: %w", dest, err)
+	}
+	return true, nil
+}
+
+func repoRelativePath(repo, dest string) (string, error) {
+	repoAbs, err := filepath.Abs(repo)
+	if err != nil {
+		return "", fmt.Errorf("resolve scaffold root %s: %w", repo, err)
+	}
+	destAbs, err := filepath.Abs(dest)
+	if err != nil {
+		return "", fmt.Errorf("resolve scaffold path %s: %w", dest, err)
+	}
+	rel, err := filepath.Rel(repoAbs, destAbs)
+	if err != nil || rel == "." || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("scaffold path %s is not a file inside %s", dest, repo)
+	}
+	return rel, nil
 }
 
 // linkIfAbsent creates a symlink, replacing an existing symlink but never a real
@@ -330,7 +401,7 @@ func (s *scaffolder) copySkills() error {
 		if info, err := os.Stat(dest); err == nil && info.IsDir() {
 			restored = true
 		}
-		if err := copyEmbedDir("templates/skills/"+name, dest); err != nil {
+		if err := s.copyEmbedDir("templates/skills/"+name, dest); err != nil {
 			return err
 		}
 		s.changed = true
@@ -364,7 +435,11 @@ func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 			prepareIsStock = readErr == nil && string(data) == prepareCommitMsgChainHook && info.Mode()&0o100 != 0
 		}
 	}
-	if err := s.writeContentIfAbsent(preparePath, prepareCommitMsgChainHook, 0o755); err != nil {
+	if prepareExists {
+		// An existing prepare hook may deliberately be a project-owned symlink. It is the one
+		// scaffold path whose documented composition contract preserves non-regular entries.
+		s.keep()
+	} else if err := s.writeContentIfAbsent(preparePath, prepareCommitMsgChainHook, 0o755); err != nil {
 		return err
 	}
 	// One copy of the Claude commit gate, not two: the project artifact always wins over the
@@ -536,7 +611,7 @@ func insertIgnoreLineAfter(lines []string, line, anchor string) []string {
 	return lines
 }
 
-func copyEmbedDir(src, dest string) error {
+func (s *scaffolder) copyEmbedDir(src, dest string) error {
 	return fs.WalkDir(templates, src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -544,20 +619,30 @@ func copyEmbedDir(src, dest string) error {
 		rel, _ := filepath.Rel(src, p)
 		target := filepath.Join(dest, filepath.FromSlash(rel))
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return mkdirs(s.repo, target)
 		}
 		data, err := templates.ReadFile(p)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0o644)
+		_, err = writeNewRepoFile(s.repo, target, data, 0o644, writeAndSync)
+		return err
 	})
 }
 
-func mkdirs(paths ...string) error {
+func mkdirs(repo string, paths ...string) error {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return fmt.Errorf("open scaffold root %s: %w", repo, err)
+	}
+	defer root.Close()
 	for _, p := range paths {
-		if err := os.MkdirAll(p, 0o755); err != nil {
+		rel, err := repoRelativePath(repo, p)
+		if err != nil {
 			return err
+		}
+		if err := root.MkdirAll(rel, 0o755); err != nil {
+			return fmt.Errorf("create scaffold directory %s: %w", p, err)
 		}
 	}
 	return nil

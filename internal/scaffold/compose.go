@@ -1,7 +1,6 @@
 package scaffold
 
 import (
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -101,9 +100,6 @@ func WriteCompose(repo string, services []string) error {
 		return nil
 	}
 	dest := filepath.Join(repo, filepath.FromSlash(project.DefaultCompose))
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return err
-	}
 	s := &scaffolder{repo: repo}
 	return s.writeContentIfAbsent(dest, content, 0o644)
 }

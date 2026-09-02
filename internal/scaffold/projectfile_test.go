@@ -1,10 +1,13 @@
 package scaffold
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/project"
@@ -147,6 +150,181 @@ func TestRegisterSubprojectsEditsInPlace(t *testing.T) {
 		}
 		if out := readProjectYAML(t, repo); out != custom {
 			t.Errorf("file was rewritten:\n%s", out)
+		}
+	})
+}
+
+func TestWriteProjectNoClobberBoundaries(t *testing.T) {
+	t.Run("concurrent creators produce one complete file", func(t *testing.T) {
+		repo := t.TempDir()
+		const workers = 16
+		start := make(chan struct{})
+		wrote := make(chan bool, workers)
+		errs := make(chan error, workers)
+		var wait sync.WaitGroup
+		for i := range workers {
+			wait.Add(1)
+			go func(i int) {
+				defer wait.Done()
+				<-start
+				created, err := WriteProject(repo, []string{fmt.Sprintf("member-%02d", i)})
+				wrote <- created
+				errs <- err
+			}(i)
+		}
+		close(start)
+		wait.Wait()
+		close(wrote)
+		close(errs)
+		created := 0
+		for err := range errs {
+			if err != nil {
+				t.Errorf("concurrent WriteProject: %v", err)
+			}
+		}
+		for result := range wrote {
+			if result {
+				created++
+			}
+		}
+		if created != 1 {
+			t.Fatalf("successful creators = %d, want exactly 1", created)
+		}
+		pj, err := project.Load(repo)
+		if err != nil {
+			t.Fatalf("concurrent result is not a complete project file: %v", err)
+		}
+		if len(pj.Subprojects) != 1 || !strings.HasPrefix(pj.Subprojects[0], "member-") {
+			t.Fatalf("concurrent result = %v, want one creator's complete member list", pj.Subprojects)
+		}
+	})
+
+	for _, tc := range []struct {
+		name     string
+		dangling bool
+	}{
+		{name: "final symlink"},
+		{name: "dangling final symlink", dangling: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(t.TempDir(), "outside.yaml")
+			if !tc.dangling {
+				if err := os.WriteFile(outside, []byte("keep\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dest := filepath.Join(repo, project.File)
+			if err := os.Symlink(outside, dest); err != nil {
+				t.Fatal(err)
+			}
+			if wrote, err := WriteProject(repo, []string{"member"}); err == nil || wrote {
+				t.Fatalf("WriteProject = (%v, %v), want symlink refusal", wrote, err)
+			}
+			if target, err := os.Readlink(dest); err != nil || target != outside {
+				t.Fatalf("project symlink changed: target=%q err=%v", target, err)
+			}
+			if !tc.dangling {
+				if got, err := os.ReadFile(outside); err != nil || string(got) != "keep\n" {
+					t.Fatalf("outside target changed: %v, %q", err, got)
+				}
+			}
+		})
+	}
+
+	t.Run("parent symlink cannot escape repository", func(t *testing.T) {
+		repo := t.TempDir()
+		outside := t.TempDir()
+		if err := os.Symlink(outside, filepath.Join(repo, ".agent")); err != nil {
+			t.Fatal(err)
+		}
+		if wrote, err := WriteProject(repo, []string{"member"}); err == nil || wrote {
+			t.Fatalf("WriteProject = (%v, %v), want parent escape refusal", wrote, err)
+		}
+		if _, err := os.Lstat(filepath.Join(outside, "project.yaml")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("scaffold wrote outside repository: %v", err)
+		}
+	})
+
+	t.Run("partial create is removed", func(t *testing.T) {
+		repo := t.TempDir()
+		dest := filepath.Join(repo, "partial.txt")
+		sentinel := errors.New("interrupted create")
+		created, err := writeNewRepoFile(repo, dest, []byte("complete"), 0o644, func(file *os.File, _ []byte) error {
+			if _, err := file.Write([]byte("par")); err != nil {
+				return err
+			}
+			return sentinel
+		})
+		if created || !errors.Is(err, sentinel) {
+			t.Fatalf("writeNewRepoFile = (%v, %v), want interrupted failure", created, err)
+		}
+		if _, err := os.Lstat(dest); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("partial scaffold file remains: %v", err)
+		}
+	})
+}
+
+func TestRegisterSubprojectsAtomicReplacement(t *testing.T) {
+	t.Run("interrupted stage preserves old file", func(t *testing.T) {
+		repo := t.TempDir()
+		if _, err := WriteProject(repo, []string{"portal"}); err != nil {
+			t.Fatal(err)
+		}
+		before := readProjectYAML(t, repo)
+		sentinel := errors.New("interrupted replacement")
+		_, err := registerSubprojects(repo, []string{"portal", "infra"}, func(file *os.File, data []byte) error {
+			if _, err := file.Write(data[:len(data)/2]); err != nil {
+				return err
+			}
+			return sentinel
+		}, nil)
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("RegisterSubprojects error = %v, want interrupted replacement", err)
+		}
+		if got := readProjectYAML(t, repo); got != before {
+			t.Fatalf("interrupted replacement changed project.yaml:\n%s", got)
+		}
+		entries, err := os.ReadDir(filepath.Join(repo, ".agent"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), ".project.yaml.coop-") {
+				t.Fatalf("interrupted replacement left temporary file %s", entry.Name())
+			}
+		}
+	})
+
+	t.Run("concurrent edit is reread and preserved", func(t *testing.T) {
+		repo := t.TempDir()
+		if _, err := WriteProject(repo, []string{"portal"}); err != nil {
+			t.Fatal(err)
+		}
+		var once sync.Once
+		var hookErr error
+		hook := func() error {
+			once.Do(func() {
+				hookErr = os.WriteFile(filepath.Join(repo, project.File), []byte(projectYAML([]string{"external", "portal"})), 0o644)
+			})
+			return hookErr
+		}
+		added, err := registerSubprojects(repo, []string{"infra", "portal"}, writeAndSync, hook)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(added, []string{"infra"}) {
+			t.Fatalf("added = %v, want only infra after reread", added)
+		}
+		pj, err := project.Load(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(pj.Subprojects, []string{"external", "infra", "portal"}) {
+			t.Fatalf("concurrent edit was lost: %v", pj.Subprojects)
 		}
 	})
 }

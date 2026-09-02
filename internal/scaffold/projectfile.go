@@ -1,12 +1,17 @@
 package scaffold
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/taskstate"
@@ -25,7 +30,7 @@ func InitSubproject(repo, dir string) error {
 	for _, st := range taskstate.All {
 		dirs = append(dirs, filepath.Join(dir, ".agent", "tasks", st))
 	}
-	if err := mkdirs(dirs...); err != nil {
+	if err := mkdirs(repo, dirs...); err != nil {
 		return err
 	}
 	s := &scaffolder{repo: repo}
@@ -82,13 +87,7 @@ var subprojectSkipDirs = map[string]bool{
 // your edits — cmdInit notes any newly-detected members instead).
 func WriteProject(dir string, subprojects []string) (bool, error) {
 	dest := filepath.Join(dir, project.File)
-	if _, err := os.Stat(dest); err == nil {
-		return false, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return false, err
-	}
-	return true, os.WriteFile(dest, []byte(projectYAML(subprojects)), 0o644)
+	return writeNewRepoFile(dir, dest, []byte(projectYAML(subprojects)), 0o644, writeAndSync)
 }
 
 // RegisterSubprojects adds any detected member missing from an EXISTING project.yaml's
@@ -101,12 +100,37 @@ func WriteProject(dir string, subprojects []string) (bool, error) {
 // Missing file, or a subprojects: block coop can't confidently locate → returns nothing and
 // changes nothing, so the caller's advisory stays the fallback.
 func RegisterSubprojects(repo string, detected []string) ([]string, error) {
-	dest := filepath.Join(repo, project.File)
-	data, err := os.ReadFile(dest)
+	return registerSubprojects(repo, detected, writeAndSync, nil)
+}
+
+var errProjectChanged = errors.New("project.yaml changed during subproject registration")
+
+func registerSubprojects(repo string, detected []string, write scaffoldFileWrite, beforeReplace func() error) ([]string, error) {
+	const maxAttempts = 3
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		added, err := registerSubprojectsOnce(repo, detected, write, beforeReplace)
+		if !errors.Is(err, errProjectChanged) {
+			return added, err
+		}
+	}
+	return nil, fmt.Errorf("%w after %d attempts; retry coop init", errProjectChanged, maxAttempts)
+}
+
+func registerSubprojectsOnce(repo string, detected []string, write scaffoldFileWrite, beforeReplace func() error) ([]string, error) {
+	root, err := os.OpenRoot(repo)
 	if err != nil {
+		return nil, fmt.Errorf("open scaffold root %s: %w", repo, err)
+	}
+	defer root.Close()
+	dest := filepath.Join(repo, project.File)
+	before, present, err := readProjectFile(root, project.File, dest)
+	if err != nil {
+		return nil, err
+	}
+	if !present {
 		return nil, nil // no project.yaml — WriteProject creates one with the members already in it
 	}
-	pj, err := project.Load(repo)
+	pj, err := project.Parse(before.data)
 	if err != nil {
 		return nil, err // malformed: don't compound it by editing
 	}
@@ -120,7 +144,7 @@ func RegisterSubprojects(repo string, detected []string) ([]string, error) {
 		return nil, nil
 	}
 
-	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	lines := strings.Split(strings.TrimSuffix(string(before.data), "\n"), "\n")
 	entries := make([]string, 0, len(missing))
 	for _, s := range missing {
 		entries = append(entries, "  - "+s)
@@ -143,10 +167,109 @@ func RegisterSubprojects(repo string, detected []string) ([]string, error) {
 	} else {
 		return nil, nil // hand-restructured file — leave it alone and let the caller advise
 	}
-	if err := os.WriteFile(dest, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+	next := []byte(strings.Join(lines, "\n") + "\n")
+	if err := replaceProjectFile(root, project.File, dest, before, next, write, beforeReplace); err != nil {
 		return nil, err
 	}
 	return missing, nil
+}
+
+type projectFileSnapshot struct {
+	info os.FileInfo
+	data []byte
+}
+
+func readProjectFile(root *os.Root, rel, display string) (projectFileSnapshot, bool, error) {
+	file, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		if info, statErr := root.Lstat(rel); errors.Is(statErr, os.ErrNotExist) {
+			return projectFileSnapshot{}, false, nil
+		} else if statErr == nil && !info.Mode().IsRegular() {
+			return projectFileSnapshot{}, false, fmt.Errorf("%s must be a regular file", display)
+		}
+		return projectFileSnapshot{}, false, fmt.Errorf("open %s: %w", display, err)
+	}
+	defer file.Close()
+	before, err := file.Stat()
+	if err != nil {
+		return projectFileSnapshot{}, false, fmt.Errorf("inspect %s: %w", display, err)
+	}
+	if !before.Mode().IsRegular() {
+		return projectFileSnapshot{}, false, fmt.Errorf("%s must be a regular file", display)
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return projectFileSnapshot{}, false, fmt.Errorf("read %s: %w", display, err)
+	}
+	after, err := file.Stat()
+	if err != nil {
+		return projectFileSnapshot{}, false, fmt.Errorf("reinspect %s: %w", display, err)
+	}
+	named, err := root.Lstat(rel)
+	if err != nil || !os.SameFile(before, after) || !os.SameFile(before, named) || int64(len(data)) != after.Size() {
+		return projectFileSnapshot{}, false, errProjectChanged
+	}
+	return projectFileSnapshot{info: before, data: data}, true, nil
+}
+
+func replaceProjectFile(root *os.Root, rel, display string, before projectFileSnapshot, next []byte, write scaffoldFileWrite, beforeReplace func() error) error {
+	tmp, err := stageProjectFile(root, rel, display, next, before.info.Mode().Perm(), write)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(tmp)
+	if beforeReplace != nil {
+		if err := beforeReplace(); err != nil {
+			return err
+		}
+	}
+	current, present, err := readProjectFile(root, rel, display)
+	if err != nil {
+		return err
+	}
+	if !present || !os.SameFile(before.info, current.info) || !bytes.Equal(before.data, current.data) {
+		return errProjectChanged
+	}
+	if err := root.Rename(tmp, rel); err != nil {
+		return fmt.Errorf("replace %s: %w", display, err)
+	}
+	return nil
+}
+
+func stageProjectFile(root *os.Root, rel, display string, data []byte, perm os.FileMode, write scaffoldFileWrite) (string, error) {
+	dir, base := filepath.Dir(rel), filepath.Base(rel)
+	for attempt := 0; attempt < 100; attempt++ {
+		name := filepath.Join(dir, fmt.Sprintf(".%s.coop-%d-%d.tmp", base, os.Getpid(), attempt))
+		file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, perm)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("create temporary %s: %w", display, err)
+		}
+		created, statErr := file.Stat()
+		if statErr != nil {
+			_ = file.Close()
+			_ = root.Remove(name)
+			return "", fmt.Errorf("inspect temporary %s: %w", display, statErr)
+		}
+		removePartial := func() {
+			if current, currentErr := root.Lstat(name); currentErr == nil && os.SameFile(created, current) {
+				_ = root.Remove(name)
+			}
+		}
+		if err := write(file, data); err != nil {
+			_ = file.Close()
+			removePartial()
+			return "", fmt.Errorf("write temporary %s: %w", display, err)
+		}
+		if err := file.Close(); err != nil {
+			removePartial()
+			return "", fmt.Errorf("close temporary %s: %w", display, err)
+		}
+		return name, nil
+	}
+	return "", fmt.Errorf("create temporary %s: too many stale temporary files", display)
 }
 
 func indexOfLine(lines []string, want string) int {

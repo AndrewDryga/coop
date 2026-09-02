@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Scaffold writes no longer race into repository-owned paths.** New `coop init` files use
+  repository-anchored, exclusive creation and refuse links or unsupported entries instead of
+  following or replacing them. Subproject registration stages a complete `project.yaml`, checks
+  that the file it read is still current, and atomically replaces it without losing a concurrent
+  valid edit.
+
 - **Required box setup no longer disappears silently.** A selected provider's instructions,
   synthesized skills/settings, assigned-task Git hook, and generated Git config must be readable
   and prepared before Coop touches the container runtime. Unused providers remain out of scope,
