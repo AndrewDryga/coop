@@ -11,9 +11,9 @@ bindir="${COOP_BIN_DIR:-$HOME/.local/bin}"
 # verify_checksum ASSET CHECKSUMS_FILE ARCHIVE — verify ARCHIVE against the sha256 entry for
 # ASSET in CHECKSUMS_FILE. Returns non-zero (and aborts the install) on a release-integrity
 # failure: a *missing* entry for ASSET is treated as a failure, not as "unverified" — a
-# fetched-but-incomplete checksums.txt must never let an unchecked binary through. Returns 0
-# with a warning only when an entry exists but no sha256 tool is available to check it. Pure
-# (no network), so it's unit-testable by sourcing this script with COOP_INSTALL_LIB=1.
+# fetched-but-incomplete checksums.txt must never let an unchecked binary through. A host
+# without sha256sum or shasum also fails rather than installing unchecked bytes. Pure (no
+# network), so it's unit-testable by sourcing this script with COOP_INSTALL_LIB=1.
 verify_checksum() {
   vc_asset=$1
   vc_sums=$2
@@ -28,8 +28,8 @@ verify_checksum() {
   elif command -v shasum >/dev/null 2>&1; then
     vc_got=$(shasum -a 256 "$vc_archive" | cut -d ' ' -f 1)
   else
-    echo "coop: no sha256 tool found; skipping checksum verification" >&2
-    return 0
+    echo "coop: no SHA-256 tool found — install sha256sum or shasum, then retry" >&2
+    return 1
   fi
   if [ "$vc_want" != "$vc_got" ]; then
     echo "coop: checksum mismatch for $vc_asset — aborting (expected $vc_want, got $vc_got)" >&2
@@ -101,30 +101,31 @@ curl -fsSL "$url" -o "$tmp/coop.tar.gz" || { echo "coop: download failed: $url" 
 # When cosign is present we first verify checksums.txt's Sigstore signature, so the
 # checksum file itself is trusted (not just internally consistent) — an attacker who
 # swapped both the archive and checksums.txt would be caught here. Without cosign we
-# fall back to the plain checksum and say the signature was not verified.
-if curl -fsSL "https://github.com/$repo/releases/download/$ver/checksums.txt" -o "$tmp/checksums.txt"; then
-  if command -v cosign >/dev/null 2>&1; then
-    if curl -fsSL "https://github.com/$repo/releases/download/$ver/checksums.txt.bundle" -o "$tmp/checksums.txt.bundle"; then
-      if cosign verify-blob "$tmp/checksums.txt" \
-          --bundle "$tmp/checksums.txt.bundle" \
-          --certificate-identity-regexp '^https://github.com/AndrewDryga/coop/' \
-          --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-          >/dev/null 2>&1; then
-        echo "coop: verified checksums.txt signature with cosign"
-      else
-        echo "coop: checksums.txt failed cosign signature verification — aborting" >&2
-        exit 1
-      fi
+# fall back to the plain checksum and say the signature was not verified. The checksum
+# file itself is mandatory either way: no release metadata means no install.
+if ! curl -fsSL "https://github.com/$repo/releases/download/$ver/checksums.txt" -o "$tmp/checksums.txt"; then
+  echo "coop: could not fetch checksums.txt for $ver — aborting" >&2
+  exit 1
+fi
+if command -v cosign >/dev/null 2>&1; then
+  if curl -fsSL "https://github.com/$repo/releases/download/$ver/checksums.txt.bundle" -o "$tmp/checksums.txt.bundle"; then
+    if cosign verify-blob "$tmp/checksums.txt" \
+        --bundle "$tmp/checksums.txt.bundle" \
+        --certificate-identity "https://github.com/AndrewDryga/coop/.github/workflows/release.yml@refs/tags/$ver" \
+        --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+        >/dev/null 2>&1; then
+      echo "coop: verified checksums.txt signature with cosign"
     else
-      echo "coop: no checksums.txt.bundle for $ver; skipping signature verification" >&2
+      echo "coop: checksums.txt failed cosign signature verification — aborting" >&2
+      exit 1
     fi
   else
-    echo "coop: cosign not found; skipping signature check (see README → Verifying a download)" >&2
+    echo "coop: no checksums.txt.bundle for $ver; skipping signature verification" >&2
   fi
-  verify_checksum "$asset" "$tmp/checksums.txt" "$tmp/coop.tar.gz" || exit 1
 else
-  echo "coop: could not fetch checksums.txt; skipping verification" >&2
+  echo "coop: cosign not found; skipping signature check (see README → Verifying a download)" >&2
 fi
+verify_checksum "$asset" "$tmp/checksums.txt" "$tmp/coop.tar.gz" || exit 1
 
 tar -xzf "$tmp/coop.tar.gz" -C "$tmp"
 atomic_install "$tmp/coop" "$bindir/coop"
@@ -134,15 +135,6 @@ case ":$PATH:" in
   *":$bindir:"*) ;;
   *) printf "\n  %s is not on your PATH — add to your shell rc:\n    export PATH=\"%s:\$PATH\"\n\n" "$bindir" "$bindir" ;;
 esac
-
-# Carry over an existing agent-box config (the pre-rename location), once.
-conf="${XDG_CONFIG_HOME:-$HOME/.config}/coop"
-old="${XDG_CONFIG_HOME:-$HOME/.config}/agent-box/agents"
-if [ ! -d "$conf/agents" ] && [ -d "$old" ]; then
-  mkdir -p "$conf"
-  cp -R "$old" "$conf/agents"
-  echo "coop: migrated config from $old"
-fi
 
 # Build the sandbox image + verify, when a container runtime is available.
 if [ "${COOP_NO_BUILD:-0}" = 1 ]; then

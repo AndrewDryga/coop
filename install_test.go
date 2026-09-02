@@ -12,9 +12,9 @@ import (
 )
 
 // TestInstallVerifyChecksum exercises install.sh's verify_checksum helper without network: it
-// sources the script (COOP_INSTALL_LIB=1 stops it before any download) and checks the three
-// outcomes — a matching entry passes, a missing entry fails closed (the bug this guards), and
-// a present-but-wrong entry still aborts.
+// sources the script (COOP_INSTALL_LIB=1 stops it before any download) and checks that a matching
+// entry passes while missing metadata/archive bytes, a mismatch, or an unavailable SHA tool all
+// fail closed.
 func TestInstallVerifyChecksum(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not available")
@@ -49,23 +49,56 @@ func TestInstallVerifyChecksum(t *testing.T) {
 	if verify("coop_missing.tar.gz") == nil {
 		t.Error("a missing checksum entry must fail closed, not install unverified")
 	}
-
-	// The mismatch path only aborts when a sha256 tool is present to compute the real hash;
-	// without one verify_checksum returns 0 with a warning (an entry exists, just uncheckable).
-	if hasSHATool() {
-		if verify("coop_wrong.tar.gz") == nil {
-			t.Error("a present-but-wrong checksum must abort")
-		}
+	if verify("coop_wrong.tar.gz") == nil {
+		t.Error("a present-but-wrong checksum must abort")
+	}
+	missingSums := filepath.Join(dir, "missing-checksums.txt")
+	cmd := exec.Command("sh", "-c", `. ./install.sh; verify_checksum "$1" "$2" "$3"`,
+		"sh", "coop_match.tar.gz", missingSums, archive)
+	cmd.Env = append(os.Environ(), "COOP_INSTALL_LIB=1")
+	if cmd.Run() == nil {
+		t.Error("an unreadable checksum file must fail closed")
+	}
+	missingArchive := filepath.Join(dir, "missing-coop.tar.gz")
+	cmd = exec.Command("sh", "-c", `. ./install.sh; verify_checksum "$1" "$2" "$3"`,
+		"sh", "coop_match.tar.gz", sums, missingArchive)
+	cmd.Env = append(os.Environ(), "COOP_INSTALL_LIB=1")
+	if cmd.Run() == nil {
+		t.Error("an unreadable release archive must fail closed")
 	}
 }
 
-func hasSHATool() bool {
-	for _, t := range []string{"sha256sum", "shasum"} {
-		if _, err := exec.LookPath(t); err == nil {
-			return true
-		}
+func TestInstallVerifyChecksumRequiresTool(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
 	}
-	return false
+	awk, err := exec.LookPath("awk")
+	if err != nil {
+		t.Skip("awk not available")
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(awk, filepath.Join(dir, "awk")); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "coop.tar.gz")
+	if err := os.WriteFile(archive, []byte("archive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sums := filepath.Join(dir, "checksums.txt")
+	if err := os.WriteFile(sums, []byte(strings.Repeat("0", 64)+"  coop.tar.gz\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(sh, "-c", `. ./install.sh; verify_checksum "$1" "$2" "$3"`,
+		"sh", "coop.tar.gz", sums, archive)
+	cmd.Env = []string{"COOP_INSTALL_LIB=1", "HOME=" + t.TempDir(), "PATH=" + dir}
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("verification without sha256sum or shasum must fail")
+	}
+	if !strings.Contains(string(out), "no SHA-256 tool found") {
+		t.Errorf("missing actionable SHA-tool error: %s", out)
+	}
 }
 
 // TestInstallAtomicInstall exercises install.sh's atomic_install helper without network

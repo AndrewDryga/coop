@@ -63,9 +63,10 @@ and runs `coop doctor`; otherwise do that once yourself:
 coop build && coop doctor
 ```
 
-**Requirements:** a container runtime — Apple
-[`container`](https://github.com/apple/container) (macOS 26+), Docker, or Podman,
-auto-detected. `coop` itself is a single static binary with no other dependencies.
+**Requirements:** the installer needs `curl`, `tar`, and either `sha256sum` or
+`shasum`. Running Coop needs a container runtime — Apple
+[`container`](https://github.com/apple/container) (macOS 26+), Docker, or Podman —
+which Coop auto-detects. The installed `coop` binary itself is static.
 
 **Staying current:** [`coop update`](#keeping-the-box-current) self-updates the binary
 *and* rebuilds the box image fresh, pulling the latest agent CLIs and ACP adapters
@@ -80,11 +81,15 @@ git clone https://github.com/AndrewDryga/coop && cd coop && make install   # fro
 
 <details><summary><b>Verifying a download</b></summary>
 
-`install.sh` verifies automatically: when [cosign](https://github.com/sigstore/cosign)
-is on your `PATH` it checks `checksums.txt`'s keyless Sigstore signature (so the
-checksum file itself is trusted, not just internally consistent) and aborts on failure;
-otherwise it compares the archive's SHA-256 and prints that the signature was not
-verified. To verify by hand, set `VER` and `ASSET` for your platform — e.g.
+The one-line command executes the mutable `main/install.sh` first, so that bootstrap
+trusts GitHub and the repository's current `main` branch. The script then requires the
+release's `checksums.txt` and verifies the downloaded archive with `sha256sum` or
+`shasum`; it aborts if either the metadata or tool is missing. When
+[cosign](https://github.com/sigstore/cosign) and the release bundle are available, it
+also authenticates the checksum file to the exact release workflow and requested tag.
+
+For verification *before* executing project code, download the release artifacts by
+hand. Set `VER` and `ASSET` for your platform — e.g.
 `VER=v0.1.0 ASSET=coop_0.1.0_darwin_arm64.tar.gz`:
 
 ```bash
@@ -96,7 +101,7 @@ curl -fsSLO "$base/checksums.txt.bundle"
 # 1. checksums.txt is signed by the release workflow (keyless Sigstore):
 cosign verify-blob checksums.txt \
   --bundle checksums.txt.bundle \
-  --certificate-identity-regexp '^https://github.com/AndrewDryga/coop/' \
+  --certificate-identity "https://github.com/AndrewDryga/coop/.github/workflows/release.yml@refs/tags/$VER" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # 2. the archive matches the now-trusted checksum (Linux: sha256sum -c -):

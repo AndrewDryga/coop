@@ -169,7 +169,8 @@
                     <h2>Install</h2>
                     <p class="section-lead">
                         One binary, no Go toolchain, no clone. A container
-                        runtime is the only requirement.
+                        runtime plus standard download and SHA-256 tools are the
+                        only requirements.
                     </p>
                     <pre
                         class="code"
@@ -198,17 +199,26 @@
                         is fully static with no other dependencies.
                     </p>
                     <div class="note">
-                        The installer verifies what it downloads. With
+                        The one-line command trusts GitHub and the repository's
+                        mutable <code>main</code> branch because it executes the
+                        downloaded script first. That script always requires a
+                        release checksum and a local SHA-256 tool; missing
+                        verification stops the install. With
                         <a
                             href="https://github.com/sigstore/cosign"
                             target="_blank"
                             rel="noopener"
                             >cosign</a
                         >
-                        on your <code>PATH</code> it checks a keyless Sigstore
-                        signature; otherwise it falls back to a SHA-256 check
-                        and tells you the signature wasn't verified. Prefer to
-                        build from source?
+                        on your <code>PATH</code> it also authenticates the
+                        checksum to the exact release workflow and tag. For
+                        pre-execution artifact verification, follow the
+                        <a
+                            href="https://github.com/AndrewDryga/coop#verifying-a-download"
+                            target="_blank"
+                            rel="noopener"
+                            >manual steps</a
+                        >. Prefer to build from source?
                         <code
                             >git clone https://github.com/AndrewDryga/coop &amp;&amp; cd coop &amp;&amp; make install</code
                         >

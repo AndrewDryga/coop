@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fresh installs fail closed on archive verification.** The installer now requires
+  `checksums.txt` and either `sha256sum` or `shasum`; missing metadata, tools, or a matching digest
+  stops before extraction. Optional Cosign verification binds to the exact release workflow and
+  tag, the retired `agent-box` config-copy branch is gone, and the docs distinguish the mutable
+  one-line bootstrap's GitHub/repository trust from manual pre-execution artifact verification.
+
 - **Self-update is local and monotonic.** `coop update` now uses one strict release comparison
   shared with passive and explicit update checks, so a checkout newer than GitHub's latest release
   is never downgraded. An actual upgrade downloads the tagged platform archive and

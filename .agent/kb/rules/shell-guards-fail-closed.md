@@ -2,9 +2,9 @@
 name: shell-guards-fail-closed
 description: "a shell guard checks every command's status and fails CLOSED on ambiguity; a script that fails open says so in its header"
 scope: agent-workflow
-sources: [.agent/skills/sweep/queue-guard.sh, internal/scaffold/templates/skills/sweep/queue-guard.sh, internal/scaffold/queue_guard_test.go, .claude/hooks/commit-gate.sh, Makefile]
+sources: [.agent/skills/sweep/queue-guard.sh, internal/scaffold/templates/skills/sweep/queue-guard.sh, internal/scaffold/queue_guard_test.go, .claude/hooks/commit-gate.sh, install.sh, install_test.go, Makefile]
 check: "go test ./internal/scaffold -run TestSweepQueueGuard"
-updated: 2026-08-10
+updated: 2026-08-29
 ---
 
 # A shell guard fails closed, and says which way it fails
@@ -75,3 +75,8 @@ loosening it) and [[static-bounded-supervision]].
   test was added. What was missing is that the property is only *incidental* there: `TestSweepQueueGuard`
   exercises the embedded template while the Stop hook it asserts runs the canonical copy, so the
   identity check now also lives in that test as the precondition it is.
+- 2026-08-29 — applied the same fail-closed rule to the fresh installer: a missing release checksum
+  file, absent SHA-256 tool, missing asset entry, or digest mismatch now stops before extraction.
+  Added the installer and its focused tests to this card's sources; its root-package tests run in
+  the normal gate. Cosign remains an optional publisher-authentication layer, not a reason to skip
+  the required digest.
