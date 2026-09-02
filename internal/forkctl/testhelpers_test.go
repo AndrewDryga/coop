@@ -1,10 +1,12 @@
 package forkctl
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -109,6 +111,38 @@ type forkCommandResult struct {
 	err  error
 }
 
+func allGoroutineStacks() []byte {
+	for size := 64 << 10; ; size *= 2 {
+		buf := make([]byte, size)
+		if n := runtime.Stack(buf, true); n < len(buf) {
+			return buf[:n]
+		}
+	}
+}
+
+// The command has finished its unlocked preflight once it enters LockStateContext. Observing that
+// frame keeps the race test deterministic without adding a production-only synchronization hook.
+func waitForLockWaiter(t *testing.T, result <-chan forkCommandResult) {
+	t.Helper()
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if bytes.Contains(allGoroutineStacks(), []byte("internal/forkspace.LockStateContext")) {
+			return
+		}
+
+		select {
+		case got := <-result:
+			t.Fatalf("fork command bypassed lifecycle lock: (%d, %v)", got.code, got.err)
+		case <-deadline.C:
+			t.Fatal("fork command never entered the held lifecycle lock")
+		case <-ticker.C:
+		}
+	}
+}
+
 // runForkCommandAcrossLockedMutation proves a fork command re-checks lifecycle state under the
 // forkspace lock: it starts command while the lock is held (so the command must block), applies
 // mutate, then releases and returns what the command decided about the changed world.
@@ -130,11 +164,7 @@ func runForkCommandAcrossLockedMutation(t *testing.T, repo, name string, command
 		code, err := command()
 		result <- forkCommandResult{code: code, err: err}
 	}()
-	select {
-	case got := <-result:
-		t.Fatalf("fork command bypassed lifecycle lock: (%d, %v)", got.code, got.err)
-	case <-time.After(80 * time.Millisecond):
-	}
+	waitForLockWaiter(t, result)
 	mutate()
 	unlock()
 	locked = false
