@@ -3,8 +3,6 @@ package box
 import (
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,31 +10,20 @@ import (
 	"github.com/AndrewDryga/coop/internal/project"
 )
 
-func serveRepo(t *testing.T, portsYAML string) string {
-	t.Helper()
-	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("serve:\n  ports:\n"+portsYAML), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return repo
-}
-
 // TestAppendPublish: with egress open, a serve port becomes a localhost -p to its deterministic host
 // port; egress off or no serve config publishes nothing. The port probe is injected rather than
 // bound for real: the host-port window overlaps the OS ephemeral range, so claiming the assigned
 // port made this test contend with every other process on the machine — and both branches now run
 // on every machine instead of skipping when the port happened to be taken.
 func TestAppendPublish(t *testing.T) {
-	repo := serveRepo(t, "    - 5173\n")
+	repo := t.TempDir()
 	host := project.HostPort(repo, 5173)
+	spec := RunSpec{Repo: repo, servePorts: []int{5173}}
 	free := func(int) bool { return true }
 	inUse := func(int) bool { return false }
 
 	// egress open + a free host port → -p 127.0.0.1:<host>:5173
-	got := appendPublish(nil, &config.Config{Egress: "open"}, RunSpec{Repo: repo}, free)
+	got := appendPublish(nil, &config.Config{Egress: "open"}, spec, free)
 	if joined := strings.Join(got, " "); !strings.Contains(joined, "-p") || !strings.Contains(joined, fmt.Sprintf("127.0.0.1:%d:5173", host)) {
 		t.Errorf("egress-open publish = %v, want a -p 127.0.0.1:%d:5173", got, host)
 	}
@@ -47,7 +34,7 @@ func TestAppendPublish(t *testing.T) {
 
 	// An occupied assigned port cannot be published by this box, but its deterministic URL remains
 	// available for workspace-aware tooling (for example when the host dev server owns it).
-	occupied := appendPublish(nil, &config.Config{Egress: "open"}, RunSpec{Repo: repo}, inUse)
+	occupied := appendPublish(nil, &config.Config{Egress: "open"}, spec, inUse)
 	joined := strings.Join(occupied, " ")
 	if strings.Contains(joined, "-p") {
 		t.Errorf("occupied port must not be published: %v", occupied)
@@ -63,7 +50,7 @@ func TestAppendPublish(t *testing.T) {
 	if forkHost == host {
 		t.Skip("workspace-path hash collided (astronomically unlikely) — can't prove distinctness")
 	}
-	forkGot := strings.Join(appendPublish(nil, &config.Config{Egress: "open"}, RunSpec{Repo: forkWs, PolicyRepo: repo}, free), " ")
+	forkGot := strings.Join(appendPublish(nil, &config.Config{Egress: "open"}, RunSpec{Repo: forkWs, PolicyRepo: repo, servePorts: []int{5173}}, free), " ")
 	if !strings.Contains(forkGot, fmt.Sprintf("127.0.0.1:%d:5173", forkHost)) {
 		t.Errorf("a fork must publish on its own host port %d (from its workspace), got %v", forkHost, forkGot)
 	}
@@ -72,7 +59,7 @@ func TestAppendPublish(t *testing.T) {
 	}
 
 	// egress not open → nothing published (-p can't bind under --network none).
-	if got := appendPublish(nil, &config.Config{Egress: "none"}, RunSpec{Repo: repo}, free); len(got) != 0 {
+	if got := appendPublish(nil, &config.Config{Egress: "none"}, spec, free); len(got) != 0 {
 		t.Errorf("egress-off must not publish, got %v", got)
 	}
 

@@ -168,7 +168,10 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// toolbar rewrite + preset/plain selectors) and re-execs `coop acp <inner>` (COOP_ACP_INNER
 	// set) to run the box, the current selection carried in the env. The inner falls through to box.Run.
 	if !innerProcess {
-		repo, _ := box.ResolveRepo(a.cfg.RepoOverride)
+		repo, pj, err := loadProject(a.cfg.RepoOverride)
+		if err != nil {
+			return -1, err
+		}
 		ctrlModel := model
 		if ctrlModel == "" {
 			ctrlModel = a.cfg.ModelFor(tool)
@@ -182,10 +185,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 		// when egress is open — otherwise nothing publishes, so nothing to announce.
 		var serveURLs []string
 		if a.cfg.Egress == "open" {
-			if pj, err := project.Load(repo); err == nil {
-				for _, port := range pj.Serve.Ports {
-					serveURLs = append(serveURLs, fmt.Sprintf("box :%d → http://localhost:%d", port, project.HostPort(repo, port)))
-				}
+			for _, port := range pj.Serve.Ports {
+				serveURLs = append(serveURLs, fmt.Sprintf("box :%d → http://localhost:%d", port, project.HostPort(repo, port)))
 			}
 		}
 		sel := acpctl.Selection{Account: profile, Preset: presetName}

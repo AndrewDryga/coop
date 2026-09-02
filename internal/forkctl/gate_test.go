@@ -21,20 +21,27 @@ func TestGateFor(t *testing.T) {
 
 	t.Run("project gate used when COOP_GATE unset", func(t *testing.T) {
 		a := &Control{cfg: config.Load()}
-		if g := a.gateFor(repoWith(t, "gate: make check\n")); len(g) != 2 || g[0] != "make" || g[1] != "check" {
-			t.Errorf("project gate: = %v, want [make check]", g)
+		if g, err := a.gateFor(repoWith(t, "gate: make check\n")); err != nil || len(g) != 2 || g[0] != "make" || g[1] != "check" {
+			t.Errorf("project gate = %v, %v; want [make check], nil", g, err)
 		}
 	})
 	t.Run("explicit COOP_GATE beats the file", func(t *testing.T) {
 		t.Setenv("COOP_GATE", "go test ./...")
 		a := &Control{cfg: config.Load()}
-		if g := a.gateFor(repoWith(t, "gate: make check\n")); len(g) != 3 || g[0] != "go" {
-			t.Errorf("explicit COOP_GATE must win, got %v", g)
+		if g, err := a.gateFor(repoWith(t, "gate: make check\n")); err != nil || len(g) != 3 || g[0] != "go" {
+			t.Errorf("explicit COOP_GATE must win, got %v, %v", g, err)
 		}
 	})
 	t.Run("neither set → no gate", func(t *testing.T) {
-		if g := (&Control{cfg: config.Load()}).gateFor(repoWith(t, "")); len(g) != 0 {
-			t.Errorf("no gate anywhere → empty, got %v", g)
+		if g, err := (&Control{cfg: config.Load()}).gateFor(repoWith(t, "")); err != nil || len(g) != 0 {
+			t.Errorf("no gate anywhere → empty, nil; got %v, %v", g, err)
+		}
+	})
+	t.Run("invalid project fails even with an explicit gate", func(t *testing.T) {
+		t.Setenv("COOP_GATE", "go test ./...")
+		a := &Control{cfg: config.Load()}
+		if g, err := a.gateFor(repoWith(t, "gate: [\n")); err == nil || len(g) != 0 {
+			t.Fatalf("invalid project gate = %v, %v; want error", g, err)
 		}
 	})
 }

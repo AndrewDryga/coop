@@ -22,7 +22,11 @@ import (
 // gates on a compose-capable runtime (Apple `container` has no compose). Shared by `coop up`
 // and box.Run's auto-start.
 func EnsureServices(rt runtime.Runtime, workspace, policyRepo string, stdout, stderr io.Writer) ([]string, error) {
-	return EnsureServicesFile(rt, workspace, ComposeFile(workspace, policyRepo), stdout, stderr)
+	p, err := project.Load(policyRepo)
+	if err != nil {
+		return nil, err
+	}
+	return EnsureServicesFile(rt, workspace, ComposeFileAt(workspace, p.ComposeRel()), stdout, stderr)
 }
 
 // EnsureServicesFile is the explicit-file form used by trusted review policy. The file must live
@@ -81,7 +85,11 @@ func resolvedComposeServices(rt runtime.Runtime, args []string, stderr io.Writer
 
 // DownServices stops the current workspace's hashed Compose project. Volumes are optional.
 func DownServices(rt runtime.Runtime, workspace, policyRepo string, volumes bool, stdout, stderr io.Writer) error {
-	file := ComposeFile(workspace, policyRepo)
+	p, err := project.Load(policyRepo)
+	if err != nil {
+		return err
+	}
+	file := ComposeFileAt(workspace, p.ComposeRel())
 	if file == "" {
 		return nil
 	}
@@ -114,6 +122,9 @@ const (
 // Compose file, so interrupted agent edits cannot prevent cleanup. The next turn starts services
 // again through EnsureServices.
 func StopSessionServices(ctx context.Context, rt runtime.Runtime, workspace, policyRepo string) error {
+	// Cleanup must survive a policy typo introduced after the services started. ComposePath's
+	// default-on-error behavior preserves the existing immutable-label cleanup path; launch and
+	// ordinary service control still reject the invalid policy before touching the runtime.
 	composeDir := filepath.Dir(filepath.Join(workspace, filepath.FromSlash(project.ComposePath(policyRepo))))
 	_, err := rt.RemoveByLabels(ctx, map[string]string{
 		composeProjectLabel:    ComposeProject(workspace),

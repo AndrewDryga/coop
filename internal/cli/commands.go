@@ -27,13 +27,25 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
+func loadProject(repoOverride string) (string, *project.Project, error) {
+	repo, err := box.ResolveRepo(repoOverride)
+	if err != nil {
+		return "", nil, err
+	}
+	p, err := project.Load(repo)
+	if err != nil {
+		return "", nil, err
+	}
+	return repo, p, nil
+}
+
 // resolveImage resolves the repo and its image, verifying the image is built.
 func (a *app) resolveImage() (repo, img string, err error) {
-	if err := a.ensureRuntime(); err != nil { // the choke point for box commands not eagerly detected in dispatch (fork)
+	repo, _, err = loadProject(a.cfg.RepoOverride)
+	if err != nil {
 		return "", "", err
 	}
-	repo, err = box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
+	if err := a.ensureRuntime(); err != nil { // the choke point for box commands not eagerly detected in dispatch (fork)
 		return "", "", err
 	}
 	img = box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
@@ -578,11 +590,11 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 
 	// The box rebuild needs the runtime; --self-only returned above, so detect only here (not eagerly
 	// in dispatch), keeping `coop update --self-only` usable on a box with no container runtime.
-	if err := a.ensureRuntime(); err != nil {
+	repo, _, err := loadProject(a.cfg.RepoOverride)
+	if err != nil {
 		return -1, err
 	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
+	if err := a.ensureRuntime(); err != nil {
 		return -1, err
 	}
 	ui.Info("updating the box: newer base image + latest agent CLIs and ACP adapters")
@@ -684,24 +696,24 @@ func (a *app) cmdUp(args []string) (int, error) {
 	if err := rejectArgs("up", args); err != nil {
 		return 2, err
 	}
+	repo, p, err := loadProject(a.cfg.RepoOverride)
+	if err != nil {
+		return -1, err
+	}
 	if err := a.rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
 	if a.rt.Name == "container" {
 		return -1, errors.New("the Apple 'container' runtime has no compose yet — use Docker or Podman for services")
 	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
-		return -1, err
-	}
-	file := box.ComposeFile(repo, repo)
+	file := box.ComposeFileAt(repo, p.ComposeRel())
 	if file == "" {
-		return -1, fmt.Errorf("no %s — run 'coop init --services postgres,redis' to scaffold one", project.ComposePath(repo))
+		return -1, fmt.Errorf("no %s — run 'coop init --services postgres,redis' to scaffold one", p.ComposeRel())
 	}
 	proj := box.ComposeProject(repo)
 	rel, _ := filepath.Rel(repo, file)
 	ui.Info("starting services from %s (waiting until healthy)", rel)
-	services, err := box.EnsureServices(a.rt, repo, repo, os.Stdout, os.Stderr)
+	services, err := box.EnsureServicesFile(a.rt, repo, file, os.Stdout, os.Stderr)
 	if err != nil {
 		return -1, fmt.Errorf("could not start services from %s: %w — fix the Compose file or runtime, then retry: coop up", rel, err)
 	}
@@ -719,18 +731,18 @@ func (a *app) cmdDown(args []string) (int, error) {
 		}
 		volumes = true
 	}
-	if err := a.rt.EnsureDaemon(); err != nil {
-		return -1, err
-	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	repo, p, err := loadProject(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}
-	file := box.ComposeFile(repo, repo)
-	if file == "" {
-		return -1, fmt.Errorf("no %s here — nothing to bring down", project.ComposePath(repo))
+	if err := a.rt.EnsureDaemon(); err != nil {
+		return -1, err
 	}
-	if err := box.DownServices(a.rt, repo, repo, volumes, os.Stdout, os.Stderr); err != nil {
+	file := box.ComposeFileAt(repo, p.ComposeRel())
+	if file == "" {
+		return -1, fmt.Errorf("no %s here — nothing to bring down", p.ComposeRel())
+	}
+	if err := box.DownServicesFile(a.rt, repo, file, volumes, os.Stdout, os.Stderr); err != nil {
 		return -1, err
 	}
 	return 0, nil

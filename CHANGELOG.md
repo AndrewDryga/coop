@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Invalid project policy now stops before box and fork work.** A present malformed, unknown-key,
+  unreadable, symlinked, or non-regular `.agent/project.yaml` now returns a clear error before box
+  runtime access, `coop up`/`down`, fork merge/review, or JSON output. A genuinely missing file
+  remains the supported empty-project default.
+
 - **Fresh installs fail closed on archive verification.** The installer now requires
   `checksums.txt` and either `sha256sum` or `shasum`; missing metadata, tools, or a matching digest
   stops before extraction. Optional Cosign verification binds to the exact release workflow and

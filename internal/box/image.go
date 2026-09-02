@@ -409,12 +409,12 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, vers
 // editor's initialize. It passes an empty reader and os.Stderr instead (ui.* is already stderr-only,
 // so progress lands in the editor's agent log either way).
 func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, version string, stdin io.Reader, stdout io.Writer) error {
-	if err := rt.EnsureDaemon(); err != nil {
-		return err
-	}
 	// Load once so a malformed project.yaml fails the build loudly, and to resolve box.dockerfile.
 	proj, err := project.Load(repo)
 	if err != nil {
+		return err
+	}
+	if err := rt.EnsureDaemon(); err != nil {
 		return err
 	}
 	dfRel := proj.DockerfileRel() // box.dockerfile, else .agent/Dockerfile

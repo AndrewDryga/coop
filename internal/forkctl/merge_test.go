@@ -12,6 +12,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
@@ -80,6 +81,44 @@ func TestForkMergeRunningRefusalKeepsLifecycleExitClass(t *testing.T) {
 	code, err := c.ForkMerge([]string{"busy", "--yes"})
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "running or awaiting cleanup") {
 		t.Fatalf("ForkMerge(running) = (%d, %v), want lifecycle refusal class 1", code, err)
+	}
+}
+
+func TestForkMergeRejectsInvalidProjectBeforeRuntimeOrMutation(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "invalid-policy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("gate: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", project.File)
+	git(t, repo, "commit", "-qm", "invalid project policy")
+	parentHead, forkHead := gitOut(repo, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD")
+	runtimeCalls := 0
+	c := &Control{
+		cfg: &config.Config{RepoOverride: repo},
+		host: Host{EnsureRuntime: func() (runtime.Runtime, error) {
+			runtimeCalls++
+			return runtime.Runtime{}, nil
+		}},
+	}
+	code, err := c.ForkMerge([]string{"invalid-policy", "--yes"})
+	if code != -1 || err == nil || !strings.Contains(err.Error(), project.File) {
+		t.Fatalf("ForkMerge = (%d, %v), want policy error", code, err)
+	}
+	if runtimeCalls != 0 {
+		t.Fatalf("invalid project resolved runtime %d time(s)", runtimeCalls)
+	}
+	if got := gitOut(repo, "rev-parse", "HEAD"); got != parentHead {
+		t.Fatalf("parent HEAD changed: %s -> %s", parentHead, got)
+	}
+	if got := gitOut(ws, "rev-parse", "HEAD"); got != forkHead {
+		t.Fatalf("fork HEAD changed: %s -> %s", forkHead, got)
 	}
 }
 

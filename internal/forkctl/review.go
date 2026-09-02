@@ -136,6 +136,11 @@ func (c *Control) ForkReview(args []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s", name)
 	}
+	gateCommand, err := c.gateFor(repo)
+	if err != nil {
+		return -1, err
+	}
+	gateConfigured := len(gateCommand) > 0
 	reviewRepo, ref := repo, "review/"+name
 	outcome := forkReviewGateUnchecked
 	if gate {
@@ -194,7 +199,7 @@ func (c *Control) ForkReview(args []string) (int, error) {
 	} else if err := gitFetchInto(repo, ws, name); err != nil {
 		return -1, fmt.Errorf("%s: git fetch: %w", name, err)
 	}
-	c.forkBrief(reviewRepo, ws, name, ref, outcome)
+	c.forkBrief(reviewRepo, ws, name, ref, outcome, gateConfigured)
 	if _, s := c.host.forkCost(ws); s != "" {
 		ui.Info("cost: %s", s)
 	}
@@ -299,7 +304,7 @@ func (c *Control) runReviewCmd(repo, ws, name, ref string) (int, error) {
 // of the risk before reading the patch. Everything except the task log is computed by
 // the parent from git facts; the log is the fork's own voice and is labeled as such,
 // so a fork can't steer its review via its narrative.
-func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref string, gateOutcome forkReviewGateOutcome) {
+func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) {
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
 	files := gitOut(repo, "diff", "--name-status", "HEAD..."+ref)
 	nfiles := 0
@@ -338,7 +343,7 @@ func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref s
 			}
 		}
 		if gateOutcome == forkReviewGateUnchecked {
-			if len(c.gateFor(repo)) == 0 {
+			if !gateConfigured {
 				fmt.Printf("%s none configured (COOP_GATE or .agent/project.yaml gate:)\n", ui.Bold("gate:"))
 			} else {
 				fmt.Printf("%s runs at merge — rolled back on failure\n", ui.Bold("gate:"))

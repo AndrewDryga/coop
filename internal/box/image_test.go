@@ -1,6 +1,7 @@
 package box
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -389,5 +391,23 @@ func TestBuildWithHonorsCallerStreams(t *testing.T) {
 	// not from the process's own os.Stdin.
 	if got := out.String(); !strings.Contains(got, "FROM ${NODE_IMAGE}") {
 		t.Errorf("base Dockerfile was not piped to the runtime:\n%s", got)
+	}
+}
+
+func TestBuildWithRejectsInvalidProjectBeforeRuntime(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	err := BuildWith(recorderRuntime(t, recorder), &config.Config{BaseImage: "coop-box"}, repo, false, "vTest", strings.NewReader(""), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), project.File) {
+		t.Fatalf("BuildWith = %v, want policy error", err)
+	}
+	if _, statErr := os.Stat(recorder); !os.IsNotExist(statErr) {
+		t.Fatalf("runtime was invoked before policy validation: %v", statErr)
 	}
 }

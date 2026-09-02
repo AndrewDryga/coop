@@ -16,6 +16,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/liveprocess"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
@@ -1001,5 +1002,61 @@ func TestResolveImageBlamesTheDaemonNotTheImage(t *testing.T) {
 				t.Errorf("resolveImage = %q, want it to mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestRepoCommandsRejectInvalidProjectBeforeRuntimeDetection(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box:\n  egres: none\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "runtime-called")
+	shim := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\ntouch "+strconv.Quote(marker)+"\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo, RuntimeName: shim}}
+	code, err := a.dispatch([]string{"run", "--", "true"})
+	if code != -1 || err == nil || !strings.Contains(err.Error(), project.File) {
+		t.Fatalf("dispatch = (%d, %v), want policy error", code, err)
+	}
+	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+		t.Fatalf("runtime detection ran before policy validation: %v", statErr)
+	}
+	a = &app{cfg: &config.Config{RepoOverride: repo, RuntimeName: shim}}
+	code, err = a.cmdUpdate([]string{"--box-only"})
+	if code != -1 || err == nil || !strings.Contains(err.Error(), project.File) {
+		t.Fatalf("update --box-only = (%d, %v), want policy error", code, err)
+	}
+	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+		t.Fatalf("box update detected the runtime before policy validation: %v", statErr)
+	}
+}
+
+func TestACPOuterRejectsInvalidProjectBeforeSupervisor(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("serve: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	a := &app{
+		cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()},
+		acpSupervise: func([]string, *acpctl.Control) (int, error) {
+			called = true
+			return 0, nil
+		},
+	}
+	code, err := a.cmdACP([]string{"codex"})
+	if code != -1 || err == nil || !strings.Contains(err.Error(), project.File) {
+		t.Fatalf("cmdACP = (%d, %v), want policy error", code, err)
+	}
+	if called {
+		t.Fatal("ACP supervisor started before policy validation")
 	}
 }

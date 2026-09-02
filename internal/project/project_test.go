@@ -3,6 +3,7 @@ package project
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -29,6 +30,78 @@ func TestLoadMissing(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsPresentUnsafeEntries(t *testing.T) {
+	assertPolicyError := func(t *testing.T, repo string) {
+		t.Helper()
+		if _, err := Load(repo); err == nil || !strings.Contains(err.Error(), File) {
+			t.Fatalf("Load = %v, want an error naming %s", err, File)
+		}
+	}
+
+	t.Run("symlink", func(t *testing.T) {
+		repo := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(t.TempDir(), "project.yaml")
+		if err := os.WriteFile(target, []byte("serve: {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(repo, File)); err != nil {
+			t.Fatal(err)
+		}
+		assertPolicyError(t, repo)
+	})
+
+	t.Run("dangling symlink", func(t *testing.T) {
+		repo := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(repo, "missing"), filepath.Join(repo, File)); err != nil {
+			t.Fatal(err)
+		}
+		assertPolicyError(t, repo)
+	})
+
+	t.Run("symlinked agent directory", func(t *testing.T) {
+		repo := t.TempDir()
+		target := t.TempDir()
+		if err := os.WriteFile(filepath.Join(target, "project.yaml"), []byte("serve: {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(repo, ".agent")); err != nil {
+			t.Fatal(err)
+		}
+		assertPolicyError(t, repo)
+	})
+
+	t.Run("directory", func(t *testing.T) {
+		repo := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(repo, File), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		assertPolicyError(t, repo)
+	})
+
+	t.Run("unreadable", func(t *testing.T) {
+		repo := writeProject(t, "serve: {}\n")
+		path := filepath.Join(repo, File)
+		if err := os.Chmod(path, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+		if _, err := Load(repo); err == nil {
+			if os.Geteuid() == 0 {
+				t.Skip("root can read mode-000 files")
+			}
+			t.Fatalf("Load unreadable %s = nil error", File)
+		} else if !strings.Contains(err.Error(), File) {
+			t.Fatalf("Load error = %v, want it to name %s", err, File)
+		}
+	})
+}
+
 // TestLoadParse: subprojects + serve ports both parse.
 func TestLoadParse(t *testing.T) {
 	repo := writeProject(t, "subprojects:\n  - runner\n  - packs\nserve:\n  ports:\n    - 5173\n    - 3000\n")
@@ -47,11 +120,12 @@ func TestLoadParse(t *testing.T) {
 // TestLoadInvalid: a typo surfaces as an error, not a silent no-op.
 func TestLoadInvalid(t *testing.T) {
 	cases := map[string]string{
-		"bad port":     "serve:\n  ports:\n    - 70000\n",
-		"zero port":    "serve:\n  ports:\n    - 0\n",
-		"bad yaml":     "serve: [\n",
-		"absolute sub": "subprojects:\n  - /etc\n",
-		"escaping sub": "subprojects:\n  - ../evil\n",
+		"bad port":        "serve:\n  ports:\n    - 70000\n",
+		"zero port":       "serve:\n  ports:\n    - 0\n",
+		"bad yaml":        "serve: [\n",
+		"second document": "---\n---\nbox:\n  egress: none\n",
+		"absolute sub":    "subprojects:\n  - /etc\n",
+		"escaping sub":    "subprojects:\n  - ../evil\n",
 		// KnownFields: an unknown key (a typo'd `subproject:`) errors instead of silently doing nothing.
 		"unknown key":                    "subproject:\n  - runner\n",
 		"unknown box key":                "box:\n  egres: none\n",

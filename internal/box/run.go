@@ -95,6 +95,7 @@ type RunSpec struct {
 
 	ForceNoTTY   bool   // ACP: attach stdin (-i) but never allocate a tty
 	Serve        bool   // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
+	servePorts   []int  // validated project policy carried into argument assembly by Run
 	SupervisorID string // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
 	ShareACPSessions bool   // mount credential-independent ACP transcript dirs across account switches
@@ -261,6 +262,31 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if spec.ForkWorker && spec.ForkGeneration == "" {
 		return -1, errors.New("detached fork worker label requires a fork generation")
 	}
+	policyRepo := projectPolicyRepo(spec)
+	p, err := project.Load(policyRepo)
+	if err != nil {
+		return -1, err
+	}
+	cfg = applyProjectPolicy(cfg, p, &spec)
+	projectEnv := p.Box.Env
+	composeFile := ComposeFileAt(spec.Repo, p.ComposeRel())
+	spec.servePorts = p.Serve.Ports
+	if spec.Review {
+		if p.Review.Compose != "" {
+			composeFile = ComposeFileAt(spec.Repo, p.Review.Compose)
+		}
+		spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_REVIEW=1")
+		keys := make([]string, 0, len(p.Review.Env))
+		for key := range p.Review.Env {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			// Explicit -e arguments follow --env-file, so trusted review policy cannot be
+			// weakened by an operator's ordinary agent environment.
+			spec.ExtraArgs = append(spec.ExtraArgs, "-e", key+"="+p.Review.Env[key])
+		}
+	}
 	var mcpSnapshot []byte
 	mcpPresent := false
 	if spec.Homes {
@@ -280,35 +306,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	if err := rt.EnsureDaemon(); err != nil {
 		return -1, err
-	}
-	// The trusted policy repo's committed box: policy (.agent/project.yaml) overlays this run —
-	// each field only where the user didn't explicitly set its COOP_* (env/conf beats file beats
-	// default), on a copy so the shared Config is never mutated. A broken project.yaml warns and
-	// is skipped (same best-effort posture as appendPublish) rather than bricking every launch.
-	var projectEnv map[string]string
-	var composeFile string
-	if p, err := project.Load(projectPolicyRepo(spec)); err == nil {
-		cfg = applyProjectPolicy(cfg, p, &spec)
-		projectEnv = p.Box.Env
-		composeFile = ComposeFile(spec.Repo, projectPolicyRepo(spec))
-		if spec.Review {
-			if p.Review.Compose != "" {
-				composeFile = ComposeFileAt(spec.Repo, p.Review.Compose)
-			}
-			spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_REVIEW=1")
-			keys := make([]string, 0, len(p.Review.Env))
-			for key := range p.Review.Env {
-				keys = append(keys, key)
-			}
-			sort.Strings(keys)
-			for _, key := range keys {
-				// Explicit -e arguments follow --env-file, so trusted review policy cannot be
-				// weakened by an operator's ordinary agent environment.
-				spec.ExtraArgs = append(spec.ExtraArgs, "-e", key+"="+p.Review.Env[key])
-			}
-		}
-	} else if !spec.Quiet {
-		ui.Info("%v — ignoring its box policy", err) // err already names .agent/project.yaml
 	}
 	workdir := resolveWorkdir(spec, cfg)
 
@@ -1617,20 +1614,14 @@ func boxLimits(cfg *config.Config, rt runtime.Runtime) []string {
 // free reports whether a host port is bindable (hostPortFree in production), injected so the
 // publish decision is unit-tested without claiming a real port.
 func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(int) bool) []string {
-	policyRepo := projectPolicyRepo(spec)
-	p, err := project.Load(policyRepo)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "coop: %v — not publishing ports\n", err)
-		return args
-	}
-	if len(p.Serve.Ports) == 0 {
+	if len(spec.servePorts) == 0 {
 		return args
 	}
 	if cfg.Egress != "open" {
 		fmt.Fprintf(os.Stderr, "coop: serve ports need network egress (COOP_EGRESS=open) — not publishing\n")
 		return args
 	}
-	for _, port := range p.Serve.Ports {
+	for _, port := range spec.servePorts {
 		// Allocate from the WORKSPACE path (spec.Repo), not the policy repo: a fork inherits the
 		// parent's serve.ports config but must get its OWN distinct host ports (project.HostPort
 		// hashes the path), so two forks — or a fork and its parent — never collide on one host port.

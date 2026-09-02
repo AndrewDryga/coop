@@ -106,18 +106,44 @@ type Review struct {
 // port, a bad box value, or a subproject path that escapes the repo) IS an error, so a typo surfaces
 // instead of silently doing nothing. Subproject paths are cleaned in place.
 func Load(repo string) (*Project, error) {
-	data, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(File)))
-	if os.IsNotExist(err) {
+	path := filepath.Join(repo, filepath.FromSlash(File))
+	agentDir := filepath.Dir(path)
+	dirInfo, err := os.Lstat(agentDir)
+	if errors.Is(err, os.ErrNotExist) {
 		return &Project{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", File, err)
+		return nil, fmt.Errorf("inspect %s parent %s: %w", path, agentDir, err)
+	}
+	if !dirInfo.IsDir() {
+		return nil, fmt.Errorf("%s parent %s must be a directory", path, agentDir)
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return &Project{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s must be a regular file", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	var p Project
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)                                             // an unknown key is a typo doing nothing — fail loudly instead
 	if err := dec.Decode(&p); err != nil && !errors.Is(err, io.EOF) { // EOF = an all-comments/empty file
 		return nil, fmt.Errorf("%s: %w", File, err)
+	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", File, err)
+		}
+		return nil, fmt.Errorf("%s must not contain more than one YAML document", File)
 	}
 	for _, port := range p.Serve.Ports {
 		if port < 1 || port > 65535 {

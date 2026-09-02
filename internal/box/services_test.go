@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -81,6 +82,9 @@ func TestStopSessionServicesUsesImmutableOwnershipLabels(t *testing.T) {
 	if err := os.Remove(compose); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := StopSessionServices(context.Background(), runtime.Runtime{Name: shim}, repo, repo); err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +151,36 @@ func TestEnsureServicesValidates(t *testing.T) {
 			t.Error("compose must not run when there's no file")
 		}
 	})
+}
+
+func TestServiceHelpersRejectInvalidProjectBeforeRuntime(t *testing.T) {
+	for name, call := range map[string]func(runtime.Runtime, string) error{
+		"ensure": func(rt runtime.Runtime, repo string) error {
+			_, err := EnsureServices(rt, repo, repo, io.Discard, io.Discard)
+			return err
+		},
+		"down": func(rt runtime.Runtime, repo string) error {
+			return DownServices(rt, repo, repo, false, io.Discard, io.Discard)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box:\n  egres: none\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			err := call(recorderRuntime(t, recorder), repo)
+			if err == nil || !strings.Contains(err.Error(), project.File) {
+				t.Fatalf("service helper = %v, want policy error", err)
+			}
+			if _, statErr := os.Stat(recorder); !os.IsNotExist(statErr) {
+				t.Fatalf("runtime was invoked before policy validation: %v", statErr)
+			}
+		})
+	}
 }
 
 func composeRuntimeWithServices(t *testing.T, recorder string, services []string, serviceExit int) runtime.Runtime {

@@ -120,22 +120,28 @@ func pkgScripts(content string) map[string]string {
 // gateFor resolves the fork-merge revalidation gate for repo: an explicit COOP_GATE (env/conf)
 // wins; otherwise the repo's committed .agent/project.yaml gate:. The gate runs IN THE BOX (see
 // runGate), so a repo-authored command executes sandboxed — same trust class as the code it merges.
-func (c *Control) gateFor(repo string) []string {
+func (c *Control) gateFor(repo string) ([]string, error) {
+	p, err := project.Load(repo)
+	if err != nil {
+		return nil, err
+	}
 	if c.cfg.Explicit("COOP_GATE") {
-		return c.cfg.Gate
+		return c.cfg.Gate, nil
 	}
-	if p, err := project.Load(repo); err == nil {
-		if g := strings.TrimSpace(p.Gate); g != "" {
-			return config.ShellSplit(g)
-		}
+	if g := strings.TrimSpace(p.Gate); g != "" {
+		return config.ShellSplit(g), nil
 	}
-	return c.cfg.Gate
+	return c.cfg.Gate, nil
 }
 
 // MergeGate resolves the box image when a merge gate is configured (so a merge can be revalidated
 // in the box), or returns "" when none is.
 func (c *Control) MergeGate(repo string) (string, error) {
-	if len(c.gateFor(repo)) == 0 {
+	gate, err := c.gateFor(repo)
+	if err != nil {
+		return "", err
+	}
+	if len(gate) == 0 {
 		return "", nil // no gate configured → the merge is pure-local, no runtime needed
 	}
 	if err := c.ensureRuntime(); err != nil {
@@ -158,7 +164,10 @@ func (c *Control) MergeGate(repo string) (string, error) {
 // against treeDir (the rebased candidate), so a red gate never touches the parent. A non-zero gate
 // is a normal red result; an error means the box never started.
 func (c *Control) runGateMode(gateRepo, treeDir, img string, review bool) (bool, error) {
-	gate := c.gateFor(gateRepo)
+	gate, err := c.gateFor(gateRepo)
+	if err != nil {
+		return false, err
+	}
 	ui.Info("revalidating: %s", strings.Join(gate, " "))
 	reviewBase := strings.TrimSpace(gitOut(treeDir, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
 	if reviewBase == "" {

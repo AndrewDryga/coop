@@ -3,6 +3,7 @@ package box
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -106,6 +107,60 @@ func TestRunRepoWritable(t *testing.T) {
 	}
 	if slices.Contains(fields, repo+":/workspace:ro") {
 		t.Fatalf("full-write repo mount must not be read-only:\n%s", args)
+	}
+}
+
+func TestRunRejectsInvalidProjectBeforeRuntime(t *testing.T) {
+	for name, body := range map[string]string{
+		"bad yaml":    "box: [\n",
+		"unknown key": "box:\n  egres: none\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repo, project.File), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
+			code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
+				Image: "i", Repo: repo, Cmd: []string{"true"}, Batch: true, Quiet: true,
+			})
+			if code != -1 || err == nil || !strings.Contains(err.Error(), project.File) {
+				t.Fatalf("Run = (%d, %v), want policy error", code, err)
+			}
+			if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("runtime was invoked before policy validation: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestRunCarriesValidatedServePortsIntoArguments(t *testing.T) {
+	policyRepo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(policyRepo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(policyRepo, project.File), []byte("serve:\n  ports: [5173]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
+	if code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
+		Image: "i", Repo: repo, PolicyRepo: policyRepo, Cmd: []string{"true"}, Batch: true, Quiet: true, Serve: true,
+	}); code != 0 || err != nil {
+		t.Fatalf("Run = (%d, %v), want success", code, err)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("COOP_SERVE_URL_5173=http://localhost:%d", project.HostPort(repo, 5173))
+	if !strings.Contains(string(args), want) {
+		t.Fatalf("runtime args missing %q:\n%s", want, args)
 	}
 }
 

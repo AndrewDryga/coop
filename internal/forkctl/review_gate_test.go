@@ -9,6 +9,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -336,6 +337,42 @@ func TestForkReviewGateRejectsOpen(t *testing.T) {
 	c := &Control{cfg: &config.Config{}}
 	if code, err := c.ForkReview([]string{"perf", "--gate", "--open"}); code != 2 || err == nil || !strings.Contains(err.Error(), "cannot be combined") {
 		t.Fatalf("ForkReview(--gate --open) = (%d, %v), want usage rejection", code, err)
+	}
+}
+
+func TestForkReviewRejectsInvalidProjectBeforeDossierOrGitMutation(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("gatez: make check\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", project.File)
+	git(t, repo, "commit", "-qm", "invalid project policy")
+	parentBefore, forkBefore := reviewSourceSnapshot(repo), reviewSourceSnapshot(ws)
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	var code int
+	var runErr error
+	out := captureStdout(t, func() { code, runErr = c.ForkReview([]string{"perf", "--stat"}) })
+	if code != -1 || runErr == nil || !strings.Contains(runErr.Error(), project.File) {
+		t.Fatalf("ForkReview = (%d, %v), want policy error", code, runErr)
+	}
+	if out != "" {
+		t.Fatalf("invalid project emitted a partial dossier: %q", out)
+	}
+	if got := reviewSourceSnapshot(repo); got != parentBefore {
+		t.Fatalf("parent changed before policy refusal:\n%s", got)
+	}
+	if got := reviewSourceSnapshot(ws); got != forkBefore {
+		t.Fatalf("fork changed before policy refusal:\n%s", got)
+	}
+	if got := gitOut(repo, "show-ref", "--verify", "refs/heads/review/perf"); got != "" {
+		t.Fatalf("invalid project created review ref: %s", got)
 	}
 }
 

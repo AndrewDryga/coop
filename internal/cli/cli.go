@@ -168,7 +168,14 @@ func (a *app) dispatch(argv []string) (int, error) {
 	// (--self-only is local) — and every pure-local family detect lazily in their box-running paths
 	// (resolveImage, forkStop, mergeGate, cmdUpdate), so they work with no runtime.
 	switch sub {
-	case "run", "shell", "login", "acp", "loop", "up", "down", "doctor", "build":
+	case "run", "shell", "login", "acp", "loop", "up", "down", "build":
+		if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
+			return -1, err
+		}
+		if err := a.ensureRuntime(); err != nil {
+			return -1, err
+		}
+	case "doctor":
 		if err := a.ensureRuntime(); err != nil {
 			return -1, err
 		}
