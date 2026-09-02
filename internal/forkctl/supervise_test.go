@@ -21,6 +21,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	containerruntime "github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func TestComposeTarget(t *testing.T) {
@@ -912,23 +913,96 @@ func TestStreamLog(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var buf bytes.Buffer
-	if err := streamLog(p, "", false, &buf, &mu); err != nil {
+	if opened, err := streamLog(p, "", false, &buf, &mu); err != nil || !opened {
 		t.Fatal(err)
 	}
 	if buf.String() != "line1\nline2\n" {
 		t.Errorf("streamLog = %q, want unprefixed lines", buf.String())
 	}
 	buf.Reset()
-	_ = streamLog(p, "perf", false, &buf, &mu)
+	_, _ = streamLog(p, "perf", false, &buf, &mu)
 	if buf.String() != "perf | line1\nperf | line2\n" {
 		t.Errorf("streamLog prefixed = %q", buf.String())
 	}
 	// A missing log is not an error and produces nothing.
 	buf.Reset()
-	if err := streamLog(filepath.Join(dir, "missing.log"), "", false, &buf, &mu); err != nil {
-		t.Fatalf("missing log should not error: %v", err)
+	if opened, err := streamLog(filepath.Join(dir, "missing.log"), "", false, &buf, &mu); err != nil || opened {
+		t.Fatalf("missing log = (opened %v, %v), want absent success", opened, err)
 	}
 	if buf.Len() != 0 {
 		t.Errorf("missing log produced %q", buf.String())
+	}
+	if opened, err := streamLog(dir, "", false, &buf, &mu); err == nil || !opened {
+		t.Fatalf("directory log = (opened %v, %v), want read error", opened, err)
+	}
+}
+
+func TestForkLogsNamedMissingIsExplicit(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(forkspace.Workspace(repo, "quiet"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var notes []string
+	ui.SetLiveSink(func(line string) { notes = append(notes, line) })
+	t.Cleanup(func() { ui.SetLiveSink(nil) })
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	if code, err := c.ForkLogs([]string{"quiet"}); code != 0 || err != nil {
+		t.Fatalf("ForkLogs(quiet) = (%d, %v), want empty success", code, err)
+	}
+	if got := strings.Join(notes, "\n"); !strings.Contains(got, "fork quiet has no log output yet") {
+		t.Fatalf("missing-log note = %q", got)
+	}
+}
+
+func TestForkLogsAllKeepsReadableOutputAndReturnsFailures(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	for _, name := range []string{"good", "broken"} {
+		if err := os.MkdirAll(forkspace.Workspace(repo, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(forkspace.StateDir(repo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(forkspace.LogPath(repo, "good"), []byte("kept\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(forkspace.LogPath(repo, "broken"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	var code int
+	var runErr error
+	out := captureStdout(t, func() { code, runErr = c.ForkLogs(nil) })
+	if code != 1 || runErr == nil || !strings.Contains(runErr.Error(), "broken") ||
+		!strings.Contains(runErr.Error(), forkspace.LogPath(repo, "broken")) {
+		t.Fatalf("ForkLogs(all) = (%d, %v), want broken-log failure", code, runErr)
+	}
+	if !strings.Contains(out, "good | kept\n") {
+		t.Fatalf("readable log output was lost: %q", out)
+	}
+}
+
+func TestForkLogsFollowReportsStreamFailure(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(forkspace.Workspace(repo, "broken"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(forkspace.StateDir(repo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(forkspace.LogPath(repo, "broken"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	ui.SetLiveSink(func(line string) { lines = append(lines, line) })
+	t.Cleanup(func() { ui.SetLiveSink(nil) })
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	code, err := c.ForkLogs([]string{"--follow"})
+	if code != 1 || err == nil {
+		t.Fatalf("ForkLogs(--follow) = (%d, %v), want stream failure", code, err)
+	}
+	if got := strings.Join(lines, "\n"); !strings.Contains(got, "fork broken log") || !strings.Contains(got, "fix ownership or permissions") {
+		t.Fatalf("follow failure output = %q", got)
 	}
 }

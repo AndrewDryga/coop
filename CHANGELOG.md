@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fork logs now distinguish quiet forks from broken reads.** A named fork with no output says so;
+  multi-fork reads keep every readable log while returning failure for unreadable ones. Follow-mode
+  stream errors are reported immediately without stopping independent healthy followers.
+
 - **Fork conversation resume state is no longer best-effort.** Coop now refuses to launch until a
   selected provider and every Coop-owned session ID are durably recorded. If Codex finishes but
   its provider-minted ID cannot be saved afterward, Coop says the work remains in the fork while

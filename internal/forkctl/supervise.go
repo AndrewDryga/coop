@@ -353,7 +353,14 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 		if !pathExists(forkspace.Workspace(repo, name)) {
 			return -1, fmt.Errorf("no such fork: %s", name) // match fork path/review, not a silent exit 0
 		}
-		return 0, streamLog(forkspace.LogPath(repo, name), "", follow, os.Stdout, &mu)
+		opened, err := streamLog(forkspace.LogPath(repo, name), "", follow, os.Stdout, &mu)
+		if err != nil {
+			return 1, forkLogReadError(repo, name, err)
+		}
+		if !opened {
+			ui.Note("fork %s has no log output yet", name)
+		}
+		return 0, nil
 	}
 	names, err := forkspace.Names(repo)
 	if err != nil {
@@ -364,33 +371,68 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 		return 0, nil
 	}
 	if !follow {
+		var failures []error
 		for _, n := range names {
-			_ = streamLog(forkspace.LogPath(repo, n), n, false, os.Stdout, &mu)
+			opened, err := streamLog(forkspace.LogPath(repo, n), n, false, os.Stdout, &mu)
+			if err != nil {
+				failures = append(failures, forkLogReadError(repo, n, err))
+			} else if !opened {
+				ui.Note("fork %s has no log output yet", n)
+			}
+		}
+		if len(failures) > 0 {
+			return 1, fmt.Errorf("read fork logs: %w", errors.Join(failures...))
 		}
 		return 0, nil
 	}
 	// Follow every fork at once, prefixed (compose-style). Followers never return,
 	// so this blocks until Ctrl-C.
 	var wg sync.WaitGroup
+	results := make(chan error, len(names))
 	for _, n := range names {
 		wg.Add(1)
 		go func(name string) {
 			defer wg.Done()
-			_ = streamLog(forkspace.LogPath(repo, name), name, true, os.Stdout, &mu)
+			opened, err := streamLog(forkspace.LogPath(repo, name), name, true, os.Stdout, &mu)
+			if err != nil {
+				err = forkLogReadError(repo, name, err)
+				mu.Lock()
+				ui.Error("%v", err)
+				mu.Unlock()
+			} else if !opened {
+				mu.Lock()
+				ui.Note("fork %s has no log output yet", name)
+				mu.Unlock()
+			}
+			results <- err
 		}(n)
 	}
 	wg.Wait()
+	close(results)
+	failed := 0
+	for err := range results {
+		if err != nil {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return 1, fmt.Errorf("%s failed; see the errors above, fix the log paths, and retry", ui.Count(failed, "fork log stream"))
+	}
 	return 0, nil
 }
 
+func forkLogReadError(repo, name string, err error) error {
+	return fmt.Errorf("fork %s log %s: %w — fix ownership or permissions under %s and retry", name, forkspace.LogPath(repo, name), err, forkspace.StateDir(repo))
+}
+
 // streamLog prints a log file (optionally prefixed and followed) to w under mu.
-func streamLog(path, prefix string, follow bool, w io.Writer, mu *sync.Mutex) error {
+func streamLog(path, prefix string, follow bool, w io.Writer, mu *sync.Mutex) (bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // no output yet
+			return false, nil // no output yet
 		}
-		return err
+		return false, err
 	}
 	defer f.Close()
 	r := bufio.NewReader(f)
@@ -407,13 +449,13 @@ func streamLog(path, prefix string, follow bool, w io.Writer, mu *sync.Mutex) er
 		}
 		if err == io.EOF {
 			if !follow {
-				return nil
+				return true, nil
 			}
 			time.Sleep(300 * time.Millisecond)
 			continue
 		}
 		if err != nil {
-			return err
+			return true, err
 		}
 	}
 }

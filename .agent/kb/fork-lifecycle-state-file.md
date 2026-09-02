@@ -38,6 +38,11 @@ incomplete clone. Fork discovery treats a missing workspace/state root as empty,
 other directory error to lifecycle callers; only prompt decoration and shell completion suppress
 that diagnostic deliberately.
 
+Fork log absence is an ordinary not-yet-produced state, not a read success with mysteriously blank
+output. A named read says that explicitly. Multi-fork reads preserve every readable stream and
+return failure for any unreadable one; follow-mode failures print immediately from the failed
+follower while the other followers continue independently.
+
 ## Who owns which half
 
 The FILE is `internal/forkspace`'s: paths (`StateDir`/`PidPath`/`LockPath`/`LogPath`), the flock
@@ -105,6 +110,8 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-09-03 — documented honest missing/error fork-log states and independent follow failure
+  reporting
 - 2026-09-03 — documented and re-verified all-or-nothing workspace setup and fail-closed fork
   discovery; prompt/completion remain the explicit best-effort display exceptions
 - 2026-09-03 — documented and re-verified owner-only fork control roots and records across
