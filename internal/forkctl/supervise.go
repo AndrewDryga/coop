@@ -94,7 +94,7 @@ func claimForkPidUnlocked(repo, name string, generation ...forkspace.Generation)
 		currentGeneration = generation[0]
 	}
 	path := forkspace.PidPath(repo, name)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err == nil {
 		// A reservation owns no signalable worker yet. If this process crashes here, stop can safely
 		// reap the scoped runtime label and clear the reservation without guessing at a pid.
@@ -238,7 +238,7 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 		}
 		return -1, cause
 	}
-	logf, err := os.Create(forkspace.LogPath(repo, name))
+	logf, err := OpenForkLog(forkspace.LogPath(repo, name))
 	if err != nil {
 		return failStart(err)
 	}
@@ -293,6 +293,33 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 	return 0, nil
 }
 
+// OpenForkLog creates or truncates one owner-only fork log without following a final link.
+// Both foreground CLI loops and detached supervision use this boundary.
+func OpenForkLog(path string) (*os.File, error) {
+	if info, err := os.Lstat(path); err == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
+		return nil, fmt.Errorf("fork log %s must be a regular file", path)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		_ = f.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("fork log %s must be a regular file", path)
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
 func (c *Control) ForkLogs(args []string) (int, error) {
 	follow := false
 	var pos []string
@@ -317,6 +344,9 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 	repo, err := box.ResolveRepo(c.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
+	}
+	if err := forkspace.EnsureStateDir(repo); err != nil {
+		return -1, fmt.Errorf("prepare fork log state: %w", err)
 	}
 	var mu sync.Mutex
 	if name != "" {

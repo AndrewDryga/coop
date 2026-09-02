@@ -138,7 +138,7 @@ func writeLandIntent(repo string, intent landIntent) error {
 	if err := validateLandIntent(intent); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
+	if err := forkspace.EnsureStateDir(repo); err != nil {
 		return err
 	}
 	body, err := json.Marshal(intent)

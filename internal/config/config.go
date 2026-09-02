@@ -256,6 +256,18 @@ func Load() (*Config, error) {
 
 	c.MCPFile = get("COOP_MCP_FILE", filepath.Join(c.ConfigDir, "mcp.json"))
 	c.MCPInBox = c.HomeInBox + "/.mcp.json"
+	if err := EnsurePrivateDir(c.ConfigDir); err != nil {
+		return nil, err
+	}
+	privateFiles := []string{c.EnvFile(), c.DefaultsFile()}
+	if c.MCPFile == filepath.Join(c.ConfigDir, "mcp.json") {
+		privateFiles = append(privateFiles, c.MCPFile)
+	}
+	for _, path := range privateFiles {
+		if err := ensurePrivateFileIfPresent(path); err != nil {
+			return nil, err
+		}
+	}
 	c.defaultProfiles = loadDefaultsFile(c.DefaultsFile())
 	return c, nil
 }
@@ -335,7 +347,7 @@ func (c *Config) DefaultProfileOf(agent string) string {
 // updating the in-memory view. The load→modify→write runs under WithLock so concurrent writers
 // (e.g. two `coop credentials default` for different agents) don't lose each other's edit.
 func (c *Config) SetDefaultProfile(agent, name string) error {
-	if err := os.MkdirAll(c.ConfigDir, 0o700); err != nil {
+	if err := EnsurePrivateDir(c.ConfigDir); err != nil {
 		return err
 	}
 	err := WithLock(c.DefaultsFile(), func() error {
@@ -375,6 +387,9 @@ func WithLock(path string, fn func() error) error {
 		return fmt.Errorf("open config lock %s: %w", lock, err)
 	}
 	defer f.Close()
+	if err := f.Chmod(0o600); err != nil {
+		return fmt.Errorf("make config lock %s owner-only: %w", lock, err)
+	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("lock config file %s: %w", lock, err)
 	}
@@ -394,6 +409,11 @@ func WriteFileAtomic(path string, data []byte) error {
 		return err
 	}
 	name := tmp.Name()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return err
+	}
 	_, werr := tmp.Write(data)
 	if werr == nil {
 		werr = tmp.Sync()

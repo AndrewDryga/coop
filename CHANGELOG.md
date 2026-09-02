@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Host-side credentials and fork control state are private by default.** Coop now tightens its
+  credential/profile ancestors and per-project fork state to owner-only directories before use,
+  keeps shared secrets, worker records, locks, and logs at `0600`, and refuses linked or
+  non-directory roots. Provider-owned profile contents remain untouched beneath the private
+  ancestor.
+
 - **Scaffold writes no longer race into repository-owned paths.** New `coop init` files use
   repository-anchored, exclusive creation and refuse links or unsupported entries instead of
   following or replacing them. Subproject registration stages a complete `project.yaml`, checks

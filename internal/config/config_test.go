@@ -609,6 +609,9 @@ func TestWriteFileAtomic(t *testing.T) {
 	if string(got) != "claude=work\n" {
 		t.Errorf("content = %q, want the last write", got)
 	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, err = %v; want 0600", info, err)
+	}
 	if names := dirNames(t, dir); !slices.Equal(names, []string{"defaults"}) {
 		t.Errorf("dir = %v, want only the target file (no leftover temps)", names)
 	}

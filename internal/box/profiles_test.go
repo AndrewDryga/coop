@@ -16,8 +16,13 @@ func TestEnsureProfilesDirPreservesExisting(t *testing.T) {
 	cfg := &config.Config{ConfigDir: dir}
 	// A vault already in the profiles/ layout with a real default credential.
 	def := filepath.Join(dir, "codex", "profiles", "default")
-	if err := os.MkdirAll(def, 0o700); err != nil {
+	if err := os.MkdirAll(def, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	for _, path := range []string{dir, filepath.Join(dir, "codex"), filepath.Join(dir, "codex", "profiles")} {
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(def, "auth.json"), []byte("real"), 0o600); err != nil {
 		t.Fatal(err)
@@ -29,6 +34,25 @@ func TestEnsureProfilesDirPreservesExisting(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(def, "auth.json"))
 	if err != nil || string(got) != "real" {
 		t.Errorf("existing default profile clobbered: %q (err %v)", got, err)
+	}
+	for _, path := range []string{dir, filepath.Join(dir, "codex"), filepath.Join(dir, "codex", "profiles")} {
+		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o700 {
+			t.Errorf("%s was not tightened to 0700: info=%v err=%v", path, info, err)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(def, "auth.json")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("provider-owned credential mode changed: info=%v err=%v", info, err)
+	}
+}
+
+func TestEnsureProfilesDirRefusesUnsafeRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "agents")
+	if err := os.Symlink(t.TempDir(), root); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureProfilesDir(&config.Config{ConfigDir: root}, "codex"); err == nil {
+		t.Fatal("symlinked credential root was accepted")
 	}
 }
 

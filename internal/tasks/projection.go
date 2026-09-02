@@ -1316,10 +1316,7 @@ func snapshotForkProjection(authorityRepo, root, id string, expected ForkTaskOwn
 		return ProjectionResult{}, "", err
 	}
 	stateRoot := forkspace.StateDir(authorityRepo)
-	if err := ensureRealDirectory(forkspace.Home(authorityRepo), 0o755); err != nil {
-		return ProjectionResult{}, "", err
-	}
-	if err := ensureRealDirectory(stateRoot, 0o755); err != nil {
+	if err := forkspace.EnsureStateDir(authorityRepo); err != nil {
 		return ProjectionResult{}, "", err
 	}
 	snapshots := filepath.Join(stateRoot, "projection-snapshots")

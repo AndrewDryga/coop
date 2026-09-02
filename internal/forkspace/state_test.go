@@ -13,6 +13,82 @@ import (
 	"time"
 )
 
+func TestForkStateRootAndFilesAreOwnerOnly(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(StateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(LockPath(repo, "perf"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(LockPath(repo, "perf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	unlock, err := LockState(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if err := WriteWorkerState(repo, "perf", WorkerState{Pending: true}); err != nil {
+		t.Fatal(err)
+	}
+	assertForkStatePerm(t, StateDir(repo), 0o700)
+	assertForkStatePerm(t, LockPath(repo, "perf"), 0o600)
+	assertForkStatePerm(t, PidPath(repo, "perf"), 0o600)
+}
+
+func TestForkStateRootRefusesUnsafeEntries(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T, string)
+	}{
+		{
+			name: "symlink",
+			setup: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.Symlink(t.TempDir(), path); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "regular file",
+			setup: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.WriteFile(path, []byte("not a directory\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := filepath.Join(t.TempDir(), "project")
+			if err := os.MkdirAll(Home(repo), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tc.setup(t, StateDir(repo))
+			if _, err := LockState(repo, "perf"); err == nil {
+				t.Fatal("unsafe fork state root was accepted")
+			}
+		})
+	}
+}
+
+func assertForkStatePerm(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %04o, want %04o", path, got, want)
+	}
+}
+
 func TestForkStatePaths(t *testing.T) {
 	repo := "/home/me/proj"
 	if got, want := StateDir(repo), "/home/me/proj-forks/.coop"; got != want {

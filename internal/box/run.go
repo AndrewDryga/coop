@@ -272,6 +272,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	projectEnv := p.Box.Env
 	composeFile := ComposeFileAt(spec.Repo, p.ComposeRel())
 	spec.servePorts = p.Serve.Ports
+	workdir := resolveWorkdir(spec, cfg)
+	if spec.Homes {
+		if err := ensureAgentHomes(cfg, spec); err != nil {
+			return -1, err
+		}
+	}
 	if spec.Review {
 		if p.Review.Compose != "" {
 			composeFile = ComposeFileAt(spec.Repo, p.Review.Compose)
@@ -305,8 +311,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, fmt.Errorf("mcp.json: %w", err)
 		}
 	}
-	workdir := resolveWorkdir(spec, cfg)
-
 	mounts, err := ComputeMounts(spec.Repo, workdir)
 	if err != nil {
 		return -1, err
@@ -583,7 +587,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return -1, err
 	}
 	if spec.Homes {
-		ensureAgentHomes(cfg, spec, workdir)
+		ensureAgentDefaults(cfg, spec, workdir)
 		// An ACP box shares the lead's session transcripts across credentials (see assembleArgs), so
 		// ensure that shared store exists before it's mounted.
 		if spec.ShareACPSessions {
@@ -1246,18 +1250,35 @@ func resolvedRoleTargetList(cfg *config.Config, role *preset.Role) string {
 	return strings.Join(parts, " ")
 }
 
-// ensureAgentHomes pre-creates the credential-home dir and first-run defaults for exactly
+// ensureAgentHomes pre-creates the credential-home dir for exactly
 // the agents this run MOUNTS (credentialScope: the launched agent plus named consult peers)
 // — not every agent. Pre-creating all three was a husk factory: every box
 // run materialized each agent's active-profile dir, so a profile the user deleted (an empty
 // "default" showing "not signed in" in `coop credentials`) kept reappearing, seeded with
 // EnsureDefaults' settings files, recreated by runs that never involved that agent. An
 // out-of-scope agent has no home mounted, so nothing in the box reads the dir anyway.
-// Best-effort: EnsureDefaults is best-effort too, and a real failure to make the vault
-// surfaces with a clearer error when its home is mounted. 0o700 — owner-only.
-func ensureAgentHomes(cfg *config.Config, spec RunSpec, workdir string) {
+// Provider defaults remain provider-owned/best-effort and are written only after every required
+// input has validated. Host-owned ancestor permissions are mandatory and are established before
+// any credential read, mount, or runtime access.
+func ensureAgentHomes(cfg *config.Config, spec RunSpec) error {
 	for _, name := range credentialScope(cfg, spec) {
-		_ = os.MkdirAll(cfg.AgentDir(name), 0o700)
+		if err := EnsureProfilesDir(cfg, name); err != nil {
+			return fmt.Errorf("prepare %s credential root: %w", name, err)
+		}
+		profileRoot := filepath.Join(cfg.ConfigDir, name, "profiles")
+		profileDir := cfg.AgentDir(name)
+		if filepath.Dir(profileDir) != profileRoot {
+			return fmt.Errorf("prepare %s credential profile: selected name does not resolve inside %s", name, profileRoot)
+		}
+		if err := config.EnsurePrivateDir(profileDir); err != nil {
+			return fmt.Errorf("prepare %s credential profile: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func ensureAgentDefaults(cfg *config.Config, spec RunSpec, workdir string) {
+	for _, name := range credentialScope(cfg, spec) {
 		if ag, ok := agents.Get(name); ok {
 			ag.EnsureDefaults(cfg, workdir)
 		}

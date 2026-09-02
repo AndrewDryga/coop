@@ -107,15 +107,17 @@ func ProfileTokenMtime(cfg *config.Config, agent, profile string) (time.Time, bo
 	return fi.ModTime(), true
 }
 
-// EnsureProfilesDir creates agent's profiles/ dir (0700) if it's missing — run before a
-// profile other than the default is created, so config.AgentProfileDir resolves "default"
-// (and every named profile) under it. Idempotent: a no-op once profiles/ exists.
+// EnsureProfilesDir creates or tightens the host-owned credential ancestors before a profile is
+// read or mounted. Provider-owned descendants keep their own modes beneath this 0700 boundary.
 func EnsureProfilesDir(cfg *config.Config, agent string) error {
-	profiles := filepath.Join(cfg.ConfigDir, agent, "profiles")
-	if dirExists(profiles) {
-		return nil
+	if err := config.EnsurePrivateDir(cfg.ConfigDir); err != nil {
+		return err
 	}
-	return os.MkdirAll(profiles, 0o700)
+	if err := config.EnsurePrivateDir(filepath.Join(cfg.ConfigDir, agent)); err != nil {
+		return err
+	}
+	profiles := filepath.Join(cfg.ConfigDir, agent, "profiles")
+	return config.EnsurePrivateDir(profiles)
 }
 
 func dirExists(path string) bool {

@@ -173,6 +173,9 @@ func TestForkGenerationPublicationLeavesOneLinkAndNoTemporaryAuthority(t *testin
 	if !ok || stat.Nlink != 1 {
 		t.Fatalf("published authority link count = %v", stat)
 	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("published authority mode = %04o, want 0600", got)
+	}
 	matches, err := filepath.Glob(filepath.Join(StateDir(repo), ".clean.generation-*"))
 	if err != nil {
 		t.Fatal(err)

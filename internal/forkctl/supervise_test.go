@@ -86,6 +86,53 @@ func TestDetachStartFailureReleasesReservation(t *testing.T) {
 	}
 }
 
+func TestForkLogIsOwnerOnlyAndDoesNotFollowLinks(t *testing.T) {
+	t.Run("new and reused regular file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "fork.log")
+		if err := os.WriteFile(path, []byte("old output\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		file, err := OpenForkLog(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.WriteString("new output\n"); err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("fork log mode = %v, err=%v; want 0600", info, err)
+		}
+		if got, err := os.ReadFile(path); err != nil || string(got) != "new output\n" {
+			t.Fatalf("fork log did not preserve truncate-on-start behavior: %q, %v", got, err)
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		outside := filepath.Join(t.TempDir(), "outside.log")
+		if err := os.WriteFile(outside, []byte("keep\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "fork.log")
+		if err := os.Symlink(outside, path); err != nil {
+			t.Fatal(err)
+		}
+		if file, err := OpenForkLog(path); err == nil {
+			_ = file.Close()
+			t.Fatal("symlinked fork log was accepted")
+		}
+		if got, err := os.ReadFile(outside); err != nil || string(got) != "keep\n" {
+			t.Fatalf("symlink target changed: %q, %v", got, err)
+		}
+	})
+}
+
 // The start path itself must clear an abandoned reservation, not just claimForkPid: a fork whose
 // last start died before its worker existed has to be startable again with no `coop fork stop`.
 func TestDetachReclaimsAbandonedReservation(t *testing.T) {

@@ -524,11 +524,17 @@ coop login gemini     # or it logs in on first use
 only to boxes whose credential scope includes that provider:
 
 ```bash
+install -d -m 700 ~/.config/coop/agents
+touch ~/.config/coop/agents/env
+chmod 600 ~/.config/coop/agents/env
 echo 'ANTHROPIC_API_KEY=sk-…'  >> ~/.config/coop/agents/env
 echo 'OPENAI_API_KEY=sk-…'      >> ~/.config/coop/agents/env
 echo 'GEMINI_API_KEY=AIza…'    >> ~/.config/coop/agents/env
 echo 'XAI_API_KEY=xai-…'        >> ~/.config/coop/agents/env
 ```
+
+Coop also tightens the credential root to `0700` and this shared secret file to `0600` before
+using them, including installations created by older versions.
 
 | Agent | Accepted token keys |
 | --- | --- |

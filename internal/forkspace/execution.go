@@ -221,26 +221,10 @@ func decodeExecutionRecord(data []byte) (ExecutionRecord, error) {
 }
 
 func ensureExecutionDir(repo string) error {
-	if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
+	if err := EnsureStateDir(repo); err != nil {
 		return err
 	}
-	if info, err := os.Lstat(StateDir(repo)); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		if err != nil {
-			return err
-		}
-		return errors.New("fork state root is not a real directory")
-	}
-	if err := os.Mkdir(executionDir(repo), 0o755); err != nil && !errors.Is(err, os.ErrExist) {
-		return err
-	}
-	info, err := os.Lstat(executionDir(repo))
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		if err != nil {
-			return err
-		}
-		return errors.New("project execution registry is not a real directory")
-	}
-	return nil
+	return ensurePrivateStateDir(executionDir(repo))
 }
 
 func ensureFallbackExecutionDir(dir string) error {

@@ -910,8 +910,8 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 	var sink io.Writer
 	if !detached {
 		// Foreground: tee to a log so `coop fork logs` works after the fact too.
-		if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err == nil {
-			if f, err := os.Create(forkspace.LogPath(repo, name)); err == nil {
+		if err := forkspace.EnsureStateDir(repo); err == nil {
+			if f, err := forkctl.OpenForkLog(forkspace.LogPath(repo, name)); err == nil {
 				defer f.Close()
 				sink = f
 			}

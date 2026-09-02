@@ -59,12 +59,13 @@ func ensureForkProposalAssignmentRecordRoot(repo string, identity forkspace.Iden
 	if !validAssignmentID(assignmentID) {
 		return errors.New("invalid proposal assignment identity")
 	}
+	if err := forkspace.EnsureStateDir(repo); err != nil {
+		return err
+	}
 	for _, dir := range []struct {
 		path string
 		mode os.FileMode
 	}{
-		{forkspace.Home(repo), 0o755},
-		{forkspace.StateDir(repo), 0o755},
 		{filepath.Join(forkspace.StateDir(repo), "proposals"), 0o700},
 		{forkProposalRecordRoot(repo, identity), 0o700},
 		{forkProposalAssignmentRecordRoot(repo, identity, assignmentID), 0o700},

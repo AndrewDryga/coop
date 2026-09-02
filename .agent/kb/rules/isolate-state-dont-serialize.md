@@ -4,7 +4,7 @@ description: "when shared state breaks concurrency, isolate the state; never loc
 scope: box
 sources: [internal/box/profiles.go, internal/box/run.go, internal/agent/codex.go]
 check: "none"
-updated: 2026-08-09
+updated: 2026-09-03
 ---
 
 # Isolate the state, don't serialize the users of it
@@ -43,6 +43,8 @@ left to lock.
   must be idempotent across generations of the same logical session.
 
 ## Changelog
+- 2026-09-03 — re-verified after credential-root permission hardening: owner-only ancestors protect
+  shared credentials and transcripts without adding a per-account or per-session serialization lock
 - 2026-07-12 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: confirmed `CODEX_SQLITE_HOME` still wired exactly as

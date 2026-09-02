@@ -330,7 +330,7 @@ func EnsureGenerationLocked(repo, name string) (Identity, error) {
 }
 
 func writeGenerationAtomic(repo, name string, data []byte) error {
-	if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
+	if err := EnsureStateDir(repo); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(StateDir(repo), "."+name+".generation-")
@@ -343,7 +343,7 @@ func writeGenerationAtomic(repo, name string, data []byte) error {
 			_ = os.Remove(tmp)
 		}
 	}()
-	if err := f.Chmod(0o644); err != nil {
+	if err := f.Chmod(0o600); err != nil {
 		_ = f.Close()
 		return err
 	}

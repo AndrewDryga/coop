@@ -210,6 +210,9 @@ func writeForkDiscard(repo string, intent forkDiscardIntent) error {
 	if err := validateForkDiscard(intent); err != nil {
 		return err
 	}
+	if err := forkspace.EnsureStateDir(repo); err != nil {
+		return err
+	}
 	body, err := json.Marshal(intent)
 	if err != nil {
 		return err

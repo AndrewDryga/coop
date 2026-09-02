@@ -132,10 +132,7 @@ func writeForkCandidate(repo string, candidate ForkCandidate) error {
 	if err := validateForkCandidate(candidate); err != nil {
 		return err
 	}
-	if err := ensureRealDirectory(forkspace.Home(repo), 0o755); err != nil {
-		return err
-	}
-	if err := ensureRealDirectory(forkspace.StateDir(repo), 0o755); err != nil {
+	if err := forkspace.EnsureStateDir(repo); err != nil {
 		return err
 	}
 	if _, ok, err := ReadForkCandidate(repo, candidate.Fork); err != nil {

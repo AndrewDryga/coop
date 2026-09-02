@@ -70,10 +70,7 @@ func ensureRealDirectory(path string, mode os.FileMode) error {
 }
 
 func ensureForkAssignmentIndexDir(repo string, identity forkspace.Identity) error {
-	if err := ensureRealDirectory(forkspace.Home(repo), 0o755); err != nil {
-		return err
-	}
-	if err := ensureRealDirectory(forkspace.StateDir(repo), 0o755); err != nil {
+	if err := forkspace.EnsureStateDir(repo); err != nil {
 		return err
 	}
 	root := filepath.Join(forkspace.StateDir(repo), "assignments")

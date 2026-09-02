@@ -23,6 +23,9 @@ func TestWorkspaceReservationIsExactIdempotentAndBlocksLifecycle(t *testing.T) {
 		unlock()
 		t.Fatal(err)
 	}
+	assertForkStatePerm(t, StateDir(repo), 0o700)
+	assertForkStatePerm(t, reservationDir(repo), 0o700)
+	assertForkStatePerm(t, filepath.Join(reservationDir(repo), reservationName(identity)), 0o600)
 	if err := ReserveWorkspaceLocked(repo, record); err != nil {
 		unlock()
 		t.Fatalf("idempotent reserve: %v", err)

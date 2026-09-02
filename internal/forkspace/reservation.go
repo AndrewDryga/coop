@@ -67,22 +67,10 @@ func validateWorkspaceReservation(record WorkspaceReservation) error {
 }
 
 func ensureReservationDir(repo string) error {
-	for _, entry := range []struct {
-		path string
-		mode os.FileMode
-	}{{Home(repo), 0o755}, {StateDir(repo), 0o755}, {reservationDir(repo), 0o700}} {
-		if err := os.Mkdir(entry.path, entry.mode); err != nil && !errors.Is(err, os.ErrExist) {
-			return err
-		}
-		info, err := os.Lstat(entry.path)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			if err != nil {
-				return err
-			}
-			return fmt.Errorf("workspace reservation path %q is not a real directory", entry.path)
-		}
+	if err := EnsureStateDir(repo); err != nil {
+		return err
 	}
-	return nil
+	return ensurePrivateStateDir(reservationDir(repo))
 }
 
 func decodeWorkspaceReservation(data []byte) (WorkspaceReservation, error) {

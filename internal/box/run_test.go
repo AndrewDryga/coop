@@ -2078,7 +2078,9 @@ func TestInstructionPlan(t *testing.T) {
 func TestEnsureAgentHomesScoped(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}
-	ensureAgentHomes(cfg, RunSpec{Homes: true, Agent: "claude"}, "/workspace")
+	if err := ensureAgentHomes(cfg, RunSpec{Homes: true, Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
 	if !dirExists(filepath.Join(dir, "claude")) {
 		t.Error("the launched agent's home was not created")
 	}
@@ -2088,9 +2090,85 @@ func TestEnsureAgentHomesScoped(t *testing.T) {
 		}
 	}
 	raw := t.TempDir()
-	ensureAgentHomes(&config.Config{ConfigDir: raw}, RunSpec{Homes: true}, "/workspace")
+	if err := ensureAgentHomes(&config.Config{ConfigDir: raw}, RunSpec{Homes: true}); err != nil {
+		t.Fatal(err)
+	}
 	if entries, _ := os.ReadDir(raw); len(entries) != 0 {
 		t.Errorf("a raw run (no agent) created agent homes: %v", entries)
+	}
+}
+
+func TestEnsureAgentHomesTightensSelectedProfileOnly(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir}
+	profile := cfg.AgentProfileDir("codex", "default")
+	if err := os.MkdirAll(profile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{dir, filepath.Join(dir, "codex"), filepath.Join(dir, "codex", "profiles"), profile} {
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	providerFile := filepath.Join(profile, "provider-state.json")
+	if err := os.WriteFile(providerFile, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(providerFile, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureAgentHomes(cfg, RunSpec{Homes: true, Agent: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{dir, filepath.Join(dir, "codex"), filepath.Join(dir, "codex", "profiles"), profile} {
+		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o700 {
+			t.Errorf("%s was not tightened to 0700: info=%v err=%v", path, info, err)
+		}
+	}
+	if info, err := os.Stat(providerFile); err != nil || info.Mode().Perm() != 0o644 {
+		t.Errorf("provider-owned descendant mode changed: info=%v err=%v", info, err)
+	}
+}
+
+func TestEnsureAgentHomesRefusesProfilePathEscape(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{ConfigDir: filepath.Join(root, "agents")}
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetActiveProfile("codex", "../../../outside")
+
+	if err := ensureAgentHomes(cfg, RunSpec{Homes: true, Agent: "codex"}); err == nil {
+		t.Fatal("profile path escape was accepted")
+	}
+	if info, err := os.Stat(outside); err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("outside directory was changed: info=%v err=%v", info, err)
+	}
+}
+
+func TestRunRefusesUnsafeCredentialProfileBeforeRuntime(t *testing.T) {
+	repo := t.TempDir()
+	configDir := t.TempDir()
+	profiles := filepath.Join(configDir, "codex", "profiles")
+	if err := os.MkdirAll(profiles, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(profiles, "default")); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", Egress: "none"}
+	code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		Homes: true, Agent: "codex", Batch: true, Quiet: true,
+	})
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "credential profile") {
+		t.Fatalf("Run = (%d, %v), want unsafe-profile refusal", code, err)
+	}
+	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unsafe profile reached runtime: %v", statErr)
 	}
 }
 

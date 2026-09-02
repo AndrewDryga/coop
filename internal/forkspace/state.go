@@ -49,6 +49,33 @@ func LogPath(repo, name string) string  { return filepath.Join(StateDir(repo), n
 func PidPath(repo, name string) string  { return filepath.Join(StateDir(repo), name+".pid") }
 func LockPath(repo, name string) string { return filepath.Join(StateDir(repo), name+".lock") }
 
+// EnsureStateDir creates or tightens the central fork control directory. Fork workspaces remain
+// ordinary project directories; only the host-owned .coop authority and its descendants are
+// owner-private.
+func EnsureStateDir(repo string) error {
+	if err := os.MkdirAll(Home(repo), 0o755); err != nil {
+		return err
+	}
+	return ensurePrivateStateDir(StateDir(repo))
+}
+
+func ensurePrivateStateDir(path string) error {
+	if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("fork state path %q is not a real directory", path)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		return fmt.Errorf("make fork state path %q owner-only: %w", path, err)
+	}
+	return nil
+}
+
 // LockState serializes start, worker cleanup, and stop for one fork. The lock file persists,
 // but flock ownership does not: the kernel releases it if a coop process crashes.
 func LockState(repo, name string) (func(), error) {
@@ -59,11 +86,15 @@ func LockState(repo, name string) (func(), error) {
 // wait forever behind another process. The ordinary command path passes a
 // background context and retains the historical blocking behavior.
 func LockStateContext(ctx context.Context, repo, name string) (func(), error) {
-	if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
+	if err := EnsureStateDir(repo); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(LockPath(repo, name), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(LockPath(repo, name), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
+		return nil, err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
 		return nil, err
 	}
 	for {
@@ -91,11 +122,15 @@ func LockStateContext(ctx context.Context, repo, name string) (func(), error) {
 // TryLockState is used by worker-exit cleanup: if stop already owns the lifecycle lock, the
 // worker must be allowed to exit rather than wait behind the command that's waiting for its exit.
 func TryLockState(repo, name string) (func(), bool) {
-	if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
+	if err := EnsureStateDir(repo); err != nil {
 		return nil, false
 	}
-	f, err := os.OpenFile(LockPath(repo, name), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(LockPath(repo, name), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
+		return nil, false
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
 		return nil, false
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
@@ -349,13 +384,16 @@ func WriteWorkerState(repo, name string, state WorkerState) error {
 }
 
 func writeStateAtomic(repo, name string, data []byte) error {
+	if err := EnsureStateDir(repo); err != nil {
+		return err
+	}
 	f, err := os.CreateTemp(StateDir(repo), "."+name+".pid-")
 	if err != nil {
 		return err
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
-	if err := f.Chmod(0o644); err != nil {
+	if err := f.Chmod(0o600); err != nil {
 		_ = f.Close()
 		return err
 	}

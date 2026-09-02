@@ -21,6 +21,9 @@ func TestExecutionRegistryTracksAllBoundIdentityAndExactCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertForkStatePerm(t, StateDir(repo), 0o700)
+	assertForkStatePerm(t, executionDir(repo), 0o700)
+	assertForkStatePerm(t, filepath.Join(executionDir(repo), record.ID+".json"), 0o600)
 	got, problems := Executions(repo)
 	if len(problems) != 0 || len(got) != 1 || !got[0].Running || !got[0].Active || got[0].Record.Fork == nil || *got[0].Record.Fork != identity {
 		t.Fatalf("executions = %#v, problems=%v", got, problems)
