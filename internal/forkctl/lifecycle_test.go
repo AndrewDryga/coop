@@ -28,7 +28,9 @@ func TestForkAgentMemory(t *testing.T) {
 		t.Errorf("ReadForkAgent(fresh) = %q, want empty", got)
 	}
 	// Persist, read back, and confirm it's git-excluded so it never lands.
-	SaveForkAgent(ws, "codex")
+	if err := SaveForkAgent(ws, "codex"); err != nil {
+		t.Fatal(err)
+	}
 	if got := ReadForkAgent(ws); got != "codex" {
 		t.Errorf("ReadForkAgent after save = %q, want codex", got)
 	}
@@ -37,7 +39,9 @@ func TestForkAgentMemory(t *testing.T) {
 		t.Errorf(".git/info/exclude missing .coop/: %q", excl)
 	}
 	// An explicit switch updates the memory; the exclude isn't duplicated.
-	SaveForkAgent(ws, "gemini")
+	if err := SaveForkAgent(ws, "gemini"); err != nil {
+		t.Fatal(err)
+	}
 	if got := ReadForkAgent(ws); got != "gemini" {
 		t.Errorf("ReadForkAgent after switch = %q, want gemini", got)
 	}
@@ -67,7 +71,12 @@ func TestForkMetadataRefusesSymlinks(t *testing.T) {
 	if err := os.Symlink(outside, meta); err != nil {
 		t.Fatal(err)
 	}
-	SaveForkAgent(ws, "claude")
+	if err := SaveForkAgent(ws, "claude"); err == nil || !strings.Contains(err.Error(), meta) {
+		t.Fatalf("SaveForkAgent through symlink = %v, want path-specific error", err)
+	}
+	if err := ClearForkSession(ws, "claude", "work"); err == nil || !strings.Contains(err.Error(), meta) {
+		t.Fatalf("ClearForkSession through symlink = %v, want path-specific error", err)
+	}
 	if pathExists(filepath.Join(outside, "agent")) {
 		t.Fatal("fork metadata write followed a symlinked .coop directory")
 	}
@@ -88,8 +97,12 @@ func TestForkMetadataRefusesSymlinks(t *testing.T) {
 	if got := ReadForkSession(ws, "claude", "work"); got != "" {
 		t.Fatalf("ReadForkSession followed a symlink: %q", got)
 	}
-	SaveForkAgent(ws, "gemini")
-	SaveForkSession(ws, "claude", "work", strings.TrimSpace(want))
+	if err := SaveForkAgent(ws, "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveForkSession(ws, "claude", "work", strings.TrimSpace(want)); err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(sentinel)
 	if err != nil || string(data) != want {
 		t.Fatalf("fork metadata write changed symlink target: %q, %v", data, err)
@@ -99,6 +112,26 @@ func TestForkMetadataRefusesSymlinks(t *testing.T) {
 	}
 	if got := ReadForkSession(ws, "claude", "work"); got != strings.TrimSpace(want) {
 		t.Fatalf("safe session replacement = %q", got)
+	}
+	if err := ClearForkSession(ws, "claude", "work"); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadForkSession(ws, "claude", "work"); got != "" {
+		t.Fatalf("session after clear = %q, want empty", got)
+	}
+	if err := ClearForkSession(ws, "claude", "work"); err != nil {
+		t.Fatalf("clear missing session: %v", err)
+	}
+}
+
+func TestForkMetadataReportsNonReplaceableEntry(t *testing.T) {
+	ws := t.TempDir()
+	path := ForkSessionFile(ws, "claude", "work")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveForkSession(ws, "claude", "work", "11111111-2222-4333-8444-555555555555"); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("SaveForkSession with directory target = %v, want path-specific error", err)
 	}
 }
 

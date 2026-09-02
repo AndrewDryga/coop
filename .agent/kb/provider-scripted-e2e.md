@@ -2,8 +2,8 @@
 name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
-sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-08-25
+sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
+updated: 2026-09-03
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -26,7 +26,9 @@ launch shapes; provider, account, cwd, and explicit-ID isolation; remembered-pro
 across `--fresh`; task seeding; confirmation; merge; and parent queue reconciliation. Claude,
 Gemini, and Grok use Coop-owned IDs scoped by provider and account. Coop records Codex's native
 post-run ID and later requires that exact account/cwd match; a missing hint starts fresh rather
-than adopting provider-only fork metadata or the latest conversation for a cwd. All Coop-owned
+than adopting provider-only fork metadata or the latest conversation for a cwd. Provider choice
+and Coop-owned IDs must persist before launch. Codex's necessarily post-run write reports partial
+success if its exact native ID cannot persist; it never silently promises resumability. All Coop-owned
 interactive Codex producers for one profile/cwd take the same host-only ConfigDir lock, even across
 parent repos; contention fails before provider launch because a TUI can remain open for hours.
 External Codex processes cannot participate, so native-ID attribution remains best-effort if one
@@ -116,6 +118,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-09-03 - fork provider and Coop-owned session IDs became required pre-launch writes; Codex's
+  necessarily post-run native-ID write now reports partial success if exact resume cannot be saved
 - 2026-08-25 - removed provider-only and latest-by-cwd fork-session adoption; process coverage proves
   both old paths are ignored while current per-account hints and post-run Codex attribution remain
 - 2026-08-25 - moved loop lease proof out of the provider fixture and onto the real host authority;

@@ -626,7 +626,9 @@ func (a *app) forkCreate(args []string) (int, error) {
 		// the old worker is stopped and the workspace is adopted into a generation.
 		return 1, fmt.Errorf("fork %s detached worker has legacy state without a generation — stop it and restart", fa.name)
 	}
-	forkctl.SaveForkAgent(ws, fa.agent)
+	if err := forkctl.SaveForkAgent(ws, fa.agent); err != nil {
+		return -1, fmt.Errorf("save fork provider before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))
+	}
 	if fa.loop {
 		// The worker/foreground paths run the loop here, so resolve --peer to peer targets
 		// (validate authed, reject an @account). The detach path re-execs `coop fork … --peer
@@ -672,14 +674,19 @@ func (a *app) forkCreate(args []string) (int, error) {
 				sessionsBefore = snapshot
 			}
 			if fa.newSession {
-				forkctl.ClearForkSession(ws, fa.agent, account)
+				if err := forkctl.ClearForkSession(ws, fa.agent, account); err != nil {
+					return -1, fmt.Errorf("clear fork session before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))
+				}
 			}
 		}
 	}
 	// Resume the agent's prior session by default when re-entering a fork (opt out with
 	// --new; --fresh recreates the fork, so it starts new too). Falls back to a fresh
 	// run when no session for this fork exists. See forkLaunchCmd.
-	cmd := a.forkLaunchCmd(fa, ws, existed)
+	cmd, err := a.forkLaunchCmd(fa, ws, existed)
+	if err != nil {
+		return -1, fmt.Errorf("prepare fork session before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))
+	}
 	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: ws, Cmd: cmd, Agent: fa.agent, ConsultLead: fa.agent, Preset: a.preset,
 		ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkInteractive,
@@ -689,10 +696,16 @@ func (a *app) forkCreate(args []string) (int, error) {
 		ForkGeneration: string(forkIdentity.Generation),
 	})
 	if err == nil {
+		var rememberErr error
 		if captureNewSession {
-			a.rememberNewDiscoveredForkSession(ws, fa.agent, discoverer, sessionsBefore)
+			if saveErr := a.rememberNewDiscoveredForkSession(ws, fa.agent, discoverer, sessionsBefore); saveErr != nil {
+				rememberErr = saveErr
+			}
 		}
 		forkctl.ForkNextSteps(fa.name) // the box ran (the work is in the fork); print next steps even on a nonzero agent exit
+		if rememberErr != nil {
+			return code, rememberErr
+		}
 	}
 	return code, err // propagate the agent's exit code, like every other launch path
 }
@@ -704,10 +717,10 @@ func (a *app) forkCreate(args []string) (int, error) {
 // exactly it later — so a loop or consult that shares the cwd can never hijack the
 // "continue". codex can't preset an id, so coop persists the native id it discovers
 // after a run and resumes that exact session later.
-func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool) []string {
+func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool) ([]string, error) {
 	ag, ok := agents.Get(fa.agent)
 	if !ok {
-		return a.defaultCmd(fa.agent)
+		return a.defaultCmd(fa.agent), nil
 	}
 	sessionCWD := box.Workdir(a.cfg, ws)
 	account := a.cfg.ActiveProfile(fa.agent)
@@ -717,29 +730,36 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool) []string {
 	}
 	if ag.PresetSessionID() {
 		if id == "" {
-			if sid, err := newSessionID(); err == nil {
-				id = sid
-				forkctl.SaveForkSession(ws, fa.agent, account, id)
+			sid, err := newSessionID()
+			if err != nil {
+				return nil, fmt.Errorf("allocate %s session ID: %w", fa.agent, err)
 			}
+			if err := forkctl.SaveForkSession(ws, fa.agent, account, sid); err != nil {
+				return nil, fmt.Errorf("save %s session ID before launch: %w", fa.agent, err)
+			}
+			id = sid
 		}
 	}
 	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
 		if rc, resumed := ag.Resume(a.cfg, sessionCWD, id); resumed {
 			ui.Info("continuing your last %s session in this fork", fa.agent)
-			return rc
+			return rc, nil
 		}
 	}
-	return ag.StartSession(a.cfg, id)
+	return ag.StartSession(a.cfg, id), nil
 }
 
-func (a *app) rememberNewDiscoveredForkSession(ws, provider string, discoverer agents.SessionDiscoverer, before []string) {
+func (a *app) rememberNewDiscoveredForkSession(ws, provider string, discoverer agents.SessionDiscoverer, before []string) error {
 	if discoverer == nil {
-		return
+		return nil
 	}
 	id := uniquelyNewSessionID(before, discoverer.SessionIDs(a.cfg, box.Workdir(a.cfg, ws)))
 	if agents.ValidSessionID(id) {
-		forkctl.SaveForkSession(ws, provider, a.cfg.ActiveProfile(provider), id)
+		if err := forkctl.SaveForkSession(ws, provider, a.cfg.ActiveProfile(provider), id); err != nil {
+			return fmt.Errorf("%s run finished and its work remains in fork %s, but Coop could not save the exact session for re-entry: %w — fix ownership or permissions of %s before re-entering", provider, filepath.Base(ws), err, filepath.Join(ws, ".coop"))
+		}
 	}
+	return nil
 }
 
 func uniquelyNewSessionID(before, after []string) string {

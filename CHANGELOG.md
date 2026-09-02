@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fork conversation resume state is no longer best-effort.** Coop now refuses to launch until a
+  selected provider and every Coop-owned session ID are durably recorded. If Codex finishes but
+  its provider-minted ID cannot be saved afterward, Coop says the work remains in the fork while
+  exact conversation re-entry is unavailable, instead of silently starting over next time.
+
 - **Fork setup and discovery now fail cleanly.** A new fork is kept only after its requested branch,
   Git identity, and bookkeeping exclusion are ready; failed setup removes the incomplete clone.
   Fork listing, logs, snapshots, and bulk merge now distinguish a missing fork root from a root

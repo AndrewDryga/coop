@@ -94,7 +94,9 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			id := forkctl.ReadForkSession(ws, provider, account)
 			if provider == "codex" {
 				id = "11111111-2222-4333-8444-000000000001"
-				forkctl.SaveForkSession(ws, provider, account, id)
+				if err := forkctl.SaveForkSession(ws, provider, account, id); err != nil {
+					t.Fatal(err)
+				}
 			} else if id == "" {
 				t.Fatalf("%s fresh run did not persist an exact session id", provider)
 			}
@@ -237,7 +239,9 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		}
 		staleID := "11111111-2222-4333-8444-000000000099"
 		replacementID := "11111111-2222-4333-8444-000000000003"
-		forkctl.SaveForkSession(noSessionWS, provider, account, staleID)
+		if err := forkctl.SaveForkSession(noSessionWS, provider, account, staleID); err != nil {
+			t.Fatal(err)
+		}
 		replacementScenario := processScenario(provider, nil, 0, "")
 		replacementScenario["native_session"] = map[string]string{"account": account, "cwd": "/workspace/fork", "id": replacementID}
 		result, trace = runForkProcessScenario(t, &override, []string{noSessionName, target}, replacementScenario)

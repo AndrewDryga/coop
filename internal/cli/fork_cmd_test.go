@@ -365,6 +365,37 @@ func TestOrdinaryForkLaunchCannotEnterRemoteSessionWorkspace(t *testing.T) {
 	}
 }
 
+func TestForkCreateStopsBeforeBoxWhenProviderMetadataCannotBeSaved(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "metadata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := filepath.Join(ws, ".coop")
+	if err := os.Symlink(t.TempDir(), meta); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	a := &app{
+		cfg: &config.Config{
+			RepoOverride: repo, ConfigDir: t.TempDir(), BoxHome: t.TempDir(),
+			ImageOverride: "test-image", Egress: "none",
+		},
+		rt: recordingRuntime(t, recorder), rtSet: true,
+	}
+	code, runErr := a.forkCreate([]string{"metadata", "claude"})
+	if code != -1 || runErr == nil || !strings.Contains(runErr.Error(), "save fork provider before launch") ||
+		!strings.Contains(runErr.Error(), meta) {
+		t.Fatalf("forkCreate = (%d, %v), want provider metadata refusal", code, runErr)
+	}
+	if args, err := os.ReadFile(recorder); err != nil || strings.Contains(string(args), "\nrun ") || strings.HasPrefix(string(args), "run ") {
+		t.Fatalf("metadata failure reached box launch: %q, %v", args, err)
+	}
+}
+
 func TestForkFreshConfirmsBeforeRuntimeWork(t *testing.T) {
 	repo := initRepo(t)
 	ws, err := forkspace.Setup(repo, "perf")
@@ -695,10 +726,18 @@ func TestForkLaunchCmd(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{ConfigDir: cfgDir}}
+	launch := func(fa forkArgs, workspace string, existed bool) []string {
+		t.Helper()
+		cmd, err := a.forkLaunchCmd(fa, workspace, existed)
+		if err != nil {
+			t.Fatalf("forkLaunchCmd: %v", err)
+		}
+		return cmd
+	}
 
 	// First launch of a preset agent (claude): start under a fresh coop-owned id and
 	// persist it; the command carries --session-id <uuid>.
-	cmd := a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, false)
+	cmd := launch(forkArgs{name: "demo", agent: "claude"}, ws, false)
 	id := forkctl.ReadForkSession(ws, "claude", "default")
 	if id == "" {
 		t.Fatal("first launch did not persist a session id")
@@ -718,7 +757,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	if err := os.WriteFile(sess, []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd = a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, true)
+	cmd = launch(forkArgs{name: "demo", agent: "claude"}, ws, true)
 	if !slices.Contains(cmd, "--resume") || !slices.Contains(cmd, id) {
 		t.Errorf("re-entry cmd = %v, want --resume %s", cmd, id)
 	}
@@ -733,7 +772,9 @@ func TestForkLaunchCmd(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.cfg.Workdir = "/workspace/fork"
-	forkctl.SaveForkSession(overrideWS, "claude", "default", id)
+	if err := forkctl.SaveForkSession(overrideWS, "claude", "default", id); err != nil {
+		t.Fatal(err)
+	}
 	overrideSession := filepath.Join(a.cfg.AgentDir("claude"), "projects", agents.ClaudeProjectKey(a.cfg.Workdir), id+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(overrideSession), 0o755); err != nil {
 		t.Fatal(err)
@@ -741,7 +782,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	if err := os.WriteFile(overrideSession, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd = a.forkLaunchCmd(forkArgs{name: "override", agent: "claude"}, overrideWS, true)
+	cmd = launch(forkArgs{name: "override", agent: "claude"}, overrideWS, true)
 	if !slices.Contains(cmd, "--resume") || !slices.Contains(cmd, id) {
 		t.Errorf("COOP_WORKDIR re-entry cmd = %v, want --resume %s", cmd, id)
 	}
@@ -749,7 +790,7 @@ func TestForkLaunchCmd(t *testing.T) {
 
 	// --new rotates the persisted id instead of launching a supposedly fresh session under the
 	// existing conversation's id.
-	cmd = a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude", newSession: true}, ws, true)
+	cmd = launch(forkArgs{name: "demo", agent: "claude", newSession: true}, ws, true)
 	newID := forkctl.ReadForkSession(ws, "claude", "default")
 	if newID == "" || newID == id || !slices.Contains(cmd, "--session-id") || !slices.Contains(cmd, newID) || slices.Contains(cmd, "--resume") {
 		t.Errorf("--new command/id = %v / %q, want a new persisted --session-id distinct from %q", cmd, newID, id)
@@ -761,14 +802,16 @@ func TestForkLaunchCmd(t *testing.T) {
 	if err := os.MkdirAll(ws2, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	forkctl.SaveForkSession(ws2, "claude", "default", id)
-	cmd = a.forkLaunchCmd(forkArgs{name: "ghost", agent: "claude"}, ws2, true)
+	if err := forkctl.SaveForkSession(ws2, "claude", "default", id); err != nil {
+		t.Fatal(err)
+	}
+	cmd = launch(forkArgs{name: "ghost", agent: "claude"}, ws2, true)
 	if !slices.Contains(cmd, "--session-id") || slices.Contains(cmd, "--resume") {
 		t.Errorf("ghost re-entry cmd = %v, want a fresh --session-id (no live session)", cmd)
 	}
 
 	// codex can't preset an id: no session file, and a fresh start is plain Interactive.
-	cmd = a.forkLaunchCmd(forkArgs{name: "demo", agent: "codex"}, ws, false)
+	cmd = launch(forkArgs{name: "demo", agent: "codex"}, ws, false)
 	if forkctl.ReadForkSession(ws, "codex", "default") != "" {
 		t.Error("codex must not get a coop-owned session id")
 	}
@@ -789,7 +832,9 @@ func TestForkLaunchCmd(t *testing.T) {
 	}
 	codexAdapter, _ := agents.Get("codex")
 	discoverer := codexAdapter.(agents.SessionDiscoverer)
-	a.rememberNewDiscoveredForkSession(ws, "codex", discoverer, nil)
+	if err := a.rememberNewDiscoveredForkSession(ws, "codex", discoverer, nil); err != nil {
+		t.Fatal(err)
+	}
 	if got := forkctl.ReadForkSession(ws, "codex", "default"); got != codexID {
 		t.Fatalf("remembered Codex id = %q, want %q", got, codexID)
 	}
@@ -801,7 +846,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	if err := os.Chtimes(newerFile, time.Now().Add(time.Minute), time.Now().Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	cmd = a.forkLaunchCmd(forkArgs{name: "demo", agent: "codex"}, ws, true)
+	cmd = launch(forkArgs{name: "demo", agent: "codex"}, ws, true)
 	if !slices.Contains(cmd, "resume") || !slices.Contains(cmd, codexID) || slices.Contains(cmd, newerCodexID) {
 		t.Errorf("Codex exact re-entry cmd = %v, want persisted %s", cmd, codexID)
 	}
@@ -809,7 +854,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	// Each account gets a distinct hint. Switching accounts cannot reuse or overwrite the other
 	// account's explicit conversation id.
 	a.cfg.SetActiveProfile("claude", "work")
-	workCmd := a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, true)
+	workCmd := launch(forkArgs{name: "demo", agent: "claude"}, ws, true)
 	workID := forkctl.ReadForkSession(ws, "claude", "work")
 	if workID == "" || workID == newID || !slices.Contains(workCmd, workID) {
 		t.Errorf("work-account command/id = %v / %q, default id %q", workCmd, workID, newID)
@@ -819,7 +864,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	if err := os.WriteFile(forkctl.ForkSessionFile(ws, "claude", "work"), []byte("../../outside\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd = a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, true)
+	cmd = launch(forkArgs{name: "demo", agent: "claude"}, ws, true)
 	safeID := forkctl.ReadForkSession(ws, "claude", "work")
 	if safeID == "" || safeID == "../../outside" || !slices.Contains(cmd, safeID) || slices.Contains(cmd, "../../outside") {
 		t.Errorf("invalid persisted id was not replaced: cmd %v id %q", cmd, safeID)
@@ -842,11 +887,44 @@ func TestForkLaunchCmd(t *testing.T) {
 	if err := os.WriteFile(legacySession, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd = a.forkLaunchCmd(forkArgs{name: "legacy", agent: "claude"}, legacyWS, true)
+	cmd = launch(forkArgs{name: "legacy", agent: "claude"}, legacyWS, true)
 	got := forkctl.ReadForkSession(legacyWS, "claude", "work")
 	if got == "" || got == legacyID || !slices.Contains(cmd, "--session-id") ||
 		slices.Contains(cmd, "--resume") || slices.Contains(cmd, legacyID) {
 		t.Errorf("provider-only hint = id %q cmd %v, want a new account-scoped session", got, cmd)
+	}
+}
+
+type fixedSessionDiscoverer []string
+
+func (d fixedSessionDiscoverer) SessionIDs(*config.Config, string) []string { return d }
+func (fixedSessionDiscoverer) ProducesSession([]string) bool                { return true }
+
+func TestForkLaunchRequiresWritableSessionMetadata(t *testing.T) {
+	ws := filepath.Join(t.TempDir(), "repo-forks", "demo")
+	path := forkctl.ForkSessionFile(ws, "claude", "default")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	cmd, err := a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, false)
+	if err == nil || len(cmd) != 0 || !strings.Contains(err.Error(), path) {
+		t.Fatalf("forkLaunchCmd = %v, %v; want path-specific pre-launch save error", cmd, err)
+	}
+}
+
+func TestDiscoveredForkSessionSaveFailureIsReturned(t *testing.T) {
+	ws := filepath.Join(t.TempDir(), "repo-forks", "demo")
+	path := forkctl.ForkSessionFile(ws, "codex", "default")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	id := "11111111-2222-4333-8444-555555555555"
+	err := a.rememberNewDiscoveredForkSession(ws, "codex", fixedSessionDiscoverer{id}, nil)
+	if err == nil || !strings.Contains(err.Error(), "codex run finished") || !strings.Contains(err.Error(), "work remains in fork demo") ||
+		!strings.Contains(err.Error(), "could not save the exact session") || !strings.Contains(err.Error(), path) {
+		t.Fatalf("rememberNewDiscoveredForkSession error = %v", err)
 	}
 }
 
