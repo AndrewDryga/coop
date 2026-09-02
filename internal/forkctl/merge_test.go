@@ -329,7 +329,7 @@ func prepareForkTaskCandidate(t *testing.T, name string) (string, string, string
 	}
 	git(t, ws, "add", "feature.txt")
 	git(t, ws, "commit", "-qm", "implement canonical task\n\nCoop-Task: canonical-task")
-	projected, ok := tasks.CurrentTask(assignment.Owner.Projection, "canonical-task")
+	projected, ok := mustCurrentTask(t, assignment.Owner.Projection, "canonical-task")
 	if !ok {
 		t.Fatal("projected task missing")
 	}
@@ -355,7 +355,7 @@ func TestMergeOneLandsExactCandidateAndCanonicalTask(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(repo, "feature.txt")); err != nil || string(data) != "landed\n" {
 		t.Fatalf("landed Git content = %q, %v", data, err)
 	}
-	item, ok := tasks.CurrentTask(root, "canonical-task")
+	item, ok := mustCurrentTask(t, root, "canonical-task")
 	if !ok || item.State != tasks.StateDone {
 		t.Fatalf("canonical task after land = %+v, ok=%v", item, ok)
 	}
@@ -374,7 +374,7 @@ func TestMergeOneReplaysCrashAfterParentFastForward(t *testing.T) {
 	if !landed || err == nil || !strings.Contains(err.Error(), "injected crash") {
 		t.Fatalf("first merge = (%v, %v), want landed crash", landed, err)
 	}
-	item, _ := tasks.CurrentTask(root, "canonical-task")
+	item, _ := mustCurrentTask(t, root, "canonical-task")
 	if item.State != tasks.StateInProgress {
 		t.Fatalf("canonical task finalized before journal replay: %s", item.State)
 	}
@@ -383,7 +383,7 @@ func TestMergeOneReplaysCrashAfterParentFastForward(t *testing.T) {
 	if err != nil || !landed {
 		t.Fatalf("replayed merge = (%v, %v)", landed, err)
 	}
-	item, _ = tasks.CurrentTask(root, "canonical-task")
+	item, _ = mustCurrentTask(t, root, "canonical-task")
 	if item.State != tasks.StateDone {
 		t.Fatalf("canonical task after replay = %s", item.State)
 	}
@@ -410,7 +410,7 @@ func TestTaskCandidateMergeRecoversWhenParentMovesDuringGate(t *testing.T) {
 	if err != nil || !ok || intent.Phase != landPreparing || intent.RebasedHead != "" || intent.ParentBefore != gitOut(repo, "rev-parse", "HEAD") {
 		t.Fatalf("retryable land intent = %+v, ok=%v err=%v", intent, ok, err)
 	}
-	item, _ := tasks.CurrentTask(root, "canonical-task")
+	item, _ := mustCurrentTask(t, root, "canonical-task")
 	if item.State != tasks.StateInProgress {
 		t.Fatalf("canonical task finalized before retry: %s", item.State)
 	}
@@ -419,7 +419,7 @@ func TestTaskCandidateMergeRecoversWhenParentMovesDuringGate(t *testing.T) {
 	if !landed || err != nil {
 		t.Fatalf("retried merge = (%v, %v)", landed, err)
 	}
-	item, _ = tasks.CurrentTask(root, "canonical-task")
+	item, _ = mustCurrentTask(t, root, "canonical-task")
 	if item.State != tasks.StateDone || !pathExists(filepath.Join(repo, "hotfix.txt")) || !pathExists(filepath.Join(repo, "feature.txt")) {
 		t.Fatalf("retried land lost work: task=%s", item.State)
 	}
@@ -452,7 +452,7 @@ func TestTaskCandidateMergeReplaysCrashAfterRedGateRestoresWorkspace(t *testing.
 	if _, pending, err := readLandIntent(repo, identity); err != nil || pending {
 		t.Fatalf("restored red-gate journal remains: pending=%v err=%v", pending, err)
 	}
-	item, _ := tasks.CurrentTask(root, "canonical-task")
+	item, _ := mustCurrentTask(t, root, "canonical-task")
 	if item.State != tasks.StateInProgress {
 		t.Fatalf("red-gate replay finalized canonical task: %s", item.State)
 	}

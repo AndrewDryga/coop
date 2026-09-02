@@ -160,13 +160,22 @@ func (a *app) taskScopePaths(repo, id string) ([]string, error) {
 	}
 	var items []tasks.Item
 	for _, rel := range rels {
-		items = append(items, tasks.ReadTaskTree(filepath.Join(repo, rel))...)
+		queueItems, err := tasks.ReadTaskTree(filepath.Join(repo, rel))
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, queueItems...)
 	}
 	t, err := tasks.MatchTask(items, id, "coop tasks")
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(filepath.Join(t.Dir, "task.md"))
+	metadata, err := tasks.OpenTaskMetadataRoot(t.Dir)
+	if err != nil {
+		return nil, fmt.Errorf("coop context: reading task %s: %w", t.ID, err)
+	}
+	defer metadata.Close()
+	data, err := tasks.ReadTaskMetadataFile(metadata, "task.md")
 	if err != nil {
 		return nil, fmt.Errorf("coop context: reading task %s: %w", t.ID, err)
 	}

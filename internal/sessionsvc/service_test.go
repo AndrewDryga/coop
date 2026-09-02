@@ -409,7 +409,7 @@ func TestConfirmedEngineeringSessionEnsuresOneDurableWorkspaceTask(t *testing.T)
 		bound.WorkspaceTask.ID == "" || bound.WorkspaceTask.DraftSHA256 == "" {
 		t.Fatalf("workspace task binding = %+v", bound)
 	}
-	item, ok := tasks.CurrentTask(filepath.Join(bound.Workspace, tasks.TasksRoot), bound.WorkspaceTask.ID)
+	item, ok := mustCurrentTask(t, filepath.Join(bound.Workspace, tasks.TasksRoot), bound.WorkspaceTask.ID)
 	if !ok || item.State != tasks.StateTodo || len(item.Subtasks) != 2 {
 		t.Fatalf("workspace task = %+v, ok=%v", item, ok)
 	}
@@ -463,7 +463,7 @@ func TestParkedEngineeringWorkspaceCheckpointCapturesExactCodeAndTaskState(t *te
 		t.Fatal(err)
 	}
 	queue := filepath.Join(sess.Workspace, tasks.TasksRoot)
-	item, ok := tasks.CurrentTask(queue, sess.WorkspaceTask.ID)
+	item, ok := mustCurrentTask(t, queue, sess.WorkspaceTask.ID)
 	if !ok {
 		t.Fatal("workspace task disappeared")
 	}
@@ -474,7 +474,7 @@ func TestParkedEngineeringWorkspaceCheckpointCapturesExactCodeAndTaskState(t *te
 	if err := os.WriteFile(filepath.Join(item.Dir, "task.md"), bytes.Replace(body, []byte("- [ ]"), []byte("- [x]"), 1), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	item, _ = tasks.CurrentTask(queue, item.ID)
+	item, _ = mustCurrentTask(t, queue, item.ID)
 	if err := tasks.MoveTaskDir(queue, item, tasks.StateInProgress); err != nil {
 		t.Fatal(err)
 	}
@@ -649,7 +649,7 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 		t.Fatal(err)
 	}
 	queue := filepath.Join(source.Workspace, tasks.TasksRoot)
-	item, ok := tasks.CurrentTask(queue, source.WorkspaceTask.ID)
+	item, ok := mustCurrentTask(t, queue, source.WorkspaceTask.ID)
 	if !ok {
 		t.Fatal("source workspace task disappeared")
 	}
@@ -660,7 +660,7 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 	if err := os.WriteFile(filepath.Join(item.Dir, "task.md"), bytes.Replace(body, []byte("- [ ]"), []byte("- [x]"), 1), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	item, _ = tasks.CurrentTask(queue, item.ID)
+	item, _ = mustCurrentTask(t, queue, item.ID)
 	if err := tasks.MoveTaskDir(queue, item, tasks.StateInProgress); err != nil {
 		t.Fatal(err)
 	}
@@ -706,7 +706,7 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 	if got, err := os.ReadFile(filepath.Join(restored.Workspace, "helper.sh")); err != nil || string(got) != "#!/bin/sh\necho restored\n" {
 		t.Fatalf("restored untracked file = %q, err=%v", got, err)
 	}
-	restoredItem, ok := tasks.CurrentTask(filepath.Join(restored.Workspace, tasks.TasksRoot), source.WorkspaceTask.ID)
+	restoredItem, ok := mustCurrentTask(t, filepath.Join(restored.Workspace, tasks.TasksRoot), source.WorkspaceTask.ID)
 	if !ok || restoredItem.State != tasks.StateInProgress || len(restoredItem.Subtasks) != 1 || !restoredItem.Subtasks[0] {
 		t.Fatalf("restored task = %+v, ok=%v", restoredItem, ok)
 	}

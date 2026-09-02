@@ -2,12 +2,10 @@ package tasks
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -76,68 +74,6 @@ func appendSnapshotProblem(snapshot *ProjectSnapshot, scope string, err error) {
 	if err != nil {
 		snapshot.Problems = append(snapshot.Problems, scope+": "+err.Error())
 	}
-}
-
-func snapshotQueueProblems(root string) []error {
-	info, err := os.Lstat(root)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return []error{err}
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return []error{errors.New("queue root is not a real directory")}
-	}
-	var problems []error
-	for _, state := range TaskStates {
-		path := filepath.Join(root, state)
-		info, err := os.Lstat(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			problems = append(problems, fmt.Errorf("%s: %w", state, err))
-			continue
-		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			problems = append(problems, fmt.Errorf("%s: lifecycle state is not a real directory", state))
-			continue
-		}
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			problems = append(problems, fmt.Errorf("%s: %w", state, err))
-			continue
-		}
-		for _, entry := range entries {
-			taskPath := filepath.Join(path, entry.Name())
-			entryInfo, statErr := os.Lstat(taskPath)
-			if statErr != nil {
-				problems = append(problems, fmt.Errorf("%s/%s: %w", state, entry.Name(), statErr))
-				continue
-			}
-			if !entryInfo.IsDir() || entryInfo.Mode()&os.ModeSymlink != 0 {
-				problems = append(problems, fmt.Errorf("%s/%s: task entry is not a real directory", state, entry.Name()))
-				continue
-			}
-			taskFile := filepath.Join(taskPath, "task.md")
-			taskInfo, taskErr := os.Lstat(taskFile)
-			if taskErr != nil {
-				problems = append(problems, fmt.Errorf("%s/%s/task.md: %w", state, entry.Name(), taskErr))
-				continue
-			}
-			if !taskInfo.Mode().IsRegular() || taskInfo.Mode()&os.ModeSymlink != 0 {
-				problems = append(problems, fmt.Errorf("%s/%s/task.md: task definition is not a real regular file", state, entry.Name()))
-				continue
-			}
-			if file, openErr := os.OpenFile(taskFile, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0); openErr != nil {
-				problems = append(problems, fmt.Errorf("%s/%s/task.md: %w", state, entry.Name(), openErr))
-			} else if closeErr := file.Close(); closeErr != nil {
-				problems = append(problems, fmt.Errorf("%s/%s/task.md: %w", state, entry.Name(), closeErr))
-			}
-		}
-	}
-	return problems
 }
 
 func queueSnapshotLabel(repo, root string) string {
@@ -216,10 +152,10 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 	taskIndexesByDurableKey := map[string][]int{}
 	taskIndexesByReadableID := map[string][]int{}
 	for _, root := range queueRoots {
-		for _, problem := range snapshotQueueProblems(root) {
-			appendSnapshotProblem(&snapshot, "queue "+root, problem)
+		items, err := ReadTaskTree(root)
+		if err != nil {
+			appendSnapshotProblem(&snapshot, "queue "+root, err)
 		}
-		items := ReadTaskTree(root)
 		counts, _ := TaskTreeCounts(items)
 		label := queueSnapshotLabel(repo, root)
 		queueID := ""

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 // The three-line git/path readers every git-touching package's tests grow. They are per-package
@@ -27,6 +29,15 @@ func gitOut(dir string, args ...string) string {
 func pathExists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
+}
+
+func mustCurrentTask(t testing.TB, root, id string) (tasks.Item, bool) {
+	t.Helper()
+	item, ok, err := tasks.CurrentTask(root, id)
+	if err != nil {
+		t.Fatalf("CurrentTask(%q, %q): %v", root, id, err)
+	}
+	return item, ok
 }
 
 // reviewSourceSnapshot is everything a review must leave untouched in a repo it reads: the commit,

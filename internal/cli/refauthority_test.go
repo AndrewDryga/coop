@@ -172,7 +172,11 @@ func TestReconcileQueueAfterMergeTakesRefAuthority(t *testing.T) {
 // mutator left a task's state untouched.
 func findTaskForTest(t *testing.T, root, id string) (tasks.Item, bool) {
 	t.Helper()
-	for _, item := range tasks.ReadTaskTree(root) {
+	items, err := tasks.ReadTaskTree(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
 		if item.ID == id {
 			return item, true
 		}

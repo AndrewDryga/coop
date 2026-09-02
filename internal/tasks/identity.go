@@ -250,7 +250,10 @@ func taskFolderGeneration(taskDir string) (TaskGeneration, error) {
 // EnsureTaskInstance establishes and returns the canonical logical and filesystem identity for
 // item. Callers serialize it with the task owner mutation lock before using it as authority.
 func EnsureTaskInstance(root string, item Item) (TaskInstance, error) {
-	current, ok := CurrentTask(root, item.ID)
+	current, ok, err := CurrentTask(root, item.ID)
+	if err != nil {
+		return TaskInstance{}, err
+	}
 	if !ok || current.State != item.State || current.Dir != item.Dir {
 		return TaskInstance{}, errors.New("task changed while establishing its identity")
 	}

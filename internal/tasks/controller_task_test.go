@@ -30,7 +30,7 @@ func TestConfirmedControllerTaskHasOneDurableChecklistIdentity(t *testing.T) {
 	if first.Ref != second.Ref || first.Ref.QueueID == "" || first.Ref.TaskID == "" || first.Ref.ID == "" {
 		t.Fatalf("durable task identities = first=%+v second=%+v", first, second)
 	}
-	item, ok := CurrentTask(filepath.Join(workspace, TasksRoot), first.Ref.ID)
+	item, ok := mustCurrentTask(t, filepath.Join(workspace, TasksRoot), first.Ref.ID)
 	if !ok || item.State != StateTodo || len(item.Subtasks) != 2 {
 		t.Fatalf("controller task = %+v, ok=%v", item, ok)
 	}

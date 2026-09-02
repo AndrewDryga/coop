@@ -27,11 +27,18 @@ type taskItem = tasks.Item
 
 var (
 	moveTaskDir           = tasks.MoveTaskDir
-	queueProgress         = tasks.QueueProgress
 	completeTrustedTask   = tasks.CompleteTrustedTask
 	readAuditReopenRecord = tasks.ReadAuditReopenRecord
 	openLeaseAuthority    = tasks.OpenLeaseAuthority
 )
+
+func queueProgress(hosts []string) (tasks.TaskCounts, string) {
+	counts, active, err := tasks.QueueProgress(hosts)
+	if err != nil {
+		panic(err)
+	}
+	return counts, active
+}
 
 const tasksRoot = tasks.TasksRoot
 
@@ -51,7 +58,10 @@ func writeTaskFile(t *testing.T, path, content string) {
 func taskForLease(t *testing.T, root, state, id string) tasks.Item {
 	t.Helper()
 	writeTaskFile(t, filepath.Join(root, state, id, "task.md"), "# "+id+"\n")
-	item, ok := tasks.CurrentTask(root, id)
+	item, ok, err := tasks.CurrentTask(root, id)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok {
 		t.Fatalf("could not read task %s", id)
 	}

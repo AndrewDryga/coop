@@ -1024,7 +1024,7 @@ func (a *app) cmdPrompt(args []string) (int, error) {
 		for i, q := range queues {
 			hosts[i] = filepath.Join(repo, q)
 		}
-		c, _ = tasks.QueueProgress(hosts)
+		c, _, _ = tasks.QueueProgress(hosts)
 	}
 	// Fork activity from a dir listing + pidfiles — no git, so it stays prompt-cheap.
 	names := forkspace.Names(repo)

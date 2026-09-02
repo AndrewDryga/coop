@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/url"
 	"os"
 	osuser "os/user"
@@ -205,13 +204,21 @@ func MatchTask(items []Item, id, listCmd string) (Item, error) {
 // substring match. Backlog (xx_backlog) is deliberately NOT searched: it's off to the side, so the
 // active id-commands (claim/done/…) can't accidentally act on an un-promoted idea. See findBacklogTask.
 func FindTask(root, id string) (Item, error) {
-	return MatchTask(ReadTaskTree(root), id, "coop tasks")
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		return Item{}, err
+	}
+	return MatchTask(items, id, "coop tasks")
 }
 
 // findBacklogTask locates a backlog item by ID under root's xx_backlog/ — the backlog analog of
 // findTask, so `coop backlog rm/promote` accept a slug fragment and error clearly on absent/ambiguous.
 func findBacklogTask(root, id string) (Item, error) {
-	return MatchTask(ReadBacklog(root), id, "coop backlog")
+	items, err := ReadBacklog(root)
+	if err != nil {
+		return Item{}, err
+	}
+	return MatchTask(items, id, "coop backlog")
 }
 
 // slugify turns a title into a lowercase, hyphenated id fragment: runs of non-letter/digit
@@ -471,7 +478,10 @@ func claimTaskOwnerRecord(root, id string) error {
 	} else if ok && record.Kind == TaskOwnerFork {
 		return fmt.Errorf("%w: %s", ErrTaskSandboxOwned, TaskOwnerLabel(record))
 	}
-	item, ok := CurrentTask(root, id)
+	item, ok, err := CurrentTask(root, id)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return errors.New("task changed before its claim could be recorded")
 	}
@@ -678,7 +688,11 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 	// Don't unblock into a state lint rejects: a todo task with an UNRESOLVED decision.md is the
 	// inconsistency lint flags. Require a resolution — inline, or pre-written in decision.md — or
 	// the task stays blocked.
-	if answer == "" && t.HasDecision && !decisionResolved(filepath.Join(t.Dir, "decision.md")) {
+	resolved, err := decisionResolved(filepath.Join(t.Dir, "decision.md"))
+	if err != nil {
+		return -1, err
+	}
+	if answer == "" && t.HasDecision && !resolved {
 		return 2, fmt.Errorf("%s has no resolution yet — write the **Resolution:** in its decision.md, or pass it inline: coop tasks unblock %s \"<answer>\"", t.ID, args[0])
 	}
 	if err := resolveAndUnblock(root, t, answer); err != nil {
@@ -697,7 +711,16 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 // Resolution line in place (dropping the placeholder), or appends one if the file has none.
 func recordResolution(decPath, answer string) error {
 	line := "**Resolution:** " + answer
-	body := readFileString(decPath)
+	taskRoot, err := OpenTaskMetadataRoot(filepath.Dir(decPath))
+	if err != nil {
+		return err
+	}
+	defer taskRoot.Close()
+	bodyBytes, _, err := readOptionalTaskMetadataFile(taskRoot, filepath.Base(decPath))
+	if err != nil {
+		return err
+	}
+	body := string(bodyBytes)
 	lines := strings.Split(body, "\n")
 	for i, l := range lines {
 		if strings.HasPrefix(l, "**Resolution:**") {
@@ -706,28 +729,37 @@ func recordResolution(decPath, answer string) error {
 			if !strings.HasSuffix(out, "\n") {
 				out += "\n"
 			}
-			return os.WriteFile(decPath, []byte(out), 0o644)
+			return AtomicWriteTaskFile(taskRoot, filepath.Base(decPath), []byte(out))
 		}
 	}
 	out := line + "\n"
 	if strings.TrimSpace(body) != "" {
 		out = strings.TrimRight(body, "\n") + "\n\n" + line + "\n"
 	}
-	return os.WriteFile(decPath, []byte(out), 0o644)
+	return AtomicWriteTaskFile(taskRoot, filepath.Base(decPath), []byte(out))
 }
 
 // decisionResolved reports whether a decision.md has a filled-in Resolution (a human's answer),
 // as opposed to the empty/placeholder line `coop tasks block` seeds. lint uses it: a resolved
 // decision rides along on an unblocked (todo) task as its audit trail, but an unresolved one on a
 // non-blocked task is the inconsistency to flag.
-func decisionResolved(decPath string) bool {
-	for _, line := range strings.Split(readFileString(decPath), "\n") {
+func decisionResolved(decPath string) (bool, error) {
+	taskRoot, err := OpenTaskMetadataRoot(filepath.Dir(decPath))
+	if err != nil {
+		return false, err
+	}
+	defer taskRoot.Close()
+	body, exists, err := readOptionalTaskMetadataFile(taskRoot, filepath.Base(decPath))
+	if err != nil || !exists {
+		return false, err
+	}
+	for _, line := range strings.Split(string(body), "\n") {
 		if r, ok := strings.CutPrefix(line, "**Resolution:**"); ok {
 			r = strings.TrimSpace(r)
-			return r != "" && !strings.HasPrefix(r, "<!--")
+			return r != "" && !strings.HasPrefix(r, "<!--"), nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 type unblockStageError struct {
@@ -1114,6 +1146,25 @@ func ReadTaskMetadataFile(root *os.Root, name string) ([]byte, error) {
 	return data, nil
 }
 
+func readOptionalTaskMetadataFile(root *os.Root, name string) ([]byte, bool, error) {
+	if _, err := root.Lstat(name); errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	} else if err != nil {
+		return nil, false, err
+	}
+	data, err := ReadTaskMetadataFile(root, name)
+	return data, err == nil, err
+}
+
+func readOptionalTaskMetadataPath(path string) ([]byte, bool, error) {
+	root, err := OpenTaskMetadataRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, false, err
+	}
+	defer root.Close()
+	return readOptionalTaskMetadataFile(root, filepath.Base(path))
+}
+
 func validateTaskMetadataFile(name string, info os.FileInfo) error {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || !ok || stat.Nlink != 1 {
@@ -1200,7 +1251,10 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 		if err != nil {
 			return -1, errors.Join(err, unlockLeaseFile(authority))
 		}
-		current, ok := CurrentTask(root, t.ID)
+		current, ok, err := CurrentTask(root, t.ID)
+		if err != nil {
+			return -1, errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
+		}
 		if !ok || current.State != t.State || current.Dir != t.Dir {
 			return 1, errors.Join(errors.New("task changed before it could be blocked"), ownerLock.Close(), unlockLeaseFile(authority))
 		}
@@ -1268,7 +1322,10 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 		if len(pos) != 0 {
 			return 2, errors.New(usage) // an id and --all-done together is ambiguous
 		}
-		n := countDone(root)
+		n, err := countDone(root)
+		if err != nil {
+			return -1, err
+		}
 		if n == 0 {
 			ui.Note("no done tasks to remove")
 			return 0, nil
@@ -1334,7 +1391,10 @@ func removeTaskFolderAndRecords(root string, task Item) (removed bool, err error
 		err = errors.Join(err, unlockLeaseFile(authority))
 	}()
 
-	current, ok := CurrentTask(root, task.ID)
+	current, ok, err := CurrentTask(root, task.ID)
+	if err != nil {
+		return false, err
+	}
 	if !ok {
 		return false, errors.New("task disappeared before deletion")
 	}
@@ -1405,7 +1465,9 @@ func removeTaskFolderAndRecords(root string, task Item) (removed bool, err error
 	if err := os.RemoveAll(task.Dir); err != nil {
 		return false, err
 	}
-	if survivor, ok := CurrentTask(root, task.ID); ok {
+	if survivor, ok, readErr := CurrentTask(root, task.ID); readErr != nil {
+		return false, readErr
+	} else if ok {
 		return false, fmt.Errorf("task changed state during deletion and survives in %s", StateLabel(survivor.State))
 	}
 	return true, nil
@@ -1415,7 +1477,11 @@ func removeTaskFolderAndRecords(root string, task Item) (removed bool, err error
 // Shared by the single-queue `rm --all-done` and the multi-queue roll-up.
 func removeAllDone(root string) (int, error) {
 	removed := 0
-	for _, t := range ReadTaskTree(root) {
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		return 0, err
+	}
+	for _, t := range items {
 		if t.State != StateDone {
 			continue
 		}
@@ -1435,14 +1501,18 @@ func removeAllDone(root string) (int, error) {
 
 // countDone reports how many done tasks removeAllDone would delete — for the pre-delete blast-radius
 // prompt, so `rm --all-done` can say the count before the (unrecoverable) removal, not after.
-func countDone(root string) int {
+func countDone(root string) (int, error) {
 	n := 0
-	for _, t := range ReadTaskTree(root) {
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		return 0, err
+	}
+	for _, t := range items {
 		if t.State == StateDone {
 			n++
 		}
 	}
-	return n
+	return n, nil
 }
 
 // doneListCap caps how many of the (oldest-first sorted) done tasks `coop tasks ls` shows — the
@@ -1454,7 +1524,10 @@ const doneListCap = 5
 // --blocked/--todo/… filter); empty shows every state. Each task's id is an OSC 8 hyperlink to its
 // folder, so it opens on click in a supporting terminal and stays plain text in a pipe.
 func tasksFolderList(root string, all bool, only ...string) (int, error) {
-	items := ReadTaskTree(root)
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		return -1, err
+	}
 	if len(items) == 0 {
 		ui.Note("no tasks yet — add one with 'coop tasks add \"<title>\"'")
 		return 0, nil
@@ -1694,7 +1767,11 @@ func tasksFolderDecisions(root string, args []string) (int, error) {
 		}
 	}
 	var decisions []Item
-	for _, t := range ReadTaskTree(root) {
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		return -1, err
+	}
+	for _, t := range items {
 		if t.State == StateBlocked {
 			decisions = append(decisions, t)
 		}
@@ -1710,7 +1787,11 @@ func tasksFolderDecisions(root string, args []string) (int, error) {
 	for n, t := range decisions {
 		question := t.Title
 		rec := ""
-		for _, line := range strings.Split(readFileString(filepath.Join(t.Dir, "decision.md")), "\n") {
+		body, _, err := readOptionalTaskMetadataPath(filepath.Join(t.Dir, "decision.md"))
+		if err != nil {
+			return -1, err
+		}
+		for _, line := range strings.Split(string(body), "\n") {
 			if q, ok := strings.CutPrefix(line, "# Decision:"); ok {
 				question = strings.TrimSpace(q)
 			}
@@ -1777,8 +1858,16 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 			where = ref.label + " · " + t.ID // say which queue this decision lives in
 		}
 		fmt.Fprintf(out, "\n%s\n", decisionDivider(p, i+1, len(refs), where))
-		fprintDecisionBody(out, p, readFileString(decPath))
-		if decisionResolved(decPath) {
+		body, _, err := readOptionalTaskMetadataPath(decPath)
+		if err != nil {
+			return -1, err
+		}
+		fprintDecisionBody(out, p, string(body))
+		resolved, err := decisionResolved(decPath)
+		if err != nil {
+			return -1, err
+		}
+		if resolved {
 			fmt.Fprintln(out, p.Green("✓ answered")+p.Dim(" — type a new answer to change it"))
 		}
 		key := func(k string) string { return p.Cyan(k) }
@@ -1921,7 +2010,10 @@ func taskShapeIssues(body string) []string {
 }
 
 func tasksFolderLint(root string) (int, error) {
-	items := ReadTaskTree(root)
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		return -1, err
+	}
 	var findings []string
 	add := func(id, msg string) { findings = append(findings, fmt.Sprintf("  %s: %s", id, msg)) }
 	// Every queue needs all four state dirs, or the move-a-folder-between-states protocol renames a
@@ -1935,15 +2027,28 @@ func tasksFolderLint(root string) (int, error) {
 		}
 	}
 	for _, t := range items {
-		body := readFileString(filepath.Join(t.Dir, "task.md"))
+		bodyBytes, exists, err := readOptionalTaskMetadataPath(filepath.Join(t.Dir, "task.md"))
+		if err != nil {
+			return -1, err
+		}
+		if !exists {
+			return -1, fmt.Errorf("task %s lost task.md while linting", t.ID)
+		}
+		body := string(bodyBytes)
 		// blocked ⇒ a decision.md is present. A RESOLVED decision.md rides along as the audit trail
 		// once unblocked (todo→in_progress→done); only an UNRESOLVED one on a non-blocked task is the
 		// inconsistency — an open one-way door waiting in the queue instead of parked in 50_blocked/.
 		if t.State == StateBlocked && !t.HasDecision {
 			add(t.ID, "blocked but has no decision.md — add one, or unblock it")
 		}
-		if t.State == StateTodo && t.HasDecision && !decisionResolved(filepath.Join(t.Dir, "decision.md")) {
-			add(t.ID, "has an unresolved decision.md but is todo — block it (or resolve it and unblock)")
+		if t.State == StateTodo && t.HasDecision {
+			resolved, err := decisionResolved(filepath.Join(t.Dir, "decision.md"))
+			if err != nil {
+				return -1, err
+			}
+			if !resolved {
+				add(t.ID, "has an unresolved decision.md but is todo — block it (or resolve it and unblock)")
+			}
 		}
 		// a status field is forbidden — the directory IS the status
 		if fields, _ := SplitFrontmatter(body); fields["status"] != "" {
@@ -1956,14 +2061,6 @@ func tasksFolderLint(root string) (int, error) {
 				add(t.ID, "not self-contained: "+issue)
 			}
 		}
-	}
-	// An id sitting in TWO state dirs is a copy mistake (cp instead of a coop move). readTaskTree
-	// deliberately masks it — its dedup exists for torn mid-rename reads — so lint is where the
-	// persistent case surfaces (duplicateTaskIDs re-checks, so a task mid-move never flags).
-	dups := duplicateTaskIDs(root)
-	for _, id := range slices.Sorted(maps.Keys(dups)) {
-		add(id, fmt.Sprintf("exists in %s — a task lives in ONE state dir; only the %s copy is listed, so keep the real one and delete the rest",
-			strings.Join(dups[id], " AND "), dups[id][0]))
 	}
 	if len(findings) == 0 {
 		if len(items) == 0 {

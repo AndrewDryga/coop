@@ -3,6 +3,7 @@ package tasks
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -84,19 +85,19 @@ func TestParseTaskFolderTitleResolution(t *testing.T) {
 	// frontmatter title wins
 	a := filepath.Join(dir, StateTodo, "2026-01-01-a")
 	writeTaskFile(t, filepath.Join(a, "task.md"), "---\ntitle: From frontmatter\n---\n# From H1\n")
-	if it, ok := parseTaskFolder(a, StateTodo); !ok || it.Title != "From frontmatter" || it.ID != "2026-01-01-a" {
+	if it, ok := mustParseTaskFolder(t, a, StateTodo); !ok || it.Title != "From frontmatter" || it.ID != "2026-01-01-a" {
 		t.Fatalf("frontmatter title: ok=%v item=%+v", ok, it)
 	}
 	// no frontmatter title → H1
 	b := filepath.Join(dir, StateTodo, "2026-01-01-b")
 	writeTaskFile(t, filepath.Join(b, "task.md"), "# Heading title\nbody")
-	if it, _ := parseTaskFolder(b, StateTodo); it.Title != "Heading title" {
+	if it, _ := mustParseTaskFolder(t, b, StateTodo); it.Title != "Heading title" {
 		t.Errorf("H1 title = %q", it.Title)
 	}
 	// neither → id
 	c := filepath.Join(dir, StateTodo, "2026-01-01-c")
 	writeTaskFile(t, filepath.Join(c, "task.md"), "just prose, no heading")
-	if it, _ := parseTaskFolder(c, StateTodo); it.Title != "2026-01-01-c" {
+	if it, _ := mustParseTaskFolder(t, c, StateTodo); it.Title != "2026-01-01-c" {
 		t.Errorf("id fallback title = %q", it.Title)
 	}
 	// no task.md → not a task
@@ -104,7 +105,7 @@ func TestParseTaskFolderTitleResolution(t *testing.T) {
 	if err := os.MkdirAll(empty, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := parseTaskFolder(empty, StateTodo); ok {
+	if _, ok := mustParseTaskFolder(t, empty, StateTodo); ok {
 		t.Errorf("folder without task.md should not parse as a task")
 	}
 }
@@ -122,7 +123,7 @@ func TestReadTaskTreeAndCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items := ReadTaskTree(root)
+	items := mustReadTaskTree(t, root)
 	if len(items) != 5 {
 		t.Fatalf("want 5 tasks, got %d", len(items))
 	}
@@ -160,10 +161,7 @@ func TestReadTaskTreeAndCounts(t *testing.T) {
 	}
 }
 
-// TestReadTaskTreeDedupesTornMove: a task read in two state dirs (a torn read of an in-flight
-// os.Rename) is counted ONCE, at its earliest-lifecycle state — so counts can't inflate and a
-// finishing task can't flash a false "✓ done" in the dashboard.
-func TestReadTaskTreeDedupesTornMove(t *testing.T) {
+func TestReadTaskTreeRejectsPersistentDuplicate(t *testing.T) {
 	root := t.TempDir()
 	// the SAME id present in both 10_in_progress and 99_done, as during a mid-read move
 	writeTaskFile(t, filepath.Join(root, StateInProgress, "2026-01-01-x", "task.md"), "# X\n")
@@ -171,21 +169,8 @@ func TestReadTaskTreeDedupesTornMove(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-02-a", "task.md"), "# A\n")
 	writeTaskFile(t, filepath.Join(root, StateDone, "2026-01-03-b", "task.md"), "# B\n")
 
-	items := ReadTaskTree(root)
-	if len(items) != 3 {
-		t.Fatalf("torn move double-counted: %d items, want 3 distinct ids", len(items))
-	}
-	if c, _ := TaskTreeCounts(items); c.Total() != 3 {
-		t.Errorf("counts inflated by a torn read: total=%d, want 3", c.Total())
-	}
-	var x Item
-	for _, it := range items {
-		if it.ID == "2026-01-01-x" {
-			x = it
-		}
-	}
-	if x.State != StateInProgress {
-		t.Errorf("torn-move task attributed to %q, want %q (earliest-lifecycle)", x.State, StateInProgress)
+	if _, err := ReadTaskTree(root); err == nil || !strings.Contains(err.Error(), "multiple lifecycle states") {
+		t.Fatalf("persistent duplicate error = %v", err)
 	}
 }
 
@@ -194,7 +179,7 @@ func TestQueueCounts(t *testing.T) {
 	dir := filepath.Join(ws, TasksRoot)
 	writeTaskFile(t, filepath.Join(dir, StateTodo, "2026-01-01-a", "task.md"), "# one\n")
 	writeTaskFile(t, filepath.Join(dir, StateInProgress, "2026-01-02-b", "task.md"), "# two\n")
-	c, active := QueueCounts(dir)
+	c, active := mustQueueCounts(t, dir)
 	if c.Todo != 1 || c.Doing != 1 {
 		t.Errorf("counts = %+v", c)
 	}
@@ -202,7 +187,7 @@ func TestQueueCounts(t *testing.T) {
 		t.Errorf("active = %q", active)
 	}
 	// A missing/empty tree reads as all-zero, no panic.
-	if c0, a0 := QueueCounts(filepath.Join(t.TempDir(), "nope")); c0.Total() != 0 || a0 != "" {
+	if c0, a0 := mustQueueCounts(t, filepath.Join(t.TempDir(), "nope")); c0.Total() != 0 || a0 != "" {
 		t.Errorf("missing tree = %+v %q, want zero/empty", c0, a0)
 	}
 }
@@ -210,7 +195,7 @@ func TestQueueCounts(t *testing.T) {
 func TestTaskTreeCountsActiveFallsBackToTodo(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-01-only", "task.md"), "# Only todo\n")
-	_, active := TaskTreeCounts(ReadTaskTree(root))
+	_, active := TaskTreeCounts(mustReadTaskTree(t, root))
 	if active != "Only todo" {
 		t.Errorf("active = %q, want the todo task when none in progress", active)
 	}

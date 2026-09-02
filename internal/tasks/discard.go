@@ -304,7 +304,10 @@ func discardForkAssignment(repo string, identity forkspace.Identity, index ForkA
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, ownerLock.Close()) }()
-	item, ok := CurrentTask(root, id)
+	item, ok, err := CurrentTask(root, id)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return fmt.Errorf("discard assignment %s: canonical task is missing", index.AssignmentID)
 	}

@@ -329,7 +329,11 @@ func (c *Control) mergeOne(repo, img, name string, force bool) (bool, error) {
 	if !pathExists(ws) {
 		return false, fmt.Errorf("no such fork: %s", name)
 	}
-	if legacy := tasks.LegacyForkQueueWithWork(ws); legacy != "" {
+	legacy, err := tasks.LegacyForkQueueWithWork(ws)
+	if err != nil {
+		return false, err
+	}
+	if legacy != "" {
 		return false, fmt.Errorf("%s contains a legacy copied task queue at %s; refusing a Git-only merge because it could duplicate or lose canonical work — preserve any fork-only task notes, recreate the fork with --fresh, and rerun the canonical task loop", name, legacy)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {

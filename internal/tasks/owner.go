@@ -225,7 +225,10 @@ func ReadTaskOwnerRecord(root, id string) (TaskOwnerRecord, bool, error) {
 	if err != nil || !ok || record.Version == taskOwnerRecordVersion {
 		return record, ok, err
 	}
-	item, exists := CurrentTask(root, id)
+	item, exists, err := CurrentTask(root, id)
+	if err != nil {
+		return TaskOwnerRecord{}, false, err
+	}
 	if !exists {
 		return TaskOwnerRecord{}, false, errors.New("owned task is missing from its canonical queue")
 	}
@@ -244,7 +247,10 @@ func writeTaskOwnerRecord(root string, record TaskOwnerRecord) error {
 		return err
 	}
 	if record.Version == taskOwnershipRecordVersion {
-		item, ok := CurrentTask(root, record.TaskID)
+		item, ok, err := CurrentTask(root, record.TaskID)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return errors.New("cannot own a missing task")
 		}

@@ -19,7 +19,7 @@ import (
 // task queue. Those folders are duplicate authority and must never be merged or scheduled as if
 // they were canonical. Empty scaffolds are harmless; any lifecycle task requires explicit human
 // migration before the fork may proceed.
-func LegacyForkQueueWithWork(workspace string) string {
+func LegacyForkQueueWithWork(workspace string) (string, error) {
 	candidates := []string{filepath.Join(workspace, TasksRoot)}
 	if rels, err := project.TaskDirs(workspace); err == nil {
 		for _, rel := range rels {
@@ -30,15 +30,19 @@ func LegacyForkQueueWithWork(workspace string) string {
 		}
 	}
 	for _, root := range candidates {
-		if len(ReadTaskTree(root)) == 0 {
+		items, err := ReadTaskTree(root)
+		if err != nil {
+			return "", err
+		}
+		if len(items) == 0 {
 			continue
 		}
 		if rel, err := filepath.Rel(workspace, root); err == nil {
-			return rel
+			return rel, nil
 		}
-		return root
+		return root, nil
 	}
-	return ""
+	return "", nil
 }
 
 // extractTasksFlags pulls every `--tasks <path>` (or `--tasks=<path>`) out of args,
@@ -369,7 +373,11 @@ func tasksInQueue(host Host, repo, rel string, rest, flags []string) (int, error
 	// bootstraps it on demand (tasksFolderAdd creates the folder) — that's how you start a
 	// secondary --tasks queue in a monorepo, since `coop init` only scaffolds the repo root.
 	// Every other subcommand needs an existing queue to act on.
-	if !IsTaskDir(root) {
+	exists, err := taskQueueExists(root)
+	if err != nil {
+		return -1, err
+	}
+	if !exists {
 		switch sub {
 		case "":
 			// `coop tasks --tasks done` greedily eats `done` as the queue path, leaving no
@@ -413,15 +421,24 @@ func tasksListAll(repo string, rels []string, args []string) (int, error) {
 		root := filepath.Join(repo, rel)
 		// Empty/absent queues print a plain gray line (not ui.Info) so the whole roll-up stays one
 		// clean stdout block — no "coop:" prefix mid-list, and `coop tasks ls > file` keeps it all.
-		switch {
-		case !IsTaskDir(root):
+		exists, err := taskQueueExists(root)
+		if err != nil {
+			return -1, err
+		}
+		if !exists {
 			fmt.Println(p.Gray("  (no task queue here yet)"))
-		case len(ReadTaskTree(root)) == 0:
+			continue
+		}
+		items, err := ReadTaskTree(root)
+		if err != nil {
+			return -1, err
+		}
+		if len(items) == 0 {
 			fmt.Println(p.Gray("  (no tasks)"))
-		default:
-			if _, err := tasksFolderList(root, all, only...); err != nil {
-				return -1, err
-			}
+			continue
+		}
+		if _, err := tasksFolderList(root, all, only...); err != nil {
+			return -1, err
 		}
 	}
 	return 0, nil
@@ -436,7 +453,11 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 	if sub == "clear" || (sub == "rm" && slices.Contains(args, "--all-done")) {
 		total := 0
 		for _, rel := range rels {
-			total += countDone(filepath.Join(repo, rel))
+			n, err := countDone(filepath.Join(repo, rel))
+			if err != nil {
+				return -1, err
+			}
+			total += n
 		}
 		if total == 0 {
 			ui.Note("no done tasks to remove in any of the %s", ui.Count(len(rels), "configured queue"))
@@ -489,11 +510,15 @@ func queueOfTask(repo string, rels []string, id string) (string, error) {
 // queueOfTaskWith is queueOfTask parametrized by the per-queue reader, so the lifecycle tree
 // (readTaskTree) and the backlog drawer (readBacklog) share one resolver. read maps a queue root to
 // its items; everything else — exact-beats-substring precedence, the absent/ambiguous errors — is common.
-func queueOfTaskWith(repo string, rels []string, id string, read func(string) []Item) (string, error) {
+func queueOfTaskWith(repo string, rels []string, id string, read func(string) ([]Item, error)) (string, error) {
 	type hit struct{ rel, id string }
 	var exact, subs []hit
 	for _, rel := range rels {
-		for _, t := range read(filepath.Join(repo, rel)) {
+		items, err := read(filepath.Join(repo, rel))
+		if err != nil {
+			return "", err
+		}
+		for _, t := range items {
 			switch {
 			case t.ID == id:
 				exact = append(exact, hit{rel, t.ID})
@@ -527,7 +552,11 @@ func tasksLintAll(repo string, rels []string) (int, error) {
 	first := true
 	for _, rel := range rels {
 		root := filepath.Join(repo, rel)
-		if !IsTaskDir(root) {
+		exists, err := taskQueueExists(root)
+		if err != nil {
+			return -1, err
+		}
+		if !exists {
 			continue
 		}
 		if !first {
@@ -566,10 +595,18 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 		var refs []decisionRef
 		for _, rel := range rels {
 			root := filepath.Join(repo, rel)
-			if !IsTaskDir(root) {
+			exists, err := taskQueueExists(root)
+			if err != nil {
+				return -1, err
+			}
+			if !exists {
 				continue
 			}
-			for _, t := range ReadTaskTree(root) {
+			items, err := ReadTaskTree(root)
+			if err != nil {
+				return -1, err
+			}
+			for _, t := range items {
 				if t.State == StateBlocked {
 					refs = append(refs, decisionRef{root: root, label: rel, id: t.ID})
 				}
@@ -593,13 +630,21 @@ func tasksDecisionsRollup(repo string, rels []string) (int, error) {
 	first := true
 	for _, rel := range rels {
 		root := filepath.Join(repo, rel)
-		if !IsTaskDir(root) {
+		exists, err := taskQueueExists(root)
+		if err != nil {
+			return -1, err
+		}
+		if !exists {
 			continue
 		}
 		// Only surface a queue that actually has an open decision, so the roll-up never prints a
 		// bare "# path" header over nothing (the per-queue "none" note goes to stderr).
 		hasBlocked := false
-		for _, t := range ReadTaskTree(root) {
+		items, err := ReadTaskTree(root)
+		if err != nil {
+			return -1, err
+		}
+		for _, t := range items {
 			if t.State == StateBlocked {
 				hasBlocked = true
 				break

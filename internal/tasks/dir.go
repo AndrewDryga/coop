@@ -1,6 +1,8 @@
 package tasks
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -64,10 +66,15 @@ func (t Item) doneSubtasks() int {
 	return n
 }
 
-// isTaskDir reports whether path exists and is a directory — the folder-mode selector.
-func IsTaskDir(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.IsDir()
+func taskQueueExists(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect task queue %s: %w", path, err)
+	}
+	return true, nil
 }
 
 // subtaskRe matches a markdown checkbox list item (a subtask) and captures its marker.
@@ -176,14 +183,25 @@ func scanSubtasks(body string) []bool {
 	return subs
 }
 
-// parseTaskFolder reads dir/task.md into a taskItem, with State set by the caller. It
-// returns ok=false when there is no task.md (so a stray non-task folder is skipped).
-func parseTaskFolder(dir, state string) (Item, bool) {
-	path := filepath.Join(dir, "task.md")
-	if !fileExists(path) {
-		return Item{}, false
+// parseTaskFolder reads dir/task.md into an Item, with State set by the caller. It returns
+// ok=false only when a real task folder has no task.md, so an ordinary stray folder is skipped;
+// present but unsafe or unreadable metadata is an error.
+func parseTaskFolder(dir, state string) (Item, bool, error) {
+	root, err := OpenTaskMetadataRoot(dir)
+	if err != nil {
+		return Item{}, false, err
 	}
-	content := readFileString(path)
+	defer root.Close()
+	if _, err := root.Lstat("task.md"); errors.Is(err, os.ErrNotExist) {
+		return Item{}, false, nil
+	} else if err != nil {
+		return Item{}, false, fmt.Errorf("inspect task.md: %w", err)
+	}
+	data, err := ReadTaskMetadataFile(root, "task.md")
+	if err != nil {
+		return Item{}, false, fmt.Errorf("read task.md: %w", err)
+	}
+	content := string(data)
 	fields, body := SplitFrontmatter(content)
 	id := filepath.Base(dir)
 	title := fields["title"]
@@ -194,42 +212,118 @@ func parseTaskFolder(dir, state string) (Item, bool) {
 		title = id
 	}
 	title = sanitizeCell(title) // task.md can be agent-authored — keep control chars/ANSI out of output
+	hasDecision := false
+	if _, err := root.Lstat("decision.md"); err == nil {
+		if _, err := ReadTaskMetadataFile(root, "decision.md"); err != nil {
+			return Item{}, false, fmt.Errorf("read decision.md: %w", err)
+		}
+		hasDecision = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Item{}, false, fmt.Errorf("inspect decision.md: %w", err)
+	}
 	return Item{
 		ID:          id,
 		Title:       title,
 		State:       state,
 		Dir:         dir,
 		Subtasks:    scanSubtasks(body),
-		HasDecision: fileExists(filepath.Join(dir, "decision.md")),
-	}, true
+		HasDecision: hasDecision,
+	}, true, nil
 }
 
-// readTaskTree enumerates every task folder under root's state directories, sorted by
+// ReadTaskTree enumerates every task folder under root's state directories, sorted by
 // state (lifecycle order) then ID, so callers get a stable ordering. A missing state
 // dir is simply empty. root is typically <repo>/.agent/tasks.
-func ReadTaskTree(root string) []Item {
+func ReadTaskTree(root string) ([]Item, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		items, retry, err := readTaskTreeOnce(root)
+		if err != nil || !retry {
+			return items, err
+		}
+	}
+	return nil, fmt.Errorf("task queue %s kept changing while it was read; retry", root)
+}
+
+func readTaskTreeOnce(root string) ([]Item, bool, error) {
 	var items []Item
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("inspect task queue %s: %w", root, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, false, fmt.Errorf("task queue %s is not a real directory", root)
+	}
 	// The four ReadDir calls below aren't one atomic snapshot, so a task being moved between state
 	// dirs (an os.Rename) can be read in BOTH — once in the source dir, once in the destination.
 	// Dedup by id, keeping the first (lifecycle-earliest) occurrence, so a torn read can't inflate
 	// the counts (coop tasks watch) or flash a false "✓ done" as the last task finishes. A
-	// PERSISTENT duplicate (a copy mistake, not a rename in flight) is surfaced by `coop tasks
-	// lint` via duplicateTaskIDs — this hot path stays quiet by design.
-	seen := map[string]bool{}
+	// PERSISTENT duplicate (a copy mistake, not a rename in flight) is an error: no caller may pick
+	// one copy as lifecycle authority. The second look below still tolerates an atomic move that
+	// completed while the four directories were scanned.
+	seen := map[string]string{}
+	duplicates := map[string][]string{}
 	for _, state := range TaskStates {
 		stateDir := filepath.Join(root, state)
-		entries, err := os.ReadDir(stateDir)
-		if err != nil {
+		info, err := os.Lstat(stateDir)
+		if errors.Is(err, os.ErrNotExist) {
 			continue
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("inspect lifecycle state %s: %w", stateDir, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, false, fmt.Errorf("lifecycle state %s is not a real directory", stateDir)
+		}
+		entries, err := os.ReadDir(stateDir)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, true, nil
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("read lifecycle state %s: %w", stateDir, err)
 		}
 		for _, e := range entries {
 			if !e.IsDir() {
+				return nil, false, fmt.Errorf("task entry %s is not a real directory", filepath.Join(stateDir, e.Name()))
+			}
+			t, ok, err := parseTaskFolder(filepath.Join(stateDir, e.Name()), state)
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, true, nil
+			}
+			if err != nil {
+				return nil, false, fmt.Errorf("read task %s/%s: %w", state, e.Name(), err)
+			}
+			if !ok {
 				continue
 			}
-			if t, ok := parseTaskFolder(filepath.Join(stateDir, e.Name()), state); ok && !seen[t.ID] {
-				seen[t.ID] = true
+			if first, exists := seen[t.ID]; exists {
+				if len(duplicates[t.ID]) == 0 {
+					duplicates[t.ID] = append(duplicates[t.ID], first)
+				}
+				duplicates[t.ID] = append(duplicates[t.ID], state)
+			} else {
+				seen[t.ID] = state
 				items = append(items, t)
 			}
+		}
+	}
+	for id, states := range duplicates {
+		var still []string
+		for _, state := range states {
+			_, err := os.Lstat(filepath.Join(root, state, id, "task.md"))
+			if err == nil {
+				still = append(still, state)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return nil, false, fmt.Errorf("recheck duplicate task %s in %s: %w", id, state, err)
+			}
+		}
+		if len(still) > 1 {
+			return nil, false, fmt.Errorf("task %s exists in multiple lifecycle states: %s", id, strings.Join(still, ", "))
+		}
+		if len(still) != len(states) {
+			return nil, true, nil
 		}
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -239,43 +333,7 @@ func ReadTaskTree(root string) []Item {
 		}
 		return items[i].ID < items[j].ID
 	})
-	return items
-}
-
-// duplicateTaskIDs reports task ids that PERSISTENTLY sit in more than one state dir — a copy
-// mistake (cp instead of a coop move), which readTaskTree's torn-read dedup masks forever on the
-// hot path. Each candidate is re-checked with a second look: a task mid-rename exists in at most
-// one dir at any instant (os.Rename is atomic), so only ids still present in ≥2 dirs on the
-// second look are returned. Map: id → the state dirs (lifecycle order) that hold it.
-func duplicateTaskIDs(root string) map[string][]string {
-	found := map[string][]string{}
-	for _, state := range TaskStates {
-		entries, err := os.ReadDir(filepath.Join(root, state))
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if e.IsDir() && fileExists(filepath.Join(root, state, e.Name(), "task.md")) {
-				found[e.Name()] = append(found[e.Name()], state)
-			}
-		}
-	}
-	dups := map[string][]string{}
-	for id, states := range found {
-		if len(states) < 2 {
-			continue
-		}
-		var still []string
-		for _, state := range states {
-			if fileExists(filepath.Join(root, state, id, "task.md")) {
-				still = append(still, state)
-			}
-		}
-		if len(still) > 1 {
-			dups[id] = still
-		}
-	}
-	return dups
+	return items, false, nil
 }
 
 // readBacklog enumerates the task folders under root's xx_backlog/, sorted by id. It reads ONE state
@@ -283,22 +341,50 @@ func duplicateTaskIDs(root string) map[string][]string {
 // so it's the only path that surfaces backlog items (the `coop backlog` commands). A missing dir is
 // simply empty. No cross-state dedup is needed: a backlog item lives only here until it's promoted
 // (an atomic os.Rename out), so it can't be read in two states at once.
-func ReadBacklog(root string) []Item {
+func ReadBacklog(root string) ([]Item, error) {
 	var items []Item
-	entries, err := os.ReadDir(filepath.Join(root, StateBacklog))
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("inspect task queue %s: %w", root, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("task queue %s is not a real directory", root)
+	}
+	backlog := filepath.Join(root, StateBacklog)
+	info, err = os.Lstat(backlog)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("inspect backlog %s: %w", backlog, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("backlog %s is not a real directory", backlog)
+	}
+	entries, err := os.ReadDir(backlog)
+	if err != nil {
+		return nil, fmt.Errorf("read backlog %s: %w", backlog, err)
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
-			continue
+			return nil, fmt.Errorf("backlog entry %s is not a real directory", filepath.Join(backlog, e.Name()))
 		}
-		if t, ok := parseTaskFolder(filepath.Join(root, StateBacklog, e.Name()), StateBacklog); ok {
+		t, ok, err := parseTaskFolder(filepath.Join(backlog, e.Name()), StateBacklog)
+		if errors.Is(err, os.ErrNotExist) {
+			continue // promotion is one atomic rename out of the backlog
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read backlog item %s: %w", e.Name(), err)
+		}
+		if ok {
 			items = append(items, t)
 		}
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].ID < items[j].ID })
-	return items
+	return items, nil
 }
 
 // scaffoldStateDirs creates the four task-state dirs (00_todo/10_in_progress/50_blocked/99_done)
@@ -339,8 +425,13 @@ func StateLabel(state string) string {
 // queueCounts reads a task queue directory (.agent/tasks) and returns its counts and active
 // task — the one seam the status and loop readers funnel through. A missing/empty dir
 // reads as all-zero.
-func QueueCounts(dir string) (TaskCounts, string) {
-	return TaskTreeCounts(ReadTaskTree(dir))
+func QueueCounts(dir string) (TaskCounts, string, error) {
+	items, err := ReadTaskTree(dir)
+	if err != nil {
+		return TaskCounts{}, "", err
+	}
+	counts, active := TaskTreeCounts(items)
+	return counts, active, nil
 }
 
 // latestTaskLog returns the last n lines of the most-recently-modified per-task log.md under
@@ -363,14 +454,17 @@ func LatestTaskLog(ws string, n int) string {
 
 // LatestForkTaskLog reads reviewed execution projections through the generation registry. It
 // replaces review's old assumption that a fork owns a copied .agent/tasks tree.
-func LatestForkTaskLog(repo, name string, n int) string {
+func LatestForkTaskLog(repo, name string, n int) (string, error) {
 	identity, ok, err := forkspace.ReadGeneration(repo, name)
-	if err != nil || !ok {
-		return ""
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", nil
 	}
 	assignments, err := ForkAssignments(repo, identity)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	newest, newestMod := "", time.Time{}
 	for _, assignment := range assignments {
@@ -378,7 +472,10 @@ func LatestForkTaskLog(repo, name string, n int) string {
 		if owner.Phase != ForkAssignmentReviewing && owner.Phase != ForkAssignmentReady {
 			continue
 		}
-		item, ok := CurrentTask(owner.Projection, assignment.Item.ID)
+		item, ok, err := CurrentTask(owner.Projection, assignment.Item.ID)
+		if err != nil {
+			return "", err
+		}
 		if !ok || item.State != StateDone {
 			continue
 		}
@@ -397,9 +494,9 @@ func LatestForkTaskLog(repo, name string, n int) string {
 		}
 	}
 	if newest == "" {
-		return ""
+		return "", nil
 	}
-	return lastLines(newest, n)
+	return lastLines(newest, n), nil
 }
 
 // taskTreeCounts tallies a task tree into the shared taskCounts and returns the "active"

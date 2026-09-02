@@ -215,7 +215,10 @@ func ValidateForkCandidateLocked(repo string, candidate ForkCandidate, head, tre
 		if current[i] != candidate.Assignments[i] {
 			return errors.New("fork projection changed after final review")
 		}
-		item, ok := CurrentTask(current[i].Index.CanonicalRoot, current[i].Index.Task.Ref.ID)
+		item, ok, err := CurrentTask(current[i].Index.CanonicalRoot, current[i].Index.Task.Ref.ID)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return errors.New("candidate task disappeared before landing")
 		}
@@ -273,7 +276,10 @@ func PublishForkCandidate(repo string, identity forkspace.Identity, head, tree s
 		}
 	}
 	for _, assignment := range candidate.Assignments {
-		item, ok := CurrentTask(assignment.Index.CanonicalRoot, assignment.Index.Task.Ref.ID)
+		item, ok, err := CurrentTask(assignment.Index.CanonicalRoot, assignment.Index.Task.Ref.ID)
+		if err != nil {
+			return ForkCandidate{}, false, err
+		}
 		if !ok {
 			return ForkCandidate{}, false, errors.New("candidate task disappeared before ready publication")
 		}
@@ -350,7 +356,10 @@ func FinalizeForkCandidateTask(authorityRepo string, candidate ForkCandidate, as
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, ownerLock.Close()) }()
-	current, ok := CurrentTask(root, id)
+	current, ok, err := CurrentTask(root, id)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return errors.New("candidate canonical task disappeared before landing")
 	}

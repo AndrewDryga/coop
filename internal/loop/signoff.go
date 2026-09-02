@@ -17,22 +17,29 @@ func shouldRunBetweenAudit(iterationSucceeded, auditAvailable, protected bool) b
 
 // doneTaskDirs maps every done task's id → its folder across the queue(s). The between audit
 // diffs a before/after snapshot of it to name exactly which task(s) an iteration finished.
-func doneTaskDirs(hosts []string) map[string]string {
+func doneTaskDirs(hosts []string) (map[string]string, error) {
 	out := map[string]string{}
 	for _, h := range hosts {
-		for _, t := range tasks.ReadTaskTree(h) {
+		items, err := tasks.ReadTaskTree(h)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range items {
 			if t.State == tasks.StateDone {
 				out[t.ID] = t.Dir
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // completedReviewSubjects returns only tasks this controller accepted during the current run and
 // that are still archived. Commit trailers describe their changes but never grant review authority.
-func completedReviewSubjects(hosts []string, completed map[string]bool) []string {
-	states := tasks.QueueSnapshot(hosts)
+func completedReviewSubjects(hosts []string, completed map[string]bool) ([]string, error) {
+	states, err := tasks.QueueSnapshot(hosts)
+	if err != nil {
+		return nil, err
+	}
 	var ids []string
 	for id := range completed {
 		if states[id] == tasks.StateDone {
@@ -40,7 +47,7 @@ func completedReviewSubjects(hosts []string, completed map[string]bool) []string
 		}
 	}
 	slices.Sort(ids)
-	return ids
+	return ids, nil
 }
 
 // newlyFinished returns "id — dir" lines (sorted by id) for tasks done now but not before —

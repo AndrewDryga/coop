@@ -137,7 +137,10 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 	if live {
 		liveWidth = func() int { return ui.TermWidth(os.Stderr) }
 		region := ui.NewRegion(os.Stderr, liveWidth)
-		c0, _ := tasks.QueueProgress(hosts)
+		c0, _, progressErr := tasks.QueueProgress(hosts)
+		if progressErr != nil {
+			return 1, "", nil, classification, nil, errors.Join(progressErr, windows.Close())
+		}
 		bar = newLoopBar(region, liveWidth, time.Now(), c0, activity)
 		funnel = &lineWriter{fn: bar.history} // agent/loop lines scroll above the bar
 		termOut, termErr = funnel, funnel
@@ -320,7 +323,7 @@ func (c *Control) iterationActivityTask(id string) *forkspace.ExecutionTaskRef {
 func monitorProgress(hosts []string, stop <-chan struct{}, bar *loopBar) {
 	t := time.NewTicker(progressPoll)
 	defer t.Stop()
-	last, _ := tasks.QueueProgress(hosts) // the bar was built with this baseline
+	last, _, _ := tasks.QueueProgress(hosts) // the bar was built with this baseline
 	for {
 		select {
 		case <-stop:
@@ -334,7 +337,10 @@ func monitorProgress(hosts []string, stop <-chan struct{}, bar *loopBar) {
 func updateLoopBarCounts(hosts []string, last tasks.TaskCounts, bar *loopBar) tasks.TaskCounts {
 	// c.total()==0 while we had a baseline is a torn read (a folder caught mid-move) — a
 	// running loop always has tasks; keep the last good counts rather than blink to 0/0.
-	c, _ := tasks.QueueProgress(hosts)
+	c, _, err := tasks.QueueProgress(hosts)
+	if err != nil {
+		return last
+	}
 	if c != last && (c.Total() > 0 || last.Total() == 0) {
 		bar.setCounts(c)
 		return c

@@ -899,7 +899,11 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 	if err != nil {
 		return -1, err
 	}
-	if legacy := tasks.LegacyForkQueueWithWork(ws); legacy != "" {
+	legacy, err := tasks.LegacyForkQueueWithWork(ws)
+	if err != nil {
+		return -1, err
+	}
+	if legacy != "" {
 		return 1, fmt.Errorf("fork %s contains a legacy copied task queue at %s; Coop will not guess between duplicate authorities — preserve any fork-only notes, then recreate this fork with --fresh (use --force only after reviewing its Git work)", name, legacy)
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
@@ -1067,8 +1071,11 @@ func forkCanonicalQueues(repo, override string) ([]string, error) {
 			return nil, err
 		}
 		root = filepath.Clean(root)
-		if !tasks.IsTaskDir(root) {
+		if _, err := os.Lstat(root); err != nil {
 			return nil, fmt.Errorf("coop fork --tasks: %s is not a task queue", override)
+		}
+		if _, err := tasks.ReadTaskTree(root); err != nil {
+			return nil, fmt.Errorf("coop fork --tasks: %w", err)
 		}
 		return []string{root}, nil
 	}
@@ -1079,9 +1086,15 @@ func forkCanonicalQueues(repo, override string) ([]string, error) {
 	var roots []string
 	for _, rel := range rels {
 		root := filepath.Join(repo, rel)
-		if tasks.IsTaskDir(root) {
-			roots = append(roots, filepath.Clean(root))
+		if _, err := os.Lstat(root); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return nil, err
 		}
+		if _, err := tasks.ReadTaskTree(root); err != nil {
+			return nil, err
+		}
+		roots = append(roots, filepath.Clean(root))
 	}
 	if len(roots) == 0 {
 		return nil, fmt.Errorf("no canonical task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(rels, ", "))

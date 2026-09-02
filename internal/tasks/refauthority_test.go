@@ -164,7 +164,7 @@ func TestRefAuthorityWindowRejectsConcurrentHeadMove(t *testing.T) {
 	}
 
 	// Drive the SAME restore/error path commands.go uses on this exact failure.
-	current, ok := CurrentTask(root, id)
+	current, ok := mustCurrentTask(t, root, id)
 	if !ok || current.State != StateDone {
 		t.Fatalf("task state before restore = %+v, %v; want it still done (untouched by the failed window)", current, ok)
 	}
@@ -177,7 +177,7 @@ func TestRefAuthorityWindowRejectsConcurrentHeadMove(t *testing.T) {
 
 	// The task is actionable again, with no partial authority: no receipt, and the audit-reopen
 	// generation this window never reached is exactly as it was.
-	restored, ok := CurrentTask(root, id)
+	restored, ok := mustCurrentTask(t, root, id)
 	if !ok || restored.State != StateInProgress {
 		t.Fatalf("restored task = %+v, %v; want it back in in_progress", restored, ok)
 	}

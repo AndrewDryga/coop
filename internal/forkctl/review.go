@@ -199,7 +199,9 @@ func (c *Control) ForkReview(args []string) (int, error) {
 	} else if err := gitFetchInto(repo, ws, name); err != nil {
 		return -1, fmt.Errorf("%s: git fetch: %w", name, err)
 	}
-	c.forkBrief(reviewRepo, ws, name, ref, outcome, gateConfigured)
+	if err := c.forkBrief(reviewRepo, ws, name, ref, outcome, gateConfigured); err != nil {
+		return -1, err
+	}
 	if _, s := c.host.forkCost(ws); s != "" {
 		ui.Info("cost: %s", s)
 	}
@@ -304,7 +306,7 @@ func (c *Control) runReviewCmd(repo, ws, name, ref string) (int, error) {
 // of the risk before reading the patch. Everything except the task log is computed by
 // the parent from git facts; the log is the fork's own voice and is labeled as such,
 // so a fork can't steer its review via its narrative.
-func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) {
+func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) error {
 	ins, del := parseShortstat(gitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
 	files := gitOut(repo, "diff", "--name-status", "HEAD..."+ref)
 	nfiles := 0
@@ -317,7 +319,11 @@ func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref s
 		fmt.Println(ui.Bold("commits:"))
 		fmt.Println(indent(log))
 	}
-	if why := tasks.LatestForkTaskLog(repo, name, 12); strings.TrimSpace(why) != "" {
+	why, err := tasks.LatestForkTaskLog(repo, name, 12)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(why) != "" {
 		fmt.Println(ui.Bold("why (agent's claim — latest task log):"))
 		fmt.Println(indent(why))
 	} else {
@@ -361,4 +367,5 @@ func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref s
 		fmt.Printf("%s %s conflict while rebasing onto current parent — gate not run\n", ui.Bold("gate:"), ui.Yellow("⚠"))
 	}
 	fmt.Println(ui.Bold("diff:"))
+	return nil
 }

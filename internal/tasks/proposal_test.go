@@ -70,7 +70,7 @@ func TestImportForkProposalCreatesOneCanonicalTaskIdempotently(t *testing.T) {
 	if err != nil || len(imported) != 1 {
 		t.Fatalf("import proposals = %+v, %v", imported, err)
 	}
-	item, ok := CurrentTask(root, imported[0].TaskID)
+	item, ok := mustCurrentTask(t, root, imported[0].TaskID)
 	if !ok || item.State != StateTodo {
 		t.Fatalf("imported canonical task = %+v, ok=%v", item, ok)
 	}
@@ -93,7 +93,7 @@ func TestImportForkProposalCreatesOneCanonicalTaskIdempotently(t *testing.T) {
 	if again, err := ImportForkProposals(repo, assignment.Owner.Fork); err != nil || len(again) != 0 {
 		t.Fatalf("same-id replay = %+v, %v", again, err)
 	}
-	if got := len(ReadTaskTree(root)); got != 2 {
+	if got := len(mustReadTaskTree(t, root)); got != 2 {
 		t.Fatalf("task count after idempotent replay = %d, want 2", got)
 	}
 
@@ -124,7 +124,7 @@ func TestImportForkProposalReplaysCrashAfterCanonicalCreate(t *testing.T) {
 	if err != nil || len(imported) != 1 || imported[0].TaskID != record.Task.Ref.ID {
 		t.Fatalf("crash replay = %+v, %v", imported, err)
 	}
-	item, ok := CurrentTask(root, record.Task.Ref.ID)
+	item, ok := mustCurrentTask(t, root, record.Task.Ref.ID)
 	if !ok || item.State != StateTodo {
 		t.Fatalf("replayed canonical task = %+v, ok=%v", item, ok)
 	}
@@ -230,14 +230,14 @@ func TestForkProposalReceiptsDoNotCreateALifetimeCap(t *testing.T) {
 	if len(problems) != 0 || len(records) != forkProposalCountLimit+1 {
 		t.Fatalf("long-lived proposal receipts = %d, problems=%v", len(records), problems)
 	}
-	if got := len(ReadTaskTree(root)); got != forkProposalCountLimit+2 {
+	if got := len(mustReadTaskTree(t, root)); got != forkProposalCountLimit+2 {
 		t.Fatalf("canonical tasks after long-lived proposal stream = %d", got)
 	}
 }
 
 func TestForkCandidateRequiresProposalOutboxDrained(t *testing.T) {
 	repo, root, assignment := proposalAssignment(t, "proposal-candidate")
-	projected, _ := CurrentTask(assignment.Owner.Projection, "assigned")
+	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "assigned")
 	if err := MoveTaskDir(assignment.Owner.Projection, projected, StateDone); err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestForkProposalBacklogUsesCanonicalQueueBacklog(t *testing.T) {
 	if err != nil || len(imported) != 1 || imported[0].Kind != ForkProposalBacklog {
 		t.Fatalf("backlog import = %+v, %v", imported, err)
 	}
-	backlog := ReadBacklog(root)
+	backlog := mustReadBacklog(t, root)
 	if len(backlog) != 1 || backlog[0].ID != imported[0].TaskID {
 		t.Fatalf("canonical backlog = %+v", backlog)
 	}
@@ -307,16 +307,16 @@ func TestForcedForkDiscardKeepsImportedTaskAndDropsPreparedProposal(t *testing.T
 	if err := DiscardForkTaskStateLocked(repo, assignment.Owner.Fork); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := CurrentTask(root, prepared.Task.Ref.ID); ok {
+	if _, ok := mustCurrentTask(t, root, prepared.Task.Ref.ID); ok {
 		t.Fatalf("forced discard materialized prepared proposal %s", prepared.Task.Ref.ID)
 	}
-	if _, ok := CurrentTask(root, next.Task.Ref.ID); !ok {
+	if _, ok := mustCurrentTask(t, root, next.Task.Ref.ID); !ok {
 		t.Fatalf("forced discard removed imported canonical task %s", next.Task.Ref.ID)
 	}
 	if records, problems := forkProposalRecords(repo, assignment.Owner.Fork); len(records) != 0 || len(problems) != 0 {
 		t.Fatalf("forced discard left proposal state %+v problems %v", records, problems)
 	}
-	item, ok := CurrentTask(root, "assigned")
+	item, ok := mustCurrentTask(t, root, "assigned")
 	if !ok || item.State != StateTodo {
 		t.Fatalf("discarded assignment task = %+v, ok=%v", item, ok)
 	}

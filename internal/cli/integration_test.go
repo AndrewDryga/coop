@@ -39,11 +39,7 @@ const (
 var taskStates = tasks.TaskStates
 
 var (
-	readTaskTree   = tasks.ReadTaskTree
-	isTaskDir      = tasks.IsTaskDir
 	moveTaskDir    = tasks.MoveTaskDir
-	currentTask    = tasks.CurrentTask
-	queueProgress  = tasks.QueueProgress
 	stateLabel     = tasks.StateLabel
 	stateOrder     = tasks.StateOrder
 	findTask       = tasks.FindTask
@@ -51,6 +47,35 @@ var (
 	taskTreeCounts = tasks.TaskTreeCounts
 	cmdTasksFolder = tasks.CmdTasksFolder
 )
+
+func isTaskDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func readTaskTree(root string) []tasks.Item {
+	items, err := tasks.ReadTaskTree(root)
+	if err != nil {
+		panic(err)
+	}
+	return items
+}
+
+func currentTask(root, id string) (tasks.Item, bool) {
+	item, ok, err := tasks.CurrentTask(root, id)
+	if err != nil {
+		panic(err)
+	}
+	return item, ok
+}
+
+func queueProgress(hosts []string) (tasks.TaskCounts, string) {
+	counts, active, err := tasks.QueueProgress(hosts)
+	if err != nil {
+		panic(err)
+	}
+	return counts, active
+}
 
 var tasksVerbs = tasks.TasksVerbs
 

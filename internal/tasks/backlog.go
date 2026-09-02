@@ -117,7 +117,10 @@ func cmdBacklogFolder(root string, rest []string) (int, error) {
 // shape, but without state grouping (everything here is one state) and without the subtask/blocked
 // markers (a parked idea's placeholder subtask is noise, and nothing here is blocked). Empty is a note.
 func backlogFolderList(root string) (int, error) {
-	items := ReadBacklog(root)
+	items, err := ReadBacklog(root)
+	if err != nil {
+		return -1, err
+	}
 	if len(items) == 0 {
 		ui.Note("backlog is empty — capture an idea with 'coop backlog add \"<title>\"'")
 		return 0, nil
@@ -193,7 +196,11 @@ func backlogListAll(repo string, rels []string) (int, error) {
 		}
 		fmt.Println(banner(p, rel))
 		root := filepath.Join(repo, rel)
-		if len(ReadBacklog(root)) == 0 {
+		items, err := ReadBacklog(root)
+		if err != nil {
+			return -1, err
+		}
+		if len(items) == 0 {
 			fmt.Println(p.Gray("  (backlog empty)"))
 			continue
 		}

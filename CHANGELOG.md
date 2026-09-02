@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Unreadable task queues fail closed.** Task and backlog enumeration now reports unsafe or
+  unreadable lifecycle directories and metadata instead of treating hidden work as an empty queue.
+  Listing, assignment, loop completion, fork-candidate publication, audit, and deletion stop on
+  those errors; missing optional queues and normal atomic task moves keep their existing behavior.
+
 - **Configuration mistakes stop before Coop does work.** A present or explicitly selected
   `coop.conf` must now be a readable, well-formed file with known, non-duplicate settings, and
   booleans, PID limits, carry budgets, egress, and consult timeouts use closed validated values.

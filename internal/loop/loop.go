@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -146,9 +145,19 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			return 1, errors.Join(relErr, statErr, errors.New("fork task proposal outbox is outside the checkout or not a real directory"))
 		}
 	}
-	// A queue is a directory (.agent/tasks), so check for one with tasks.IsTaskDir — fileExists is
-	// false for a directory and used to reject every folder queue, so the loop never ran.
-	if !slices.ContainsFunc(hosts, tasks.IsTaskDir) {
+	queueExists := false
+	for _, host := range hosts {
+		if _, statErr := os.Lstat(host); errors.Is(statErr, os.ErrNotExist) {
+			continue
+		} else if statErr != nil {
+			return 1, statErr
+		}
+		if _, readErr := tasks.ReadTaskTree(host); readErr != nil {
+			return 1, readErr
+		}
+		queueExists = true
+	}
+	if !queueExists {
 		return -1, fmt.Errorf("no task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(queues, ", "))
 	}
 	// One loop per checkout, claimed before ANY queue state is touched — the reconcilers just
@@ -185,7 +194,11 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("recover interrupted completion window: %w", err)
 	}
-	if duplicates := tasks.NonArchivedDuplicateTaskIDs(hosts); len(duplicates) > 0 {
+	duplicates, err := tasks.NonArchivedDuplicateTaskIDs(hosts)
+	if err != nil {
+		return 1, err
+	}
+	if len(duplicates) > 0 {
 		return 1, fmt.Errorf("aggregated loop cannot safely distinguish non-archived task id(s) present in multiple queues: %s — rename the duplicates or select one queue with --tasks", strings.Join(duplicates, ", "))
 	}
 	custom := lc.Work.Command
@@ -196,13 +209,20 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	preflightBuiltinRan := false
 	if limit.enabled() && preflight && len(custom) == 0 {
 		ui.Info("pre-flight: resolving answered blockers")
-		if ids := tasks.UnblockResolved(hosts); len(ids) > 0 {
+		ids, err := tasks.UnblockResolved(hosts)
+		if err != nil {
+			return 1, err
+		}
+		if len(ids) > 0 {
 			ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
 		}
 		preflightBuiltinRan = true
 	}
 	if limit.enabled() {
-		cf, _ := tasks.QueueProgress(hosts)
+		cf, _, err := tasks.QueueProgress(hosts)
+		if err != nil {
+			return 1, err
+		}
 		if cf.Todo+cf.Doing == 0 {
 			fmt.Fprintln(os.Stderr, loopTaskLimitBanner(cf, limit))
 			return loopExitCode(cf), nil
@@ -344,7 +364,11 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if preflight && len(custom) == 0 {
 		if !preflightBuiltinRan {
 			ui.Info("pre-flight: resolving answered blockers")
-			if ids := tasks.UnblockResolved(hosts); len(ids) > 0 {
+			ids, err := tasks.UnblockResolved(hosts)
+			if err != nil {
+				return 1, err
+			}
+			if len(ids) > 0 {
 				ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
 			}
 		}
@@ -374,7 +398,10 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		}
 	}
 	label := strings.Join(queues, ", ")
-	c0, _ := tasks.QueueProgress(hosts)
+	c0, _, err := tasks.QueueProgress(hosts)
+	if err != nil {
+		return 1, err
+	}
 	stopHint := "Ctrl-C to stop"
 	if limit.enabled() {
 		stopHint = fmt.Sprintf("at most %s, then pause", ui.Count(limit.max, "task"))
@@ -392,7 +419,11 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// An in_progress task whose commit is already in history means a previous run died between the
 	// commit and the folder move. Say so before working it: the resume recipe only stays safe while
 	// that commit is HEAD, and left unnoticed these sat in the queue for days.
-	for _, t := range tasks.AlreadyCommittedInProgress(repo, hosts) {
+	committed, err := tasks.AlreadyCommittedInProgress(repo, hosts)
+	if err != nil {
+		return 1, err
+	}
+	for _, t := range committed {
 		ui.Warn("task %s is in progress but its commit %s is already in history (%s on top) — it may be finished; verify it and `coop tasks done %s`, or leave it to be resumed",
 			t.ID, t.Commit, ui.Count(t.Depth, "commit"), t.ID)
 	}
@@ -409,7 +440,11 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	loopStartHead := prevHead // for the end-of-run signing sweep (catches any straggler cycle)
 	// The signoff reviews only what THIS RUN completed: anchoring to the pre-run done set keeps
 	// 99_done/'s history (pruned only by a human) out of every round's subject list.
-	reviewBaseline := reviewBaselineAfterVerdict(doneTaskDirs(hosts), nil, nil, recoveredReviewCompletions)
+	doneBaseline, err := doneTaskDirs(hosts)
+	if err != nil {
+		return 1, err
+	}
+	reviewBaseline := reviewBaselineAfterVerdict(doneBaseline, nil, nil, recoveredReviewCompletions)
 	if len(recoveredReviewCompletions) > 0 {
 		ui.Info("recovered concurrent host completion during an interrupted review: %s — carrying it into signoff", strings.Join(recoveredReviewCompletions, ", "))
 	}
@@ -429,7 +464,11 @@ reviewAgain:
 			if softStop.Load() || iterCtx.Err() != nil {
 				break
 			}
-			reached, limitErr := limit.observe(tasks.QueueSnapshot(hosts))
+			snapshot, snapshotErr := tasks.QueueSnapshot(hosts)
+			if snapshotErr != nil {
+				return 1, snapshotErr
+			}
+			reached, limitErr := limit.observe(snapshot)
 			if limitErr != nil {
 				return 1, limitErr
 			}
@@ -681,7 +720,14 @@ reviewAgain:
 			if assignedCompletion != nil {
 				missing, tolerated = tasks.CompletionUnbindableTasks(repo, iterHead, headAfter, finished, lease.Reopen, touched)
 			}
-			tasks.ReportToleratedForeignBindings(repo, hosts, iterHead, headAfter, assigned.Item.ID, tolerated)
+			if reportErr := tasks.ReportToleratedForeignBindings(repo, hosts, iterHead, headAfter, assigned.Item.ID, tolerated); reportErr != nil {
+				if assignedCompletion != nil {
+					restoreErr = errors.Join(restoreErr, tasks.RestoreQueuedCompletion(*assignedCompletion, lease.Reopen != nil))
+				}
+				releaseErr := errors.Join(lease.Release(), windows.Abandon())
+				refRelease()
+				return 1, errors.Join(reportErr, restoreErr, releaseErr)
+			}
 			if len(missing) > 0 {
 				restoreErr = errors.Join(restoreErr, tasks.RestoreQueuedCompletion(*assignedCompletion, lease.Reopen != nil))
 				var windowErr error
@@ -901,12 +947,18 @@ reviewAgain:
 		// A requested stop (soft: the current iteration finished; hard: it was torn down) skips the
 		// signoff pass and the drain summary — the queue isn't done, the user asked to stop.
 		if softStop.Load() || iterCtx.Err() != nil {
-			cf, _ := tasks.QueueProgress(hosts)
+			cf, _, err := tasks.QueueProgress(hosts)
+			if err != nil {
+				return 1, err
+			}
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 			return LoopInterruptedExitCode, nil
 		}
 		if limit.enabled() {
-			cf, _ := tasks.QueueProgress(hosts)
+			cf, _, err := tasks.QueueProgress(hosts)
+			if err != nil {
+				return 1, err
+			}
 			fmt.Fprintln(os.Stderr, loopTaskLimitBanner(cf, limit))
 			if limit.settled == 0 {
 				return loopExitCode(cf), nil
@@ -923,7 +975,11 @@ reviewAgain:
 		// The round's subjects: what entered done/ since the last accepted round (for round 1, since
 		// the run started) — a folder diff, so it also catches a completion with no commit. Nothing
 		// new means nothing to review: skip the pass instead of burning a box on 99_done/'s history.
-		subjects := newlyFinished(reviewBaseline, doneTaskDirs(hosts))
+		doneNow, err := doneTaskDirs(hosts)
+		if err != nil {
+			return 1, err
+		}
+		subjects := newlyFinished(reviewBaseline, doneNow)
 		if len(subjects) == 0 {
 			ui.Info("signoff — nothing newly completed to review, skipping")
 			break
@@ -946,7 +1002,10 @@ reviewAgain:
 		// Preserve the exact tasks the host reopened before any early return.
 		reopenedIDs := soRun.reopened
 		if errors.Is(serr, errReviewInterrupted) {
-			cf, _ := tasks.QueueProgress(hosts)
+			cf, _, err := tasks.QueueProgress(hosts)
+			if err != nil {
+				return 1, err
+			}
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 			return LoopInterruptedExitCode, nil
 		}
@@ -955,7 +1014,10 @@ reviewAgain:
 		}
 		// A stop that landed during the signoff pass is honored before the next round is decided.
 		if softStop.Load() || iterCtx.Err() != nil {
-			cf, _ := tasks.QueueProgress(hosts)
+			cf, _, err := tasks.QueueProgress(hosts)
+			if err != nil {
+				return 1, err
+			}
 			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 			return LoopInterruptedExitCode, nil
 		}
@@ -985,7 +1047,11 @@ reviewAgain:
 			ui.Info("signoff reopened %s — draining again", ui.Count(len(reopenedIDs), "task"))
 			continue
 		case signoffAccepted:
-			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneTaskDirs(hosts))); len(pending) > 0 {
+			doneNow, err := doneTaskDirs(hosts)
+			if err != nil {
+				return 1, err
+			}
+			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
 				ui.Info("signoff passed, but a parallel session completed %s during the round — running another signoff round to review it", ui.Count(len(pending), "task"))
 				signoffRound = 0
 				continue
@@ -997,7 +1063,11 @@ reviewAgain:
 			if err := blockReopenedTasks(hosts, reopenedIDs, maxSignoffRounds); err != nil {
 				return 3, err
 			}
-			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneTaskDirs(hosts))); len(pending) > 0 {
+			doneNow, err := doneTaskDirs(hosts)
+			if err != nil {
+				return 1, err
+			}
+			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
 				ui.Info("blocked the repeatedly reopened work; a parallel session also completed %s — running a fresh signoff round for it", ui.Count(len(pending), "task"))
 				signoffRound = 0
 				continue
@@ -1020,7 +1090,10 @@ reviewAgain:
 			ui.Info("verify pass — e2e the affected features (%s)", strings.Join(cs.subsystems, ", "))
 			vPrompt := substituteLoopVars(lc.Verify.Prompt, cs, health) + cs.reviewBlock(health) +
 				"\n\n" + auditEvidencePrompt + "\n\n" + reviewContextFooter(repo, queues)
-			verifyIDs := completedReviewSubjects(hosts, completedThisRun)
+			verifyIDs, err := completedReviewSubjects(hosts, completedThisRun)
+			if err != nil {
+				return 1, err
+			}
 			verifyActivity := reviewActivity("verify", verifyIDs)
 			if len(verifyIDs) == 0 {
 				verifyActivity = "verify: unbound changes"
@@ -1032,7 +1105,10 @@ reviewAgain:
 			reopenedIDs := vRun.reopened
 			health.noteReopen(reopenedIDs)
 			if errors.Is(verr, errReviewInterrupted) {
-				cf, _ := tasks.QueueProgress(hosts)
+				cf, _, err := tasks.QueueProgress(hosts)
+				if err != nil {
+					return 1, err
+				}
 				fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
 				return LoopInterruptedExitCode, nil
 			}
@@ -1045,7 +1121,11 @@ reviewAgain:
 				ui.Warn("verify pass could not run: %v — the affected features went un-e2e'd", verr)
 			}
 			reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, nil, vRun.concurrent)
-			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneTaskDirs(hosts))); len(pending) > 0 {
+			doneNow, err := doneTaskDirs(hosts)
+			if err != nil {
+				return 1, err
+			}
+			if pending := taskIDsOf(newlyFinished(reviewBaseline, doneNow)); len(pending) > 0 {
 				ui.Info("verify observed concurrent host completion of %s — returning to signoff before exit", strings.Join(pending, ", "))
 				goto reviewAgain
 			}
@@ -1061,12 +1141,19 @@ reviewAgain:
 			ui.Info("signed %s with your host key", ui.Count(signed, "commit"))
 		}
 	}
-	cf, _ := tasks.QueueProgress(hosts)
+	cf, _, err := tasks.QueueProgress(hosts)
+	if err != nil {
+		return 1, err
+	}
 	// A human-facing digest above the verdict banner: what shipped (per task + areas), what's blocked,
 	// and any task the run flagged — so you see what to review/e2e at a glance.
 	if len(custom) == 0 {
 		cost := costFromRecords(readStageRecords(repo, runid), ReadPeerRecords(repo, runid))
-		if digest := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD")).humanDigest(health, tasks.BlockedTaskIDs(hosts), cost); digest != "" {
+		blocked, err := tasks.BlockedTaskIDs(hosts)
+		if err != nil {
+			return 1, err
+		}
+		if digest := loopChanges(repo, loopStartHead, gitOut(repo, "rev-parse", "HEAD")).humanDigest(health, blocked, cost); digest != "" {
 			fmt.Fprintln(os.Stderr, digest)
 		}
 		// Done folders accumulate until a human prunes them (agents never delete) — and a big
@@ -1118,7 +1205,10 @@ func pruneNudge(done int) string {
 // otherwise masquerade as a stalled iteration, spending the stall budget on a broken repo — and the
 // next iteration would work a task it can't bind a commit range to anyway.
 func (c *Control) advanceStall(repo string, hosts []string, prevHead string, settledBaseline, stalls int, active string) (string, int, int, error) {
-	after, _ := tasks.QueueProgress(hosts)
+	after, _, err := tasks.QueueProgress(hosts)
+	if err != nil {
+		return prevHead, settledBaseline, stalls, err
+	}
 	settled := after.Done + after.Blocked
 	head, err := gitOutErr(repo, "rev-parse", "HEAD")
 	if err != nil {

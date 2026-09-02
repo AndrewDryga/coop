@@ -44,10 +44,10 @@ func TestAggregateDuplicateTaskIDs(t *testing.T) {
 		writeTaskFile(t, filepath.Join(root, StateDone, "archived", "task.md"), "# archived\n")
 	}
 	hosts := []string{first, second}
-	if got, want := aggregateDuplicateTaskIDs(hosts), []string{"actionable", "archived", "blocked"}; !slices.Equal(got, want) {
+	if got, want := mustAggregateDuplicateTaskIDs(t, hosts), []string{"actionable", "archived", "blocked"}; !slices.Equal(got, want) {
 		t.Fatalf("aggregate duplicate ids = %v, want %v", got, want)
 	}
-	if got, want := NonArchivedDuplicateTaskIDs(hosts), []string{"actionable", "blocked"}; !slices.Equal(got, want) {
+	if got, want := mustNonArchivedDuplicateTaskIDs(t, hosts), []string{"actionable", "blocked"}; !slices.Equal(got, want) {
 		t.Fatalf("non-archived duplicate ids = %v, want %v", got, want)
 	}
 }
@@ -215,7 +215,7 @@ func TestReviewCompletionWindowDetectsNewReceiptGeneration(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	before, ok := taskCompletionReceipt(root, archived)
 	if !ok {
 		t.Fatal("trusted completion did not record its first receipt")
@@ -228,11 +228,11 @@ func TestReviewCompletionWindowDetectsNewReceiptGeneration(t *testing.T) {
 	if err := moveTrustedTaskFromDone(root, archived, StateInProgress); err != nil {
 		t.Fatal(err)
 	}
-	reopened, _ := CurrentTask(root, archived.ID)
+	reopened, _ := mustCurrentTask(t, root, archived.ID)
 	if err := CompleteTrustedTask(root, reopened); err != nil {
 		t.Fatal(err)
 	}
-	recompleted, _ := CurrentTask(root, archived.ID)
+	recompleted, _ := mustCurrentTask(t, root, archived.ID)
 	after, ok := taskCompletionReceipt(root, recompleted)
 	if !ok || after.Nonce == before.Nonce {
 		t.Fatalf("completion generation was not refreshed: before=%q after=%q", before.Nonce, after.Nonce)
@@ -251,7 +251,7 @@ func TestReviewCompletionWindowRejectsRawSameInodeOutAndBack(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	windows, err := BeginReviewCompletionWindows([]string{root}, []string{archived.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +260,7 @@ func TestReviewCompletionWindowRejectsRawSameInodeOutAndBack(t *testing.T) {
 	if err := MoveTaskDir(root, archived, StateInProgress); err != nil {
 		t.Fatal(err)
 	}
-	reopened, _ := CurrentTask(root, archived.ID)
+	reopened, _ := mustCurrentTask(t, root, archived.ID)
 	if err := MoveTaskDir(root, reopened, StateDone); err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestWorkCompletionWindowRejectsRawSameInodeOutAndBack(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	windows, err := BeginCompletionWindows([]string{root})
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +287,7 @@ func TestWorkCompletionWindowRejectsRawSameInodeOutAndBack(t *testing.T) {
 	if err := MoveTaskDir(root, archived, StateInProgress); err != nil {
 		t.Fatal(err)
 	}
-	reopened, _ := CurrentTask(root, archived.ID)
+	reopened, _ := mustCurrentTask(t, root, archived.ID)
 	if err := MoveTaskDir(root, reopened, StateDone); err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestWorkCompletionWindowWaitsToInvalidateStaleReceipt(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	windows, err := BeginCompletionWindows([]string{root})
 	if err != nil {
 		t.Fatal(err)
@@ -320,7 +320,7 @@ func TestWorkCompletionWindowWaitsToInvalidateStaleReceipt(t *testing.T) {
 	if err := MoveTaskDir(root, archived, StateInProgress); err != nil {
 		t.Fatal(err)
 	}
-	reopened, _ := CurrentTask(root, archived.ID)
+	reopened, _ := mustCurrentTask(t, root, archived.ID)
 	if err := MoveTaskDir(root, reopened, StateDone); err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func TestWorkCompletionWindowAcceptsHostReceiptedForeignArchivedDeparture(t *tes
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	windows, err := BeginWorkCompletionWindows([]string{root}, assigned.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -447,7 +447,7 @@ func TestWorkCompletionWindowRejectsSubjectAndWrongDepartureRecord(t *testing.T)
 		if err := CompleteTrustedTask(root, assigned); err != nil {
 			t.Fatal(err)
 		}
-		assigned, _ = CurrentTask(root, assigned.ID)
+		assigned, _ = mustCurrentTask(t, root, assigned.ID)
 		windows, err := BeginWorkCompletionWindows([]string{root}, assigned.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -466,7 +466,7 @@ func TestWorkCompletionWindowRejectsSubjectAndWrongDepartureRecord(t *testing.T)
 		if err := CompleteTrustedTask(root, archived); err != nil {
 			t.Fatal(err)
 		}
-		archived, _ = CurrentTask(root, archived.ID)
+		archived, _ = mustCurrentTask(t, root, archived.ID)
 		windows, err := BeginWorkCompletionWindows([]string{root}, assigned.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -492,7 +492,7 @@ func TestWorkCompletionWindowReplayAcceptsHostReceiptedForeignDeparture(t *testi
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	windows, err := BeginWorkCompletionWindows([]string{root}, assigned.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -523,7 +523,7 @@ func TestReviewCompletionWindowRejectsInPlaceArchiveMutation(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	windows, err := BeginReviewCompletionWindows([]string{root}, []string{archived.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -551,7 +551,7 @@ func TestReviewCompletionWindowRejectsDirectTaskReopen(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	windows, err := BeginReviewCompletionWindows([]string{root}, []string{archived.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -577,7 +577,7 @@ func TestReviewCompletionWindowRejectsReplacedSubject(t *testing.T) {
 	if err := CompleteTrustedTask(root, subject); err != nil {
 		t.Fatal(err)
 	}
-	subject, _ = CurrentTask(root, subject.ID)
+	subject, _ = mustCurrentTask(t, root, subject.ID)
 	windows, err := BeginReviewCompletionWindows([]string{root}, []string{subject.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -625,7 +625,7 @@ func TestReviewCompletionWindowReportsConcurrentHostCompletion(t *testing.T) {
 	if err := CompleteTrustedTask(root, subject); err != nil {
 		t.Fatal(err)
 	}
-	subject, _ = CurrentTask(root, subject.ID)
+	subject, _ = mustCurrentTask(t, root, subject.ID)
 	foreign := taskForLease(t, root, StateTodo, "foreign-host-completion")
 	windows, err := BeginReviewCompletionWindows([]string{root}, []string{subject.ID})
 	if err != nil {
@@ -641,14 +641,14 @@ func TestReviewCompletionWindowReportsConcurrentHostCompletion(t *testing.T) {
 	if !slices.Equal(concurrent, []string{foreign.ID}) {
 		t.Fatalf("concurrent completions = %v, want [%s]", concurrent, foreign.ID)
 	}
-	completed, ok := CurrentTask(root, foreign.ID)
+	completed, ok := mustCurrentTask(t, root, foreign.ID)
 	if !ok || completed.State != StateDone {
 		t.Fatalf("foreign host completion = %+v, want done", completed)
 	}
 	if !taskCompletionRecorded(root, completed) {
 		t.Fatal("tolerated foreign completion lost its host receipt")
 	}
-	if kept, _ := CurrentTask(root, subject.ID); kept.State != StateDone {
+	if kept, _ := mustCurrentTask(t, root, subject.ID); kept.State != StateDone {
 		t.Fatal("review subject was disturbed by concurrent host activity")
 	}
 }
@@ -706,7 +706,7 @@ func TestReviewCompletionWindowSubjectStaysStrictBesideConcurrentActivity(t *tes
 	if err := CompleteTrustedTask(root, subject); err != nil {
 		t.Fatal(err)
 	}
-	subject, _ = CurrentTask(root, subject.ID)
+	subject, _ = mustCurrentTask(t, root, subject.ID)
 	foreign := taskForLease(t, root, StateTodo, "foreign-beside-subject")
 	windows, err := BeginReviewCompletionWindows([]string{root}, []string{subject.ID})
 	if err != nil {
@@ -723,7 +723,7 @@ func TestReviewCompletionWindowSubjectStaysStrictBesideConcurrentActivity(t *tes
 	if len(concurrent) != 0 {
 		t.Fatalf("failed review audit still reported concurrent completions: %v", concurrent)
 	}
-	if done, _ := CurrentTask(root, foreign.ID); done.State != StateDone {
+	if done, _ := mustCurrentTask(t, root, foreign.ID); done.State != StateDone {
 		t.Fatal("subject tampering revoked an unrelated host completion")
 	}
 }
@@ -845,7 +845,7 @@ func TestTrustedTaskReopenRollsBackMetadataAndReceipt(t *testing.T) {
 				if err := CompleteTrustedTask(root, task); err != nil {
 					t.Fatal(err)
 				}
-				task, _ = CurrentTask(root, task.ID)
+				task, _ = mustCurrentTask(t, root, task.ID)
 			}
 			beforeFiles := map[string][]byte{}
 			beforeExists := map[string]bool{}
@@ -863,7 +863,7 @@ func TestTrustedTaskReopenRollsBackMetadataAndReceipt(t *testing.T) {
 			if !errors.Is(err, injected) {
 				t.Fatalf("trusted reopen error = %v, want injected failure", err)
 			}
-			current, ok := CurrentTask(root, task.ID)
+			current, ok := mustCurrentTask(t, root, task.ID)
 			if !ok || current.State != StateDone || current.Dir != task.Dir {
 				t.Fatalf("task after rollback = %+v, %v; want original done task", current, ok)
 			}
@@ -905,7 +905,7 @@ func TestTrustedTaskReopenRollsBackEverySubject(t *testing.T) {
 		if err := CompleteTrustedTask(root, task); err != nil {
 			t.Fatal(err)
 		}
-		task, _ = CurrentTask(root, id)
+		task, _ = mustCurrentTask(t, root, id)
 		tasks = append(tasks, task)
 		beforeFiles[id] = map[string][]byte{}
 		for _, name := range []string{"log.md", "state.md"} {
@@ -943,7 +943,7 @@ func TestTrustedTaskReopenRollsBackEverySubject(t *testing.T) {
 		t.Fatalf("multi-task reopen = %v, want injected failure", err)
 	}
 	for _, task := range tasks {
-		current, ok := CurrentTask(root, task.ID)
+		current, ok := mustCurrentTask(t, root, task.ID)
 		if !ok || current.State != StateDone {
 			t.Fatalf("task %s after rollback = %+v/%v, want done", task.ID, current, ok)
 		}
@@ -985,7 +985,7 @@ func TestTrustedTaskMoveRollsBackDeclaredMetadata(t *testing.T) {
 	if !errors.Is(err, injected) {
 		t.Fatalf("trusted move = %v, want injected callback failure", err)
 	}
-	current, ok := CurrentTask(root, task.ID)
+	current, ok := mustCurrentTask(t, root, task.ID)
 	if !ok || current.State != StateInProgress {
 		t.Fatalf("task after rollback = %+v/%v, want in progress", current, ok)
 	}
@@ -1001,7 +1001,7 @@ func TestStaleReceiptClearDoesNotEraseFreshGeneration(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	old, ok := taskCompletionReceipt(root, archived)
 	if !ok {
 		t.Fatal("trusted completion did not record its first receipt")
@@ -1009,7 +1009,7 @@ func TestStaleReceiptClearDoesNotEraseFreshGeneration(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	fresh, ok := taskCompletionReceipt(root, archived)
 	if !ok || fresh.Nonce == old.Nonce {
 		t.Fatalf("trusted recompletion did not publish a fresh nonce: old=%q fresh=%q", old.Nonce, fresh.Nonce)
@@ -1033,7 +1033,7 @@ func TestCompletionWindowAuditsBusyReceiptBaseline(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	authority, err := OpenLeaseAuthority(root, archived.ID, false)
 	if err != nil {
 		t.Fatal(err)
@@ -1054,7 +1054,7 @@ func TestCompletionWindowAuditsBusyReceiptBaseline(t *testing.T) {
 	if err := MoveTaskDir(root, archived, StateInProgress); err != nil {
 		t.Fatal(err)
 	}
-	reopened, _ := CurrentTask(root, archived.ID)
+	reopened, _ := mustCurrentTask(t, root, archived.ID)
 	if err := MoveTaskDir(root, reopened, StateDone); err != nil {
 		t.Fatal(err)
 	}
@@ -1072,7 +1072,7 @@ func TestTrustedReopenMoveFailureRestoresExactReceipt(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	before, ok := taskCompletionReceipt(root, archived)
 	if !ok {
 		t.Fatal("trusted completion did not record its receipt")
@@ -1091,8 +1091,17 @@ func TestTrustedReopenMoveFailureRestoresExactReceipt(t *testing.T) {
 	if !ok || after.Nonce != before.Nonce {
 		t.Fatalf("failed trusted reopen changed receipt: before=%q after=%q", before.Nonce, after.Nonce)
 	}
+	if _, err := windows.candidates(); err == nil || !strings.Contains(err.Error(), StateInProgress) {
+		t.Fatalf("unreadable lifecycle state did not stop completion audit: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, StateInProgress)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, StateInProgress), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if candidates, err := windows.candidates(); err != nil || len(candidates) != 0 {
-		t.Fatalf("failed trusted reopen looked like a completion generation: %#v, %v", candidates, err)
+		t.Fatalf("repaired failed reopen looked like a completion generation: %#v, %v", candidates, err)
 	}
 	if err := windows.Close(); err != nil {
 		t.Fatal(err)
@@ -1105,7 +1114,7 @@ func TestTrustedReopenCrashWindowRestoresClearedReceipt(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	windows, err := beginCompletionWindowsAllowing([]string{root}, archived.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -1269,7 +1278,7 @@ func TestCompletionWindowReplayLeavesChangedBaselineArchivesDone(t *testing.T) {
 		if err := CompleteTrustedTask(root, task); err != nil {
 			t.Fatal(err)
 		}
-		task, _ = CurrentTask(root, id)
+		task, _ = mustCurrentTask(t, root, id)
 		return task
 	}
 	first := trustedArchive("baseline-first")
@@ -1305,7 +1314,7 @@ func TestCompletionWindowReplayLeavesChangedBaselineArchivesDone(t *testing.T) {
 		t.Fatalf("baseline mutation replay error = %v", err)
 	}
 	for _, archived := range []Item{first, second} {
-		current, ok := CurrentTask(root, archived.ID)
+		current, ok := mustCurrentTask(t, root, archived.ID)
 		if !ok || current.State != StateDone {
 			t.Fatalf("baseline archive %s was reopened: %#v", archived.ID, current)
 		}
@@ -1313,7 +1322,7 @@ func TestCompletionWindowReplayLeavesChangedBaselineArchivesDone(t *testing.T) {
 			t.Fatalf("baseline archive %s retained stale completion receipt", archived.ID)
 		}
 	}
-	current, ok := CurrentTask(root, rogue.ID)
+	current, ok := mustCurrentTask(t, root, rogue.ID)
 	if !ok || current.State != StateInProgress {
 		t.Fatalf("new unowned completion was not restored: %#v", current)
 	}
@@ -1341,7 +1350,7 @@ func TestCompletionWindowReplayArrivalPrecedesLaterMutation(t *testing.T) {
 	if err := MoveTaskDir(root, rogue, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	rogue, _ = CurrentTask(root, rogue.ID)
+	rogue, _ = mustCurrentTask(t, root, rogue.ID)
 	newer, err := BeginCompletionWindows([]string{root})
 	if err != nil {
 		t.Fatal(err)
@@ -1359,7 +1368,7 @@ func TestCompletionWindowReplayArrivalPrecedesLaterMutation(t *testing.T) {
 	if err := ReconcileCompletionWindows([]string{root}); err != nil {
 		t.Fatalf("staggered recovery: %v", err)
 	}
-	current, ok := CurrentTask(root, rogue.ID)
+	current, ok := mustCurrentTask(t, root, rogue.ID)
 	if !ok || current.State != StateInProgress {
 		t.Fatalf("older window's unowned arrival was suppressed by later mutation: %#v", current)
 	}
@@ -1378,7 +1387,7 @@ func TestCompletionWindowReplayOwnedArrivalDoesNotHideLaterMutation(t *testing.T
 	if err := CompleteTrustedTask(root, arrival); err != nil {
 		t.Fatal(err)
 	}
-	arrival, _ = CurrentTask(root, arrival.ID)
+	arrival, _ = mustCurrentTask(t, root, arrival.ID)
 	newer, err := BeginCompletionWindows([]string{root})
 	if err != nil {
 		t.Fatal(err)
@@ -1398,7 +1407,7 @@ func TestCompletionWindowReplayOwnedArrivalDoesNotHideLaterMutation(t *testing.T
 		!strings.Contains(err.Error(), "remain done") {
 		t.Fatalf("owned staggered recovery error = %v", err)
 	}
-	current, ok := CurrentTask(root, arrival.ID)
+	current, ok := mustCurrentTask(t, root, arrival.ID)
 	if !ok || current.State != StateDone {
 		t.Fatalf("owned arrival mutation was reopened: %#v", current)
 	}
@@ -1420,7 +1429,7 @@ func TestCompletionWindowReplayPersistsRecoveredDepartureAcrossCrash(t *testing.
 	if err := MoveTaskDir(root, rogue, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	rogue, _ = CurrentTask(root, rogue.ID)
+	rogue, _ = mustCurrentTask(t, root, rogue.ID)
 	newer, err := BeginCompletionWindows([]string{root})
 	if err != nil {
 		t.Fatal(err)
@@ -1460,7 +1469,7 @@ func TestCompletionWindowReplayPersistsRecoveredDepartureAcrossCrash(t *testing.
 	if _, ok := index.Windows[newerID]; ok {
 		t.Fatal("recovered-departure retry retained the newer journal")
 	}
-	current, ok := CurrentTask(root, rogue.ID)
+	current, ok := mustCurrentTask(t, root, rogue.ID)
 	if !ok || current.State != StateInProgress {
 		t.Fatalf("recovered departure changed state on retry: %#v", current)
 	}
@@ -1472,7 +1481,7 @@ func TestCompletionWindowReplayLeavesReplacedBaselineArchiveDone(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	windows, err := BeginCompletionWindows([]string{root})
 	if err != nil {
 		t.Fatal(err)
@@ -1494,7 +1503,7 @@ func TestCompletionWindowReplayLeavesReplacedBaselineArchiveDone(t *testing.T) {
 		!strings.Contains(err.Error(), archived.ID) {
 		t.Fatalf("replaced baseline recovery error = %v", err)
 	}
-	current, ok := CurrentTask(root, archived.ID)
+	current, ok := mustCurrentTask(t, root, archived.ID)
 	if !ok || current.State != StateDone {
 		t.Fatalf("replaced baseline archive was reopened: %#v", current)
 	}
@@ -1506,7 +1515,7 @@ func TestCompletionWindowReplayLeavesBusyBaselineWithoutReceiptDone(t *testing.T
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	authority, err := OpenLeaseAuthority(root, archived.ID, false)
 	if err != nil {
 		t.Fatal(err)
@@ -1536,7 +1545,7 @@ func TestCompletionWindowReplayLeavesBusyBaselineWithoutReceiptDone(t *testing.T
 		!strings.Contains(err.Error(), archived.ID) {
 		t.Fatalf("busy baseline recovery error = %v", err)
 	}
-	current, ok := CurrentTask(root, archived.ID)
+	current, ok := mustCurrentTask(t, root, archived.ID)
 	if !ok || current.State != StateDone {
 		t.Fatalf("busy receiptless baseline archive was reopened: %#v", current)
 	}
@@ -1573,7 +1582,7 @@ func TestCompletionWindowReplayAcceptsReceiptCompletedFromBusyBaseline(t *testin
 	if err := ReconcileCompletionWindows([]string{root}); err != nil {
 		t.Fatalf("completed busy-baseline receipt recovery: %v", err)
 	}
-	current, ok := CurrentTask(root, archived.ID)
+	current, ok := mustCurrentTask(t, root, archived.ID)
 	if !ok || current.State != StateDone || !taskCompletionRecorded(root, current) {
 		t.Fatalf("completed busy-baseline receipt was not accepted: %#v", current)
 	}
@@ -1585,7 +1594,7 @@ func TestCompletionWindowReplayResumesPersistedBaselineMutation(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	windows, err := BeginCompletionWindows([]string{root})
 	if err != nil {
 		t.Fatal(err)
@@ -1624,7 +1633,7 @@ func TestCompletionWindowReplayResumesPersistedBaselineMutation(t *testing.T) {
 		!strings.Contains(err.Error(), archived.ID) {
 		t.Fatalf("persisted baseline mutation recovery error = %v", err)
 	}
-	current, ok := CurrentTask(root, archived.ID)
+	current, ok := mustCurrentTask(t, root, archived.ID)
 	if !ok || current.State != StateDone {
 		t.Fatalf("persisted baseline mutation was reopened: %#v", current)
 	}
@@ -1643,7 +1652,7 @@ func TestCompletionWindowReplayFreshReceiptSupersedesPersistedMutation(t *testin
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	before, ok := taskCompletionReceipt(root, archived)
 	if !ok {
 		t.Fatal("initial trusted completion has no receipt")
@@ -1674,7 +1683,7 @@ func TestCompletionWindowReplayFreshReceiptSupersedesPersistedMutation(t *testin
 	if err := moveTrustedTaskFromDone(root, archived, StateInProgress); err != nil {
 		t.Fatal(err)
 	}
-	reopened, _ := CurrentTask(root, archived.ID)
+	reopened, _ := mustCurrentTask(t, root, archived.ID)
 	if err := CompleteTrustedTask(root, reopened); err != nil {
 		t.Fatal(err)
 	}
@@ -1682,7 +1691,7 @@ func TestCompletionWindowReplayFreshReceiptSupersedesPersistedMutation(t *testin
 	if err := ReconcileCompletionWindows([]string{root}); err != nil {
 		t.Fatalf("fresh trusted re-completion recovery: %v", err)
 	}
-	current, ok := CurrentTask(root, archived.ID)
+	current, ok := mustCurrentTask(t, root, archived.ID)
 	if !ok || current.State != StateDone {
 		t.Fatalf("fresh trusted re-completion was reopened: %#v", current)
 	}
@@ -1705,7 +1714,7 @@ func TestCompletionWindowReplayRetainsMarkedMutationWhileReceiptOwned(t *testing
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	windows, err := BeginCompletionWindows([]string{root})
 	if err != nil {
 		t.Fatal(err)
@@ -1769,7 +1778,7 @@ func TestBaselineMutationLockRejectsOwnerAcquiredAfterClassification(t *testing.
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	baseline, err := snapshotDoneCompletions(root)
 	if err != nil {
 		t.Fatal(err)
@@ -1819,7 +1828,7 @@ func TestCompletionWindowRecoveryDetectsSameIDMetadataHandoff(t *testing.T) {
 	if err := CompleteTrustedTask(root, archived); err != nil {
 		t.Fatal(err)
 	}
-	archived, _ = CurrentTask(root, archived.ID)
+	archived, _ = mustCurrentTask(t, root, archived.ID)
 	candidates := map[string]QueuedTask{
 		archived.ID: {Root: root, Item: archived},
 	}
@@ -1950,7 +1959,7 @@ func TestReviewCompletionWindowReplayRejectsSubjectRecompletion(t *testing.T) {
 	if err := CompleteTrustedTask(root, subject); err != nil {
 		t.Fatal(err)
 	}
-	subject, _ = CurrentTask(root, subject.ID)
+	subject, _ = mustCurrentTask(t, root, subject.ID)
 	windows, err := BeginReviewCompletionWindows([]string{root}, []string{subject.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -1959,7 +1968,7 @@ func TestReviewCompletionWindowReplayRejectsSubjectRecompletion(t *testing.T) {
 	if err := moveTrustedTaskFromDone(root, subject, StateInProgress); err != nil {
 		t.Fatal(err)
 	}
-	reopened, _ := CurrentTask(root, subject.ID)
+	reopened, _ := mustCurrentTask(t, root, subject.ID)
 	if err := CompleteTrustedTask(root, reopened); err != nil {
 		t.Fatal(err)
 	}
@@ -2017,7 +2026,7 @@ func TestReviewCompletionWindowReplayPreservesConcurrentHostCompletion(t *testin
 	if err := CompleteTrustedTask(root, subject); err != nil {
 		t.Fatal(err)
 	}
-	subject, _ = CurrentTask(root, subject.ID)
+	subject, _ = mustCurrentTask(t, root, subject.ID)
 	foreign := taskForLease(t, root, StateTodo, "crashed-review-foreign")
 	windows, err := BeginReviewCompletionWindows([]string{root}, []string{subject.ID})
 	if err != nil {
@@ -2046,7 +2055,7 @@ func TestReviewCompletionWindowReplayPreservesConcurrentHostCompletion(t *testin
 	if !slices.Equal(concurrent, []string{foreign.ID}) {
 		t.Fatalf("crash replay concurrent completions = %v, want [%s]", concurrent, foreign.ID)
 	}
-	done, ok := CurrentTask(root, foreign.ID)
+	done, ok := mustCurrentTask(t, root, foreign.ID)
 	if !ok || done.State != StateDone || !taskCompletionRecorded(root, done) {
 		t.Fatal("crash replay revoked a host-receipted concurrent completion")
 	}
@@ -2370,7 +2379,7 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 		id := "serialized-recovery"
 		seedDone(t, repo, id)
 		host := filepath.Join(repo, TasksRoot)
-		item := ReadTaskTree(host)[0]
+		item := mustReadTaskTree(t, host)[0]
 		lock, current, acquired, err := lockCrashCompletion(host, item)
 		if err != nil || !acquired {
 			t.Fatalf("lock crash completion = acquired %v, err %v", acquired, err)
@@ -2379,7 +2388,7 @@ func TestReconcileInterruptedCompletions(t *testing.T) {
 			_ = lock.release()
 			t.Fatal(err)
 		}
-		moved := ReadTaskTree(host)[0]
+		moved := mustReadTaskTree(t, host)[0]
 		lease, observed, err := TryTaskLease(host, moved, testLeaseOwner())
 		if err != nil || lease != nil || observed.State != leaseBusy {
 			_ = lock.release()
@@ -2623,7 +2632,7 @@ func TestAssignLoopTaskClaimsBeforeReturningAndCanBlock(t *testing.T) {
 	if pathExists(filepath.Join(q, StateTodo, "a-task")) || !pathExists(got.Item.Dir) {
 		t.Fatal("assignment returned before the host-side todo to in_progress move was observable")
 	}
-	if _, active := QueueProgress([]string{q}); active != got.Item.Title {
+	if _, active := mustQueueProgress(t, []string{q}); active != got.Item.Title {
 		t.Fatalf("banner active title = %q, assigned title = %q", active, got.Item.Title)
 	}
 
@@ -4486,7 +4495,7 @@ func TestBlockedAuditUnblockRebasesStaleAuthority(t *testing.T) {
 	if err := resolveAndUnblock(f.root, f.task, "external acceptance passed"); err != nil {
 		t.Fatal(err)
 	}
-	current, ok := CurrentTask(f.root, f.id)
+	current, ok := mustCurrentTask(t, f.root, f.id)
 	if !ok || current.State != StateTodo {
 		t.Fatalf("rebased unblock task = %#v, ok=%v", current, ok)
 	}
@@ -4614,7 +4623,7 @@ func TestRebaseBlockedAuditReopenAcceptsMergeSubjectParent(t *testing.T) {
 func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 	assertBlocked := func(t *testing.T, f blockedAuditRebaseFixture) {
 		t.Helper()
-		current, ok := CurrentTask(f.root, f.id)
+		current, ok := mustCurrentTask(t, f.root, f.id)
 		if !ok || current.State != StateBlocked {
 			t.Fatalf("rejected unblock task = %#v, ok=%v", current, ok)
 		}
@@ -4645,7 +4654,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		if err != nil || !ok || !sameAuditReopenRecord(got, tampered) {
 			t.Fatalf("rejected subject changed authority: got=%#v ok=%v err=%v", got, ok, err)
 		}
-		if decisionResolved(filepath.Join(f.task.Dir, "decision.md")) {
+		if mustDecisionResolved(t, filepath.Join(f.task.Dir, "decision.md")) {
 			t.Fatal("rejected subject recorded the inline answer")
 		}
 	})
@@ -4976,14 +4985,14 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		if err := MoveTaskDir(f.root, f.task, StateTodo); err != nil {
 			t.Fatal(err)
 		}
-		todo, ok := CurrentTask(f.root, f.id)
+		todo, ok := mustCurrentTask(t, f.root, f.id)
 		if !ok {
 			t.Fatal("raw-moved pending task disappeared")
 		}
 		if err := MoveTaskDir(f.root, todo, StateInProgress); err != nil {
 			t.Fatal(err)
 		}
-		inProgress, ok := CurrentTask(f.root, f.id)
+		inProgress, ok := mustCurrentTask(t, f.root, f.id)
 		if !ok {
 			t.Fatal("claimed pending task disappeared")
 		}
@@ -5094,7 +5103,7 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 	writeTaskFile(t, filepath.Join(doneDir, "task.md"), "# Unbound\n")
 	writeTaskFile(t, filepath.Join(doneDir, "log.md"), "# Log\n")
 
-	item := ReadTaskTree(root)[0]
+	item := mustReadTaskTree(t, root)[0]
 	if err := RestoreQueuedCompletion(QueuedTask{Root: root, Item: item}, false); err != nil {
 		t.Fatalf("restoreQueuedCompletion: %v", err)
 	}
@@ -5145,7 +5154,7 @@ func TestRestoreAuditRejectedCompletion(t *testing.T) {
 	writeTaskFile(t, filepath.Join(doneDir, "task.md"), "# Audit\n")
 	writeTaskFile(t, filepath.Join(doneDir, "log.md"), "# Log\n")
 
-	item := ReadTaskTree(root)[0]
+	item := mustReadTaskTree(t, root)[0]
 	if err := RestoreQueuedCompletion(QueuedTask{Root: root, Item: item}, true); err != nil {
 		t.Fatalf("restoreQueuedCompletion: %v", err)
 	}
@@ -5195,7 +5204,7 @@ func TestParkStaleAuditReopenPreservesPriorDecision(t *testing.T) {
 	writeTaskFile(t, filepath.Join(dir, "state.md"), "# State\n")
 	writeTaskFile(t, filepath.Join(dir, "decision.md"), "# Prior decision\n\n**Resolution:** accepted earlier\n")
 
-	item := ReadTaskTree(root)[0]
+	item := mustReadTaskTree(t, root)[0]
 	baseline := strings.Repeat("b", 40)
 	if err := ParkStaleAuditReopen(QueuedTask{Root: root, Item: item}, baseline); err != nil {
 		t.Fatalf("parkStaleAuditReopen: %v", err)
@@ -5217,7 +5226,7 @@ func TestParkStaleAuditReopenPreservesPriorDecision(t *testing.T) {
 			t.Errorf("stale audit decision missing %q:\n%s", want, decision)
 		}
 	}
-	if decisionResolved(filepath.Join(blockedDir, "decision.md")) {
+	if mustDecisionResolved(t, filepath.Join(blockedDir, "decision.md")) {
 		t.Errorf("stale audit decision retained a live prior resolution:\n%s", decision)
 	}
 	state := readFileString(filepath.Join(blockedDir, "state.md"))
@@ -5243,7 +5252,7 @@ func TestRestoreCompromisedCompletionTrapFollowsLeaseAuthority(t *testing.T) {
 			doneDir := filepath.Join(root, StateDone, id)
 			writeTaskFile(t, filepath.Join(doneDir, "task.md"), "# Compromised\n")
 			writeTaskFile(t, filepath.Join(doneDir, "log.md"), "# Log\n")
-			item := ReadTaskTree(root)[0]
+			item := mustReadTaskTree(t, root)[0]
 			if err := RestoreCompromisedCompletion(QueuedTask{Root: root, Item: item}, tc.audit); err != nil {
 				t.Fatalf("restoreCompromisedCompletion: %v", err)
 			}
@@ -5530,7 +5539,7 @@ func TestUnblockResolved(t *testing.T) {
 	mk("no-decision", "")
 	mk("freeform", "we talked and agreed to do X\n") // no **Resolution:** marker
 
-	ids := UnblockResolved([]string{root})
+	ids := mustUnblockResolved(t, []string{root})
 	if len(ids) != 1 || ids[0] != "answered" {
 		t.Fatalf("unblockResolved = %v, want [answered]", ids)
 	}
@@ -5559,7 +5568,7 @@ func TestUnblockResolvedDoesNotRebaseAuditAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if ids := UnblockResolved([]string{root}); len(ids) != 0 {
+	if ids := mustUnblockResolved(t, []string{root}); len(ids) != 0 {
 		t.Fatalf("audit-authority preflight unblocked %v", ids)
 	}
 	if !pathExists(task.Dir) || pathExists(filepath.Join(root, StateTodo, task.ID)) {
@@ -5577,7 +5586,7 @@ func TestUnblockResolvedDoesNotRebaseAuditAuthority(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(authorityRoot, name), []byte("{malformed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if ids := UnblockResolved([]string{root}); len(ids) != 0 {
+	if ids := mustUnblockResolved(t, []string{root}); len(ids) != 0 {
 		t.Fatalf("authority read error preflight unblocked %v", ids)
 	}
 	if !pathExists(task.Dir) || pathExists(filepath.Join(root, StateTodo, task.ID)) {
@@ -5614,7 +5623,7 @@ func TestAlreadyCommittedInProgress(t *testing.T) {
 	hosts := []string{root}
 
 	// Nothing bound yet: an ordinary start must stay silent.
-	if got := AlreadyCommittedInProgress(repo, hosts); len(got) != 0 {
+	if got := mustAlreadyCommittedInProgress(t, repo, hosts); len(got) != 0 {
 		t.Fatalf("no bound commits yet, want no report, got %+v", got)
 	}
 
@@ -5622,7 +5631,7 @@ func TestAlreadyCommittedInProgress(t *testing.T) {
 	git("commit", "-q", "--allow-empty", "-m", "done work\n\nCoop-Task: "+finished)
 	git("commit", "-q", "--allow-empty", "-m", "an unrelated later commit")
 
-	got := AlreadyCommittedInProgress(repo, hosts)
+	got := mustAlreadyCommittedInProgress(t, repo, hosts)
 	if len(got) != 1 {
 		t.Fatalf("want only the in_progress task with a commit, got %+v", got)
 	}

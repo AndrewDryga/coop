@@ -108,7 +108,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if code, err := tasksFolderAdd(root, []string{"Make egress fail closed"}, StateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
-	items := ReadTaskTree(root)
+	items := mustReadTaskTree(t, root)
 	if len(items) != 1 || items[0].State != StateTodo {
 		t.Fatalf("after add: %+v", items)
 	}
@@ -121,7 +121,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if code, err := tasksFolderMove(root, []string{"egress"}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
 		t.Fatalf("claim: code=%d err=%v", code, err)
 	}
-	if got := ReadTaskTree(root)[0].State; got != StateInProgress {
+	if got := mustReadTaskTree(t, root)[0].State; got != StateInProgress {
 		t.Fatalf("after claim, state = %s", got)
 	}
 	if rec, owned := taskOwned(t, root, id); !owned {
@@ -149,7 +149,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if code, err := tasksFolderBlock(root, []string{id}); code != 0 || err != nil {
 		t.Fatalf("block: code=%d err=%v", code, err)
 	}
-	bt := ReadTaskTree(root)[0]
+	bt := mustReadTaskTree(t, root)[0]
 	if bt.State != StateBlocked || !bt.HasDecision {
 		t.Fatalf("after block: %+v", bt)
 	}
@@ -169,7 +169,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if code, err := tasksFolderUnblock(root, []string{id, "A — go with it"}); code != 0 || err != nil {
 		t.Fatalf("unblock: code=%d err=%v", code, err)
 	}
-	if ReadTaskTree(root)[0].State != StateTodo {
+	if mustReadTaskTree(t, root)[0].State != StateTodo {
 		t.Fatal("after unblock, not back in todo")
 	}
 	if !fileExists(filepath.Join(root, StateTodo, id, "tmp", "scratch.patch")) {
@@ -197,7 +197,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
-	if ReadTaskTree(root)[0].State != StateDone {
+	if mustReadTaskTree(t, root)[0].State != StateDone {
 		t.Fatal("after done, not done")
 	}
 	if pathExists(filepath.Join(root, StateDone, id, "tmp")) {
@@ -243,7 +243,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if info.Size() != 0 {
 		t.Error("review reopen retained stale host-only completion evidence")
 	}
-	reopenedItem, ok := CurrentTask(root, id)
+	reopenedItem, ok := mustCurrentTask(t, root, id)
 	if !ok {
 		t.Fatal("reopened task disappeared")
 	}
@@ -275,7 +275,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if code, err := tasksFolderRemove(root, []string{id, "--yes"}); code != 0 || err != nil {
 		t.Fatalf("remove: code=%d err=%v", code, err)
 	}
-	if len(ReadTaskTree(root)) != 0 {
+	if len(mustReadTaskTree(t, root)) != 0 {
 		t.Fatal("after remove, tree not empty")
 	}
 }
@@ -421,7 +421,7 @@ func TestTasksDoneSurfacesTmpCleanupFailure(t *testing.T) {
 		!strings.Contains(err.Error(), "retry: coop tasks done "+id) {
 		t.Fatalf("done cleanup failure = (%d, %v), want loud retryable failure", code, err)
 	}
-	if got := ReadTaskTree(root)[0].State; got != StateDone {
+	if got := mustReadTaskTree(t, root)[0].State; got != StateDone {
 		t.Fatalf("successful folder transition should remain observable for retry, got %s", got)
 	}
 	if !fileExists(filepath.Join(root, StateDone, id, "tmp", "scratch")) {
@@ -582,7 +582,7 @@ func TestTasksRemoveGate(t *testing.T) {
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "2026-01-01-keep") {
 		t.Fatalf("rm without --yes = (%d, %v), want (2, a refusal naming the resolved id)", code, err)
 	}
-	if len(ReadTaskTree(root)) != 1 {
+	if len(mustReadTaskTree(t, root)) != 1 {
 		t.Fatal("a refused rm must not delete the task")
 	}
 	// --all-done: refuses with the blast-radius count; the done task survives.
@@ -591,7 +591,7 @@ func TestTasksRemoveGate(t *testing.T) {
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "1 done task") {
 		t.Fatalf("rm --all-done without --yes = (%d, %v), want (2, a refusal naming the count)", code, err)
 	}
-	if countDone(root) != 1 {
+	if mustCountDone(t, root) != 1 {
 		t.Error("a refused --all-done must not delete anything")
 	}
 }
@@ -606,7 +606,7 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	if err := MoveTaskDir(root, task, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	done, ok := CurrentTask(root, task.ID)
+	done, ok := mustCurrentTask(t, root, task.ID)
 	if !ok {
 		t.Fatal("completed task disappeared")
 	}
@@ -660,7 +660,7 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	if code, err := tasksFolderRemove(root, []string{task.ID, "--yes"}); code != 0 || err != nil {
 		t.Fatalf("rm cancelled task = (%d, %v), want (0, nil)", code, err)
 	}
-	if _, ok := CurrentTask(root, task.ID); ok {
+	if _, ok := mustCurrentTask(t, root, task.ID); ok {
 		t.Fatal("removed task survived in a lifecycle state")
 	}
 	index, err = ReadCompletionWindowIndex(root)
@@ -715,7 +715,7 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	if err := MoveTaskDir(root, concurrent, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	concurrentDone, ok := CurrentTask(root, concurrent.ID)
+	concurrentDone, ok := mustCurrentTask(t, root, concurrent.ID)
 	if !ok {
 		t.Fatal("concurrently completed task disappeared")
 	}
@@ -744,7 +744,7 @@ func TestTasksRemoveRefusesLiveLeaseBeforePurging(t *testing.T) {
 	if err := MoveTaskDir(root, task, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	done, ok := CurrentTask(root, task.ID)
+	done, ok := mustCurrentTask(t, root, task.ID)
 	if !ok {
 		t.Fatal("completed live task disappeared")
 	}
@@ -764,7 +764,7 @@ func TestTasksRemoveRefusesLiveLeaseBeforePurging(t *testing.T) {
 		!strings.Contains(err.Error(), "still leased by a live controller") {
 		t.Fatalf("rm live task = (%d, %v), want refusal", code, err)
 	}
-	if _, ok := CurrentTask(root, task.ID); !ok {
+	if _, ok := mustCurrentTask(t, root, task.ID); !ok {
 		t.Fatal("refused rm deleted the live task")
 	}
 	index, err := ReadCompletionWindowIndex(root)
@@ -794,13 +794,13 @@ func TestTasksClear(t *testing.T) {
 	if code, err := CmdTasksFolder("", root, []string{"clear"}); code != 2 || err == nil {
 		t.Fatalf("tasks clear without --yes = (%d, %v), want (2, gated)", code, err)
 	}
-	if countDone(root) != 1 {
+	if mustCountDone(t, root) != 1 {
 		t.Error("a refused clear must not delete the done task")
 	}
 	if code, err := CmdTasksFolder("", root, []string{"clear", "--yes"}); code != 0 || err != nil {
 		t.Fatalf("tasks clear --yes = (%d, %v), want (0, nil)", code, err)
 	}
-	if countDone(root) != 0 {
+	if mustCountDone(t, root) != 0 {
 		t.Error("clear --yes should empty the done archive")
 	}
 }
@@ -824,7 +824,7 @@ func TestTasksFolderRemoveAllDone(t *testing.T) {
 	if code, err := tasksFolderRemove(root, []string{"--all-done", "--yes"}); code != 0 || err != nil {
 		t.Fatalf("rm --all-done: code=%d err=%v", code, err)
 	}
-	items := ReadTaskTree(root)
+	items := mustReadTaskTree(t, root)
 	if len(items) != 2 {
 		t.Fatalf("after --all-done, want 2 tasks left (todo+in_progress), got %d", len(items))
 	}
@@ -864,7 +864,7 @@ func TestTasksFolderRemoveAllDoneStopsAtLiveLease(t *testing.T) {
 	if err := MoveTaskDir(root, busy, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	done, ok := CurrentTask(root, busy.ID)
+	done, ok := mustCurrentTask(t, root, busy.ID)
 	if !ok {
 		t.Fatal("busy completed task disappeared")
 	}
@@ -886,10 +886,10 @@ func TestTasksFolderRemoveAllDoneStopsAtLiveLease(t *testing.T) {
 			t.Errorf("bulk failure missing %q:\n%s", want, err)
 		}
 	}
-	if _, ok := CurrentTask(root, "2026-01-01-a"); ok {
+	if _, ok := mustCurrentTask(t, root, "2026-01-01-a"); ok {
 		t.Fatal("bulk failure restored an earlier successfully removed task")
 	}
-	if current, ok := CurrentTask(root, busy.ID); !ok || current.State != StateDone {
+	if current, ok := mustCurrentTask(t, root, busy.ID); !ok || current.State != StateDone {
 		t.Fatal("bulk failure removed or moved the busy task")
 	}
 
@@ -899,7 +899,7 @@ func TestTasksFolderRemoveAllDoneStopsAtLiveLease(t *testing.T) {
 	if code, err := tasksFolderRemove(root, []string{"--all-done", "--yes"}); code != 0 || err != nil {
 		t.Fatalf("bulk retry after lease release = (%d, %v), want success", code, err)
 	}
-	if _, ok := CurrentTask(root, busy.ID); ok {
+	if _, ok := mustCurrentTask(t, root, busy.ID); ok {
 		t.Fatal("bulk retry left the released task")
 	}
 }
@@ -998,10 +998,7 @@ func TestTasksFolderLintFlagsMissingStateDir(t *testing.T) {
 	}
 }
 
-// A task id copied into TWO state dirs (cp instead of a coop move) is deliberately masked by
-// readTaskTree's torn-read dedup, so `coop tasks` and the loop stay quiet — lint is the surface
-// that flags the persistent duplicate. readTaskTree itself must keep showing exactly one.
-func TestTasksFolderLintFlagsDuplicateIDs(t *testing.T) {
+func TestTasksFolderLintRejectsDuplicateIDs(t *testing.T) {
 	root := t.TempDir()
 	if err := ScaffoldStateDirs(root); err != nil {
 		t.Fatal(err)
@@ -1009,11 +1006,11 @@ func TestTasksFolderLintFlagsDuplicateIDs(t *testing.T) {
 	task := "# D\n**Context:** c\n**Acceptance criteria:** the gate is green\n**Approach:** a\n"
 	writeTaskFile(t, filepath.Join(root, StateTodo, "dup", "task.md"), task)
 	writeTaskFile(t, filepath.Join(root, StateDone, "dup", "task.md"), task)
-	if got := len(ReadTaskTree(root)); got != 1 {
-		t.Fatalf("readTaskTree sees %d items, want 1 — the dedup must keep masking the hot path", got)
+	if _, err := ReadTaskTree(root); err == nil || !strings.Contains(err.Error(), "multiple lifecycle states") {
+		t.Fatalf("duplicated id read error = %v", err)
 	}
-	if code, err := tasksFolderLint(root); err != nil || code != 1 {
-		t.Fatalf("lint of a duplicated id: code=%d err=%v (want 1)", code, err)
+	if code, err := tasksFolderLint(root); err == nil || code == 0 || !strings.Contains(err.Error(), "multiple lifecycle states") {
+		t.Fatalf("lint of a duplicated id: code=%d err=%v", code, err)
 	}
 	if err := os.RemoveAll(filepath.Join(root, StateDone, "dup")); err != nil {
 		t.Fatal(err)
@@ -1030,7 +1027,7 @@ func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {
 	if code, err := tasksFolderAdd(root, []string{"make egress fail closed"}, StateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
-	items := ReadTaskTree(root)
+	items := mustReadTaskTree(t, root)
 	if len(items) != 1 {
 		t.Fatalf("want 1 task, got %d", len(items))
 	}
@@ -1084,7 +1081,7 @@ func TestTasksFolderAddStructuredFlags(t *testing.T) {
 	if code != 0 || err != nil {
 		t.Fatalf("structured add: code=%d err=%v", code, err)
 	}
-	items := ReadTaskTree(root)
+	items := mustReadTaskTree(t, root)
 	if len(items) != 1 {
 		t.Fatalf("want 1 task, got %d", len(items))
 	}
@@ -1109,7 +1106,7 @@ func TestTasksFolderAddStructuredFlags(t *testing.T) {
 	if code, _ := tasksFolderAdd(root2, []string{"half", "--context", "only this"}, StateTodo, "tasks add"); code != 2 {
 		t.Errorf("partial structured flags should be a usage error (2), got %d", code)
 	}
-	if len(ReadTaskTree(root2)) != 0 {
+	if len(mustReadTaskTree(t, root2)) != 0 {
 		t.Error("a refused structured add must not create a task folder")
 	}
 }
@@ -1128,7 +1125,7 @@ func TestTasksFolderAddRepeatedSectionFlag(t *testing.T) {
 	if code != 0 || err != nil {
 		t.Fatalf("repeated-flag add: code=%d err=%v", code, err)
 	}
-	body := readFileString(filepath.Join(ReadTaskTree(root)[0].Dir, "task.md"))
+	body := readFileString(filepath.Join(mustReadTaskTree(t, root)[0].Dir, "task.md"))
 	// ALL three acceptance clauses survive (not just the last), under the one heading.
 	for _, want := range []string{
 		"OAuth is fail-closed: token must carry mcp scope",
@@ -1328,18 +1325,18 @@ func TestUnblockRequiresResolution(t *testing.T) {
 	if code, err := tasksFolderUnblock(root, []string{"pick"}); code != 2 || err == nil {
 		t.Fatalf("unblock with no resolution: got (%d, %v), want (2, err)", code, err)
 	}
-	if ReadTaskTree(root)[0].State != StateBlocked {
+	if mustReadTaskTree(t, root)[0].State != StateBlocked {
 		t.Fatal("a refused unblock must leave the task blocked")
 	}
 	// With an inline answer → resolves the decision and unblocks to todo.
 	if code, err := tasksFolderUnblock(root, []string{"pick", "Postgres"}); code != 0 || err != nil {
 		t.Fatalf("unblock with answer: %d %v", code, err)
 	}
-	tk := ReadTaskTree(root)[0]
+	tk := mustReadTaskTree(t, root)[0]
 	if tk.State != StateTodo {
 		t.Fatalf("after answered unblock, state=%s want todo", tk.State)
 	}
-	if !decisionResolved(filepath.Join(tk.Dir, "decision.md")) {
+	if !mustDecisionResolved(t, filepath.Join(tk.Dir, "decision.md")) {
 		t.Error("decision.md should be resolved after an inline answer")
 	}
 	if code, _ := tasksFolderLint(root); code != 0 {
@@ -1352,7 +1349,7 @@ func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
 	if code, err := tasksFolderAdd(root, []string{"pick the database"}, StateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
-	id := ReadTaskTree(root)[0].ID
+	id := mustReadTaskTree(t, root)[0].ID
 	if code, err := tasksFolderBlock(root, []string{id}); code != 0 || err != nil {
 		t.Fatalf("block: code=%d err=%v", code, err)
 	}
@@ -1375,14 +1372,14 @@ func TestTasksFolderUnblockRecordsInlineAnswer(t *testing.T) {
 	if code, err := tasksFolderAdd(root, []string{"pick the db"}, StateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
-	id := ReadTaskTree(root)[0].ID
+	id := mustReadTaskTree(t, root)[0].ID
 	if code, err := tasksFolderBlock(root, []string{id}); code != 0 || err != nil {
 		t.Fatalf("block: code=%d err=%v", code, err)
 	}
 	if code, err := tasksFolderUnblock(root, []string{id, "B", "—", "go", "SQLite"}); code != 0 || err != nil {
 		t.Fatalf("unblock+answer: code=%d err=%v", code, err)
 	}
-	if ReadTaskTree(root)[0].State != StateTodo {
+	if mustReadTaskTree(t, root)[0].State != StateTodo {
 		t.Fatal("after unblock, not back in todo")
 	}
 	dec := readFileString(filepath.Join(root, StateTodo, id, "decision.md"))
@@ -1416,7 +1413,7 @@ func TestTasksFolderUnblockRejectsUnknownFlagBeforeMutation(t *testing.T) {
 			if code, err := tasksFolderAdd(root, []string{"pick the db"}, StateTodo, "tasks add"); code != 0 || err != nil {
 				t.Fatalf("add: code=%d err=%v", code, err)
 			}
-			id := ReadTaskTree(root)[0].ID
+			id := mustReadTaskTree(t, root)[0].ID
 			if code, err := tasksFolderBlock(root, []string{id}); code != 0 || err != nil {
 				t.Fatalf("block: code=%d err=%v", code, err)
 			}
@@ -1426,7 +1423,7 @@ func TestTasksFolderUnblockRejectsUnknownFlagBeforeMutation(t *testing.T) {
 			if code != 2 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("unknown flag %q", tc.flag)) {
 				t.Fatalf("unknown flag = code %d err=%v", code, err)
 			}
-			if current, ok := CurrentTask(root, id); !ok || current.State != StateBlocked {
+			if current, ok := mustCurrentTask(t, root, id); !ok || current.State != StateBlocked {
 				t.Fatalf("unknown flag moved task: %#v ok=%v", current, ok)
 			}
 			if after := readFileString(decision); after != before {
@@ -1460,13 +1457,13 @@ func TestRunDecisionBrowser(t *testing.T) {
 			t.Fatalf("add %s: code=%d err=%v", title, code, err)
 		}
 	}
-	for _, it := range ReadTaskTree(root) {
+	for _, it := range mustReadTaskTree(t, root) {
 		if code, err := tasksFolderBlock(root, []string{it.ID}); code != 0 || err != nil {
 			t.Fatalf("block %s: code=%d err=%v", it.ID, code, err)
 		}
 	}
 	var decisions []Item
-	for _, it := range ReadTaskTree(root) {
+	for _, it := range mustReadTaskTree(t, root) {
 		if it.State == StateBlocked {
 			decisions = append(decisions, it)
 		}
@@ -1507,13 +1504,13 @@ func TestRunDecisionBrowserDelete(t *testing.T) {
 			t.Fatalf("add %s: code=%d err=%v", title, code, err)
 		}
 	}
-	for _, it := range ReadTaskTree(root) {
+	for _, it := range mustReadTaskTree(t, root) {
 		if code, err := tasksFolderBlock(root, []string{it.ID}); code != 0 || err != nil {
 			t.Fatalf("block %s: code=%d err=%v", it.ID, code, err)
 		}
 	}
 	var decisions []Item
-	for _, it := range ReadTaskTree(root) {
+	for _, it := range mustReadTaskTree(t, root) {
 		if it.State == StateBlocked {
 			decisions = append(decisions, it)
 		}
@@ -1577,12 +1574,12 @@ func TestRunDecisionBrowserDeleteDeclined(t *testing.T) {
 	if code, err := tasksFolderAdd(root, []string{"alpha"}, StateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
-	it := ReadTaskTree(root)[0]
+	it := mustReadTaskTree(t, root)[0]
 	if code, err := tasksFolderBlock(root, []string{it.ID}); code != 0 || err != nil {
 		t.Fatalf("block: code=%d err=%v", code, err)
 	}
 	var decisions []Item
-	for _, d := range ReadTaskTree(root) {
+	for _, d := range mustReadTaskTree(t, root) {
 		if d.State == StateBlocked {
 			decisions = append(decisions, d)
 		}
@@ -1611,7 +1608,7 @@ func TestRunDecisionBrowserSpansQueues(t *testing.T) {
 		if code, err := tasksFolderAdd(q.root, []string{q.title}, StateTodo, "tasks add"); code != 0 || err != nil {
 			t.Fatalf("add %s: code=%d err=%v", q.title, code, err)
 		}
-		it := ReadTaskTree(q.root)[0]
+		it := mustReadTaskTree(t, q.root)[0]
 		if code, err := tasksFolderBlock(q.root, []string{it.ID}); code != 0 || err != nil {
 			t.Fatalf("block %s: code=%d err=%v", it.ID, code, err)
 		}
@@ -1648,7 +1645,7 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 	if code, err := tasksFolderAdd(root, []string{"redo me"}, StateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
-	id := ReadTaskTree(root)[0].ID
+	id := mustReadTaskTree(t, root)[0].ID
 	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
@@ -1656,7 +1653,7 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 	if code, err := tasksFolderAdd(root, []string{"redo me"}, StateTodo, "tasks add"); code == 0 || err == nil {
 		t.Fatalf("re-add of a shipped id should be rejected, got (%d, %v)", code, err)
 	}
-	items := ReadTaskTree(root)
+	items := mustReadTaskTree(t, root)
 	if len(items) != 1 || items[0].State != StateDone {
 		t.Fatalf("collision must not create a duplicate id: %+v", items)
 	}
@@ -1671,8 +1668,8 @@ func TestMoveTaskDirRefusesDuplicateDest(t *testing.T) {
 	// `done` resolves the in_progress copy (read-side dedup keeps earliest); moving it onto the
 	// existing 99_done copy must surface a clean "already exists", not crash or strand.
 	code, err := tasksFolderMove(root, []string{"2026-01-01-x"}, StateDone, "done", "done")
-	if code == 0 || err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("move onto a duplicate dest = (%d, %v), want a clean 'already exists' error", code, err)
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "multiple lifecycle states") {
+		t.Fatalf("move onto a duplicate dest = (%d, %v), want an ambiguous-authority error", code, err)
 	}
 }
 

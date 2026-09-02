@@ -373,8 +373,15 @@ func proposalTaskIdentity(record ForkProposalRecord) taskIdentityRecord {
 }
 
 func exactImportedProposal(record ForkProposalRecord) (Item, bool, error) {
-	item, ok := CurrentTask(record.CanonicalRoot, record.Task.Ref.ID)
-	for _, backlog := range ReadBacklog(record.CanonicalRoot) {
+	item, ok, err := CurrentTask(record.CanonicalRoot, record.Task.Ref.ID)
+	if err != nil {
+		return Item{}, false, err
+	}
+	backlogItems, err := ReadBacklog(record.CanonicalRoot)
+	if err != nil {
+		return Item{}, false, err
+	}
+	for _, backlog := range backlogItems {
 		if backlog.ID != record.Task.Ref.ID {
 			continue
 		}

@@ -56,21 +56,29 @@ func validateForkAssignmentRequest(request ForkAssignmentRequest) error {
 	return nil
 }
 
-func assignmentCounts(hosts []string) TaskCounts {
+func assignmentCounts(hosts []string) (TaskCounts, error) {
 	var counts TaskCounts
 	for _, root := range hosts {
-		current, _ := TaskTreeCounts(ReadTaskTree(root))
+		items, err := ReadTaskTree(root)
+		if err != nil {
+			return TaskCounts{}, err
+		}
+		current, _ := TaskTreeCounts(items)
 		counts.Todo += current.Todo
 		counts.Doing += current.Doing
 		counts.Blocked += current.Blocked
 		counts.Done += current.Done
 	}
-	return counts
+	return counts, nil
 }
 
 func forkAssignmentCandidates(hosts []string) (owned, unowned []QueuedTask, foreign bool, err error) {
 	for _, root := range hosts {
-		for _, item := range ReadTaskTree(root) {
+		items, readErr := ReadTaskTree(root)
+		if readErr != nil {
+			return nil, nil, false, readErr
+		}
+		for _, item := range items {
 			if item.State != StateInProgress && item.State != StateTodo {
 				continue
 			}
@@ -132,7 +140,10 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 	if err := recoverForkBlockingAssignmentsLocked(request.AuthorityRepo, request.Fork); err != nil {
 		return ForkAssignment{}, err
 	}
-	counts := assignmentCounts(hosts)
+	counts, err := assignmentCounts(hosts)
+	if err != nil {
+		return ForkAssignment{}, err
+	}
 	// A published generation candidate freezes the reviewed HEAD and its exact assignment set.
 	// Re-entry may finish a partial ready publication in PublishForkCandidate, but it may not claim
 	// another task and silently make that immutable candidate incomplete.
@@ -186,7 +197,11 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 				_ = lock.Close()
 				return ForkAssignment{}, errors.Join(err, lease.Release())
 			}
-			current, currentOK := CurrentTask(candidate.Root, candidate.Item.ID)
+			current, currentOK, currentErr := CurrentTask(candidate.Root, candidate.Item.ID)
+			if currentErr != nil {
+				_ = lock.Close()
+				return ForkAssignment{}, errors.Join(currentErr, lease.Release())
+			}
 			if !currentOK || current.State != candidate.Item.State {
 				_ = lock.Close()
 				_ = lease.Release()
@@ -340,7 +355,10 @@ func ForkAssignments(repo string, identity forkspace.Identity) ([]LocatedForkAss
 	}
 	var out []LocatedForkAssignment
 	for _, index := range indexes {
-		item, ok := CurrentTask(index.CanonicalRoot, index.Task.Ref.ID)
+		item, ok, err := CurrentTask(index.CanonicalRoot, index.Task.Ref.ID)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			return nil, fmt.Errorf("indexed fork assignment %s lost canonical task %s", index.AssignmentID, index.Task.Ref.ID)
 		}
@@ -396,7 +414,10 @@ func recoverForkAssignmentIndexes(repo string, identity forkspace.Identity) erro
 		return errors.Join(problems...)
 	}
 	for _, index := range indexes {
-		item, ok := CurrentTask(index.CanonicalRoot, index.Task.Ref.ID)
+		item, ok, err := CurrentTask(index.CanonicalRoot, index.Task.Ref.ID)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return fmt.Errorf("recover assignment %s: canonical task is missing", index.AssignmentID)
 		}

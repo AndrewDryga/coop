@@ -299,7 +299,11 @@ func (a *app) taskIDs() []string {
 	}
 	var ids []string
 	for _, rel := range rels {
-		for _, it := range tasks.ReadTaskTree(filepath.Join(repo, rel)) {
+		items, err := tasks.ReadTaskTree(filepath.Join(repo, rel))
+		if err != nil {
+			return nil
+		}
+		for _, it := range items {
 			ids = append(ids, it.ID)
 		}
 	}
@@ -319,7 +323,11 @@ func (a *app) backlogIDs() []string {
 	}
 	var ids []string
 	for _, rel := range rels {
-		for _, it := range tasks.ReadBacklog(filepath.Join(repo, rel)) {
+		items, err := tasks.ReadBacklog(filepath.Join(repo, rel))
+		if err != nil {
+			return nil
+		}
+		for _, it := range items {
 			ids = append(ids, it.ID)
 		}
 	}

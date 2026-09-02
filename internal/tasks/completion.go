@@ -69,7 +69,11 @@ type CompletionWindowSet struct {
 
 func snapshotDoneCompletions(root string) (map[string]CompletionFingerprint, error) {
 	snapshot := map[string]CompletionFingerprint{}
-	for _, task := range ReadTaskTree(root) {
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range items {
 		if task.State != StateDone {
 			continue
 		}
@@ -154,7 +158,11 @@ func completionTreeMetadataDigest(taskDir string) (string, error) {
 
 func changedDoneCompletions(root string, baseline map[string]CompletionFingerprint) ([]QueuedTask, error) {
 	var changed []QueuedTask
-	for _, task := range ReadTaskTree(root) {
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range items {
 		if task.State != StateDone {
 			continue
 		}
@@ -389,15 +397,18 @@ func BeginCompletionWindows(hosts []string) (*CompletionWindowSet, error) {
 	return beginCompletionWindowsWithPolicy(hosts, nil, nil, false)
 }
 
-func duplicateReviewTaskIDs(hosts, ids []string) []string {
-	duplicates := aggregateDuplicateTaskIDs(hosts)
+func duplicateReviewTaskIDs(hosts, ids []string) ([]string, error) {
+	duplicates, err := aggregateDuplicateTaskIDs(hosts)
+	if err != nil {
+		return nil, err
+	}
 	var relevant []string
 	for _, id := range slices.Compact(slices.Sorted(slices.Values(ids))) {
 		if slices.Contains(duplicates, id) {
 			relevant = append(relevant, id)
 		}
 	}
-	return relevant
+	return relevant, nil
 }
 
 // beginReviewCompletionWindows opens review-stage windows bound to the exact task ids under
@@ -407,7 +418,11 @@ func duplicateReviewTaskIDs(hosts, ids []string) []string {
 // while ReviewSubjectScoped preserves concurrent-host semantics if authoritative deletion later
 // removes the last id from a subject-scoped review.
 func BeginReviewCompletionWindows(hosts, subjects []string) (*CompletionWindowSet, error) {
-	if duplicates := duplicateReviewTaskIDs(hosts, subjects); len(duplicates) > 0 {
+	duplicates, err := duplicateReviewTaskIDs(hosts, subjects)
+	if err != nil {
+		return nil, err
+	}
+	if len(duplicates) > 0 {
 		return nil, fmt.Errorf("review subject id(s) %s exist in multiple task queues", strings.Join(duplicates, ", "))
 	}
 	return beginCompletionWindowsWithPolicy(hosts, nil, subjects, true)
@@ -420,7 +435,11 @@ func BeginWorkCompletionWindows(hosts []string, subject string) (*CompletionWind
 	if subject == "" {
 		return nil, errors.New("work completion window is missing its assigned subject")
 	}
-	if duplicates := duplicateReviewTaskIDs(hosts, []string{subject}); len(duplicates) > 0 {
+	duplicates, err := duplicateReviewTaskIDs(hosts, []string{subject})
+	if err != nil {
+		return nil, err
+	}
+	if len(duplicates) > 0 {
 		return nil, fmt.Errorf("work subject id(s) %s exist in multiple task queues", strings.Join(duplicates, ", "))
 	}
 	return beginCompletionWindowsWithPolicy(hosts, nil, nil, false, subject)
@@ -505,9 +524,13 @@ func (s *CompletionWindowSet) AuditDoneCandidates(assigned QueuedTask) ([]Queued
 	return candidates, rejected, err
 }
 
-func completionWindowBaselineChanges(root string, record CompletionWindowRecord) ([]Item, []string) {
+func completionWindowBaselineChanges(root string, record CompletionWindowRecord) ([]Item, []string, error) {
 	currentByID := map[string]Item{}
-	for _, task := range ReadTaskTree(root) {
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, task := range items {
 		currentByID[task.ID] = task
 	}
 	var departed []Item
@@ -524,11 +547,14 @@ func completionWindowBaselineChanges(root string, record CompletionWindowRecord)
 	}
 	slices.SortFunc(departed, func(a, b Item) int { return strings.Compare(a.ID, b.ID) })
 	slices.Sort(missing)
-	return departed, missing
+	return departed, missing, nil
 }
 
 func completionWindowDepartures(root string, record CompletionWindowRecord) ([]string, error) {
-	departed, missing := completionWindowBaselineChanges(root, record)
+	departed, missing, err := completionWindowBaselineChanges(root, record)
+	if err != nil {
+		return nil, err
+	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("task(s) %s left the queue during this completion window; restore the missing task folder to a lifecycle state, then re-run `coop loop`", strings.Join(missing, ", "))
 	}
@@ -742,7 +768,11 @@ func (s *CompletionWindowSet) auditReview(hosts, subjectIDs []string, subjectSco
 		relevant = append(relevant, candidate.Item.ID)
 	}
 	var duplicateErr error
-	if duplicates := duplicateReviewTaskIDs(hosts, relevant); len(duplicates) > 0 {
+	duplicates, err := duplicateReviewTaskIDs(hosts, relevant)
+	if err != nil {
+		return nil, err, nil
+	}
+	if len(duplicates) > 0 {
 		duplicateErr = fmt.Errorf("review task id(s) %s became ambiguous across task queues", strings.Join(duplicates, ", "))
 	}
 	departed, departureErr := s.Departures()
@@ -793,7 +823,7 @@ func markedCompletionCandidates(
 	root string,
 	candidates []QueuedTask,
 	marked []string,
-) []QueuedTask {
+) ([]QueuedTask, error) {
 	seen := make(map[string]bool, len(candidates))
 	for _, candidate := range candidates {
 		seen[candidate.Item.ID] = true
@@ -802,7 +832,10 @@ func markedCompletionCandidates(
 		if seen[id] {
 			continue
 		}
-		task, ok := CurrentTask(root, id)
+		task, ok, err := CurrentTask(root, id)
+		if err != nil {
+			return nil, err
+		}
 		if ok && task.State == StateDone {
 			candidates = append(candidates, QueuedTask{Root: root, Item: task})
 			seen[id] = true
@@ -811,7 +844,7 @@ func markedCompletionCandidates(
 	slices.SortFunc(candidates, func(a, b QueuedTask) int {
 		return strings.Compare(a.Item.ID, b.Item.ID)
 	})
-	return candidates
+	return candidates, nil
 }
 
 func setRecordBaselineMutations(record *CompletionWindowRecord, protected map[string]bool) bool {
@@ -958,7 +991,9 @@ func ReconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 				continue
 			}
 			candidates, candidateErr := changedDoneCompletions(root, record.Baseline)
-			candidates = markedCompletionCandidates(root, candidates, record.BaselineMutations)
+			if candidateErr == nil {
+				candidates, candidateErr = markedCompletionCandidates(root, candidates, record.BaselineMutations)
+			}
 			if candidateErr != nil {
 				acquireErrs = append(acquireErrs, candidateErr, unlockLeaseFile(live))
 				continue
@@ -987,7 +1022,9 @@ func ReconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 		stabilizationErrs = append(stabilizationErrs, verifyLockedCompletionCandidates(locked))
 		for _, recovery := range recoveries {
 			latest, latestErr := changedDoneCompletions(root, recovery.record.Baseline)
-			latest = markedCompletionCandidates(root, latest, recovery.record.BaselineMutations)
+			if latestErr == nil {
+				latest, latestErr = markedCompletionCandidates(root, latest, recovery.record.BaselineMutations)
+			}
 			if latestErr != nil {
 				stabilizationErrs = append(stabilizationErrs, latestErr)
 				continue
@@ -1130,7 +1167,10 @@ func ReconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 				for _, candidate := range recovery.candidates {
 					relevant = append(relevant, candidate.Item.ID)
 				}
-				if duplicates := duplicateReviewTaskIDs(hosts, relevant); len(duplicates) > 0 {
+				duplicates, duplicateErr := duplicateReviewTaskIDs(hosts, relevant)
+				if duplicateErr != nil {
+					reviewErr = errors.Join(reviewErr, duplicateErr)
+				} else if len(duplicates) > 0 {
 					reviewErr = errors.Join(reviewErr, fmt.Errorf("review task id(s) %s became ambiguous across task queues before recovery", strings.Join(duplicates, ", ")))
 				}
 			}

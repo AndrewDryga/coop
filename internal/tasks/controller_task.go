@@ -52,7 +52,10 @@ type ControllerTaskBinding struct {
 // approved draft and durable queue/task identities before a session row is allowed to bind it.
 func ReadControllerTaskBinding(workspace, id string) (ControllerTaskBinding, error) {
 	queue := filepath.Join(workspace, TasksRoot)
-	item, ok := CurrentTask(queue, id)
+	item, ok, err := CurrentTask(queue, id)
+	if err != nil {
+		return ControllerTaskBinding{}, err
+	}
 	if !ok {
 		return ControllerTaskBinding{}, errors.New("restored controller task is missing")
 	}
@@ -127,7 +130,9 @@ func EnsureControllerTask(workspace string, draft ControllerTaskDraft) (TaskInst
 		return TaskInstance{}, err
 	}
 	id := controllerTaskID(draft.OfferRef)
-	if item, ok := CurrentTask(root, id); ok {
+	if item, ok, err := CurrentTask(root, id); err != nil {
+		return TaskInstance{}, err
+	} else if ok {
 		if err := requireControllerTaskRecord(item.Dir, draft.OfferRef, digest); err != nil {
 			return TaskInstance{}, err
 		}
@@ -160,7 +165,10 @@ func EnsureControllerTask(workspace string, draft ControllerTaskDraft) (TaskInst
 		if !errors.Is(err, os.ErrExist) {
 			return TaskInstance{}, fmt.Errorf("publish controller task: %w", err)
 		}
-		item, ok := CurrentTask(root, id)
+		item, ok, readErr := CurrentTask(root, id)
+		if readErr != nil {
+			return TaskInstance{}, readErr
+		}
 		if !ok {
 			return TaskInstance{}, errors.New("controller task publish raced without a durable task")
 		}
@@ -169,7 +177,10 @@ func EnsureControllerTask(workspace string, draft ControllerTaskDraft) (TaskInst
 		}
 		return EnsureTaskInstance(root, item)
 	}
-	item, ok := CurrentTask(root, id)
+	item, ok, err := CurrentTask(root, id)
+	if err != nil {
+		return TaskInstance{}, err
+	}
 	if !ok {
 		return TaskInstance{}, errors.New("published controller task is unreadable")
 	}

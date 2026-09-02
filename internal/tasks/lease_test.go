@@ -50,7 +50,7 @@ func taskOwned(t *testing.T, root, id string) (TaskOwnerRecord, bool) {
 func taskForLease(t *testing.T, root, state, id string) Item {
 	t.Helper()
 	writeTaskFile(t, filepath.Join(root, state, id, "task.md"), "# "+id+"\n")
-	item, ok := CurrentTask(root, id)
+	item, ok := mustCurrentTask(t, root, id)
 	if !ok {
 		t.Fatalf("could not read task %s", id)
 	}
@@ -179,7 +179,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 				if code, err := tasksFolderMove(root, []string{task.ID}, StateDone, "done", "completed"); code != -1 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("unsupported audit reopen record version %d", version)) {
 					t.Fatalf("unsupported completion = code %d err=%v", code, err)
 				}
-				if current, ok := CurrentTask(root, task.ID); !ok || current.State != StateInProgress {
+				if current, ok := mustCurrentTask(t, root, task.ID); !ok || current.State != StateInProgress {
 					t.Fatalf("unsupported authority moved task: %#v ok=%v", current, ok)
 				}
 				name, _ := auditReopenRecordName(root, task.ID)
@@ -231,7 +231,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 		if code != -1 || err == nil || !strings.Contains(err.Error(), "unsupported audit reopen record version 1") {
 			t.Fatalf("unsupported unblock = code %d err=%v", code, err)
 		}
-		if current, ok := CurrentTask(root, task.ID); !ok || current.State != StateBlocked {
+		if current, ok := mustCurrentTask(t, root, task.ID); !ok || current.State != StateBlocked {
 			t.Fatalf("unsupported unblock moved task: %#v ok=%v", current, ok)
 		}
 		if after := readFileString(decision); after != beforeDecision {
@@ -283,7 +283,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 			strings.Contains(err.Error(), "retry: coop tasks done") {
 			t.Fatalf("pending tasks done recovery = code %d err %v", code, err)
 		}
-		current, ok := CurrentTask(root, task.ID)
+		current, ok := mustCurrentTask(t, root, task.ID)
 		if !ok || current.State != StateTodo {
 			t.Fatalf("pending completion moved task: %#v, ok=%v", current, ok)
 		}
@@ -311,7 +311,7 @@ func TestTaskLeaseAuditReopenAuthorityIsScopedConsumedAndNotReusable(t *testing.
 	if err := MoveTaskDir(root, first, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	done, _ := CurrentTask(root, first.ID)
+	done, _ := mustCurrentTask(t, root, first.ID)
 	if err := FinalizeQueuedCompletion(QueuedTask{Root: root, Item: done}); err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +389,7 @@ func TestInterruptedAcceptedCompletionConsumesAuditReopenGeneration(t *testing.T
 	if err := MoveTaskDir(root, task, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	done, _ := CurrentTask(root, task.ID)
+	done, _ := mustCurrentTask(t, root, task.ID)
 	if err := FinalizeQueuedCompletion(QueuedTask{Root: root, Item: done}); err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +431,7 @@ func TestTrustedManualCompletionConsumesAuditReopenGeneration(t *testing.T) {
 	if err := CompleteTrustedTask(root, task); err != nil {
 		t.Fatal(err)
 	}
-	done, _ := CurrentTask(root, task.ID)
+	done, _ := mustCurrentTask(t, root, task.ID)
 	receipt, ok := taskCompletionReceipt(root, done)
 	if !ok || receipt.AuditReopenGeneration != record.Generation {
 		t.Fatalf("manual completion receipt = %#v, ok=%v", receipt, ok)
@@ -578,7 +578,7 @@ func TestTaskLeaseWritesHostHeartbeatAndReleases(t *testing.T) {
 			t.Fatalf("task-local lease mirror %s was created", name)
 		}
 	}
-	doneItem, ok := CurrentTask(root, id)
+	doneItem, ok := mustCurrentTask(t, root, id)
 	if !ok {
 		t.Fatal("moved task disappeared before completion")
 	}
@@ -911,7 +911,7 @@ func TestTaskLeaseProcessRaces(t *testing.T) {
 		if state == StateTodo && pathExists(filepath.Join(root, StateTodo, id)) {
 			t.Fatal("losing todo contender recreated the task's old state path")
 		}
-		items := ReadTaskTree(root)
+		items := mustReadTaskTree(t, root)
 		if len(items) != 1 || items[0].ID != id || items[0].State != StateInProgress {
 			t.Fatalf("simultaneous %s claim left queue %+v, want one in-progress task", state, items)
 		}

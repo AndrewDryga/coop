@@ -1254,7 +1254,10 @@ func acceptForkProjectionLocked(authorityRepo, root, id string, expected ForkTas
 			return ProjectionResult{}, errors.New("blocked projection changed after its durable transition intent")
 		}
 	}
-	canonical, exists := CurrentTask(root, id)
+	canonical, exists, err := CurrentTask(root, id)
+	if err != nil {
+		return ProjectionResult{}, err
+	}
 	if !exists {
 		return ProjectionResult{}, errors.New("canonical task disappeared before projection acceptance")
 	}

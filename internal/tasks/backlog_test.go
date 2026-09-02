@@ -18,7 +18,7 @@ func TestBacklogAddIsolatedFromQueue(t *testing.T) {
 		t.Fatalf("backlog add: code=%d err=%v", code, err)
 	}
 	// It's really in xx_backlog, with a task.md.
-	bl := ReadBacklog(root)
+	bl := mustReadBacklog(t, root)
 	if len(bl) != 1 || bl[0].State != StateBacklog {
 		t.Fatalf("readBacklog = %+v, want one xx_backlog item", bl)
 	}
@@ -29,10 +29,10 @@ func TestBacklogAddIsolatedFromQueue(t *testing.T) {
 		t.Errorf("backlog item has no task.md at %s", bl[0].Dir)
 	}
 	// The lifecycle tree, and therefore every counter/lister/loop check, ignores it entirely.
-	if items := ReadTaskTree(root); len(items) != 0 {
+	if items := mustReadTaskTree(t, root); len(items) != 0 {
 		t.Fatalf("readTaskTree sees %d items, want 0 — backlog must be invisible to the queue", len(items))
 	}
-	if c, _ := TaskTreeCounts(ReadTaskTree(root)); c.Todo+c.Doing+c.Blocked+c.Done != 0 {
+	if c, _ := TaskTreeCounts(mustReadTaskTree(t, root)); c.Todo+c.Doing+c.Blocked+c.Done != 0 {
 		t.Errorf("counts should be all-zero with only a backlog item, got %+v", c)
 	}
 }
@@ -44,15 +44,15 @@ func TestBacklogPromote(t *testing.T) {
 	if code, err := tasksFolderAdd(root, []string{"promote me"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("backlog add: code=%d err=%v", code, err)
 	}
-	id := ReadBacklog(root)[0].ID
+	id := mustReadBacklog(t, root)[0].ID
 
 	if code, err := backlogFolderPromote(root, []string{"promote"}); code != 0 || err != nil { // substring match
 		t.Fatalf("promote: code=%d err=%v", code, err)
 	}
-	if len(ReadBacklog(root)) != 0 {
+	if len(mustReadBacklog(t, root)) != 0 {
 		t.Error("after promote, backlog should be empty")
 	}
-	items := ReadTaskTree(root)
+	items := mustReadTaskTree(t, root)
 	if len(items) != 1 || items[0].State != StateTodo || items[0].ID != id {
 		t.Fatalf("after promote: %+v, want the same id in todo", items)
 	}
@@ -77,7 +77,7 @@ func TestBacklogIsolatedFromActiveCommands(t *testing.T) {
 	if code, err := tasksFolderAdd(root, []string{"parked"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("backlog add: code=%d err=%v", code, err)
 	}
-	id := ReadBacklog(root)[0].ID
+	id := mustReadBacklog(t, root)[0].ID
 
 	if _, err := FindTask(root, id); err == nil {
 		t.Error("findTask must NOT resolve a backlog id (the active tree excludes xx_backlog)")
@@ -96,20 +96,20 @@ func TestBacklogRemove(t *testing.T) {
 	if code, err := tasksFolderAdd(root, []string{"drop me"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("backlog add: code=%d err=%v", code, err)
 	}
-	id := ReadBacklog(root)[0].ID
+	id := mustReadBacklog(t, root)[0].ID
 
 	// No --yes and no TTY → refused, item survives.
 	if code, err := backlogFolderRemove(root, []string{id}); code != 2 || err == nil {
 		t.Errorf("rm without --yes = (%d, %v), want a refusal (2)", code, err)
 	}
-	if len(ReadBacklog(root)) != 1 {
+	if len(mustReadBacklog(t, root)) != 1 {
 		t.Fatal("a refused rm must not delete the item")
 	}
 	// With --yes → gone.
 	if code, err := backlogFolderRemove(root, []string{id, "--yes"}); code != 0 || err != nil {
 		t.Fatalf("rm --yes: code=%d err=%v", code, err)
 	}
-	if len(ReadBacklog(root)) != 0 {
+	if len(mustReadBacklog(t, root)) != 0 {
 		t.Error("after rm --yes, backlog should be empty")
 	}
 	// No id → usage.
@@ -173,7 +173,7 @@ func TestCmdBacklogDispatch(t *testing.T) {
 		t.Fatalf("cmdBacklog add: code=%d err=%v", code, err)
 	}
 	root := filepath.Join(repo, ".agent", "tasks")
-	items := ReadBacklog(root)
+	items := mustReadBacklog(t, root)
 	if len(items) != 1 {
 		t.Fatalf("after add, backlog = %+v, want 1 item", items)
 	}
@@ -191,7 +191,7 @@ func TestCmdBacklogDispatch(t *testing.T) {
 	if code, err := CmdBacklog(cfg, []string{"promote", id}); code != 0 || err != nil {
 		t.Fatalf("cmdBacklog promote: code=%d err=%v", code, err)
 	}
-	if tree := ReadTaskTree(root); len(tree) != 1 || tree[0].State != StateTodo {
+	if tree := mustReadTaskTree(t, root); len(tree) != 1 || tree[0].State != StateTodo {
 		t.Fatalf("after promote, tree = %+v, want the id in todo", tree)
 	}
 
@@ -202,14 +202,14 @@ func TestCmdBacklogDispatch(t *testing.T) {
 	if code, err := CmdBacklog(cfg, []string{"add", "drop me"}); code != 0 || err != nil {
 		t.Fatalf("second add: code=%d err=%v", code, err)
 	}
-	dropID := ReadBacklog(root)[0].ID
+	dropID := mustReadBacklog(t, root)[0].ID
 	if code, err := CmdBacklog(cfg, []string{"rm", dropID}); code != 2 || err == nil {
 		t.Errorf("rm without --yes piped = (%d, %v), want a refusal (2)", code, err)
 	}
 	if code, err := CmdBacklog(cfg, []string{"rm", dropID, "--yes"}); code != 0 || err != nil {
 		t.Fatalf("rm --yes: code=%d err=%v", code, err)
 	}
-	if len(ReadBacklog(root)) != 0 {
+	if len(mustReadBacklog(t, root)) != 0 {
 		t.Error("after rm --yes, the drawer should be empty")
 	}
 }
@@ -230,7 +230,7 @@ func TestCmdBacklogMonorepo(t *testing.T) {
 	if code, err := tasksFolderAdd(rootA, []string{"an a-side idea"}, StateBacklog, "backlog add"); code != 0 || err != nil {
 		t.Fatalf("seed svc-a: code=%d err=%v", code, err)
 	}
-	id := ReadBacklog(rootA)[0].ID
+	id := mustReadBacklog(t, rootA)[0].ID
 
 	out := captureStdout(t, func() {
 		if code, err := CmdBacklog(cfg, nil); code != 0 || err != nil {
@@ -251,7 +251,7 @@ func TestCmdBacklogMonorepo(t *testing.T) {
 	if code, err := CmdBacklog(cfg, []string{"promote", id}); code != 0 || err != nil {
 		t.Fatalf("monorepo promote: code=%d err=%v", code, err)
 	}
-	if tree := ReadTaskTree(rootA); len(tree) != 1 || tree[0].State != StateTodo {
+	if tree := mustReadTaskTree(t, rootA); len(tree) != 1 || tree[0].State != StateTodo {
 		t.Fatalf("promote should land in svc-a's todo, tree = %+v", tree)
 	}
 	// an id no queue holds fails loudly.

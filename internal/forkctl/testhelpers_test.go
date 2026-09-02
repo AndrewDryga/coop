@@ -25,6 +25,15 @@ const (
 
 var latestTaskLog = tasks.LatestTaskLog
 
+func mustCurrentTask(t testing.TB, root, id string) (tasks.Item, bool) {
+	t.Helper()
+	item, ok, err := tasks.CurrentTask(root, id)
+	if err != nil {
+		t.Fatalf("CurrentTask(%q, %q): %v", root, id, err)
+	}
+	return item, ok
+}
+
 // lastLines returns the last n lines of s (trailing blank lines trimmed first).
 func lastLines(s string, n int) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")

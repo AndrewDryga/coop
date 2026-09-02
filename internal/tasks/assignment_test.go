@@ -50,10 +50,10 @@ func TestForkAssignmentProjectsOneCanonicalTaskAndDefersCompletion(t *testing.T)
 	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := CurrentTask(root, "second"); !ok {
+	if _, ok := mustCurrentTask(t, root, "second"); !ok {
 		t.Fatal("materializing one assignment changed its canonical sibling")
 	}
-	projected := ReadTaskTree(assignment.Owner.Projection)
+	projected := mustReadTaskTree(t, assignment.Owner.Projection)
 	if len(projected) != 1 || projected[0].ID != "first" || projected[0].State != StateInProgress {
 		t.Fatalf("projection = %+v, want only first in progress", projected)
 	}
@@ -63,7 +63,7 @@ func TestForkAssignmentProjectsOneCanonicalTaskAndDefersCompletion(t *testing.T)
 	if _, err := AcceptForkProjection(authorityRepo, root, "first", assignment.Owner); err != nil {
 		t.Fatal(err)
 	}
-	canonical, _ := CurrentTask(root, "first")
+	canonical, _ := mustCurrentTask(t, root, "first")
 	if canonical.State != StateInProgress {
 		t.Fatalf("candidate-ready canonical state = %s, want in progress", canonical.State)
 	}
@@ -74,7 +74,7 @@ func TestForkAssignmentProjectsOneCanonicalTaskAndDefersCompletion(t *testing.T)
 	if err := CompleteTrustedTask(root, canonical); !errors.Is(err, ErrTaskSandboxOwned) {
 		t.Fatalf("ordinary completion = %v, want sandbox-owned refusal", err)
 	}
-	canonical, _ = CurrentTask(root, "first")
+	canonical, _ = mustCurrentTask(t, root, "first")
 	if canonical.State != StateInProgress {
 		t.Fatal("refused ordinary completion mutated canonical state")
 	}
@@ -139,7 +139,7 @@ func TestForkAssignmentReplaysPreparingOwnerBeforeExecution(t *testing.T) {
 	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	current, _ := CurrentTask(root, "preparing")
+	current, _ := mustCurrentTask(t, root, "preparing")
 	if err := MoveTaskDir(root, current, StateTodo); err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestForkAssignmentReplaysPreparingOwnerBeforeExecution(t *testing.T) {
 		t.Fatalf("preparing replay = %+v, %v", resumed, err)
 	}
 	defer resumed.Lease.Release()
-	current, _ = CurrentTask(root, "preparing")
+	current, _ = mustCurrentTask(t, root, "preparing")
 	if current.State != StateInProgress {
 		t.Fatalf("preparing replay canonical state = %s", current.State)
 	}
@@ -182,7 +182,7 @@ func TestHumanLifecycleCannotClearForkAssignment(t *testing.T) {
 	if code, err := tasksFolderBlock(root, []string{"owned"}); code == 0 || !errors.Is(err, ErrTaskSandboxOwned) {
 		t.Fatalf("block fork-owned task = code %d err %v", code, err)
 	}
-	current, _ := CurrentTask(root, "owned")
+	current, _ := mustCurrentTask(t, root, "owned")
 	if current.State != StateInProgress {
 		t.Fatal("refused human lifecycle changed fork-owned task")
 	}
@@ -277,7 +277,7 @@ func TestForkCandidateFinalizesExactCanonicalTask(t *testing.T) {
 	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	projected, _ := CurrentTask(assignment.Owner.Projection, "land-me")
+	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "land-me")
 	if err := os.WriteFile(filepath.Join(projected.Dir, "artifacts", "proof.txt"), []byte("reviewed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestForkCandidateFinalizesExactCanonicalTask(t *testing.T) {
 	if err := FinalizeForkCandidateTask(repo, candidate, candidate.Assignments[0]); err != nil {
 		t.Fatal(err)
 	}
-	landed, ok := CurrentTask(root, "land-me")
+	landed, ok := mustCurrentTask(t, root, "land-me")
 	if !ok || landed.State != StateDone {
 		t.Fatalf("landed task = %+v, ok=%v", landed, ok)
 	}
@@ -333,7 +333,7 @@ func TestPublishedForkCandidateFreezesGenerationBeforeAnotherAssignment(t *testi
 	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	projected, _ := CurrentTask(assignment.Owner.Projection, assignment.Task.Item.ID)
+	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, assignment.Task.Item.ID)
 	if err := MoveTaskDir(assignment.Owner.Projection, projected, StateDone); err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestPublishedForkCandidateFreezesGenerationBeforeAnotherAssignment(t *testi
 	if next.Outcome != ForkAssignmentExecutorDrained || next.Lease != nil {
 		t.Fatalf("ready generation selected more work: %+v", next)
 	}
-	remaining, ok := CurrentTask(root, "z-next")
+	remaining, ok := mustCurrentTask(t, root, "z-next")
 	if !ok || remaining.State != StateTodo {
 		t.Fatalf("next canonical task changed under ready candidate: %+v, ok=%v", remaining, ok)
 	}
@@ -447,7 +447,7 @@ func TestForkProjectionAcceptanceReplacesExistingNestedArtifactsIdempotently(t *
 	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	projected, _ := CurrentTask(assignment.Owner.Projection, "repeat")
+	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "repeat")
 	artifact := filepath.Join(projected.Dir, "artifacts", "nested", "proof.txt")
 	writeTaskFile(t, artifact, "first\n")
 	if _, err := AcceptForkProjection(repo, root, "repeat", assignment.Owner); err != nil {
@@ -463,7 +463,7 @@ func TestForkProjectionAcceptanceReplacesExistingNestedArtifactsIdempotently(t *
 	if _, err := AcceptForkProjection(repo, root, "repeat", *record.Fork); err != nil {
 		t.Fatalf("second acceptance over existing nested artifact: %v", err)
 	}
-	canonical, _ := CurrentTask(root, "repeat")
+	canonical, _ := mustCurrentTask(t, root, "repeat")
 	data, err := os.ReadFile(filepath.Join(canonical.Dir, "artifacts", "nested", "proof.txt"))
 	if err != nil || string(data) != "second\n" {
 		t.Fatalf("canonical repeated artifact = %q, err=%v", data, err)
@@ -485,7 +485,7 @@ func TestFailedForkRunCannotPublishProjectedDoneForReview(t *testing.T) {
 	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	projected, _ := CurrentTask(assignment.Owner.Projection, "failed-signoff")
+	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "failed-signoff")
 	if err := MoveTaskDir(assignment.Owner.Projection, projected, StateDone); err != nil {
 		t.Fatal(err)
 	}
@@ -499,7 +499,7 @@ func TestFailedForkRunCannotPublishProjectedDoneForReview(t *testing.T) {
 	if err != nil || !ok || record.Fork == nil || record.Fork.Phase != ForkAssignmentPaused {
 		t.Fatalf("failed run owner = %+v, owned=%v err=%v; want paused", record, ok, err)
 	}
-	canonical, _ := CurrentTask(root, "failed-signoff")
+	canonical, _ := mustCurrentTask(t, root, "failed-signoff")
 	if canonical.State != StateInProgress {
 		t.Fatalf("failed run canonical state = %s, want in progress", canonical.State)
 	}
@@ -520,11 +520,11 @@ func TestForkDiscardReplayNormalizesTaskAlreadyReturnedToTodo(t *testing.T) {
 	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	canonical, _ := CurrentTask(root, "discard-replay")
+	canonical, _ := mustCurrentTask(t, root, "discard-replay")
 	if err := MoveTaskDir(root, canonical, StateTodo); err != nil {
 		t.Fatal(err)
 	}
-	canonical, _ = CurrentTask(root, "discard-replay")
+	canonical, _ = mustCurrentTask(t, root, "discard-replay")
 	writeTaskFile(t, filepath.Join(canonical.Dir, "state.md"), "# stale\n")
 	if err := DiscardForkTaskStateLocked(repo, identity); err != nil {
 		t.Fatal(err)
@@ -559,7 +559,7 @@ func TestUnblockedForkAssignmentRestoresBlockedProjectionForSameGeneration(t *te
 	if err := assignment.Lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	projected, _ := CurrentTask(assignment.Owner.Projection, "decision")
+	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "decision")
 	writeTaskFile(t, filepath.Join(projected.Dir, "decision.md"), "# Decision\n\n**Resolution:** accepted\n")
 	if err := MoveTaskDir(assignment.Owner.Projection, projected, StateBlocked); err != nil {
 		t.Fatal(err)
@@ -567,7 +567,7 @@ func TestUnblockedForkAssignmentRestoresBlockedProjectionForSameGeneration(t *te
 	if _, err := AcceptForkProjection(repo, root, "decision", assignment.Owner); err != nil {
 		t.Fatal(err)
 	}
-	canonical, _ := CurrentTask(root, "decision")
+	canonical, _ := mustCurrentTask(t, root, "decision")
 	if canonical.State != StateBlocked {
 		t.Fatalf("canonical state = %s, want blocked", canonical.State)
 	}
@@ -582,7 +582,7 @@ func TestUnblockedForkAssignmentRestoresBlockedProjectionForSameGeneration(t *te
 	if err := PrepareForkProjectionForRun(repo, root, "decision", resumed.Owner); err != nil {
 		t.Fatal(err)
 	}
-	projected, _ = CurrentTask(resumed.Owner.Projection, "decision")
+	projected, _ = mustCurrentTask(t, resumed.Owner.Projection, "decision")
 	if projected.State != StateInProgress {
 		t.Fatalf("unblocked projection state = %s, want in progress", projected.State)
 	}
@@ -590,7 +590,7 @@ func TestUnblockedForkAssignmentRestoresBlockedProjectionForSameGeneration(t *te
 
 func TestForkUnblockReplaysPausedOwnerWhileCanonicalStillBlocked(t *testing.T) {
 	repo, root, assignment := proposalAssignment(t, "paused-blocked-unblock")
-	projected, _ := CurrentTask(assignment.Owner.Projection, "assigned")
+	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "assigned")
 	writeTaskFile(t, filepath.Join(projected.Dir, "decision.md"), "# Decision\n\n**Resolution:** accepted\n")
 	if err := MoveTaskDir(assignment.Owner.Projection, projected, StateBlocked); err != nil {
 		t.Fatal(err)
@@ -608,11 +608,11 @@ func TestForkUnblockReplaysPausedOwnerWhileCanonicalStillBlocked(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	canonical, _ := CurrentTask(root, "assigned")
+	canonical, _ := mustCurrentTask(t, root, "assigned")
 	if err := resolveAndUnblock(root, canonical, ""); err != nil {
 		t.Fatal(err)
 	}
-	canonical, _ = CurrentTask(root, "assigned")
+	canonical, _ = mustCurrentTask(t, root, "assigned")
 	if canonical.State != StateTodo {
 		t.Fatalf("replayed paused unblock state = %s", canonical.State)
 	}
@@ -630,7 +630,7 @@ func TestForkAssignmentReplaysBlockedAcceptanceAtBothCrashBoundaries(t *testing.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, root, assignment := proposalAssignment(t, "blocked-replay")
-			projected, _ := CurrentTask(assignment.Owner.Projection, "assigned")
+			projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "assigned")
 			writeTaskFile(t, filepath.Join(projected.Dir, "decision.md"), "# Decision\n\nBlocked pending an operator choice.\n")
 			if err := MoveTaskDir(assignment.Owner.Projection, projected, StateBlocked); err != nil {
 				t.Fatal(err)
@@ -647,7 +647,7 @@ func TestForkAssignmentReplaysBlockedAcceptanceAtBothCrashBoundaries(t *testing.
 				t.Fatal(err)
 			}
 			if tc.moveCanonical {
-				canonical, _ := CurrentTask(root, "assigned")
+				canonical, _ := mustCurrentTask(t, root, "assigned")
 				if err := MoveTaskDir(root, canonical, StateBlocked); err != nil {
 					t.Fatal(err)
 				}
@@ -660,7 +660,7 @@ func TestForkAssignmentReplaysBlockedAcceptanceAtBothCrashBoundaries(t *testing.
 			if err != nil || resumed.Outcome != ForkAssignmentExecutorDrained {
 				t.Fatalf("blocking replay = %+v, err=%v", resumed, err)
 			}
-			canonical, _ := CurrentTask(root, "assigned")
+			canonical, _ := mustCurrentTask(t, root, "assigned")
 			record, owned, err := ReadTaskOwnerRecord(root, "assigned")
 			if err != nil || !owned || canonical.State != StateBlocked || record.Fork == nil ||
 				record.Fork.Phase != ForkAssignmentBlocked || record.Fork.ProjectionDigest != result.Digest {
@@ -672,7 +672,7 @@ func TestForkAssignmentReplaysBlockedAcceptanceAtBothCrashBoundaries(t *testing.
 
 func TestForkAssignmentBlockingReplayRejectsChangedProjectionBeforeCanonicalSync(t *testing.T) {
 	repo, root, assignment := proposalAssignment(t, "blocked-changed")
-	projected, _ := CurrentTask(assignment.Owner.Projection, "assigned")
+	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "assigned")
 	if err := MoveTaskDir(assignment.Owner.Projection, projected, StateBlocked); err != nil {
 		t.Fatal(err)
 	}
@@ -687,12 +687,12 @@ func TestForkAssignmentBlockingReplayRejectsChangedProjectionBeforeCanonicalSync
 	}); err != nil {
 		t.Fatal(err)
 	}
-	canonical, _ := CurrentTask(root, "assigned")
+	canonical, _ := mustCurrentTask(t, root, "assigned")
 	canonicalTask, err := os.ReadFile(filepath.Join(canonical.Dir, "task.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	projected, _ = CurrentTask(assignment.Owner.Projection, "assigned")
+	projected, _ = mustCurrentTask(t, assignment.Owner.Projection, "assigned")
 	writeTaskFile(t, filepath.Join(projected.Dir, "task.md"), "# changed after blocking intent\n")
 	_, err = AssignForkTask([]string{root}, ForkAssignmentRequest{
 		AuthorityRepo: repo, Fork: assignment.Owner.Fork,
@@ -713,7 +713,7 @@ func TestForkAssignmentBlockingReplayRejectsChangedProjectionBeforeCanonicalSync
 
 func TestForkUnblockRecoversTodoWithBlockedOwner(t *testing.T) {
 	repo, root, assignment := proposalAssignment(t, "todo-blocked-unblock")
-	projected, _ := CurrentTask(assignment.Owner.Projection, "assigned")
+	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "assigned")
 	writeTaskFile(t, filepath.Join(projected.Dir, "decision.md"), "# Decision\n\n**Resolution:** accepted\n")
 	if err := MoveTaskDir(assignment.Owner.Projection, projected, StateBlocked); err != nil {
 		t.Fatal(err)
@@ -721,7 +721,7 @@ func TestForkUnblockRecoversTodoWithBlockedOwner(t *testing.T) {
 	if _, err := AcceptForkProjection(repo, root, "assigned", assignment.Owner); err != nil {
 		t.Fatal(err)
 	}
-	canonical, _ := CurrentTask(root, "assigned")
+	canonical, _ := mustCurrentTask(t, root, "assigned")
 	if err := MoveTaskDir(root, canonical, StateTodo); err != nil {
 		t.Fatal(err)
 	}

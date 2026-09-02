@@ -123,7 +123,7 @@ func TestProjectSnapshotReportsQueueEntriesTheTaskReaderCannotTrust(t *testing.T
 		t.Fatal(err)
 	}
 	snapshot := ReadProjectSnapshot(repo, []string{root})
-	if len(snapshot.Problems) == 0 || !strings.Contains(strings.Join(snapshot.Problems, "\n"), "task entry is not a real directory") {
+	if len(snapshot.Problems) == 0 || !strings.Contains(strings.Join(snapshot.Problems, "\n"), "is not a real directory") {
 		t.Fatalf("untrusted queue entry disappeared from snapshot: %v", snapshot.Problems)
 	}
 }

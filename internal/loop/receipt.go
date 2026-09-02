@@ -197,7 +197,11 @@ func reviewSubject(hosts []string, id string) (tasks.QueuedTask, error) {
 func lifecycleTaskSubject(hosts []string, id string) (tasks.QueuedTask, error) {
 	var found *tasks.QueuedTask
 	for _, root := range hosts {
-		for _, task := range tasks.ReadTaskTree(root) {
+		items, err := tasks.ReadTaskTree(root)
+		if err != nil {
+			return tasks.QueuedTask{}, err
+		}
+		for _, task := range items {
 			if task.ID != id {
 				continue
 			}

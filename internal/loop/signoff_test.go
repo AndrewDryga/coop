@@ -43,7 +43,11 @@ func TestCompletedReviewSubjectsUseHostState(t *testing.T) {
 	taskForLease(t, root, stateBlocked, "later-blocked")
 	taskForLease(t, root, stateDone, "trailer-only")
 	completed := map[string]bool{"accepted": true, "later-blocked": true}
-	if got := completedReviewSubjects([]string{root}, completed); !slices.Equal(got, []string{"accepted"}) {
+	got, err := completedReviewSubjects([]string{root}, completed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"accepted"}) {
 		t.Fatalf("completed review subjects = %v, want host-accepted archived task only", got)
 	}
 }

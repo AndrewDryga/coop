@@ -264,29 +264,37 @@ func ProtectedGateChanges(repo, base, head string) []string {
 }
 
 // queueSnapshot maps task id → state across the hosts for UI and audit bookkeeping.
-func QueueSnapshot(hosts []string) map[string]string {
+func QueueSnapshot(hosts []string) (map[string]string, error) {
 	m := map[string]string{}
 	for _, h := range hosts {
-		for _, t := range ReadTaskTree(h) {
+		items, err := ReadTaskTree(h)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range items {
 			m[t.ID] = t.State
 		}
 	}
-	return m
+	return m, nil
 }
 
-func aggregateDuplicateTaskIDs(hosts []string) []string {
+func aggregateDuplicateTaskIDs(hosts []string) ([]string, error) {
 	return taskIDDuplicates(hosts, false)
 }
 
-func NonArchivedDuplicateTaskIDs(hosts []string) []string {
+func NonArchivedDuplicateTaskIDs(hosts []string) ([]string, error) {
 	return taskIDDuplicates(hosts, true)
 }
 
-func taskIDDuplicates(hosts []string, requireLive bool) []string {
+func taskIDDuplicates(hosts []string, requireLive bool) ([]string, error) {
 	counts := map[string]int{}
 	live := map[string]bool{}
 	for _, host := range hosts {
-		for _, task := range ReadTaskTree(host) {
+		items, err := ReadTaskTree(host)
+		if err != nil {
+			return nil, err
+		}
+		for _, task := range items {
 			counts[task.ID]++
 			if task.State != StateDone {
 				live[task.ID] = true
@@ -300,7 +308,7 @@ func taskIDDuplicates(hosts []string, requireLive bool) []string {
 		}
 	}
 	slices.Sort(duplicates)
-	return duplicates
+	return duplicates, nil
 }
 
 // completeTrustedTask is the host equivalent of the provider completion boundary. It holds the
@@ -334,7 +342,10 @@ func CompleteTrustedTask(root string, task Item) (retErr error) {
 	if err := refuseForkTaskOwner(root, task.ID, "complete"); err != nil {
 		return err
 	}
-	current, ok := CurrentTask(root, task.ID)
+	current, ok, err := CurrentTask(root, task.ID)
+	if err != nil {
+		return err
+	}
 	if !ok || current.Dir != task.Dir || current.State != task.State {
 		return errLeaseCandidateGone
 	}
@@ -515,7 +526,10 @@ func MoveTrustedTasksFromDoneWith(moves []TrustedTaskMove) (retErr error) {
 			return failBeforeMutation(err)
 		}
 		states = append(states, trustedTaskMoveState{move: move, authority: authority})
-		current, ok := CurrentTask(move.Root, move.Task.ID)
+		current, ok, err := CurrentTask(move.Root, move.Task.ID)
+		if err != nil {
+			return failBeforeMutation(err)
+		}
 		if !ok {
 			return failBeforeMutation(errLeaseCandidateGone)
 		}
@@ -771,7 +785,12 @@ func FinalizeQueuedCompletion(task QueuedTask) error {
 func ReconcileInterruptedCompletions(hosts []string) error {
 	var restoreErrs []error
 	for _, host := range hosts {
-		for _, task := range ReadTaskTree(host) {
+		items, err := ReadTaskTree(host)
+		if err != nil {
+			restoreErrs = append(restoreErrs, err)
+			continue
+		}
+		for _, task := range items {
 			if task.State != StateDone {
 				restoreErrs = append(restoreErrs, clearTaskCompletionReceipt(host, task.ID))
 				continue
@@ -883,7 +902,10 @@ func lockCrashCompletion(root string, task Item) (crashCompletionLock, Item, boo
 		return crashCompletionLock{}, Item{}, false, err
 	}
 	lock := crashCompletionLock{authority: authority}
-	current, ok := CurrentTask(root, task.ID)
+	current, ok, err := CurrentTask(root, task.ID)
+	if err != nil {
+		return crashCompletionLock{}, Item{}, false, errors.Join(err, lock.release())
+	}
 	if !ok || current.State != StateDone || current.Dir != task.Dir {
 		return crashCompletionLock{}, Item{}, false, lock.release()
 	}
@@ -929,15 +951,19 @@ func crashCompletionCandidate(root string, task Item) bool {
 
 // blockedTaskIDs returns the ids currently parked in 50_blocked/ across the hosts — what needs a
 // human decision, for the closing digest. Sorted.
-func BlockedTaskIDs(hosts []string) []string {
+func BlockedTaskIDs(hosts []string) ([]string, error) {
 	var ids []string
-	for id, st := range QueueSnapshot(hosts) {
+	snapshot, err := QueueSnapshot(hosts)
+	if err != nil {
+		return nil, err
+	}
+	for id, st := range snapshot {
 		if st == StateBlocked {
 			ids = append(ids, id)
 		}
 	}
 	slices.Sort(ids)
-	return ids
+	return ids, nil
 }
 
 // alreadyCommittedInProgress reports the in_progress tasks whose implementation commit is ALREADY
@@ -946,15 +972,19 @@ func BlockedTaskIDs(hosts []string) []string {
 // handoff un-completing finished work — and nothing else surfaces it: the loop just re-picks the
 // task, and the resume recipe is only safe while the commit is still HEAD. Reporting it at startup
 // turns a silent trap into something a human can confirm or close. Sorted; read-only.
-func AlreadyCommittedInProgress(repo string, hosts []string) []struct {
+func AlreadyCommittedInProgress(repo string, hosts []string) ([]struct {
 	ID, Commit string
 	Depth      int
-} {
+}, error) {
 	var out []struct {
 		ID, Commit string
 		Depth      int
 	}
-	for id, st := range QueueSnapshot(hosts) {
+	snapshot, err := QueueSnapshot(hosts)
+	if err != nil {
+		return nil, err
+	}
+	for id, st := range snapshot {
 		if st != StateInProgress {
 			continue
 		}
@@ -977,7 +1007,7 @@ func AlreadyCommittedInProgress(repo string, hosts []string) []struct {
 	}) int {
 		return strings.Compare(a.ID, b.ID)
 	})
-	return out
+	return out, nil
 }
 
 type semanticHistoryCommit struct {
@@ -2357,7 +2387,10 @@ func prepareBlockedAuditReopenUnblock(root string, task Item) (*blockedAuditUnbl
 			return nil, fmt.Errorf("lock blocked task authority for task %s: %w", task.ID, err)
 		}
 		transition := &blockedAuditUnblock{authority: authority, root: root}
-		current, currentOK := CurrentTask(root, task.ID)
+		current, currentOK, currentErr := CurrentTask(root, task.ID)
+		if currentErr != nil {
+			return nil, transition.finish(currentErr)
+		}
 		if !currentOK || current.State != StateBlocked || current.Dir != task.Dir {
 			return nil, transition.finish(fmt.Errorf("task %s changed state while its blocked authority was locked", task.ID))
 		}
@@ -2382,7 +2415,10 @@ func lockBlockedAuditReopenUnblock(root string, task Item, observed AuditReopenR
 	if !ok || !AuditReopenRecordsEqual(record, observed) {
 		return fail(fmt.Errorf("audit reopen authority changed while unblocking task %s", task.ID))
 	}
-	current, ok := CurrentTask(root, task.ID)
+	current, ok, err := CurrentTask(root, task.ID)
+	if err != nil {
+		return fail(err)
+	}
 	if !ok || current.State != StateBlocked || current.Dir != task.Dir {
 		return fail(fmt.Errorf("task %s changed state while its blocked audit authority was locked", task.ID))
 	}
@@ -2435,7 +2471,10 @@ func finishPendingAuditUnblock(root string, task Item, observed AuditReopenRecor
 	if !ok || !record.UnblockPending || !AuditReopenRecordsEqual(record, observed) {
 		return fail(fmt.Errorf("pending audit unblock authority changed for task %s", task.ID))
 	}
-	current, ok := CurrentTask(root, task.ID)
+	current, ok, err := CurrentTask(root, task.ID)
+	if err != nil {
+		return fail(err)
+	}
 	if !ok || current.State != StateTodo || current.Dir != task.Dir {
 		return fail(fmt.Errorf("task %s is no longer the todo task from its pending audit unblock", task.ID))
 	}
@@ -2463,7 +2502,10 @@ func finishPendingAuditUnblock(root string, task Item, observed AuditReopenRecor
 // the caller holds the canonical task-authority flock. Fork ownership is retained but paused;
 // human ownership is removed only when an audit-pending record proves this really is an unblock.
 func reconcileTodoUnblockOwnerLocked(root string, task Item, allowHuman bool) (bool, error) {
-	current, ok := CurrentTask(root, task.ID)
+	current, ok, err := CurrentTask(root, task.ID)
+	if err != nil {
+		return false, err
+	}
 	if !ok || current.State != StateTodo || current.Dir != task.Dir {
 		return false, fmt.Errorf("task %s changed while recovering its unblock owner", task.ID)
 	}
@@ -2517,7 +2559,10 @@ func (l *TaskLease) PreserveBlockedAuditReopen(repo, base, head string) error {
 	if l.Reopen == nil || base == head {
 		return nil
 	}
-	current, ok := CurrentTask(l.root, l.id)
+	current, ok, err := CurrentTask(l.root, l.id)
+	if err != nil {
+		return err
+	}
 	if !ok || current.State != StateBlocked {
 		return nil
 	}
@@ -2692,9 +2737,9 @@ func unbindableTasks(repo, base, head string, finished []string, touched map[str
 // — instead of mistaking it for that task's own completion. The mark is deliberately informational,
 // not mechanical: unbindableTasks' own reachable-binding count already refuses to let that task's
 // real next completion silently ride on a binding it did not itself just create.
-func ReportToleratedForeignBindings(repo string, hosts []string, base, head, leasedID string, tolerated []string) {
+func ReportToleratedForeignBindings(repo string, hosts []string, base, head, leasedID string, tolerated []string) error {
 	if len(tolerated) == 0 {
-		return
+		return nil
 	}
 	ui.Warn("task %s's commit range also carries Coop-Task trailer(s) for %s, which this iteration's authority never touched — tolerated, not rejected; see each task's log.md", leasedID, strings.Join(tolerated, ", "))
 	for _, id := range tolerated {
@@ -2707,12 +2752,17 @@ func ReportToleratedForeignBindings(repo string, hosts []string, base, head, lea
 			leasedID, sha, leasedID,
 		)
 		for _, host := range hosts {
-			if t, ok := CurrentTask(host, id); ok {
+			t, ok, err := CurrentTask(host, id)
+			if err != nil {
+				return err
+			}
+			if ok {
 				appendTaskLog(t.Dir, note)
 				break
 			}
 		}
 	}
+	return nil
 }
 
 func RestoreQueuedCompletion(task QueuedTask, audit bool) error {
@@ -3260,7 +3310,11 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 		var counts TaskCounts
 		var inProgress, todo []QueuedTask
 		for _, root := range hosts {
-			for _, item := range ReadTaskTree(root) {
+			items, err := ReadTaskTree(root)
+			if err != nil {
+				return TaskAssignment{}, err
+			}
+			for _, item := range items {
 				switch item.State {
 				case StateTodo:
 					counts.Todo++
@@ -3435,7 +3489,11 @@ func ReconcileQueueAfterMerge(cfg *config.Config, repo, forkName, revRange strin
 	for i, queue := range queues {
 		hosts[i] = filepath.Join(repo, queue)
 	}
-	for _, id := range aggregateDuplicateTaskIDs(hosts) {
+	duplicates, err := aggregateDuplicateTaskIDs(hosts)
+	if err != nil {
+		return fmt.Errorf("fork %s landed, but reading parent task queues failed: %w — %s", forkName, err, unreconciledQueueRecovery(repo, revRange))
+	}
+	for _, id := range duplicates {
 		delete(landed, id)
 		ui.Warn("reconcile: task id %s exists in multiple queues; skipped automatic fork reconciliation", id)
 	}
@@ -3452,7 +3510,11 @@ func ReconcileQueueAfterMerge(cfg *config.Config, repo, forkName, revRange strin
 		host := filepath.Join(repo, q)
 		states := map[string]string{}
 		items := map[string]Item{}
-		for _, t := range ReadTaskTree(host) {
+		queueItems, err := ReadTaskTree(host)
+		if err != nil {
+			return fmt.Errorf("fork %s landed, but reading parent task queue %s failed: %w — %s", forkName, host, err, unreconciledQueueRecovery(repo, revRange))
+		}
+		for _, t := range queueItems {
 			states[t.ID] = t.State
 			items[t.ID] = t
 		}
@@ -3477,14 +3539,26 @@ func ReconcileQueueAfterMerge(cfg *config.Config, repo, forkName, revRange strin
 // `coop tasks unblock` applies (decisionResolved) — moves back to 00_todo/ with a log note.
 // Audit-reopened tasks require an explicit host `coop tasks unblock`: provider-writable prose can
 // never invoke the host-authority rebase path.
-// A task with no decision.md, or one whose format decisionResolved can't read, stays parked:
-// never act on a file we can't parse confidently. Best-effort; a move failure warns and skips.
+// A task with no decision.md or an unanswered one stays parked. An unreadable decision or queue
+// stops the pass before it can be mistaken for an unanswered/empty state; move failures still
+// warn and skip the affected task.
 // Returns the unblocked ids in readTaskTree order.
-func UnblockResolved(hosts []string) []string {
+func UnblockResolved(hosts []string) ([]string, error) {
 	var ids []string
 	for _, host := range hosts {
-		for _, t := range ReadTaskTree(host) {
-			if t.State != StateBlocked || !decisionResolved(filepath.Join(t.Dir, "decision.md")) {
+		items, err := ReadTaskTree(host)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range items {
+			if t.State != StateBlocked || !t.HasDecision {
+				continue
+			}
+			resolved, err := decisionResolved(filepath.Join(t.Dir, "decision.md"))
+			if err != nil {
+				return nil, err
+			}
+			if !resolved {
 				continue
 			}
 			_, hasAuthority, err := ReadAuditReopenRecord(host, t.ID)
@@ -3504,7 +3578,7 @@ func UnblockResolved(hosts []string) []string {
 			ids = append(ids, t.ID)
 		}
 	}
-	return ids
+	return ids, nil
 }
 
 func AppendTaskLogStrict(taskDir, note string) error {

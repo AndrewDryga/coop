@@ -58,6 +58,117 @@ func initRepo(t *testing.T) string {
 	return repo
 }
 
+func mustReadTaskTree(t testing.TB, root string) []Item {
+	t.Helper()
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		t.Fatalf("ReadTaskTree(%q): %v", root, err)
+	}
+	return items
+}
+
+func mustReadBacklog(t testing.TB, root string) []Item {
+	t.Helper()
+	items, err := ReadBacklog(root)
+	if err != nil {
+		t.Fatalf("ReadBacklog(%q): %v", root, err)
+	}
+	return items
+}
+
+func mustCurrentTask(t testing.TB, root, id string) (Item, bool) {
+	t.Helper()
+	item, ok, err := CurrentTask(root, id)
+	if err != nil {
+		t.Fatalf("CurrentTask(%q, %q): %v", root, id, err)
+	}
+	return item, ok
+}
+
+func mustQueueCounts(t testing.TB, root string) (TaskCounts, string) {
+	t.Helper()
+	counts, active, err := QueueCounts(root)
+	if err != nil {
+		t.Fatalf("QueueCounts(%q): %v", root, err)
+	}
+	return counts, active
+}
+
+func mustQueueProgress(t testing.TB, hosts []string) (TaskCounts, string) {
+	t.Helper()
+	counts, active, err := QueueProgress(hosts)
+	if err != nil {
+		t.Fatalf("QueueProgress: %v", err)
+	}
+	return counts, active
+}
+
+func mustAlreadyCommittedInProgress(t testing.TB, repo string, hosts []string) []struct {
+	ID, Commit string
+	Depth      int
+} {
+	t.Helper()
+	items, err := AlreadyCommittedInProgress(repo, hosts)
+	if err != nil {
+		t.Fatalf("AlreadyCommittedInProgress: %v", err)
+	}
+	return items
+}
+
+func mustNonArchivedDuplicateTaskIDs(t testing.TB, hosts []string) []string {
+	t.Helper()
+	ids, err := NonArchivedDuplicateTaskIDs(hosts)
+	if err != nil {
+		t.Fatalf("NonArchivedDuplicateTaskIDs: %v", err)
+	}
+	return ids
+}
+
+func mustUnblockResolved(t testing.TB, hosts []string) []string {
+	t.Helper()
+	ids, err := UnblockResolved(hosts)
+	if err != nil {
+		t.Fatalf("UnblockResolved: %v", err)
+	}
+	return ids
+}
+
+func mustAggregateDuplicateTaskIDs(t testing.TB, hosts []string) []string {
+	t.Helper()
+	ids, err := aggregateDuplicateTaskIDs(hosts)
+	if err != nil {
+		t.Fatalf("aggregateDuplicateTaskIDs: %v", err)
+	}
+	return ids
+}
+
+func mustDecisionResolved(t testing.TB, path string) bool {
+	t.Helper()
+	resolved, err := decisionResolved(path)
+	if err != nil {
+		t.Fatalf("decisionResolved(%q): %v", path, err)
+	}
+	return resolved
+}
+
+func mustCountDone(t testing.TB, root string) int {
+	t.Helper()
+	count, err := countDone(root)
+	if err != nil {
+		t.Fatalf("countDone(%q): %v", root, err)
+	}
+	return count
+}
+
+func mustParseTaskFolder(t testing.TB, dir, state string) (Item, bool) {
+	t.Helper()
+	item, ok, err := parseTaskFolder(dir, state)
+	if err != nil {
+		t.Fatalf("parseTaskFolder(%q, %q): %v", dir, state, err)
+	}
+	return item, ok
+}
+
 // captureStderr returns whatever fn writes to os.Stderr (ui.Warn/ui.Note/ui.Error go there).
 // internal/cli/status_test.go keeps its own identical copy for the same reason gitOut does; see
 // git.go.

@@ -173,7 +173,7 @@ func openRunsRoot(repo string, create bool) (*os.Root, error) {
 // counts at emit time. Best-effort — a write failure is warned once and swallowed, so telemetry can
 // never break the run it observes.
 func (c *Control) recordStage(repo, run, stage, outcome string, tgt agents.Target, start time.Time, exit, retries, reopened int, headBefore string, hosts, finished, gateFiles []string, res *iterResult) {
-	cnt, _ := tasks.QueueProgress(hosts)
+	cnt, _, _ := tasks.QueueProgress(hosts)
 	rec := buildStageRecord(run, stage, outcome, c.version, tgt, start, time.Now(), exit, retries, reopened, headBefore, gitOut(repo, "rev-parse", "HEAD"), cnt, finished, gateFiles)
 	if res != nil { // the box run's result-event tally (nil for stages that had no stream-json result)
 		rec.CostUSD, rec.InTok, rec.OutTok = res.CostUSD, res.InTok, res.OutTok

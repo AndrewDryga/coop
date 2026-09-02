@@ -16,7 +16,7 @@ func TestTaskIdentitySurvivesLifecycleAndFencesReplacement(t *testing.T) {
 	if err := MoveTaskDir(root, item, StateInProgress); err != nil {
 		t.Fatal(err)
 	}
-	moved, _ := CurrentTask(root, item.ID)
+	moved, _ := mustCurrentTask(t, root, item.ID)
 	second, err := ReadTaskInstance(root, moved)
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestTaskIdentitySurvivesLifecycleAndFencesReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTaskFile(t, filepath.Join(root, StateInProgress, item.ID, "task.md"), "# replacement\n")
-	replacement, _ := CurrentTask(root, item.ID)
+	replacement, _ := mustCurrentTask(t, root, item.ID)
 	third, err := EnsureTaskInstance(root, replacement)
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestCopiedProjectionCarriesLogicalIdentityButNotFolderGeneration(t *testing
 	if err := copyProjectionTree(item.Dir, dst); err != nil {
 		t.Fatal(err)
 	}
-	projectedItem, _ := CurrentTask(projection, item.ID)
+	projectedItem, _ := mustCurrentTask(t, projection, item.ID)
 	projected, err := ReadTaskInstance(projection, projectedItem)
 	if err != nil {
 		t.Fatal(err)

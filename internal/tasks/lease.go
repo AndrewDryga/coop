@@ -830,7 +830,10 @@ func clearTaskCompletionReceiptIfMatches(root string, task Item, nonce string) (
 	if err != nil {
 		return false, err
 	}
-	current, ok := CurrentTask(root, task.ID)
+	current, ok, err := CurrentTask(root, task.ID)
+	if err != nil {
+		return false, errors.Join(err, unlockLeaseFile(authority))
+	}
 	if !ok || current.State != StateDone || current.Dir != task.Dir {
 		return false, unlockLeaseFile(authority)
 	}
@@ -985,13 +988,17 @@ func (s TaskLeaseSummary) String() string {
 	return strings.Join(parts, " - ")
 }
 
-func CurrentTask(root, id string) (Item, bool) {
-	for _, t := range ReadTaskTree(root) {
+func CurrentTask(root, id string) (Item, bool, error) {
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		return Item{}, false, err
+	}
+	for _, t := range items {
 		if t.ID == id {
-			return t, true
+			return t, true, nil
 		}
 	}
-	return Item{}, false
+	return Item{}, false, nil
 }
 
 // TryTaskLease locks a candidate without waiting, writes metadata only after the authoritative
@@ -1011,7 +1018,10 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 	reject := func(cause error) (*TaskLease, TaskLeaseObservation, error) {
 		return nil, TaskLeaseObservation{}, errors.Join(cause, unlockLeaseFile(authority))
 	}
-	current, ok := CurrentTask(root, item.ID)
+	current, ok, err := CurrentTask(root, item.ID)
+	if err != nil {
+		return reject(err)
+	}
 	if !ok || current.State != item.State {
 		return reject(errLeaseCandidateGone)
 	}
@@ -1064,7 +1074,10 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 	if err := l.refresh(); err != nil {
 		return abort(err)
 	}
-	current, ok = CurrentTask(root, item.ID)
+	current, ok, err = CurrentTask(root, item.ID)
+	if err != nil {
+		return abort(err)
+	}
 	if !ok || current.State != item.State {
 		// Metadata follows the id across legitimate moves once an iteration owns the task, but a
 		// move DURING acquisition means this stale candidate must be rescanned, not launched.

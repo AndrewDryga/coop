@@ -507,7 +507,10 @@ func checkpointTaskProjection(
 	sess session.Session,
 ) (workerproto.WorkspaceCheckpointTaskProjection, []checkpointBlob, []bool, error) {
 	queue := filepath.Join(sess.Workspace, tasks.TasksRoot)
-	item, ok := tasks.CurrentTask(queue, sess.WorkspaceTask.ID)
+	item, ok, err := tasks.CurrentTask(queue, sess.WorkspaceTask.ID)
+	if err != nil {
+		return workerproto.WorkspaceCheckpointTaskProjection{}, nil, nil, err
+	}
 	if !ok {
 		return workerproto.WorkspaceCheckpointTaskProjection{}, nil, nil, errors.New("bound workspace task is missing")
 	}

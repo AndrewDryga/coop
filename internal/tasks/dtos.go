@@ -24,12 +24,16 @@ type QueuedTask struct {
 // ties preserve queue order and ReadTaskTree's stable ID order. Shared by the loop's own
 // assignment (AssignLoopTaskOnly) and cli's banner printing, so the two can never disagree about
 // what's next.
-func QueueState(hosts []string) (TaskCounts, QueuedTask, bool) {
+func QueueState(hosts []string) (TaskCounts, QueuedTask, bool, error) {
 	var total TaskCounts
 	var firstTodo, firstDoing QueuedTask
 	haveTodo, haveDoing := false, false
 	for _, h := range hosts {
-		for _, t := range ReadTaskTree(h) {
+		items, err := ReadTaskTree(h)
+		if err != nil {
+			return TaskCounts{}, QueuedTask{}, false, err
+		}
+		for _, t := range items {
 			switch t.State {
 			case StateTodo:
 				total.Todo++
@@ -49,17 +53,20 @@ func QueueState(hosts []string) (TaskCounts, QueuedTask, bool) {
 		}
 	}
 	if haveDoing {
-		return total, firstDoing, true
+		return total, firstDoing, true, nil
 	}
-	return total, firstTodo, haveTodo
+	return total, firstTodo, haveTodo, nil
 }
 
 // QueueProgress sums task counts across the queue(s) and returns the authoritative next task's
 // title, sharing QueueState with the loop assignment so cli's banner cannot disagree with the box.
-func QueueProgress(hosts []string) (TaskCounts, string) {
-	total, next, ok := QueueState(hosts)
-	if !ok {
-		return total, ""
+func QueueProgress(hosts []string) (TaskCounts, string, error) {
+	total, next, ok, err := QueueState(hosts)
+	if err != nil {
+		return TaskCounts{}, "", err
 	}
-	return total, next.Item.Title
+	if !ok {
+		return total, "", nil
+	}
+	return total, next.Item.Title, nil
 }
