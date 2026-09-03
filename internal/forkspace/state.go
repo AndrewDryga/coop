@@ -491,14 +491,9 @@ func PublishReservedWorker(repo, name string, expected []byte, pid int) error {
 	}
 }
 
-// ClaimState is the reservation a detaching coop writes over the fork's pidfile: its OWN
-// identity, so a later start can tell a claim a live coop is still working through from one whose
-// owner died holding it. launched marks the instant a worker has been forked but not yet recorded —
-// the one window where a dead owner does NOT prove that nothing is running.
-func ClaimState(launched bool) WorkerState {
-	return ClaimStateFor("", launched)
-}
-
+// ClaimStateFor records the detaching process's identity and the immutable fork generation.
+// Launched marks the instant a worker exists but has not yet published its own identity — the one
+// window where a dead owner does not prove that nothing is running.
 func ClaimStateFor(generation Generation, launched bool) WorkerState {
 	pid := os.Getpid()
 	return WorkerState{Claim: true, Launched: launched, Pid: pid, Token: ProcStartToken(pid), Generation: generation}

@@ -92,7 +92,7 @@ def cyan(s):
 
 
 def bar(done, total, w=10):
-    """ui.ProgressBar — [ cyan-filled ░-empty ]."""
+    """Static cast progress bar — [ cyan-filled ░-empty ]."""
     filled = round(done / total * w) if total else 0
     return "[" + _w("█" * filled, CYAN) + "░" * (w - filled) + "]"
 

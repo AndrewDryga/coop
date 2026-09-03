@@ -113,25 +113,6 @@ func visible(s string) int {
 	return n
 }
 
-func TestProgressBar(t *testing.T) {
-	// Colors are off under `go test`, so the bar is plain blocks.
-	for _, c := range []struct {
-		frac float64
-		w    int
-		want string
-	}{
-		{0, 4, "[░░░░]"},
-		{1, 4, "[████]"},
-		{0.5, 10, "[█████░░░░░]"},
-		{2, 4, "[████]"},  // clamped high
-		{-1, 4, "[░░░░]"}, // clamped low
-	} {
-		if got := ProgressBar(c.frac, c.w); got != c.want {
-			t.Errorf("ProgressBar(%v,%d) = %q, want %q", c.frac, c.w, got, c.want)
-		}
-	}
-}
-
 func TestProgressBarStates(t *testing.T) {
 	// Colors are off under `go test`, so every state segment renders as plain █. Assert the total
 	// filled-cell layout here; the protected-segment test below distinguishes colors with sentinels.

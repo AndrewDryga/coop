@@ -47,7 +47,7 @@ follower while the other followers continue independently.
 
 The FILE is `internal/forkspace`'s: paths (`StateDir`/`PidPath`/`LockPath`/`LogPath`), the flock
 (`LockState`/`TryLockState`), the wire format (`WorkerState`, `ParseWorkerState`, `Marshal`,
-`Read/WriteWorkerState`, `WritePid`, `ClaimState`, `PublishReservedWorker`, `ClearPidIfMine`), and
+`Read/WriteWorkerState`, `WritePid`, `ClaimStateFor`, `PublishReservedWorker`, `ClearPidIfMine`), and
 the identity doctrine
 (`ProcessIdentityOf`, `OwnerProvablyDead`, `StateOwner`, `RunningPid`, `NeedsStop`). It is a leaf —
 no runtime, no `ui` — so direct fork commands and the sessions service read one contract.
@@ -110,6 +110,8 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-09-03 — removed the unused generation-less `ClaimState` wrapper and re-verified that every
+  reservation creator uses `ClaimStateFor` with the fork's immutable generation
 - 2026-09-03 — documented honest missing/error fork-log states and independent follow failure
   reporting
 - 2026-09-03 — documented and re-verified all-or-nothing workspace setup and fail-closed fork

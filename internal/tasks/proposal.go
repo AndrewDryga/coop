@@ -54,13 +54,6 @@ type ImportedForkProposal struct {
 	Kind       ForkProposalKind
 }
 
-type ForkProposalSummary struct {
-	Prepared int `json:"prepared"`
-	Imported int `json:"imported"`
-	Pending  int `json:"pending"`
-	Problems int `json:"problems"`
-}
-
 func ForkProposalOutbox(owner ForkTaskOwner) string {
 	return filepath.Join(filepath.Dir(owner.Projection), "proposals")
 }
@@ -841,49 +834,4 @@ func discardForkProposalsLocked(authorityRepo string, identity forkspace.Identit
 	}
 	_ = os.RemoveAll(forkProposalRecordRoot(authorityRepo, identity))
 	return nil
-}
-
-func ForkProposalState(authorityRepo string, identity forkspace.Identity) (ForkProposalSummary, []string) {
-	records, recordProblems := forkProposalRecords(authorityRepo, identity)
-	summary := ForkProposalSummary{Problems: len(recordProblems)}
-	var problems []string
-	for _, problem := range recordProblems {
-		problems = append(problems, problem.Error())
-	}
-	for _, record := range records {
-		switch record.Phase {
-		case ForkProposalPrepared:
-			summary.Prepared++
-		case ForkProposalImported:
-			summary.Imported++
-		}
-	}
-	indexes, indexProblems := IndexedForkAssignments(authorityRepo, identity)
-	for _, problem := range indexProblems {
-		problems = append(problems, problem.Error())
-		summary.Problems++
-	}
-	for _, index := range indexes {
-		owner, err := ownerForProposalIndex(index)
-		if err != nil {
-			problems = append(problems, err.Error())
-			summary.Problems++
-			continue
-		}
-		root, err := openForkProposalOutbox(authorityRepo, owner)
-		if err != nil {
-			problems = append(problems, err.Error())
-			summary.Problems++
-			continue
-		}
-		entries, err := readDirBounded(root, forkProposalCountLimit)
-		root.Close()
-		if err != nil {
-			problems = append(problems, err.Error())
-			summary.Problems++
-			continue
-		}
-		summary.Pending += len(entries)
-	}
-	return summary, problems
 }

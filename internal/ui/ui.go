@@ -35,7 +35,6 @@ var (
 	cCyan    string
 	cMagenta string
 	cDim     string
-	cGray    string
 	cBold    string
 	cReset   string
 )
@@ -44,7 +43,6 @@ func init() {
 	if colorEnabled(os.Stderr) {
 		cGreen, cRed, cYellow, cCyan = codeGreen, codeRed, codeYellow, codeCyan
 		cMagenta, cDim, cBold, cReset = codeMagenta, codeDim, codeBold, codeReset
-		cGray = codeGray
 	}
 }
 
@@ -199,21 +197,11 @@ func Steps(steps ...string) {
 // Color wrappers, used to compose richer output (e.g. the doctor report).
 func Bold(s string) string    { return cBold + s + cReset }
 func Dim(s string) string     { return cDim + s + cReset }
-func Gray(s string) string    { return cGray + s + cReset }
 func Green(s string) string   { return cGreen + s + cReset }
 func Red(s string) string     { return cRed + s + cReset }
 func Yellow(s string) string  { return cYellow + s + cReset }
 func Cyan(s string) string    { return cCyan + s + cReset }
 func Magenta(s string) string { return cMagenta + s + cReset }
-
-// DimLine renders the whole of s faint, re-applying the dim after any internal reset so colored
-// spans inside it (e.g. a progress bar) are dimmed too instead of snapping back to full color.
-func DimLine(s string) string {
-	if cDim == "" {
-		return s
-	}
-	return cDim + strings.ReplaceAll(s, cReset, cReset+cDim) + cReset
-}
 
 // Check and Cross are the doctor pass/fail marks.
 func Check() string { return cGreen + "✓" + cReset }
@@ -221,7 +209,7 @@ func Cross() string { return cRed + "✗" + cReset }
 
 // Palette applies ANSI color gated on a chosen stream. Use For(os.Stdout) for a stdout view —
 // `coop tasks ls` — so a redirect or pipe (`coop tasks ls > file`) stays plain text, where the
-// package-level Bold/Gray/… helpers gate on stderr (coop's progress stream). Each method is the
+// package-level color helpers gate on stderr (coop's progress stream). Each method is the
 // identity function when color is off, so the call site reads the same with or without it.
 type Palette struct{ on bool }
 

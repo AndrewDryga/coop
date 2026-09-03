@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Unreachable UI and task helpers are gone.** Progress displays keep the state-aware bar used by
+  loops and task watches, while six obsolete helpers, one unused summary type, and the old bar's
+  direct-only test are removed.
+
 - **Audit history has one exact-object implementation.** The retired Git-log predecessor and its
   duplicate tests are gone; raw-object replay keeps the history bounds, malformed-parent checks,
   unusual-path coverage, and SHA-1/SHA-256 behavior that protect task completion.

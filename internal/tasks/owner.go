@@ -334,7 +334,7 @@ func (lock *taskOwnerLock) RemoveHumanOrAbsent() error {
 }
 
 // removeTaskOwnerRecord is the human/local lifecycle clear. It is idempotent for absent records
-// and refuses a fork assignment; land/discard must use the exact-match API below.
+// and refuses a fork assignment; land/discard perform exact-match removal in their transactions.
 func removeTaskOwnerRecord(root, id string) error {
 	lock, err := lockTaskOwner(root, id)
 	if err != nil {
@@ -354,25 +354,6 @@ func newAssignmentID() (string, error) {
 
 func sameForkAssignment(a, b ForkTaskOwner) bool {
 	return a.Fork == b.Fork && a.AssignmentID == b.AssignmentID
-}
-
-func RemoveForkTaskAssignment(root, id string, expected ForkTaskOwner) error {
-	lock, err := lockTaskOwner(root, id)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	record, ok, err := lock.Read()
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return nil
-	}
-	if record.Kind != TaskOwnerFork || record.Fork == nil || !sameForkAssignment(*record.Fork, expected) {
-		return errors.New("task assignment changed before release")
-	}
-	return removeTaskOwnerRecordFile(root, id)
 }
 
 func UpdateForkTaskAssignment(root, id string, expected ForkTaskOwner, update func(*ForkTaskOwner) error) (TaskOwnerRecord, error) {

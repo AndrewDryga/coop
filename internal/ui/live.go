@@ -190,21 +190,6 @@ func (s *AltScreen) Frame(lines []string) {
 // Leave shows the cursor and restores the screen that was active before Enter.
 func (s *AltScreen) Leave() { fmt.Fprint(s.w, "\033[?25h\033[?1049l") }
 
-// ProgressBar renders a width-cell bar filled to frac (0..1), the filled cells cyan.
-func ProgressBar(frac float64, width int) string {
-	if width < 0 {
-		width = 0 // a negative width would make strings.Repeat panic on the empty portion
-	}
-	if frac < 0 {
-		frac = 0
-	}
-	if frac > 1 {
-		frac = 1
-	}
-	filled := int(frac*float64(width) + 0.5)
-	return "[" + Cyan(strings.Repeat("█", filled)) + strings.Repeat("░", width-filled) + "]"
-}
-
 // ProgressBarStates renders done (cyan), in-progress (yellow), blocked (red), then todo (empty).
 // Non-zero in-progress and blocked counts each claim at least one cell when the width permits; done
 // yields overflow to both. On a bar too narrow for both protected segments, blocked wins because a
