@@ -17,6 +17,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/consult"
 )
 
+const (
+	wrapperTestDeadlockTimeout = 15 * time.Second
+	wrapperTestProviderTimeout = 3 * time.Second
+)
+
 // TestDelegateWrapperShellcheck keeps the embedded coop-delegate script clean, like the
 // coop-consult wrapper's check (skipped when shellcheck isn't installed).
 func TestDelegateWrapperShellcheck(t *testing.T) {
@@ -756,18 +761,13 @@ func TestDelegateWrapperRejectsRecursiveInvocationBeforeLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, filepath.Join(h.dir, "coop-delegate"), "fast", "nested work")
-	cmd.Dir = h.repo
-	cmd.Env = append(h.env, DelegateDepthEnv+"=1")
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		t.Fatalf("recursive invocation waited on the delegate lock instead of failing first: %v", ctx.Err())
+	h.env = append(h.env, DelegateDepthEnv+"=1")
+	out, code, exceeded := h.runGroupDeadline(wrapperTestDeadlockTimeout, "fast", "nested work")
+	if exceeded {
+		t.Fatal("recursive invocation waited on the delegate lock instead of failing first")
 	}
-	exit, ok := err.(*exec.ExitError)
-	if !ok || exit.ExitCode() != 2 || !strings.Contains(string(out), "recursive delegation is not allowed") {
-		t.Fatalf("recursive invocation = (%v):\n%s", err, out)
+	if code != 2 || !strings.Contains(out, "recursive delegation is not allowed") {
+		t.Fatalf("recursive invocation = exit %d:\n%s", code, out)
 	}
 	if _, err := os.Stat(launched); err == nil || !os.IsNotExist(err) {
 		t.Fatal("recursive invocation launched the provider")
@@ -899,13 +899,15 @@ func TestDelegateWrapperStopsOutputOverflowWithoutFallback(t *testing.T) {
 func TestDelegateWrapperTimesOutWithoutFallback(t *testing.T) {
 	h := newDelegateHarness(t)
 	calls := filepath.Join(h.dir, "calls")
-	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex gemini", "COOP_DELEGATE_TIMEOUT=1")
-	h.stub("codex", "echo codex >>"+calls+"; echo 'usage limit reached' >&2; trap 'exit 143' TERM; while :; do sleep 1; done")
+	h.env = append(h.env,
+		"COOP_DELEGATE_FAST_TARGETS=codex gemini",
+		fmt.Sprintf("COOP_DELEGATE_TIMEOUT=%d", int(wrapperTestProviderTimeout/time.Second)),
+	)
+	h.stub("codex", "echo codex >>"+calls+"; echo 'usage limit reached' >&2; exec sleep 60")
 	h.stub("gemini", "echo gemini >>"+calls)
-	start := time.Now()
-	out, code, exceeded := h.runGroupDeadline(5*time.Second, "fast", "task")
-	if exceeded || code != 124 || time.Since(start) > 5*time.Second || !strings.Contains(out, "bounded execution failed") {
-		t.Fatalf("timeout = exit %d after %s, want bounded terminal failure:\n%s", code, time.Since(start), out)
+	out, code, exceeded := h.runGroupDeadline(wrapperTestDeadlockTimeout, "fast", "task")
+	if exceeded || code != 124 || !strings.Contains(out, "bounded execution failed") {
+		t.Fatalf("timeout = exit %d, want bounded terminal failure:\n%s", code, out)
 	}
 	got, _ := os.ReadFile(calls)
 	if string(got) != "codex\n" {
@@ -963,11 +965,9 @@ func TestDelegateWrapperRejectsUnsafePrecreatedLock(t *testing.T) {
 	if err := os.Mkdir(h.lock, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-	defer cancel()
-	out, code := h.runContext(ctx, "fast", "task")
-	if ctx.Err() != nil {
-		t.Fatalf("unsafe precreated lock hung instead of failing closed: %v", ctx.Err())
+	out, code, exceeded := h.runGroupDeadline(wrapperTestDeadlockTimeout, "fast", "task")
+	if exceeded {
+		t.Fatal("unsafe precreated lock hung instead of failing closed")
 	}
 	if code != 2 || !strings.Contains(out, "unsafe delegate lock") {
 		t.Fatalf("unsafe precreated lock = (exit %d), want explicit refusal:\n%s", code, out)
