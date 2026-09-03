@@ -2817,6 +2817,11 @@ func accumulateSessionACPUpdateArtifacts(raw json.RawMessage, expectedSession st
 		Update    struct {
 			SessionUpdate string          `json:"sessionUpdate"`
 			Content       json.RawMessage `json:"content"`
+			Meta          struct {
+				Codex struct {
+					Phase string `json:"phase"`
+				} `json:"codex"`
+			} `json:"_meta"`
 		} `json:"update"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
@@ -2830,6 +2835,13 @@ func accumulateSessionACPUpdateArtifacts(raw json.RawMessage, expectedSession st
 		return false, acpFailure(sessionACPProtocolError, err.Error())
 	}
 	if envelope.Update.SessionUpdate != "assistant_message_chunk" && envelope.Update.SessionUpdate != "agent_message_chunk" {
+		return imageFrame, nil
+	}
+	// Codex ACP uses the same agent_message_chunk event for progress commentary and the final
+	// answer, but preserves their host-owned phase in metadata. Only the final phase belongs to
+	// the output-contract candidate. Adapters without phase metadata retain the ACP-compatible
+	// append behavior below.
+	if phase := envelope.Update.Meta.Codex.Phase; phase != "" && phase != "final_answer" {
 		return imageFrame, nil
 	}
 	var content struct {

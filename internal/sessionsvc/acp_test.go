@@ -128,6 +128,21 @@ func TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes(t *testing.T) {
 	}
 }
 
+func TestStructuredResultExcludesCodexProgressCommentary(t *testing.T) {
+	fixture := newSessionACPFixture(t, "valid-contract-with-commentary")
+	leased := fixture.submitContract(t, "return the result")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != session.TurnCompleted || result.AssistantMessage != `{"reply":"valid"}` {
+		t.Fatalf("completed contracted turn = %+v", result)
+	}
+	if got := countStrings(readSessionACPLog(t, fixture.childLog), "session/prompt"); got != 1 {
+		t.Fatalf("session/prompt calls = %d, want no repair for valid final answer", got)
+	}
+}
+
 func TestRepeatedInvalidStructuredResultNeverCompletes(t *testing.T) {
 	fixture := newSessionACPFixture(t, "invalid-contract-always")
 	leased := fixture.submitContract(t, "return the result")
@@ -2505,6 +2520,43 @@ func TestAccumulateSessionACPUpdateDecodesContentByUpdateType(t *testing.T) {
 	}
 }
 
+// A real Codex turn reported progress before returning its schema-valid final result. Coop joined
+// both messages, so the output contract saw a value beginning with "I'm checking" and rejected it;
+// the local Conversation Lab then waited forever on blocked work. Codex ACP marks the two messages
+// explicitly, so only final_answer is part of the caller-visible assistant result.
+func TestAccumulateSessionACPUpdateIgnoresCodexCommentary(t *testing.T) {
+	var assistant []byte
+	commentary := json.RawMessage(`{
+		"sessionId":"native-1",
+		"update":{
+			"sessionUpdate":"agent_message_chunk",
+			"messageId":"commentary-1",
+			"content":{"type":"text","text":"I'm checking the live source first."},
+			"_meta":{"codex":{"phase":"commentary"}}
+		}
+	}`)
+	if err := accumulateSessionACPUpdate(commentary, "native-1", &assistant); err != nil {
+		t.Fatalf("commentary update = %v", err)
+	}
+
+	final := json.RawMessage(`{
+		"sessionId":"native-1",
+		"update":{
+			"sessionUpdate":"agent_message_chunk",
+			"messageId":"final-1",
+			"content":{"type":"text","text":"{\"reply\":\"bounded result\"}"},
+			"_meta":{"codex":{"phase":"final_answer"}}
+		}
+	}`)
+	if err := accumulateSessionACPUpdate(final, "native-1", &assistant); err != nil {
+		t.Fatalf("final-answer update = %v", err)
+	}
+
+	if got, want := string(assistant), `{"reply":"bounded result"}`; got != want {
+		t.Fatalf("assistant message = %q, want %q", got, want)
+	}
+}
+
 // sessionSlowStreamFrames is how many prompt-phase frames the "slow-stream"
 // child produces in total, counting the response that ends it.
 const sessionSlowStreamFrames = 7
@@ -2600,7 +2652,7 @@ func TestSessionACPChildHelper(t *testing.T) {
 		case "session/prompt":
 			promptCount++
 			switch scenario {
-			case "invalid-contract-once", "invalid-contract-always", "valid-contract", "semantic-tool-image-output", "schema-repair-tool-image-output":
+			case "invalid-contract-once", "invalid-contract-always", "valid-contract", "valid-contract-with-commentary", "semantic-tool-image-output", "schema-repair-tool-image-output":
 				message := `{"reply":"valid"}`
 				if scenario == "invalid-contract-once" {
 					marker := os.Getenv("COOP_TEST_SESSION_CONTRACT_MARKER")
@@ -2629,7 +2681,24 @@ func TestSessionACPChildHelper(t *testing.T) {
 						}})
 					}
 				}
-				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": message}}}})
+				if scenario == "valid-contract-with-commentary" {
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+						"sessionId": frame.Params.SessionID, "update": map[string]any{
+							"sessionUpdate": "agent_message_chunk", "messageId": "commentary-1",
+							"content": map[string]string{"type": "text", "text": "I'm checking the source first."},
+							"_meta":   map[string]any{"codex": map[string]string{"phase": "commentary"}},
+						},
+					}})
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+						"sessionId": frame.Params.SessionID, "update": map[string]any{
+							"sessionUpdate": "agent_message_chunk", "messageId": "final-1",
+							"content": map[string]string{"type": "text", "text": message},
+							"_meta":   map[string]any{"codex": map[string]string{"phase": "final_answer"}},
+						},
+					}})
+				} else {
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": message}}}})
+				}
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
 					"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 10, "outputTokens": 2},
 				}})
