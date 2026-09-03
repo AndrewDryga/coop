@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Audit history has one exact-object implementation.** The retired Git-log predecessor and its
+  duplicate tests are gone; raw-object replay keeps the history bounds, malformed-parent checks,
+  unusual-path coverage, and SHA-1/SHA-256 behavior that protect task completion.
+
 - **Current documentation no longer advertises retired controls.** Help and the website now
   describe the files, target ladders, agent directories, and generated preset roles Coop actually
   uses; historical release notes remain available as history.

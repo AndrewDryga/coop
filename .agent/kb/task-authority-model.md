@@ -3,7 +3,7 @@ name: task-authority-model
 description: four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 subsystem: tasks
 sources: [internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/loop/lock.go]
-updated: 2026-08-28
+updated: 2026-09-03
 ---
 Coop has FOUR separate authorities over a task and its checkout. Each answers a different question,
 each is held a different length of time, and each fails differently — conflating any two of them is
@@ -55,19 +55,19 @@ PID liveness, or heartbeat age (unlike a lease, which a heartbeat CAN mark `leas
 though even a stalled lease still blocks nobody but its own kernel lock) — a timeout can't distinguish
 "went quiet for a good reason" from "abandoned," and guessing wrong is the 2026-07-25 dogfood incident
 this authority exists to fix: the loop adopted a task a founder had claimed, because claim held no
-lease and left no record, so `AssignLoopTaskOnly` (`internal/tasks/audit.go:3329`) saw a free flock
+lease and left no record, so `AssignLoopTaskOnly` (`internal/tasks/audit.go:3064`) saw a free flock
 and took it.
 
 ## How claim and lease interact — claim wins unconditionally
 
-`skipOwnedCandidate` (`internal/tasks/audit.go:3310`) checks the claim record BEFORE `TryTaskLease`
+`skipOwnedCandidate` (`internal/tasks/audit.go:3041`) checks the claim record BEFORE `TryTaskLease`
 even runs, for every in-progress AND todo candidate: an owned task is skipped like a busy lease, never
 leased, regardless of whether its lease actually is free. This ordering matters for the race between a
 human claiming a todo task and the loop scanning the same instant: `tasksFolderMove`'s claim path
 (`internal/tasks/cmd.go:481`) writes the owner record BEFORE it moves the folder, and rolls the record
 back if the move then loses the race — so the record is visible to any concurrent scan from the
 instant a claim begins, not from whenever its folder move happens to land. The record is cleared by
-`done` (`CompleteTrustedTask`, `internal/tasks/audit.go:309`, so every caller — the interactive verb,
+`done` (`CompleteTrustedTask`, `internal/tasks/audit.go:281`, so every caller — the interactive verb,
 fork-merge reconciliation — gets it for free), `block` (`tasksFolderBlock`), `unblock`
 (`moveBlockedAuditUnblock`), and the explicit `coop tasks release <id>` (`tasksFolderRelease`,
 `internal/tasks/cmd.go:544`) — nothing else. `coop tasks ls` tags an owned in-progress row "claimed by
@@ -118,6 +118,8 @@ these authorities sit beside but never replace — the folder is still the only 
 lifecycle STATE; these four decide who may act on it.
 
 ## Changelog
+- 2026-09-03 — re-verified the authority model after deleting the retired audit-history algorithm;
+  refreshed shifted `internal/tasks/audit.go` line citations. Authority semantics are unchanged.
 - 2026-08-28 — generalized durable claim authority into typed human-or-fork ownership. A fork
   assignment survives process exit and clears only through exact candidate land or journaled discard;
   the short iteration lease, checkout lock, and ref window keep their existing scopes.

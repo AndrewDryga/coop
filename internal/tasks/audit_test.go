@@ -3470,8 +3470,7 @@ func TestAuditReopenCompletionAcceptsSemanticDescendantReplay(t *testing.T) {
 		t.Fatalf("clean-tree reproduction unexpectedly changed: missing=%v tolerated=%v", got, tol)
 	}
 	if got, _ := CompletionUnbindableTasks(repo, oldHead, newHead, []string{"task-a"}, &reopen, nil); len(got) != 0 {
-		replayed, err := semanticHistoryCommits(repo, oldHead+".."+newHead)
-		t.Fatalf("authorized semantic descendant replay rejected: %v; recorded=%#v replayed=%#v err=%v", got, reopen, replayed, err)
+		t.Fatalf("authorized semantic descendant replay rejected: %v; recorded=%#v", got, reopen)
 	}
 	for _, id := range []string{"task-a", "task-b"} {
 		if got := CommitsForTask(repo, "HEAD", id); len(got) != 1 {
@@ -3609,17 +3608,17 @@ func TestAuditReopenHistoryEnumeratorFailsClosed(t *testing.T) {
 		}
 	})
 	t.Run("overflow", func(t *testing.T) {
-		repo, git, subject := newRepo(t)
+		repo, git, _ := newRepo(t)
 		for i := 0; i < 3; i++ {
 			git("commit", "-q", "--allow-empty", "-m", "manual")
 		}
-		if _, err := semanticHistoryCommitsLimit(repo, subject+"..HEAD", 2); err == nil ||
+		if _, err := rawAuditHistoryUntil(repo, "HEAD", 2, func(rawAuditCommit) bool { return false }); err == nil ||
 			!strings.Contains(err.Error(), "exceeds 2") {
 			t.Fatalf("history overflow error = %v", err)
 		}
 	})
-	t.Run("batch diff boundaries handle empty commits and hex paths", func(t *testing.T) {
-		repo, git, subject := newRepo(t)
+	t.Run("exact diff boundaries handle empty commits and hex paths", func(t *testing.T) {
+		repo, git, _ := newRepo(t)
 		name := strings.Repeat("a", 40)
 		var heads []string
 		if err := os.WriteFile(filepath.Join(repo, name), []byte("hex path\n"), 0o600); err != nil {
@@ -3642,29 +3641,23 @@ func TestAuditReopenHistoryEnumeratorFailsClosed(t *testing.T) {
 		heads = append(heads, gitOut(repo, "rev-parse", "HEAD"))
 		git("commit", "-q", "--allow-empty", "-m", "empty manual marker")
 		heads = append(heads, gitOut(repo, "rev-parse", "HEAD"))
-		history, err := semanticHistoryCommits(repo, subject+"..HEAD")
+		rawHistory, err := rawAuditHistoryCount(repo, "HEAD", len(heads))
+		if err != nil {
+			t.Fatal(err)
+		}
+		history, err := semanticHistoryCommitsExact(repo, rawHistory)
 		if err != nil || len(history) != len(heads) {
-			t.Fatalf("batched complete history = %#v, err=%v", history, err)
+			t.Fatalf("exact complete history = %#v, err=%v", history, err)
 		}
+		seenChangeTrees := map[string]bool{}
 		for i, commit := range history {
-			want, err := semanticCommit(repo, heads[i], "")
-			if err != nil {
-				t.Fatal(err)
+			if commit.sha != heads[i] || commit.semantic.ChangeTree == "" {
+				t.Errorf("history[%d] = %#v, want sha %s and a change tree", i, commit, heads[i])
 			}
-			if commit.sha != heads[i] || commit.semantic != want {
-				t.Errorf("history[%d] = %#v, want sha %s semantic %#v", i, commit, heads[i], want)
+			if seenChangeTrees[commit.semantic.ChangeTree] {
+				t.Errorf("history[%d] reused change tree %s", i, commit.semantic.ChangeTree)
 			}
-		}
-	})
-	t.Run("representative bounded history is extracted in one batch", func(t *testing.T) {
-		repo, git, subject := newRepo(t)
-		const count = 128
-		for i := 0; i < count; i++ {
-			git("commit", "-q", "--allow-empty", "-m", "manual marker")
-		}
-		history, err := semanticHistoryCommitsLimit(repo, subject+"..HEAD", count)
-		if err != nil || len(history) != count {
-			t.Fatalf("representative batch length = %d, err=%v", len(history), err)
+			seenChangeTrees[commit.semantic.ChangeTree] = true
 		}
 	})
 }
@@ -3752,7 +3745,7 @@ func TestAuditTreeParserRejectsNoncanonicalDirectoryMode(t *testing.T) {
 	}
 }
 
-func TestAuditCommitParent(t *testing.T) {
+func TestRawAuditHistoryRejectsMalformedParents(t *testing.T) {
 	total := int64(auditLinearHistoryByteLimit)
 	if err := addAuditLinearHistoryBytes(&total, []byte{0}); err == nil ||
 		!strings.Contains(err.Error(), "linear audit history") {
@@ -3762,20 +3755,22 @@ func TestAuditCommitParent(t *testing.T) {
 	repo, git := gitRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "root")
 	root := gitOut(repo, "rev-parse", "HEAD")
-	if got, err := auditCommitParent(repo, root); err != nil || got != "" {
-		t.Fatalf("root parent = %q, %v; want empty", got, err)
+	history, err := rawAuditHistoryCount(repo, root, 1)
+	if err != nil || history[0].parent != "" {
+		t.Fatalf("root history = %#v, %v; want empty parent", history, err)
 	}
 
 	git("commit", "-q", "--allow-empty", "-m", "child")
 	child := gitOut(repo, "rev-parse", "HEAD")
-	if got, err := auditCommitParent(repo, child); err != nil || got != root {
-		t.Fatalf("child parent = %q, %v; want %s", got, err, root)
+	history, err = rawAuditHistoryCount(repo, child, 1)
+	if err != nil || history[0].parent != root {
+		t.Fatalf("child history = %#v, %v; want parent %s", history, err, root)
 	}
 	if _, err := rawReachableAuditCommitsLimit(repo, child, 10, 10, 1); err == nil ||
 		!strings.Contains(err.Error(), "exceeds 1 bytes") {
 		t.Fatalf("raw reachable byte bound error = %v", err)
 	}
-	if _, err := auditCommitParent(repo, strings.Repeat("f", 40)); err == nil {
+	if _, err := rawAuditHistoryCount(repo, strings.Repeat("f", 40), 1); err == nil {
 		t.Fatal("missing commit parent was accepted")
 	}
 
@@ -3798,7 +3793,7 @@ func TestAuditCommitParent(t *testing.T) {
 			"parent " + root + "\n" +
 			"committer " + identity + "\n\nmalformed parent placement\n",
 	)
-	if _, err := auditCommitParent(repo, misplacedParent); err == nil {
+	if _, err := rawAuditHistoryCount(repo, misplacedParent, 1); err == nil {
 		t.Error("parent after author header was accepted")
 	}
 	danglingParent := writeRawCommit(
@@ -3807,7 +3802,7 @@ func TestAuditCommitParent(t *testing.T) {
 			"author " + identity + "\n" +
 			"committer " + identity + "\n\ndangling parent\n",
 	)
-	if _, err := auditCommitParent(repo, danglingParent); err == nil {
+	if _, err := rawAuditHistoryCount(repo, danglingParent, 1); err == nil {
 		t.Error("dangling parent was accepted")
 	}
 	duplicateParent := writeRawCommit(
@@ -3817,7 +3812,7 @@ func TestAuditCommitParent(t *testing.T) {
 			"author " + identity + "\n" +
 			"committer " + identity + "\n\nduplicate parent\n",
 	)
-	if _, err := auditCommitParent(repo, duplicateParent); err == nil {
+	if _, err := rawAuditHistoryCount(repo, duplicateParent, 1); err == nil {
 		t.Error("duplicate raw parent was accepted")
 	}
 	oversizedCommit := writeRawCommit(
@@ -3867,7 +3862,7 @@ func TestAuditCommitParent(t *testing.T) {
 	git("checkout", "-q", branch)
 	git("commit", "-q", "--allow-empty", "-m", "main")
 	git("merge", "-q", "--no-ff", "parent-side", "-m", "merge")
-	if _, err := auditCommitParent(repo, gitOut(repo, "rev-parse", "HEAD")); err == nil {
+	if _, err := rawAuditHistoryCount(repo, gitOut(repo, "rev-parse", "HEAD"), 1); err == nil {
 		t.Fatal("merge commit parent was accepted")
 	}
 }
@@ -3988,13 +3983,6 @@ func TestSemanticHistoryExactSupportsSHA256Root(t *testing.T) {
 	run("config", "user.email", "test@example.com")
 	run("config", "user.name", "Test")
 	run("config", "commit.gpgsign", "false")
-	emptyTree, err := auditEmptyTree(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(emptyTree) != 64 {
-		t.Fatalf("SHA-256 empty tree length = %d, want 64", len(emptyTree))
-	}
 	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("A\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -4507,10 +4495,11 @@ func TestBlockedAuditUnblockRebasesStaleAuthority(t *testing.T) {
 	if len(subjects) != 1 {
 		t.Fatalf("reachable subject bindings = %v", subjects)
 	}
-	wantSubject, err := semanticCommit(f.repo, subjects[0], f.id)
-	if err != nil {
+	semantics, _, err := rawAuditHistory(f.repo, subjects[0], 1)
+	if err != nil || len(semantics) != 1 {
 		t.Fatal(err)
 	}
+	wantSubject := semantics[0].semantic
 	if got.Generation != f.record.Generation || got.Subject != wantSubject ||
 		!slices.Equal(got.History, f.record.History) {
 		t.Fatalf("rebased authority = %#v, want generation %q subject %#v history %#v", got, f.record.Generation, wantSubject, f.record.History)

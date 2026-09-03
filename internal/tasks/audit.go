@@ -66,7 +66,6 @@ type CommitInfo struct{ SHA, Subject string }
 type TaskTrailerCommit struct {
 	Info          CommitInfo
 	fullSHA       string
-	parents       string
 	authorName    string
 	authorEmail   string
 	authorDate    string
@@ -115,41 +114,6 @@ func TaskTrailerCommits(repo, rangeExpr string, reverse bool) ([]TaskTrailerComm
 		commits = append(commits, record)
 	}
 	return commits, nil
-}
-
-func auditHistoryCommitsLimited(repo, rangeExpr string, limit int) ([]TaskTrailerCommit, bool) {
-	args := []string{"log", "--reverse", fmt.Sprintf("--max-count=%d", limit)}
-	return auditHistoryCommits(repo, args, []string{rangeExpr})
-}
-
-func auditHistoryCommits(repo string, args, revisions []string) ([]TaskTrailerCommit, bool) {
-	format := "%h%x00%H%x00%s%x00%P%x00%an%x00%ae%x00%aI%x00%B"
-	args = append(args, "-z", "--format="+format)
-	args = append(args, revisions...)
-	cmd := exec.Command("git", gitArgs(repo, args)...)
-	raw, err := auditCommandOutput(cmd, auditHistoryOutputLimit)
-	if err != nil {
-		return nil, false
-	}
-	fields := strings.Split(string(raw), "\x00")
-	if len(fields) == 0 || fields[len(fields)-1] != "" || (len(fields)-1)%8 != 0 {
-		return nil, false
-	}
-	commits := make([]TaskTrailerCommit, 0, (len(fields)-1)/8)
-	for i := 0; i < len(fields)-1; i += 8 {
-		record := TaskTrailerCommit{
-			Info:          CommitInfo{SHA: fields[i], Subject: fields[i+2]},
-			fullSHA:       fields[i+1],
-			parents:       fields[i+3],
-			authorName:    fields[i+4],
-			authorEmail:   fields[i+5],
-			authorDate:    fields[i+6],
-			commitMessage: fields[i+7],
-		}
-		record.Values, record.Malformed = auditTaskTrailersFromMessage([]byte(record.commitMessage))
-		commits = append(commits, record)
-	}
-	return commits, true
 }
 
 func auditCommandOutput(cmd *exec.Cmd, limit int64) ([]byte, error) {
@@ -1015,23 +979,6 @@ type semanticHistoryCommit struct {
 	semantic AuditReopenCommit
 }
 
-// semanticHistoryCommits identifies every commit by its exact introduced content and author
-// intent, retaining an optional task binding as ownership metadata. The raw diff-tree includes
-// paths, modes, and old/new blob ids, so an unrelated ancestor repair does not change a replayed
-// descendant's identity while any change to that descendant does. Author identity/date and the
-// complete message make this deliberately stricter than patch-id.
-func semanticHistoryCommits(repo, rangeExpr string) ([]semanticHistoryCommit, error) {
-	return semanticHistoryCommitsLimit(repo, rangeExpr, auditReopenHistoryLimit)
-}
-
-func semanticHistoryCommitsLimit(repo, rangeExpr string, limit int) ([]semanticHistoryCommit, error) {
-	commits, ok := auditHistoryCommitsLimited(repo, rangeExpr, limit+1)
-	if !ok {
-		return nil, errors.New("read complete audit history")
-	}
-	return semanticHistoryCommitsFromRecords(repo, commits, limit)
-}
-
 func semanticHistoryCommitsExact(repo string, rawHistory []rawAuditCommit) ([]semanticHistoryCommit, error) {
 	commits := make([]TaskTrailerCommit, len(rawHistory))
 	for i := range rawHistory {
@@ -1049,30 +996,13 @@ func semanticHistoryCommitsExact(repo string, rawHistory []rawAuditCommit) ([]se
 	if err != nil {
 		return nil, err
 	}
-	return semanticHistoryCommitsFromChangeTrees(commits, changeTrees, len(commits), false)
-}
-
-func semanticHistoryCommitsFromRecords(
-	repo string,
-	commits []TaskTrailerCommit,
-	limit int,
-) ([]semanticHistoryCommit, error) {
-	changeTrees, err := semanticHistoryChangeTrees(repo, commits)
-	if err != nil {
-		return nil, err
-	}
-	return semanticHistoryCommitsFromChangeTrees(commits, changeTrees, limit, true)
+	return semanticHistoryCommitsFromChangeTrees(commits, changeTrees)
 }
 
 func semanticHistoryCommitsFromChangeTrees(
 	commits []TaskTrailerCommit,
 	changeTrees []string,
-	limit int,
-	rejectTraversalMerges bool,
 ) ([]semanticHistoryCommit, error) {
-	if len(commits) > limit {
-		return nil, fmt.Errorf("audit history exceeds %d commits", limit)
-	}
 	if len(changeTrees) != len(commits) {
 		return nil, errors.New("complete audit history changes are incomplete")
 	}
@@ -1084,9 +1014,6 @@ func semanticHistoryCommitsFromChangeTrees(
 		}
 		if !validAuditReopenHead(commit.fullSHA) {
 			return nil, errors.New("history contains an invalid commit id")
-		}
-		if rejectTraversalMerges && len(strings.Fields(commit.parents)) > 1 {
-			return nil, fmt.Errorf("audit history merge commit %s cannot be replayed safely", commit.fullSHA)
 		}
 		if len(commit.Values) == 1 {
 			taskIDs[i] = commit.Values[0]
@@ -1357,162 +1284,6 @@ func auditTreeChildren(raw []byte, objectIDBytes int) ([]string, int, error) {
 	return children, entries, nil
 }
 
-func auditEmptyTree(repo string) (string, error) {
-	format := gitOut(repo, "rev-parse", "--show-object-format")
-	switch format {
-	case "sha1":
-		return auditObjectID("tree", nil, sha1.Size*2), nil
-	case "sha256":
-		return auditObjectID("tree", nil, sha256.Size*2), nil
-	default:
-		return "", fmt.Errorf("derive repository empty tree for object format %q", format)
-	}
-}
-
-// semanticHistoryChangeTrees batches raw diff extraction for the bounded history. Git prefixes
-// each --stdin result with its full commit id; raw entries then carry exactly one NUL-delimited
-// path because rename detection is disabled. Parsing that structure avoids spawning one Git
-// process per commit while hashing the exact same bytes as semanticCommit.
-func semanticHistoryChangeTrees(repo string, commits []TaskTrailerCommit) ([]string, error) {
-	if len(commits) == 0 {
-		return []string{}, nil
-	}
-	var input strings.Builder
-	for _, commit := range commits {
-		input.WriteString(commit.fullSHA)
-		input.WriteByte('\n')
-	}
-	cmd := exec.Command("git", gitArgs(repo,
-		[]string{"diff-tree", "--stdin", "--root", "--always", "--raw", "-z", "-r", "--no-renames"})...)
-	cmd.Stdin = strings.NewReader(input.String())
-	raw, err := auditCommandOutput(cmd, auditDiffOutputLimit)
-	if err != nil {
-		return nil, fmt.Errorf("read complete audit history changes: %w", err)
-	}
-	expected := make([]string, len(commits))
-	for i := range commits {
-		expected[i] = commits[i].fullSHA
-	}
-	return parseSemanticHistoryChangeTrees(raw, expected)
-}
-
-func parseSemanticHistoryChangeTrees(raw []byte, expected []string) ([]string, error) {
-	fields := bytes.Split(raw, []byte{0})
-	if len(fields) == 0 || len(fields[len(fields)-1]) != 0 {
-		return nil, errors.New("parse complete audit history changes")
-	}
-	fields = fields[:len(fields)-1]
-	trees := make([]string, 0, len(expected))
-	var diff bytes.Buffer
-	current := -1
-	flush := func() {
-		if current < 0 {
-			return
-		}
-		sum := sha256.Sum256(diff.Bytes())
-		trees = append(trees, fmt.Sprintf("%x", sum))
-		diff.Reset()
-	}
-	for i := 0; i < len(fields); {
-		field := fields[i]
-		if len(field) > 0 && field[0] == ':' {
-			if current < 0 || i+1 >= len(fields) {
-				return nil, errors.New("parse complete audit history raw change")
-			}
-			diff.Write(field)
-			diff.WriteByte(0)
-			diff.Write(fields[i+1])
-			diff.WriteByte(0)
-			i += 2
-			continue
-		}
-		flush()
-		current++
-		if current >= len(expected) || string(field) != expected[current] {
-			return nil, errors.New("complete audit history changes are out of order")
-		}
-		i++
-	}
-	flush()
-	if len(trees) != len(expected) {
-		return nil, errors.New("complete audit history changes are incomplete")
-	}
-	return trees, nil
-}
-
-func semanticCommit(repo, sha, taskID string) (AuditReopenCommit, error) {
-	semantic, _, err := semanticCommitAndParent(repo, sha, taskID)
-	return semantic, err
-}
-
-func semanticCommitAndParent(repo, sha, taskID string) (AuditReopenCommit, string, error) {
-	rawParent, err := auditCommitParent(repo, sha)
-	if err != nil {
-		return AuditReopenCommit{}, "", err
-	}
-	parents := strings.Fields(gitOut(repo, "rev-list", "--parents", "-n", "1", sha))
-	if len(parents) == 0 {
-		return AuditReopenCommit{}, "", fmt.Errorf("resolve audit history commit %s", sha)
-	}
-	if (rawParent == "" && len(parents) != 1) ||
-		(rawParent != "" && (len(parents) != 2 || parents[1] != rawParent)) {
-		return AuditReopenCommit{}, "", fmt.Errorf("audit history commit %s traversal parent differs from its raw object", sha)
-	}
-	diffCmd := exec.Command("git", gitArgs(repo,
-		[]string{"diff-tree", "--root", "--no-commit-id", "--raw", "-z", "-r", "--no-renames", sha})...)
-	diff, err := auditCommandOutput(diffCmd, auditDiffOutputLimit)
-	if err != nil {
-		return AuditReopenCommit{}, "", fmt.Errorf("read audit history commit %s changes: %w", sha, err)
-	}
-	sum := sha256.Sum256(diff)
-	metaCmd := exec.Command("git", gitArgs(repo,
-		[]string{"show", "-s", "--format=format:%an%x00%ae%x00%aI%x00%B", sha})...)
-	meta, err := auditCommandOutput(metaCmd, auditMetadataOutputLimit)
-	if err != nil {
-		return AuditReopenCommit{}, "", fmt.Errorf("read audit history commit %s metadata: %w", sha, err)
-	}
-	fields := strings.SplitN(string(meta), "\x00", 4)
-	if len(fields) != 4 {
-		return AuditReopenCommit{}, "", fmt.Errorf("parse audit history commit %s metadata", sha)
-	}
-	return AuditReopenCommit{
-		TaskID:        taskID,
-		ChangeTree:    fmt.Sprintf("%x", sum),
-		AuthorName:    fields[0],
-		AuthorEmail:   fields[1],
-		AuthorDate:    fields[2],
-		CommitMessage: fields[3],
-	}, rawParent, nil
-}
-
-// auditCommitParent returns the raw object's sole parent, or "" for a root commit. Reading the
-// commit object directly keeps grafts and shallow boundaries from rewriting parent identity;
-// forkspace.GitHardening separately disables agent-writable replacement objects. Missing objects,
-// malformed parents, and merges fail closed.
-func auditCommitParent(repo, sha string) (parent string, err error) {
-	resolved := gitOut(repo, "rev-parse", "--verify", sha+"^{commit}")
-	if !validAuditReopenHead(resolved) {
-		return "", fmt.Errorf("resolve audit history commit %s parent", sha)
-	}
-	batch, err := openAuditCommitBatch(repo)
-	if err != nil {
-		return "", err
-	}
-	defer func() { err = errors.Join(err, batch.close()) }()
-	raw, err := batch.commit(resolved)
-	if err != nil {
-		return "", fmt.Errorf("resolve audit history commit %s parent: %w", sha, err)
-	}
-	parent, err = auditCommitParentFromRaw(resolved, raw)
-	if err != nil || parent == "" {
-		return parent, err
-	}
-	if _, err := batch.commit(parent); err != nil {
-		return "", fmt.Errorf("resolve audit history commit %s parent: %w", sha, err)
-	}
-	return parent, nil
-}
-
 func auditCommitTree(repo, sha string) (tree string, err error) {
 	if !validAuditReopenHead(sha) {
 		return "", fmt.Errorf("resolve audit history commit %s tree", sha)
@@ -1528,20 +1299,6 @@ func auditCommitTree(repo, sha string) (tree string, err error) {
 	}
 	tree, _, err = auditCommitHeaderFromRaw(sha, raw)
 	return tree, err
-}
-
-func auditCommitParentFromRaw(sha string, raw []byte) (string, error) {
-	_, parents, err := auditCommitHeaderFromRaw(sha, raw)
-	if err != nil {
-		return "", err
-	}
-	if len(parents) > 1 {
-		return "", fmt.Errorf("audit history merge commit %s cannot be replayed safely", sha)
-	}
-	if len(parents) == 0 {
-		return "", nil
-	}
-	return parents[0], nil
 }
 
 func auditCommitHeaderFromRaw(sha string, raw []byte) (string, []string, error) {
