@@ -2824,6 +2824,7 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	if semanticAcceptance {
 		turn.ValidationReceipt = s.id("validation")
 	}
+	turn.Candidate = nil
 	turn.Usage = req.Usage
 	turn.Usage.CostUSD, turn.Usage.CostRecorded = 0, false
 	if req.CostRecorded {
@@ -2842,7 +2843,7 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?,
 	    assistant_message = ?, usage_input_tokens = ?, usage_cached_input_tokens = ?,
 	    usage_output_tokens = ?, usage_reasoning_tokens = ?, usage_cost_usd = ?,
-	    usage_cost_recorded = ?, validation_receipt = ? WHERE id = ?`,
+	    usage_cost_recorded = ?, candidate_message = '', validation_receipt = ? WHERE id = ?`,
 		string(turn.State), now.UnixNano(), string(turn.StopReason), turn.AssistantMessage,
 		turn.Usage.InputTokens, turn.Usage.CachedInputTokens,
 		turn.Usage.OutputTokens, turn.Usage.ReasoningTokens,

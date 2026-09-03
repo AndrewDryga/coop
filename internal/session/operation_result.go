@@ -99,6 +99,10 @@ func turnOperationResultFromTurn(turn Turn) turnOperationResult {
 		artifact.Data = nil
 		artifacts = append(artifacts, artifact)
 	}
+	var candidate *TurnCandidate
+	if turn.State == TurnAwaitingValidation {
+		candidate = cloneTurnCandidate(turn.Candidate)
+	}
 	return turnOperationResult{
 		ReceiptVersion: turnOperationResultVersion,
 		ID:             turn.ID, SessionID: turn.SessionID, Ordinal: turn.Ordinal,
@@ -107,7 +111,7 @@ func turnOperationResultFromTurn(turn Turn) turnOperationResult {
 		ErrorCode: turn.ErrorCode, ErrorDetail: PublicErrorDetail(turn.ErrorCode, turn.ErrorDetail),
 		QueuedAt: turn.QueuedAt, StartedAt: turn.StartedAt, FinishedAt: turn.FinishedAt,
 		OutputArtifacts: artifacts, Usage: turn.Usage,
-		Candidate:                 cloneTurnCandidate(turn.Candidate),
+		Candidate:                 candidate,
 		ValidationCandidateSHA256: turn.CandidateSHA256,
 		ValidationAttempt:         turn.ValidationAttempt, ValidationError: turn.ValidationError,
 		ValidationReceipt: turn.ValidationReceipt, ResponderBindingDigest: digest,

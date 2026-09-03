@@ -402,8 +402,21 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 		t.Fatal(err)
 	}
 	if completed.State != TurnCompleted || completed.AssistantMessage != candidateBytes ||
+		completed.Candidate != nil || completed.CandidateSHA256 != staged.Candidate.SHA256 ||
 		completed.ValidationReceipt == "" {
 		t.Fatalf("accepted semantic turn = %+v", completed)
+	}
+	var storedCandidate string
+	if err := store.db.QueryRowContext(ctx, `SELECT candidate_message FROM turns WHERE id = ?`, turn.ID).Scan(&storedCandidate); err != nil {
+		t.Fatal(err)
+	}
+	if storedCandidate != "" {
+		t.Fatalf("accepted candidate_message = %q, want cleared", storedCandidate)
+	}
+	stored, err := store.GetTurn(ctx, sess.ID, turn.ID)
+	if err != nil || stored.Candidate != nil || stored.CandidateSHA256 != staged.Candidate.SHA256 ||
+		stored.ValidationReceipt != completed.ValidationReceipt {
+		t.Fatalf("stored accepted semantic turn = %+v, err=%v", stored, err)
 	}
 	if cleanupTurns, err := store.ListRuntimeCleanupTurns(ctx); err != nil || len(cleanupTurns) != 0 {
 		t.Fatalf("runtime cleanup turns after acceptance = %+v, err=%v", cleanupTurns, err)

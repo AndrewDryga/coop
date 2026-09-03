@@ -2,9 +2,9 @@
 name: structured-output-is-runtime-enforced
 description: "a structured-output schema is durable execution control, validated before completion, never prompt-only advice"
 scope: architecture
-sources: [internal/session/output_contract.go, internal/session/store.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/sessionsvc/http.go, docs/session-api.md]
-check: "go test ./internal/sessionsvc -run 'TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes|TestRepeatedInvalidStructuredResultNeverCompletes|TestSchemaValidSemanticResultWaitsForCallerAcceptance|TestRejectedSemanticResultRepromptsTheSameNativeTurn|TestSchemaRepairDoesNotSpendASemanticCandidateAttempt|TestSessionTurnRunnerPublishesSemanticCandidateWhenCleanupFails|TestSessionServiceStartupReapsAwaitingValidationRuntimeWithoutChangingCandidate|TestSessionServiceCandidateDecisionsReapRuntimeBeforeTransition|TestSessionServiceAwaitingCancelRequiresFreshKeyAfterCleanupFailure|TestSessionServiceDoesNotRestartRejectedCandidateWhenRuntimeReapFails'"
-updated: 2026-08-26
+sources: [internal/session/output_contract.go, internal/session/store.go, internal/session/operation_result.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/sessionsvc/http.go, docs/session-api.md]
+check: "go test ./internal/sessionsvc -run 'TestCompactTurnResultOmitsCandidateAfterValidation|TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes|TestRepeatedInvalidStructuredResultNeverCompletes|TestSchemaValidSemanticResultWaitsForCallerAcceptance|TestRejectedSemanticResultRepromptsTheSameNativeTurn|TestSchemaRepairDoesNotSpendASemanticCandidateAttempt|TestSessionTurnRunnerPublishesSemanticCandidateWhenCleanupFails|TestSessionServiceStartupReapsAwaitingValidationRuntimeWithoutChangingCandidate|TestSessionServiceCandidateDecisionsReapRuntimeBeforeTransition|TestSessionServiceAwaitingCancelRequiresFreshKeyAfterCleanupFailure|TestSessionServiceDoesNotRestartRejectedCandidateWhenRuntimeReapFails'"
+updated: 2026-09-03
 ---
 
 # Enforce structured output at the runtime completion boundary
@@ -33,6 +33,10 @@ receipt only after exact runtime cleanup succeeds; reject and cancel use the sam
 durable transition never erases the last cleanup signal.
 
 ## Changelog
+- 2026-09-03 — accepted candidates now move their message into the published assistant field and
+  clear the staging copy in the same transaction. Retry receipts and the public DTO expose
+  candidate text only while the turn is actually `awaiting_validation`; the digest and validation
+  receipt remain available for reconciliation.
 - 2026-08-26 — separated durable candidate authority from provider-runtime ownership: startup and
   periodic recovery now reap awaiting-validation runtimes without changing the candidate, and a
   post-staging teardown failure no longer hides the published candidate.

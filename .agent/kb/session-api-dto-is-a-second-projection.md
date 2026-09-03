@@ -3,7 +3,7 @@ name: session-api-dto-is-a-second-projection
 description: A field on session.Turn/Session is invisible to API clients until the hand-written DTO and its public* copier carry it too.
 subsystem: sessions
 sources: [internal/sessionsvc/http.go, internal/session/records.go, internal/sessionsvc/http_test.go, internal/sessionsvc/activity.go]
-updated: 2026-08-25
+updated: 2026-09-03
 ---
 
 The durable record and the public wire type are two separate hand-maintained structs. `session.Turn`
@@ -47,6 +47,9 @@ See also [[acp-generated-output-boundary]] (what public turn JSON may contain, a
 the artifact endpoint).
 
 ## Changelog
+- 2026-09-03 — made the candidate projection explicitly state-dependent: old completed operation
+  receipts may still contain a staged candidate, but `publicTurn` exposes it only while the turn is
+  `awaiting_validation`. Acceptance keeps the digest and receipt, not a second message copy.
 - 2026-08-25 — re-verified while adding the public semantic candidate, validation attempt/error,
   and acceptance receipt projections; the durable record and wire DTO still require explicit
   field-by-field wiring and an HTTP-byte regression.

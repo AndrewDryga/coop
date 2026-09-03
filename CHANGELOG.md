@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Accepted semantic candidates are stored once.** Acceptance now clears the staging message in
+  the same transaction that publishes it as the assistant answer, while retaining the candidate
+  digest and validation receipt. Public reads and retry receipts expose candidate text only while
+  the turn is actually awaiting validation, including when replaying old completed records.
+
 - **Remote session creation now has one durable operation.** The session row, first event, and
   public `CreateRemoteSession` receipt commit in one transaction instead of creating a hidden
   `CreateSession` operation with a duplicate result first. Existing operation history remains

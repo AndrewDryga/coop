@@ -478,14 +478,16 @@ func TestSemanticCandidateIsAcceptedEndToEndByExactDigest(t *testing.T) {
 		"/v1/sessions/"+sess.ID+"/turns/"+turn.ID+"/validation", body, "accept-candidate", "application/json")
 	if accepted.Code != http.StatusOK || !strings.Contains(accepted.Body.String(), `"state":"completed"`) ||
 		!strings.Contains(accepted.Body.String(), `"assistant_message":"{\"reply\":\"accepted\"}"`) ||
-		!strings.Contains(accepted.Body.String(), `"validation_receipt":"validation_`) {
+		!strings.Contains(accepted.Body.String(), `"validation_receipt":"validation_`) ||
+		strings.Contains(accepted.Body.String(), `"candidate":`) {
 		t.Fatalf("candidate acceptance = %d %s", accepted.Code, accepted.Body.String())
 	}
 	// A transport retry after Coop committed the receipt returns the same
 	// accepted turn instead of turning a successful decision into a conflict.
 	retry := sessionHTTPTestRequest(t, handler, http.MethodPost,
 		"/v1/sessions/"+sess.ID+"/turns/"+turn.ID+"/validation", body, "accept-candidate", "application/json")
-	if retry.Code != http.StatusOK || !strings.Contains(retry.Body.String(), `"validation_receipt":"validation_`) {
+	if retry.Code != http.StatusOK || !strings.Contains(retry.Body.String(), `"validation_receipt":"validation_`) ||
+		strings.Contains(retry.Body.String(), `"candidate":`) {
 		t.Fatalf("candidate acceptance retry = %d %s", retry.Code, retry.Body.String())
 	}
 }

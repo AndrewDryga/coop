@@ -36,3 +36,33 @@ func TestCompactTurnResultReplaysTheExactPublicProjection(t *testing.T) {
 		t.Fatalf("public replay changed:\n got  %+v\n want %+v", got, want)
 	}
 }
+
+func TestPublicTurnHidesHistoricalCandidateAfterValidation(t *testing.T) {
+	legacy := session.Turn{
+		ID: "accepted-turn", State: session.TurnCompleted, AssistantMessage: "accepted",
+		Candidate:       &session.TurnCandidate{Message: "accepted", SHA256: "candidate-sha", Attempt: 1},
+		CandidateSHA256: "candidate-sha", ValidationAttempt: 1,
+		ValidationReceipt: "validation-receipt",
+	}
+	got := publicTurn(legacy)
+	if got.Candidate != nil || got.ValidationCandidateSHA256 != legacy.CandidateSHA256 ||
+		got.ValidationReceipt != legacy.ValidationReceipt {
+		t.Fatalf("completed historical turn projection = %+v", got)
+	}
+}
+
+func TestCompactTurnResultOmitsCandidateAfterValidation(t *testing.T) {
+	turn := session.Turn{
+		ID: "accepted-turn", State: session.TurnCompleted, AssistantMessage: "accepted",
+		Candidate:       &session.TurnCandidate{Message: "accepted", SHA256: "candidate-sha", Attempt: 1},
+		CandidateSHA256: "candidate-sha", ValidationAttempt: 1,
+		ValidationReceipt: "validation-receipt",
+	}
+	encoded, err := session.EncodeTurnOperationResult(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"candidate"`) {
+		t.Fatalf("accepted turn receipt retained candidate: %s", encoded)
+	}
+}

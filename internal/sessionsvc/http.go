@@ -1398,12 +1398,16 @@ func publicTurn(value session.Turn) TurnDTO {
 			SHA256: artifact.SHA256, Bytes: artifact.Bytes,
 		})
 	}
+	var candidate *session.TurnCandidate
+	if value.State == session.TurnAwaitingValidation {
+		candidate = value.Candidate
+	}
 	return TurnDTO{
 		ID: value.ID, SessionID: value.SessionID, Ordinal: value.Ordinal, State: value.State,
 		SendState: value.SendState, AssistantMessage: value.AssistantMessage, StopReason: value.StopReason,
 		ErrorCode: value.ErrorCode, ErrorDetail: publicSessionErrorDetail(value.ErrorCode, value.ErrorDetail), QueuedAt: value.QueuedAt,
 		StartedAt: value.StartedAt, FinishedAt: value.FinishedAt, OutputArtifacts: artifacts,
-		Usage: value.Usage, Candidate: value.Candidate,
+		Usage: value.Usage, Candidate: candidate,
 		ValidationCandidateSHA256: value.CandidateSHA256,
 		ValidationAttempt:         value.ValidationAttempt,
 		ValidationError:           value.ValidationError,

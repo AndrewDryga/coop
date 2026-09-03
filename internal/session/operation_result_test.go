@@ -87,6 +87,30 @@ func TestTurnOperationResultReadsLegacyFullTurnJSON(t *testing.T) {
 	}
 }
 
+func TestTurnOperationResultOmitsCandidateAfterValidation(t *testing.T) {
+	turn := Turn{
+		ID: "accepted-turn", State: TurnCompleted, AssistantMessage: "accepted",
+		Candidate:       &TurnCandidate{Message: "accepted", SHA256: "candidate-digest", Attempt: 1},
+		CandidateSHA256: "candidate-digest", ValidationAttempt: 1,
+		ValidationReceipt: "validation-receipt",
+	}
+	encoded, err := EncodeTurnOperationResult(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"candidate"`) {
+		t.Fatalf("accepted turn receipt retained candidate: %s", encoded)
+	}
+	replayed, err := DecodeTurnOperationResult(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Candidate != nil || replayed.CandidateSHA256 != turn.CandidateSHA256 ||
+		replayed.ValidationReceipt != turn.ValidationReceipt {
+		t.Fatalf("accepted turn replay = %+v", replayed)
+	}
+}
+
 func TestTurnOperationResultRejectsUnknownOrEmptyReceipts(t *testing.T) {
 	for _, data := range [][]byte{
 		[]byte(`{}`),
