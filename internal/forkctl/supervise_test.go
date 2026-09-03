@@ -163,16 +163,15 @@ func TestDetachReclaimsAbandonedReservation(t *testing.T) {
 	}
 }
 
-func TestForkStopRejectsUnsupportedStateWithoutSideEffects(t *testing.T) {
+func TestForkStopRejectsInvalidStateWithoutSideEffects(t *testing.T) {
 	stable := fmt.Sprintf("%d\n%s\n", os.Getpid(), forkspace.ProcStartToken(os.Getpid()))
 	cases := []struct {
 		name string
 		raw  string
 		want []string
 	}{
-		{name: "pre-v8 worker", raw: stable, want: []string{"pre-v8", "left the exact file unchanged", "will not signal", "do not add an owner-v1 header", "https://github.com/AndrewDryga/coop/"}},
-		{name: "pre-v8 pending stable token", raw: forkspace.ReapPending + stable, want: []string{"pre-v8", "MIGRATING.md#detached-worker-state"}},
-		{name: "pre-v8 pending legacy token", raw: forkspace.ReapPending + fmt.Sprintf("%d\nWed Jun 18 10:00:00 2026\n", os.Getpid()), want: []string{"pre-v8", "MIGRATING.md#detached-worker-state"}},
+		{name: "headerless worker", raw: stable, want: []string{"malformed", "left the exact file unchanged", "will not infer a process identity"}},
+		{name: "headerless pending", raw: forkspace.ReapPending + stable, want: []string{"malformed", "left the exact file unchanged", "will not infer a process identity"}},
 		{name: "future owner", raw: "owner-v3\nopaque\n", want: []string{"unsupported detached-worker state version", "use the Coop version that wrote it", "do not edit its header"}},
 	}
 	oldSignal := forkspace.SignalPID

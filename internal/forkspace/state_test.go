@@ -117,13 +117,13 @@ func TestForkRunningPid(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := RunningPid(repo, "perf"); got != 0 {
-		t.Errorf("RunningPid(pre-v8 state) = %d, want 0", got)
+		t.Errorf("RunningPid(malformed state) = %d, want 0", got)
 	}
 	if !NeedsStop(repo, "perf") {
 		t.Error("unsupported state must keep the destructive-operation guard held")
 	}
 	if pid, held := StateOwner(repo, "perf"); pid != 0 || !held {
-		t.Errorf("StateOwner(pre-v8 state) = (%d, %v), want (0, true)", pid, held)
+		t.Errorf("StateOwner(malformed state) = (%d, %v), want (0, true)", pid, held)
 	}
 	if got, err := os.ReadFile(PidPath(repo, "perf")); err != nil || string(got) != string(unsupported) {
 		t.Fatalf("unsupported state changed = %q, %v; want exact %q", got, err, unsupported)
@@ -160,6 +160,7 @@ func TestParsePidfileBody(t *testing.T) {
 }
 
 func TestForkWorkerStateWireFormat(t *testing.T) {
+	generation := Generation("0123456789abcdef0123456789abcdef")
 	cases := []struct {
 		name   string
 		raw    string
@@ -168,22 +169,18 @@ func TestForkWorkerStateWireFormat(t *testing.T) {
 		bad    bool
 	}{
 		{name: "owner scoped running", raw: OwnerStateV1 + "42\nlinux-proc-v1:boot:123\n", want: WorkerState{Pid: 42, Token: "linux-proc-v1:boot:123"}},
-		{name: "pre-v8 running stable token", raw: "42\nlinux-proc-v1:boot:123\n", wantIs: ErrPreV8WorkerState},
-		{name: "pre-v8 running legacy token", raw: "42\nWed Jun 18 10:00:00 2026\n", wantIs: ErrPreV8WorkerState},
+		{name: "generation scoped running", raw: OwnerStateV2 + GenerationTag + string(generation) + "\n42\nlinux-proc-v1:boot:123\n", want: WorkerState{Pid: 42, Token: "linux-proc-v1:boot:123", Generation: generation}},
+		{name: "headerless worker", raw: "42\nlinux-proc-v1:boot:123\n", bad: true},
 		{name: "start reservation", raw: OwnerStateV1 + StartClaim + "42\nlinux-proc-v1:boot:123\n", want: WorkerState{Claim: true, Pid: 42, Token: "linux-proc-v1:boot:123"}},
 		{name: "start reservation with a launched worker", raw: OwnerStateV1 + StartLaunched + "42\nlinux-proc-v1:boot:123\n", want: WorkerState{Claim: true, Launched: true, Pid: 42, Token: "linux-proc-v1:boot:123"}},
 		{name: "reservation without an owner", raw: OwnerStateV1 + StartClaim, bad: true},
 		{name: "owner scoped pending", raw: OwnerStateV1 + ReapPending, want: WorkerState{Pending: true}},
-		{name: "pre-v8 bare pending", raw: ReapPending, wantIs: ErrPreV8WorkerState},
-		{name: "pre-v8 pending stable token", raw: ReapPending + "42\nlinux-proc-v1:boot:123\n", wantIs: ErrPreV8WorkerState},
-		{name: "pre-v8 pending legacy token", raw: ReapPending + "42\nWed Jun 18 10:00:00 2026\n", wantIs: ErrPreV8WorkerState},
-		{name: "pre-v8 pending arbitrary body", raw: ReapPending + "not-a-pid\n", wantIs: ErrPreV8WorkerState},
+		{name: "generation scoped pending", raw: OwnerStateV2 + GenerationTag + string(generation) + "\n" + ReapPending, want: WorkerState{Pending: true, Generation: generation}},
+		{name: "headerless pending", raw: ReapPending, bad: true},
 		{name: "identified pending", raw: OwnerStateV1 + ReapPending + "42\ndarwin-kinfo-v1:1:2\n", want: WorkerState{Pid: 42, Token: "darwin-kinfo-v1:1:2", Pending: true}},
 		{name: "unknown owner version", raw: "owner-v3\n42\ntoken\n", wantIs: ErrUnsupportedWorkerStateVersion},
 		{name: "known header missing newline", raw: "owner-v1", bad: true},
 		{name: "empty", bad: true},
-		{name: "pre-v8 pid zero", raw: "0\ntoken\n", wantIs: ErrPreV8WorkerState},
-		{name: "pre-v8 pid one", raw: "1\ntoken\n", wantIs: ErrPreV8WorkerState},
 		{name: "current pending pid one", raw: OwnerStateV1 + ReapPending + "1\ntoken\n", bad: true},
 	}
 	for _, tc := range cases {

@@ -28,9 +28,6 @@ const (
 )
 
 var (
-	// ErrPreV8WorkerState identifies a headerless state file without decoding it into an identity.
-	// V9 cannot prove which repository owns any container that old state may have launched.
-	ErrPreV8WorkerState = errors.New("unsupported pre-v8 detached-worker state")
 	// ErrUnsupportedWorkerStateVersion keeps a future writer's state fail-closed until that version
 	// can interpret its own lifecycle contract.
 	ErrUnsupportedWorkerStateVersion = errors.New("unsupported detached-worker state version")
@@ -286,12 +283,6 @@ func ParseWorkerState(raw string) (WorkerState, error) {
 		version, body = 2, strings.TrimPrefix(raw, OwnerStateV2)
 	}
 	if version == 0 {
-		if first == strings.TrimSpace(ReapPending) {
-			return WorkerState{}, fmt.Errorf("%w: headerless %s record", ErrPreV8WorkerState, first)
-		}
-		if _, err := strconv.Atoi(strings.TrimSpace(first)); err == nil {
-			return WorkerState{}, fmt.Errorf("%w: headerless numeric pid record", ErrPreV8WorkerState)
-		}
 		if strings.HasPrefix(first, "owner-") {
 			return WorkerState{}, fmt.Errorf("%w %q", ErrUnsupportedWorkerStateVersion, first)
 		}

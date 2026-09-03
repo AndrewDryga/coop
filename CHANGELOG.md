@@ -181,16 +181,11 @@
   candidate, and the caller retries the still-current decision with a fresh idempotency key after
   runtime recovery.
 
-- **Detached forks have one repository-owned worker-state format.** Every current pidfile starts
-  with `owner-v1`; Coop no longer decodes, signals, rewrites, or partially cleans up headerless
-  pre-v8 records. Start/recreate, merge, remove, and stop reject unsupported state before runtime or
-  workspace effects while retaining the exact file as lifecycle authority. Stop detached forks
-  with v8 before upgrading, or follow the verified process/container procedure in the
-  [migration guide](MIGRATING.md#detached-worker-state); never fabricate current ownership by
-  prepending the header. Current worker, cleanup-pending, reservation, stable-identity, exact-owner
-  reap, and atomic-write wire behavior is unchanged. Detached startup now hands the exact launched
-  reservation from parent to child and publishes the child's PID/token before any child mutation,
-  so a successful concurrent stop cannot be undone by a delayed child.
+- **Detached worker parsing now recognizes only versioned state.** Owner-v1 cleanup and owner-v2
+  generation records remain supported. Headerless bytes take the generic malformed-state path;
+  unknown future `owner-*` versions retain their distinct refusal. Start/recreate, merge, remove,
+  and stop still reject invalid state before runtime or workspace effects and leave its exact bytes
+  untouched. PID/start-token identity guards and the parent-to-child launch handoff are unchanged.
 
 - **Task authority now opens only its durable registry.** Coop creates or opens
   `~/.local/state/coop/task-leases/v1` directly; the retired cache-root detector, migration refusal,

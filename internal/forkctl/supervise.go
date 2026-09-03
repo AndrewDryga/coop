@@ -46,14 +46,11 @@ func ForkContainerOwner(repo, name string, generation ...forkspace.Generation) s
 
 func workerStateFormatError(repo, name string, err error) error {
 	path := forkspace.PidPath(repo, name)
-	const guide = "https://github.com/AndrewDryga/coop/blob/main/MIGRATING.md#detached-worker-state"
 	switch {
-	case errors.Is(err, forkspace.ErrPreV8WorkerState):
-		return fmt.Errorf("fork %s uses unsupported pre-v8 detached-worker state at %q — this Coop version left the exact file unchanged and will not signal its PID or reap a container; do not add an owner-v1 header. Stop it with Coop v8 before upgrading, or follow %s", name, path, guide)
 	case errors.Is(err, forkspace.ErrUnsupportedWorkerStateVersion):
-		return fmt.Errorf("fork %s uses an unsupported detached-worker state version at %q — this Coop version left the exact file unchanged; use the Coop version that wrote it, and do not edit its header or apply the pre-v8 recovery procedure: %s", name, path, guide)
+		return fmt.Errorf("fork %s uses an unsupported detached-worker state version at %q — Coop left the exact file unchanged; use the Coop version that wrote it and do not edit its header", name, path)
 	default:
-		return fmt.Errorf("fork %s state at %q is malformed — Coop left the exact file unchanged and will not infer a process identity from it; inspect it with: sed -n '1,4p' %q; follow %s, then retry: coop fork stop %s", name, path, path, guide, name)
+		return fmt.Errorf("fork %s state at %q is malformed — Coop left the exact file unchanged and will not infer a process identity from it; inspect a bounded prefix with: sed -n '1,4p' %q", name, path, path)
 	}
 }
 

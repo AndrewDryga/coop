@@ -311,7 +311,7 @@ func TestForkFreshGuardsDirtyWork(t *testing.T) {
 	}
 }
 
-func TestForkStartPreflightsUnsupportedStateBeforeWorkspaceMutation(t *testing.T) {
+func TestForkStartPreflightsMalformedStateBeforeWorkspaceMutation(t *testing.T) {
 	repo := initRepo(t)
 	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
@@ -323,8 +323,8 @@ func TestForkStartPreflightsUnsupportedStateBeforeWorkspaceMutation(t *testing.T
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
 	code, err := a.forkCreate([]string{"blocked", "claude"})
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "pre-v8") {
-		t.Fatalf("fork start over unsupported state = (%d, %v), want pre-v8 refusal", code, err)
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "malformed") {
+		t.Fatalf("fork start over malformed state = (%d, %v), want malformed-state refusal", code, err)
 	}
 	if pathExists(forkspace.Workspace(repo, "blocked")) {
 		t.Fatal("unsupported state allowed fork setup before refusal")

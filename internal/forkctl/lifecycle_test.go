@@ -188,7 +188,7 @@ func TestForkRmRefusesRunning(t *testing.T) {
 	}
 }
 
-func TestForkRmPreflightsUnsupportedStateBeforeConfirmation(t *testing.T) {
+func TestForkRmPreflightsMalformedStateBeforeConfirmation(t *testing.T) {
 	repo := initRepo(t)
 	a := &Control{cfg: &config.Config{RepoOverride: repo}}
 	ws, err := forkspace.Setup(repo, "old")
@@ -204,8 +204,8 @@ func TestForkRmPreflightsUnsupportedStateBeforeConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, err := a.ForkRm([]string{"old", "--force"}) // no --yes: format refusal must win
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "pre-v8") || strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("ForkRm unsupported state = (%d, %v), want pre-confirmation format refusal", code, err)
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "malformed") || strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("ForkRm malformed state = (%d, %v), want pre-confirmation format refusal", code, err)
 	}
 	if !pathExists(ws) {
 		t.Fatal("unsupported state allowed fork removal")

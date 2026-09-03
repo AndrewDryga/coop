@@ -59,15 +59,14 @@ of thumb: if it decides what to do to a PROCESS or a CONTAINER, or prints, it is
 
 ## Unsupported state never becomes an identity
 
-`ParseWorkerState` classifies before body parsing. A headerless numeric PID or first-line
-`reap-pending` record is pre-v8 evidence; an unknown `owner-*` header belongs to another version.
-Neither becomes a `WorkerState`. `forkctl.CheckWorkerStateFormat` applies the user-facing refusal
-before start/recreate, merge, removal, or stop can probe the runtime or change workspace metadata,
-and locked start/stop parse again against races. Merge holds that same lifecycle flock across its
-final check, fetch, rebase, gate, land, and reconciliation, then reacquires it for post-land removal.
-The exact file remains authoritative: `RunningPid` returns 0, while `NeedsStop` and `StateOwner`
-stay held. Recovery must never prepend a header; `MIGRATING.md` owns the stop-with-v8 and verified
-manual procedure.
+`ParseWorkerState` accepts only `owner-v1` and `owner-v2`. A headerless or otherwise malformed
+record fails for a missing supported owner header; an unknown `owner-*` header retains a distinct
+unsupported-version error. Neither becomes a `WorkerState`. `forkctl.CheckWorkerStateFormat`
+applies the user-facing refusal before start/recreate, merge, removal, or stop can probe the runtime
+or change workspace metadata, and locked start/stop parse again against races. Merge holds that same
+lifecycle flock across its final check, fetch, rebase, gate, land, and reconciliation, then
+reacquires it for post-land removal. The exact file remains authoritative: `RunningPid` returns 0,
+while `NeedsStop` and `StateOwner` stay held. Coop never infers or signals a PID from invalid bytes.
 
 ## The two crash windows, and the child handoff
 
@@ -110,6 +109,9 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-09-03 — removed the headerless pre-v8 classification and migration procedure after a live
+  inventory found 32 fork-state directories and zero worker PID files. Headerless records now use
+  the generic malformed fail-closed path; owner-v1/v2 and future-version handling remain.
 - 2026-09-03 — removed the unused generation-less `ClaimState` wrapper and re-verified that every
   reservation creator uses `ClaimStateFor` with the fork's immutable generation
 - 2026-09-03 — documented honest missing/error fork-log states and independent follow failure
