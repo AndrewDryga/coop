@@ -260,7 +260,8 @@ func TestRemoveByLabelCancellationKillsRuntimeGroup(t *testing.T) {
 if [ "$1" = ps ]; then
 	sleep 30 &
 	child=$!
-	printf '%s\n' "$child" > "$COOP_TEST_CHILD_PID_FILE"
+	printf '%s\n' "$child" > "$COOP_TEST_CHILD_PID_FILE.tmp"
+	mv "$COOP_TEST_CHILD_PID_FILE.tmp" "$COOP_TEST_CHILD_PID_FILE"
 	wait "$child"
 fi
 `), 0o755); err != nil {
