@@ -53,9 +53,11 @@ Build *to* them, then *check the diff against them*.
    `coop tasks rm` (pruning the archive is the human's call). Blocked instead? Fill in
    `decision.md` (question · options · recommendation), then use `coop tasks block <id>` when
    available or move the folder to the existing `50_blocked/` directory yourself.
-8. Spot unrelated work? Use `coop backlog add` when available, or create a self-contained folder
-   under `.agent/tasks/xx_backlog/`, then return to the queue —
-   don't derail the current task.
+8. Spot unrelated work? Use the proposal route supplied by the current run when there is one.
+   Otherwise capture ready work in `00_todo/`: use `coop tasks add` when `coop` is on `PATH`, or
+   create a self-contained task folder there. Only genuinely large or unscoped work goes to
+   `xx_backlog/` (`coop backlog add` when available, or the same folder fallback). Then return to
+   the current task.
 
 ## 3. Finish
 - When `00_todo/` and `10_in_progress/` are empty, run a completeness pass: re-check every task

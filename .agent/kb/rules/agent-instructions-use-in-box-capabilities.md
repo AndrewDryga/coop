@@ -2,9 +2,9 @@
 name: agent-instructions-use-in-box-capabilities
 description: "agent-facing instructions name in-box capabilities, never host-side lifecycle commands"
 scope: agent-workflow
-sources: [AGENTS.md, internal/scaffold/scaffold.go]
+sources: [AGENTS.md, internal/scaffold/scaffold.go, .agent/skills/review-board/SKILL.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, internal/scaffold/templates/skills/review-board/SKILL.md, internal/scaffold/templates/skills/work/SKILL.md, internal/scaffold/templates/skills/sweep/SKILL.md]
 check: "none"
-updated: 2026-08-25
+updated: 2026-09-03
 ---
 
 # Agent-facing instructions use in-box capabilities only
@@ -31,8 +31,14 @@ human/operator layer; the boxed agent should use only its runtime's native tools
   capabilities, not mentioning them as bans — a ban wastes no turns.
 - If a native capability may not exist, phrase it as "if your runtime has it" and require
   the closest safe fallback instead of inventing slash commands or APIs.
+- A workflow skill that can run on the host or in a box uses an explicitly supplied proposal route
+  first. Otherwise it checks whether `coop` is on `PATH` before naming a lifecycle command and
+  falls back to the self-contained task-folder operation available in the box.
 
 ## Changelog
+- 2026-09-03 — swept `review-board`, `work`, and `sweep` plus their scaffold copies. Removed their
+  unconditional host-command assumptions, added proposal/availability/folder routing, and added all
+  six agent-facing files to `sources`.
 - 2026-08-25 — removed the retired Fleet command from current examples and the repo's hands-off
   list; the host-versus-box capability boundary is unchanged.
 - 2026-06-26 — created

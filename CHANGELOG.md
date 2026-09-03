@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Workflow skills now capture follow-up work consistently.** Ready fixes go to the task queue,
+  while only genuinely large or unscoped work goes to the backlog. Skills use an available proposal
+  route or a PATH-gated Coop command, with a self-contained task-folder fallback inside boxes.
+
 - **Presets now keep one target representation.** Lead and role targets are stored once, with the
   primary target derived from the first entry. A bare preset remains an explicit target, so mixing
   it with later `work.agent` rungs no longer drops the preset's lead from rotation.

@@ -21,9 +21,12 @@ If there's no plan yet and the change is non-trivial, run `/spec` first.
    failure pass.
 
 ## Rules while working
-- **No scope creep.** Build the approved slice. A good idea that wasn't in the plan
-  → the backlog (`coop backlog add`) as "later", don't build it now. If the plan turns out wrong,
-  stop and re-plan with the user — don't silently redesign.
+- **No scope creep.** Build the approved slice; capture a separate idea instead of building it now.
+  Use the proposal route supplied by the current run when there is one. Otherwise, ready work goes
+  to `00_todo/` (`coop tasks add` when `coop` is on `PATH`, or a self-contained task folder when it
+  is not); only genuinely large or unscoped work goes to `xx_backlog/` (`coop backlog add` when
+  available, or a self-contained folder there). If the plan turns out wrong, stop and re-plan with
+  the user — don't silently redesign.
 - **Readable, no bloat.** Match the surrounding style. Delete dead code you pass.
   No speculative options or abstractions. Comments say *why*, not *what*.
 - **Tests are part of the step**, not a follow-up — including the failure/denial path.
