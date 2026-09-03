@@ -1190,22 +1190,23 @@ func TestRunRejectsUnsafeGeminiSettingsWithoutSharedMCP(t *testing.T) {
 	}
 }
 
-func TestRunKeepsAlternateNativeMCPInactiveWithoutSharedServers(t *testing.T) {
+func TestRunKeepsInactiveMCPSeparateFromCodexDefaultsValidation(t *testing.T) {
 	nativeCases := []struct {
-		name string
-		make func(*testing.T, string)
+		name    string
+		make    func(*testing.T, string)
+		wantErr bool
 	}{
 		{name: "alternate", make: func(t *testing.T, path string) {
 			if err := os.WriteFile(path, []byte(`mcp_servers.stale.command = "native"`), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{name: "malformed", make: func(t *testing.T, path string) {
+		{name: "malformed", wantErr: true, make: func(t *testing.T, path string) {
 			if err := os.WriteFile(path, []byte(`broken = {`), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{name: "unreadable shape", make: func(t *testing.T, path string) {
+		{name: "unreadable shape", wantErr: true, make: func(t *testing.T, path string) {
 			if err := os.Mkdir(path, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -1234,8 +1235,18 @@ func TestRunKeepsAlternateNativeMCPInactiveWithoutSharedServers(t *testing.T) {
 				native.make(t, nativePath)
 				recorder := filepath.Join(t.TempDir(), "runtime-args")
 				spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: "codex", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
-				if code, err := Run(cfg, recorderRuntime(t, recorder), spec); code != 0 || err != nil {
-					t.Fatalf("Run = (%d, %v), want inactive shared MCP to preserve launch", code, err)
+				code, runErr := Run(cfg, recorderRuntime(t, recorder), spec)
+				if native.wantErr {
+					if code != -1 || runErr == nil || !strings.Contains(runErr.Error(), "prepare codex defaults") {
+						t.Fatalf("Run = (%d, %v), want Codex defaults refusal", code, runErr)
+					}
+					if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+						t.Fatalf("invalid Codex defaults launched provider: %v", statErr)
+					}
+					return
+				}
+				if code != 0 || runErr != nil {
+					t.Fatalf("Run = (%d, %v), want valid native defaults to preserve launch", code, runErr)
 				}
 				args, err := os.ReadFile(recorder)
 				if err != nil {

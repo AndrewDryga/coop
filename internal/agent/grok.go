@@ -349,7 +349,7 @@ func (grokAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[strin
 // EnsureDefaults is a no-op: grok launches in the mounted repo (a project dir) with its
 // auth.json mounted, so it goes straight to work without a first-run prompt to pre-answer.
 // (Any config.toml keys a fresh box turns out to need are a box-verified finalization item.)
-func (grokAgent) EnsureDefaults(*config.Config, string) {}
+func (grokAgent) EnsureDefaults(*config.Config, string) error { return nil }
 
 // ACPRateLimitSignals: the structured marker grok's ACP adapter embeds on a usage/rate limit
 // isn't captured yet (needs a live limit in a box), so declare none — the controller still

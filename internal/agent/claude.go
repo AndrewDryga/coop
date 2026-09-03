@@ -579,18 +579,24 @@ func ClaudeProjectKey(ws string) string {
 // bypass-permissions warning) and pins its bash OS-sandbox off — the box is itself the
 // sandbox and ships no bubblewrap. Existing values are preserved; only missing flags
 // are filled, and a file is rewritten only when something changes.
-func (a claudeAgent) EnsureDefaults(cfg *config.Config, workdir string) {
+func (a claudeAgent) EnsureDefaults(cfg *config.Config, workdir string) error {
 	dir := cfg.AgentDir(a.Name())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
+		return fmt.Errorf("create Claude defaults directory %s: %w", dir, err)
 	}
 	// settings.json: a default theme (kept if already chosen), the flag that skips the
 	// bypass warning, and the sandbox pinned off.
 	settings := filepath.Join(dir, "settings.json")
-	sm := map[string]any{}
-	if data, err := os.ReadFile(settings); err == nil {
-		_ = json.Unmarshal(data, &sm)
+	sm, _, err := readJSONDefaults(settings)
+	if err != nil {
+		return err
 	}
+	cj := filepath.Join(dir, ".claude.json")
+	m, _, err := readJSONDefaults(cj)
+	if err != nil {
+		return err
+	}
+
 	sChanged := false
 	if _, ok := sm["theme"]; !ok {
 		sm["theme"] = "dark"
@@ -603,15 +609,12 @@ func (a claudeAgent) EnsureDefaults(cfg *config.Config, workdir string) {
 		sChanged = true
 	}
 	if sChanged {
-		writeJSONFile(settings, sm, 0o644)
+		if err := writeJSONFile(settings, sm, 0o644); err != nil {
+			return err
+		}
 	}
 	// .claude.json: accept onboarding/bypass and trust the workdir, merged so the
 	// account/onboarding state survives the disposable box.
-	cj := filepath.Join(dir, ".claude.json")
-	m := map[string]any{}
-	if data, err := os.ReadFile(cj); err == nil {
-		_ = json.Unmarshal(data, &m)
-	}
 	changed := ensureTrue(m, "hasCompletedOnboarding")
 	if ensureTrue(m, "bypassPermissionsModeAccepted") {
 		changed = true
@@ -620,8 +623,11 @@ func (a claudeAgent) EnsureDefaults(cfg *config.Config, workdir string) {
 		changed = true
 	}
 	if changed {
-		writeJSONFile(cj, m, 0o600)
+		if err := writeJSONFile(cj, m, 0o600); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // ensureSandboxOff pins Claude Code's bash OS-sandbox off in settings.json, filling

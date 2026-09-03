@@ -330,9 +330,9 @@ type Agent interface {
 	// against the environment that session's box gets, since ACP carries headers only.
 	ACPMCPServers(mcpFile string, lookupEnv func(string) (string, bool)) ([]map[string]any, error)
 	// EnsureDefaults pre-answers the agent's first-run prompts (theme, folder-trust,
-	// sandbox) in its config dir so a fresh box goes straight to work. Best-effort; an
-	// agent that needs nothing leaves it empty. workdir is the resolved box cwd.
-	EnsureDefaults(cfg *config.Config, workdir string)
+	// sandbox) in its config dir so a fresh box goes straight to work. A present invalid
+	// settings file is an error, never an empty default. workdir is the resolved box cwd.
+	EnsureDefaults(cfg *config.Config, workdir string) error
 	// Packages are the npm packages the box image installs for this agent — its CLI and
 	// (if separate) its ACP adapter.
 	Packages() []string

@@ -312,24 +312,23 @@ func (geminiAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[str
 
 // EnsureDefaults guarantees a valid settings.json (an empty/missing one makes gemini
 // fail at launch) and turns off its folder-trust prompt — the box is the sandbox. An
-// existing choice is kept; a non-blank but unparseable file is left for the user.
-func (a geminiAgent) EnsureDefaults(cfg *config.Config, _ string) {
+// existing choice is kept; a non-blank but unparseable file stops launch without being changed.
+func (a geminiAgent) EnsureDefaults(cfg *config.Config, _ string) error {
 	dir := cfg.AgentDir(a.Name())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
+		return fmt.Errorf("create Gemini defaults directory %s: %w", dir, err)
 	}
 	path := filepath.Join(dir, "settings.json")
-	data, _ := os.ReadFile(path)
-	blank := strings.TrimSpace(string(data)) == ""
-	m := map[string]any{}
-	if !blank {
-		if json.Unmarshal(data, &m) != nil {
-			return // non-blank but unparseable — don't clobber it
-		}
+	m, blank, err := readJSONDefaults(path)
+	if err != nil {
+		return err
 	}
 	if disableGeminiFolderTrust(m) || blank {
-		writeJSONFile(path, m, 0o644)
+		if err := writeJSONFile(path, m, 0o644); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // disableGeminiFolderTrust sets security.folderTrust.enabled=false unless the user

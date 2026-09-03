@@ -37,7 +37,9 @@ func readFile(t *testing.T, path string) string {
 func TestEnsureClaudeDefaultsFresh(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}
-	claudeAgent{}.EnsureDefaults(cfg, "/workspace")
+	if err := (claudeAgent{}).EnsureDefaults(cfg, "/workspace"); err != nil {
+		t.Fatal(err)
+	}
 
 	s := readJSONMap(t, filepath.Join(cfg.AgentDir("claude"), "settings.json"))
 	if s["theme"] != "dark" {
@@ -75,7 +77,9 @@ func TestEnsureClaudeDefaultsPreservesAndIdempotent(t *testing.T) {
 		[]byte(`{"oauthAccount":{"u":"x"},"numStartups":5}`), 0o600)
 	os.WriteFile(filepath.Join(cdir, "settings.json"), []byte(`{"theme":"light"}`), 0o644)
 
-	claudeAgent{}.EnsureDefaults(cfg, "/workspace")
+	if err := (claudeAgent{}).EnsureDefaults(cfg, "/workspace"); err != nil {
+		t.Fatal(err)
+	}
 
 	c := readJSONMap(t, filepath.Join(cdir, ".claude.json"))
 	if c["oauthAccount"] == nil {
@@ -94,7 +98,9 @@ func TestEnsureClaudeDefaultsPreservesAndIdempotent(t *testing.T) {
 
 	// Idempotent: a second call must not rewrite the file.
 	before, _ := os.ReadFile(filepath.Join(cdir, ".claude.json"))
-	claudeAgent{}.EnsureDefaults(cfg, "/workspace")
+	if err := (claudeAgent{}).EnsureDefaults(cfg, "/workspace"); err != nil {
+		t.Fatal(err)
+	}
 	after, _ := os.ReadFile(filepath.Join(cdir, ".claude.json"))
 	if !bytes.Equal(before, after) {
 		t.Error("second call rewrote .claude.json (not idempotent)")
@@ -107,7 +113,9 @@ func TestEnsureCodexDefaults(t *testing.T) {
 	cfgPath := filepath.Join(cfg.AgentDir("codex"), "config.toml")
 
 	// Fresh: appends a trust entry for the workdir.
-	codexAgent{}.EnsureDefaults(cfg, "/Users/x/proj")
+	if err := (codexAgent{}).EnsureDefaults(cfg, "/Users/x/proj"); err != nil {
+		t.Fatal(err)
+	}
 	got := readFile(t, cfgPath)
 	if !strings.Contains(got, `[projects."/Users/x/proj"]`) || !strings.Contains(got, `trust_level = "trusted"`) {
 		t.Errorf("config.toml missing trust entry:\n%s", got)
@@ -115,13 +123,17 @@ func TestEnsureCodexDefaults(t *testing.T) {
 
 	// Idempotent: a second call must not duplicate or rewrite.
 	before := readFile(t, cfgPath)
-	codexAgent{}.EnsureDefaults(cfg, "/Users/x/proj")
+	if err := (codexAgent{}).EnsureDefaults(cfg, "/Users/x/proj"); err != nil {
+		t.Fatal(err)
+	}
 	if after := readFile(t, cfgPath); after != before {
 		t.Error("second call changed config.toml (not idempotent)")
 	}
 
 	// A different workdir adds a second entry; the first survives.
-	codexAgent{}.EnsureDefaults(cfg, "/Users/x/other")
+	if err := (codexAgent{}).EnsureDefaults(cfg, "/Users/x/other"); err != nil {
+		t.Fatal(err)
+	}
 	got = readFile(t, cfgPath)
 	if !strings.Contains(got, `[projects."/Users/x/proj"]`) || !strings.Contains(got, `[projects."/Users/x/other"]`) {
 		t.Errorf("expected both project entries:\n%s", got)
@@ -135,7 +147,9 @@ func TestEnsureCodexDefaultsPreservesExisting(t *testing.T) {
 	os.MkdirAll(cdir, 0o755)
 	os.WriteFile(filepath.Join(cdir, "config.toml"), []byte("model = \"o3\"\n"), 0o644)
 
-	codexAgent{}.EnsureDefaults(cfg, "/w")
+	if err := (codexAgent{}).EnsureDefaults(cfg, "/w"); err != nil {
+		t.Fatal(err)
+	}
 	got := readFile(t, filepath.Join(cdir, "config.toml"))
 	if !strings.Contains(got, `model = "o3"`) {
 		t.Error("existing config was dropped")
@@ -172,7 +186,9 @@ INSERT INTO logs(ts, ts_nanos, level, target) VALUES (1, 0, 'INFO', 'before');
 		t.Fatalf("sqlite setup: %v\n%s", err, out)
 	}
 
-	codexAgent{}.EnsureDefaults(cfg, "/w")
+	if err := (codexAgent{}).EnsureDefaults(cfg, "/w"); err != nil {
+		t.Fatal(err)
+	}
 
 	insert := `INSERT INTO logs(ts, ts_nanos, level, target) VALUES (2, 0, 'INFO', 'after'); SELECT count(*) FROM logs;`
 	out, err := exec.Command(sqlite, db, insert).CombinedOutput()
@@ -207,21 +223,27 @@ func TestEnsureGeminiDefaults(t *testing.T) {
 	}
 
 	// Missing → valid JSON with the folder-trust prompt disabled.
-	geminiAgent{}.EnsureDefaults(cfg, "")
+	if err := (geminiAgent{}).EnsureDefaults(cfg, ""); err != nil {
+		t.Fatal(err)
+	}
 	if v, ok := folderTrust(t); !ok || v != false {
 		t.Errorf("missing settings: folderTrust.enabled = %v (present=%v), want false", v, ok)
 	}
 
 	// Empty file (the launch crash) → same.
 	os.WriteFile(path, []byte(""), 0o644)
-	geminiAgent{}.EnsureDefaults(cfg, "")
+	if err := (geminiAgent{}).EnsureDefaults(cfg, ""); err != nil {
+		t.Fatal(err)
+	}
 	if v, ok := folderTrust(t); !ok || v != false {
 		t.Errorf("empty settings: folderTrust.enabled = %v (present=%v), want false", v, ok)
 	}
 
 	// Existing settings preserved; the folder-trust disable is added alongside.
 	os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o644)
-	geminiAgent{}.EnsureDefaults(cfg, "")
+	if err := (geminiAgent{}).EnsureDefaults(cfg, ""); err != nil {
+		t.Fatal(err)
+	}
 	if m := readJSONMap(t, path); m["theme"] != "dark" {
 		t.Errorf("existing theme dropped: %v", m["theme"])
 	}
@@ -231,8 +253,87 @@ func TestEnsureGeminiDefaults(t *testing.T) {
 
 	// A user's explicit folderTrust choice is respected, not overridden.
 	os.WriteFile(path, []byte(`{"security":{"folderTrust":{"enabled":true}}}`), 0o644)
-	geminiAgent{}.EnsureDefaults(cfg, "")
+	if err := (geminiAgent{}).EnsureDefaults(cfg, ""); err != nil {
+		t.Fatal(err)
+	}
 	if v, _ := folderTrust(t); v != true {
 		t.Errorf("user's folderTrust=true should be respected, got %v", v)
+	}
+}
+
+func TestEnsureDefaultsPreservesMalformedFiles(t *testing.T) {
+	tests := []struct {
+		name, provider, file, body string
+		ensure                     func(*config.Config) error
+	}{
+		{
+			name: "Claude settings JSON", provider: "claude", file: "settings.json", body: "{\n",
+			ensure: func(cfg *config.Config) error { return (claudeAgent{}).EnsureDefaults(cfg, "/workspace") },
+		},
+		{
+			name: "Claude state is not an object", provider: "claude", file: ".claude.json", body: "null\n",
+			ensure: func(cfg *config.Config) error { return (claudeAgent{}).EnsureDefaults(cfg, "/workspace") },
+		},
+		{
+			name: "Gemini settings JSON", provider: "gemini", file: "settings.json", body: "[1]\n",
+			ensure: func(cfg *config.Config) error { return (geminiAgent{}).EnsureDefaults(cfg, "") },
+		},
+		{
+			name: "Codex config TOML", provider: "codex", file: "config.toml", body: "broken = {\n",
+			ensure: func(cfg *config.Config) error { return (codexAgent{}).EnsureDefaults(cfg, "/workspace") },
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir()}
+			path := filepath.Join(cfg.AgentDir(tc.provider), tc.file)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := tc.ensure(cfg)
+			if err == nil || !strings.Contains(err.Error(), path) {
+				t.Fatalf("EnsureDefaults error = %v, want path-specific parse error", err)
+			}
+			if got, readErr := os.ReadFile(path); readErr != nil || string(got) != tc.body {
+				t.Fatalf("malformed file = %q, %v; want original %q", got, readErr, tc.body)
+			}
+			if tc.provider == "claude" && tc.file == ".claude.json" {
+				if _, statErr := os.Stat(filepath.Join(cfg.AgentDir("claude"), "settings.json")); !os.IsNotExist(statErr) {
+					t.Fatalf("Claude wrote settings before validating .claude.json: %v", statErr)
+				}
+			}
+		})
+	}
+}
+
+func TestDefaultsFileReaderRejectsLinksAndNonRegularFiles(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readDefaultsFile(link); err == nil {
+		t.Fatal("defaults reader unexpectedly followed a symbolic link")
+	}
+	nonRegular := filepath.Join(dir, "directory")
+	if err := os.Mkdir(nonRegular, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readDefaultsFile(nonRegular); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("directory read error = %v, want non-regular refusal", err)
+	}
+}
+
+func TestWriteJSONFileReportsWriteFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "settings.json")
+	if err := writeJSONFile(path, map[string]any{"enabled": true}, 0o600); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("writeJSONFile error = %v, want target-specific failure", err)
 	}
 }

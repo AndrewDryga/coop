@@ -587,7 +587,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return -1, err
 	}
 	if spec.Homes {
-		ensureAgentDefaults(cfg, spec, workdir)
+		if err := ensureAgentDefaults(cfg, spec, workdir); err != nil {
+			return -1, err
+		}
 		// An ACP box shares the lead's session transcripts across credentials (see assembleArgs), so
 		// ensure that shared store exists before it's mounted.
 		if spec.ShareACPSessions {
@@ -1257,9 +1259,10 @@ func resolvedRoleTargetList(cfg *config.Config, role *preset.Role) string {
 // "default" showing "not signed in" in `coop credentials`) kept reappearing, seeded with
 // EnsureDefaults' settings files, recreated by runs that never involved that agent. An
 // out-of-scope agent has no home mounted, so nothing in the box reads the dir anyway.
-// Provider defaults remain provider-owned/best-effort and are written only after every required
-// input has validated. Host-owned ancestor permissions are mandatory and are established before
-// any credential read, mount, or runtime access.
+// Provider defaults remain provider-owned and are written only after every required input has
+// validated. Their read/parse/write errors stop launch rather than treating broken user state as
+// empty. Host-owned ancestor permissions are mandatory and are established before any credential
+// read, mount, or runtime access.
 func ensureAgentHomes(cfg *config.Config, spec RunSpec) error {
 	for _, name := range credentialScope(cfg, spec) {
 		if err := EnsureProfilesDir(cfg, name); err != nil {
@@ -1277,12 +1280,15 @@ func ensureAgentHomes(cfg *config.Config, spec RunSpec) error {
 	return nil
 }
 
-func ensureAgentDefaults(cfg *config.Config, spec RunSpec, workdir string) {
+func ensureAgentDefaults(cfg *config.Config, spec RunSpec, workdir string) error {
 	for _, name := range credentialScope(cfg, spec) {
 		if ag, ok := agents.Get(name); ok {
-			ag.EnsureDefaults(cfg, workdir)
+			if err := ag.EnsureDefaults(cfg, workdir); err != nil {
+				return fmt.Errorf("prepare %s defaults: %w", name, err)
+			}
 		}
 	}
+	return nil
 }
 
 // resolveWorkdir picks where the repo mounts inside the box — and thus the

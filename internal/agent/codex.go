@@ -20,6 +20,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
+	"github.com/pelletier/go-toml/v2"
 )
 
 type codexAgent struct{}
@@ -532,22 +533,34 @@ func (codexAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[stri
 // stop at "Do you trust this directory?". Codex records trust as
 // [projects."<dir>"] trust_level = "trusted"; we append it idempotently. The box is the
 // sandbox, so trusting the one mounted repo is the intended posture.
-func (a codexAgent) EnsureDefaults(cfg *config.Config, workdir string) {
+func (a codexAgent) EnsureDefaults(cfg *config.Config, workdir string) error {
 	if workdir == "" {
-		return
+		return nil
 	}
 	dir := cfg.AgentDir(a.Name())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
+		return fmt.Errorf("create Codex defaults directory %s: %w", dir, err)
+	}
+	path := filepath.Join(dir, "config.toml")
+	data, _, err := readDefaultsFile(path)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(data)) != "" {
+		var values map[string]any
+		if err := toml.Unmarshal(data, &values); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
 	}
 	hardenCodexSQLiteFeedbackLog(dir)
-	path := filepath.Join(dir, "config.toml")
-	data, _ := os.ReadFile(path) // missing file → empty, which is fine
 	out, changed := ensureCodexTrust(string(data), workdir)
 	if !changed {
-		return
+		return nil
 	}
-	os.WriteFile(path, []byte(out), 0o644)
+	if err := config.WriteFileAtomicMode(path, []byte(out), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 func ensureCodexTrust(configTOML, workdir string) (string, bool) {

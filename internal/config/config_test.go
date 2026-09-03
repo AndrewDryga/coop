@@ -599,6 +599,9 @@ func TestWriteFileAtomic(t *testing.T) {
 	if err := WriteFileAtomic(path, []byte("claude=personal\n")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := WriteFileAtomic(path, []byte("claude=work\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -614,6 +617,43 @@ func TestWriteFileAtomic(t *testing.T) {
 	}
 	if names := dirNames(t, dir); !slices.Equal(names, []string{"defaults"}) {
 		t.Errorf("dir = %v, want only the target file (no leftover temps)", names)
+	}
+}
+
+func TestWriteFileAtomicModePreservesExistingModeAndRejectsLinks(t *testing.T) {
+	dir := t.TempDir()
+	fresh := filepath.Join(dir, "fresh-settings.json")
+	if err := WriteFileAtomicMode(fresh, []byte("fresh\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(fresh); err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("new file mode = %v, err = %v; want requested 0640", info, err)
+	}
+
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte("before\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFileAtomicMode(path, []byte("after\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("replacement mode = %v, err = %v; want preserved 0640", info, err)
+	}
+
+	target := filepath.Join(dir, "outside")
+	link := filepath.Join(dir, "linked-settings.json")
+	if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFileAtomicMode(link, []byte("replace\n"), 0o600); err == nil {
+		t.Fatal("atomic replacement unexpectedly accepted a symbolic link")
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "keep\n" {
+		t.Fatalf("link target = %q, %v; want unchanged", got, err)
 	}
 }
 

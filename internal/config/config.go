@@ -404,12 +404,32 @@ func WithLock(path string, fn func() error) error {
 // never a live-but-empty file, which for a credential pointer reads back as "unset" and silently
 // changes which account the next run picks.
 func WriteFileAtomic(path string, data []byte) error {
+	return writeFileAtomic(path, data, 0o600, false)
+}
+
+// WriteFileAtomicMode is WriteFileAtomic with an explicit mode for a newly created file. Replacing
+// an existing regular file preserves its mode; links and unsupported file types are never replaced.
+func WriteFileAtomicMode(path string, data []byte, perm os.FileMode) error {
+	return writeFileAtomic(path, data, perm, true)
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode, preserveMode bool) error {
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("replace %s: expected a regular file, found %s", path, info.Mode().Type())
+		}
+		if preserveMode {
+			perm = info.Mode().Perm()
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect %s before replacement: %w", path, err)
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
 	if err != nil {
 		return err
 	}
 	name := tmp.Name()
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := tmp.Chmod(perm.Perm()); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(name)
 		return err
