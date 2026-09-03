@@ -349,7 +349,7 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 			return tasksLintAll(repo, rels)
 		case "decisions":
 			return tasksDecisionsAll(repo, rels, rest[1:])
-		case "claim", "block", "unblock", "done", "path", "rm", "clear":
+		case "claim", "block", "unblock", "done", "path", "rm":
 			return tasksAcrossQueues(repo, rels, sub, rest)
 		case "":
 			return tasksListAll(repo, rels, nil)
@@ -450,7 +450,7 @@ func tasksListAll(repo string, rels []string, args []string) (int, error) {
 // id-less exception: it clears every queue's done archive.
 func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (int, error) {
 	args := rest[1:]
-	if sub == "clear" || (sub == "rm" && slices.Contains(args, "--all-done")) {
+	if sub == "rm" && slices.Contains(args, "--all-done") {
 		total := 0
 		for _, rel := range rels {
 			n, err := countDone(filepath.Join(repo, rel))

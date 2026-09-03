@@ -786,25 +786,6 @@ func TestTasksRemoveRefusesLiveLeaseBeforePurging(t *testing.T) {
 	}
 }
 
-// `coop tasks clear` is the bulk-delete idiom: it clears the done archive (= `rm --all-done`),
-// gated the same way as rm — refuses without --yes in a non-TTY, deletes with it.
-func TestTasksClear(t *testing.T) {
-	root := t.TempDir()
-	writeTaskFile(t, filepath.Join(root, StateDone, "d1", "task.md"), "# d\n")
-	if code, err := CmdTasksFolder("", root, []string{"clear"}); code != 2 || err == nil {
-		t.Fatalf("tasks clear without --yes = (%d, %v), want (2, gated)", code, err)
-	}
-	if mustCountDone(t, root) != 1 {
-		t.Error("a refused clear must not delete the done task")
-	}
-	if code, err := CmdTasksFolder("", root, []string{"clear", "--yes"}); code != 0 || err != nil {
-		t.Fatalf("tasks clear --yes = (%d, %v), want (0, nil)", code, err)
-	}
-	if mustCountDone(t, root) != 0 {
-		t.Error("clear --yes should empty the done archive")
-	}
-}
-
 func TestTasksFolderRemoveAllDone(t *testing.T) {
 	root := t.TempDir()
 	// two done tasks, one todo and one in_progress that must SURVIVE --all-done
@@ -929,14 +910,14 @@ func TestCmdTasksFolderDispatch(t *testing.T) {
 	}
 }
 
-// The tasks unknown-subcommand suggester and isTasksSubcommand share one source (tasksVerbs), so the
-// flagship `watch` is suggestable and every verb+alias is recognized — no drift between the two.
+// The tasks unknown-subcommand suggester and isTasksSubcommand share one source (TasksVerbs), so the
+// flagship `watch` is suggestable and every canonical verb is recognized — no drift between the two.
 func TestTasksVerbsIncludeWatch(t *testing.T) {
 	// a mistype of watch suggests it — only possible if watch is in the derived candidate list.
 	if err := unknownErr("tasks command", "watxh", TasksVerbs); !strings.Contains(err.Error(), `did you mean "watch"`) {
 		t.Errorf("expected a watch suggestion, got: %v", err)
 	}
-	for _, s := range []string{"watch", "ls", "rm", "clear", "decisions"} {
+	for _, s := range []string{"watch", "ls", "rm", "decisions"} {
 		if !isTasksSubcommand(s) {
 			t.Errorf("isTasksSubcommand(%q) = false, want true", s)
 		}

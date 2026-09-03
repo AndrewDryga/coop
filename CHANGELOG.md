@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Task archive removal has one spelling.** Use `coop tasks rm --all-done`; the duplicate
+  `coop tasks clear` alias is gone before release.
+
 - **Unreachable UI and task helpers are gone.** Progress displays keep the state-aware bar used by
   loops and task watches, while six obsolete helpers, one unused summary type, and the old bar's
   direct-only test are removed.

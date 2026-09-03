@@ -144,8 +144,6 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderPath(root, args)
 	case "rm":
 		return tasksFolderRemove(root, args)
-	case "clear": // bulk-delete idiom: clear the done archive (like `rm --all-done`)
-		return tasksFolderRemove(root, append([]string{"--all-done"}, args...))
 	case "decisions":
 		return tasksFolderDecisions(root, args)
 	default:
@@ -156,7 +154,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 // tasksVerbs are the canonical `coop tasks` subcommands (primary spellings, no aliases): the single
 // source for the unknown-subcommand suggester and isTasksSubcommand, so the two can't drift. `watch`
 // belongs here even though cmdTasks (not cmdTasksFolder) handles it — a mistype of it should suggest it.
-var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "block", "unblock", "done", "watch", "queues", "path", "rm", "clear", "decisions"}
+var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "block", "unblock", "done", "watch", "queues", "path", "rm", "decisions"}
 
 // isTasksSubcommand reports whether s names a `coop tasks` subcommand. cmdTasks uses it to catch
 // `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path. v3 keeps no
