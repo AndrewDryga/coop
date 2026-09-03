@@ -192,14 +192,9 @@ func LeaseAuthorityKey(root, id string) (string, error) {
 
 // leaseAuthorityRoot resolves where the host-global completion-trust registry lives. Everything
 // in this registry — lock-authority inodes, completion receipts, audit-reopen authority, departure
-// records, and the completion-window journal are DURABLE TRUST STATE, so they live with the session
-// store's state root (see defaultSessionStateRoot in internal/sessionsvc/http.go), not under
-// os.UserCacheDir(). A cache is OS-deletable BY CONTRACT: macOS
-// purges ~/Library/Caches under pressure and cleaners empty it wholesale. A purge mid-run unlinks
-// lock files whose fds are still flocked, so the next open recreates the name as a new inode and
-// two controllers each hold an "exclusive" lock on a different one; a purge between runs erases the
-// receipts crash recovery reads, degrading it to restore-and-redo and stranding audit-reopened
-// tasks behind manual repair.
+// records, and the completion-window journal — is durable trust state, so it lives with the session
+// store's state root (see defaultSessionStateRoot in internal/sessionsvc/http.go). Losing this
+// directory could split lock authority and erase the receipts used by crash recovery.
 func leaseAuthorityRoot() (string, error) {
 	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
 		if root := os.Getenv(TestLeaseAuthorityRootEnv); root != "" {
@@ -213,38 +208,9 @@ func leaseAuthorityRoot() (string, error) {
 	return filepath.Join(home, ".local", "state", "coop", "task-leases", LeaseAuthorityVersion), nil
 }
 
-func legacyLeaseAuthorityRoot() (string, error) {
-	cache, cacheErr := os.UserCacheDir()
-	if cacheErr != nil {
-		return "", cacheErr
-	}
-	return filepath.Join(cache, "coop", "task-leases", LeaseAuthorityVersion), nil
-}
-
 func OpenLeaseAuthorityRoot() (*os.Root, error) {
 	dir, err := leaseAuthorityRoot()
 	if err != nil {
-		return nil, err
-	}
-	return openLeaseAuthorityRootAt(dir, legacyLeaseAuthorityRoot)
-}
-
-func openLeaseAuthorityRootAt(dir string, resolveLegacy func() (string, error)) (*os.Root, error) {
-	// Current authority wins without even resolving the retired cache path. Besides keeping the
-	// steady state small, this means a stale or unreadable cache cannot break a current install.
-	if _, err := os.Lstat(dir); err == nil {
-		return openLeaseAuthorityRoot(dir)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	legacy, err := resolveLegacy()
-	if err != nil {
-		return nil, fmt.Errorf(
-			"resolve pre-v8 task lease authority from the OS cache before creating %q: %w; stop all older Coop processes and migrate the whole pre-v8 registry directory before retrying",
-			dir, err,
-		)
-	}
-	if err := rejectLegacyLeaseAuthorityRoot(dir, legacy); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -262,40 +228,6 @@ func openLeaseAuthorityRoot(dir string) (*os.Root, error) {
 		return nil, fmt.Errorf("task lease authority %q is not a real directory", dir)
 	}
 	return os.OpenRoot(dir)
-}
-
-func rejectLegacyLeaseAuthorityRoot(dir, legacy string) error {
-	// Any entry may be trust state or evidence of an interrupted write. V9 does not interpret,
-	// merge, move, or delete it; the operator must migrate the whole directory while old Coop
-	// processes are stopped. This check cannot synchronize with binaries that still write there.
-	root, err := os.OpenFile(legacy, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return legacyLeaseAuthorityRefusal(
-			dir, legacy, fmt.Errorf("the retired path is not a readable real directory: %w", err),
-		)
-	}
-	_, readErr := root.Readdirnames(1)
-	closeErr := root.Close()
-	if errors.Is(readErr, io.EOF) && closeErr == nil {
-		return nil
-	}
-	if readErr != nil {
-		return legacyLeaseAuthorityRefusal(dir, legacy, errors.Join(readErr, closeErr))
-	}
-	if closeErr != nil {
-		return legacyLeaseAuthorityRefusal(dir, legacy, closeErr)
-	}
-	return legacyLeaseAuthorityRefusal(dir, legacy, errors.New("the retired registry is not empty"))
-}
-
-func legacyLeaseAuthorityRefusal(dir, legacy string, cause error) error {
-	return fmt.Errorf(
-		"pre-v8 task lease authority at %q cannot be ignored before creating %q: %w; stop all older Coop processes and migrate the whole directory before retrying",
-		legacy, dir, cause,
-	)
 }
 
 // leaseAuthorityIsCurrent proves, with the kernel lock already held, that the locked inode is still

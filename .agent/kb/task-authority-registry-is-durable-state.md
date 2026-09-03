@@ -1,9 +1,9 @@
 ---
 name: task-authority-registry-is-durable-state
-description: host-global task ownership and completion trust live in ~/.local/state/coop/task-leases, never a cache dir; every authority flock rechecks its inode
+description: host-global task ownership and completion trust live in ~/.local/state/coop/task-leases; every authority flock rechecks its inode
 subsystem: tasks
 sources: [internal/tasks/lease.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/tasks/owner.go, internal/tasks/assignment_registry.go, internal/sessionsvc/http.go]
-updated: 2026-08-28
+updated: 2026-09-03
 ---
 Everything that decides whether a task is *really* finished lives OUTSIDE the repo, in one
 host-global registry: the `<sha>.lock` files whose kernel flock makes one controller the single
@@ -22,25 +22,11 @@ assignment, and generation even if the folder later moves or a configured queue 
 The same registry is the sole iteration-lease store. Coop does not mirror its flock or heartbeat
 into a task's provider-writable `tmp/`; observation and recovery consult only the host records.
 
-**It must not be a cache dir.** It was `os.UserCacheDir()/coop/task-leases/v1` until 2026-08-09.
-A cache is OS-deletable by contract (macOS purges `~/Library/Caches` under pressure; cleaners empty
-it), and a purge breaks trust two ways: mid-run it unlinks a lock file whose fd is still flocked, so
-the next `openLeaseAuthorityRecord` recreates the name as a NEW inode and two controllers each hold
-an "exclusive" lock on a different one — silently; between runs it erases receipts and reopen
-authority, degrading crash recovery to restore-and-redo. `leaseAuthorityRoot`
-(`internal/tasks/lease.go`) now resolves `$HOME/.local/state/coop/task-leases/v1` on both darwin
-and linux, the same durable family as the session store's `defaultSessionStateRoot`
-(`internal/sessionsvc/http.go`) — NOT XDG-configurable, matching that precedent exactly.
-
-**V9 does not adopt or read retired authority.** When the durable root exists,
-`OpenLeaseAuthorityRoot` opens it without even resolving the old cache path. When it is absent, Coop
-checks the retired path before creating anything: missing or an empty real directory is safe, while
-any entry, path-shape anomaly, lookup failure, or read failure refuses without mutation. The guard
-does not interpret, merge, move, copy, or delete old records. Stop every older Coop process first:
-an old binary does not participate in the guard and can write the cache path after it was checked.
-Move the whole registry using the crash-safe same-filesystem or staged cross-filesystem procedure in
-`MIGRATING.md`; never expose a partial current `v1` directory, because once it exists it is the sole
-authority and the old path is intentionally ignored.
+`leaseAuthorityRoot` (`internal/tasks/lease.go`) resolves
+`$HOME/.local/state/coop/task-leases/v1` on both Darwin and Linux, the same durable family as the
+session store's `defaultSessionStateRoot` (`internal/sessionsvc/http.go`) and intentionally not
+XDG-configurable. `OpenLeaseAuthorityRoot` creates that directory with owner-only permissions and
+rejects a final path that is a symlink or not a directory.
 
 **Every authority flock is proved after the fact.** Take authority locks through
 `lockLeaseAuthority` / `lockLeaseAuthorityForAudit` (`internal/tasks/lease.go`), never a bare `syscall.Flock`
@@ -52,6 +38,9 @@ INODE, never to a name; without the recheck a deleted-underfoot lock is silently
 for the repo-local queue, which did NOT move.
 
 ## Changelog
+- 2026-09-03 — removed the retired cache-root detector and migration procedure after inventory
+  confirmed the current durable registry is authoritative; re-verified current-root creation,
+  path-shape rejection, concurrent opening, and post-flock inode guards against the listed sources.
 - 2026-08-28 — added typed human/fork owner v2 records and generation reverse indexes so isolated
   assignments survive process exit, external queue selection, and task folder moves.
 - 2026-08-26 — v9 removed automatic cache-root adoption; current state is resolved first, and a
