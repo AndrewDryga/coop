@@ -2,9 +2,9 @@
 name: help-output-style
 description: "UPPERCASE headers, one command per line, no `·`, command cell under 32 runes"
 scope: cli-output
-sources: [internal/cli/help.go]
-check: "go test ./internal/cli -run TestHelpRowsAlign"
-updated: 2026-08-25
+sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go]
+check: "none"
+updated: 2026-09-03
 ---
 
 # Help output: UPPERCASE section headers, one command per line, no "·"
@@ -26,8 +26,7 @@ updated: 2026-08-25
   explanation. Same for any row/error one-liner: prefer the real path/file/flag.
 - A row's command cell stays **≤ 32 runes** so every description starts at the same column
   (the table look breaks the moment one row pushes past the gap). Too long? Drop optional
-  flags from the cell — they live in the command's own help page. Enforced by
-  `TestHelpRowsAlign`.
+  flags from the cell — they live in the command's own help page.
 - A group with more than ~6 rows is a wall — split it by what the user is doing (e.g.
   AGENTS / CREDENTIALS, MODELS & PRESETS / THE BOX), not by implementation.
 
@@ -40,12 +39,17 @@ services" hides the one thing that makes the row make sense.
 **How to apply:**
 - New command → add a one-line row to `helpText` (under its group) AND a `commandHelp`
   entry (synopsis + `Usage:` + flags). A test ties `commandHelp` to `topLevelCommands`.
-- Never put `·` in a help string. Guard (help text only — runtime status/stat lines may
-  still use `·` as a separator): `grep -n '·' internal/cli/help.go` should be empty, and in
-  `internal/cli/fork_cmd.go` only the non-help paths may have it, and the `·`-bearing fork paths
-  (`forkBrief`, the merge prompt) now live in `internal/forkctl/{review,merge}.go`.
+- Focused regressions cover parts of the rule: `TestHelpRowsAlign` gates the 32-rune command cells in
+  top-level and fork help; `TestHelpTextAligned` checks the top-level column gap, selected rows, and
+  section headers; `TestAllHelpAvoidsMiddleDots` renders every help page; `TestCLIConformance` ties
+  live verbs and selected usage forms to help. The card remains `check: none` because those tests do
+  not enforce capitalization and one-row layout on every focused page; review owns the full rule.
+- Never put `·` in a help string. Runtime status/stat lines may still use it as a separator.
 
 ## Changelog
+- 2026-09-03 — added `forkHelpText` and both test files to `sources`; replaced the false claim that
+  `TestHelpRowsAlign` enforced the whole card with an exact test-to-claim map, and set `check: none`
+  because the focused regressions do not enforce every page-level claim.
 - 2026-08-25 — removed the Fleet-only long verb-list exception, shortened the direct-fork rows,
   and extended `TestHelpRowsAlign` from the top-level index to `forkHelpText`; both surfaces now
   enforce the 32-rune command-cell rule.

@@ -23,7 +23,7 @@ import (
 // gathered from explicit paths, --changed (git), --task <id> (a task's declared paths), and the
 // current subproject — never inferred from a free-form prompt.
 //
-//	coop context [--changed] [--task <id>] [--json | --rendered] [paths...]
+//	coop context [--changed] [--task <id>] [--json | --rendered] [<path>...]
 func (a *app) cmdContext(args []string) (int, error) {
 	var changed, asJSON, rendered bool
 	var taskID string

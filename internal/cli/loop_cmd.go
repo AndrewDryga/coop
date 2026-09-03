@@ -15,8 +15,8 @@ import (
 
 // parseLoopArgs resolves `coop loop`'s leading who-runs positional — a TARGET
 // (provider[:model][/effort][@account,…]) OR a PRESET NAME (validated by cmdLoop's loadRunPreset) —
-// and its flags. Model + account come from the target (`--model`/`--credential` are retired);
-// `--peer`/`--tasks` are pre-extracted by cmdLoop. hasTarget is false and presetName "" when no
+// and its flags. Model + account come from the target; `--peer`/`--tasks` are pre-extracted by
+// cmdLoop. hasTarget is false and presetName "" when no
 // positional was given (a loop.yaml work.agent then supplies the lead).
 func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, presetName string, debugOnFail, preflight, noMCP bool, maxTasks int, err error) {
 	preflight = def

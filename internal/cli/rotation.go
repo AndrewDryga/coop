@@ -18,8 +18,8 @@ import (
 // target), and "rotate all accounts" is just what a no-account target expands to. The cursor
 // itself is internal/ladder (pure, clock injected); this file is the EXPANSION half — what the
 // config says is signed in — shared by `coop loop`, `coop acp`, and `coop fork`. What a rotation
-// then DOES (point cfg at the active target, rotate or sleep on a limit) is internal/loop's
-// rotation.go, because only the loop rotates.
+// then DOES with the active rung is caller policy: the unattended loop, editor ACP, and durable
+// session service each preserve their own continuation semantics.
 //
 // Both the ladder and its expansion are the ONE agents.Target type: a ladder entry may
 // carry an account list (or none = every runnable account); expandLadder turns it into
@@ -128,7 +128,7 @@ func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target
 			return nil, fmt.Errorf("credentials need login (%s) — run: %s", strings.Join(targets, ", "), strings.Join(commands, "; "))
 		}
 		if len(missing) > 0 {
-			return nil, fmt.Errorf("no signed-in account for %s — run: coop login %s[@account]", strings.Join(missing, ", "), missing[0])
+			return nil, fmt.Errorf("no signed-in account for %s — run: coop login %s[@<account>]", strings.Join(missing, ", "), missing[0])
 		}
 		return nil, fmt.Errorf("%s: none of the ladder's accounts are signed in — run 'coop login', or edit the preset", defaultAgent)
 	}

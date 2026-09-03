@@ -904,9 +904,9 @@ reviewAgain:
 					return code, stop
 				}
 			case actWait:
-				// A rate/usage limit is expected on long runs. With more than one profile in
-				// the pool, switch to another subscription and retry immediately; otherwise wait
-				// for the reset. Either way the same iteration is retried, not burned.
+				// A rate/usage limit is expected on long runs. With more than one target in
+				// the ladder, switch to the next provider/model/account rung and retry immediately;
+				// otherwise wait for the reset. Either way the same iteration is retried, not burned.
 				if rot.Rotates() {
 					// Advancing the rotation is the point — the loop head re-derives the agent
 					// from rot (applyTarget), so the returned name would go unread here.

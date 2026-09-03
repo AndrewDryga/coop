@@ -245,8 +245,8 @@ func TaskQueues(cfg *config.Config, repo string, flags []string) ([]string, erro
 }
 
 // CmdTasks drives the folder task queue (.agent/tasks): one folder per task, its state the
-// parent directory. The subcommands (list/lint/add/claim/block/unblock/done/remove/
-// decisions) live in cmd.go; a bare `coop tasks` shows help.
+// parent directory. The subcommands (ls/lint/add/claim/block/unblock/done/rm/
+// decisions) live in cmd.go; a bare `coop tasks` lists the queue.
 func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	flags, rest, err := ExtractTasksFlags(args)
 	if err != nil {
@@ -369,7 +369,7 @@ func tasksInQueue(host Host, repo, rel string, rest, flags []string) (int, error
 		sub = rest[0]
 	}
 	root := filepath.Join(repo, rel)
-	// When the queue doesn't exist yet, a bare `coop tasks` still shows help, and `add`
+	// When the queue doesn't exist yet, a bare `coop tasks` shows help, while `add`
 	// bootstraps it on demand (tasksFolderAdd creates the folder) — that's how you start a
 	// secondary --tasks queue in a monorepo, since `coop init` only scaffolds the repo root.
 	// Every other subcommand needs an existing queue to act on.

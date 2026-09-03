@@ -19,6 +19,13 @@ import (
 
 var allAgents = agents.Names() // from the registry, so a new agent is covered without editing tests
 
+func TestConsultWrapperUsageUsesLiteralFlagsAndMetavariables(t *testing.T) {
+	const want = "usage: coop-consult <peer|role> (--fresh|--continue) [<prompt>]"
+	if got := ConsultWrapper(); !strings.Contains(got, want) {
+		t.Fatalf("consult wrapper missing canonical usage %q", want)
+	}
+}
+
 // TestConsultWrapperShellcheck keeps the embedded coop-consult script clean. It's a Go
 // string constant, so the normal shellcheck pass can't see it; run it here when
 // shellcheck is available (skipped otherwise, so CI without it still passes).
@@ -543,13 +550,28 @@ func TestConsultWrapperRefusesUnlistedPeer(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not available")
 	}
-	f := filepath.Join(t.TempDir(), "coop-consult")
+	dir := t.TempDir()
+	f := filepath.Join(dir, "coop-consult")
 	if err := os.WriteFile(f, []byte(ConsultWrapper()), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// A listed peer must reach provider dispatch without ever launching a real host credential.
+	// This test used to assume Claude was absent; on a development host it could start the real
+	// unlimited consult and hang until the package timeout.
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte("#!/bin/sh\necho test-claude-invoked >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte("#!/bin/sh\necho test-codex-invoked >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{
+		"PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"TMPDIR=" + dir,
+		"COOP_PEERS=claude gemini",
+	}
 	// codex IS a registered adapter but NOT listed → refused with the council message, exit ≠ 0.
 	cmd := exec.Command("sh", f, "codex", "--fresh", "hi")
-	cmd.Env = append(os.Environ(), "COOP_PEERS=claude gemini")
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("wrapper allowed an unlisted peer:\n%s", out)
@@ -557,12 +579,15 @@ func TestConsultWrapperRefusesUnlistedPeer(t *testing.T) {
 	if !strings.Contains(string(out), "not in this run's credential scope") {
 		t.Errorf("expected the council-refusal message, got:\n%s", out)
 	}
-	// A LISTED peer clears the council gate (it then tries to run the agent, which isn't
-	// installed here — but that's a different failure, never the council refusal).
+	if strings.Contains(string(out), "test-codex-invoked") {
+		t.Errorf("wrapper launched the refused provider:\n%s", out)
+	}
+	// A LISTED peer clears the council gate and reaches the test-owned failing provider.
 	cmd = exec.Command("sh", f, "claude", "--fresh", "hi")
-	cmd.Env = append(os.Environ(), "COOP_PEERS=claude gemini")
-	if out, _ := cmd.CombinedOutput(); strings.Contains(string(out), "not in this run's council") {
-		t.Errorf("a listed peer must clear the council gate, got:\n%s", out)
+	cmd.Env = env
+	if out, _ := cmd.CombinedOutput(); strings.Contains(string(out), "not in this run's credential scope") ||
+		!strings.Contains(string(out), "test-claude-invoked") {
+		t.Errorf("a listed peer must clear the credential gate and reach its provider, got:\n%s", out)
 	}
 }
 

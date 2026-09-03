@@ -1,11 +1,11 @@
 // Package preset loads YAML orchestration presets: a runtime recipe naming the lead
-// agent and a set of roles (native subagent / read-only consult / write-capable
-// delegate), each with its model, credentials, routing hints, and optional Markdown
-// prompt material. A preset is DISTINCT from a credential: credentials are
-// accounts/logins/rate-limit slots (stored per agent); a preset is the orchestration
-// recipe that says which agent+model+credential plays which role. The package is pure
-// (files + text only); the cli applies a preset's selections and box.Run mounts the
-// generated contracts and wrappers.
+// target and a set of roles (native subagent / read-only consult / write-capable
+// delegate), each with a target selection, routing hints, and optional Markdown prompt
+// material. Consult/delegate roles may carry target/model fallback ladders; a native
+// role has one target. A preset is distinct from a credential: credentials are
+// host-stored accounts/logins/rate-limit slots, while role targets deliberately use
+// each provider's default account. The package is pure (files + text only); the cli
+// applies a preset's selections and box.Run mounts the generated contracts and wrappers.
 package preset
 
 import (

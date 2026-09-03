@@ -82,7 +82,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	} else {
 		fmt.Fprintf(&b, "%s %s — run a coding agent all night long in a box it can't escape.\n", p.Bold("coop"), resolveVersion())
 	}
-	fmt.Fprint(&b, "Usage: coop <command> [args]\n")
+	fmt.Fprint(&b, "Usage: coop <command> [<args>...]\n")
 	// A newcomer (no agent signed in) gets the day-one order up front. Pure-local check (no runtime),
 	// so `coop help` still works before Docker exists — same state-aware style as the up/down rows below.
 	if !ref && !anyAgentSignedIn(cfg) {
@@ -90,16 +90,16 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	}
 
 	group("AGENTS")
-	row("coop <target>", "<agent>[:model][/effort][@account] in a box")
+	row("coop <target>", "agent target in a box")
 	row("coop <preset>", "run a preset interactively (its lead leads)")
 	row("coop acp <target|preset>", "serve as an editor agent (ACP; e.g. Zed)")
 	row("coop <target> --peer <target>...", "a read-only second opinion, named peers")
 
 	group("CREDENTIALS, MODELS & PRESETS")
 	row("coop login <agent>", "sign in an agent (a subscription)")
-	row("coop credentials [agent]", "stored credentials + which are signed in")
-	row("coop models [agent]", "the model menu per agent")
-	row("coop presets [name]", "orchestration recipes (lead + roles)")
+	row("coop credentials [<agent>]", "stored credentials + which are signed in")
+	row("coop models [<agent>]", "the model menu per agent")
+	row("coop presets [<preset>]", "orchestration recipes (lead + roles)")
 
 	group("THE BOX")
 	row("coop run -- <cmd...>", "run a raw command in the box")
@@ -111,7 +111,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop fork review <name>", "show a fork's review dossier + diff")
 	row("coop fork merge <name>", "rebase the fork onto your branch and land it")
 	row("coop fork merge --all", "rebase and land every fork")
-	row("coop fork logs [name]", "tail a fork's loop log (no name: every fork)")
+	row("coop fork logs [<name>]", "tail a fork's loop log (no name: every fork)")
 	row("coop fork rm <name>", "discard a fork")
 	row("coop fork stop <name>", "stop a detached loop")
 	row("coop fork open <name>", "open the fork in your editor")
@@ -241,7 +241,7 @@ const sourceTreeConformance = `SOURCE-TREE CONFORMANCE
 // help-output-style — the detail is in coop credentials / coop models.
 const agentHelp = `coop <target> — run a sandboxed coding agent (claude, codex, gemini, or grok).
 
-  Usage: coop <target> [coop flags] [-- <agent args>]
+  Usage: coop <target> [<coop-flags>] [-- <agent-args>...]
          coop <preset>   (run an orchestration preset interactively — its lead leads)
 
   The agent is a TARGET — a provider, an optional :model, an optional reasoning /effort,
@@ -335,7 +335,7 @@ var commandHelp = map[string]string{
 
 	"login": `coop login <agent> — sign in to an agent (token persists in the config dir).
 
-  Usage: coop login <agent>[@account]
+  Usage: coop login <agent>[@<account>]
 
   Runs the agent's sign-in (paste a code, no browser). Re-run any time to
   refresh or switch accounts — e.g. after a usage limit.
@@ -347,7 +347,7 @@ var commandHelp = map[string]string{
 
 	"credentials": `coop credentials — list stored credentials; a path grammar edits one.
 
-  Usage: coop credentials [agent [credential]]
+  Usage: coop credentials [<agent> [<credential>]]
          coop credentials <agent> <credential> default
          coop credentials <agent> <credential> rm
 
@@ -371,9 +371,9 @@ var commandHelp = map[string]string{
   any agent launch: 'coop claude@work', 'coop claude@work --peer codex', and
   'coop acp claude@work' (so an editor entry can pin an account).`,
 
-	"models": `coop models [agent] — the model menu per agent.
+	"models": `coop models [<agent>] — the model menu per agent.
 
-  Usage: coop models [claude|codex|gemini|grok] [--refresh]
+  Usage: coop models [<claude|codex|gemini|grok>] [--refresh]
 
   A block per agent: its models and when that list was last refreshed. A fresh per-agent
   cache shows the agent's real list; a never- (or stale-) refreshed list is the curated
@@ -467,8 +467,8 @@ var commandHelp = map[string]string{
 
 	"presets": `coop presets — YAML orchestration recipes under .agent/presets/<name>/.
 
-  Usage: coop presets [name]        list them, or show one recipe in full
-         coop presets init [name]   scaffold the frontier template (default name: frontier)
+  Usage: coop presets [<preset>]        list them, or show one recipe in full
+         coop presets init [<preset>]   scaffold the frontier template (default name: frontier)
 
   A PRESET is a runtime recipe: which agent leads, and which roles it can route
   work to — each role an agent: target or fallback list + routing hints. The lead's
@@ -605,7 +605,7 @@ var commandHelp = map[string]string{
 
 	"context": `coop context — compile the committed docs relevant to a scope (instructions + rules + KB).
 
-  Usage: coop context [--changed] [--task <id>] [--json | --rendered] [paths...]
+  Usage: coop context [--changed] [--task <id>] [--json | --rendered] [<path>...]
 
   Selects which committed docs an agent needs for the paths in play — canonical
   AGENTS.md/CLAUDE.md (always, whole) plus the .agent/project.yaml 'context.routes'

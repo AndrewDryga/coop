@@ -23,7 +23,7 @@ func (a *app) cmdPresets(args []string) (int, error) {
 		return a.presetsInit(repo, args[1:])
 	}
 	if len(args) > 1 {
-		return 2, fmt.Errorf("unexpected argument %q (usage: coop presets [init] [name])", args[1])
+		return 2, fmt.Errorf("unexpected argument %q (usage: coop presets [init] [<preset>])", args[1])
 	}
 	if len(args) == 1 {
 		if args[0] == "ls" { // rule: `ls` must lead somewhere useful, not read as a preset name
@@ -74,13 +74,13 @@ func (a *app) cmdPresets(args []string) (int, error) {
 }
 
 // presetsInit scaffolds a ready-to-edit preset from the documented frontier template
-// (`coop presets init [name]`, name defaulting to "frontier"). The template loads
+// (`coop presets init [<preset>]`, name defaulting to "frontier"). The template loads
 // cleanly as written, so the new preset lists and runs immediately.
 func (a *app) presetsInit(repo string, args []string) (int, error) {
 	name := "frontier"
 	switch {
 	case len(args) > 1:
-		return 2, fmt.Errorf("unexpected argument %q (usage: coop presets init [name])", args[1])
+		return 2, fmt.Errorf("unexpected argument %q (usage: coop presets init [<preset>])", args[1])
 	case len(args) == 1:
 		name = args[0]
 	}

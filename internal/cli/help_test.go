@@ -162,7 +162,7 @@ func TestRenderManual(t *testing.T) {
 	providerPipe := strings.Join(agents.Names(), "|")
 	for _, want := range []string{
 		"AGENTS", "coop fork", "coop tasks", "coop run", "SOURCE-TREE CONFORMANCE",
-		"for an agent (" + providerSlash + ")", "Usage: coop models [" + providerPipe + "]",
+		"for an agent (" + providerSlash + ")", "Usage: coop models [<" + providerPipe + ">]",
 		"make provider-scripted-e2e", "make acp-scripted-e2e", "make live-process-control",
 		"make provider-resume-live-e2e", "make provider-loop-live-e2e",
 		"make provider-consult-live-e2e", "make acp-e2e",

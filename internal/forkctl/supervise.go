@@ -248,8 +248,8 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 		return failStart(fmt.Errorf("locate coop binary: %w", err))
 	}
 	// The worker re-parses the who-runs positional, so forward ONE token: a preset name (the worker
-	// re-loads it), or the composed target (composeTarget round-trips the fork's one-off model/account;
-	// --model/--credential are retired). A fork picks one, so a preset means no target to compose.
+	// re-loads it), or the composed target (composeTarget round-trips the fork's one-off
+	// model/account). A fork picks one, so a preset means no target to compose.
 	who := presetName
 	if who == "" {
 		who, err = composeTarget(agent, model, effort, credential)

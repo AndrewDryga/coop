@@ -17,7 +17,7 @@ import (
 // narrows: `coop credentials` lists every agent, `coop credentials claude` one agent,
 // `coop credentials claude personal` one credential, and a trailing attribute reads or writes
 // one property of it: `default` (mark it the agent's default) or `rm` (delete it). A credential
-// is just an account — the model is a separate axis (set it with --model or a preset), never a
+// is just an account — the model rides a launch target or preset, never a
 // property here. So marking the default reads as a path, not a verb sandwich:
 //
 //	coop credentials claude personal default

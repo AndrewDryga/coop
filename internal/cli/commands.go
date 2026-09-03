@@ -237,8 +237,7 @@ func (a *app) cmdRun(args []string) (int, error) {
 // -- separator are stripped first so they aren't forwarded to the agent. A preset lead runs
 // via launchPreset instead (the who-runs positional names a target OR a preset, never both).
 func (a *app) launchAgent(target string, args []string) (int, error) {
-	// The head is a target: provider[:model][/effort][@account]. Model, effort, and account ride it —
-	// --model/--credential are retired.
+	// The head is a target: provider[:model][/effort][@account]. Model, effort, and account ride it.
 	t, err := agents.ParseTarget(target)
 	if err != nil {
 		return 2, err
@@ -326,8 +325,8 @@ func (a *app) selectRunProfile(tool, profile string) error {
 	return nil
 }
 
-// selectRunModel points cfg at the model chosen with --model for a run of tool (a no-op when
-// model is ""). Deliberately unvalidated: model ids churn faster than coop releases, so the
+// selectRunModel points cfg at the model chosen by a run target (a no-op when model is "").
+// Deliberately unvalidated: model ids churn faster than coop releases, so the
 // agent CLI stays the source of truth — a bad id fails loudly in the agent's own error.
 // Shared by every agent-launch path: launchAgent, launchPreset, cmdACP, and the fork paths.
 func (a *app) selectRunModel(tool, model string) {
@@ -422,15 +421,15 @@ func (a *app) defaultCmd(tool string) []string {
 }
 
 func (a *app) cmdLogin(args []string) (int, error) {
-	// The account rides the target now (coop login claude@work); --credential is retired.
+	// The account rides the target (coop login claude@work).
 	// The agent is required — bare `coop login` must not silently default to one (it would open a
 	// browser and block); name it explicitly, like the help shows. A stray extra arg is a typo,
 	// not a second target, so reject it rather than silently ignore.
 	if len(args) == 0 {
-		return 2, fmt.Errorf("usage: coop login <%s>[@account]", strings.Join(agents.Names(), "|"))
+		return 2, fmt.Errorf("usage: coop login <%s>[@<account>]", strings.Join(agents.Names(), "|"))
 	}
 	if len(args) > 1 {
-		return 2, fmt.Errorf("unexpected argument %q (usage: coop login <%s>[@account])", args[1], strings.Join(agents.Names(), "|"))
+		return 2, fmt.Errorf("unexpected argument %q (usage: coop login <%s>[@<account>])", args[1], strings.Join(agents.Names(), "|"))
 	}
 	t, err := agents.ParseTarget(args[0])
 	if err != nil {
@@ -469,8 +468,8 @@ func flagValue(args []string, i int, flag string) (val string, consumed int, ok 
 	return "", 0, false, nil
 }
 
-// validProfileName keeps a credential profile name to a single safe path segment, so a name passed
-// to --credential can't traverse or collide outside the agent's profiles/ vault (no '/', '\', '..',
+// validProfileName keeps a target's @account name to a single safe path segment, so it cannot
+// traverse or collide outside the agent's profiles/ vault (no '/', '\', '..',
 // '.', empty, or leading '-'). Login is the path that CREATES the dir from the name, so it's the
 // gate; runs/select/rm/default already require an existing profile.
 func validProfileName(name string) bool {
@@ -481,8 +480,8 @@ func validProfileName(name string) bool {
 }
 
 // loginTo runs an agent's sign-in flow in the box; its token persists in the agent's
-// config dir for the chosen credential. Shared by `coop login <provider>[@account]` and
-// `coop <agent> login [--credential <name>]`.
+// config dir for the chosen credential. Shared by `coop login <provider>[@<account>]` and
+// `coop <provider>[@<account>] login`.
 func (a *app) loginTo(tool, profile string) (int, error) {
 	ag, ok := agents.Get(tool)
 	if !ok {

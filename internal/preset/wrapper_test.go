@@ -30,6 +30,13 @@ func TestDelegateWrapperShellcheck(t *testing.T) {
 	}
 }
 
+func TestDelegateWrapperUsageUsesMetavariables(t *testing.T) {
+	const want = "usage: coop-delegate <role> [<prompt>]"
+	if got := DelegateWrapper(); !strings.Contains(got, want) {
+		t.Fatalf("delegate wrapper missing canonical usage %q", want)
+	}
+}
+
 func shellcheckPath(t *testing.T) string {
 	t.Helper()
 	sc, err := exec.LookPath("shellcheck")

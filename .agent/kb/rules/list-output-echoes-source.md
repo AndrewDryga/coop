@@ -1,47 +1,40 @@
 ---
 name: list-output-echoes-source
-description: "list output echoes the on-disk form, and grouped sections breathe"
+description: "list output echoes the canonical shape and separates grouped sections with whitespace"
 scope: cli-output
-sources: [internal/tasks/queue.go]
+sources: [internal/tasks/cmd.go, internal/tasks/queue.go, internal/cli/profiles.go]
 check: "none"
-updated: 2026-08-10
+updated: 2026-09-03
 ---
 
-# List output echoes the source's own format, and groups breathe
+# Echo canonical list shapes and give groups room to breathe
 
-A command that prints items which exist in a canonical on-disk form should render them in
-that form, and separate grouped sections with a blank line. The original `coop tasks list`
-(legacy single-file queue) first printed a bare `[ ]` with no bullet and ran files
-together; it was fixed to echo `- [ ]` with a blank line between files. The folder-mode
-`coop tasks ls` groups by state directory (`todo`/`in_progress`/`blocked`/`done`) and
-breathes the same way — a blank line between state groups.
+A command that lists canonical records should make its output map visibly back to those records.
+Keep native markers or state names, and place blank space between groups instead of flattening them
+into one wall.
 
-**Why:** list output is scanned and often copied. Echoing the on-disk shape (the marker,
-or the state-folder grouping) means what you see maps straight to what's on disk —
-recognizable as the task format rather than a coop-only rendering. Whitespace between groups
-turns a wall of lines into scannable sections. The bar, in the user's words: "more spaces
-between task files and some - or * before [ ]."
+- `coop tasks`/`coop tasks ls` group task folders by lifecycle state and leave a blank line between
+  non-empty state or project sections.
+- `coop credentials` groups credentials by agent and leaves a blank line between agent blocks.
+- New list surfaces should preserve the record's recognizable leading syntax when one exists,
+  rather than inventing a second display-only form.
+
+**Why:** list output is scanned and often copied. When it echoes the source shape, a user can move
+between terminal output and disk without translating Coop-only notation; whitespace makes separate
+authorities and states obvious.
 
 **How to apply:**
-- Echoing on-disk items (tasks, diffs, config entries) → keep their native markers/leading
-  syntax; don't strip them to a coop-only form.
-- Multi-section output (per file, per agent) → clear vertical space *between* sections (two
-  blank lines reads better than one for file groups), while the section header stays tight
-  to its own items.
-- Siblings to keep consistent: the `coop tasks` listing (done); `coop credentials` groups by
-  agent — give it the same inter-section blank line if it's ever touched.
-- Pairs with [[help-output-style]] (the help reference's scannability) and
-  [[no-color-in-width-fields]] (column alignment).
+- Keep a section header tight to its own items and put vertical space between sections.
+- Pad and style only after deciding the plain source-shaped fields; see
+  [[no-color-in-width-fields]].
+- This remains a review rule: the current task and credential renderers exhibit the behavior, but
+  no test honestly gates spacing and source shape across both surfaces or every future list.
+
+Related: [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
-- 2026-06-17 — created
-- 2026-07-09 — revised
-- 2026-08-06 — card metadata added (format v1); body unchanged
-- 2026-08-09 — validate-on-write backfill: read internal/cli/tasks.go's `tasksListAll` (3 blank
-  lines between queues) and internal/cli/taskcmd.go's `tasksFolderList` (2 blank lines between
-  state sections, 1 between tasks within a section) — both carry explicit "see rule" comments.
-  Also checked the card's "give `coop credentials` the same inter-section blank line if it's ever
-  touched" note: already done (profiles.go:58-60, a blank line between agent blocks). 0
-  violations.
-- 2026-08-10 — sources repointed: `tasks.go`/`taskcmd.go` moved to `internal/tasks/queue.go`/
-  `internal/tasks/cmd.go` (the 2026-08 tasks/lease/completion-audit extraction). Facts unchanged.
+- 2026-09-03 — removed the retired single-file queue narrative, added the actual task renderer and
+  credential-list sources, and re-verified current state/project/agent grouping. Kept `check: none`
+  rather than claiming a package test enforces future list design.
+- 2026-08-10 — task queue implementation moved from `internal/cli` to `internal/tasks`.
+- 2026-06-17 — created; revised 2026-07-09.

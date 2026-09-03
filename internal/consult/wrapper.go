@@ -99,7 +99,7 @@ func renderConsult(as []consultInput) string {
 	b.WriteString(`#!/bin/sh
 # coop-consult — ask a peer read-only, with optional cross-turn continuity.
 # Generated and mounted by coop; do not edit.
-#   coop-consult <peer|role> <--fresh|--continue> [prompt]
+#   coop-consult <peer|role> (--fresh|--continue) [<prompt>]
 # <peer> is ` + peerList + ` (an explicit --peer). A preset CONSULT ROLE — or a
 # native role degraded under a non-Claude lead — is addressed by its ROLE name. Its
 # COOP_CONSULT_<ROLE>_TARGETS value is an ordered fallback ladder; each target remains
@@ -118,7 +118,7 @@ consult_prompt_limit=` + strconv.Itoa(consultPromptLimitBytes) + `
 consult_context_limit=` + strconv.Itoa(consultContextLimitBytes) + `
 
 die() { echo "coop-consult: $1" >&2; exit 2; }
-[ "$#" -ge 2 ] || die "usage: coop-consult <peer|role> <--fresh|--continue> [prompt]"
+[ "$#" -ge 2 ] || die "usage: coop-consult <peer|role> (--fresh|--continue) [<prompt>]"
 name=$1
 mode=$2
 shift 2

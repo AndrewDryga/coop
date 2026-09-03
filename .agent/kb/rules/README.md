@@ -85,8 +85,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [list-verb-ls](list-verb-ls.md) — listing subcommands are `ls`, the only spelling (no `list` alias in v3)
 - [destructive-verb-rm](destructive-verb-rm.md) — destructive subcommands are `rm`, the only spelling (no `remove` alias in v3)
 - [credentials-not-profiles](credentials-not-profiles.md) — a stored account is publicly a "credential"; "profile" is retired, not aliased
-- [model-is-the-rotation-axis](model-is-the-rotation-axis.md) — rotation walks an `agent:` ladder of targets; accounts are a suffix on the model, never their own axis
-- [usage-placeholder-style](usage-placeholder-style.md) — one frozen `<angle>` lexicon for every usage string and error hint
+- [usage-placeholder-style](usage-placeholder-style.md) — usage metavariables use angle brackets and stable names; optionality stays outside the placeholder
 - [bare-subcommand-shows-help](bare-subcommand-shows-help.md) — a bare group prints help or its default view, never an empty-token error
 - [bare-flag-routes-to-default-view](bare-flag-routes-to-default-view.md) — a leading flag where a subcommand goes routes to the group's default listing
 
@@ -97,7 +96,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [no-color-in-width-fields](no-color-in-width-fields.md) — pad plain text to the column width, then style; never style inside `%-16s`
 - [entity-blocks-with-labeled-fields](entity-blocks-with-labeled-fields.md) — multi-fact listings get one labeled block per entity, not one dense row
 - [tag-exceptions-not-every-row](tag-exceptions-not-every-row.md) — tag only the exceptional row; explain the scheme once in a dim caption
-- [list-output-echoes-source](list-output-echoes-source.md) — list output echoes the on-disk form, and grouped sections breathe
+- [list-output-echoes-source](list-output-echoes-source.md) — list output echoes the canonical shape and separates grouped sections with whitespace
 - [spinner-frames-animate-one-object](spinner-frames-animate-one-object.md) — spinner frames are successive states of one recognizable object
 - [nonzero-progress-segments-stay-visible](nonzero-progress-segments-stay-visible.md) — a positive live or blocked count always gets at least one bar cell
 
@@ -111,7 +110,6 @@ updated: <YYYY-MM-DD>                # last edit
 - [isolate-state-dont-serialize](isolate-state-dont-serialize.md) — when shared state breaks concurrency, isolate the state; never lock the users of it
 
 **The loop**
-- [loop-failover-profiles](loop-failover-profiles.md) — in the loop, failover swaps the active credential and never a session; the session API is the one surface that rotates the session itself
 - [provider-reset-timezones-preserve-iana](provider-reset-timezones-preserve-iana.md) — preserve exact provider reset zones; parse safe IANA names and reject ambiguous abbreviations
 
 **Scaffolding**
@@ -124,6 +122,8 @@ updated: <YYYY-MM-DD>                # last edit
 - [secret-scan-literals-not-refs](secret-scan-literals-not-refs.md) — the scanner flags literal credentials and never references to them; precision is the product
 
 **Architecture**
+- [model-is-the-rotation-axis](model-is-the-rotation-axis.md) — every rotation and fallback surface uses the same target grammar; accounts are part of a target, never a second axis
+- [loop-failover-profiles](loop-failover-profiles.md) — loop, editor ACP, and remote sessions share target rotation but keep distinct continuation semantics
 - [agents-are-one-file](agents-are-one-file.md) — a coding agent is one self-registering file in `internal/agent`, never a switch elsewhere
 - [internal-import-dag](internal-import-dag.md) — a new internal import edge is an architecture decision — the allowlist test and this card move in the same commit
 - [transport-bounds-do-not-abort-valid-work](transport-bounds-do-not-abort-valid-work.md) — bound retained state and single payloads, never the cumulative volume of valid work

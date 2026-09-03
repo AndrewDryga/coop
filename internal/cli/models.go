@@ -13,12 +13,12 @@ import (
 // cmdModels is the model MENU: a block per agent — a bold-cyan header, its models (the
 // fresh cached list, else the curated static example Models()), and an explicit "Last
 // refreshed" fact (green when fresh, yellow when stale, with the refresh channel as the
-// hint) — then one caption and a short how-to. A model is picked per run (--model) or as
-// a preset's models: ladder; coop never validates --model against any list, so any id the
-// agent's CLI accepts works.
+// hint) — then one caption and a short how-to. A model is picked in a launch target or an
+// `agent:` ladder; coop never validates the id against any list, so any id the agent's CLI
+// accepts works.
 //
 // The plain command stays instant and Docker-free: it only reads the per-agent cache, never
-// spawning a box. `coop models --refresh [agent]` updates the cache from each agent's
+// spawning a box. `coop models --refresh [<agent>]` updates the cache from each agent's
 // real catalog source (grok/codex's native host CLI; claude/gemini's boxed ACP adapter)
 // and folds each outcome into that block's "Last refreshed" line.
 func (a *app) cmdModels(args []string) (int, error) {

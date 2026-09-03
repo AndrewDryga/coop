@@ -1,75 +1,65 @@
 ---
 name: model-is-the-rotation-axis
-description: "rotation walks an `agent:` ladder of targets; accounts are a suffix on the model, never their own axis"
-scope: cli-grammar
-sources: [internal/cli/target.go, internal/preset/preset.go, internal/sessionsvc/service.go]
+description: "every rotation and fallback surface uses the same target grammar; accounts are part of a target, never a second axis"
+scope: architecture
+sources: [internal/agent/target.go, internal/cli/target.go, internal/cli/rotation.go, internal/cli/presetflag.go, internal/config/config.go, internal/preset/preset.go, internal/loopcfg/loopcfg.go, internal/sessionsvc/service.go]
 check: "none"
 updated: 2026-09-03
 ---
 
-# Model is the one axis: rotation walks an `agent:` ladder of targets, not a pool
+# Use targets as the one rotation and fallback grammar
 
-**The rule:** Every rotation/fallback surface names WHO runs the same way — a **target**,
-`provider[:model][/effort][@account]` — and rotation is a ladder of targets. Accounts are a
-suffix on the model, never their own axis.
-- A preset's lead carries ONE `agent:` ladder (a target or a list of them, cross-provider
-  allowed). A **bare `provider:model` fans out across every signed-in account** (marked-default
-  first, then the rest); a pinned `provider:model@account` is one rung.
-- Native roles carry one `agent:` target. Consult and delegate roles may carry an ordered
-  fallback ladder. Roles never pin credentials — each target runs on that provider's default
-  account.
-- A direct fork launch takes one positional target or preset; a preset supplies its full lead
-  ladder and roles. There is no fork-specific target schema.
-- `.agent/loop.yaml` steps (preflight/work/between/review) each take an `agent:` ladder whose
-  rungs are targets **or preset names** (a preset rung brings its own lead ladder + roles).
-- The launch names the target positionally: `coop claude:opus@work`. The old `--model` and
-  `--credential` flags are RETIRED (tombstoned in target.go) — an account never carries a model,
-  and a model is never a flag apart from its provider.
-- There is NO persistent pool. `coop loop pool`/`pools.json` are gone; a stray `pools.json` is
-  ignored silently. "Rotate all my accounts" is just what a bare-model rung already does.
+Every surface names who runs as a target: `provider[:model][/effort][@account]`. An ordered
+fallback is a ladder of those same targets. Do not introduce a separate credential list, model
+list, or surface-specific target shape.
 
-**Why:** credentials and models were two competing axes for the same knob (which sub, which
-model), which bred a credential-first `work@opus` shorthand, a `pools.json` registry, and
-per-role credentials — three ways to say overlapping things. Making the **target** the single
-spelling (model-first, accounts fan out under it) collapses all of that: the ladder is the
-rotation, and a bare model is the old "rotate every account." The user drove this explicitly
-("model first... drop pools, v3 is a clean sheet"); v4 finished it by folding provider, model,
-effort, and account into the one target grammar.
+- A preset lead stores one non-empty `LeadTargets` ladder. On a rotating surface, a bare target
+  fans out over every runnable account for its provider; a non-rotating launch uses the provider's
+  default account. An account-pinned target selects exact accounts.
+- A native role has one target because the provider's native subagent hook cannot fail over.
+  Consult and delegate roles may have ordered target ladders. Roles never pin accounts; each rung
+  uses that provider's default account.
+- A direct agent, fork, or ACP launch accepts one positional target or preset. A preset contributes
+  its full lead ladder and roles; there is no fork- or editor-specific target schema.
+- Loop orchestration has preflight, work, between, signoff, and verify stages. `work.agent` accepts
+  target-or-preset ladders; `between.agent`, `signoff.agent`, and `verify.agent` select target
+  ladders for their review passes. Preflight intentionally uses the work rotation and has no
+  separate `agent:` field.
+- Coop's launch grammar is positional (`coop claude:opus@work`), not Coop-level `--model` or
+  `--credential` flags. Provider adapters may still emit their provider CLI's native model flag;
+  that is an implementation detail, not another Coop grammar.
+- There is no persistent rotation pool. On rotating surfaces, a bare target expresses “all
+  runnable accounts,” and ladder order expresses fallback.
 
-**How to apply:** any new rotation/fallback surface takes targets in an `agent:` key — never a
-separate credential list, never a bespoke model key. The ONE exception is the session API's
-operator policy file, which spells the same thing `target:` because that key predates ladders and
-is deployed; it takes a scalar or a list with identical parsing to a preset's `agent:`. Widening
-the existing key was chosen over renaming it (every deployed policy file would break) and over
-adding a `models:` list (a bespoke model key, and a rung is a target, not a model). Do not
-"harmonize" it to `agent:`. Resolution for a run, coarse to fine: the
-explicit command-line target > the active ladder rung (loop.yaml step or preset lead) > the
-agent-wide default (`COOP_<AGENT>_MODEL`) > the agent CLI's own default. Fan-out order for a
-bare model is marked-default account first, then the rest alphabetically (`accountsFor`). See
-[[loop-failover-profiles]] for how rotation swaps the active account each iteration, and
-[[credentials-not-profiles]] for the user-facing naming.
+The remote-session policy is the deliberate spelling exception: its deployed YAML key remains
+`target:`, accepting either one target or a list. It uses the same target parser and ladder meaning;
+do not rename it to `agent:` or add a parallel `models:` field.
+
+**Why:** separate model, credential, and pool axes created overlapping ways to select the same
+execution identity. One target grammar keeps parsing, logging, failover, and policy review aligned.
+The previous card later drifted in the opposite direction: it described scalar roles, retired loop
+stages, and nonexistent flag tombstones, putting current fallback and provider passthrough at risk.
+
+**How to apply:**
+- New fallback configuration stores an ordered target list and uses `agent.ParseTarget`.
+- Preserve bare-target account fan-out when constructing a rotation, default-account selection for
+  non-rotating launches, and first-seen ladder order.
+- Resolve model/effort from most specific to least: explicit one-off target, selected ladder target
+  (including a preset lead), the optional internal standing fallback, `COOP_<AGENT>_MODEL`, then the
+  provider default. The standing fallback's setters have no production callers; only tests exercise
+  this dormant tier. It is not preset behavior or public grammar, and new selection policy must not
+  depend on it.
+- Keep provider credentials in the host vault. Repository configuration may name an account but
+  never contain its login material.
+
+Related: [[loop-failover-profiles]] and [[credentials-not-profiles]].
 
 ## Changelog
-- 2026-09-03 — corrected the role shape after re-verifying preset parsing: native execution has
-  one target, while consult and delegate roles support ordered provider/model/effort fallbacks;
-  none may pin an account.
-- 2026-08-25 — removed the Fleet-only config rule; direct fork launches now reuse the positional
-  target-or-preset grammar instead of carrying an orchestration-specific schema.
-- 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).
-- 2026-07-03 — created
-- 2026-07-11 — revised
-- 2026-08-06 — card metadata added (format v1); body unchanged
-- 2026-08-07 — session policies gained ladders; recorded why that surface keeps `target:` instead
-  of `agent:`. Swept every rotation surface (preset lead, roles, loop.yaml steps, fleet forks,
-  session policies): 0 violations — no surface carries a separate credential list or model key.
-- 2026-08-09 — validate-on-write backfill: re-verified against internal/preset/preset.go (lead
-  ladder via `leadLadder`; a role's `Agent` takes only `first.Provider` — one target, no ladder),
-  internal/cli/fork_fleet.go (`fleetEntry.agent` is a single string; parseFleetYAML explicitly
-  rejects an account ladder — "a fork takes one account"), internal/loopcfg/loopcfg.go (every
-  step's `Agent` field is a `[]string` ladder), and internal/sessionsvc/service.go (`Target
-  yaml.Node` — the one `target:`-spelled exception). Also re-ran the `--model`/`--credential`/
-  `pools.json` greps from the 2026-08-07 sweep. 0 new violations; every claim still holds.
-- 2026-08-10 — path-only, no claim change: the fleet surface this card re-verified moved to
-  `internal/forkctl/fleet.go`, where the entry type and its parser are now exported
-  (`FleetEntry.Agent`, `ParseFleetYAML`). The one-target-one-account rule and its explicit
-  account-ladder rejection are byte-identical; only the names a grep would chase changed.
+- 2026-09-03 — re-verified preset, loop, direct-launch, and session-policy grammar after target
+  normalization. Corrected the current role ladders and five loop stages, removed nonexistent
+  tombstone claims, and explicitly preserved provider-native model flags.
+- 2026-08-25 — direct fork launches adopted the shared positional target-or-preset grammar.
+- 2026-08-10 — fork orchestration implementation moved into `internal/forkctl`.
+- 2026-08-09 — moved the session service to `internal/sessionsvc` and added source metadata.
+- 2026-08-07 — session policies gained target ladders while retaining the deployed `target:` key.
+- 2026-07-03 — created; revised 2026-07-11.

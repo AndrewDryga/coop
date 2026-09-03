@@ -6,19 +6,19 @@ The complete command reference, identical to what \fBcoop help \-\-all\fR prints
 .PP
 .nf
 coop — run a coding agent all night long in a box it can't escape.
-Usage: coop <command> [args]
+Usage: coop <command> [<args>...]
 
 AGENTS
-  coop <target>                     <agent>[:model][/effort][@account] in a box
+  coop <target>                     agent target in a box
   coop <preset>                     run a preset interactively (its lead leads)
   coop acp <target|preset>          serve as an editor agent (ACP; e.g. Zed)
   coop <target> --peer <target>...  a read-only second opinion, named peers
 
 CREDENTIALS, MODELS & PRESETS
   coop login <agent>                sign in an agent (a subscription)
-  coop credentials [agent]          stored credentials + which are signed in
-  coop models [agent]               the model menu per agent
-  coop presets [name]               orchestration recipes (lead + roles)
+  coop credentials [<agent>]        stored credentials + which are signed in
+  coop models [<agent>]             the model menu per agent
+  coop presets [<preset>]           orchestration recipes (lead + roles)
 
 THE BOX
   coop run -- <cmd...>              run a raw command in the box
@@ -30,7 +30,7 @@ FORKS — review and land work like a PR
   coop fork review <name>           show a fork's review dossier + diff
   coop fork merge <name>            rebase the fork onto your branch and land it
   coop fork merge --all             rebase and land every fork
-  coop fork logs [name]             tail a fork's loop log (no name: every fork)
+  coop fork logs [<name>]           tail a fork's loop log (no name: every fork)
   coop fork rm <name>               discard a fork
   coop fork stop <name>             stop a detached loop
   coop fork open <name>             open the fork in your editor
@@ -135,7 +135,7 @@ coop shell — open an interactive shell in the box.
 
 coop login <agent> — sign in to an agent (token persists in the config dir).
 
-  Usage: coop login <agent>[@account]
+  Usage: coop login <agent>[@<account>]
 
   Runs the agent's sign-in (paste a code, no browser). Re-run any time to
   refresh or switch accounts — e.g. after a usage limit.
@@ -147,7 +147,7 @@ coop login <agent> — sign in to an agent (token persists in the config dir).
 
 coop credentials — list stored credentials; a path grammar edits one.
 
-  Usage: coop credentials [agent [credential]]
+  Usage: coop credentials [<agent> [<credential>]]
          coop credentials <agent> <credential> default
          coop credentials <agent> <credential> rm
 
@@ -173,8 +173,8 @@ coop credentials — list stored credentials; a path grammar edits one.
 
 coop presets — YAML orchestration recipes under .agent/presets/<name>/.
 
-  Usage: coop presets [name]        list them, or show one recipe in full
-         coop presets init [name]   scaffold the frontier template (default name: frontier)
+  Usage: coop presets [<preset>]        list them, or show one recipe in full
+         coop presets init [<preset>]   scaffold the frontier template (default name: frontier)
 
   A PRESET is a runtime recipe: which agent leads, and which roles it can route
   work to — each role an agent: target or fallback list + routing hints. The lead's
@@ -253,9 +253,9 @@ coop presets — YAML orchestration recipes under .agent/presets/<name>/.
   no merging); coop presets tags a global-sourced one (global). init scaffolds into the
   repo — author a global preset by hand (or copy one there).
 
-coop models [agent] — the model menu per agent.
+coop models [<agent>] — the model menu per agent.
 
-  Usage: coop models [claude|codex|gemini|grok] [--refresh]
+  Usage: coop models [<claude|codex|gemini|grok>] [--refresh]
 
   A block per agent: its models and when that list was last refreshed. A fresh per-agent
   cache shows the agent's real list; a never- (or stale-) refreshed list is the curated
@@ -387,7 +387,7 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 
 coop context — compile the committed docs relevant to a scope (instructions + rules + KB).
 
-  Usage: coop context [--changed] [--task <id>] [--json | --rendered] [paths...]
+  Usage: coop context [--changed] [--task <id>] [--json | --rendered] [<path>...]
 
   Selects which committed docs an agent needs for the paths in play — canonical
   AGENTS.md/CLAUDE.md (always, whole) plus the .agent/project.yaml 'context.routes'

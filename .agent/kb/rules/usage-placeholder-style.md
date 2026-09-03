@@ -1,76 +1,58 @@
 ---
 name: usage-placeholder-style
-description: "one frozen `<angle>` lexicon for every usage string and error hint"
+description: "usage metavariables use angle brackets and stable names; optionality stays outside the placeholder"
 scope: cli-grammar
-sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/loop_cmd.go, internal/cli/target.go, internal/cli/conformance_test.go]
+sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/loop_cmd.go, internal/cli/models.go, internal/cli/profiles.go, internal/cli/completion.go, internal/cli/worker_cmd.go, internal/tasks/cmd.go, internal/tasks/backlog.go, internal/forkctl/rm.go, internal/forkctl/review.go, internal/forkctl/merge.go, internal/forkctl/supervise.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/cli/conformance_test.go]
 check: none
-updated: 2026-08-26
+updated: 2026-09-03
 ---
 
-# One frozen lexicon for usage placeholders
+# Put usage metavariables in angle brackets and name them consistently
 
-Every `Usage:`/`usage:` string and error hint spells a value the SAME way, in `<angle>` brackets,
-using this fixed lexicon — so a value never reads `m` here and `<m>` there:
+In `Usage:` lines, synopsis rows, and usage errors, a replaceable value uses `<angle-brackets>`.
+Optionality wraps the whole token (`[<agent>]`), alternatives stay inside one token
+(`<target|preset>`), and repetition uses ASCII `...` (`[<path>...]`). Literal flags and verbs remain
+literal.
+
+Use these established names:
 
 | Value | Placeholder |
 | --- | --- |
-| a coding agent | `<agent>` (or the literal `claude\|codex\|gemini\|grok`) |
-| a credential name | `<name>` (a bare arg) or `<credential>` (the slot in `coop credentials <agent> <credential> …`) |
-| a model | `<model>` |
-| a target | `<target>` |
-| a preset name | `<preset>` |
-| a target-or-preset slot | `<target|preset>` |
-| a filesystem path (dir or file) | `<path>` |
-| a task id | `<id>` |
-| a count | `<n>` |
-| "one or more" / continuation | ASCII `...` — never the Unicode `…` |
+| command and trailing arguments | `<command>`, `<args>...`, or the established raw-command `<cmd...>` |
+| Coop/provider argument groups | `<coop-flags>`, `<agent-args>...` |
+| coding agent or account | `<agent>`, `<account>` |
+| stored credential | `<credential>` |
+| model, target, preset | `<model>`, `<target>`, `<preset>`, `<target|preset>` |
+| fork or other resource name | `<name>` |
+| filesystem path | `<path>` or `<absolute-path>` when absoluteness is required |
+| task/ref/count/shell | `<id>`, `<ref>`, `<n>`, `<bash|zsh>` |
+| structured task fields | `<title>`, `<project>`, `<context>`, `<acceptance>`, `<approach>`, `<subtask>` |
+| prompt text | `<prompt>` |
 
-**Why:** the v3 audit found the same value spelled `p` / `<name>`, `m` / `<m>` / `<model>`,
-`<dir>` / `<path>`, and Unicode vs ASCII ellipses across help and error strings — noise that makes
-the CLI read as several tools. A user shouldn't have to learn that `m` and `<model>` mean the same.
+Provider literals may replace `<agent>` when listing the closed accepted set, for example
+`<claude|codex|gemini|grok>`. A usage error that interpolates an actual chosen value may print that
+value literally; it is no longer a metavariable.
+
+**Why:** bare forms such as `[agent [credential]]`, `[name]`, `[paths...]`, and single-letter
+placeholders make values look like fixed syntax and force users to learn several spellings for the
+same slot. The vocabulary is intentionally descriptive, not artificially frozen: current commands
+legitimately need paths, refs, task fields, and argument groups that the old table omitted.
 
 **How to apply:**
-- A new usage/error string → use the placeholders above; wrap in `<…>`; ASCII `...` for repetition.
-- Never abbreviate to a single letter (`p`, `m`) and never use the Unicode ellipsis in a usage string.
-- NOT comprehensively mechanically gated. `TestCLIConformance`
-  (`internal/cli/conformance_test.go`) locks the target-valued launch and peer subset across current
-  help plus parser errors, but it does not inspect every usage string for the full lexicon. Enforce
-  the remaining placeholders in review until one gate covers the whole card, then put that command
-  in `check:`.
+- Reuse the nearest semantic placeholder before adding a new one; never abbreviate a value to one
+  letter.
+- Keep `...` outside a closing angle bracket for repeated individual values. Preserve `<cmd...>`
+  only for the established raw-command tail, where command and arguments are intentionally one slot.
+- `TestCLIConformance/usage_metavariables` pins the public forms that previously drifted, and its
+  target-placeholder subtest covers launch/peer grammar. The card remains `check: none` because
+  provider-specific usage errors are not exhaustively parsed; review still owns the full rule.
 
-See also [[help-output-style]].
+Related: [[help-output-style]].
 
 ## Changelog
-- 2026-08-26 — added a focused target-valued launch and peer regression to `TestCLIConformance`:
-  current top-level, agent, ACP, loop, and fork help plus parser error hints must use `<target>` or
-  `<target|preset>`, never provider-only `<agent>`, undefined `<peer>`, or bare `[target|preset]`.
-- 2026-08-25 — added the target/preset placeholders used by every launch surface and normalized
-  the changed fork/loop synopses to keep values inside angle brackets.
-- 2026-07-02 — created
-- 2026-07-11 — revised
-- 2026-08-06 — card metadata added; corrected the stale conformance claim — TestCLIConformance landed, but it covers ls/rm/help rows, NOT the placeholder lexicon
-- 2026-08-09 — validate-on-write backfill: swept every `Usage:`/`usage:` string and error hint in
-  internal/cli/*.go (non-test), including help.go's full `commandHelp` text blocks. 2 violation
-  clusters found: (1) Unicode ellipsis `…` instead of the required ASCII `...` in the `--peer`
-  repeatable-flag documentation and its runtime error hint — help.go:98,258,437,470,709,777 and
-  commands.go:319,1676; help.go:709's own `coop loop` Usage: line mixes both forms
-  (`[--tasks <path>]...` ASCII, correct, vs `[--peer <peer>…]` Unicode, wrong) in one string. (2)
-  Single-letter placeholders in taskcmd.go:368's add-task usage error — ``usage: coop %s "<title>"
-  [--context <c> --acceptance <a> --approach <p> --subtask <s>...]`` — the exact `p`/`m`-style
-  abbreviation the rule's own "Why" section names. Both queued for the lead as violations, not
-  fixed here.
-- 2026-08-09 — fixed sweep: both clusters above corrected. `…`→`...` at help.go:98,258,437,470,778
-  and its now-doubled site help.go:710 (`[@account,…]` and `[--peer <peer>…]` in the same `coop
-  loop` Usage: line), plus commands.go:319 and commands.go:1676 (same `[@account,…]` +
-  `[--peer <agent>]…` pair, error-hint form). Also normalized tasks.go:352's `add "…"` hint to the
-  established `add "<title>"` form (same value, same rule). taskcmd.go:368's single letters moved
-  to taskcmd.go:371 by intervening commits; `<c>/<a>/<p>/<s>` → `<context>/<acceptance>/<approach>/
-  <subtask>`, matching the flag names. help.go:258's column layout is auto-computed by rune count
-  (`row`/manual two-space columns) and stayed aligned; verified by rendering `coop help`/`help
-  <agent>`/`help loop`/`help fusion`. `make docs` regenerated docs/cli.md, docs/man/coop.1,
-  site/llms.txt with no other drift. Left every other `…` hit in internal/cli/*.go alone —
-  narrative comments, truncation ellipses (util.go's `truncate`, acpcontrol.go tool-title/history
-  elision, commands.go's log-tail clip, loopchanges.go's audit-evidence clip), live status/list
-  narration (ratelimit.go's countdown, taskcmd.go/taskwatch.go's "+N more" elision), and the
-  unrelated `<…>` task-scaffold "fill this in" marker in taskcmd.go (294/378/1874/1916) — none are
-  a `Usage:`/`usage:` string or error hint.
+- 2026-09-03 — corrected the audited Coop help/parser and shipped wrapper forms, expanded the
+  honest vocabulary, and added a focused conformance regression. Kept `check: none` because that
+  test deliberately does not claim exhaustive provider-argument parsing.
+- 2026-08-26 — added focused target/peer placeholder coverage to `TestCLIConformance`.
+- 2026-08-09 — normalized Unicode ellipses, task-field abbreviations, and task title usage.
+- 2026-07-02 — created; revised 2026-07-11.

@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Rule cards now describe the current target and help contracts.** Rotation guidance distinguishes
+  fresh loop attempts, stateful editor ACP recovery, and durable remote-session movement; target
+  grammar, loop stages, help checks, list sources, and usage placeholders now match the code they
+  govern without removing any fallback or provider-native behavior.
+
 - **Workflow skills now capture follow-up work consistently.** Ready fixes go to the task queue,
   while only genuinely large or unscoped work goes to the backlog. Skills use an available proposal
   route or a PATH-gated Coop command, with a self-contained task-folder fallback inside boxes.

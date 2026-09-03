@@ -90,7 +90,7 @@ func renderDelegate(as []delegateInput) string {
 const delegateWrapperTmpl = `#!/bin/sh
 # coop-delegate — hand a write-capable delegate role one implementation task.
 # Generated and mounted by coop from the active preset; do not edit.
-#   coop-delegate <role> [prompt]
+#   coop-delegate <role> [<prompt>]
 # The prompt is the trailing argument, or piped on stdin (use a quoted heredoc).
 # The delegate MAY edit the worktree; it must NOT commit — the lead reviews the
 # diff, runs the gate, and owns the commit. Runs are serialized via a global lock.
@@ -115,7 +115,7 @@ case "${COOP_DELEGATE_DEPTH:-0}" in
 esac
 COOP_DELEGATE_DEPTH=1
 export COOP_DELEGATE_DEPTH
-[ "$#" -ge 1 ] || die "usage: coop-delegate <role> [prompt]"
+[ "$#" -ge 1 ] || die "usage: coop-delegate <role> [<prompt>]"
 role=$1
 shift
 case "$role" in

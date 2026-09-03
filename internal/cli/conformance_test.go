@@ -116,7 +116,7 @@ func TestCLIConformance(t *testing.T) {
 		}
 		for name, want := range map[string]string{
 			"top-level help":        "coop <target> --peer <target>...",
-			"agent help":            "Usage: coop <target> [coop flags]",
+			"agent help":            "Usage: coop <target> [<coop-flags>]",
 			"ACP help":              "coop acp <target|preset> [--peer <target>...]",
 			"ACP usage error":       "coop acp <target|preset> [--peer <target>...]",
 			"loop help":             "coop loop [<target|preset>]",
@@ -128,6 +128,62 @@ func TestCLIConformance(t *testing.T) {
 			"loop usage error":      "--peer <target>",
 			"peer usage error":      "--peer <target>",
 			"no-provider error":     "coop loop <target|preset>",
+		} {
+			if !strings.Contains(surfaces[name], want) {
+				t.Errorf("%s missing canonical form %q", name, want)
+			}
+		}
+	})
+
+	// usage-placeholder-style: optional metavariables remain visibly distinct from literal flags
+	// and verbs. This pins the public help/error surfaces that previously used bare [agent], [name],
+	// [paths...], and [@account] forms without pretending to parse every provider-owned argument.
+	t.Run("usage_metavariables", func(t *testing.T) {
+		errorText := func(name string, err error) string {
+			t.Helper()
+			if err == nil {
+				t.Errorf("%s unexpectedly succeeded; usage error surface is untested", name)
+				return ""
+			}
+			return err.Error()
+		}
+		a := newApp()
+		_, presetErr := a.cmdPresets([]string{"frontier", "extra"})
+		_, presetInitErr := a.presetsInit(t.TempDir(), []string{"frontier", "extra"})
+		_, loginErr := a.cmdLogin(nil)
+		surfaces := map[string]string{
+			"top-level help":    renderHelp(a.cfg, true),
+			"agent help":        agentHelp,
+			"credentials help":  commandHelp["credentials"],
+			"login help":        commandHelp["login"],
+			"models help":       commandHelp["models"],
+			"presets help":      commandHelp["presets"],
+			"context help":      commandHelp["context"],
+			"preset error":      errorText("extra preset argument", presetErr),
+			"preset init error": errorText("extra preset init argument", presetInitErr),
+			"login error":       errorText("missing login target", loginErr),
+		}
+		for name, surface := range surfaces {
+			for _, bare := range []string{
+				" [args]", " [agent", " [credential", " [name]", "[paths...]", "[@account]",
+				"[coop flags]", "<agent args>",
+			} {
+				if strings.Contains(surface, bare) {
+					t.Errorf("%s uses bare metavariable form %q", name, bare)
+				}
+			}
+		}
+		for name, want := range map[string]string{
+			"top-level help":    "Usage: coop <command> [<args>...]",
+			"agent help":        "Usage: coop <target> [<coop-flags>] [-- <agent-args>...]",
+			"credentials help":  "coop credentials [<agent> [<credential>]]",
+			"login help":        "coop login <agent>[@<account>]",
+			"models help":       "coop models [<agent>]",
+			"presets help":      "coop presets init [<preset>]",
+			"context help":      "[<path>...]",
+			"preset error":      "coop presets [init] [<preset>]",
+			"preset init error": "coop presets init [<preset>]",
+			"login error":       "coop login <" + strings.Join(agents.Names(), "|") + ">[@<account>]",
 		} {
 			if !strings.Contains(surfaces[name], want) {
 				t.Errorf("%s missing canonical form %q", name, want)
