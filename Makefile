@@ -78,7 +78,7 @@ docs-check: ## Fail if the committed CLI docs drifted from help.go (run 'make do
 align: require-python3 ## Check trailing-# comment alignment in README + site + CLI docs (--write to fix)
 	@python3 tools/align-comments.py --check
 
-casts: build require-python3 ## Regenerate + safety-check site terminal casts (refuses a dirty/untagged ./coop; needs python3)
+casts: require-python3 ## Regenerate + safety-check site terminal casts (needs python3)
 	@python3 tools/gen_casts.py
 	@python3 tools/cast_hygiene.py site/casts
 

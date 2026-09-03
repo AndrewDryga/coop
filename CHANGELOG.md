@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The unused help recording is gone.** The site keeps its five embedded terminal casts, while
+  cast generation and releases no longer build or recapture an unreferenced version-stamped asset.
+
 - **Task archive removal has one spelling.** Use `coop tasks rm --all-done`; the duplicate
   `coop tasks clear` alias is gone before release.
 

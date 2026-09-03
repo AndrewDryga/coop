@@ -2,16 +2,11 @@
 """
 Generate asciinema v2 .cast files for the coop website (site/casts/*.cast).
 
-No third-party dependencies — just the stdlib. There are two kinds of scene:
-
-  • A real capture (`capture_output`) runs an actual coop command under a PTY and
-    records its true, colored output. Used for `coop help`, so that cast is genuine.
-
-  • A scripted scene reconstructs coop's live output faithfully — every line, color,
-    and glyph matches internal/ui/ui.go and internal/cli/streamjson.go. These cover
-    the flows that need a container runtime and signed-in (paid) agents to run for
-    real: the loop, forks, doctor, check-secrets. To capture a
-    real one instead, run e.g.  `asciinema rec -c "coop loop" site/casts/loop.cast`.
+No third-party dependencies — just the stdlib. The scripted scenes reconstruct coop's
+live output faithfully: every line, color, and glyph matches internal/ui/ui.go and
+internal/cli/streamjson.go. They cover flows that need a container runtime and signed-in
+(paid) agents to run for real: an agent, the loop, forks, doctor, and check-secrets. To
+capture a real one instead, run e.g. `asciinema rec -c "coop loop" site/casts/loop.cast`.
 
 Usage:  python3 tools/gen_casts.py              # (re)write every cast
         python3 tools/gen_casts.py loop fork    # only the named ones
@@ -168,34 +163,6 @@ class Cast:
         finally:
             pending.unlink(missing_ok=True)
         print(f"wrote {path.relative_to(ROOT)}  ({len(self.ev)} events, {self.t:.1f}s)")
-
-
-def capture_output(argv, cwd=ROOT, cols=88, rows=44):
-    """Run argv under a PTY and return its real, colored output as one string."""
-    import fcntl
-    import struct
-    import termios
-    import pty
-    import subprocess
-
-    master, slave = pty.openpty()
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-    env = {**os.environ, "TERM": "xterm-256color", "CLICOLOR_FORCE": "1", "COLUMNS": str(cols)}
-    env.pop("NO_COLOR", None)
-    p = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, cwd=str(cwd), env=env)
-    os.close(slave)
-    chunks = []
-    while True:
-        try:
-            data = os.read(master, 65536)
-        except OSError:
-            break
-        if not data:
-            break
-        chunks.append(data)
-    p.wait()
-    os.close(master)
-    return b"".join(chunks).decode("utf-8", "replace")
 
 
 # ===========================================================================
@@ -460,58 +427,12 @@ def scene_claude():
     c.write()
 
 
-def _coop_version(coop_bin):
-    """The version string `./coop version` reports (e.g. 'coop v3.0.0'), or '' if it won't run."""
-    import subprocess
-
-    try:
-        r = subprocess.run([str(coop_bin), "version"], cwd=str(ROOT),
-                           capture_output=True, text=True, timeout=10)
-        return (r.stdout or "").strip()
-    except Exception:
-        return ""
-
-
-def _require_clean_coop():
-    """Refuse to capture help.cast from an untagged/dirty ./coop — the recording embeds the version
-    string, and a dev/+dirty binary shipped a `coop v0.0.0-...+dirty` line to the site once. A missing
-    binary is fine (scene_help just skips; scripted scenes carry no version); only a present-but-dirty
-    one is fatal, so `make casts` off a clean release tag just works."""
-    coop_bin = ROOT / "coop"
-    if not coop_bin.exists():
-        return
-    ver = _coop_version(coop_bin)
-    if (not ver) or ("dirty" in ver) or ("v0.0.0" in ver) or ver.split()[-1] in ("dev", "(devel)"):
-        sys.exit(
-            f"refusing to capture help.cast from an untagged/dirty coop ({ver or 'no version'}).\n"
-            "The cast records this version string, so the site would ship it. Regenerate from a\n"
-            "clean release tag (e.g. `git checkout v3.0.0 && make casts`)."
-        )
-
-
-def scene_help():
-    """Real, colored `coop help`, captured under a PTY."""
-    coop_bin = ROOT / "coop"
-    if not coop_bin.exists():
-        print("skip help: build ./coop first (make build)")
-        return
-    out = capture_output([str(coop_bin), "help"], cols=104)
-    if "\r\n" not in out:
-        out = out.replace("\n", "\r\n")
-    c = Cast("help", cols=104, rows=50, title="coop help")
-    c.command("coop help")
-    c.raw(out, after=0.2)
-    c.sleep(1.2)
-    c.write()
-
-
 SCENES = {
     "loop": scene_loop,
     "doctor": scene_doctor,
     "fork": scene_fork,
     "secrets": scene_secrets,
     "claude": scene_claude,
-    "help": scene_help,
 }
 
 
@@ -520,8 +441,6 @@ def main():
     unknown = [w for w in want if w not in SCENES]
     if unknown:
         sys.exit(f"unknown scene(s): {', '.join(unknown)}  (have: {', '.join(SCENES)})")
-    if "help" in want:
-        _require_clean_coop()  # fail fast, before any cast is written
     for name in want:
         SCENES[name]()
 

@@ -48,14 +48,13 @@ python3 tools/gen_casts.py loop fork  # just the named ones
 make casts-check                      # validate the checked-in recordings
 ```
 
-`coop help` is captured live from the real binary. The dynamic flows (the loop,
-forks, doctor, check-secrets) are **scripted reconstructions** —
-their colors and glyphs match `internal/ui` and `internal/cli/streamjson.go` exactly,
-so the docs show coop's real terminal experience without needing a container runtime
-and signed-in (paid) agents to run for real. Real dogfood runs are retained with their
-task first, not written directly into `site/casts/`. The helper records in the system
-temporary directory, validates the completed recording, then re-resolves the task in
-case it moved states and promotes the cast into its durable artifacts:
+The five published casts are **scripted reconstructions**. Their colors and glyphs match
+`internal/ui` and `internal/cli/streamjson.go`, so the docs show coop's real terminal
+experience without needing a container runtime and signed-in (paid) agents to run for
+real. Real dogfood runs are retained with their task first, not written directly into
+`site/casts/`. The helper records in the system temporary directory, validates the
+completed recording, then re-resolves the task in case it moved states and promotes the
+cast into its durable artifacts:
 
 ```bash
 python3 tools/capture_cast.py \
