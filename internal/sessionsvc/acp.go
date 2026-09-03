@@ -51,6 +51,7 @@ const (
 	sessionACPWarmLimit       = 20
 	sessionACPStderrLimit     = 4 << 10
 	sessionACPRejectionLimit  = 300
+	sessionACPAirVersion      = 1
 )
 
 // One initial candidate plus two corrections keeps a broken model from
@@ -2511,7 +2512,7 @@ func (r *sessionTurnRunner) runACP(
 	if !process.initialized {
 		initializeResult, err := request("initialize", map[string]any{
 			"protocolVersion":    1,
-			"clientCapabilities": map[string]any{},
+			"clientCapabilities": sessionACPClientCapabilities(),
 		}, "")
 		if err != nil {
 			return "", nil, session.Usage{}, err
@@ -2612,11 +2613,25 @@ func (r *sessionTurnRunner) runACP(
 		StopReason string    `json:"stopReason"`
 		Usage      *acpUsage `json:"usage"`
 		Meta       *struct {
-			Usage *acpUsage `json:"usage"`
+			Usage     *acpUsage `json:"usage"`
+			JetBrains struct {
+				Air struct {
+					Version        int                        `json:"version"`
+					SessionFailure *sessionACPTerminalFailure `json:"sessionFailure"`
+				} `json:"air"`
+			} `json:"jetbrains"`
 		} `json:"_meta"`
 	}
 	if json.Unmarshal(result, &promptResult) != nil || !validACPStopReason(promptResult.StopReason) {
 		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "session/prompt returned an invalid stop reason")
+	}
+	if promptResult.Meta != nil {
+		if failure := sessionACPTerminalFailureError(
+			promptResult.Meta.JetBrains.Air.Version,
+			promptResult.Meta.JetBrains.Air.SessionFailure,
+		); failure != nil {
+			return "", nil, session.Usage{}, failure
+		}
 	}
 	if promptResult.StopReason == "cancelled" || promptResult.StopReason == "error" {
 		return "", nil, session.Usage{}, acpFailure(sessionACPCancelledError, "ACP prompt was cancelled")
@@ -2655,6 +2670,80 @@ func (r *sessionTurnRunner) runACP(
 	}
 	usage.CostUSD, usage.CostRecorded = cumulativeCostUSD, costRecorded
 	return string(assistant), outputArtifacts, usage, nil
+}
+
+// sessionACPClientCapabilities opts into the one adapter extension Coop consumes. Without it,
+// codex-acp turns terminal provider failures into compatibility text, which is indistinguishable
+// from an assistant answer and can be misclassified as invalid structured output.
+func sessionACPClientCapabilities() map[string]any {
+	return map[string]any{
+		"_meta": map[string]any{
+			"jetbrains": map[string]any{
+				"air": map[string]any{
+					"version":      sessionACPAirVersion,
+					"capabilities": []string{"sessionFailure"},
+				},
+			},
+		},
+	}
+}
+
+type sessionACPTerminalFailure struct {
+	ID       string   `json:"id"`
+	Revision int      `json:"revision"`
+	Category string   `json:"category"`
+	Severity string   `json:"severity"`
+	Title    string   `json:"title"`
+	Actions  []string `json:"actions"`
+}
+
+func sessionACPTerminalFailureError(version int, failure *sessionACPTerminalFailure) error {
+	if failure == nil {
+		return nil
+	}
+	if version < sessionACPAirVersion || failure.ID == "" || failure.Revision < 1 ||
+		failure.Severity != "error" || strings.TrimSpace(failure.Title) == "" ||
+		len(failure.Actions) > 8 {
+		return acpFailure(sessionACPProtocolError, "ACP typed provider failure was malformed")
+	}
+
+	switch failure.Category {
+	case "limit":
+		if sessionACPFailureHasAction(failure, "retry") {
+			return &sessionACPFailure{
+				code:   sessionACPRateLimited,
+				detail: sessionACPBoundedDetail("provider rate limited the turn", failure.Title),
+			}
+		}
+		return acpFailure(sessionACPProtocolError,
+			sessionACPBoundedDetail("provider limit prevented the turn", failure.Title))
+	case "connection":
+		return acpFailure(sessionACPProtocolError,
+			sessionACPBoundedDetail("provider connection failed", failure.Title))
+	case "service":
+		return acpFailure(sessionACPProtocolError,
+			sessionACPBoundedDetail("provider service unavailable", failure.Title))
+	case "access":
+		return acpFailure(sessionACPProtocolError,
+			sessionACPBoundedDetail("provider authentication failed", failure.Title))
+	case "request":
+		return acpFailure(sessionACPProtocolError,
+			sessionACPBoundedDetail("provider rejected the request", failure.Title))
+	case "unknown":
+		return acpFailure(sessionACPProtocolError,
+			sessionACPBoundedDetail("provider failed", failure.Title))
+	default:
+		return acpFailure(sessionACPProtocolError, "ACP typed provider failure was malformed")
+	}
+}
+
+func sessionACPFailureHasAction(failure *sessionACPTerminalFailure, action string) bool {
+	for _, candidate := range failure.Actions {
+		if candidate == action {
+			return true
+		}
+	}
+	return false
 }
 
 func sessionACPUpdateTranscriptBytes(raw json.RawMessage, frameBytes int, imageFrame bool) int {

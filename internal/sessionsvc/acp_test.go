@@ -143,6 +143,99 @@ func TestStructuredResultExcludesCodexProgressCommentary(t *testing.T) {
 	}
 }
 
+// A full Responder model-world run recorded four upstream Codex 404s as invalid JSON because
+// compatibility-mode error prose reached the output validator. Typed ACP failure metadata is the
+// provider result; assistant bytes from that failed turn must never spend schema-repair attempts.
+func TestTypedProviderFailurePreemptsOutputContractValidation(t *testing.T) {
+	fixture := newSessionACPFixture(t, "typed-provider-failure")
+	leased := fixture.submitContract(t, "return the result")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased)
+	if err == nil {
+		t.Fatal("typed provider failure completed the turn")
+	}
+	if result.State != session.TurnFailed || result.ErrorCode != sessionACPProtocolError ||
+		result.ErrorDetail != "provider service unavailable: upstream temporarily unavailable" ||
+		result.AssistantMessage != "" {
+		t.Fatalf("typed provider failure = %+v, err=%v", result, err)
+	}
+	methods := readSessionACPLog(t, fixture.childLog)
+	if got := countStrings(methods, "session/prompt"); got != 1 {
+		t.Fatalf("session/prompt calls = %d, want no schema repair; methods=%v", got, methods)
+	}
+	if wire := readFile(t, fixture.childLog); !strings.Contains(wire, `"capabilities":["sessionFailure"]`) {
+		t.Fatalf("ACP initialize did not advertise typed failures: %s", wire)
+	}
+	events, eventErr := fixture.store.ListEvents(context.Background(), fixture.session.ID, 0, 50)
+	if eventErr != nil {
+		t.Fatal(eventErr)
+	}
+	for _, event := range events {
+		if event.Type == session.EventOutputContractRejected {
+			t.Fatalf("typed provider failure reached output validation: %s", event.Payload)
+		}
+	}
+}
+
+func TestTypedProviderRateLimitKeepsTheLadderSignal(t *testing.T) {
+	fixture := newSessionACPFixture(t, "typed-provider-rate-limit")
+	leased := fixture.submitContract(t, "return the result")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased)
+	if err == nil {
+		t.Fatal("typed provider rate limit completed the turn")
+	}
+	if result.State != session.TurnFailed || result.ErrorCode != sessionACPRateLimited ||
+		result.AssistantMessage != "" {
+		t.Fatalf("typed provider rate limit = %+v, err=%v", result, err)
+	}
+	if got := countStrings(readSessionACPLog(t, fixture.childLog), "session/prompt"); got != 1 {
+		t.Fatalf("session/prompt calls = %d, want no schema repair", got)
+	}
+}
+
+func TestMalformedTypedProviderFailureFailsClosed(t *testing.T) {
+	valid := sessionACPTerminalFailure{
+		ID: "turn:error", Revision: 1, Category: "service", Severity: "error",
+		Title: "temporarily unavailable", Actions: []string{"retry"},
+	}
+	missingIdentity := valid
+	missingIdentity.ID = ""
+	missingRevision := valid
+	missingRevision.Revision = 0
+	warning := valid
+	warning.Severity = "warning"
+	blankTitle := valid
+	blankTitle.Title = " \n"
+	unknownCategory := valid
+	unknownCategory.Category = "surprise"
+	unboundedActions := valid
+	unboundedActions.Actions = make([]string, 9)
+	cases := map[string]struct {
+		version int
+		failure sessionACPTerminalFailure
+	}{
+		"old extension":       {version: 0, failure: valid},
+		"missing identity":    {version: 1, failure: missingIdentity},
+		"missing revision":    {version: 1, failure: missingRevision},
+		"nonterminal warning": {version: 1, failure: warning},
+		"blank title":         {version: 1, failure: blankTitle},
+		"unknown category":    {version: 1, failure: unknownCategory},
+		"unbounded actions":   {version: 1, failure: unboundedActions},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := sessionACPTerminalFailureError(tc.version, &tc.failure)
+			var failure *sessionACPFailure
+			if !errors.As(err, &failure) || failure.code != sessionACPProtocolError ||
+				failure.detail != "ACP typed provider failure was malformed" {
+				t.Fatalf("malformed typed failure = %v", err)
+			}
+		})
+	}
+	if err := sessionACPTerminalFailureError(sessionACPAirVersion, nil); err != nil {
+		t.Fatalf("absent typed failure = %v", err)
+	}
+}
+
 func TestRepeatedInvalidStructuredResultNeverCompletes(t *testing.T) {
 	fixture := newSessionACPFixture(t, "invalid-contract-always")
 	leased := fixture.submitContract(t, "return the result")
@@ -2652,6 +2745,27 @@ func TestSessionACPChildHelper(t *testing.T) {
 		case "session/prompt":
 			promptCount++
 			switch scenario {
+			case "typed-provider-failure", "typed-provider-rate-limit":
+				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+					"sessionId": frame.Params.SessionID, "update": map[string]any{
+						"sessionUpdate": "agent_message_chunk",
+						"content":       map[string]string{"type": "text", "text": "We could not complete this request."},
+					},
+				}})
+				category, title := "service", "upstream temporarily unavailable"
+				if scenario == "typed-provider-rate-limit" {
+					category, title = "limit", "provider rate limited the turn"
+				}
+				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
+					"stopReason": "end_turn",
+					"_meta": map[string]any{"jetbrains": map[string]any{"air": map[string]any{
+						"version": 1,
+						"sessionFailure": map[string]any{
+							"id": "turn:error", "revision": 1, "category": category,
+							"severity": "error", "title": title, "actions": []string{"retry"},
+						},
+					}}},
+				}})
 			case "invalid-contract-once", "invalid-contract-always", "valid-contract", "valid-contract-with-commentary", "semantic-tool-image-output", "schema-repair-tool-image-output":
 				message := `{"reply":"valid"}`
 				if scenario == "invalid-contract-once" {
