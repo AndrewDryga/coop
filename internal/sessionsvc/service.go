@@ -880,6 +880,41 @@ func ResolvedPolicyDigest(policy Policy) string {
 	return resolvedSessionPolicyDigest(policy)
 }
 
+// ResolvedPolicyAuthorityDigest identifies the authority shared by policies that differ only in
+// model, reasoning effort, or resource budgets. Provider accounts remain part of authority: a
+// faster model must not silently select a wider credential set.
+func ResolvedPolicyAuthorityDigest(policy Policy) string {
+	type authorityTarget struct {
+		Provider string   `json:"provider"`
+		Accounts []string `json:"accounts,omitempty"`
+	}
+	targets := make([]authorityTarget, 0, len(policy.Targets))
+	for _, target := range policy.Targets {
+		targets = append(targets, authorityTarget{
+			Provider: target.Provider,
+			Accounts: append([]string(nil), target.Accounts...),
+		})
+	}
+	canonical := struct {
+		Repository         string            `json:"repository"`
+		Remote             string            `json:"remote,omitempty"`
+		Branch             string            `json:"branch,omitempty"`
+		Companions         []CompanionPolicy `json:"companions,omitempty"`
+		Targets            []authorityTarget `json:"targets"`
+		OmitEnv            bool              `json:"omit_env,omitempty"`
+		OmitMCP            bool              `json:"omit_mcp,omitempty"`
+		RepositoryReadOnly bool              `json:"repository_read_only,omitempty"`
+	}{
+		Repository: policy.Repository, Remote: policy.Remote, Branch: policy.Branch,
+		Companions: append([]CompanionPolicy(nil), policy.Companions...), Targets: targets,
+		OmitEnv: policy.OmitEnv, OmitMCP: policy.OmitMCP,
+		RepositoryReadOnly: policy.RepositoryReadOnly,
+	}
+	data, _ := json.Marshal(canonical)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
 func (s *Service) Store() *session.Store { return s.store }
 
 func (s *Service) lockOperation(key string) func() {
@@ -2046,6 +2081,7 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		// A session starts on the ladder's first rung; a rate limit rotates it to the next.
 		ID: intent.SessionID, ExternalRef: intent.Task, Target: intent.Policy.Targets[0].String(), Policy: intent.Policy.Name,
 		PolicyDigest:       resolvedSessionPolicyDigest(intent.Policy),
+		AuthorityDigest:    ResolvedPolicyAuthorityDigest(intent.Policy),
 		OmitEnv:            intent.Policy.OmitEnv,
 		OmitMCP:            intent.Policy.OmitMCP,
 		ResponderBinding:   cloneResponderBinding(intent.ResponderBinding),

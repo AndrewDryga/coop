@@ -43,6 +43,7 @@ type SessionDTO struct {
 	Target                 string                      `json:"target"`
 	Policy                 string                      `json:"policy"`
 	PolicyDigest           string                      `json:"policy_digest"`
+	AuthorityDigest        string                      `json:"authority_digest"`
 	ProjectEnv             bool                        `json:"project_env"`
 	ProjectMCP             bool                        `json:"project_mcp"`
 	ResponderBindingDigest string                      `json:"responder_binding_digest,omitempty"`
@@ -1361,7 +1362,8 @@ func publicSession(value session.Session) SessionDTO {
 	}
 	return SessionDTO{
 		ID: value.ID, ExternalRef: value.ExternalRef, Target: value.Target, Policy: value.Policy,
-		PolicyDigest: value.PolicyDigest, ProjectEnv: value.ProjectEnv, ProjectMCP: value.ProjectMCP,
+		PolicyDigest: value.PolicyDigest, AuthorityDigest: value.AuthorityDigest,
+		ProjectEnv: value.ProjectEnv, ProjectMCP: value.ProjectMCP,
 		RepositoryReadOnly:     value.RepositoryReadOnly,
 		ResponderBindingDigest: session.ResponderBindingDigest(value.ResponderBinding),
 		WorkspaceTask:          publicWorkspaceTask(value.WorkspaceTask),

@@ -225,6 +225,12 @@ ALTER TABLE turns ADD COLUMN responder_endpoint TEXT NOT NULL DEFAULT '';
 ALTER TABLE turns ADD COLUMN responder_token TEXT NOT NULL DEFAULT '';
 `
 
+// Policy identity includes model and budget choices. Keep the model-independent authority digest
+// beside it so a controller can prove that differently sized execution lanes cannot widen access.
+const schemaV19 = `
+ALTER TABLE sessions ADD COLUMN authority_digest TEXT NOT NULL DEFAULT '';
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -349,6 +355,12 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v18: %w", err)
 		}
 		version = 18
+	}
+	if version < 19 {
+		if _, err := tx.Exec(schemaV19); err != nil {
+			return fmt.Errorf("migrate schema v19: %w", err)
+		}
+		version = 19
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)

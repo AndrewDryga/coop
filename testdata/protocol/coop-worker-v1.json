@@ -10,6 +10,7 @@
       "clock_at": "2026-08-29T12:00:00Z",
       "sandbox_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "policy_digests": {"responder-read-only-v1": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+      "policy_authority_digests": {"responder-read-only-v1": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
       "repositories": [{"ref": "responder", "revision": "commit:abc123"}],
       "capabilities": [{"name": "responder-state", "version": "1"}],
       "capacity": {

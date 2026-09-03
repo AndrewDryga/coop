@@ -248,12 +248,16 @@ func TestSessionPoliciesPrintsDigestsFromTheTrustedPolicyFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.PolicyFile != policyPath || len(result.PolicyDigests) != len(loaded) {
+	if result.PolicyFile != policyPath || len(result.PolicyDigests) != len(loaded) ||
+		len(result.PolicyAuthorityDigests) != len(loaded) {
 		t.Fatalf("sessions policies result = %+v", result)
 	}
 	for name, policy := range loaded {
 		if got, want := result.PolicyDigests[name], sessionsvc.ResolvedPolicyDigest(policy); got != want {
 			t.Errorf("policy %q digest = %q, want %q", name, got, want)
+		}
+		if got, want := result.PolicyAuthorityDigests[name], sessionsvc.ResolvedPolicyAuthorityDigest(policy); got != want {
+			t.Errorf("policy %q authority digest = %q, want %q", name, got, want)
 		}
 	}
 }

@@ -26,6 +26,7 @@ func TestConnectorConfigurationBuildsOnlyAProtocolValidWorker(t *testing.T) {
   "journal_dir": "` + filepath.Join(directory, "journal") + `",
   "sandbox_digest": "` + repeatedDigest("a") + `",
   "policy_digests": {"work-read-only": "` + repeatedDigest("b") + `"},
+  "policy_authority_digests": {"work-read-only": "` + repeatedDigest("c") + `"},
   "repositories": [{"ref":"responder","revision":"commit:abc123"}],
   "capabilities": [{"name":"responder-state","version":"1"}],
   "capacity": {"session_slots_free":2,"session_slots_total":2,"turn_slots_free":2,"turn_slots_total":2,"workspace_slots_free":1,"workspace_slots_total":1,"state":"eligible","cooldown_until":null},
@@ -43,6 +44,9 @@ func TestConnectorConfigurationBuildsOnlyAProtocolValidWorker(t *testing.T) {
 	}
 	if configuration.Hello.ID != "worker-a" || configuration.Hello.BuildVersion != "coop-test" || configuration.PollInterval != time.Second {
 		t.Fatalf("configuration = %+v", configuration)
+	}
+	if configuration.Hello.PolicyAuthorityDigests["work-read-only"] != repeatedDigest("c") {
+		t.Fatalf("worker authority digests = %+v", configuration.Hello.PolicyAuthorityDigests)
 	}
 
 	unknown := filepath.Join(directory, "unknown.json")

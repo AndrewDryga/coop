@@ -857,7 +857,8 @@ func (s *Store) validateHistoricalSplitSessionTx(
 		return fmt.Errorf("read historical inner create operation: %w", err)
 	}
 	if inner.Method != "CreateSession" || inner.State != OperationSucceeded ||
-		inner.RequestHash != requestHash || inner.ResourceType != "session" || inner.ResourceID != sess.ID {
+		!historicalCreateRequestHashMatches(inner.RequestHash, requestHash, req, sess) ||
+		inner.ResourceType != "session" || inner.ResourceID != sess.ID {
 		return ErrOperationIntentConflict
 	}
 	innerSession, err := s.replaySession(inner)
@@ -889,6 +890,7 @@ func (s *Store) initialSession(req CreateSessionRequest) Session {
 		Target:             req.Target,
 		Policy:             req.Policy,
 		PolicyDigest:       req.PolicyDigest,
+		AuthorityDigest:    req.AuthorityDigest,
 		ProjectEnv:         !req.OmitEnv,
 		ProjectMCP:         !req.OmitMCP,
 		ResponderBinding:   cloneResponderBinding(req.ResponderBinding),
@@ -924,11 +926,11 @@ func (s *Store) insertInitialSessionTx(ctx context.Context, tx *sql.Tx, sess *Se
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
-		(id, external_ref, target, policy, policy_digest, project_env, project_mcp, responder_endpoint, responder_token, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions,
+		(id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions,
 		 pull_request_number, pull_request_ref, pull_request_head_commit,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
-		sess.Policy, sess.PolicyDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ResponderBinding), responderToken(sess.ResponderBinding), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		sess.Policy, sess.PolicyDigest, sess.AuthorityDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ResponderBinding), responderToken(sess.ResponderBinding), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
 		string(companions), pullRequestNumber(sess.PullRequest), pullRequestRef(sess.PullRequest), pullRequestHead(sess.PullRequest),
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
 		sess.MaxQueuedTurns, sess.MaxQueuedBytes, sess.CreatedAt.UnixNano(), sess.UpdatedAt.UnixNano()); err != nil {
@@ -957,6 +959,7 @@ func sameOperationSnapshot(current, expected Operation) bool {
 func initialSessionMatchesRequest(sess Session, req CreateSessionRequest) bool {
 	return sess.ID == req.ID && sess.ExternalRef == req.ExternalRef && sess.Target == req.Target &&
 		sess.Policy == req.Policy && sess.PolicyDigest == req.PolicyDigest &&
+		(sess.AuthorityDigest == req.AuthorityDigest || sess.AuthorityDigest == "") &&
 		sess.ProjectEnv == !req.OmitEnv && sess.ProjectMCP == !req.OmitMCP &&
 		equalResponderBinding(sess.ResponderBinding, req.ResponderBinding) &&
 		sess.RepositoryReadOnly == req.RepositoryReadOnly && sess.Repository == req.Repository &&
@@ -971,6 +974,24 @@ func initialSessionMatchesRequest(sess Session, req CreateSessionRequest) bool {
 		sess.TurnsUsed == 0 && sess.QueuedTurnCount == 0 && sess.QueuedPromptBytes == 0 &&
 		sess.ActiveTurnID == "" && sess.LastEventSequence == 1 && !sess.CreatedAt.IsZero() &&
 		!sess.UpdatedAt.Before(sess.CreatedAt)
+}
+
+func historicalCreateRequestHashMatches(
+	storedHash string,
+	currentHash string,
+	req CreateSessionRequest,
+	sess Session,
+) bool {
+	if storedHash == currentHash {
+		return true
+	}
+	if sess.AuthorityDigest != "" || req.AuthorityDigest == "" {
+		return false
+	}
+	legacy := req
+	legacy.AuthorityDigest = ""
+	legacyHash, err := CanonicalRequestHash(legacy)
+	return err == nil && storedHash == legacyHash
 }
 
 func equalResponderBinding(left, right *ResponderBinding) bool {
@@ -1057,6 +1078,14 @@ func validateCreateRequest(req CreateSessionRequest) error {
 	}
 	if _, err := hex.DecodeString(req.PolicyDigest); err != nil {
 		return &Error{Code: CodeInvalidRequest, Detail: "policy digest is not hexadecimal"}
+	}
+	if req.AuthorityDigest != "" {
+		if len(req.AuthorityDigest) != sha256.Size*2 || !validBoundedText(req.AuthorityDigest, sha256.Size*2) {
+			return &Error{Code: CodeInvalidRequest, Detail: "authority digest is outside bounds"}
+		}
+		if _, err := hex.DecodeString(req.AuthorityDigest); err != nil {
+			return &Error{Code: CodeInvalidRequest, Detail: "authority digest is not hexadecimal"}
+		}
 	}
 	if req.TurnTimeout <= 0 || req.TurnTimeout > MaxTurnTimeout || req.MaxPatchBytes <= 0 || req.MaxPatchBytes > MaxPatchBytesLimit {
 		return &Error{Code: CodeInvalidRequest, Detail: "session policy bounds are outside limits"}
@@ -1294,7 +1323,7 @@ func (s *Store) ListSessionRuntimeCleanupTurns(ctx context.Context, sessionID st
 	return turns, nil
 }
 
-const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, repository_read_only, repository, workspace, fork_name, fork_generation,
+const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, repository_read_only, repository, workspace, fork_name, fork_generation,
 	   base_commit, companions, pull_request_number, pull_request_ref, pull_request_head_commit,
 	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
 	   max_turns, max_queued_turns, max_queued_bytes, turns_used, queued_turn_count,
@@ -1311,7 +1340,7 @@ func scanSession(row rowScanner) (Session, error) {
 	var pullRequestRef, pullRequestHead, responderEndpointValue, responderTokenValue, workspaceTaskValue string
 	var turnTimeout int64
 	var createdAt, updatedAt int64
-	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest,
+	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest, &sess.AuthorityDigest,
 		&sess.ProjectEnv, &sess.ProjectMCP, &responderEndpointValue, &responderTokenValue, &workspaceTaskValue, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions,
 		&pullRequestNumber, &pullRequestRef, &pullRequestHead, &sess.NativeSessionID,
 		&turnTimeout, &sess.MaxPatchBytes, &sess.Revision, &state, &activity, &sess.MaxTurns,

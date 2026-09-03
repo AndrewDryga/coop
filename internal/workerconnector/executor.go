@@ -143,6 +143,7 @@ type createSessionPayload struct {
 	ExternalRef      string            `json:"external_ref"`
 	Policy           string            `json:"policy"`
 	PolicyDigest     string            `json:"policy_digest"`
+	AuthorityDigest  string            `json:"authority_digest,omitempty"`
 	ResponderBinding *responderBinding `json:"responder_binding,omitempty"`
 }
 
@@ -287,7 +288,8 @@ func prepareRequest(ctx context.Context, command workerproto.Command, artifacts 
 		if err := decodePayload(command.Payload, &payload); err != nil {
 			return Request{}, err
 		}
-		if !reference(payload.ExternalRef, 1024) || !reference(payload.Policy, 1024) || !digest(payload.PolicyDigest) {
+		if !reference(payload.ExternalRef, 1024) || !reference(payload.Policy, 1024) || !digest(payload.PolicyDigest) ||
+			(payload.AuthorityDigest != "" && !digest(payload.AuthorityDigest)) {
 			return Request{}, errors.New("create_session payload identity is invalid")
 		}
 		bodyDocument := map[string]any{"policy": payload.Policy, "task": payload.ExternalRef}

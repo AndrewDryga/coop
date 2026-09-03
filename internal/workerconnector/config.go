@@ -16,23 +16,24 @@ import (
 const maxWorkerConfigBytes = 256 << 10
 
 type fileConfig struct {
-	Version             int                      `json:"version"`
-	WorkerID            string                   `json:"worker_id"`
-	WorkspaceRef        string                   `json:"workspace_ref"`
-	ResponderURL        string                   `json:"responder_url"`
-	CAFile              string                   `json:"ca_file"`
-	IdentityFile        string                   `json:"identity_file"`
-	EnrollmentTokenFile string                   `json:"enrollment_token_file"`
-	CoopSocket          string                   `json:"coop_socket"`
-	JournalDir          string                   `json:"journal_dir"`
-	SandboxDigest       string                   `json:"sandbox_digest"`
-	PolicyDigests       map[string]string        `json:"policy_digests"`
-	Repositories        []workerproto.Repository `json:"repositories"`
-	Capabilities        []workerproto.Capability `json:"capabilities"`
-	Capacity            workerproto.Capacity     `json:"capacity"`
-	PollIntervalMS      int                      `json:"poll_interval_ms"`
-	RequestTimeoutMS    int                      `json:"request_timeout_ms"`
-	RenewBeforeSeconds  int                      `json:"renew_before_seconds"`
+	Version                int                      `json:"version"`
+	WorkerID               string                   `json:"worker_id"`
+	WorkspaceRef           string                   `json:"workspace_ref"`
+	ResponderURL           string                   `json:"responder_url"`
+	CAFile                 string                   `json:"ca_file"`
+	IdentityFile           string                   `json:"identity_file"`
+	EnrollmentTokenFile    string                   `json:"enrollment_token_file"`
+	CoopSocket             string                   `json:"coop_socket"`
+	JournalDir             string                   `json:"journal_dir"`
+	SandboxDigest          string                   `json:"sandbox_digest"`
+	PolicyDigests          map[string]string        `json:"policy_digests"`
+	PolicyAuthorityDigests map[string]string        `json:"policy_authority_digests,omitempty"`
+	Repositories           []workerproto.Repository `json:"repositories"`
+	Capabilities           []workerproto.Capability `json:"capabilities"`
+	Capacity               workerproto.Capacity     `json:"capacity"`
+	PollIntervalMS         int                      `json:"poll_interval_ms"`
+	RequestTimeoutMS       int                      `json:"request_timeout_ms"`
+	RenewBeforeSeconds     int                      `json:"renew_before_seconds"`
 }
 
 type Config struct {
@@ -98,7 +99,8 @@ func LoadConfig(path, buildVersion string, now time.Time) (Config, error) {
 	hello := workerproto.WorkerHello{
 		ID: raw.WorkerID, WorkspaceRef: raw.WorkspaceRef, ProtocolVersion: "1", BuildVersion: buildVersion,
 		ClockAt: now, SandboxDigest: raw.SandboxDigest, PolicyDigests: raw.PolicyDigests,
-		Repositories: raw.Repositories, Capabilities: raw.Capabilities, Capacity: raw.Capacity, State: "eligible",
+		PolicyAuthorityDigests: raw.PolicyAuthorityDigests,
+		Repositories:           raw.Repositories, Capabilities: raw.Capabilities, Capacity: raw.Capacity, State: "eligible",
 	}
 	probe := workerproto.Poll{Version: workerproto.Version, PollRef: "poll:" + raw.WorkerID + ":config", Worker: hello}
 	if err := probe.Validate(); err != nil {

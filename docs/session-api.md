@@ -190,6 +190,12 @@ resolved fields; a one-rung ladder digests exactly as the equivalent pre-ladder 
 repository's trusted box policy control the child. Raw runtime arguments, task queues, and merge
 gates are not forwarded into a turn.
 
+`authority_digest` separately identifies the model-independent authority: repository source,
+companions, project environment and MCP projection, repository write mode, and provider account
+selection. It excludes policy name, model, reasoning effort, and resource budgets. Controllers may
+therefore require conversational, standard, and deep policies to share one authority digest while
+still pinning each policy's full `policy_digest`.
+
 On session creation Coop resolves all configured repositories concurrently. A repository with
 `remote` and `branch` is pinned to that remote branch's exact commit; otherwise Coop preserves the
 legacy local-`HEAD` behavior. Remote refresh imports only the immutable commit object and does not

@@ -1105,7 +1105,7 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
 	sess, err := store.CreateSession(ctx, "policy-fields", CreateSessionRequest{
-		Target: "target", PolicyDigest: strings.Repeat("a", 64), OmitEnv: true, OmitMCP: true,
+		Target: "target", PolicyDigest: strings.Repeat("a", 64), AuthorityDigest: strings.Repeat("b", 64), OmitEnv: true, OmitMCP: true,
 		RepositoryReadOnly: true,
 		TurnTimeout:        3 * time.Minute, MaxPatchBytes: 1234,
 		ResponderBinding: &ResponderBinding{
@@ -1116,7 +1116,7 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.PolicyDigest != strings.Repeat("a", 64) || sess.ProjectEnv || sess.ProjectMCP ||
+	if sess.PolicyDigest != strings.Repeat("a", 64) || sess.AuthorityDigest != strings.Repeat("b", 64) || sess.ProjectEnv || sess.ProjectMCP ||
 		!sess.RepositoryReadOnly ||
 		sess.TurnTimeout != 3*time.Minute || sess.MaxPatchBytes != 1234 ||
 		sess.ResponderBinding == nil || sess.ResponderBinding.Token != strings.Repeat("t", 48) {
@@ -1128,7 +1128,7 @@ func TestSessionPersistsEffectivePolicyFieldsAndRejectsMalformedReplay(t *testin
 	store = openTestStore(t, root)
 	defer store.Close()
 	reopened, err := store.GetSession(ctx, sess.ID)
-	if err != nil || reopened.PolicyDigest != sess.PolicyDigest || reopened.ProjectEnv || reopened.ProjectMCP ||
+	if err != nil || reopened.PolicyDigest != sess.PolicyDigest || reopened.AuthorityDigest != sess.AuthorityDigest || reopened.ProjectEnv || reopened.ProjectMCP ||
 		!reopened.RepositoryReadOnly ||
 		reopened.TurnTimeout != sess.TurnTimeout || reopened.MaxPatchBytes != sess.MaxPatchBytes ||
 		reopened.ResponderBinding == nil || reopened.ResponderBinding.Endpoint != sess.ResponderBinding.Endpoint ||

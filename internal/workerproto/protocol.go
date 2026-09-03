@@ -47,17 +47,18 @@ type Poll struct {
 }
 
 type WorkerHello struct {
-	ID              string            `json:"id"`
-	WorkspaceRef    string            `json:"workspace_ref"`
-	ProtocolVersion string            `json:"protocol_version"`
-	BuildVersion    string            `json:"build_version"`
-	ClockAt         time.Time         `json:"clock_at"`
-	SandboxDigest   string            `json:"sandbox_digest"`
-	PolicyDigests   map[string]string `json:"policy_digests"`
-	Repositories    []Repository      `json:"repositories"`
-	Capabilities    []Capability      `json:"capabilities"`
-	Capacity        Capacity          `json:"capacity"`
-	State           string            `json:"state"`
+	ID                     string            `json:"id"`
+	WorkspaceRef           string            `json:"workspace_ref"`
+	ProtocolVersion        string            `json:"protocol_version"`
+	BuildVersion           string            `json:"build_version"`
+	ClockAt                time.Time         `json:"clock_at"`
+	SandboxDigest          string            `json:"sandbox_digest"`
+	PolicyDigests          map[string]string `json:"policy_digests"`
+	PolicyAuthorityDigests map[string]string `json:"policy_authority_digests,omitempty"`
+	Repositories           []Repository      `json:"repositories"`
+	Capabilities           []Capability      `json:"capabilities"`
+	Capacity               Capacity          `json:"capacity"`
+	State                  string            `json:"state"`
 }
 
 type Repository struct {
@@ -228,12 +229,22 @@ func (w WorkerHello) validate() error {
 	if !slices.Contains(workerStates, w.State) {
 		return errors.New("invalid worker state")
 	}
-	if len(w.PolicyDigests) > maxBatch || len(w.Repositories) > maxBatch || len(w.Capabilities) > maxBatch {
+	if len(w.PolicyDigests) > maxBatch || len(w.PolicyAuthorityDigests) > maxBatch || len(w.Repositories) > maxBatch || len(w.Capabilities) > maxBatch {
 		return errors.New("worker advertisement exceeds 100 items")
 	}
 	for name, digest := range w.PolicyDigests {
 		if reference(name, 256, "policy name") != nil || !digestPattern.MatchString(digest) {
 			return errors.New("invalid policy advertisement")
+		}
+	}
+	if len(w.PolicyAuthorityDigests) > 0 {
+		if len(w.PolicyAuthorityDigests) != len(w.PolicyDigests) {
+			return errors.New("policy authority advertisement does not match policy advertisement")
+		}
+		for name, digest := range w.PolicyAuthorityDigests {
+			if _, ok := w.PolicyDigests[name]; !ok || reference(name, 256, "policy name") != nil || !digestPattern.MatchString(digest) {
+				return errors.New("invalid policy authority advertisement")
+			}
 		}
 	}
 	for _, repository := range w.Repositories {

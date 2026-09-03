@@ -217,8 +217,9 @@ func runSessionCompact(state, backup string) (int, error) {
 }
 
 type sessionPoliciesResult struct {
-	PolicyFile    string            `json:"policy_file"`
-	PolicyDigests map[string]string `json:"policy_digests"`
+	PolicyFile             string            `json:"policy_file"`
+	PolicyDigests          map[string]string `json:"policy_digests"`
+	PolicyAuthorityDigests map[string]string `json:"policy_authority_digests"`
 }
 
 func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) (int, error) {
@@ -231,13 +232,15 @@ func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) 
 		return 1, err
 	}
 	result := sessionPoliciesResult{
-		PolicyFile:    policyPath,
-		PolicyDigests: make(map[string]string, len(policies)),
+		PolicyFile:             policyPath,
+		PolicyDigests:          make(map[string]string, len(policies)),
+		PolicyAuthorityDigests: make(map[string]string, len(policies)),
 	}
 	names := make([]string, 0, len(policies))
 	for name, policy := range policies {
 		names = append(names, name)
 		result.PolicyDigests[name] = sessionsvc.ResolvedPolicyDigest(policy)
+		result.PolicyAuthorityDigests[name] = sessionsvc.ResolvedPolicyAuthorityDigest(policy)
 	}
 	if jsonOutput {
 		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
@@ -248,7 +251,7 @@ func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) 
 	sort.Strings(names)
 	fmt.Fprintf(os.Stdout, "Policy file: %s\n", result.PolicyFile)
 	for _, name := range names {
-		fmt.Fprintf(os.Stdout, "%s\t%s\n", name, result.PolicyDigests[name])
+		fmt.Fprintf(os.Stdout, "%s\t%s\t%s\n", name, result.PolicyDigests[name], result.PolicyAuthorityDigests[name])
 	}
 	return 0, nil
 }

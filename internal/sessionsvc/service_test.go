@@ -223,6 +223,58 @@ func TestWarmIdleTimeoutIsBoundIntoPolicyDigest(t *testing.T) {
 	}
 }
 
+func TestPolicyAuthorityDigestIgnoresExecutionTargetButBindsAuthority(t *testing.T) {
+	base := Policy{
+		Name: "conversation", Repository: "/repo", Remote: "origin", Branch: "main",
+		Companions:         []CompanionPolicy{{Name: "docs", Repository: "/docs", Remote: "origin", Branch: "main"}},
+		Targets:            []agents.Target{{Provider: "codex", Model: "gpt-5.6-terra", Effort: "medium", Accounts: []string{"work"}}},
+		RepositoryReadOnly: true, MaxTurns: 20, MaxQueuedTurns: 4, MaxQueuedBytes: 4096,
+		TurnTimeout: time.Hour, MaxPatchBytes: 8192,
+	}
+	digest := ResolvedPolicyAuthorityDigest(base)
+	if len(digest) != sha256.Size*2 {
+		t.Fatalf("authority digest = %q", digest)
+	}
+
+	equivalent := base
+	equivalent.Name = "deep"
+	equivalent.Targets = []agents.Target{{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"work"}}}
+	equivalent.MaxTurns = 100
+	equivalent.MaxQueuedTurns = 10
+	equivalent.MaxQueuedBytes = 1 << 20
+	equivalent.TurnTimeout = 24 * time.Hour
+	equivalent.WarmIdleTimeout = 15 * time.Minute
+	equivalent.MaxPatchBytes = 1 << 20
+	if got := ResolvedPolicyAuthorityDigest(equivalent); got != digest {
+		t.Fatalf("model-only policy authority digest = %q, want %q", got, digest)
+	}
+
+	mutations := map[string]func(*Policy){
+		"credential account":  func(policy *Policy) { policy.Targets[0].Accounts = []string{"other"} },
+		"project environment": func(policy *Policy) { policy.OmitEnv = true },
+		"project MCP":         func(policy *Policy) { policy.OmitMCP = true },
+		"read-only mode":      func(policy *Policy) { policy.RepositoryReadOnly = false },
+		"repository":          func(policy *Policy) { policy.Repository = "/other" },
+		"repository branch":   func(policy *Policy) { policy.Branch = "release" },
+		"repository remote":   func(policy *Policy) { policy.Remote = "upstream" },
+		"companion": func(policy *Policy) {
+			policy.Companions = []CompanionPolicy{{Name: "docs", Repository: "/other-docs", Remote: "origin", Branch: "main"}}
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			changed := base
+			changed.Targets = append([]agents.Target(nil), base.Targets...)
+			changed.Targets[0].Accounts = append([]string(nil), base.Targets[0].Accounts...)
+			changed.Companions = append([]CompanionPolicy(nil), base.Companions...)
+			mutate(&changed)
+			if got := ResolvedPolicyAuthorityDigest(changed); got == digest {
+				t.Fatalf("authority change retained digest %q", got)
+			}
+		})
+	}
+}
+
 func TestParseSessionPoliciesRejectsUnsafeCompanions(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
@@ -358,7 +410,9 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 	}
 	policy := policies["responder"]
 	if sess.BaseCommit != base || sess.ID != intent.SessionID || sess.ForkName != intent.ForkName ||
-		sess.PolicyDigest != resolvedSessionPolicyDigest(policy) || sess.TurnTimeout != policy.TurnTimeout || sess.MaxPatchBytes != policy.MaxPatchBytes {
+		sess.PolicyDigest != resolvedSessionPolicyDigest(policy) ||
+		sess.AuthorityDigest != ResolvedPolicyAuthorityDigest(policy) ||
+		sess.TurnTimeout != policy.TurnTimeout || sess.MaxPatchBytes != policy.MaxPatchBytes {
 		t.Fatalf("replayed session = %+v, intent=%+v", sess, intent)
 	}
 	if got := gitOut(sess.Workspace, "rev-parse", "HEAD"); got != base {
@@ -1357,12 +1411,18 @@ func TestProjectIsolationRemainsPublicThroughSessionCreation(t *testing.T) {
 		t.Fatalf("project authority widened across creation: created=%+v persisted=%+v public=%+v",
 			created, persisted, public)
 	}
+	if want := ResolvedPolicyAuthorityDigest(policy); created.AuthorityDigest != want ||
+		persisted.AuthorityDigest != want || public.AuthorityDigest != want {
+		t.Fatalf("authority digest changed across creation: created=%+v persisted=%+v public=%+v",
+			created, persisted, public)
+	}
 	wire, err := json.Marshal(public)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(wire, []byte(`"project_env":false`)) ||
-		!bytes.Contains(wire, []byte(`"project_mcp":false`)) {
+		!bytes.Contains(wire, []byte(`"project_mcp":false`)) ||
+		!bytes.Contains(wire, []byte(`"authority_digest":"`+ResolvedPolicyAuthorityDigest(policy)+`"`)) {
 		t.Fatalf("public session omitted isolation proof: %s", wire)
 	}
 }

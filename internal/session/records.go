@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 18
+	SchemaVersion = 19
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -270,6 +270,7 @@ type Session struct {
 	Target             string                `json:"target"`
 	Policy             string                `json:"policy"`
 	PolicyDigest       string                `json:"policy_digest"`
+	AuthorityDigest    string                `json:"authority_digest"`
 	ProjectEnv         bool                  `json:"project_env"`
 	ProjectMCP         bool                  `json:"project_mcp"`
 	ResponderBinding   *ResponderBinding     `json:"responder_binding,omitempty"`
@@ -476,6 +477,7 @@ type CreateSessionRequest struct {
 	Target             string                `json:"target"`
 	Policy             string                `json:"policy"`
 	PolicyDigest       string                `json:"policy_digest"`
+	AuthorityDigest    string                `json:"authority_digest,omitempty"`
 	OmitEnv            bool                  `json:"omit_env,omitempty"`
 	OmitMCP            bool                  `json:"omit_mcp,omitempty"`
 	ResponderBinding   *ResponderBinding     `json:"responder_binding,omitempty"`

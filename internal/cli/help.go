@@ -269,7 +269,8 @@ var commandHelp = map[string]string{
   versioned Responder commands to the owner-private Coop Unix API. It journals
   each command before execution and resends terminal results until Responder
   durably acknowledges them. It never opens an inbound TCP port or accepts a
-  generic shell command.`,
+  generic shell command. Populate policy_digests and policy_authority_digests
+  from the exact output of 'coop sessions policies --json'.`,
 	"sessions": `coop sessions — serve and inspect local remote sessions.
 
   Usage: coop sessions serve [--state <path>] [--policies <path>] [--socket <path>]
@@ -280,8 +281,9 @@ var commandHelp = map[string]string{
   'serve' owns the state root and exposes the v1 JSON API over an owner-only Unix
   socket. It never listens on TCP. 'doctor' checks only that Unix socket and exits
   nonzero when the service is unavailable or unready. 'policies' validates the
-  trusted policy file and prints the immutable policy digests a fleet worker must
-  advertise; JSON output contains policy_file and policy_digests. 'compact' stops
+  trusted policy file and prints the immutable policy and model-independent authority
+  digests a fleet worker must advertise; JSON output contains policy_file,
+  policy_digests, and policy_authority_digests. 'compact' stops
   if the state root is active, writes and verifies a new SQLite backup, replaces
   legacy full-turn retry receipts with prompt-free receipts, checks integrity,
   then vacuums reclaimed pages. It never overwrites the backup path.
