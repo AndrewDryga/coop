@@ -49,6 +49,10 @@ func Open(root string, opts ...Option) (*Store, error) {
 			opt(&settings)
 		}
 	}
+	return openStore(root, settings, true)
+}
+
+func openStore(root string, settings options, prepareCurrentSchema bool) (*Store, error) {
 	if root == "" {
 		return nil, &Error{Code: CodeInvalidRequest, Detail: "state root is required"}
 	}
@@ -79,14 +83,16 @@ func Open(root string, opts ...Option) (*Store, error) {
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		return closeOnError(fmt.Errorf("enable foreign keys: %w", err))
 	}
-	if err := verifyWALMode(db); err != nil {
-		return closeOnError(err)
-	}
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeout)); err != nil {
 		return closeOnError(fmt.Errorf("set busy timeout: %w", err))
 	}
-	if err := migrate(db); err != nil {
-		return closeOnError(err)
+	if prepareCurrentSchema {
+		if err := verifyWALMode(db); err != nil {
+			return closeOnError(err)
+		}
+		if err := migrate(db); err != nil {
+			return closeOnError(err)
+		}
 	}
 	return &Store{db: db, lock: lock, root: root, clock: settings.clock, id: settings.id}, nil
 }
@@ -1309,7 +1315,7 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 		mustJSON(map[string]any{"ordinal": turn.Ordinal})); err != nil {
 		return Turn{}, fmt.Errorf("append turn.queued: %w", err)
 	}
-	result, err := json.Marshal(turn)
+	result, err := EncodeTurnOperationResult(turn)
 	if err != nil {
 		return Turn{}, fmt.Errorf("encode turn result: %w", err)
 	}
@@ -1436,14 +1442,7 @@ func (s *Store) replayTurn(op Operation) (Turn, error) {
 	if op.State != OperationSucceeded {
 		return Turn{}, ErrOperationUncertain
 	}
-	var turn Turn
-	if err := json.Unmarshal(op.Result, &turn); err != nil {
-		return Turn{}, fmt.Errorf("decode turn operation result: %w", err)
-	}
-	if turn.ID == "" {
-		return Turn{}, errors.New("decode turn operation result: missing turn id")
-	}
-	return turn, nil
+	return DecodeTurnOperationResult(op.Result)
 }
 
 func (s *Store) LeaseNextTurn(ctx context.Context, sessionID string) (Turn, bool, error) {
@@ -2244,7 +2243,7 @@ func (s *Store) CancelTurn(ctx context.Context, key string, req CancelTurnReques
 	}
 	if isTerminal(turn.State) {
 		if replay && (op.State == OperationReserved || op.State == OperationRunning) {
-			result, err := json.Marshal(turn)
+			result, err := EncodeTurnOperationResult(turn)
 			if err != nil {
 				return Turn{}, fmt.Errorf("encode observed terminal turn: %w", err)
 			}
@@ -2288,7 +2287,7 @@ func (s *Store) CancelTurn(ctx context.Context, key string, req CancelTurnReques
 	if _, err := s.appendEventTx(ctx, tx, req.SessionID, req.TurnID, EventTurnCancelled, 1, mustJSON(map[string]any{"stop_reason": string(turn.StopReason)})); err != nil {
 		return Turn{}, fmt.Errorf("append turn.cancelled: %w", err)
 	}
-	result, err := json.Marshal(turn)
+	result, err := EncodeTurnOperationResult(turn)
 	if err != nil {
 		return Turn{}, fmt.Errorf("encode cancelled turn: %w", err)
 	}

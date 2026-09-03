@@ -46,23 +46,15 @@ func defaultSessionPolicyPath() (string, error) {
 }
 
 func sessionCLIPaths(state, policy, socket string) (string, string, string, error) {
-	if state == "" {
-		var err error
-		state, err = defaultSessionStateRoot()
-		if err != nil {
-			return "", "", "", err
-		}
+	state, err := sessionStatePath(state)
+	if err != nil {
+		return "", "", "", err
 	}
 	if policy == "" {
-		var err error
 		policy, err = defaultSessionPolicyPath()
 		if err != nil {
 			return "", "", "", err
 		}
-	}
-	state, err := filepath.Abs(filepath.Clean(state))
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolve session state path: %w", err)
 	}
 	if socket == "" {
 		socket = filepath.Join(state, "control.sock")
@@ -77,6 +69,21 @@ func sessionCLIPaths(state, policy, socket string) (string, string, string, erro
 		return "", "", "", fmt.Errorf("resolve session policy path: %w", err)
 	}
 	return state, policy, socket, nil
+}
+
+func sessionStatePath(state string) (string, error) {
+	if state == "" {
+		var err error
+		state, err = defaultSessionStateRoot()
+		if err != nil {
+			return "", err
+		}
+	}
+	state, err := filepath.Abs(filepath.Clean(state))
+	if err != nil {
+		return "", fmt.Errorf("resolve session state path: %w", err)
+	}
+	return state, nil
 }
 
 func parseSessionsFlags(args []string, command string) (state, policy, socket string, jsonOutput bool, err error) {
@@ -122,6 +129,33 @@ func parseSessionsFlags(args []string, command string) (state, policy, socket st
 	return state, policy, socket, jsonOutput, nil
 }
 
+func parseSessionCompactFlags(args []string) (state, backup string, err error) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		var target *string
+		switch arg {
+		case "--state":
+			target = &state
+		case "--backup":
+			target = &backup
+		default:
+			return "", "", fmt.Errorf("sessions compact: unknown flag %q", arg)
+		}
+		if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+			return "", "", fmt.Errorf("sessions compact: flag %s requires a value", arg)
+		}
+		i++
+		if *target != "" {
+			return "", "", fmt.Errorf("sessions compact: flag %s may be specified once", arg)
+		}
+		*target = args[i]
+	}
+	if backup == "" {
+		return "", "", errors.New("sessions compact: --backup <path> is required")
+	}
+	return state, backup, nil
+}
+
 func (a *app) cmdSessions(args []string) (int, error) {
 	if len(args) == 0 {
 		return groupHelp("sessions")
@@ -145,9 +179,41 @@ func (a *app) cmdSessions(args []string) (int, error) {
 			return 2, err
 		}
 		return runSessionPolicies(a.cfg, policy, jsonOutput)
+	case "compact":
+		state, backup, err := parseSessionCompactFlags(args[1:])
+		if err != nil {
+			return 2, err
+		}
+		return runSessionCompact(state, backup)
 	default:
 		return 2, fmt.Errorf("sessions: unknown command %q", args[0])
 	}
+}
+
+func runSessionCompact(state, backup string) (int, error) {
+	state, err := sessionStatePath(state)
+	if err != nil {
+		return 2, err
+	}
+	backup, err = filepath.Abs(filepath.Clean(backup))
+	if err != nil {
+		return 2, fmt.Errorf("resolve session backup path: %w", err)
+	}
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	result, err := sessionsvc.CompactSessionState(ctx, state, backup)
+	if err != nil {
+		return 1, err
+	}
+	if result.CompactedOperations == 0 {
+		ui.Note("no legacy turn retry receipts needed compaction")
+	} else {
+		ui.OK("compacted %s (%d -> %d bytes)", ui.Count(result.CompactedOperations, "turn retry receipt"), result.ResultBytesBefore, result.ResultBytesAfter)
+	}
+	ui.Note("database: %d -> %d bytes", result.DatabaseBytesBefore, result.DatabaseBytesAfter)
+	ui.Note("backup: %s (%d bytes)", result.BackupPath, result.BackupBytes)
+	ui.Warn("backup contains private session data; protect it and remove it after recovery is no longer needed")
+	return 0, nil
 }
 
 type sessionPoliciesResult struct {

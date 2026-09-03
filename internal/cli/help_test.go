@@ -49,6 +49,7 @@ func TestHelpTextAligned(t *testing.T) {
 		"coop fork review <name>", "coop fork merge <name>", "coop fork stop <name>",
 		"coop doctor", "coop check-secrets", "coop tasks ls", "coop tasks decisions",
 		"coop sessions serve", "coop sessions doctor", "coop sessions policies",
+		"coop sessions compact",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help missing %q", want)

@@ -190,8 +190,26 @@ const (
 	CodeDiscardPlanStale        ErrorCode = "discard_plan_stale"
 	CodeRepositoryUnavailable   ErrorCode = "repository_unavailable"
 	CodeOutputContractFailed    ErrorCode = "output_contract_failed"
+	CodeSessionCleanupError     ErrorCode = "session_cleanup_error"
 	CodeInternal                ErrorCode = "internal_error"
 )
+
+// PublicErrorDetail removes implementation details that must not cross the
+// session API boundary or be retained in compact idempotency receipts.
+func PublicErrorDetail(code ErrorCode, detail string) string {
+	switch code {
+	case "":
+		return ""
+	case CodeInternal:
+		return "internal operation failure"
+	case CodeDiscardPlanStale:
+		return "discard plan no longer matches workspace state"
+	case CodeSessionCleanupError:
+		return "session runtime cleanup is temporarily unavailable"
+	default:
+		return detail
+	}
+}
 
 type Error struct {
 	Code   ErrorCode
@@ -379,6 +397,10 @@ type Turn struct {
 	// turn. It stays private, survives admission/restart, and may differ between
 	// turns that reuse one native provider session.
 	ResponderBinding *ResponderBinding `json:"-"`
+	// ResponderBindingDigest is populated only when an operation replay comes
+	// from a compact receipt. The receipt keeps the public digest without
+	// duplicating the private bearer needed by the canonical turn row.
+	ResponderBindingDigest string `json:"-"`
 }
 
 // TurnCandidate is a schema-valid result that still needs caller-owned

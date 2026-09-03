@@ -62,6 +62,12 @@ func TestCompletionCandidates(t *testing.T) {
 	if c := a.completionCandidates([]string{"completion"}); !hasCand(c, "bash") || !hasCand(c, "zsh") {
 		t.Errorf("completion completion missing shells: %v", c)
 	}
+	if c := a.completionCandidates([]string{"sessions"}); !hasCand(c, "compact") {
+		t.Errorf("sessions completion missing compact: %v", c)
+	}
+	if c := a.completionCandidates([]string{"sessions", "compact"}); !hasCand(c, "--state") || !hasCand(c, "--backup") {
+		t.Errorf("sessions compact completion missing flags: %v", c)
+	}
 
 	loop := a.completionCandidatesFor([]string{"loop"}, "")
 	for _, want := range []string{"claude", "claude:opus", "codex:gpt-5.5", "--peer", "--max-tasks", "--no-mcp"} {

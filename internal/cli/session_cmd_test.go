@@ -10,8 +10,10 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // sessionHealthDTO decodes /healthz, like sessionReadyDTO decodes /readyz — the doctor is a client
@@ -133,6 +135,58 @@ func TestSessionPoliciesFlagsAreNarrow(t *testing.T) {
 	if _, _, _, _, err := parseSessionsFlags([]string{"--json", "--json"}, "policies"); err == nil ||
 		!strings.Contains(err.Error(), "sessions policies") {
 		t.Fatalf("duplicate policies --json error = %v", err)
+	}
+}
+
+func TestSessionCompactFlagsRequireOneBackup(t *testing.T) {
+	state, backup, err := parseSessionCompactFlags([]string{"--state", "/tmp/state", "--backup", "/tmp/backup.sqlite"})
+	if err != nil || state != "/tmp/state" || backup != "/tmp/backup.sqlite" {
+		t.Fatalf("compact flags = state %q backup %q err %v", state, backup, err)
+	}
+	for _, args := range [][]string{
+		nil,
+		{"--state", "/tmp/state"},
+		{"--backup"},
+		{"--backup", "/tmp/one", "--backup", "/tmp/two"},
+		{"--policies", "/tmp/policies"},
+		{"--json"},
+	} {
+		if _, _, err := parseSessionCompactFlags(args); err == nil || !strings.Contains(err.Error(), "sessions compact") {
+			t.Fatalf("compact flags unexpectedly accepted %v: %v", args, err)
+		}
+	}
+}
+
+func TestRunSessionCompactCreatesANewBackup(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := session.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(t.TempDir(), "backup.sqlite")
+	var output []string
+	ui.SetLiveSink(func(line string) { output = append(output, line) })
+	defer ui.SetLiveSink(nil)
+	code, runErr := runSessionCompact(root, backup)
+	if runErr != nil || code != 0 {
+		t.Fatalf("sessions compact = code %d err %v output %q", code, runErr, output)
+	}
+	joined := strings.Join(output, "\n")
+	for _, want := range []string{
+		"no legacy turn retry receipts needed compaction",
+		"database:",
+		"backup: " + backup,
+		"contains private session data",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("compact output missing %q: %q", want, output)
+		}
+	}
+	if info, err := os.Stat(backup); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("backup info = %+v err=%v", info, err)
 	}
 }
 

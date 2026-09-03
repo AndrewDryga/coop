@@ -963,6 +963,22 @@ generated fork, a persistent FIFO of turns, private provider/ACP state, structur
 inspection, a read-only review, non-destructive close, and explicit two-step discard. Each turn
 starts a boxed ACP child and tears it down before parking, so an idle conversation consumes no box.
 
+Older databases may contain full prompt copies in successful turn retry receipts. During a
+maintenance window, stop the controller and compact those receipts with an explicit new backup:
+
+```bash
+coop sessions compact --backup "$HOME/session-before-compact.sqlite"
+```
+
+The command refuses an active state root, a backup inside that root, or an existing backup path. It verifies the SQLite backup,
+rewrites only successful turn-operation receipts, checks database integrity, and vacuums only after
+the rewrite commits. Canonical turns and their prompts are unchanged. The owner-only backup still
+contains the old prompt copies and is sensitive; delete it after the compacted controller and its
+ordinary backup cycle are verified. For recovery, stop the
+controller, move `session.sqlite` plus any `session.sqlite-wal` and `session.sqlite-shm` files aside
+as one rollback set, copy the backup to `session.sqlite` with mode `0600`, restart, and run
+`coop sessions doctor`. Keep the rollback set until the restored controller is verified.
+
 An operator-owned session policy may also declare up to 32 companion Git repositories. Coop pins
 each at session creation and mounts a self-contained snapshot read-only at
 `/coop/repositories/<alias>`. Snapshots retain complete reachable history through 1 GiB of logical

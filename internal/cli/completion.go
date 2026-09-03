@@ -172,13 +172,19 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		}
 	case "sessions":
 		if len(prev) == 1 {
-			return []string{"serve", "doctor"}
+			return []string{"serve", "doctor", "policies", "compact"}
 		}
 		if len(prev) > 1 && prev[1] == "serve" {
 			return []string{"--state", "--policies", "--socket"}
 		}
 		if len(prev) > 1 && prev[1] == "doctor" {
 			return []string{"--socket", "--json"}
+		}
+		if len(prev) > 1 && prev[1] == "policies" {
+			return []string{"--policies", "--json"}
+		}
+		if len(prev) > 1 && prev[1] == "compact" {
+			return []string{"--state", "--backup"}
 		}
 	}
 	return nil

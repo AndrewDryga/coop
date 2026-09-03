@@ -149,6 +149,8 @@ func TestPersistenceAndOperationReplayBeforeRevisionValidation(t *testing.T) {
 	}
 	if op, err := store.GetOperation(ctx, "turn-1"); err != nil || op.State != OperationSucceeded || op.ResourceID != turn.ID {
 		t.Fatalf("turn operation = %+v, %v", op, err)
+	} else if strings.Contains(string(op.Result), "durable prompt") || !strings.Contains(string(op.Result), `"receipt_version":1`) {
+		t.Fatalf("turn operation kept a full turn result: %s", op.Result)
 	}
 }
 

@@ -1387,6 +1387,10 @@ func publicWorkspaceTask(value *session.WorkspaceTaskBinding) *SessionWorkspaceT
 }
 
 func publicTurn(value session.Turn) TurnDTO {
+	responderBindingDigest := value.ResponderBindingDigest
+	if responderBindingDigest == "" {
+		responderBindingDigest = session.ResponderBindingDigest(value.ResponderBinding)
+	}
 	artifacts := make([]TurnArtifactDTO, 0, len(value.OutputArtifacts))
 	for _, artifact := range value.OutputArtifacts {
 		artifacts = append(artifacts, TurnArtifactDTO{
@@ -1404,7 +1408,7 @@ func publicTurn(value session.Turn) TurnDTO {
 		ValidationAttempt:         value.ValidationAttempt,
 		ValidationError:           value.ValidationError,
 		ValidationReceipt:         value.ValidationReceipt,
-		ResponderBindingDigest:    session.ResponderBindingDigest(value.ResponderBinding),
+		ResponderBindingDigest:    responderBindingDigest,
 	}
 }
 
@@ -1465,18 +1469,7 @@ func publicReview(value ReviewDossier) SessionReviewDTO {
 }
 
 func publicSessionErrorDetail(code session.ErrorCode, detail string) string {
-	switch code {
-	case "":
-		return ""
-	case session.CodeInternal:
-		return "internal operation failure"
-	case session.CodeDiscardPlanStale:
-		return "discard plan no longer matches workspace state"
-	case sessionACPCleanupError:
-		return "session runtime cleanup is temporarily unavailable"
-	default:
-		return BoundedDetail(detail)
-	}
+	return BoundedDetail(session.PublicErrorDetail(code, detail))
 }
 
 func publicDiscardPlan(value PlanDiscardResult) SessionPlanDiscardDTO {

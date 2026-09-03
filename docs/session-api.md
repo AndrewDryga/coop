@@ -297,6 +297,24 @@ one `key` only and never returns the key, request hash, private intent, or resul
 Operation lookup deliberately omits the stored request, private result, prompts, native provider
 IDs, and host paths.
 
+Successful turn mutations store a compact public replay receipt rather than a second copy of the
+turn prompt and private execution controls. Upgraded daemons can still read older full-turn
+receipts. An operator can rewrite those old receipts only during an explicit maintenance window:
+
+```bash
+coop sessions compact --state <state-root> --backup <new-backup.sqlite>
+```
+
+The command takes the controller's exclusive state lock, refuses an existing backup path or one
+inside the state root, verifies
+the backup before one transactional rewrite, checks database integrity, and only then vacuums the
+database. It never changes canonical turn rows and never runs automatically during startup.
+The owner-only backup retains the legacy prompt copies and is sensitive. Delete it only after the
+compacted controller and its ordinary backup cycle are verified.
+To restore, stop the controller, move `session.sqlite` and both possible `-wal`/`-shm` sidecars
+aside together, install the backup as owner-only `session.sqlite`, restart, and verify with
+`coop sessions doctor` before removing the rollback set.
+
 When an owner revokes authority after durably preparing a session create or turn submit but cannot
 know whether the request crossed the socket, it must not replay the mutation merely to discover a
 resource to stop. `POST /v1/operations/fence` uses the **target mutation's** idempotency key and a

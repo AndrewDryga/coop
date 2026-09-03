@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Turn retries no longer duplicate private prompts.** Submit, validation, and cancellation
+  operations now keep a compact public replay receipt while canonical turns remain unchanged.
+  The explicit `coop sessions compact --backup <path>` maintenance command verifies a new SQLite
+  backup before transactionally rewriting legacy receipts and reclaiming their pages.
+
 - **Agent defaults no longer overwrite broken settings.** Claude and Gemini JSON plus Codex TOML
   are validated before first-run defaults are merged, and read/write failures now stop provider
   launch. Successful updates use synced atomic replacement while preserving existing file modes.

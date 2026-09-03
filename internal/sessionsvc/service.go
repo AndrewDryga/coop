@@ -2478,8 +2478,8 @@ func (s *Service) validateTurnCandidateOperation(
 	if replay {
 		switch op.State {
 		case session.OperationSucceeded:
-			var turn session.Turn
-			if err := json.Unmarshal(op.Result, &turn); err != nil || turn.ID == "" {
+			turn, err := session.DecodeTurnOperationResult(op.Result)
+			if err != nil {
 				return session.Turn{}, errors.New("decode semantic validation operation result")
 			}
 			return turn, nil
@@ -2492,7 +2492,7 @@ func (s *Service) validateTurnCandidateOperation(
 	if err != nil {
 		return session.Turn{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	result, err := json.Marshal(turn)
+	result, err := session.EncodeTurnOperationResult(turn)
 	if err != nil {
 		return session.Turn{}, err
 	}
@@ -3220,7 +3220,7 @@ func (s *Service) uncertainCancelOperation(
 }
 
 func (s *Service) completeObservedCancel(ctx context.Context, op session.Operation, turn session.Turn) (session.Turn, error) {
-	data, err := json.Marshal(turn)
+	data, err := session.EncodeTurnOperationResult(turn)
 	if err != nil {
 		return session.Turn{}, err
 	}
@@ -3242,14 +3242,10 @@ func replayCancelOperation(op session.Operation) (session.Turn, error) {
 	if op.State != session.OperationSucceeded {
 		return session.Turn{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
 	}
-	var turn session.Turn
-	if err := json.Unmarshal(op.Result, &turn); err != nil {
+	turn, err := session.DecodeTurnOperationResult(op.Result)
+	if err != nil {
 		return session.Turn{}, wrapServiceOperationError(op.ID,
 			fmt.Errorf("decode cancel operation result: %w", err))
-	}
-	if turn.ID == "" {
-		return session.Turn{}, wrapServiceOperationError(op.ID,
-			errors.New("decode cancel operation result: missing turn id"))
 	}
 	return turn, nil
 }
