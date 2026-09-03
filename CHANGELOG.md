@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Init rejects misspelled services and agents.** Explicit `--services` and `--agents` lists now
+  normalize and de-duplicate known names, but fail with valid choices instead of silently dropping typos.
+
 - **Invalid verify agents fail at loop-config load.** `verify.agent` now uses the same early target
   validation as work, between, and signoff ladders, before task recovery or box work begins.
 

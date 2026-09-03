@@ -772,34 +772,46 @@ func (a *app) cmdDown(args []string) (int, error) {
 // root AGENTS.md, no dir of its own).
 var scaffoldableAgents = []string{"claude", "codex", "gemini"}
 
-// scaffoldAgentSet resolves which per-agent dirs `coop init` scaffolds: the --agents list when given
-// ("all" → every scaffoldable agent; else the named ones, kept to the scaffoldable set), else the
-// agents you're signed in to. Empty (no --agents, none signed in) → .agent/ only — a box synthesizes
-// a missing agent's skills from the repo's shared source on demand, so un-scaffolded agents work.
-func scaffoldAgentSet(cfg *config.Config, flag string, flagSet bool) []string {
-	pick := func(names []string) []string {
-		var out []string
-		for _, n := range names {
-			if slices.Contains(scaffoldableAgents, n) && !slices.Contains(out, n) {
-				out = append(out, n)
-			}
+// parseExplicitList normalizes and de-duplicates a comma/space-separated closed list. The optional
+// sentinel must stand alone and maps to sentinelValues ("none" → nil; "all" → every agent).
+func parseExplicitList(flag, value string, valid []string, sentinel string, sentinelValues []string) ([]string, error) {
+	tokens := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool { return r == ',' || r == ' ' })
+	choices := strings.Join(append(slices.Clone(valid), sentinel), ", ")
+	if slices.Contains(tokens, sentinel) {
+		if len(tokens) != 1 {
+			return nil, fmt.Errorf("%s: %q must be used alone — choose from %s", flag, sentinel, choices)
 		}
-		return out
+		return slices.Clone(sentinelValues), nil
 	}
-	if flagSet {
-		if strings.TrimSpace(flag) == "all" {
-			return append([]string{}, scaffoldableAgents...)
+	var out []string
+	for _, token := range tokens {
+		if !slices.Contains(valid, token) {
+			return nil, fmt.Errorf("%s: unknown value %q — choose from %s", flag, token, choices)
 		}
-		return pick(strings.FieldsFunc(flag, func(r rune) bool { return r == ',' || r == ' ' }))
+		if !slices.Contains(out, token) {
+			out = append(out, token)
+		}
 	}
-	return pick(box.AuthedAgents(cfg))
+	return out, nil
+}
+
+// scaffoldAgentSet resolves the implicit per-agent dirs from signed-in agents. Empty means
+// .agent/ only; a box synthesizes a missing agent's skills from the shared source on demand.
+func scaffoldAgentSet(cfg *config.Config) []string {
+	var out []string
+	for _, name := range box.AuthedAgents(cfg) {
+		if slices.Contains(scaffoldableAgents, name) && !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func (a *app) cmdInit(args []string) (int, error) {
 	stack := ""
 	var services []string
 	servicesSet := false
-	agentsFlag := ""
+	var agentDirs []string
 	agentsSet := false
 	for i := 0; i < len(args); i++ {
 		if v, n, ok, e := flagValue(args, i, "--stack"); ok {
@@ -814,7 +826,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 			if e != nil {
 				return 2, e
 			}
-			services, servicesSet = parseServices(v), true
+			services, e = parseExplicitList("--services", v, scaffold.ComposeServices, "none", nil)
+			if e != nil {
+				return 2, e
+			}
+			servicesSet = true
 			i += n - 1
 			continue
 		}
@@ -822,7 +838,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 			if e != nil {
 				return 2, e
 			}
-			agentsFlag, agentsSet = v, true
+			agentDirs, e = parseExplicitList("--agents", v, scaffoldableAgents, "all", scaffoldableAgents)
+			if e != nil {
+				return 2, e
+			}
+			agentsSet = true
 			i += n - 1
 			continue
 		}
@@ -850,10 +870,12 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if !servicesSet && !already && ui.IsTerminal(os.Stdin) {
 		services = promptServices(os.Stdin)
 	}
-	// Which per-agent dirs to scaffold: `--agents` if given (a name list, or "all"), else the agents
-	// you're signed in to. Others aren't clutter you delete later — a box synthesizes a missing
-	// agent's skills from the repo's shared source on demand.
-	agentDirs := scaffoldAgentSet(a.cfg, agentsFlag, agentsSet)
+	// Without an explicit --agents list, scaffold dirs for the signed-in agents. Others aren't
+	// clutter you delete later — a box synthesizes a missing agent's skills from the repo's shared
+	// source on demand.
+	if !agentsSet {
+		agentDirs = scaffoldAgentSet(a.cfg)
+	}
 	if err := scaffold.Init(repo, stack, langs, agentDirs); err != nil {
 		return 0, err
 	}
@@ -973,18 +995,6 @@ func (a *app) writeMCPStub() error {
 	}
 	ui.Detail("wrote %s — add MCP servers under \"mcpServers\" to share them with every agent", path)
 	return nil
-}
-
-// parseServices reads a --services value (comma/space-separated) into known service names,
-// dropping blanks, "none", and unknowns.
-func parseServices(s string) []string {
-	var out []string
-	for _, tok := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return r == ',' || r == ' ' }) {
-		if tok != "none" && slices.Contains(scaffold.ComposeServices, tok) && !slices.Contains(out, tok) {
-			out = append(out, tok)
-		}
-	}
-	return out
 }
 
 // promptServices asks (on a tty) which sibling services to scaffold into .agent/compose.yml.

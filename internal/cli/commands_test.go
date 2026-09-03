@@ -18,6 +18,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
@@ -729,24 +730,39 @@ func TestACPRequiresAnExplicitInitialTarget(t *testing.T) {
 	}
 }
 
-func TestParseServices(t *testing.T) {
+func TestParseExplicitList(t *testing.T) {
 	cases := []struct {
-		in   string
-		want []string
+		name           string
+		flag           string
+		in             string
+		valid          []string
+		sentinel       string
+		sentinelValues []string
+		want           []string
+		wantErr        string
 	}{
-		{"", nil},
-		{"none", nil},
-		{"postgres", []string{"postgres"}},
-		{"postgres,redis", []string{"postgres", "redis"}},
-		{"redis postgres", []string{"redis", "postgres"}}, // input order preserved
-		{"postgres,postgres", []string{"postgres"}},       // de-duped
-		{"mongo", nil}, // unknown dropped
-		{"postgres,mongo", []string{"postgres"}},
+		{name: "services none", flag: "--services", in: "none", valid: scaffold.ComposeServices, sentinel: "none"},
+		{name: "services normalized and de-duplicated", flag: "--services", in: "Redis, POSTGRES redis", valid: scaffold.ComposeServices, sentinel: "none", want: []string{"redis", "postgres"}},
+		{name: "unknown service", flag: "--services", in: "postgres,mongo", valid: scaffold.ComposeServices, sentinel: "none", wantErr: `unknown value "mongo"`},
+		{name: "none is standalone", flag: "--services", in: "postgres,none", valid: scaffold.ComposeServices, sentinel: "none", wantErr: `"none" must be used alone`},
+		{name: "agents all", flag: "--agents", in: "ALL", valid: scaffoldableAgents, sentinel: "all", sentinelValues: scaffoldableAgents, want: scaffoldableAgents},
+		{name: "agents normalized and de-duplicated", flag: "--agents", in: "Codex claude,codex", valid: scaffoldableAgents, sentinel: "all", sentinelValues: scaffoldableAgents, want: []string{"codex", "claude"}},
+		{name: "unknown agent", flag: "--agents", in: "claude,grok", valid: scaffoldableAgents, sentinel: "all", sentinelValues: scaffoldableAgents, wantErr: `unknown value "grok"`},
+		{name: "all is standalone", flag: "--agents", in: "all,codex", valid: scaffoldableAgents, sentinel: "all", sentinelValues: scaffoldableAgents, wantErr: `"all" must be used alone`},
 	}
-	for _, c := range cases {
-		if got := parseServices(c.in); !slices.Equal(got, c.want) {
-			t.Errorf("parseServices(%q) = %v, want %v", c.in, got, c.want)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseExplicitList(tc.flag, tc.in, tc.valid, tc.sentinel, tc.sentinelValues)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), strings.Join(append(slices.Clone(tc.valid), tc.sentinel), ", ")) {
+					t.Fatalf("parseExplicitList() = (%v, %v), want error containing %q and valid choices", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || !slices.Equal(got, tc.want) {
+				t.Fatalf("parseExplicitList() = (%v, %v), want (%v, nil)", got, err, tc.want)
+			}
+		})
 	}
 }
 
@@ -1017,16 +1033,32 @@ func TestSignOnExitAndPromptWarn(t *testing.T) {
 
 func TestScaffoldAgentSet(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()} // no agents signed in
-	if got := scaffoldAgentSet(cfg, "all", true); len(got) != 3 {
-		t.Errorf(`--agents all → 3 scaffoldable agents, got %v`, got)
-	}
-	// A named list is kept to the scaffoldable set — grok has no per-agent dir, so it's dropped.
-	if got := scaffoldAgentSet(cfg, "claude,grok,codex", true); len(got) != 2 || got[0] != "claude" || got[1] != "codex" {
-		t.Errorf("named list should keep scaffoldable only: %v", got)
-	}
 	// No flag, no credentials → empty (.agent/ only).
-	if got := scaffoldAgentSet(cfg, "", false); len(got) != 0 {
+	if got := scaffoldAgentSet(cfg); len(got) != 0 {
 		t.Errorf("no flag + no creds → empty, got %v", got)
+	}
+}
+
+func TestInitRejectsUnknownExplicitNamesBeforeWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "service", args: []string{"--services", "postgres,mongo"}, want: "postgres, redis, none"},
+		{name: "agent", args: []string{"--agents", "claude,grok"}, want: "claude, codex, gemini, all"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+			code, err := a.cmdInit(tc.args)
+			if code != 2 || err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("cmdInit(%v) = (%d, %v), want valid-choice error", tc.args, code, err)
+			}
+			if _, statErr := os.Stat(filepath.Join(repo, ".agent")); !os.IsNotExist(statErr) {
+				t.Fatalf("invalid explicit list wrote .agent state: %v", statErr)
+			}
+		})
 	}
 }
 
