@@ -4,7 +4,7 @@ description: "a new check goes in `make check`; CI installs the tools and calls 
 scope: agent-workflow
 sources: [Makefile, .github/workflows/ci.yml]
 check: "none"
-updated: 2026-08-09
+updated: 2026-09-03
 ---
 
 # There is ONE gate recipe: `make check`
@@ -44,3 +44,6 @@ Related: [[static-bounded-supervision]].
   `review-writes` → `make review-writes-e2e`) are the rule's one documented exception
   (container-runtime-dependent), and Makefile:94 names both by hand right next to `check:`. 0
   violations.
+- 2026-09-03 — routed the doctor job's duplicated build plus `./coop doctor` commands through the
+  existing `make doctor` target. Re-verified that the Docker/Podman matrix, runtime environment,
+  and separate init-process contract remain in CI; added a focused wiring regression.

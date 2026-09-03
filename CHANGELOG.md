@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **CI and local doctor runs now share one Make recipe.** The runtime matrix keeps its Docker and
+  Podman coverage while Make owns the build-and-run commands, removing a drift-prone duplicate.
+
 - **Rule cards now describe the current target and help contracts.** Rotation guidance distinguishes
   fresh loop attempts, stateful editor ACP recovery, and durable remote-session movement; target
   grammar, loop stages, help checks, list sources, and usage placeholders now match the code they

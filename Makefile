@@ -66,8 +66,8 @@ require-python3:
 snapshot: ## Build a local release snapshot with GoReleaser (no publish, no signing)
 	@goreleaser release --snapshot --clean --skip=sign
 
-doctor: ## Integration check: prove isolation holds (needs a runtime)
-	@go run . doctor
+doctor: build ## Integration check: prove isolation holds (needs a runtime)
+	@./coop doctor
 
 docs: ## Regenerate docs/cli.md + site/llms.txt from internal/cli (help.go is the single source)
 	@go run ./tools/gendocs
