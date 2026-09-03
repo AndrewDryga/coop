@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -530,7 +531,9 @@ func (a *app) cmdBuild(args []string) (int, error) {
 	if err := box.Build(a.rt, a.cfg, repo, false, resolveVersion()); err != nil {
 		return -1, err
 	}
-	a.recycleBoxes(repo)
+	if err := a.recycleBoxes(repo); err != nil {
+		return -1, fmt.Errorf("box image built, but old supervised boxes could not be recycled: %w — fix the container runtime and run 'coop build' again", err)
+	}
 	return 0, nil
 }
 
@@ -540,17 +543,33 @@ func (a *app) cmdBuild(args []string) (int, error) {
 // running boxes (loops, forks, an un-supervised session) are left alone; SIGKILLing
 // them would lose work, and they pick up the new image when they next start.
 // It reaps repo's orphans first, so a box nobody supervises is never counted (or reported to the
-// user) as work still running on the old image.
-func (a *app) recycleBoxes(repo string) {
+// user) as work still running on the old image. Every authoritative query and removal shares one
+// deadline; the preceding image build has already succeeded if an error is returned.
+const recycleBoxesTimeout = 10 * time.Second
+
+func (a *app) recycleBoxes(repo string) error {
 	a.sweepOrphanBoxes(repo)
-	total := a.rt.CountByLabel(box.LabelKey, box.LabelBox)
-	supervised := a.rt.CountByLabel(box.LabelSupervised, box.LabelOn)
-	if n := a.rt.KillByLabel(box.LabelSupervised, box.LabelOn); n > 0 {
+	ctx, cancel := context.WithTimeout(context.Background(), recycleBoxesTimeout)
+	defer cancel()
+	running, err := a.rt.RunningContainerIDsByLabel(ctx, box.LabelKey, box.LabelBox)
+	if err != nil {
+		return fmt.Errorf("list running Coop boxes: %w", err)
+	}
+	supervised, err := a.rt.RunningContainerIDsByLabel(ctx, box.LabelSupervised, box.LabelOn)
+	if err != nil {
+		return fmt.Errorf("list supervised Coop boxes: %w", err)
+	}
+	n, err := a.rt.RemoveByLabel(ctx, box.LabelSupervised, box.LabelOn)
+	if err != nil {
+		return fmt.Errorf("remove supervised Coop boxes (%d removed before failure): %w", n, err)
+	}
+	if n > 0 {
 		ui.Info("restarted %s onto the new image", ui.Count(n, "supervised session"))
 	}
-	if others := total - supervised; others > 0 {
+	if others := len(running) - len(supervised); others > 0 {
 		ui.Info("%s still on the old image until restarted", ui.Count(others, "other running container"))
 	}
+	return nil
 }
 
 // cmdUpdate self-updates the coop binary to the latest release, then force-rebuilds
@@ -601,7 +620,9 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 	if err := box.Build(a.rt, a.cfg, repo, true, resolveVersion()); err != nil {
 		return -1, err
 	}
-	a.recycleBoxes(repo)
+	if err := a.recycleBoxes(repo); err != nil {
+		return -1, fmt.Errorf("box image updated, but old supervised boxes could not be recycled: %w — fix the container runtime and run 'coop update --box-only' again", err)
+	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	ui.Info("installed versions:")
 	_, _ = box.Run(a.cfg, a.rt, box.RunSpec{

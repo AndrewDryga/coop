@@ -176,7 +176,7 @@ func TestRuntimeInitForwardsTerminationSignal(t *testing.T) {
 	}()
 
 	awaitRuntimeInitMarker(t, ready, "ready\n")
-	if got := rt.CountByLabel(LabelRun, runID); got != 1 {
+	if got := runtimeInitRunningCount(t, rt, LabelRun, runID); got != 1 {
 		t.Fatalf("running box count = %d, want 1", got)
 	}
 	cancel()
@@ -189,9 +189,20 @@ func TestRuntimeInitForwardsTerminationSignal(t *testing.T) {
 		t.Fatal("canceled runtime did not return")
 	}
 	awaitRuntimeInitMarker(t, received, "term\n")
-	if got := rt.CountByLabel(LabelRun, runID); got != 0 {
+	if got := runtimeInitRunningCount(t, rt, LabelRun, runID); got != 0 {
 		t.Fatalf("canceled box count = %d, want 0", got)
 	}
+}
+
+func runtimeInitRunningCount(t *testing.T, rt runtime.Runtime, key, value string) int {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ids, err := rt.RunningContainerIDsByLabel(ctx, key, value)
+	if err != nil {
+		t.Fatalf("query running containers by %s=%s: %v", key, value, err)
+	}
+	return len(ids)
 }
 
 func runtimeInitTestRuntime(t *testing.T) runtime.Runtime {

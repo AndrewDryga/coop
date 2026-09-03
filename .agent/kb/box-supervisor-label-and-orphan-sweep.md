@@ -3,7 +3,7 @@ name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
 sources: [internal/box/sweep.go, internal/box/run.go, internal/cli/boxsweep.go, internal/cli/doctor.go, internal/runtime/runtime.go]
-updated: 2026-08-25
+updated: 2026-09-03
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
 CLIENT's promise, no Go `defer` runs, and no PID 1 inside the box can help (that limit, and why a
@@ -45,6 +45,11 @@ command's own box work reports a broken runtime loudly, and Apple's `container` 
 inspection at all, so it would otherwise print on every start. `coop doctor` is the reporting
 surface: count, ids, and the label evidence, outside its pass/fail tally, reaping nothing.
 
+Post-build recycling is a separate authority boundary. It uses a bounded, error-reporting running
+container query to preserve the old-image notice, then `RemoveByLabel` to restart supervised boxes.
+A true no-match is success; query or partial-removal failure makes `build`/`update` fail with the
+already-built image called out explicitly. Do not reintroduce best-effort count/kill helpers there.
+
 Traps:
 - The sweep adds ONE runtime `ps` to loop/fork/build. The scripted process E2Es pin exact
   runtime call counts, so those suites pass `sweepsOrphanBoxes` (see `assertDirectRunContract`); a
@@ -56,6 +61,8 @@ Traps:
   exact-owner reap.
 
 ## Changelog
+- 2026-09-03 — replaced post-build's silent count/kill path with bounded diagnostic queries and
+  exact-label removal; verified the pull-only orphan sweep remains intentionally best-effort.
 - 2026-08-25 — removed Fleet from the current sweep-entry and runtime-call inventory after the
   command family was retired; direct loop/fork/build entry points keep the same scoped reap.
 - 2026-08-09 — created with the supervisor label + sweep (verified against `internal/box/sweep_test.go`'s decision table and the scripted loop/fork E2Es).

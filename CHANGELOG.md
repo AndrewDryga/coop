@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Post-build box recycling no longer hides runtime failures.** `coop build` and box updates now
+  distinguish a real no-match from a failed container query or partial removal, keep cleanup
+  bounded, and explain when the image succeeded but supervised sessions could not restart.
+
 - **Fork logs now distinguish quiet forks from broken reads.** A named fork with no output says so;
   multi-fork reads keep every readable log while returning failure for unreadable ones. Follow-mode
   stream errors are reported immediately without stopping independent healthy followers.

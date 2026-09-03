@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -422,6 +423,41 @@ func TestAbsoluteRuntimePathsKeepDockerCapabilities(t *testing.T) {
 	container := Runtime{Name: filepath.Join(dir, "container")}
 	if container.SupportsCIDFile() || container.SupportsInit() || container.SupportsRunLimits() {
 		t.Fatal("Apple container path gained unsupported run capabilities")
+	}
+}
+
+func TestRunningContainerIDsByLabelDistinguishesNoMatchFromFailure(t *testing.T) {
+	dir := t.TempDir()
+	runtimeCLI := filepath.Join(dir, "runtime")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+if [ "$COOP_TEST_QUERY_FAILURE" = 1 ]; then
+	echo 'daemon query broke' >&2
+	exit 42
+fi
+if [ "$COOP_TEST_QUERY_MATCH" = 1 ]; then
+	printf 'box-one\nbox-two\n'
+fi
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Name: runtimeCLI}
+
+	ids, err := rt.RunningContainerIDsByLabel(context.Background(), "coop", "box")
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("no-match query = (%v, %v), want empty success", ids, err)
+	}
+	t.Setenv("COOP_TEST_QUERY_MATCH", "1")
+	ids, err = rt.RunningContainerIDsByLabel(context.Background(), "coop", "box")
+	if err != nil || !slices.Equal(ids, []string{"box-one", "box-two"}) {
+		t.Fatalf("matching query = (%v, %v), want two ids", ids, err)
+	}
+	t.Setenv("COOP_TEST_QUERY_FAILURE", "1")
+	_, err = rt.RunningContainerIDsByLabel(context.Background(), "coop", "box")
+	if err == nil || !strings.Contains(err.Error(), "daemon query broke") {
+		t.Fatalf("failed query = %v, want runtime diagnostic", err)
+	}
+	if _, err := rt.RunningContainerIDsByLabel(context.Background(), "", "box"); err == nil {
+		t.Fatal("empty label key unexpectedly queried the runtime")
 	}
 }
 

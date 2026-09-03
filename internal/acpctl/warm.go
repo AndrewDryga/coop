@@ -75,7 +75,7 @@ func (p *WarmPool) Refill(provider string) {
 }
 
 // Reap stops every held box and disables the pool (called on supervisor exit). The container itself
-// is also caught by the supervisor's final KillByLabel sweep; this closes the box's pipes/cidfile.
+// is also caught by the supervisor's final exact-label removal; this closes the box's pipes/cidfile.
 func (p *WarmPool) Reap() {
 	if p == nil {
 		return

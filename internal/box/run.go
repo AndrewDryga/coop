@@ -27,7 +27,7 @@ import (
 )
 
 // Container labels coop stamps on its boxes so it can find and tear them down later. The SET
-// sites (assembleArgs, below) and the cli QUERY sites (CountByLabel/KillByLabel) MUST agree —
+// sites (assembleArgs, below) and the cleanup queries/removals MUST agree —
 // a label renamed on only one side would orphan running containers — so both reference these.
 const (
 	LabelKey            = "coop"                 // every coop box: coop=box

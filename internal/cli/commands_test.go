@@ -205,6 +205,100 @@ func composeUpRuntime(t *testing.T, services []string, serviceExit int) runtime.
 	return runtime.Runtime{Name: shim}
 }
 
+func recycleRuntime(t *testing.T, mode string) (runtime.Runtime, string) {
+	t.Helper()
+	dir := t.TempDir()
+	shim := filepath.Join(dir, "runtime")
+	trace := filepath.Join(dir, "trace")
+	if err := os.WriteFile(shim, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_RUNTIME_TRACE"
+if [ "$1" = ps ]; then
+	if [ "$COOP_TEST_RECYCLE_MODE" = query-failure ]; then
+		echo 'daemon query broke' >&2
+		exit 42
+	fi
+	case "$*" in
+		*" -a "*)
+			case "$COOP_TEST_RECYCLE_MODE" in success|partial) printf 'supervised-a\nsupervised-b\n' ;; esac
+			;;
+		*"label=coop.supervised=1"*)
+			case "$COOP_TEST_RECYCLE_MODE" in success|partial) printf 'supervised-a\nsupervised-b\n' ;; esac
+			;;
+		*"label=coop=box"*)
+			case "$COOP_TEST_RECYCLE_MODE" in success|partial) printf 'supervised-a\nsupervised-b\nother\n' ;; esac
+			;;
+	esac
+fi
+if [ "$1" = rm ] && [ "$COOP_TEST_RECYCLE_MODE" = partial ] && [ "$3" = supervised-b ]; then
+	echo 'container remove broke' >&2
+	exit 43
+fi
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_RUNTIME_TRACE", trace)
+	t.Setenv("COOP_TEST_RECYCLE_MODE", mode)
+	return runtime.Runtime{Name: shim}, trace
+}
+
+func TestRecycleBoxesDistinguishesNoMatchFromFailure(t *testing.T) {
+	t.Run("no match", func(t *testing.T) {
+		rt, _ := recycleRuntime(t, "no-match")
+		a := &app{rt: rt, rtSet: true}
+		var recycleErr error
+		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
+		if recycleErr != nil || out != "" {
+			t.Fatalf("empty recycle = (%q, %v), want quiet success", out, recycleErr)
+		}
+	})
+
+	t.Run("success preserves both notices", func(t *testing.T) {
+		rt, _ := recycleRuntime(t, "success")
+		a := &app{rt: rt, rtSet: true}
+		var recycleErr error
+		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
+		if recycleErr != nil {
+			t.Fatal(recycleErr)
+		}
+		for _, want := range []string{"restarted 2 supervised sessions", "1 other running container still on the old image"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("recycle output missing %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("query failure happens before removal", func(t *testing.T) {
+		rt, trace := recycleRuntime(t, "query-failure")
+		a := &app{rt: rt, rtSet: true}
+		var recycleErr error
+		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
+		if recycleErr == nil || !strings.Contains(recycleErr.Error(), "daemon query broke") || out != "" {
+			t.Fatalf("query failure = output %q, error %v; want silent diagnostic error", out, recycleErr)
+		}
+		calls, err := os.ReadFile(trace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(calls), "rm -f") {
+			t.Fatalf("query failure mutated containers:\n%s", calls)
+		}
+	})
+
+	t.Run("partial removal reports progress", func(t *testing.T) {
+		rt, _ := recycleRuntime(t, "partial")
+		a := &app{rt: rt, rtSet: true}
+		var recycleErr error
+		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
+		if recycleErr == nil || !strings.Contains(recycleErr.Error(), "1 removed before failure") ||
+			!strings.Contains(recycleErr.Error(), "container remove broke") {
+			t.Fatalf("partial removal error = %v, want count and runtime diagnostic", recycleErr)
+		}
+		if strings.Contains(out, "restarted") {
+			t.Fatalf("partial removal printed a success summary:\n%s", out)
+		}
+	})
+}
+
 func TestCmdUpReportsResolvedServiceNames(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

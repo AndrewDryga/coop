@@ -270,17 +270,13 @@ func (r Runtime) Silent(args ...string) bool {
 	return exec.Command(r.Name, args...).Run() == nil
 }
 
-// psIDs returns the ids of running containers matching all the given ps --filter expressions
-// (e.g. "label=coop=box"). Legacy best-effort callers treat an error like no match.
-func (r Runtime) psIDs(filters ...string) []string {
-	ids, _ := r.psIDsContext(context.Background(), filters...)
-	return ids
-}
-
-// psIDsContext is the error-reporting, cancelable form used when cleanup must not claim success
-// after a failed query. A real no-match is an empty slice with a nil error.
-func (r Runtime) psIDsContext(ctx context.Context, filters ...string) ([]string, error) {
-	return r.containerIDsContext(ctx, false, filters...)
+// RunningContainerIDsByLabel returns the ids of running containers carrying key=value. A real
+// no-match is an empty slice with a nil error; runtime query failures remain distinguishable.
+func (r Runtime) RunningContainerIDsByLabel(ctx context.Context, key, value string) ([]string, error) {
+	if key == "" {
+		return nil, errors.New("container label key is empty")
+	}
+	return r.containerIDsContext(ctx, false, "label="+key+"="+value)
 }
 
 func (r Runtime) containerIDsContext(ctx context.Context, all bool, filters ...string) ([]string, error) {
@@ -302,7 +298,7 @@ func (r Runtime) containerIDsContext(ctx context.Context, all bool, filters ...s
 		return nil, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, nil))
 	}
 	// Fields (not Split on "\n") so a blank line or a stray CRLF can't yield an empty/`\r`-suffixed
-	// id — which would over-count CountByLabel or silently no-op a kill. Ids carry no whitespace.
+	// id — which would over-count a caller or silently no-op a removal. Ids carry no whitespace.
 	return strings.Fields(string(out)), nil
 }
 
@@ -367,11 +363,6 @@ func (r Runtime) appleContainerIDsContext(ctx context.Context, all bool, filters
 	return ids, nil
 }
 
-// CountByLabel returns how many running containers carry the label key=value.
-func (r Runtime) CountByLabel(key, value string) int {
-	return len(r.psIDs("label=" + key + "=" + value))
-}
-
 // Container is one container's id together with the labels coop stamped on it.
 type Container struct {
 	ID     string
@@ -405,22 +396,6 @@ func (r Runtime) ContainersByLabel(ctx context.Context, key, value string) ([]Co
 		containers = append(containers, Container{ID: id, Labels: labels})
 	}
 	return containers, nil
-}
-
-// KillByLabel sends SIGKILL to every running container whose label matches
-// key=value. Returns the number of containers killed.
-func (r Runtime) KillByLabel(key, value string) int {
-	n := 0
-	for _, id := range r.psIDs("label=" + key + "=" + value) {
-		if r.kill(id) {
-			n++
-		}
-	}
-	return n
-}
-
-func (r Runtime) kill(id string) bool {
-	return id != "" && exec.Command(r.Name, "kill", id).Run() == nil
 }
 
 // RemoveContainer force-removes a container by id (or name) — `rm -f`, which stops it first.
