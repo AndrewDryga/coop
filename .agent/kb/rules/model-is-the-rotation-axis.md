@@ -55,6 +55,8 @@ stages, and nonexistent flag tombstones, putting current fallback and provider p
 Related: [[loop-failover-profiles]] and [[credentials-not-profiles]].
 
 ## Changelog
+- 2026-09-03 — `verify.agent` now goes through `loopcfg`'s shared load-time `Rungs` validation,
+  matching the work, between, and signoff ladders before task recovery or box work begins.
 - 2026-09-03 — re-verified preset, loop, direct-launch, and session-policy grammar after target
   normalization. Corrected the current role ladders and five loop stages, removed nonexistent
   tombstone claims, and explicitly preserved provider-native model flags.

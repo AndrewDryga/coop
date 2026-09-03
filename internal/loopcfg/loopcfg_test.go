@@ -71,6 +71,12 @@ between:
   writes: repo
   prompt: |
     Audit the finished task.
+verify:
+  enabled: true
+  agent: [grok]
+  writes: tasks
+  prompt: |
+    Exercise the affected feature.
 `)
 	c, err := Load(repo)
 	if err != nil {
@@ -91,6 +97,12 @@ between:
 	if !c.Between.Writes.RepositoryWritable() {
 		t.Errorf("between.writes = %q, want repo", c.Between.Writes)
 	}
+	if !c.Verify.Enabled || len(c.Verify.Agent) != 1 || c.Verify.Agent[0] != "grok" || c.Verify.Prompt == "" {
+		t.Errorf("verify = %+v", c.Verify)
+	}
+	if c.Verify.Writes.RepositoryWritable() {
+		t.Errorf("verify.writes = %q, want tasks", c.Verify.Writes)
+	}
 }
 
 func TestLoadRejects(t *testing.T) {
@@ -109,6 +121,13 @@ func TestLoadRejects(t *testing.T) {
 				t.Errorf("expected error for:\n%s", body)
 			}
 		})
+	}
+}
+
+func TestLoadRejectsMalformedVerifyAgent(t *testing.T) {
+	_, err := Load(write(t, "verify:\n  agent: [\"claude:opus:extra\"]\n"))
+	if err == nil || !strings.Contains(err.Error(), File+" verify.agent:") {
+		t.Fatalf("malformed verify agent error = %v, want field-scoped load error", err)
 	}
 }
 

@@ -143,7 +143,12 @@ func parse(data []byte) (*Config, error) {
 	for _, s := range []struct {
 		name  string
 		rungs []string
-	}{{"work.agent", c.Work.Agent}, {"signoff.agent", c.Signoff.Agent}, {"between.agent", c.Between.Agent}} {
+	}{
+		{"work.agent", c.Work.Agent},
+		{"signoff.agent", c.Signoff.Agent},
+		{"between.agent", c.Between.Agent},
+		{"verify.agent", c.Verify.Agent},
+	} {
 		if _, err := Rungs(s.rungs); err != nil {
 			return nil, fmt.Errorf("%s %s: %w", File, s.name, err)
 		}

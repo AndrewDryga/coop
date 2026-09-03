@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Invalid verify agents fail at loop-config load.** `verify.agent` now uses the same early target
+  validation as work, between, and signoff ladders, before task recovery or box work begins.
+
 - **The unused help recording is gone.** The site keeps its five embedded terminal casts, while
   cast generation and releases no longer build or recapture an unreferenced version-stamped asset.
 

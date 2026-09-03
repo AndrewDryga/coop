@@ -165,6 +165,25 @@ func TestLoopAcceptsFolderQueue(t *testing.T) {
 	}
 }
 
+func TestLoopRejectsInvalidVerifyAgentBeforeImageCheck(t *testing.T) {
+	repo := t.TempDir()
+	taskPath := filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md")
+	writeTaskFile(t, taskPath, "# x\n")
+	writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), "verify:\n  agent: [\"claude:opus:extra\"]\n")
+	c := New(&config.Config{RepoOverride: repo}, runtime.Runtime{Name: "false"}, "test", Host{})
+
+	code, err := c.Run(RunSpec{Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "verify.agent") {
+		t.Fatalf("invalid verify agent = (%d, %v), want load-time field error", code, err)
+	}
+	if strings.Contains(err.Error(), "not built") {
+		t.Fatalf("invalid verify agent reached the image check: %v", err)
+	}
+	if _, statErr := os.Stat(taskPath); statErr != nil {
+		t.Fatalf("invalid loop config changed the queued task: %v", statErr)
+	}
+}
+
 func TestLoopTaskLimitWithNoActionableTaskNeedsNoImage(t *testing.T) {
 	repo := t.TempDir()
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateDone, "2026-01-01-done", "task.md"), "# Done\n")
