@@ -379,6 +379,159 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 	if err != nil || replayed.ID != sess.ID || replayed.Workspace != sess.Workspace {
 		t.Fatalf("create replay = %+v, err=%v", replayed, err)
 	}
+	if _, err := service.Store().GetOperation(context.Background(), "create-session-"+op.ID); !errors.Is(err, session.ErrOperationNotFound) {
+		t.Fatalf("remote create persisted a synthetic inner operation: %v", err)
+	}
+}
+
+func TestSessionServiceDoesNotRollbackAnExistingSplitCreateOnConflict(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	policies := testSessionPolicies(repo)
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+	ctx := context.Background()
+	fixture := seedHistoricalSplitCreate(t, service, repo, policies, "split-create")
+	existing := fixture.session
+	var err error
+	existing, err = service.Store().ExtendBudget(ctx, "advance-split-session", session.ExtendBudgetRequest{
+		SessionID: existing.ID, ExpectedRevision: existing.Revision, AdditionalTurns: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(fixture.workspace.Path, ".git", "preserve-existing-session.txt")
+	if err := os.WriteFile(marker, []byte("owned by durable session\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.CreateRemoteSession(ctx, "split-create", fixture.request); session.CodeOf(err) != session.CodeOperationUncertain {
+		t.Fatalf("conflicting split create error = %v", err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "owned by durable session\n" {
+		t.Fatalf("existing session workspace was rolled back: data=%q err=%v", data, err)
+	}
+	persisted, err := service.Store().GetSession(ctx, existing.ID)
+	if err != nil || persisted.Revision != existing.Revision || persisted.MaxTurns != existing.MaxTurns {
+		t.Fatalf("existing session changed = %+v err=%v", persisted, err)
+	}
+	outer, err := service.Store().GetOperationByID(ctx, fixture.operation.ID)
+	if err != nil || outer.State != session.OperationUncertain || outer.ErrorCode != session.CodeOperationUncertain {
+		t.Fatalf("conflicting outer operation = %+v err=%v", outer, err)
+	}
+	incomplete, err := service.Store().ListIncompleteOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range incomplete {
+		if operation.ID == outer.ID {
+			t.Fatalf("quarantined create remained schedulable: %+v", operation)
+		}
+	}
+}
+
+func TestSessionServiceStartupFinishesAnExactHistoricalSplitCreate(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	policies := testSessionPolicies(repo)
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	before := newTestSessionService(t, stateRoot, policies, nil)
+	fixture := seedHistoricalSplitCreate(t, before, repo, policies, "restart-split-create")
+	marker := filepath.Join(fixture.workspace.Path, ".git", "preserve-recovered-session.txt")
+	if err := os.WriteFile(marker, []byte("historical session\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := before.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	after := newTestSessionService(t, stateRoot, policies, nil)
+	if err := after.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer after.Stop()
+	var outer session.Operation
+	waitForSessionTest(t, func() bool {
+		outer, _ = after.Store().GetOperationByID(context.Background(), fixture.operation.ID)
+		return outer.State == session.OperationSucceeded
+	})
+	first, err := after.CreateRemoteSession(context.Background(), "restart-split-create", fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := after.CreateRemoteSession(context.Background(), "restart-split-create", fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstJSON, _ := json.Marshal(first)
+	secondJSON, _ := json.Marshal(second)
+	if !bytes.Equal(firstJSON, secondJSON) || first.ID != fixture.session.ID || outer.ResourceID != first.ID {
+		t.Fatalf("historical split replay changed: first=%s second=%s outer=%+v", firstJSON, secondJSON, outer)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "historical session\n" {
+		t.Fatalf("recovered workspace marker = %q err=%v", data, err)
+	}
+	inner, err := after.Store().GetOperation(context.Background(), "create-session-"+fixture.operation.ID)
+	if err != nil || inner.State != session.OperationSucceeded || inner.ResourceID != first.ID {
+		t.Fatalf("historical inner operation = %+v err=%v", inner, err)
+	}
+}
+
+type historicalSplitCreateFixture struct {
+	request   CreateRemoteSessionRequest
+	operation session.Operation
+	session   session.Session
+	workspace sessionWorkspace
+}
+
+func seedHistoricalSplitCreate(
+	t *testing.T,
+	service *Service,
+	repo string,
+	policies map[string]Policy,
+	key string,
+) historicalSplitCreateFixture {
+	t.Helper()
+	ctx := context.Background()
+	base := gitOut(repo, "rev-parse", "HEAD")
+	req := CreateRemoteSessionRequest{Policy: "responder", Task: "historical split create"}
+	op, replay, err := service.Store().ReserveOperation(ctx, "CreateRemoteSession", key, req)
+	if err != nil || replay {
+		t.Fatalf("reserve split create = %+v replay=%v err=%v", op, replay, err)
+	}
+	intent, err := service.captureCreateIntent(op, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.BaseCommit, intent.WorkspaceCommit = base, base
+	intentData, err := json.Marshal(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Store().MarkOperationRunning(ctx, op.ID, intentData); err != nil {
+		t.Fatal(err)
+	}
+	op, err = service.Store().GetOperationByID(ctx, op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := ensureSessionWorkspaceContext(ctx, repo, intent.ForkName, base, intent.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := policies["responder"]
+	existing, err := service.Store().CreateSession(ctx, "create-session-"+op.ID, session.CreateSessionRequest{
+		ID: intent.SessionID, ExternalRef: intent.Task, Target: policy.Targets[0].String(), Policy: policy.Name,
+		PolicyDigest: resolvedSessionPolicyDigest(policy), OmitEnv: policy.OmitEnv, OmitMCP: policy.OmitMCP,
+		RepositoryReadOnly: policy.RepositoryReadOnly, Repository: repo, Workspace: workspace.Path,
+		ForkName: intent.ForkName, ForkGeneration: string(workspace.Fork.Generation), BaseCommit: base,
+		MaxTurns: policy.MaxTurns, MaxQueuedTurns: policy.MaxQueuedTurns,
+		MaxQueuedBytes: policy.MaxQueuedBytes, TurnTimeout: policy.TurnTimeout, MaxPatchBytes: policy.MaxPatchBytes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return historicalSplitCreateFixture{request: req, operation: op, session: existing, workspace: workspace}
 }
 
 func TestConfirmedEngineeringSessionEnsuresOneDurableWorkspaceTask(t *testing.T) {

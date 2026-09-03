@@ -1969,7 +1969,9 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		intent.ForkName != deterministicForkName(op.ID) {
 		return s.rejectCreateIntent(ctx, op.ID, "create operation intent is invalid")
 	}
+	sessionExisted := false
 	if existing, err := s.store.GetSession(ctx, intent.SessionID); err == nil {
+		sessionExisted = true
 		if err := requireSessionForkAuthority(existing); errors.Is(err, errLegacySessionForkUnproven) {
 			return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 		}
@@ -1979,6 +1981,7 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 	if !validSessionIntentTargets(intent.Policy.Targets) {
 		return s.rejectCreateIntent(ctx, op.ID, "create operation intent has no valid target")
 	}
+	expectedIntent := op.Result
 	if intent.BaseCommit == "" {
 		if intent.WorkspaceCommit != "" {
 			return s.rejectCreateIntent(ctx, op.ID, "create operation intent has incomplete repository pins")
@@ -1990,6 +1993,10 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 				return session.Session{}, err
 			}
 			return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+		}
+		expectedIntent, err = json.Marshal(intent)
+		if err != nil {
+			return session.Session{}, err
 		}
 	}
 	workspaceCommit := intent.WorkspaceCommit
@@ -2050,16 +2057,36 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		MaxQueuedTurns: intent.Policy.MaxQueuedTurns, MaxQueuedBytes: intent.Policy.MaxQueuedBytes,
 		TurnTimeout: intent.Policy.TurnTimeout, MaxPatchBytes: intent.Policy.MaxPatchBytes,
 	}
-	sess, err := s.store.CreateSession(ctx, "create-session-"+op.ID, createReq)
+	latest, err := s.store.GetOperationByID(ctx, op.ID)
 	if err != nil {
+		return session.Session{}, err
+	}
+	if latest.State != session.OperationRunning {
+		return s.replayCreateOperation(ctx, latest)
+	}
+	if latest.Method != "CreateRemoteSession" || !bytes.Equal(latest.Result, expectedIntent) {
+		return session.Session{}, session.ErrOperationIntentConflict
+	}
+	sess, err := s.store.CompleteCreateSessionOperation(ctx, latest, createReq)
+	if err != nil {
+		receiptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
+		current, readErr := s.store.GetOperationByID(receiptCtx, op.ID)
+		if readErr == nil && current.State == session.OperationSucceeded {
+			return s.replayCreateOperation(receiptCtx, current)
+		}
+		if sessionExisted && session.CodeOf(err) == session.CodeOperationIntentConflict &&
+			readErr == nil && current.State == session.OperationRunning &&
+			current.Method == "CreateRemoteSession" && bytes.Equal(current.Result, expectedIntent) {
+			return session.Session{}, s.makeOperationUncertain(
+				receiptCtx, current, "existing session conflicts with remote create intent",
+			)
+		}
+		if sessionExisted || readErr != nil || current.State != session.OperationRunning ||
+			current.Method != "CreateRemoteSession" || !bytes.Equal(current.Result, expectedIntent) {
+			return session.Session{}, errors.Join(err, readErr)
+		}
 		return failCreate(err)
-	}
-	result, err := json.Marshal(sess)
-	if err != nil {
-		return session.Session{}, err
-	}
-	if err := s.store.CompleteOperation(ctx, op.ID, "session", sess.ID, result); err != nil {
-		return session.Session{}, err
 	}
 	return sess, nil
 }

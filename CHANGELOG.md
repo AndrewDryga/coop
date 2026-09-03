@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Remote session creation now has one durable operation.** The session row, first event, and
+  public `CreateRemoteSession` receipt commit in one transaction instead of creating a hidden
+  `CreateSession` operation with a duplicate result first. Existing operation history remains
+  readable, and restart recovery can finish an exact pre-change split create without adding one.
+
 - **Turn retries no longer duplicate private prompts.** Submit, validation, and cancellation
   operations now keep a compact public replay receipt while canonical turns remain unchanged.
   The explicit `coop sessions compact --backup <path>` maintenance command verifies a new SQLite

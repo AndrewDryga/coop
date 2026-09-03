@@ -717,6 +717,171 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 	if err := validateCreateRequest(req); err != nil {
 		return Session{}, s.failAndCommit(tx, op.ID, err)
 	}
+	sess := s.initialSession(req)
+	if err := s.insertInitialSessionTx(ctx, tx, &sess); err != nil {
+		if CodeOf(err) != "" {
+			return Session{}, s.failAndCommit(tx, op.ID, err)
+		}
+		return Session{}, err
+	}
+	result, err := json.Marshal(sess)
+	if err != nil {
+		return Session{}, fmt.Errorf("encode session result: %w", err)
+	}
+	if err := s.completeOperationTx(ctx, tx, op.ID, "session", sess.ID, result); err != nil {
+		return Session{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Session{}, fmt.Errorf("commit session creation: %w", err)
+	}
+	return sess, nil
+}
+
+// CompleteCreateSessionOperation atomically creates a session for an already-running
+// CreateRemoteSession operation and stores the session result on that same operation. The exact
+// operation snapshot is the caller's authority: a stale worker cannot finish a changed intent.
+func (s *Store) CompleteCreateSessionOperation(
+	ctx context.Context,
+	expected Operation,
+	req CreateSessionRequest,
+) (Session, error) {
+	req = normalizeCreateRequest(req)
+	requestHash, err := CanonicalRequestHash(req)
+	if err != nil {
+		return Session{}, err
+	}
+	if expected.ID == "" || expected.Method != "CreateRemoteSession" || expected.State != OperationRunning {
+		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "running remote create operation is required"}
+	}
+	if req.ID == "" {
+		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "remote session id is required"}
+	}
+	if err := validateCreateRequest(req); err != nil {
+		return Session{}, err
+	}
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Session{}, fmt.Errorf("begin remote session creation: %w", err)
+	}
+	defer tx.Rollback()
+	current, err := scanOperation(tx.QueryRowContext(ctx, `
+		SELECT id, method, idempotency_key, request_hash, state, resource_type,
+		       resource_id, result, error_code, error_detail, created_at, updated_at
+		FROM operations WHERE id = ?`, expected.ID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrOperationNotFound
+	}
+	if err != nil {
+		return Session{}, fmt.Errorf("read remote create operation: %w", err)
+	}
+	if current.State == OperationSucceeded {
+		if current.Method != "CreateRemoteSession" || current.ResourceType != "session" || current.ResourceID != req.ID {
+			return Session{}, ErrOperationIntentConflict
+		}
+		sess, err := s.replaySession(current)
+		if err != nil {
+			return Session{}, err
+		}
+		if !initialSessionMatchesRequest(sess, req) {
+			return Session{}, ErrOperationIntentConflict
+		}
+		return sess, nil
+	}
+	if !sameOperationSnapshot(current, expected) {
+		return Session{}, ErrOperationIntentConflict
+	}
+
+	sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", req.ID))
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		sess = s.initialSession(req)
+		if err := s.insertInitialSessionTx(ctx, tx, &sess); err != nil {
+			return Session{}, err
+		}
+	case err != nil:
+		return Session{}, fmt.Errorf("read existing remote session: %w", err)
+	case !initialSessionMatchesRequest(sess, req):
+		return Session{}, ErrOperationIntentConflict
+	default:
+		if err := s.validateHistoricalSplitSessionTx(ctx, tx, expected, requestHash, req, sess); err != nil {
+			return Session{}, err
+		}
+	}
+	result, err := json.Marshal(sess)
+	if err != nil {
+		return Session{}, fmt.Errorf("encode remote session result: %w", err)
+	}
+	updated, err := tx.ExecContext(ctx, `
+		UPDATE operations
+		SET state = ?, resource_type = 'session', resource_id = ?, result = ?, updated_at = ?
+		WHERE id = ? AND method = ? AND idempotency_key = ? AND request_hash = ?
+		  AND state = ? AND resource_type = ? AND resource_id = ? AND result IS ?
+		  AND error_code = ? AND error_detail = ? AND updated_at = ?`,
+		string(OperationSucceeded), sess.ID, result, s.now().UnixNano(),
+		expected.ID, expected.Method, expected.IdempotencyKey, expected.RequestHash,
+		string(expected.State), expected.ResourceType, expected.ResourceID, expected.Result,
+		string(expected.ErrorCode), expected.ErrorDetail, expected.UpdatedAt.UnixNano(),
+	)
+	if err != nil {
+		return Session{}, fmt.Errorf("complete remote create operation: %w", err)
+	}
+	count, err := updated.RowsAffected()
+	if err != nil {
+		return Session{}, fmt.Errorf("complete remote create operation: %w", err)
+	}
+	if count != 1 {
+		return Session{}, ErrOperationIntentConflict
+	}
+	if err := tx.Commit(); err != nil {
+		return Session{}, fmt.Errorf("commit remote session creation: %w", err)
+	}
+	return sess, nil
+}
+
+func (s *Store) validateHistoricalSplitSessionTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	outer Operation,
+	requestHash string,
+	req CreateSessionRequest,
+	sess Session,
+) error {
+	inner, err := scanOperation(tx.QueryRowContext(ctx, `
+		SELECT id, method, idempotency_key, request_hash, state, resource_type,
+		       resource_id, result, error_code, error_detail, created_at, updated_at
+		FROM operations WHERE idempotency_key = ?`, "create-session-"+outer.ID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrOperationIntentConflict
+	}
+	if err != nil {
+		return fmt.Errorf("read historical inner create operation: %w", err)
+	}
+	if inner.Method != "CreateSession" || inner.State != OperationSucceeded ||
+		inner.RequestHash != requestHash || inner.ResourceType != "session" || inner.ResourceID != sess.ID {
+		return ErrOperationIntentConflict
+	}
+	innerSession, err := s.replaySession(inner)
+	if err != nil || !initialSessionMatchesRequest(innerSession, req) ||
+		!innerSession.CreatedAt.Equal(sess.CreatedAt) {
+		return ErrOperationIntentConflict
+	}
+	var eventType, turnID string
+	var eventVersion int
+	var payload []byte
+	if err := tx.QueryRowContext(ctx, `
+		SELECT turn_id, type, version, payload FROM events
+		WHERE session_id = ? AND sequence = 1`, sess.ID).
+		Scan(&turnID, &eventType, &eventVersion, &payload); err != nil {
+		return fmt.Errorf("read existing remote session creation event: %w", err)
+	}
+	if turnID != "" || EventType(eventType) != EventSessionCreated || eventVersion != 1 ||
+		!bytes.Equal(payload, mustJSON(map[string]any{"target": sess.Target})) {
+		return ErrOperationIntentConflict
+	}
+	return nil
+}
+
+func (s *Store) initialSession(req CreateSessionRequest) Session {
 	now := s.now()
 	sess := Session{
 		ID:                 req.ID,
@@ -749,9 +914,13 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 	if sess.ID == "" {
 		sess.ID = s.id("ses")
 	}
+	return sess
+}
+
+func (s *Store) insertInitialSessionTx(ctx context.Context, tx *sql.Tx, sess *Session) error {
 	companions, err := json.Marshal(sess.Companions)
 	if err != nil {
-		return Session{}, fmt.Errorf("encode companion repositories: %w", err)
+		return fmt.Errorf("encode companion repositories: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
@@ -762,28 +931,68 @@ func (s *Store) CreateSession(ctx context.Context, key string, req CreateSession
 		sess.Policy, sess.PolicyDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ResponderBinding), responderToken(sess.ResponderBinding), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
 		string(companions), pullRequestNumber(sess.PullRequest), pullRequestRef(sess.PullRequest), pullRequestHead(sess.PullRequest),
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
-		sess.MaxQueuedTurns, sess.MaxQueuedBytes, now.UnixNano(), now.UnixNano()); err != nil {
+		sess.MaxQueuedTurns, sess.MaxQueuedBytes, sess.CreatedAt.UnixNano(), sess.UpdatedAt.UnixNano()); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: sessions.id") {
-			return Session{}, s.failAndCommit(tx, op.ID, &Error{Code: CodeInvalidRequest, Detail: "session id is already in use"})
+			return &Error{Code: CodeInvalidRequest, Detail: "session id is already in use"}
 		}
-		return Session{}, fmt.Errorf("insert session: %w", err)
+		return fmt.Errorf("insert session: %w", err)
 	}
 	payload := mustJSON(map[string]any{"target": sess.Target})
 	if _, err := s.appendEventTx(ctx, tx, sess.ID, "", EventSessionCreated, 1, payload); err != nil {
-		return Session{}, fmt.Errorf("append session.created: %w", err)
+		return fmt.Errorf("append session.created: %w", err)
 	}
 	sess.LastEventSequence = 1
-	result, err := json.Marshal(sess)
-	if err != nil {
-		return Session{}, fmt.Errorf("encode session result: %w", err)
+	return nil
+}
+
+func sameOperationSnapshot(current, expected Operation) bool {
+	return current.ID == expected.ID && current.Method == expected.Method &&
+		current.IdempotencyKey == expected.IdempotencyKey && current.RequestHash == expected.RequestHash &&
+		current.State == expected.State && current.ResourceType == expected.ResourceType &&
+		current.ResourceID == expected.ResourceID && bytes.Equal(current.Result, expected.Result) &&
+		current.ErrorCode == expected.ErrorCode && current.ErrorDetail == expected.ErrorDetail &&
+		current.CreatedAt.Equal(expected.CreatedAt) && current.UpdatedAt.Equal(expected.UpdatedAt)
+}
+
+func initialSessionMatchesRequest(sess Session, req CreateSessionRequest) bool {
+	return sess.ID == req.ID && sess.ExternalRef == req.ExternalRef && sess.Target == req.Target &&
+		sess.Policy == req.Policy && sess.PolicyDigest == req.PolicyDigest &&
+		sess.ProjectEnv == !req.OmitEnv && sess.ProjectMCP == !req.OmitMCP &&
+		equalResponderBinding(sess.ResponderBinding, req.ResponderBinding) &&
+		sess.RepositoryReadOnly == req.RepositoryReadOnly && sess.Repository == req.Repository &&
+		sess.Workspace == req.Workspace && sess.ForkName == req.ForkName &&
+		sess.ForkGeneration == req.ForkGeneration && sess.BaseCommit == req.BaseCommit &&
+		equalPullRequestBinding(sess.PullRequest, req.PullRequest) && equalCompanions(sess.Companions, req.Companions) &&
+		sess.NativeSessionID == "" && sess.WorkspaceTask == nil && sess.TurnTimeout == req.TurnTimeout &&
+		sess.MaxPatchBytes == req.MaxPatchBytes && sess.Revision == 1 && sess.State == SessionOpen &&
+		sess.Activity == ActivityParked && sess.MaxTurns == normalized(req.MaxTurns, DefaultMaxTurns) &&
+		sess.MaxQueuedTurns == normalized(req.MaxQueuedTurns, DefaultMaxQueuedTurns) &&
+		sess.MaxQueuedBytes == normalized(req.MaxQueuedBytes, DefaultMaxQueuedBytes) &&
+		sess.TurnsUsed == 0 && sess.QueuedTurnCount == 0 && sess.QueuedPromptBytes == 0 &&
+		sess.ActiveTurnID == "" && sess.LastEventSequence == 1 && !sess.CreatedAt.IsZero() &&
+		!sess.UpdatedAt.Before(sess.CreatedAt)
+}
+
+func equalResponderBinding(left, right *ResponderBinding) bool {
+	return (left == nil && right == nil) ||
+		(left != nil && right != nil && left.Endpoint == right.Endpoint && left.Token == right.Token)
+}
+
+func equalPullRequestBinding(left, right *PullRequestBinding) bool {
+	return (left == nil && right == nil) ||
+		(left != nil && right != nil && *left == *right)
+}
+
+func equalCompanions(left, right []CompanionRepository) bool {
+	if len(left) != len(right) {
+		return false
 	}
-	if err := s.completeOperationTx(ctx, tx, op.ID, "session", sess.ID, result); err != nil {
-		return Session{}, err
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
 	}
-	if err := tx.Commit(); err != nil {
-		return Session{}, fmt.Errorf("commit session creation: %w", err)
-	}
-	return sess, nil
+	return true
 }
 
 func (s *Store) replaySession(op Operation) (Session, error) {
