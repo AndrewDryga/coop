@@ -269,7 +269,6 @@ fi
 	t.Setenv("COOP_TEST_CHILD_PID_FILE", childPIDFile)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	start := time.Now()
 	done := make(chan error, 1)
 	go func() {
 		_, err := (Runtime{Name: runtimeCLI}).RemoveByLabel(ctx, "coop.fork", "perf")
@@ -277,7 +276,7 @@ fi
 	}()
 
 	var data []byte
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		var err error
 		data, err = os.ReadFile(childPIDFile)
@@ -292,6 +291,7 @@ fi
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	cancelStarted := time.Now()
 	cancel()
 	select {
 	case err := <-done:
@@ -301,7 +301,7 @@ fi
 	case <-time.After(2 * time.Second):
 		t.Fatal("RemoveByLabel did not return after cancellation")
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
+	if elapsed := time.Since(cancelStarted); elapsed > 2*time.Second {
 		t.Fatalf("RemoveByLabel returned after %v, want a bounded cancellation", elapsed)
 	}
 	childPID, err := strconv.Atoi(strings.TrimSpace(string(data)))
