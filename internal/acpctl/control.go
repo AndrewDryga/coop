@@ -354,12 +354,12 @@ func (c *Control) presetRotation() *ladder.Rotation {
 	if err != nil {
 		return nil
 	}
-	rungs := slices.Clone(p.LeadLadder)
+	rungs := slices.Clone(p.LeadTargets)
 	// The whole ladder, cross-provider rungs included: the respawn env carries a full target,
 	// so a rung on another provider swaps the lead (the proxy re-creates the session there and
 	// the conversation is carried best-effort as a text preamble). Account fan-out is part of
 	// expandLadder, so the preset remains authoritative for every rung.
-	targets, err := c.host.ExpandLadder(c.cfg, p.LeadAgent, rungs)
+	targets, err := c.host.ExpandLadder(c.cfg, p.Lead().Provider, rungs)
 	if err != nil || len(targets) == 0 {
 		return nil
 	}
@@ -2069,11 +2069,8 @@ func (c *Control) presetDescription(name, headline string) string {
 // presetLeadDisplay renders a preset's declared lead as a target string — the whole fallback
 // ladder joined with " → " (a bare provider when no models/accounts are pinned).
 func presetLeadDisplay(p *preset.Preset) string {
-	if len(p.LeadLadder) == 0 {
-		return p.LeadAgent
-	}
-	rungs := make([]string, len(p.LeadLadder))
-	for i, t := range p.LeadLadder {
+	rungs := make([]string, len(p.LeadTargets))
+	for i, t := range p.LeadTargets {
 		rungs[i] = t.String()
 	}
 	return strings.Join(rungs, " → ")
@@ -2085,7 +2082,7 @@ func presetLeadDisplay(p *preset.Preset) string {
 func rolesRoster(p *preset.Preset) string {
 	lines := make([]string, 0, len(p.Roles))
 	for _, r := range p.Roles {
-		rungs := r.TargetLadder()
+		rungs := r.Targets
 		if len(rungs) == 0 {
 			continue
 		}
@@ -2192,7 +2189,7 @@ func (c *Control) SelectorSelection(configID, value string) (next Selection, rec
 
 func (c *Control) presetLead(name, fallback string) string {
 	if p, err := preset.Load(c.repo, c.cfg.GlobalPresetsDir(), name); err == nil {
-		return p.LeadAgent
+		return p.Lead().Provider
 	}
 	return fallback
 }

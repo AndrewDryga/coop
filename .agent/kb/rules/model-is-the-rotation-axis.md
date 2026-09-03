@@ -4,7 +4,7 @@ description: "rotation walks an `agent:` ladder of targets; accounts are a suffi
 scope: cli-grammar
 sources: [internal/cli/target.go, internal/preset/preset.go, internal/sessionsvc/service.go]
 check: "none"
-updated: 2026-08-25
+updated: 2026-09-03
 ---
 
 # Model is the one axis: rotation walks an `agent:` ladder of targets, not a pool
@@ -15,8 +15,9 @@ suffix on the model, never their own axis.
 - A preset's lead carries ONE `agent:` ladder (a target or a list of them, cross-provider
   allowed). A **bare `provider:model` fans out across every signed-in account** (marked-default
   first, then the rest); a pinned `provider:model@account` is one rung.
-- Roles carry a single `agent:` target and NO credentials — a role runs on its agent's
-  default account.
+- Native roles carry one `agent:` target. Consult and delegate roles may carry an ordered
+  fallback ladder. Roles never pin credentials — each target runs on that provider's default
+  account.
 - A direct fork launch takes one positional target or preset; a preset supplies its full lead
   ladder and roles. There is no fork-specific target schema.
 - `.agent/loop.yaml` steps (preflight/work/between/review) each take an `agent:` ladder whose
@@ -49,6 +50,9 @@ bare model is marked-default account first, then the rest alphabetically (`accou
 [[credentials-not-profiles]] for the user-facing naming.
 
 ## Changelog
+- 2026-09-03 — corrected the role shape after re-verifying preset parsing: native execution has
+  one target, while consult and delegate roles support ordered provider/model/effort fallbacks;
+  none may pin an account.
 - 2026-08-25 — removed the Fleet-only config rule; direct fork launches now reuse the positional
   target-or-preset grammar instead of carrying an orchestration-specific schema.
 - 2026-08-09 — sources repointed: the sessions service moved out of `internal/cli/session_*.go` into `internal/sessionsvc/`; the facts here are unchanged (a move-only extraction).

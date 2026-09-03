@@ -14,12 +14,11 @@ import (
 
 func cliFrontier() *preset.Preset {
 	return &preset.Preset{
-		Name: "frontier", LeadAgent: "claude",
-		LeadLadder: []agents.Target{{Provider: "claude", Model: "claude-fable-5", Accounts: []string{"work"}}},
+		Name: "frontier", LeadTargets: []agents.Target{{Provider: "claude", Model: "claude-fable-5", Accounts: []string{"work"}}},
 		Roles: []preset.Role{
-			{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-5.5"},
-			{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini", Model: "gemini-3.5-flash"},
-			{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8", Subagent: "deep-reasoner"},
+			{Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "codex", Model: "gpt-5.5"}}},
+			{Name: "fast", Mode: preset.ModeDelegate, Targets: []agents.Target{{Provider: "gemini", Model: "gemini-3.5-flash"}}},
+			{Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude", Model: "claude-opus-4-8"}}, Subagent: "deep-reasoner"},
 		},
 	}
 }
@@ -52,7 +51,7 @@ func TestApplyPresetPrecedence(t *testing.T) {
 		t.Errorf("lead model = %q, want claude-fable-5 (a native role must not clobber the lead)", got)
 	}
 	// Consult/delegate role models are NOT seeded into global provider state — they ride each
-	// role's wrapper target (Role.TargetList()), so global ModelFor for a role-only provider
+	// role's wrapper target (Role.Targets), so global ModelFor for a role-only provider
 	// stays empty (which is what keeps a rotated lead on that provider from being shadowed).
 	if got := a.cfg.ModelFor("codex"); got != "" {
 		t.Errorf("critic (codex) model in global config = %q, want \"\" (roles ride the wrapper, not global config)", got)
@@ -61,7 +60,7 @@ func TestApplyPresetPrecedence(t *testing.T) {
 		t.Errorf("fast (gemini) model in global config = %q, want \"\"", got)
 	}
 	// The role's model is carried on its own target for the wrapper env.
-	if got := p.Roles[0].TargetList(); got != "codex:gpt-5.5" {
+	if got := p.Roles[0].Primary().String(); got != "codex:gpt-5.5" {
 		t.Errorf("critic role target = %q, want codex:gpt-5.5 (the role's model rides its target)", got)
 	}
 	if got := a.cfg.ActiveProfile("codex"); got != "default" {
@@ -102,14 +101,13 @@ func TestRoleModelDoesNotShadowRotatedLead(t *testing.T) {
 	// Frontier in miniature: claude leads first, failing over to codex:sol; codex ALSO owns the
 	// thinker (terra) and fast (luna) roles — the same provider playing three parts at once.
 	p := &preset.Preset{
-		Name: "frontier", LeadAgent: "claude",
-		LeadLadder: []agents.Target{
+		Name: "frontier", LeadTargets: []agents.Target{
 			{Provider: "claude", Model: "claude-fable-5", Effort: "xhigh"},
 			{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"personal"}},
 		},
 		Roles: []preset.Role{
-			{Name: "fast", Mode: preset.ModeDelegate, Agent: "codex", Model: "gpt-5.6-luna", Effort: "xhigh"},
-			{Name: "thinker", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-5.6-terra", Effort: "xhigh"},
+			{Name: "fast", Mode: preset.ModeDelegate, Targets: []agents.Target{{Provider: "codex", Model: "gpt-5.6-luna", Effort: "xhigh"}}},
+			{Name: "thinker", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "codex", Model: "gpt-5.6-terra", Effort: "xhigh"}}},
 		},
 	}
 	a.applyPreset(p, "claude")
@@ -162,7 +160,7 @@ func TestRoleModelDoesNotShadowRotatedLead(t *testing.T) {
 			thinker = r
 		}
 	}
-	if got := thinker.TargetList(); got != "codex:gpt-5.6-terra/xhigh" {
+	if got := thinker.Primary().String(); got != "codex:gpt-5.6-terra/xhigh" {
 		t.Errorf("thinker wrapper target = %q, want codex:gpt-5.6-terra/xhigh (consult stays on terra)", got)
 	}
 }
@@ -218,7 +216,7 @@ func TestLoadRunPreset(t *testing.T) {
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
 	p, err := a.loadRunPreset("frontier")
-	if err != nil || p == nil || p.LeadAgent != "claude" {
+	if err != nil || p == nil || p.Lead().Provider != "claude" {
 		t.Fatalf("loadRunPreset = (%+v, %v)", p, err)
 	}
 	if p, err := a.loadRunPreset(""); p != nil || err != nil {
@@ -248,7 +246,7 @@ func TestPresetNamed(t *testing.T) {
 	write("broken", "lead: {agent: nonprovider}\n") // a folder that exists but won't load
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
 
-	if p, ok, err := a.presetNamed("frontier"); !ok || err != nil || p == nil || p.LeadAgent != "claude" {
+	if p, ok, err := a.presetNamed("frontier"); !ok || err != nil || p == nil || p.Lead().Provider != "claude" {
 		t.Fatalf("presetNamed(frontier) = (%+v, ok=%v, %v), want the loaded preset", p, ok, err)
 	}
 	// A word that names no preset → ok=false, no error (the dispatch then shows unknown-command).

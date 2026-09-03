@@ -55,7 +55,7 @@ func (a *app) presetNamed(word string) (p *preset.Preset, ok bool, err error) {
 // named explicitly wins; otherwise the preset's lead.agent is the default.
 func presetLeadAgent(p *preset.Preset, agent string, explicit bool) string {
 	if p != nil && !explicit {
-		return p.LeadAgent
+		return p.Lead().Provider
 	}
 	return agent
 }
@@ -69,7 +69,7 @@ func presetLeadAgent(p *preset.Preset, agent string, explicit bool) string {
 //
 // A role's model/effort are deliberately NOT seeded into global provider state. A role rides
 // its OWN target (provider:model/effort) in the coop-consult/coop-delegate wrapper env
-// (Role.TargetList() → COOP_CONSULT/DELEGATE_<ROLE>_TARGETS), which every provider's arm passes
+// (Role.Targets → COOP_CONSULT/DELEGATE_<ROLE>_TARGETS), which every provider's arm passes
 // straight through as `--model`. Per-provider global state can't represent a provider that plays
 // several parts at once — frontier runs codex as the thinker (terra), the fast delegate (luna),
 // AND a lead rung (sol) — and seeding a role's model into the active tier would shadow the lead's
@@ -79,11 +79,11 @@ func (a *app) applyPreset(p *preset.Preset, lead string) {
 	if p == nil {
 		return
 	}
-	if lead == p.LeadAgent && len(p.LeadLadder) > 0 {
+	if lead == p.Lead().Provider {
 		// A run that doesn't rotate (single, or the loop before its first applyTarget) uses the
 		// ladder's FIRST entry: its first account if pinned (else the marked default), and its
 		// model in the target tier — below an explicit target model, above the account mark.
-		first := p.LeadLadder[0]
+		first := p.Lead()
 		if acct := first.Account(); acct != "" {
 			a.cfg.SetActiveProfile(lead, acct)
 		}
@@ -97,8 +97,8 @@ func (a *app) applyPreset(p *preset.Preset, lead string) {
 // will use. Rotating supervisors expand the ladder without seeding it and pass one concrete target
 // to each inner child; a terminal single run has no such fallback.
 func (a *app) applyPinnedPreset(p *preset.Preset, lead string) error {
-	if p != nil && lead == p.LeadAgent && len(p.LeadLadder) > 0 {
-		first := p.LeadLadder[0]
+	if p != nil && lead == p.Lead().Provider {
+		first := p.Lead()
 		if acct := first.Account(); acct != "" {
 			if err := a.selectRunProfile(lead, acct); err != nil {
 				return fmt.Errorf("preset %s first lead rung %s: %w", p.Name, first.String(), err)

@@ -278,7 +278,7 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 // lead ladder's first entry supplies the lead's model/account (applyPreset). --peer still adds
 // ad-hoc read-only peers on top of the preset's own consult roles.
 func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
-	tool := p.LeadAgent
+	tool := p.Lead().Provider
 	peerVals, args, err := extractPeer(args)
 	if err != nil {
 		return 2, err

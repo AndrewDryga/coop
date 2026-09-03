@@ -589,8 +589,8 @@ func runConsultLiveEdge(
 
 func consultLiveRingPreset(lead string, peer agents.Target) *preset.Preset {
 	return &preset.Preset{
-		Name: "consult-live", LeadAgent: lead,
-		Roles: []preset.Role{{Name: "live-probe", Mode: preset.ModeConsult, Agent: peer.Provider, Model: peer.Model, Effort: peer.Effort, Ladder: []agents.Target{peer}}},
+		Name: "consult-live", LeadTargets: []agents.Target{{Provider: lead}},
+		Roles: []preset.Role{{Name: "live-probe", Mode: preset.ModeConsult, Targets: []agents.Target{peer}}},
 	}
 }
 
@@ -742,8 +742,8 @@ func TestProviderConsultLiveContract(t *testing.T) {
 	for i, peer := range targets {
 		lead := consultLiveLead(targets, i)
 		role := consultLiveRingPreset(lead.Provider, peer).Roles[0]
-		if lead.Provider == peer.Provider || role.Name != "live-probe" || role.Agent != peer.Provider ||
-			len(role.Ladder) != 1 || role.Ladder[0].Provider != peer.Provider {
+		if lead.Provider == peer.Provider || role.Name != "live-probe" || role.Primary().Provider != peer.Provider ||
+			len(role.Targets) != 1 || role.Targets[0].Provider != peer.Provider {
 			t.Fatalf("invalid live ring edge %s -> %s: %+v", lead.Provider, peer.Provider, role)
 		}
 	}

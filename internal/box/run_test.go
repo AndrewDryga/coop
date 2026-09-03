@@ -935,8 +935,8 @@ func TestRunProjectsSharedMCPForNestedClaudeCommandsOnly(t *testing.T) {
 			MCPInBox: "/home/node/.mcp.json", Egress: "none",
 		}
 	}
-	rolePreset := &preset.Preset{Name: "nested", LeadAgent: "codex", Roles: []preset.Role{{
-		Name: "fast", Mode: preset.ModeDelegate, Agent: "claude",
+	rolePreset := &preset.Preset{Name: "nested", LeadTargets: []agents.Target{{Provider: "codex"}}, Roles: []preset.Role{{
+		Name: "fast", Mode: preset.ModeDelegate, Targets: []agents.Target{{Provider: "claude"}},
 	}}}
 	tests := []struct {
 		name       string
@@ -2266,8 +2266,8 @@ func TestRunPresetRoleMountsConsultWrapperAndRoleEnv(t *testing.T) {
 	if err := os.WriteFile(cfg.EnvFile(), []byte("OPENAI_API_KEY=test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p := &preset.Preset{Name: "council", LeadAgent: "claude", Roles: []preset.Role{
-		{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-role"},
+	p := &preset.Preset{Name: "council", LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []preset.Role{
+		{Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "codex", Model: "gpt-role"}}},
 	}}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
@@ -2295,18 +2295,18 @@ func TestRunPresetRoleMountsConsultWrapperAndRoleEnv(t *testing.T) {
 func TestRunDeclaredCompositionArtifactFailuresStopBeforeProvider(t *testing.T) {
 	sentinel := errors.New("fixture artifact failure")
 	consultPreset := func() *preset.Preset {
-		return &preset.Preset{Name: "consult", LeadAgent: "claude", Roles: []preset.Role{{
-			Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-role", PromptText: "consult-persona-sentinel",
+		return &preset.Preset{Name: "consult", LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []preset.Role{{
+			Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "codex", Model: "gpt-role"}}, PromptText: "consult-persona-sentinel",
 		}}}
 	}
 	delegatePreset := func() *preset.Preset {
-		return &preset.Preset{Name: "delegate", LeadAgent: "claude", Roles: []preset.Role{{
-			Name: "fast", Mode: preset.ModeDelegate, Agent: "codex", Model: "gpt-role", PromptText: "delegate-contract-sentinel",
+		return &preset.Preset{Name: "delegate", LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []preset.Role{{
+			Name: "fast", Mode: preset.ModeDelegate, Targets: []agents.Target{{Provider: "codex", Model: "gpt-role"}}, PromptText: "delegate-contract-sentinel",
 		}}}
 	}
 	nativePreset := func() *preset.Preset {
-		return &preset.Preset{Name: "native", LeadAgent: "claude", Roles: []preset.Role{{
-			Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-role", PromptText: "native-persona-sentinel",
+		return &preset.Preset{Name: "native", LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []preset.Role{{
+			Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude", Model: "claude-role"}}, PromptText: "native-persona-sentinel",
 		}}}
 	}
 	normalSpec := func(p *preset.Preset) RunSpec {
@@ -2722,7 +2722,7 @@ func TestRunDeclaredCompositionRequiresHomes(t *testing.T) {
 func TestPresetRoleTargetDefaultsDoNotInheritRawPeerOverride(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	cfg.SetActiveModel("codex", "configured-default")
-	p := &preset.Preset{Roles: []preset.Role{{Name: "thinker", Mode: preset.ModeConsult, Agent: "codex"}}}
+	p := &preset.Preset{Roles: []preset.Role{{Name: "thinker", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "codex"}}}}}
 	_, args, files, dirs, err := presetRoleMounts(cfg, RunSpec{
 		Homes: true, Preset: p, ConsultLead: "claude",
 		Peers: []agents.Target{{Provider: "codex", Model: "raw-peer-model"}},
@@ -2983,12 +2983,11 @@ func TestAssembleArgsEgress(t *testing.T) {
 // one role per mode, matching the docs' frontier recipe.
 func frontierPreset() *preset.Preset {
 	return &preset.Preset{
-		Name: "frontier", LeadAgent: "claude",
-		LeadLadder: []agents.Target{{Provider: "claude", Model: "claude-fable-5"}},
+		Name: "frontier", LeadTargets: []agents.Target{{Provider: "claude", Model: "claude-fable-5"}},
 		Roles: []preset.Role{
-			{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-5.5"},
-			{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini", Model: "gemini-3.5-flash"},
-			{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8", Subagent: "deep-reasoner"},
+			{Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "codex", Model: "gpt-5.5"}}},
+			{Name: "fast", Mode: preset.ModeDelegate, Targets: []agents.Target{{Provider: "gemini", Model: "gemini-3.5-flash"}}},
+			{Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude", Model: "claude-opus-4-8"}}, Subagent: "deep-reasoner"},
 		},
 	}
 }
@@ -3022,8 +3021,8 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 	}
 
 	// A delegate-only preset wires no consult (nothing read-only to call).
-	delegateOnly := &preset.Preset{Name: "d", LeadAgent: "claude",
-		Roles: []preset.Role{{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini"}}}
+	delegateOnly := &preset.Preset{Name: "d", LeadTargets: []agents.Target{{Provider: "claude"}},
+		Roles: []preset.Role{{Name: "fast", Mode: preset.ModeDelegate, Targets: []agents.Target{{Provider: "gemini"}}}}}
 	if _, _, wired, _, err := leadInstructionMount(cfg, "claude", delegateOnly, nil); err != nil {
 		t.Fatal(err)
 	} else if wired {
@@ -3066,8 +3065,8 @@ func TestCredentialScopePreset(t *testing.T) {
 	}
 
 	// A consult-role-only preset must not drag in agents with no role (no blanket widening).
-	oneRole := &preset.Preset{Name: "one", LeadAgent: "claude",
-		Roles: []preset.Role{{Name: "critic", Mode: preset.ModeConsult, Agent: "codex"}}}
+	oneRole := &preset.Preset{Name: "one", LeadTargets: []agents.Target{{Provider: "claude"}},
+		Roles: []preset.Role{{Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "codex"}}}}}
 	scope = credentialScope(cfg, RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: oneRole})
 	if !slices.Equal(scope, []string{"claude", "codex"}) {
 		t.Errorf("one-role preset scope = %v, want [claude codex] — gemini has no role", scope)
@@ -3075,8 +3074,8 @@ func TestCredentialScopePreset(t *testing.T) {
 
 	// Every fallback provider joins the scope before the box starts; mounting only the
 	// primary rung would make a syntactically-valid ladder fail when it rotates.
-	ladderRole := &preset.Preset{Name: "fallback", LeadAgent: "claude",
-		Roles: []preset.Role{{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Ladder: []agents.Target{
+	ladderRole := &preset.Preset{Name: "fallback", LeadTargets: []agents.Target{{Provider: "claude"}},
+		Roles: []preset.Role{{Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{
 			{Provider: "codex", Model: "gpt-5.6-sol"},
 			{Provider: "gemini", Model: "gemini-3.5-flash"},
 		}}}}
@@ -3103,10 +3102,10 @@ func TestModelEnvArgsPreset(t *testing.T) {
 // (subagent set) or non-native roles.
 func TestGeneratedSubagentFiles(t *testing.T) {
 	p := &preset.Preset{Roles: []preset.Role{
-		{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8", When: []string{"architecture"}},
-		{Name: "critic", Mode: preset.ModeNative, Agent: "claude", Subagent: "deep-reasoner"},
-		{Name: "foreign", Mode: preset.ModeNative, Agent: "codex"},
-		{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini"},
+		{Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude", Model: "claude-opus-4-8"}}, When: []string{"architecture"}},
+		{Name: "critic", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude"}}, Subagent: "deep-reasoner"},
+		{Name: "foreign", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "codex"}}},
+		{Name: "fast", Mode: preset.ModeDelegate, Targets: []agents.Target{{Provider: "gemini"}}},
 	}}
 	claude, _ := agents.Get("claude")
 	support := claude.NativeSubagents()
@@ -3151,8 +3150,8 @@ func TestAssembleAgentsDir(t *testing.T) {
 // mount the user owns.
 func TestPresetRoleMountsNativeTargetsUserAgents(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node"}
-	p := &preset.Preset{LeadAgent: "claude", Roles: []preset.Role{
-		{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8"},
+	p := &preset.Preset{LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []preset.Role{
+		{Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude", Model: "claude-opus-4-8"}}},
 	}}
 	mounts, _, _, tmpDirs, err := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: "claude", Repo: t.TempDir()}, defaultCompositionArtifactOps())
 	if err != nil {
@@ -3178,8 +3177,8 @@ func TestPresetRoleMountsNativeTargetsUserAgents(t *testing.T) {
 // empty RunID (outside a loop) injects nothing.
 func TestPresetRoleMountsRunID(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node"}
-	p := &preset.Preset{LeadAgent: "claude", Roles: []preset.Role{
-		{Name: "thinker", Mode: preset.ModeNative, Agent: "claude", Model: "claude-opus-4-8"},
+	p := &preset.Preset{LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []preset.Role{
+		{Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude", Model: "claude-opus-4-8"}}},
 	}}
 	args := func(id string) []string {
 		_, a, _, dirs, err := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: "claude", Repo: t.TempDir(), RunID: id}, defaultCompositionArtifactOps())
@@ -3201,12 +3200,12 @@ func TestPresetRoleMountsRunID(t *testing.T) {
 
 func TestPresetRoleMountsExportsFallbackTargets(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node"}
-	p := &preset.Preset{LeadAgent: "claude", Roles: []preset.Role{
-		{Name: "critic", Mode: preset.ModeConsult, Agent: "codex", Model: "gpt-5.6-sol", Ladder: []agents.Target{
+	p := &preset.Preset{LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []preset.Role{
+		{Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{
 			{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh"},
 			{Provider: "grok", Model: "grok-4.5", Effort: "high"},
 		}},
-		{Name: "fast", Mode: preset.ModeDelegate, Agent: "gemini", Ladder: []agents.Target{
+		{Name: "fast", Mode: preset.ModeDelegate, Targets: []agents.Target{
 			{Provider: "gemini", Model: "gemini-3.5-flash"},
 			{Provider: "codex", Model: "gpt-5.4-mini"},
 		}},

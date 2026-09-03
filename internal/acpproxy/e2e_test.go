@@ -260,11 +260,7 @@ func liveACPSelections(targetOrPreset string, extraProviders ...string) ([]livep
 		if loadErr != nil {
 			return nil, loadErr
 		}
-		if len(p.LeadLadder) == 0 {
-			targets = append(targets, agents.Target{Provider: p.LeadAgent})
-		} else {
-			targets = append(targets, p.LeadLadder...)
-		}
+		targets = append(targets, p.LeadTargets...)
 	}
 	for _, raw := range extraProviders {
 		target, err := agents.ParseTarget(raw)

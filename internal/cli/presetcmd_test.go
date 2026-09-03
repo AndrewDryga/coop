@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
 )
@@ -94,9 +95,9 @@ func TestRoleTuning(t *testing.T) {
 		role                preset.Role
 		wantKind, wantValue string
 	}{
-		{"model and effort", preset.Role{Model: "gpt-5.6-sol", Effort: "xhigh"}, "model", "gpt-5.6-sol/xhigh"},
-		{"model only", preset.Role{Model: "gemini-3.5-flash"}, "model", "gemini-3.5-flash"},
-		{"effort only", preset.Role{Effort: "high"}, "effort", "high"},
+		{"model and effort", preset.Role{Targets: []agents.Target{{Model: "gpt-5.6-sol", Effort: "xhigh"}}}, "model", "gpt-5.6-sol/xhigh"},
+		{"model only", preset.Role{Targets: []agents.Target{{Model: "gemini-3.5-flash"}}}, "model", "gemini-3.5-flash"},
+		{"effort only", preset.Role{Targets: []agents.Target{{Effort: "high"}}}, "effort", "high"},
 		{"neither", preset.Role{}, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

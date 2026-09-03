@@ -53,13 +53,14 @@ func (a *app) cmdPresets(args []string) (int, error) {
 			fmt.Printf("  %s  %s\n", label, pal.Red("broken: "+err.Error()))
 			continue
 		}
-		lead := p.LeadAgent
+		leadTarget := p.Lead()
+		lead := leadTarget.Provider
 		if m := p.LeadModel(); m != "" {
 			lead += "/" + m
 		}
 		var roles []string
 		for _, r := range p.Roles {
-			roles = append(roles, fmt.Sprintf("%s (%s %s)", r.Name, r.Mode, r.Agent))
+			roles = append(roles, fmt.Sprintf("%s (%s %s)", r.Name, r.Mode, r.Primary().Provider))
 		}
 		summary := pal.Dim("no roles")
 		if len(roles) > 0 {
@@ -100,10 +101,11 @@ func (a *app) showPreset(repo, name string) (int, error) {
 	}
 	pal := ui.For(os.Stdout)
 	fmt.Println(pal.Bold(name) + pal.Dim("  ("+preset.Path(repo, globalDir, name)+")"))
-	lead := fmt.Sprintf("  %s  %s", pal.Bold(padRight("lead", 10)), p.LeadAgent)
-	if len(p.LeadLadder) > 0 {
-		rungs := make([]string, len(p.LeadLadder))
-		for i, t := range p.LeadLadder {
+	leadTarget := p.Lead()
+	lead := fmt.Sprintf("  %s  %s", pal.Bold(padRight("lead", 10)), leadTarget.Provider)
+	if len(p.LeadTargets) > 1 || leadTarget.Model != "" || leadTarget.Effort != "" || len(leadTarget.Accounts) > 0 {
+		rungs := make([]string, len(p.LeadTargets))
+		for i, t := range p.LeadTargets {
 			rungs[i] = t.String()
 		}
 		lead += pal.Dim("  ladder ") + strings.Join(rungs, ", ")
@@ -114,7 +116,7 @@ func (a *app) showPreset(repo, name string) (int, error) {
 	fmt.Println(lead)
 	for _, r := range p.Roles {
 		line := fmt.Sprintf("  %s  %s", pal.Bold(padRight(r.Name, 10)), r.Mode)
-		ladder := r.TargetLadder()
+		ladder := r.Targets
 		if len(ladder) > 1 {
 			targets := make([]string, len(ladder))
 			for i, target := range ladder {
@@ -122,7 +124,7 @@ func (a *app) showPreset(repo, name string) (int, error) {
 			}
 			line += pal.Dim("  ladder ") + strings.Join(targets, ", ")
 		} else {
-			line += " " + r.Agent
+			line += " " + r.Primary().Provider
 		}
 		if r.Subagent != "" {
 			line += pal.Dim("  @") + r.Subagent
@@ -146,15 +148,16 @@ func (a *app) showPreset(repo, name string) (int, error) {
 }
 
 func roleTuning(r preset.Role) (kind, value string) {
-	if r.Model == "" {
-		if r.Effort == "" {
+	primary := r.Primary()
+	if primary.Model == "" {
+		if primary.Effort == "" {
 			return "", ""
 		}
-		return "effort", r.Effort
+		return "effort", primary.Effort
 	}
-	model := r.Model
-	if r.Effort != "" {
-		model += "/" + r.Effort
+	model := primary.Model
+	if primary.Effort != "" {
+		model += "/" + primary.Effort
 	}
 	return "model", model
 }

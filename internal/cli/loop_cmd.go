@@ -128,8 +128,8 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		rungs = []agents.Target{t}
 	case len(workLadder) > 0:
 		rungs = workLadder
-	case p != nil && agent == p.LeadAgent:
-		rungs = p.LeadLadder
+	case p != nil && agent == p.Lead().Provider:
+		rungs = p.LeadTargets
 	}
 	rot, err := a.buildRotation(agent, rungs)
 	if err != nil {
@@ -170,12 +170,12 @@ func (a *app) resolveWorkAgent(rungs []string) (agent string, p *preset.Preset, 
 				return "", nil, nil, fmt.Errorf("work.agent: %w", perr)
 			}
 			if agent == "" {
-				agent = pr.LeadAgent
+				agent = pr.Lead().Provider
 			}
 			if p == nil {
 				p = pr // apply the first preset rung's roles for the run
 			}
-			targets = append(targets, pr.LeadLadder...)
+			targets = append(targets, pr.LeadTargets...)
 			continue
 		}
 		if agent == "" {

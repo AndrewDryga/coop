@@ -43,7 +43,8 @@ func RoleContract(r *Role) string {
 
 func roleContract(r *Role, lead string) string {
 	var b strings.Builder
-	model := r.Model
+	primary := r.Primary()
+	model := primary.Model
 	if model == "" {
 		model = "its default model"
 	}
@@ -56,7 +57,7 @@ func roleContract(r *Role, lead string) string {
 	}
 	switch mode {
 	case ModeNative:
-		fmt.Fprintf(&b, "## %s — native %s subagent (%s)\n", r.Name, r.Agent, model)
+		fmt.Fprintf(&b, "## %s — native %s subagent (%s)\n", r.Name, primary.Provider, model)
 		writeWhen(&b, r.When)
 		fmt.Fprintf(&b, "Invoke it as the @%s subagent in your own session — it thinks inside your\n", SubagentName(r))
 		b.WriteString("context; you weigh its conclusion and act on it yourself.\n")
@@ -97,7 +98,7 @@ func roleContract(r *Role, lead string) string {
 // nativeRoleUsable requires both halves of native execution: the effective lead must be the
 // role's configured provider, and that provider's adapter must own a complete native descriptor.
 func nativeRoleUsable(role *Role, lead string) bool {
-	if role.Mode != ModeNative || role.Agent != lead {
+	if role.Mode != ModeNative || role.Primary().Provider != lead {
 		return false
 	}
 	ag, ok := agents.Get(lead)
@@ -109,12 +110,11 @@ func nativeRoleUsable(role *Role, lead string) bool {
 }
 
 func roleRunner(r *Role, primaryModel string) string {
-	ladder := r.TargetLadder()
-	if len(ladder) <= 1 {
-		return r.Agent + ", " + primaryModel
+	if len(r.Targets) <= 1 {
+		return r.Primary().Provider + ", " + primaryModel
 	}
-	targets := make([]string, len(ladder))
-	for i, target := range ladder {
+	targets := make([]string, len(r.Targets))
+	for i, target := range r.Targets {
 		targets[i] = target.String()
 	}
 	return "fallback " + strings.Join(targets, " -> ")

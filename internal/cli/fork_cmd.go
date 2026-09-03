@@ -353,7 +353,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return 2, err
 		}
 		if !fa.agentSet {
-			fa.agent, fa.agentSet = p.LeadAgent, true // the preset's lead wins over the remembered agent
+			fa.agent, fa.agentSet = p.Lead().Provider, true // the preset's lead wins over the remembered agent
 		}
 		// The preset's models ladder drives the fork's rotation (built in runForkLoop from
 		// a.preset); credentials/model aren't merged into fa here.
@@ -945,8 +945,8 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 	if err != nil {
 		return -1, err
 	}
-	if ladder == nil && a.preset != nil && agent == a.preset.LeadAgent {
-		ladder = a.preset.LeadLadder
+	if ladder == nil && a.preset != nil && agent == a.preset.Lead().Provider {
+		ladder = a.preset.LeadTargets
 	}
 	rot, err := a.buildRotation(agent, ladder)
 	if err != nil {

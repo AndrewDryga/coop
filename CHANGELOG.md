@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Presets now keep one target representation.** Lead and role targets are stored once, with the
+  primary target derived from the first entry. A bare preset remains an explicit target, so mixing
+  it with later `work.agent` rungs no longer drops the preset's lead from rotation.
+
 - **Accepted semantic candidates are stored once.** Acceptance now clears the staging message in
   the same transaction that publishes it as the assistant answer, while retaining the candidate
   digest and validation receipt. Public reads and retry receipts expose candidate text only while

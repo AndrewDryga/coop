@@ -1238,7 +1238,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 // config before exporting the wrapper ladder. Provider-scoped COOP_PEER_MODEL_* may carry an
 // ad-hoc peer's explicit override; a blank role target must not inherit that unrelated pin.
 func resolvedRoleTargetList(cfg *config.Config, role *preset.Role) string {
-	targets := role.TargetLadder()
+	targets := role.Targets
 	parts := make([]string, len(targets))
 	for i, target := range targets {
 		if target.Model == "" {
@@ -1592,9 +1592,10 @@ func generatedSubagentFiles(p *preset.Preset, lead string, support agents.Native
 	}
 	var out []genFile
 	for _, role := range p.GeneratedNativeRoles(lead) {
+		primary := role.Primary()
 		fname, content := support.Render(agents.NativeSubagent{
 			Name: preset.SubagentName(&role), Description: preset.NativeDescription(&role),
-			Model: role.Model, Effort: role.Effort, Prompt: preset.NativeBody(&role),
+			Model: primary.Model, Effort: primary.Effort, Prompt: preset.NativeBody(&role),
 		})
 		out = append(out, genFile{fname, content})
 	}

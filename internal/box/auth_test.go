@@ -144,8 +144,8 @@ func TestCredentialScope(t *testing.T) {
 	// A preset whose only role is a native claude thinker: in-session under a Claude lead
 	// (adds nothing to the scope), but degrades to a consult on claude under a codex lead —
 	// which then must mount claude's creds.
-	nativePreset := &preset.Preset{Roles: []preset.Role{{Name: "thinker", Mode: preset.ModeNative, Agent: "claude"}}}
-	sameProviderConsult := &preset.Preset{Roles: []preset.Role{{Name: "probe", Mode: preset.ModeConsult, Agent: "claude"}}}
+	nativePreset := &preset.Preset{Roles: []preset.Role{{Name: "thinker", Mode: preset.ModeNative, Targets: peerTargets("claude")}}}
+	sameProviderConsult := &preset.Preset{Roles: []preset.Role{{Name: "probe", Mode: preset.ModeConsult, Targets: peerTargets("claude")}}}
 
 	cases := []struct {
 		name string
@@ -194,7 +194,7 @@ func TestCredentialScopeRoleCredentialMatrix(t *testing.T) {
 				if name == lead {
 					lead = "codex"
 				}
-				p := &preset.Preset{Roles: []preset.Role{{Name: "reviewer", Mode: preset.ModeConsult, Agent: name}}}
+				p := &preset.Preset{Roles: []preset.Role{{Name: "reviewer", Mode: preset.ModeConsult, Targets: peerTargets(name)}}}
 				got := credentialScope(cfg, RunSpec{Homes: true, Agent: lead, ConsultLead: lead, Preset: p})
 				if !slices.Equal(got, []string{lead, name}) {
 					t.Errorf("credentialScope role %s via %s = %v, want [%s %s]", name, source, got, lead, name)

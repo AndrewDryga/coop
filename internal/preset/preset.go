@@ -30,16 +30,12 @@ const (
 	ModeDelegate = "delegate" // a write-capable delegate via coop-delegate
 )
 
-// Role is one named role in a preset. Consult and delegate roles may carry an ordered
-// fallback ladder; every rung uses that provider's default account. Agent/Model/Effort
-// project the first rung for native-role generation, contracts, and compact displays.
+// Role is one named role in a preset. Consult and delegate roles may carry ordered
+// fallback targets; every target uses that provider's default account.
 type Role struct {
 	Name       string
 	Mode       string // native | consult | delegate
-	Agent      string // known agent
-	Model      string // optional model id ("" = the agent's own default)
-	Effort     string // optional reasoning-effort level ("" = the agent's own default)
-	Ladder     []agents.Target
+	Targets    []agents.Target
 	When       []string // routing hints injected into the lead contract
 	Subagent   string   // native only, OPTIONAL: reference an existing subagent; empty ⇒ coop generates coop-<Name>
 	PromptText string   // roles/<name>.md content, appended to the generated contract
@@ -50,77 +46,72 @@ type Preset struct {
 	Name string
 	Dir  string // the preset folder on the host (for docs/errors)
 
-	LeadAgent string
-	// LeadLadder is the lead's fallback ladder: whole targets, in order. A rung with no
+	// LeadTargets is the lead's fallback ladder: whole targets, in order. A rung with no
 	// accounts fans out across all signed-in accounts at loop start; a pinned one runs those
 	// accounts only. The ladder MAY be cross-provider — the loop rotates across agents. The
 	// loop rotates the expansion (expandLadder) on rate limits; a single non-loop run uses the
-	// first entry. Empty = the agent's default model, all accounts.
-	LeadLadder     []agents.Target
+	// first entry. Load always returns at least one target; a bare provider means its default
+	// model across all accounts.
+	LeadTargets    []agents.Target
 	LeadPromptText string // lead.md content, appended after the generated block
 
 	Roles []Role // sorted by name for deterministic contracts
+}
+
+// Lead returns the preset's primary target. Loaded presets always have one; the zero value keeps
+// hand-built internal values safe to inspect without creating a second stored representation.
+func (p *Preset) Lead() agents.Target {
+	if p == nil || len(p.LeadTargets) == 0 {
+		return agents.Target{}
+	}
+	return p.LeadTargets[0]
 }
 
 // LeadModel returns the lead's primary model — the first ladder entry's model, or "" when
 // no models are declared (the agent's default resolves). Used by the generated contract and
 // `coop presets`.
 func (p *Preset) LeadModel() string {
-	if len(p.LeadLadder) == 0 {
-		return ""
-	}
-	return p.LeadLadder[0].Model
+	return p.Lead().Model
 }
 
 // LeadEffort returns the lead's primary reasoning effort — the first ladder entry's effort, or
 // "" when none is declared. Used by the generated contract and applyPreset.
 func (p *Preset) LeadEffort() string {
-	if len(p.LeadLadder) == 0 {
-		return ""
-	}
-	return p.LeadLadder[0].Effort
+	return p.Lead().Effort
 }
 
-// leadLadder parses the lead's agent: node — a TARGET (scalar "claude:opus@work") or a target
-// LADDER (sequence [claude:fable, claude:opus@work]) — into the lead provider (the first rung's)
-// and the ladder itself, entries kept whole (expandLadder fans a rung's account list out at run
-// time, against what's actually signed in). The ladder MAY be cross-provider
-// ([claude:opus, codex:gpt-5]) — the loop rotates across agents. A single bare-lead entry (no
-// model, no effort, no account) collapses to the empty ladder (the agent's default model, all
-// accounts).
-func leadLadder(node *yaml.Node) (provider string, ladder []agents.Target, err error) {
+// leadTargets parses the lead's agent: node — a TARGET (scalar "claude:opus@work") or a target
+// LADDER (sequence [claude:fable, claude:opus@work]) — into whole targets. expandLadder fans a
+// target's account list out at run time against what's actually signed in. The ladder MAY be
+// cross-provider
+// ([claude:opus, codex:gpt-5]) — the loop rotates across agents. A bare provider remains a real
+// target whose empty model/effort and accounts mean provider defaults and account fan-out.
+func leadTargets(node *yaml.Node) ([]agents.Target, error) {
 	var raw []string
 	switch node.Kind {
 	case yaml.ScalarNode:
 		raw = []string{node.Value}
 	case yaml.SequenceNode:
 		if len(node.Content) == 0 {
-			return "", nil, fmt.Errorf("is an empty list — name at least one target, or write a single one")
+			return nil, fmt.Errorf("is an empty list — name at least one target, or write a single one")
 		}
 		for _, c := range node.Content {
 			raw = append(raw, c.Value)
 		}
 	case 0: // absent
-		return "", nil, fmt.Errorf("is required — a target: <agent>[:model][/effort][@account] (e.g. %s or %s:<model>)", agents.Names()[0], agents.Names()[0])
+		return nil, fmt.Errorf("is required — a target: <agent>[:model][/effort][@account] (e.g. %s or %s:<model>)", agents.Names()[0], agents.Names()[0])
 	default:
-		return "", nil, fmt.Errorf("must be a target (claude:opus@work) or a list of targets, not a map")
+		return nil, fmt.Errorf("must be a target (claude:opus@work) or a list of targets, not a map")
 	}
+	targets := make([]agents.Target, 0, len(raw))
 	for i, s := range raw {
 		t, perr := agents.ParseTarget(s)
 		if perr != nil {
-			return "", nil, fmt.Errorf("[%d] %v", i, perr)
+			return nil, fmt.Errorf("[%d] %v", i, perr)
 		}
-		if provider == "" {
-			provider = t.Provider // the lead = the first rung's provider
-		}
-		ladder = append(ladder, t)
+		targets = append(targets, t)
 	}
-	// A single bare-lead entry (no model, no effort, no account) is "default model, all
-	// accounts" — the empty ladder, identical to the pre-unification absent models:.
-	if len(ladder) == 1 && ladder[0].Model == "" && ladder[0].Effort == "" && len(ladder[0].Accounts) == 0 {
-		ladder = nil
-	}
-	return provider, ladder, nil
+	return targets, nil
 }
 
 // roleName limits role names to env-safe tokens: the delegate wrapper turns a role
@@ -253,13 +244,11 @@ func Load(repo, globalDir, name string) (*Preset, error) {
 		return fmt.Errorf("preset %s: %s", name, fmt.Sprintf(format, a...))
 	}
 
-	// Lead. agent: is a TARGET or a target ladder; its model+account fold in.
-	// LeadAgent is the provider; LeadLadder the ladder.
-	leadAgent, ladder, err := leadLadder(&y.Lead.Agent)
+	// Lead. agent: is a TARGET or a target ladder; its model+account stay on the target.
+	p.LeadTargets, err = leadTargets(&y.Lead.Agent)
 	if err != nil {
 		return nil, bad("lead.agent: %v", err)
 	}
-	p.LeadAgent, p.LeadLadder = leadAgent, ladder
 	if p.LeadPromptText, err = promptText(p.Dir, y.Lead.Prompt); err != nil {
 		return nil, bad("lead.prompt: %v", err)
 	}
@@ -326,10 +315,8 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 		if len(t.Accounts) > 0 {
 			return r, bad("agent[%d] %q pins an account — roles use each provider's default account; drop the @account", i, raw)
 		}
-		r.Ladder = append(r.Ladder, t)
+		r.Targets = append(r.Targets, t)
 	}
-	first := r.Ladder[0]
-	r.Agent, r.Model, r.Effort = first.Provider, first.Model, first.Effort
 	if y.Permissions != nil || y.WritePaths != nil || y.DenyPaths != nil {
 		return r, bad("permissions/write_paths/deny_paths are not supported — coop can't enforce path-level permissions yet, so declaring them would only pretend to")
 	}
@@ -337,10 +324,10 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 	// Mode-specific shape.
 	switch r.Mode {
 	case ModeNative:
-		ag, _ := agents.Get(r.Agent)
+		ag, _ := agents.Get(r.Primary().Provider)
 		support := ag.NativeSubagents()
 		if support.HomeDir == "" || support.Render == nil {
-			return r, bad("mode: native requires an agent that supports in-session subagents; %s does not (use consult or delegate)", r.Agent)
+			return r, bad("mode: native requires an agent that supports in-session subagents; %s does not (use consult or delegate)", r.Primary().Provider)
 		}
 		// subagent is OPTIONAL: set = reference an adapter-native subagent; empty = coop
 		// generates coop-<role> in the box from this role (model/when/prompt).
@@ -421,7 +408,7 @@ func (p *Preset) RunnableRoleAgents(lead string) []string {
 		if r.Mode != ModeConsult && r.Mode != ModeDelegate && !(r.Mode == ModeNative && !nativeRoleUsable(&r, lead)) {
 			continue
 		}
-		for _, target := range r.TargetLadder() {
+		for _, target := range r.Targets {
 			if seen[target.Provider] {
 				continue
 			}
@@ -432,25 +419,11 @@ func (p *Preset) RunnableRoleAgents(lead string) []string {
 	return out
 }
 
-// TargetLadder returns a role's ordered targets. The synthesized first target keeps
-// programmatically-built Roles (mostly tests and internal callers) compatible with the
-// pre-ladder struct without making every caller populate redundant fields.
-func (r Role) TargetLadder() []agents.Target {
-	if len(r.Ladder) > 0 {
-		return r.Ladder
+// Primary returns the role's first target. Loaded roles always have one; the zero value keeps
+// hand-built internal values safe to inspect without a compatibility representation.
+func (r Role) Primary() agents.Target {
+	if len(r.Targets) == 0 {
+		return agents.Target{}
 	}
-	if r.Agent == "" {
-		return nil
-	}
-	return []agents.Target{{Provider: r.Agent, Model: r.Model, Effort: r.Effort}}
-}
-
-// TargetList renders the ladder in the target grammar for the in-box wrapper env.
-func (r Role) TargetList() string {
-	targets := r.TargetLadder()
-	parts := make([]string, len(targets))
-	for i, target := range targets {
-		parts[i] = target.String()
-	}
-	return strings.Join(parts, " ")
+	return r.Targets[0]
 }

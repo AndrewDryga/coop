@@ -74,6 +74,35 @@ func TestLoopTargetResolution(t *testing.T) {
 	}
 }
 
+func TestResolveWorkAgentKeepsBarePresetTargetInMixedLadder(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".agent", "presets", "bare")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte("lead: {agent: claude}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+
+	agent, p, targets, err := a.resolveWorkAgent([]string{"bare", "codex:gpt-5.6-sol/xhigh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent != "claude" || p == nil || p.Name != "bare" {
+		t.Fatalf("resolved lead = (%q, %+v), want bare preset led by claude", agent, p)
+	}
+	want := []string{"claude", "codex:gpt-5.6-sol/xhigh"}
+	if len(targets) != len(want) {
+		t.Fatalf("resolved targets = %v, want %v", targets, want)
+	}
+	for i, target := range targets {
+		if got := target.String(); got != want[i] {
+			t.Errorf("resolved target[%d] = %q, want %q", i, got, want[i])
+		}
+	}
+}
+
 func TestParseLoopArgs(t *testing.T) {
 	// --peer is pre-extracted by cmdLoop (see TestExtractPeer), so parseLoopArgs never sees it — it
 	// resolves the who-runs positional (a target OR a preset name) + the boolean flags only.

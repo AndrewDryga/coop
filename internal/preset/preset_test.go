@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
 // writePreset lays down .agent/presets/<name>/preset.yaml (plus extra files) in a
@@ -69,11 +71,11 @@ func TestLoadFrontier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.LeadAgent != "claude" || p.LeadModel() != "claude-fable-5" {
-		t.Errorf("lead = %s/%s", p.LeadAgent, p.LeadModel())
+	if p.Lead().Provider != "claude" || p.LeadModel() != "claude-fable-5" {
+		t.Errorf("lead = %s/%s", p.Lead().Provider, p.LeadModel())
 	}
-	if len(p.LeadLadder) != 2 || p.LeadLadder[0].String() != "claude:claude-fable-5" || p.LeadLadder[1].String() != "claude:claude-opus-4-8@work" {
-		t.Errorf("lead ladder = %v", p.LeadLadder)
+	if len(p.LeadTargets) != 2 || p.LeadTargets[0].String() != "claude:claude-fable-5" || p.LeadTargets[1].String() != "claude:claude-opus-4-8@work" {
+		t.Errorf("lead targets = %v", p.LeadTargets)
 	}
 	if p.LeadPromptText != "LEAD EXTRA" {
 		t.Errorf("lead prompt = %q", p.LeadPromptText)
@@ -92,7 +94,7 @@ func TestLoadFrontier(t *testing.T) {
 	if th.Subagent != "deep-reasoner" || th.PromptText != "THINKER EXTRA" {
 		t.Errorf("thinker = %+v", th)
 	}
-	if d := p.Delegates(); len(d) != 1 || d[0].Name != "fast" || d[0].Agent != "gemini" {
+	if d := p.Delegates(); len(d) != 1 || d[0].Name != "fast" || d[0].Primary().Provider != "gemini" {
 		t.Errorf("Delegates = %+v", d)
 	}
 }
@@ -168,22 +170,33 @@ roles:
 	}
 	r := p.Roles[0]
 	want := []string{"codex:gpt-5.6-sol/xhigh", "grok:grok-4.5/high", "gemini"}
-	if len(r.TargetLadder()) != len(want) {
-		t.Fatalf("role ladder = %v, want %v", r.TargetLadder(), want)
+	if len(r.Targets) != len(want) {
+		t.Fatalf("role targets = %v, want %v", r.Targets, want)
 	}
-	for i, target := range r.TargetLadder() {
+	for i, target := range r.Targets {
 		if got := target.String(); got != want[i] {
 			t.Errorf("role ladder[%d] = %q, want %q", i, got, want[i])
 		}
 	}
-	if r.Agent != "codex" || r.Model != "gpt-5.6-sol" || r.Effort != "xhigh" {
-		t.Errorf("primary projection = %s:%s/%s, want first rung", r.Agent, r.Model, r.Effort)
-	}
-	if got := r.TargetList(); got != strings.Join(want, " ") {
-		t.Errorf("TargetList = %q, want %q", got, strings.Join(want, " "))
+	if primary := r.Primary(); primary.Provider != "codex" || primary.Model != "gpt-5.6-sol" || primary.Effort != "xhigh" {
+		t.Errorf("primary target = %s, want first target", primary.String())
 	}
 	if got := p.RunnableRoleAgents("claude"); !slices.Equal(got, []string{"codex", "grok", "gemini"}) {
 		t.Errorf("RunnableRoleAgents = %v, want every fallback provider", got)
+	}
+}
+
+func TestLoadBareLeadKeepsTarget(t *testing.T) {
+	repo := writePreset(t, "bare", "lead: {agent: claude}\n", nil)
+	p, err := Load(repo, "", "bare")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.LeadTargets) != 1 || p.LeadTargets[0].String() != "claude" {
+		t.Fatalf("bare lead targets = %v, want [claude]", p.LeadTargets)
+	}
+	if got := p.Lead(); got.Provider != "claude" || got.Model != "" || got.Effort != "" || len(got.Accounts) != 0 {
+		t.Fatalf("bare primary lead = %+v, want provider defaults and account fan-out", got)
 	}
 }
 
@@ -196,16 +209,16 @@ func TestLoadCrossProviderLead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.LeadAgent != "claude" {
-		t.Errorf("LeadAgent = %q, want claude (the first rung)", p.LeadAgent)
+	if p.Lead().Provider != "claude" {
+		t.Errorf("lead provider = %q, want claude (the first target)", p.Lead().Provider)
 	}
-	if len(p.LeadLadder) != 2 {
-		t.Fatalf("LeadLadder = %+v, want 2 rungs", p.LeadLadder)
+	if len(p.LeadTargets) != 2 {
+		t.Fatalf("LeadTargets = %+v, want 2 targets", p.LeadTargets)
 	}
-	if got := p.LeadLadder[0].String(); got != "claude:opus" {
+	if got := p.LeadTargets[0].String(); got != "claude:opus" {
 		t.Errorf("rung 0 = %q, want claude:opus", got)
 	}
-	if got := p.LeadLadder[1].String(); got != "codex:gpt-5.5@work" {
+	if got := p.LeadTargets[1].String(); got != "codex:gpt-5.5@work" {
 		t.Errorf("rung 1 = %q, want codex:gpt-5.5@work", got)
 	}
 }
@@ -305,15 +318,15 @@ func TestScaffold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the scaffolded template must load cleanly: %v", err)
 	}
-	if p.LeadAgent != "claude" || p.LeadModel() != "claude-fable-5" {
-		t.Errorf("template lead = %s/%s", p.LeadAgent, p.LeadModel())
+	if p.Lead().Provider != "claude" || p.LeadModel() != "claude-fable-5" {
+		t.Errorf("template lead = %s/%s", p.Lead().Provider, p.LeadModel())
 	}
 	wantLadder := []string{"claude:claude-fable-5/xhigh", "codex:gpt-5.6-sol/xhigh"}
-	if len(p.LeadLadder) != len(wantLadder) {
-		t.Fatalf("template lead ladder = %v, want %v", p.LeadLadder, wantLadder)
+	if len(p.LeadTargets) != len(wantLadder) {
+		t.Fatalf("template lead targets = %v, want %v", p.LeadTargets, wantLadder)
 	}
 	for i, want := range wantLadder {
-		if got := p.LeadLadder[i].String(); got != want {
+		if got := p.LeadTargets[i].String(); got != want {
 			t.Errorf("template lead ladder[%d] = %q, want %q", i, got, want)
 		}
 	}
@@ -331,9 +344,10 @@ func TestScaffold(t *testing.T) {
 			t.Errorf("unexpected scaffolded role %q", role.Name)
 			continue
 		}
-		if role.Agent != want.agent || role.Model != want.model || role.Effort != want.effort {
+		primary := role.Primary()
+		if primary.Provider != want.agent || primary.Model != want.model || primary.Effort != want.effort {
 			t.Errorf("template role %s target = %s:%s/%s, want %s:%s/%s",
-				role.Name, role.Agent, role.Model, role.Effort, want.agent, want.model, want.effort)
+				role.Name, primary.Provider, primary.Model, primary.Effort, want.agent, want.model, want.effort)
 		}
 	}
 	// The active prompt: lines must resolve — every file the template references is
@@ -371,9 +385,9 @@ func TestScaffold(t *testing.T) {
 // the role, description from when, body from the prompt); one WITH subagent references it,
 // and the generated role's prompt lives in the subagent, not the lead contract.
 func TestNativeSubagentGeneration(t *testing.T) {
-	gen := Role{Name: "thinker", Mode: ModeNative, Agent: "claude", Model: "opus",
+	gen := Role{Name: "thinker", Mode: ModeNative, Targets: []agents.Target{{Provider: "claude", Model: "opus"}},
 		When: []string{"architecture", "debugging"}, PromptText: "Think hard."}
-	ref := Role{Name: "critic", Mode: ModeNative, Agent: "claude", Subagent: "deep-reasoner"}
+	ref := Role{Name: "critic", Mode: ModeNative, Targets: []agents.Target{{Provider: "claude"}}, Subagent: "deep-reasoner"}
 
 	if got := SubagentName(&gen); got != "coop-thinker" {
 		t.Errorf("generated name = %q, want coop-thinker", got)
@@ -382,7 +396,7 @@ func TestNativeSubagentGeneration(t *testing.T) {
 		t.Errorf("referenced name = %q, want deep-reasoner", got)
 	}
 
-	p := &Preset{Roles: []Role{gen, ref, {Name: "fast", Mode: ModeDelegate, Agent: "gemini"}}}
+	p := &Preset{Roles: []Role{gen, ref, {Name: "fast", Mode: ModeDelegate, Targets: []agents.Target{{Provider: "gemini"}}}}}
 	if nr := p.GeneratedNativeRoles("claude"); len(nr) != 1 || nr[0].Name != "thinker" {
 		t.Fatalf("GeneratedNativeRoles = %+v, want only the generated native role", nr)
 	}
@@ -390,13 +404,13 @@ func TestNativeSubagentGeneration(t *testing.T) {
 	if got := NativeDescription(&gen); got != "Use for: architecture, debugging." {
 		t.Errorf("native description = %q", got)
 	}
-	if body := NativeBody(&Role{Name: "x", Mode: ModeNative, Agent: "claude"}); !strings.Contains(body, "You are the x subagent") {
+	if body := NativeBody(&Role{Name: "x", Mode: ModeNative, Targets: []agents.Target{{Provider: "claude"}}}); !strings.Contains(body, "You are the x subagent") {
 		t.Errorf("empty prompt should get a default body:\n%s", body)
 	}
 
 	// The lead contract invokes @coop-thinker (generated) and @deep-reasoner (referenced),
 	// and doesn't dump the generated role's prompt into the contract.
-	c := LeadContract(&Preset{Name: "t", LeadAgent: "claude", Roles: []Role{gen, ref}}, "claude")
+	c := LeadContract(&Preset{Name: "t", LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []Role{gen, ref}}, "claude")
 	if !strings.Contains(c, "@coop-thinker") || !strings.Contains(c, "@deep-reasoner") {
 		t.Errorf("contract invocations wrong:\n%s", c)
 	}
@@ -409,9 +423,9 @@ func TestNativeSubagentGeneration(t *testing.T) {
 // each one's persona: a degraded native's NativeBody, or an explicit consult's own prompt.
 func TestConsultWiredRoles(t *testing.T) {
 	p := &Preset{Roles: []Role{
-		{Name: "thinker", Mode: ModeNative, Agent: "claude", Model: "opus", PromptText: "Think hard."},
-		{Name: "critic", Mode: ModeConsult, Agent: "codex", PromptText: "Be ruthless."},
-		{Name: "scout", Mode: ModeConsult, Agent: "codex"}, // two consult roles on ONE agent — distinct wirings
+		{Name: "thinker", Mode: ModeNative, Targets: []agents.Target{{Provider: "claude", Model: "opus"}}, PromptText: "Think hard."},
+		{Name: "critic", Mode: ModeConsult, Targets: []agents.Target{{Provider: "codex"}}, PromptText: "Be ruthless."},
+		{Name: "scout", Mode: ModeConsult, Targets: []agents.Target{{Provider: "codex"}}}, // two consult roles on ONE agent — distinct wirings
 	}}
 	if b := ConsultBody(&Role{Name: "x", Mode: ModeNative}); !strings.Contains(b, "You are the x subagent") {
 		t.Errorf("a promptless native should yield the default body, got %q", b)
@@ -447,7 +461,7 @@ func TestConsultWiredRoles(t *testing.T) {
 
 func TestNativeRoleRequiresMatchingCapableLead(t *testing.T) {
 	p := &Preset{Roles: []Role{{
-		Name: "foreign", Mode: ModeNative, Agent: "codex", Model: "gpt-5.6",
+		Name: "foreign", Mode: ModeNative, Targets: []agents.Target{{Provider: "codex", Model: "gpt-5.6"}},
 		PromptText: "Review the boundary.",
 	}}}
 	if got := p.GeneratedNativeRoles("claude"); got != nil {

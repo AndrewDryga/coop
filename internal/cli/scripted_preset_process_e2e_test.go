@@ -29,7 +29,7 @@ func TestProviderScriptedPresetCompositionMatrix(t *testing.T) {
 				target := compositionTarget(provider, "role")
 				roleTargets[provider] = target
 				roles = append(roles, preset.Role{
-					Name: compositionRole(provider), Mode: preset.ModeConsult, Ladder: []agents.Target{target},
+					Name: compositionRole(provider), Mode: preset.ModeConsult, Targets: []agents.Target{target},
 					PromptText: "You are " + compositionRole(provider) + " in the deterministic preset composition matrix.",
 				})
 			}
@@ -111,8 +111,8 @@ func TestProviderScriptedPresetExplicitPeerAndRoleIdentities(t *testing.T) {
 		"critic":  compositionTarget(peer, "critic"),
 	}
 	personas := writePresetRolePreset(t, suite.layout.Repo, name, leadTarget, []preset.Role{
-		{Name: "analyst", Mode: preset.ModeConsult, Ladder: []agents.Target{roleTargets["analyst"]}, PromptText: "Deterministic analyst persona."},
-		{Name: "critic", Mode: preset.ModeConsult, Ladder: []agents.Target{roleTargets["critic"]}, PromptText: "Deterministic critic persona."},
+		{Name: "analyst", Mode: preset.ModeConsult, Targets: []agents.Target{roleTargets["analyst"]}, PromptText: "Deterministic analyst persona."},
+		{Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{roleTargets["critic"]}, PromptText: "Deterministic critic persona."},
 	})
 	calls := []consultCallSpec{
 		{Target: peer, Mode: "fresh", Prompt: "explicit peer question", ExitCode: 0},
@@ -165,7 +165,7 @@ func TestProviderScriptedNativeRoleDegradesUnderIncapableLead(t *testing.T) {
 	leadTarget := compositionTarget(lead, "degraded-lead")
 	roleTarget := compositionTarget(nativeProvider, "native-role")
 	personas := writePresetRolePreset(t, suite.layout.Repo, name, leadTarget, []preset.Role{{
-		Name: "thinker", Mode: preset.ModeNative, Ladder: []agents.Target{roleTarget}, PromptText: "Deterministic degraded native persona.",
+		Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{roleTarget}, PromptText: "Deterministic degraded native persona.",
 	}})
 	question := "degraded native question"
 	step := consultPairStep(roleTarget, "fresh", "usable", consultPersonaPrompt(personas["thinker"], question), "degraded native reply")
@@ -254,10 +254,10 @@ func writePresetRolePreset(t *testing.T, repo, name string, lead agents.Target, 
 	fmt.Fprintf(&body, "lead: {agent: %s}\nroles:\n", lead.String())
 	for index := range roles {
 		role := &roles[index]
-		if len(role.Ladder) != 1 {
+		if len(role.Targets) != 1 {
 			t.Fatalf("fixture role %q needs exactly one target", role.Name)
 		}
-		fmt.Fprintf(&body, "  %s:\n    mode: %s\n    agent: %s\n    prompt: roles/%s.md\n", role.Name, role.Mode, role.Ladder[0].String(), role.Name)
+		fmt.Fprintf(&body, "  %s:\n    mode: %s\n    agent: %s\n    prompt: roles/%s.md\n", role.Name, role.Mode, role.Targets[0].String(), role.Name)
 		if err := os.WriteFile(filepath.Join(rolesDir, role.Name+".md"), []byte(role.PromptText+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
