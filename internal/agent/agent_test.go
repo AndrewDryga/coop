@@ -473,6 +473,7 @@ func TestResume(t *testing.T) {
 
 	// gemini resumes the exact id, matched by file content (not "latest").
 	gemini, _ := Get("gemini")
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "demo", ".project_root"), ws+"\n")
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "demo", "chats", "session-x.jsonl"),
 		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, id, sha256.Sum256([]byte(ws))))
 	if cmd, ok := gemini.Resume(cfg, ws, id); !ok ||
@@ -483,6 +484,7 @@ func TestResume(t *testing.T) {
 	// resume must find the id regardless of the bucket name (the old raw-basename lookup silently
 	// missed a fork named e.g. "My.Repo" whose real bucket is "my-repo").
 	slugWs := filepath.Join(t.TempDir(), "My.Cool_Repo")
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "my-cool-repo", ".project_root"), slugWs+"\n")
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "my-cool-repo", "chats", "s.jsonl"),
 		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, id, sha256.Sum256([]byte(slugWs))))
 	if _, ok := gemini.Resume(cfg, slugWs, id); !ok {
@@ -494,6 +496,7 @@ func TestResume(t *testing.T) {
 	hashID := "77777777-2222-4333-8444-555555555555"
 	hashBucket := "00019aef076a44ed361af8d31415c187d0650aad947127fd02c5617717734f4f"
 	hashWs := filepath.Join(t.TempDir(), "hashed-repo")
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", hashBucket, ".project_root"), hashWs+"\n")
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", hashBucket, "chats", "h.jsonl"),
 		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, hashID, sha256.Sum256([]byte(hashWs))))
 	if _, ok := gemini.Resume(cfg, hashWs, hashID); !ok {
@@ -502,41 +505,32 @@ func TestResume(t *testing.T) {
 	if cmd, ok := gemini.Resume(cfg, filepath.Join(t.TempDir(), "wrong-cwd"), id); ok {
 		t.Errorf("gemini Resume matched the same id under another cwd: %v", cmd)
 	}
-	// Gemini still loads legacy whole-file JSON records. Pretty printing must not make the
-	// persisted fork session disappear after a CLI upgrade.
-	legacyGeminiID := "66666666-2222-4333-8444-555555555555"
-	legacyGeminiWS := filepath.Join(t.TempDir(), "legacy-gemini")
-	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "legacy", "chats", "session.json"), fmt.Sprintf(`{
-  "messages": [],
-  "sessionId": %q,
-  "projectHash": "%x"
-}`, legacyGeminiID, sha256.Sum256([]byte(legacyGeminiWS))))
-	if _, ok := gemini.Resume(cfg, legacyGeminiWS, legacyGeminiID); !ok {
-		t.Error("gemini Resume must match a pretty-printed legacy JSON session")
+	unsupportedGeminiWS := filepath.Join(t.TempDir(), "unsupported-gemini")
+	markerlessID := "66666666-2222-4333-8444-555555555555"
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "markerless", "chats", "session.jsonl"),
+		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, markerlessID, sha256.Sum256([]byte(unsupportedGeminiWS))))
+	if cmd, ok := gemini.Resume(cfg, unsupportedGeminiWS, markerlessID); ok {
+		t.Errorf("gemini Resume accepted a markerless bucket: %v", cmd)
 	}
-	missingHashID := "33333333-2222-4333-8444-555555555555"
-	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "legacy-no-hash", "chats", "session.json"),
-		fmt.Sprintf(`{"sessionId":%q}`, missingHashID))
-	if cmd, ok := gemini.Resume(cfg, legacyGeminiWS, missingHashID); ok {
-		t.Errorf("gemini Resume accepted legacy metadata with no cwd projectHash: %v", cmd)
-	}
-	hashOnlyID := "11111111-2222-4333-8444-555555555555"
-	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", fmt.Sprintf("%x", sha256.Sum256([]byte(legacyGeminiWS))), "chats", "legacy.json"),
-		fmt.Sprintf(`{"sessionId":%q}`, hashOnlyID))
-	if _, ok := gemini.Resume(cfg, legacyGeminiWS, hashOnlyID); !ok {
-		t.Error("gemini Resume must accept a no-projectHash legacy record in the exact cwd hash bucket")
+	wholeFileID := "33333333-2222-4333-8444-555555555555"
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "whole-file", ".project_root"), unsupportedGeminiWS+"\n")
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "whole-file", "chats", "session.json"),
+		fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, wholeFileID, sha256.Sum256([]byte(unsupportedGeminiWS))))
+	if cmd, ok := gemini.Resume(cfg, unsupportedGeminiWS, wholeFileID); ok {
+		t.Errorf("gemini Resume accepted a whole-file JSON session: %v", cmd)
 	}
 	symlinkID := "22222222-2222-4333-8444-555555555555"
-	outside := filepath.Join(t.TempDir(), "outside.json")
-	mustWrite(t, outside, fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, symlinkID, sha256.Sum256([]byte(legacyGeminiWS))))
-	symlink := filepath.Join(cfg.AgentDir("gemini"), "tmp", "linked", "chats", "session.json")
+	outside := filepath.Join(t.TempDir(), "outside.jsonl")
+	mustWrite(t, outside, fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x"}`, symlinkID, sha256.Sum256([]byte(unsupportedGeminiWS))))
+	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "linked", ".project_root"), unsupportedGeminiWS+"\n")
+	symlink := filepath.Join(cfg.AgentDir("gemini"), "tmp", "linked", "chats", "session.jsonl")
 	if err := os.MkdirAll(filepath.Dir(symlink), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, symlink); err != nil {
 		t.Fatal(err)
 	}
-	if cmd, ok := gemini.Resume(cfg, legacyGeminiWS, symlinkID); ok {
+	if cmd, ok := gemini.Resume(cfg, unsupportedGeminiWS, symlinkID); ok {
 		t.Errorf("gemini Resume followed a provider-created session symlink: %v", cmd)
 	}
 

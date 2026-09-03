@@ -197,6 +197,12 @@
   and migration-only tests and instructions are gone. Record formats, owner-only creation, path
   checks, inode rechecks, completion trust, and current crash recovery are unchanged.
 
+- **Gemini resume now reads one current session shape.** Coop scans every Gemini bucket whose
+  bounded `.project_root` marker exactly owns the workspace, then accepts only a regular JSONL chat
+  whose first metadata record matches both the session ID and project hash. Whole-file JSON,
+  markerless buckets, and hash-name ownership guesses are gone; slug and hash bucket names both
+  remain supported through the marker-based cross-bucket scan.
+
 - **Audit reopen authority has one complete-history format.** Coop reads active v3 and
   non-authorizing pending v4 records only. It removes support for the unshipped v1/v2 descendant
   formats and the now-unused `tasks unblock --adopt-audit-head` adoption transaction; unsupported

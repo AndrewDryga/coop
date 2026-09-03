@@ -67,52 +67,6 @@ func TestSessionLookupLargeHistory(t *testing.T) {
 	}
 }
 
-func TestGeminiLargeLegacySession(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir()}
-	ws := "/work/large-legacy/repo"
-	id := "77777777-2222-4333-8444-555555555555"
-	root := cfg.AgentProfileDir("gemini", config.DefaultProfile)
-	bucket := filepath.Join(root, "tmp", "legacy")
-	mustWriteSessionHistory(t, filepath.Join(bucket, ".project_root"), ws+"\n")
-	project := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
-	body := `{"messages":[{"type":"user","content":"` + strings.Repeat("x", (1<<20)+1) +
-		fmt.Sprintf(`"}],"sessionId":%q,"projectHash":%q}`, id, project)
-	mustWriteSessionHistory(t, filepath.Join(bucket, "chats", "session.json"), body)
-	ag, _ := Get("gemini")
-	assertLargeHistoryResume(t, ag, cfg, ws, id, true)
-}
-
-func TestGeminiRejectsOversizedOrTrailingLegacySession(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir()}
-	ws := "/work/legacy-bounds/repo"
-	root := cfg.AgentProfileDir("gemini", config.DefaultProfile)
-	bucket := filepath.Join(root, "tmp", "legacy")
-	mustWriteSessionHistory(t, filepath.Join(bucket, ".project_root"), ws+"\n")
-	project := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
-	cases := []struct {
-		name string
-		id   string
-		body string
-	}{
-		{
-			name: "oversized", id: "88888888-2222-4333-8444-555555555555",
-			body: `{"messages":"` + strings.Repeat("x", geminiLegacyMetadataLimit) +
-				fmt.Sprintf(`","sessionId":%q,"projectHash":%q}`, "88888888-2222-4333-8444-555555555555", project),
-		},
-		{
-			name: "trailing value", id: "99999999-2222-4333-8444-555555555555",
-			body: fmt.Sprintf(`{"sessionId":%q,"projectHash":%q}`, "99999999-2222-4333-8444-555555555555", project) + "\n{}",
-		},
-	}
-	ag, _ := Get("gemini")
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			mustWriteSessionHistory(t, filepath.Join(bucket, "chats", tc.name+".json"), tc.body)
-			assertLargeHistoryResume(t, ag, cfg, ws, tc.id, false)
-		})
-	}
-}
-
 func TestGeminiRejectsOversizedCurrentMetadata(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	ws := "/work/current-metadata-bound/repo"
@@ -126,25 +80,6 @@ func TestGeminiRejectsOversizedCurrentMetadata(t *testing.T) {
 	mustWriteSessionHistory(t, filepath.Join(bucket, "chats", "session.jsonl"), body+"\n")
 	ag, _ := Get("gemini")
 	assertLargeHistoryResume(t, ag, cfg, ws, id, false)
-}
-
-func BenchmarkGeminiLargeLegacySession(b *testing.B) {
-	cfg := &config.Config{ConfigDir: b.TempDir()}
-	ws := "/work/large-legacy/repo"
-	id := "77777777-2222-4333-8444-555555555555"
-	root := cfg.AgentProfileDir("gemini", config.DefaultProfile)
-	bucket := filepath.Join(root, "tmp", "legacy")
-	mustWriteSessionHistory(b, filepath.Join(bucket, ".project_root"), ws+"\n")
-	project := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
-	body := `{"messages":[{"type":"user","content":"` + strings.Repeat("x", (1<<20)+1) +
-		fmt.Sprintf(`"}],"sessionId":%q,"projectHash":%q}`, id, project)
-	mustWriteSessionHistory(b, filepath.Join(bucket, "chats", "session.json"), body)
-	ag, _ := Get("gemini")
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		_, _ = ag.Resume(cfg, ws, id)
-	}
 }
 
 func TestGeminiBucketCWD(t *testing.T) {
@@ -174,7 +109,7 @@ func TestGeminiBucketCWD(t *testing.T) {
 	}
 	for _, name := range []string{"missing", "relative", "oversize", "linked"} {
 		if got := geminiBucketCWD(root, name); got != "" {
-			t.Errorf("%s marker = %q, want legacy fallback", name, got)
+			t.Errorf("%s marker = %q, want no authority", name, got)
 		}
 	}
 }
@@ -278,17 +213,11 @@ func seedLargeSessionHistory(tb testing.TB, cfg *config.Config, provider, accoun
 		mustWriteSessionHistory(tb, filepath.Join(target, ".project_root"), ws+"\n")
 		project := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
 		mustWriteSessionHistory(tb, filepath.Join(target, "chats", "session-hit.jsonl"), fmt.Sprintf(`{"sessionId":%q,"projectHash":%q}`, hitID, project)+"\n")
-		mustWriteSessionHistory(tb, filepath.Join(target, "chats", "session-malformed.json"), fmt.Sprintf(`{"sessionId":%q,"projectHash":17}`, largeHistoryMalformedID))
+		mustWriteSessionHistory(tb, filepath.Join(target, "chats", "session-malformed.jsonl"), fmt.Sprintf(`{"sessionId":%q,"projectHash":17}`, largeHistoryMalformedID))
 		wrong := filepath.Join(root, "tmp", "wrong")
 		mustWriteSessionHistory(tb, filepath.Join(wrong, ".project_root"), ws+"-wrong\n")
 		wrongProject := fmt.Sprintf("%x", sha256.Sum256([]byte(ws+"-wrong")))
 		mustWriteSessionHistory(tb, filepath.Join(wrong, "chats", "session-wrong.jsonl"), fmt.Sprintf(`{"sessionId":%q,"projectHash":%q}`, largeHistoryWrongCwdID, wrongProject)+"\n")
-		for i := range 16 {
-			legacyCWD := fmt.Sprintf("/work/legacy/%02d", i)
-			legacyProject := fmt.Sprintf("%x", sha256.Sum256([]byte(legacyCWD)))
-			body := `{"messages":"` + strings.Repeat("x", 4<<10) + fmt.Sprintf(`","sessionId":%q,"projectHash":%q}`, largeHistoryID(entries+i), legacyProject)
-			mustWriteSessionHistory(tb, filepath.Join(root, "tmp", "legacy", "chats", fmt.Sprintf("session-%02d.json", i)), body)
-		}
 	case "grok":
 		for i := range entries {
 			bucket := filepath.Join(root, "sessions", fmt.Sprintf("foreign-%04d", i))

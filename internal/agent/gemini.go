@@ -72,13 +72,12 @@ func (a geminiAgent) Resume(cfg *config.Config, ws, id string) ([]string, bool) 
 }
 
 const (
-	geminiProjectRootLimit    = 4 << 10
-	geminiMetadataLimit       = 1 << 20
-	geminiLegacyMetadataLimit = 4 << 20
+	geminiProjectRootLimit = 4 << 10
+	geminiMetadataLimit    = 1 << 20
 )
 
 // geminiHasSession matches both the Coop-owned id and Gemini's native sha256(cwd) projectHash.
-// Current buckets carry a .project_root owner; markerless legacy buckets fall back to metadata.
+// Bucket names vary between Gemini releases, so scan every bucket whose .project_root owns ws.
 func geminiHasSession(cfg *config.Config, ws, id string) bool {
 	wantProject := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
 	root, err := openSessionRoot(filepath.Join(cfg.AgentDir("gemini"), "tmp"))
@@ -96,7 +95,7 @@ func geminiHasSession(cfg *config.Config, ws, id string) bool {
 		if !bucket.IsDir() || bucket.Type()&os.ModeSymlink != 0 {
 			continue
 		}
-		if bucketCWD := geminiBucketCWD(root, bucket.Name()); bucketCWD != "" && bucketCWD != ws {
+		if geminiBucketCWD(root, bucket.Name()) != ws {
 			continue
 		}
 		chats := filepath.Join(bucket.Name(), "chats")
@@ -111,6 +110,9 @@ func geminiHasSession(cfg *config.Config, ws, id string) bool {
 		files, _ := chatDir.ReadDir(-1)
 		_ = chatDir.Close()
 		for _, entry := range files {
+			if !strings.HasSuffix(entry.Name(), ".jsonl") {
+				continue
+			}
 			path := filepath.Join(chats, entry.Name())
 			info, err := root.Lstat(path)
 			if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
@@ -120,20 +122,9 @@ func geminiHasSession(cfg *config.Config, ws, id string) bool {
 			if err != nil {
 				continue
 			}
-			legacy := strings.HasSuffix(entry.Name(), ".json")
-			limit := int64(geminiMetadataLimit)
-			if legacy {
-				limit = geminiLegacyMetadataLimit
-				if info.Size() > limit {
-					_ = f.Close()
-					continue
-				}
-			}
-			sessionID, projectHash := geminiSessionMetadata(io.LimitReader(f, limit), legacy)
+			sessionID, projectHash := geminiSessionMetadata(io.LimitReader(f, geminiMetadataLimit))
 			_ = f.Close()
-			// Some whole-file legacy records omit projectHash. Accept those only from the old
-			// exact sha256(cwd) bucket; a slug without metadata cannot prove cwd safely.
-			if sessionID == id && (projectHash == wantProject || (projectHash == "" && bucket.Name() == wantProject)) {
+			if sessionID == id && projectHash == wantProject {
 				return true
 			}
 		}
@@ -141,8 +132,8 @@ func geminiHasSession(cfg *config.Config, ws, id string) bool {
 	return false
 }
 
-// geminiBucketCWD reads Gemini's current bucket ownership marker. An absent or malformed marker
-// returns empty so older bucket schemes retain the metadata fallback above.
+// geminiBucketCWD reads Gemini's bucket ownership marker. An absent or malformed marker is not
+// authoritative and returns empty.
 func geminiBucketCWD(root *os.Root, bucket string) string {
 	path := filepath.Join(bucket, ".project_root")
 	info, err := root.Lstat(path)
@@ -165,9 +156,9 @@ func geminiBucketCWD(root *os.Root, bucket string) string {
 	return cwd
 }
 
-// geminiSessionMetadata decodes only the two top-level keys needed for lookup. Callers cap the
-// complete record because encoding/json buffers one top-level value even when the target is narrow.
-func geminiSessionMetadata(r io.Reader, wholeRecord bool) (sessionID, projectHash string) {
+// geminiSessionMetadata decodes only the first JSONL record's two lookup keys. Callers bound that
+// record because encoding/json buffers one top-level value even when the target is narrow.
+func geminiSessionMetadata(r io.Reader) (sessionID, projectHash string) {
 	dec := json.NewDecoder(r)
 	var metadata struct {
 		SessionID   string `json:"sessionId"`
@@ -175,11 +166,6 @@ func geminiSessionMetadata(r io.Reader, wholeRecord bool) (sessionID, projectHas
 	}
 	if err := dec.Decode(&metadata); err != nil {
 		return "", ""
-	}
-	if wholeRecord {
-		if _, err := dec.Token(); err != io.EOF {
-			return "", ""
-		}
 	}
 	return metadata.SessionID, metadata.ProjectHash
 }

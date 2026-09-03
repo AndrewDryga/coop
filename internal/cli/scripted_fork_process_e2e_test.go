@@ -639,7 +639,7 @@ func forkResumeArgv(provider, model, effort, id string) []string {
 func writeForkProviderSession(t *testing.T, suite *directProcessSuite, provider, account, ws, id, source string, modTime time.Time) {
 	t.Helper()
 	profile := filepath.Join(suite.layout.Config, provider, "profiles", account)
-	var path, body string
+	var path, body, markerPath string
 	switch provider {
 	case "claude":
 		path = filepath.Join(profile, "projects", agents.ClaudeProjectKey(ws), id+".jsonl")
@@ -649,7 +649,9 @@ func writeForkProviderSession(t *testing.T, suite *directProcessSuite, provider,
 		path = filepath.Join(profile, "sessions", "2026", "07", "16", bucket+"-"+id+".jsonl")
 		body = fmt.Sprintf("{\"type\":\"session_meta\",\"payload\":{\"id\":%q,\"cwd\":%q,\"source\":%q}}\n", id, ws, source)
 	case "gemini":
-		path = filepath.Join(profile, "tmp", fmt.Sprintf("fixture-%x", sha256.Sum256([]byte(ws)))[:24], "chats", id+".jsonl")
+		bucket := filepath.Join(profile, "tmp", fmt.Sprintf("fixture-%x", sha256.Sum256([]byte(ws)))[:24])
+		markerPath = filepath.Join(bucket, ".project_root")
+		path = filepath.Join(bucket, "chats", id+".jsonl")
 		body = fmt.Sprintf("{\"sessionId\":%q,\"projectHash\":\"%x\"}\n", id, sha256.Sum256([]byte(ws)))
 	case "grok":
 		path = filepath.Join(profile, "sessions", url.PathEscape(ws), id, "summary.json")
@@ -659,6 +661,11 @@ func writeForkProviderSession(t *testing.T, suite *directProcessSuite, provider,
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
+	}
+	if markerPath != "" {
+		if err := os.WriteFile(markerPath, []byte(ws+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)

@@ -482,7 +482,7 @@ func TestProviderResumeLiveContract(t *testing.T) {
 func seedProviderResumeLiveSession(t *testing.T, cfg *config.Config, provider, id string) {
 	t.Helper()
 	ws := box.Workdir(cfg, cfg.RepoOverride)
-	var path, body string
+	var path, body, markerPath string
 	switch provider {
 	case "claude":
 		path = filepath.Join(cfg.AgentDir(provider), "projects", agents.ClaudeProjectKey(ws), id+".jsonl")
@@ -491,8 +491,10 @@ func seedProviderResumeLiveSession(t *testing.T, cfg *config.Config, provider, i
 		return
 	case "gemini":
 		projectHash := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
-		path = filepath.Join(cfg.AgentDir(provider), "tmp", projectHash, "chats", "session.json")
-		body = `{"sessionId":"` + id + `"}`
+		bucket := filepath.Join(cfg.AgentDir(provider), "tmp", projectHash)
+		markerPath = filepath.Join(bucket, ".project_root")
+		path = filepath.Join(bucket, "chats", "session.jsonl")
+		body = `{"sessionId":"` + id + `","projectHash":"` + projectHash + `"}` + "\n"
 	case "grok":
 		bucket := filepath.Join(cfg.AgentDir(provider), "sessions", "live")
 		if err := os.MkdirAll(bucket, 0o700); err != nil {
@@ -508,6 +510,11 @@ func seedProviderResumeLiveSession(t *testing.T, cfg *config.Config, provider, i
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
+	}
+	if markerPath != "" {
+		if err := os.WriteFile(markerPath, []byte(ws+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
