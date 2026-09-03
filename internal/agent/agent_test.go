@@ -1681,11 +1681,11 @@ func TestMCPWithoutSharedSourceOnlyBuildsAlwaysOnGeminiSettings(t *testing.T) {
 	}
 }
 
-// Every registered agent reaches the shared servers by exactly one route: a generated config
-// file its adapter reads, or the ACP session parameter when it has no file to read. Both routes
-// at once registers every server twice; neither is how an ACP claude session ran with no MCP at
-// all while its box faithfully mounted an mcp.json nothing in that session ever opened.
-func TestEveryAgentReachesTheSharedServersByExactlyOneRoute(t *testing.T) {
+// Every registered agent reaches the shared servers through at least one route:
+// a generated config file its adapter reads, the ACP session parameter, or both
+// where the adapter deduplicates mounted names but still requires a session
+// inventory (codex-acp 1.7).
+func TestEveryAgentReachesTheSharedServersThroughItsSupportedRoutes(t *testing.T) {
 	dir := t.TempDir()
 	mcpFile := filepath.Join(dir, "mcp.json")
 	mustWrite(t, mcpFile, `{"mcpServers":{"x":{"url":"https://x.example/mcp"}}}`)
@@ -1700,10 +1700,34 @@ func TestEveryAgentReachesTheSharedServersByExactlyOneRoute(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s ACPMCPServers = %v", name, err)
 		}
-		if (len(wiring.Mounts) > 0) == (len(servers) > 0) {
-			t.Errorf("%s: %d generated mount(s) and %d ACP server(s); want exactly one of the two",
+		if len(wiring.Mounts) == 0 && len(servers) == 0 {
+			t.Errorf("%s: %d generated mount(s) and %d ACP server(s); want at least one route",
 				name, len(wiring.Mounts), len(servers))
 		}
+	}
+}
+
+// codex-acp 1.7 treats session/new.mcpServers as the session's MCP inventory and
+// startup contract. The mounted config remains Codex's authority source, while
+// this exact ACP declaration makes those same servers callable and observable in
+// the session; codex-acp deduplicates names already present in config.toml.
+func TestCodexACPDeclaresTheMountedSharedServers(t *testing.T) {
+	dir := t.TempDir()
+	mcpFile := filepath.Join(dir, "mcp.json")
+	mustWrite(t, mcpFile, `{"mcpServers":{"emisar":{"command":"emisar-mcp","env":{"EMISAR_URL":"https://emisar.example","EMISAR_API_KEY":"secret"}}}}`)
+	agent, _ := Get("codex")
+
+	servers, err := agent.ACPMCPServers(mcpFile, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(servers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"command":"emisar-mcp","env":[{"name":"EMISAR_API_KEY","value":"secret"},{"name":"EMISAR_URL","value":"https://emisar.example"}],"name":"emisar"}]`
+	if string(got) != want {
+		t.Fatalf("Codex ACP servers = %s, want %s", got, want)
 	}
 }
 

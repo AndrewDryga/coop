@@ -619,6 +619,10 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	outputRoot := filepath.Join(workspace, ".coop-output")
+	if err := os.Mkdir(outputRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "1")
 	recorder := filepath.Join(root, "runtime-args")
 	a := &app{
@@ -638,6 +642,41 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 	}
 	if !strings.Contains(string(args), workspace+":"+workspace+":ro") {
 		t.Fatalf("read-only session repository was writable:\n%s", args)
+	}
+	if !strings.Contains(string(args), outputRoot+":"+outputRoot+":rw") {
+		t.Fatalf("read-only session output root was not writable:\n%s", args)
+	}
+}
+
+func TestForkACPRejectsUnsafeReadOnlySessionOutputRootBeforeBoxLaunch(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "repo")
+	workspace := forkspace.Workspace(repo, "readonly")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(workspace, ".coop-output")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "1")
+	recorder := filepath.Join(root, "runtime-args")
+	a := &app{
+		cfg: &config.Config{
+			RepoOverride: repo, ConfigDir: filepath.Join(root, "config"),
+			BoxHome: filepath.Join(root, "box"), HomeInBox: "/home/node",
+			ImageOverride: "test-image", Egress: "none",
+		},
+		rt: recordingRuntime(t, recorder), rtSet: true,
+	}
+	code, runErr := a.forkACP("readonly", []string{"codex"})
+	if code != -1 || runErr == nil || !strings.Contains(runErr.Error(), "output root is unsafe") {
+		t.Fatalf("forkACP = (%d, %v), want unsafe output-root refusal", code, runErr)
+	}
+	if args, err := os.ReadFile(recorder); err != nil || strings.Contains(string(args), "\nrun ") || strings.HasPrefix(string(args), "run ") {
+		t.Fatalf("unsafe output root reached box launch: %q, %v", args, err)
 	}
 }
 

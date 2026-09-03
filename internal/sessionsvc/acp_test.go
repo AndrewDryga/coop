@@ -489,16 +489,19 @@ func TestAClaudeACPSessionIsHandedTheSharedMCPServers(t *testing.T) {
 	}
 }
 
-// Codex reads the same servers from the generated [mcp_servers.*] file its box mounts. Sending
-// them here as well would register every server twice in one session.
-func TestAnAgentWithAGeneratedMCPConfigIsHandedNoACPServers(t *testing.T) {
+// Codex reads authority from the generated [mcp_servers.*] file, while
+// codex-acp 1.7 also requires the exact session inventory in mcpServers. The
+// adapter deduplicates the mounted name before constructing Codex config.
+func TestACodexSessionIsHandedItsMountedMCPInventory(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	leased := fixture.submit(t, "first prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased); err != nil {
 		t.Fatal(err)
 	}
-	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != "[]" {
-		t.Fatalf("codex session/new mcpServers = %s, want an empty list", got)
+	want := `[{"headers":[{"name":"Authorization","value":"Bearer observe-only"}],` +
+		`"name":"emisar","type":"http","url":"https://example.invalid/mcp"}]`
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != want {
+		t.Fatalf("codex session/new mcpServers = %s, want %s", got, want)
 	}
 }
 

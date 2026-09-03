@@ -523,10 +523,12 @@ func (codexAgent) MCP(cfg *config.Config, workdir string) (MCPConfig, error) {
 	return MCPConfig{Mounts: []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}}}, nil
 }
 
-// ACPMCPServers is nil: this agent's ACP adapter reads the [mcp_servers.*] config.toml MCP mounts,
-// so passing the servers again would register every one of them twice.
-func (codexAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[string]any, error) {
-	return nil, nil
+// ACPMCPServers declares the same shared servers to codex-acp. Codex still reads
+// their authority from the generated config.toml mount, while codex-acp 1.7 uses
+// session/new.mcpServers as the session inventory and startup contract. The
+// adapter deduplicates names already present in config.toml.
+func (codexAgent) ACPMCPServers(path string, lookupEnv func(string) (string, bool)) ([]map[string]any, error) {
+	return mcp.ACPServers(path, lookupEnv)
 }
 
 // EnsureDefaults pre-trusts the workdir in codex's config.toml so a fresh box doesn't

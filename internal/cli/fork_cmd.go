@@ -842,6 +842,13 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !pathExists(ws) {
 		return -1, fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
 	}
+	var sessionOutputArgs []string
+	if repositoryReadOnly {
+		sessionOutputArgs, err = readOnlySessionOutputMountArgs(ws)
+		if err != nil {
+			return -1, err
+		}
+	}
 	unlock, err := forkspace.LockState(repo, name)
 	if err != nil {
 		return -1, fmt.Errorf("lock fork %s generation: %w", name, err)
@@ -885,7 +892,20 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			return os.Getenv("COOP_ACP_SUPERVISOR")
 		}(),
 		RunID: sessionsvc.RunIDFromEnv(), CompanionRepositories: companionRepositories,
+		ExtraArgs: sessionOutputArgs,
 	})
+}
+
+func readOnlySessionOutputMountArgs(workspace string) ([]string, error) {
+	if !filepath.IsAbs(workspace) {
+		return nil, errors.New("read-only session output root is unsafe")
+	}
+	root := filepath.Join(workspace, ".coop-output")
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("read-only session output root is unsafe")
+	}
+	return []string{"-v", root + ":" + root + ":rw"}, nil
 }
 
 // runForkLoop schedules against the parent project's canonical queue and materializes only its one

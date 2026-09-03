@@ -46,6 +46,22 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-08-29 — **+1 edge: `sessionsvc -> workerproto`.** The private session service captures and
+  restores the exact portable workspace-checkpoint descriptor and bundle that the outbound worker
+  transports. Reusing the leaf wire contract keeps digest, bound, and task identity validation
+  byte-identical on both sides of the worker boundary.
+- 2026-08-29 — **+1 leaf package, +2 edges: `box -> secretscan`, `workerconnector -> secretscan`.**
+  The existing pure high-signal scanner moved out of the sandbox owner so the outbound worker can
+  reject a writable checkpoint before upload and before restore without importing the sandbox
+  engine. `box.ScanSecrets` remains a compatibility wrapper; the scanner itself stays stdlib-only.
+- 2026-08-29 — **+2 edges: `cli -> workerconnector`, `cli -> workerproto`.** The host-local
+  `coop worker connect` command owns configuration, signals, and terminal errors while delegating
+  every protocol, journal, mTLS, and Unix-API operation to the connector. The CLI imports the leaf
+  protocol only to refresh the advertised clock without duplicating its wire type.
+- 2026-08-29 — **+2 packages, +1 edge: `workerconnector -> workerproto`.** The versioned outbound
+  worker wire types remain a leaf; the connector owns durable command receipt and private Unix API
+  execution without importing CLI, session engines, credentials, or presentation. Swept the full
+  production graph with `TestInternalImportDAG`; this was the only new internal edge.
 - 2026-08-28 — **+2 lifecycle-authority edges: `box → forkspace`, `sessionsvc → tasks`.** Every
   sandbox now publishes its exact execution generation at the runtime boundary, so `box` reaches
   the leaf host-control records directly instead of relying on callers to remember publication.
