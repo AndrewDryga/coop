@@ -237,7 +237,7 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills, and [starter subagents](#the-orchestrator-pattern) (and optionally a toolchain) |
+| `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills, and selected [agent directories](#instructions-one-source-of-truth) (and optionally a toolchain) |
 | `coop build` · `update` | build the box image · [self-update coop + rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
 | `coop completion <shell>` | shell tab-completion (bash, zsh) |
 | `coop help` · `version` | print help · print the version |
@@ -657,9 +657,7 @@ The chosen model reaches consult peers too (each peer resolves its
 own default), and `coop loop`'s live view prints the model each iteration actually ran —
 the agent's own init report, so it's ground truth, not coop's guess. coop never validates
 a model id: `coop models` shows *examples*, ids churn, and whatever the agent CLI accepts
-works — a bad one fails loudly in the agent's own error. (One gap: codex under ACP reads
-its model from its own `config.toml`; its adapter takes no flags and codex has no model
-env var.)
+works — a bad one fails loudly in the agent's own error.
 
 ### The orchestrator pattern
 
@@ -1035,9 +1033,7 @@ coop login claude    # or codex / gemini / grok
 Claude session with a Codex peer is `["acp","claude:opus/xhigh","--peer","codex"]`,
 and a solo run is `["acp","claude:opus/xhigh@work"]`. The toolbar dropdowns come up reflecting the
 target and stay switchable mid-thread, and coop ignores any editor permission-`mode` setting —
-every session runs yolo (the box is the boundary). **One caveat:** a **codex** lead
-takes its model from codex's own `config.toml` — coop can't set it over ACP — so choose a
-`claude`, `gemini`, or `grok` lead when you want coop to pick the model.
+every session runs yolo (the box is the boundary).
 
 > GUI apps don't always inherit your shell's `PATH`. If Zed can't find `coop`, use the
 > absolute path from step 1 as `command`.
@@ -1218,11 +1214,6 @@ and a focused built-in prompt. Coop names the just-finished task in either promp
 stronger model than the cheaper `work.agent` loop. Settings live here too: `signoff.rounds`,
 `preflight.enabled`, `verify.enabled`, `work.command`. Every field is optional (a missing file = the built-in
 defaults), and `coop init` scaffolds a fully-commented starter.
-
-> The old `.agent/loop/*.md` files (`review.md`/`audit.md`/`between.md`) and the legacy
-> `.agent/audit.md` are retired — fold them into `.agent/loop.yaml` (`signoff.prompt` gains
-> `review.md` + `audit.md`; `between.prompt` gains `between.md`). coop warns once if one lingers and
-> no longer reads it.
 
 **Exit codes.** A cron job or CI can branch on the loop's outcome without parsing output: `0` the
 queue is verified done; `1` a failure; `2` a usage error; `3` the loop stopped with a task blocked

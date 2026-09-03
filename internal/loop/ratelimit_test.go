@@ -216,8 +216,8 @@ func TestProgressStall(t *testing.T) {
 }
 
 // TestReviewRoundCap covers the batch-scaled cap: half the tasks worked, floored at 3 and
-// ceilinged at COOP_MAX_REVIEW_ROUNDS — so a tiny batch still gets 3 rounds and a big overnight
-// batch caps at the ceiling.
+// ceilinged at the configured signoff.rounds — so a tiny batch still gets 3 rounds and a big
+// overnight batch caps at the ceiling.
 func TestReviewRoundCap(t *testing.T) {
 	const max = 5
 	cases := []struct{ tasks, want int }{
@@ -233,7 +233,7 @@ func TestReviewRoundCap(t *testing.T) {
 			t.Errorf("signoffRoundCap(%d, %d) = %d, want %d", c.tasks, max, got, c.want)
 		}
 	}
-	// A ceiling below the floor (COOP_MAX_REVIEW_ROUNDS=1, a one-shot review) still wins.
+	// A configured ceiling below the floor (signoff.rounds: 1, a one-shot review) still wins.
 	if got := signoffRoundCap(100, 1); got != 1 {
 		t.Errorf("signoffRoundCap(100, 1) = %d, want 1 (a sub-floor ceiling wins)", got)
 	}
@@ -262,7 +262,7 @@ func TestReviewRoundOutcome(t *testing.T) {
 	if got := signoffRoundOutcome(cap, cap, true); got != signoffCapReached {
 		t.Errorf("round %d/%d still reopening: got %v, want signoffCapReached", cap, cap, got)
 	}
-	// A cap of 1 (COOP_MAX_REVIEW_ROUNDS=1) is a one-shot review: reopen on round 1 → block now.
+	// A cap of 1 is a one-shot review: reopen on round 1 → block now.
 	if got := signoffRoundOutcome(1, 1, true); got != signoffCapReached {
 		t.Errorf("cap 1, reopened: got %v, want signoffCapReached", got)
 	}

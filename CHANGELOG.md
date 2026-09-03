@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Current documentation no longer advertises retired controls.** Help and the website now
+  describe the files, target ladders, agent directories, and generated preset roles Coop actually
+  uses; historical release notes remain available as history.
+
 - **CI and local doctor runs now share one Make recipe.** The runtime matrix keeps its Docker and
   Podman coverage while Make owns the build-and-run commands, removing a drift-prone duplicate.
 

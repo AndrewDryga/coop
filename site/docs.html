@@ -642,8 +642,9 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         <strong>target</strong> (<code>claude:opus</code>), then
                         the active <a href="#presets">ladder</a> entry's model (a
                         loop stepping through a preset), then
-                        <code>COOP_LOOP_MODEL</code> (loop runs only), then
-                        <code>COOP_&lt;AGENT&gt;_MODEL</code>. Coop never
+                        <code>COOP_&lt;AGENT&gt;_MODEL</code>, then a model baked
+                        into <code>COOP_&lt;AGENT&gt;_CMD</code>, then the agent
+                        CLI's own default. Coop never
                         validates a model id — whatever the agent's own CLI
                         accepts works, and a bad one fails loudly in the agent's
                         own error, so new models work the day they ship.
@@ -660,28 +661,25 @@ vault/                   <span class="t"># a directory — hidden whole</span></
                         <code>--reasoning-effort</code>) and never validates it;
                         Gemini has no effort control, so a <code>/effort</code>
                         on it is rejected up front. It mirrors the model's
-                        precedence, and one env var carries both axes:
-                        <code>COOP_&lt;AGENT&gt;_MODEL</code>,
-                        <code>COOP_LOOP_MODEL</code>, and
-                        <code>COOP_REVIEW_MODEL</code> take
-                        <code>model/effort</code> (e.g. <code>opus/high</code>) —
-                        no separate effort var.
+                        precedence. Targets, preset and
+                        <code>.agent/loop.yaml</code> <code>agent:</code>
+                        ladders, and <code>COOP_&lt;AGENT&gt;_MODEL</code> all
+                        accept <code>model/effort</code> (e.g.
+                        <code>opus/high</code>) — no separate effort var.
                     </p>
                     <p>
                         This is what makes the
                         <strong>orchestrator pattern</strong> cheap to run.
-                        <code>coop init</code> scaffolds two starter subagents:
-                        <code>deep-reasoner</code> (pinned to Opus —
-                        architecture, complex debugging) and
-                        <code>fast-worker</code> (pinned to Sonnet — mechanical
-                        work). A lead on a bigger model spends its tokens on
-                        planning and synthesis while each delegated turn bills
-                        at the subagent's cheaper model. Add
+                        <code>coop init</code> installs the workflow skills but
+                        commits no starter subagents. Put named roles in a
+                        <a href="#presets">preset</a>; Coop generates each
+                        role's wrapper inside the box. A lead on a bigger model
+                        spends its tokens on planning and synthesis while each
+                        delegated turn bills at the role's chosen model. Add
                         <code>--peer codex --peer gemini</code> — naming
                         each peer — and the lead can also ask them
                         read-only — peer engineers with different blind spots,
-                        no plugins required. Wrap the whole arrangement in a
-                        <a href="#presets">preset</a>.
+                        no plugins required.
                     </p>
                 </section>
 
@@ -1096,11 +1094,6 @@ roles:
                         the editor's per-option defaults; the toolbar dropdowns
                         come up reflecting it and stay switchable, and coop always
                         runs yolo whatever the editor's permission-mode setting.
-                        One caveat: a <strong>codex</strong> target takes its
-                        model from codex's own <code>config.toml</code> (coop
-                        can't set it over ACP), so pick a <code>claude</code>,
-                        <code>gemini</code>, or <code>grok</code> target when
-                        you want coop to choose the model.
                     </p>
                     <p>
                         Because the repo mounts at its real path, sessions line
@@ -1241,13 +1234,6 @@ roles:
                             <td>
                                 an agent's default model everywhere it runs
                                 (e.g. <code>COOP_CLAUDE_MODEL=opus</code>)
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>COOP_LOOP_MODEL</code></td>
-                            <td>
-                                the model for loop iterations only — overnight
-                                runs on a cheaper model than interactive ones
                             </td>
                         </tr>
                         <tr>

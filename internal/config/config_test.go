@@ -728,7 +728,7 @@ func TestModelResolution(t *testing.T) {
 	if got := c.ModelFor("claude"); got != "sonnet" {
 		t.Errorf("ModelFor with env = %q, want sonnet", got)
 	}
-	// A per-run selection (--model / COOP_LOOP_MODEL) beats everything.
+	// A per-run selection beats everything.
 	c.SetActiveModel("claude", "fable")
 	if got := c.ModelFor("claude"); got != "fable" {
 		t.Errorf("ModelFor with active selection = %q, want fable", got)
@@ -740,8 +740,8 @@ func TestModelResolution(t *testing.T) {
 }
 
 // TestEffortResolution: EffortFor's precedence mirrors ModelFor — an explicit target /effort
-// beats the rotation target, which beats the standing default (preset lead / COOP_LOOP_MODEL's
-// /effort), which beats the agent-wide COOP_<AGENT>_MODEL's /effort; clearing falls through.
+// beats the rotation target, which beats an optional standing fallback, which beats the
+// agent-wide COOP_<AGENT>_MODEL's /effort; clearing falls through.
 func TestEffortResolution(t *testing.T) {
 	clearAgentEnv(t)
 	c := &Config{ConfigDir: t.TempDir()}
@@ -823,9 +823,9 @@ func TestLoadRejectsInvalidEgress(t *testing.T) {
 	}
 }
 
-// ModelFor resolves through four tiers, most specific first: explicit (--model), the
-// rotation target's model, the standing fallback (preset lead / COOP_LOOP_MODEL), then
-// COOP_<AGENT>_MODEL. The model is its own axis — never a credential property.
+// ModelFor resolves through four tiers, most specific first: an explicit per-run choice, the
+// rotation target's model, an optional standing fallback, then COOP_<AGENT>_MODEL. The model is
+// its own axis — never a credential property.
 func TestModelForTiers(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("COOP_CLAUDE_MODEL", "env-model")

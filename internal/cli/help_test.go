@@ -173,6 +173,51 @@ func TestRenderManual(t *testing.T) {
 	}
 }
 
+// Current public references must not re-advertise config names the strict loader rejects, or
+// claim init creates starter subagents when its focused help correctly says it commits none.
+func TestCurrentDocsDoNotAdvertiseRetiredContracts(t *testing.T) {
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	surfaces := map[string]string{
+		"CLI manual": RenderManual(&config.Config{}),
+		"README":     read(filepath.Join("..", "..", "README.md")),
+		"site docs":  read(filepath.Join("..", "..", "site", "docs.html")),
+	}
+	for name, surface := range surfaces {
+		for _, retired := range []string{
+			"COOP_LOOP_CMD", "COOP_LOOP_MODEL", "COOP_REVIEW_MODEL",
+			"COOP_MAX_REVIEW_ROUNDS", "COOP_PREFLIGHT",
+		} {
+			if strings.Contains(surface, retired) {
+				t.Errorf("%s advertises retired config %s", name, retired)
+			}
+		}
+		if strings.Contains(surface, "can't set it over ACP") {
+			t.Errorf("%s claims Codex ACP cannot receive its target model", name)
+		}
+	}
+
+	manual := surfaces["CLI manual"]
+	if !strings.Contains(manual, "scaffold queue, hooks, skills, agent dirs") ||
+		strings.Contains(manual, "scaffold the queue, hooks, skills, subagents") {
+		t.Errorf("top-level init summary does not match the current scaffold:\n%s", manual)
+	}
+	if site := surfaces["site docs"]; !strings.Contains(site, "commits no starter subagents") ||
+		strings.Contains(site, "scaffolds two starter subagents") {
+		t.Errorf("site init description does not match the current scaffold")
+	}
+	if readme := surfaces["README"]; !strings.Contains(readme, "selected [agent directories]") ||
+		strings.Contains(readme, "[starter subagents]") {
+		t.Errorf("README init description does not match the current scaffold")
+	}
+}
+
 // helpRequested stops at `--`: a flag after it is passthrough to the agent, so `coop claude --
 // --help` runs the agent's --help, not coop's page.
 func TestHelpRequestedStopsAtDashDash(t *testing.T) {

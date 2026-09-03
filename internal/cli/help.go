@@ -157,7 +157,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop check-secrets", "scan the working tree for committed secrets")
 
 	group("SETUP & MAINTENANCE")
-	row("coop init [--stack asdf]", "scaffold the queue, hooks, skills, subagents")
+	row("coop init [--stack asdf]", "scaffold queue, hooks, skills, agent dirs")
 	row("coop build", "build the box image (stable, pinned)")
 	row("coop update", "self-update coop, then rebuild the box")
 	row("coop completion <shell>", "shell tab-completion (bash, zsh)")
@@ -710,8 +710,9 @@ var commandHelp = map[string]string{
   The target is a one-off ladder for this run (no preset needed): a bare provider
   (claude) fans the agent's default model across all signed-in accounts, claude:opus
   pins the model, claude@work,personal is an explicit account ladder — the loop rotates
-  the rungs on a rate limit. Below a rung's own model sits the account's marked default
-  ('coop models'), then COOP_<AGENT>_MODEL — so overnight runs can grind on a cheaper model.
+  the rungs on a rate limit. A rung without a model uses COOP_<AGENT>_MODEL, then a model
+  baked into COOP_<AGENT>_CMD, then the agent CLI's own default — so overnight runs can
+  grind on a cheaper model.
 
   --peer <target>... lets each iteration ask NAMED peers for a read-only second opinion
   (repeatable; coop-consult on PATH, only those peers' credentials mounted) — the
