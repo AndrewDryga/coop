@@ -82,6 +82,7 @@ func newProxyHarness(t *testing.T, n int, hooks *Hooks, providers ...string) *pr
 	queue := make(chan *fakeChild, n)
 	for i := 0; i < n; i++ {
 		c := newFakeChild()
+		c.provider = "codex"
 		if i < len(providers) {
 			c.provider = providers[i]
 		}
@@ -504,8 +505,8 @@ func TestProxyReplayScopesAuthenticationToFreshProviderCapabilities(t *testing.T
 	child.Provider = "claude"
 	child.Account = "default"
 	p := &proxy{
-		out:   io.Discard,
-		setup: [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}` + "\n")},
+		out:        io.Discard,
+		initialize: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}` + "\n"),
 		authentication: map[authenticationScope]authenticationState{
 			{"grok", "default"}:   {"grok-login", []byte(`{"jsonrpc":"2.0","id":"g","method":"authenticate","params":{"methodId":"grok-login"}}` + "\n")},
 			{"claude", "default"}: {"claude-login", []byte(`{"jsonrpc":"2.0","id":"c","method":"authenticate","params":{"methodId":"claude-login"}}` + "\n")},
@@ -557,8 +558,8 @@ func TestProxyReplaySkipsAuthenticationNoLongerAdvertised(t *testing.T) {
 	child.Provider = "claude"
 	child.Account = "default"
 	p := &proxy{
-		out:   io.Discard,
-		setup: [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")},
+		out:        io.Discard,
+		initialize: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n"),
 		authentication: map[authenticationScope]authenticationState{
 			{"claude", "default"}: {"old-login", []byte(`{"jsonrpc":"2.0","id":"a","method":"authenticate","params":{"methodId":"old-login"}}` + "\n")},
 		},
@@ -588,8 +589,8 @@ func TestProxyReplayDoesNotCrossAccounts(t *testing.T) {
 	child.Provider = "claude"
 	child.Account = "work"
 	p := &proxy{
-		out:   io.Discard,
-		setup: [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")},
+		out:        io.Discard,
+		initialize: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n"),
 		authentication: map[authenticationScope]authenticationState{
 			{"claude", "default"}: {"claude-login", []byte(`{"jsonrpc":"2.0","id":"a","method":"authenticate","params":{"methodId":"claude-login"}}` + "\n")},
 		},
@@ -619,7 +620,7 @@ func TestProxyReplayStopsWhenInitializeFails(t *testing.T) {
 	child.Provider = "claude"
 	p := &proxy{
 		out:            io.Discard,
-		setup:          [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")},
+		initialize:     []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n"),
 		authentication: map[authenticationScope]authenticationState{},
 		sessions: map[string]*sess{
 			"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", provider: "claude"},
@@ -1265,13 +1266,14 @@ func TestProxyReplayRecreatesFailedLoad(t *testing.T) {
 	var recreated []string
 	p := &proxy{
 		out:         io.Discard,
-		sessions:    map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", turned: true}},
+		sessions:    map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", provider: "codex", turned: true}},
 		byAdapter:   map[string]string{},
 		sessionReqs: map[string]sessionRequest{},
 		pending:     map[string]bool{},
 		hooks:       &Hooks{SessionRecreated: func(sid string) { recreated = append(recreated, sid) }},
 	}
 	fc := newFakeChild()
+	fc.provider = "codex"
 	br := bufio.NewReader(fc.outR)
 	// Round 1: fail the synthetic session/load. Round 2: answer the re-create session/new with a
 	// fresh box id, and confirm it reused the ORIGINAL params (cwd survives the provider switch).
@@ -1308,6 +1310,7 @@ func TestProxyReplayRecreatesFailedLoad(t *testing.T) {
 	// that was never persisted, and no repeat "did NOT reload" warning.
 	buf.Reset()
 	fc2 := newFakeChild()
+	fc2.provider = "codex"
 	br2 := bufio.NewReader(fc2.outR)
 	go func() {
 		r := bufio.NewReader(fc2.inR)
@@ -1442,13 +1445,14 @@ func TestProxyReplayRecreateFails(t *testing.T) {
 	var editor bytes.Buffer
 	p := &proxy{
 		out:         &editor,
-		sessions:    map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", turned: true}},
+		sessions:    map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", provider: "codex", turned: true}},
 		byAdapter:   map[string]string{},
 		sessionReqs: map[string]sessionRequest{},
 		pending:     map[string]bool{},
 		hooks:       &Hooks{SessionRecreated: func(sid string) { recreated = append(recreated, sid) }},
 	}
 	fc := newFakeChild()
+	fc.provider = "codex"
 	br := bufio.NewReader(fc.outR)
 	go func() {
 		r := bufio.NewReader(fc.inR)
@@ -1475,7 +1479,8 @@ func TestProxyReplayRecreateFails(t *testing.T) {
 	}
 
 	// A failed replay cannot make the editor thread immortal. Close is handled locally and retains
-	// the unbound marker so a subsequent delete is local too.
+	// the unbound marker; delete drops it locally and asks the same-provider child to clean up its
+	// native identity best-effort.
 	p.fromClient([]byte(`{"jsonrpc":"2.0","id":9,"method":"session/close","params":{"sessionId":"S1"}}` + "\n"))
 	if s := p.sessions["S1"]; s == nil || !s.closed || !p.unavailable["S1"] {
 		t.Fatalf("local close after failed replay left session active/unavailable: %+v unavailable=%v", s, p.unavailable)
@@ -1483,12 +1488,17 @@ func TestProxyReplayRecreateFails(t *testing.T) {
 	if !strings.Contains(editor.String(), `"id":9,"result":{}`) {
 		t.Fatalf("local close did not answer the editor: %q", editor.String())
 	}
+	cleanup := &recordingWriteCloser{}
+	p.child.In = cleanup
 	p.fromClient([]byte(`{"jsonrpc":"2.0","id":10,"method":"session/delete","params":{"sessionId":"S1"}}` + "\n"))
 	if p.sessions["S1"] != nil || p.unavailable["S1"] {
 		t.Fatalf("delete after local close retained failed identity: sessions=%v unavailable=%v", p.sessions, p.unavailable)
 	}
 	if !strings.Contains(editor.String(), `"id":10,"result":{}`) {
 		t.Fatalf("delete after local close did not answer the editor: %q", editor.String())
+	}
+	if !strings.Contains(cleanup.String(), `"method":"session/delete"`) || !strings.Contains(cleanup.String(), `"sessionId":"S1"`) {
+		t.Fatalf("delete after failed replay did not request native cleanup: %q", cleanup.String())
 	}
 }
 
@@ -2563,12 +2573,13 @@ func TestProxyReplayFailureIsVisibleInThread(t *testing.T) {
 
 	p := &proxy{
 		out:         &editor,
-		sessions:    map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", turned: true}},
+		sessions:    map[string]*sess{"S1": {params: json.RawMessage(`{"cwd":"/w"}`), adapterID: "S1", provider: "codex", turned: true}},
 		byAdapter:   map[string]string{},
 		sessionReqs: map[string]sessionRequest{},
 		pending:     map[string]bool{},
 	}
 	fc := newFakeChild()
+	fc.provider = "codex"
 	br := bufio.NewReader(fc.outR)
 	// Round 1: the session/load fails. Round 2: the re-create session/new fails too — the box
 	// is genuinely unable to host the session.
@@ -2600,8 +2611,8 @@ func TestProxyReplayFailureIsVisibleInThread(t *testing.T) {
 // so the next child can decide whether the native id belongs to it before choosing load vs new.
 func TestProxySnapshotRestore(t *testing.T) {
 	src := &proxy{
-		out:   io.Discard,
-		setup: [][]byte{[]byte(`{"method":"initialize"}`), []byte(`{"method":"authenticate","params":{"methodId":"unsafe-global"}}`)},
+		out:        io.Discard,
+		initialize: []byte(`{"method":"initialize"}`),
 		authentication: map[authenticationScope]authenticationState{
 			{"codex", "default"}: {"oauth", []byte(`{"method":"authenticate","params":{"methodId":"oauth"}}`)},
 		},
@@ -2611,16 +2622,18 @@ func TestProxySnapshotRestore(t *testing.T) {
 		pending:     map[string]bool{},
 	}
 	snap := src.snapshot()
-	if len(snap.Setup) != 1 || string(snap.Setup[0]) != `{"method":"initialize"}` {
-		t.Errorf("setup not snapshotted: %v", snap.Setup)
+	if string(snap.Initialize) != `{"method":"initialize"}` {
+		t.Errorf("initialize not snapshotted: %s", snap.Initialize)
 	}
 	if len(snap.Authentication) != 1 || snap.Authentication[0].Provider != "codex" || snap.Authentication[0].Account != "default" || snap.Authentication[0].MethodID != "oauth" {
 		t.Errorf("provider authentication not snapshotted: %+v", snap.Authentication)
 	}
 	dst := &proxy{out: io.Discard, sessions: map[string]*sess{}, byAdapter: map[string]string{}, sessionReqs: map[string]sessionRequest{}, pending: map[string]bool{}}
-	dst.restore(snap)
-	if len(dst.setup) != 1 || string(dst.setup[0]) != `{"method":"initialize"}` {
-		t.Errorf("setup not restored: %v", dst.setup)
+	if err := dst.restore(snap); err != nil {
+		t.Fatal(err)
+	}
+	if string(dst.initialize) != `{"method":"initialize"}` {
+		t.Errorf("initialize not restored: %s", dst.initialize)
 	}
 	if got := string(dst.authentication[authenticationScope{"codex", "default"}].line); !strings.Contains(got, `"methodId":"oauth"`) {
 		t.Errorf("provider authentication not restored: %q", got)
@@ -2837,8 +2850,8 @@ func TestProxyResumeReplaysOnFirstChild(t *testing.T) {
 	go drainReader(bufio.NewReader(clientOutR)) // replay pushes config_option_update to the client
 
 	snap := &Snapshot{
-		Setup:    [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)},
-		Sessions: []SessionSnap{{EditorID: "S1", AdapterID: "N1", Provider: "codex", Params: json.RawMessage(`{"cwd":"/w"}`), Turned: true}},
+		Initialize: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`),
+		Sessions:   []SessionSnap{{EditorID: "S1", AdapterID: "N1", Provider: "codex", Params: json.RawMessage(`{"cwd":"/w"}`), Turned: true}},
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -2869,6 +2882,37 @@ func TestProxyResumeReplaysOnFirstChild(t *testing.T) {
 	<-done
 }
 
+func TestProxyInvalidResumeStartsFresh(t *testing.T) {
+	c1 := newFakeChild()
+	c1.provider = "codex"
+	clientInR, clientInW := io.Pipe()
+	clientOutR, clientOutW := io.Pipe()
+	done := make(chan error, 1)
+	invalid := &Snapshot{
+		Initialize: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`),
+		Sessions:   []SessionSnap{{EditorID: "S1", AdapterID: "N1"}},
+	}
+	go func() {
+		done <- RunWith(context.Background(), clientInR, clientOutW, func(context.Context) (*Child, error) {
+			return c1.child(), nil
+		}, nil, RunOpts{Resume: invalid})
+	}()
+
+	writeLine(t, clientInW, `{"jsonrpc":"2.0","id":7,"method":"initialize","params":{}}`)
+	request := readLine(t, bufio.NewReader(c1.inR))
+	if h := parse(request); h.Method != "initialize" || string(h.ID) != "7" {
+		t.Fatalf("invalid resume replayed state instead of starting fresh: %s", request)
+	}
+	writeLine(t, c1.outW, `{"jsonrpc":"2.0","id":7,"result":{}}`)
+	if response := readLine(t, bufio.NewReader(clientOutR)); string(parse(response).ID) != "7" {
+		t.Fatalf("fresh initialize response = %s, want editor id 7", response)
+	}
+	clientInW.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("fresh run after invalid resume: %v", err)
+	}
+}
+
 func TestProxyResumeCreatesDirectlyForAnotherProvider(t *testing.T) {
 	c1 := newFakeChild()
 	factory := func(context.Context) (*Child, error) {
@@ -2883,7 +2927,7 @@ func TestProxyResumeCreatesDirectlyForAnotherProvider(t *testing.T) {
 	var recreated atomic.Int32
 	recreatedCh := make(chan struct{})
 	snap := &Snapshot{
-		Setup: [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)},
+		Initialize: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`),
 		Sessions: []SessionSnap{{
 			EditorID: "E1", AdapterID: "C9", Provider: "codex", Params: json.RawMessage(`{"cwd":"/w"}`), Turned: true,
 		}},
@@ -2937,6 +2981,7 @@ func TestProxyResumeCreatesDirectlyForAnotherProvider(t *testing.T) {
 // live state and stops the child — the editor's transport is meant to survive the re-exec.
 func TestProxyReloadReturnsSnapshot(t *testing.T) {
 	c1 := newFakeChild()
+	c1.provider = "codex"
 	factory := func(context.Context) (*Child, error) { return c1.child(), nil }
 	clientInR, clientInW := io.Pipe()
 	clientOutR, clientOutW := io.Pipe()
@@ -2964,8 +3009,8 @@ func TestProxyReloadReturnsSnapshot(t *testing.T) {
 	if !ok || snap == nil {
 		t.Fatalf("a reload should return a reloadError carrying a snapshot, got %v", err)
 	}
-	if len(snap.Setup) == 0 {
-		t.Errorf("snapshot should carry the setup (initialize): %+v", snap)
+	if len(snap.Initialize) == 0 {
+		t.Errorf("snapshot should carry the initialize request: %+v", snap)
 	}
 	if len(snap.Sessions) != 1 || snap.Sessions[0].EditorID != "S1" {
 		t.Errorf("snapshot should carry session S1: %+v", snap.Sessions)
@@ -2982,6 +3027,7 @@ func TestProxyResumeReplayTimeoutRespawnsClean(t *testing.T) {
 
 	c1 := newFakeChild() // never answers replay → errReplayTimeout
 	c2 := newFakeChild() // the clean respawn
+	c1.provider, c2.provider = "codex", "codex"
 	var calls atomic.Int32
 	factory := func(context.Context) (*Child, error) {
 		if calls.Add(1) == 1 {
@@ -2995,8 +3041,8 @@ func TestProxyResumeReplayTimeoutRespawnsClean(t *testing.T) {
 	go drainReader(bufio.NewReader(c1.inR)) // let replay's writes to the hung child complete
 
 	snap := &Snapshot{
-		Setup:    [][]byte{[]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)},
-		Sessions: []SessionSnap{{EditorID: "S1", Params: json.RawMessage(`{"cwd":"/w"}`), Turned: true}},
+		Initialize: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`),
+		Sessions:   []SessionSnap{{EditorID: "S1", AdapterID: "N1", Provider: "codex", Params: json.RawMessage(`{"cwd":"/w"}`), Turned: true}},
 	}
 	done := make(chan error, 1)
 	go func() {

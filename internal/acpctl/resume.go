@@ -19,7 +19,8 @@ type ResumeState struct {
 }
 
 // WriteResumeState JSON-encodes the handoff to a 0600 temp file (CreateTemp is 0600) and returns its
-// path — the setup lines it carries are sensitive, so it's owner-only and removed after one read.
+// path. The initialize, authentication, and session data are sensitive, so the file is owner-only
+// and removed after one read.
 func WriteResumeState(st ResumeState) (string, error) {
 	data, err := json.Marshal(st)
 	if err != nil {
@@ -35,7 +36,7 @@ func WriteResumeState(st ResumeState) (string, error) {
 		return "", werr
 	}
 	if cerr := f.Close(); cerr != nil {
-		os.Remove(f.Name()) // a flush failure on close still wrote bytes — don't leave the setup lines in /tmp
+		os.Remove(f.Name()) // a flush failure on close still wrote bytes — don't leave handoff data in /tmp
 		return "", cerr
 	}
 	return f.Name(), nil
@@ -51,7 +52,10 @@ func ReadResumeState(path string) (ResumeState, error) {
 	if err != nil {
 		return st, err
 	}
-	return st, json.Unmarshal(data, &st)
+	if err := json.Unmarshal(data, &st); err != nil {
+		return st, err
+	}
+	return st, st.Proxy.Validate()
 }
 
 // BareProviderSwitch reports whether a spawn target is a plain provider switch at default

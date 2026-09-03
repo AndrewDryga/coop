@@ -224,7 +224,10 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 	}
 	// Resume: seed the restored session state before the first child, then replay onto it below.
 	if opts.Resume != nil {
-		p.restore(*opts.Resume)
+		if err := p.restore(*opts.Resume); err != nil {
+			Trace("resume snapshot invalid (%v) — starting fresh", err)
+			opts.Resume = nil
+		}
 	}
 
 	child, err := factory(ctx)
@@ -233,7 +236,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 	}
 	reader := bufio.NewReaderSize(child.Out, readBuf)
 	p.setChild(child)
-	// A resumed start replays the restored setup + sessions onto its FIRST child (a normal start
+	// A resumed start replays the restored initialize request + sessions onto its FIRST child (a normal start
 	// skips replay — the first child has nothing to restore). A replay failure degrades to a fresh
 	// start rather than exiting: new threads must still work. A controller-driven restart during
 	// replay is different: retain the restored state and negotiate the newly-selected target.
@@ -270,7 +273,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 			// spawn a clean first child so new threads still work.
 			child.Stop()
 			p.mu.Lock()
-			p.setup = nil
+			p.initialize = nil
 			p.authentication = map[authenticationScope]authenticationState{}
 			p.setupReqs = map[string]setupRequest{}
 			p.authPending = map[authenticationScope]string{}
@@ -497,7 +500,7 @@ type proxy struct {
 	restartHeld    map[string]clientLine                       // at most one post-ack prompt per known editor session
 	restartHeldLen int                                         // total queued bytes, bounded against a stalled replacement
 	shuttingDown   bool                                        // editor gone / ctx cancelled: a concurrent swap must stop the child it publishes
-	setup          [][]byte                                    // the editor's initialize request (slice shape preserves old snapshots)
+	initialize     []byte                                      // the editor's initialize request
 	authentication map[authenticationScope]authenticationState // one chosen method per provider account
 	setupReqs      map[string]setupRequest                     // request id -> handshake state committed only on success
 	authPending    map[authenticationScope]string              // provider account -> serialized authenticate/logout request id
@@ -526,7 +529,7 @@ type proxy struct {
 // the snapshot: a fresh child of the same provider can load it, while another provider must create
 // its own native session without probing a foreign id.
 type Snapshot struct {
-	Setup          [][]byte             `json:"setup"`                    // initialize only; old snapshots may contain unsafe global authenticate lines
+	Initialize     []byte               `json:"initialize"`               // the editor's initialize request
 	Authentication []AuthenticationSnap `json:"authentication,omitempty"` // successful requests, scoped to provider + advertised method
 	Sessions       []SessionSnap        `json:"sessions"`                 // one per live editor session
 }
@@ -543,24 +546,37 @@ type AuthenticationSnap struct {
 // SessionSnap is one session flattened for serialization.
 type SessionSnap struct {
 	EditorID  string          `json:"editor_id"`
-	AdapterID string          `json:"adapter_id,omitempty"`
-	Provider  string          `json:"provider,omitempty"`
+	AdapterID string          `json:"adapter_id"`
+	Provider  string          `json:"provider"`
 	Params    json.RawMessage `json:"params"`
 	Closed    bool            `json:"closed,omitempty"`
 	Turned    bool            `json:"turned"`
 }
 
-// snapshot copies the proxy's setup + sessions into a serializable Snapshot, under the lock.
+// Validate rejects handoffs that predate the current single-initialize and explicit native-identity
+// contract. A failed validation is a fresh-start condition; no partial session state is restored.
+func (snap Snapshot) Validate() error {
+	if len(snap.Initialize) == 0 || parse(snap.Initialize).Method != "initialize" {
+		return errors.New("ACP resume snapshot is missing its initialize request")
+	}
+	for i, session := range snap.Sessions {
+		switch {
+		case session.EditorID == "":
+			return fmt.Errorf("ACP resume snapshot session %d is missing its editor identity", i)
+		case session.AdapterID == "":
+			return fmt.Errorf("ACP resume snapshot session %d is missing its adapter identity", i)
+		case session.Provider == "":
+			return fmt.Errorf("ACP resume snapshot session %d is missing its provider identity", i)
+		}
+	}
+	return nil
+}
+
+// snapshot copies the proxy's initialize request + sessions into a serializable Snapshot, under the lock.
 func (p *proxy) snapshot() Snapshot {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	snap := Snapshot{}
-	for _, line := range p.setup {
-		if parse(line).Method == "initialize" {
-			snap.Setup = [][]byte{clone(line)}
-			break
-		}
-	}
+	snap := Snapshot{Initialize: clone(p.initialize)}
 	scopes := make([]authenticationScope, 0, len(p.authentication))
 	for scope := range p.authentication {
 		scopes = append(scopes, scope)
@@ -585,18 +601,14 @@ func (p *proxy) snapshot() Snapshot {
 	return snap
 }
 
-// restore seeds a fresh proxy's setup + sessions from a Snapshot. Old snapshots did not carry the
-// native id/provider; a provider-aware child re-creates those rather than guessing ownership.
-func (p *proxy) restore(snap Snapshot) {
+// restore seeds a fresh proxy's initialize request + sessions from a current Snapshot.
+func (p *proxy) restore(snap Snapshot) error {
+	if err := snap.Validate(); err != nil {
+		return err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.setup = nil
-	for _, l := range snap.Setup {
-		if parse(l).Method == "initialize" {
-			p.setup = [][]byte{clone(l)}
-			break
-		}
-	}
+	p.initialize = clone(snap.Initialize)
 	if p.authentication == nil {
 		p.authentication = map[authenticationScope]authenticationState{}
 	}
@@ -609,17 +621,14 @@ func (p *proxy) restore(snap Snapshot) {
 		p.authentication[authenticationScope{a.Provider, a.Account}] = authenticationState{a.MethodID, clone(a.Request)}
 	}
 	for _, s := range snap.Sessions {
-		adapterID := s.AdapterID
-		if adapterID == "" {
-			adapterID = s.EditorID
-		}
 		p.sessions[s.EditorID] = &sess{
-			params: s.Params, adapterID: adapterID, provider: s.Provider, closed: s.Closed, turned: s.Turned,
+			params: s.Params, adapterID: s.AdapterID, provider: s.Provider, closed: s.Closed, turned: s.Turned,
 		}
-		if adapterID != s.EditorID {
-			p.byAdapter[adapterID] = s.EditorID
+		if s.AdapterID != s.EditorID {
+			p.byAdapter[s.AdapterID] = s.EditorID
 		}
 	}
+	return nil
 }
 
 func (p *proxy) setChild(c *Child) {
@@ -918,7 +927,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 			// Initialize parameters describe the editor and can be reused for every child, but each
 			// child's RESPONSE is fresh capability truth. Replace instead of append so a duplicate
 			// editor initialize cannot grow an invalid replay tape.
-			p.setup = [][]byte{clone(line)}
+			p.initialize = clone(line)
 			p.setupReqs[string(h.ID)] = setupRequest{
 				method: h.Method, provider: provider, account: account, line: clone(line), generation: p.generation,
 			}
@@ -1755,13 +1764,7 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 		return errReplaySuperseded
 	}
 	p.candidate = c
-	var initialize []byte
-	for _, line := range p.setup {
-		if parse(line).Method == "initialize" {
-			initialize = clone(line)
-			break
-		}
-	}
+	initialize := clone(p.initialize)
 	providerAuth, hasProviderAuth := p.authentication[authenticationScope{c.Provider, c.Account}]
 	providerAuth.line = clone(providerAuth.line)
 	snaps := make([]snap, 0, len(p.sessions))
@@ -1793,10 +1796,9 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 	Trace("replay: negotiating %s and restoring %d session(s) on the restarted box", c.Provider, len(snaps))
 	var sessionMsgs [][]byte
 	for _, s := range snaps {
-		// Native ids belong to one provider. Load only when the replacement child is that provider (or
-		// when both sides are provider-agnostic legacy callers); otherwise create directly and let Coop
-		// carry context without first sending a known-foreign id.
-		canLoad := s.turned && !s.forceNew && (c.Provider == "" || (s.provider != "" && s.provider == c.Provider))
+		// Native ids belong to one provider. Load only when the replacement child is that provider;
+		// otherwise create directly and let Coop carry context without probing a foreign id.
+		canLoad := s.turned && !s.forceNew && c.Provider != "" && s.provider == c.Provider
 		if canLoad {
 			id := replayPrefix + "load-" + s.editorID
 			if msg := loadRequest(id, s.adapterID, s.params); msg != nil {
@@ -1940,12 +1942,8 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 							Trace("replay: session %s did NOT reload — re-creating: %s", eid, h.Error)
 							recreate = append(recreate, eid)
 						} else {
-							provider := c.Provider
-							if provider == "" {
-								provider = snapByEditor[eid].provider
-							}
 							bindings[eid] = replayBinding{
-								adapterID: snapByEditor[eid].adapterID, provider: provider, turned: true,
+								adapterID: snapByEditor[eid].adapterID, provider: c.Provider, turned: true,
 							}
 							ready[eid] = true
 							configUpdates = append(configUpdates, configUpdate{eid, resultConfigOptions(h.Result), resultModels(h.Result)})
