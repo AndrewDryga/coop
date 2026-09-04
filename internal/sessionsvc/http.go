@@ -280,6 +280,10 @@ type sessionReadyDTO struct {
 	Ready bool `json:"ready"`
 }
 
+type sessionCapabilitiesDTO struct {
+	RepositoryFreshnessReceiptVersions []int `json:"repository_freshness_receipt_versions"`
+}
+
 type sessionHTTPErrorBody struct {
 	Code        string `json:"code"`
 	Detail      string `json:"detail,omitempty"`
@@ -326,6 +330,17 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeSessionJSON(w, http.StatusOK, sessionReadyDTO{Ready: true})
+		return
+	case "/v1/capabilities":
+		if !sessionHTTPMethod(w, r, http.MethodGet) {
+			return
+		}
+		if !sessionQueryOnly(w, r) {
+			return
+		}
+		writeSessionJSON(w, http.StatusOK, sessionCapabilitiesDTO{
+			RepositoryFreshnessReceiptVersions: []int{2},
+		})
 		return
 	}
 	if r.URL.Path == "/v1/sessions" || strings.HasPrefix(r.URL.Path, "/v1/sessions/") {

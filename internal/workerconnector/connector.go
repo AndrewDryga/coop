@@ -15,14 +15,14 @@ type Transport interface {
 
 type ConnectorConfig struct {
 	Executor  *Executor
-	Hello     func(clockAt time.Time) workerproto.WorkerHello
+	Hello     func(context.Context, time.Time) workerproto.WorkerHello
 	Now       func() time.Time
 	Transport Transport
 }
 
 type Connector struct {
 	executor  *Executor
-	hello     func(time.Time) workerproto.WorkerHello
+	hello     func(context.Context, time.Time) workerproto.WorkerHello
 	now       func() time.Time
 	sequence  uint64
 	transport Transport
@@ -33,7 +33,7 @@ func NewConnector(config ConnectorConfig) (*Connector, error) {
 	if config.Executor == nil || config.Hello == nil || config.Now == nil || config.Transport == nil {
 		return nil, errors.New("worker connector configuration is incomplete")
 	}
-	hello := config.Hello(config.Now())
+	hello := config.Hello(context.Background(), config.Now())
 	poll := workerproto.Poll{Version: workerproto.Version, PollRef: "poll:" + hello.ID + ":0", Worker: hello}
 	if err := poll.Validate(); err != nil {
 		return nil, fmt.Errorf("validate worker connector hello: %w", err)
@@ -52,7 +52,7 @@ func (c *Connector) PollOnce(ctx context.Context) error {
 	c.sequence++
 	pollRef := fmt.Sprintf("poll:%s:%d", c.workerID, c.sequence)
 	poll := workerproto.Poll{
-		Version: workerproto.Version, PollRef: pollRef, Worker: c.hello(c.now()),
+		Version: workerproto.Version, PollRef: pollRef, Worker: c.hello(ctx, c.now()),
 		AcknowledgedCommandIDs: acknowledgements, CommandResults: results,
 		EventBatches: []workerproto.EventBatch{},
 	}

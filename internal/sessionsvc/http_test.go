@@ -104,6 +104,25 @@ func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 	}
 }
 
+func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersions(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	response := sessionHTTPTestRequest(
+		t, NewHTTPHandler(service), http.MethodGet, "/v1/capabilities", "", "", "",
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("capabilities status=%d body=%s", response.Code, response.Body.String())
+	}
+	var document map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	versions, ok := document["repository_freshness_receipt_versions"].([]any)
+	if !ok || len(document) != 1 || len(versions) != 1 || versions[0] != float64(2) {
+		t.Fatalf("capabilities = %#v", document)
+	}
+}
+
 func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	service, repo := newHTTPTestSessionService(t)
 	defer service.Stop()

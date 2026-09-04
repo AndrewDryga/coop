@@ -65,9 +65,11 @@ func runWorkerConnect(configurationPath string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	hello := func(clock time.Time) workerproto.WorkerHello {
+	hello := func(ctx context.Context, clock time.Time) workerproto.WorkerHello {
 		current := configuration.Hello
 		current.ClockAt = clock.UTC()
+		current.Capabilities =
+			workerconnector.LiveCapabilities(ctx, privateAPI, current.Capabilities)
 		return current
 	}
 	connector, err := workerconnector.NewConnector(workerconnector.ConnectorConfig{

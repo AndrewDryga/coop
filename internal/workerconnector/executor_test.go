@@ -703,7 +703,7 @@ func TestConnectorKeepsAResultUntilResponderAcknowledgesIt(t *testing.T) {
 		{Version: 1, PollRef: "poll:worker-a:3", ServerTime: now},
 	}}
 	connector, err := NewConnector(ConnectorConfig{
-		Executor: executor, Hello: func(clock time.Time) workerproto.WorkerHello { return hello(clock) },
+		Executor: executor, Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello { return hello(clock) },
 		Now: func() time.Time { return now }, Transport: transport,
 	})
 	if err != nil {

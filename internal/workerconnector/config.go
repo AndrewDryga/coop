@@ -13,7 +13,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
-const maxWorkerConfigBytes = 256 << 10
+const (
+	maxWorkerConfigBytes                 = 256 << 10
+	repositoryFreshnessCapabilityName    = "repository-freshness"
+	repositoryFreshnessCapabilityVersion = "2"
+)
 
 type fileConfig struct {
 	Version                int                      `json:"version"`
@@ -100,7 +104,7 @@ func LoadConfig(path, buildVersion string, now time.Time) (Config, error) {
 		ID: raw.WorkerID, WorkspaceRef: raw.WorkspaceRef, ProtocolVersion: "1", BuildVersion: buildVersion,
 		ClockAt: now, SandboxDigest: raw.SandboxDigest, PolicyDigests: raw.PolicyDigests,
 		PolicyAuthorityDigests: raw.PolicyAuthorityDigests,
-		Repositories:           raw.Repositories, Capabilities: raw.Capabilities, Capacity: raw.Capacity, State: "eligible",
+		Repositories:           raw.Repositories, Capabilities: configuredCapabilities(raw.Capabilities), Capacity: raw.Capacity, State: "eligible",
 	}
 	probe := workerproto.Poll{Version: workerproto.Version, PollRef: "poll:" + raw.WorkerID + ":config", Worker: hello}
 	if err := probe.Validate(); err != nil {
@@ -117,4 +121,14 @@ func LoadConfig(path, buildVersion string, now time.Time) (Config, error) {
 		ResponderURL:   raw.ResponderURL,
 		RenewBefore:    time.Duration(raw.RenewBeforeSeconds) * time.Second,
 	}, nil
+}
+
+func configuredCapabilities(configured []workerproto.Capability) []workerproto.Capability {
+	result := make([]workerproto.Capability, 0, len(configured))
+	for _, capability := range configured {
+		if capability.Name != repositoryFreshnessCapabilityName {
+			result = append(result, capability)
+		}
+	}
+	return result
 }

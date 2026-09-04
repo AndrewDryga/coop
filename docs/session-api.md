@@ -437,6 +437,12 @@ host command, or return a host workspace path.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after controller startup |
+| `GET` | `/v1/capabilities` | `{"repository_freshness_receipt_versions":[2]}` for caller-side protocol negotiation |
+
+The outbound worker connector reports `repository-freshness` capability version `2` only after the
+session daemon on its configured Unix socket returns this exact document. It removes any configured
+claim and drops the advertised capability again if live proof is unavailable. Responder therefore
+negotiates the exact worker and daemon currently serving a placed session during rolling upgrades.
 
 ### Sessions
 

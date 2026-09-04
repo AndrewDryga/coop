@@ -19,7 +19,7 @@ func TestConnectorRunRetriesTransportFailureWithoutDroppingCustody(t *testing.T)
 	}
 	transport := &failingThenHealthyTransport{now: now}
 	connector, err := NewConnector(ConnectorConfig{
-		Executor: executor, Hello: func(clock time.Time) workerproto.WorkerHello { return hello(clock) },
+		Executor: executor, Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello { return hello(clock) },
 		Now: time.Now, Transport: transport,
 	})
 	if err != nil {
