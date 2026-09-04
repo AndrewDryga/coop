@@ -56,6 +56,16 @@ func (c *Connector) PollOnce(ctx context.Context) error {
 		AcknowledgedCommandIDs: acknowledgements, CommandResults: results,
 		EventBatches: []workerproto.EventBatch{},
 	}
+	// Never put best-effort narration on the critical path of command
+	// settlement. Its durable cursor makes deferring the read lossless.
+	if len(poll.CommandResults) == 0 {
+		poll.EventBatches = c.executor.pendingEventBatches(ctx, eventBatchBudget(poll))
+	}
+	if !pollFits(poll) {
+		// Command settlement owns the wire budget. Activity is replayable from
+		// its durable cursor on the next poll after those results are acknowledged.
+		poll.EventBatches = []workerproto.EventBatch{}
+	}
 	if err := poll.Validate(); err != nil {
 		return fmt.Errorf("validate outbound worker poll: %w", err)
 	}
@@ -77,6 +87,9 @@ func (c *Connector) PollOnce(ctx context.Context) error {
 			return err
 		}
 	}
+	// Event narration cannot delay commands or turn settlement. A failed
+	// acknowledgement remains replayable from the previous durable cursor.
+	_ = c.executor.journal.acknowledgeEvents(response.EventAcknowledgements)
 	return nil
 }
 

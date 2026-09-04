@@ -93,6 +93,10 @@ func (e *Executor) Execute(ctx context.Context, command workerproto.Command) (wo
 		return workerproto.CommandResult{}, err
 	}
 	if entry.State == "completed" {
+		// A crash may have landed the command receipt before the activity
+		// binding. Reconstruct it only from the same successful create receipt;
+		// later commands must never invent a remote session identity.
+		_ = e.journal.bindEventStreamResult(command, *entry.Result)
 		return *entry.Result, nil
 	}
 
@@ -136,6 +140,9 @@ func (e *Executor) complete(entry journalEntry, result workerproto.CommandResult
 	if err != nil {
 		return workerproto.CommandResult{}, err
 	}
+	// Narration remains best effort, but its identity comes from the validated
+	// create result rather than an arbitrary later command payload.
+	_ = e.journal.bindEventStreamResult(*entry.Command, *completed.Result)
 	return *completed.Result, nil
 }
 

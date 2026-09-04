@@ -55,6 +55,35 @@ func TestUnixAPIKeepsTheSessionControllerPrivateAndBounded(t *testing.T) {
 	}
 }
 
+func TestUnixAPIReadsTheBoundedPublicSessionEventPage(t *testing.T) {
+	now := time.Date(2026, 9, 4, 18, 0, 0, 0, time.UTC)
+	socket := unixSocketPath(t)
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1/sessions/session-1/events" ||
+			request.URL.Query().Get("after") != "4" || request.URL.Query().Get("limit") != "20" {
+			t.Errorf("request = %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`[{"id":"evt-5","session_id":"session-1","sequence":5,"turn_id":"turn-1","type":"model.thought","version":1,"occurred_at":"` + now.Format(time.RFC3339Nano) + `","payload":{"text":"Inspect the exact runtime."}}]`))
+	})}
+	go server.Serve(listener)
+	t.Cleanup(func() { _ = server.Close() })
+
+	api, err := NewUnixAPI(socket, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := api.ListEvents(context.Background(), "session-1", 4, 20)
+	if err != nil || len(events) != 1 || events[0].ID != "evt-5" || events[0].Sequence != 5 ||
+		!bytes.Contains(events[0].Payload, []byte("exact runtime")) {
+		t.Fatalf("events = %+v, %v", events, err)
+	}
+}
+
 func TestUnixAPIFetchesOneVerifiedRawOutputArtifact(t *testing.T) {
 	data := []byte{137, 80, 78, 71, 13, 10, 26, 10, 'x'}
 	digest := sha256.Sum256(data)

@@ -18,6 +18,7 @@ import (
 const (
 	Version          = 1
 	MaxDocumentBytes = 1 << 20
+	SessionEventKind = "session_event"
 	maxBatch         = 100
 	maxPayloadBytes  = 768 << 10
 )
@@ -29,7 +30,7 @@ var (
 	workerStates     = []string{"eligible", "busy", "draining", "needs_auth"}
 	capacityStates   = []string{"eligible", "busy", "cooldown", "needs_auth"}
 	resultStates     = []string{"succeeded", "failed", "uncertain"}
-	eventKinds       = []string{"operation", "session", "turn", "candidate", "validation", "workspace", "checkpoint", "capacity"}
+	eventKinds       = []string{"operation", "session", "turn", "candidate", "validation", "workspace", "checkpoint", "capacity", SessionEventKind}
 )
 
 type Envelope struct {
@@ -101,6 +102,20 @@ type Event struct {
 	Sequence int64           `json:"sequence"`
 	Kind     string          `json:"kind"`
 	Payload  json.RawMessage `json:"payload"`
+}
+
+// SessionEvent is Coop's existing bounded public event projection carried
+// inside one acknowledged worker event. The outer sequence and this sequence
+// must match so neither side can advance a cursor over different data.
+type SessionEvent struct {
+	ID         string          `json:"id"`
+	SessionID  string          `json:"session_id"`
+	Sequence   int64           `json:"sequence"`
+	TurnID     string          `json:"turn_id,omitempty"`
+	Type       string          `json:"type"`
+	Version    int             `json:"version"`
+	OccurredAt time.Time       `json:"occurred_at"`
+	Payload    json.RawMessage `json:"payload,omitempty"`
 }
 
 type Response struct {
@@ -308,9 +323,36 @@ func (b EventBatch) validate() error {
 		if event.Sequence != b.AfterSequence+int64(index)+1 {
 			return errors.New("event batch sequence is not contiguous")
 		}
-		if !slices.Contains(eventKinds, event.Kind) || !boundedObject(event.Payload) {
+		if !slices.Contains(eventKinds, event.Kind) || !event.validPayload() {
 			return errors.New("invalid event")
 		}
+	}
+	return nil
+}
+
+func (e Event) validPayload() bool {
+	if e.Kind != SessionEventKind {
+		return boundedObject(e.Payload)
+	}
+	var sessionEvent SessionEvent
+	return decodeStrict(e.Payload, &sessionEvent) == nil && sessionEvent.validate(e.Sequence) == nil
+}
+
+// Validate confirms one public session event before the worker publishes it.
+func (e SessionEvent) Validate() error { return e.validate(e.Sequence) }
+
+func (e SessionEvent) validate(outerSequence int64) error {
+	if reference(e.ID, 1024, "session event id") != nil ||
+		reference(e.SessionID, 1024, "session event session id") != nil ||
+		(e.TurnID != "" && reference(e.TurnID, 1024, "session event turn id") != nil) ||
+		reference(e.Type, 128, "session event type") != nil {
+		return errors.New("invalid session event identity")
+	}
+	if e.Sequence <= 0 || e.Sequence != outerSequence || e.Version <= 0 || e.Version > 65535 || e.OccurredAt.IsZero() {
+		return errors.New("invalid session event sequence, version, or time")
+	}
+	if len(e.Payload) > 0 && !boundedObject(e.Payload) {
+		return errors.New("invalid session event payload")
 	}
 	return nil
 }

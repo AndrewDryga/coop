@@ -18,7 +18,8 @@ var ErrCommandConflict = errors.New("worker command identity conflicts with its 
 const journalVersion = 1
 
 type journal struct {
-	dir string
+	dir     string
+	streams string
 }
 
 type journalEntry struct {
@@ -47,8 +48,12 @@ func openJournal(dir string) (*journal, error) {
 		return nil, errors.New("worker command journal needs an absolute directory")
 	}
 	commands := filepath.Join(dir, "commands")
+	streams := filepath.Join(dir, "event-streams")
 	if err := os.MkdirAll(commands, 0o700); err != nil {
 		return nil, fmt.Errorf("create worker command journal: %w", err)
+	}
+	if err := os.MkdirAll(streams, 0o700); err != nil {
+		return nil, fmt.Errorf("create worker event stream journal: %w", err)
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("protect worker command journal: %w", err)
@@ -56,7 +61,10 @@ func openJournal(dir string) (*journal, error) {
 	if err := os.Chmod(commands, 0o700); err != nil {
 		return nil, fmt.Errorf("protect worker command receipt directory: %w", err)
 	}
-	return &journal{dir: commands}, nil
+	if err := os.Chmod(streams, 0o700); err != nil {
+		return nil, fmt.Errorf("protect worker event stream directory: %w", err)
+	}
+	return &journal{dir: commands, streams: streams}, nil
 }
 
 func (j *journal) begin(command workerproto.Command) (journalEntry, error) {

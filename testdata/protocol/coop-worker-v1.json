@@ -27,7 +27,42 @@
     },
     "acknowledged_command_ids": ["command:create:1"],
     "command_results": [{"command_id": "command:create:1", "state": "succeeded", "operation_key": "responder:work:create:session-1:g1", "resource": {"session_id": "coop-session-1"}, "error": null}],
-    "event_batches": [{"session_ref": "session-1", "placement_generation": 1, "after_sequence": 0, "events": [{"sequence": 1, "kind": "session", "payload": {"state": "open"}}, {"sequence": 2, "kind": "turn", "payload": {"state": "running"}}]}]
+    "event_batches": [{
+      "session_ref": "session-1",
+      "placement_generation": 1,
+      "after_sequence": 0,
+      "events": [
+        {
+          "sequence": 1,
+          "kind": "session_event",
+          "payload": {
+            "id": "event-session-1",
+            "session_id": "coop-session-1",
+            "sequence": 1,
+            "type": "session.created",
+            "version": 1,
+            "occurred_at": "2026-08-29T12:00:00Z"
+          }
+        },
+        {
+          "sequence": 2,
+          "kind": "session_event",
+          "payload": {
+            "id": "event-tool-2",
+            "session_id": "coop-session-1",
+            "sequence": 2,
+            "turn_id": "coop-turn-1",
+            "type": "tool.started",
+            "version": 1,
+            "occurred_at": "2026-08-29T12:00:01Z",
+            "payload": {
+              "title": "Read repository",
+              "tool_call_id": "tool-1"
+            }
+          }
+        }
+      ]
+    }]
   },
   "response": {
     "version": 1,

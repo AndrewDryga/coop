@@ -77,6 +77,43 @@ func TestWorkerProtocolRejectsOversizeAndSequenceGaps(t *testing.T) {
 	}
 }
 
+func TestWorkerProtocolCarriesOneExactPublicSessionEvent(t *testing.T) {
+	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Poll map[string]any `json:"poll"`
+	}
+	if err := json.Unmarshal(document, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	event := fixture.Poll["event_batches"].([]any)[0].(map[string]any)["events"].([]any)[0].(map[string]any)
+	event["kind"] = "session_event"
+	event["payload"] = map[string]any{
+		"id": "evt-1", "session_id": "coop-session-1", "sequence": 1,
+		"turn_id": "turn-1", "type": "tool.started", "version": 1,
+		"occurred_at": "2026-08-29T12:00:00Z",
+		"payload":     map[string]any{"tool_call_id": "tool-1", "title": "Read repository"},
+	}
+	encoded, err := json.Marshal(fixture.Poll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodePoll(encoded); err != nil {
+		t.Fatalf("session event rejected: %v", err)
+	}
+
+	event["payload"].(map[string]any)["sequence"] = float64(2)
+	mismatched, err := json.Marshal(fixture.Poll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodePoll(mismatched); err == nil {
+		t.Fatal("mismatched inner session event sequence was accepted")
+	}
+}
+
 func TestWorkerProtocolRejectsDuplicateAuthorityAdvertisements(t *testing.T) {
 	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v1.json"))
 	if err != nil {

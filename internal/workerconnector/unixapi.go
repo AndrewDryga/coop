@@ -29,6 +29,55 @@ type UnixAPI struct {
 	client *http.Client
 }
 
+func (a *UnixAPI) ListEvents(ctx context.Context, sessionID string, after int64, limit int) ([]workerproto.SessionEvent, error) {
+	if !reference(sessionID, 1024) || after < 0 || limit <= 0 || limit > maximumEventPage {
+		return nil, errors.New("private Coop session event cursor is invalid")
+	}
+	query := url.Values{
+		"after": {strconv.FormatInt(after, 10)},
+		"limit": {strconv.Itoa(limit)},
+	}
+	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/events?" + query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := a.client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxPrivateResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read private Coop session events: %w", err)
+	}
+	if len(body) > maxPrivateResponseBytes {
+		return nil, errors.New("private Coop session events are oversized")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, decodeAPIError(response.StatusCode, body)
+	}
+	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if mediaErr != nil || mediaType != "application/json" {
+		return nil, errors.New("private Coop session events are not JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	var events []workerproto.SessionEvent
+	if err := decoder.Decode(&events); err != nil || events == nil || len(events) > limit {
+		return nil, errors.New("private Coop session event page is invalid")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("private Coop session event page has trailing data")
+	}
+	for index, event := range events {
+		if event.SessionID != sessionID || event.Sequence != after+int64(index)+1 || event.Validate() != nil {
+			return nil, errors.New("private Coop session event identity is invalid")
+		}
+	}
+	return events, nil
+}
+
 func (a *UnixAPI) FetchOutputArtifact(ctx context.Context, sessionID, turnID, artifactID string) (Artifact, error) {
 	if !reference(sessionID, 1024) || !reference(turnID, 1024) || !reference(artifactID, 256) {
 		return Artifact{}, errors.New("private Coop output artifact identity is invalid")
