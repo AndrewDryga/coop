@@ -757,6 +757,9 @@ func (s *Store) CompleteCreateSessionOperation(
 	if req.ID == "" {
 		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "remote session id is required"}
 	}
+	if len(req.RepositoryFreshness) == 0 {
+		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "remote session repository freshness is required"}
+	}
 	if err := validateCreateRequest(req); err != nil {
 		return Session{}, err
 	}

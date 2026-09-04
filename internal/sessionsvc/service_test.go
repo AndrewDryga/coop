@@ -1893,7 +1893,6 @@ func TestSessionServiceCreateReplayNormalizesLegacySingleTargetIntent(t *testing
 	intent := sessionCreateIntent{
 		OperationID: op.ID, Policy: legacyPolicy, Task: request.Task,
 		SessionID: deterministicSessionID(op.ID), ForkName: deterministicForkName(op.ID),
-		BaseCommit: base,
 	}
 	intentBytes, err := json.Marshal(intent)
 	if err != nil {
@@ -1916,13 +1915,55 @@ func TestSessionServiceCreateReplayNormalizesLegacySingleTargetIntent(t *testing
 	}
 
 	sess, err := service.CreateRemoteSession(context.Background(), "legacy-create", request)
-	if err != nil || sess.Target != wantTarget || sess.ID != intent.SessionID {
+	if err != nil || sess.Target != wantTarget || sess.ID != intent.SessionID || sess.BaseCommit != base || len(sess.RepositoryFreshness) == 0 {
 		t.Fatalf("legacy create replay = %+v, err=%v", sess, err)
 	}
 	resolved, err := service.Store().GetOperationByID(context.Background(), op.ID)
 	if err != nil || resolved.State != session.OperationSucceeded ||
 		resolved.ResourceID != sess.ID {
 		t.Fatalf("legacy create operation = %+v, err=%v", resolved, err)
+	}
+}
+
+func TestSessionServiceCreateReplayRejectsLegacyRepositoryPinsWithoutFreshness(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
+	defer service.Stop()
+	request := CreateRemoteSessionRequest{Policy: "responder", Task: "legacy pinned task"}
+	op, replay, err := service.Store().ReserveOperation(
+		context.Background(), "CreateRemoteSession", "legacy-pinned-create", request,
+	)
+	if err != nil || replay {
+		t.Fatalf("reserve legacy pinned create = %+v, replay=%v, err=%v", op, replay, err)
+	}
+	intent, err := service.captureCreateIntent(op, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.BaseCommit = base
+	intent.WorkspaceCommit = base
+	intentData, err := json.Marshal(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Store().MarkOperationRunning(context.Background(), op.ID, intentData); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.CreateRemoteSession(
+		context.Background(), "legacy-pinned-create", request,
+	); session.CodeOf(err) != session.CodeRepositoryUnavailable {
+		t.Fatalf("legacy pinned create replay error = %v", err)
+	}
+	failed, err := service.Store().GetOperationByID(context.Background(), op.ID)
+	if err != nil || failed.State != session.OperationFailed ||
+		failed.ErrorCode != session.CodeRepositoryUnavailable {
+		t.Fatalf("legacy pinned create operation = %+v, err=%v", failed, err)
+	}
+	if _, err := service.Store().GetSession(context.Background(), intent.SessionID); !errors.Is(err, session.ErrSessionNotFound) {
+		t.Fatalf("legacy pinned intent created an unproven session: %v", err)
 	}
 }
 

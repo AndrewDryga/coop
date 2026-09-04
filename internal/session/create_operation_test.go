@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestCompleteCreateSessionOperationUsesOnlyTheOuterOperation(t *testing.T) {
@@ -119,6 +120,22 @@ func TestCompleteCreateSessionOperationRejectsAStaleOuterSnapshot(t *testing.T) 
 	}
 }
 
+func TestCompleteCreateSessionOperationRejectsMissingRepositoryFreshness(t *testing.T) {
+	store := openTestStore(t, t.TempDir())
+	defer store.Close()
+	ctx := context.Background()
+	op := runningRemoteCreateOperation(t, store, "missing-freshness-create")
+	req := remoteCreateSessionRequest("missing-freshness-session")
+	req.RepositoryFreshness = nil
+
+	if _, err := store.CompleteCreateSessionOperation(ctx, op, req); CodeOf(err) != CodeInvalidRequest {
+		t.Fatalf("missing freshness error = %v", err)
+	}
+	if _, err := store.GetSession(ctx, req.ID); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("missing freshness created a session: %v", err)
+	}
+}
+
 func TestCompleteCreateSessionOperationFinishesAnExactHistoricalSplitCreate(t *testing.T) {
 	store := openTestStore(t, t.TempDir())
 	defer store.Close()
@@ -190,11 +207,17 @@ func runningRemoteCreateOperation(t *testing.T, store *Store, key string) Operat
 }
 
 func remoteCreateSessionRequest(id string) CreateSessionRequest {
+	base := "0123456789abcdef0123456789abcdef01234567"
 	return CreateSessionRequest{
 		ID: id, ExternalRef: "task", Target: "codex:model", Policy: "responder",
 		Repository: "/repo", Workspace: "/workspace", ForkName: "remote-fork",
 		ForkGeneration: "0123456789abcdef0123456789abcdef",
-		BaseCommit:     "0123456789abcdef0123456789abcdef01234567",
-		MaxTurns:       3, MaxQueuedTurns: 2, MaxQueuedBytes: 4096,
+		BaseCommit:     base,
+		RepositoryFreshness: []RepositoryFreshnessReceipt{{
+			Version: 2, Name: "primary", RequestedRevision: "HEAD", ResolvedRevision: base,
+			WorkspaceBaseRevision: base, RemoteIdentity: "origin", FetchedAt: time.Unix(1, 0).UTC(),
+			StaleBaseStatus: "not_applicable",
+		}},
+		MaxTurns: 3, MaxQueuedTurns: 2, MaxQueuedBytes: 4096,
 	}
 }

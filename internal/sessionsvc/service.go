@@ -2034,6 +2034,11 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		if err != nil {
 			return session.Session{}, err
 		}
+	} else if len(intent.RepositoryFreshness) == 0 {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code:   session.CodeRepositoryUnavailable,
+			Detail: "repository freshness must be reacquired by a new session request",
+		})
 	}
 	workspaceCommit := intent.WorkspaceCommit
 	if workspaceCommit == "" {
