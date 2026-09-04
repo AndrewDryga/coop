@@ -306,14 +306,15 @@ type Session struct {
 // process that actually resolves repository policy. RemoteIdentity is the
 // configured remote alias, never its potentially credential-bearing URL.
 type RepositoryFreshnessReceipt struct {
-	Version           int       `json:"version"`
-	Name              string    `json:"name"`
-	RequestedRevision string    `json:"requested_revision"`
-	ResolvedRevision  string    `json:"resolved_revision"`
-	FetchedAt         time.Time `json:"fetched_at"`
-	RemoteIdentity    string    `json:"remote_identity"`
-	StaleBaseStatus   string    `json:"stale_base_status"`
-	StaleBaseRevision string    `json:"stale_base_revision,omitempty"`
+	Version               int       `json:"version"`
+	Name                  string    `json:"name"`
+	RequestedRevision     string    `json:"requested_revision"`
+	ResolvedRevision      string    `json:"resolved_revision"`
+	WorkspaceBaseRevision string    `json:"workspace_base_revision,omitempty"`
+	FetchedAt             time.Time `json:"fetched_at"`
+	RemoteIdentity        string    `json:"remote_identity"`
+	StaleBaseStatus       string    `json:"stale_base_status"`
+	StaleBaseRevision     string    `json:"stale_base_revision,omitempty"`
 }
 
 // WorkspaceTaskBinding is the immutable durable identity of the host-approved task projected

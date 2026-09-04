@@ -475,7 +475,13 @@ operation-plus-session response.
 
 The public session includes IDs, target, policy digest, the exact `project_env`, `project_mcp`, and
 `repository_read_only` authority flags, primary base commit, optional immutable pull-request
-number/ref/head binding, companion aliases,
+number/ref/head binding, companion aliases, and one version-2 repository freshness receipt per
+configured alias. Each receipt contains the requested revision, immutable fetched revision,
+sanitized remote identity, UTC fetch time, and stale-base status. The primary receipt also carries
+`workspace_base_revision`: normally the fetched base head, or the exact merge base for a bound pull
+request. Legacy sessions expose explicit unavailable freshness instead; a caller requiring current
+source evidence must fail closed or replace that session rather than infer freshness. The remaining
+session fields include
 in-box paths and pinned commits, generated fork name, revision, state, activity, queue/budget
 counters, event cursor, and timestamps. It excludes host repository and workspace paths, native
 session ID, prompts, credentials, environment, caller-defined mounts, and runtime data.

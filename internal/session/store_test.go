@@ -1512,6 +1512,30 @@ func TestSessionBindingPersistenceAndFixedIDValidation(t *testing.T) {
 	}
 }
 
+func TestRepositoryFreshnessReceiptBindsOnlyPrimaryWorkspaceBase(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	valid := RepositoryFreshnessReceipt{
+		Version: 2, Name: "primary", RequestedRevision: "refs/heads/main",
+		ResolvedRevision: commit, WorkspaceBaseRevision: commit, FetchedAt: time.Now().UTC(),
+		RemoteIdentity: "origin", StaleBaseStatus: "current", StaleBaseRevision: commit,
+	}
+	if err := validateRepositoryFreshness([]RepositoryFreshnessReceipt{valid}); err != nil {
+		t.Fatalf("valid primary freshness receipt: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*RepositoryFreshnessReceipt){
+		"legacy version":           func(receipt *RepositoryFreshnessReceipt) { receipt.Version = 1 },
+		"missing workspace base":   func(receipt *RepositoryFreshnessReceipt) { receipt.WorkspaceBaseRevision = "" },
+		"companion workspace base": func(receipt *RepositoryFreshnessReceipt) { receipt.Name = "topology" },
+	} {
+		receipt := valid
+		mutate(&receipt)
+		if err := validateRepositoryFreshness([]RepositoryFreshnessReceipt{receipt}); CodeOf(err) != CodeInvalidRequest {
+			t.Fatalf("%s error = %v, want invalid_request", name, err)
+		}
+	}
+}
+
 func TestLeaseSendCheckpointsAndCompletion(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))

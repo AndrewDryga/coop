@@ -2077,14 +2077,15 @@ func TestSessionServicePinsConfiguredRemoteWithoutChangingLocalCheckout(t *testi
 		t.Fatalf("repository freshness = %+v, want primary and companion receipts", sess.RepositoryFreshness)
 	}
 	primaryReceipt, companionReceipt := sess.RepositoryFreshness[0], sess.RepositoryFreshness[1]
-	if primaryReceipt.Version != 1 || primaryReceipt.Name != "primary" ||
+	if primaryReceipt.Version != 2 || primaryReceipt.Name != "primary" ||
 		primaryReceipt.RequestedRevision != "refs/heads/main" ||
-		primaryReceipt.ResolvedRevision != remoteHead || primaryReceipt.RemoteIdentity != "origin" ||
+		primaryReceipt.ResolvedRevision != remoteHead || primaryReceipt.WorkspaceBaseRevision != remoteHead ||
+		primaryReceipt.RemoteIdentity != "origin" ||
 		primaryReceipt.StaleBaseStatus != "stale" || primaryReceipt.StaleBaseRevision != localMain ||
 		primaryReceipt.FetchedAt.IsZero() {
 		t.Fatalf("primary freshness receipt = %+v", primaryReceipt)
 	}
-	if companionReceipt.Version != 1 || companionReceipt.Name != "topology" ||
+	if companionReceipt.Version != 2 || companionReceipt.Name != "topology" ||
 		companionReceipt.RequestedRevision != "refs/heads/master" ||
 		companionReceipt.ResolvedRevision != companionRemoteHead || companionReceipt.RemoteIdentity != "origin" ||
 		companionReceipt.StaleBaseStatus != "stale" ||

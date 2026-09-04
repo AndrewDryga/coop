@@ -98,6 +98,7 @@ func pinSessionPolicyRepositories(
 	result := sessionPolicyPins{
 		creationBase: commits[0], workspaceHead: commits[0], companions: commits[1:], receipts: receipts,
 	}
+	result.receipts[0].WorkspaceBaseRevision = result.creationBase
 	if pullRequest == nil {
 		return result, nil
 	}
@@ -125,6 +126,7 @@ func pinSessionPolicyRepositories(
 	if !validSessionWorkspaceCommit(result.creationBase) {
 		return sessionPolicyPins{}, errors.New("pull request merge base is invalid")
 	}
+	result.receipts[0].WorkspaceBaseRevision = result.creationBase
 	result.workspaceHead = pullHead
 	return result, nil
 }
@@ -249,7 +251,7 @@ func pinSessionRepositoryReceiptWithTimeouts(
 
 func repositoryFreshnessReceipt(name, requested, resolved, remote, staleStatus, staleRevision string) session.RepositoryFreshnessReceipt {
 	return session.RepositoryFreshnessReceipt{
-		Version: 1, Name: strings.ReplaceAll(name, " ", "_"), RequestedRevision: requested, ResolvedRevision: resolved,
+		Version: 2, Name: strings.ReplaceAll(name, " ", "_"), RequestedRevision: requested, ResolvedRevision: resolved,
 		FetchedAt: time.Now().UTC(), RemoteIdentity: remote,
 		StaleBaseStatus: staleStatus, StaleBaseRevision: staleRevision,
 	}

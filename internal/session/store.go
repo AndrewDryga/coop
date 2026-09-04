@@ -1164,12 +1164,14 @@ func validateRepositoryFreshness(receipts []RepositoryFreshnessReceipt) error {
 		validStale := receipt.StaleBaseStatus == "current" || receipt.StaleBaseStatus == "stale" ||
 			receipt.StaleBaseStatus == "unknown" || receipt.StaleBaseStatus == "not_applicable"
 		validPrior := receipt.StaleBaseRevision == "" || validGitObjectID(receipt.StaleBaseRevision)
-		if receipt.Version != 1 || receipt.Name == "" || seen[receipt.Name] ||
+		validWorkspaceBase := (receipt.Name == "primary" && validGitObjectID(receipt.WorkspaceBaseRevision)) ||
+			(receipt.Name != "primary" && receipt.WorkspaceBaseRevision == "")
+		if receipt.Version != 2 || receipt.Name == "" || seen[receipt.Name] ||
 			!validBoundedText(receipt.Name, MaxBindingBytes) ||
 			!validBoundedText(receipt.RequestedRevision, MaxBindingBytes) || receipt.RequestedRevision == "" ||
 			!validGitObjectID(receipt.ResolvedRevision) ||
 			!validBoundedText(receipt.RemoteIdentity, MaxBindingBytes) || receipt.RemoteIdentity == "" ||
-			receipt.FetchedAt.IsZero() || !validStale || !validPrior ||
+			receipt.FetchedAt.IsZero() || !validStale || !validPrior || !validWorkspaceBase ||
 			(receipt.StaleBaseStatus == "current" && receipt.StaleBaseRevision != receipt.ResolvedRevision) ||
 			(receipt.StaleBaseStatus == "stale" && (receipt.StaleBaseRevision == "" || receipt.StaleBaseRevision == receipt.ResolvedRevision)) ||
 			(receipt.StaleBaseStatus != "current" && receipt.StaleBaseStatus != "stale" && receipt.StaleBaseRevision != "") {

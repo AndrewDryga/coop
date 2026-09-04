@@ -677,6 +677,7 @@ func TestSessionHTTPExistingPullRequestBindingSurvivesCreateAndReview(t *testing
 	runGitTest(t, "", "init", "-q", "--bare", remote)
 	git("remote", "add", "origin", remote)
 	git("push", "-q", "-u", "origin", "main")
+	mergeBase := gitOut(seed, "rev-parse", "HEAD")
 	git("checkout", "-qb", "pull-514")
 	if err := os.WriteFile(filepath.Join(seed, "pull.txt"), []byte("pull request\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -685,6 +686,10 @@ func TestSessionHTTPExistingPullRequestBindingSurvivesCreateAndReview(t *testing
 	git("commit", "-qm", "pull request")
 	pullHead := gitOut(seed, "rev-parse", "HEAD")
 	git("push", "-q", "origin", "HEAD:refs/pull/514/head")
+	git("checkout", "-q", "main")
+	git("commit", "-q", "--allow-empty", "-m", "base advanced")
+	git("push", "-q", "origin", "main")
+	baseHead := gitOut(seed, "rev-parse", "HEAD")
 
 	checkout := filepath.Join(t.TempDir(), "checkout")
 	runGitTest(t, "", "clone", "-q", "-b", "main", remote, checkout)
@@ -714,6 +719,14 @@ func TestSessionHTTPExistingPullRequestBindingSurvivesCreateAndReview(t *testing
 		created.Session.PullRequest.Ref != "refs/pull/514/head" ||
 		created.Session.PullRequest.HeadCommit != pullHead {
 		t.Fatalf("created pull request binding = %+v", created.Session.PullRequest)
+	}
+	if created.Session.BaseCommit != mergeBase || len(created.Session.RepositoryFreshness) != 2 ||
+		created.Session.RepositoryFreshness[0].Name != "primary" ||
+		created.Session.RepositoryFreshness[0].ResolvedRevision != baseHead ||
+		created.Session.RepositoryFreshness[0].WorkspaceBaseRevision != mergeBase ||
+		created.Session.RepositoryFreshness[1].Name != "pull_request" ||
+		created.Session.RepositoryFreshness[1].ResolvedRevision != pullHead {
+		t.Fatalf("created pull request freshness = %+v", created.Session)
 	}
 	review := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/review",
