@@ -163,6 +163,12 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	if created.Session.ID == "" || created.Operation.ID == "" {
 		t.Fatalf("create response = %+v", created)
 	}
+	if created.Session.RepositoryFreshnessStatus != "recorded" ||
+		len(created.Session.RepositoryFreshness) != 1 ||
+		created.Session.RepositoryFreshness[0].Name != "primary" ||
+		created.Session.RepositoryFreshness[0].StaleBaseStatus != "not_applicable" {
+		t.Fatalf("create response freshness = %+v", created.Session)
+	}
 	if strings.Contains(response.Body.String(), repo) || strings.Contains(response.Body.String(), "workspace") {
 		t.Fatalf("create response leaked host data: %s", response.Body.String())
 	}

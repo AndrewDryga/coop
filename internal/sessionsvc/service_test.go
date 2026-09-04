@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -2071,6 +2072,36 @@ func TestSessionServicePinsConfiguredRemoteWithoutChangingLocalCheckout(t *testi
 	}
 	if len(sess.Companions) != 1 || sess.Companions[0].BaseCommit != companionRemoteHead {
 		t.Fatalf("session companion = %+v, want remote %s", sess.Companions, companionRemoteHead)
+	}
+	if len(sess.RepositoryFreshness) != 2 {
+		t.Fatalf("repository freshness = %+v, want primary and companion receipts", sess.RepositoryFreshness)
+	}
+	primaryReceipt, companionReceipt := sess.RepositoryFreshness[0], sess.RepositoryFreshness[1]
+	if primaryReceipt.Version != 1 || primaryReceipt.Name != "primary" ||
+		primaryReceipt.RequestedRevision != "refs/heads/main" ||
+		primaryReceipt.ResolvedRevision != remoteHead || primaryReceipt.RemoteIdentity != "origin" ||
+		primaryReceipt.StaleBaseStatus != "stale" || primaryReceipt.StaleBaseRevision != localMain ||
+		primaryReceipt.FetchedAt.IsZero() {
+		t.Fatalf("primary freshness receipt = %+v", primaryReceipt)
+	}
+	if companionReceipt.Version != 1 || companionReceipt.Name != "topology" ||
+		companionReceipt.RequestedRevision != "refs/heads/master" ||
+		companionReceipt.ResolvedRevision != companionRemoteHead || companionReceipt.RemoteIdentity != "origin" ||
+		companionReceipt.StaleBaseStatus != "stale" ||
+		companionReceipt.StaleBaseRevision != companionLocalHead || companionReceipt.FetchedAt.IsZero() {
+		t.Fatalf("companion freshness receipt = %+v", companionReceipt)
+	}
+	persisted, err := service.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(persisted.RepositoryFreshness, sess.RepositoryFreshness) {
+		t.Fatalf("persisted freshness = %+v, want %+v", persisted.RepositoryFreshness, sess.RepositoryFreshness)
+	}
+	public := publicSession(persisted)
+	if public.RepositoryFreshnessStatus != "recorded" ||
+		!reflect.DeepEqual(public.RepositoryFreshness, sess.RepositoryFreshness) {
+		t.Fatalf("public freshness = %+v", public)
 	}
 	if got := readFile(t, filepath.Join(sess.Companions[0].Workspace, "topology.txt")); got != "current\n" {
 		t.Fatalf("companion topology = %q, want current remote snapshot", got)

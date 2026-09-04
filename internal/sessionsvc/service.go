@@ -1928,16 +1928,17 @@ func (s *Service) replayCreateOperation(ctx context.Context, op session.Operatio
 }
 
 type sessionCreateIntent struct {
-	OperationID      string                        `json:"operation_id"`
-	Policy           Policy                        `json:"policy"`
-	Task             string                        `json:"task"`
-	SessionID        string                        `json:"session_id"`
-	ForkName         string                        `json:"fork_name"`
-	BaseCommit       string                        `json:"base_commit"`
-	WorkspaceCommit  string                        `json:"workspace_commit"`
-	PullRequest      *session.PullRequestBinding   `json:"pull_request,omitempty"`
-	ResponderBinding *session.ResponderBinding     `json:"responder_binding,omitempty"`
-	Companions       []session.CompanionRepository `json:"companions,omitempty"`
+	OperationID         string                               `json:"operation_id"`
+	Policy              Policy                               `json:"policy"`
+	Task                string                               `json:"task"`
+	SessionID           string                               `json:"session_id"`
+	ForkName            string                               `json:"fork_name"`
+	BaseCommit          string                               `json:"base_commit"`
+	WorkspaceCommit     string                               `json:"workspace_commit"`
+	PullRequest         *session.PullRequestBinding          `json:"pull_request,omitempty"`
+	ResponderBinding    *session.ResponderBinding            `json:"responder_binding,omitempty"`
+	Companions          []session.CompanionRepository        `json:"companions,omitempty"`
+	RepositoryFreshness []session.RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
 }
 
 func (s *Service) captureCreateIntent(op session.Operation, req CreateRemoteSessionRequest) (sessionCreateIntent, error) {
@@ -2089,8 +2090,9 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		Repository:         intent.Policy.Repository, Workspace: workspace.Path, ForkName: intent.ForkName,
 		ForkGeneration: string(workspace.Fork.Generation),
 		BaseCommit:     intent.BaseCommit, PullRequest: intent.PullRequest, Companions: companions,
-		MaxTurns:       intent.Policy.MaxTurns,
-		MaxQueuedTurns: intent.Policy.MaxQueuedTurns, MaxQueuedBytes: intent.Policy.MaxQueuedBytes,
+		RepositoryFreshness: append([]session.RepositoryFreshnessReceipt(nil), intent.RepositoryFreshness...),
+		MaxTurns:            intent.Policy.MaxTurns,
+		MaxQueuedTurns:      intent.Policy.MaxQueuedTurns, MaxQueuedBytes: intent.Policy.MaxQueuedBytes,
 		TurnTimeout: intent.Policy.TurnTimeout, MaxPatchBytes: intent.Policy.MaxPatchBytes,
 	}
 	latest, err := s.store.GetOperationByID(ctx, op.ID)
@@ -2168,6 +2170,7 @@ func (s *Service) pinCreateIntent(
 	}
 	intent.BaseCommit = pins.creationBase
 	intent.WorkspaceCommit = pins.workspaceHead
+	intent.RepositoryFreshness = append([]session.RepositoryFreshnessReceipt(nil), pins.receipts...)
 	for index := range intent.Companions {
 		intent.Companions[index].BaseCommit = pins.companions[index]
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 19
+	SchemaVersion = 20
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -265,40 +265,55 @@ type Operation struct {
 }
 
 type Session struct {
-	ID                 string                `json:"id"`
-	ExternalRef        string                `json:"external_ref"`
-	Target             string                `json:"target"`
-	Policy             string                `json:"policy"`
-	PolicyDigest       string                `json:"policy_digest"`
-	AuthorityDigest    string                `json:"authority_digest"`
-	ProjectEnv         bool                  `json:"project_env"`
-	ProjectMCP         bool                  `json:"project_mcp"`
-	ResponderBinding   *ResponderBinding     `json:"responder_binding,omitempty"`
-	WorkspaceTask      *WorkspaceTaskBinding `json:"workspace_task,omitempty"`
-	RepositoryReadOnly bool                  `json:"repository_read_only"`
-	Repository         string                `json:"repository"`
-	Workspace          string                `json:"workspace"`
-	ForkName           string                `json:"fork_name"`
-	ForkGeneration     string                `json:"fork_generation,omitempty"`
-	BaseCommit         string                `json:"base_commit"`
-	PullRequest        *PullRequestBinding   `json:"pull_request,omitempty"`
-	Companions         []CompanionRepository `json:"companions,omitempty"`
-	NativeSessionID    string                `json:"native_session_id"`
-	TurnTimeout        time.Duration         `json:"turn_timeout"`
-	MaxPatchBytes      int                   `json:"max_patch_bytes"`
-	Revision           int64                 `json:"revision"`
-	State              SessionState          `json:"state"`
-	Activity           ActivityState         `json:"activity"`
-	MaxTurns           int                   `json:"max_turns"`
-	MaxQueuedTurns     int                   `json:"max_queued_turns"`
-	MaxQueuedBytes     int                   `json:"max_queued_bytes"`
-	TurnsUsed          int                   `json:"turns_used"`
-	QueuedTurnCount    int                   `json:"queued_turn_count"`
-	QueuedPromptBytes  int                   `json:"queued_prompt_bytes"`
-	ActiveTurnID       string                `json:"active_turn_id"`
-	LastEventSequence  int64                 `json:"last_event_sequence"`
-	CreatedAt          time.Time             `json:"created_at"`
-	UpdatedAt          time.Time             `json:"updated_at"`
+	ID                  string                       `json:"id"`
+	ExternalRef         string                       `json:"external_ref"`
+	Target              string                       `json:"target"`
+	Policy              string                       `json:"policy"`
+	PolicyDigest        string                       `json:"policy_digest"`
+	AuthorityDigest     string                       `json:"authority_digest"`
+	ProjectEnv          bool                         `json:"project_env"`
+	ProjectMCP          bool                         `json:"project_mcp"`
+	ResponderBinding    *ResponderBinding            `json:"responder_binding,omitempty"`
+	WorkspaceTask       *WorkspaceTaskBinding        `json:"workspace_task,omitempty"`
+	RepositoryReadOnly  bool                         `json:"repository_read_only"`
+	Repository          string                       `json:"repository"`
+	Workspace           string                       `json:"workspace"`
+	ForkName            string                       `json:"fork_name"`
+	ForkGeneration      string                       `json:"fork_generation,omitempty"`
+	BaseCommit          string                       `json:"base_commit"`
+	RepositoryFreshness []RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
+	PullRequest         *PullRequestBinding          `json:"pull_request,omitempty"`
+	Companions          []CompanionRepository        `json:"companions,omitempty"`
+	NativeSessionID     string                       `json:"native_session_id"`
+	TurnTimeout         time.Duration                `json:"turn_timeout"`
+	MaxPatchBytes       int                          `json:"max_patch_bytes"`
+	Revision            int64                        `json:"revision"`
+	State               SessionState                 `json:"state"`
+	Activity            ActivityState                `json:"activity"`
+	MaxTurns            int                          `json:"max_turns"`
+	MaxQueuedTurns      int                          `json:"max_queued_turns"`
+	MaxQueuedBytes      int                          `json:"max_queued_bytes"`
+	TurnsUsed           int                          `json:"turns_used"`
+	QueuedTurnCount     int                          `json:"queued_turn_count"`
+	QueuedPromptBytes   int                          `json:"queued_prompt_bytes"`
+	ActiveTurnID        string                       `json:"active_turn_id"`
+	LastEventSequence   int64                        `json:"last_event_sequence"`
+	CreatedAt           time.Time                    `json:"created_at"`
+	UpdatedAt           time.Time                    `json:"updated_at"`
+}
+
+// RepositoryFreshnessReceipt is the non-secret proof captured by the Coop
+// process that actually resolves repository policy. RemoteIdentity is the
+// configured remote alias, never its potentially credential-bearing URL.
+type RepositoryFreshnessReceipt struct {
+	Version           int       `json:"version"`
+	Name              string    `json:"name"`
+	RequestedRevision string    `json:"requested_revision"`
+	ResolvedRevision  string    `json:"resolved_revision"`
+	FetchedAt         time.Time `json:"fetched_at"`
+	RemoteIdentity    string    `json:"remote_identity"`
+	StaleBaseStatus   string    `json:"stale_base_status"`
+	StaleBaseRevision string    `json:"stale_base_revision,omitempty"`
 }
 
 // WorkspaceTaskBinding is the immutable durable identity of the host-approved task projected
@@ -472,28 +487,29 @@ type Event struct {
 }
 
 type CreateSessionRequest struct {
-	ID                 string                `json:"id"`
-	ExternalRef        string                `json:"external_ref"`
-	Target             string                `json:"target"`
-	Policy             string                `json:"policy"`
-	PolicyDigest       string                `json:"policy_digest"`
-	AuthorityDigest    string                `json:"authority_digest,omitempty"`
-	OmitEnv            bool                  `json:"omit_env,omitempty"`
-	OmitMCP            bool                  `json:"omit_mcp,omitempty"`
-	ResponderBinding   *ResponderBinding     `json:"responder_binding,omitempty"`
-	RepositoryReadOnly bool                  `json:"repository_read_only,omitempty"`
-	Repository         string                `json:"repository"`
-	Workspace          string                `json:"workspace"`
-	ForkName           string                `json:"fork_name"`
-	ForkGeneration     string                `json:"fork_generation,omitempty"`
-	BaseCommit         string                `json:"base_commit"`
-	PullRequest        *PullRequestBinding   `json:"pull_request,omitempty"`
-	Companions         []CompanionRepository `json:"companions,omitempty"`
-	TurnTimeout        time.Duration         `json:"turn_timeout"`
-	MaxPatchBytes      int                   `json:"max_patch_bytes"`
-	MaxTurns           int                   `json:"max_turns"`
-	MaxQueuedTurns     int                   `json:"max_queued_turns"`
-	MaxQueuedBytes     int                   `json:"max_queued_bytes"`
+	ID                  string                       `json:"id"`
+	ExternalRef         string                       `json:"external_ref"`
+	Target              string                       `json:"target"`
+	Policy              string                       `json:"policy"`
+	PolicyDigest        string                       `json:"policy_digest"`
+	AuthorityDigest     string                       `json:"authority_digest,omitempty"`
+	OmitEnv             bool                         `json:"omit_env,omitempty"`
+	OmitMCP             bool                         `json:"omit_mcp,omitempty"`
+	ResponderBinding    *ResponderBinding            `json:"responder_binding,omitempty"`
+	RepositoryReadOnly  bool                         `json:"repository_read_only,omitempty"`
+	Repository          string                       `json:"repository"`
+	Workspace           string                       `json:"workspace"`
+	ForkName            string                       `json:"fork_name"`
+	ForkGeneration      string                       `json:"fork_generation,omitempty"`
+	BaseCommit          string                       `json:"base_commit"`
+	RepositoryFreshness []RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
+	PullRequest         *PullRequestBinding          `json:"pull_request,omitempty"`
+	Companions          []CompanionRepository        `json:"companions,omitempty"`
+	TurnTimeout         time.Duration                `json:"turn_timeout"`
+	MaxPatchBytes       int                          `json:"max_patch_bytes"`
+	MaxTurns            int                          `json:"max_turns"`
+	MaxQueuedTurns      int                          `json:"max_queued_turns"`
+	MaxQueuedBytes      int                          `json:"max_queued_bytes"`
 }
 
 // SubmitTurnRequest admits one turn. MinTargetIndex is the escalation floor: the

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -885,33 +886,34 @@ func (s *Store) validateHistoricalSplitSessionTx(
 func (s *Store) initialSession(req CreateSessionRequest) Session {
 	now := s.now()
 	sess := Session{
-		ID:                 req.ID,
-		ExternalRef:        req.ExternalRef,
-		Target:             req.Target,
-		Policy:             req.Policy,
-		PolicyDigest:       req.PolicyDigest,
-		AuthorityDigest:    req.AuthorityDigest,
-		ProjectEnv:         !req.OmitEnv,
-		ProjectMCP:         !req.OmitMCP,
-		ResponderBinding:   cloneResponderBinding(req.ResponderBinding),
-		RepositoryReadOnly: req.RepositoryReadOnly,
-		Repository:         req.Repository,
-		Workspace:          req.Workspace,
-		ForkName:           req.ForkName,
-		ForkGeneration:     req.ForkGeneration,
-		BaseCommit:         req.BaseCommit,
-		PullRequest:        clonePullRequestBinding(req.PullRequest),
-		Companions:         append([]CompanionRepository(nil), req.Companions...),
-		TurnTimeout:        req.TurnTimeout,
-		MaxPatchBytes:      req.MaxPatchBytes,
-		Revision:           1,
-		State:              SessionOpen,
-		Activity:           ActivityParked,
-		MaxTurns:           normalized(req.MaxTurns, DefaultMaxTurns),
-		MaxQueuedTurns:     normalized(req.MaxQueuedTurns, DefaultMaxQueuedTurns),
-		MaxQueuedBytes:     normalized(req.MaxQueuedBytes, DefaultMaxQueuedBytes),
-		CreatedAt:          now,
-		UpdatedAt:          now,
+		ID:                  req.ID,
+		ExternalRef:         req.ExternalRef,
+		Target:              req.Target,
+		Policy:              req.Policy,
+		PolicyDigest:        req.PolicyDigest,
+		AuthorityDigest:     req.AuthorityDigest,
+		ProjectEnv:          !req.OmitEnv,
+		ProjectMCP:          !req.OmitMCP,
+		ResponderBinding:    cloneResponderBinding(req.ResponderBinding),
+		RepositoryReadOnly:  req.RepositoryReadOnly,
+		Repository:          req.Repository,
+		Workspace:           req.Workspace,
+		ForkName:            req.ForkName,
+		ForkGeneration:      req.ForkGeneration,
+		BaseCommit:          req.BaseCommit,
+		RepositoryFreshness: append([]RepositoryFreshnessReceipt(nil), req.RepositoryFreshness...),
+		PullRequest:         clonePullRequestBinding(req.PullRequest),
+		Companions:          append([]CompanionRepository(nil), req.Companions...),
+		TurnTimeout:         req.TurnTimeout,
+		MaxPatchBytes:       req.MaxPatchBytes,
+		Revision:            1,
+		State:               SessionOpen,
+		Activity:            ActivityParked,
+		MaxTurns:            normalized(req.MaxTurns, DefaultMaxTurns),
+		MaxQueuedTurns:      normalized(req.MaxQueuedTurns, DefaultMaxQueuedTurns),
+		MaxQueuedBytes:      normalized(req.MaxQueuedBytes, DefaultMaxQueuedBytes),
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 	if sess.ID == "" {
 		sess.ID = s.id("ses")
@@ -924,14 +926,18 @@ func (s *Store) insertInitialSessionTx(ctx context.Context, tx *sql.Tx, sess *Se
 	if err != nil {
 		return fmt.Errorf("encode companion repositories: %w", err)
 	}
+	repositoryFreshness, err := json.Marshal(sess.RepositoryFreshness)
+	if err != nil {
+		return fmt.Errorf("encode repository freshness: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
-		(id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions,
+		(id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions, repository_freshness,
 		 pull_request_number, pull_request_ref, pull_request_head_commit,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
 		sess.Policy, sess.PolicyDigest, sess.AuthorityDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ResponderBinding), responderToken(sess.ResponderBinding), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
-		string(companions), pullRequestNumber(sess.PullRequest), pullRequestRef(sess.PullRequest), pullRequestHead(sess.PullRequest),
+		string(companions), string(repositoryFreshness), pullRequestNumber(sess.PullRequest), pullRequestRef(sess.PullRequest), pullRequestHead(sess.PullRequest),
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
 		sess.MaxQueuedTurns, sess.MaxQueuedBytes, sess.CreatedAt.UnixNano(), sess.UpdatedAt.UnixNano()); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: sessions.id") {
@@ -965,6 +971,7 @@ func initialSessionMatchesRequest(sess Session, req CreateSessionRequest) bool {
 		sess.RepositoryReadOnly == req.RepositoryReadOnly && sess.Repository == req.Repository &&
 		sess.Workspace == req.Workspace && sess.ForkName == req.ForkName &&
 		sess.ForkGeneration == req.ForkGeneration && sess.BaseCommit == req.BaseCommit &&
+		equalRepositoryFreshness(sess.RepositoryFreshness, req.RepositoryFreshness) &&
 		equalPullRequestBinding(sess.PullRequest, req.PullRequest) && equalCompanions(sess.Companions, req.Companions) &&
 		sess.NativeSessionID == "" && sess.WorkspaceTask == nil && sess.TurnTimeout == req.TurnTimeout &&
 		sess.MaxPatchBytes == req.MaxPatchBytes && sess.Revision == 1 && sess.State == SessionOpen &&
@@ -974,6 +981,10 @@ func initialSessionMatchesRequest(sess Session, req CreateSessionRequest) bool {
 		sess.TurnsUsed == 0 && sess.QueuedTurnCount == 0 && sess.QueuedPromptBytes == 0 &&
 		sess.ActiveTurnID == "" && sess.LastEventSequence == 1 && !sess.CreatedAt.IsZero() &&
 		!sess.UpdatedAt.Before(sess.CreatedAt)
+}
+
+func equalRepositoryFreshness(left, right []RepositoryFreshnessReceipt) bool {
+	return slices.Equal(left, right)
 }
 
 func historicalCreateRequestHashMatches(
@@ -1137,6 +1148,34 @@ func validateCreateRequest(req CreateSessionRequest) error {
 			return &Error{Code: CodeInvalidRequest, Detail: "companion repository binding is invalid"}
 		}
 		seenCompanions[companion.Name] = true
+	}
+	if err := validateRepositoryFreshness(req.RepositoryFreshness); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateRepositoryFreshness(receipts []RepositoryFreshnessReceipt) error {
+	if len(receipts) > 102 {
+		return &Error{Code: CodeInvalidRequest, Detail: "repository freshness exceeds bounds"}
+	}
+	seen := make(map[string]bool, len(receipts))
+	for _, receipt := range receipts {
+		validStale := receipt.StaleBaseStatus == "current" || receipt.StaleBaseStatus == "stale" ||
+			receipt.StaleBaseStatus == "unknown" || receipt.StaleBaseStatus == "not_applicable"
+		validPrior := receipt.StaleBaseRevision == "" || validGitObjectID(receipt.StaleBaseRevision)
+		if receipt.Version != 1 || receipt.Name == "" || seen[receipt.Name] ||
+			!validBoundedText(receipt.Name, MaxBindingBytes) ||
+			!validBoundedText(receipt.RequestedRevision, MaxBindingBytes) || receipt.RequestedRevision == "" ||
+			!validGitObjectID(receipt.ResolvedRevision) ||
+			!validBoundedText(receipt.RemoteIdentity, MaxBindingBytes) || receipt.RemoteIdentity == "" ||
+			receipt.FetchedAt.IsZero() || !validStale || !validPrior ||
+			(receipt.StaleBaseStatus == "current" && receipt.StaleBaseRevision != receipt.ResolvedRevision) ||
+			(receipt.StaleBaseStatus == "stale" && (receipt.StaleBaseRevision == "" || receipt.StaleBaseRevision == receipt.ResolvedRevision)) ||
+			(receipt.StaleBaseStatus != "current" && receipt.StaleBaseStatus != "stale" && receipt.StaleBaseRevision != "") {
+			return &Error{Code: CodeInvalidRequest, Detail: "repository freshness receipt is invalid"}
+		}
+		seen[receipt.Name] = true
 	}
 	return nil
 }
@@ -1324,7 +1363,7 @@ func (s *Store) ListSessionRuntimeCleanupTurns(ctx context.Context, sessionID st
 }
 
 const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, repository_read_only, repository, workspace, fork_name, fork_generation,
-	   base_commit, companions, pull_request_number, pull_request_ref, pull_request_head_commit,
+	   base_commit, companions, repository_freshness, pull_request_number, pull_request_ref, pull_request_head_commit,
 	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
 	   max_turns, max_queued_turns, max_queued_bytes, turns_used, queued_turn_count,
 	   queued_prompt_bytes, active_turn_id, last_event_sequence, created_at, updated_at
@@ -1335,13 +1374,13 @@ type rowScanner interface{ Scan(...any) error }
 func scanSession(row rowScanner) (Session, error) {
 	var sess Session
 	var state, activity, active string
-	var companions string
+	var companions, repositoryFreshness string
 	var pullRequestNumber int
 	var pullRequestRef, pullRequestHead, responderEndpointValue, responderTokenValue, workspaceTaskValue string
 	var turnTimeout int64
 	var createdAt, updatedAt int64
 	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest, &sess.AuthorityDigest,
-		&sess.ProjectEnv, &sess.ProjectMCP, &responderEndpointValue, &responderTokenValue, &workspaceTaskValue, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions,
+		&sess.ProjectEnv, &sess.ProjectMCP, &responderEndpointValue, &responderTokenValue, &workspaceTaskValue, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions, &repositoryFreshness,
 		&pullRequestNumber, &pullRequestRef, &pullRequestHead, &sess.NativeSessionID,
 		&turnTimeout, &sess.MaxPatchBytes, &sess.Revision, &state, &activity, &sess.MaxTurns,
 		&sess.MaxQueuedTurns, &sess.MaxQueuedBytes, &sess.TurnsUsed, &sess.QueuedTurnCount,
@@ -1351,6 +1390,11 @@ func scanSession(row rowScanner) (Session, error) {
 	}
 	if err := json.Unmarshal([]byte(companions), &sess.Companions); err != nil {
 		return Session{}, fmt.Errorf("decode companion repositories: %w", err)
+	}
+	if repositoryFreshness != "" {
+		if err := json.Unmarshal([]byte(repositoryFreshness), &sess.RepositoryFreshness); err != nil {
+			return Session{}, fmt.Errorf("decode repository freshness: %w", err)
+		}
 	}
 	if pullRequestNumber > 0 {
 		sess.PullRequest = &PullRequestBinding{Number: pullRequestNumber, Ref: pullRequestRef, HeadCommit: pullRequestHead}

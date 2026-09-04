@@ -26,6 +26,7 @@ type sessionPolicyPins struct {
 	creationBase  string
 	workspaceHead string
 	companions    []string
+	receipts      []session.RepositoryFreshnessReceipt
 }
 
 type sessionSourceGitRunner func(context.Context, string, ...string) ([]byte, error)
@@ -58,6 +59,7 @@ func pinSessionPolicyRepositories(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	commits := make([]string, len(sources))
+	receipts := make([]session.RepositoryFreshnessReceipt, len(sources))
 	sem := make(chan struct{}, sessionPolicyRemoteConcurrency)
 	errs := make(chan error, len(sources))
 	var wg sync.WaitGroup
@@ -72,7 +74,7 @@ func pinSessionPolicyRepositories(
 			case <-ctx.Done():
 				return
 			}
-			commit, err := pinSessionRepository(ctx, source)
+			receipt, err := pinSessionRepositoryReceipt(ctx, source)
 			if err != nil {
 				select {
 				case errs <- err:
@@ -81,7 +83,8 @@ func pinSessionPolicyRepositories(
 				cancel()
 				return
 			}
-			commits[index] = commit
+			commits[index] = receipt.ResolvedRevision
+			receipts[index] = receipt
 		}()
 	}
 	wg.Wait()
@@ -93,12 +96,12 @@ func pinSessionPolicyRepositories(
 		return sessionPolicyPins{}, err
 	}
 	result := sessionPolicyPins{
-		creationBase: commits[0], workspaceHead: commits[0], companions: commits[1:],
+		creationBase: commits[0], workspaceHead: commits[0], companions: commits[1:], receipts: receipts,
 	}
 	if pullRequest == nil {
 		return result, nil
 	}
-	pullHead, err := pinSessionRepository(ctx, sessionRepositorySource{
+	pullReceipt, err := pinSessionRepositoryReceipt(ctx, sessionRepositorySource{
 		label: "pull request", repository: policy.Repository, remote: policy.Remote,
 		branch: policy.Branch, ref: fmt.Sprintf("refs/pull/%d/head", pullRequest.Number),
 		expected: pullRequest.HeadCommit,
@@ -106,6 +109,8 @@ func pinSessionPolicyRepositories(
 	if err != nil {
 		return sessionPolicyPins{}, err
 	}
+	pullHead := pullReceipt.ResolvedRevision
+	result.receipts = append(result.receipts, pullReceipt)
 	mergeBase, truncated, err := runSessionWorkspaceGitWithEnvContext(
 		ctx, policy.Repository, 4<<10, nil,
 		"merge-base", result.creationBase, pullHead,
@@ -125,7 +130,12 @@ func pinSessionPolicyRepositories(
 }
 
 func pinSessionRepository(ctx context.Context, source sessionRepositorySource) (string, error) {
-	return pinSessionRepositoryWithTimeouts(
+	receipt, err := pinSessionRepositoryReceipt(ctx, source)
+	return receipt.ResolvedRevision, err
+}
+
+func pinSessionRepositoryReceipt(ctx context.Context, source sessionRepositorySource) (session.RepositoryFreshnessReceipt, error) {
+	return pinSessionRepositoryReceiptWithTimeouts(
 		ctx, source, sessionPolicyRemoteLookupTimeout, sessionPolicyRemoteFetchTimeout,
 		runSessionSourceGit,
 	)
@@ -138,12 +148,25 @@ func pinSessionRepositoryWithTimeouts(
 	fetchTimeout time.Duration,
 	runGit sessionSourceGitRunner,
 ) (string, error) {
+	receipt, err := pinSessionRepositoryReceiptWithTimeouts(ctx, source, lookupTimeout, fetchTimeout, runGit)
+	return receipt.ResolvedRevision, err
+}
+
+func pinSessionRepositoryReceiptWithTimeouts(
+	ctx context.Context,
+	source sessionRepositorySource,
+	lookupTimeout time.Duration,
+	fetchTimeout time.Duration,
+	runGit sessionSourceGitRunner,
+) (session.RepositoryFreshnessReceipt, error) {
+	requested := "HEAD"
+	remoteIdentity := "local"
 	if source.remote == "" {
 		commit, err := sessionWorkspaceCommitContext(ctx, source.repository, "HEAD")
 		if err != nil {
-			return "", fmt.Errorf("pin %s repository HEAD: %w", source.label, err)
+			return session.RepositoryFreshnessReceipt{}, fmt.Errorf("pin %s repository HEAD: %w", source.label, err)
 		}
-		return commit, nil
+		return repositoryFreshnessReceipt(source.label, requested, commit, remoteIdentity, "not_applicable", ""), nil
 	}
 
 	lookupCtx, cancelLookup := context.WithTimeout(ctx, lookupTimeout)
@@ -151,13 +174,16 @@ func pinSessionRepositoryWithTimeouts(
 	if ref == "" {
 		ref = "refs/heads/" + source.branch
 	}
+	requested = ref
+	remoteIdentity = source.remote
+	staleRevision := localSourceRevision(ctx, source)
 	out, err := runGit(lookupCtx, source.repository,
 		"ls-remote", "--exit-code", "--refs", "--", source.remote, ref)
 	cancelLookup()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if source.ref != "" && errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
-			return "", &session.Error{
+			return session.RepositoryFreshnessReceipt{}, &session.Error{
 				Code: session.CodeInvalidRequest,
 				Detail: fmt.Sprintf(
 					"pull request ref %s does not exist on the operator-configured remote; create a fresh task for an open pull request",
@@ -169,7 +195,7 @@ func pinSessionRepositoryWithTimeouts(
 		if source.ref != "" {
 			display = source.ref
 		}
-		return "", repositoryUnavailable(source, display, "", err)
+		return session.RepositoryFreshnessReceipt{}, repositoryUnavailable(source, display, "", err)
 	}
 	fields := strings.Fields(string(out))
 	if len(fields) != 2 || fields[1] != ref || !validSessionWorkspaceCommit(fields[0]) {
@@ -177,14 +203,14 @@ func pinSessionRepositoryWithTimeouts(
 		if source.ref != "" {
 			display = source.ref
 		}
-		return "", fmt.Errorf(
+		return session.RepositoryFreshnessReceipt{}, fmt.Errorf(
 			"refresh %s repository from %s/%s: remote returned an invalid branch identity",
 			source.label, source.remote, display,
 		)
 	}
 	commit := fields[0]
 	if source.expected != "" && commit != source.expected {
-		return "", &session.Error{
+		return session.RepositoryFreshnessReceipt{}, &session.Error{
 			Code: session.CodeInvalidRequest,
 			Detail: fmt.Sprintf(
 				"pull request head changed before session creation; expected %s, found %s; create a fresh task for the current revision",
@@ -197,9 +223,10 @@ func pinSessionRepositoryWithTimeouts(
 	// session more exact; it only makes every new watch session wait on the
 	// network again.
 	if resolved, resolveErr := sessionWorkspaceCommitContext(ctx, source.repository, commit); resolveErr == nil {
-		return resolved, nil
+		status, prior := staleBaseEvidence(staleRevision, resolved)
+		return repositoryFreshnessReceipt(source.label, requested, resolved, remoteIdentity, status, prior), nil
 	} else if ctx.Err() != nil {
-		return "", resolveErr
+		return session.RepositoryFreshnessReceipt{}, resolveErr
 	}
 	fetchCtx, cancelFetch := context.WithTimeout(ctx, fetchTimeout)
 	_, err = runGit(fetchCtx, source.repository,
@@ -210,13 +237,46 @@ func pinSessionRepositoryWithTimeouts(
 		if source.ref != "" {
 			display = source.ref
 		}
-		return "", repositoryUnavailable(source, display, commit, err)
+		return session.RepositoryFreshnessReceipt{}, repositoryUnavailable(source, display, commit, err)
 	}
 	resolved, err := sessionWorkspaceCommitContext(ctx, source.repository, commit)
 	if err != nil {
-		return "", fmt.Errorf("verify refreshed %s repository commit %s: %w", source.label, commit, err)
+		return session.RepositoryFreshnessReceipt{}, fmt.Errorf("verify refreshed %s repository commit %s: %w", source.label, commit, err)
 	}
-	return resolved, nil
+	status, prior := staleBaseEvidence(staleRevision, resolved)
+	return repositoryFreshnessReceipt(source.label, requested, resolved, remoteIdentity, status, prior), nil
+}
+
+func repositoryFreshnessReceipt(name, requested, resolved, remote, staleStatus, staleRevision string) session.RepositoryFreshnessReceipt {
+	return session.RepositoryFreshnessReceipt{
+		Version: 1, Name: strings.ReplaceAll(name, " ", "_"), RequestedRevision: requested, ResolvedRevision: resolved,
+		FetchedAt: time.Now().UTC(), RemoteIdentity: remote,
+		StaleBaseStatus: staleStatus, StaleBaseRevision: staleRevision,
+	}
+}
+
+func localSourceRevision(ctx context.Context, source sessionRepositorySource) string {
+	if source.expected != "" {
+		return source.expected
+	}
+	if source.branch == "" {
+		return ""
+	}
+	commit, err := sessionWorkspaceCommitContext(ctx, source.repository, "refs/remotes/"+source.remote+"/"+source.branch)
+	if err != nil {
+		return ""
+	}
+	return commit
+}
+
+func staleBaseEvidence(previous, resolved string) (string, string) {
+	if previous == "" {
+		return "unknown", ""
+	}
+	if previous == resolved {
+		return "current", previous
+	}
+	return "stale", previous
 }
 
 func repositoryUnavailable(

@@ -38,34 +38,36 @@ const (
 // These DTOs are the public v1 wire types. They deliberately do not mirror the durable records:
 // the latter contain prompts, operation secrets, native provider identities, and host paths.
 type SessionDTO struct {
-	ID                     string                      `json:"id"`
-	ExternalRef            string                      `json:"external_ref"`
-	Target                 string                      `json:"target"`
-	Policy                 string                      `json:"policy"`
-	PolicyDigest           string                      `json:"policy_digest"`
-	AuthorityDigest        string                      `json:"authority_digest"`
-	ProjectEnv             bool                        `json:"project_env"`
-	ProjectMCP             bool                        `json:"project_mcp"`
-	ResponderBindingDigest string                      `json:"responder_binding_digest,omitempty"`
-	WorkspaceTask          *SessionWorkspaceTaskDTO    `json:"workspace_task,omitempty"`
-	RepositoryReadOnly     bool                        `json:"repository_read_only"`
-	BaseCommit             string                      `json:"base_commit"`
-	PullRequest            *session.PullRequestBinding `json:"pull_request,omitempty"`
-	Companions             []SessionCompanionDTO       `json:"companions,omitempty"`
-	ForkName               string                      `json:"fork_name"`
-	Revision               int64                       `json:"revision"`
-	State                  session.SessionState        `json:"state"`
-	Activity               session.ActivityState       `json:"activity"`
-	MaxTurns               int                         `json:"max_turns"`
-	MaxQueuedTurns         int                         `json:"max_queued_turns"`
-	MaxQueuedBytes         int                         `json:"max_queued_bytes"`
-	TurnsUsed              int                         `json:"turns_used"`
-	QueuedTurnCount        int                         `json:"queued_turn_count"`
-	QueuedPromptBytes      int                         `json:"queued_prompt_bytes"`
-	ActiveTurnID           string                      `json:"active_turn_id,omitempty"`
-	LastEventSequence      int64                       `json:"last_event_sequence"`
-	CreatedAt              time.Time                   `json:"created_at"`
-	UpdatedAt              time.Time                   `json:"updated_at"`
+	ID                        string                               `json:"id"`
+	ExternalRef               string                               `json:"external_ref"`
+	Target                    string                               `json:"target"`
+	Policy                    string                               `json:"policy"`
+	PolicyDigest              string                               `json:"policy_digest"`
+	AuthorityDigest           string                               `json:"authority_digest"`
+	ProjectEnv                bool                                 `json:"project_env"`
+	ProjectMCP                bool                                 `json:"project_mcp"`
+	ResponderBindingDigest    string                               `json:"responder_binding_digest,omitempty"`
+	WorkspaceTask             *SessionWorkspaceTaskDTO             `json:"workspace_task,omitempty"`
+	RepositoryReadOnly        bool                                 `json:"repository_read_only"`
+	BaseCommit                string                               `json:"base_commit"`
+	RepositoryFreshnessStatus string                               `json:"repository_freshness_status"`
+	RepositoryFreshness       []session.RepositoryFreshnessReceipt `json:"repository_freshness"`
+	PullRequest               *session.PullRequestBinding          `json:"pull_request,omitempty"`
+	Companions                []SessionCompanionDTO                `json:"companions,omitempty"`
+	ForkName                  string                               `json:"fork_name"`
+	Revision                  int64                                `json:"revision"`
+	State                     session.SessionState                 `json:"state"`
+	Activity                  session.ActivityState                `json:"activity"`
+	MaxTurns                  int                                  `json:"max_turns"`
+	MaxQueuedTurns            int                                  `json:"max_queued_turns"`
+	MaxQueuedBytes            int                                  `json:"max_queued_bytes"`
+	TurnsUsed                 int                                  `json:"turns_used"`
+	QueuedTurnCount           int                                  `json:"queued_turn_count"`
+	QueuedPromptBytes         int                                  `json:"queued_prompt_bytes"`
+	ActiveTurnID              string                               `json:"active_turn_id,omitempty"`
+	LastEventSequence         int64                                `json:"last_event_sequence"`
+	CreatedAt                 time.Time                            `json:"created_at"`
+	UpdatedAt                 time.Time                            `json:"updated_at"`
 }
 
 type SessionWorkspaceTaskDTO struct {
@@ -1364,18 +1366,27 @@ func publicSession(value session.Session) SessionDTO {
 		ID: value.ID, ExternalRef: value.ExternalRef, Target: value.Target, Policy: value.Policy,
 		PolicyDigest: value.PolicyDigest, AuthorityDigest: value.AuthorityDigest,
 		ProjectEnv: value.ProjectEnv, ProjectMCP: value.ProjectMCP,
-		RepositoryReadOnly:     value.RepositoryReadOnly,
-		ResponderBindingDigest: session.ResponderBindingDigest(value.ResponderBinding),
-		WorkspaceTask:          publicWorkspaceTask(value.WorkspaceTask),
-		BaseCommit:             value.BaseCommit,
-		PullRequest:            cloneSessionPullRequestBinding(value.PullRequest),
-		Companions:             companions, ForkName: value.ForkName,
+		RepositoryReadOnly:        value.RepositoryReadOnly,
+		ResponderBindingDigest:    session.ResponderBindingDigest(value.ResponderBinding),
+		WorkspaceTask:             publicWorkspaceTask(value.WorkspaceTask),
+		BaseCommit:                value.BaseCommit,
+		RepositoryFreshnessStatus: repositoryFreshnessStatus(value.RepositoryFreshness),
+		RepositoryFreshness:       append([]session.RepositoryFreshnessReceipt(nil), value.RepositoryFreshness...),
+		PullRequest:               cloneSessionPullRequestBinding(value.PullRequest),
+		Companions:                companions, ForkName: value.ForkName,
 		Revision: value.Revision, State: value.State, Activity: value.Activity, MaxTurns: value.MaxTurns,
 		MaxQueuedTurns: value.MaxQueuedTurns, MaxQueuedBytes: value.MaxQueuedBytes, TurnsUsed: value.TurnsUsed,
 		QueuedTurnCount: value.QueuedTurnCount, QueuedPromptBytes: value.QueuedPromptBytes,
 		ActiveTurnID: value.ActiveTurnID, LastEventSequence: value.LastEventSequence,
 		CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
 	}
+}
+
+func repositoryFreshnessStatus(receipts []session.RepositoryFreshnessReceipt) string {
+	if len(receipts) == 0 {
+		return "unavailable"
+	}
+	return "recorded"
 }
 
 func publicWorkspaceTask(value *session.WorkspaceTaskBinding) *SessionWorkspaceTaskDTO {

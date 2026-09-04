@@ -75,6 +75,9 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 	if version >= 18 {
 		ddl += schemaV18
 	}
+	if version >= 19 {
+		ddl += schemaV19
+	}
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("build v%d schema: %v", version, err)
 	}
@@ -158,6 +161,9 @@ func TestMigrationFromEachHistoricalVersionReachesCurrentSchema(t *testing.T) {
 			}
 			if len(sess.Companions) != wantCompanions {
 				t.Fatalf("v%d migration companions = %+v, want %d entries", version, sess.Companions, wantCompanions)
+			}
+			if len(sess.RepositoryFreshness) != 0 {
+				t.Fatalf("v%d legacy repository freshness = %+v, want explicit unavailable", version, sess.RepositoryFreshness)
 			}
 
 			turn, err := store.GetTurn(ctx, "legacy-session", "turn-legacy")

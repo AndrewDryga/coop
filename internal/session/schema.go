@@ -231,6 +231,13 @@ const schemaV19 = `
 ALTER TABLE sessions ADD COLUMN authority_digest TEXT NOT NULL DEFAULT '';
 `
 
+// Repository resolution is performed by Coop before a remote session exists.
+// Keep its exact non-secret receipts beside the immutable session bindings so
+// controllers never have to infer freshness from a later worker heartbeat.
+const schemaV20 = `
+ALTER TABLE sessions ADD COLUMN repository_freshness TEXT NOT NULL DEFAULT '';
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -361,6 +368,12 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v19: %w", err)
 		}
 		version = 19
+	}
+	if version < 20 {
+		if _, err := tx.Exec(schemaV20); err != nil {
+			return fmt.Errorf("migrate schema v20: %w", err)
+		}
+		version = 20
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
