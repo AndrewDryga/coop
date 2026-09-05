@@ -32,9 +32,9 @@ func TestCommandReceiptIsPublishedWholeOrNotAtAll(t *testing.T) {
 	if len(names) != 1 || !strings.HasSuffix(names[0], ".json") {
 		t.Fatalf("receipt dir after begin = %v; want exactly the published receipt and no temp file", names)
 	}
-	acknowledgements, results, err := journal.pending()
-	if err != nil || len(acknowledgements) != 1 || acknowledgements[0] != command.CommandID || len(results) != 0 {
-		t.Fatalf("pending = %v, %v, %v; want the received receipt only", acknowledgements, results, err)
+	entries, err := journal.pending()
+	if err != nil || len(entries) != 1 || entries[0].CommandID != command.CommandID || entries[0].Result != nil {
+		t.Fatalf("pending = %+v, %v; want the received receipt only", entries, err)
 	}
 	again, err := journal.begin(command)
 	if err != nil || again.CommandDigest != entry.CommandDigest || again.State != "received" {

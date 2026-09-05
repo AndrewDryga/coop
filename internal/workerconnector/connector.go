@@ -45,20 +45,21 @@ func NewConnector(config ConnectorConfig) (*Connector, error) {
 }
 
 func (c *Connector) PollOnce(ctx context.Context) error {
-	acknowledgements, results, err := c.executor.journal.pending()
-	if err != nil {
-		return err
-	}
 	c.sequence++
 	pollRef := fmt.Sprintf("poll:%s:%d", c.workerID, c.sequence)
 	poll := workerproto.Poll{
 		Version: workerproto.Version, PollRef: pollRef, Worker: c.hello(ctx, c.now()),
-		AcknowledgedCommandIDs: acknowledgements, CommandResults: results,
+		AcknowledgedCommandIDs: []string{}, CommandResults: []workerproto.CommandResult{},
 		EventBatches: []workerproto.EventBatch{},
 	}
+	page, err := c.executor.journal.nextReceiptPage(poll)
+	if err != nil {
+		return err
+	}
+	poll = page.poll
 	// Never put best-effort narration on the critical path of command
 	// settlement. Its durable cursor makes deferring the read lossless.
-	if len(poll.CommandResults) == 0 {
+	if !page.settlementPending {
 		poll.EventBatches = c.executor.pendingEventBatches(ctx, eventBatchBudget(poll))
 	}
 	if !pollFits(poll) {
@@ -79,18 +80,21 @@ func (c *Connector) PollOnce(ctx context.Context) error {
 	if response.PollRef != pollRef {
 		return errors.New("worker response poll identity does not match")
 	}
+	// Fairness is not custody authority: a cursor write failure must not prevent
+	// acknowledged receipts from freeing space or discard newly delivered commands.
+	pollErr := errors.Join(page.issue, c.executor.journal.advanceReceiptScan(page.cursor))
 	if err := c.executor.journal.acknowledgeResults(response.AcknowledgedResultCommandIDs); err != nil {
-		return err
+		return errors.Join(pollErr, err)
 	}
 	for _, command := range response.Commands {
 		if _, err := c.executor.Execute(ctx, command); err != nil {
-			return err
+			return errors.Join(pollErr, err)
 		}
 	}
 	// Event narration cannot delay commands or turn settlement. A failed
 	// acknowledgement remains replayable from the previous durable cursor.
 	_ = c.executor.journal.acknowledgeEvents(response.EventAcknowledgements)
-	return nil
+	return pollErr
 }
 
 func (c *Connector) Run(ctx context.Context, interval time.Duration, onError func(error)) error {

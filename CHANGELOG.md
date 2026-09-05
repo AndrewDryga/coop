@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Workers page pending receipts within both message-count and wire-size limits, so a large queue
+  or result cannot wedge polling. Restart and partial acknowledgements preserve delivery progress
+  without discarding unacknowledged custody; unsendable legacy results leave healthy work runnable.
+
 - Accepting or finally rejecting a semantic candidate resumes queued turns even after its worker
   exits. Final rejection also enforces the session turn limit before any successor can start.
 

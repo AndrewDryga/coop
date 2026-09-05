@@ -441,7 +441,7 @@ func copyPublicTime(target map[string]any, key string, raw any) {
 
 func eventBatchBudget(base workerproto.Poll) int {
 	base.EventBatches = []workerproto.EventBatch{}
-	encoded, err := json.Marshal(base)
+	encoded, err := encodeWireJSON(base)
 	if err != nil || len(encoded) >= workerproto.MaxDocumentBytes {
 		return 0
 	}
@@ -451,6 +451,6 @@ func eventBatchBudget(base workerproto.Poll) int {
 }
 
 func pollFits(poll workerproto.Poll) bool {
-	encoded, err := json.Marshal(poll)
+	encoded, err := encodeWireJSON(poll)
 	return err == nil && len(encoded) <= workerproto.MaxDocumentBytes
 }

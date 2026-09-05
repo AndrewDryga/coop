@@ -2,7 +2,7 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, moves workspaces only as digest-verified bounded bundles, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go]
+sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/http_transport.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go]
 updated: 2026-09-05
 ---
 
@@ -19,8 +19,15 @@ The traps the code does not make obvious:
   stored result, a changed payload under the same id is `ErrCommandConflict`. Receipts are published
   whole (temp file + exclusive link) because `pending()` decodes every receipt at the top of each
   poll — a torn one would stop the worker from polling at all.
-- **Results ride every poll until acknowledged.** Terminal results are resent until the controller
-  acknowledges them; the activity-stream ledger (`event_streams.go`) advances only from exact
+- **Receipts page by count and actual wire bytes, never expiry.** ACK/result units rotate across
+  restarts using a durable cursor advanced only after a matching validated response. Cursor write
+  failure still permits that response's ACKs and commands. Deferred results precede activity;
+  structurally readable but unsendable legacy results retain unchanged custody, report their
+  command identity and yield to healthy siblings. Arbitrary journal corruption still fails closed.
+  Custody and HTTP share non-HTML-escaping JSON encoding so bounded raw payloads do not expand;
+  command digests and replay comparison keep their original encoder for compatibility.
+- **Results repeat until acknowledged.** Terminal results are resent on subsequent pages until the
+  controller acknowledges them; the activity-stream ledger (`event_streams.go`) advances only from exact
   acknowledgements and binds only from a successful `create_session` result. Under the connector's
   `Prefer: respond-async` that result carries an operation, not a session — the binding gap is a
   queued task, not a feature.
@@ -37,6 +44,8 @@ The traps the code does not make obvious:
   controller redelivers.
 
 ## Changelog
+- 2026-09-05 — bounded receipt paging and wire encoding verified through real HTTP with count/byte
+  pressure, restart, partial ACKs, expired custody, legacy results and publication/response failures.
 - 2026-09-05 — verified checkpoint restore tracking and binding order against the real service;
   regression covers mixed committed/staged/binary/untracked work and rejected bundles.
 - 2026-09-05 — created during the pre-release audit, against the sources listed.

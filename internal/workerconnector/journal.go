@@ -87,7 +87,7 @@ func (j *journal) begin(command workerproto.Command) (journalEntry, error) {
 	entry = journalEntry{
 		Version: journalVersion, CommandID: command.CommandID, CommandDigest: digest, Command: &command, State: "received",
 	}
-	encoded, err := json.Marshal(entry)
+	encoded, err := encodeWireJSON(entry)
 	if err != nil {
 		return journalEntry{}, fmt.Errorf("encode worker command receipt: %w", err)
 	}
@@ -137,7 +137,7 @@ func (j *journal) complete(entry journalEntry, result workerproto.CommandResult)
 	}
 	entry.State = "completed"
 	entry.Result = &result
-	encoded, err := json.Marshal(entry)
+	encoded, err := encodeWireJSON(entry)
 	if err != nil {
 		return journalEntry{}, fmt.Errorf("encode completed worker command receipt: %w", err)
 	}
@@ -194,10 +194,10 @@ func (j *journal) read(path string) (journalEntry, error) {
 	return entry, nil
 }
 
-func (j *journal) pending() ([]string, []workerproto.CommandResult, error) {
+func (j *journal) pending() ([]journalEntry, error) {
 	files, err := os.ReadDir(j.dir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list worker command receipts: %w", err)
+		return nil, fmt.Errorf("list worker command receipts: %w", err)
 	}
 	entries := make([]journalEntry, 0, len(files))
 	for _, file := range files {
@@ -206,20 +206,12 @@ func (j *journal) pending() ([]string, []workerproto.CommandResult, error) {
 		}
 		entry, err := j.read(filepath.Join(j.dir, file.Name()))
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		entries = append(entries, entry)
 	}
 	sort.Slice(entries, func(left, right int) bool { return entries[left].CommandID < entries[right].CommandID })
-	acknowledgements := make([]string, 0, len(entries))
-	results := make([]workerproto.CommandResult, 0, len(entries))
-	for _, entry := range entries {
-		acknowledgements = append(acknowledgements, entry.CommandID)
-		if entry.Result != nil {
-			results = append(results, *entry.Result)
-		}
-	}
-	return acknowledgements, results, nil
+	return entries, nil
 }
 
 func (j *journal) acknowledgeResults(commandIDs []string) error {

@@ -99,7 +99,7 @@ func (t *HTTPTransport) Poll(ctx context.Context, poll workerproto.Poll) (worker
 	if err := poll.Validate(); err != nil {
 		return workerproto.Response{}, err
 	}
-	document, err := json.Marshal(poll)
+	document, err := encodeWireJSON(poll)
 	if err != nil {
 		return workerproto.Response{}, fmt.Errorf("encode worker poll: %w", err)
 	}

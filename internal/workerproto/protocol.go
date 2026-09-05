@@ -19,7 +19,7 @@ const (
 	Version          = 1
 	MaxDocumentBytes = 1 << 20
 	SessionEventKind = "session_event"
-	maxBatch         = 100
+	MaxBatchItems    = 100
 	maxPayloadBytes  = 768 << 10
 )
 
@@ -184,7 +184,7 @@ func (p Poll) Validate() error {
 	if err := p.Worker.validate(); err != nil {
 		return err
 	}
-	if len(p.AcknowledgedCommandIDs) > maxBatch || len(p.CommandResults) > maxBatch || len(p.EventBatches) > maxBatch {
+	if len(p.AcknowledgedCommandIDs) > MaxBatchItems || len(p.CommandResults) > MaxBatchItems || len(p.EventBatches) > MaxBatchItems {
 		return errors.New("worker poll batch exceeds 100 items")
 	}
 	if err := uniqueReferences(p.AcknowledgedCommandIDs, "acknowledged command id"); err != nil {
@@ -213,7 +213,7 @@ func (r Response) Validate() error {
 	if r.ServerTime.IsZero() {
 		return errors.New("server_time is required")
 	}
-	if len(r.AcknowledgedResultCommandIDs) > maxBatch || len(r.Commands) > maxBatch || len(r.EventAcknowledgements) > maxBatch {
+	if len(r.AcknowledgedResultCommandIDs) > MaxBatchItems || len(r.Commands) > MaxBatchItems || len(r.EventAcknowledgements) > MaxBatchItems {
 		return errors.New("worker response batch exceeds 100 items")
 	}
 	if err := uniqueReferences(r.AcknowledgedResultCommandIDs, "acknowledged result command id"); err != nil {
@@ -244,7 +244,7 @@ func (w WorkerHello) validate() error {
 	if !slices.Contains(workerStates, w.State) {
 		return errors.New("invalid worker state")
 	}
-	if len(w.PolicyDigests) > maxBatch || len(w.PolicyAuthorityDigests) > maxBatch || len(w.Repositories) > maxBatch || len(w.Capabilities) > maxBatch {
+	if len(w.PolicyDigests) > MaxBatchItems || len(w.PolicyAuthorityDigests) > MaxBatchItems || len(w.Repositories) > MaxBatchItems || len(w.Capabilities) > MaxBatchItems {
 		return errors.New("worker advertisement exceeds 100 items")
 	}
 	for name, digest := range w.PolicyDigests {
@@ -303,10 +303,10 @@ func (r CommandResult) validate() error {
 	}
 	resource := nonNullObject(r.Resource)
 	failure := nonNullObject(r.Error)
-	if r.State == "succeeded" && resource && !failure {
+	if r.State == "succeeded" && resource && nullOrOmitted(r.Error) {
 		return nil
 	}
-	if r.State != "succeeded" && !resource && failure {
+	if r.State != "succeeded" && nullOrOmitted(r.Resource) && failure {
 		return nil
 	}
 	return errors.New("command result resource/error shape does not match state")
@@ -316,7 +316,7 @@ func (b EventBatch) validate() error {
 	if err := reference(b.SessionRef, 256, "session ref"); err != nil {
 		return err
 	}
-	if b.PlacementGeneration <= 0 || b.AfterSequence < 0 || len(b.Events) > maxBatch {
+	if b.PlacementGeneration <= 0 || b.AfterSequence < 0 || len(b.Events) > MaxBatchItems {
 		return errors.New("invalid event batch identity")
 	}
 	for index, event := range b.Events {
@@ -456,4 +456,8 @@ func boundedObject(raw json.RawMessage) bool {
 
 func nonNullObject(raw json.RawMessage) bool {
 	return !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) && boundedObject(raw)
+}
+
+func nullOrOmitted(raw json.RawMessage) bool {
+	return len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }

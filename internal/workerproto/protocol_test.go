@@ -77,6 +77,25 @@ func TestWorkerProtocolRejectsOversizeAndSequenceGaps(t *testing.T) {
 	}
 }
 
+func TestCommandResultRequiresANullInactiveField(t *testing.T) {
+	for _, state := range []string{"succeeded", "failed", "uncertain"} {
+		for _, inactive := range []json.RawMessage{nil, json.RawMessage("null"), json.RawMessage(" \nnull\t"),
+			json.RawMessage(`"scalar"`), json.RawMessage(`[]`), json.RawMessage(`false`), json.RawMessage(`42`),
+			json.RawMessage(`{"oversized":"` + strings.Repeat("x", maxPayloadBytes) + `"}`)} {
+			result := CommandResult{CommandID: "command-1", OperationKey: "operation-1", State: state}
+			if state == "succeeded" {
+				result.Resource, result.Error = json.RawMessage(`{"answer":"ok"}`), inactive
+			} else {
+				result.Resource, result.Error = inactive, json.RawMessage(`{"code":"failed"}`)
+			}
+			valid := len(inactive) == 0 || bytes.Equal(bytes.TrimSpace(inactive), []byte("null"))
+			if err := result.Validate(); (err == nil) != valid {
+				t.Errorf("%s inactive field (%d bytes): err=%v, want valid=%v", state, len(inactive), err, valid)
+			}
+		}
+	}
+}
+
 func TestWorkerProtocolCarriesOneExactPublicSessionEvent(t *testing.T) {
 	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v1.json"))
 	if err != nil {
