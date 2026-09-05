@@ -96,8 +96,8 @@ echo "coop: downloading $asset ($ver)…"
 curl -fsSL "$url" -o "$tmp/coop.tar.gz" || { echo "coop: download failed: $url" >&2; exit 1; }
 
 # Verify the download against the release's published checksums — defends against a
-# tampered or MITM'd asset. Fails closed on a mismatch or a missing entry; best-effort
-# (warn, continue) only when an entry exists but no sha256 tool is available to check it.
+# tampered or MITM'd asset. Fails closed on a mismatch, a missing entry, or a host with no
+# sha256 tool to check it.
 # When cosign is present we first verify checksums.txt's Sigstore signature, so the
 # checksum file itself is trusted (not just internally consistent) — an attacker who
 # swapped both the archive and checksums.txt would be caught here. Without cosign we

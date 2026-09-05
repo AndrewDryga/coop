@@ -1011,25 +1011,24 @@ roles:
                     <h2>Parallel forks — many agents at once</h2>
                     <p class="section-lead">
                         One loop is one agent working one queue. Direct detached
-                        forks let several models work independent slices at the
-                        same time.
+                        forks let several models work the same queue at the same
+                        time, one canonical task each.
                     </p>
                     <p>
-                        Split the backlog into separate task trees (<code>coop
-                        tasks split 3</code> slices the queue into copy-trees),
-                        then start one detached fork loop per slice. Use
-                        <code>coop tasks watch</code> for the merged task view,
-                        <code>coop fork ls</code> for fork state and cost, and
-                        <code>coop fork logs -f</code> for their output.
+                        Start one detached fork loop per model. The host assigns
+                        each fork one canonical task at a time from the shared
+                        <code>.agent/tasks</code> queue, so forks never duplicate
+                        work. Use <code>coop tasks watch</code> for the merged
+                        task view, <code>coop fork ls</code> for fork state and
+                        cost, and <code>coop fork logs -f</code> for their output.
                     </p>
                     <pre
                         class="code"
-                    ><span class="k">coop</span> tasks split 3    <span class="t"># slice the todo queue 3 ways into copy-trees</span>
-<span class="k">coop</span> fork api frontier --loop -d --tasks .agent/tasks.slice1
-<span class="k">coop</span> fork web codex@work --loop -d --tasks .agent/tasks.slice2
-<span class="k">coop</span> fork deps gemini --loop -d --tasks .agent/tasks.slice3
-<span class="k">coop</span> tasks watch      <span class="t"># merged task progress across the forks</span>
-<span class="k">coop</span> fork merge --all <span class="t"># land all forks through a revalidating rebase</span></pre>
+                    ><span class="k">coop</span> fork api frontier --loop -d   <span class="t"># each fork claims the next canonical task</span>
+<span class="k">coop</span> fork web codex@work --loop -d
+<span class="k">coop</span> fork deps gemini --loop -d
+<span class="k">coop</span> tasks watch                   <span class="t"># merged task progress across the forks</span>
+<span class="k">coop</span> fork merge --all              <span class="t"># land all forks through a revalidating rebase</span></pre>
                     <p>
                         The positional who-runs value can be a
                         <a href="#models">target</a>

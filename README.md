@@ -220,6 +220,14 @@ spelled out here (there's room to render them).
 | `coop tasks decisions [-i]` · `lint` | what's blocked on a decision (`-i` to answer) · check the canonical tree |
 | `coop backlog` · `add "<title>"` · `promote <id>` · `rm <id>` | park unscheduled ideas in the `xx_backlog/` drawer — same folder format, but outside the lifecycle (never auto-worked, never nagged); `promote` moves one into `00_todo/` when it's ready |
 
+**Sessions** — the local remote-session controller ([details](#drive-it-from-a-local-service))
+
+| Command | What it does |
+|---|---|
+| `coop sessions serve [--state <path>] [--policies <path>] [--socket <path>]` | run the session controller over an owner-only Unix socket (it never listens on TCP) |
+| `coop sessions doctor [--json]` · `policies [--json]` · `compact --backup <path>` | check the socket · print the trusted policy and authority digests a fleet worker must advertise · back up, then compact turn retry receipts |
+| `coop worker connect --config <absolute-path>` | join one private Coop daemon to an external fleet controller over an outbound mutual-TLS poll stream; commands are journaled before they run and results resent until acknowledged |
+
 **Services** — the box's `.agent/compose.yml` sidecars ([details](#services))
 
 | Command | What it does |
@@ -986,8 +994,7 @@ request or public API.
 
 The API deliberately cannot merge, sign, push, publish a PR, accept arbitrary host paths, or choose
 credentials and sandbox settings from a request. A same-UID caller is trusted at the Unix-account
-boundary. See the complete [local remote-session API](docs/session-api.md) and the separate
-[Slack/incident responder architecture](docs/external-responder-service.md).
+boundary. See the complete [local remote-session API](docs/session-api.md).
 
 ## Drive it from Zed (ACP)
 

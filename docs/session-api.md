@@ -5,8 +5,7 @@ creates one Coop fork per session, submits persistent conversation turns, inspec
 read-only review, and closes or explicitly discards the fork.
 
 This is a generic local control plane. Slack, incident routing, authorization, audit storage,
-GitHub publication, signing, merging, and deployment remain outside Coop. See
-[External responder service](external-responder-service.md) for one consumer architecture.
+GitHub publication, signing, merging, and deployment remain outside Coop.
 
 ## Boundary
 
