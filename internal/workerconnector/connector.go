@@ -57,10 +57,11 @@ func (c *Connector) PollOnce(ctx context.Context) error {
 		return err
 	}
 	poll = page.poll
+	var activityErr error
 	// Never put best-effort narration on the critical path of command
 	// settlement. Its durable cursor makes deferring the read lossless.
 	if !page.settlementPending {
-		poll.EventBatches = c.executor.pendingEventBatches(ctx, eventBatchBudget(poll))
+		poll.EventBatches, activityErr = c.executor.collectActivity(ctx, eventBatchBudget(poll))
 	}
 	if !pollFits(poll) {
 		// Command settlement owns the wire budget. Activity is replayable from
@@ -82,9 +83,9 @@ func (c *Connector) PollOnce(ctx context.Context) error {
 	}
 	// Fairness is not custody authority: a cursor write failure must not prevent
 	// acknowledged receipts from freeing space or discard newly delivered commands.
-	pollErr := errors.Join(page.issue, c.executor.journal.advanceReceiptScan(page.cursor))
+	pollErr := errors.Join(page.issue, activityErr, c.executor.journal.advanceReceiptScan(page.cursor))
 	if err := c.executor.journal.acknowledgeResults(response.AcknowledgedResultCommandIDs); err != nil {
-		return errors.Join(pollErr, err)
+		pollErr = errors.Join(pollErr, err)
 	}
 	for _, command := range response.Commands {
 		if _, err := c.executor.Execute(ctx, command); err != nil {
@@ -93,8 +94,7 @@ func (c *Connector) PollOnce(ctx context.Context) error {
 	}
 	// Event narration cannot delay commands or turn settlement. A failed
 	// acknowledgement remains replayable from the previous durable cursor.
-	_ = c.executor.journal.acknowledgeEvents(response.EventAcknowledgements)
-	return pollErr
+	return errors.Join(pollErr, c.executor.journal.acknowledgeEvents(response.EventAcknowledgements))
 }
 
 func (c *Connector) Run(ctx context.Context, interval time.Duration, onError func(error)) error {

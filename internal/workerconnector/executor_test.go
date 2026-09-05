@@ -17,7 +17,7 @@ import (
 
 func TestDurableCommandReceiptMakesRedeliveryOneIdempotentLocalOperation(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	api := &fakeAPI{response: json.RawMessage(`{"operation":{"id":"operation-create-1","state":"running"}}`)}
+	api := &fakeAPI{response: json.RawMessage(`{"operation":{"id":"operation-create-1","method":"CreateRemoteSession","state":"running"}}`)}
 	executor, err := NewExecutor(ExecutorConfig{
 		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
 	})
@@ -59,7 +59,7 @@ func TestDurableCommandReceiptMakesRedeliveryOneIdempotentLocalOperation(t *test
 
 func TestCreateSessionCarriesTheExactPrivateResponderBinding(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	api := &fakeAPI{response: json.RawMessage(`{"operation":{"id":"operation-create-1","state":"running"}}`)}
+	api := &fakeAPI{response: json.RawMessage(`{"operation":{"id":"operation-create-1","method":"CreateRemoteSession","state":"running"}}`)}
 	executor, err := NewExecutor(ExecutorConfig{
 		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
 	})
@@ -177,7 +177,7 @@ func TestReceivedBeforeCrashIsSafelyResumedUnderTheSameOperationKey(t *testing.T
 		t.Fatal(err)
 	}
 
-	api := &fakeAPI{response: json.RawMessage(`{"operation":{"id":"operation-create-after-crash","state":"running"}}`)}
+	api := &fakeAPI{response: json.RawMessage(`{"operation":{"id":"operation-create-after-crash","method":"CreateRemoteSession","state":"running"}}`)}
 	executor, err := NewExecutor(ExecutorConfig{
 		API: api, JournalDir: dir, Now: func() time.Time { return now }, WorkerID: "worker-a",
 	})
@@ -689,7 +689,7 @@ func TestCandidateValidationRejectsBodiesCoopWouldReject(t *testing.T) {
 
 func TestConnectorKeepsAResultUntilResponderAcknowledgesIt(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	api := &fakeAPI{response: json.RawMessage(`{"operation":{"id":"operation-create-1","state":"running"}}`)}
+	api := &fakeAPI{response: json.RawMessage(`{"operation":{"id":"operation-create-1","method":"CreateRemoteSession","state":"running"}}`)}
 	executor, err := NewExecutor(ExecutorConfig{
 		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
 	})

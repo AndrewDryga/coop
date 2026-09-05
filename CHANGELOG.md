@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Worker activity resumes after asynchronous session creation, including when its command receipt
+  is acknowledged before creation finishes. Durable origin and generation records survive restart
+  without losing event cursors or reviving discarded streams.
+
 - Workers page pending receipts within both message-count and wire-size limits, so a large queue
   or result cannot wedge polling. Restart and partial acknowledgements preserve delivery progress
   without discarding unacknowledged custody; unsendable legacy results leave healthy work runnable.

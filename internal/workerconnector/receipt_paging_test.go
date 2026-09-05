@@ -75,9 +75,7 @@ func TestReceiptPagesRespectCountAndWireBytesAcrossRestart(t *testing.T) {
 			}
 			if fixture.received {
 				command := createCommand(now.Add(time.Minute))
-				if err := executor.journal.bindEventStreamResult(command, workerproto.CommandResult{
-					State: "succeeded", Resource: json.RawMessage(`{"session":{"id":"session-1"}}`),
-				}); err != nil {
+				if err := executor.journal.bindEventStream(command, "coop-session-1"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -186,9 +184,7 @@ func TestLegacyUnsendableReceiptDoesNotBlockSettlementOrCommands(t *testing.T) {
 		return executor
 	}
 	executor := open()
-	if err := executor.journal.bindEventStreamResult(createCommand(now.Add(time.Minute)), workerproto.CommandResult{
-		State: "succeeded", Resource: json.RawMessage(`{"session":{"id":"coop-session-1"}}`),
-	}); err != nil {
+	if err := executor.journal.bindEventStream(createCommand(now.Add(time.Minute)), "coop-session-1"); err != nil {
 		t.Fatal(err)
 	}
 	legacy := createCommand(now.Add(time.Minute))

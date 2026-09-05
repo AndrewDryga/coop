@@ -20,6 +20,9 @@ const journalVersion = 1
 type journal struct {
 	dir     string
 	streams string
+	origins string
+	// Fault injection for the rename-visible / directory-not-yet-durable crash window.
+	testSyncActivityDir func(string) error
 }
 
 type journalEntry struct {
@@ -49,6 +52,13 @@ func openJournal(dir string) (*journal, error) {
 	}
 	commands := filepath.Join(dir, "commands")
 	streams := filepath.Join(dir, "event-streams")
+	origins := filepath.Join(dir, "create-origins")
+	if err := os.MkdirAll(origins, 0o700); err != nil {
+		return nil, fmt.Errorf("create worker origin journal: %w", err)
+	}
+	if err := os.Chmod(origins, 0o700); err != nil {
+		return nil, fmt.Errorf("protect worker origin journal: %w", err)
+	}
 	if err := os.MkdirAll(commands, 0o700); err != nil {
 		return nil, fmt.Errorf("create worker command journal: %w", err)
 	}
@@ -64,7 +74,10 @@ func openJournal(dir string) (*journal, error) {
 	if err := os.Chmod(streams, 0o700); err != nil {
 		return nil, fmt.Errorf("protect worker event stream directory: %w", err)
 	}
-	return &journal{dir: commands, streams: streams}, nil
+	if err := syncDir(dir); err != nil {
+		return nil, err // persist new child journal directories before any receipt uses them
+	}
+	return &journal{dir: commands, streams: streams, origins: origins}, nil
 }
 
 func (j *journal) begin(command workerproto.Command) (journalEntry, error) {
@@ -215,6 +228,7 @@ func (j *journal) pending() ([]journalEntry, error) {
 }
 
 func (j *journal) acknowledgeResults(commandIDs []string) error {
+	var failures error
 	for _, commandID := range commandIDs {
 		path := j.path(commandID)
 		entry, err := j.read(path)
@@ -227,14 +241,18 @@ func (j *journal) acknowledgeResults(commandIDs []string) error {
 		if entry.State != "completed" || entry.Result == nil {
 			return fmt.Errorf("acknowledge incomplete worker command %s", commandID)
 		}
+		if err := j.preserveCreateOrigin(entry); err != nil {
+			failures = errors.Join(failures, fmt.Errorf("preserve worker create %s before acknowledgement: %w", commandID, err))
+			continue
+		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove acknowledged worker command result: %w", err)
 		}
 	}
 	if len(commandIDs) > 0 {
-		return syncDir(j.dir)
+		return errors.Join(failures, syncDir(j.dir))
 	}
-	return nil
+	return failures
 }
 
 func (j *journal) path(commandID string) string {

@@ -14,6 +14,13 @@ import (
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
+// Existing event projection tests inspect best-effort batches; origin/error recovery tests
+// exercise collectActivity and PollOnce directly, including their reported failures.
+func (e *Executor) pendingEventBatches(ctx context.Context, maximumBytes int) []workerproto.EventBatch {
+	batches, _ := e.collectActivity(ctx, maximumBytes)
+	return batches
+}
+
 func TestConnectorResumesSessionEventsFromTheLastResponderAcknowledgement(t *testing.T) {
 	now := time.Date(2026, 9, 4, 18, 0, 0, 0, time.UTC)
 	dir := t.TempDir()

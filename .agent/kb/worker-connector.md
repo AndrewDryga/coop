@@ -2,7 +2,7 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, moves workspaces only as digest-verified bounded bundles, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/http_transport.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go]
+sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go]
 updated: 2026-09-05
 ---
 
@@ -27,10 +27,18 @@ The traps the code does not make obvious:
   Custody and HTTP share non-HTML-escaping JSON encoding so bounded raw payloads do not expand;
   command digests and replay comparison keep their original encoder for compatibility.
 - **Results repeat until acknowledged.** Terminal results are resent on subsequent pages until the
-  controller acknowledges them; the activity-stream ledger (`event_streams.go`) advances only from exact
-  acknowledgements and binds only from a successful `create_session` result. Under the connector's
-  `Prefer: respond-async` that result carries an operation, not a session — the binding gap is a
-  queued task, not a feature.
+  controller acknowledges them. A successful asynchronous create carries an operation, not a
+  session: its metadata-only origin must be durable before receipt deletion. The fair activity scan
+  resolves only that original key and operation ID, verifies a succeeded CreateRemoteSession/session
+  resource, then fsyncs the stream before marking its origin bound. Uncertain operations remain
+  pending. Only exact event ACKs advance cursors; lookup/activity errors cannot block response commands.
+- **Generation markers outlive activity.** Bound/failed origins prevent old receipts from resurrecting
+  a discarded or superseded stream. Legacy v1 streams remain readable; an acknowledged terminal
+  legacy stream stays dormant if it is the only generation floor. Short metadata transitions use a
+  nonblocking journal lock; network lookups happen outside it and recheck origin identity when binding.
+  A visible rename is not durable proof after a failed directory sync: retries re-sync before receipt
+  release, stream adoption or event publication. A corrupt origin suppresses its corresponding stream
+  and reports an error while healthy siblings continue; it never enables legacy fallback.
 - **Bytes move only as verified bundles.** Input artifacts and workspace checkpoints are fetched
   through the authenticated transfer, bounded, and digest-verified before any filesystem mutation;
   member paths are canonical base64 bytes, and the restore writer refuses `.git` components and
@@ -44,6 +52,9 @@ The traps the code does not make obvious:
   controller redelivers.
 
 ## Changelog
+- 2026-09-05 — restored async-create activity through real service/Unix API ACK-before-completion and
+  restart tests; verified origin identity, generation/tombstone, directory-sync failure and fair-scan
+  recovery without resetting cursors or changing receipt identity.
 - 2026-09-05 — bounded receipt paging and wire encoding verified through real HTTP with count/byte
   pressure, restart, partial ACKs, expired custody, legacy results and publication/response failures.
 - 2026-09-05 — verified checkpoint restore tracking and binding order against the real service;

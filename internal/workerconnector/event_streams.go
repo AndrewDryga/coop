@@ -39,22 +39,15 @@ type eventStream struct {
 	TerminalSequence      int64  `json:"terminal_sequence"`
 }
 
-func (j *journal) bindEventStreamResult(command workerproto.Command, result workerproto.CommandResult) error {
-	if command.Kind != "create_session" || result.State != "succeeded" {
-		return nil
-	}
-	coopSessionID := resultCoopSessionID(result.Resource)
-	if coopSessionID == "" {
-		return errors.New("successful create result has no session identity")
-	}
+func (j *journal) bindEventStream(command workerproto.Command, coopSessionID string) error {
 	path := j.eventStreamPath(command.SessionRef)
 	current, err := j.readEventStream(path)
 	if err == nil {
 		switch {
 		case current.PlacementGeneration > command.PlacementGeneration:
-			return nil
+			return j.syncActivityDir(j.streams)
 		case current.PlacementGeneration == command.PlacementGeneration && current.CoopSessionID == coopSessionID:
-			return nil
+			return j.syncActivityDir(j.streams)
 		case current.PlacementGeneration == command.PlacementGeneration:
 			return errors.New("worker event stream session identity conflicts")
 		}
@@ -65,18 +58,6 @@ func (j *journal) bindEventStreamResult(command workerproto.Command, result work
 		Version: eventStreamVersion, SessionRef: command.SessionRef,
 		PlacementGeneration: command.PlacementGeneration, CoopSessionID: coopSessionID,
 	})
-}
-
-func resultCoopSessionID(resource json.RawMessage) string {
-	var payload struct {
-		Session struct {
-			ID string `json:"id"`
-		} `json:"session"`
-	}
-	if json.Unmarshal(resource, &payload) != nil || !reference(payload.Session.ID, 1024) {
-		return ""
-	}
-	return payload.Session.ID
 }
 
 func (j *journal) eventStreams() ([]eventStream, error) {
@@ -141,6 +122,13 @@ func (j *journal) advanceEventScan(sessionRef string) error {
 }
 
 func (j *journal) publishEventStream(stream eventStream, sequence, terminalSequence int64) error {
+	return j.withActivityLock(func() error { return j.publishEventStreamLocked(stream, sequence, terminalSequence) })
+}
+
+func (j *journal) publishEventStreamLocked(stream eventStream, sequence, terminalSequence int64) error {
+	if !j.eventStreamAuthorized(stream) {
+		return errors.New("worker event stream origin is not bound")
+	}
 	current, err := j.readEventStream(j.eventStreamPath(stream.SessionRef))
 	if err != nil {
 		return err
@@ -161,6 +149,13 @@ func (j *journal) publishEventStream(stream eventStream, sequence, terminalSeque
 }
 
 func (j *journal) acknowledgeEvents(acknowledgements []workerproto.EventAcknowledgement) error {
+	if len(acknowledgements) == 0 {
+		return nil
+	}
+	return j.withActivityLock(func() error { return j.acknowledgeEventsLocked(acknowledgements) })
+}
+
+func (j *journal) acknowledgeEventsLocked(acknowledgements []workerproto.EventAcknowledgement) error {
 	for _, acknowledgement := range acknowledgements {
 		path := j.eventStreamPath(acknowledgement.SessionRef)
 		stream, err := j.readEventStream(path)
@@ -168,16 +163,26 @@ func (j *journal) acknowledgeEvents(acknowledgements []workerproto.EventAcknowle
 			return err
 		}
 		if stream.PlacementGeneration != acknowledgement.PlacementGeneration ||
+			!j.eventStreamAuthorized(stream) ||
 			acknowledgement.Sequence < stream.AcknowledgedSequence ||
 			acknowledgement.Sequence > stream.LastPublishedSequence {
 			return errors.New("worker event acknowledgement conflicts with published custody")
 		}
 		stream.AcknowledgedSequence = acknowledgement.Sequence
 		if stream.TerminalSequence > 0 && acknowledgement.Sequence >= stream.TerminalSequence {
+			origin, err := j.readCreateOrigin(j.createOriginPath(stream.SessionRef))
+			if errors.Is(err, os.ErrNotExist) || (err == nil && origin.PlacementGeneration < stream.PlacementGeneration) {
+				// A legacy stream is still the only proof of this generation. Keep its
+				// acknowledged terminal cursor as a dormant floor instead of inventing an origin.
+				if err := j.writeEventStream(path, stream); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("remove terminal worker event stream: %w", err)
 			}
-			if err := syncDir(j.streams); err != nil {
+			if err := j.syncActivityDir(j.streams); err != nil {
 				return err
 			}
 			continue
@@ -208,35 +213,40 @@ func (j *journal) readEventStream(path string) (eventStream, error) {
 }
 
 func (j *journal) writeEventStream(path string, stream eventStream) error {
-	encoded, err := json.Marshal(stream)
+	return j.writeActivityRecord(path, stream)
+}
+
+func (j *journal) writeActivityRecord(path string, record any) error {
+	encoded, err := json.Marshal(record)
 	if err != nil {
-		return fmt.Errorf("encode worker event stream: %w", err)
+		return fmt.Errorf("encode worker activity record: %w", err)
 	}
-	temporary, err := os.CreateTemp(j.streams, ".event-stream-*")
+	directory := filepath.Dir(path)
+	temporary, err := os.CreateTemp(directory, ".activity-record-*")
 	if err != nil {
-		return fmt.Errorf("create worker event stream: %w", err)
+		return fmt.Errorf("create worker activity record: %w", err)
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("protect worker event stream: %w", err)
+		return fmt.Errorf("protect worker activity record: %w", err)
 	}
 	if _, err := temporary.Write(encoded); err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("write worker event stream: %w", err)
+		return fmt.Errorf("write worker activity record: %w", err)
 	}
 	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("sync worker event stream: %w", err)
+		return fmt.Errorf("sync worker activity record: %w", err)
 	}
 	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close worker event stream: %w", err)
+		return fmt.Errorf("close worker activity record: %w", err)
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
-		return fmt.Errorf("publish worker event stream: %w", err)
+		return fmt.Errorf("publish worker activity record: %w", err)
 	}
-	return syncDir(j.streams)
+	return j.syncActivityDir(directory)
 }
 
 func (j *journal) eventStreamPath(sessionRef string) string {
@@ -246,31 +256,39 @@ func (j *journal) eventStreamPath(sessionRef string) string {
 
 func (j *journal) eventScanPath() string { return filepath.Join(j.streams, ".scan-cursor") }
 
-func (e *Executor) pendingEventBatches(ctx context.Context, maximumBytes int) []workerproto.EventBatch {
+func (e *Executor) collectActivity(ctx context.Context, maximumBytes int) ([]workerproto.EventBatch, error) {
 	api, ok := e.api.(sessionEventAPI)
 	if !ok || maximumBytes <= 0 {
-		return []workerproto.EventBatch{}
+		return []workerproto.EventBatch{}, nil
 	}
-	streams, err := e.journal.eventStreams()
-	if err != nil {
-		return []workerproto.EventBatch{}
-	}
-	batches := make([]workerproto.EventBatch, 0, len(streams))
-	remainingEvents, remainingBytes := maximumPollEvents, min(maximumPollBytes, maximumBytes)
 	collectionCtx, cancel := context.WithTimeout(ctx, maximumEventDelay)
 	defer cancel()
+	targets, issues := e.activityTargets()
+	if targets == nil && issues != nil {
+		return []workerproto.EventBatch{}, issues
+	}
+	batches := make([]workerproto.EventBatch, 0, len(targets))
+	remainingEvents, remainingBytes := maximumPollEvents, min(maximumPollBytes, maximumBytes)
 	lastScanned := ""
-	for _, stream := range streams {
+	for index, target := range targets {
 		if collectionCtx.Err() != nil {
 			break
 		}
-		if remainingEvents == 0 || remainingBytes == 0 {
+		if index == maximumEventPage || remainingEvents == 0 || remainingBytes == 0 {
 			break
 		}
+		lastScanned = target.sessionRef
+		if target.origin != nil {
+			if err := e.resolveCreateOrigin(collectionCtx, *target.origin); err != nil {
+				issues = errors.Join(issues, fmt.Errorf("resolve worker create %s: %w", target.sessionRef, err))
+			}
+			continue
+		}
+		stream := *target.stream
 		limit := min(maximumEventPage, remainingEvents)
 		events, err := api.ListEvents(collectionCtx, stream.CoopSessionID, stream.AcknowledgedSequence, limit)
-		lastScanned = stream.SessionRef
 		if err != nil || len(events) == 0 || len(events) > limit {
+			issues = errors.Join(issues, err)
 			continue
 		}
 		batchEvents := make([]workerproto.Event, 0, len(events))
@@ -308,6 +326,7 @@ func (e *Executor) pendingEventBatches(ctx context.Context, maximumBytes int) []
 		}
 		lastSequence := batchEvents[len(batchEvents)-1].Sequence
 		if err := e.journal.publishEventStream(stream, lastSequence, terminalSequence); err != nil {
+			issues = errors.Join(issues, err)
 			continue
 		}
 		batches = append(batches, workerproto.EventBatch{
@@ -318,9 +337,9 @@ func (e *Executor) pendingEventBatches(ctx context.Context, maximumBytes int) []
 		remainingBytes -= batchBytes
 	}
 	if lastScanned != "" {
-		_ = e.journal.advanceEventScan(lastScanned)
+		issues = errors.Join(issues, e.journal.advanceEventScan(lastScanned))
 	}
-	return batches
+	return batches, issues
 }
 
 func operatorActivityEvent(kind string) bool {
