@@ -355,9 +355,14 @@ func TestCleanupSupervisorRejectsMalformedRecordButStillSweeps(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeRawResult(t, filepath.Join(processDir, "malformed.json"), []byte("{}\n"))
-	labelCalls := 0
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	// A malformed record means the producers never provably quiesced, so the label sweep must keep
+	// polling until the caller gives up. Assert that on a fake clock with an explicit cancel after
+	// the third sweep — never on how many 1ms timers a loaded scheduler fires inside 25ms, which is
+	// what made this test flake under the race suite.
+	clock := &cleanupClock{now: time.Unix(1, 0)}
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	labelCalls := 0
 	err = CleanupSupervisor(ctx, SupervisorCleanupSpec{
 		Root: layout.Root, CIDDir: layout.State, ProcessDir: processDir,
 		Supervisor: "supervisor", LabelKey: "label", QuietPeriod: time.Millisecond, PollInterval: time.Millisecond,
@@ -365,10 +370,14 @@ func TestCleanupSupervisorRejectsMalformedRecordButStillSweeps(t *testing.T) {
 		RemoveContainer: func(context.Context, string) error { return nil },
 		RemoveByLabel: func(context.Context, string, string) (int, error) {
 			labelCalls++
+			if labelCalls == 3 {
+				cancel()
+			}
 			return 0, nil
 		},
+		Now: clock.Now, Sleep: clock.Sleep,
 	})
-	if !errors.Is(err, context.DeadlineExceeded) || labelCalls < 3 {
+	if !errors.Is(err, context.Canceled) || labelCalls != 3 || !strings.Contains(err.Error(), "invalid live process record") {
 		t.Fatalf("malformed cleanup = %v, label calls=%d", err, labelCalls)
 	}
 }
