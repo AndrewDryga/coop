@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A stray file no longer hides a task queue.** A Finder `.DS_Store` or an editor swap file inside
+  a lifecycle or backlog directory is skipped by every reader instead of failing `coop tasks`, the
+  loop, and fork scheduling with "is not a real directory"; `coop tasks lint` still names a
+  misplaced non-dotfile. Symlinks, special files, and unreadable entries keep failing closed.
+
 - **ACP reload handoffs now use one current snapshot shape.** SIGHUP persists one initialize frame
   and explicit editor, adapter, and provider identity per session. Old setup tapes and snapshots
   missing native identity are consumed and start fresh instead of being guessed into current state;

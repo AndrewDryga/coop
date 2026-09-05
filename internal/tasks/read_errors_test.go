@@ -36,14 +36,6 @@ func TestReadTaskTreeRejectsUnsafePresentEntries(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"task entry file", func(t *testing.T, root string) {
-			if err := os.MkdirAll(filepath.Join(root, StateTodo), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(root, StateTodo, "not-a-folder"), []byte("task\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}},
 		{"task entry symlink", func(t *testing.T, root string) {
 			if err := os.MkdirAll(filepath.Join(root, StateTodo), 0o755); err != nil {
 				t.Fatal(err)
@@ -191,5 +183,43 @@ func TestPublishForkCandidateStopsWhenCanonicalTaskBecomesUnreadable(t *testing.
 	}
 	if _, ok, err := forkspace.ReadGeneration(repo, identity.Name); err != nil || !ok {
 		t.Fatalf("test generation was lost: ok=%v err=%v", ok, err)
+	}
+}
+
+// A regular file in a lifecycle dir is exactly what Finder (.DS_Store) and editors (swap files)
+// leave behind; it cannot redirect authority, so it must never hide the queue. Lint still names the
+// non-dotfile ones: a task written as a file is misplaced work, not noise.
+func TestReadTaskTreeSkipsStrayRegularFilesAndLintNamesThem(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "tasks")
+	if err := ScaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	done := taskForLease(t, root, StateDone, "keep-done")
+	for _, name := range []string{".DS_Store", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(root, StateTodo, name), []byte("stray\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := ReadTaskTree(root)
+	if err != nil || len(items) != 1 || items[0].ID != done.ID {
+		t.Fatalf("ReadTaskTree = %+v, %v; want only %s", items, err, done.ID)
+	}
+	if code, err := tasksFolderLint(root); err != nil || code != 1 {
+		t.Fatalf("lint with a misplaced file = %d, %v; want 1", code, err)
+	}
+	if err := os.Remove(filepath.Join(root, StateTodo, "notes.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderLint(root); err != nil || code != 0 {
+		t.Fatalf("lint with only a dotfile = %d, %v; want clean", code, err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, StateBacklog), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, StateBacklog, ".DS_Store"), []byte("stray\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if items, err := ReadBacklog(root); err != nil || len(items) != 0 {
+		t.Fatalf("ReadBacklog beside a dotfile = %+v, %v; want an empty backlog", items, err)
 	}
 }

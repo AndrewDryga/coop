@@ -286,6 +286,12 @@ func readTaskTreeOnce(root string) ([]Item, bool, error) {
 		}
 		for _, e := range entries {
 			if !e.IsDir() {
+				if e.Type().IsRegular() {
+					// A stray regular file (a Finder .DS_Store from browsing the queue, an editor swap
+					// file) cannot redirect lifecycle authority the way a symlink can, so it must not
+					// hide the whole queue; `coop tasks lint` names the non-dotfile ones as misplaced work.
+					continue
+				}
 				return nil, false, fmt.Errorf("task entry %s is not a real directory", filepath.Join(stateDir, e.Name()))
 			}
 			t, ok, err := parseTaskFolder(filepath.Join(stateDir, e.Name()), state)
@@ -370,6 +376,9 @@ func ReadBacklog(root string) ([]Item, error) {
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
+			if e.Type().IsRegular() {
+				continue // same as the lifecycle dirs: a stray file cannot redirect authority
+			}
 			return nil, fmt.Errorf("backlog entry %s is not a real directory", filepath.Join(backlog, e.Name()))
 		}
 		t, ok, err := parseTaskFolder(filepath.Join(backlog, e.Name()), StateBacklog)

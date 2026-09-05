@@ -2024,6 +2024,20 @@ func tasksFolderLint(root string) (int, error) {
 			}
 		}
 	}
+	// ReadTaskTree skips a regular file where only task folders belong (a Finder .DS_Store must not
+	// hide the queue), so lint is where a non-dotfile one — most likely a task someone wrote as a
+	// file — becomes visible instead of staying silently unworked.
+	for _, st := range TaskStates {
+		entries, err := os.ReadDir(filepath.Join(root, st))
+		if err != nil {
+			continue // a missing state dir is reported above; an unreadable one already failed ReadTaskTree
+		}
+		for _, e := range entries {
+			if e.Type().IsRegular() && !strings.HasPrefix(e.Name(), ".") {
+				add(st+"/"+e.Name(), "is a file, not a task folder — every task is a folder holding a task.md; move it into one or remove it")
+			}
+		}
+	}
 	for _, t := range items {
 		bodyBytes, exists, err := readOptionalTaskMetadataPath(filepath.Join(t.Dir, "task.md"))
 		if err != nil {
