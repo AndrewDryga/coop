@@ -410,3 +410,33 @@ func awaitFileContent(t *testing.T, path string) string {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// The live probes remove Config and publish a credential vault there by rename, so the layout must
+// leave that directory empty; the mandatory conf file lives with the other state files instead.
+func TestNewLayoutKeepsConfigEmptyForVaultPublication(t *testing.T) {
+	layout, err := NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(layout.Config); err != nil || len(entries) != 0 {
+		t.Fatalf("Config after NewLayout = %v, %v; want an empty directory", entries, err)
+	}
+	if err := os.Remove(layout.Config); err != nil {
+		t.Fatalf("Config must be removable for vault publication: %v", err)
+	}
+	if info, err := os.Stat(layout.Conf); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("Conf = %v, %v; want an existing regular file", info, err)
+	}
+	env, err := Environment(layout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "COOP_CONF=" + layout.Conf
+	found := false
+	for _, kv := range env {
+		found = found || kv == want
+	}
+	if !found {
+		t.Fatalf("environment lacks %s: %v", want, env)
+	}
+}

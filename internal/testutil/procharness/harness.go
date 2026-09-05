@@ -29,6 +29,7 @@ type Layout struct {
 	XDGState  string
 	Tmp       string
 	Config    string
+	Conf      string
 	Repo      string
 	Plans     string
 	State     string
@@ -60,6 +61,10 @@ func NewLayout(root string) (Layout, error) {
 	}
 	l.Trace = filepath.Join(l.State, "trace.jsonl")
 	l.GitConfig = filepath.Join(l.State, "gitconfig")
+	// The explicit COOP_CONF must name an existing file, but it lives beside the other state files,
+	// never inside Config: the live probes publish a credential vault AT Config by rename, which
+	// needs that directory empty and gone first.
+	l.Conf = filepath.Join(l.State, "coop.conf")
 	for _, dir := range []string{l.Root, l.Bin, l.Home, l.XDGConfig, l.XDGCache, l.XDGState, l.Tmp, l.Config, l.Repo, l.Plans, l.State} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return Layout{}, fmt.Errorf("create process-test state %s: %w", dir, err)
@@ -68,7 +73,7 @@ func NewLayout(root string) (Layout, error) {
 			return Layout{}, fmt.Errorf("secure process-test state %s: %w", dir, err)
 		}
 	}
-	for _, path := range []string{l.Trace, l.GitConfig, filepath.Join(l.Config, "missing.conf")} {
+	for _, path := range []string{l.Trace, l.GitConfig, l.Conf} {
 		if err := os.WriteFile(path, nil, 0o600); err != nil {
 			return Layout{}, fmt.Errorf("create process-test file %s: %w", path, err)
 		}
@@ -97,7 +102,7 @@ func Environment(layout Layout, extra map[string]string) ([]string, error) {
 		"XDG_STATE_HOME": layout.XDGState, "TMPDIR": layout.Tmp,
 		"GIT_CONFIG_GLOBAL": layout.GitConfig, "GIT_CONFIG_NOSYSTEM": "1",
 		"LANG": "C", "LC_ALL": "C", "TERM": "dumb", "TZ": "UTC",
-		"COOP_CONF": filepath.Join(layout.Config, "missing.conf"), "COOP_CONFIG_DIR": layout.Config,
+		"COOP_CONF": layout.Conf, "COOP_CONFIG_DIR": layout.Config,
 		"COOP_MCP_FILE": filepath.Join(layout.Config, "missing-mcp.json"), "COOP_REPO": layout.Repo,
 		"COOP_HOMES": "0", "COOP_NETWORK": "0", "COOP_AUTO_UP": "0", "COOP_CACHE": "0",
 		"COOP_CAFFEINATE": "0", "COOP_EGRESS": "none", "COOP_NO_UPDATE_CHECK": "1",

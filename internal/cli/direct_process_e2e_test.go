@@ -241,7 +241,7 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 	if err := os.WriteFile(filepath.Join(layout.Config, "defaults"), []byte(defaults.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(layout.Config, "missing.conf"), []byte(conf.String()), 0o600); err != nil {
+	if err := os.WriteFile(layout.Conf, []byte(conf.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	allCredKeys := sortedKeys(credentialSet)

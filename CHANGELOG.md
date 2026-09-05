@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The opt-in live provider probes work again.** `make provider-live-e2e` and the resume, loop,
+  consult, and ACP live targets had failed in their harness phase since the configuration file
+  became mandatory, because the empty `coop.conf` the process harness creates lived inside the
+  directory the probes replace with an isolated credential vault. It now lives beside the other
+  harness state files.
+
 - **Self-update downloads are bounded by size, not by a 30-second clock.** Release files fetch
   through a client with a minutes-long transfer budget instead of the API call's 30s timeout, which
   failed real updates on slow links, and `checksums.txt`, the archive, and the extracted binary each

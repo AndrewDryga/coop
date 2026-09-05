@@ -21,7 +21,7 @@ import (
 // file is the deadline's channel into the host process.
 func setLoopWatchdogDeadlines(t *testing.T, suite *directProcessSuite, value string) {
 	t.Helper()
-	conf := filepath.Join(suite.layout.Config, "missing.conf")
+	conf := suite.layout.Conf
 	original, err := os.ReadFile(conf)
 	if err != nil {
 		t.Fatal(err)

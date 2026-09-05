@@ -848,7 +848,7 @@ func processEnvironmentValues(layout procharness.Layout, path string, runtime Ru
 		"XDG_STATE_HOME": layout.XDGState, "TMPDIR": layout.Tmp,
 		"GIT_CONFIG_GLOBAL": layout.GitConfig, "GIT_CONFIG_NOSYSTEM": "1",
 		"LANG": "C", "LC_ALL": "C", "TERM": "dumb", "TZ": "UTC",
-		"COOP_CONF": filepath.Join(layout.Config, "missing.conf"), "COOP_CONFIG_DIR": layout.Config,
+		"COOP_CONF": layout.Conf, "COOP_CONFIG_DIR": layout.Config,
 		"COOP_MCP_FILE": filepath.Join(layout.Config, "missing-mcp.json"), "COOP_REPO": layout.Repo,
 		"COOP_WORKDIR": "", "COOP_HOMES": "1", "COOP_NETWORK": "0", "COOP_AUTO_UP": "0",
 		"COOP_CACHE": "0", "COOP_CAFFEINATE": "0", "COOP_EGRESS": "open",
