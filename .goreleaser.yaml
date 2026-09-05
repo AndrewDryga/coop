@@ -6,7 +6,7 @@ project_name: coop
 
 before:
   hooks:
-    - go mod tidy
+    - go mod tidy -diff
     # Ship shell completions rendered from the single source (help.go) — see `coop completion`.
     - sh -c 'mkdir -p completions && go run . completion bash > completions/coop.bash && go run . completion zsh > completions/_coop'
 
