@@ -397,6 +397,14 @@ func TestSessionServiceCreateReplayUsesPersistedIntentAndWorkspaceBase(t *testin
 		OperationID: op.ID, Policy: policies["responder"], Task: request.Task,
 		SessionID: deterministicSessionID(op.ID), ForkName: deterministicForkName(op.ID), BaseCommit: base,
 	}
+	// A replay carries the actual freshness receipt acquired before the parent
+	// advances. A bare historical SHA is intentionally no longer replayable.
+	pins, err := pinSessionPolicyRepositories(context.Background(), intent.Policy, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.RepositoryFreshness = pins.receipts
+	intent.WorkspaceCommit = pins.workspaceHead
 	intentBytes, err := json.Marshal(intent)
 	if err != nil {
 		t.Fatal(err)
@@ -558,7 +566,12 @@ func seedHistoricalSplitCreate(
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent.BaseCommit, intent.WorkspaceCommit = base, base
+	pins, err := pinSessionPolicyRepositories(ctx, intent.Policy, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.BaseCommit, intent.WorkspaceCommit = pins.creationBase, pins.workspaceHead
+	intent.RepositoryFreshness = pins.receipts
 	intentData, err := json.Marshal(intent)
 	if err != nil {
 		t.Fatal(err)
@@ -580,7 +593,8 @@ func seedHistoricalSplitCreate(
 		PolicyDigest: resolvedSessionPolicyDigest(policy), OmitEnv: policy.OmitEnv, OmitMCP: policy.OmitMCP,
 		RepositoryReadOnly: policy.RepositoryReadOnly, Repository: repo, Workspace: workspace.Path,
 		ForkName: intent.ForkName, ForkGeneration: string(workspace.Fork.Generation), BaseCommit: base,
-		MaxTurns: policy.MaxTurns, MaxQueuedTurns: policy.MaxQueuedTurns,
+		RepositoryFreshness: intent.RepositoryFreshness,
+		MaxTurns:            policy.MaxTurns, MaxQueuedTurns: policy.MaxQueuedTurns,
 		MaxQueuedBytes: policy.MaxQueuedBytes, TurnTimeout: policy.TurnTimeout, MaxPatchBytes: policy.MaxPatchBytes,
 	})
 	if err != nil {

@@ -188,7 +188,9 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 		created.Session.RepositoryFreshness[0].StaleBaseStatus != "not_applicable" {
 		t.Fatalf("create response freshness = %+v", created.Session)
 	}
-	if strings.Contains(response.Body.String(), repo) || strings.Contains(response.Body.String(), "workspace") {
+	// workspace_base_revision is public evidence, not a host path. Reject the
+	// private workspace field exactly so adding public provenance cannot disable this gate.
+	if strings.Contains(response.Body.String(), repo) || strings.Contains(response.Body.String(), `"workspace":`) {
 		t.Fatalf("create response leaked host data: %s", response.Body.String())
 	}
 	redacted, err := json.Marshal(struct {

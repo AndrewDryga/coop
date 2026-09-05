@@ -3,7 +3,7 @@ name: session-operation-intents-cross-versions
 description: running session operations survive binary upgrades, so persisted intent JSON needs explicit compatibility normalization before replay
 subsystem: session-api
 sources: [internal/sessionsvc/service.go, internal/session/store.go]
-updated: 2026-08-12
+updated: 2026-09-05
 ---
 
 `operations.result` is also the write-ahead intent for a running cross-process operation
@@ -32,7 +32,14 @@ rules belong to the operation record, not HTTP. An exact idempotent replay coale
 operation, and operation-correlated errors must preserve the operation ID while keeping internal
 paths and secrets out of the public projection.
 
+A pinned create intent must now retain the acquired repository-freshness receipts. A historical
+base SHA without receipts is rejected with `repository_unavailable`; replay must not acquire new
+authority under the old request. Successful replay fixtures must call the real pinning boundary
+before advancing the parent, and preserve its exact receipt in both intent and session.
+
 ## Changelog
+- 2026-09-05 — aligned replay fixtures with the enforced freshness contract; kept explicit
+  missing-receipt rejection and conflict/non-rollback coverage. No production fence changed.
 - 2026-08-12 — documented the admitted-to-pinned create-intent transition, bounded async worker,
   and general stale-operation reconciliation.
 - 2026-08-12 — created after recovering an Aug 7 production create intent that crossed the
