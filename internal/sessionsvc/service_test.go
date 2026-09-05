@@ -836,6 +836,9 @@ func TestExhaustedOneTurnEngineeringSessionStillCapturesItsWorkspaceCheckpoint(t
 }
 
 func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(t *testing.T) {
+	gitConfig := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(gitConfig, "global"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(gitConfig, "system"))
 	repo, git := gitrepo.New(t)
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/tasks/\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -843,7 +846,17 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	git("add", ".gitignore", "tracked.txt")
+	writeFile := func(workspace, name, body string, mode os.FileMode) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(workspace, name), []byte(body), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"committed-old.txt", "staged-old.txt", "committed-delete.txt", "staged-delete.txt", "kept.txt"} {
+		writeFile(repo, name, name+"\n", 0o644)
+	}
+	writeFile(repo, "binary.bin", "base\x00binary\n", 0o644)
+	git("add", ".")
 	git("commit", "-qm", "base")
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), nil)
 	defer service.Stop()
@@ -864,6 +877,26 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 	if err != nil {
 		t.Fatal(err)
 	}
+	sourceGit := func(args ...string) {
+		t.Helper()
+		git(append([]string{"-C", source.Workspace}, args...)...)
+	}
+	writeFile(source.Workspace, "committed.txt", "committed addition\n", 0o644)
+	writeFile(source.Workspace, "committed.bin", "committed\x00binary\n", 0o644)
+	sourceGit("mv", "committed-old.txt", "committed-new.txt")
+	sourceGit("rm", "committed-delete.txt")
+	sourceGit("add", "committed.txt", "committed.bin")
+	sourceGit("commit", "-qm", "candidate committed changes")
+	writeFile(source.Workspace, "staged.txt", "staged addition\n", 0o644)
+	writeFile(source.Workspace, "staged.bin", "staged\x00binary\n", 0o644)
+	writeFile(source.Workspace, "executable.sh", "#!/bin/sh\necho tracked\n", 0o755)
+	writeFile(source.Workspace, "empty.txt", "", 0o644)
+	writeFile(source.Workspace, "binary.bin", "changed\x00binary\n", 0o644)
+	sourceGit("mv", "staged-old.txt", "staged-new.txt")
+	sourceGit("rm", "staged-delete.txt")
+	sourceGit("rm", "--cached", "kept.txt")
+	sourceGit("add", "staged.txt", "staged.bin", "executable.sh", "empty.txt", "binary.bin")
+	writeFile(source.Workspace, "staged.txt", "staged addition with later unstaged edit\n", 0o644)
 	if err := os.WriteFile(filepath.Join(source.Workspace, "tracked.txt"), []byte("restored change\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -894,6 +927,9 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 	if err != nil {
 		t.Fatal(err)
 	}
+	if captured.Checkpoint.CommittedRevision == captured.Checkpoint.BaseRevision {
+		t.Fatal("checkpoint fixture did not include committed candidate changes")
+	}
 	bundle, err := service.OpenWorkspaceCheckpointBundle(context.Background(), captured.OperationID)
 	if err != nil {
 		t.Fatal(err)
@@ -904,6 +940,57 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeFile(target.Workspace, "restore-canary.txt", "must survive rejected bundles\n", 0o644)
+	for _, invalid := range []string{"corrupt bundle", "crossed descriptor"} {
+		t.Run(invalid, func(t *testing.T) {
+			req := RestoreWorkspaceCheckpointRequest{
+				SessionID: target.ID, ExpectedRevision: target.Revision,
+				Checkpoint: captured.Checkpoint, Bundle: bundle,
+			}
+			if invalid == "corrupt bundle" {
+				req.Bundle = []byte("not a checkpoint bundle")
+			} else {
+				req.Checkpoint.CandidateTreeSHA256 = strings.Repeat("0", 64)
+			}
+			if _, err := service.RestoreWorkspaceCheckpoint(context.Background(), "restore-invalid-"+invalid, req); err == nil {
+				t.Fatal("invalid checkpoint restored")
+			}
+			if got, err := os.ReadFile(filepath.Join(target.Workspace, "restore-canary.txt")); err != nil || string(got) != "must survive rejected bundles\n" {
+				t.Fatalf("rejected bundle changed workspace: %q, %v", got, err)
+			}
+			if current := mustSession(t, service, target.ID); current.Revision != target.Revision || current.WorkspaceTask != nil {
+				t.Fatalf("rejected bundle published a task binding: %+v", current)
+			}
+		})
+	}
+	t.Run("post-restore task verification", func(t *testing.T) {
+		unbound, err := service.CreateRemoteSession(context.Background(), "restore-unbound-create", CreateRemoteSessionRequest{
+			Policy: "responder", Task: "record:task_offer:restore",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkpoint := captured.Checkpoint
+		checkpoint.Task.Subtasks = append([]bool(nil), checkpoint.Task.Subtasks...)
+		checkpoint.Task.Subtasks[0] = !checkpoint.Task.Subtasks[0]
+		if _, err := workerproto.ValidateWorkspaceCheckpointBundle(checkpoint, bundle); err != nil {
+			t.Fatalf("fixture must reach post-restore verification: %v", err)
+		}
+		for range 2 {
+			_, err := service.RestoreWorkspaceCheckpoint(context.Background(), "restore-unbound-once", RestoreWorkspaceCheckpointRequest{
+				SessionID: unbound.ID, ExpectedRevision: unbound.Revision, Checkpoint: checkpoint, Bundle: bundle,
+			})
+			if err == nil || !strings.Contains(err.Error(), "restored workspace task projection does not match") {
+				t.Fatalf("restore verification error = %v", err)
+			}
+			if current := mustSession(t, service, unbound.ID); current.Revision != unbound.Revision || current.WorkspaceTask != nil {
+				t.Fatalf("failed verification published a task binding: %+v", current)
+			}
+		}
+		if got, err := os.ReadFile(filepath.Join(unbound.Workspace, "committed.bin")); err != nil || string(got) != "committed\x00binary\n" {
+			t.Fatalf("fixture did not reach restored-file verification: %q, %v", got, err)
+		}
+	})
 	restored, err := service.RestoreWorkspaceCheckpoint(context.Background(), "restore-target-once", RestoreWorkspaceCheckpointRequest{
 		SessionID: target.ID, ExpectedRevision: target.Revision,
 		Checkpoint: captured.Checkpoint, Bundle: bundle,
@@ -924,6 +1011,22 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 		"diff", "--no-ext-diff", "--no-textconv", "--binary", captured.Checkpoint.BaseRevision, "--")
 	if err != nil || !bytes.Equal(gotPatch, wantPatch) {
 		t.Fatalf("restored tracked patch differs: err=%v\nwant=%q\n got=%q", err, wantPatch, gotPatch)
+	}
+	wantTracked, _, err := runSessionWorkspaceGit(source.Workspace, sessionWorkspaceGitOutputLimit, "ls-files", "-z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotTracked, _, err := runSessionWorkspaceGit(restored.Workspace, sessionWorkspaceGitOutputLimit, "ls-files", "-z")
+	if err != nil || !bytes.Equal(gotTracked, wantTracked) {
+		t.Fatalf("restored tracked membership differs: err=%v\nwant=%q\n got=%q", err, wantTracked, gotTracked)
+	}
+	wantUntracked, err := checkpointUntrackedFiles(source.Workspace)
+	if err != nil || len(wantUntracked) != 2 {
+		t.Fatalf("source untracked files = %+v, err=%v", wantUntracked, err)
+	}
+	gotUntracked, err := checkpointUntrackedFiles(restored.Workspace)
+	if err != nil || !checkpointFileEntriesEqual(checkpointEntries(gotUntracked), checkpointEntries(wantUntracked)) {
+		t.Fatalf("restored untracked entries differ: err=%v\nwant=%+v\n got=%+v", err, wantUntracked, gotUntracked)
 	}
 	if got, err := os.ReadFile(filepath.Join(restored.Workspace, "helper.sh")); err != nil || string(got) != "#!/bin/sh\necho restored\n" {
 		t.Fatalf("restored untracked file = %q, err=%v", got, err)

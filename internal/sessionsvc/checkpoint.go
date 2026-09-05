@@ -235,7 +235,7 @@ func restoreWorkspaceCheckpointFiles(
 	patch := members[manifest.TrackedPatch.Entry]
 	if len(patch) > 0 {
 		stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-		command := exec.Command("git", gitArgs(workspace, []string{"apply", "--binary", "--whitespace=nowarn", "-"})...)
+		command := exec.Command("git", gitArgs(workspace, []string{"apply", "--index", "--binary", "--whitespace=nowarn", "-"})...)
 		command.Stdin = bytes.NewReader(patch)
 		command.Stderr = stderr
 		if err := command.Run(); err != nil {

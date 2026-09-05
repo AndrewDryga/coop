@@ -27,10 +27,16 @@ The traps the code does not make obvious:
 - **Bytes move only as verified bundles.** Input artifacts and workspace checkpoints are fetched
   through the authenticated transfer, bounded, and digest-verified before any filesystem mutation;
   member paths are canonical base64 bytes, and the restore writer refuses `.git` components and
-  symlinked parents. Durable command records never carry raw bytes.
+  symlinked parents. Restore applies the base-relative tracked patch to both index and worktree:
+  plain `git apply` loses the tracking identity of additions and fails exact verification. This
+  restores the logical candidate, not its source commit history or staged/unstaged split. Durable
+  task binding follows exact patch, untracked-file and task-projection verification. Durable
+  command records never carry raw bytes.
 - **No local fallback.** Every command is a private-API call; nothing executes work directly or
   reads a shared filesystem when the daemon is unreachable — the error is reported and the
   controller redelivers.
 
 ## Changelog
+- 2026-09-05 — verified checkpoint restore tracking and binding order against the real service;
+  regression covers mixed committed/staged/binary/untracked work and rejected bundles.
 - 2026-09-05 — created during the pre-release audit, against the sources listed.

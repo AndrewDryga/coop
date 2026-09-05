@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Workspace checkpoint restoration preserves new tracked files, renames and deletions alongside
+  binary and untracked content, without weakening exact integrity checks before task binding.
+
 - Task removal rejects unknown flags, extra IDs and mixed ID/`--all-done` requests before inspecting
   any queue, including aggregate and empty archives. `--yes` cannot override invalid syntax.
 
