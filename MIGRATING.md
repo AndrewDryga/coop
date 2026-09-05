@@ -45,6 +45,21 @@ This prevents a deleted and recreated same-named fork from being mistaken for th
 Inspect and preserve the quarantined workspace directly, then create a new remote session; never
 fabricate a generation or reservation file to make the old record attach.
 
+## The next release: strict `coop.conf`, one removal verb, schema v20
+
+- **`coop.conf` is validated on every command.** An unknown key, a duplicate key, a malformed
+  line, or a retired key stops Coop before any work, naming the file and line. Replace the retired
+  loop settings with their `.agent/loop.yaml` fields: `COOP_LOOP_MODEL` → `work.agent`,
+  `COOP_REVIEW_MODEL` → `signoff.agent`, `COOP_MAX_REVIEW_ROUNDS` → `signoff.rounds`,
+  `COOP_LOOP_CMD` → `work.command`, `COOP_PREFLIGHT` → `preflight.enabled`.
+- **`coop tasks clear` → `coop tasks rm --all-done`.** The alias 9.0.0 still accepted is gone.
+- **`coop tasks split` is gone.** Parallel forks share the canonical queue; see
+  [Canonical tasks across isolated forks](#canonical-tasks-across-isolated-forks) above.
+- **Session state root schema v20.** `coop sessions serve` upgrades a 9.0.0 (v13) root in place on
+  first start, and an older Coop refuses the upgraded root. Stop the daemon and copy the state root
+  — or take a verified SQLite copy with `coop sessions compact --backup <path>` — before upgrading
+  a host you may need to roll back.
+
 ## v9: one composition model, direct fork loops
 
 Fusion was a second command grammar over capabilities Coop already exposes directly. v9 removes

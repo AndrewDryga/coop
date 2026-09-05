@@ -41,6 +41,50 @@
   loop, and fork scheduling with "is not a real directory"; `coop tasks lint` still names a
   misplaced non-dotfile. Symlinks, special files, and unreadable entries keep failing closed.
 
+- **BREAKING: the session state root migrates to schema v20.** Remote-session state written by
+  9.0.0 (schema v13) is upgraded in place, in one transaction, the first time `coop sessions serve`
+  opens it, and an older Coop then refuses the root as too new. Stop the daemon and back the root
+  up before upgrading a host you may need to roll back
+  ([MIGRATING.md](MIGRATING.md#the-next-release-strict-coopconf-one-removal-verb-schema-v20)).
+
+- **`coop worker connect` joins a private Coop daemon to an external fleet controller.** Given an
+  absolute config path, the connector opens one outbound mutual-TLS poll stream, maps only
+  versioned controller commands onto the owner-private Unix API, journals every command before it
+  runs, and resends terminal results until they are acknowledged; it never listens on TCP or runs a
+  shell command. Writable workspaces travel as bounded, digest-verified checkpoint bundles
+  (`testdata/protocol/workspace-checkpoint-v1.json`), session activity streams as acknowledged event
+  batches, and the worker negotiates repository-freshness support against the daemon's new
+  `GET /v1/capabilities` so a rolling upgrade never mixes protocol versions.
+
+- **`coop sessions policies` prints what a fleet worker must advertise.** It validates the trusted
+  policy file and prints each policy's immutable digest plus a model-independent authority digest
+  (`--json` yields `policy_digests` and `policy_authority_digests`); session records carry that
+  `authority_digest`.
+
+- **Remote sessions keep durable repository freshness receipts.** Creation now records one
+  version-2 receipt per configured repository, bound to the session's workspace base, and fails
+  instead of completing on stale `HEAD` when freshness cannot be established; sessions from before
+  this release report freshness as explicitly unavailable.
+
+- **A revoked create or submit can be fenced before it runs.** `POST /v1/operations/fence` takes
+  the target mutation's idempotency key and exact request; if admission has not happened, the
+  operation is recorded as fenced and can never execute, and if it already won, the fence returns
+  the existing operation for an ordinary cancel or close.
+
+- **Codex ACP sessions see the shared MCP servers again.** codex-acp 1.7 expects MCP servers on
+  `session/new`, so Coop declares the mounted servers there as well as in `config.toml`.
+
+- **Structured output no longer misreads provider failures or progress chatter.** Typed ACP
+  provider failures are classified before output validation, so a Codex rate limit surfaces as
+  `rate_limited` rather than as invalid JSON; Codex progress commentary is excluded from the
+  candidate answer; the model is no longer told to validate its own output with a tool, since Coop
+  validates every candidate and bounds repairs; and a semantic repair keeps the turn's original
+  start time.
+
+- **`coop tasks watch` no longer lists idle remote-session workspaces.** A workspace reservation
+  alone is ownership, not work: it stays in `--json` but renders no activity row and cannot keep a
+  drained watch alive.
+
 - **ACP reload handoffs now use one current snapshot shape.** SIGHUP persists one initialize frame
   and explicit editor, adapter, and provider identity per session. Old setup tapes and snapshots
   missing native identity are consumed and start fresh instead of being guessed into current state;
@@ -72,8 +116,9 @@
 - **The unused help recording is gone.** The site keeps its five embedded terminal casts, while
   cast generation and releases no longer build or recapture an unreferenced version-stamped asset.
 
-- **Task archive removal has one spelling.** Use `coop tasks rm --all-done`; the duplicate
-  `coop tasks clear` alias is gone before release.
+- **BREAKING: `coop tasks clear` is gone.** Use `coop tasks rm --all-done`; 9.0.0 still shipped the
+  duplicate alias and there is no compatibility spelling (see
+  [MIGRATING.md](MIGRATING.md#the-next-release-strict-coopconf-one-removal-verb-schema-v20)).
 
 - **Unreachable UI and task helpers are gone.** Progress displays keep the state-aware bar used by
   loops and task watches, while six obsolete helpers, one unused summary type, and the old bar's
@@ -166,11 +211,15 @@
   Listing, assignment, loop completion, fork-candidate publication, audit, and deletion stop on
   those errors; missing optional queues and normal atomic task moves keep their existing behavior.
 
-- **Configuration mistakes stop before Coop does work.** A present or explicitly selected
+- **BREAKING: configuration mistakes stop before Coop does work.** A present or explicitly selected
   `coop.conf` must now be a readable, well-formed file with known, non-duplicate settings, and
   booleans, PID limits, carry budgets, egress, and consult timeouts use closed validated values.
   Errors name the source before housekeeping or runtime discovery; the absent default file remains
-  optional and environment values still take precedence.
+  optional and environment values still take precedence. An existing `coop.conf` that still names a
+  retired key (`COOP_LOOP_CMD`, `COOP_LOOP_MODEL`, `COOP_MAX_REVIEW_ROUNDS`, `COOP_PREFLIGHT`,
+  `COOP_REVIEW_MODEL`) or an unknown one now stops every command until it is edited;
+  [MIGRATING.md](MIGRATING.md#the-next-release-strict-coopconf-one-removal-verb-schema-v20) maps
+  each retired key to its `.agent/loop.yaml` field.
 
 - **Invalid project policy now stops before box and fork work.** A present malformed, unknown-key,
   unreadable, symlinked, or non-regular `.agent/project.yaml` now returns a clear error before box
@@ -206,7 +255,7 @@
   cannot authorize mutation or keep a drained watch alive. `coop fork ls` consumes the same model
   while preserving the distinction between a detached worker and another active sandbox.
 
-- **Copied task authorities are retired.** `coop tasks split` is no longer a command, and fork loops
+- **BREAKING: copied task authorities are retired.** `coop tasks split` is no longer a command, and fork loops
   neither seed nor mount a full `.agent/tasks` tree. A fork's `--tasks <path>` now filters the
   canonical scheduler to that one queue. Existing fork workspaces containing copied task work fail
   closed until their notes/code are reconciled and the fork is recreated; see
@@ -214,7 +263,7 @@
 
 - **Remote sessions and sandboxes carry exact cleanup authority.** Every sandbox execution is
   generation-scoped in the project control plane; remote sessions reserve their exact workspace
-  generation through review/discard. Session schema v15 also keeps the exact ordinary or
+  generation through review/discard. Session schema v20 also keeps the exact ordinary or
   borrowed-warm runtime ID after a turn becomes terminal when teardown fails, so bounded cleanup
   retries the right process without changing a successful answer or semantic candidate. A legacy
   session without an exact same-session reservation is quarantined instead of adopting whichever
