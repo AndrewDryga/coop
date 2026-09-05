@@ -425,8 +425,11 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 
 func TestRejectedSemanticCandidateRequeuesTheSameLogicalTurn(t *testing.T) {
 	ctx := context.Background()
-	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	root := filepath.Join(t.TempDir(), "state")
+	store := openTestStore(t, root)
 	defer store.Close()
+	now := time.Date(2026, 9, 5, 5, 4, 29, 0, time.UTC)
+	store.clock = func() time.Time { return now }
 	sess, err := store.CreateSession(ctx, "semantic-repair-session", CreateSessionRequest{Target: "codex:model"})
 	if err != nil {
 		t.Fatal(err)
@@ -447,6 +450,8 @@ func TestRejectedSemanticCandidateRequeuesTheSameLogicalTurn(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("lease = %+v, ok=%v, err=%v", leased, ok, err)
 	}
+	firstStart := leased.StartedAt
+	now = now.Add(26 * time.Second)
 	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, leased.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -474,9 +479,26 @@ func TestRejectedSemanticCandidateRequeuesTheSameLogicalTurn(t *testing.T) {
 		requeued.ValidationAttempt != 1 || !strings.Contains(requeued.ValidationError, "contradicts current OOM evidence") {
 		t.Fatalf("requeued semantic turn = %+v", requeued)
 	}
+	// A live greeting's 26 seconds of first-attempt execution were mislabeled
+	// as queue wait when semantic repair erased and replaced its first start.
+	if !requeued.StartedAt.Equal(firstStart) {
+		t.Fatalf("semantic repair lost first start: got %v want %v", requeued.StartedAt, firstStart)
+	}
 	leasedAgain, ok, err := store.LeaseNextTurn(ctx, sess.ID)
 	if err != nil || !ok || leasedAgain.ID != admitted.ID || leasedAgain.ValidationAttempt != 1 {
 		t.Fatalf("re-leased semantic turn = %+v, ok=%v, err=%v", leasedAgain, ok, err)
+	}
+	if !leasedAgain.StartedAt.Equal(firstStart) {
+		t.Fatalf("repair execution became queue wait: got %v want %v", leasedAgain.StartedAt, firstStart)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened := openTestStore(t, root)
+	defer reopened.Close()
+	persisted, err := reopened.GetTurn(ctx, sess.ID, leased.ID)
+	if err != nil || !persisted.StartedAt.Equal(firstStart) {
+		t.Fatalf("persisted first start = %v, err=%v", persisted.StartedAt, err)
 	}
 }
 

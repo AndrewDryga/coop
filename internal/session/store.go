@@ -1775,7 +1775,13 @@ func (s *Store) LeaseNextTurn(ctx context.Context, sessionID string) (Turn, bool
 	if turn.OutputContract != nil && turn.OutputContract.RequireSemanticValidation && turn.ValidationAttempt > 0 {
 		nextState, nextSend, nextActivity = TurnRunning, SendStateSent, ActivityRunning
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, send_state = ?, started_at = ? WHERE id = ?`, string(nextState), string(nextSend), now.UnixNano(), turn.ID); err != nil {
+	// A semantic repair belongs to the same logical turn. Keep its first start
+	// so prior execution is never reported as queue wait; events retain each lease.
+	startedAt := turn.StartedAt
+	if startedAt.IsZero() {
+		startedAt = now
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, send_state = ?, started_at = ? WHERE id = ?`, string(nextState), string(nextSend), startedAt.UnixNano(), turn.ID); err != nil {
 		return Turn{}, false, fmt.Errorf("lease turn: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET active_turn_id = ?, activity = ?, queued_turn_count = queued_turn_count - 1, queued_prompt_bytes = queued_prompt_bytes - ?, updated_at = ? WHERE id = ?`, turn.ID, string(nextActivity), len(turn.Prompt), now.UnixNano(), sessionID); err != nil {
@@ -1786,7 +1792,7 @@ func (s *Store) LeaseNextTurn(ctx context.Context, sessionID string) (Turn, bool
 	}
 	turn.State = nextState
 	turn.SendState = nextSend
-	turn.StartedAt = now
+	turn.StartedAt = startedAt
 	if err := tx.Commit(); err != nil {
 		return Turn{}, false, fmt.Errorf("commit turn lease: %w", err)
 	}
@@ -2803,7 +2809,7 @@ func (s *Store) RejectTurnCandidate(ctx context.Context, req RejectTurnCandidate
 		if err != nil {
 			return Turn{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, send_state = ?, started_at = NULL,
+		if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, send_state = ?,
 			candidate_message = '', validation_error = ?, validation_receipt = '' WHERE id = ?`,
 			string(TurnQueued), string(SendStateNone), detail, turn.ID); err != nil {
 			return Turn{}, fmt.Errorf("requeue rejected semantic turn: %w", err)
@@ -2813,7 +2819,7 @@ func (s *Store) RejectTurnCandidate(ctx context.Context, req RejectTurnCandidate
 			string(ActivityParked), len(turn.Prompt), now.UnixNano(), sess.ID); err != nil {
 			return Turn{}, fmt.Errorf("requeue rejected semantic session: %w", err)
 		}
-		turn.State, turn.SendState, turn.StartedAt = TurnQueued, SendStateNone, time.Time{}
+		turn.State, turn.SendState = TurnQueued, SendStateNone
 	}
 	if err := tx.Commit(); err != nil {
 		return Turn{}, fmt.Errorf("commit semantic candidate rejection: %w", err)

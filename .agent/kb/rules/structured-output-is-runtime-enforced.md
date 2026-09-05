@@ -19,6 +19,9 @@ Do not require the model to write schema/candidate files or invoke a validator t
 return structured output. Host validation is mandatory; model-side tool work is not its authority
 and adds avoidable latency. Preserve tools needed for the actual task, exact schema/digest guidance,
 and bounded correction feedback in both initial and repair prompts.
+Explicitly distinguish redundant JSON Schema checks from mandatory caller-owned semantic
+tools. Semantic repairs keep the logical turn's first start timestamp; per-attempt start
+events remain the detailed timeline, never reclassify execution as queue wait.
 
 **Why:** Responder gave models its result schema and asked them to self-check, but malformed JSON
 still completed in Coop and consumed Responder correction rounds. The operator's correction was:
@@ -38,6 +41,8 @@ receipt only after exact runtime cleanup succeeds; reject and cancel use the sam
 durable transition never erases the last cleanup signal.
 
 ## Changelog
+- 2026-09-05 — narrowed schema advice to preserve mandatory caller tools and retained first
+  start across semantic repair after a live run mislabeled 26 seconds as queue time.
 - 2026-09-05 — removed mandatory file/jv instructions from both ACP prompt builders after a
   recorded Responder greeting took 136 seconds with millisecond queue waits. Host validation,
   bounded repair, semantic acceptance and cleanup are unchanged; prompt regression fails on the

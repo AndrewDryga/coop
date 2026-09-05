@@ -310,6 +310,9 @@ func TestStructuredResponsesDoNotRequireRedundantModelToolValidation(t *testing.
 		if strings.Contains(prompt, "jv ") || strings.Contains(prompt, "/tmp/") {
 			t.Fatalf("%s structured response requires redundant tool work:\n%s", name, prompt)
 		}
+		if !strings.Contains(prompt, "Caller-required semantic validation tools remain mandatory") {
+			t.Fatalf("%s schema advice obscures mandatory task validation", name)
+		}
 		if !strings.Contains(prompt, contract.SHA256) ||
 			!strings.Contains(prompt, `<json-schema>{"type":"object"}</json-schema>`) ||
 			!strings.Contains(prompt, "Coop validates") {

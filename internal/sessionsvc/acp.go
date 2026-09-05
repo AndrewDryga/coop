@@ -770,7 +770,7 @@ func sessionOutputContractInitialPrompt(prompt string, contract *session.OutputC
 Your final assistant response must be exactly one JSON value that matches this schema.
 Do not wrap the candidate in Markdown.
 Coop validates the final bytes and returns any validation errors for correction.
-Do not write files or call tools merely to validate your response. Use tools when the task itself requires them.
+Do not write files or call tools merely to check JSON Schema conformance. Caller-required semantic validation tools remain mandatory; complete those checks before returning the exact approved candidate. Use other tools when the task itself requires them.
 
 <json-schema>%s</json-schema>
 </coop-output-contract>`, prompt, contract.SHA256, contract.JSONSchema)
@@ -782,7 +782,7 @@ func sessionOutputContractRepairPrompt(contract *session.OutputContract, attempt
 %s
 Return exactly one JSON value. Do not include explanation or Markdown.
 Coop validates the final bytes and returns any validation errors for correction.
-Do not write files or call tools merely to validate your response. Use tools when the task itself requires them.
+Do not write files or call tools merely to check JSON Schema conformance. Caller-required semantic validation tools remain mandatory; complete those checks before returning the exact approved candidate. Use other tools when the task itself requires them.
 This is correction attempt %d of %d.
 
 <json-schema>%s</json-schema>`, contract.SHA256, detail, attempt, sessionOutputContractMaxAttempts, contract.JSONSchema)
