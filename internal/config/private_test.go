@@ -49,6 +49,29 @@ func TestLoadMakesCredentialRootAndSharedSecretsPrivate(t *testing.T) {
 	}
 }
 
+// Every command loads configuration first, so Load must not need a writable HOME: `coop version`
+// and `coop help` on a read-only or absent home answered with "create private directory ...
+// read-only file system" once the root was created eagerly. A missing root is nothing to protect.
+func TestLoadLeavesMissingCredentialRootAbsent(t *testing.T) {
+	clearAgentEnv(t)
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	root := filepath.Join(xdg, "coop", "agents")
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(root); !os.IsNotExist(err) {
+		t.Fatalf("Load created %s (err=%v); a read-only command must not need a writable HOME", root, err)
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+	assertPerm(t, root, 0o700)
+}
+
 func TestLoadRefusesUnsafeCredentialRootAndSecret(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

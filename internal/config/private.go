@@ -26,6 +26,17 @@ func EnsurePrivateDir(path string) error {
 	return nil
 }
 
+// ensurePrivateDirIfPresent tightens an existing host-owned directory (refusing a link or a
+// non-directory) and treats a missing one as nothing to protect yet. Load uses it because every
+// command loads configuration, and `coop version` on a read-only or absent HOME must still answer;
+// the paths that write into the root create it owner-only themselves.
+func ensurePrivateDirIfPresent(path string) error {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return EnsurePrivateDir(path)
+}
+
 func ensurePrivateFileIfPresent(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {

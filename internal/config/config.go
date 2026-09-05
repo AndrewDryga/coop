@@ -256,7 +256,7 @@ func Load() (*Config, error) {
 
 	c.MCPFile = get("COOP_MCP_FILE", filepath.Join(c.ConfigDir, "mcp.json"))
 	c.MCPInBox = c.HomeInBox + "/.mcp.json"
-	if err := EnsurePrivateDir(c.ConfigDir); err != nil {
+	if err := ensurePrivateDirIfPresent(c.ConfigDir); err != nil {
 		return nil, err
 	}
 	privateFiles := []string{c.EnvFile(), c.DefaultsFile()}

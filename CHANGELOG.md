@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Read-only commands no longer need a writable config directory.** `coop version`, `coop help`,
+  `coop completion`, and the task commands work on a read-only or absent HOME again: loading
+  configuration still tightens an existing credential root to owner-only but no longer creates one.
+  The first login, box launch, or default-credential write creates it private as before.
+
 - **A stray file no longer hides a task queue.** A Finder `.DS_Store` or an editor swap file inside
   a lifecycle or backlog directory is skipped by every reader instead of failing `coop tasks`, the
   loop, and fork scheduling with "is not a real directory"; `coop tasks lint` still names a
