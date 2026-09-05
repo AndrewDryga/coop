@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Landed forks are kept if their workspace, generation, commit or uncommitted work changes before
+  removal, including during service shutdown. Bulk merge-and-remove now defaults to No at its
+  confirmation prompt.
+
 - Repository skills, settings and hook copies cannot read through outside source links. Safe
   in-repository sources and internal links remain supported; failed setup removes earlier copies.
 

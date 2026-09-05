@@ -3,7 +3,7 @@ name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file holds four fork lifecycle states; unsupported formats stay held and only pid+start-token — never file age — may decide a current owner is gone
 subsystem: fork
 sources: [internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/processidentity/identity.go]
-updated: 2026-09-03
+updated: 2026-09-05
 ---
 Every fork's whole process lifecycle lives in ONE small file, `<repo>-forks/.coop/<name>.pid`, read
 and written through `forkspace.WorkerState` (`internal/forkspace/state.go`) — never by hand. Four
@@ -65,7 +65,17 @@ unsupported-version error. Neither becomes a `WorkerState`. `forkctl.CheckWorker
 applies the user-facing refusal before start/recreate, merge, removal, or stop can probe the runtime
 or change workspace metadata, and locked start/stop parse again against races. Merge holds that same
 lifecycle flock across its final check, fetch, rebase, gate, land, and reconciliation, then
-reacquires it for post-land removal. The exact file remains authoritative: `RunningPid` returns 0,
+reacquires it for post-land removal. Successful land transfers an open workspace pin, generation
+presence/value and exact landed HEAD to the caller; a landed-but-unfinalized result transfers no
+deletion authority. Removal checks that approval, error-aware worktree status including untracked
+files, and parent ancestry under the lock, both before and after stopping writable sidecars.
+Cleanliness is checked independently in every populated indexed submodule, even an inactive one:
+parent status can hide nested changes through a child's ignore configuration. Assume-unchanged
+and skip-worktree index flags prevent automatic cleanup, without changing the user's index;
+nonempty uninspectable children are kept, while absent/empty uninitialized modules remain safe.
+Keep the pin across any user prompt, but never the lifecycle lock. Bulk land-and-remove uses the
+same default-No `DestroyGate` as single-fork removal; `--yes` does not override changed work.
+The exact file remains authoritative: `RunningPid` returns 0,
 while `NeedsStop` and `StateOwner` stay held. Coop never infers or signals a PID from invalid bytes.
 
 ## The two crash windows, and the child handoff
@@ -109,6 +119,11 @@ A dead-WORKER state (not a reservation) is never auto-cleared: it may still own 
 only `coop fork stop` reaps that by owner label.
 
 ## Changelog
+- 2026-09-05 — post-land deletion retains the successful land's open inode, generation and commit
+  approval through confirmation, and rechecks clean state after sidecar teardown. Regressed legacy,
+  task-candidate and journal-replay success, late work, identity replacement and inspection errors.
+  Added nested-submodule proofs for ignore/untracked settings, hidden index bits, inactive modules
+  and missing/redirected Git roots; status alone does not establish safe removal.
 - 2026-09-03 — removed the headerless pre-v8 classification and migration procedure after a live
   inventory found 32 fork-state directories and zero worker PID files. Headerless records now use
   the generic malformed fail-closed path; owner-v1/v2 and future-version handling remain.

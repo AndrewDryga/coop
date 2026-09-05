@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -276,14 +278,172 @@ func fetchForkForMerge(repo, ws, name string) error {
 	return nil
 }
 
-func destroyLandedFork(rt runtime.Runtime, repo, name string, exposedRoots ...string) error {
+type mergeOutcome struct {
+	landed   bool
+	approval *landedFork
+}
+
+// A successful land transfers the open workspace pin to its caller. A name alone
+// is not deletion authority: the user may keep editing while answering the prompt.
+type landedFork struct {
+	pin           *os.File
+	info          os.FileInfo
+	identity      forkspace.Identity
+	hasGeneration bool
+	head          string
+}
+
+func (f *landedFork) close() {
+	if f != nil && f.pin != nil {
+		f.pin.Close()
+		f.pin = nil
+	}
+}
+
+func (f *landedFork) validateLand(repo, name string) error {
+	if f == nil || f.pin == nil || f.info == nil || f.head == "" {
+		return errors.New("landed fork has no open deletion approval")
+	}
+	if _, err := f.pin.Stat(); err != nil {
+		return fmt.Errorf("landed fork pin is no longer open: %w", err)
+	}
+	ws := forkspace.Workspace(repo, name)
+	if !forkspace.SamePinned(ws, f.info) {
+		return errors.New("landed fork workspace changed before removal")
+	}
+	identity, exists, err := forkspace.ReadGeneration(repo, name)
+	if err != nil {
+		return err
+	}
+	if exists != f.hasGeneration || identity != f.identity {
+		return errors.New("landed fork generation changed before removal")
+	}
+	head, err := gitOutErr(ws, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return fmt.Errorf("inspect landed fork HEAD: %w", err)
+	}
+	if head != f.head {
+		return errors.New("landed fork HEAD changed before removal")
+	}
+	if _, err := gitOutErr(repo, "merge-base", "--is-ancestor", f.head, "HEAD"); err != nil {
+		return fmt.Errorf("cannot confirm the parent contains the landed commit: %w", err)
+	}
+	return nil
+}
+
+func (f *landedFork) validateRemoval(repo, name string) error {
+	if err := f.validateLand(repo, name); err != nil {
+		return err
+	}
+	return landedWorktreeClean(forkspace.Workspace(repo, name))
+}
+
+// Status trusts index flags and submodule ignore configuration. Inspect every
+// populated gitlink ourselves; active=false must not hide a child from deletion.
+func landedWorktreeClean(ws string) error {
+	top, err := gitRawOutErr(ws, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return fmt.Errorf("inspect landed fork Git root: %w", err)
+	}
+	top = strings.TrimSuffix(top, "\n") // remove Git's terminator, not part of the path
+	root, err := os.OpenRoot(ws)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	actual, actualErr := os.Stat(top)
+	expected, expectedErr := root.Stat(".")
+	if err := errors.Join(actualErr, expectedErr); err != nil {
+		return err
+	}
+	if !os.SameFile(actual, expected) {
+		return errors.New("landed fork Git root does not match its workspace")
+	}
+	entries, err := gitRawOutErr(ws, "ls-files", "--stage", "-v", "-z")
+	if err != nil {
+		return fmt.Errorf("inspect landed fork index: %w", err)
+	}
+	for entry := range strings.SplitSeq(entries, "\x00") {
+		if entry == "" {
+			continue
+		}
+		if entry[0] == 'S' || entry[0] >= 'a' && entry[0] <= 'z' {
+			return errors.New("landed fork index hides worktree changes with assume-unchanged or skip-worktree; keeping its workspace")
+		}
+		header, path, ok := strings.Cut(entry, "\t")
+		fields := strings.Fields(header)
+		if !ok || len(fields) != 4 || !filepath.IsLocal(path) || filepath.Clean(path) == "." {
+			return errors.New("cannot inspect landed fork index entry")
+		}
+		if fields[1] != "160000" || fields[3] != "0" {
+			continue
+		}
+		// Gitlink workspaces are directories, not symlink aliases. Check ancestors
+		// too, so recursion cannot leave the approved tree or return to its parent.
+		present := true
+		prefix := ""
+		for _, part := range strings.Split(filepath.Clean(path), string(filepath.Separator)) {
+			prefix = filepath.Join(prefix, part)
+			info, err := root.Lstat(prefix)
+			if errors.Is(err, os.ErrNotExist) {
+				present = false
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("inspect submodule %q: %w", path, err)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("submodule %q has a non-directory or symlinked workspace", path)
+			}
+		}
+		if !present {
+			continue // uninitialized submodule; there is no child worktree to erase
+		}
+		child, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return err
+		}
+		info, statErr := child.Stat()
+		if statErr != nil || !info.IsDir() {
+			child.Close()
+			return errors.Join(fmt.Errorf("submodule %q changed while opening its workspace", path), statErr)
+		}
+		contents, readErr := child.ReadDir(1)
+		if errors.Is(readErr, io.EOF) {
+			readErr = nil
+		}
+		closeErr := child.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			return err
+		}
+		if len(contents) == 0 {
+			continue // an empty uninitialized submodule is safe too
+		}
+		if _, err := root.Lstat(filepath.Join(path, ".git")); err != nil {
+			return fmt.Errorf("cannot inspect populated submodule %q: %w", path, err)
+		}
+		if err := landedWorktreeClean(filepath.Join(ws, path)); err != nil {
+			return fmt.Errorf("submodule %q: %w", path, err)
+		}
+	}
+	status, err := gitOutErr(ws, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
+	if err != nil {
+		return fmt.Errorf("inspect landed fork worktree: %w", err)
+	}
+	if status != "" {
+		return errors.New("landed fork has uncommitted changes; keeping its workspace")
+	}
+	return nil
+}
+
+func destroyLandedFork(rt runtime.Runtime, repo, name string, approval *landedFork, exposedRoots ...string) error {
 	unlock, err := lockForkForMerge(repo, name)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	if !pathExists(forkspace.Workspace(repo, name)) {
-		return fmt.Errorf("no such fork: %s", name)
+	if err := approval.validateRemoval(repo, name); err != nil {
+		return err
 	}
 	identity, hasGeneration, err := forkspace.ReadGeneration(repo, name)
 	if err != nil {
@@ -301,7 +461,13 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string, exposedRoots ...st
 			return errors.New("landed fork still owns canonical task authority")
 		}
 	}
-	if err := DestroyFork(rt, repo, name, exposedRoots...); err != nil {
+	stopForkServices(rt, repo, name, exposedRoots...)
+	// Services have writable binds and stopping them can take time. Check again
+	// after teardown, not merely before giving those processes their last turn.
+	if err := approval.validateRemoval(repo, name); err != nil {
+		return err
+	}
+	if err := forkspace.Destroy(repo, name); err != nil {
 		return err
 	}
 	if hasGeneration {
@@ -316,44 +482,65 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string, exposedRoots ...st
 // fork was cut from. Reports whether the merge landed: landed=false with an error is a merge that
 // did NOT happen, while landed=true WITH an error means the commits are in the parent but the queue
 // reconciliation below couldn't be done — the caller reports it and stops, never rolls the land back.
-func (c *Control) mergeOne(repo, img, name string, force bool) (bool, error) {
+func (c *Control) mergeOne(repo, img, name string, force bool) (outcome mergeOutcome, retErr error) {
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
-		return false, fmt.Errorf("no such fork: %s", name)
+		return mergeOutcome{}, fmt.Errorf("no such fork: %s", name)
 	}
 	unlock, err := lockForkForMerge(repo, name)
 	if err != nil {
-		return false, err
+		return mergeOutcome{}, err
 	}
 	defer unlock()
 	if !pathExists(ws) {
-		return false, fmt.Errorf("no such fork: %s", name)
+		return mergeOutcome{}, fmt.Errorf("no such fork: %s", name)
 	}
+	pin, info, err := forkspace.Pin(ws)
+	if err != nil {
+		return mergeOutcome{}, fmt.Errorf("pin fork before land: %w", err)
+	}
+	defer func() {
+		if outcome.approval == nil {
+			pin.Close()
+		}
+	}()
 	legacy, err := tasks.LegacyForkQueueWithWork(ws)
 	if err != nil {
-		return false, err
+		return mergeOutcome{}, err
 	}
 	if legacy != "" {
-		return false, fmt.Errorf("%s contains a legacy copied task queue at %s; refusing a Git-only merge because it could duplicate or lose canonical work — preserve any fork-only task notes, recreate the fork with --fresh, and rerun the canonical task loop", name, legacy)
+		return mergeOutcome{}, fmt.Errorf("%s contains a legacy copied task queue at %s; refusing a Git-only merge because it could duplicate or lose canonical work — preserve any fork-only task notes, recreate the fork with --fresh, and rerun the canonical task loop", name, legacy)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
-		return false, fmt.Errorf("%s: git fetch: %w", name, err)
+		return mergeOutcome{}, fmt.Errorf("%s: git fetch: %w", name, err)
 	}
 	identity, hasGeneration, err := forkspace.ReadGeneration(repo, name)
 	if err != nil {
-		return false, err
+		return mergeOutcome{}, err
+	}
+	finishLand := func(landed bool, head string, err error) (mergeOutcome, error) {
+		result := mergeOutcome{landed: landed}
+		if !landed || err != nil {
+			return result, err
+		}
+		approval := &landedFork{pin: pin, info: info, identity: identity, hasGeneration: hasGeneration, head: head}
+		if err := approval.validateLand(repo, name); err != nil {
+			return result, err
+		}
+		result.approval = approval
+		return result, nil
 	}
 	if hasGeneration {
 		if intent, ok, err := readLandIntent(repo, identity); err != nil {
-			return false, err
+			return mergeOutcome{}, err
 		} else if ok {
-			_, landed, err := c.advanceTaskLand(repo, ws, name, img, intent)
-			return landed, err
+			finished, landed, err := c.advanceTaskLand(repo, ws, name, img, intent)
+			return finishLand(landed, finished.RebasedHead, err)
 		}
 	}
 	ref := "review/" + name
 	if warns := PolicyScan(repo, ref); len(warns) > 0 && !force {
-		return false, fmt.Errorf("%s: policy flagged risky changes:\n%s\n(use --force to merge anyway)", name, indent(strings.Join(warns, "\n")))
+		return mergeOutcome{}, fmt.Errorf("%s: policy flagged risky changes:\n%s\n(use --force to merge anyway)", name, indent(strings.Join(warns, "\n")))
 	}
 	// Say which branch we're landing onto — merge rebases onto your *current* branch,
 	// so this is your chance to notice you're on the wrong one.
@@ -365,53 +552,57 @@ func (c *Control) mergeOne(repo, img, name string, force bool) (bool, error) {
 	if hasGeneration {
 		candidate, hasCandidate, err := tasks.ReadForkCandidate(repo, identity)
 		if err != nil {
-			return false, err
+			return mergeOutcome{}, err
 		}
 		indexes, problems := tasks.IndexedForkAssignments(repo, identity)
 		if len(problems) > 0 {
-			return false, errors.Join(problems...)
+			return mergeOutcome{}, errors.Join(problems...)
 		}
 		if len(indexes) > 0 && !hasCandidate {
-			return false, fmt.Errorf("%s has sandbox-assigned tasks but no final reviewed candidate — resume its loop before merge", name)
+			return mergeOutcome{}, fmt.Errorf("%s has sandbox-assigned tasks but no final reviewed candidate — resume its loop before merge", name)
 		}
 		if hasCandidate {
 			if err := forkspace.ValidateGenerationWorkspace(repo, identity); err != nil {
-				return false, err
+				return mergeOutcome{}, err
 			}
 			head, tree := gitOut(ws, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD^{tree}")
 			if err := tasks.ValidateForkCandidateLocked(repo, candidate, head, tree); err != nil {
-				return false, fmt.Errorf("%s reviewed candidate is stale: %w", name, err)
+				return mergeOutcome{}, fmt.Errorf("%s reviewed candidate is stale: %w", name, err)
 			}
 			intent := landIntent{
 				Version: landIntentVersion, Candidate: candidate,
 				ParentBefore: gitOut(repo, "rev-parse", "HEAD"), Phase: landPreparing, CreatedAt: time.Now().UTC(),
 			}
 			if err := writeLandIntent(repo, intent); err != nil {
-				return false, err
+				return mergeOutcome{}, err
 			}
-			_, landed, err := c.advanceTaskLand(repo, ws, name, img, intent)
-			return landed, err
+			finished, landed, err := c.advanceTaskLand(repo, ws, name, img, intent)
+			return finishLand(landed, finished.RebasedHead, err)
 		}
 	}
 	// Rebase the fork onto the parent's HEAD inside the fork's OWN clone — an isolated candidate.
 	// The parent tree is NOT touched here, so a red gate below has nothing to roll back.
 	if err := c.rebaseForkOntoParent(repo, ws, name); err != nil {
-		return false, err
+		return mergeOutcome{}, err
 	}
 	// Gate the CANDIDATE (the rebased fork), never the live parent — with the parent's own gate
 	// policy. A red gate leaves the parent exactly as it was: no reset --hard of a shared tree.
 	if img != "" && !c.gatePasses(repo, ws, img) {
-		return false, fmt.Errorf("%s: gate failed on the rebased fork — parent untouched; fix it in the fork (%s), then re-run", name, ws)
+		return mergeOutcome{}, fmt.Errorf("%s: gate failed on the rebased fork — parent untouched; fix it in the fork (%s), then re-run", name, ws)
 	}
 	// Advance the parent by a fast-forward-ONLY merge — an atomic compare-and-swap: it refuses if a
 	// concurrent commit moved the parent since the rebase, so a divergence lands nothing (re-run to
 	// rebase onto the new HEAD) instead of being erased by a rollback.
+	landedHead, err := gitOutErr(ws, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return mergeOutcome{}, fmt.Errorf("inspect candidate before land: %w", err)
+	}
 	if err := c.FastForwardParent(repo, ws, name); err != nil {
-		return false, err
+		return mergeOutcome{}, err
 	}
 	// Legacy/non-task forks land Git only. Canonical task completion is never inferred from a
 	// trailer; generation candidates above carry exact task and projection authority.
-	return true, nil
+	return finishLand(true, landedHead, nil)
 }
 
 // landFork rebases the fork's branch onto the parent's current HEAD — in the fork,
@@ -622,8 +813,9 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	if !approve("rebase and land?", yes) {
 		return 0, nil
 	}
-	landed, err := c.mergeOne(repo, img, name, force)
-	if landed {
+	result, err := c.mergeOne(repo, img, name, force)
+	defer result.approval.close()
+	if result.landed {
 		ui.OK("landed %s", name) // say it BEFORE any error: the commits are in the parent either way
 	}
 	if err != nil {
@@ -632,7 +824,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		ui.Error("%v", err)
 		return 1, nil
 	}
-	if !landed {
+	if !result.landed {
 		return 1, nil
 	}
 	// The merge landed the committed work (via review/<name>); an interrupted iteration can still leave
@@ -644,7 +836,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	// Default-No delete confirm (the land above was the default-Yes step); --yes is already required
 	// for a non-interactive run, so this only prompts at a TTY. Declining just keeps the landed fork.
 	if ui.DestroyGate("remove the landed fork "+name, yes) == nil {
-		if err := destroyLandedFork(c.rt, repo, name, box.ConfigExposureRoots(c.cfg)...); err != nil {
+		if err := destroyLandedFork(c.rt, repo, name, result.approval, box.ConfigExposureRoots(c.cfg)...); err != nil {
 			if isForkMergeLifecycleError(err) {
 				return 1, err
 			}
@@ -680,8 +872,8 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 	// Landing every fork also DELETES each one — and unlike the single-fork path (which prompts per
 	// fork), this runs unattended. Ask once before destroying anything; --yes (already required for a
 	// non-interactive run) skips the prompt.
-	if !approve(fmt.Sprintf("rebase and land up to %s? each that lands is then deleted", ui.Count(len(names)-len(skip), "fork")), yes) {
-		return 0, nil
+	if err := ui.DestroyGate(fmt.Sprintf("rebase, land and remove up to %s", ui.Count(len(names)-len(skip), "fork")), yes); err != nil {
+		return 2, err
 	}
 	var landed []string
 	for _, n := range names {
@@ -695,8 +887,8 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 		if gitOut(repo, "rev-list", "--count", "HEAD..review/"+n) == "0" {
 			continue // nothing to land
 		}
-		ok, err := c.mergeOne(repo, img, n, force)
-		if ok {
+		result, err := c.mergeOne(repo, img, n, force)
+		if result.landed {
 			ui.OK("landed %s", n)
 			// Keep the fork when its worktree still holds uncommitted work (an interrupted iteration),
 			// and when its queue reconciliation failed — deleting a workspace right after an
@@ -704,12 +896,13 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 			if gitDirty(ws) {
 				ui.Warn("keeping fork %s — uncommitted changes; 'coop fork rm %s --force' after review", n, n)
 			} else if err == nil {
-				if destroyErr := destroyLandedFork(c.rt, repo, n, box.ConfigExposureRoots(c.cfg)...); destroyErr != nil {
-					ui.Warn("keeping landed fork %s — it changed before removal: %v", n, destroyErr)
+				if destroyErr := destroyLandedFork(c.rt, repo, n, result.approval, box.ConfigExposureRoots(c.cfg)...); destroyErr != nil {
+					ui.Warn("could not complete cleanup for landed fork %s: %v", n, destroyErr)
 				}
 			}
 			landed = append(landed, n)
 		}
+		result.approval.close()
 		if err != nil {
 			ui.Error("%v", err)
 			ui.Info("rebase queue stopped at %s — %d landed, the rest left untouched", n, len(landed))

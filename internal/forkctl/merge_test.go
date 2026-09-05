@@ -153,7 +153,7 @@ func TestForkMergeRefusesLegacyCopiedTaskQueue(t *testing.T) {
 	writeTaskFile(t, filepath.Join(ws, tasks.TasksRoot, tasks.StateTodo, "copied", "task.md"), "# Copied task\n")
 	parentBefore := gitOut(repo, "rev-parse", "HEAD")
 	c := &Control{cfg: &config.Config{RepoOverride: repo}}
-	landed, err := c.mergeOne(repo, "", "legacy-tasks", false)
+	landed, err := mergeOneForTest(t, c, repo, "", "legacy-tasks", false)
 	if err == nil || landed || !strings.Contains(err.Error(), "legacy copied task queue") {
 		t.Fatalf("legacy copied queue merge = landed %v err %v", landed, err)
 	}
@@ -234,9 +234,15 @@ func TestDestroyLandedForkRechecksUnsupportedStateUnderLifecycleLock(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	c := &Control{cfg: &config.Config{}}
+	result, err := c.mergeOne(repo, "", "landed", false)
+	t.Cleanup(result.approval.close)
+	if err != nil || result.approval == nil {
+		t.Fatalf("land: %v", err)
+	}
 	raw := []byte("owner-v3\nopaque\n")
 	got := runForkCommandAcrossLockedMutation(t, repo, "landed", func() (int, error) {
-		if err := destroyLandedFork(runtime.Runtime{}, repo, "landed"); err != nil {
+		if err := destroyLandedFork(runtime.Runtime{}, repo, "landed", result.approval); err != nil {
 			return 1, err
 		}
 		return 0, nil
@@ -270,7 +276,7 @@ func TestMergeOneNoGate(t *testing.T) {
 	git(t, ws, "add", "-A")
 	git(t, ws, "commit", "-qm", "work")
 
-	landed, err := c.mergeOne(repo, "", "perf", false)
+	landed, err := mergeOneForTest(t, c, repo, "", "perf", false)
 	if err != nil || !landed {
 		t.Fatalf("mergeOne = (%v, %v), want (true, nil)", landed, err)
 	}
@@ -299,7 +305,7 @@ func TestMergeOneDoesNotInferTaskCompletionFromTrailer(t *testing.T) {
 	git(t, ws, "add", "-A")
 	git(t, ws, "commit", "-qm", "work\n\nCoop-Task: t1")
 
-	landed, err := c.mergeOne(repo, "", "perf", false)
+	landed, err := mergeOneForTest(t, c, repo, "", "perf", false)
 	if !landed || err != nil {
 		t.Fatalf("mergeOne = (%v, %v), want Git-only land", landed, err)
 	}
@@ -370,7 +376,7 @@ func prepareForkTaskCandidate(t *testing.T, name string) (string, string, string
 
 func TestMergeOneLandsExactCandidateAndCanonicalTask(t *testing.T) {
 	repo, _, root, identity, c := prepareForkTaskCandidate(t, "task-land")
-	landed, err := c.mergeOne(repo, "", identity.Name, false)
+	landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false)
 	if err != nil || !landed {
 		t.Fatalf("mergeOne = (%v, %v)", landed, err)
 	}
@@ -392,7 +398,7 @@ func TestMergeOneLandsExactCandidateAndCanonicalTask(t *testing.T) {
 func TestMergeOneReplaysCrashAfterParentFastForward(t *testing.T) {
 	repo, _, root, identity, c := prepareForkTaskCandidate(t, "task-crash")
 	c.afterLandFastForward = func() error { return errors.New("injected crash after parent fast-forward") }
-	landed, err := c.mergeOne(repo, "", identity.Name, false)
+	landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false)
 	if !landed || err == nil || !strings.Contains(err.Error(), "injected crash") {
 		t.Fatalf("first merge = (%v, %v), want landed crash", landed, err)
 	}
@@ -401,7 +407,7 @@ func TestMergeOneReplaysCrashAfterParentFastForward(t *testing.T) {
 		t.Fatalf("canonical task finalized before journal replay: %s", item.State)
 	}
 	c.afterLandFastForward = nil
-	landed, err = c.mergeOne(repo, "", identity.Name, false)
+	landed, err = mergeOneForTest(t, c, repo, "", identity.Name, false)
 	if err != nil || !landed {
 		t.Fatalf("replayed merge = (%v, %v)", landed, err)
 	}
@@ -421,7 +427,7 @@ func TestTaskCandidateMergeRecoversWhenParentMovesDuringGate(t *testing.T) {
 		git(t, repo, "commit", "-qm", "concurrent hotfix")
 		return true
 	}
-	landed, err := c.mergeOne(repo, "gate-img", identity.Name, false)
+	landed, err := mergeOneForTest(t, c, repo, "gate-img", identity.Name, false)
 	if landed || err == nil || !strings.Contains(err.Error(), "candidate restored") {
 		t.Fatalf("merge across moved parent = (%v, %v)", landed, err)
 	}
@@ -437,7 +443,7 @@ func TestTaskCandidateMergeRecoversWhenParentMovesDuringGate(t *testing.T) {
 		t.Fatalf("canonical task finalized before retry: %s", item.State)
 	}
 	c.gateOK = func(_, _, _ string) bool { return true }
-	landed, err = c.mergeOne(repo, "gate-img", identity.Name, false)
+	landed, err = mergeOneForTest(t, c, repo, "gate-img", identity.Name, false)
 	if !landed || err != nil {
 		t.Fatalf("retried merge = (%v, %v)", landed, err)
 	}
@@ -455,7 +461,7 @@ func TestTaskCandidateMergeReplaysCrashAfterRedGateRestoresWorkspace(t *testing.
 	}
 	c.gateOK = func(_, _, _ string) bool { return false }
 	c.afterLandCandidateRestore = func() error { return errors.New("injected crash after candidate restore") }
-	landed, err := c.mergeOne(repo, "gate-img", identity.Name, false)
+	landed, err := mergeOneForTest(t, c, repo, "gate-img", identity.Name, false)
 	if landed || err == nil || !strings.Contains(err.Error(), "injected crash") {
 		t.Fatalf("crashed red-gate merge = (%v, %v)", landed, err)
 	}
@@ -467,7 +473,7 @@ func TestTaskCandidateMergeReplaysCrashAfterRedGateRestoresWorkspace(t *testing.
 		t.Fatalf("restoring journal = %+v, pending=%v err=%v", intent, pending, err)
 	}
 	c.afterLandCandidateRestore = nil
-	landed, err = c.mergeOne(repo, "gate-img", identity.Name, false)
+	landed, err = mergeOneForTest(t, c, repo, "gate-img", identity.Name, false)
 	if landed || err == nil || !strings.Contains(err.Error(), "candidate restored") {
 		t.Fatalf("restored red-gate replay = (%v, %v)", landed, err)
 	}
@@ -479,7 +485,7 @@ func TestTaskCandidateMergeReplaysCrashAfterRedGateRestoresWorkspace(t *testing.
 		t.Fatalf("red-gate replay finalized canonical task: %s", item.State)
 	}
 	c.gateOK = func(_, _, _ string) bool { return true }
-	landed, err = c.mergeOne(repo, "gate-img", identity.Name, false)
+	landed, err = mergeOneForTest(t, c, repo, "gate-img", identity.Name, false)
 	if !landed || err != nil {
 		t.Fatalf("green retry after restored red gate = (%v, %v)", landed, err)
 	}
@@ -518,7 +524,7 @@ func TestMergeOneRebasesNamedBranch(t *testing.T) {
 	git(t, ws, "add", "-A")
 	git(t, ws, "commit", "-qm", "stray work")
 
-	landed, err := c.mergeOne(repo, "", "perf", false)
+	landed, err := mergeOneForTest(t, c, repo, "", "perf", false)
 	if err != nil || !landed {
 		t.Fatalf("mergeOne = (%v, %v), want (true, nil) — it must rebase the named branch", landed, err)
 	}
@@ -551,7 +557,7 @@ func TestMergeOneConflictRollsBack(t *testing.T) {
 	}
 	git(t, repo, "commit", "-aqm", "parent edit")
 
-	landed, err := c.mergeOne(repo, "", "a", false)
+	landed, err := mergeOneForTest(t, c, repo, "", "a", false)
 	if landed || err == nil {
 		t.Fatalf("mergeOne = (%v, %v), want (false, error)", landed, err)
 	}
@@ -571,7 +577,7 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 	t.Run("abandoned worktree recovers and the fork lands", func(t *testing.T) {
 		repo, ws := forkWithInterruptedRebase(t)
 		c := &Control{cfg: &config.Config{}}
-		landed, err := c.mergeOne(repo, "", "perf", false)
+		landed, err := mergeOneForTest(t, c, repo, "", "perf", false)
 		if !landed || err != nil {
 			t.Fatalf("mergeOne over leftover rebase state = (%v, %v), want the merge to recover and land", landed, err)
 		}
@@ -732,7 +738,7 @@ func TestMergeOneAbortsWhenParentMovesDuringGate(t *testing.T) {
 		git(t, repo, "commit", "-qm", "concurrent hotfix")
 		return true
 	}
-	landed, err := c.mergeOne(repo, "gate-img", "perf", false)
+	landed, err := mergeOneForTest(t, c, repo, "gate-img", "perf", false)
 	if landed || err == nil {
 		t.Fatalf("mergeOne = (%v, %v), want abort — the parent moved during the gate", landed, err)
 	}
@@ -764,7 +770,7 @@ func TestMergeOneGateFailLeavesParentUntouched(t *testing.T) {
 	git(t, ws, "add", "-A")
 	git(t, ws, "commit", "-qm", "fork work")
 	c.gateOK = func(_, _, _ string) bool { return false } // red gate
-	landed, err := c.mergeOne(repo, "gate-img", "perf", false)
+	landed, err := mergeOneForTest(t, c, repo, "gate-img", "perf", false)
 	if landed || err == nil {
 		t.Fatalf("mergeOne = (%v, %v), want a gate failure", landed, err)
 	}
@@ -796,7 +802,7 @@ func TestMergeOneGatePassLands(t *testing.T) {
 	git(t, ws, "add", "-A")
 	git(t, ws, "commit", "-qm", "fork work")
 	c.gateOK = func(_, _, _ string) bool { return true } // green gate
-	landed, err := c.mergeOne(repo, "gate-img", "perf", false)
+	landed, err := mergeOneForTest(t, c, repo, "gate-img", "perf", false)
 	if !landed || err != nil {
 		t.Fatalf("mergeOne = (%v, %v), want (true, nil)", landed, err)
 	}
@@ -822,14 +828,14 @@ func TestMergeOnePolicyForce(t *testing.T) {
 	git(t, ws, "commit", "-qm", "leak")
 
 	// Without --force the policy guard blocks the secret-like file.
-	if landed, err := c.mergeOne(repo, "", "leak", false); landed || err == nil {
+	if landed, err := mergeOneForTest(t, c, repo, "", "leak", false); landed || err == nil {
 		t.Fatalf("mergeOne(force=false) = (%v, %v), want blocked", landed, err)
 	}
 	if pathExists(filepath.Join(repo, ".env")) {
 		t.Fatal(".env landed despite the policy block")
 	}
 	// With --force it lands.
-	if landed, err := c.mergeOne(repo, "", "leak", true); !landed || err != nil {
+	if landed, err := mergeOneForTest(t, c, repo, "", "leak", true); !landed || err != nil {
 		t.Fatalf("mergeOne(force=true) = (%v, %v), want landed", landed, err)
 	}
 	if !pathExists(filepath.Join(repo, ".env")) {
@@ -894,7 +900,7 @@ func TestMergeOneIgnoresForkBooby(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "PWNED")
 	plantForkBooby(t, ws, marker)
 
-	landed, err := c.mergeOne(repo, "", "evil", false)
+	landed, err := mergeOneForTest(t, c, repo, "", "evil", false)
 	if err != nil || !landed {
 		t.Fatalf("mergeOne = (%v, %v), want landed", landed, err)
 	}
@@ -1099,15 +1105,14 @@ func TestForkMergeAllRefusesWithoutApproval(t *testing.T) {
 		}
 	}
 	c := &Control{cfg: &config.Config{}}
-	// Non-interactive stdin (go test) with yes=false → approve() returns false → bulk land is a
-	// no-op. Without the gate this path would fetch, land, and DELETE every fork unattended.
+	// Non-interactive stdin without --yes must fail before fetch, land or deletion.
 	names, err := forkspace.Names(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	code, err := c.forkMergeAll(repo, names, "", false, false)
-	if err != nil || code != 0 {
-		t.Fatalf("forkMergeAll = (%d, %v), want (0, nil)", code, err)
+	if err == nil || code != 2 {
+		t.Fatalf("forkMergeAll = (%d, %v), want explicit refusal", code, err)
 	}
 	for _, n := range []string{"a", "b"} {
 		if !pathExists(forkspace.Workspace(repo, n)) {
@@ -1228,7 +1233,7 @@ func TestMergeNeutralizesForkDrivers(t *testing.T) {
 	_ = os.Remove(marker)
 
 	// The land rebase must NOT fire it.
-	landed, err := c.mergeOne(repo, "", "drv", false)
+	landed, err := mergeOneForTest(t, c, repo, "", "drv", false)
 	if err != nil || !landed {
 		t.Fatalf("mergeOne = (%v, %v), want landed", landed, err)
 	}
