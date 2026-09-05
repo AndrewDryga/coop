@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Worker command receipts are written whole or not at all.** The outbound worker publishes each
+  command receipt from a fsynced temporary file with an exclusive link, so a crash mid-write can no
+  longer leave a truncated receipt that every later poll fails to decode, wedging the worker.
+
 - **Checkpoint restores refuse the Git directory.** A workspace checkpoint whose member path has a
   `.git` component (any case) is rejected by the manifest decoder, and the restore writer also
   refuses it and any symlinked parent inside the workspace before creating anything, so a forged

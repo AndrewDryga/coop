@@ -91,23 +91,36 @@ func (j *journal) begin(command workerproto.Command) (journalEntry, error) {
 	if err != nil {
 		return journalEntry{}, fmt.Errorf("encode worker command receipt: %w", err)
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		return j.begin(command)
-	}
+	// Write the receipt beside its final name and publish it with an exclusive hard link: a crash
+	// mid-write then leaves an unnamed temp file, never a truncated receipt that every later poll
+	// would fail to decode and so never poll again. The link keeps the create-exclusive semantics —
+	// a sibling that published first wins and is re-read above.
+	temporary, err := os.CreateTemp(j.dir, ".command-receipt-*")
 	if err != nil {
 		return journalEntry{}, fmt.Errorf("create worker command receipt: %w", err)
 	}
-	if _, err := file.Write(encoded); err != nil {
-		_ = file.Close()
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return journalEntry{}, fmt.Errorf("protect worker command receipt: %w", err)
+	}
+	if _, err := temporary.Write(encoded); err != nil {
+		_ = temporary.Close()
 		return journalEntry{}, fmt.Errorf("write worker command receipt: %w", err)
 	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
 		return journalEntry{}, fmt.Errorf("sync worker command receipt: %w", err)
 	}
-	if err := file.Close(); err != nil {
+	if err := temporary.Close(); err != nil {
 		return journalEntry{}, fmt.Errorf("close worker command receipt: %w", err)
+	}
+	if err := os.Link(temporaryPath, path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return j.begin(command)
+		}
+		return journalEntry{}, fmt.Errorf("publish worker command receipt: %w", err)
 	}
 	if err := syncDir(j.dir); err != nil {
 		return journalEntry{}, err
