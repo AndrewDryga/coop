@@ -8,10 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -250,6 +253,88 @@ type forkCommandResult struct {
 	err  error
 }
 
+func TestForkLifecycleMutationWaitsForCommandPreflight(t *testing.T) {
+	repo := t.TempDir()
+	synctest.Test(t, func(t *testing.T) {
+		// An unrelated lock waiter must not satisfy the command's barrier.
+		unlockOther, err := forkspace.LockState(repo, "other")
+		if err != nil {
+			t.Fatal(err)
+		}
+		otherDone := make(chan struct{})
+		defer func() {
+			unlockOther()
+			<-otherDone
+		}()
+		go func() {
+			defer close(otherDone)
+			unlock, err := forkspace.LockState(repo, "other")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			unlock()
+		}()
+		synctest.Wait()
+		var preflightComplete atomic.Bool
+		got := runForkCommandAcrossLockedMutation(t, repo, "delayed", func() (int, error) {
+			// Virtual time deterministically exceeds the old helper's 80 ms guess.
+			time.Sleep(150 * time.Millisecond)
+			preflightComplete.Store(true)
+			unlock, err := forkspace.LockState(repo, "delayed")
+			if err != nil {
+				return -1, err
+			}
+			unlock()
+			return 17, nil
+		}, func() {
+			if !preflightComplete.Load() {
+				t.Error("lifecycle mutation ran before the command completed preflight")
+			}
+		})
+		if got.code != 17 || got.err != nil {
+			t.Fatalf("command result = %+v, want the completed lock-protected command", got)
+		}
+	})
+}
+
+func forkLifecycleTestStacks() []byte {
+	for size := 64 << 10; ; size *= 2 {
+		buf := make([]byte, size)
+		if n := goruntime.Stack(buf, true); n < len(buf) {
+			return buf[:n]
+		}
+	}
+}
+
+// Entering LockStateContext proves that the command completed its unlocked
+// preflight. Elapsed time cannot prove that, and another goroutine's lock wait
+// is irrelevant, so require both frames in the same stack.
+// Callers must remain nonparallel: the frame identifies the helper, not an invocation.
+func waitForForkCommandLock(t *testing.T, result <-chan forkCommandResult) {
+	t.Helper()
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		stacks := forkLifecycleTestStacks()
+		for _, stack := range bytes.Split(stacks, []byte("\n\n")) {
+			if bytes.Contains(stack, []byte("internal/forkspace.LockStateContext(")) &&
+				bytes.Contains(stack, []byte("internal/cli.runForkCommandAcrossLockedMutation.func")) {
+				return
+			}
+		}
+		select {
+		case got := <-result:
+			t.Fatalf("fork command bypassed lifecycle lock: (%d, %v)", got.code, got.err)
+		case <-deadline.C:
+			t.Fatalf("fork command never entered the held lifecycle lock\n%s", stacks)
+		case <-ticker.C:
+		}
+	}
+}
+
 func runForkCommandAcrossLockedMutation(t *testing.T, repo, name string, command func() (int, error), mutate func()) forkCommandResult {
 	t.Helper()
 	unlock, err := forkspace.LockState(repo, name)
@@ -268,11 +353,7 @@ func runForkCommandAcrossLockedMutation(t *testing.T, repo, name string, command
 		code, err := command()
 		result <- forkCommandResult{code: code, err: err}
 	}()
-	select {
-	case got := <-result:
-		t.Fatalf("fork command bypassed lifecycle lock: (%d, %v)", got.code, got.err)
-	case <-time.After(80 * time.Millisecond):
-	}
+	waitForForkCommandLock(t, result)
 	mutate()
 	unlock()
 	locked = false
@@ -280,7 +361,7 @@ func runForkCommandAcrossLockedMutation(t *testing.T, repo, name string, command
 	case got := <-result:
 		return got
 	case <-time.After(2 * time.Second):
-		t.Fatal("fork command remained blocked after lifecycle unlock")
+		t.Fatalf("fork command remained blocked after lifecycle unlock\n%s", forkLifecycleTestStacks())
 		return forkCommandResult{}
 	}
 }
