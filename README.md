@@ -966,8 +966,10 @@ coop sessions doctor --json
 
 It exposes strict HTTP/JSON over an owner-only Unix socket, never TCP. One session owns one
 generated fork, a persistent FIFO of turns, private provider/ACP state, structured change
-inspection, a read-only review, non-destructive close, and explicit two-step discard. Each turn
-starts a boxed ACP child and tears it down before parking, so an idle conversation consumes no box.
+inspection, a read-only review, non-destructive close, and explicit two-step discard. By default,
+each turn starts a boxed ACP child and tears it down before parking, so an idle conversation consumes
+no box. Policies with `warm_idle_timeout` can instead prepare the authenticated child before the first
+turn and retain it between turns; see the [session lifecycle](docs/session-api.md#lifecycle).
 
 Older databases may contain full prompt copies in successful turn retry receipts. During a
 maintenance window, stop the controller and compact those receipts with an explicit new backup:

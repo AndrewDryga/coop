@@ -2148,8 +2148,8 @@ func validateWorkspaceTaskBinding(binding WorkspaceTaskBinding) error {
 // still marked delivered, or delivered but still on the limited rung.
 //
 // resetNativeSession drops the bound native session id. The caller decides, because only it knows
-// the target grammar: a rung on the same provider keeps its transcript, but a cross-provider hop
-// must clear it — the new provider's adapter cannot load the old one's session, so every later
+// the target grammar: a rung on the same provider and account keeps its transcript, but changing
+// either must clear it — the new target cannot load the old account's session, so every later
 // session/load would fail against an id that outlived its store.
 func (s *Store) RotateTurnTarget(ctx context.Context, sessionID, turnID, from, to string, resetNativeSession bool) (Session, Turn, error) {
 	if sessionID == "" || turnID == "" ||

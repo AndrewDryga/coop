@@ -119,9 +119,10 @@ policy edit cannot orphan the workspaces its old sessions own.
 
 A rotation is durable. `target` on the session becomes the rung now in use, and a
 `session.target_rotated` event carries `from`, `to`, and `native_session_reset`. The last is what a
-client needs to know: a rung on the same provider keeps the conversation, but a cross-provider hop
-drops the native transcript, because the new provider cannot load the previous one's session. A
-client that wants continuity across a hop re-seeds it from its own durable context.
+client needs to know: model or effort changes on the same provider and credential account preserve
+the native session. Changing either the provider or account clears the native-session binding,
+because the new target cannot load the previous account's session. A client that wants continuity
+across that reset re-seeds it from its own durable context.
 
 ### Starting above the first rung
 
@@ -171,8 +172,8 @@ curl --unix-socket "$SOCKET" \
 
 The turn starts on rung zero before any provider receives the prompt. The move becomes the
 session's durable target and publishes the ordinary `session.target_rotated` event; a
-cross-provider rewind clears the previous provider's native transcript. The field governs one
-admission decision and cannot be combined with a positive `min_target_index`. Omitting it preserves
+rewind that changes provider or account clears the previous native-session binding. The field governs
+one admission decision and cannot be combined with a positive `min_target_index`. Omitting it preserves
 the existing behavior and request hash.
 
 A rejection that is not a rate limit still fails the turn as `acp_protocol_error`, but its detail
