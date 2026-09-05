@@ -2,7 +2,7 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, moves workspaces only as digest-verified bounded bundles, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go, internal/sessionsvc/worker_connector_test.go, docs/worker.md, docs/examples/worker.json]
+sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go, internal/sessionsvc/worker_connector_test.go, docs/worker.md, docs/examples/worker.json]
 updated: 2026-09-06
 ---
 
@@ -14,6 +14,11 @@ and never listens on TCP or accepts a shell command (`internal/cli/worker_cmd.go
 
 The traps the code does not make obvious:
 
+- **Redirects are not controller authority.** The shared production identity-client factory
+  removes response Location before Go's client can parse or follow it, including malformed URLs
+  that otherwise leak into errors before CheckRedirect. The original status and body remain for
+  bounded handling; same-origin redirects are refused too. Enrollment, renewal, polls and every
+  artifact/checkpoint transfer use that factory; a failed poll preserves receipt/cursor custody.
 - **Enrollment is not restart.** Identity begins absent, is generated privately and consumes its
   bootstrap token only after publication. Every restart must retain both identity and the entire
   journal, not only command receipts. A malformed/expired identity never falls back to enrollment.
@@ -58,6 +63,8 @@ The traps the code does not make obvious:
   controller redelivers.
 
 ## Changelog
+- 2026-09-06 — reproduced TLS enrollment redirecting a synthetic token to plaintext, then fenced
+  the shared identity-client factory; exercised every transport operation and retained poll custody.
 - 2026-09-06 — added operator enrollment/recovery guide and real TLS/Unix integration with
   identity persistence, command redelivery, ACK-before-completion and event replay/ACK checks.
 - 2026-09-05 — restored async-create activity through real service/Unix API ACK-before-completion and

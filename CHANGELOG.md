@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Worker enrollment, renewal, polling and artifact transfers now refuse HTTP redirects, including
+  same-origin redirects, so credentials and command data stay on their exact configured API routes.
+
 - Added a validated worker configuration example and enrollment/recovery guide. Integration tests
   now cover TLS enrollment and saved identity reload together with real Unix-API asynchronous
   creation, receipt redelivery and durable event acknowledgements.

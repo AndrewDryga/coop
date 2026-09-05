@@ -41,6 +41,9 @@ The format is strict JSON: no comments, unknown fields, trailing documents or en
 expansion. Use literal absolute paths, not `~` or `$HOME` in JSON. In particular:
 
 - `responder_url` is the controller's HTTPS origin, without an API endpoint, query or fragment.
+  Serve its worker API routes directly, or rewrite internally at your proxy. The connector refuses
+  HTTP redirects, including same-origin redirects; it does not forward credentials or transfer
+  bytes to a redirect destination.
 - `ca_file` contains exactly one trusted CA certificate in PEM format.
 - `enrollment_token_file` is an owner-private regular file, at most 128 bytes. Its token must be
   32–128 bytes with no embedded whitespace. Obtain it through your controller's enrollment process;

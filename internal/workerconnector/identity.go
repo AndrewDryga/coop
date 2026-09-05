@@ -253,7 +253,20 @@ func (m *identityManager) httpClient(certificate *tls.Certificate) *http.Client 
 		tlsConfig.Certificates = []tls.Certificate{*certificate}
 	}
 	transport.TLSClientConfig = tlsConfig
-	return &http.Client{Timeout: m.config.timeout, Transport: transport}
+	return &http.Client{Timeout: m.config.timeout, Transport: workerRoundTripper{transport}}
+}
+
+type workerRoundTripper struct{ *http.Transport }
+
+func (t workerRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := t.Transport.RoundTrip(request)
+	if response != nil {
+		// Fixed API responses never authorize navigation. Client parses Location
+		// before CheckRedirect, leaking malformed values into errors; remove it
+		// first so callers receive only the original bounded status and body.
+		response.Header.Del("Location")
+	}
+	return response, err
 }
 
 func validateIdentityCertificate(certificate tls.Certificate, roots *x509.CertPool, workerID string, now time.Time) (*x509.Certificate, error) {
