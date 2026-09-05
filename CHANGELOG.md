@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Update the indirect `golang.org/x/text` dependency to v0.39.0 for
+  [GO-2026-5970](https://pkg.go.dev/vuln/GO-2026-5970).
+
 - `coop context --task` rejects ambiguous task IDs across queues and accepts repeatable `--tasks`
   selectors. Invalid task selection fails before collecting Git changes or printing context.
 
