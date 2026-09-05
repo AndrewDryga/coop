@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -249,41 +250,81 @@ func TestCommandSettlementKeepsItsWireBudgetAheadOfActivity(t *testing.T) {
 }
 
 func TestEventStreamScanGivesEveryBoundSessionAChanceToPublish(t *testing.T) {
-	now := time.Date(2026, 9, 4, 18, 0, 0, 0, time.UTC)
-	api := &multiEventAPI{events: map[string][]workerproto.SessionEvent{}}
-	executor, err := NewExecutor(ExecutorConfig{
-		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for index := 0; index < 101; index++ {
-		sessionRef := fmt.Sprintf("fair-session-%03d", index)
-		coopSessionID := fmt.Sprintf("coop-session-%03d", index)
-		if err := executor.journal.writeEventStream(executor.journal.eventStreamPath(sessionRef), eventStream{
-			Version: eventStreamVersion, SessionRef: sessionRef, PlacementGeneration: 1, CoopSessionID: coopSessionID,
-		}); err != nil {
+	// Exercise the event cap independently of filesystem throughput. The scan's
+	// deadline is tested separately with an API that waits for cancellation.
+	synctest.Test(t, func(t *testing.T) {
+		now := time.Date(2026, 9, 4, 18, 0, 0, 0, time.UTC)
+		api := &multiEventAPI{events: map[string][]workerproto.SessionEvent{}}
+		executor, err := NewExecutor(ExecutorConfig{
+			API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
+		})
+		if err != nil {
 			t.Fatal(err)
 		}
-		api.events[coopSessionID] = []workerproto.SessionEvent{{
-			ID: "evt-1", SessionID: coopSessionID, Sequence: 1,
-			Type: "model.thought", Version: 1, OccurredAt: now,
-		}}
-	}
-	first := executor.pendingEventBatches(context.Background(), maximumPollBytes)
-	if len(first) != 100 {
-		t.Fatalf("first scan batches = %d", len(first))
-	}
-	if first[0].SessionRef != "fair-session-000" || first[99].SessionRef != "fair-session-099" {
-		t.Fatalf("first scan bounds = %q..%q", first[0].SessionRef, first[99].SessionRef)
-	}
-	second := executor.pendingEventBatches(context.Background(), maximumPollBytes)
-	if len(second) != 100 {
-		t.Fatalf("second scan batches = %d", len(second))
-	}
-	if second[0].SessionRef != "fair-session-100" {
-		t.Fatalf("rotated scan did not reach the late session: %+v", second)
-	}
+		for index := 0; index < 101; index++ {
+			sessionRef := fmt.Sprintf("fair-session-%03d", index)
+			coopSessionID := fmt.Sprintf("coop-session-%03d", index)
+			if err := executor.journal.writeEventStream(executor.journal.eventStreamPath(sessionRef), eventStream{
+				Version: eventStreamVersion, SessionRef: sessionRef, PlacementGeneration: 1, CoopSessionID: coopSessionID,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			api.events[coopSessionID] = []workerproto.SessionEvent{{
+				ID: "evt-1", SessionID: coopSessionID, Sequence: 1,
+				Type: "model.thought", Version: 1, OccurredAt: now,
+			}}
+		}
+		first := executor.pendingEventBatches(context.Background(), maximumPollBytes)
+		if len(first) != 100 {
+			t.Fatalf("first scan batches = %d", len(first))
+		}
+		if first[0].SessionRef != "fair-session-000" || first[99].SessionRef != "fair-session-099" {
+			t.Fatalf("first scan bounds = %q..%q", first[0].SessionRef, first[99].SessionRef)
+		}
+		second := executor.pendingEventBatches(context.Background(), maximumPollBytes)
+		if len(second) != 100 {
+			t.Fatalf("second scan batches = %d", len(second))
+		}
+		if second[0].SessionRef != "fair-session-100" {
+			t.Fatalf("rotated scan did not reach the late session: %+v", second)
+		}
+	})
+}
+
+func TestEventStreamScanDeadlinePreservesRotation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		api := &blockedEventAPI{}
+		executor, err := NewExecutor(ExecutorConfig{
+			API: api, JournalDir: t.TempDir(), Now: time.Now, WorkerID: "worker-a",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{"session-a", "session-b"} {
+			if err := executor.journal.writeEventStream(executor.journal.eventStreamPath(id), eventStream{
+				Version: eventStreamVersion, SessionRef: id, PlacementGeneration: 1, CoopSessionID: id,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for index, id := range []string{"session-a", "session-b"} {
+			start := time.Now()
+			if batches := executor.pendingEventBatches(context.Background(), maximumPollBytes); len(batches) != 0 {
+				t.Fatalf("blocked scan returned batches: %+v", batches)
+			}
+			if elapsed := time.Since(start); elapsed != maximumEventDelay {
+				t.Fatalf("scan deadline = %s, want %s", elapsed, maximumEventDelay)
+			}
+			if len(api.sessions) != index+1 || api.sessions[index] != id {
+				t.Fatalf("scan did not resume after timed-out session: %v", api.sessions)
+			}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if batches := executor.pendingEventBatches(ctx, maximumPollBytes); len(batches) != 0 || len(api.sessions) != 2 {
+			t.Fatalf("cancelled scan read activity: batches=%v calls=%v", batches, api.sessions)
+		}
+	})
 }
 
 func TestConnectorRunRetriesTransportFailureWithoutDroppingCustody(t *testing.T) {
@@ -340,6 +381,17 @@ type eventAPI struct {
 type multiEventAPI struct {
 	fakeAPI
 	events map[string][]workerproto.SessionEvent
+}
+
+type blockedEventAPI struct {
+	fakeAPI
+	sessions []string
+}
+
+func (f *blockedEventAPI) ListEvents(ctx context.Context, sessionID string, _ int64, _ int) ([]workerproto.SessionEvent, error) {
+	f.sessions = append(f.sessions, sessionID)
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func (f *multiEventAPI) ListEvents(_ context.Context, sessionID string, after int64, limit int) ([]workerproto.SessionEvent, error) {
