@@ -232,6 +232,14 @@ func Load(repo, globalDir, name string) (*Preset, error) {
 	if err != nil {
 		return nil, fmt.Errorf("no preset %q — expected it under %s (create the folder with a preset.yaml; see 'coop help presets')", name, strings.Join(roots(repo, globalDir), " or "))
 	}
+	dir := filepath.Dir(path)
+	return loadPreset(name, dir, data, func(rel string) ([]byte, error) {
+		return os.ReadFile(filepath.Join(dir, rel))
+	})
+}
+
+// Scaffold shares validation while reading from its pinned, unpublished bundle.
+func loadPreset(name, dir string, data []byte, readFile func(string) ([]byte, error)) (*Preset, error) {
 	var y yamlPreset
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
@@ -239,17 +247,18 @@ func Load(repo, globalDir, name string) (*Preset, error) {
 		return nil, fmt.Errorf("preset %s: malformed YAML: %v", name, err)
 	}
 
-	p := &Preset{Name: name, Dir: filepath.Dir(path)}
+	p := &Preset{Name: name, Dir: dir}
 	bad := func(format string, a ...any) error {
 		return fmt.Errorf("preset %s: %s", name, fmt.Sprintf(format, a...))
 	}
 
 	// Lead. agent: is a TARGET or a target ladder; its model+account stay on the target.
+	var err error
 	p.LeadTargets, err = leadTargets(&y.Lead.Agent)
 	if err != nil {
 		return nil, bad("lead.agent: %v", err)
 	}
-	if p.LeadPromptText, err = promptText(p.Dir, y.Lead.Prompt); err != nil {
+	if p.LeadPromptText, err = promptText(y.Lead.Prompt, readFile); err != nil {
 		return nil, bad("lead.prompt: %v", err)
 	}
 
@@ -260,7 +269,7 @@ func Load(repo, globalDir, name string) (*Preset, error) {
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		r, err := loadRole(p.Dir, n, y.Roles[n])
+		r, err := loadRole(n, y.Roles[n], readFile)
 		if err != nil {
 			return nil, bad("%v", err)
 		}
@@ -269,7 +278,7 @@ func Load(repo, globalDir, name string) (*Preset, error) {
 	return p, nil
 }
 
-func loadRole(dir, name string, y yamlRole) (Role, error) {
+func loadRole(name string, y yamlRole, readFile func(string) ([]byte, error)) (Role, error) {
 	r := Role{Name: name, When: y.When}
 	bad := func(format string, a ...any) error {
 		return fmt.Errorf("role %s: %s", name, fmt.Sprintf(format, a...))
@@ -352,7 +361,7 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 	}
 
 	var err error
-	if r.PromptText, err = promptText(dir, y.Prompt); err != nil {
+	if r.PromptText, err = promptText(y.Prompt, readFile); err != nil {
 		return r, bad("prompt: %v", err)
 	}
 	return r, nil
@@ -361,14 +370,14 @@ func loadRole(dir, name string, y yamlRole) (Role, error) {
 // promptText loads an optional Markdown prompt file (relative to the preset folder).
 // A declared file that doesn't exist is an error — a silent skip would quietly drop
 // the user's prompt material.
-func promptText(dir, rel string) (string, error) {
+func promptText(rel string, readFile func(string) ([]byte, error)) (string, error) {
 	if rel == "" {
 		return "", nil
 	}
 	if filepath.IsAbs(rel) || strings.Contains(rel, "..") {
 		return "", fmt.Errorf("%q must be a relative path inside the preset folder", rel)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+	data, err := readFile(filepath.FromSlash(rel))
 	if err != nil {
 		return "", fmt.Errorf("declared prompt file %q does not exist in the preset folder", rel)
 	}

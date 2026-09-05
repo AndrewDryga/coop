@@ -159,3 +159,66 @@ func TestCmdPresetsInit(t *testing.T) {
 		t.Errorf("bad init name = (%d, %v), want a refusal", code, err)
 	}
 }
+
+func TestCmdPresetsInitPreservesIncompleteDestinations(t *testing.T) {
+	for _, shape := range []string{"empty", "prompt", "file", "dangling", "external"} {
+		t.Run(shape, func(t *testing.T) {
+			repo, outside := t.TempDir(), t.TempDir()
+			dest := filepath.Join(repo, preset.Dir, "custom")
+			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			kept := dest
+			switch shape {
+			case "empty":
+				if err := os.Mkdir(dest, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case "prompt", "file":
+				if shape == "prompt" {
+					kept = filepath.Join(dest, "roles", "lead.md")
+					if err := os.MkdirAll(filepath.Dir(kept), 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.WriteFile(kept, []byte("my instructions"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "dangling", "external":
+				target := outside
+				if shape == "dangling" {
+					target = filepath.Join(outside, "absent")
+				}
+				if err := os.Symlink(target, dest); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := os.Lstat(kept)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+			out := captureStdout(t, func() {
+				code, err := a.cmdPresets([]string{"init", "custom"})
+				if code != 2 || err == nil || !strings.Contains(err.Error(), "existing files were preserved") || !strings.Contains(err.Error(), "choose another name") {
+					t.Fatalf("incomplete preset refusal = %d, %v", code, err)
+				}
+			})
+			if out != "" {
+				t.Fatalf("failed init announced success: %q", out)
+			}
+			after, err := os.Lstat(kept)
+			if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() {
+				t.Fatalf("CLI replaced existing entry: %v", err)
+			}
+			if shape == "prompt" || shape == "file" {
+				if data, err := os.ReadFile(kept); err != nil || string(data) != "my instructions" {
+					t.Fatal("CLI changed user content")
+				}
+			}
+			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+				t.Fatalf("CLI wrote outside the repository: %v, %v", entries, err)
+			}
+		})
+	}
+}

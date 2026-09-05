@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Preset initialization preserves existing prompt files and incomplete preset directories. New
+  presets publish as a complete validated bundle, with safe refusal on symlinks or concurrent creation.
+
 - Accepting a semantic candidate removes its retained input attachments. Repair attempts keep
   their inputs, and accepted output artifacts and validation receipts remain available after restart.
 

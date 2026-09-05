@@ -1,11 +1,5 @@
 package preset
 
-import (
-	"fmt"
-	"os"
-	"path/filepath"
-)
-
 // Template is the scaffolded preset — the documented frontier recipe, ready to edit:
 // a big-model lead, a native deep-thinking subagent, a read-only cross-vendor critic,
 // and a cheap write-capable delegate. Its prompt: lines are active because Scaffold
@@ -180,37 +174,4 @@ var templateFiles = []templateFile{
 	{"roles/lead.md", leadPrompt},
 	{"roles/thinker.md", thinkerPrompt},
 	{"roles/fast.md", fastPrompt},
-}
-
-// Scaffold writes the template as .agent/presets/<name>/preset.yaml plus the starter
-// prompt files it references (templateFiles: roles/lead.md, roles/fast.md) and returns
-// the preset.yaml path. It never clobbers an existing preset, and the result is guaranteed
-// to load — the referenced prompt files are written here, so the active prompt: lines
-// resolve.
-func Scaffold(repo, name string) (string, error) {
-	if !ValidName(name) {
-		return "", fmt.Errorf("invalid preset name %q — a preset is a folder name under %s/ (lowercase, no '/', '..', or leading '-')", name, Dir)
-	}
-	path := Path(repo, "", name) // scaffolding is repo-only; global authoring is by hand
-	if _, err := os.Stat(path); err == nil {
-		return "", fmt.Errorf("preset %q already exists (%s) — edit it, or pick another name", name, filepath.Join(Dir, name, "preset.yaml"))
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(path, fmt.Appendf(nil, Template, name), 0o644); err != nil {
-		return "", err
-	}
-	// The prompt files preset.yaml references, so the scaffolded preset loads as written.
-	dir := filepath.Dir(path)
-	for _, f := range templateFiles {
-		dest := filepath.Join(dir, filepath.FromSlash(f.rel))
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return "", err
-		}
-		if err := os.WriteFile(dest, []byte(f.content), 0o644); err != nil {
-			return "", err
-		}
-	}
-	return path, nil
 }
