@@ -164,7 +164,7 @@ review-writes-e2e: ## Review mount-isolation e2e (needs Docker; pulls a small te
 
 box-runtime-e2e: ## Init/reaping, signal, and entrypoint descendant-supervision contracts (set COOP_RUNTIME=docker or podman)
 	@test -n "$$COOP_RUNTIME" || { echo 'COOP_RUNTIME is required (for example: COOP_RUNTIME=docker make box-runtime-e2e)'; exit 2; }
-	@go test -tags boxruntimee2e -run '^TestRuntime(Init|Entrypoint)' -count=1 -v ./internal/box/
+	@go test -tags boxruntimee2e -run '^TestRuntime(Init|Entrypoint|Compose)' -count=1 -v ./internal/box/
 
 clean: ## Remove build artifacts
 	@rm -f coop

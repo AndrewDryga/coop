@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -32,37 +33,90 @@ func EnsureServices(rt runtime.Runtime, workspace, policyRepo string, stdout, st
 // EnsureServicesFile is the explicit-file form used by trusted review policy. The file must live
 // inside workspace; ValidateComposeFile enforces that its bind mounts cannot escape that boundary.
 func EnsureServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer) ([]string, error) {
+	started, err := startServicesFile(rt, workspace, file, stdout, stderr)
+	return started.names, err
+}
+
+type startedServices struct {
+	names []string
+	ports []ServicePort
+}
+
+func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer) (startedServices, error) {
 	if file == "" {
-		return nil, nil
+		return startedServices{}, nil
 	}
 	// coop runs this file on the HOST daemon, so validate it first: an in-box agent may author it
 	// (the compose path is no longer shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
-	if err := ValidateComposeFile(file, workspace); err != nil {
-		return nil, fmt.Errorf("refusing to run %s: %w", filepath.Base(file), err)
+	args, cleanup, err := snapshotComposeArgs(workspace, file)
+	if err != nil {
+		return startedServices{}, fmt.Errorf("refusing to run %s: %w", filepath.Base(file), err)
 	}
-	proj := ComposeProject(workspace)
-	args := []string{"compose", "-p", proj, "-f", file}
+	defer cleanup()
 	// Publish each `expose`d sidecar port to its stable per-workspace host port via a merged
 	// override (the base file's `expose` publishes nothing, so this adds the only host mapping).
-	if sp := ServicePorts(rt, workspace, file); len(sp) > 0 {
-		override, cleanup, err := writeServiceOverride(sp)
+	ports := servicePortsWithArgs(rt, workspace, args)
+	if sp := ports; len(sp) > 0 {
+		override, cleanup, err := writeServiceOverride(sp, workspace)
 		if err != nil {
-			return nil, err
+			return startedServices{}, err
 		}
 		defer cleanup()
 		args = append(args, "-f", override)
 	}
 	services, err := resolvedComposeServices(rt, args, stderr)
 	if err != nil {
-		return nil, err
+		return startedServices{}, err
 	}
 	upArgs := append(append([]string(nil), args...), "up", "-d", "--wait", "--remove-orphans")
 	if err := runCompose(rt, stdout, stderr, "up", upArgs); err != nil {
-		return nil, err
+		return startedServices{}, err
 	}
-	return services, nil
+	return startedServices{names: services, ports: ports}, nil
+}
+
+// Snapshot approved bytes outside the writable workspace. All commands in one operation use
+// this file; the explicit project directory preserves relative binds and ownership labels.
+func snapshotComposeArgs(workspace, file string) ([]string, func(), error) {
+	data, err := readValidatedCompose(file, workspace)
+	if err != nil {
+		return nil, nil, err
+	}
+	abs, err := filepath.Abs(file)
+	if err != nil {
+		return nil, nil, err
+	}
+	dir, err := privateComposeDir(workspace)
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	path := filepath.Join(dir, "compose.yml")
+	if err := os.WriteFile(path, data, 0o400); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return []string{"compose", "-p", ComposeProject(workspace),
+		"--project-directory", filepath.Dir(abs), "--env-file", os.DevNull, "-f", path}, cleanup, nil
+}
+
+func privateComposeDir(workspace string) (string, error) {
+	abs, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", err
+	}
+	repoPath, repoErr := filepath.EvalSymlinks(abs)
+	parent, parentErr := filepath.EvalSymlinks(os.TempDir())
+	rel, relErr := filepath.Rel(repoPath, parent)
+	if repoErr != nil || parentErr != nil || relErr != nil ||
+		(rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+		return "", errors.New("compose temporary directory must resolve outside the workspace — choose an external TMPDIR")
+	}
+	// Resolve before allocating: a TMPDIR alias inside the repo must not remain in any
+	// later write/read/cleanup path, even when its current target is outside the repo.
+	return os.MkdirTemp(parent, "coop-compose-")
 }
 
 func resolvedComposeServices(rt runtime.Runtime, args []string, stderr io.Writer) ([]string, error) {
@@ -102,10 +156,12 @@ func DownServicesFile(rt runtime.Runtime, workspace, file string, volumes bool, 
 	if file == "" {
 		return nil
 	}
-	if err := ValidateComposeFile(file, workspace); err != nil {
+	args, cleanup, err := snapshotComposeArgs(workspace, file)
+	if err != nil {
 		return fmt.Errorf("refusing to stop %s: %w", filepath.Base(file), err)
 	}
-	args := []string{"compose", "-p", ComposeProject(workspace), "-f", file, "down", "--remove-orphans"}
+	defer cleanup()
+	args = append(args, "down", "--remove-orphans")
 	if volumes {
 		args = append(args, "--volumes")
 	}

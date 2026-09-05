@@ -270,11 +270,15 @@ func TestEnsureServicesReturnsResolvedServiceNames(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			calls := string(data)
-			config := "compose -p " + ComposeProject(repo) + " -f " + filepath.Join(repo, ".agent", "compose.yml") + " config --services"
-			up := "compose -p " + ComposeProject(repo) + " -f " + filepath.Join(repo, ".agent", "compose.yml") + " up -d --wait --remove-orphans"
-			if i, j := strings.Index(calls, config), strings.Index(calls, up); i < 0 || j < 0 || i >= j {
-				t.Fatalf("service discovery must use the current project/file before up:\n%s", calls)
+			calls := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if len(calls) != 3 {
+				t.Fatalf("expected port discovery, service discovery and up: %s", data)
+			}
+			ports := assertComposeSnapshotCall(t, calls[0], repo, "config --format json")
+			config := assertComposeSnapshotCall(t, calls[1], repo, "config --services")
+			up := assertComposeSnapshotCall(t, calls[2], repo, "up -d --wait --remove-orphans")
+			if ports != config || config != up {
+				t.Fatalf("discovery/startup did not use one approved snapshot:\n%s", data)
 			}
 		})
 	}
@@ -356,9 +360,26 @@ func TestDownServicesUsesCurrentProjectAndVolumePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "compose -p " + ComposeProject(repo) + " -f " +
-		filepath.Join(repo, ".agent", "compose.yml") + " down --remove-orphans --volumes\n"
-	if got := string(data); got != want {
-		t.Fatalf("service cleanup call = %q, want %q", got, want)
+	assertComposeSnapshotCall(t, strings.TrimSpace(string(data)), repo, "down --remove-orphans --volumes")
+}
+
+func assertComposeSnapshotCall(t *testing.T, call, repo, action string) string {
+	t.Helper()
+	if !strings.HasSuffix(call, " "+action) {
+		t.Fatalf("missing action %q: %s", action, call)
 	}
+	base := strings.TrimSuffix(call, " "+action)
+	prefix := "compose -p " + ComposeProject(repo) + " --project-directory " +
+		filepath.Join(repo, ".agent") + " --env-file " + os.DevNull + " -f "
+	if !strings.HasPrefix(base, prefix) {
+		t.Fatalf("snapshot lost project/path/environment authority: %s", call)
+	}
+	path := strings.TrimPrefix(base, prefix)
+	if path == filepath.Join(repo, ".agent", "compose.yml") {
+		t.Fatal("runtime used mutable repository source")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("snapshot was not cleaned up: %v", err)
+	}
+	return base
 }

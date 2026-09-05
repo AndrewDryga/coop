@@ -678,6 +678,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// them all. Gated like the network join below (on the services net, online, compose-capable
 	// runtime) plus COOP_AUTO_UP. Idempotent; progress goes to stderr (never stdout, which may
 	// carry ACP/JSON) and only when not Quiet; a failure warns but never blocks the session.
+	var servicePorts []ServicePort
+	servicesInspected := false
 	if autoUpServices(cfg, spec, rt.Name) {
 		if cf := composeFile; cf != "" {
 			reviewServicesAttempted = spec.Review
@@ -690,7 +692,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// the file first, so a refusal (an unsafe compose an agent wrote) surfaces here and the
 			// session continues WITHOUT services rather than running anything host-dangerous.
 			var composeStderr bytes.Buffer
-			if _, err := EnsureServicesFile(rt, spec.Repo, cf, io.Discard, &composeStderr); err != nil {
+			servicesInspected = true
+			started, err := startServicesFile(rt, spec.Repo, cf, io.Discard, &composeStderr)
+			if err != nil {
 				if spec.Review {
 					detail := strings.TrimSpace(composeStderr.String())
 					if detail != "" {
@@ -699,6 +703,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 					return finish(-1, fmt.Errorf("start review services: %w", err))
 				}
 				ui.Info("services: %v — continuing without them (run 'coop up' to retry)", err)
+			} else {
+				servicePorts = started.ports
 			}
 		}
 	}
@@ -714,7 +720,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// the services may already be running from `coop up`. Best-effort; no sidecars → nothing added.
 	if cfg.Egress == "open" && spec.Network && rt.Name != "container" {
 		if cf := composeFile; cf != "" {
-			if svc := ServicePorts(rt, spec.Repo, cf); len(svc) > 0 {
+			if !servicesInspected {
+				servicePorts = ServicePorts(rt, spec.Repo, cf)
+			}
+			if svc := servicePorts; len(svc) > 0 {
 				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_FORWARD="+forwardEnv(svc))
 				for _, p := range svc {
 					spec.ExtraArgs = append(spec.ExtraArgs, "-e",

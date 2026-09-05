@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Sibling services now reject host environment imports and implicit all-interface port publishing.
+  Discovery and startup share a validated private Compose snapshot, preserving relative binds and
+  escaped container variables without rereading agent-edited configuration.
+
 - **The opt-in live provider probes work again.** `make provider-live-e2e` and the resume, loop,
   consult, and ACP live targets had failed in their harness phase since the configuration file
   became mandatory, because the empty `coop.conf` the process harness creates lived inside the

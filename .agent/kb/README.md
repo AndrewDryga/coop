@@ -62,6 +62,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [box-host-port-window-is-contended](box-host-port-window-is-contended.md) — coop's deterministic serve host ports sit inside the OS ephemeral range, so any process can be holding one; publishing is best-effort and a test must never claim one for real
 - [host-disk-exhaustion-stops-the-runtime](host-disk-exhaustion-stops-the-runtime.md) — a host out of disk OR memory stops the container runtime mid-run and surfaces as unexplained "unexpected EOF" failures; prune alone never returns the space
 - [services-teardown-needs-the-workspace](services-teardown-needs-the-workspace.md) — sibling services persist across boxes on purpose, but teardown reads the workspace's compose file, so stopping them after deleting the workspace does nothing
+- [compose-host-authority](compose-host-authority.md) — sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 - [credentials-expired-is-a-false-alarm](credentials-expired-is-a-false-alarm.md) — refreshable OAuth stays signed in; re-login required means the stored login cannot recover
 - [credential-presence-is-adapter-declared](credential-presence-is-adapter-declared.md) — adapters own credential presence, selected env authority, and inspectable stored readiness
 - [mcp-authority-projection](mcp-authority-projection.md) — one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope

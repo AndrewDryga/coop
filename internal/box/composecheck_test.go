@@ -39,10 +39,9 @@ volumes:
     image: postgres:18
     ports: ["127.0.0.1:5432:5432"]
 `,
-		"container-only port + expose": `services:
+		"container-only expose": `services:
   db:
     image: postgres:18
-    ports: ["5432"]
     expose: ["5432"]
 `,
 		"repo-relative bind": `services:

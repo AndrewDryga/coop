@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,9 +32,21 @@ type ServicePort struct {
 // `expose` (not `ports`) is the opt-in marker: it publishes nothing on its own, so coop's override
 // adds the only host mapping (no double-publish).
 func ServicePorts(rt runtime.Runtime, workspacePath, composeFile string) []ServicePort {
+	if composeFile == "" {
+		return nil
+	}
+	args, cleanup, err := snapshotComposeArgs(workspacePath, composeFile)
+	if err != nil {
+		return nil
+	}
+	defer cleanup()
+	return servicePortsWithArgs(rt, workspacePath, args)
+}
+
+func servicePortsWithArgs(rt runtime.Runtime, workspacePath string, args []string) []ServicePort {
 	var buf bytes.Buffer
-	code, err := rt.Run(nil, &buf, io.Discard, "compose", "-f", composeFile, "config", "--format", "json")
-	if err != nil || code != 0 {
+	configArgs := append(append([]string(nil), args...), "config", "--format", "json")
+	if err := runCompose(rt, &buf, io.Discard, "config --format json", configArgs); err != nil {
 		return nil
 	}
 	return parseServicePorts(buf.Bytes(), workspacePath)
@@ -86,7 +99,7 @@ func parseServicePorts(configJSON []byte, workspacePath string) []ServicePort {
 // writeServiceOverride writes a temp compose override publishing each ServicePort to
 // 127.0.0.1:<HostPort>:<ContainerPort>, and returns its path + a cleanup func. Merged as a second
 // `-f`, it adds the loopback host mapping the base file's `expose` deliberately left off.
-func writeServiceOverride(sp []ServicePort) (path string, cleanup func(), err error) {
+func writeServiceOverride(sp []ServicePort, workspace string) (path string, cleanup func(), err error) {
 	bySvc := map[string][]ServicePort{}
 	var order []string
 	for _, p := range sp {
@@ -103,17 +116,17 @@ func writeServiceOverride(sp []ServicePort) (path string, cleanup func(), err er
 			fmt.Fprintf(&b, "      - \"127.0.0.1:%d:%d\"\n", p.HostPort, p.ContainerPort)
 		}
 	}
-	f, err := os.CreateTemp("", "coop-compose-override-*.yml")
+	dir, err := privateComposeDir(workspace)
 	if err != nil {
 		return "", nil, err
 	}
-	if _, err := f.WriteString(b.String()); err != nil {
-		f.Close()
-		os.Remove(f.Name())
+	cleanup = func() { _ = os.RemoveAll(dir) }
+	path = filepath.Join(dir, "coop-compose-override-ports.yml")
+	if err := os.WriteFile(path, []byte(b.String()), 0o400); err != nil {
+		cleanup()
 		return "", nil, err
 	}
-	f.Close()
-	return f.Name(), func() { os.Remove(f.Name()) }, nil
+	return path, cleanup, nil
 }
 
 // forwardEnv renders the COOP_FORWARD value coop-entry consumes: "<hostPort>:<service>:<containerPort>"

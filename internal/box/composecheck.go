@@ -1,10 +1,14 @@
 package box
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,20 +25,77 @@ import (
 // (privileged, cap_add, devices, security_opt, userns_mode, pid/ipc/network_mode, env_file,
 // secrets, configs, build, extends, include, a volume's driver_opts, …) is rejected because it
 // is simply absent from the structs — a deny-by-construction that also covers directives compose
-// hasn't invented yet. Only three value checks remain for the fields we DO allow: bind sources
-// must stay within the repo (symlinks resolved), published ports must bind loopback only, and
-// neither may carry a `$` (the file is validated PRE-interpolation, so `${HOME}/.ssh` would read
-// in-repo here yet escape once compose expands it).
+// hasn't invented yet. Values cannot import the host environment, bind sources must stay in
+// the repo, and every published port must explicitly bind loopback.
 func ValidateComposeFile(path, repoRoot string) error {
-	data, err := os.ReadFile(path)
+	_, err := readValidatedCompose(path, repoRoot)
+	return err
+}
+
+const maxComposeFileBytes = 1 << 20
+
+func readValidatedCompose(path, repoRoot string) ([]byte, error) {
+	repo, err := filepath.Abs(repoRoot)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(repo, abs)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	// Nonblocking open lets us reject a FIFO before reading it, even if the source changes
+	// after path inspection. Rooted traversal also refuses out-of-repository symlinks.
+	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("compose source must be a regular file")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxComposeFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxComposeFileBytes {
+		return nil, errors.New("compose source exceeds 1 MiB")
+	}
+	if err := validateComposeData(data, abs, repo); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func validateComposeData(data []byte, path, repoRoot string) error {
 	var doc composeDoc
-	dec := yaml.NewDecoder(strings.NewReader(string(data)))
-	dec.KnownFields(true) // an unknown key (privileged, build, env_file, …) fails the decode
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
 	if err := dec.Decode(&doc); err != nil {
 		return fmt.Errorf("not a plain sibling-services compose file (only image/environment/ports/volumes/healthcheck-style keys are allowed): %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("compose source must contain exactly one YAML document")
+	}
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
+		return err
+	}
+	if err := checkComposeValues(&node, make(map[*yaml.Node]bool)); err != nil {
+		return err
 	}
 	composeDir := filepath.Dir(path)
 	realRepo, err := resolveExisting(repoRoot)
@@ -44,6 +105,9 @@ func ValidateComposeFile(path, repoRoot string) error {
 	for name, svc := range doc.Services {
 		if strings.TrimSpace(svc.Image) == "" {
 			return fmt.Errorf("service %q: an image is required (build: is not allowed — publish a pre-built image)", name)
+		}
+		if err := checkComposeEnvironment(name, svc.Environment); err != nil {
+			return err
 		}
 		for _, p := range svc.Ports {
 			if err := checkPort(name, p); err != nil {
@@ -55,6 +119,70 @@ func ValidateComposeFile(path, repoRoot string) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func checkComposeValues(node *yaml.Node, seen map[*yaml.Node]bool) error {
+	if node == nil || seen[node] {
+		return nil
+	}
+	seen[node] = true
+	if node.Kind == yaml.ScalarNode {
+		var decoded any
+		if err := node.Decode(&decoded); err != nil {
+			return err
+		}
+		// YAML binary-tagged scalars decode before Compose interpolation.
+		value, _ := decoded.(string)
+		for i := 0; i+1 < len(value); i++ {
+			if value[i] != '$' {
+				continue
+			}
+			next := value[i+1]
+			if next == '$' {
+				i++ // Compose's escape keeps container-side variables literal on the host.
+				continue
+			}
+			if next == '{' || next == '_' || next >= 'a' && next <= 'z' || next >= 'A' && next <= 'Z' {
+				return fmt.Errorf("compose value at line %d imports the host environment — use literal values or escape container variables with $$", node.Line)
+			}
+		}
+	}
+	if node.Kind == yaml.AliasNode {
+		return checkComposeValues(node.Alias, seen)
+	}
+	start, step := 0, 1
+	if node.Kind == yaml.MappingNode {
+		start, step = 1, 2 // Compose substitutes values, never mapping keys.
+	}
+	for i := start; i < len(node.Content); i += step {
+		if err := checkComposeValues(node.Content[i], seen); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkComposeEnvironment(service string, value any) error {
+	switch env := value.(type) {
+	case nil:
+		return nil
+	case map[string]any:
+		for name, value := range env {
+			if value == nil {
+				return fmt.Errorf("service %q: environment %q imports the host value — provide an explicit value", service, name)
+			}
+		}
+	case []any:
+		for _, value := range env {
+			entry, ok := value.(string)
+			if !ok || !strings.Contains(entry, "=") {
+				return fmt.Errorf("service %q: environment entries must be explicit NAME=value assignments", service)
+			}
+		}
+	default:
+		return fmt.Errorf("service %q: environment must be a mapping or explicit NAME=value list", service)
 	}
 	return nil
 }
@@ -173,19 +301,16 @@ func checkBindSource(svc, source, composeDir, realRepo string) error {
 
 // checkPort rejects a published port bound to any host interface other than loopback (D2): a bare
 // "5432:5432" binds 0.0.0.0 (LAN-exposed), so a host port must name 127.0.0.1/localhost/::1
-// explicitly. A single-field "5432" (container-only, no host publish) and a `$`-free long form are
-// checked the same way. `$` is rejected for the same pre-interpolation reason as bind sources.
+// explicitly. A single-field "5432" also publishes a randomly allocated host port; only expose
+// is container-network-only. `$` is rejected for the same reason as bind sources.
 func checkPort(svc string, entry any) error {
 	switch v := entry.(type) {
 	case string:
 		return checkPortSpec(svc, v)
 	case int:
-		return nil // "5432" as a bare int — container port only, not published to the host
+		return fmt.Errorf("service %q: port %d publishes to all interfaces — use expose or an explicit loopback host address", svc, v)
 	case map[string]any:
 		hostIP, _ := v["host_ip"].(string)
-		if v["published"] == nil {
-			return nil // no published port — container-network only
-		}
 		if hostIP == "" {
 			return fmt.Errorf("service %q: port publishes to all interfaces — set host_ip: 127.0.0.1 to bind loopback only", svc)
 		}
@@ -194,7 +319,7 @@ func checkPort(svc string, entry any) error {
 		}
 		return nil
 	default:
-		return nil
+		return fmt.Errorf("service %q: unrecognized port entry", svc)
 	}
 }
 
@@ -218,7 +343,7 @@ func checkPortSpec(svc, spec string) error {
 	parts := strings.Split(spec, ":")
 	switch len(parts) {
 	case 1:
-		return nil // "5432" — container port only, not published to the host
+		return fmt.Errorf("service %q: port %q publishes to all interfaces — use expose or an explicit loopback host address", svc, spec)
 	case 2:
 		// "hostPort:containerPort" — no host_ip means docker binds 0.0.0.0 (LAN-exposed).
 		return fmt.Errorf("service %q: port %q publishes to all interfaces — write \"127.0.0.1:%s\" to bind loopback only", svc, spec, spec)

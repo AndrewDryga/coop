@@ -57,7 +57,7 @@ func TestServicePortNoCollision(t *testing.T) {
 
 // writeServiceOverride emits a compose override that publishes each port to its loopback host port.
 func TestWriteServiceOverride(t *testing.T) {
-	path, cleanup, err := writeServiceOverride([]ServicePort{{Service: "keycloak", ContainerPort: 8443, HostPort: 28443}})
+	path, cleanup, err := writeServiceOverride([]ServicePort{{Service: "keycloak", ContainerPort: 8443, HostPort: 28443}}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
