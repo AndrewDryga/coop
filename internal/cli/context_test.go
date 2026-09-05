@@ -145,7 +145,7 @@ func TestContextChangedPreservesGitPaths(t *testing.T) {
 	ctxWrite(t, filepath.Join(repo, "nested", "untracked file.txt"), "new\n")
 
 	a := &app{}
-	got, err := a.contextScope(repo, &project.Project{}, nil, true, "")
+	got, err := a.contextScope(repo, &project.Project{}, nil, true, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestContextChangedPropagatesGitFailure(t *testing.T) {
 	}
 	t.Setenv("PATH", bin)
 	a := &app{}
-	if _, err := a.contextScope(t.TempDir(), &project.Project{}, nil, true, ""); err == nil || !strings.Contains(err.Error(), "fatal: status broke") {
+	if _, err := a.contextScope(t.TempDir(), &project.Project{}, nil, true, "", nil); err == nil || !strings.Contains(err.Error(), "fatal: status broke") {
 		t.Fatalf("contextScope Git error = %v, want captured stderr", err)
 	}
 }

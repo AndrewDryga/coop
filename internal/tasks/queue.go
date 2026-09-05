@@ -526,19 +526,41 @@ func queueOfTask(repo string, rels []string, id string) (string, error) {
 // (readTaskTree) and the backlog drawer (readBacklog) share one resolver. read maps a queue root to
 // its items; everything else — exact-beats-substring precedence, the absent/ambiguous errors — is common.
 func queueOfTaskWith(repo string, rels []string, id string, read func(string) ([]Item, error)) (string, error) {
-	type hit struct{ rel, id string }
-	var exact, subs []hit
+	hit, err := findTaskAcrossQueuesWith(repo, rels, id, read)
+	return hit.rel, err
+}
+
+// FindTaskAcrossQueues uses the same identity resolution as the lifecycle commands,
+// retaining the selected Item so readers need not flatten queues or resolve it again.
+func FindTaskAcrossQueues(repo string, rels []string, id string) (Item, error) {
+	if len(rels) == 1 {
+		return FindTask(filepath.Join(repo, rels[0]), id)
+	}
+	if id == "" {
+		return Item{}, errors.New("need a task id (run 'coop tasks' to list)")
+	}
+	hit, err := findTaskAcrossQueuesWith(repo, rels, id, ReadTaskTree)
+	return hit.task, err
+}
+
+type queueTask struct {
+	rel  string
+	task Item
+}
+
+func findTaskAcrossQueuesWith(repo string, rels []string, id string, read func(string) ([]Item, error)) (queueTask, error) {
+	var exact, subs []queueTask
 	for _, rel := range rels {
 		items, err := read(filepath.Join(repo, rel))
 		if err != nil {
-			return "", err
+			return queueTask{}, err
 		}
 		for _, t := range items {
 			switch {
 			case t.ID == id:
-				exact = append(exact, hit{rel, t.ID})
+				exact = append(exact, queueTask{rel, t})
 			case strings.Contains(t.ID, id):
-				subs = append(subs, hit{rel, t.ID})
+				subs = append(subs, queueTask{rel, t})
 			}
 		}
 	}
@@ -548,15 +570,15 @@ func queueOfTaskWith(repo string, rels []string, id string, read func(string) ([
 	}
 	switch len(pick) {
 	case 1:
-		return pick[0].rel, nil
+		return pick[0], nil
 	case 0:
-		return "", fmt.Errorf("no task matching %q in any of the %d configured queues (run 'coop tasks' to list)", id, len(rels))
+		return queueTask{}, fmt.Errorf("no task matching %q in any of the %d configured queues (run 'coop tasks' to list)", id, len(rels))
 	}
 	where := make([]string, len(pick))
 	for i, h := range pick {
-		where[i] = h.rel + ": " + h.id
+		where[i] = h.rel + ": " + h.task.ID
 	}
-	return "", fmt.Errorf("%q matches %d tasks across the queues (%s) — pass a single --tasks <path> to pick one", id, len(pick), strings.Join(where, ", "))
+	return queueTask{}, fmt.Errorf("%q matches %d tasks across the queues (%s) — pass a single --tasks <path> to pick one", id, len(pick), strings.Join(where, ", "))
 }
 
 // tasksLintAll rolls `coop tasks lint` up across the configured queues, each under its banner.

@@ -608,7 +608,7 @@ var commandHelp = map[string]string{
 
 	"context": `coop context — compile the committed docs relevant to a scope (instructions + rules + KB).
 
-  Usage: coop context [--changed] [--task <id>] [--json | --rendered] [<path>...]
+  Usage: coop context [--changed] [--task <id> [--tasks <path>...]] [--json | --rendered] [<path>...]
 
   Selects which committed docs an agent needs for the paths in play — canonical
   AGENTS.md/CLAUDE.md (always, whole) plus the .agent/project.yaml 'context.routes'
@@ -619,6 +619,10 @@ var commandHelp = map[string]string{
     --changed        paths git reports changed (staged, unstaged, untracked)
     --task <id>      the paths a queued task declares (a 'paths:' frontmatter list)
     (current subproject, when run inside one)
+
+  Task IDs use the same exact-then-unique-fragment matching as coop tasks. Ambiguous
+  matches are errors; --tasks <path> selects a queue for --task (repeatable). Explicit
+  queues override COOP_TASKS, which otherwise overrides project-derived queues.
 
   Output: a report of each file + the route that selected it; --json for the same
   as data; --rendered to print the compiled content itself (canonical first, whole).

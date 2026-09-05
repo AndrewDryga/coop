@@ -23,8 +23,27 @@ import (
 // gathered from explicit paths, --changed (git), --task <id> (a task's declared paths), and the
 // current subproject — never inferred from a free-form prompt.
 //
-//	coop context [--changed] [--task <id>] [--json | --rendered] [<path>...]
+//	coop context [--changed] [--task <id> [--tasks <path>...]] [--json | --rendered] [<path>...]
 func (a *app) cmdContext(args []string) (int, error) {
+	// Validate original token boundaries before queue-flag extraction can turn
+	// `--task --tasks queue id` into the different, apparently valid `--task id`.
+	for i := 0; i < len(args); i++ {
+		if v, n, ok, err := flagValue(args, i, "--task"); ok {
+			if err != nil || v == "" || strings.HasPrefix(v, "-") {
+				return 2, errors.New("coop context: --task needs a task id")
+			}
+			i += n - 1
+		}
+	}
+	queueFlags, args, err := tasks.ExtractTasksFlags(args)
+	if err != nil {
+		return 2, err
+	}
+	for _, path := range queueFlags {
+		if path == "" {
+			return 2, errors.New("coop context: --tasks needs a queue path")
+		}
+	}
 	var changed, asJSON, rendered bool
 	var taskID string
 	var paths []string
@@ -37,20 +56,20 @@ func (a *app) cmdContext(args []string) (int, error) {
 		case arg == "--rendered":
 			rendered = true
 		case arg == "--task":
-			if i+1 >= len(args) {
-				return 2, errors.New("coop context: --task needs a task id")
-			}
 			taskID, i = args[i+1], i+1
 		case strings.HasPrefix(arg, "--task="):
 			taskID = strings.TrimPrefix(arg, "--task=")
 		case strings.HasPrefix(arg, "-") && arg != "-":
-			return 2, fmt.Errorf("coop context: unknown flag %q (supported: --changed, --task <id>, --json, --rendered)", arg)
+			return 2, fmt.Errorf("coop context: unknown flag %q (supported: --changed, --task <id>, --tasks <path>, --json, --rendered)", arg)
 		default:
 			paths = append(paths, arg)
 		}
 	}
 	if asJSON && rendered {
 		return 2, errors.New("coop context: choose --json or --rendered, not both")
+	}
+	if len(queueFlags) > 0 && taskID == "" {
+		return 2, errors.New("coop context: --tasks requires --task <id>")
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -62,7 +81,7 @@ func (a *app) cmdContext(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	scope, err := a.contextScope(repo, p, paths, changed, taskID)
+	scope, err := a.contextScope(repo, p, paths, changed, taskID, queueFlags)
 	if err != nil {
 		return 2, err
 	}
@@ -83,7 +102,7 @@ func (a *app) cmdContext(args []string) (int, error) {
 
 // contextScope gathers the deterministic touched-path set, repo-relative and deduped: the current
 // subproject (from cwd), any explicit paths, --changed git paths, and a task's declared paths.
-func (a *app) contextScope(repo string, p *project.Project, paths []string, changed bool, taskID string) ([]string, error) {
+func (a *app) contextScope(repo string, p *project.Project, paths []string, changed bool, taskID string, queueFlags []string) ([]string, error) {
 	var scope []string
 	seen := map[string]bool{}
 	add := func(rel string) {
@@ -115,6 +134,16 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 		}
 		add(clean)
 	}
+	// Resolve identity and metadata before optional Git work, but retain the
+	// original append order: scope order also determines route explanations.
+	var taskPaths []string
+	if taskID != "" {
+		var err error
+		taskPaths, err = a.taskScopePaths(repo, taskID, queueFlags)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if changed {
 		changedPaths, err := gitChangedPaths(repo)
 		if err != nil {
@@ -124,14 +153,8 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 			add(c)
 		}
 	}
-	if taskID != "" {
-		tps, err := a.taskScopePaths(repo, taskID)
-		if err != nil {
-			return nil, err
-		}
-		for _, tp := range tps {
-			add(tp)
-		}
+	for _, tp := range taskPaths {
+		add(tp)
 	}
 	return scope, nil
 }
@@ -182,20 +205,12 @@ func parseGitStatusPaths(out []byte) ([]string, error) {
 // taskScopePaths reads a task's declared scope: a `paths:` frontmatter list in its task.md — a YAML
 // flow list, a block list, or a bare space/comma-separated scalar. A task without one contributes
 // nothing.
-func (a *app) taskScopePaths(repo, id string) ([]string, error) {
-	rels, err := tasks.TaskQueues(a.cfg, repo, nil)
+func (a *app) taskScopePaths(repo, id string, queueFlags []string) ([]string, error) {
+	rels, err := tasks.TaskQueues(a.cfg, repo, queueFlags)
 	if err != nil {
 		return nil, err
 	}
-	var items []tasks.Item
-	for _, rel := range rels {
-		queueItems, err := tasks.ReadTaskTree(filepath.Join(repo, rel))
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, queueItems...)
-	}
-	t, err := tasks.MatchTask(items, id, "coop tasks")
+	t, err := tasks.FindTaskAcrossQueues(repo, rels, id)
 	if err != nil {
 		return nil, err
 	}
