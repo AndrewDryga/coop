@@ -69,6 +69,7 @@ var allowedEdges = map[string][]string{
 	"testutil/gitrepo":      nil,
 	"testutil/liveprovider": {"agent", "config", "liveprocess", "processidentity", "testutil/procharness"},
 	"testutil/procharness":  nil,
+	"testutil/workertls":    nil,
 	"ui":                    nil,
 	"workerconnector":       {"secretscan", "workerproto"},
 	"workerproto":           nil,

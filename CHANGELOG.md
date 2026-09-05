@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Added a validated worker configuration example and enrollment/recovery guide. Integration tests
+  now cover TLS enrollment and saved identity reload together with real Unix-API asynchronous
+  creation, receipt redelivery and durable event acknowledgements.
+
 - Release publication now requires the tagged commit's full CI checks and finalized, nonempty
   changelog notes matching the tag. Changed or missing tags refuse publication, and the build
   verifies the dependency graph without rewriting it.

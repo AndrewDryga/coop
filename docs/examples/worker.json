@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "worker_id": "worker-a",
+  "workspace_ref": "workspace-main",
+  "responder_url": "https://fleet.example.com",
+  "ca_file": "/etc/coop/worker-ca.pem",
+  "identity_file": "/var/lib/coop-worker/identity.pem",
+  "enrollment_token_file": "/etc/coop/worker-enrollment-token",
+  "coop_socket": "/var/lib/coop-sessions/control.sock",
+  "journal_dir": "/var/lib/coop-worker/journal",
+  "sandbox_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "policy_digests": {
+    "work-read-only": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "policy_authority_digests": {
+    "work-read-only": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "repositories": [],
+  "capabilities": [],
+  "capacity": {
+    "session_slots_free": 2,
+    "session_slots_total": 2,
+    "turn_slots_free": 2,
+    "turn_slots_total": 2,
+    "workspace_slots_free": 1,
+    "workspace_slots_total": 1,
+    "state": "eligible",
+    "cooldown_until": null
+  },
+  "poll_interval_ms": 1000,
+  "request_timeout_ms": 30000,
+  "renew_before_seconds": 3600
+}

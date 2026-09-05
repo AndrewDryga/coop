@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-08-28
+updated: 2026-09-06
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,10 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-06 — added stdlib-only `testutil/workertls` leaf for shared ephemeral worker
+  certificate fixtures. Test-only callers add no production edges; no presentation grant.
+  Swept the full import graph with `TestInternalImportDAG` (including three race runs):
+  0 violations; no production import edges were added.
 - 2026-08-29 — **+1 edge: `sessionsvc -> workerproto`.** The private session service captures and
   restores the exact portable workspace-checkpoint descriptor and bundle that the outbound worker
   transports. Reusing the leaf wire contract keeps digest, bound, and task identity validation

@@ -2,8 +2,8 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, moves workspaces only as digest-verified bounded bundles, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go]
-updated: 2026-09-05
+sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go, internal/sessionsvc/worker_connector_test.go, docs/worker.md, docs/examples/worker.json]
+updated: 2026-09-06
 ---
 
 `coop worker connect --config <absolute-path>` runs one private Coop daemon as a fleet worker. Its
@@ -14,6 +14,12 @@ and never listens on TCP or accepts a shell command (`internal/cli/worker_cmd.go
 
 The traps the code does not make obvious:
 
+- **Enrollment is not restart.** Identity begins absent, is generated privately and consumes its
+  bootstrap token only after publication. Every restart must retain both identity and the entire
+  journal, not only command receipts. A malformed/expired identity never falls back to enrollment.
+  The committed JSON example is loaded by tests; real TLS plus Unix-service integration rebuilds
+  the transport/executor/connector before receipt and event ACKs, proving disk recovery rather
+  than reuse of one in-memory identity manager. Test-only CA helpers never load production trust.
 - **Journal before execute; the receipt is the authority.** `journal.begin` publishes a receipt
   before the executor touches the daemon: a redelivered command with the same digest replays the
   stored result, a changed payload under the same id is `ErrCommandConflict`. Receipts are published
@@ -52,6 +58,8 @@ The traps the code does not make obvious:
   controller redelivers.
 
 ## Changelog
+- 2026-09-06 — added operator enrollment/recovery guide and real TLS/Unix integration with
+  identity persistence, command redelivery, ACK-before-completion and event replay/ACK checks.
 - 2026-09-05 — restored async-create activity through real service/Unix API ACK-before-completion and
   restart tests; verified origin identity, generation/tombstone, directory-sync failure and fair-scan
   recovery without resetting cursors or changing receipt identity.

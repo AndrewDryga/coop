@@ -3,20 +3,15 @@ package workerconnector
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
-	"math/big"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/workertls"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
@@ -69,16 +65,10 @@ func TestHTTPTransportPostsOneBoundedStrictPoll(t *testing.T) {
 }
 
 func TestProductionHTTPTransportEnrollsAndRotatesAWorkerOwnedIdentity(t *testing.T) {
-	caCertificate, caKey, caPEM := testWorkerCA(t)
-	serverCertificate := testSignedCertificate(t, caCertificate, caKey, &x509.Certificate{
-		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "localhost"},
-		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
-	})
+	ca := workertls.NewCA(t)
+	serverCertificate := ca.ServerCertificate(t)
 	clientRoots := x509.NewCertPool()
-	clientRoots.AddCert(caCertificate)
+	clientRoots.AddCert(ca.Certificate)
 	var enrollCount atomic.Int32
 	var renewCount atomic.Int32
 	var pollCount atomic.Int32
@@ -90,20 +80,22 @@ func TestProductionHTTPTransportEnrollsAndRotatesAWorkerOwnedIdentity(t *testing
 				t.Errorf("enrollment unexpectedly had a client certificate")
 			}
 			enrollCount.Add(1)
-			writeWorkerIdentityResponse(t, response, request, caCertificate, caKey, caPEM, http.StatusCreated)
+			writeWorkerIdentityResponse(t, response, request, ca, http.StatusCreated)
 		case "/v1/coop-workers/renew":
-			if len(request.TLS.PeerCertificates) != 1 {
+			if len(request.TLS.VerifiedChains) == 0 || len(request.TLS.PeerCertificates) != 1 {
 				t.Errorf("renewal client certificates = %d", len(request.TLS.PeerCertificates))
 			}
 			renewCount.Add(1)
-			writeWorkerIdentityResponse(t, response, request, caCertificate, caKey, caPEM, http.StatusOK)
+			writeWorkerIdentityResponse(t, response, request, ca, http.StatusOK)
 		case "/v1/coop-workers/poll":
-			if len(request.TLS.PeerCertificates) != 1 || request.TLS.PeerCertificates[0].Subject.CommonName != "worker-a" {
+			if len(request.TLS.VerifiedChains) == 0 || len(request.TLS.PeerCertificates) != 1 || request.TLS.PeerCertificates[0].Subject.CommonName != "worker-a" {
 				t.Errorf("poll client identity = %+v", request.TLS.PeerCertificates)
 			}
 			var poll workerproto.Poll
 			if err := json.NewDecoder(request.Body).Decode(&poll); err != nil {
-				t.Fatal(err)
+				t.Error(err)
+				http.Error(response, "invalid poll", http.StatusBadRequest)
+				return
 			}
 			pollCount.Add(1)
 			response.Header().Set("Content-Type", "application/json")
@@ -127,7 +119,7 @@ func TestProductionHTTPTransportEnrollsAndRotatesAWorkerOwnedIdentity(t *testing
 	caPath := filepath.Join(directory, "ca.pem")
 	tokenPath := filepath.Join(directory, "enrollment-token")
 	identityPath := filepath.Join(directory, "identity.pem")
-	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
+	if err := os.WriteFile(caPath, ca.PEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(tokenPath, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
@@ -303,71 +295,21 @@ func TestProductionHTTPTransportRequiresHTTPSAndAWorkerOwnedIdentityFile(t *test
 	}
 }
 
-func testWorkerCA(t *testing.T) (*x509.Certificate, *rsa.PrivateKey, []byte) {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Responder Test Worker CA"},
-		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(24 * time.Hour),
-		IsCA: true, BasicConstraintsValid: true,
-		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	certificate, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return certificate, key, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-}
-
-func testSignedCertificate(t *testing.T, ca *x509.Certificate, caKey *rsa.PrivateKey, template *x509.Certificate) tls.Certificate {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, ca, &key.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
-}
-
-func writeWorkerIdentityResponse(t *testing.T, response http.ResponseWriter, request *http.Request, ca *x509.Certificate, caKey *rsa.PrivateKey, caPEM []byte, status int) {
+func writeWorkerIdentityResponse(t *testing.T, response http.ResponseWriter, request *http.Request, ca *workertls.CA, status int) {
 	t.Helper()
 	var document map[string]string
 	if err := json.NewDecoder(request.Body).Decode(&document); err != nil {
-		t.Fatal(err)
+		t.Error(err)
+		http.Error(response, "invalid identity request", http.StatusBadRequest)
+		return
 	}
-	block, _ := pem.Decode([]byte(document["public_key_pem"]))
-	if block == nil {
-		t.Fatal("missing public key")
-	}
-	publicKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	identity, err := ca.Identity(document["public_key_pem"], "worker-a", "workspace-main")
 	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(now.UnixNano()), Subject: pkix.Name{CommonName: "worker-a"},
-		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(10 * time.Minute).Truncate(time.Second),
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, ca, publicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
+		http.Error(response, "invalid worker key", http.StatusBadRequest)
+		return
 	}
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
-	_ = json.NewEncoder(response).Encode(identityResponse{
-		CACertificatePEM: string(caPEM), CertificateExpires: template.NotAfter.Format(time.RFC3339),
-		CertificatePEM:    string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
-		CertificateSHA256: sha256sum(der), WorkerID: "worker-a", WorkspaceRef: "workspace-main",
-	})
+	_ = json.NewEncoder(response).Encode(identity)
 }

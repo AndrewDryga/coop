@@ -67,6 +67,22 @@ func TestConnectorConfigurationBuildsOnlyAProtocolValidWorker(t *testing.T) {
 	}
 }
 
+func TestDocumentedWorkerConfigurationLoads(t *testing.T) {
+	path, err := filepath.Abs("../../docs/examples/worker.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration, err := LoadConfig(path, "example-test", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configuration.Hello.ID != "worker-a" || configuration.Hello.WorkspaceRef != "workspace-main" ||
+		len(configuration.Hello.PolicyDigests) != 1 || len(configuration.Hello.PolicyAuthorityDigests) != 1 ||
+		configuration.PollInterval != time.Second || configuration.RenewBefore != time.Hour {
+		t.Fatalf("documented worker contract changed: %+v", configuration)
+	}
+}
+
 func TestWorkerFreshnessCapabilityRequiresLiveSessionDaemonProof(t *testing.T) {
 	configured := []workerproto.Capability{
 		{Name: "responder-state", Version: "1"},
