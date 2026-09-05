@@ -428,3 +428,18 @@ func testReleaseServer(t *testing.T, archive, checksums []byte, paths *[]string)
 		}
 	}))
 }
+
+// A wrong or hostile asset must fail at the size cap, never be read whole into memory first.
+func TestFetchReleaseFileRejectsOversizedAsset(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 17))
+	}))
+	defer srv.Close()
+	defer stub(&releaseFileURLFor, func(tag, name string) string { return srv.URL + "/" + tag + "/" + name })()
+	if _, err := fetchReleaseFile("v1.0.0", "big.bin", 16); err == nil || !strings.Contains(err.Error(), "exceeds 16 bytes") {
+		t.Fatalf("oversized asset error = %v, want the cap named", err)
+	}
+	if data, err := fetchReleaseFile("v1.0.0", "fits.bin", 17); err != nil || len(data) != 17 {
+		t.Fatalf("asset at the cap = %d bytes, %v; want it accepted", len(data), err)
+	}
+}

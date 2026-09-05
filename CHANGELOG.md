@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Self-update downloads are bounded by size, not by a 30-second clock.** Release files fetch
+  through a client with a minutes-long transfer budget instead of the API call's 30s timeout, which
+  failed real updates on slow links, and `checksums.txt`, the archive, and the extracted binary each
+  have an explicit byte cap so a wrong or hostile asset fails before it can exhaust memory.
+
 - **Worker command receipts are written whole or not at all.** The outbound worker publishes each
   command receipt from a fsynced temporary file with an exclusive link, so a crash mid-write can no
   longer leave a truncated receipt that every later poll fails to decode, wedging the worker.

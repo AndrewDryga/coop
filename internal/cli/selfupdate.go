@@ -32,6 +32,19 @@ var (
 	executablePath = os.Executable
 
 	updateHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+	// Release assets are megabytes over whatever link the host has, so they get a whole-transfer
+	// bound of minutes rather than the API client's 30s — which timed out real updates on slow
+	// connections — plus the explicit size caps below.
+	releaseHTTPClient = &http.Client{Timeout: 10 * time.Minute}
+)
+
+// Release files are fully verified before use; the caps only keep a wrong or hostile response from
+// exhausting memory before the checksum ever runs. A stripped coop binary is a few MB.
+const (
+	maxReleaseChecksumsBytes = 1 << 20
+	maxReleaseArchiveBytes   = 256 << 20
+	maxReleaseBinaryBytes    = 256 << 20
 )
 
 // checkError marks a soft failure: coop couldn't determine the latest release
@@ -151,11 +164,11 @@ func dirWritable(dir string) error {
 func installRelease(exe, tag string) error {
 	version := normalizeVersion(tag)
 	asset := fmt.Sprintf("coop_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
-	checksums, err := fetchReleaseFile(tag, "checksums.txt")
+	checksums, err := fetchReleaseFile(tag, "checksums.txt", maxReleaseChecksumsBytes)
 	if err != nil {
 		return fmt.Errorf("fetch checksums.txt: %w", err)
 	}
-	archive, err := fetchReleaseFile(tag, asset)
+	archive, err := fetchReleaseFile(tag, asset, maxReleaseArchiveBytes)
 	if err != nil {
 		return fmt.Errorf("fetch %s: %w", asset, err)
 	}
@@ -169,8 +182,8 @@ func installRelease(exe, tag string) error {
 	return replaceExecutable(exe, binary)
 }
 
-func fetchReleaseFile(tag, name string) ([]byte, error) {
-	resp, err := updateHTTPClient.Get(releaseFileURLFor(tag, name))
+func fetchReleaseFile(tag, name string, limit int64) ([]byte, error) {
+	resp, err := releaseHTTPClient.Get(releaseFileURLFor(tag, name))
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +191,14 @@ func fetchReleaseFile(tag, name string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub returned %s", resp.Status)
 	}
-	return io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s exceeds %d bytes", name, limit)
+	}
+	return data, nil
 }
 
 func verifyReleaseChecksum(asset string, archive, checksums []byte) error {
@@ -229,9 +249,12 @@ func releaseBinary(archive []byte) ([]byte, error) {
 		if binary != nil {
 			return nil, fmt.Errorf("archive contains coop more than once")
 		}
-		binary, err = io.ReadAll(tr)
+		binary, err = io.ReadAll(io.LimitReader(tr, maxReleaseBinaryBytes+1))
 		if err != nil {
 			return nil, err
+		}
+		if int64(len(binary)) > maxReleaseBinaryBytes {
+			return nil, fmt.Errorf("archive member coop exceeds %d bytes", maxReleaseBinaryBytes)
 		}
 	}
 	if binary == nil {
