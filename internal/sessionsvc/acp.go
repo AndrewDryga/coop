@@ -768,13 +768,9 @@ func sessionOutputContractInitialPrompt(prompt string, contract *session.OutputC
 
 <coop-output-contract sha256="%s">
 Your final assistant response must be exactly one JSON value that matches this schema.
-Before ending the response:
-1. Save the exact bytes inside the json-schema element to /tmp/coop-output-contract.schema.json.
-2. Save your final candidate to /tmp/coop-output-contract.candidate.json.
-3. Run: jv --assert-format --output detailed /tmp/coop-output-contract.schema.json /tmp/coop-output-contract.candidate.json
-4. Fix every error and run the command again. Return the candidate only after jv exits successfully.
 Do not wrap the candidate in Markdown.
-Coop independently validates the final bytes and rejects an invalid candidate.
+Coop validates the final bytes and returns any validation errors for correction.
+Do not write files or call tools merely to validate your response. Use tools when the task itself requires them.
 
 <json-schema>%s</json-schema>
 </coop-output-contract>`, prompt, contract.SHA256, contract.JSONSchema)
@@ -784,11 +780,9 @@ func sessionOutputContractRepairPrompt(contract *session.OutputContract, attempt
 	detail := sessionACPBoundedDetail("validation failed", validationErr.Error())
 	return fmt.Sprintf(`Your previous final response was rejected by output contract %s.
 %s
-Save the exact bytes inside the json-schema element to /tmp/coop-output-contract.schema.json.
-Write the corrected replacement to /tmp/coop-output-contract.candidate.json, then run:
-jv --assert-format --output detailed /tmp/coop-output-contract.schema.json /tmp/coop-output-contract.candidate.json
-Fix every error and rerun that command. Return the candidate only after jv exits successfully.
 Return exactly one JSON value. Do not include explanation or Markdown.
+Coop validates the final bytes and returns any validation errors for correction.
+Do not write files or call tools merely to validate your response. Use tools when the task itself requires them.
 This is correction attempt %d of %d.
 
 <json-schema>%s</json-schema>`, contract.SHA256, detail, attempt, sessionOutputContractMaxAttempts, contract.JSONSchema)

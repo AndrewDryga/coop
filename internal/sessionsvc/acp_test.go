@@ -122,9 +122,9 @@ func TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes(t *testing.T) {
 		t.Fatalf("native session reloads = %d, want repair to retain logical session; methods=%v", got, methods)
 	}
 	wire := readFile(t, fixture.childLog)
-	if !strings.Contains(wire, "jv --assert-format --output detailed") ||
+	if !strings.Contains(wire, "Coop validates the final bytes") ||
 		!strings.Contains(wire, leased.OutputContract.SHA256) {
-		t.Fatalf("initial prompt did not require exact self-validation: %s", wire)
+		t.Fatalf("initial prompt did not retain the exact host-validated contract: %s", wire)
 	}
 }
 
@@ -299,17 +299,25 @@ func TestSchemaRepairDoesNotSpendASemanticCandidateAttempt(t *testing.T) {
 	}
 }
 
-func TestEveryStructuredCandidateIsToldToSelfValidateBeforeReturning(t *testing.T) {
+func TestStructuredResponsesDoNotRequireRedundantModelToolValidation(t *testing.T) {
+	// A greeting spent 136 seconds in two turns that wrote JSON files and ran jv,
+	// despite millisecond queue waits. The host already enforces this contract.
 	contract := &session.OutputContract{SHA256: strings.Repeat("a", 64), JSONSchema: json.RawMessage(`{"type":"object"}`)}
 	for name, prompt := range map[string]string{
 		"initial": sessionOutputContractInitialPrompt("answer", contract),
 		"repair":  sessionOutputContractRepairPrompt(contract, 2, errors.New("missing required field")),
 	} {
-		if !strings.Contains(prompt, "jv --assert-format") ||
-			!strings.Contains(prompt, "only after jv exits successfully") ||
-			!strings.Contains(prompt, `<json-schema>{"type":"object"}</json-schema>`) {
-			t.Fatalf("%s structured prompt does not require model-side validation:\n%s", name, prompt)
+		if strings.Contains(prompt, "jv ") || strings.Contains(prompt, "/tmp/") {
+			t.Fatalf("%s structured response requires redundant tool work:\n%s", name, prompt)
 		}
+		if !strings.Contains(prompt, contract.SHA256) ||
+			!strings.Contains(prompt, `<json-schema>{"type":"object"}</json-schema>`) ||
+			!strings.Contains(prompt, "Coop validates") {
+			t.Fatalf("%s structured prompt lost the exact host-validated contract:\n%s", name, prompt)
+		}
+	}
+	if prompt := sessionOutputContractRepairPrompt(contract, 2, errors.New("missing required field")); !strings.Contains(prompt, "missing required field") || !strings.Contains(prompt, "correction attempt 2 of 3") {
+		t.Fatalf("repair lost bounded validation feedback: %s", prompt)
 	}
 }
 

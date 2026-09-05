@@ -3,8 +3,8 @@ name: structured-output-is-runtime-enforced
 description: "a structured-output schema is durable execution control, validated before completion, never prompt-only advice"
 scope: architecture
 sources: [internal/session/output_contract.go, internal/session/store.go, internal/session/operation_result.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/sessionsvc/http.go, docs/session-api.md]
-check: "go test ./internal/sessionsvc -run 'TestCompactTurnResultOmitsCandidateAfterValidation|TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes|TestRepeatedInvalidStructuredResultNeverCompletes|TestSchemaValidSemanticResultWaitsForCallerAcceptance|TestRejectedSemanticResultRepromptsTheSameNativeTurn|TestSchemaRepairDoesNotSpendASemanticCandidateAttempt|TestSessionTurnRunnerPublishesSemanticCandidateWhenCleanupFails|TestSessionServiceStartupReapsAwaitingValidationRuntimeWithoutChangingCandidate|TestSessionServiceCandidateDecisionsReapRuntimeBeforeTransition|TestSessionServiceAwaitingCancelRequiresFreshKeyAfterCleanupFailure|TestSessionServiceDoesNotRestartRejectedCandidateWhenRuntimeReapFails'"
-updated: 2026-09-03
+check: "go test ./internal/sessionsvc -run 'TestStructuredResponsesDoNotRequireRedundantModelToolValidation|TestCompactTurnResultOmitsCandidateAfterValidation|TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes|TestRepeatedInvalidStructuredResultNeverCompletes|TestSchemaValidSemanticResultWaitsForCallerAcceptance|TestRejectedSemanticResultRepromptsTheSameNativeTurn|TestSchemaRepairDoesNotSpendASemanticCandidateAttempt|TestSessionTurnRunnerPublishesSemanticCandidateWhenCleanupFails|TestSessionServiceStartupReapsAwaitingValidationRuntimeWithoutChangingCandidate|TestSessionServiceCandidateDecisionsReapRuntimeBeforeTransition|TestSessionServiceAwaitingCancelRequiresFreshKeyAfterCleanupFailure|TestSessionServiceDoesNotRestartRejectedCandidateWhenRuntimeReapFails'"
+updated: 2026-09-05
 ---
 
 # Enforce structured output at the runtime completion boundary
@@ -14,6 +14,11 @@ inside Coop, and retry a rejected candidate in the same native session. When the
 semantic rules over frozen external state, keep a schema-valid result unpublished until the caller
 accepts its exact digest. Never mark an invalid or unaccepted candidate complete or rely on a prompt
 saying that the model should validate itself.
+
+Do not require the model to write schema/candidate files or invoke a validator tool merely to
+return structured output. Host validation is mandatory; model-side tool work is not its authority
+and adds avoidable latency. Preserve tools needed for the actual task, exact schema/digest guidance,
+and bounded correction feedback in both initial and repair prompts.
 
 **Why:** Responder gave models its result schema and asked them to self-check, but malformed JSON
 still completed in Coop and consumed Responder correction rounds. The operator's correction was:
@@ -33,6 +38,10 @@ receipt only after exact runtime cleanup succeeds; reject and cancel use the sam
 durable transition never erases the last cleanup signal.
 
 ## Changelog
+- 2026-09-05 — removed mandatory file/jv instructions from both ACP prompt builders after a
+  recorded Responder greeting took 136 seconds with millisecond queue waits. Host validation,
+  bounded repair, semantic acceptance and cleanup are unchanged; prompt regression fails on the
+  old instructions and the existing invalid-result and semantic lifecycle tests remain the gate.
 - 2026-09-03 — accepted candidates now move their message into the published assistant field and
   clear the staging copy in the same transaction. Retry receipts and the public DTO expose
   candidate text only while the turn is actually `awaiting_validation`; the digest and validation
