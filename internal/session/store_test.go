@@ -334,8 +334,11 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 	}
 	schema := json.RawMessage(`{"type":"object","properties":{"reply":{"type":"string"}},"required":["reply"],"additionalProperties":false}`)
 	digest := sha256.Sum256(schema)
+	input := []byte("evidence for semantic validation")
+	inputDigest := sha256.Sum256(input)
 	turn, err := store.SubmitTurn(ctx, "semantic-turn", SubmitTurnRequest{
 		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
+		Artifacts: []InputArtifact{{Name: "evidence.txt", MediaType: "text/plain", SHA256: hex.EncodeToString(inputDigest[:]), Data: input}},
 		OutputContract: &OutputContract{
 			JSONSchema: schema, SHA256: hex.EncodeToString(digest[:]),
 			RequireSemanticValidation: true,
@@ -343,6 +346,22 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	assertInputs := func(want int) {
+		t.Helper()
+		var count int
+		if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM turn_artifacts WHERE turn_id = ?`, turn.ID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != want {
+			t.Fatalf("semantic input rows = %d, want %d", count, want)
+		}
+		if want > 0 {
+			var data []byte
+			if err := store.db.QueryRowContext(ctx, `SELECT data FROM turn_artifacts WHERE turn_id = ?`, turn.ID).Scan(&data); err != nil || !bytes.Equal(data, input) {
+				t.Fatalf("semantic input custody changed: %q, %v", data, err)
+			}
+		}
 	}
 	turn, ok, err := store.LeaseNextTurn(ctx, sess.ID)
 	if err != nil || !ok {
@@ -362,9 +381,13 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 
 	candidateBytes := `{"reply":"safe"}`
 	candidateDigest := sha256.Sum256([]byte(candidateBytes))
+	output := []byte("\x89PNG\r\n\x1a\nvalidated visual")
+	outputDigest := sha256.Sum256(output)
+	artifact := OutputArtifact{ID: "semantic-output", Name: "result.png", MediaType: "image/png",
+		SHA256: hex.EncodeToString(outputDigest[:]), Bytes: int64(len(output)), Data: output}
 	staged, err := store.StageTurnCandidate(ctx, StageTurnCandidateRequest{
 		SessionID: sess.ID, TurnID: turn.ID, Message: candidateBytes,
-		SHA256: hex.EncodeToString(candidateDigest[:]), Attempt: 1,
+		SHA256: hex.EncodeToString(candidateDigest[:]), Attempt: 1, Artifacts: []OutputArtifact{artifact},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -373,11 +396,13 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 		staged.Candidate == nil || staged.Candidate.Message != candidateBytes {
 		t.Fatalf("staged semantic candidate = %+v", staged)
 	}
+	assertInputs(1)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
 	store = openTestStore(t, root)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
+	assertInputs(1)
 	staged, err = store.GetTurn(ctx, sess.ID, turn.ID)
 	if err != nil || staged.State != TurnAwaitingValidation || staged.Candidate == nil ||
 		staged.Candidate.Message != candidateBytes {
@@ -394,6 +419,7 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 	}); CodeOf(err) != CodeRevisionConflict {
 		t.Fatalf("stale candidate acceptance error = %v", err)
 	}
+	assertInputs(1)
 	completed, err := store.CompleteTurn(ctx, CompleteTurnRequest{
 		SessionID: sess.ID, TurnID: turn.ID,
 		CandidateSHA256: staged.Candidate.SHA256,
@@ -406,6 +432,7 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 		completed.ValidationReceipt == "" {
 		t.Fatalf("accepted semantic turn = %+v", completed)
 	}
+	assertInputs(0)
 	var storedCandidate string
 	if err := store.db.QueryRowContext(ctx, `SELECT candidate_message FROM turns WHERE id = ?`, turn.ID).Scan(&storedCandidate); err != nil {
 		t.Fatal(err)
@@ -421,6 +448,44 @@ func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testin
 	if cleanupTurns, err := store.ListRuntimeCleanupTurns(ctx); err != nil || len(cleanupTurns) != 0 {
 		t.Fatalf("runtime cleanup turns after acceptance = %+v, err=%v", cleanupTurns, err)
 	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = openTestStore(t, root)
+	assertInputs(0)
+	loaded, err := store.GetTurn(ctx, sess.ID, turn.ID)
+	if err != nil || len(loaded.OutputArtifacts) != 1 || loaded.OutputArtifacts[0].SHA256 != artifact.SHA256 || len(loaded.OutputArtifacts[0].Data) != 0 {
+		t.Fatalf("accepted output metadata lost after reopen: %+v, %v", loaded.OutputArtifacts, err)
+	}
+	gotOutput, err := store.GetOutputArtifact(ctx, sess.ID, turn.ID, artifact.ID)
+	if err != nil || !bytes.Equal(gotOutput.Data, output) || gotOutput.SHA256 != artifact.SHA256 {
+		t.Fatalf("accepted output content lost: %+v, %v", gotOutput, err)
+	}
+	beforeReplay, err := store.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.ListEvents(ctx, sess.ID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.clock = func() time.Time { return completed.FinishedAt.Add(time.Hour) }
+	replayed, err := store.CompleteTurn(ctx, CompleteTurnRequest{SessionID: sess.ID, TurnID: turn.ID, CandidateSHA256: completed.CandidateSHA256})
+	if err != nil || replayed.ValidationReceipt != completed.ValidationReceipt || replayed.AssistantMessage != completed.AssistantMessage || !replayed.FinishedAt.Equal(completed.FinishedAt) {
+		t.Fatalf("acceptance replay changed terminal proof: %+v, %v", replayed, err)
+	}
+	if _, err := store.CompleteTurn(ctx, CompleteTurnRequest{SessionID: sess.ID, TurnID: turn.ID, CandidateSHA256: strings.Repeat("0", 64)}); CodeOf(err) != CodeRevisionConflict {
+		t.Fatalf("wrong digest accepted after reopen: %v", err)
+	}
+	afterReplay, err := store.GetSession(ctx, sess.ID)
+	if err != nil || !bytes.Equal(mustJSON(beforeReplay), mustJSON(afterReplay)) {
+		t.Fatalf("acceptance replay changed session usage/state: %+v, %v", afterReplay, err)
+	}
+	afterEvents, err := store.ListEvents(ctx, sess.ID, 0, 100)
+	if err != nil || len(afterEvents) != len(events) {
+		t.Fatalf("acceptance replay emitted events: %d -> %d, %v", len(events), len(afterEvents), err)
+	}
+	assertInputs(0)
 }
 
 func TestRejectedSemanticCandidateRequeuesTheSameLogicalTurn(t *testing.T) {
@@ -436,8 +501,11 @@ func TestRejectedSemanticCandidateRequeuesTheSameLogicalTurn(t *testing.T) {
 	}
 	schema := json.RawMessage(`{"type":"object"}`)
 	digest := sha256.Sum256(schema)
+	input := []byte("repair evidence")
+	inputDigest := sha256.Sum256(input)
 	admitted, err := store.SubmitTurn(ctx, "semantic-repair-turn", SubmitTurnRequest{
 		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
+		Artifacts: []InputArtifact{{Name: "repair.txt", MediaType: "text/plain", SHA256: hex.EncodeToString(inputDigest[:]), Data: input}},
 		OutputContract: &OutputContract{
 			JSONSchema: schema, SHA256: hex.EncodeToString(digest[:]),
 			RequireSemanticValidation: true,
@@ -449,6 +517,9 @@ func TestRejectedSemanticCandidateRequeuesTheSameLogicalTurn(t *testing.T) {
 	leased, ok, err := store.LeaseNextTurn(ctx, sess.ID)
 	if err != nil || !ok {
 		t.Fatalf("lease = %+v, ok=%v, err=%v", leased, ok, err)
+	}
+	if len(leased.Artifacts) != 1 || !bytes.Equal(leased.Artifacts[0].Data, input) {
+		t.Fatal("initial semantic lease lost input bytes")
 	}
 	firstStart := leased.StartedAt
 	now = now.Add(26 * time.Second)
@@ -488,6 +559,9 @@ func TestRejectedSemanticCandidateRequeuesTheSameLogicalTurn(t *testing.T) {
 	if err != nil || !ok || leasedAgain.ID != admitted.ID || leasedAgain.ValidationAttempt != 1 {
 		t.Fatalf("re-leased semantic turn = %+v, ok=%v, err=%v", leasedAgain, ok, err)
 	}
+	if len(leasedAgain.Artifacts) != 1 || !bytes.Equal(leasedAgain.Artifacts[0].Data, input) {
+		t.Fatal("repair lease lost input bytes")
+	}
 	if !leasedAgain.StartedAt.Equal(firstStart) {
 		t.Fatalf("repair execution became queue wait: got %v want %v", leasedAgain.StartedAt, firstStart)
 	}
@@ -499,6 +573,10 @@ func TestRejectedSemanticCandidateRequeuesTheSameLogicalTurn(t *testing.T) {
 	persisted, err := reopened.GetTurn(ctx, sess.ID, leased.ID)
 	if err != nil || !persisted.StartedAt.Equal(firstStart) {
 		t.Fatalf("persisted first start = %v, err=%v", persisted.StartedAt, err)
+	}
+	var kept []byte
+	if err := reopened.db.QueryRowContext(ctx, `SELECT data FROM turn_artifacts WHERE turn_id = ?`, leased.ID).Scan(&kept); err != nil || !bytes.Equal(kept, input) {
+		t.Fatalf("reopened repair input custody changed: %q, %v", kept, err)
 	}
 }
 

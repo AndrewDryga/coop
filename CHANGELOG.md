@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Accepting a semantic candidate removes its retained input attachments. Repair attempts keep
+  their inputs, and accepted output artifacts and validation receipts remain available after restart.
+
 - Worker activity resumes after asynchronous session creation, including when its command receipt
   is acknowledged before creation finishes. Durable origin and generation records survive restart
   without losing event cursors or reviving discarded streams.

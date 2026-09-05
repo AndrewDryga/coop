@@ -32,6 +32,11 @@ old drain loop is not a wakeup guarantee. When MaxTurns is reached, final reject
 turns and their inputs, queue counters and session budget in the same transaction as the failed
 turn before scheduling.
 
+Input attachments remain durable while a candidate awaits validation or the same logical turn
+repairs a rejection. Successful semantic acceptance deletes only that turn's input rows in the
+completion transaction, just like ordinary completion; candidate outputs and validation receipts
+remain available after reopen and acceptance replay. Runtime teardown never owns this cleanup.
+
 Cleanup is host-runtime work only. It must not call the validation operation, change the candidate,
 publish the assistant message, alter usage/cost or artifacts, or clear the native session binding.
 
@@ -50,6 +55,8 @@ workers and janitors skip it, and every workspace/runtime/destructive API fails 
 fork. Read-only durable session and turn history remains available for manual recovery.
 
 ## Changelog
+- 2026-09-05 — semantic acceptance removes terminal input bytes while preserving repair input
+  custody, candidate outputs and idempotent validation proof across database reopen.
 - 2026-09-05 — verified semantic decision wakeups with exited/unwinding workers and replay;
   final rejection now preserves normal transactional MaxTurns exhaustion and queued-input cleanup.
 - 2026-08-28 — made legacy generation adoption require an exact pre-existing session reservation;

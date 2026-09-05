@@ -2948,10 +2948,8 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 		turn.Usage.CostUSD, turn.Usage.CostRecorded, turn.ValidationReceipt, turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("complete turn: %w", err)
 	}
-	if !semanticAcceptance {
-		if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
-			return Turn{}, err
-		}
+	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
+		return Turn{}, err
 	}
 	for i, artifact := range req.Artifacts {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO turn_output_artifacts(turn_id, ordinal, id, name, media_type, sha256, data)
