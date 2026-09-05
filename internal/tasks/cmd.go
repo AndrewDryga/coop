@@ -32,14 +32,13 @@ type taskArgSpec struct {
 
 // taskArgSpecs validates the structured `coop tasks` subcommands so an unsupported flag or a stray
 // argument fails loudly instead of being silently ignored or mistaken for an id. add takes a
-// free-form title that may start with "-"; unblock and decisions validate their own grammar, so
+// free-form title that may start with "-"; rm, unblock and decisions validate their own grammar, so
 // those commands are intentionally absent.
 var taskArgSpecs = map[string]taskArgSpec{
 	"ls":    {lsFlags, 0},
 	"lint":  {nil, 0},
 	"claim": {nil, 1}, "release": {nil, 1}, "path": {nil, 1},
 	"block": {nil, 1}, "done": {nil, 1},
-	"rm": {[]string{"--all-done", "--yes", "-y"}, 1},
 }
 
 // lsFlags are the flags `coop tasks ls` accepts: --all (uncap the done archive) plus a per-state
@@ -115,7 +114,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 		args = rest[1:]
 	}
 	// Reject unsupported flags / stray arguments up front for the structured subcommands (see
-	// taskArgSpecs); add/unblock/decisions handle their own free-form args.
+	// taskArgSpecs); add/rm/unblock/decisions own their argument parsing.
 	if spec, ok := taskArgSpecs[sub]; ok {
 		if err := validateArgs("tasks "+sub, args, spec.flags, spec.maxPos); err != nil {
 			return 2, err
@@ -1303,23 +1302,48 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	return 0, nil
 }
 
-// tasksFolderRemove deletes task folders — `rm <id>` for one (any state), or
-// `remove --all-done` to clear the 99_done/ archive. It is a MANUAL, human action: the
-// loop and skills only ever MOVE a finished task to 99_done/, never delete it, so done
-// tasks accumulate until someone prunes them with this.
-func tasksFolderRemove(root string, args []string) (int, error) {
+type taskRemoveArgs struct {
+	id      string
+	allDone bool
+	yes     bool
+}
+
+// Keep syntax independent of discovery: a typo must not reach an archive scan,
+// confirmation or deletion, even when the archive is empty or spans many queues.
+func parseTaskRemoveArgs(args []string) (taskRemoveArgs, error) {
 	const usage = "usage: coop tasks rm <id> [--yes]  |  coop tasks rm --all-done [--yes]"
-	yes := hasYes(args)
-	var pos []string
+	if err := validateArgs("tasks rm", args, []string{"--all-done", "--yes", "-y"}, 1); err != nil {
+		return taskRemoveArgs{}, err
+	}
+	var request taskRemoveArgs
 	for _, a := range args {
-		if !strings.HasPrefix(a, "-") {
-			pos = append(pos, a)
+		switch a {
+		case "--all-done":
+			request.allDone = true
+		case "--yes", "-y":
+			request.yes = true
+		default:
+			if a == "" || a == "-" {
+				return taskRemoveArgs{}, errors.New(usage)
+			}
+			request.id = a
 		}
 	}
-	if slices.Contains(args, "--all-done") {
-		if len(pos) != 0 {
-			return 2, errors.New(usage) // an id and --all-done together is ambiguous
-		}
+	if request.allDone && request.id != "" || !request.allDone && request.id == "" {
+		return taskRemoveArgs{}, errors.New(usage)
+	}
+	return request, nil
+}
+
+// tasksFolderRemove deletes task folders — `rm <id>` for one (any state), or
+// `rm --all-done` to clear the 99_done/ archive. It is a MANUAL, human action: the
+// loop and skills only ever MOVE a finished task to 99_done/, never delete it.
+func tasksFolderRemove(root string, args []string) (int, error) {
+	request, err := parseTaskRemoveArgs(args)
+	if err != nil {
+		return 2, err
+	}
+	if request.allDone {
 		n, err := countDone(root)
 		if err != nil {
 			return -1, err
@@ -1328,7 +1352,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 			ui.Note("no done tasks to remove")
 			return 0, nil
 		}
-		if err := ui.DestroyGate("remove "+ui.Count(n, "done task")+" from the archive", yes); err != nil {
+		if err := ui.DestroyGate("remove "+ui.Count(n, "done task")+" from the archive", request.yes); err != nil {
 			return 2, err
 		}
 		removed, err := removeAllDone(root)
@@ -1341,14 +1365,11 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 		ui.OK("removed %s", ui.Count(removed, "done task"))
 		return 0, nil
 	}
-	if len(pos) != 1 {
-		return 2, errors.New(usage)
-	}
-	t, err := FindTask(root, pos[0]) // resolve the (possibly substring) match first, so the gate names it
+	t, err := FindTask(root, request.id) // resolve the (possibly substring) match first, so the gate names it
 	if err != nil {
 		return 1, err
 	}
-	if err := ui.DestroyGate(fmt.Sprintf("delete task %s (%s)", t.ID, StateLabel(t.State)), yes); err != nil {
+	if err := ui.DestroyGate(fmt.Sprintf("delete task %s (%s)", t.ID, StateLabel(t.State)), request.yes); err != nil {
 		return 2, err
 	}
 	removed, err := removeTaskFolderAndRecords(root, t)

@@ -259,6 +259,11 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	if len(rest) > 0 && strings.HasPrefix(rest[0], "-") && rest[0] != "-" {
 		rest = append([]string{"ls"}, rest...)
 	}
+	if len(rest) > 0 && rest[0] == "rm" {
+		if _, err := parseTaskRemoveArgs(rest[1:]); err != nil {
+			return 2, err
+		}
+	}
 	repo, err := box.ResolveRepo(cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -450,7 +455,15 @@ func tasksListAll(repo string, rels []string, args []string) (int, error) {
 // id-less exception: it clears every queue's done archive.
 func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (int, error) {
 	args := rest[1:]
-	if sub == "rm" && slices.Contains(args, "--all-done") {
+	var removal taskRemoveArgs
+	if sub == "rm" {
+		var err error
+		removal, err = parseTaskRemoveArgs(args)
+		if err != nil {
+			return 2, err
+		}
+	}
+	if sub == "rm" && removal.allDone {
 		total := 0
 		for _, rel := range rels {
 			n, err := countDone(filepath.Join(repo, rel))
@@ -463,7 +476,7 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 			ui.Note("no done tasks to remove in any of the %s", ui.Count(len(rels), "configured queue"))
 			return 0, nil
 		}
-		if err := ui.DestroyGate(fmt.Sprintf("remove %s across %s", ui.Count(total, "done task"), ui.Count(len(rels), "queue")), hasYes(args)); err != nil {
+		if err := ui.DestroyGate(fmt.Sprintf("remove %s across %s", ui.Count(total, "done task"), ui.Count(len(rels), "queue")), removal.yes); err != nil {
 			return 2, err
 		}
 		removed := 0
@@ -482,11 +495,13 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 	}
 	// The id is the first positional token; with none, delegate as-is so the subcommand's own
 	// usage error (e.g. "usage: coop tasks claim <id>") is what the user sees.
-	id := ""
-	for _, x := range args {
-		if !strings.HasPrefix(x, "-") {
-			id = x
-			break
+	id := removal.id
+	if sub != "rm" {
+		for _, x := range args {
+			if !strings.HasPrefix(x, "-") {
+				id = x
+				break
+			}
 		}
 	}
 	if id == "" {

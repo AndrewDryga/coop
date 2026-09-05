@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Task removal rejects unknown flags, extra IDs and mixed ID/`--all-done` requests before inspecting
+  any queue, including aggregate and empty archives. `--yes` cannot override invalid syntax.
+
 - Landed forks are kept if their workspace, generation, commit or uncommitted work changes before
   removal, including during service shutdown. Bulk merge-and-remove now defaults to No at its
   confirmation prompt.
