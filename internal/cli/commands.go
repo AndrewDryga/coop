@@ -695,13 +695,19 @@ func (a *app) cmdUpdateCheck() (int, error) {
 		return 0, nil
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
-	if at, ok := box.ImageBuildAge(a.cfg, img); ok {
-		when := "today"
-		if days := int(time.Since(at).Hours() / 24); days > 0 {
-			when = ui.Count(days, "day") + " ago"
-		}
-		ui.Note("box image %s: built %s", img, when)
+	at, built := box.ImageBuildAge(a.cfg, img)
+	if !built {
+		// No build stamp means this coop never built the image here; "current" would describe an
+		// image `coop run` is about to refuse. The runtime is deliberately not consulted so the
+		// dry-run keeps working without one.
+		ui.Note("box image %s has no build record here — run 'coop build'", img)
+		return 0, nil
 	}
+	when := "today"
+	if days := int(time.Since(at).Hours() / 24); days > 0 {
+		when = ui.Count(days, "day") + " ago"
+	}
+	ui.Note("box image %s: built %s", img, when)
 	nudges := box.StalenessNudges(a.cfg, repo, img)
 	for _, n := range nudges {
 		ui.Note("%s", n)

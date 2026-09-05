@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop update --check` no longer calls a never-built image current.** A per-project or base
+  image with no local build record is reported as such, with `coop build` as the fix, instead of
+  "is current" for an image `coop run` is about to refuse.
+
 - **`coop context --task` reads every `paths:` list shape.** A task's declared scope may be a
   YAML flow list (`paths: [a, b]`), a block list, or the bare space/comma-separated form; the flow
   brackets were previously taken literally and a block list yielded no scope at all.

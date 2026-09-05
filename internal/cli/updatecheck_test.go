@@ -167,6 +167,34 @@ func TestCmdUpdateCheck(t *testing.T) {
 	}
 }
 
+// An image this coop never built has no stamp; the dry-run must say so instead of calling it
+// current, since `coop run` is about to refuse that same image.
+func TestCmdUpdateCheckNamesAnUnbuiltImage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"tag_name":"v9.0.0"}`)
+	}))
+	defer srv.Close()
+	defer stub(&githubLatestURL, srv.URL)()
+	defer stub(&Version, "9.0.0")()
+
+	var lines []string
+	ui.SetLiveSink(func(s string) { lines = append(lines, s) })
+	defer ui.SetLiveSink(nil)
+
+	a := &app{cfg: &config.Config{BoxHome: t.TempDir(), RepoOverride: t.TempDir(), BaseImage: "coop-box"}}
+	code, err := a.cmdUpdateCheck()
+	if code != 0 || err != nil {
+		t.Fatalf("cmdUpdateCheck: code=%d err=%v", code, err)
+	}
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "coop-box has no build record") || !strings.Contains(joined, "coop build") {
+		t.Errorf("unbuilt image must be named with the fix, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "is current") {
+		t.Errorf("an unbuilt image must not be called current:\n%s", joined)
+	}
+}
+
 func TestCmdUpdateCheckVersionRelations(t *testing.T) {
 	for name, tc := range map[string]struct {
 		current, latest string
