@@ -2,9 +2,9 @@
 name: secret-scan-literals-not-refs
 description: "the scanner flags literal credentials and never references to them; precision is the product"
 scope: security
-sources: [internal/box/secretscan.go]
+sources: [internal/box/secretscan.go, internal/secretscan/secretscan.go]
 check: "go test ./internal/box -run TestScanSecrets"
-updated: 2026-07-13
+updated: 2026-09-05
 ---
 
 # A secret scanner flags literal credentials, never references to them
@@ -70,3 +70,4 @@ random token.
 - 2026-06-17 — created
 - 2026-07-13 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-09-05 — the patterns and the reference heuristic moved to `internal/secretscan/secretscan.go` (137bde8); `internal/box/secretscan.go` is now a thin wrapper, so both are sources.

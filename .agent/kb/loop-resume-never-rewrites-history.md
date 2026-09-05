@@ -3,14 +3,14 @@ name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
 sources: [internal/tasks/audit.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
-updated: 2026-09-03
+updated: 2026-09-05
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
 observed twice in emisar on 2026-08-01:
 
 1. The agent commits with its `Coop-Task` trailer and moves the folder to `99_done/`.
 2. A descendant it started never exits — a leaked headless Chromium from a browser test is the real
-   case. `coop-entry` waits `COOP_DESCENDANT_TIMEOUT` (default **1800s**, `internal/box/image.go`)
+   case. `coop-entry` waits `COOP_DESCENDANT_TIMEOUT` (default **900s**, `internal/box/image.go`)
    and exits `DescendantsTimedOutExit` (191). It now announces that wait once with the process names
    holding the box open, and names them again on termination — before that it was silent for the
    whole window, which reads as a hung loop.
@@ -71,3 +71,4 @@ and pointing a new task at it invites cross-task edits.
   `restoreBackgroundHandoffCompletion` are now `tasks.ResumePrefixFor`/`tasks.RestoreBackgroundHandoffCompletion`. Facts unchanged.
 - 2026-08-10 — sources repointed: the loop engine moved out of `internal/cli` into `internal/loop` (`commands.go`'s loop half → `loop.go`, `classifyIteration` → `ratelimit.go`);
   re-verified the chain — `resumeLine`/`boundTaskCommitIsHead` stayed in `internal/tasks/audit.go`, unchanged.
+- 2026-09-05 — corrected the descendant timeout default to 900s (verified against `handoff_wait` in image.go).

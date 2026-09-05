@@ -97,3 +97,4 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [task-authority-registry-is-durable-state](task-authority-registry-is-durable-state.md) — host-global task ownership and completion trust live in ~/.local/state/coop/task-leases, never a cache dir; every authority flock rechecks its inode
 - [task-authority-model](task-authority-model.md) — four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 - [task-tmp-lifetime](task-tmp-lifetime.md) — task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist
+- [worker-connector](worker-connector.md) — the outbound worker journals before executing, resends results until acknowledged, moves workspaces only as verified bundles, and never falls back to local execution

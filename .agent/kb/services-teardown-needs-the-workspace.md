@@ -2,8 +2,8 @@
 name: services-teardown-needs-the-workspace
 description: sibling-service teardown is driven by the workspace's own compose file, so stopping services after deleting the workspace is a silent no-op
 subsystem: box/services
-sources: [internal/box/services.go, internal/box/repo.go, internal/forkctl/rm.go, internal/forkspace/create.go]
-updated: 2026-08-25
+sources: [internal/sessionsvc/workspace.go, internal/box/services.go, internal/box/repo.go, internal/forkctl/rm.go, internal/forkspace/create.go]
+updated: 2026-09-05
 ---
 Sibling services are brought up per box (`box.Run` → `EnsureServicesFile`) and are deliberately
 **not** brought down when a box exits: the stack is idempotent and reused across iterations, so a
@@ -34,8 +34,9 @@ box-aware wrapper that runs teardown first and then calls it. Anything that reac
 `forkspace.Destroy` directly skips the teardown and re-opens this bug.
 
 Two related seams behave correctly already and are worth copying rather than duplicating:
-- `internal/sessionsvc/service.go` downs services itself before planning a discard, so `discardSessionWorkspace`
-  passes a zero `runtime.Runtime{}` into `forkctl.DestroyFork` to avoid a second teardown.
+- `internal/sessionsvc` downs services itself before applying a discard, so `discardSessionWorkspace`
+  (`internal/sessionsvc/workspace.go`) calls the leaf `forkspace.Destroy` directly on purpose — the
+  one sanctioned direct caller, and only because the teardown already happened.
 - `StopSessionServices` removes by immutable compose LABELS instead of the file, so an agent's
   interrupted edit to `compose.yml` cannot block cleanup. Prefer that shape when the file's
   trustworthiness — not its existence — is the risk.
@@ -57,3 +58,4 @@ Two related seams behave correctly already and are worth copying rather than dup
   is now the wrapper that keeps the order. `TestDestroyForkStopsServicesBeforeRemovingTheWorktree`
   stays in `internal/cli` because it is the ORDER it proves.
 - 2026-08-03 — created: removed forks were leaving their compose stacks running because teardown ran after the worktree was deleted, where the missing compose file made it a silent no-op.
+- 2026-09-05 — the session discard calls `forkspace.Destroy` directly (not `forkctl.DestroyFork` with a zero runtime); re-verified against workspace.go.

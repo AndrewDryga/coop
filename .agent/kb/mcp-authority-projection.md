@@ -2,8 +2,8 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/box/auth.go, internal/box/run.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
-updated: 2026-08-26
+sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/box/auth.go, internal/box/run.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
+updated: 2026-09-05
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -11,7 +11,8 @@ and validates it once, then calls each credential-scoped adapter's `MCP` transfo
 any agent home. Generated native configs are immutable mounts; an outer ordinary CLI gets
 `MCPConfig.CommandArgs`; a peer or runnable preset role gets adapter-owned
 `NestedCommandEnv` consumed by its consult/delegate fragments; an ACP adapter receives servers
-through `ACPMCPServers` during protocol initialization. These are projections of the same snapshot,
+through `ACPMCPServers` on `session/new` and `session/load` — codex-acp 1.7 needs them there as well as
+in `config.toml` and deduplicates the two routes itself (`internal/agent/codex.go`). These are projections of the same snapshot,
 not separate sources.
 
 Every projection crosses the same host-file boundary before parsing. Shared and native config must
@@ -53,3 +54,4 @@ mounting the raw snapshot for every scoped credential is not the fallback.
   moved box source-isolation validation before snapshot capture
 - 2026-08-26 — created after the v9 range review found that Claude's direct command received the
   shared snapshot while Claude peers and preset roles silently did not
+- 2026-09-05 — ACP servers travel on session/new and session/load, not initialize; recorded the codex-acp 1.7 dual route (46a2500).
