@@ -2804,6 +2804,20 @@ func (s *Store) RejectTurnCandidate(ctx context.Context, req RejectTurnCandidate
 			mustJSON(map[string]any{"reason": string(StopError)})); err != nil {
 			return Turn{}, fmt.Errorf("append rejected semantic session parked: %w", err)
 		}
+		if sess.TurnsUsed+1 >= sess.MaxTurns {
+			if err := s.exhaustQueuedTx(ctx, tx, req.SessionID, now); err != nil {
+				return Turn{}, err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state = ?, revision = revision + 1 WHERE id = ?`, string(SessionExhausted), req.SessionID); err != nil {
+				return Turn{}, fmt.Errorf("mark max-turn budget exhausted: %w", err)
+			}
+			if _, err := s.appendEventTx(ctx, tx, req.SessionID, "", EventSessionStateChanged, 1, mustJSON(map[string]any{"state": string(SessionExhausted)})); err != nil {
+				return Turn{}, fmt.Errorf("append max-turn session.state_changed: %w", err)
+			}
+			if _, err := s.appendEventTx(ctx, tx, req.SessionID, "", EventBudgetExhausted, 1, mustJSON(map[string]any{"reason": string(StopBudget)})); err != nil {
+				return Turn{}, fmt.Errorf("append max-turn budget.exhausted: %w", err)
+			}
+		}
 	} else {
 		turn.OutputArtifacts, err = readOutputArtifactMetadata(ctx, tx, turn.ID)
 		if err != nil {

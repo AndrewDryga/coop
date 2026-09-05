@@ -3,7 +3,7 @@ name: session-awaiting-validation-runtime-cleanup
 description: every started turn retains its exact runtime receipt through teardown; awaiting-validation owns durable candidate authority but no live provider runtime
 subsystem: sessions
 sources: [internal/session/store.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/forkspace/generation.go, internal/forkspace/reservation.go]
-updated: 2026-08-28
+updated: 2026-09-05
 ---
 
 # Awaiting validation is durable authority, not runtime authority
@@ -26,6 +26,12 @@ exact successful reap (or that matching proof) before changing durable state. A 
 leaves the candidate awaiting and terminally fails that idempotent operation; after runtime
 recovery the caller rereads the candidate and submits its still-current decision with a fresh key.
 
+Successful accept/reject operations wake the session FIFO after releasing runtime and operation
+locks, including successful receipt replay. The candidate worker may already have exited, so its
+old drain loop is not a wakeup guarantee. When MaxTurns is reached, final rejection exhausts queued
+turns and their inputs, queue counters and session budget in the same transaction as the failed
+turn before scheduling.
+
 Cleanup is host-runtime work only. It must not call the validation operation, change the candidate,
 publish the assistant message, alter usage/cost or artifacts, or clear the native session binding.
 
@@ -44,6 +50,8 @@ workers and janitors skip it, and every workspace/runtime/destructive API fails 
 fork. Read-only durable session and turn history remains available for manual recovery.
 
 ## Changelog
+- 2026-09-05 — verified semantic decision wakeups with exited/unwinding workers and replay;
+  final rejection now preserves normal transactional MaxTurns exhaustion and queued-input cleanup.
 - 2026-08-28 — made legacy generation adoption require an exact pre-existing session reservation;
   unproven sessions remain byte-stable and quarantined from runtime and workspace operations.
 - 2026-08-28 — persisted exact ordinary and borrowed-warm runtime IDs through terminal transitions;

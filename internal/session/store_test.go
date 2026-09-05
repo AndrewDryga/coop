@@ -506,7 +506,9 @@ func TestThirdRejectedSemanticCandidateFailsWithoutPublishingItsMessage(t *testi
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "semantic-exhaustion-session", CreateSessionRequest{Target: "codex:model"})
+	sess, err := store.CreateSession(ctx, "semantic-exhaustion-session", CreateSessionRequest{
+		Target: "codex:model", MaxTurns: 1, MaxQueuedTurns: 3,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,6 +523,19 @@ func TestThirdRejectedSemanticCandidateFailsWithoutPublishingItsMessage(t *testi
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	var successors []Turn
+	for index := range 2 {
+		body := []byte(fmt.Sprintf("queued input %d", index))
+		digest := sha256.Sum256(body)
+		queued, err := store.SubmitTurn(ctx, fmt.Sprintf("semantic-successor-%d", index), SubmitTurnRequest{
+			SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "successor",
+			Artifacts: []InputArtifact{{Name: "input.txt", MediaType: "text/plain", SHA256: hex.EncodeToString(digest[:]), Data: body}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		successors = append(successors, queued)
 	}
 	turn, ok, err := store.LeaseNextTurn(ctx, sess.ID)
 	if err != nil || !ok {
@@ -551,6 +566,35 @@ func TestThirdRejectedSemanticCandidateFailsWithoutPublishingItsMessage(t *testi
 	if failed.State != TurnFailed || failed.ErrorCode != CodeOutputContractFailed ||
 		failed.AssistantMessage != "" || failed.Candidate != nil {
 		t.Fatalf("exhausted semantic turn = %+v", failed)
+	}
+	for _, successor := range successors {
+		got, err := store.GetTurn(ctx, sess.ID, successor.ID)
+		if err != nil || got.State != TurnBudgetExhausted || got.ErrorCode != CodeBudgetExhausted || !got.StartedAt.IsZero() {
+			t.Fatalf("queued budget result = %+v, err=%v", got, err)
+		}
+		var retained int
+		if err := store.db.QueryRowContext(ctx, "SELECT count(*) FROM turn_artifacts WHERE turn_id = ?", successor.ID).Scan(&retained); err != nil || retained != 0 {
+			t.Fatalf("queued input artifacts retained = %d, err=%v", retained, err)
+		}
+	}
+	current := mustGetSession(t, store, ctx, sess.ID)
+	if current.State != SessionExhausted || current.Activity != ActivityParked || current.ActiveTurnID != "" ||
+		current.TurnsUsed != 1 || current.QueuedTurnCount != 0 || current.QueuedPromptBytes != 0 || current.Revision != sess.Revision+1 {
+		t.Fatalf("rejected budget session = %+v", current)
+	}
+	events, err := store.ListEvents(ctx, sess.ID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := make(map[EventType]int)
+	for _, event := range events {
+		counts[event.Type]++
+	}
+	if counts[EventBudgetExhausted] != 1 || counts[EventSessionStateChanged] != 1 || counts[EventTurnFailed] != 3 || counts[EventAssistantMessage] != 0 {
+		t.Fatalf("terminal rejection events = %v", counts)
+	}
+	if got, leased, err := store.LeaseNextTurn(ctx, sess.ID); err != nil || leased {
+		t.Fatalf("leased beyond terminal rejection budget: %+v, leased=%v, err=%v", got, leased, err)
 	}
 }
 

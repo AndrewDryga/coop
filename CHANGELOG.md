@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Accepting or finally rejecting a semantic candidate resumes queued turns even after its worker
+  exits. Final rejection also enforces the session turn limit before any successor can start.
+
 - Workspace checkpoint restoration preserves new tracked files, renames and deletions alongside
   binary and untracked content, without weakening exact integrity checks before task binding.
 

@@ -2503,7 +2503,7 @@ func (s *Service) AcceptTurnCandidate(ctx context.Context, key, sessionID, turnI
 	request := struct {
 		SessionID, TurnID, Digest, Verdict string
 	}{sessionID, turnID, digest, "accept"}
-	return s.validateTurnCandidateOperation(ctx, key, request, func() (session.Turn, error) {
+	turn, err := s.validateTurnCandidateOperation(ctx, key, request, func() (session.Turn, error) {
 		unlock, err := s.lockAndReapAwaitingCandidateRuntime(ctx, sessionID, turnID, digest)
 		if err != nil {
 			return session.Turn{}, err
@@ -2513,6 +2513,10 @@ func (s *Service) AcceptTurnCandidate(ctx context.Context, key, sessionID, turnI
 			SessionID: sessionID, TurnID: turnID, CandidateSHA256: digest,
 		})
 	})
+	if err == nil {
+		s.schedule(sessionID)
+	}
+	return turn, err
 }
 
 func (s *Service) RejectTurnCandidate(ctx context.Context, key string, req session.RejectTurnCandidateRequest) (session.Turn, error) {
@@ -2528,7 +2532,7 @@ func (s *Service) RejectTurnCandidate(ctx context.Context, key string, req sessi
 		defer unlock()
 		return s.store.RejectTurnCandidate(ctx, req)
 	})
-	if err == nil && turn.State == session.TurnQueued {
+	if err == nil {
 		s.schedule(req.SessionID)
 	}
 	return turn, err
