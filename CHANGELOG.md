@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Checkpoint restores refuse the Git directory.** A workspace checkpoint whose member path has a
+  `.git` component (any case) is rejected by the manifest decoder, and the restore writer also
+  refuses it and any symlinked parent inside the workspace before creating anything, so a forged
+  bundle cannot plant a hook or config that the post-restore verification and `git clean` would
+  leave behind.
+
 - **`coop worker connect` is listed in `coop help`.** The connector's runtime warnings use Coop's
   usual warning voice instead of a raw stderr line, and credential preparation errors say
   "credential" rather than the retired "profile".

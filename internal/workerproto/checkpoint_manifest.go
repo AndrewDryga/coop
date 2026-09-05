@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strings"
 )
 
 const (
@@ -240,7 +241,10 @@ func decodeWorkspaceCheckpointPath(encoded string) ([]byte, error) {
 		return nil, errors.New("checkpoint path is invalid")
 	}
 	for _, part := range splitPathBytes(decoded) {
-		if len(part) == 0 || string(part) == "." || string(part) == ".." {
+		// Git never reports its own directory as untracked, so a `.git` component (any case, as
+		// Git's own dotfile check treats it) can only be a forged bundle aiming a hook or config
+		// at the restored workspace.
+		if len(part) == 0 || string(part) == "." || string(part) == ".." || strings.EqualFold(string(part), ".git") {
 			return nil, errors.New("checkpoint path is invalid")
 		}
 	}

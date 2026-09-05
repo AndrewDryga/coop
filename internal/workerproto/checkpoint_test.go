@@ -111,6 +111,12 @@ func TestWorkspaceCheckpointBundleManifestRejectsAmbiguousOrUnsafeEntries(t *tes
 		"parent path bytes": func(value map[string]any) {
 			value["untracked_files"].([]any)[0].(map[string]any)["path_b64"] = base64.StdEncoding.EncodeToString([]byte("../escape"))
 		},
+		"git directory component": func(value map[string]any) {
+			value["untracked_files"].([]any)[0].(map[string]any)["path_b64"] = base64.StdEncoding.EncodeToString([]byte(".git/hooks/pre-commit"))
+		},
+		"nested git directory component": func(value map[string]any) {
+			value["untracked_files"].([]any)[0].(map[string]any)["path_b64"] = base64.StdEncoding.EncodeToString([]byte("vendor/.GIT/config"))
+		},
 		"oversized file": func(value map[string]any) {
 			value["untracked_files"].([]any)[0].(map[string]any)["byte_size"] = float64(MaxWorkspaceCheckpointBundleBytes)
 		},

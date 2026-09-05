@@ -266,6 +266,33 @@ func writeRestoredCheckpointFile(root *os.Root, pathBytes []byte, mode int64, bo
 		return errors.New("restored checkpoint path is invalid")
 	}
 	name := string(pathBytes)
+	for _, part := range strings.Split(name, "/") {
+		// The manifest decoder already refuses these; repeating the check here keeps the
+		// filesystem write safe on its own, since a hook planted under .git/ survives the
+		// post-restore verification failure and `git clean -x` alike.
+		if part == "" || part == "." || part == ".." || strings.EqualFold(part, ".git") {
+			return errors.New("restored checkpoint path is invalid")
+		}
+	}
+	// os.Root confines the final path to the workspace but follows links inside it, and the
+	// tracked patch applied just before this may legitimately have created one — so a member
+	// under a linked directory could still land in .git/. Only components that already exist can
+	// be links; refuse them before MkdirAll creates anything beneath.
+	for i, b := range pathBytes {
+		if b != '/' {
+			continue
+		}
+		info, err := root.Lstat(string(pathBytes[:i]))
+		if errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("inspect restored checkpoint directory: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("restored checkpoint path crosses a symbolic link")
+		}
+	}
 	parent := "."
 	if index := bytes.LastIndexByte(pathBytes, '/'); index >= 0 {
 		parent = string(pathBytes[:index])
