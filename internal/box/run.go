@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -529,13 +530,17 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// so a repo can omit committed adapter directories and still give each agent its skills, mounted
 	// USER-level at ~/.<agent>/skills (writable copy, dies with the box). A project skills dir wins,
 	// like the subagents mount.
-	synthMounts, synthDirs, err := synthSkillsMounts(spec.Repo, cfg.HomeInBox, configAgents)
+	privateRoots := append(ConfigExposureRoots(cfg), projectPolicyRepo(spec))
+	for _, companion := range spec.CompanionRepositories {
+		privateRoots = append(privateRoots, companion.HostPath)
+	}
+	synthMounts, synthDirs, err := synthSkillsMounts(spec.Repo, cfg.HomeInBox, configAgents, privateRoots...)
 	if err != nil {
 		return -1, err
 	}
 	tmpDirs = append(tmpDirs, synthDirs...)
 	if spec.Homes {
-		homeMounts, homeDirs, err := synthHomeFallbackMounts(spec.Repo, cfg.HomeInBox, configAgents)
+		homeMounts, homeDirs, err := synthHomeFallbackMounts(spec.Repo, cfg.HomeInBox, configAgents, privateRoots...)
 		if err != nil {
 			return -1, err
 		}
@@ -649,7 +654,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			execution = forkspace.ExecutionRecord{}
 		}
 		if reviewServicesAttempted {
-			cleanupErr := DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard)
+			cleanupErr := DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard, privateRoots...)
 			runErr = errors.Join(runErr, cleanupErr)
 		}
 		return code, runErr
@@ -693,7 +698,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// session continues WITHOUT services rather than running anything host-dangerous.
 			var composeStderr bytes.Buffer
 			servicesInspected = true
-			started, err := startServicesFile(rt, spec.Repo, cf, io.Discard, &composeStderr)
+			started, err := startServicesFile(rt, spec.Repo, cf, io.Discard, &composeStderr, privateRoots...)
 			if err != nil {
 				if spec.Review {
 					detail := strings.TrimSpace(composeStderr.String())
@@ -721,7 +726,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if cfg.Egress == "open" && spec.Network && rt.Name != "container" {
 		if cf := composeFile; cf != "" {
 			if !servicesInspected {
-				servicePorts = ServicePorts(rt, spec.Repo, cf)
+				servicePorts = ServicePorts(rt, spec.Repo, cf, privateRoots...)
 			}
 			if svc := servicePorts; len(svc) > 0 {
 				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_FORWARD="+forwardEnv(svc))
@@ -936,6 +941,9 @@ func pathComponents(value string) []string {
 // cleaned components case-insensitively, which is conservative on case-sensitive filesystems.
 func futurePathWithin(root, candidate string) (bool, error) {
 	rootInfo, err := os.Stat(root)
+	if errors.Is(err, syscall.ENOTDIR) {
+		return false, nil // a non-directory root ancestor cannot expose a subtree
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return pathComponentPrefix(root, candidate), nil
 	}
@@ -1418,7 +1426,12 @@ var skillsCapableAgents = map[string]bool{"claude": true, "codex": true, "gemini
 // COPY, not a read-only bind of the host dir:
 // some CLIs (codex) install their own system skills INTO the skills dir, which a :ro mount breaks —
 // and the copy keeps the host's source pristine. The copies die with the box.
-func synthSkillsMounts(repo, homeInBox string, agentNames []string) (mounts []extraMount, tmpdirs []string, retErr error) {
+func synthSkillsMounts(repo, homeInBox string, agentNames []string, exposedRoots ...string) (mounts []extraMount, tmpdirs []string, retErr error) {
+	sources, err := openRepositorySources(repo)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer sources.root.Close()
 	seen := map[string]bool{}
 	var selected []string
 	for _, ag := range agentNames {
@@ -1426,7 +1439,7 @@ func synthSkillsMounts(repo, homeInBox string, agentNames []string) (mounts []ex
 			continue
 		}
 		seen[ag] = true
-		present, err := existingArtifact(filepath.Join(repo, "."+ag, "skills"), true)
+		present, err := sources.exists(filepath.Join("."+ag, "skills"), true)
 		if err != nil {
 			return nil, nil, fmt.Errorf("inspect project skills for %s: %w", ag, err)
 		}
@@ -1439,50 +1452,62 @@ func synthSkillsMounts(repo, homeInBox string, agentNames []string) (mounts []ex
 		return nil, nil, nil
 	}
 
-	src := filepath.Join(repo, ".agent", "skills")
-	present, err := existingArtifact(src, true)
+	src := filepath.Join(".agent", "skills")
+	present, err := sources.exists(src, true)
 	if err != nil {
 		return nil, nil, fmt.Errorf("inspect shared skills source: %w", err)
 	}
 	if !present {
 		// The old .claude source is only a compatibility fallback. Invalid links and other
 		// unusable legacy shapes remain equivalent to absence.
-		src = filepath.Join(repo, ".claude", "skills")
-		info, legacyErr := os.Lstat(src)
+		src = filepath.Join(".claude", "skills")
+		info, legacyErr := sources.root.Lstat(src)
 		if legacyErr != nil || !info.IsDir() {
 			return nil, nil, nil
 		}
 	}
+	source, err := sources.openTree(src)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open shared skills source: %w", err)
+	}
+	defer source.Close()
+	var preparedDirs []string
 	defer func() {
 		if retErr != nil {
-			for _, dir := range tmpdirs {
+			for _, dir := range preparedDirs {
 				_ = os.RemoveAll(dir)
 			}
 			mounts, tmpdirs = nil, nil
 		}
 	}()
 	for _, ag := range selected {
-		dst, err := os.MkdirTemp("", "coop-skills-"+ag+"-")
+		dst, err := privateWorkspaceTempDir(repo, "coop-skills-"+ag+"-", exposedRoots...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("prepare skills for %s: %w", ag, err)
 		}
-		if err := os.CopyFS(dst, os.DirFS(src)); err != nil {
+		if err := copySourceTree(dst, source); err != nil {
 			_ = os.RemoveAll(dst)
 			return nil, nil, fmt.Errorf("copy skills for %s from %s: %w", ag, src, err)
 		}
-		tmpdirs = append(tmpdirs, dst)
+		preparedDirs = append(preparedDirs, dst)
 		mounts = append(mounts, extraMount{dst, homeInBox + "/." + ag + "/skills"})
 	}
-	return mounts, tmpdirs, nil
+	return mounts, preparedDirs, nil
 }
 
 // synthHomeFallbackMounts copies each active adapter's declared fallback artifacts into
 // ephemeral user-level mounts. Project artifacts suppress matching fallbacks independently;
 // writable copies keep both the committed source and host credential profile untouched.
-func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string) (mounts []extraMount, tmpdirs []string, retErr error) {
+func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string, exposedRoots ...string) (mounts []extraMount, tmpdirs []string, retErr error) {
+	sources, err := openRepositorySources(repo)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer sources.root.Close()
+	var preparedDirs []string
 	defer func() {
 		if retErr != nil {
-			for _, dir := range tmpdirs {
+			for _, dir := range preparedDirs {
 				_ = os.RemoveAll(dir)
 			}
 			mounts, tmpdirs = nil, nil
@@ -1496,16 +1521,16 @@ func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string) (mount
 		}
 		seen[name] = true
 		for _, artifact := range ag.HomeFallbacks() {
-			source := filepath.Join(repo, filepath.FromSlash(artifact.Source))
-			projectArtifact := filepath.Join(repo, filepath.FromSlash(artifact.Project))
-			projectPresent, err := existingArtifact(projectArtifact, artifact.Dir)
+			source := filepath.FromSlash(artifact.Source)
+			projectArtifact := filepath.FromSlash(artifact.Project)
+			projectPresent, err := sources.exists(projectArtifact, artifact.Dir)
 			if err != nil {
 				return nil, nil, fmt.Errorf("inspect project %s artifact for %s: %w", artifact.Project, name, err)
 			}
 			if projectPresent {
 				continue
 			}
-			sourcePresent, err := existingArtifact(source, artifact.Dir)
+			sourcePresent, err := sources.exists(source, artifact.Dir)
 			if err != nil {
 				return nil, nil, fmt.Errorf("inspect fallback %s for %s: %w", artifact.Source, name, err)
 			}
@@ -1513,17 +1538,22 @@ func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string) (mount
 				continue
 			}
 
-			dst, err := os.MkdirTemp("", "coop-home-"+name+"-")
+			dst, err := privateWorkspaceTempDir(repo, "coop-home-"+name+"-", exposedRoots...)
 			if err != nil {
 				return nil, nil, fmt.Errorf("prepare fallback %s for %s: %w", artifact.Source, name, err)
 			}
 			host := dst
 			if artifact.Dir {
-				err = os.CopyFS(dst, os.DirFS(source))
+				var tree *os.Root
+				tree, err = sources.openTree(source)
+				if err == nil {
+					err = copySourceTree(dst, tree)
+					_ = tree.Close()
+				}
 			} else {
 				host = filepath.Join(dst, filepath.Base(source))
 				var data []byte
-				data, err = os.ReadFile(source)
+				data, err = sources.readFile(source)
 				if err == nil {
 					err = os.WriteFile(host, data, 0o600)
 				}
@@ -1532,38 +1562,11 @@ func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string) (mount
 				_ = os.RemoveAll(dst)
 				return nil, nil, fmt.Errorf("copy fallback %s for %s: %w", artifact.Source, name, err)
 			}
-			tmpdirs = append(tmpdirs, dst)
+			preparedDirs = append(preparedDirs, dst)
 			mounts = append(mounts, extraMount{host, filepath.Join(homeInBox, filepath.FromSlash(artifact.Target))})
 		}
 	}
-	return mounts, tmpdirs, nil
-}
-
-// existingArtifact reports whether path exists with the declared shape. Missing is the normal
-// optional case; a present selected-provider artifact with the wrong shape or an unreadable parent
-// is an error. Symlinks to the declared shape retain their existing behavior.
-func existingArtifact(path string, wantDir bool) (bool, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if _, linkErr := os.Lstat(path); errors.Is(linkErr, os.ErrNotExist) {
-				return false, nil
-			} else if linkErr != nil {
-				return false, linkErr
-			}
-		}
-		return false, err
-	}
-	if wantDir {
-		if !info.IsDir() {
-			return false, fmt.Errorf("%s is not a directory", path)
-		}
-		return true, nil
-	}
-	if !info.Mode().IsRegular() {
-		return false, fmt.Errorf("%s is not a regular file", path)
-	}
-	return true, nil
+	return mounts, preparedDirs, nil
 }
 
 // instructionPlan is the global instruction each non-lead agent should receive: the box env

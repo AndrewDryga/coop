@@ -276,7 +276,7 @@ func fetchForkForMerge(repo, ws, name string) error {
 	return nil
 }
 
-func destroyLandedFork(rt runtime.Runtime, repo, name string) error {
+func destroyLandedFork(rt runtime.Runtime, repo, name string, exposedRoots ...string) error {
 	unlock, err := lockForkForMerge(repo, name)
 	if err != nil {
 		return err
@@ -301,7 +301,7 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string) error {
 			return errors.New("landed fork still owns canonical task authority")
 		}
 	}
-	if err := DestroyFork(rt, repo, name); err != nil {
+	if err := DestroyFork(rt, repo, name, exposedRoots...); err != nil {
 		return err
 	}
 	if hasGeneration {
@@ -644,7 +644,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	// Default-No delete confirm (the land above was the default-Yes step); --yes is already required
 	// for a non-interactive run, so this only prompts at a TTY. Declining just keeps the landed fork.
 	if ui.DestroyGate("remove the landed fork "+name, yes) == nil {
-		if err := destroyLandedFork(c.rt, repo, name); err != nil {
+		if err := destroyLandedFork(c.rt, repo, name, box.ConfigExposureRoots(c.cfg)...); err != nil {
 			if isForkMergeLifecycleError(err) {
 				return 1, err
 			}
@@ -704,7 +704,7 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 			if gitDirty(ws) {
 				ui.Warn("keeping fork %s — uncommitted changes; 'coop fork rm %s --force' after review", n, n)
 			} else if err == nil {
-				if destroyErr := destroyLandedFork(c.rt, repo, n); destroyErr != nil {
+				if destroyErr := destroyLandedFork(c.rt, repo, n, box.ConfigExposureRoots(c.cfg)...); destroyErr != nil {
 					ui.Warn("keeping landed fork %s — it changed before removal: %v", n, destroyErr)
 				}
 			}

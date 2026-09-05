@@ -567,7 +567,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 					}
 				}
 			}
-			if err := forkctl.DestroyFork(a.rt, repo, fa.name); err != nil {
+			if err := forkctl.DestroyFork(a.rt, repo, fa.name, box.ConfigExposureRoots(a.cfg)...); err != nil {
 				unlock()
 				return -1, err
 			}

@@ -2972,6 +2972,7 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 			true,
 			io.Discard,
 			io.Discard,
+			append(box.ConfigExposureRoots(s.sourceCfg), s.stateRoot)...,
 		); err != nil {
 			_ = preflight.close()
 			unlockWorkspace()

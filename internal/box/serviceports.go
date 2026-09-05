@@ -31,11 +31,11 @@ type ServicePort struct {
 // no compose file, no docker, or a parse error yields nothing (sidecars just aren't published).
 // `expose` (not `ports`) is the opt-in marker: it publishes nothing on its own, so coop's override
 // adds the only host mapping (no double-publish).
-func ServicePorts(rt runtime.Runtime, workspacePath, composeFile string) []ServicePort {
+func ServicePorts(rt runtime.Runtime, workspacePath, composeFile string, exposedRoots ...string) []ServicePort {
 	if composeFile == "" {
 		return nil
 	}
-	args, cleanup, err := snapshotComposeArgs(workspacePath, composeFile)
+	args, cleanup, err := snapshotComposeArgs(workspacePath, composeFile, exposedRoots...)
 	if err != nil {
 		return nil
 	}
@@ -99,7 +99,7 @@ func parseServicePorts(configJSON []byte, workspacePath string) []ServicePort {
 // writeServiceOverride writes a temp compose override publishing each ServicePort to
 // 127.0.0.1:<HostPort>:<ContainerPort>, and returns its path + a cleanup func. Merged as a second
 // `-f`, it adds the loopback host mapping the base file's `expose` deliberately left off.
-func writeServiceOverride(sp []ServicePort, workspace string) (path string, cleanup func(), err error) {
+func writeServiceOverride(sp []ServicePort, workspace string, exposedRoots ...string) (path string, cleanup func(), err error) {
 	bySvc := map[string][]ServicePort{}
 	var order []string
 	for _, p := range sp {
@@ -116,7 +116,7 @@ func writeServiceOverride(sp []ServicePort, workspace string) (path string, clea
 			fmt.Fprintf(&b, "      - \"127.0.0.1:%d:%d\"\n", p.HostPort, p.ContainerPort)
 		}
 	}
-	dir, err := privateComposeDir(workspace)
+	dir, err := privateWorkspaceTempDir(workspace, "coop-compose-", exposedRoots...)
 	if err != nil {
 		return "", nil, err
 	}

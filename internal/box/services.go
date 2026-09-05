@@ -22,18 +22,18 @@ import (
 // started. Progress is written to stdout/stderr; the caller decides where to point them and
 // gates on a compose-capable runtime (Apple `container` has no compose). Shared by `coop up`
 // and box.Run's auto-start.
-func EnsureServices(rt runtime.Runtime, workspace, policyRepo string, stdout, stderr io.Writer) ([]string, error) {
+func EnsureServices(rt runtime.Runtime, workspace, policyRepo string, stdout, stderr io.Writer, exposedRoots ...string) ([]string, error) {
 	p, err := project.Load(policyRepo)
 	if err != nil {
 		return nil, err
 	}
-	return EnsureServicesFile(rt, workspace, ComposeFileAt(workspace, p.ComposeRel()), stdout, stderr)
+	return EnsureServicesFile(rt, workspace, ComposeFileAt(workspace, p.ComposeRel()), stdout, stderr, append([]string{policyRepo}, exposedRoots...)...)
 }
 
 // EnsureServicesFile is the explicit-file form used by trusted review policy. The file must live
 // inside workspace; ValidateComposeFile enforces that its bind mounts cannot escape that boundary.
-func EnsureServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer) ([]string, error) {
-	started, err := startServicesFile(rt, workspace, file, stdout, stderr)
+func EnsureServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, exposedRoots ...string) ([]string, error) {
+	started, err := startServicesFile(rt, workspace, file, stdout, stderr, exposedRoots...)
 	return started.names, err
 }
 
@@ -42,7 +42,7 @@ type startedServices struct {
 	ports []ServicePort
 }
 
-func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer) (startedServices, error) {
+func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, exposedRoots ...string) (startedServices, error) {
 	if file == "" {
 		return startedServices{}, nil
 	}
@@ -50,7 +50,7 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 	// (the compose path is no longer shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
-	args, cleanup, err := snapshotComposeArgs(workspace, file)
+	args, cleanup, err := snapshotComposeArgs(workspace, file, exposedRoots...)
 	if err != nil {
 		return startedServices{}, fmt.Errorf("refusing to run %s: %w", filepath.Base(file), err)
 	}
@@ -59,7 +59,7 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 	// override (the base file's `expose` publishes nothing, so this adds the only host mapping).
 	ports := servicePortsWithArgs(rt, workspace, args)
 	if sp := ports; len(sp) > 0 {
-		override, cleanup, err := writeServiceOverride(sp, workspace)
+		override, cleanup, err := writeServiceOverride(sp, workspace, exposedRoots...)
 		if err != nil {
 			return startedServices{}, err
 		}
@@ -79,7 +79,7 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 
 // Snapshot approved bytes outside the writable workspace. All commands in one operation use
 // this file; the explicit project directory preserves relative binds and ownership labels.
-func snapshotComposeArgs(workspace, file string) ([]string, func(), error) {
+func snapshotComposeArgs(workspace, file string, exposedRoots ...string) ([]string, func(), error) {
 	data, err := readValidatedCompose(file, workspace)
 	if err != nil {
 		return nil, nil, err
@@ -88,7 +88,7 @@ func snapshotComposeArgs(workspace, file string) ([]string, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	dir, err := privateComposeDir(workspace)
+	dir, err := privateWorkspaceTempDir(workspace, "coop-compose-", exposedRoots...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -102,21 +102,34 @@ func snapshotComposeArgs(workspace, file string) ([]string, func(), error) {
 		"--project-directory", filepath.Dir(abs), "--env-file", os.DevNull, "-f", path}, cleanup, nil
 }
 
-func privateComposeDir(workspace string) (string, error) {
-	abs, err := filepath.Abs(workspace)
+func privateWorkspaceTempDir(workspace, pattern string, exposedRoots ...string) (string, error) {
+	absParent, err := filepath.Abs(os.TempDir())
 	if err != nil {
 		return "", err
 	}
-	repoPath, repoErr := filepath.EvalSymlinks(abs)
-	parent, parentErr := filepath.EvalSymlinks(os.TempDir())
-	rel, relErr := filepath.Rel(repoPath, parent)
-	if repoErr != nil || parentErr != nil || relErr != nil ||
-		(rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
-		return "", errors.New("compose temporary directory must resolve outside the workspace — choose an external TMPDIR")
+	parent, err := filepath.EvalSymlinks(absParent)
+	if err != nil {
+		return "", err
+	}
+	for _, root := range append([]string{workspace}, exposedRoots...) {
+		if root == "" {
+			continue
+		}
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			return "", err
+		}
+		inside, err := futurePathWithin(abs, parent)
+		if err != nil {
+			return "", err
+		}
+		if inside {
+			return "", errors.New("temporary directory must resolve outside agent-exposed directories — choose an external TMPDIR")
+		}
 	}
 	// Resolve before allocating: a TMPDIR alias inside the repo must not remain in any
 	// later write/read/cleanup path, even when its current target is outside the repo.
-	return os.MkdirTemp(parent, "coop-compose-")
+	return os.MkdirTemp(parent, pattern)
 }
 
 func resolvedComposeServices(rt runtime.Runtime, args []string, stderr io.Writer) ([]string, error) {
@@ -138,7 +151,7 @@ func resolvedComposeServices(rt runtime.Runtime, args []string, stderr io.Writer
 }
 
 // DownServices stops the current workspace's hashed Compose project. Volumes are optional.
-func DownServices(rt runtime.Runtime, workspace, policyRepo string, volumes bool, stdout, stderr io.Writer) error {
+func DownServices(rt runtime.Runtime, workspace, policyRepo string, volumes bool, stdout, stderr io.Writer, exposedRoots ...string) error {
 	p, err := project.Load(policyRepo)
 	if err != nil {
 		return err
@@ -147,16 +160,16 @@ func DownServices(rt runtime.Runtime, workspace, policyRepo string, volumes bool
 	if file == "" {
 		return nil
 	}
-	return DownServicesFile(rt, workspace, file, volumes, stdout, stderr)
+	return DownServicesFile(rt, workspace, file, volumes, stdout, stderr, append([]string{policyRepo}, exposedRoots...)...)
 }
 
 // DownServicesFile is the explicit-file counterpart to EnsureServicesFile. Review runs use it to
 // remove their short-lived project, network, and volumes before the disposable candidate goes away.
-func DownServicesFile(rt runtime.Runtime, workspace, file string, volumes bool, stdout, stderr io.Writer) error {
+func DownServicesFile(rt runtime.Runtime, workspace, file string, volumes bool, stdout, stderr io.Writer, exposedRoots ...string) error {
 	if file == "" {
 		return nil
 	}
-	args, cleanup, err := snapshotComposeArgs(workspace, file)
+	args, cleanup, err := snapshotComposeArgs(workspace, file, exposedRoots...)
 	if err != nil {
 		return fmt.Errorf("refusing to stop %s: %w", filepath.Base(file), err)
 	}

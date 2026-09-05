@@ -64,10 +64,10 @@ func RecoverOrphanedGenerationLocked(repo, name string) (bool, error) {
 //
 // Best effort: a service that refuses to stop must not block the removal the operator asked
 // for, but it must not vanish silently either.
-func DestroyFork(rt runtime.Runtime, repo, name string) error {
+func DestroyFork(rt runtime.Runtime, repo, name string, exposedRoots ...string) error {
 	if rt.Name != "" {
 		ws := forkspace.Workspace(repo, name)
-		if err := box.DownServices(rt, ws, repo, true, io.Discard, io.Discard); err != nil {
+		if err := box.DownServices(rt, ws, repo, true, io.Discard, io.Discard, exposedRoots...); err != nil {
 			ui.Info("fork %s: sibling services did not stop cleanly (%v) — check 'coop ps'", name, err)
 		}
 	}
@@ -297,7 +297,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			}
 		}
 	}
-	if err := DestroyFork(c.rt, repo, name); err != nil {
+	if err := DestroyFork(c.rt, repo, name, box.ConfigExposureRoots(c.cfg)...); err != nil {
 		return -1, err
 	}
 	if hasGenerationNow {

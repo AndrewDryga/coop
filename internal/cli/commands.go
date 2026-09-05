@@ -739,7 +739,7 @@ func (a *app) cmdUp(args []string) (int, error) {
 	proj := box.ComposeProject(repo)
 	rel, _ := filepath.Rel(repo, file)
 	ui.Info("starting services from %s (waiting until healthy)", rel)
-	services, err := box.EnsureServicesFile(a.rt, repo, file, os.Stdout, os.Stderr)
+	services, err := box.EnsureServicesFile(a.rt, repo, file, os.Stdout, os.Stderr, box.ConfigExposureRoots(a.cfg)...)
 	if err != nil {
 		return -1, fmt.Errorf("could not start services from %s: %w — fix the Compose file or runtime, then retry: coop up", rel, err)
 	}
@@ -768,7 +768,7 @@ func (a *app) cmdDown(args []string) (int, error) {
 	if file == "" {
 		return -1, fmt.Errorf("no %s here — nothing to bring down", p.ComposeRel())
 	}
-	if err := box.DownServicesFile(a.rt, repo, file, volumes, os.Stdout, os.Stderr); err != nil {
+	if err := box.DownServicesFile(a.rt, repo, file, volumes, os.Stdout, os.Stderr, box.ConfigExposureRoots(a.cfg)...); err != nil {
 		return -1, err
 	}
 	return 0, nil

@@ -129,7 +129,7 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 			return nil
 		}
 		m := map[string]string{}
-		for _, sp := range box.ServicePorts(c.rt, ws, cf) {
+		for _, sp := range box.ServicePorts(c.rt, ws, cf, append(box.ConfigExposureRoots(c.cfg), repo)...) {
 			m[fmt.Sprintf("%s:%d", sp.Service, sp.ContainerPort)] = fmt.Sprintf("%s://localhost:%d", sp.Scheme, sp.HostPort)
 		}
 		if len(m) == 0 {

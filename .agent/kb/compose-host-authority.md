@@ -18,7 +18,9 @@ remain supported. Bind and port strings retain their stricter no-dollar rule.
 `snapshotComposeArgs` writes the approved bytes into a private directory whose canonical path must
 be outside the workspace, even when `TMPDIR` points inside it. Discovery and launch share that file,
 the original `--project-directory`, and an empty `--env-file`; the generated port override has the
-same placement requirement. `Run` reuses the startup port list for forwarding instead of reading
+same placement requirement. Callers also exclude credential configuration and ACP transcript mount
+roots, with inode-aware ancestry so case aliases cannot place an artifact back in the workspace.
+`Run` reuses the startup port list for forwarding instead of reading
 the mutable source again. Teardown and independent port inspection also validate a snapshot.
 
 This freezes configuration bytes, not bind-source filesystem identity: changing a bind path after

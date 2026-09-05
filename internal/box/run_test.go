@@ -2398,6 +2398,32 @@ func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
 		}
 	}
 
+	t.Run("private copies cannot live in a credential home", func(t *testing.T) {
+		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
+		writeCopyFixture(t, filepath.Join(spec.Repo, ".agent", "skills", "SKILL.md"), "inside")
+		if err := os.MkdirAll(cfg.AgentDir("codex"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TMPDIR", cfg.AgentDir("codex"))
+		assertStopped(t, cfg, spec, artifacts, recorder, rt, "outside agent-exposed", false)
+	})
+
+	t.Run("private copies cannot live in another provider ACP alias", func(t *testing.T) {
+		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
+		writeCopyFixture(t, filepath.Join(spec.Repo, ".agent", "skills", "SKILL.md"), "inside")
+		outside := t.TempDir()
+		claude, _ := agents.Get("claude")
+		link := filepath.Join(acpSharedDir(cfg, "claude"), claude.ACPSessionDirs()[0])
+		if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, link); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TMPDIR", outside)
+		assertStopped(t, cfg, spec, artifacts, recorder, rt, "outside agent-exposed", false)
+	})
+
 	t.Run("selected provider instruction read", func(t *testing.T) {
 		cfg, spec, artifacts, recorder, rt := newFixture(t, "claude")
 		path := filepath.Join(cfg.AgentDir("claude"), "CLAUDE.md")
