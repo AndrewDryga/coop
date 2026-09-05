@@ -1271,10 +1271,10 @@ func ensureAgentHomes(cfg *config.Config, spec RunSpec) error {
 		profileRoot := filepath.Join(cfg.ConfigDir, name, "profiles")
 		profileDir := cfg.AgentDir(name)
 		if filepath.Dir(profileDir) != profileRoot {
-			return fmt.Errorf("prepare %s credential profile: selected name does not resolve inside %s", name, profileRoot)
+			return fmt.Errorf("prepare %s credential: selected name does not resolve inside %s", name, profileRoot)
 		}
 		if err := config.EnsurePrivateDir(profileDir); err != nil {
-			return fmt.Errorf("prepare %s credential profile: %w", name, err)
+			return fmt.Errorf("prepare %s credential: %w", name, err)
 		}
 	}
 	return nil

@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop worker connect` is listed in `coop help`.** The connector's runtime warnings use Coop's
+  usual warning voice instead of a raw stderr line, and credential preparation errors say
+  "credential" rather than the retired "profile".
+
 - **`coop update --check` no longer calls a never-built image current.** A per-project or base
   image with no local build record is reported as such, with `coop build` as the fix, instead of
   "is current" for an image `coop run` is about to refuse.

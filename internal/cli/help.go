@@ -133,6 +133,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop sessions doctor", "check the session controller Unix socket")
 	row("coop sessions policies", "print trusted policy digests for workers")
 	row("coop sessions compact", "back up and compact turn retry receipts")
+	row("coop worker connect", "outbound worker: join a fleet controller")
 
 	group("SERVICES — the box's .agent/compose.yml sidecars")
 	// `coop up`/`down` act on this repo's .agent/compose.yml — always NAME the file (it's what makes

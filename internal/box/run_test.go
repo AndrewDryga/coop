@@ -2175,8 +2175,8 @@ func TestRunRefusesUnsafeCredentialProfileBeforeRuntime(t *testing.T) {
 		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
 		Homes: true, Agent: "codex", Batch: true, Quiet: true,
 	})
-	if code != -1 || err == nil || !strings.Contains(err.Error(), "credential profile") {
-		t.Fatalf("Run = (%d, %v), want unsafe-profile refusal", code, err)
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "codex credential") {
+		t.Fatalf("Run = (%d, %v), want unsafe-credential refusal", code, err)
 	}
 	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("unsafe profile reached runtime: %v", statErr)

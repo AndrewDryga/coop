@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/ui"
 	"github.com/AndrewDryga/coop/internal/workerconnector"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
@@ -81,7 +82,7 @@ func runWorkerConnect(configurationPath string) (int, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err = connector.Run(ctx, configuration.PollInterval, func(err error) {
-		fmt.Fprintf(os.Stderr, "coop worker: %v\n", err)
+		ui.Warn("%v", err)
 	})
 	if errors.Is(err, context.Canceled) {
 		return 0, nil

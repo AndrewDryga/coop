@@ -50,6 +50,7 @@ SESSIONS — LOCAL REMOTE-SESSION CONTROLLER
   coop sessions doctor              check the session controller Unix socket
   coop sessions policies            print trusted policy digests for workers
   coop sessions compact             back up and compact turn retry receipts
+  coop worker connect               outbound worker: join a fleet controller
 
 SERVICES — the box's .agent/compose.yml sidecars
   coop up                           start the .agent/compose.yml services
