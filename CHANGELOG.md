@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop context --task` reads every `paths:` list shape.** A task's declared scope may be a
+  YAML flow list (`paths: [a, b]`), a block list, or the bare space/comma-separated form; the flow
+  brackets were previously taken literally and a block list yielded no scope at all.
+
 - **Read-only commands no longer need a writable config directory.** `coop version`, `coop help`,
   `coop completion`, and the task commands work on a read-only or absent HOME again: loading
   configuration still tightens an existing credential root to owner-only but no longer creates one.

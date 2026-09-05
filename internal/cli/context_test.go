@@ -84,6 +84,18 @@ func TestCmdContext(t *testing.T) {
 		t.Errorf("task-declared path should route the portal doc, got %v", r.Files)
 	}
 
+	// The declared paths may also be a YAML flow or block list, not just a bare scalar.
+	for name, frontmatter := range map[string]string{
+		"flow":  "---\npaths: [portal/lib/auth.ex, runner/x.go]\n---\n# Portal auth\n",
+		"block": "---\npaths:\n  - portal/lib/auth.ex\n  - runner/x.go\n---\n# Portal auth\n",
+	} {
+		ctxWrite(t, filepath.Join(repo, ".agent", "tasks", "00_todo", "2026-01-01-portal-auth", "task.md"), frontmatter)
+		r = parse(t, "--json", "--task", "portal-auth")
+		if len(r.Scope) != 2 || !strings.Contains(r.fileset(), ".agent/kb/portal.md") {
+			t.Errorf("%s list: scope %v, files %v", name, r.Scope, r.Files)
+		}
+	}
+
 	// Absolute (and escaping) scope paths are rejected.
 	if code, err := a.cmdContext([]string{"/etc/passwd"}); code == 0 || err == nil {
 		t.Errorf("absolute path must be rejected, got (%d, %v)", code, err)

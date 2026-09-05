@@ -396,7 +396,7 @@ coop context — compile the committed docs relevant to a scope (instructions + 
   Scope is DETERMINISTIC (never inferred from a prompt), from any of:
     paths...         explicit repo-relative paths
     --changed        paths git reports changed (staged, unstaged, untracked)
-    --task <id>      the paths a queued task declares (a 'paths:' frontmatter field)
+    --task <id>      the paths a queued task declares (a 'paths:' frontmatter list)
     (current subproject, when run inside one)
 
   Output: a report of each file + the route that selected it; --json for the same

@@ -200,3 +200,23 @@ func TestTaskTreeCountsActiveFallsBackToTodo(t *testing.T) {
 		t.Errorf("active = %q, want the todo task when none in progress", active)
 	}
 }
+
+func TestFrontmatterList(t *testing.T) {
+	for name, tc := range map[string]struct {
+		content string
+		want    string
+	}{
+		"flow":           {"---\npaths: [svc/a/main.go, \"docs/**\"]\n---\n", "svc/a/main.go|docs/**"},
+		"block":          {"---\ntitle: x\npaths:\n  - svc/a/main.go\n  - sp ace.txt\nlabels: []\n---\n", "svc/a/main.go|sp ace.txt"},
+		"scalar":         {"---\npaths: svc/a/main.go, docs/**\n---\n", "svc/a/main.go|docs/**"},
+		"empty flow":     {"---\npaths: []\n---\n", ""},
+		"missing":        {"---\ntitle: x\n---\n", ""},
+		"no frontmatter": {"# just a body\n", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := strings.Join(FrontmatterList(tc.content, "paths"), "|"); got != tc.want {
+				t.Errorf("FrontmatterList = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

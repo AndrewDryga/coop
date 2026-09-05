@@ -179,8 +179,9 @@ func parseGitStatusPaths(out []byte) ([]string, error) {
 	return paths, nil
 }
 
-// taskScopePaths reads a task's declared scope: a `paths:` frontmatter field in its task.md, split
-// on commas/whitespace. A task without one contributes nothing.
+// taskScopePaths reads a task's declared scope: a `paths:` frontmatter list in its task.md — a YAML
+// flow list, a block list, or a bare space/comma-separated scalar. A task without one contributes
+// nothing.
 func (a *app) taskScopePaths(repo, id string) ([]string, error) {
 	rels, err := tasks.TaskQueues(a.cfg, repo, nil)
 	if err != nil {
@@ -207,8 +208,7 @@ func (a *app) taskScopePaths(repo, id string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("coop context: reading task %s: %w", t.ID, err)
 	}
-	fields, _ := tasks.SplitFrontmatter(string(data))
-	return strings.FieldsFunc(fields["paths"], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }), nil
+	return tasks.FrontmatterList(string(data), "paths"), nil
 }
 
 func contextReport(scope []string, sel []contextc.Selected) {

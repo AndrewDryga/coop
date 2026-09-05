@@ -87,40 +87,11 @@ var subtaskRe = regexp.MustCompile(`^[ \t]*[-*] \[(.)\] `)
 // is the body and fields is empty. Kept dependency-free on purpose — coop is stdlib-only.
 func SplitFrontmatter(content string) (fields map[string]string, body string) {
 	fields = map[string]string{}
-	lines := strings.Split(content, "\n")
-	// The frontmatter is the first `---` fence — but `coop tasks add` seeds task.md with a leading
-	// `<!-- … -->` header (and a hand-written file may have blank lines) before it, so skip those
-	// first. Without this a seeded task's title/labels/status field would go unparsed.
-	start := 0
-	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
-		start++
-	}
-	if start < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[start]), "<!--") {
-		for start < len(lines) {
-			closed := strings.Contains(lines[start], "-->")
-			start++
-			if closed {
-				break
-			}
-		}
-		for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
-			start++
-		}
-	}
-	if start >= len(lines) || strings.TrimSpace(lines[start]) != "---" {
+	lines, body, ok := frontmatterLines(content)
+	if !ok {
 		return fields, content
 	}
-	end := -1
-	for i := start + 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			end = i
-			break
-		}
-	}
-	if end < 0 {
-		return fields, content // no closing fence — treat the whole thing as body
-	}
-	for _, l := range lines[start+1 : end] {
+	for _, l := range lines {
 		t := strings.TrimSpace(l)
 		if t == "" || strings.HasPrefix(t, "#") {
 			continue
@@ -129,7 +100,88 @@ func SplitFrontmatter(content string) (fields map[string]string, body string) {
 			fields[strings.TrimSpace(k)] = unquoteScalar(strings.TrimSpace(v))
 		}
 	}
-	return fields, strings.Join(lines[end+1:], "\n")
+	return fields, body
+}
+
+// FrontmatterList reads a list-valued frontmatter field in the three shapes a task file uses: a
+// YAML flow list (`paths: [a, b]`), a block list (`paths:` followed by `- a` lines), and the bare
+// space- or comma-separated scalar (`paths: a b`). Items are unquoted; a missing field yields nil.
+func FrontmatterList(content, key string) []string {
+	lines, _, ok := frontmatterLines(content)
+	if !ok {
+		return nil
+	}
+	var items []string
+	add := func(item string) {
+		if item = unquoteScalar(strings.TrimSpace(item)); item != "" {
+			items = append(items, item)
+		}
+	}
+	for i, l := range lines {
+		k, v, found := strings.Cut(strings.TrimSpace(l), ":")
+		if !found || strings.TrimSpace(k) != key {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		switch {
+		case v == "":
+			for _, next := range lines[i+1:] {
+				n := strings.TrimSpace(next)
+				if !strings.HasPrefix(n, "-") {
+					break
+				}
+				add(strings.TrimPrefix(n, "-"))
+			}
+		case strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]"):
+			for _, part := range strings.Split(v[1:len(v)-1], ",") {
+				add(part)
+			}
+		default:
+			for _, part := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }) {
+				add(part)
+			}
+		}
+		return items
+	}
+	return nil
+}
+
+// frontmatterLines returns the lines between the leading `---` fences and the body after them.
+// The frontmatter is the first fence — but `coop tasks add` seeds task.md with a leading
+// `<!-- … -->` header (and a hand-written file may have blank lines) before it, so skip those
+// first. Without this a seeded task's title/labels/status field would go unparsed.
+func frontmatterLines(content string) (lines []string, body string, ok bool) {
+	all := strings.Split(content, "\n")
+	start := 0
+	for start < len(all) && strings.TrimSpace(all[start]) == "" {
+		start++
+	}
+	if start < len(all) && strings.HasPrefix(strings.TrimSpace(all[start]), "<!--") {
+		for start < len(all) {
+			closed := strings.Contains(all[start], "-->")
+			start++
+			if closed {
+				break
+			}
+		}
+		for start < len(all) && strings.TrimSpace(all[start]) == "" {
+			start++
+		}
+	}
+	if start >= len(all) || strings.TrimSpace(all[start]) != "---" {
+		return nil, content, false
+	}
+	end := -1
+	for i := start + 1; i < len(all); i++ {
+		if strings.TrimSpace(all[i]) == "---" {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
+		return nil, content, false // no closing fence — treat the whole thing as body
+	}
+	return all[start+1 : end], strings.Join(all[end+1:], "\n"), true
 }
 
 // unquoteScalar strips a YAML scalar's surrounding quotes. A title that opens with a flow
