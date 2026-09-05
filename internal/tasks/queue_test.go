@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,34 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
+
+func TestAggregateReleasePreservesSandboxOwner(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	repo := t.TempDir()
+	rels := []string{"a/.agent/tasks", "b/.agent/tasks"}
+	root := filepath.Join(repo, rels[1])
+	taskForLease(t, root, StateTodo, "assigned")
+	workspace, identity := testAssignmentFork(t, repo, "release-test")
+	assignment, err := AssignForkTask([]string{root}, ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: workspace,
+		BaselineHead: strings.Repeat("a", 40), LeaseOwner: testLeaseOwner(),
+	})
+	if err != nil || assignment.Outcome != ForkAssignmentSelected {
+		t.Fatalf("assign fixture: %+v, %v", assignment, err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	before := removalSnapshot(t, repo)
+	authority := os.Getenv(TestLeaseAuthorityRootEnv)
+	authorityBefore := removalSnapshot(t, authority)
+	code, err := CmdTasks(Host{}, &config.Config{RepoOverride: repo, TasksFiles: rels}, []string{"release", "assigned"})
+	if code != -1 || !errors.Is(err, ErrTaskSandboxOwned) {
+		t.Errorf("aggregate release=%d, %v; want sandbox ownership refusal", code, err)
+	}
+	assertRemovalSnapshot(t, repo, before)
+	assertRemovalSnapshot(t, authority, authorityBefore)
+}
 
 // TestTaskQueuesMonorepo: with no --tasks/COOP_TASKS, taskQueues derives the queue set from
 // .agent/project.yaml — a monorepo's subproject queues — while an explicit override still wins.

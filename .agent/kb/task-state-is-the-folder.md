@@ -22,7 +22,14 @@ single-queue handler. It accepts one ID or `--all-done`, never both, before repo
 discovery or archive counting. An empty archive or `--yes` does not excuse malformed arguments;
 valid removals still use the shared confirmation gate and existing lease/authority cleanup.
 
+ID-addressed commands, including `release`, share the cross-queue resolver: unique exact identity
+beats fragments, duplicate matches refuse with queue-selection guidance. Release then uses the
+ordinary single-queue handler: it clears a human claim without moving the task, and cannot clear a
+sandbox assignment. Explicit `--tasks` overrides configured queues and project-derived discovery.
+
 ## Changelog
+- 2026-09-05 — wired release through aggregate identity resolution; verified derived/configured/
+  explicit selection, unchanged task trees, ambiguity/usage denials and retained sandbox authority.
 - 2026-09-05 — shared strict removal grammar now runs before discovery in single and aggregate
   paths. Regressed syntax refusals with retained completion-window authority, empty/populated
   archives and confirmation flags, plus valid aggregate and substring behavior.

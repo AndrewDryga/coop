@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- `coop tasks release` resolves unique tasks across all configured queues, like `claim`. Ambiguous
+  identities still require queue selection, and sandbox-owned tasks cannot be released this way.
+
 - Invalid initialization stacks and missing asdf prerequisites fail before writing scaffolding or
   Git hooks. Corrected retries retain the existing auto-detection and no-clobber behavior.
 

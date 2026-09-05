@@ -245,7 +245,7 @@ func TaskQueues(cfg *config.Config, repo string, flags []string) ([]string, erro
 }
 
 // CmdTasks drives the folder task queue (.agent/tasks): one folder per task, its state the
-// parent directory. The subcommands (ls/lint/add/claim/block/unblock/done/rm/
+// parent directory. The subcommands (ls/lint/add/claim/release/block/unblock/done/rm/
 // decisions) live in cmd.go; a bare `coop tasks` lists the queue.
 func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	flags, rest, err := ExtractTasksFlags(args)
@@ -354,7 +354,7 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 			return tasksLintAll(repo, rels)
 		case "decisions":
 			return tasksDecisionsAll(repo, rels, rest[1:])
-		case "claim", "block", "unblock", "done", "path", "rm":
+		case "claim", "release", "block", "unblock", "done", "path", "rm":
 			return tasksAcrossQueues(repo, rels, sub, rest)
 		case "":
 			return tasksListAll(repo, rels, nil)
@@ -449,7 +449,7 @@ func tasksListAll(repo string, rels []string, args []string) (int, error) {
 	return 0, nil
 }
 
-// tasksAcrossQueues routes an id-addressed subcommand (claim/block/unblock/done/rm) when several
+// tasksAcrossQueues routes an id-addressed subcommand (claim/release/block/unblock/done/path/rm) when several
 // queues are configured: find which queue holds the id, then run the normal single-queue handler
 // against that queue — so `coop tasks done <id>` just works in a monorepo. `rm --all-done` is the
 // id-less exception: it clears every queue's done archive.
