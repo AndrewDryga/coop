@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Invalid initialization stacks and missing asdf prerequisites fail before writing scaffolding or
+  Git hooks. Corrected retries retain the existing auto-detection and no-clobber behavior.
+
 - Preset initialization preserves existing prompt files and incomplete preset directories. New
   presets publish as a complete validated bundle, with safe refusal on symlinks or concurrent creation.
 

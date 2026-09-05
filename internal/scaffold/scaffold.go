@@ -31,6 +31,10 @@ var templates embed.FS
 // Per-file progress prints as faint ui.Detail lines; the caller prints the summary and the
 // next-step actions. Existing files are never clobbered.
 func Init(repo, stack string, gateLangs, agentDirs []string) error {
+	dockerfile, detected, err := initDockerfile(repo, stack)
+	if err != nil {
+		return err
+	}
 	s := &scaffolder{repo: repo}
 	// A per-agent dir (.claude/.codex/.gemini) is scaffolded only for agents in agentDirs — the ones
 	// you actually use. A repo that drops the others stays clean: a box synthesizes a missing agent's
@@ -137,39 +141,15 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 		return err
 	}
 
-	// The toolchain is driven by .tool-versions (asdf). With no --stack, auto-detect
-	// a .tool-versions and scaffold the asdf Dockerfile from it. The only explicit
-	// stack is "asdf"; the per-language stacks are gone — pin versions in
-	// .tool-versions instead, and coop provisions them.
-	switch stack {
-	case "":
-		if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err == nil {
-			stack = "asdf"
-			// Only announce the scaffold when there's actually one to do — saying "scaffolding an
-			// asdf-driven .agent/Dockerfile" and then "kept existing .agent/Dockerfile" one line
-			// later reads as a contradiction on every re-init.
+	if dockerfile != "" {
+		// Keep the announcement next to the write, and only when auto-detection
+		// actually adds a Dockerfile rather than keeping a customized one.
+		if detected {
 			if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(project.DefaultDockerfile))); err != nil {
 				ui.Detail("detected .tool-versions — scaffolding an asdf-driven .agent/Dockerfile")
 			}
 		}
-	case "asdf":
-		// scaffolded below
-	default:
-		return fmt.Errorf("unknown --stack %q: coop provisions toolchains from .tool-versions now\n"+
-			"  pin versions there and run `coop init` (auto-detected), or `coop init --stack asdf`", stack)
-	}
-	if stack == "asdf" {
-		if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err != nil {
-			return fmt.Errorf("--stack asdf needs a .tool-versions in the repo\n" +
-				"  e.g. `echo 'elixir 1.18.3-otp-27' > .tool-versions`, then re-run")
-		}
-		// Generated, not copied: the system packages come from the tools THIS repo pins, so a
-		// Terraform box doesn't carry Erlang's build deps and a checkov box isn't missing pip.
-		df, err := asdfDockerfile(toolVersions(repo))
-		if err != nil {
-			return err
-		}
-		if err := s.writeContentIfAbsent(filepath.Join(repo, filepath.FromSlash(project.DefaultDockerfile)), df, 0o644); err != nil {
+		if err := s.writeContentIfAbsent(filepath.Join(repo, filepath.FromSlash(project.DefaultDockerfile)), dockerfile, 0o644); err != nil {
 			return err
 		}
 	}
@@ -185,6 +165,28 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 	// actions are all printed by the caller (cmdInit), which has the full picture (services,
 	// mcp) and orders them as one block after the faint per-file log.
 	return nil
+}
+
+// Validate and render before any scaffold or Git hook writes. Re-init follows the
+// same prerequisite contract even when a customized Dockerfile already exists.
+func initDockerfile(repo, stack string) (content string, detected bool, err error) {
+	switch stack {
+	case "":
+		if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err != nil {
+			return "", false, nil
+		}
+		detected = true
+	case "asdf":
+	default:
+		return "", false, fmt.Errorf("unknown --stack %q: coop provisions toolchains from .tool-versions now\n"+
+			"  pin versions there and run `coop init` (auto-detected), or `coop init --stack asdf`", stack)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err != nil {
+		return "", false, fmt.Errorf("--stack asdf needs a .tool-versions in the repo\n" +
+			"  e.g. `echo 'elixir 1.18.3-otp-27' > .tool-versions`, then re-run")
+	}
+	content, err = asdfDockerfile(toolVersions(repo))
+	return content, detected, err
 }
 
 // Initialized reports whether repo already carries a coop scaffold. `coop init` uses it to stay
