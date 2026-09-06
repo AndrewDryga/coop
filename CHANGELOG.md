@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A transient artifact fetch no longer fails a worker command for good.** A network error,
+  timeout, or server-side failure while the outbound worker fetches a turn's input artifacts or a
+  workspace checkpoint leaves the command receipt received, so redelivery retries the fetch; only a
+  client status from the controller (the artifact is gone or the request is wrong) fails the
+  command, as `artifact_transfer_failed`. Previously any fetch error was journaled as
+  `invalid_command` and replayed forever.
+
 - **`coop sessions policies` prints one labeled block per policy.** The text form shows each
   policy's name with `Policy digest:` and `Authority digest:` lines instead of an unlabeled
   tab-separated row; `--json` is unchanged.

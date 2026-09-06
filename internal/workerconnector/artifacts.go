@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
@@ -21,6 +22,14 @@ type Artifact struct {
 	MediaType string
 	SHA256    string
 	Data      []byte
+}
+
+// ArtifactStatusError is an artifact request the controller answered with a non-200 status. A
+// client status is a permanent answer about this artifact; anything else may not recur.
+type ArtifactStatusError struct{ Status int }
+
+func (e *ArtifactStatusError) Error() string {
+	return fmt.Sprintf("responder artifact request returned HTTP %d", e.Status)
 }
 
 type ArtifactTransport interface {

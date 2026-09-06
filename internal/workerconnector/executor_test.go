@@ -965,3 +965,59 @@ func digestBytes(value []byte) string {
 	sum := sha256.Sum256(value)
 	return hex.EncodeToString(sum[:])
 }
+
+// A network blip while fetching an input artifact must not be journaled as a permanent failure:
+// the receipt stays received so redelivery retries the fetch, while a client status from the
+// controller — the artifact is gone — is a real answer and fails the command.
+func TestTransientArtifactFetchLeavesTheReceiptRetryable(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	data := []byte("exact authenticated pull request context")
+	artifactRef := "artifact:input:review:1"
+	artifacts := &fakeArtifactTransport{
+		inputs: map[string]Artifact{
+			artifactRef: {ID: artifactRef, Name: "review.txt", MediaType: "text/plain", SHA256: digestBytes(data), Data: data},
+		},
+		err: errors.New("dial tcp: connection refused"),
+	}
+	api := &fakeAPI{response: json.RawMessage(`{"turn":{"id":"turn-remote-1","state":"queued"}}`)}
+	executor, err := NewExecutor(ExecutorConfig{
+		API: api, ArtifactTransport: artifacts, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	submission := map[string]any{
+		"contract_version": "work-final-v1", "context": map[string]any{"mode": "full"},
+		"input_artifact_refs": []any{artifactRef}, "output_schema": map[string]any{"type": "object"},
+		"prompt": "Inspect the exact attachment.",
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"coop_session_id": "session-remote-1", "expected_revision": 2,
+		"submission": submission, "submission_sha256": canonicalDigest(t, submission), "turn_ref": "turn-2",
+	})
+	command := createCommand(now.Add(time.Minute))
+	command.Kind, command.Payload, command.IdempotencyKey = "submit_turn", payload, "responder:work:turn:artifact:g1"
+
+	if _, err := executor.Execute(context.Background(), command); !errors.Is(err, errArtifactTransfer) {
+		t.Fatalf("execute with a failing fetch = %v; want the transient transfer error", err)
+	}
+	entry, err := executor.journal.read(executor.journal.path(command.CommandID))
+	if err != nil || entry.State != "received" || entry.Result != nil || len(api.requests) != 0 {
+		t.Fatalf("after the transient failure: receipt=%+v err=%v requests=%d; want a received receipt and no API call", entry, err, len(api.requests))
+	}
+
+	artifacts.err = nil
+	result, err := executor.Execute(context.Background(), command)
+	if err != nil || result.State != "succeeded" || len(api.requests) != 1 {
+		t.Fatalf("redelivery after the fetch recovered = %+v, %v (requests=%d); want success", result, err, len(api.requests))
+	}
+
+	gone := createCommand(now.Add(time.Minute))
+	gone.Kind, gone.Payload, gone.IdempotencyKey = "submit_turn", payload, "responder:work:turn:artifact:g2"
+	gone.CommandID = "018f04f4-2222-7000-8000-000000000099"
+	artifacts.err = &ArtifactStatusError{Status: 404}
+	result, err = executor.Execute(context.Background(), gone)
+	if err != nil || result.State != "failed" || !strings.Contains(string(result.Error), "artifact_transfer_failed") {
+		t.Fatalf("execute with a 404 artifact = %+v, %v; want a permanent artifact_transfer_failed", result, err)
+	}
+}

@@ -158,7 +158,7 @@ func (t *HTTPTransport) FetchInputArtifact(ctx context.Context, commandID, artif
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return Artifact{}, fmt.Errorf("responder input artifact returned HTTP %d", response.StatusCode)
+		return Artifact{}, &ArtifactStatusError{Status: response.StatusCode}
 	}
 	encodedName := response.Header.Get("X-Responder-Artifact-Name")
 	name, err := base64.RawURLEncoding.DecodeString(encodedName)
@@ -204,7 +204,7 @@ func (t *HTTPTransport) FetchWorkspaceCheckpoint(
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return workerproto.WorkspaceCheckpoint{}, nil, fmt.Errorf("responder workspace checkpoint returned HTTP %d", response.StatusCode)
+		return workerproto.WorkspaceCheckpoint{}, nil, &ArtifactStatusError{Status: response.StatusCode}
 	}
 	mediaType := strings.TrimSpace(strings.Split(response.Header.Get("Content-Type"), ";")[0])
 	if mediaType != workerproto.WorkspaceCheckpointBundleMediaType {

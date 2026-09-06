@@ -118,12 +118,22 @@ func (e *Executor) Execute(ctx context.Context, command workerproto.Command) (wo
 			return e.complete(entry, failureResult(command, "invalid_command", err.Error()))
 		}
 		if payload.Checkpoint != nil {
-			result := e.restoreWorkspaceCheckpoint(ctx, command, payload)
+			result, err := e.restoreWorkspaceCheckpoint(ctx, command, payload)
+			if err != nil {
+				return workerproto.CommandResult{}, err // transient fetch: receipt stays received
+			}
 			return e.complete(entry, result)
 		}
 	}
 
 	request, err := prepareRequest(ctx, command, e.artifactTransport)
+	if errors.Is(err, errArtifactTransfer) {
+		return workerproto.CommandResult{}, err // receipt stays received; redelivery retries the fetch
+	}
+	var status *ArtifactStatusError
+	if errors.As(err, &status) {
+		return e.complete(entry, failureResult(command, "artifact_transfer_failed", err.Error()))
+	}
 	if err != nil {
 		return e.complete(entry, failureResult(command, "invalid_command", err.Error()))
 	}
@@ -570,44 +580,47 @@ func (e *Executor) restoreWorkspaceCheckpoint(
 	ctx context.Context,
 	command workerproto.Command,
 	payload ensureWorkspacePayload,
-) workerproto.CommandResult {
+) (workerproto.CommandResult, error) {
 	checkpointRef := payload.Checkpoint
 	if !reference(payload.CoopSessionID, 1024) || payload.ExpectedRevision <= 0 ||
 		!validWorkspaceTask(payload.Task) || !reference(checkpointRef.TransferID, 256) ||
 		!reference(checkpointRef.CheckpointRef, 256) || !digest(checkpointRef.SHA256) ||
 		checkpointRef.ByteSize <= 0 || checkpointRef.ByteSize > workerproto.MaxWorkspaceCheckpointBundleBytes ||
 		!reference(checkpointRef.SourceSessionRef, 256) || checkpointRef.SourcePlacementGeneration <= 0 {
-		return failureResult(command, "invalid_command", "ensure_workspace checkpoint identity is invalid")
+		return failureResult(command, "invalid_command", "ensure_workspace checkpoint identity is invalid"), nil
 	}
 	if e.artifactTransport == nil {
-		return failureResult(command, "artifact_transport_unavailable", "workspace checkpoint transport is unavailable")
+		return failureResult(command, "artifact_transport_unavailable", "workspace checkpoint transport is unavailable"), nil
 	}
 	checkpoint, bundle, err := e.artifactTransport.FetchWorkspaceCheckpoint(
 		ctx, command.CommandID, checkpointRef.TransferID,
 	)
 	if err != nil {
-		return failureResult(command, "artifact_transfer_failed", err.Error())
+		if classified := classifyArtifactFetch(err, "fetch workspace checkpoint"); errors.Is(classified, errArtifactTransfer) {
+			return workerproto.CommandResult{}, classified
+		}
+		return failureResult(command, "artifact_transfer_failed", err.Error()), nil
 	}
 	if checkpoint.CheckpointRef != checkpointRef.CheckpointRef ||
 		checkpoint.Bundle.SHA256 != checkpointRef.SHA256 || checkpoint.Bundle.ByteSize != checkpointRef.ByteSize ||
 		checkpoint.SessionRef != checkpointRef.SourceSessionRef ||
 		checkpoint.PlacementGeneration != checkpointRef.SourcePlacementGeneration {
-		return failureResult(command, "artifact_identity_mismatch", "workspace checkpoint does not match the restore command")
+		return failureResult(command, "artifact_identity_mismatch", "workspace checkpoint does not match the restore command"), nil
 	}
 	if _, err := workerproto.ValidateWorkspaceCheckpointBundle(checkpoint, bundle); err != nil {
-		return failureResult(command, "artifact_identity_mismatch", err.Error())
+		return failureResult(command, "artifact_identity_mismatch", err.Error()), nil
 	}
 	if err := rejectWorkspaceCheckpointSecrets(bundle); err != nil {
-		return failureResult(command, "checkpoint_secret_detected", err.Error())
+		return failureResult(command, "checkpoint_secret_detected", err.Error()), nil
 	}
 	api, ok := e.api.(WorkspaceRestoreAPI)
 	if !ok {
-		return failureResult(command, "unsupported_command", "private Coop API cannot restore workspace checkpoints")
+		return failureResult(command, "unsupported_command", "private Coop API cannot restore workspace checkpoints"), nil
 	}
 	resource, callErr := api.RestoreWorkspaceCheckpoint(
 		ctx, payload.CoopSessionID, command.IdempotencyKey, payload.ExpectedRevision, checkpoint, bundle,
 	)
-	return resultFromCall(command, resource, callErr)
+	return resultFromCall(command, resource, callErr), nil
 }
 
 func validWorkspaceTask(task workspaceTaskDraft) bool {
@@ -676,6 +689,20 @@ func validateSubmission(raw json.RawMessage, expectedDigest string) (frozenSubmi
 	return submission, nil
 }
 
+// errArtifactTransfer marks an artifact fetch that failed for a reason the next delivery may not
+// see again — a network error, a timeout, a server-side failure. Such a command must keep its
+// receipt in "received" so redelivery retries the fetch; only a client status from the
+// controller, which says this artifact is gone or the request is wrong, is a permanent answer.
+var errArtifactTransfer = errors.New("artifact transfer failed for now")
+
+func classifyArtifactFetch(err error, what string) error {
+	var status *ArtifactStatusError
+	if errors.As(err, &status) && status.Status >= 400 && status.Status < 500 {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	return fmt.Errorf("%w: %s: %v", errArtifactTransfer, what, err)
+}
+
 func fetchInputArtifacts(ctx context.Context, transport ArtifactTransport, commandID string, refs []string) ([]map[string]any, error) {
 	if len(refs) == 0 {
 		return []map[string]any{}, nil
@@ -688,7 +715,7 @@ func fetchInputArtifacts(ctx context.Context, transport ArtifactTransport, comma
 	for _, ref := range refs {
 		artifact, err := transport.FetchInputArtifact(ctx, commandID, ref)
 		if err != nil {
-			return nil, fmt.Errorf("fetch input artifact: %w", err)
+			return nil, classifyArtifactFetch(err, "fetch input artifact")
 		}
 		if artifact.ID == "" {
 			artifact.ID = ref
