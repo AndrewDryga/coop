@@ -686,7 +686,31 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	var servicePorts []ServicePort
 	servicesInspected := false
 	if autoUpServices(cfg, spec, rt.Name) {
-		if cf := composeFile; cf != "" {
+		// Only when no other box is running in this project: a running agent could swap a validated
+		// bind source for a link to a host path between coop's check and Docker opening it, and a
+		// launch that happens while it runs (a peer or consult box mid-iteration) is the only one
+		// it could race. Services already up stay up; live binds stay live.
+		projectRepo := spec.ActivityRepo
+		if projectRepo == "" {
+			projectRepo = spec.Repo
+		}
+		startServices := true
+		if live, err := LiveBoxes(projectRepo, spec.activityID); err != nil {
+			if spec.Review {
+				return finish(-1, fmt.Errorf("start review services: %w", err))
+			}
+			ui.Info("services: %v — not starting them (run 'coop up' to retry)", err)
+			startServices = false
+		} else if len(live) > 0 {
+			if spec.Review {
+				return finish(-1, fmt.Errorf("start review services: an agent box is running in this project (%s) — sidecars start only when none is", DescribeLiveBoxes(live)))
+			}
+			if !spec.Quiet {
+				ui.Info("sidecars not started: an agent box is running in this project (%s) — they start when none is; services already up are still reachable", DescribeLiveBoxes(live))
+			}
+			startServices = false
+		}
+		if cf := composeFile; cf != "" && startServices {
 			reviewServicesAttempted = spec.Review
 			if !spec.Quiet {
 				ui.Info("starting sibling services (%s)", filepath.Base(cf))

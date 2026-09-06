@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
@@ -1256,5 +1257,42 @@ func TestLoopReportsUsageBeforeRuntimeDiscovery(t *testing.T) {
 	signInCred(t, signed.cfg, "codex", signed.cfg.DefaultProfileOf("codex"))
 	if code, err := signed.dispatch([]string{"loop", "codex"}); code == 2 || err == nil || !strings.Contains(err.Error(), "runtime") {
 		t.Errorf("coop loop codex with no runtime = (%d, %v); want the runtime error once usage is valid", code, err)
+	}
+}
+
+// coop up refuses while an agent box is running in the project: that start is the launch a
+// running agent could race by swapping a validated bind source for a link to a host path.
+func TestCmdUpRefusesWhileABoxRuns(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"),
+		[]byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	running, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop, Workspace: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = forkspace.EndExecution(repo, running) })
+	a := &app{
+		cfg:   &config.Config{RepoOverride: repo},
+		rt:    composeUpRuntime(t, []string{"db"}, 0),
+		rtSet: true,
+	}
+	var code int
+	var runErr error
+	out := captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
+	if code != 1 || runErr == nil || !strings.Contains(runErr.Error(), "an agent box is running in this project") ||
+		!strings.Contains(runErr.Error(), "local-loop") {
+		t.Fatalf("cmdUp beside a running box = (%d, %v); want a refusal naming the box\n%s", code, runErr, out)
+	}
+	if err := forkspace.EndExecution(repo, running); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
+	if code != 0 || runErr != nil {
+		t.Fatalf("cmdUp after the box ended = (%d, %v); want success\n%s", code, runErr, out)
 	}
 }

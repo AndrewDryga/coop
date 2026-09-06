@@ -1523,7 +1523,11 @@ from re-downloading the world.
 
 `.agent/compose.yml` runs on your host daemon (that's how a service becomes a real
 container), so coop validates it before every run — `coop up` and each networked launch
-alike. Only plain sibling-service directives pass: an `image`, inline `environment`, named
+alike. Services start only when no agent box is running in the project: a running agent could
+swap a validated bind folder for a link to somewhere else on your machine in the instant between
+coop's check and Docker opening it, and a start that happens while it runs (a peer or consult
+box mid-task, a `coop up` typed alongside it) is the only launch it could race. Services already
+up stay up and reachable; `coop up` says which box to stop or wait for. Only plain sibling-service directives pass: an `image`, inline `environment`, named
 volumes or repo-relative binds, `healthcheck`, `depends_on`, and loopback-only published
 ports. Anything that would reach past a repo-scoped container is refused with the exact reason —
 `privileged`, `cap_add`, a host bind like `/:/host` or `/var/run/docker.sock`, `network_mode:

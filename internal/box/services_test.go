@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -382,4 +383,34 @@ func assertComposeSnapshotCall(t *testing.T, call, repo, action string) string {
 		t.Fatalf("snapshot was not cleaned up: %v", err)
 	}
 	return base
+}
+
+// Sidecars start only when no other box is running in the project: LiveBoxes reports every
+// running box except the caller's own execution.
+func TestLiveBoxesExcludesOwnExecution(t *testing.T) {
+	repo := t.TempDir()
+	if live, err := LiveBoxes(repo, ""); err != nil || len(live) != 0 {
+		t.Fatalf("empty project = %v, %v; want no live boxes", live, err)
+	}
+	first, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionInteractive, Workspace: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = forkspace.EndExecution(repo, first) })
+	if live, err := LiveBoxes(repo, first.ID); err != nil || len(live) != 0 {
+		t.Fatalf("own execution counted as another box: %v, %v", live, err)
+	}
+	live, err := LiveBoxes(repo, "")
+	if err != nil || len(live) != 1 || live[0].Record.ID != first.ID {
+		t.Fatalf("live boxes = %v, %v; want the one running box", live, err)
+	}
+	if got := DescribeLiveBoxes(live); !strings.Contains(got, "interactive in "+filepath.Base(repo)) {
+		t.Fatalf("description = %q", got)
+	}
+	if err := forkspace.EndExecution(repo, first); err != nil {
+		t.Fatal(err)
+	}
+	if live, err := LiveBoxes(repo, ""); err != nil || len(live) != 0 {
+		t.Fatalf("ended execution still live: %v, %v", live, err)
+	}
 }

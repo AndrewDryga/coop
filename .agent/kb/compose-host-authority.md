@@ -41,6 +41,7 @@ teardown), so the project definition never differs between them. Sources that do
 named volumes, tmpfs, and public files are untouched.
 
 ## Changelog
+- 2026-09-06 — sidecars start only when no other box is running in the project (`LiveBoxes`, `internal/box/services.go`; `box.Run` skips the start, `coop up` refuses): closes the bind-source replacement race without changing live binds (human decision, task resolve-sidecar-bind-identity-without-losing-liv).
 - 2026-09-06 — sidecar secret shadowing: the generated shadow override projects the primary decoys into repo binds (release-audit follow-up; real-Compose merge verified by `TestRuntimeComposeShadowsRepoSecretsIntoSidecars`).
 
 - 2026-09-05 — release-audit regressions established interpolation, encoded-scalar, implicit-port,

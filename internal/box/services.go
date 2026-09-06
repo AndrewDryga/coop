@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -233,6 +234,47 @@ func runCompose(rt runtime.Runtime, stdout, stderr io.Writer, action string, arg
 // reach them), it isn't offline (COOP_EGRESS=none, where there's nothing to reach), and the
 // runtime supports compose — Apple `container` does not. Whether a compose file actually exists
 // is checked separately, by EnsureServices.
+// LiveBoxes lists the coop boxes running in repo's project right now, other than except (a box
+// may pass its own execution id). Sibling services start only when this is empty: a running
+// agent can edit the compose file and swap a validated bind source for a link to a host path in
+// the moment between coop's check and Docker opening it, and the only launch it could race is one
+// that happens while it runs — a peer or consult box mid-iteration, or a `coop up` typed
+// alongside it. With no box running there is nothing to race. Live binds stay live.
+func LiveBoxes(repo, except string) ([]forkspace.ExecutionObservation, error) {
+	authority, _, err := forkspace.ResolveProjectBinding(repo)
+	if err != nil {
+		return nil, err
+	}
+	observations, problems := forkspace.Executions(authority)
+	if len(problems) > 0 {
+		return nil, fmt.Errorf("read the project's sandbox registry: %w", errors.Join(problems...))
+	}
+	var live []forkspace.ExecutionObservation
+	for _, observation := range observations {
+		if observation.Running && observation.Record.ID != except {
+			live = append(live, observation)
+		}
+	}
+	return live, nil
+}
+
+// DescribeLiveBoxes names running boxes for a refusal: kind and workspace, deduplicated.
+func DescribeLiveBoxes(live []forkspace.ExecutionObservation) string {
+	var parts []string
+	seen := map[string]bool{}
+	for _, observation := range live {
+		part := string(observation.Record.Kind) + " in " + filepath.Base(observation.Record.Workspace)
+		if observation.Record.Fork != nil {
+			part = string(observation.Record.Kind) + " in fork " + observation.Record.Fork.Name
+		}
+		if !seen[part] {
+			seen[part] = true
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
 func autoUpServices(cfg *config.Config, spec RunSpec, rtName string) bool {
 	return cfg.AutoUp && spec.Network && cfg.Egress == "open" && rtName != "container"
 }

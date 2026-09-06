@@ -736,6 +736,16 @@ func (a *app) cmdUp(args []string) (int, error) {
 	if file == "" {
 		return -1, fmt.Errorf("no %s — run 'coop init --services postgres,redis' to scaffold one", p.ComposeRel())
 	}
+	// Sidecars start only when no agent box is running in this project: a running agent could
+	// swap a validated bind source for a link to a host path between coop's check and Docker
+	// opening it, and this start is exactly the launch it would race.
+	live, err := box.LiveBoxes(repo, "")
+	if err != nil {
+		return -1, err
+	}
+	if len(live) > 0 {
+		return 1, fmt.Errorf("an agent box is running in this project (%s) — sidecars start only when none is; stop it or wait for it to finish, then retry: coop up", box.DescribeLiveBoxes(live))
+	}
 	proj := box.ComposeProject(repo)
 	rel, _ := filepath.Rel(repo, file)
 	ui.Info("starting services from %s (waiting until healthy)", rel)

@@ -3668,3 +3668,66 @@ func TestRunSynthesizesClaudeConfigForClaudeScope(t *testing.T) {
 		})
 	}
 }
+
+// A launch beside a running box in the same project does not start sibling services — that start
+// is the launch a running agent could race by swapping a validated bind source for a link to a
+// host path — but services already up are still discovered for the box's forwarders.
+func TestRunSkipsSidecarStartWhileAnotherBoxRuns(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"),
+		[]byte("services:\n  db:\n    image: postgres:18\n    expose: [5432]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop, Workspace: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = forkspace.EndExecution(repo, other) })
+
+	dir := t.TempDir()
+	recorder := filepath.Join(dir, "runtime-args")
+	discovered := filepath.Join(dir, "ports-discovered")
+	shim := filepath.Join(dir, "rt")
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + strconv.Quote(recorder) + "\n" +
+		"case \"$*\" in\n" +
+		"  *\"config --services\"*) printf '%s\\n' db ;;\n" +
+		"  *\"config --format json\"*) touch " + strconv.Quote(discovered) + "; printf '%s\\n' '{\"services\":{\"db\":{\"expose\":[\"5432\"]}}}' ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		ConfigDir: t.TempDir(), HomeInBox: "/home/node",
+		Egress: "open", AutoUp: true, ServicesNet: "ordinary-shared-network",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	spec := RunSpec{
+		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
+		Network: true, Batch: true, Quiet: true, Ctx: ctx,
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = Run(cfg, runtime.Runtime{Name: shim}, spec)
+		close(done)
+	}()
+	wait.ForFile(t, discovered)
+	cancel()
+	<-done
+
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	if strings.Contains(args, "up -d --wait --remove-orphans") {
+		t.Fatalf("sibling services were started beside a running box:\n%s", args)
+	}
+	if !strings.Contains(args, "config --format json") {
+		t.Fatalf("already-running services were not discovered for the box:\n%s", args)
+	}
+}
