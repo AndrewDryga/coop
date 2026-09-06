@@ -1790,9 +1790,7 @@ func TestSessionTurnRunnerBoundsFramesStderrAndCancellation(t *testing.T) {
 			turn := fixture.submit(t, "bounded prompt")
 			ctx := contextWithTurnDeadline(t)
 			if scenario == "hang" {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
-				defer cancel()
+				ctx = hangTimeout(t, fixture.childLog, 100*time.Millisecond)
 			}
 			if _, err := fixture.runner.Run(ctx, fixture.session, turn); err == nil {
 				t.Fatal("bounded failure unexpectedly succeeded")
@@ -2565,6 +2563,47 @@ func (f *sessionACPFixture) submitRequest(t *testing.T, req session.SubmitTurnRe
 		t.Fatalf("lease turn = %v, %v", leased, err)
 	}
 	return leased
+}
+
+// hangTimeout bounds a HANG, not the child's start-up: the context expires — as a deadline, the
+// timeout path under test — hang after the child has written its first frame to childLog, however
+// long spawning it took. A fixed 100 ms from before the spawn proved too short under gate load:
+// the turn timed out before the child existed, and the cancellation the test looks for in the
+// child's log had nowhere to go. The child's start is a fixture guard (bounded by the same 60 s
+// as testutil/wait); only the hang is a timing bound.
+func hangTimeout(t *testing.T, childLog string, hang time.Duration) context.Context {
+	t.Helper()
+	base, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() {
+		guard := time.Now().Add(60 * time.Second)
+		for time.Now().Before(guard) {
+			if _, err := os.Stat(childLog); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		time.Sleep(hang)
+		cancel()
+	}()
+	return deadlineOnCancel{Context: base, deadline: time.Now().Add(time.Hour)}
+}
+
+// deadlineOnCancel is a cancellable context that reports its expiry as a deadline: Deadline
+// satisfies the runner's "turn deadline is required" check, and Err reads DeadlineExceeded once
+// cancelled, which derived contexts inherit.
+type deadlineOnCancel struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c deadlineOnCancel) Deadline() (time.Time, bool) { return c.deadline, true }
+
+func (c deadlineOnCancel) Err() error {
+	if c.Context.Err() != nil {
+		return context.DeadlineExceeded
+	}
+	return nil
 }
 
 func contextWithTurnDeadline(t *testing.T) context.Context {
