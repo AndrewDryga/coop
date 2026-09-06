@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -98,8 +99,21 @@ func ReviewServiceSecrets(workspace, file string) (*ServiceSecretReview, error) 
 	if len(hidden) == 0 {
 		return nil, nil
 	}
-	if _, approved := ApprovedServiceSecrets(data); approved {
-		return nil, nil
+	if approval, ok := ApprovedServiceSecrets(data); ok {
+		remaining := make([]string, 0, len(hidden))
+		approved := make(map[string]bool, len(approval.Paths))
+		for _, p := range approval.Paths {
+			approved[p] = true
+		}
+		for _, p := range hidden {
+			if !approved[p] {
+				remaining = append(remaining, p)
+			}
+		}
+		hidden = remaining
+		if len(hidden) == 0 {
+			return nil, nil
+		}
 	}
 	rel, err := filepath.Rel(workspace, abs)
 	if err != nil {
@@ -121,7 +135,14 @@ func (r *ServiceSecretReview) Approve() error {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
 	}
-	approval := ServiceApproval{File: r.File, Workspace: r.workspace, Paths: r.Hidden, ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
+	// Everything hidden for this content is approved together: Hidden already excludes anything an
+	// earlier approval of the same content covered, so re-approving adds the new files to it.
+	paths := r.Hidden
+	if prior, ok := ApprovedServiceSecrets(r.data); ok {
+		paths = append(append([]string(nil), prior.Paths...), paths...)
+		sort.Strings(paths)
+	}
+	approval := ServiceApproval{File: r.File, Workspace: r.workspace, Paths: paths, ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
 	raw, err := json.MarshalIndent(approval, "", "  ")
 	if err != nil {
 		return err

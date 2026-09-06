@@ -122,8 +122,9 @@ func snapshotComposeArgs(workspace, file string, repoReadOnly bool, exposedRoots
 		return nil, nil, nil, fmt.Errorf("project secret shadowing into sibling services: %w", err)
 	}
 	if len(hidden) > 0 {
-		if _, approved := ApprovedServiceSecrets(data); approved {
-			return args, cleanup, nil, nil
+		if approval, ok := ApprovedServiceSecrets(data); ok {
+			// Only the files the human actually saw and approved come out from behind a decoy.
+			decoys, hidden = keepDecoysOutside(decoys, approval.Paths)
 		}
 	}
 	shadow, needed, err := writeServiceShadowOverride(decoys, dir)

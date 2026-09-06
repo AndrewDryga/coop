@@ -1506,6 +1506,8 @@ legitimately needs such a file (a generated dev TLS key for Keycloak), run `coop
 it lists the files and asks once. The approval is tied to the Compose file's exact content and
 stored outside the repo, so an edit to the file (the one thing a box can do) resets it; until you
 approve again, box launches start the services with decoys and say which file is hidden and why.
+The approval covers the exact files you saw, so a secret that lands later under an approved
+directory bind stays hidden until you approve it too.
 
 **Reaching a service at the same URL inside and out.** For something the *host browser* and the
 *app in the box* must both reach at one URL — an OIDC issuer like Keycloak — give the service an

@@ -33,10 +33,13 @@ func serviceShadowOverride(repo, composeFile string, data []byte, dir string) (s
 	return writeServiceShadowOverride(decoys, dir)
 }
 
-// serviceDecoy is one decoy the override mounts over a service's bind target.
+// serviceDecoy is one decoy the override mounts over a service's bind target. source is the
+// repo-relative path being hidden — the key a human approval is matched against, so an approval
+// covers exactly the files it listed and nothing that appears later under the same bind.
 type serviceDecoy struct {
 	target string
 	dir    bool
+	source string
 }
 
 // serviceShadowPlan decides, per service, which bind targets get a decoy, and lists the
@@ -83,7 +86,7 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 				continue // a source that does not exist yet has nothing to hide
 			}
 			if rel != "." && shadowed(filepath.ToSlash(rel)) {
-				decoys[name] = append(decoys[name], serviceDecoy{target: target, dir: info.IsDir()})
+				decoys[name] = append(decoys[name], serviceDecoy{target: target, dir: info.IsDir(), source: filepath.ToSlash(rel)})
 				hidden[filepath.ToSlash(rel)] = true
 				continue
 			}
@@ -111,7 +114,7 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 				if err != nil {
 					return err
 				}
-				decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), dir: d.IsDir()})
+				decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), dir: d.IsDir(), source: filepath.ToSlash(relRepo)})
 				hidden[filepath.ToSlash(relRepo)] = true
 				if d.IsDir() {
 					return fs.SkipDir
@@ -129,6 +132,33 @@ func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serv
 	}
 	sort.Strings(paths)
 	return decoys, paths, nil
+}
+
+// keepDecoysOutside drops the decoys whose source a human approved, and reports the sources still
+// hidden. An approval names exact files, so a secret that appears LATER under an approved
+// directory bind keeps its decoy — the human never saw it.
+func keepDecoysOutside(decoys map[string][]serviceDecoy, approved []string) (map[string][]serviceDecoy, []string) {
+	allow := make(map[string]bool, len(approved))
+	for _, p := range approved {
+		allow[p] = true
+	}
+	kept := map[string][]serviceDecoy{}
+	hidden := map[string]bool{}
+	for name, list := range decoys {
+		for _, d := range list {
+			if allow[d.source] {
+				continue
+			}
+			kept[name] = append(kept[name], d)
+			hidden[d.source] = true
+		}
+	}
+	paths := make([]string, 0, len(hidden))
+	for p := range hidden {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return kept, paths
 }
 
 // writeServiceShadowOverride materializes a plan: one empty read-only decoy file and one empty

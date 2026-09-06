@@ -90,12 +90,59 @@ func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
 		t.Fatalf("after an edit review = %+v, err=%v; want a fresh review", review, err)
 	}
 
+	// An approval names exact files. A secret that appears LATER under an approved DIRECTORY bind
+	// keeps its decoy: the human never saw it.
+	write(".agent/compose.yml", "services:\n  keycloak:\n    image: quay.io/keycloak/keycloak:26\n    volumes:\n      - \"../certs:/certs:ro\"\n")
+	review, err = ReviewServiceSecrets(repo, compose)
+	if err != nil || review == nil || strings.Join(review.Hidden, ",") != "certs/tls.key" {
+		t.Fatalf("directory bind review = %+v, err=%v", review, err)
+	}
+	if err := review.Approve(); err != nil {
+		t.Fatal(err)
+	}
+	write("certs/.env", "STOLEN=1\n")
+	args, cleanup, hidden, err = snapshotComposeArgs(repo, compose, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	if strings.Join(hidden, ",") != "certs/.env" || !hasShadow(args) {
+		t.Fatalf("new secret under an approved bind: hidden=%v shadow=%v; want it still hidden", hidden, hasShadow(args))
+	}
+	later, err := ReviewServiceSecrets(repo, compose)
+	if err != nil || later == nil || strings.Join(later.Hidden, ",") != "certs/.env" {
+		t.Fatalf("follow-up review = %+v, err=%v; want only the new file to approve", later, err)
+	}
+	if err := later.Approve(); err != nil {
+		t.Fatal(err)
+	}
+	if approval, ok := ApprovedServiceSecrets([]byte(readFileString(t, compose))); !ok || strings.Join(approval.Paths, ",") != "certs/.env,certs/tls.key" {
+		t.Fatalf("re-approval = %+v, ok=%v; want both files kept", approval, ok)
+	}
+	_, cleanup, hidden, err = snapshotComposeArgs(repo, compose, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	if len(hidden) != 0 {
+		t.Fatalf("after approving both: hidden=%v", hidden)
+	}
+
 	// A file that binds nothing secret-looking has nothing to review and records nothing.
 	write(".agent/compose.yml", "services:\n  db:\n    image: postgres:18\n    volumes: [\"../realm.json:/r:ro\"]\n")
 	if review, err := ReviewServiceSecrets(repo, compose); err != nil || review != nil {
 		t.Fatalf("plain compose review = %+v, err=%v; want nil", review, err)
 	}
-	if entries, _ := os.ReadDir(os.Getenv(ServiceApprovalRootEnv)); len(entries) != 1 {
-		t.Fatalf("approval store has %d entries, want only the one approval", len(entries))
+	if entries, _ := os.ReadDir(os.Getenv(ServiceApprovalRootEnv)); len(entries) != 2 {
+		t.Fatalf("approval store has %d entries, want one per approved compose content", len(entries))
 	}
+}
+
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
