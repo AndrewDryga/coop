@@ -524,6 +524,15 @@ type CreateRemoteSessionRequest struct {
 	Task             string                    `json:"task"`
 	PullRequest      *RemotePullRequestBinding `json:"pull_request,omitempty"`
 	ResponderBinding *session.ResponderBinding `json:"responder_binding,omitempty"`
+	// ExpectedPolicyDigest / ExpectedAuthorityDigest pin the create to the policy the caller was
+	// authorized against (a fleet worker advertises them from its configuration). Admission compares
+	// each against the daemon's CURRENT resolution of the named policy and refuses on a mismatch —
+	// before any intent is journaled or a workspace exists — so a daemon restarted with a changed
+	// same-name policy cannot run a command that was pinned to the old one. Both are optional, so a
+	// direct client that pins nothing, and every request hash recorded before the fields existed,
+	// are unchanged.
+	ExpectedPolicyDigest    string `json:"expected_policy_digest,omitempty"`
+	ExpectedAuthorityDigest string `json:"expected_authority_digest,omitempty"`
 }
 
 type EnsureWorkspaceTaskRequest struct {
@@ -852,6 +861,36 @@ func cloneSessionPolicies(in map[string]Policy) map[string]Policy {
 		out[name] = policy
 	}
 	return out
+}
+
+// fenceExpectedPolicyDigests refuses a create whose caller pinned a digest the daemon's current
+// resolution of that policy does not produce. The full digest and the model-independent authority
+// digest are compared separately, exactly as they are advertised, so a controller may pin only the
+// authority shared across conversational/standard/deep policies. It runs at intent capture, so
+// the refusal precedes every side effect and a replayed intent is never re-judged.
+func fenceExpectedPolicyDigests(policy Policy, req CreateRemoteSessionRequest) error {
+	if req.ExpectedPolicyDigest != "" && req.ExpectedPolicyDigest != resolvedSessionPolicyDigest(policy) {
+		return &session.Error{Code: session.CodePolicyDigestMismatch,
+			Detail: fmt.Sprintf("policy %q no longer resolves to the expected policy digest; the daemon's policy changed since the caller was authorized", policy.Name)}
+	}
+	if req.ExpectedAuthorityDigest != "" && req.ExpectedAuthorityDigest != ResolvedPolicyAuthorityDigest(policy) {
+		return &session.Error{Code: session.CodePolicyDigestMismatch,
+			Detail: fmt.Sprintf("policy %q no longer resolves to the expected authority digest; its repository, companions, environment, write mode, or accounts changed since the caller was authorized", policy.Name)}
+	}
+	return nil
+}
+
+// validSessionDigest is the shape every pinned digest takes: lowercase hex SHA-256.
+func validSessionDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func resolvedSessionPolicyDigest(policy Policy) string {
@@ -1937,6 +1976,11 @@ func (s *Service) beginCreateOperation(
 	if err := session.ValidateResponderBinding(req.ResponderBinding); err != nil {
 		return session.Operation{}, err
 	}
+	for _, expected := range []string{req.ExpectedPolicyDigest, req.ExpectedAuthorityDigest} {
+		if expected != "" && !validSessionDigest(expected) {
+			return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "expected policy digests must be lowercase hex SHA-256"}
+		}
+	}
 	op, replay, err := s.store.ReserveOperation(ctx, "CreateRemoteSession", key, req)
 	if err != nil {
 		return session.Operation{}, err
@@ -2015,6 +2059,9 @@ type sessionCreateIntent struct {
 func (s *Service) captureCreateIntent(op session.Operation, req CreateRemoteSessionRequest) (sessionCreateIntent, error) {
 	policy, err := s.policy(req.Policy)
 	if err != nil {
+		return sessionCreateIntent{}, err
+	}
+	if err := fenceExpectedPolicyDigests(policy, req); err != nil {
 		return sessionCreateIntent{}, err
 	}
 	sessionID := deterministicSessionID(op.ID)

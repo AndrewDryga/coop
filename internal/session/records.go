@@ -180,6 +180,7 @@ const (
 	CodeSessionNotFound         ErrorCode = "session_not_found"
 	CodeTurnNotFound            ErrorCode = "turn_not_found"
 	CodeRevisionConflict        ErrorCode = "revision_conflict"
+	CodePolicyDigestMismatch    ErrorCode = "policy_digest_mismatch"
 	CodeInvalidSessionState     ErrorCode = "invalid_session_state"
 	CodeQueueFull               ErrorCode = "queue_full"
 	CodeBudgetExhausted         ErrorCode = "budget_exhausted"

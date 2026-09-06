@@ -5982,3 +5982,68 @@ func TestPolicyAncestryErrorsNameTheOffendingComponent(t *testing.T) {
 		t.Fatalf("writable ancestor error = %v; want the directory named", err)
 	}
 }
+
+// A create pinned to a policy digest is refused, before any intent is journaled or a workspace
+// exists, when the daemon's current resolution of that same-name policy no longer produces it —
+// the full digest and the model-independent authority digest each on their own. Unpinned creates
+// and matching pins are unchanged.
+func TestCreateRemoteSessionFencesExpectedPolicyDigests(t *testing.T) {
+	gitConfig := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(gitConfig, "global"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(gitConfig, "system"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	policies := testSessionPolicies(repo)
+	current := policies["responder"]
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), policies, nil)
+	defer service.Stop()
+
+	stale := current
+	stale.MaxTurns++ // the daemon restarted with a same-name policy whose budget changed
+	staleAuthority := current
+	staleAuthority.RepositoryReadOnly = !current.RepositoryReadOnly // ... or whose authority changed
+	for name, tc := range map[string]struct {
+		req  CreateRemoteSessionRequest
+		code session.ErrorCode
+	}{
+		"matching pins": {req: CreateRemoteSessionRequest{
+			Policy: "responder", Task: "record:task_offer:fence",
+			ExpectedPolicyDigest: ResolvedPolicyDigest(current), ExpectedAuthorityDigest: ResolvedPolicyAuthorityDigest(current),
+		}},
+		"unpinned": {req: CreateRemoteSessionRequest{Policy: "responder", Task: "record:task_offer:fence"}},
+		"stale policy digest": {req: CreateRemoteSessionRequest{
+			Policy: "responder", Task: "record:task_offer:fence", ExpectedPolicyDigest: ResolvedPolicyDigest(stale),
+		}, code: session.CodePolicyDigestMismatch},
+		"stale authority digest": {req: CreateRemoteSessionRequest{
+			Policy: "responder", Task: "record:task_offer:fence",
+			ExpectedPolicyDigest: ResolvedPolicyDigest(current), ExpectedAuthorityDigest: ResolvedPolicyAuthorityDigest(staleAuthority),
+		}, code: session.CodePolicyDigestMismatch},
+		"malformed pin": {req: CreateRemoteSessionRequest{
+			Policy: "responder", Task: "record:task_offer:fence", ExpectedPolicyDigest: "not-a-digest",
+		}, code: session.CodeInvalidRequest},
+	} {
+		t.Run(name, func(t *testing.T) {
+			key := "fence-" + strings.ReplaceAll(name, " ", "-")
+			sess, err := service.CreateRemoteSession(context.Background(), key, tc.req)
+			if tc.code == "" {
+				if err != nil || sess.ID == "" {
+					t.Fatalf("create = %+v, %v; want a session", sess, err)
+				}
+				return
+			}
+			if session.CodeOf(err) != tc.code {
+				t.Fatalf("create error = %v; want code %s", err, tc.code)
+			}
+			if tc.code == session.CodePolicyDigestMismatch {
+				op, opErr := service.GetOperation(context.Background(), key)
+				if opErr != nil || op.State != session.OperationFailed || op.ResourceID != "" || op.ErrorCode != tc.code {
+					t.Fatalf("refused create left operation %+v, %v; want a failed receipt with no session", op, opErr)
+				}
+				// Asynchronous admission refuses just the same, before anything is scheduled.
+				if _, err := service.CreateRemoteSessionAsync(context.Background(), key+"-async", tc.req); session.CodeOf(err) != tc.code {
+					t.Fatalf("async create error = %v; want code %s", err, tc.code)
+				}
+			}
+		})
+	}
+}

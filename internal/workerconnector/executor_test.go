@@ -73,7 +73,7 @@ func TestCreateSessionCarriesTheExactPrivateResponderBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(api.requests) != 1 || string(api.requests[0].Body) !=
-		`{"policy":"work-read-only","responder_binding":{"endpoint":"https://responder.example/v1/state-tools/mcp","token":"`+strings.Repeat("t", 48)+`"},"task":"episode-1"}` {
+		`{"expected_policy_digest":"`+repeatedDigest("b")+`","policy":"work-read-only","responder_binding":{"endpoint":"https://responder.example/v1/state-tools/mcp","token":"`+strings.Repeat("t", 48)+`"},"task":"episode-1"}` {
 		t.Fatalf("create requests = %+v", api.requests)
 	}
 }
@@ -1019,5 +1019,51 @@ func TestTransientArtifactFetchLeavesTheReceiptRetryable(t *testing.T) {
 	result, err = executor.Execute(context.Background(), gone)
 	if err != nil || result.State != "failed" || !strings.Contains(string(result.Error), "artifact_transfer_failed") {
 		t.Fatalf("execute with a 404 artifact = %+v, %v; want a permanent artifact_transfer_failed", result, err)
+	}
+}
+
+// The digests a command is pinned to travel with the create, so the daemon can refuse a
+// same-name policy that changed since this worker was authorized.
+func TestCreateSessionForwardsThePinnedPolicyDigests(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	api := &fakeAPI{response: json.RawMessage(`{"operation":{"id":"operation-create-1","method":"CreateRemoteSession","state":"running"}}`)}
+	executor, err := NewExecutor(ExecutorConfig{
+		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := createCommand(now.Add(time.Minute))
+	command.Payload = json.RawMessage(`{"external_ref":"episode-1","policy":"work-read-only","policy_digest":"` + repeatedDigest("b") + `","authority_digest":"` + repeatedDigest("c") + `"}`)
+	if _, err := executor.Execute(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.requests) != 1 {
+		t.Fatalf("requests = %d", len(api.requests))
+	}
+	var body map[string]any
+	if err := json.Unmarshal(api.requests[0].Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["expected_policy_digest"] != repeatedDigest("b") || body["expected_authority_digest"] != repeatedDigest("c") {
+		t.Fatalf("create body = %v; want both pinned digests forwarded", body)
+	}
+	// Without an authority digest in the command, only the policy digest is pinned.
+	bareAPI := &fakeAPI{response: api.response}
+	bareExecutor, err := NewExecutor(ExecutorConfig{
+		API: bareAPI, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bareExecutor.Execute(context.Background(), createCommand(now.Add(time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	body = map[string]any{} // Unmarshal merges into an existing map
+	if err := json.Unmarshal(bareAPI.requests[0].Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := body["expected_authority_digest"]; present || body["expected_policy_digest"] != repeatedDigest("b") {
+		t.Fatalf("create body without an authority digest = %v; want only the policy digest pinned", body)
 	}
 }

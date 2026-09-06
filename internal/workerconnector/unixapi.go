@@ -333,12 +333,24 @@ func (a *UnixAPI) Do(ctx context.Context, request Request) (json.RawMessage, err
 	return json.RawMessage(body), nil
 }
 
+// decodeAPIError reads the daemon's typed error. The session API wraps it as
+// {"error":{"code","detail","operation_id"}}; a flat {"code","detail"} is accepted too. Without
+// the code the worker could only report "HTTP 409", and a controller could not tell a policy
+// digest mismatch from any other conflict.
 func decodeAPIError(status int, body []byte) error {
 	var document struct {
 		Code   string `json:"code"`
 		Detail string `json:"detail"`
+		Error  *struct {
+			Code   string `json:"code"`
+			Detail string `json:"detail"`
+		} `json:"error"`
 	}
-	if err := json.Unmarshal(body, &document); err != nil || document.Code == "" {
+	err := json.Unmarshal(body, &document)
+	switch {
+	case err == nil && document.Error != nil && document.Error.Code != "":
+		return &APIError{Status: status, Code: bounded(document.Error.Code), Detail: bounded(document.Error.Detail)}
+	case err != nil || document.Code == "":
 		return &APIError{Status: status, Code: "http_error", Detail: fmt.Sprintf("HTTP %d", status)}
 	}
 	return &APIError{Status: status, Code: bounded(document.Code), Detail: bounded(document.Detail)}

@@ -321,7 +321,16 @@ func prepareRequest(ctx context.Context, command workerproto.Command, artifacts 
 			(payload.AuthorityDigest != "" && !digest(payload.AuthorityDigest)) {
 			return Request{}, errors.New("create_session payload identity is invalid")
 		}
-		bodyDocument := map[string]any{"policy": payload.Policy, "task": payload.ExternalRef}
+		// The digests the controller pinned this command to travel with the create, so the daemon
+		// refuses (before any workspace exists) when its same-name policy has changed since this
+		// worker was authorized — a stale hello or a later session response can never vouch for it.
+		bodyDocument := map[string]any{
+			"policy": payload.Policy, "task": payload.ExternalRef,
+			"expected_policy_digest": payload.PolicyDigest,
+		}
+		if payload.AuthorityDigest != "" {
+			bodyDocument["expected_authority_digest"] = payload.AuthorityDigest
+		}
 		if payload.ResponderBinding != nil {
 			if err := validateResponderBinding(*payload.ResponderBinding); err != nil {
 				return Request{}, err

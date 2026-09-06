@@ -727,17 +727,20 @@ func (h *sessionHTTPHandler) createSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		Policy           string                    `json:"policy"`
-		Task             string                    `json:"task"`
-		PullRequest      *RemotePullRequestBinding `json:"pull_request,omitempty"`
-		ResponderBinding *session.ResponderBinding `json:"responder_binding,omitempty"`
+		Policy                  string                    `json:"policy"`
+		Task                    string                    `json:"task"`
+		PullRequest             *RemotePullRequestBinding `json:"pull_request,omitempty"`
+		ResponderBinding        *session.ResponderBinding `json:"responder_binding,omitempty"`
+		ExpectedPolicyDigest    string                    `json:"expected_policy_digest,omitempty"`
+		ExpectedAuthorityDigest string                    `json:"expected_authority_digest,omitempty"`
 	}
 	if !decodeSessionJSON(w, r, &body) {
 		return
 	}
 	request := CreateRemoteSessionRequest{
 		Policy: body.Policy, Task: body.Task, PullRequest: body.PullRequest,
-		ResponderBinding: body.ResponderBinding,
+		ResponderBinding:     body.ResponderBinding,
+		ExpectedPolicyDigest: body.ExpectedPolicyDigest, ExpectedAuthorityDigest: body.ExpectedAuthorityDigest,
 	}
 	if sessionPreferAsync(r) {
 		op, err := h.service.CreateRemoteSessionAsync(
@@ -1596,7 +1599,7 @@ func sessionHTTPError(err error) (string, int, string) {
 		session.CodeOperationFenced,
 		session.CodeRevisionConflict, session.CodeInvalidSessionState, session.CodeQueueFull,
 		session.CodeBudgetExhausted, session.CodeTurnNotRunnable, session.CodeNativeSessionConflict,
-		session.CodeDiscardPlanStale:
+		session.CodeDiscardPlanStale, session.CodePolicyDigestMismatch:
 		status = http.StatusConflict
 	case session.CodeInternal:
 		status = http.StatusInternalServerError

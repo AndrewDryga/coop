@@ -196,6 +196,13 @@ selection. It excludes policy name, model, reasoning effort, and resource budget
 therefore require conversational, standard, and deep policies to share one authority digest while
 still pinning each policy's full `policy_digest`.
 
+A create may pin either or both: `expected_policy_digest` and `expected_authority_digest` on
+`POST /v1/sessions`. Admission compares each against the daemon's current resolution of the named
+policy and refuses with `policy_digest_mismatch` (409) before any intent is journaled or a
+workspace exists, so a daemon restarted with a changed same-name policy cannot run a create that
+was authorized against the old one. A fleet worker forwards the digests its command was pinned to;
+a direct client that pins nothing is unchanged.
+
 On session creation Coop resolves all configured repositories concurrently. A repository with
 `remote` and `branch` is pinned to that remote branch's exact commit; otherwise Coop preserves the
 legacy local-`HEAD` behavior. Remote refresh imports only the immutable commit object and does not
@@ -474,7 +481,7 @@ operation-plus-session response.
 
 | Method | Path | Body/query |
 | --- | --- | --- |
-| `POST` | `/v1/sessions` | `policy`, `task`, optional `pull_request.number` + `pull_request.head_commit` |
+| `POST` | `/v1/sessions` | `policy`, `task`, optional `pull_request.number` + `pull_request.head_commit`, optional `expected_policy_digest` / `expected_authority_digest` |
 | `GET` | `/v1/sessions?limit=100` | `limit` is `1..1000` |
 | `GET` | `/v1/sessions/{session_id}` | none |
 | `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; policy must enable warm execution |

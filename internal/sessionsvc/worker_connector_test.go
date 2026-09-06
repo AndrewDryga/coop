@@ -356,3 +356,65 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 		t.Fatalf("malformed identity was replaced: %v", err)
 	}
 }
+
+// The real worker-to-private-service path: a worker authorized against policy "responder" keeps
+// advertising that policy's digests, the daemon restarts with a same-name policy that resolves
+// differently, and the pinned create is refused by the daemon at admission — a definite failure
+// on the worker side, a failed operation with no session on the daemon side.
+func TestWorkerCreatePinnedToAnOldPolicyIsRefusedAfterTheDaemonRestartsWithAChangedPolicy(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	authorized := testSessionPolicies(repo)["responder"]
+	changed := authorized
+	changed.RepositoryReadOnly = !authorized.RepositoryReadOnly // same name, different authority after the restart
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), map[string]Policy{"responder": changed}, nil)
+	ctx := context.Background()
+	if err := service.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Stop() })
+	socketRoot := shortSessionSocketRoot(t)
+	socket := filepath.Join(socketRoot, "control.sock")
+	listener, cleanup, err := ListenSocket(socketRoot, socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: NewHTTPHandler(service)}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close(); cleanup() })
+
+	api, err := workerconnector.NewUnixAPI(socket, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	executor, err := workerconnector.NewExecutor(workerconnector.ExecutorConfig{
+		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := workerproto.Command{
+		CommandID: "command:create-stale", WorkerID: "worker-a", SessionRef: "remote-session", PlacementGeneration: 1,
+		LeaseRef: "lease:create", LeaseExpiresAt: now.Add(time.Hour), Kind: "create_session", CommandVersion: workerproto.Version,
+		Payload: json.RawMessage(`{"external_ref":"stale authority","policy":"responder","policy_digest":"` + ResolvedPolicyDigest(authorized) +
+			`","authority_digest":"` + ResolvedPolicyAuthorityDigest(authorized) + `"}`),
+		IdempotencyKey: "operation:create-stale",
+	}
+	result, err := executor.Execute(ctx, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != "failed" || !strings.Contains(string(result.Error), string(session.CodePolicyDigestMismatch)) {
+		t.Fatalf("stale create result = %+v; want a definite policy_digest_mismatch failure", result)
+	}
+	op, err := service.GetOperation(ctx, command.IdempotencyKey)
+	if err != nil || op.State != session.OperationFailed || op.ErrorCode != session.CodePolicyDigestMismatch || op.ResourceID != "" {
+		t.Fatalf("daemon operation = %+v, %v; want it failed at admission with no session", op, err)
+	}
+	if sessions, err := service.Store().ListSessions(ctx, 10); err != nil || len(sessions) != 0 {
+		t.Fatalf("sessions after the refused create = %+v, %v; want none", sessions, err)
+	}
+}

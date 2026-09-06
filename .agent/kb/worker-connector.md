@@ -69,6 +69,7 @@ The traps the code does not make obvious:
   controller redelivers.
 
 ## Changelog
+- 2026-09-06 — create_session forwards policy_digest/authority_digest as expected_policy_digest/expected_authority_digest; the daemon fences them at intent capture (`fenceExpectedPolicyDigests`, `internal/sessionsvc/service.go`) with `policy_digest_mismatch`. `decodeAPIError` now reads the daemon's wrapped `{"error":{...}}` shape; before, every daemon refusal surfaced as `http_error`.
 - 2026-09-06 — target-side placement fence: `Execute` refuses a still-leased `submit_turn`/`ensure_workspace` whose generation is below the journal's create origin for the session ref with a definite `placement_superseded` failure (`internal/workerconnector/executor.go`); reads and cleanup for the old generation stay allowed.
 - 2026-09-06 — reproduced a valid 244-byte ID failing at poll 1000000; bounded the shared formatter
   and covered the full protocol ID range, maximum sequence, disjoint identities and wrong-echo custody.
