@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -1568,14 +1570,11 @@ func TestSessionTurnRunnerPreparesAndExpiresWarmExecution(t *testing.T) {
 	if got, want := readSessionACPLog(t, fixture.childLog), []string{"initialize", "session/new"}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("prepared ACP methods = %v, want %v", got, want)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")); os.IsNotExist(err) {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("warm execution did not expire and remove projected credentials")
+	// The 500 ms idle expiry is the behavior; how long a loaded host takes to show it is not.
+	wait.For(t, "warm execution expiry removing the projected credentials", func() bool {
+		_, err := os.Stat(filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json"))
+		return os.IsNotExist(err)
+	})
 }
 
 func TestSessionTurnRunnerPreparedProcessHandlesFirstPromptWithoutRestart(t *testing.T) {
