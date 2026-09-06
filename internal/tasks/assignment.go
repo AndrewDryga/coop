@@ -134,6 +134,14 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 	if err := forkspace.ValidateGenerationWorkspace(request.AuthorityRepo, request.Fork); err != nil {
 		return ForkAssignment{}, fmt.Errorf("validate fork assignment generation: %w", err)
 	}
+	// A discard that crashed mid-way leaves its intent behind; until it is replayed the fork must
+	// take no new work — index recovery below would otherwise drop the half-discarded assignment
+	// as an orphan, and a later replay would remove the generation under the new assignment.
+	if _, pending, err := readForkDiscard(request.AuthorityRepo, request.Fork); err != nil {
+		return ForkAssignment{}, err
+	} else if pending {
+		return ForkAssignment{}, fmt.Errorf("fork %s has an interrupted discard — replay it with 'coop fork rm %s --force' before assigning work", request.Fork.Name, request.Fork.Name)
+	}
 	if err := recoverForkAssignmentIndexes(request.AuthorityRepo, request.Fork); err != nil {
 		return ForkAssignment{}, err
 	}

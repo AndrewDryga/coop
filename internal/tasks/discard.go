@@ -94,6 +94,12 @@ func ReadForkTaskStateSummary(repo string, identity forkspace.Identity) (ForkTas
 	for _, index := range indexes {
 		owner, err := ownerForProposalIndex(index)
 		if err != nil {
+			if hasDiscard {
+				// Mid-discard: the owner record can already be gone while its index remains
+				// (the crash window between the two removals). The journaled replay finishes
+				// it; refusing here would keep `fork rm --force` from ever reaching that replay.
+				continue
+			}
 			return ForkTaskStateSummary{}, err
 		}
 		root, err := openForkProposalOutbox(repo, owner)
@@ -277,6 +283,16 @@ func DiscardForkTaskStateLocked(repo string, identity forkspace.Identity) error 
 			return err
 		}
 	}
+	if exists {
+		// A replay covers every assignment the fork holds NOW as well as the journaled set: an
+		// assignment acquired after an interrupted discard (older binaries allowed that) must not
+		// be stranded fork-owned once the generation is removed.
+		indexes, problems := IndexedForkAssignments(repo, identity)
+		if len(problems) > 0 {
+			return errors.Join(problems...)
+		}
+		intent.Assignments = unionForkAssignmentIndexes(intent.Assignments, indexes)
+	}
 	if err := discardForkProposalsLocked(repo, identity); err != nil {
 		return err
 	}
@@ -299,6 +315,23 @@ func DiscardForkTaskStateLocked(repo string, identity forkspace.Identity) error 
 		return err
 	}
 	return nil
+}
+
+// unionForkAssignmentIndexes appends the current indexes the journaled intent does not name,
+// keyed by assignment id, keeping the journaled order first so a replay stays deterministic.
+func unionForkAssignmentIndexes(journaled, current []ForkAssignmentIndex) []ForkAssignmentIndex {
+	seen := make(map[string]bool, len(journaled))
+	for _, index := range journaled {
+		seen[index.AssignmentID] = true
+	}
+	merged := append([]ForkAssignmentIndex(nil), journaled...)
+	for _, index := range current {
+		if !seen[index.AssignmentID] {
+			seen[index.AssignmentID] = true
+			merged = append(merged, index)
+		}
+	}
+	return merged
 }
 
 func discardForkAssignment(repo string, identity forkspace.Identity, index ForkAssignmentIndex) (retErr error) {

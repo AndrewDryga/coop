@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
@@ -732,5 +733,106 @@ func TestForkUnblockRecoversTodoWithBlockedOwner(t *testing.T) {
 	record, owned, err := ReadTaskOwnerRecord(root, "assigned")
 	if err != nil || !owned || record.Fork == nil || record.Fork.Phase != ForkAssignmentPaused {
 		t.Fatalf("recovered owner = %+v, owned=%v err=%v", record, owned, err)
+	}
+}
+
+// A discard that crashed between removing the owner record and removing the assignment index
+// leaves its intent behind. Until that intent is replayed the fork takes no new work (index
+// recovery would otherwise drop the half-discarded assignment as an orphan), the task-state
+// summary still reads (so `fork rm --force` can reach the replay), and the replay covers every
+// assignment the fork holds now, not only the journaled ones.
+func TestPendingForkDiscardFailsClosedAndReplayCoversCurrentAssignments(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "tasks")
+	taskForLease(t, root, StateTodo, "crash-held")
+	taskForLease(t, root, StateTodo, "crash-next")
+	repo := filepath.Join(t.TempDir(), "project")
+	workspace, identity := testAssignmentFork(t, repo, "crash-worker")
+	request := ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: workspace,
+		BaselineHead: strings.Repeat("1", 40), LeaseOwner: testLeaseOwner(),
+	}
+	assignment, err := AssignForkTask([]string{root}, request)
+	if err != nil || assignment.Task.Item.ID != "crash-held" {
+		t.Fatalf("first assignment = %+v, err=%v; want crash-held", assignment.Owner, err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The crash window: intent journaled, task returned to todo, owner record removed, index left.
+	indexes, problems := IndexedForkAssignments(repo, identity)
+	if len(problems) > 0 || len(indexes) != 1 {
+		t.Fatalf("indexes = %+v, problems = %v", indexes, problems)
+	}
+	if err := writeForkDiscard(repo, forkDiscardIntent{
+		Version: forkDiscardVersion, Fork: identity, Assignments: indexes, CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	held, _ := mustCurrentTask(t, root, "crash-held")
+	if err := MoveTaskDir(root, held, StateTodo); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeTaskOwnerRecordFile(root, "crash-held"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := AssignForkTask([]string{root}, request); err == nil || !strings.Contains(err.Error(), "interrupted discard") {
+		t.Fatalf("assignment during a pending discard = %v; want a fail-closed refusal", err)
+	}
+	if next, _ := mustCurrentTask(t, root, "crash-next"); next.State != StateTodo {
+		t.Fatalf("crash-next was assigned during a pending discard: %+v", next)
+	}
+	if _, owned, err := ReadTaskOwnerRecord(root, "crash-next"); err != nil || owned {
+		t.Fatalf("crash-next owned during a pending discard: owned=%v err=%v", owned, err)
+	}
+	if after, _ := IndexedForkAssignments(repo, identity); len(after) != 1 {
+		t.Fatalf("half-discarded index dropped as an orphan: %+v", after)
+	}
+	summary, err := ReadForkTaskStateSummary(repo, identity)
+	if err != nil || !summary.DiscardPending || summary.Assignments != 1 {
+		t.Fatalf("summary during a pending discard = %+v, err=%v; want it readable with the discard pending", summary, err)
+	}
+
+	if err := DiscardForkTaskStateLocked(repo, identity); err != nil {
+		t.Fatalf("replay = %v", err)
+	}
+	if _, pending, err := readForkDiscard(repo, identity); err != nil || pending {
+		t.Fatalf("intent survives the replay: pending=%v err=%v", pending, err)
+	}
+	if after, _ := IndexedForkAssignments(repo, identity); len(after) != 0 {
+		t.Fatalf("indexes after the replay = %+v", after)
+	}
+	if held, _ := mustCurrentTask(t, root, "crash-held"); held.State != StateTodo {
+		t.Fatalf("crash-held after the replay = %+v", held)
+	}
+
+	// An assignment the journaled intent does not name (acquired after an interrupted discard by
+	// an older binary) is discarded by the replay too, so nothing stays fork-owned once the
+	// generation goes.
+	assignment, err = AssignForkTask([]string{root}, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	acquired := assignment.Task.Item.ID
+	if err := writeForkDiscard(repo, forkDiscardIntent{
+		Version: forkDiscardVersion, Fork: identity, CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := DiscardForkTaskStateLocked(repo, identity); err != nil {
+		t.Fatalf("replay with an unlisted assignment = %v", err)
+	}
+	if item, _ := mustCurrentTask(t, root, acquired); item.State != StateTodo {
+		t.Fatalf("%s stranded after the replay: %+v", acquired, item)
+	}
+	if _, owned, err := ReadTaskOwnerRecord(root, acquired); err != nil || owned {
+		t.Fatalf("%s still fork-owned after the replay: owned=%v err=%v", acquired, owned, err)
+	}
+	if after, _ := IndexedForkAssignments(repo, identity); len(after) != 0 {
+		t.Fatalf("indexes after the union replay = %+v", after)
 	}
 }
