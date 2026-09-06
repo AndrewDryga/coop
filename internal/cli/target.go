@@ -22,15 +22,16 @@ func noProviderErr(cmd string) error {
 		strings.TrimSpace(usage))
 }
 
-// isTargetHead reports whether s begins with a registered provider (so `coop <s>` names an
-// agent run, not a command/preset). Used by the top-level dispatch.
+// isTargetHead reports whether s is written as a target: a registered provider, or anything in
+// target syntax (a model, effort, or account segment), so `coop <s>` names an agent run, not a
+// command/preset — and a typo'd provider in `nope:model` fails as an unknown provider instead of
+// being looked up as a preset. Used by the top-level dispatch and takeHeadWho.
 func isTargetHead(s string) bool {
 	head := strings.TrimSpace(s)
-	provider := head
-	if i := strings.IndexAny(head, ":/@"); i >= 0 {
-		provider = head[:i]
+	if strings.ContainsAny(head, ":/@") {
+		return true
 	}
-	return agents.Valid(provider)
+	return agents.Valid(head)
 }
 
 // takeHeadWho pulls the leading "who runs" positional off args — the unified grammar shared by

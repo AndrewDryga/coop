@@ -135,6 +135,14 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	// Everything above is usage and config; only the run itself needs the project and a container
+	// runtime, so those are checked last and a usage error never reads as "runtime not found".
+	if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
+		return -1, err
+	}
+	if err := a.ensureRuntime(); err != nil {
+		return -1, err
+	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	return a.loopctl().Run(loop.RunSpec{ // local loop: no fork label, no fork owner
 		Repo: repo, Image: img, Agent: agent,

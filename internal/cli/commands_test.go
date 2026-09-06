@@ -1215,3 +1215,47 @@ func TestACPOuterRejectsInvalidProjectBeforeSupervisor(t *testing.T) {
 		t.Fatal("ACP supervisor started before policy validation")
 	}
 }
+
+// A bad flag, an unknown provider in the positional target, or a malformed loop.yaml is a usage
+// error and reads as one even where no container runtime is installed; the runtime is looked up
+// only once the run is otherwise valid.
+func TestLoopReportsUsageBeforeRuntimeDiscovery(t *testing.T) {
+	repo := t.TempDir()
+	if err := tasks.ScaffoldStateDirs(filepath.Join(repo, tasks.TasksRoot)); err != nil {
+		t.Fatal(err)
+	}
+	a := func() *app {
+		return &app{cfg: &config.Config{RuntimeName: "coop-no-such-runtime-xyz", ConfigDir: t.TempDir(), RepoOverride: repo}}
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"loop", "--max-tasks", "x"}, "--max-tasks must be a positive integer"},
+		{[]string{"loop", "--max-tasks", "0"}, "--max-tasks must be a positive integer"},
+		{[]string{"loop", "nope:target"}, `unknown provider "nope"`},
+	} {
+		code, err := a().dispatch(c.args)
+		if code != 2 || err == nil || !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), "runtime") {
+			t.Errorf("coop %s = (%d, %v); want a usage error (2) saying %q with no runtime lookup", strings.Join(c.args, " "), code, err, c.want)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "loop.yaml"), []byte("work: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := a().dispatch([]string{"loop", "codex"}); code != 2 || err == nil || !strings.Contains(err.Error(), "loop.yaml") || strings.Contains(err.Error(), "runtime") {
+		t.Errorf("coop loop with a malformed loop.yaml = (%d, %v); want its parse error (2), no runtime lookup", code, err)
+	}
+	if err := os.Remove(filepath.Join(repo, ".agent", "loop.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	// Valid usage on a signed-in account still needs the runtime before any box work.
+	signed := a()
+	signInCred(t, signed.cfg, "codex", signed.cfg.DefaultProfileOf("codex"))
+	if code, err := signed.dispatch([]string{"loop", "codex"}); code == 2 || err == nil || !strings.Contains(err.Error(), "runtime") {
+		t.Errorf("coop loop codex with no runtime = (%d, %v); want the runtime error once usage is valid", code, err)
+	}
+}

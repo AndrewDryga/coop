@@ -167,9 +167,11 @@ func (a *app) dispatch(argv []string) (int, error) {
 	// These commands always run a container, so detect the runtime up front (fail fast with the
 	// actionable "runtime not found"). The mixed command fork (ls/path are local) and update
 	// (--self-only is local) — and every pure-local family detect lazily in their box-running paths
-	// (resolveImage, forkStop, mergeGate, cmdUpdate), so they work with no runtime.
+	// (resolveImage, forkStop, mergeGate, cmdUpdate), so they work with no runtime. loop detects
+	// after its usage and config validation (cmdLoop), so a bad flag, target, or loop.yaml is
+	// reported as such rather than as a missing runtime.
 	switch sub {
-	case "run", "shell", "login", "acp", "loop", "up", "down", "build":
+	case "run", "shell", "login", "acp", "up", "down", "build":
 		if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
 			return -1, err
 		}
