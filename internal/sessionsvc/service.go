@@ -964,6 +964,17 @@ func (s *Service) tryLockOperation(key string) (func(), bool) {
 }
 
 func (s *Service) lockSessionRuntime(sessionID string) func() {
+	unlock, _ := s.acquireSessionRuntime(sessionID, false)
+	return unlock
+}
+
+// tryLockSessionRuntime is lockSessionRuntime without the wait: ok is false when a turn, review,
+// or cleanup already owns the session's runtime, for callers whose precondition is "parked".
+func (s *Service) tryLockSessionRuntime(sessionID string) (func(), bool) {
+	return s.acquireSessionRuntime(sessionID, true)
+}
+
+func (s *Service) acquireSessionRuntime(sessionID string, try bool) (func(), bool) {
 	s.runtimeMu.Lock()
 	lock := s.runtimeLocks[sessionID]
 	if lock == nil {
@@ -973,9 +984,7 @@ func (s *Service) lockSessionRuntime(sessionID string) func() {
 	lock.refs++
 	s.runtimeMu.Unlock()
 
-	lock.mu.Lock()
-	return func() {
-		lock.mu.Unlock()
+	release := func() {
 		s.runtimeMu.Lock()
 		lock.refs--
 		if lock.refs == 0 {
@@ -983,6 +992,18 @@ func (s *Service) lockSessionRuntime(sessionID string) func() {
 		}
 		s.runtimeMu.Unlock()
 	}
+	if try {
+		if !lock.mu.TryLock() {
+			release()
+			return nil, false
+		}
+	} else {
+		lock.mu.Lock()
+	}
+	return func() {
+		lock.mu.Unlock()
+		release()
+	}, true
 }
 
 func (s *Service) Start(parent context.Context) error {
@@ -2446,9 +2467,11 @@ func (s *Service) ListSessions(ctx context.Context, limit int) ([]session.Sessio
 	return s.store.ListSessions(ctx, limit)
 }
 
+// SubmitTurn admits a turn without taking the session's runtime lock: admission is one store
+// transaction fenced by expected_revision, and the fork-authority check takes its own lock. The
+// runtime lock belongs to whoever runs, reviews, or cleans up the workspace — a submit made while a
+// turn is executing must queue behind it, never wait on the line for it to finish.
 func (s *Service) SubmitTurn(ctx context.Context, key string, req session.SubmitTurnRequest) (session.Turn, error) {
-	unlock := s.lockSessionRuntime(req.SessionID)
-	defer unlock()
 	if err := s.validateTurnEscalation(ctx, req); err != nil {
 		return session.Turn{}, err
 	}

@@ -5809,3 +5809,90 @@ func TestSessionServiceDiscardsASessionWhoseWorkspaceVanished(t *testing.T) {
 		t.Fatal("a corrupted-but-present workspace planned as if absent")
 	}
 }
+
+// A submit while a turn runs must queue behind it, never wait on the line for it to finish; a
+// review in the same window is the documented state conflict, reported at once.
+func TestSubmitTurnDoesNotWaitForARunningTurn(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var fakeStore *session.Store
+	runner := RunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
+		if turn.Prompt == "first" {
+			started <- struct{}{}
+			<-release
+		}
+		if _, err := fakeStore.MarkTurnSendIntent(context.Background(), bound.ID, turn.ID); err != nil {
+			return turn, err
+		}
+		if _, err := fakeStore.MarkTurnSent(context.Background(), bound.ID, turn.ID); err != nil {
+			return turn, err
+		}
+		return fakeStore.CompleteTurn(context.Background(), session.CompleteTurnRequest{SessionID: bound.ID, TurnID: turn.ID, Message: turn.Prompt})
+	})
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), testSessionPolicies(repo), func(store *session.Store) Runner {
+		fakeStore = store
+		return runner
+	})
+	defer service.Stop()
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := service.CreateRemoteSession(context.Background(), "create", CreateRemoteSessionRequest{Policy: "responder", Task: "no-wait"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SubmitTurn(context.Background(), "turn-1", session.SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	<-started // the first turn is executing and owns the session runtime
+	current, err := service.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	submitted := make(chan error, 1)
+	go func() {
+		_, err := service.SubmitTurn(context.Background(), "turn-2", session.SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: current.Revision, Prompt: "second"})
+		submitted <- err
+	}()
+	select {
+	case err := <-submitted:
+		if err != nil {
+			t.Fatalf("submit during a running turn: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("submit waited for the running turn instead of queueing behind it")
+	}
+
+	reviewed := make(chan error, 1)
+	go func() {
+		_, err := service.RunReview(context.Background(), "review-1", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: current.Revision})
+		reviewed <- err
+	}()
+	select {
+	case err := <-reviewed:
+		if session.CodeOf(err) != session.CodeInvalidSessionState {
+			t.Fatalf("review during a running turn = %v, want invalid_session_state", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("review waited for the running turn instead of failing fast")
+	}
+
+	close(release)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		current, err := service.GetSession(context.Background(), sess.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.Activity == session.ActivityParked && current.ActiveTurnID == "" && current.QueuedTurnCount == 0 && current.TurnsUsed == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("both turns should complete in order after release, session = %+v", current)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

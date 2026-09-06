@@ -208,10 +208,18 @@ func (s *Service) resumeReview(
 }
 
 func (s *Service) executeReview(ctx context.Context, op session.Operation, req RunReviewRequest) (ReviewDossier, error) {
-	unlock := s.lockSessionRuntime(req.SessionID)
-	defer unlock()
-	// Turn admission takes the same lock. Check the cheap durable preconditions before evicting a
+	// Review requires a parked session, so a runtime already owned by a running turn, another
+	// review, or cleanup is the documented state conflict — reported now, not after waiting up to
+	// a turn timeout for the lock. Check the cheap durable preconditions before evicting a
 	// healthy warm child, then remove that last possible workspace writer before reading Git.
+	unlock, ok := s.tryLockSessionRuntime(req.SessionID)
+	if !ok {
+		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code:   session.CodeInvalidSessionState,
+			Detail: "review requires a parked session; a turn or another runtime operation is in progress",
+		})
+	}
+	defer unlock()
 	bound, err := s.store.GetSession(ctx, req.SessionID)
 	if err != nil {
 		return ReviewDossier{}, s.failServiceOperation(ctx, op.ID, err)

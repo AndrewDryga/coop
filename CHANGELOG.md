@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A turn submitted while one runs queues instead of waiting.** Turn admission no longer holds
+  the session's runtime lock, so a submit during a running turn returns the queued turn at once (up
+  to `max_queued_turns`) instead of blocking the request until the turn ends, and a review requested
+  while a turn runs fails immediately with `invalid_session_state`, the documented precondition,
+  instead of waiting up to the turn timeout.
+
 - **An agent working outside the loop can hold a task's lease.** `coop tasks lease <id>` takes the
   same per-task lock a loop iteration takes and holds it for a command's lifetime
   (`-- <command...>`), or, without one, until the bound process exits, the task leaves
