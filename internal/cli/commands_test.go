@@ -554,9 +554,16 @@ func TestSpawnBoxExportsEmptyPresetSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer child.Stop()
-	wait.ForFile(t, recorder)
-	if data, err := os.ReadFile(recorder); err != nil || string(data) != "set:" {
-		t.Fatalf("COOP_ACP_PRESET handoff = %q, %v, want present-but-empty", data, err)
+	// Wait for the CONTENT, not the file: the shim's redirection creates the file before printf
+	// writes it, and a loaded host widens that window.
+	var recorded []byte
+	wait.For(t, "the inner process recording COOP_ACP_PRESET", func() bool {
+		data, err := os.ReadFile(recorder)
+		recorded = data
+		return err == nil && len(data) > 0
+	})
+	if string(recorded) != "set:" {
+		t.Fatalf("COOP_ACP_PRESET handoff = %q, want present-but-empty", recorded)
 	}
 }
 
