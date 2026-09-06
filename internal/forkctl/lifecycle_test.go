@@ -773,7 +773,7 @@ func TestRecoverOrphanedGenerationAfterWorkspaceDestroy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := RecoverOrphanedGenerationLocked(repo, "orphaned")
+	recovered, err := RecoverOrphanedGenerationLocked(repo, "orphaned", false)
 	unlock()
 	if err != nil || !recovered {
 		t.Fatalf("orphaned generation recovery = %v, %v", recovered, err)
@@ -792,5 +792,77 @@ func TestRecoverOrphanedGenerationAfterWorkspaceDestroy(t *testing.T) {
 	unlock()
 	if err != nil || newIdentity == oldIdentity {
 		t.Fatalf("recreated generation = %+v, err=%v, old=%+v", newIdentity, err, oldIdentity)
+	}
+}
+
+// A fork whose workspace vanished while it held an assignment (deleted by hand, or the agent ran
+// `git clean -fdx`) used to keep its canonical tasks fork-owned forever: the task-state summary
+// failed opening the missing proposal outbox, and the orphan branch never discarded anyway. Now a
+// missing workspace/outbox counts as no pending proposals, --force returns the tasks, and without
+// --force the refusal names the remedy.
+func TestRecoverOrphanedGenerationReturnsHeldTasksOnlyWithForce(t *testing.T) {
+	repo := initRepo(t)
+	root := filepath.Join(repo, tasks.TasksRoot)
+	if err := tasks.ScaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	taskDir := filepath.Join(root, tasks.StateTodo, "held-task")
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte("# Held task\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := forkspace.Setup(repo, "vanished")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "vanished")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "vanished")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment, err := tasks.AssignForkTask([]string{root}, tasks.ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws,
+		BaselineHead: gitOut(ws, "rev-parse", "HEAD"),
+		LeaseOwner:   tasks.TaskLeaseOwner{RunID: "test", PID: os.Getpid(), Provider: "codex", Target: "codex"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := forkspace.Destroy(repo, "vanished"); err != nil {
+		t.Fatal(err)
+	}
+
+	unlock, err = forkspace.LockState(repo, "vanished")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if recovered, err := RecoverOrphanedGenerationLocked(repo, "vanished", false); recovered || err == nil ||
+		!strings.Contains(err.Error(), "canonical task authority") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("recovery without --force = %v, %v; want a refusal naming --force", recovered, err)
+	}
+	if item, ok, err := tasks.CurrentTask(root, "held-task"); err != nil || !ok || item.State != tasks.StateInProgress {
+		t.Fatalf("refused recovery moved the task: %+v, ok=%v, err=%v", item, ok, err)
+	}
+	if recovered, err := RecoverOrphanedGenerationLocked(repo, "vanished", true); !recovered || err != nil {
+		t.Fatalf("recovery with --force = %v, %v; want the generation recovered", recovered, err)
+	}
+	if item, ok, err := tasks.CurrentTask(root, "held-task"); err != nil || !ok || item.State != tasks.StateTodo {
+		t.Fatalf("held task after forced recovery = %+v, ok=%v, err=%v; want it back in todo", item, ok, err)
+	}
+	if _, owned, err := tasks.ReadTaskOwnerRecord(root, "held-task"); err != nil || owned {
+		t.Fatalf("held task still owned after forced recovery: owned=%v err=%v", owned, err)
+	}
+	if _, ok, err := forkspace.ReadGeneration(repo, "vanished"); err != nil || ok {
+		t.Fatalf("orphaned generation survives: ok=%v err=%v", ok, err)
 	}
 }

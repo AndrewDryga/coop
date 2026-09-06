@@ -492,7 +492,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return -1, fmt.Errorf("lock fork %s state: %w", fa.name, err)
 		}
 		if !pathExists(ws) {
-			if _, recoverErr := forkctl.RecoverOrphanedGenerationLocked(repo, fa.name); recoverErr != nil {
+			if _, recoverErr := forkctl.RecoverOrphanedGenerationLocked(repo, fa.name, fa.force); recoverErr != nil {
 				unlock()
 				return 1, fmt.Errorf("--fresh: recover missing fork %q before recreation: %w", fa.name, recoverErr)
 			}
@@ -601,7 +601,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return -1, fmt.Errorf("lock fork %s generation: %w", fa.name, err)
 		}
 		if !pathExists(ws) {
-			if _, recoverErr := forkctl.RecoverOrphanedGenerationLocked(repo, fa.name); recoverErr != nil {
+			if _, recoverErr := forkctl.RecoverOrphanedGenerationLocked(repo, fa.name, fa.force); recoverErr != nil {
 				unlock()
 				return 1, fmt.Errorf("recover missing fork %q before creation: %w", fa.name, recoverErr)
 			}

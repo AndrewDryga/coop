@@ -97,6 +97,12 @@ func ReadForkTaskStateSummary(repo string, identity forkspace.Identity) (ForkTas
 			return ForkTaskStateSummary{}, err
 		}
 		root, err := openForkProposalOutbox(repo, owner)
+		if errors.Is(err, os.ErrNotExist) {
+			// The workspace directory or its outbox is gone (deleted by hand, or `git clean -fdx`
+			// in the box): nothing can be pending there, and the fork must still be discardable —
+			// otherwise its canonical tasks stay fork-owned forever.
+			continue
+		}
 		if err != nil {
 			return ForkTaskStateSummary{}, err
 		}

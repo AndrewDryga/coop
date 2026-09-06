@@ -17,7 +17,7 @@ import (
 // workspace destruction. The caller holds LockState(repo,name). Any surviving worker, sandbox,
 // session reservation, task authority, land journal, or review branch makes the state ambiguous
 // and therefore non-recoverable without its owning workflow.
-func RecoverOrphanedGenerationLocked(repo, name string) (bool, error) {
+func RecoverOrphanedGenerationLocked(repo, name string, force bool) (bool, error) {
 	if pathExists(forkspace.Workspace(repo, name)) {
 		return false, nil
 	}
@@ -48,7 +48,15 @@ func RecoverOrphanedGenerationLocked(repo, name string) (bool, error) {
 	if active, err := tasks.ForkTaskState(repo, identity); err != nil {
 		return false, err
 	} else if active {
-		return false, errors.New("missing fork workspace still owns canonical task authority")
+		// The workspace is gone but the fork still owns canonical tasks (an assignment, a reviewed
+		// candidate). Without --force that is a stop; with it, the journaled discard returns the
+		// tasks to the queue exactly as it does for a present workspace.
+		if !force {
+			return false, errors.New("missing fork workspace still owns canonical task authority — use --force to return its tasks to the queue")
+		}
+		if err := tasks.DiscardForkTaskStateLocked(repo, identity); err != nil {
+			return false, fmt.Errorf("return the missing fork's canonical assignments: %w", err)
+		}
 	}
 	if err := forkspace.RemoveGenerationIfMatchesLocked(repo, identity); err != nil {
 		return false, err
@@ -192,7 +200,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			unlock()
 			return 1, errors.Join(currentErr, fmt.Errorf("orphaned fork %q changed while awaiting confirmation", name))
 		}
-		recovered, recoverErr := RecoverOrphanedGenerationLocked(repo, name)
+		recovered, recoverErr := RecoverOrphanedGenerationLocked(repo, name, force)
 		unlock()
 		if recoverErr != nil {
 			return 1, fmt.Errorf("recover missing fork %q: %w", name, recoverErr)
