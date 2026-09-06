@@ -57,6 +57,7 @@ volumes:
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
 	dir := t.TempDir()
 	path, needed, err := serviceShadowOverride(repo, compose, data, dir)
 	if err != nil || !needed {
@@ -67,7 +68,14 @@ volumes:
 		t.Fatal(err)
 	}
 	override := string(body)
-	decoyFile, decoyDir := filepath.Join(dir, "decoy"), filepath.Join(dir, "decoy-dir")
+	decoyFile, decoyDir, err := serviceDecoyPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The sidecars outlive this command, so their decoys must outlive the private per-start dir.
+	if strings.HasPrefix(decoyFile, dir) || strings.HasPrefix(decoyDir, dir) {
+		t.Fatalf("decoy sources %q/%q live in the per-start dir %q", decoyFile, decoyDir, dir)
+	}
 	for _, want := range []struct{ target, source string }{
 		{"/repo/.env", decoyFile},               // hidden descendant of a directory bind
 		{"/repo/.ssh", decoyDir},                // a secret directory is shadowed whole

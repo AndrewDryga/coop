@@ -1301,7 +1301,7 @@ func TestCmdUpRefusesWhileABoxRuns(t *testing.T) {
 // Without a terminal, `coop up` cannot ask about a secret-looking bind: it starts the services with
 // decoys and says which file is hidden and how to approve it. Once approved, it stays quiet.
 func TestCmdUpWarnsAboutHiddenServiceSecretsWithoutATerminal(t *testing.T) {
-	t.Setenv(box.ServiceApprovalRootEnv, t.TempDir())
+	t.Setenv(box.ServiceStateRootEnv, t.TempDir())
 	repo := t.TempDir()
 	write := func(rel, body string) {
 		t.Helper()

@@ -10,7 +10,7 @@ import (
 // A secret-looking bind stays a decoy until a human approves the compose file's exact content;
 // the approval is content-keyed, so editing the file hides the path again.
 func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
-	t.Setenv(ServiceApprovalRootEnv, t.TempDir())
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
 	repo := t.TempDir()
 	write := func(rel, body string) {
 		t.Helper()
@@ -133,7 +133,7 @@ func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
 	if review, err := ReviewServiceSecrets(repo, compose); err != nil || review != nil {
 		t.Fatalf("plain compose review = %+v, err=%v; want nil", review, err)
 	}
-	if entries, _ := os.ReadDir(os.Getenv(ServiceApprovalRootEnv)); len(entries) != 2 {
+	if entries, _ := os.ReadDir(filepath.Join(os.Getenv(ServiceStateRootEnv), "service-approvals")); len(entries) != 2 {
 		t.Fatalf("approval store has %d entries, want one per approved compose content", len(entries))
 	}
 }
@@ -145,4 +145,64 @@ func readFileString(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// `compose up -d` leaves the sidecars running long after coop exits, so the decoy a sidecar mounts
+// has to survive the cleanup of the private per-start directory. It did not: the sidecar was left
+// bound to a deleted path, and what it saw after a restart was whatever the runtime invented.
+func TestServiceDecoySourcesOutliveTheComposeCommand(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "tls.key"), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	compose := filepath.Join(repo, ".agent", "compose.yml")
+	if err := os.WriteFile(compose, []byte("services:\n  kc:\n    image: example/kc\n    volumes:\n      - \"../tls.key:/certs/tls.key:ro\"\n      - \"../.ssh:/ssh:ro\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, cleanup, hidden, err := snapshotComposeArgs(repo, compose, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	override := ""
+	for _, a := range args {
+		if strings.HasSuffix(a, "coop-compose-override-shadow.yml") {
+			override = a
+		}
+	}
+	if override == "" || len(hidden) != 2 {
+		t.Fatalf("args = %v, hidden = %v; want an override hiding both paths", args, hidden)
+	}
+	body, err := os.ReadFile(override)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sources []string
+	for _, line := range strings.Split(string(body), "\n") {
+		if _, rest, ok := strings.Cut(strings.TrimSpace(line), "source: "); ok {
+			sources = append(sources, strings.Trim(rest, `"`))
+		}
+	}
+	if len(sources) != 2 {
+		t.Fatalf("override sources = %v, want one per hidden path:\n%s", sources, body)
+	}
+	cleanup() // coop is done with the command; the sidecars it started are not
+	for _, source := range sources {
+		info, err := os.Stat(source)
+		if err != nil {
+			t.Fatalf("decoy source %s is gone after the command: %v", source, err)
+		}
+		if info.IsDir() {
+			continue
+		}
+		if info.Size() != 0 {
+			t.Fatalf("decoy source %s is not empty", source)
+		}
+	}
 }

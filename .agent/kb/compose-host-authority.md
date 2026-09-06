@@ -44,7 +44,10 @@ Sidecar binds get the box's secret shadowing (`serviceShadowPlan` → decoys ove
 source). The one exemption is a human approval of the compose file's exact CONTENT
 (`serviceapproval.go`: sha256 of the validated bytes → `~/.local/state/coop/service-approvals`,
 outside any box). `coop up` at a TTY asks; box auto-up never asks, it warns on stderr and keeps
-the decoys. Any edit to the file voids the approval — that is the whole security argument, so
+the decoys. Decoy SOURCES live in `<state>/decoys` (`serviceDecoyPaths`), never in the per-start
+snapshot dir: `up -d` outlives the command, and a bind whose source coop deleted resolves to
+whatever the runtime invents on the next restart. The primary box's decoy is a temp file on
+purpose — that container dies inside the same `box.Run`. Any edit to the file voids the approval — that is the whole security argument, so
 never key it by path or workspace. The approval also lists the exact repo-relative PATHS it
 covered (`keepDecoysOutside`): a secret appearing later under an approved directory bind keeps its
 decoy, because the human never saw it.
@@ -58,6 +61,7 @@ containers as users (`ps -a --filter network=`), because they reconnect on the n
 
 ## Changelog
 - 2026-09-06: session teardown removes unused project networks; orphan coop networks swept.
+- 2026-09-07: sidecar decoy sources moved to `<state>/decoys` so they outlive `compose up -d`.
 - 2026-09-06: content-keyed service secret approval (`coop up` prompt) added as the exemption to sidecar shadowing; scoped to the exact approved paths.
 - 2026-09-06 — sidecars start only when no other box is running in the project (`LiveBoxes`, `internal/box/services.go`; `box.Run` skips the start, `coop up` refuses): closes the bind-source replacement race without changing live binds (human decision, task resolve-sidecar-bind-identity-without-losing-liv).
 - 2026-09-06 — sidecar secret shadowing: the generated shadow override projects the primary decoys into repo binds (release-audit follow-up; real-Compose merge verified by `TestRuntimeComposeShadowsRepoSecretsIntoSidecars`).

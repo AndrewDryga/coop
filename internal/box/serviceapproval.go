@@ -13,9 +13,10 @@ import (
 	"time"
 )
 
-// ServiceApprovalRootEnv overrides where approvals are stored — honored only by test binaries, so a
-// test never reads or writes the developer's real approvals.
-const ServiceApprovalRootEnv = "COOP_SERVICE_APPROVAL_ROOT"
+// ServiceStateRootEnv overrides where coop keeps the host-owned state behind sibling services —
+// approvals and the decoy files sidecars mount. Honored only by test binaries, which otherwise get
+// a directory under the system temp dir, so a test never reads or writes the developer's real state.
+const ServiceStateRootEnv = "COOP_SERVICE_STATE_ROOT"
 
 // ServiceApproval records a human's decision that the sibling services defined by one exact
 // compose file may read the secret-looking files it binds — a generated dev TLS key for Keycloak,
@@ -33,18 +34,24 @@ type ServiceApproval struct {
 	ApprovedBy string    `json:"approved_by"`
 }
 
-func serviceApprovalRoot() (string, error) {
+// serviceStateRoot is <state>/<name>: host-owned, outside every repo and every box, which is what
+// makes an approval an approval and keeps a mounted decoy from vanishing under a running sidecar.
+func serviceStateRoot(name string) (string, error) {
 	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
-		if root := os.Getenv(ServiceApprovalRootEnv); root != "" {
-			return root, nil
+		root := os.Getenv(ServiceStateRootEnv)
+		if root == "" {
+			root = filepath.Join(os.TempDir(), "coop-test-service-state")
 		}
+		return filepath.Join(root, name), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "state", "coop", "service-approvals"), nil
+	return filepath.Join(home, ".local", "state", "coop", name), nil
 }
+
+func serviceApprovalRoot() (string, error) { return serviceStateRoot("service-approvals") }
 
 func composeDigest(data []byte) string {
 	sum := sha256.Sum256(data)

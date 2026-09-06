@@ -2,6 +2,7 @@ package box
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -161,8 +162,50 @@ func keepDecoysOutside(decoys map[string][]serviceDecoy, approved []string) (map
 	return kept, paths
 }
 
-// writeServiceShadowOverride materializes a plan: one empty read-only decoy file and one empty
-// decoy directory in dir, and the override that mounts them over every planned target.
+// writeServiceShadowOverride writes the override that mounts an empty decoy over every planned
+// target. The override itself is per-start (dir is the private snapshot dir, gone when the command
+// returns), but its decoy SOURCES are not: `compose up -d` leaves the sidecars running long after
+// coop exits, and a bind whose source coop deleted is a mount the container can no longer trust —
+// on a restart the runtime resolves it to whatever it invents. So the decoys live in coop's own
+// state directory, created once and shared: they are empty and read-only, so sharing them costs
+// nothing. (The primary box's decoy stays a temp file: that container dies inside the same Run.)
+// serviceDecoyPaths returns the shared empty file and empty directory sidecars mount in place of a
+// hidden path, creating them if this host has none yet. Anything unexpected at either path (a
+// non-empty file, a file where the directory belongs) is replaced rather than trusted.
+func serviceDecoyPaths() (file, dir string, err error) {
+	root, err := serviceStateRoot("decoys")
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", "", err
+	}
+	file, dir = filepath.Join(root, "file"), filepath.Join(root, "dir")
+	if info, statErr := os.Stat(file); statErr != nil || !info.Mode().IsRegular() || info.Size() != 0 {
+		if err := os.RemoveAll(file); err != nil {
+			return "", "", err
+		}
+		handle, err := os.OpenFile(file, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o400)
+		if err != nil && !errors.Is(err, fs.ErrExist) { // another coop created it in the meantime
+			return "", "", err
+		}
+		if err == nil {
+			if err := handle.Close(); err != nil {
+				return "", "", err
+			}
+		}
+	}
+	if info, statErr := os.Stat(dir); statErr != nil || !info.IsDir() {
+		if err := os.RemoveAll(dir); err != nil {
+			return "", "", err
+		}
+		if err := os.Mkdir(dir, 0o500); err != nil && !errors.Is(err, fs.ErrExist) {
+			return "", "", err
+		}
+	}
+	return file, dir, nil
+}
+
 func writeServiceShadowOverride(decoys map[string][]serviceDecoy, dir string) (string, bool, error) {
 	if len(decoys) == 0 {
 		return "", false, nil
@@ -172,12 +215,8 @@ func writeServiceShadowOverride(decoys map[string][]serviceDecoy, dir string) (s
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	decoyFile := filepath.Join(dir, "decoy")
-	if err := os.WriteFile(decoyFile, nil, 0o400); err != nil {
-		return "", false, err
-	}
-	decoyDir := filepath.Join(dir, "decoy-dir")
-	if err := os.Mkdir(decoyDir, 0o500); err != nil {
+	decoyFile, decoyDir, err := serviceDecoyPaths()
+	if err != nil {
 		return "", false, err
 	}
 	var b strings.Builder
