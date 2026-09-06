@@ -149,7 +149,11 @@ func TestDestroyLandedForkRechecksAfterServiceShutdown(t *testing.T) {
 	git(t, ws, "add", ".agent")
 	git(t, ws, "commit", "-qm", "service")
 	c := &Control{cfg: &config.Config{}}
-	result, err := c.mergeOne(repo, "", "landed", false)
+	// The compose file runs containers on the reviewer's Docker, so the merge refuses it until forced.
+	if _, err := c.mergeOne(repo, "", "landed", false); err == nil || !strings.Contains(err.Error(), ".agent/compose.yml") {
+		t.Fatalf("mergeOne without --force = %v; want a refusal naming the compose file", err)
+	}
+	result, err := c.mergeOne(repo, "", "landed", true)
 	t.Cleanup(result.approval.close)
 	if err != nil || result.approval == nil {
 		t.Fatalf("land: %v", err)

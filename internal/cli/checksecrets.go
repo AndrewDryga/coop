@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/hostsurface"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -56,6 +57,17 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 			if n := unscannedIgnoredCount(repo); n > 0 {
 				ui.Warn("%s not scanned, but a box can read them anyway — rescan with --include-ignored to cover them", ui.Count(n, "gitignored file"))
 			}
+		}
+	}
+	// Independent of secrets: which files changed since the last commit alter what runs on YOUR
+	// machine — a hook, a settings file, a compose file, the Makefile. The sandbox contains the
+	// box; it cannot contain what your own tools do with files an agent left behind, so this is
+	// the "read these before running anything here" list. Informational: the exit code is the
+	// secret scan's.
+	if surfaces := hostSurfacesChanged(repo); len(surfaces) > 0 {
+		ui.Warn("%s changed since the last commit alter what runs on your machine — read them before running tools here:", ui.Count(len(surfaces), "file", "files"))
+		for _, finding := range surfaces {
+			ui.Detail("%s — %s", finding.Path, finding.Reason)
 		}
 	}
 	if len(findings) == 0 {
@@ -251,4 +263,31 @@ func readScannable(path string) (string, bool) {
 		return "", false
 	}
 	return string(data), true
+}
+
+// hostSurfacesChanged classifies the working tree's changes since HEAD (staged, unstaged, and
+// untracked, as `git status` sees them) as host-execution surfaces. Empty outside a git work tree.
+func hostSurfacesChanged(repo string) []hostsurface.Finding {
+	out, err := gitOutputBytes(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames")
+	if err != nil {
+		return nil
+	}
+	var listing strings.Builder
+	for _, entry := range strings.Split(string(out), "\x00") {
+		if len(entry) < 4 {
+			continue
+		}
+		status, path := entry[:2], entry[3:]
+		code := "M"
+		switch {
+		case status == "??":
+			code = "A"
+		case strings.ContainsRune(status, 'D'):
+			code = "D"
+		case strings.ContainsRune(status, 'A'):
+			code = "A"
+		}
+		listing.WriteString(code + "\t" + path + "\n")
+	}
+	return hostsurface.Findings(listing.String())
 }

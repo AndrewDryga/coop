@@ -16,11 +16,19 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/hostsurface"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
+
+// HostSurfaces lists the fork's changed files that alter what runs on your machine — hooks,
+// editor and agent settings, compose, the Makefile — for the review brief. The automatic ones
+// also appear in PolicyScan, where they block a merge unless forced.
+func HostSurfaces(repo, ref string) []hostsurface.Finding {
+	return hostsurface.Findings(gitOut(repo, "diff", "--name-status", "HEAD..."+ref))
+}
 
 // PolicyScan returns human-readable concerns about a fork's added/changed files:
 // secret-looking filenames, large blobs, and — by scanning each changed blob's
@@ -45,10 +53,11 @@ func PolicyScan(repo, ref string) []string {
 		if shadowed(filepath.ToSlash(path)) {
 			warns = append(warns, "secret-like file: "+path)
 		}
-		// Files that run host code the moment a human touches the merged tree (cd, open the
-		// folder, `make`) — path-based, so a huge/binary blob can't dodge it below.
-		if w := interactionRiskPath(f[0], path); w != "" {
-			warns = append(warns, w)
+		// Files that change what runs on the HOST the moment a human touches the merged tree — a
+		// hook on their next commit, a settings file their editor session runs, a compose file
+		// their Docker runs — path-based, so a huge/binary blob can't dodge it below.
+		if reason, automatic := hostsurface.Classify(f[0], path); automatic {
+			warns = append(warns, path+" — "+reason) // runs by itself: blocks the merge unless forced
 		}
 		if size := gitBlobSize(repo, ref, path); size > 5<<20 {
 			warns = append(warns, fmt.Sprintf("large file (%dMB): %s", size>>20, path))
@@ -73,25 +82,6 @@ func PolicyScan(repo, ref string) []string {
 func gitBlobSize(repo, ref, path string) int64 {
 	n, _ := strconv.ParseInt(gitOut(repo, "cat-file", "-s", ref+":"+path), 10, 64)
 	return n
-}
-
-// interactionRiskPath flags an added/changed file that runs host code the moment a human
-// interacts with the merged tree — direnv's .envrc on `cd`, a VS Code tasks.json on folder-open,
-// a Makefile on `make`. It's a review aid (these block a merge like a secret hit unless you pass
-// --force), not a sandbox: it names high-signal files, it doesn't try to prove them safe. status
-// is the `git diff --name-status` code (A/M/R…); "" means not flagged.
-func interactionRiskPath(status, path string) string {
-	base := filepath.Base(path)
-	added := status != "" && (status[0] == 'A' || status[0] == 'R') // R = rename → new path here
-	switch {
-	case base == ".envrc":
-		return path + " runs on `cd` into the dir (direnv) — review it before entering"
-	case base == "tasks.json" && strings.Contains(path, ".vscode/"):
-		return path + " can auto-run a task when the folder opens (VS Code)"
-	case (base == "Makefile" || base == "GNUmakefile") && added:
-		return path + " runs host commands on `make` — review the new Makefile"
-	}
-	return ""
 }
 
 // addedLifecycleScript returns the name of an npm install/prepare lifecycle script the fork ADDS

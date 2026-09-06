@@ -125,6 +125,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop tasks watch [--json]", "canonical tasks + every sandbox, live")
 	row("coop tasks add \"<title>\"", "add a task (then claim/block/unblock/done)")
 	row("coop tasks decisions", "what's blocked on a decision (-i to answer)")
+	row("coop tasks flags", "tasks that changed what runs on your machine")
 	row("coop context", "compile the docs relevant to touched paths")
 	row("coop backlog", "park unscheduled ideas; promote when ready")
 
@@ -578,6 +579,11 @@ var commandHelp = map[string]string{
   path <id>        print a task's resolved folder path
   rm <id>          delete a task folder; --all-done clears the done archive
   decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
+  flags [<id>] [--ack]
+                   tasks whose commits changed files that run on YOUR machine — git hooks and
+                   attributes, editor/agent settings and hooks, compose files, the Makefile — with
+                   the reason each one matters; the board marks such a task until you read the
+                   diff and acknowledge it with --ack (the sandbox contains the box, not your tools)
   lint             check the tree (blocked<->decision.md, no status field, ...; exits 1)
   queues           print each configured queue's path, one per line (for scripts and the sweep guard)
 

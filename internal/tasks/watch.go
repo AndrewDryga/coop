@@ -353,6 +353,9 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
 		if m.queue != "" {
 			suffix += " · queue " + m.queue
 		}
+		if m.HasFlags {
+			suffix += "  " + TaskFlagsMarker
+		}
 		// A claimed task nobody is actively holding a lock on would otherwise read "unleased" — a
 		// word that, beside "claimed by", wrongly suggests the loop may take it (see inProgressMarker).
 		// The lease label stays only while a lease is actually held: busy or stalled, never unleased.

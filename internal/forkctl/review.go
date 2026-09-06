@@ -344,6 +344,13 @@ func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref s
 				fmt.Println(indent(w))
 			}
 		}
+		if surfaces := HostSurfaces(repo, ref); len(surfaces) > 0 {
+			fmt.Printf("%s %s %s — read these before you run anything in the merged tree\n",
+				ui.Bold("runs on your machine:"), ui.Yellow("⚠"), ui.Count(len(surfaces), "file"))
+			for _, f := range surfaces {
+				fmt.Println(indent(f.Path + " — " + f.Reason))
+			}
+		}
 		fmt.Println(ui.Bold("files:"))
 		for _, sec := range classifyChanged(files, gitOut(repo, "diff", "--numstat", "HEAD..."+ref)) {
 			fmt.Println(indent(sec.title + ":"))

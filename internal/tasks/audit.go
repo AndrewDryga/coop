@@ -364,6 +364,12 @@ func CompleteTrustedTask(root string, task Item) (retErr error) {
 	if err := finalizeCompletedTask(current.ID, current.Dir); err != nil {
 		return err
 	}
+	// The review aid for what the sandbox cannot contain: which of this task's commits changed
+	// files that run on the host (hooks, settings, compose, the Makefile). A flag on the board
+	// until a human acknowledges it; never a reason to refuse the completion.
+	if err := recordTaskFlags(root, current.Dir, current.ID); err != nil {
+		ui.Warn("task %s completed, but its host-surface flags could not be recorded: %v", current.ID, err)
+	}
 	generation := ""
 	if reopened {
 		generation = reopen.Generation

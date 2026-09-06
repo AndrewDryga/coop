@@ -64,6 +64,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [host-disk-exhaustion-stops-the-runtime](host-disk-exhaustion-stops-the-runtime.md) — a host out of disk OR memory stops the container runtime mid-run and surfaces as unexplained "unexpected EOF" failures; prune alone never returns the space
 - [services-teardown-needs-the-workspace](services-teardown-needs-the-workspace.md) — sibling services persist across boxes on purpose, but teardown reads the workspace's compose file, so stopping them after deleting the workspace does nothing
 - [compose-host-authority](compose-host-authority.md) — sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
+- [host-execution-surfaces](host-execution-surfaces.md) — which changed files count as "runs on your machine", the two tiers, and where coop surfaces them (fork review/merge, task flags, check-secrets)
 - [trusted-git-view](trusted-git-view.md) — host git runs under a coop-owned GIT_DIR view with an allowlisted config, so repository-defined filter/textconv/merge drivers never execute; ref-store writes stay on the real git dir
 - [test-fixture-guards-vs-timing-bounds](test-fixture-guards-vs-timing-bounds.md) — a wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight bound is only for timing that IS the behavior, and attributes its phases
 - [repository-source-copies](repository-source-copies.md) — skills and fallback copies retain rooted content authority and validate links only after relocation

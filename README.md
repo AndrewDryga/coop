@@ -198,7 +198,7 @@ spelled out here (there's room to render them).
 | `coop fork <name> [<target|preset>] [--new]` | open or re-enter a [secrets-free fork](#forks-hand-off-work-like-a-pr) + run an agent or preset (re-entry resumes the session; `--new` resets) |
 | `coop fork ls` | list this repo's forks: agent, branch, state, tasks done/total, change size, last activity |
 | `coop fork review <name> [--stat\|--tool\|--open] [--gate]` | dossier + diff; `--gate` previews the rebase and gate without touching either source repo |
-| `coop fork merge <name> [--force] [--yes]` | rebase one fork onto your branch and land it (`--yes` confirms non-interactively) |
+| `coop fork merge <name> [--force] [--yes]` | rebase one fork onto your branch and land it (`--yes` confirms non-interactively); refuses a fork that adds or edits something that runs on your machine by itself — a commit hook, editor or agent settings, compose — unless you pass `--force` after reading it |
 | `coop fork merge --all [--force] [--yes]` | rebase and land every fork (`--yes` confirms non-interactively; cannot be combined with a name) |
 | `coop fork logs [name] [-f]` · `stop <name>` | tail a loop log (no name = all) · stop a detached loop |
 | `coop fork rm <name> [--force] [--yes]` | discard a fork — confirms first; `--force` may stop its detached worker and return/discard Git plus canonical task authority |
@@ -219,6 +219,7 @@ spelled out here (there's room to render them).
 | `coop tasks ls` | show the queue, grouped by state (a folder per task; its directory *is* its state) |
 | `coop tasks watch` | one live board for canonical tasks and every local/fork/ACP/session sandbox (auto-exits when work drains, exits 1 when a queue cannot be read; Ctrl-C anytime) |
 | `coop tasks add "<title>"` · `claim [--as <label>] [--pid <n>] [--force]` · `release` · `block` · `unblock` · `done` · `rm` | move one task through its states (moving its folder is the state change); an agent's claim binds to its process so `ls`/`watch` show who holds the task and whether it is still alive, and `coop loop --preflight` releases a claim whose process is gone; `release` hands a claim back without finishing it |
+| `coop tasks flags [<id>] [--ack]` | list the finished tasks whose commits changed what runs on your machine (hooks, settings, compose, Makefile); show one task's files, or acknowledge them after reading — the board carries a ⚠ until you do |
 | `coop tasks lease <id> [--as <label>] [--pid <n>] [-- <command...>]` | hold the task's work lock — the one a loop iteration holds — for a command's lifetime, or until the bound process exits or the task moves; `ls`/`watch` show `busy <label>` and a loop in this checkout skips the task meanwhile |
 | `coop tasks decisions [-i]` · `lint` | what's blocked on a decision (`-i` to answer) · check the canonical tree |
 | `coop backlog` · `add "<title>"` · `promote <id>` · `rm <id>` | park unscheduled ideas in the `xx_backlog/` drawer — same folder format, but outside the lifecycle (never auto-worked, never nagged); `promote` moves one into `00_todo/` when it's ready |
@@ -284,7 +285,7 @@ For a token hiding *inside* a file, `coop check-secrets` scans by content (`file
 exit 1 on a hit) — a file coop shadows by name (an `id_ed25519`, a `*.pem`) is still
 reported when git would commit it, since shadowing protects the box, not the push;
 `--include-ignored` widens the scan to the whole visible tree. Prove your setup holds
-with [`coop doctor`](#prove-it-coop-doctor).
+with [`coop doctor`](#prove-it-coop-doctor). It also lists the changed files that alter what runs on your machine — a commit hook, editor or agent settings, compose, the Makefile — so you read those before running anything; that report never changes the exit code.
 
 > Full walkthrough — subdirectory scoping, template re-hiding, the fork exception:
 > [**coop.dryga.com/docs.html#secrets**](https://coop.dryga.com/docs.html#secrets).

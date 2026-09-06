@@ -150,6 +150,8 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderRemove(root, args)
 	case "decisions":
 		return tasksFolderDecisions(root, args)
+	case "flags":
+		return tasksFolderFlags(root, args)
 	default:
 		return 2, unknownErr("tasks command", sub, TasksVerbs)
 	}
@@ -158,7 +160,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 // tasksVerbs are the canonical `coop tasks` subcommands (primary spellings, no aliases): the single
 // source for the unknown-subcommand suggester and isTasksSubcommand, so the two can't drift. `watch`
 // belongs here even though cmdTasks (not cmdTasksFolder) handles it — a mistype of it should suggest it.
-var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "lease", "block", "unblock", "done", "watch", "queues", "path", "rm", "decisions"}
+var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "lease", "block", "unblock", "done", "watch", "queues", "path", "rm", "decisions", "flags"}
 
 // isTasksSubcommand reports whether s names a `coop tasks` subcommand. cmdTasks uses it to catch
 // `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path. v3 keeps no
@@ -1892,6 +1894,11 @@ func listMarkers(p ui.Palette, t Item) string {
 	}
 	if t.State == StateInProgress {
 		parts = append(parts, p.Dim(inProgressMarker(t)))
+	}
+	if t.HasFlags {
+		// Only the exceptional row carries it: this task's commits changed files that run on the
+		// host, and nobody has acknowledged that yet (coop tasks flags <id> --ack).
+		parts = append(parts, p.Red("⚠")+" "+p.Dim("changes what runs on your machine"))
 	}
 	return strings.Join(parts, "  ")
 }
