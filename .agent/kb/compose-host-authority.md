@@ -51,7 +51,11 @@ whatever the runtime invents on the next restart. The primary box's decoy is a t
 purpose — that container dies inside the same `box.Run`. Any edit to the file voids the approval — that is the whole security argument, so
 never key it by path or workspace. The approval also lists the exact repo-relative PATHS it
 covered (`keepDecoysOutside`): a secret appearing later under an approved directory bind keeps its
-decoy, because the human never saw it.
+decoy, because the human never saw it. `project.Services.RequireRealFiles` is a REQUEST, never a
+grant — it is committed and agent-writable, so it only labels the prompt (`ReviewFile.Requested`),
+and unrequested/new files sort to the top where a human cannot miss them. `lastApprovalFor` scans
+approvals by workspace+compose path so "new since your last yes" survives a compose edit, which
+voids the content-keyed approval.
 
 Networks: one compose project (and `_default` network) per canonical workspace path, so every
 worktree/fork session is a new project. `StopSessionServices` removes the containers by
@@ -61,6 +65,7 @@ like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" 
 containers as users (`ps -a --filter network=`), because they reconnect on the next start.
 
 ## Changelog
+- 2026-09-07: repo-side `services.require_real_files` request labels the approval prompt.
 - 2026-09-06: session teardown removes unused project networks; orphan coop networks swept.
 - 2026-09-07: hidden-file notice moved off the compose writer onto ui.Warn.
 - 2026-09-07: sidecar decoy sources moved to `<state>/decoys` so they outlive `compose up -d`.

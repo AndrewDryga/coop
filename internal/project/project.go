@@ -52,10 +52,22 @@ const (
 type Project struct {
 	Subprojects []string `yaml:"subprojects"` // monorepo member dirs (repo-relative), each its own coop project
 	Serve       Serve    `yaml:"serve"`
-	Box         Box      `yaml:"box"`     // committed box policy (below an explicit COOP_* setting)
-	Review      Review   `yaml:"review"`  // publication-review-only services and literal environment
-	Context     Context  `yaml:"context"` // path-routed instruction/rule/KB compilation (coop context)
-	Gate        string   `yaml:"gate"`    // fork-merge revalidation command (an explicit COOP_GATE wins)
+	Box         Box      `yaml:"box"`      // committed box policy (below an explicit COOP_* setting)
+	Review      Review   `yaml:"review"`   // publication-review-only services and literal environment
+	Context     Context  `yaml:"context"`  // path-routed instruction/rule/KB compilation (coop context)
+	Services    Services `yaml:"services"` // what the sibling services ASK for; grants nothing by itself
+	Gate        string   `yaml:"gate"`     // fork-merge revalidation command (an explicit COOP_GATE wins)
+}
+
+// Services is what the repo asks for on behalf of its sibling services. It is a REQUEST, never a
+// grant: this file is committed and an agent in the box can edit it, so the human still approves
+// once per machine (`coop up`, recorded outside every repo). Its whole job is to make the ask
+// documented, travel with the repo, and let a file nobody asked for stand out at the prompt.
+type Services struct {
+	// RequireRealFiles are repo-relative paths whose real contents the services need — a generated
+	// dev TLS key a local Keycloak reads, say — rather than the empty stand-in coop mounts over
+	// anything that looks like a secret.
+	RequireRealFiles []string `yaml:"require_real_files"`
 }
 
 // Context is the path-routed context configuration: which committed docs to compile for a given
@@ -169,6 +181,13 @@ func Parse(data []byte) (*Project, error) {
 			return nil, fmt.Errorf("%s: subproject %q must be a relative path inside the repo", File, sub)
 		}
 		p.Subprojects[i] = clean
+	}
+	for i, path := range p.Services.RequireRealFiles {
+		clean := filepath.Clean(path)
+		if path == "" || filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("%s: services.require_real_files %q must be a relative path inside the repo", File, path)
+		}
+		p.Services.RequireRealFiles[i] = filepath.ToSlash(clean)
 	}
 	switch p.Box.Egress {
 	case "", "open", "none":

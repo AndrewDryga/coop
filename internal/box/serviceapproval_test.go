@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -58,7 +59,7 @@ func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
 	}
 
 	review, err := ReviewServiceSecrets(repo, compose)
-	if err != nil || review == nil || review.File != ".agent/compose.yml" || strings.Join(review.Hidden, ",") != "certs/tls.key" {
+	if err != nil || review == nil || review.File != ".agent/compose.yml" || strings.Join(review.Paths(), ",") != "certs/tls.key" {
 		t.Fatalf("review = %+v, err=%v; want the key listed for the human", review, err)
 	}
 	if err := review.Approve(); err != nil {
@@ -98,7 +99,7 @@ func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
 	// keeps its decoy: the human never saw it.
 	write(".agent/compose.yml", "services:\n  keycloak:\n    image: quay.io/keycloak/keycloak:26\n    volumes:\n      - \"../certs:/certs:ro\"\n")
 	review, err = ReviewServiceSecrets(repo, compose)
-	if err != nil || review == nil || strings.Join(review.Hidden, ",") != "certs/tls.key" {
+	if err != nil || review == nil || strings.Join(review.Paths(), ",") != "certs/tls.key" {
 		t.Fatalf("directory bind review = %+v, err=%v", review, err)
 	}
 	if err := review.Approve(); err != nil {
@@ -114,7 +115,7 @@ func TestServiceSecretApprovalIsBoundToTheComposeContent(t *testing.T) {
 		t.Fatalf("new secret under an approved bind: hidden=%v shadow=%v; want it still hidden", hidden, hasShadow(args))
 	}
 	later, err := ReviewServiceSecrets(repo, compose)
-	if err != nil || later == nil || strings.Join(later.Hidden, ",") != "certs/.env" {
+	if err != nil || later == nil || strings.Join(later.Paths(), ",") != "certs/.env" {
 		t.Fatalf("follow-up review = %+v, err=%v; want only the new file to approve", later, err)
 	}
 	if err := later.Approve(); err != nil {
@@ -253,5 +254,74 @@ func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
 	}
 	if strings.Contains(composeWriter.String(), "empty file in place of") {
 		t.Fatalf("the notice went to the compose writer, which a box start discards: %q", composeWriter.String())
+	}
+}
+
+// The repo can say which files its services genuinely need. That request grants nothing: it labels
+// the prompt, so a file nobody asked for stands out, and a file that appeared since the last yes is
+// called out even when a compose edit voided the approval that covered it.
+func TestReviewLabelsWhatTheRepoAsksForAndWhatIsNew(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	repo := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("certs/tls.key", "-----BEGIN PRIVATE KEY-----\n")
+	write("certs/.env", "SMUGGLED=1\n")
+	write(".agent/project.yaml", "services:\n  require_real_files:\n    - certs/tls.key\n")
+	write(".agent/compose.yml", "services:\n  kc:\n    image: example/kc\n    volumes:\n      - \"../certs:/certs:ro\"\n")
+	compose := filepath.Join(repo, ".agent", "compose.yml")
+
+	review, err := ReviewServiceSecrets(repo, compose)
+	if err != nil || review == nil || len(review.Files) != 2 {
+		t.Fatalf("review = %+v, err = %v; want both hidden files", review, err)
+	}
+	byPath := map[string]ReviewFile{}
+	for _, f := range review.Files {
+		byPath[f.Path] = f
+	}
+	if key := byPath["certs/tls.key"]; !key.Requested || key.New || key.Reason() != ".agent/project.yaml asks for it" {
+		t.Fatalf("requested file = %+v, reason %q", key, key.Reason())
+	}
+	if env := byPath["certs/.env"]; env.Requested || env.New || env.Reason() != "nothing in the repo asks for it" {
+		t.Fatalf("unrequested file = %+v, reason %q", env, env.Reason())
+	}
+	// The file nobody asked for is listed FIRST, where a human cannot miss it.
+	if review.Files[0].Path != "certs/.env" {
+		t.Fatalf("review order = %v; want the unrequested file first", review.Paths())
+	}
+	if err := review.Approve(); err != nil {
+		t.Fatal(err)
+	}
+
+	// An agent edits the compose file, which voids the approval, and a third secret appears. The
+	// human is asked again: the two they already vouched for read as known, the third as new.
+	write("certs/extra.pem", "-----BEGIN PRIVATE KEY-----\n")
+	write(".agent/compose.yml", "services:\n  kc:\n    image: example/kc\n    volumes:\n      - \"../certs:/certs:ro\"\n    environment:\n      X: \"1\"\n")
+	again, err := ReviewServiceSecrets(repo, compose)
+	if err != nil || again == nil || len(again.Files) != 3 {
+		t.Fatalf("review after the edit = %+v, err = %v; want every file asked again", again, err)
+	}
+	byPath = map[string]ReviewFile{}
+	for _, f := range again.Files {
+		byPath[f.Path] = f
+	}
+	if byPath["certs/tls.key"].New || byPath["certs/.env"].New {
+		t.Fatalf("already-approved paths read as new: %+v", again.Files)
+	}
+	// Unrequested first, and among those the one that appeared since the last yes leads.
+	if got, want := again.Paths(), []string{"certs/extra.pem", "certs/.env", "certs/tls.key"}; !slices.Equal(got, want) {
+		t.Fatalf("review order after the edit = %v, want %v", got, want)
+	}
+	extra := byPath["certs/extra.pem"]
+	if !extra.New || extra.Requested || extra.Reason() != "nothing in the repo asks for it; new since you last approved this file" {
+		t.Fatalf("the new file = %+v, reason %q", extra, extra.Reason())
 	}
 }

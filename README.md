@@ -1509,6 +1509,21 @@ approve again, box launches start the services with decoys and say which file is
 The approval covers the exact files you saw, so a secret that lands later under an approved
 directory bind stays hidden until you approve it too.
 
+The repo can say which files its services genuinely need, so the ask is documented and travels to
+your teammates instead of arriving as a crash:
+
+```yaml
+# .agent/project.yaml — committed with the repo
+services:
+  require_real_files:
+    - dev/keycloak/certs/generated/tls.key  # a generated dev TLS key Keycloak reads
+```
+
+That list grants nothing on its own, because an agent in the box can edit it like any other
+committed file. It only labels the prompt: a file the repo asked for reads as expected, a file
+nothing asked for is listed first as the one to look at, and a file that appeared since your last
+approval says so. You still say yes once on each machine.
+
 **Reaching a service at the same URL inside and out.** For something the *host browser* and the
 *app in the box* must both reach at one URL — an OIDC issuer like Keycloak — give the service an
 `expose:` (container-only) port in `.agent/compose.yml`:

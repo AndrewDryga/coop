@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 // ServiceStateRootEnv overrides where coop keeps the host-owned state behind sibling services —
@@ -79,11 +81,43 @@ func ApprovedServiceSecrets(data []byte) (ServiceApproval, bool) {
 // ServiceSecretReview is what `coop up` puts in front of a human: the secret-looking files one
 // compose file binds into its services, which stay decoys until Approve is called.
 type ServiceSecretReview struct {
-	File   string   // repo-relative compose path
-	Hidden []string // repo-relative bind sources that look like secrets, sorted
+	File  string       // repo-relative compose path
+	Files []ReviewFile // the secret-looking bind sources still hidden, sorted by path
 
 	workspace string
 	data      []byte
+}
+
+// ReviewFile is one hidden file, with the two things that tell a human whether to expect it: does
+// the repo say its services need this file, and is it new since the last time they said yes.
+type ReviewFile struct {
+	Path      string
+	Requested bool // .agent/project.yaml lists it under services.require_real_files
+	New       bool // this workspace approved this compose file before, and this path was not in it
+}
+
+// Paths is the review's files, in order — what Approve records and what the caller prints.
+func (r *ServiceSecretReview) Paths() []string {
+	if r == nil {
+		return nil
+	}
+	out := make([]string, 0, len(r.Files))
+	for _, f := range r.Files {
+		out = append(out, f.Path)
+	}
+	return out
+}
+
+// Reason is the one-line explanation printed beside a hidden file at the prompt.
+func (f ReviewFile) Reason() string {
+	reason := "nothing in the repo asks for it"
+	if f.Requested {
+		reason = project.File + " asks for it"
+	}
+	if f.New {
+		reason += "; new since you last approved this file"
+	}
+	return reason
 }
 
 // ReviewServiceSecrets returns the review a human must see before workspace's compose file (an
@@ -126,7 +160,74 @@ func ReviewServiceSecrets(workspace, file string) (*ServiceSecretReview, error) 
 	if err != nil {
 		rel = abs
 	}
-	return &ServiceSecretReview{File: filepath.ToSlash(rel), Hidden: hidden, workspace: workspace, data: data}, nil
+	// The repo's own request list: committed, agent-writable, and worth exactly nothing on its own —
+	// it only labels the prompt, so a file the repo never asked for stands out from the one its
+	// services genuinely need.
+	proj, err := project.Load(workspace)
+	if err != nil {
+		return nil, err
+	}
+	requested := make(map[string]bool, len(proj.Services.RequireRealFiles))
+	for _, p := range proj.Services.RequireRealFiles {
+		requested[p] = true
+	}
+	// "New" only means something once this workspace has approved this compose file at least once.
+	previous, hadPrevious := lastApprovalFor(workspace, filepath.ToSlash(rel))
+	seen := make(map[string]bool, len(previous))
+	for _, p := range previous {
+		seen[p] = true
+	}
+	files := make([]ReviewFile, 0, len(hidden))
+	for _, p := range hidden {
+		files = append(files, ReviewFile{Path: p, Requested: requested[p], New: hadPrevious && !seen[p]})
+	}
+	// What deserves a second look goes first: a file nobody asked for, then one that appeared since
+	// the last yes. In a long list the one surprise must not sit at the bottom, which is exactly
+	// where an agent appending a line would want it.
+	sort.SliceStable(files, func(i, j int) bool {
+		a, b := files[i], files[j]
+		if a.Requested != b.Requested {
+			return !a.Requested
+		}
+		if a.New != b.New {
+			return a.New
+		}
+		return a.Path < b.Path
+	})
+	return &ServiceSecretReview{File: filepath.ToSlash(rel), Files: files, workspace: workspace, data: data}, nil
+}
+
+// lastApprovalFor returns the paths approved most recently for this workspace and compose path,
+// across every version of that file. Approvals are keyed by content, so an edited compose file
+// starts from nothing; this is what still lets the prompt say which of the paths are new.
+func lastApprovalFor(workspace, file string) ([]string, bool) {
+	root, err := serviceApprovalRoot()
+	if err != nil {
+		return nil, false
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, false
+	}
+	var newest ServiceApproval
+	found := false
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(root, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var approval ServiceApproval
+		if json.Unmarshal(raw, &approval) != nil || approval.Workspace != workspace || approval.File != file {
+			continue
+		}
+		if !found || approval.ApprovedAt.After(newest.ApprovedAt) {
+			newest, found = approval, true
+		}
+	}
+	return newest.Paths, found
 }
 
 // Approve records the human's decision for the reviewed content. It is written atomically, so a
@@ -142,9 +243,9 @@ func (r *ServiceSecretReview) Approve() error {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
 	}
-	// Everything hidden for this content is approved together: Hidden already excludes anything an
+	// Everything hidden for this content is approved together: the review already excludes anything an
 	// earlier approval of the same content covered, so re-approving adds the new files to it.
-	paths := r.Hidden
+	paths := r.Paths()
 	if prior, ok := ApprovedServiceSecrets(r.data); ok {
 		paths = append(append([]string(nil), prior.Paths...), paths...)
 		sort.Strings(paths)

@@ -757,7 +757,10 @@ func (a *app) cmdUp(args []string) (int, error) {
 		return -1, fmt.Errorf("could not start services from %s: %w — fix the Compose file, then retry: coop up", rel, err)
 	}
 	if review != nil && ui.IsTerminal(os.Stdin) {
-		ui.Warn("%s binds %s that look like secrets into its services: %s", rel, ui.Count(len(review.Hidden), "file"), strings.Join(review.Hidden, ", "))
+		ui.Warn("%s binds %s that look like secrets into its services:", rel, ui.Count(len(review.Files), "file"))
+		for _, file := range review.Files {
+			ui.Detail("%s — %s", file.Path, file.Reason())
+		}
 		ui.Detail("services get an empty file for each unless you approve; the approval lasts until %s changes", rel)
 		if ui.Confirm("let the services read these files", false) {
 			if err := review.Approve(); err != nil {
