@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -433,4 +434,84 @@ func (f *failingThenHealthyTransport) Poll(_ context.Context, poll workerproto.P
 		Version: workerproto.Version, PollRef: poll.PollRef, ServerTime: f.now,
 		AcknowledgedResultCommandIDs: []string{}, Commands: []workerproto.Command{}, EventAcknowledgements: []workerproto.EventAcknowledgement{},
 	}, nil
+}
+
+func TestPollOnceKeepsExecutingPastOneUnexecutableCommand(t *testing.T) {
+	now := time.Date(2026, 9, 5, 18, 0, 0, 0, time.UTC)
+	api := &eventAPI{
+		fakeAPI: fakeAPI{response: json.RawMessage(`{"operation":{"id":"create-1","state":"succeeded"},"session":{"id":"coop-session-1","revision":2}}`)},
+		events: []workerproto.SessionEvent{{
+			ID: "evt-1", SessionID: "coop-session-1", Sequence: 1, TurnID: "turn-1",
+			Type: "session.created", Version: 1, OccurredAt: now,
+		}},
+	}
+	first := createCommand(now.Add(time.Minute))
+	expired := createCommand(now.Add(-time.Minute))
+	expired.CommandID = "018f04f4-1111-7000-8000-000000000002"
+	expired.SessionRef = "018f04f4-2222-7000-8000-000000000002"
+	expired.IdempotencyKey = "responder:work:create:session-2:g1"
+	live := createCommand(now.Add(time.Minute))
+	live.CommandID = "018f04f4-1111-7000-8000-000000000003"
+	live.SessionRef = "018f04f4-2222-7000-8000-000000000003"
+	live.IdempotencyKey = "responder:work:create:session-3:g1"
+
+	executor, err := NewExecutor(ExecutorConfig{
+		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &scriptedTransport{responses: []workerproto.Response{
+		{Version: workerproto.Version, PollRef: "poll:worker-a:1", ServerTime: now, Commands: []workerproto.Command{first}},
+		{Version: workerproto.Version, PollRef: "poll:worker-a:2", ServerTime: now, AcknowledgedResultCommandIDs: []string{first.CommandID}},
+		{Version: workerproto.Version, PollRef: "poll:worker-a:3", ServerTime: now},
+		{
+			Version: workerproto.Version, PollRef: "poll:worker-a:4", ServerTime: now,
+			Commands: []workerproto.Command{expired, live},
+			EventAcknowledgements: []workerproto.EventAcknowledgement{{
+				SessionRef: first.SessionRef, PlacementGeneration: first.PlacementGeneration, Sequence: 1,
+			}},
+		},
+		{Version: workerproto.Version, PollRef: "poll:worker-a:5", ServerTime: now},
+	}}
+	connector, err := NewConnector(ConnectorConfig{
+		Executor: executor, Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello { return hello(clock) },
+		Now: func() time.Time { return now }, Transport: transport,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if err := connector.PollOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(transport.polls) != 3 || len(transport.polls[2].EventBatches) != 1 {
+		t.Fatalf("the first session's events were not published: %+v", transport.polls)
+	}
+
+	// One dead command in the batch is reported, not allowed to starve the commands and the
+	// acknowledgements behind it.
+	err = connector.PollOnce(context.Background())
+	if !errors.Is(err, ErrLeaseExpired) || !strings.Contains(err.Error(), expired.CommandID) {
+		t.Fatalf("PollOnce err = %v; want the expired command reported by id", err)
+	}
+	if len(api.requests) != 2 {
+		t.Fatalf("API requests = %d; want the live command executed behind the expired one", len(api.requests))
+	}
+	if _, err := executor.journal.read(executor.journal.path(expired.CommandID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expired command receipt err = %v; want none recorded", err)
+	}
+	entry, err := executor.journal.read(executor.journal.path(live.CommandID))
+	if err != nil || entry.Result == nil || entry.Result.State != "succeeded" {
+		t.Fatalf("live command receipt = %+v, err = %v; want a succeeded result", entry, err)
+	}
+	if err := connector.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, batch := range transport.polls[4].EventBatches {
+		if batch.SessionRef == first.SessionRef {
+			t.Fatalf("acknowledged events replayed after the partial batch: %+v", batch)
+		}
+	}
 }

@@ -97,9 +97,16 @@ func (c *Connector) PollOnce(ctx context.Context) error {
 	if err := c.executor.journal.acknowledgeResults(response.AcknowledgedResultCommandIDs); err != nil {
 		pollErr = errors.Join(pollErr, err)
 	}
+	// One command the worker cannot execute right now — an expired lease, a redelivery for
+	// another worker, a conflicting receipt, an artifact fetch that failed for now — must not
+	// starve the rest of the batch or the event acknowledgements behind it. Each failure is
+	// reported; the command's receipt (if any) waits for the controller's redelivery.
 	for _, command := range response.Commands {
 		if _, err := c.executor.Execute(ctx, command); err != nil {
-			return errors.Join(pollErr, err)
+			if ctx.Err() != nil {
+				return errors.Join(pollErr, err)
+			}
+			pollErr = errors.Join(pollErr, fmt.Errorf("command %s: %w", command.CommandID, err))
 		}
 	}
 	// Event narration cannot delay commands or turn settlement. A failed

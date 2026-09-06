@@ -4,6 +4,7 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **One unexecutable worker command no longer stalls its poll batch.** When the outbound worker cannot execute one command in a batch — an expired placement lease, a redelivery meant for another worker, a conflicting receipt, an artifact fetch that failed for now — it reports that command by id and keeps going: the remaining commands execute and the event acknowledgements still apply, instead of the whole batch being abandoned until the next poll.
 - **The worker's private request cap matches the daemon's.** The outbound worker admits the
   12 MiB turn and fence bodies the daemon accepts instead of refusing anything over 1 MiB before
   sending it, so an 8 MiB input artifact set can actually be submitted; and a request the worker
