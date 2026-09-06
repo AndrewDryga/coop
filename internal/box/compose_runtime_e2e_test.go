@@ -28,7 +28,7 @@ func TestRuntimeComposeSnapshot(t *testing.T) {
     volumes: ["./data:/data:ro"]
     ports: [{target: 5432, host_ip: 127.0.0.1}]
 `)
-	args, cleanup, err := snapshotComposeArgs(repo, source, false)
+	args, cleanup, _, err := snapshotComposeArgs(repo, source, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestRuntimeComposeShadowsRepoSecretsIntoSidecars(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("COOP_SYNTHETIC_CANARY=not-a-real-secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	args, cleanup, err := snapshotComposeArgs(repo, source, false)
+	args, cleanup, _, err := snapshotComposeArgs(repo, source, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // EnsureServices brings the repo's sibling services up (compose up -d --wait) so a box can
@@ -51,11 +52,18 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 	// (the compose path is no longer shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
-	args, cleanup, err := snapshotComposeArgs(workspace, file, repoReadOnly, exposedRoots...)
+	args, cleanup, hidden, err := snapshotComposeArgs(workspace, file, repoReadOnly, exposedRoots...)
 	if err != nil {
 		return startedServices{}, fmt.Errorf("refusing to run %s: %w", filepath.Base(file), err)
 	}
 	defer cleanup()
+	if len(hidden) > 0 {
+		// Say so on every start, not just the first: the service that needed the file fails in its
+		// own way (Keycloak: "missing BEGIN PRIVATE KEY"), and this line is the only one that names
+		// the cause and the fix.
+		fmt.Fprintf(stderr, "%s services get an empty file in place of %s (looks like a secret) — to let them read the real file, run `coop up` in a terminal and approve %s; the approval lasts until that file changes\n",
+			ui.Yellow("⚠"), strings.Join(hidden, ", "), filepath.Base(file))
+	}
 	// Publish each `expose`d sidecar port to its stable per-workspace host port via a merged
 	// override (the base file's `expose` publishes nothing, so this adds the only host mapping).
 	ports := servicePortsWithArgs(rt, workspace, args)
@@ -80,39 +88,53 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 
 // Snapshot approved bytes outside the writable workspace. All commands in one operation use
 // this file; the explicit project directory preserves relative binds and ownership labels.
-func snapshotComposeArgs(workspace, file string, repoReadOnly bool, exposedRoots ...string) ([]string, func(), error) {
+// hidden names the repo-relative secret-looking bind sources the services get decoys for — empty
+// when there are none or when a human approved this exact file (ReviewServiceSecrets).
+func snapshotComposeArgs(workspace, file string, repoReadOnly bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
 	data, err := readValidatedCompose(file, workspace, repoReadOnly)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	abs, err := filepath.Abs(file)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	dir, err := privateWorkspaceTempDir(workspace, "coop-compose-", exposedRoots...)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
+	cleanup = func() { _ = os.RemoveAll(dir) }
 	path := filepath.Join(dir, "compose.yml")
 	if err := os.WriteFile(path, data, 0o400); err != nil {
 		cleanup()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	args := []string{"compose", "-p", ComposeProject(workspace),
+	args = []string{"compose", "-p", ComposeProject(workspace),
 		"--project-directory", filepath.Dir(abs), "--env-file", os.DevNull, "-f", path}
 	// The sidecars get the box's secret shadowing too: a decoy over every hidden path a repo bind
-	// would otherwise hand them raw (see serviceShadowOverride). Every compose invocation — start,
-	// port discovery, teardown — carries it, so the project definition is one and the same.
-	shadow, needed, err := serviceShadowOverride(workspace, abs, data, dir)
+	// would otherwise hand them raw (see serviceShadowOverride) — unless a human approved this
+	// exact file's content on this host, which is the one way a service legitimately reads a
+	// secret-looking file (a generated dev TLS key). Every compose invocation — start, port
+	// discovery, teardown — carries the same decision, so the project definition is one and the same.
+	decoys, hidden, err := serviceShadowPlan(workspace, abs, data)
 	if err != nil {
 		cleanup()
-		return nil, nil, fmt.Errorf("project secret shadowing into sibling services: %w", err)
+		return nil, nil, nil, fmt.Errorf("project secret shadowing into sibling services: %w", err)
+	}
+	if len(hidden) > 0 {
+		if _, approved := ApprovedServiceSecrets(data); approved {
+			return args, cleanup, nil, nil
+		}
+	}
+	shadow, needed, err := writeServiceShadowOverride(decoys, dir)
+	if err != nil {
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("project secret shadowing into sibling services: %w", err)
 	}
 	if needed {
 		args = append(args, "-f", shadow)
 	}
-	return args, cleanup, nil
+	return args, cleanup, hidden, nil
 }
 
 func privateWorkspaceTempDir(workspace, pattern string, exposedRoots ...string) (string, error) {
@@ -182,7 +204,7 @@ func DownServicesFile(rt runtime.Runtime, workspace, file string, volumes bool, 
 	if file == "" {
 		return nil
 	}
-	args, cleanup, err := snapshotComposeArgs(workspace, file, false, exposedRoots...)
+	args, cleanup, _, err := snapshotComposeArgs(workspace, file, false, exposedRoots...)
 	if err != nil {
 		return fmt.Errorf("refusing to stop %s: %w", filepath.Base(file), err)
 	}

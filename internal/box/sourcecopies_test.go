@@ -319,7 +319,7 @@ func TestPrivateCopiesAndComposeRejectExposedRoots(t *testing.T) {
 	assertDenied(err)
 	_, _, err = synthHomeFallbackMounts(repo, "/home/node", []string{"claude"}, exposed)
 	assertDenied(err)
-	_, _, err = snapshotComposeArgs(repo, source, false, exposed)
+	_, _, _, err = snapshotComposeArgs(repo, source, false, exposed)
 	assertDenied(err)
 	_, _, err = writeServiceOverride([]ServicePort{{Service: "db", ContainerPort: 5432, HostPort: 25432}}, repo, exposed)
 	assertDenied(err)

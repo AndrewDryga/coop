@@ -748,6 +748,24 @@ func (a *app) cmdUp(args []string) (int, error) {
 	}
 	proj := box.ComposeProject(repo)
 	rel, _ := filepath.Rel(repo, file)
+	// A service that legitimately needs a secret-looking file (a generated dev TLS key) gets it
+	// only after a human at a terminal approves this exact compose content; a script or an agent
+	// cannot answer for them, and the auto-start on box launch never asks — it warns and uses
+	// decoys until someone runs this command and says yes.
+	review, err := box.ReviewServiceSecrets(repo, file)
+	if err != nil {
+		return -1, fmt.Errorf("could not start services from %s: %w — fix the Compose file, then retry: coop up", rel, err)
+	}
+	if review != nil && ui.IsTerminal(os.Stdin) {
+		ui.Warn("%s binds %s that look like secrets into its services: %s", rel, ui.Count(len(review.Hidden), "file"), strings.Join(review.Hidden, ", "))
+		ui.Detail("services get an empty file for each unless you approve; the approval lasts until %s changes", rel)
+		if ui.Confirm("let the services read these files", false) {
+			if err := review.Approve(); err != nil {
+				return -1, fmt.Errorf("record the approval: %w", err)
+			}
+			ui.Info("approved — services read them until %s changes", rel)
+		}
+	}
 	ui.Info("starting services from %s (waiting until healthy)", rel)
 	services, err := box.EnsureServicesFile(a.rt, repo, file, os.Stdout, os.Stderr, box.ConfigExposureRoots(a.cfg)...)
 	if err != nil {

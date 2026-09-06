@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 
@@ -1294,5 +1295,47 @@ func TestCmdUpRefusesWhileABoxRuns(t *testing.T) {
 	out = captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
 	if code != 0 || runErr != nil {
 		t.Fatalf("cmdUp after the box ended = (%d, %v); want success\n%s", code, runErr, out)
+	}
+}
+
+// Without a terminal, `coop up` cannot ask about a secret-looking bind: it starts the services with
+// decoys and says which file is hidden and how to approve it. Once approved, it stays quiet.
+func TestCmdUpWarnsAboutHiddenServiceSecretsWithoutATerminal(t *testing.T) {
+	t.Setenv(box.ServiceApprovalRootEnv, t.TempDir())
+	repo := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("certs/tls.key", "-----BEGIN PRIVATE KEY-----\n")
+	write(".agent/compose.yml", "services:\n  keycloak:\n    image: example/keycloak\n    volumes:\n      - \"../certs/tls.key:/certs/tls.key:ro\"\n")
+	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: composeUpRuntime(t, []string{"keycloak"}, 0), rtSet: true}
+	var code int
+	var runErr error
+	out := captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
+	if code != 0 || runErr != nil {
+		t.Fatalf("cmdUp = (%d, %v), want the services to start with decoys; stderr:\n%s", code, runErr, out)
+	}
+	for _, want := range []string{"empty file in place of certs/tls.key", "run `coop up` in a terminal"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cmdUp did not explain the hidden file (%q):\n%s", want, out)
+		}
+	}
+	review, err := box.ReviewServiceSecrets(repo, filepath.Join(repo, ".agent", "compose.yml"))
+	if err != nil || review == nil {
+		t.Fatalf("review = %+v, err=%v", review, err)
+	}
+	if err := review.Approve(); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
+	if code != 0 || runErr != nil || strings.Contains(out, "empty file") {
+		t.Fatalf("approved cmdUp = (%d, %v); stderr:\n%s", code, runErr, out)
 	}
 }

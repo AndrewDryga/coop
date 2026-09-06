@@ -1496,6 +1496,14 @@ Changing the configured Compose file is reconciled on the next `coop up` or box 
 removed from the file are stopped. `coop down` does the same. Every workspace uses its hashed
 Compose project name, so repositories with the same basename remain isolated.
 
+**Secret-looking files stay hidden from services too.** A bind of a `.env`, a `*.key`, or a
+`.coopignore`d path hands the service an empty decoy, exactly as the box sees it — otherwise an
+agent-written Compose file could ship your secrets to a container it controls. When a service
+legitimately needs such a file (a generated dev TLS key for Keycloak), run `coop up` in a terminal:
+it lists the files and asks once. The approval is tied to the Compose file's exact content and
+stored outside the repo, so an edit to the file (the one thing a box can do) resets it; until you
+approve again, box launches start the services with decoys and say which file is hidden and why.
+
 **Reaching a service at the same URL inside and out.** For something the *host browser* and the
 *app in the box* must both reach at one URL — an OIDC issuer like Keycloak — give the service an
 `expose:` (container-only) port in `.agent/compose.yml`:

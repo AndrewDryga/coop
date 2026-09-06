@@ -26,21 +26,35 @@ import (
 // Returns the override path and true when at least one decoy was needed; decoy sources live in
 // dir, the private per-start temp dir, beside the frozen compose snapshot.
 func serviceShadowOverride(repo, composeFile string, data []byte, dir string) (string, bool, error) {
-	var doc composeDoc
-	if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&doc); err != nil {
-		return "", false, err
-	}
-	realRepo, err := resolveExisting(repo)
+	decoys, _, err := serviceShadowPlan(repo, composeFile, data)
 	if err != nil {
 		return "", false, err
 	}
+	return writeServiceShadowOverride(decoys, dir)
+}
+
+// serviceDecoy is one decoy the override mounts over a service's bind target.
+type serviceDecoy struct {
+	target string
+	dir    bool
+}
+
+// serviceShadowPlan decides, per service, which bind targets get a decoy, and lists the
+// repo-relative sources being hidden (sorted, unique) — what a human must see before approving
+// the file (ReviewServiceSecrets) and what the auto-up warning names.
+func serviceShadowPlan(repo, composeFile string, data []byte) (map[string][]serviceDecoy, []string, error) {
+	var doc composeDoc
+	if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&doc); err != nil {
+		return nil, nil, err
+	}
+	realRepo, err := resolveExisting(repo)
+	if err != nil {
+		return nil, nil, err
+	}
 	composeDir := filepath.Dir(composeFile)
 	shadowed := NewShadowDecider(realRepo)
-	type decoy struct {
-		target string
-		dir    bool
-	}
-	decoys := map[string][]decoy{}
+	decoys := map[string][]serviceDecoy{}
+	hidden := map[string]bool{}
 	names := make([]string, 0, len(doc.Services))
 	for name := range doc.Services {
 		names = append(names, name)
@@ -58,7 +72,7 @@ func serviceShadowOverride(repo, composeFile string, data []byte, dir string) (s
 			}
 			real, err := resolveExisting(abs)
 			if err != nil {
-				return "", false, err
+				return nil, nil, err
 			}
 			rel, err := filepath.Rel(realRepo, real)
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -69,7 +83,8 @@ func serviceShadowOverride(repo, composeFile string, data []byte, dir string) (s
 				continue // a source that does not exist yet has nothing to hide
 			}
 			if rel != "." && shadowed(filepath.ToSlash(rel)) {
-				decoys[name] = append(decoys[name], decoy{target: target, dir: info.IsDir()})
+				decoys[name] = append(decoys[name], serviceDecoy{target: target, dir: info.IsDir()})
+				hidden[filepath.ToSlash(rel)] = true
 				continue
 			}
 			if !info.IsDir() {
@@ -96,20 +111,37 @@ func serviceShadowOverride(repo, composeFile string, data []byte, dir string) (s
 				if err != nil {
 					return err
 				}
-				decoys[name] = append(decoys[name], decoy{target: target + "/" + filepath.ToSlash(under), dir: d.IsDir()})
+				decoys[name] = append(decoys[name], serviceDecoy{target: target + "/" + filepath.ToSlash(under), dir: d.IsDir()})
+				hidden[filepath.ToSlash(relRepo)] = true
 				if d.IsDir() {
 					return fs.SkipDir
 				}
 				return nil
 			})
 			if err != nil {
-				return "", false, err
+				return nil, nil, err
 			}
 		}
 	}
+	paths := make([]string, 0, len(hidden))
+	for p := range hidden {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return decoys, paths, nil
+}
+
+// writeServiceShadowOverride materializes a plan: one empty read-only decoy file and one empty
+// decoy directory in dir, and the override that mounts them over every planned target.
+func writeServiceShadowOverride(decoys map[string][]serviceDecoy, dir string) (string, bool, error) {
 	if len(decoys) == 0 {
 		return "", false, nil
 	}
+	names := make([]string, 0, len(decoys))
+	for name := range decoys {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	decoyFile := filepath.Join(dir, "decoy")
 	if err := os.WriteFile(decoyFile, nil, 0o400); err != nil {
 		return "", false, err

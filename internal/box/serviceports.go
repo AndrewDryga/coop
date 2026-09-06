@@ -35,7 +35,7 @@ func ServicePorts(rt runtime.Runtime, workspacePath, composeFile string, exposed
 	if composeFile == "" {
 		return nil
 	}
-	args, cleanup, err := snapshotComposeArgs(workspacePath, composeFile, false, exposedRoots...)
+	args, cleanup, _, err := snapshotComposeArgs(workspacePath, composeFile, false, exposedRoots...)
 	if err != nil {
 		return nil
 	}

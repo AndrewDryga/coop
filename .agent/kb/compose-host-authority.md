@@ -2,7 +2,7 @@
 name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
-sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/run.go, internal/box/serviceshadow.go]
+sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go]
 updated: 2026-09-06
 ---
 
@@ -40,7 +40,15 @@ entry. `snapshotComposeArgs` appends it to EVERY compose invocation (start, port
 teardown), so the project definition never differs between them. Sources that do not exist yet,
 named volumes, tmpfs, and public files are untouched.
 
+Sidecar binds get the box's secret shadowing (`serviceShadowPlan` → decoys over every hidden
+source). The one exemption is a human approval of the compose file's exact CONTENT
+(`serviceapproval.go`: sha256 of the validated bytes → `~/.local/state/coop/service-approvals`,
+outside any box). `coop up` at a TTY asks; box auto-up never asks, it warns on stderr and keeps
+the decoys. Any edit to the file voids the approval — that is the whole security argument, so
+never key it by path or workspace.
+
 ## Changelog
+- 2026-09-06: content-keyed service secret approval (`coop up` prompt) added as the exemption to sidecar shadowing.
 - 2026-09-06 — sidecars start only when no other box is running in the project (`LiveBoxes`, `internal/box/services.go`; `box.Run` skips the start, `coop up` refuses): closes the bind-source replacement race without changing live binds (human decision, task resolve-sidecar-bind-identity-without-losing-liv).
 - 2026-09-06 — sidecar secret shadowing: the generated shadow override projects the primary decoys into repo binds (release-audit follow-up; real-Compose merge verified by `TestRuntimeComposeShadowsRepoSecretsIntoSidecars`).
 

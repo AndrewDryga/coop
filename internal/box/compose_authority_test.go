@@ -60,7 +60,7 @@ func TestComposePreservesExplicitContainerValues(t *testing.T) {
 func TestComposeArtifactsStayOutsideWorkspace(t *testing.T) {
 	repo, source := writeCompose(t, "services:\n  db:\n    image: postgres:18\n")
 	t.Setenv("TMPDIR", repo)
-	if _, cleanup, err := snapshotComposeArgs(repo, source, false); err == nil {
+	if _, cleanup, _, err := snapshotComposeArgs(repo, source, false); err == nil {
 		cleanup()
 		t.Fatal("approved snapshot was published in writable workspace")
 	}
@@ -78,7 +78,7 @@ func TestComposeArtifactsDoNotRetainMutableTempAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TMPDIR", alias)
-	args, cleanup, err := snapshotComposeArgs(repo, source, false)
+	args, cleanup, _, err := snapshotComposeArgs(repo, source, false)
 	if err != nil {
 		t.Fatal(err)
 	}
