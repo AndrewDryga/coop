@@ -65,16 +65,18 @@ const (
 // its start has already been narrated. Titles arrive on the opening frame and a
 // terminal update need not repeat them, so they are remembered per id.
 type sessionActivityTool struct {
-	title, kind                       string
-	started                           bool
-	finished                          bool
-	input, output, content, locations json.RawMessage
+	title, kind                             string
+	started                                 bool
+	finished                                bool
+	input, output, content, locations       json.RawMessage
+	inputPaths, locationPaths, contentPaths activityPaths
 }
 
 type sessionActivity struct {
 	store     *session.Store
 	sessionID string
 	turnID    string
+	workspace string
 	now       func() time.Time
 
 	mu               sync.Mutex
@@ -101,9 +103,9 @@ type sessionActivity struct {
 // heartbeat's window is measured in minutes against frames arriving from a real
 // child, which a wall clock makes either slow or timing-dependent to test.
 func newSessionActivity(
-	store *session.Store, sessionID, turnID string, clock ...func() time.Time,
+	store *session.Store, bound session.Session, turnID string, clock ...func() time.Time,
 ) *sessionActivity {
-	if store == nil || sessionID == "" {
+	if store == nil || bound.ID == "" {
 		return nil
 	}
 	now := time.Now
@@ -111,7 +113,7 @@ func newSessionActivity(
 		now = clock[0]
 	}
 	a := &sessionActivity{
-		store: store, sessionID: sessionID, turnID: turnID, now: now,
+		store: store, sessionID: bound.ID, turnID: turnID, workspace: bound.Workspace, now: now,
 		tools:  map[string]*sessionActivityTool{},
 		budget: sessionActivityMaxEvents,
 		wake:   make(chan struct{}, 1),
@@ -209,6 +211,19 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, 
 	if kind != "" {
 		tool.kind = boundedActivityText(kind, sessionActivityTitleBytes)
 	}
+	// Retain small typed path facts independently of large evidence previews.
+	// A later status-only frame must not lose the original diff's file paths.
+	if len(rawInput) > 0 {
+		tool.inputPaths = activityPathContext(a.workspace, tool.kind, rawInput, nil, nil)
+	} else if kind != "" && len(tool.input) > 0 {
+		tool.inputPaths = activityPathContext(a.workspace, tool.kind, tool.input, nil, nil)
+	}
+	if len(locations) > 0 {
+		tool.locationPaths = activityPathContext(a.workspace, tool.kind, nil, locations, nil)
+	}
+	if len(content) > 0 {
+		tool.contentPaths = activityPathContext(a.workspace, tool.kind, nil, nil, content)
+	}
 	for _, field := range []struct {
 		source json.RawMessage
 		target *json.RawMessage
@@ -225,12 +240,12 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, 
 		// reads "considered X, then did Y" instead of collapsing into one
 		// undifferentiated block at the end of the turn.
 		a.flushThoughtLocked()
-		a.enqueueLocked(session.EventToolStarted, map[string]any{
+		a.enqueueLocked(session.EventToolStarted, a.withToolPaths(tool, map[string]any{
 			"tool_call_id": id,
 			"title":        tool.title,
 			"kind":         tool.kind,
 			"input":        tool.input,
-		})
+		}))
 	}
 	switch status {
 	case "completed", "failed", "cancelled":
@@ -244,7 +259,7 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, 
 	// otherwise be handed a fresh entry and narrate the whole call again.
 	tool.finished = true
 	a.flushProgressLocked()
-	a.enqueueLocked(session.EventToolCompleted, map[string]any{
+	a.enqueueLocked(session.EventToolCompleted, a.withToolPaths(tool, map[string]any{
 		"tool_call_id": id,
 		"title":        tool.title,
 		"kind":         tool.kind,
@@ -253,7 +268,15 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, 
 		"output":       tool.output,
 		"content":      tool.content,
 		"locations":    tool.locations,
-	})
+	}))
+}
+
+func (a *sessionActivity) withToolPaths(tool *sessionActivityTool, payload map[string]any) map[string]any {
+	paths := mergeActivityPaths(tool.inputPaths, tool.locationPaths, tool.contentPaths)
+	if len(paths.Paths) > 0 || paths.Partial {
+		payload["path_context"] = paths
+	}
+	return payload
 }
 
 func (a *sessionActivity) observeThought(content json.RawMessage) {

@@ -2332,7 +2332,7 @@ func (r *sessionTurnRunner) runACP(
 	// text is: startup, auth, and status frames are not work the caller asked
 	// for. close() runs before this function returns, so every activity event
 	// is sequenced below the turn.completed that completeTurn appends after it.
-	activity := newSessionActivity(r.store, bound.ID, leased.ID, r.activityClock)
+	activity := newSessionActivity(r.store, bound, leased.ID, r.activityClock)
 	defer func() {
 		drainCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx), sessionACPCleanupTimeout,

@@ -570,9 +570,11 @@ curl --unix-socket "$SOCKET" \
 Events are returned as a JSON array ordered by monotonically increasing per-session `sequence`.
 Persist the last processed sequence and request `after=<sequence>` after a disconnect.
 
-Public events contain identity, sequence, turn ID, type, version, timestamp, and the event's own
-payload: what happened, never anything that names the host — not a repository path, not a native
-session id, not a tool's results. Each payload is capped at 256 KiB and a page is bounded by total
+Owner-private events contain identity, sequence, turn ID, type, version, timestamp, and the event's
+own payload. Bounded raw tool evidence can include filesystem paths, arguments, results, and diffs.
+The separate outbound worker projection strips those raw fields; its structured `path_context`
+contains only project-relative paths and scope warnings, never the host checkout root.
+Each payload is capped at 256 KiB and a page is bounded by total
 bytes as well as by `limit`, so a caller reading a chatty turn gets a short page rather than a
 truncated one.
 
@@ -602,15 +604,28 @@ and are always sequenced before the turn's own terminal event, so a caller that 
 `turn.completed` has already seen them:
 
 ```text
-tool.started            # tool_call_id, title, kind, input
-tool.completed          # tool_call_id, title, kind, status
+tool.started            # tool_call_id, title, kind, input, path_context
+tool.completed          # tool_call_id, title, kind, status, input, output, content, locations, path_context
 model.plan              # entries
 model.thought           # text
+model.progress          # outward commentary text, not private reasoning
 permission.decided      # tool_call_id, title, outcome, option_id, option_kind
 activity.elided         # dropped, reason
 provider.backoff        # attempt, target, next_target, retry_after_seconds, reset_at, all_limited_until
 provider.alive          # frames, bytes
 ```
+
+When structured filesystem evidence is available, `path_context` contains `basis: "lexical"`
+and up to 16 `paths` entries. Each entry identifies its evidence with a JSON-pointer `source`,
+a `scope` (`project`, `outside`, or `unknown`), and a `path` only for project-relative files.
+The bound checkout root is not exported. `partial: true` means some path evidence was omitted.
+These are lexical display facts, not symlink-safe containment or permission decisions. Missing
+provider paths stay missing; titles and shell commands are not parsed to invent them. A later
+tool update can add paths to its completion event without changing the original start event.
+Path facts are extracted before large diff bodies become partial previews. URI-shaped paths are
+reported as unknown, not interpreted as files inside the checkout.
+The outbound worker projection separately validates these fields and still excludes raw titles,
+commands, and tool arguments.
 
 `provider.backoff` is how a throttled turn stays audible. One event per proven rate limit, which
 the ladder bounds to one per rung: `attempt` numbers them from 1 within the turn, `target` is the

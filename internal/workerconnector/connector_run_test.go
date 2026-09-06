@@ -36,7 +36,7 @@ func TestConnectorResumesSessionEventsFromTheLastResponderAcknowledgement(t *tes
 			{
 				ID: "evt-2", SessionID: "coop-session-1", Sequence: 2, TurnID: "turn-1",
 				Type: "tool.started", Version: 1, OccurredAt: now.Add(time.Second),
-				Payload: json.RawMessage(`{"tool_call_id":"tool-1","title":"secret title","input":{"server":"emisar","tool":"get_action","arguments":{"action_id":"nomad.job_status_one","reason":"token=secret","args":{"api_key":"secret"}}}}`),
+				Payload: json.RawMessage(`{"tool_call_id":"tool-1","kind":"execute","title":"secret title","path_context":{"basis":"lexical","paths":[{"source":"/locations/0/path","scope":"project","path":"lib/a.go"}]},"input":{"server":"emisar","tool":"get_action","arguments":{"action_id":"nomad.job_status_one","reason":"token=secret","args":{"api_key":"secret"}}}}`),
 			},
 		},
 	}
@@ -113,7 +113,7 @@ func TestConnectorResumesSessionEventsFromTheLastResponderAcknowledgement(t *tes
 	}
 	if err := json.Unmarshal(batch.Events[1].Payload, &carried); err != nil ||
 		carried.ID != "evt-2" || carried.Type != "tool.started" ||
-		string(carried.Payload) != `{"input":{"operation":"nomad.job_status_one","server":"emisar","tool":"get_action"},"tool_call_id":"tool-1"}` {
+		string(carried.Payload) != `{"input":{"operation":"nomad.job_status_one","server":"emisar","tool":"get_action"},"kind":"execute","path_context":{"basis":"lexical","paths":[{"path":"lib/a.go","scope":"project","source":"/locations/0/path"}]},"tool_call_id":"tool-1"}` {
 		t.Fatalf("carried activity = %+v, err=%v", carried, err)
 	}
 

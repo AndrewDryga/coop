@@ -67,8 +67,20 @@ The traps the code does not make obvious:
 - **No local fallback.** Every command is a private-API call; nothing executes work directly or
   reads a shared filesystem when the daemon is unreachable — the error is reported and the
   controller redelivers.
+- **Activity has two privacy boundaries.** The owner-private events API retains bounded tool
+  evidence, but outbound `publicActivityPayload` deliberately strips free-form fields. Adding
+  local narration alone does not make it visible to a fleet controller. Tool `path_context`
+  crosses only after independent validation: up to 16 lexical project-relative paths, outside
+  or unknown warnings without absolute paths, no checkout root. This is display metadata, not
+  symlink containment authority. Late path evidence belongs to the completion, not a rewritten
+  start event. The reconnect/ACK regression proves this metadata survives durable delivery.
 
 ## Changelog
+- 2026-09-06 — review caught URI-looking names masquerading as relative paths and edit
+  previews dropping path evidence. Reject schemes before and after normalization; retain
+  bounded typed paths before diff truncation, independently of the owner-private preview.
+- 2026-09-06 — traced missing project paths through both activity projections; added bounded
+  path metadata and verified HTTP bytes plus outbound restart/ACK while retaining raw-field privacy.
 - 2026-09-06 — create_session forwards policy_digest/authority_digest as expected_policy_digest/expected_authority_digest; the daemon fences them at intent capture (`fenceExpectedPolicyDigests`, `internal/sessionsvc/service.go`) with `policy_digest_mismatch`. `decodeAPIError` now reads the daemon's wrapped `{"error":{...}}` shape; before, every daemon refusal surfaced as `http_error`.
 - 2026-09-06 — target-side placement fence: `Execute` refuses a still-leased `submit_turn`/`ensure_workspace` whose generation is below the journal's create origin for the session ref with a definite `placement_superseded` failure (`internal/workerconnector/executor.go`); reads and cleanup for the old generation stay allowed.
 - 2026-09-06 — reproduced a valid 244-byte ID failing at poll 1000000; bounded the shared formatter

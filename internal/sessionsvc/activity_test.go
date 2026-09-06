@@ -61,7 +61,7 @@ func activityPayload(t *testing.T, event session.Event) map[string]any {
 // A large public progress frame must not silently lose its tail at the narration boundary.
 func TestPublicProgressKeepsOneLogicalMessageForSafeRedaction(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess.ID, "turn-progress")
+	activity := newSessionActivity(store, sess, "turn-progress")
 	text := strings.Repeat("🙂", 1023) + "opaque-configured-secret" + strings.Repeat("é ", 4000)
 	raw, err := json.Marshal(map[string]any{"update": map[string]any{
 		"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": text},
@@ -99,7 +99,7 @@ func TestPublicProgressKeepsOneLogicalMessageForSafeRedaction(t *testing.T) {
 
 func TestOversizedPublicProgressIsExplicitlyElidedWithoutPartialSecrets(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess.ID, "turn-progress")
+	activity := newSessionActivity(store, sess, "turn-progress")
 	for range 20 {
 		activity.observePublicMessage(json.RawMessage(`{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"`+strings.Repeat("x", 4096)+`"}}}`), func(json.RawMessage) bool { return true })
 	}
@@ -126,7 +126,7 @@ func TestProgressPrecedesFollowingToolCompletionAndPermission(t *testing.T) {
 	for _, next := range []string{"completion", "permission"} {
 		t.Run(next, func(t *testing.T) {
 			store, sess := newActivityTestStore(t)
-			activity := newSessionActivity(store, sess.ID, "turn-progress")
+			activity := newSessionActivity(store, sess, "turn-progress")
 			activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"t1","status":"pending"}}`))
 			activity.observePublicMessage(json.RawMessage(`{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Checking the result."}}}`), func(json.RawMessage) bool { return true })
 			if next == "completion" {
@@ -154,7 +154,7 @@ func TestProgressPrecedesFollowingToolCompletionAndPermission(t *testing.T) {
 
 func TestEscapeHeavyToolEvidenceRetainsIdentityWithinEncodedBudget(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess.ID, "turn-tool")
+	activity := newSessionActivity(store, sess, "turn-tool")
 	field := `{"text":"` + strings.Repeat("&", 16000) + `"}`
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"t1","status":"failed","rawInput":` + field + `,"rawOutput":` + field + `,"content":` + field + `}}`))
 	activity.close(context.Background())
@@ -178,7 +178,7 @@ func TestEscapeHeavyToolEvidenceRetainsIdentityWithinEncodedBudget(t *testing.T)
 // terminal update does not repeat it.
 func TestSessionActivityNarratesToolCall(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess.ID, "turn-1")
+	activity := newSessionActivity(store, sess, "turn-1")
 
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"t1",` +
 		`"title":"Run Emisar action nomad.job_status","kind":"execute","status":"pending",` +
@@ -224,7 +224,7 @@ func TestSessionActivityNarratesToolCall(t *testing.T) {
 // Late inputs and native edits use the same update stream as MCP calls.
 func TestSessionActivityRetainsLateArgumentsAndFailureEvidence(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess.ID, "turn-1")
+	activity := newSessionActivity(store, sess, "turn-1")
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"exec-fea1da1f","title":"responder-state · plan_goal","kind":"mcp"}}`))
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"exec-fea1da1f","rawInput":{"arguments":{"read_only_repositories":["emisar"]}},"status":"in_progress"}}`))
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"exec-fea1da1f","rawOutput":{"error":"unauthorized"},"status":"failed"}}`))
@@ -268,7 +268,7 @@ func TestSessionActivityRetainsLateArgumentsAndFailureEvidence(t *testing.T) {
 // produce a row, or one tool call becomes a dozen timeline entries.
 func TestSessionActivityEmitsEachToolCallOnce(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess.ID, "turn-1")
+	activity := newSessionActivity(store, sess, "turn-1")
 	for range 5 {
 		activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"in_progress"}}`))
 	}
@@ -290,7 +290,7 @@ func TestSessionActivityEmitsEachToolCallOnce(t *testing.T) {
 // the trace, so they coalesce and flush when the model stops thinking and acts.
 func TestSessionActivityCoalescesThoughtBeforeTheToolItPrecedes(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess.ID, "turn-1")
+	activity := newSessionActivity(store, sess, "turn-1")
 	for _, chunk := range []string{"Check ", "the ", "rollout."} {
 		activity.observe(json.RawMessage(
 			`{"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"` + chunk + `"}}}`))
@@ -314,7 +314,7 @@ func TestSessionActivityCoalescesThoughtBeforeTheToolItPrecedes(t *testing.T) {
 // something. Closing must flush it, and must not count it as elided.
 func TestSessionActivityFlushesTheThoughtATurnEndsOn(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess.ID, "turn-1")
+	activity := newSessionActivity(store, sess, "turn-1")
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read","kind":"read","status":"completed"}}`))
 	activity.observe(json.RawMessage(
 		`{"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"That confirms the rollout."}}}`))
@@ -349,7 +349,7 @@ func eventTypes(events []session.Event) []session.EventType {
 
 func TestSessionActivityRecordsPlanAndPermission(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess.ID, "turn-1")
+	activity := newSessionActivity(store, sess, "turn-1")
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"plan","entries":[` +
 		`{"content":"Read the run","status":"completed","priority":"high"},` +
 		`{"content":"Check allocations","status":"pending","priority":"medium"}]}}`))
@@ -377,7 +377,7 @@ func TestSessionActivityRecordsPlanAndPermission(t *testing.T) {
 // An oversized field is explicitly partial, never silently absent or a turn failure.
 func TestSessionActivityLabelsOversizedToolInput(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess.ID, "turn-1")
+	activity := newSessionActivity(store, sess, "turn-1")
 	huge := strings.Repeat("x", sessionActivityInputBytes+1)
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"t1",` +
 		`"title":"Write","kind":"edit","rawInput":{"body":"` + huge + `"}}}`))
@@ -401,7 +401,7 @@ func TestSessionActivityLabelsOversizedToolInput(t *testing.T) {
 // silently short list reads as a complete account of a turn it only partly saw.
 func TestSessionActivityReportsWhatItCouldNotNarrate(t *testing.T) {
 	store, sess := newActivityTestStore(t)
-	activity := newSessionActivity(store, sess.ID, "turn-1")
+	activity := newSessionActivity(store, sess, "turn-1")
 	for index := range sessionActivityMaxEvents + 20 {
 		id := "t" + strconv.Itoa(index)
 		activity.observe(json.RawMessage(
@@ -452,7 +452,7 @@ func (c *activityTestClock) advance(d time.Duration) {
 func TestAStreamingTurnWithNothingToNarrateStillReportsItIsAlive(t *testing.T) {
 	store, sess := newActivityTestStore(t)
 	clock := &activityTestClock{at: time.Unix(1_760_000_000, 0)}
-	activity := newSessionActivity(store, sess.ID, "turn-1", clock.now)
+	activity := newSessionActivity(store, sess, "turn-1", clock.now)
 
 	// Two full windows of frames, forty frames apiece, with nothing narratable
 	// in any of them.
@@ -484,7 +484,7 @@ func TestAStreamingTurnWithNothingToNarrateStillReportsItIsAlive(t *testing.T) {
 	// A second window with frames still flowing pulses again, and the counters
 	// have moved — that is how a client tells progress from a redelivery.
 	clock.advance(sessionActivityAliveInterval)
-	activity = newSessionActivity(store, sess.ID, "turn-1", clock.now)
+	activity = newSessionActivity(store, sess, "turn-1", clock.now)
 	clock.advance(sessionActivityAliveInterval)
 	activity.frame(512)
 	clock.advance(sessionActivityAliveInterval)
@@ -507,7 +507,7 @@ func TestAStreamingTurnWithNothingToNarrateStillReportsItIsAlive(t *testing.T) {
 func TestAliveIsSilentWhileTheTurnIsNarratingItsWork(t *testing.T) {
 	store, sess := newActivityTestStore(t)
 	clock := &activityTestClock{at: time.Unix(1_760_000_000, 0)}
-	activity := newSessionActivity(store, sess.ID, "turn-1", clock.now)
+	activity := newSessionActivity(store, sess, "turn-1", clock.now)
 
 	// A window passes, but the frame that ends it carried a tool call, which the
 	// frame loop narrates before reporting the frame.
@@ -533,7 +533,7 @@ func TestSessionActivityWithoutStoreIsInert(t *testing.T) {
 	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"t1"}}`))
 	activity.permission("t1", "selected", "opt", "allow_once")
 	activity.close(context.Background())
-	if newSessionActivity(nil, "sess", "turn") != nil {
+	if newSessionActivity(nil, session.Session{ID: "sess"}, "turn") != nil {
 		t.Fatal("a recorder without a store must not exist")
 	}
 }

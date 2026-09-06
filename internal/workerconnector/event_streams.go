@@ -357,7 +357,8 @@ func terminalSessionEvent(kind string) bool {
 
 // publicActivityPayload is the privacy boundary between a local Coop session
 // transcript and Responder's durable operator trace. Free-form thought, plan,
-// title, reason, command, and tool argument bytes never cross it.
+// title, reason, command, and tool argument bytes never cross it. Structured
+// path context is independently validated and never carries the checkout root.
 func publicActivityPayload(kind string, raw json.RawMessage) (json.RawMessage, bool) {
 	var value map[string]any
 	if len(raw) > 0 && json.Unmarshal(raw, &value) != nil {
@@ -367,6 +368,10 @@ func publicActivityPayload(kind string, raw json.RawMessage) (json.RawMessage, b
 		value = map[string]any{}
 	}
 	public := map[string]any{}
+	if kind == "tool.started" || kind == "tool.completed" {
+		copyEnum(public, "kind", value["kind"], "read", "edit", "search", "delete", "move", "execute", "fetch", "think", "other")
+		copyToolPathContext(public, value["path_context"])
+	}
 	switch kind {
 	case "tool.started":
 		copyPublicText(public, "tool_call_id", value["tool_call_id"], 1024)
