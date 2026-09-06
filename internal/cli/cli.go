@@ -44,6 +44,7 @@ type app struct {
 	rt                   runtime.Runtime
 	rtSet                bool                                         // whether rt has been detected yet (ensureRuntime is lazy — see below)
 	sweptRepos           map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
+	sweptNetworks        bool                                         // orphaned coop networks already swept this process (they are not per repo)
 	preset               *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
 	beforeSignRefUpdate  func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
 	afterDetachedPublish func()                                       // test seam for state replacement before repeated child validation

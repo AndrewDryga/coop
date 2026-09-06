@@ -230,14 +230,50 @@ func StopSessionServices(ctx context.Context, rt runtime.Runtime, workspace, pol
 	// default-on-error behavior preserves the existing immutable-label cleanup path; launch and
 	// ordinary service control still reject the invalid policy before touching the runtime.
 	composeDir := filepath.Dir(filepath.Join(workspace, filepath.FromSlash(project.ComposePath(policyRepo))))
+	project := ComposeProject(workspace)
 	_, err := rt.RemoveByLabels(ctx, map[string]string{
-		composeProjectLabel:    ComposeProject(workspace),
+		composeProjectLabel:    project,
 		composeWorkingDirLabel: filepath.Clean(composeDir),
 	})
 	if err != nil {
 		return fmt.Errorf("stop session services: %w", err)
 	}
+	// The project's networks go with its containers: Docker hands out about thirty subnets in
+	// total, and every session in a fresh worktree gets its own project, so leaving a network
+	// behind per session exhausts the pool ("address pools fully subnetted") in a day's work.
+	if _, err := RemoveProjectNetworks(ctx, rt, project); err != nil {
+		return fmt.Errorf("stop session services: %w", err)
+	}
 	return nil
+}
+
+// RemoveProjectNetworks removes the compose project's networks that no container — running or
+// stopped — is attached to any more, and reports how many it removed. Compose recreates a network
+// on the next start, so nothing is lost; a network still in use is left alone.
+func RemoveProjectNetworks(ctx context.Context, rt runtime.Runtime, project string) (int, error) {
+	ids, err := rt.NetworkIDs(ctx, "label="+composeProjectLabel+"="+project)
+	if err != nil {
+		return 0, fmt.Errorf("list %s networks: %w", project, err)
+	}
+	return removeUnusedNetworks(ctx, rt, ids)
+}
+
+func removeUnusedNetworks(ctx context.Context, rt runtime.Runtime, ids []string) (int, error) {
+	removed := 0
+	for _, id := range ids {
+		users, err := rt.ContainerIDsOnNetwork(ctx, id)
+		if err != nil {
+			return removed, fmt.Errorf("list containers on network %s: %w", id, err)
+		}
+		if len(users) > 0 {
+			continue
+		}
+		if err := rt.RemoveNetwork(ctx, id); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 func runCompose(rt runtime.Runtime, stdout, stderr io.Writer, action string, args []string) error {

@@ -1489,6 +1489,9 @@ coop down -v   # stop services and wipe their throwaway data
 
 Services run as their own containers on a private network the box joins — connect with
 e.g. `DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev` (put it in `agents/env`).
+When an editor session ends, coop removes its workspace's service containers and the network
+they used; a leftover network of any coop project that nothing is attached to is swept on the
+next loop, fork, or build start, since Docker hands out only about thirty of them.
 Before startup, `coop up` asks Compose for the resolved service list; its final status echoes
 those exact non-empty names in Compose order. If discovery fails, Coop does not start the
 project or print the success hint.

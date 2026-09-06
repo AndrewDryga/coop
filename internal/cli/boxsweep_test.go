@@ -53,6 +53,10 @@ func TestSweepOrphanBoxesRunsOncePerRepo(t *testing.T) {
 	if got := strings.Count(sweepEvents(t, events), "ps -q -a --filter label=coop=box\n"); got != 2 {
 		t.Fatalf("orphan listings = %d, want one per repo:\n%s", got, sweepEvents(t, events))
 	}
+	// Networks are not per repo: one listing per process, however many repos start.
+	if got := strings.Count(sweepEvents(t, events), "network ls -q --filter label=com.docker.compose.project\n"); got != 1 {
+		t.Fatalf("network listings = %d, want one per process:\n%s", got, sweepEvents(t, events))
+	}
 }
 
 // doctor reports what it found — the count it checked, and the box it cannot attribute to anyone —

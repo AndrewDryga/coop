@@ -40,6 +40,9 @@ ps)
 				value=${pair#*=}
 				grep -qF "\"$key\":\"$value\"" "$f" || match=0
 				;;
+			network=*)
+				grep -qF "\"network\":\"${filter#network=}\"" "$f" || match=0
+				;;
 			esac
 		done
 		[ "$match" = 1 ] && printf '%s\n' "$(basename "$f")"
@@ -51,6 +54,38 @@ inspect)
 rm)
 	shift 2
 	for id in "$@"; do rm -f "$COOP_TEST_BOXES/$id"; done
+	;;
+network)
+	# One file per network under $COOP_TEST_NETWORKS/<id>: its labels JSON. A container is attached
+	# to a network when its labels carry "network":"<id>" (see the ps filter above).
+	case "$2" in
+	ls)
+		shift 2
+		for f in "$COOP_TEST_NETWORKS"/*; do
+			[ -e "$f" ] || continue
+			match=1
+			for filter in "$@"; do
+				case "$filter" in
+				label=*=*)
+					pair=${filter#label=}
+					grep -qF "\"${pair%%=*}\":\"${pair#*=}\"" "$f" || match=0
+					;;
+				label=*)
+					grep -qF "\"${filter#label=}\":" "$f" || match=0
+					;;
+				esac
+			done
+			[ "$match" = 1 ] && printf '%s\n' "$(basename "$f")"
+		done
+		;;
+	inspect)
+		key=$(printf '%s' "$4" | sed 's/.*"\(.*\)".*/\1/')
+		sed -n "s/.*\"$key\":\"\([^\"]*\)\".*/\1/p" "$COOP_TEST_NETWORKS/$5"
+		;;
+	rm)
+		rm -f "$COOP_TEST_NETWORKS/$3"
+		;;
+	esac
 	;;
 esac
 exit 0
@@ -71,7 +106,43 @@ func fakeRuntime(t *testing.T) (runtime.Runtime, string) {
 	}
 	t.Setenv("COOP_TEST_BOXES", boxes)
 	t.Setenv("COOP_TEST_EVENTS", filepath.Join(dir, "events"))
+	networks := filepath.Join(dir, "networks")
+	if err := os.MkdirAll(networks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_NETWORKS", networks)
 	return runtime.Runtime{Name: cli}, boxes
+}
+
+// addFakeNetwork registers a network with the labels compose gives it; project "" means a network
+// compose did not create.
+func addFakeNetwork(t *testing.T, id, name, project string) {
+	t.Helper()
+	labels := map[string]string{"name": name}
+	if project != "" {
+		labels[composeProjectLabel] = project
+	}
+	data, err := json.Marshal(labels)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("COOP_TEST_NETWORKS"), id), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func remainingFakeNetworks(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(os.Getenv("COOP_TEST_NETWORKS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	slices.Sort(names)
+	return names
 }
 
 func addFakeBox(t *testing.T, boxes, id string, labels map[string]string) {
@@ -264,5 +335,48 @@ func TestAssembleArgsSupervisorLabel(t *testing.T) {
 	review := args(RunSpec{Image: "i", Repo: "/tmp/candidate", PolicyRepo: "/r"})
 	if !containsSeq(review, []string{"--label", LabelHost + "=" + value}) {
 		t.Errorf("a policy-repo run must be scoped to the policy repo: %v", review)
+	}
+}
+
+// The network sweep removes only networks of coop's own compose projects that nothing is attached
+// to: a network still used by a stopped service stays, and a human's compose project is never even
+// asked about.
+func TestReapOrphanNetworksRemovesOnlyUnusedCoopNetworks(t *testing.T) {
+	rt, boxes := fakeRuntime(t)
+	addFakeNetwork(t, "unused", "coop-emisar-a922f3c5_default", "coop-emisar-a922f3c5")
+	addFakeNetwork(t, "used", "coop-emisar-b1c2d3e4_default", "coop-emisar-b1c2d3e4")
+	addFakeNetwork(t, "theirs", "responder-kernel_default", "responder-kernel")
+	addFakeNetwork(t, "plain", "bridge", "")
+	addFakeBox(t, boxes, "stopped-db", map[string]string{"network": "used"})
+
+	n, err := ReapOrphanNetworks(context.Background(), rt)
+	if err != nil || n != 1 {
+		t.Fatalf("ReapOrphanNetworks = (%d, %v), want (1, nil)", n, err)
+	}
+	if got, want := remainingFakeNetworks(t), []string{"plain", "theirs", "used"}; !slices.Equal(got, want) {
+		t.Fatalf("remaining networks = %v, want %v", got, want)
+	}
+	events := fakeRuntimeEvents(t)
+	if !strings.Contains(events, "network ls -q --filter label="+composeProjectLabel+"\n") {
+		t.Errorf("sweep did not list compose networks by label:\n%s", events)
+	}
+	if strings.Contains(events, "network=theirs") || strings.Contains(events, "network rm theirs") {
+		t.Errorf("sweep touched a human's compose project:\n%s", events)
+	}
+	if strings.Contains(events, "network rm used") {
+		t.Errorf("sweep removed a network a stopped container still uses:\n%s", events)
+	}
+}
+
+// A runtime that cannot list networks is not evidence there are none.
+func TestReapOrphanNetworksFailsClosed(t *testing.T) {
+	rt, _ := fakeRuntime(t)
+	addFakeNetwork(t, "unused", "coop-emisar-a922f3c5_default", "coop-emisar-a922f3c5")
+	t.Setenv("COOP_TEST_FAILURE", "network")
+	if n, err := ReapOrphanNetworks(context.Background(), rt); err == nil || n != 0 {
+		t.Fatalf("ReapOrphanNetworks = (%d, %v), want a failure and nothing removed", n, err)
+	}
+	if got := remainingFakeNetworks(t); !slices.Equal(got, []string{"unused"}) {
+		t.Fatalf("remaining networks = %v, want the network untouched", got)
 	}
 }

@@ -39,4 +39,13 @@ func (a *app) sweepOrphanBoxes(repo string) {
 	if n, _ := box.ReapOrphanBoxes(ctx, a.rt, repo); n > 0 {
 		ui.Detail("removed %s whose coop process is gone", ui.Count(n, "orphaned box", "orphaned boxes"))
 	}
+	// Networks are not scoped to a repo — a coop project's leftover network from ANY workspace
+	// eats one of Docker's ~31 subnets — so one pass per process covers them all.
+	if a.sweptNetworks {
+		return
+	}
+	a.sweptNetworks = true
+	if n, _ := box.ReapOrphanNetworks(ctx, a.rt); n > 0 {
+		ui.Detail("removed %s no container uses", ui.Count(n, "orphaned coop network", "orphaned coop networks"))
+	}
 }

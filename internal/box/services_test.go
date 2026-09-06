@@ -73,9 +73,11 @@ func TestStopSessionServicesUsesImmutableOwnershipLabels(t *testing.T) {
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
 	shim := filepath.Join(t.TempDir(), "runtime")
+	// One owned sidecar on the project's network; once the sidecar is gone the network is unused.
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
-		"if [ \"$1\" = ps ]; then echo owned-sidecar; fi\n"
+		"case \"$*\" in *label=*) [ \"$1\" = ps ] && echo owned-sidecar ;; esac\n" +
+		"if [ \"$1\" = network ] && [ \"$2\" = ls ]; then echo net-1; fi\n"
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +97,10 @@ func TestStopSessionServicesUsesImmutableOwnershipLabels(t *testing.T) {
 	}
 	want := "ps -q -a --filter label=com.docker.compose.project=" + ComposeProject(repo) +
 		" --filter label=com.docker.compose.project.working_dir=" + filepath.Join(repo, ".agent") + "\n" +
-		"rm -f owned-sidecar\n"
+		"rm -f owned-sidecar\n" +
+		"network ls -q --filter label=com.docker.compose.project=" + ComposeProject(repo) + "\n" +
+		"ps -q -a --filter network=net-1\n" +
+		"network rm net-1\n"
 	if got := string(data); got != want {
 		t.Fatalf("service cleanup calls = %q, want %q", got, want)
 	}

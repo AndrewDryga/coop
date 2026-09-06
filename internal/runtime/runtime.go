@@ -270,6 +270,58 @@ func (r Runtime) Silent(args ...string) bool {
 	return exec.Command(r.Name, args...).Run() == nil
 }
 
+// NetworkIDs lists the ids of the networks matching every filter (`label=key`, `label=key=value`,
+// `name=<regex>`), running or not. Apple container has no compose and no networks coop creates,
+// so it reads as none. A query failure stays an error, never an empty list.
+func (r Runtime) NetworkIDs(ctx context.Context, filters ...string) ([]string, error) {
+	if r.kind() == runtimeAppleContainer {
+		return nil, nil
+	}
+	args := []string{"network", "ls", "-q"}
+	for _, f := range filters {
+		args = append(args, "--filter", f)
+	}
+	out, err := contextCommand(ctx, r.Name, args...).Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, nil))
+	}
+	return strings.Fields(string(out)), nil
+}
+
+// NetworkLabel reads one label of a network; "" when the network carries no such label.
+func (r Runtime) NetworkLabel(ctx context.Context, id, key string) (string, error) {
+	out, err := contextCommand(ctx, r.Name, "network", "inspect", "-f", `{{index .Labels "`+key+`"}}`, id).Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", fmt.Errorf("run: %s network inspect %s: %w", r.Name, id, commandOutputError(err, nil))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// ContainerIDsOnNetwork lists every container attached to the network, stopped ones included —
+// a stopped compose service still reconnects to it on the next start.
+func (r Runtime) ContainerIDsOnNetwork(ctx context.Context, id string) ([]string, error) {
+	return r.containerIDsContext(ctx, true, "network="+id)
+}
+
+// RemoveNetwork removes one network. The runtime refuses while a container is attached; callers
+// check ContainerIDsOnNetwork first and treat that refusal as a real error.
+func (r Runtime) RemoveNetwork(ctx context.Context, id string) error {
+	out, err := contextCommand(ctx, r.Name, "network", "rm", id).CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("run: %s network rm %s: %w", r.Name, id, commandOutputError(err, out))
+	}
+	return nil
+}
+
 // RunningContainerIDsByLabel returns the ids of running containers carrying key=value. A real
 // no-match is an empty slice with a nil error; runtime query failures remain distinguishable.
 func (r Runtime) RunningContainerIDsByLabel(ctx context.Context, key, value string) ([]string, error) {

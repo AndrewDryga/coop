@@ -2,7 +2,7 @@
 name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
-sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go]
+sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/sweep.go]
 updated: 2026-09-06
 ---
 
@@ -47,7 +47,15 @@ outside any box). `coop up` at a TTY asks; box auto-up never asks, it warns on s
 the decoys. Any edit to the file voids the approval — that is the whole security argument, so
 never key it by path or workspace.
 
+Networks: one compose project (and `_default` network) per canonical workspace path, so every
+worktree/fork session is a new project. `StopSessionServices` removes the containers by
+ownership label AND the project's unused networks (`RemoveProjectNetworks`); `ReapOrphanNetworks`
+(hooked into the orphan box sweep, once per process) removes unused networks of any project named
+like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" counts stopped
+containers as users (`ps -a --filter network=`), because they reconnect on the next start.
+
 ## Changelog
+- 2026-09-06: session teardown removes unused project networks; orphan coop networks swept.
 - 2026-09-06: content-keyed service secret approval (`coop up` prompt) added as the exemption to sidecar shadowing.
 - 2026-09-06 — sidecars start only when no other box is running in the project (`LiveBoxes`, `internal/box/services.go`; `box.Run` skips the start, `coop up` refuses): closes the bind-source replacement race without changing live binds (human decision, task resolve-sidecar-bind-identity-without-losing-liv).
 - 2026-09-06 — sidecar secret shadowing: the generated shadow override projects the primary decoys into repo binds (release-audit follow-up; real-Compose merge verified by `TestRuntimeComposeShadowsRepoSecretsIntoSidecars`).
