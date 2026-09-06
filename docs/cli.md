@@ -639,7 +639,10 @@ coop doctor — prove the box's isolation: attack it, inside and from the host.
   Usage: coop doctor
 
   Runs the escape/leak checks — secret shadowing, network limits, host reach,
-  the fork handoff — and prints a pass/fail report. Honors COOP_RUNTIME.
+  the fork handoff — and prints a pass/fail report. Probes the image this
+  repo's boxes run: its per-project image when built, else the shared base
+  image, else a stock alpine stand-in (which skips the USER/toolchain checks
+  and says so). Honors COOP_RUNTIME.
 
 coop check-secrets — scan the working tree for committed secrets, by content.
 

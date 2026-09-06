@@ -2,6 +2,8 @@ package cli
 
 import (
 	"errors"
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -106,5 +108,40 @@ func TestDoctorCredAndHomeProbeReportsConfigWritability(t *testing.T) {
 	doctorCheckHome(&rep, "blocked", true)
 	if rep.pass != 1 || rep.fail != 1 {
 		t.Fatalf("real-image home results = %+v, want one pass and one fail", rep)
+	}
+}
+
+// doctor probes the image the repo's boxes actually run: the per-project image when its
+// .agent/Dockerfile is built, else the shared base image, else the alpine stand-in (not "real").
+func TestDoctorImagePrefersTheRepoImageThenBaseThenAlpine(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM coop-box\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{BaseImage: "coop-box"}
+	perProject := box.ImageForRepo(repo, cfg.BaseImage, "")
+	if perProject == cfg.BaseImage {
+		t.Fatalf("fixture repo did not resolve to a per-project image: %q", perProject)
+	}
+	built := map[string]bool{perProject: true, "coop-box": true}
+	exists := func(image string) bool { return built[image] }
+	if img, real := doctorImage(repo, cfg, exists); img != perProject || !real {
+		t.Fatalf("with the per-project image built: (%q, %v), want (%q, true)", img, real, perProject)
+	}
+	delete(built, perProject)
+	if img, real := doctorImage(repo, cfg, exists); img != "coop-box" || !real {
+		t.Fatalf("with only the base image built: (%q, %v), want (coop-box, true)", img, real)
+	}
+	delete(built, "coop-box")
+	if img, real := doctorImage(repo, cfg, exists); img != "alpine" || real {
+		t.Fatalf("with nothing built: (%q, %v), want (alpine, false)", img, real)
+	}
+	plain := t.TempDir() // no .agent/Dockerfile: the base image is the repo's image
+	built["coop-box"] = true
+	if img, real := doctorImage(plain, cfg, exists); img != "coop-box" || !real {
+		t.Fatalf("plain repo: (%q, %v), want (coop-box, true)", img, real)
 	}
 }

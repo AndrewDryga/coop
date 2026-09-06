@@ -12,6 +12,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -47,6 +48,19 @@ echo "RESULT PIDS $(cat /sys/fs/cgroup/pids.max 2>/dev/null || cat /sys/fs/cgrou
 
 type report struct{ pass, fail int }
 
+// doctorImage picks the image the probe runs in: the repo's own image when it is built (that is
+// the box its agents actually get), then the shared base image, then a stock alpine stand-in.
+// real reports whether one of coop's images was found — the stand-in lacks coop's non-root USER
+// and toolchain, so the caller says so instead of printing a clean bill of health.
+func doctorImage(repo string, cfg *config.Config, exists func(string) bool) (img string, real bool) {
+	for _, candidate := range []string{box.ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride), cfg.BaseImage} {
+		if candidate != "" && exists(candidate) {
+			return candidate, true
+		}
+	}
+	return "alpine", false
+}
+
 func (r *report) ok(msg string) { r.pass++; fmt.Printf("  %s %s\n", ui.Check(), msg) }
 func (r *report) no(msg string) { r.fail++; fmt.Printf("  %s %s\n", ui.Cross(), msg) }
 
@@ -78,14 +92,14 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	defer cleanup()
 
 	rep := &report{}
-	// Prefer the real box image — it carries coop's non-root USER (node) and full toolchain, so
-	// the probe tests the actual box the agent runs in, not a stand-in. Fall back to alpine when
-	// it isn't built yet, so doctor still works before a first `coop build`.
-	img := box.ImageForRepo(fixture, a.cfg.BaseImage, a.cfg.ImageOverride)
-	usingReal := box.ImageExists(a.rt, img)
-	if !usingReal {
-		img = "alpine"
+	// Probe the image THIS repo's boxes run — the per-project one when its .agent/Dockerfile is
+	// built (that is where a USER root or extra tooling would weaken the checks), else the shared
+	// base image, else a stock alpine stand-in so doctor still works before a first `coop build`.
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
+		return -1, err
 	}
+	img, usingReal := doctorImage(repo, a.cfg, func(image string) bool { return box.ImageExists(a.rt, image) })
 	fmt.Printf("%s  %s\n", ui.Bold("== coop doctor =="), ui.Dim(fmt.Sprintf("(runtime: %s, image: %s)", a.rt.Name, img)))
 	if !usingReal {
 		// doctor never builds — with no image it probes a stock alpine stand-in, which lacks coop's

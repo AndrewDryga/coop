@@ -312,8 +312,10 @@ coop doctor
 
 `doctor` plants a fake secret, launches the box, and checks from inside that the
 secret is unreachable and unwritable — then checks on the host that a fork carries
-neither the secret nor a pushable remote. Run it anytime, especially after changing
-config.
+neither the secret nor a pushable remote. It probes the image this repo's boxes actually
+run — the per-project image when its `.agent/Dockerfile` is built, else the shared base image —
+so a `USER root` or extra tooling in a custom Dockerfile shows up here. Run it anytime,
+especially after changing config.
 
 ## Forks: hand off work like a PR
 

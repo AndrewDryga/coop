@@ -857,7 +857,10 @@ var commandHelp = map[string]string{
   Usage: coop doctor
 
   Runs the escape/leak checks — secret shadowing, network limits, host reach,
-  the fork handoff — and prints a pass/fail report. Honors COOP_RUNTIME.`,
+  the fork handoff — and prints a pass/fail report. Probes the image this
+  repo's boxes run: its per-project image when built, else the shared base
+  image, else a stock alpine stand-in (which skips the USER/toolchain checks
+  and says so). Honors COOP_RUNTIME.`,
 
 	"build": `coop build — build the box image (stable, pinned).
 
