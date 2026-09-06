@@ -249,11 +249,21 @@ func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) 
 		return 0, nil
 	}
 	sort.Strings(names)
-	fmt.Fprintf(os.Stdout, "Policy file: %s\n", result.PolicyFile)
-	for _, name := range names {
-		fmt.Fprintf(os.Stdout, "%s\t%s\t%s\n", name, result.PolicyDigests[name], result.PolicyAuthorityDigests[name])
-	}
+	renderSessionPolicies(os.Stdout, ui.For(os.Stdout), result, names)
 	return 0, nil
+}
+
+// renderSessionPolicies prints one labeled block per policy (entity-blocks-with-labeled-fields):
+// the two digests are separate facts a fleet operator copies into a worker config, so each gets
+// its own labeled line instead of an unlabeled tab-separated row.
+func renderSessionPolicies(w io.Writer, p ui.Palette, result sessionPoliciesResult, names []string) {
+	fmt.Fprintf(w, "%s %s\n", p.Dim("Policy file:"), result.PolicyFile)
+	for _, name := range names {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, p.Bold(p.Cyan(name)))
+		fmt.Fprintf(w, "  %s     %s\n", p.Dim("Policy digest:"), result.PolicyDigests[name])
+		fmt.Fprintf(w, "  %s  %s\n", p.Dim("Authority digest:"), result.PolicyAuthorityDigests[name])
+	}
 }
 
 func runSessionServe(cfg *config.Config, state, policy, socket string) (int, error) {

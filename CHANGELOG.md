@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop sessions policies` prints one labeled block per policy.** The text form shows each
+  policy's name with `Policy digest:` and `Authority digest:` lines instead of an unlabeled
+  tab-separated row; `--json` is unchanged.
+
 - **Session policy path errors name the component at fault.** "session policy ancestry contains a
   symlink" and its siblings now say which directory is the link, is writable by others, or is owned
   by someone else — and, for a link such as `/tmp` or a dotfile-managed `~/.config`, offer the real

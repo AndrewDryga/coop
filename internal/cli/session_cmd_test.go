@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -259,5 +260,29 @@ func TestSessionPoliciesPrintsDigestsFromTheTrustedPolicyFile(t *testing.T) {
 		if got, want := result.PolicyAuthorityDigests[name], sessionsvc.ResolvedPolicyAuthorityDigest(policy); got != want {
 			t.Errorf("policy %q authority digest = %q, want %q", name, got, want)
 		}
+	}
+}
+
+// `coop sessions policies` lists two facts per policy; each policy is a labeled block, never an
+// unlabeled tab row (entity-blocks-with-labeled-fields).
+func TestRenderSessionPoliciesUsesLabeledBlocks(t *testing.T) {
+	var out bytes.Buffer
+	renderSessionPolicies(&out, ui.Palette{}, sessionPoliciesResult{
+		PolicyFile:             "/etc/coop/session-policies.yaml",
+		PolicyDigests:          map[string]string{"observe": "aaaa", "engineer": "bbbb"},
+		PolicyAuthorityDigests: map[string]string{"observe": "cccc", "engineer": "dddd"},
+	}, []string{"engineer", "observe"})
+	got := out.String()
+	for _, want := range []string{
+		"Policy file: /etc/coop/session-policies.yaml",
+		"\nengineer\n  Policy digest:     bbbb\n  Authority digest:  dddd\n",
+		"\nobserve\n  Policy digest:     aaaa\n  Authority digest:  cccc\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("policies output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "\t") {
+		t.Fatalf("policies output must not fall back to tab rows:\n%s", got)
 	}
 }
