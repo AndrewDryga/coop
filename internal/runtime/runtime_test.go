@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 // Detect validates a COOP_RUNTIME override up front, so a bogus value fails clearly here instead
@@ -332,7 +334,7 @@ fi
 
 	// This deadline only guards a broken fixture; timing is not the behavior under test, and the
 	// race suite may run beside the full gate on a loaded host.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
 	defer cancel()
 	if n, err := (Runtime{Name: runtimeCLI}).RemoveByLabel(ctx, "coop.fork", "perf"); err != nil || n != 1 {
 		t.Fatalf("RemoveByLabel(Apple, perf) = (%d, %v), want (1, nil)", n, err)

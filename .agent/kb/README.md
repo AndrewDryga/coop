@@ -65,6 +65,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [services-teardown-needs-the-workspace](services-teardown-needs-the-workspace.md) — sibling services persist across boxes on purpose, but teardown reads the workspace's compose file, so stopping them after deleting the workspace does nothing
 - [compose-host-authority](compose-host-authority.md) — sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 - [trusted-git-view](trusted-git-view.md) — host git runs under a coop-owned GIT_DIR view with an allowlisted config, so repository-defined filter/textconv/merge drivers never execute; ref-store writes stay on the real git dir
+- [test-fixture-guards-vs-timing-bounds](test-fixture-guards-vs-timing-bounds.md) — a wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight bound is only for timing that IS the behavior, and attributes its phases
 - [repository-source-copies](repository-source-copies.md) — skills and fallback copies retain rooted content authority and validate links only after relocation
 - [credentials-expired-is-a-false-alarm](credentials-expired-is-a-false-alarm.md) — refreshable OAuth stays signed in; re-login required means the stored login cannot recover
 - [credential-presence-is-adapter-declared](credential-presence-is-adapter-declared.md) — adapters own credential presence, selected env authority, and inspectable stored readiness

@@ -10,7 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -553,18 +554,9 @@ func TestSpawnBoxExportsEmptyPresetSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer child.Stop()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if data, readErr := os.ReadFile(recorder); readErr == nil {
-			if got := string(data); got != "set:" {
-				t.Fatalf("COOP_ACP_PRESET handoff = %q, want present-but-empty", got)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("inner process did not record COOP_ACP_PRESET")
-		}
-		time.Sleep(10 * time.Millisecond)
+	wait.ForFile(t, recorder)
+	if data, err := os.ReadFile(recorder); err != nil || string(data) != "set:" {
+		t.Fatalf("COOP_ACP_PRESET handoff = %q, %v, want present-but-empty", data, err)
 	}
 }
 

@@ -46,6 +46,7 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-06 — new leaf `testutil/wait` (no edges): the shared fixture-guard wait tests import; see KB card test-fixture-guards-vs-timing-bounds.
 - 2026-09-06 — `DriverNeutralizer` retired: the trusted git view (`internal/forkspace/gitview.go`, KB card trusted-git-view) replaced name enumeration; no edge changed — every package still reaches git through `forkspace`, now via `GitCommand`/`GitRefCommand` instead of building argv atop `GitHardening`.
 - 2026-09-06 — added stdlib-only `testutil/workertls` leaf for shared ephemeral worker
   certificate fixtures. Test-only callers add no production edges; no presentation grant.

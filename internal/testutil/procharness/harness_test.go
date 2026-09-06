@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestLayoutCacheMatchesUserCacheDirContract(t *testing.T) {
@@ -381,16 +383,7 @@ func awaitGone(t *testing.T, pid int) {
 // contention can blow through, racing the fixture against the deadline it's supposed to trigger.
 func awaitFileExists(t *testing.T, path string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if _, err := os.Stat(path); err == nil {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%s did not appear in time", path)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	wait.ForFile(t, path)
 }
 
 // awaitFileContent is awaitFileExists for a fixture that carries data (e.g. recorded pids)

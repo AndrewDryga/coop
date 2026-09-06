@@ -23,6 +23,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -5399,14 +5401,7 @@ func newTestSessionService(t *testing.T, stateRoot string, policies map[string]P
 
 func waitForSessionTest(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("session condition did not become true")
+	wait.For(t, "session condition", condition)
 }
 
 // Editing a policy must not orphan the sessions created under its previous

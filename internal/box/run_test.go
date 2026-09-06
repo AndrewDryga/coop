@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
@@ -560,15 +562,10 @@ func TestRunCanceledAfterServicesUpTearsDownAttemptedReviewCompose(t *testing.T)
 		close(done)
 	}()
 
-	for i := 0; i < 300; i++ {
-		if _, statErr := os.Stat(marker); statErr == nil {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if _, statErr := os.Stat(marker); statErr != nil {
-		t.Fatal("compose up never started — test setup didn't reach the sibling-services step")
-	}
+	wait.For(t, "compose up (the sibling-services step)", func() bool {
+		_, statErr := os.Stat(marker)
+		return statErr == nil
+	})
 	cancel()
 
 	select {

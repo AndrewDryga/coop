@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -574,7 +576,7 @@ func assertProcessEnvironment(t *testing.T, env []processEnv, provider, credenti
 
 func awaitProcessGone(t *testing.T, pid int) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for procharness.ProcessAlive(pid) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}

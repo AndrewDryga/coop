@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	agents "github.com/AndrewDryga/coop/internal/agent"
 )
 
@@ -315,7 +317,7 @@ echo REPLY
 		_ = first.Wait()
 		reapConsultFixtureGroup(t, ready)
 	})
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		if _, err := os.Stat(ready); err == nil {
 			break

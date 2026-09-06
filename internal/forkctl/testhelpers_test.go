@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
@@ -133,7 +135,7 @@ func allGoroutineStacks() []byte {
 // frame keeps the race test deterministic without adding a production-only synchronization hook.
 func waitForLockWaiter(t *testing.T, result <-chan forkCommandResult) {
 	t.Helper()
-	deadline := time.NewTimer(2 * time.Second)
+	deadline := time.NewTimer(wait.Deadline) // a fixture guard, not the behavior under test
 	defer deadline.Stop()
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()

@@ -17,6 +17,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkctl"
@@ -313,7 +315,7 @@ func forkLifecycleTestStacks() []byte {
 // Callers must remain nonparallel: the frame identifies the helper, not an invocation.
 func waitForForkCommandLock(t *testing.T, result <-chan forkCommandResult) {
 	t.Helper()
-	deadline := time.NewTimer(2 * time.Second)
+	deadline := time.NewTimer(wait.Deadline) // a fixture guard, not the behavior under test
 	defer deadline.Stop()
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()

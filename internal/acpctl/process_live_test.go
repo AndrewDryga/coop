@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 )
@@ -358,16 +360,7 @@ func liveACPHelperCommand(t *testing.T, root, scenario string, validControl bool
 
 func waitForFile(t *testing.T, path string) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if _, err := os.Stat(path); err == nil {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for helper control file")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	wait.ForFile(t, path)
 }
 
 func waitCommand(cmd *exec.Cmd, timeout time.Duration) error {
