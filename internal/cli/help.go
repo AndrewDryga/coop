@@ -568,9 +568,10 @@ var commandHelp = map[string]string{
   release <id>     hand back a claim without finishing it (stays in_progress; the loop can adopt it)
   lease <id> [--as <label>] [--pid <n>] [-- <command...>]
                    hold the task's work lock — the one a loop iteration holds — for a command's
-                   lifetime, or until the bound process exits or the task moves; ls/watch show
-                   'busy <label>' and a loop in this checkout skips the task meanwhile ('done'
-                   and 'block' run by the same agent stop its own holder first)
+                   lifetime, or until the bound process (your agent, else the task's claimant,
+                   or --pid) exits or the task moves; ls/watch show 'busy <label>' and a loop
+                   in this checkout skips the task meanwhile ('done' and 'block' run by the
+                   same agent stop its own holder first)
   block <id>       park it on a decision (-> blocked) and write a decision.md stub
   unblock <id>     move it back to todo; add "<answer>" to record in decision.md
   done <id>        move it to done (the archive)

@@ -60,6 +60,8 @@ and took it.
 
 ## How claim and lease interact — claim wins unconditionally
 
+An outside holder follows the claim, too: `coop tasks lease` binds to the agent above it, and when that ancestry is already gone (a backgrounded holder from a short-lived tool shell) it binds to the live process on the task's owner record, so the claim and the lease name the same agent and `done`/`block` by that agent can stop the holder (`stopOwnLeaseHolder`).
+
 `skipOwnedCandidate` (`internal/tasks/audit.go:3041`) checks the claim record BEFORE `TryTaskLease`
 even runs, for every in-progress AND todo candidate: an owned task is skipped like a busy lease, never
 leased, regardless of whether its lease actually is free. This ordering matters for the race between a
@@ -152,3 +154,4 @@ lifecycle STATE; these four decide who may act on it.
   and the four-authority model is untouched.
 - 2026-09-06 — an agent's claim is bound to its process identity and released by pre-flight once that process is gone; a person's claim (made at a terminal) stays unbound. The lease stays the only live-work authority.
 - 2026-09-06 — `coop tasks lease` lets an outside agent hold the iteration lock; the loop treats it like another iteration (skip, then resume once released).
+- 2026-09-06 — a `coop tasks lease` holder that finds no agent above itself (its tool-call shell exited right after the fork, so it was reparented to init before it looked) follows the task's live claimant instead (`bindLeaseToClaimant`, `internal/tasks/lease_cmd.go`); only a person's claim or a gone claimant leaves it unbound. Found when `done` refused a holder started with `nohup … &`.

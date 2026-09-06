@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/processidentity"
 	"time"
 )
 
@@ -311,5 +313,43 @@ func TestListShowsAHeldLeaseBesideTheClaim(t *testing.T) {
 	out := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
 	if !strings.Contains(out, fmt.Sprintf("claimed by codex (pid %d) · busy codex", os.Getpid())) {
 		t.Fatalf("a claimed and leased task must show both:\n%s", out)
+	}
+}
+
+func TestLeaseBindsToTheTasksClaimantWhenItsOwnAncestryIsGone(t *testing.T) {
+	root := t.TempDir()
+	me := selfActor(t, "claude")
+	inProgressTask(t, root, "mine")
+	if _, err := claimTaskOwnerRecord(root, "mine", claimOptions{actor: me}); err != nil {
+		t.Fatal(err)
+	}
+	// The holder found no agent above itself (its tool-call shell already exited): it follows the
+	// live claim the same agent made a moment earlier, label included.
+	req := bindLeaseToClaimant(root, leaseRequest{id: "mine"})
+	if req.actor.PID != me.PID || req.actor.StartToken != me.StartToken || req.actor.Label != "claude" || !req.claimant {
+		t.Fatalf("unbound holder did not follow the claimant: %+v (claimant %+v)", req, me)
+	}
+	if req := bindLeaseToClaimant(root, leaseRequest{id: "mine", actor: ClaimActor{Label: "codex@zed"}}); req.actor.Label != "codex@zed" || req.actor.PID != me.PID {
+		t.Fatalf("--as label lost while following the claimant: %+v", req)
+	}
+
+	// A claimant that is gone (its pid reused by another process here) binds nothing: the holder
+	// then holds until the task moves or it is stopped, exactly as before.
+	inProgressTask(t, root, "stale")
+	stale := ClaimActor{Label: "codex", PID: me.PID, StartToken: processidentity.StartToken(1)}
+	if _, err := claimTaskOwnerRecord(root, "stale", claimOptions{actor: stale}); err != nil {
+		t.Fatal(err)
+	}
+	if req := bindLeaseToClaimant(root, leaseRequest{id: "stale"}); req.actor.PID != 0 || req.claimant {
+		t.Fatalf("holder bound to a claimant that is gone: %+v", req)
+	}
+
+	// A person's claim carries no process, so there is nothing to follow.
+	inProgressTask(t, root, "human")
+	if _, err := claimTaskOwnerRecord(root, "human", claimOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if req := bindLeaseToClaimant(root, leaseRequest{id: "human"}); req.actor.PID != 0 || req.claimant {
+		t.Fatalf("holder bound to a person's claim: %+v", req)
 	}
 }

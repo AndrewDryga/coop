@@ -55,9 +55,10 @@ func stopOwnLeaseHolder(root string, item Item, actor ClaimActor) (bool, error) 
 
 // leaseRequest is what `coop tasks lease` learned from its arguments.
 type leaseRequest struct {
-	id      string
-	actor   ClaimActor
-	command []string
+	id       string
+	actor    ClaimActor
+	claimant bool // actor came from the task's claim, not from this holder's own ancestry
+	command  []string
 }
 
 // parseLeaseArgs reads `coop tasks lease <id> [--as <label>] [--pid <n>] [-- <command...>]`.
@@ -124,9 +125,30 @@ func tasksFolderLease(root string, args []string) (int, error) {
 	if requested != 0 && req.actor.PID == 0 {
 		return 1, fmt.Errorf("coop tasks lease: no live process with a readable identity at pid %d — it is not running, or its identity cannot be read", requested)
 	}
+	if requested == 0 && req.actor.PID == 0 {
+		req = bindLeaseToClaimant(root, req)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return holdTaskLease(ctx, root, req, leaseHoldPoll)
+}
+
+// bindLeaseToClaimant binds a holder that could not identify its own agent to the task's claimant
+// instead. An IDE agent starts the holder from a tool-call shell that exits right after the fork,
+// so by the time the holder looks, its parent is already init and the ancestor walk finds nothing —
+// while the claim the same agent made a moment earlier (synchronous, its shell still alive) is
+// bound to that agent. Following the live claim keeps `done` and `block` able to stop the holder.
+// A person's claim, an absent record, or a claimant that is gone leaves the holder unbound.
+func bindLeaseToClaimant(root string, req leaseRequest) leaseRequest {
+	owner, owned, err := ReadTaskOwnerRecord(root, req.id)
+	if err != nil || !owned || owner.ActorPID == 0 || !ownerProcessLive(owner) {
+		return req
+	}
+	req.actor.PID, req.actor.StartToken, req.claimant = owner.ActorPID, owner.ActorStart, true
+	if req.actor.Label == "" {
+		req.actor.Label = owner.Actor
+	}
+	return req
 }
 
 // holdTaskLease is the testable core of `coop tasks lease`.
@@ -180,6 +202,8 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 	}
 
 	switch {
+	case req.claimant:
+		ui.OK("leased %s%s — bound to the task's claimant; holding until that process exits, the task moves, or this holder is stopped", t.ID, claimSuffix(req.actor))
 	case req.actor.PID != 0:
 		ui.OK("leased %s%s — holding until that process exits, the task moves, or this holder is stopped", t.ID, claimSuffix(req.actor))
 	default:
