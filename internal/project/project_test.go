@@ -51,6 +51,7 @@ func TestLoadRejectsPresentUnsafeEntries(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertPolicyError(t, repo)
+		assertSymlinkRemedy(t, repo, "replace it with a regular file")
 	})
 
 	t.Run("dangling symlink", func(t *testing.T) {
@@ -74,6 +75,7 @@ func TestLoadRejectsPresentUnsafeEntries(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertPolicyError(t, repo)
+		assertSymlinkRemedy(t, repo, "replace it with a real directory")
 	})
 
 	t.Run("directory", func(t *testing.T) {
@@ -253,5 +255,16 @@ func TestHostPort(t *testing.T) {
 	}
 	if p := HostPort("/a", 5173); p < hostPortBase || p >= hostPortBase+hostPortSpan {
 		t.Errorf("host port %d outside [%d,%d)", p, hostPortBase, hostPortBase+hostPortSpan)
+	}
+}
+
+// assertSymlinkRemedy checks that a refused symlink is named as one, with what to do about it —
+// a dotfile-managed .agent or project.yaml is a common setup, and "must be a directory" (which it
+// is) or "must be a regular file" sent people looking in the wrong place.
+func assertSymlinkRemedy(t *testing.T, repo, remedy string) {
+	t.Helper()
+	_, err := Load(repo)
+	if err == nil || !strings.Contains(err.Error(), "is a symbolic link") || !strings.Contains(err.Error(), remedy) {
+		t.Fatalf("Load error = %v; want the symlink named with the remedy %q", err, remedy)
 	}
 }

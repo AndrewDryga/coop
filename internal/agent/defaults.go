@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,10 @@ func readDefaultsFile(path string) ([]byte, bool, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, false, nil
+		}
+		if errors.Is(err, syscall.ELOOP) {
+			// O_NOFOLLOW reports a symlink as ELOOP, which reads as a loop; name the real remedy.
+			return nil, false, fmt.Errorf("%s is a symbolic link; coop reads agent settings without following links — replace it with a regular file and retry", path)
 		}
 		return nil, false, fmt.Errorf("read %s: %w", path, err)
 	}

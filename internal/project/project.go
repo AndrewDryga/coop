@@ -115,6 +115,9 @@ func Load(repo string) (*Project, error) {
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s parent %s: %w", path, agentDir, err)
 	}
+	if dirInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s: parent %s is a symbolic link; coop reads project config without following links — replace it with a real directory and retry", path, agentDir)
+	}
 	if !dirInfo.IsDir() {
 		return nil, fmt.Errorf("%s parent %s must be a directory", path, agentDir)
 	}
@@ -124,6 +127,9 @@ func Load(repo string) (*Project, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s is a symbolic link; coop reads project config without following links — replace it with a regular file and retry", path)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s must be a regular file", path)

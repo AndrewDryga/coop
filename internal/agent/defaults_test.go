@@ -319,8 +319,11 @@ func TestDefaultsFileReaderRejectsLinksAndNonRegularFiles(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readDefaultsFile(link); err == nil {
-		t.Fatal("defaults reader unexpectedly followed a symbolic link")
+	// A dotfile-managed settings file is commonly a symlink; the refusal must say so and name the
+	// remedy rather than surface O_NOFOLLOW's "too many levels of symbolic links".
+	if _, _, err := readDefaultsFile(link); err == nil || !strings.Contains(err.Error(), link+" is a symbolic link") ||
+		!strings.Contains(err.Error(), "replace it with a regular file") {
+		t.Fatalf("symlink read error = %v; want a refusal naming the link and the remedy", err)
 	}
 	nonRegular := filepath.Join(dir, "directory")
 	if err := os.Mkdir(nonRegular, 0o700); err != nil {
