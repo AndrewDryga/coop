@@ -297,6 +297,11 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 			ctrl.Restore(st.Ctrl)
 			resume = &st.Proxy
 			acpproxy.Trace("resumed from re-exec: %d session(s)", len(st.Proxy.Sessions))
+			if st.PriorSupervisor != "" { // the previous generation's sweep failed — one retry, still before any box spawns
+				if cerr := a.reapACPBoxes(st.PriorSupervisor); cerr != nil {
+					ui.Warn("acp reload: previous generation's box cleanup failed again (%v) — a box labelled %s may linger until this supervisor exits", cerr, st.PriorSupervisor)
+				}
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "coop acp: resume state unreadable (%v) — starting fresh\n", rerr)
 		}
@@ -371,10 +376,11 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		// (reap only stops boxes already parked) would otherwise reparent to init and never be reaped
 		// (the re-exec'd process uses a fresh superID). Safe here: Run already stopped the active box
 		// and no new box is spawned until after exec, so nothing we need is swept.
-		if reapErr := a.reapACPBoxes(superID); reapErr != nil {
-			return 1, fmt.Errorf("acp reload cleanup: %w", reapErr)
+		warning, prior := acpReloadAfterCleanup(superID, a.reapACPBoxes(superID))
+		if warning != "" {
+			ui.Warn("%s", warning)
 		}
-		path, werr := acpctl.WriteResumeState(acpctl.ResumeState{Proxy: *snap, Ctrl: ctrl.Snapshot()})
+		path, werr := acpctl.WriteResumeState(acpctl.ResumeState{Proxy: *snap, Ctrl: ctrl.Snapshot(), PriorSupervisor: prior})
 		if werr != nil {
 			return 1, fmt.Errorf("acp reload: %w", werr)
 		}
@@ -399,6 +405,19 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		return 1, errors.Join(err, cleanupErr)
 	}
 	return 0, cleanupErr
+}
+
+// acpReloadAfterCleanup decides what a failed pre-exec box sweep means for a SIGHUP reload: the
+// reload goes ahead. `coop update` and `coop build` SIGHUP every supervisor at once, so one
+// transient `docker ps` / `rm -f` failure must not end editor sessions; Run already stopped the
+// active box, and anything the sweep missed still carries this supervisor's label, so the next
+// generation retries the sweep (PriorSupervisor) and the orphan sweep reaps it once the supervisor
+// is gone. Only the reload path is this lenient — the final teardown sweep returns its error.
+func acpReloadAfterCleanup(superID string, sweepErr error) (warning, priorSupervisor string) {
+	if sweepErr == nil {
+		return "", ""
+	}
+	return fmt.Sprintf("acp reload: box cleanup failed (%v) — reloading anyway; the next generation retries the sweep", sweepErr), superID
 }
 
 func (a *app) reapACPBoxes(superID string) error {

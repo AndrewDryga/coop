@@ -16,6 +16,10 @@ import (
 type ResumeState struct {
 	Proxy acpproxy.Snapshot `json:"proxy"`
 	Ctrl  Snapshot          `json:"ctrl"`
+	// PriorSupervisor is the previous generation's supervisor id when its pre-exec box sweep
+	// failed: the next generation retries that sweep once, since the pid survives the re-exec and
+	// the orphan sweep would otherwise wait for the whole supervisor to exit.
+	PriorSupervisor string `json:"prior_supervisor,omitempty"`
 }
 
 // WriteResumeState JSON-encodes the handoff to a 0600 temp file (CreateTemp is 0600) and returns its
