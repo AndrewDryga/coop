@@ -81,8 +81,8 @@ type ServiceSecretReview struct {
 
 // ReviewServiceSecrets returns the review a human must see before workspace's compose file (an
 // absolute path inside it) hands services any secret-looking file, or nil when nothing is hidden
-// or this exact content is already approved. A compose file the host would refuse to run is an
-// error here too, so `coop up` reports the violation before asking anything.
+// or every hidden file is already approved for this exact content. A compose file the host would
+// refuse to run is an error here too, so `coop up` reports the violation before asking anything.
 func ReviewServiceSecrets(workspace, file string) (*ServiceSecretReview, error) {
 	data, err := readValidatedCompose(file, workspace, false)
 	if err != nil {
