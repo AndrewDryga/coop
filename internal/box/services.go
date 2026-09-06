@@ -33,7 +33,7 @@ func EnsureServices(rt runtime.Runtime, workspace, policyRepo string, stdout, st
 // EnsureServicesFile is the explicit-file form used by trusted review policy. The file must live
 // inside workspace; ValidateComposeFile enforces that its bind mounts cannot escape that boundary.
 func EnsureServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, exposedRoots ...string) ([]string, error) {
-	started, err := startServicesFile(rt, workspace, file, stdout, stderr, exposedRoots...)
+	started, err := startServicesFile(rt, workspace, file, stdout, stderr, false, exposedRoots...)
 	return started.names, err
 }
 
@@ -42,7 +42,7 @@ type startedServices struct {
 	ports []ServicePort
 }
 
-func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, exposedRoots ...string) (startedServices, error) {
+func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, repoReadOnly bool, exposedRoots ...string) (startedServices, error) {
 	if file == "" {
 		return startedServices{}, nil
 	}
@@ -50,7 +50,7 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 	// (the compose path is no longer shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
-	args, cleanup, err := snapshotComposeArgs(workspace, file, exposedRoots...)
+	args, cleanup, err := snapshotComposeArgs(workspace, file, repoReadOnly, exposedRoots...)
 	if err != nil {
 		return startedServices{}, fmt.Errorf("refusing to run %s: %w", filepath.Base(file), err)
 	}
@@ -79,8 +79,8 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 
 // Snapshot approved bytes outside the writable workspace. All commands in one operation use
 // this file; the explicit project directory preserves relative binds and ownership labels.
-func snapshotComposeArgs(workspace, file string, exposedRoots ...string) ([]string, func(), error) {
-	data, err := readValidatedCompose(file, workspace)
+func snapshotComposeArgs(workspace, file string, repoReadOnly bool, exposedRoots ...string) ([]string, func(), error) {
+	data, err := readValidatedCompose(file, workspace, repoReadOnly)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -169,7 +169,7 @@ func DownServicesFile(rt runtime.Runtime, workspace, file string, volumes bool, 
 	if file == "" {
 		return nil
 	}
-	args, cleanup, err := snapshotComposeArgs(workspace, file, exposedRoots...)
+	args, cleanup, err := snapshotComposeArgs(workspace, file, false, exposedRoots...)
 	if err != nil {
 		return fmt.Errorf("refusing to stop %s: %w", filepath.Base(file), err)
 	}

@@ -3,6 +3,7 @@ package box
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/project"
@@ -79,7 +80,7 @@ volumes:
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			repo, path := writeCompose(t, body)
-			if err := ValidateComposeFile(path, repo); err != nil {
+			if err := ValidateComposeFile(path, repo, false); err != nil {
 				t.Errorf("expected valid, got error: %v", err)
 			}
 		})
@@ -120,7 +121,7 @@ func TestValidateComposeRejects(t *testing.T) {
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			repo, path := writeCompose(t, body)
-			if err := ValidateComposeFile(path, repo); err == nil {
+			if err := ValidateComposeFile(path, repo, false); err == nil {
 				t.Errorf("expected rejection, got nil for:\n%s", body)
 			}
 		})
@@ -139,14 +140,52 @@ func TestValidateComposeSymlinkEscape(t *testing.T) {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 	os.WriteFile(path, []byte("services:\n  x:\n    image: a\n    volumes: [\"./escape/secrets:/x\"]\n"), 0o644)
-	if err := ValidateComposeFile(path, repo); err == nil {
+	if err := ValidateComposeFile(path, repo, false); err == nil {
 		t.Fatal("a bind through a symlink that escapes the repo must be rejected")
 	}
 }
 
 func TestValidateComposeMalformed(t *testing.T) {
 	repo, path := writeCompose(t, "services: [this is not a map]\n")
-	if err := ValidateComposeFile(path, repo); err == nil {
+	if err := ValidateComposeFile(path, repo, false); err == nil {
 		t.Error("malformed compose (services not a mapping) must be rejected")
+	}
+}
+
+// A read-only session keeps its sidecars, but a bind of the repository into one must be
+// read-only too; otherwise the sidecar is a write path into a checkout the agent cannot write.
+func TestValidateComposeReadOnlyRepo(t *testing.T) {
+	accepted := map[string]string{
+		"short-form :ro":          "services:\n  x:\n    image: a\n    volumes: [\"./initdb:/docker-entrypoint-initdb.d:ro\"]\n",
+		"short-form :ro with z":   "services:\n  x:\n    image: a\n    volumes: [\"./initdb:/docker-entrypoint-initdb.d:ro,z\"]\n",
+		"long-form read_only":     "services:\n  x:\n    image: a\n    volumes:\n      - type: bind\n        source: ./initdb\n        target: /initdb\n        read_only: true\n",
+		"named volume stays free": "services:\n  x:\n    image: a\n    volumes: [\"pgdata:/var/lib/postgresql\"]\nvolumes:\n  pgdata:\n",
+	}
+	for name, body := range accepted {
+		t.Run(name, func(t *testing.T) {
+			repo, path := writeCompose(t, body)
+			if err := ValidateComposeFile(path, repo, true); err != nil {
+				t.Errorf("read-only repo rejected a read-only bind: %v\n%s", err, body)
+			}
+		})
+	}
+	rejected := map[string]string{
+		"short-form writable": "services:\n  x:\n    image: a\n    volumes: [\"./initdb:/docker-entrypoint-initdb.d\"]\n",
+		"short-form rw mode":  "services:\n  x:\n    image: a\n    volumes: [\"./initdb:/docker-entrypoint-initdb.d:rw\"]\n",
+		"long-form writable":  "services:\n  x:\n    image: a\n    volumes:\n      - type: bind\n        source: ./initdb\n        target: /initdb\n",
+		"repo root writable":  "services:\n  x:\n    image: a\n    volumes: [\".:/work\"]\n",
+	}
+	for name, body := range rejected {
+		t.Run(name, func(t *testing.T) {
+			repo, path := writeCompose(t, body)
+			err := ValidateComposeFile(path, repo, true)
+			if err == nil || !strings.Contains(err.Error(), "repository is read-only") {
+				t.Errorf("read-only repo accepted a writable bind (err=%v):\n%s", err, body)
+			}
+			// The same file is fine for a writable session: the rule is about the session's mode.
+			if err := ValidateComposeFile(path, repo, false); err != nil {
+				t.Errorf("writable session rejected a repo bind: %v", err)
+			}
+		})
 	}
 }

@@ -35,7 +35,7 @@ func TestComposeRejectsAmbientHostAuthority(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			repo, path := writeCompose(t, "services:\n  db:\n    image: postgres:18\n    "+body+"\n")
-			if err := ValidateComposeFile(path, repo); err == nil {
+			if err := ValidateComposeFile(path, repo, false); err == nil {
 				t.Fatal("accepted ambient host authority")
 			}
 		})
@@ -52,7 +52,7 @@ func TestComposePreservesExplicitContainerValues(t *testing.T) {
     ports: [{target: 5432, host_ip: 127.0.0.1}]
     expose: [5432]
 `)
-	if err := ValidateComposeFile(path, repo); err != nil {
+	if err := ValidateComposeFile(path, repo, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -60,7 +60,7 @@ func TestComposePreservesExplicitContainerValues(t *testing.T) {
 func TestComposeArtifactsStayOutsideWorkspace(t *testing.T) {
 	repo, source := writeCompose(t, "services:\n  db:\n    image: postgres:18\n")
 	t.Setenv("TMPDIR", repo)
-	if _, cleanup, err := snapshotComposeArgs(repo, source); err == nil {
+	if _, cleanup, err := snapshotComposeArgs(repo, source, false); err == nil {
 		cleanup()
 		t.Fatal("approved snapshot was published in writable workspace")
 	}
@@ -78,7 +78,7 @@ func TestComposeArtifactsDoNotRetainMutableTempAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TMPDIR", alias)
-	args, cleanup, err := snapshotComposeArgs(repo, source)
+	args, cleanup, err := snapshotComposeArgs(repo, source, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestComposeArtifactsDoNotRetainMutableTempAlias(t *testing.T) {
 func TestComposeRejectsUnreadSourceAuthority(t *testing.T) {
 	t.Run("second document", func(t *testing.T) {
 		repo, path := writeCompose(t, "services:\n  db:\n    image: postgres:18\n---\nservices:\n  x:\n    image: alpine\n    privileged: true\n")
-		if err := ValidateComposeFile(path, repo); err == nil {
+		if err := ValidateComposeFile(path, repo, false); err == nil {
 			t.Fatal("accepted an unvalidated second document")
 		}
 	})
@@ -129,20 +129,20 @@ func TestComposeRejectsUnreadSourceAuthority(t *testing.T) {
 		if err := os.Symlink(outside, path); err != nil {
 			t.Fatal(err)
 		}
-		if err := ValidateComposeFile(path, repo); err == nil {
+		if err := ValidateComposeFile(path, repo, false); err == nil {
 			t.Fatal("accepted a Compose source outside repository authority")
 		}
 	})
 	t.Run("bounded regular file", func(t *testing.T) {
 		repo, path := writeCompose(t, strings.Repeat("# comment\n", maxComposeFileBytes/8))
-		if err := ValidateComposeFile(path, repo); err == nil {
+		if err := ValidateComposeFile(path, repo, false); err == nil {
 			t.Fatal("accepted oversized Compose input")
 		}
 		fifo := filepath.Join(repo, "fifo.yml")
 		if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := ValidateComposeFile(fifo, repo); err == nil {
+		if err := ValidateComposeFile(fifo, repo, false); err == nil {
 			t.Fatal("accepted non-regular Compose input")
 		}
 	})

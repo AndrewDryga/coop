@@ -55,7 +55,7 @@ func TestScaffoldedComposeValidates(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("WriteCompose must write %s: %v", project.DefaultCompose, err)
 	}
-	if err := box.ValidateComposeFile(path, repo); err != nil {
+	if err := box.ValidateComposeFile(path, repo, false); err != nil {
 		t.Fatalf("coop's own scaffolded compose file must pass validation: %v", err)
 	}
 }

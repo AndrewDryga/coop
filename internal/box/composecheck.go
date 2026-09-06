@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -27,14 +28,17 @@ import (
 // is simply absent from the structs — a deny-by-construction that also covers directives compose
 // hasn't invented yet. Values cannot import the host environment, bind sources must stay in
 // the repo, and every published port must explicitly bind loopback.
-func ValidateComposeFile(path, repoRoot string) error {
-	_, err := readValidatedCompose(path, repoRoot)
+// repoReadOnly is the run's repository mode: a read-only session (an investigation, a review
+// candidate) keeps its sidecars, but a bind of the repository into one of them must be read-only
+// too — otherwise the sidecar is a write path into a checkout the agent itself cannot write.
+func ValidateComposeFile(path, repoRoot string, repoReadOnly bool) error {
+	_, err := readValidatedCompose(path, repoRoot, repoReadOnly)
 	return err
 }
 
 const maxComposeFileBytes = 1 << 20
 
-func readValidatedCompose(path, repoRoot string) ([]byte, error) {
+func readValidatedCompose(path, repoRoot string, repoReadOnly bool) ([]byte, error) {
 	repo, err := filepath.Abs(repoRoot)
 	if err != nil {
 		return nil, err
@@ -73,13 +77,13 @@ func readValidatedCompose(path, repoRoot string) ([]byte, error) {
 	if len(data) > maxComposeFileBytes {
 		return nil, errors.New("compose source exceeds 1 MiB")
 	}
-	if err := validateComposeData(data, abs, repo); err != nil {
+	if err := validateComposeData(data, abs, repo, repoReadOnly); err != nil {
 		return nil, err
 	}
 	return data, nil
 }
 
-func validateComposeData(data []byte, path, repoRoot string) error {
+func validateComposeData(data []byte, path, repoRoot string, repoReadOnly bool) error {
 	var doc composeDoc
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -115,7 +119,7 @@ func validateComposeData(data []byte, path, repoRoot string) error {
 			}
 		}
 		for _, v := range svc.Volumes {
-			if err := checkVolume(name, v, composeDir, realRepo); err != nil {
+			if err := checkVolume(name, v, composeDir, realRepo, repoReadOnly); err != nil {
 				return err
 			}
 		}
@@ -239,16 +243,20 @@ type networkDecl struct {
 // `name:/target` (or an anonymous `/target`) is a docker-managed named volume — always safe; a
 // source that looks like a path is a bind and must resolve within repoRoot. Both the short string
 // form and the long `{type,source,target}` form are handled.
-func checkVolume(svc string, entry any, composeDir, realRepo string) error {
+func checkVolume(svc string, entry any, composeDir, realRepo string, repoReadOnly bool) error {
 	var source string
+	writable := true
 	switch v := entry.(type) {
 	case string:
 		// "source:target[:mode]" — but an anonymous volume is just "/data" (one field, no source).
-		parts := strings.SplitN(v, ":", 2)
+		parts := strings.SplitN(v, ":", 3)
 		if len(parts) < 2 {
 			return nil // anonymous volume, no host source
 		}
 		source = parts[0]
+		if len(parts) == 3 {
+			writable = !slices.Contains(strings.Split(parts[2], ","), "ro")
+		}
 	case map[string]any:
 		if t, _ := v["type"].(string); t != "" && t != "bind" {
 			return nil // volume/tmpfs/npipe — no host bind source
@@ -257,13 +265,21 @@ func checkVolume(svc string, entry any, composeDir, realRepo string) error {
 		if source == "" {
 			return nil
 		}
+		readOnly, _ := v["read_only"].(bool)
+		writable = !readOnly
 	default:
 		return fmt.Errorf("service %q: unrecognized volume entry %v", svc, entry)
 	}
 	if !looksLikePath(source) {
 		return nil // a named volume token (e.g. "pgdata"), not a host bind
 	}
-	return checkBindSource(svc, source, composeDir, realRepo)
+	if err := checkBindSource(svc, source, composeDir, realRepo); err != nil {
+		return err
+	}
+	if repoReadOnly && writable {
+		return fmt.Errorf("service %q: bind mount %q is writable, but this session's repository is read-only — mount it :ro (or read_only: true)", svc, source)
+	}
+	return nil
 }
 
 // looksLikePath reports whether a volume source is a host bind (a path) rather than a named-volume

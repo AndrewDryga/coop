@@ -1521,8 +1521,11 @@ alike. Only plain sibling-service directives pass: an `image`, inline `environme
 volumes or repo-relative binds, `healthcheck`, `depends_on`, and loopback-only published
 ports. Anything that would reach past a repo-scoped container is refused with the exact reason —
 `privileged`, `cap_add`, a host bind like `/:/host` or `/var/run/docker.sock`, `network_mode:
-host`, `env_file`, `build`, a `0.0.0.0` port, an escaping symlink. So the file is safe to
-auto-run no matter who wrote it: an agent can scaffold services for you, and a prompt-injected
+host`, `env_file`, `build`, a `0.0.0.0` port, an escaping symlink. A session whose repository is
+mounted read-only (an investigation, a review candidate) still gets its sidecars, but any bind of
+the repository into one must be read-only too (`:ro` or `read_only: true`) — a writable bind is
+refused for that session, since it would be a write path into a checkout the agent itself cannot
+write. So the file is safe to auto-run no matter who wrote it: an agent can scaffold services for you, and a prompt-injected
 one still can't turn `.agent/compose.yml` into host root. (Need something outside that subset?
 Run it yourself — coop only auto-runs the safe subset.)
 

@@ -27,7 +27,7 @@ func TestRuntimeComposeSnapshot(t *testing.T) {
     volumes: ["./data:/data:ro"]
     ports: [{target: 5432, host_ip: 127.0.0.1}]
 `)
-	args, cleanup, err := snapshotComposeArgs(repo, source)
+	args, cleanup, err := snapshotComposeArgs(repo, source, false)
 	if err != nil {
 		t.Fatal(err)
 	}
