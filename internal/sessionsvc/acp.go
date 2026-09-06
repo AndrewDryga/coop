@@ -2697,9 +2697,16 @@ func sessionACPTerminalFailureError(version int, failure *sessionACPTerminalFail
 		return nil
 	}
 	if version < sessionACPAirVersion || failure.ID == "" || failure.Revision < 1 ||
-		failure.Severity != "error" || strings.TrimSpace(failure.Title) == "" ||
-		len(failure.Actions) > 8 {
+		(failure.Severity != "error" && failure.Severity != "warning") ||
+		strings.TrimSpace(failure.Title) == "" || len(failure.Actions) > 8 {
 		return acpFailure(sessionACPProtocolError, "ACP typed provider failure was malformed")
+	}
+	if failure.Severity == "warning" {
+		// The extension publishes warnings for advisories and retry-in-progress notices (an
+		// `api_retry`); they describe the turn, not its outcome. The stop reason stays
+		// authoritative, and the answer delivered beside a warning is a real answer. Only a
+		// severity the extension does not define is malformed.
+		return nil
 	}
 
 	switch failure.Category {

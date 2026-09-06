@@ -201,8 +201,10 @@ func TestMalformedTypedProviderFailureFailsClosed(t *testing.T) {
 	missingIdentity.ID = ""
 	missingRevision := valid
 	missingRevision.Revision = 0
-	warning := valid
-	warning.Severity = "warning"
+	unknownSeverity := valid
+	unknownSeverity.Severity = "fatal"
+	warningWithoutTitle := valid
+	warningWithoutTitle.Severity, warningWithoutTitle.Title = "warning", ""
 	blankTitle := valid
 	blankTitle.Title = " \n"
 	unknownCategory := valid
@@ -213,13 +215,14 @@ func TestMalformedTypedProviderFailureFailsClosed(t *testing.T) {
 		version int
 		failure sessionACPTerminalFailure
 	}{
-		"old extension":       {version: 0, failure: valid},
-		"missing identity":    {version: 1, failure: missingIdentity},
-		"missing revision":    {version: 1, failure: missingRevision},
-		"nonterminal warning": {version: 1, failure: warning},
-		"blank title":         {version: 1, failure: blankTitle},
-		"unknown category":    {version: 1, failure: unknownCategory},
-		"unbounded actions":   {version: 1, failure: unboundedActions},
+		"old extension":     {version: 0, failure: valid},
+		"missing identity":  {version: 1, failure: missingIdentity},
+		"missing revision":  {version: 1, failure: missingRevision},
+		"unknown severity":  {version: 1, failure: unknownSeverity},
+		"malformed warning": {version: 1, failure: warningWithoutTitle},
+		"blank title":       {version: 1, failure: blankTitle},
+		"unknown category":  {version: 1, failure: unknownCategory},
+		"unbounded actions": {version: 1, failure: unboundedActions},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -230,6 +233,13 @@ func TestMalformedTypedProviderFailureFailsClosed(t *testing.T) {
 				t.Fatalf("malformed typed failure = %v", err)
 			}
 		})
+	}
+	// A warning is a defined, non-terminal shape (an advisory or a retry-in-progress notice): it
+	// is ignored and the stop reason stays authoritative, so the answer beside it is kept.
+	warning := valid
+	warning.Severity, warning.Actions = "warning", nil
+	if err := sessionACPTerminalFailureError(sessionACPAirVersion, &warning); err != nil {
+		t.Fatalf("warning-severity typed failure = %v; want it ignored", err)
 	}
 	if err := sessionACPTerminalFailureError(sessionACPAirVersion, nil); err != nil {
 		t.Fatalf("absent typed failure = %v", err)
