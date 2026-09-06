@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net"
@@ -14,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -241,4 +244,33 @@ func unixSocketPath(t *testing.T) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return filepath.Join(dir, "api.sock")
+}
+
+// A request the connector refuses before sending is a definite failure — the daemon never saw it —
+// and the cap it refuses at admits the daemon's own turn and fence sizes.
+func TestUnixAPIPreSendRejectionsAreDefiniteAndAdmitDaemonSizedBodies(t *testing.T) {
+	api, err := NewUnixAPI(filepath.Join(t.TempDir(), "absent.sock"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, request := range map[string]Request{
+		"oversized body":  {Method: "POST", Path: "/v1/sessions", IdempotencyKey: "k", Body: bytes.Repeat([]byte("x"), maxPrivateRequestBytes+1)},
+		"GET with a body": {Method: "GET", Path: "/v1/sessions", Body: []byte("{}")},
+		"bad path":        {Method: "GET", Path: "/nope"},
+		"no key":          {Method: "POST", Path: "/v1/sessions", Body: []byte("{}")},
+	} {
+		if _, err := api.Do(context.Background(), request); !errors.Is(err, ErrRequestRejected) {
+			t.Errorf("%s: err = %v, want a pre-send rejection", name, err)
+		}
+	}
+	// A 12 MiB body passes the connector's own cap and fails only at the absent socket.
+	large := Request{Method: "POST", Path: "/v1/sessions", IdempotencyKey: "k", Body: bytes.Repeat([]byte("x"), 12<<20)}
+	if _, err := api.Do(context.Background(), large); err == nil || errors.Is(err, ErrRequestRejected) {
+		t.Fatalf("a daemon-sized body = %v; want it to reach the socket", err)
+	}
+	command := createCommand(time.Now().Add(time.Minute))
+	result := resultFromCall(command, nil, fmt.Errorf("%w: body exceeds cap", ErrRequestRejected))
+	if result.State != "failed" || !strings.Contains(string(result.Error), "invalid_command") {
+		t.Fatalf("pre-send rejection result = %+v; want failed/invalid_command, not uncertain", result)
+	}
 }

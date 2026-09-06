@@ -21,7 +21,11 @@ import (
 )
 
 const (
-	maxPrivateRequestBytes  = 1 << 20
+	// The daemon accepts a 12 MiB turn body and a fence body of that plus its ordinary 128 KiB
+	// request cap (sessionsvc's sessionHTTPFenceMaxBody); the connector admits the same, so an
+	// 8 MiB input artifact set — which base64 and the frozen prompt grow past 1 MiB — can still be
+	// submitted instead of being refused here before it was ever sent.
+	maxPrivateRequestBytes  = 12<<20 + 128<<10
 	maxPrivateResponseBytes = 3 << 20
 )
 
@@ -266,19 +270,24 @@ func NewUnixAPI(socket string, timeout time.Duration) (*UnixAPI, error) {
 	return &UnixAPI{client: &http.Client{Transport: transport, Timeout: timeout}}, nil
 }
 
+// ErrRequestRejected marks a private request the connector refused before sending anything: the
+// daemon never saw it, so the command's result is a definite failure, never an uncertain one a
+// controller would have to reconcile.
+var ErrRequestRejected = errors.New("private Coop API request was rejected before it was sent")
+
 func (a *UnixAPI) Do(ctx context.Context, request Request) (json.RawMessage, error) {
 	if request.Method != http.MethodGet && request.Method != http.MethodPost {
-		return nil, errors.New("private Coop API method is not allowed")
+		return nil, fmt.Errorf("%w: method is not allowed", ErrRequestRejected)
 	}
 	if len(request.Body) > maxPrivateRequestBytes {
-		return nil, errors.New("private Coop API request is oversized")
+		return nil, fmt.Errorf("%w: body exceeds %d bytes", ErrRequestRejected, maxPrivateRequestBytes)
 	}
 	parsed, err := url.ParseRequestURI(request.Path)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/v1/") {
-		return nil, errors.New("private Coop API path is invalid")
+		return nil, fmt.Errorf("%w: path is invalid", ErrRequestRejected)
 	}
 	if request.Method == http.MethodGet && len(request.Body) != 0 {
-		return nil, errors.New("private Coop API GET cannot carry a body")
+		return nil, fmt.Errorf("%w: GET cannot carry a body", ErrRequestRejected)
 	}
 
 	httpRequest, err := http.NewRequestWithContext(
@@ -292,7 +301,7 @@ func (a *UnixAPI) Do(ctx context.Context, request Request) (json.RawMessage, err
 	}
 	if request.Method == http.MethodPost {
 		if request.IdempotencyKey == "" {
-			return nil, errors.New("private Coop mutation needs an idempotency key")
+			return nil, fmt.Errorf("%w: mutation needs an idempotency key", ErrRequestRejected)
 		}
 		httpRequest.Header.Set("Content-Type", "application/json")
 		httpRequest.Header.Set("Idempotency-Key", request.IdempotencyKey)

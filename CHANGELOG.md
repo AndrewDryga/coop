@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The worker's private request cap matches the daemon's.** The outbound worker admits the
+  12 MiB turn and fence bodies the daemon accepts instead of refusing anything over 1 MiB before
+  sending it, so an 8 MiB input artifact set can actually be submitted; and a request the worker
+  itself refuses before sending is reported as a definite `invalid_command` failure rather than an
+  uncertain result the controller had to reconcile.
+
 - **A transient artifact fetch no longer fails a worker command for good.** A network error,
   timeout, or server-side failure while the outbound worker fetches a turn's input artifacts or a
   workspace checkpoint leaves the command receipt received, so redelivery retries the fetch; only a

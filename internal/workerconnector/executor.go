@@ -923,6 +923,9 @@ func resultFromCall(command workerproto.Command, resource json.RawMessage, err e
 	if errors.As(err, &apiErr) {
 		return apiFailureResult(command, apiErr.Status, apiErr.Code, apiErr.Detail)
 	}
+	if errors.Is(err, ErrRequestRejected) {
+		return failureResult(command, "invalid_command", err.Error()) // nothing was sent: not uncertain
+	}
 	detail := "private Coop API response was not proven"
 	if err != nil {
 		detail = err.Error()
