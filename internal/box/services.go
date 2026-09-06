@@ -58,11 +58,13 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 	}
 	defer cleanup()
 	if len(hidden) > 0 {
-		// Say so on every start, not just the first: the service that needed the file fails in its
-		// own way (Keycloak: "missing BEGIN PRIVATE KEY"), and this line is the only one that names
-		// the cause and the fix.
-		fmt.Fprintf(stderr, "%s services get an empty file in place of %s (looks like a secret) — to let them read the real file, run `coop up` in a terminal and approve %s; the approval lasts until that file changes\n",
-			ui.Yellow("⚠"), strings.Join(hidden, ", "), filepath.Base(file))
+		// coop's own channel, NOT the compose writer the caller passed: a box start hands that one a
+		// buffer it reads only when compose FAILS, so this notice would be discarded on the very path
+		// that needs it. Say it on every start, not just the first — the service that needed the file
+		// fails in its own way ("missing BEGIN PRIVATE KEY"), and this is the only line that names the
+		// cause and the fix.
+		ui.Warn("services get an empty file in place of %s (looks like a secret) — to let them read the real file, run `coop up` in a terminal and approve %s; the approval lasts until that file changes",
+			strings.Join(hidden, ", "), filepath.Base(file))
 	}
 	// Publish each `expose`d sidecar port to its stable per-workspace host port via a merged
 	// override (the base file's `expose` publishes nothing, so this adds the only host mapping).

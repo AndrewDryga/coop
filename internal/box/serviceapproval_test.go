@@ -1,10 +1,14 @@
 package box
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 // A secret-looking bind stays a decoy until a human approves the compose file's exact content;
@@ -204,5 +208,50 @@ func TestServiceDecoySourcesOutliveTheComposeCommand(t *testing.T) {
 		if info.Size() != 0 {
 			t.Fatalf("decoy source %s is not empty", source)
 		}
+	}
+}
+
+// The notice naming a hidden file must reach the user's terminal on EVERY start path. A box start
+// hands compose a buffer it reads only when the start fails, so a notice written there is thrown
+// away — which is exactly how a shadowed key reached a session as a service that just crashed.
+func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "tls.key"), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	compose := filepath.Join(repo, ".agent", "compose.yml")
+	if err := os.WriteFile(compose, []byte("services:\n  kc:\n    image: example/kc\n    volumes:\n      - \"../tls.key:/certs/tls.key:ro\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\ncase \"$*\" in *\"config --services\"*) echo kc ;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	var composeWriter bytes.Buffer
+	_, runErr := startServicesFile(runtime.Runtime{Name: shim}, repo, compose, io.Discard, &composeWriter, false)
+	os.Stderr = old
+	w.Close()
+	var seen bytes.Buffer
+	if _, err := io.Copy(&seen, r); err != nil {
+		t.Fatal(err)
+	}
+	if runErr != nil {
+		t.Fatalf("start = %v", runErr)
+	}
+	if !strings.Contains(seen.String(), "empty file in place of tls.key") {
+		t.Fatalf("the notice never reached the user:\nstderr: %q\ncompose writer: %q", seen.String(), composeWriter.String())
+	}
+	if strings.Contains(composeWriter.String(), "empty file in place of") {
+		t.Fatalf("the notice went to the compose writer, which a box start discards: %q", composeWriter.String())
 	}
 }
