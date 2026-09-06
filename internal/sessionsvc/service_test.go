@@ -887,6 +887,65 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 		t.Fatalf("restore replay = %+v, err=%v", replayed, err)
 	}
 
+	// Exactly one of a restore and a first turn wins. A turn submitted while the restore is
+	// rewriting the workspace is refused (and the same key is accepted afterwards); a turn queued
+	// before the restore makes the restore refuse before it touches a file.
+	t.Run("restore and first turn are serialized", func(t *testing.T) {
+		racer, err := service.CreateRemoteSession(context.Background(), "restore-racer-create", CreateRemoteSessionRequest{
+			Policy: "responder", Task: "record:task_offer:restore",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var duringErr error
+		service.testDuringRestoreFiles = func() {
+			_, duringErr = service.SubmitTurn(context.Background(), "restore-racer-turn", session.SubmitTurnRequest{
+				SessionID: racer.ID, ExpectedRevision: racer.Revision, Prompt: "Start before the files are back.",
+			})
+		}
+		defer func() { service.testDuringRestoreFiles = nil }()
+		bound, err := service.RestoreWorkspaceCheckpoint(context.Background(), "restore-racer-once", RestoreWorkspaceCheckpointRequest{
+			SessionID: racer.ID, ExpectedRevision: racer.Revision, Checkpoint: captured.Checkpoint, Bundle: bundle,
+		})
+		if err != nil || bound.WorkspaceTask == nil {
+			t.Fatalf("racer restore = %+v, err=%v", bound, err)
+		}
+		if duringErr == nil || !strings.Contains(duringErr.Error(), "restore is in progress") {
+			t.Fatalf("turn submitted mid-restore = %v; want a refusal to retry", duringErr)
+		}
+		if service.restoreInProgress(racer.ID) {
+			t.Fatal("restore mark survives the restore")
+		}
+		service.testDuringRestoreFiles = nil
+		if _, err := service.Store().SubmitTurn(context.Background(), "restore-racer-turn", session.SubmitTurnRequest{
+			SessionID: racer.ID, ExpectedRevision: bound.Revision, Prompt: "Start before the files are back.",
+		}); err != nil {
+			t.Fatalf("turn after the restore = %v; want it accepted on the restored workspace", err)
+		}
+
+		queued, err := service.CreateRemoteSession(context.Background(), "restore-queued-create", CreateRemoteSessionRequest{
+			Policy: "responder", Task: "record:task_offer:restore",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(queued.Workspace, "restore-canary.txt", "must survive a refused restore\n", 0o644)
+		if _, err := service.Store().SubmitTurn(context.Background(), "restore-queued-turn", session.SubmitTurnRequest{
+			SessionID: queued.ID, ExpectedRevision: queued.Revision, Prompt: "Queued first.",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		current := mustSession(t, service, queued.ID)
+		if _, err := service.RestoreWorkspaceCheckpoint(context.Background(), "restore-queued-once", RestoreWorkspaceCheckpointRequest{
+			SessionID: queued.ID, ExpectedRevision: current.Revision, Checkpoint: captured.Checkpoint, Bundle: bundle,
+		}); err == nil || !strings.Contains(err.Error(), "unused writable open session") {
+			t.Fatalf("restore over a queued turn = %v; want the unused-session refusal", err)
+		}
+		if got, err := os.ReadFile(filepath.Join(queued.Workspace, "restore-canary.txt")); err != nil || string(got) != "must survive a refused restore\n" {
+			t.Fatalf("refused restore touched the workspace: %q, %v", got, err)
+		}
+	})
+
 	// A bound but still unused session must refuse a DIFFERENT checkpoint before touching the
 	// workspace. The revision fence is skipped for task-bound sessions, and the store's "already
 	// bound to another task" refusal used to come only after reset --hard and clean had already

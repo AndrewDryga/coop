@@ -126,12 +126,25 @@ func (s *Service) executeRestoreWorkspaceCheckpoint(
 			return session.Session{}, err
 		}
 	}
+	// Hold the session's runtime from validation through the binding: a turn cannot start on a
+	// workspace mid-rewrite, and one cannot be queued into that window either.
+	release, ok := s.beginWorkspaceRestore(req.SessionID)
+	if !ok {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code:   session.CodeInvalidSessionState,
+			Detail: "restore requires a parked session; a turn or another runtime operation is in progress",
+		})
+	}
+	defer release()
 	sess, err := s.store.GetSession(ctx, req.SessionID)
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	if err := validateRestoreWorkspaceSession(ctx, sess, req); err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	if s.testDuringRestoreFiles != nil {
+		s.testDuringRestoreFiles()
 	}
 	if err := restoreWorkspaceCheckpointFiles(sess.Workspace, req.Checkpoint, manifest, members); err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{

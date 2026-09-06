@@ -768,6 +768,8 @@ type Service struct {
 	testAfterTurnLease     func(session.Turn)
 	runtimeMu              sync.Mutex
 	runtimeLocks           map[string]*sessionOperationLock
+	restoring              map[string]bool // sessions whose workspace a restore is rewriting right now
+	testDuringRestoreFiles func()          // test seam: runs while the restore holds the runtime and rewrites files
 	runtimeCleanupMu       sync.Mutex
 	runtimeCleanupCursor   int
 	runtimeCleanupStampMu  sync.Mutex
@@ -984,6 +986,36 @@ func (s *Service) lockSessionRuntime(sessionID string) func() {
 // or cleanup already owns the session's runtime, for callers whose precondition is "parked".
 func (s *Service) tryLockSessionRuntime(sessionID string) (func(), bool) {
 	return s.acquireSessionRuntime(sessionID, true)
+}
+
+// beginWorkspaceRestore takes the session's runtime for a checkpoint restore and marks the
+// session as restoring for the duration, so a turn cannot start on the workspace while it is
+// being rewritten (the runtime lock) and a turn cannot be queued into that window either
+// (SubmitTurn refuses while the mark is set). Exactly one of a restore and a first turn wins:
+// a turn queued first makes the restore's "unused session" check refuse before any file work.
+func (s *Service) beginWorkspaceRestore(sessionID string) (func(), bool) {
+	unlock, ok := s.tryLockSessionRuntime(sessionID)
+	if !ok {
+		return nil, false
+	}
+	s.runtimeMu.Lock()
+	if s.restoring == nil {
+		s.restoring = map[string]bool{}
+	}
+	s.restoring[sessionID] = true
+	s.runtimeMu.Unlock()
+	return func() {
+		s.runtimeMu.Lock()
+		delete(s.restoring, sessionID)
+		s.runtimeMu.Unlock()
+		unlock()
+	}, true
+}
+
+func (s *Service) restoreInProgress(sessionID string) bool {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	return s.restoring[sessionID]
 }
 
 func (s *Service) acquireSessionRuntime(sessionID string, try bool) (func(), bool) {
@@ -2492,6 +2524,12 @@ func (s *Service) ListSessions(ctx context.Context, limit int) ([]session.Sessio
 func (s *Service) SubmitTurn(ctx context.Context, key string, req session.SubmitTurnRequest) (session.Turn, error) {
 	if err := s.validateTurnEscalation(ctx, req); err != nil {
 		return session.Turn{}, err
+	}
+	if s.restoreInProgress(req.SessionID) {
+		// Refused before any receipt is journaled, so the same key succeeds once the restore is
+		// done and the turn then runs on the restored workspace it was meant for.
+		return session.Turn{}, &session.Error{Code: session.CodeInvalidSessionState,
+			Detail: "a workspace restore is in progress on this session; retry once it completes"}
 	}
 	turn, err := s.store.SubmitTurn(ctx, key, req)
 	if err == nil {
