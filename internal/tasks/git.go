@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -27,7 +28,11 @@ func gitOut(dir string, args ...string) string {
 // back as an error instead of an empty string (used by the ref-authority window's HEAD re-read,
 // where "git broke" must not pass for "git said nothing").
 func gitOutErr(dir string, args ...string) (string, error) {
-	out, err := exec.Command("git", gitArgs(dir, args)...).Output()
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -21,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -260,7 +260,10 @@ func restoreWorkspaceCheckpointFiles(
 	patch := members[manifest.TrackedPatch.Entry]
 	if len(patch) > 0 {
 		stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-		command := exec.Command("git", gitArgs(workspace, []string{"apply", "--index", "--binary", "--whitespace=nowarn", "-"})...)
+		command, err := forkspace.GitCommand(context.Background(), workspace, "apply", "--index", "--binary", "--whitespace=nowarn", "-")
+		if err != nil {
+			return err
+		}
 		command.Stdin = bytes.NewReader(patch)
 		command.Stderr = stderr
 		if err := command.Run(); err != nil {

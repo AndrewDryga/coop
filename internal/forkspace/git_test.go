@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -116,33 +115,4 @@ func TestTrustedSignArgs(t *testing.T) {
 			t.Errorf("TrustedSignArgs = %v, want %v", got, want)
 		}
 	})
-}
-
-func TestDriverNeutralizer(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	ws := initRepo(t)
-	// A legit clone has no local filter/merge/diff config → nothing to neutralize.
-	if got := DriverNeutralizer(ws); len(got) != 0 {
-		t.Errorf("clean repo should yield no neutralizer flags, got %v", got)
-	}
-	// Plant all three driver kinds locally (what an agent would do alongside an in-tree .gitattributes).
-	gitIn(t, ws, "config", "filter.x.smudge", "/evil")
-	gitIn(t, ws, "config", "filter.x.clean", "/evil")
-	gitIn(t, ws, "config", "merge.y.driver", "/evil %O %A %B")
-	gitIn(t, ws, "config", "diff.z.command", "/evil")
-	got := DriverNeutralizer(ws)
-	if len(got)%2 != 0 {
-		t.Fatalf("neutralizer must be -c/value pairs, got odd count: %v", got)
-	}
-	joined := strings.Join(got, " ")
-	for _, want := range []string{
-		"filter.x.smudge=", "filter.x.clean=", "filter.x.process=", "filter.x.required=false",
-		"merge.y.driver=", "diff.z.command=", "diff.z.textconv=",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("neutralizer missing blank for %q:\n%v", want, got)
-		}
-	}
 }

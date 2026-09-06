@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -105,19 +106,24 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	added := false
 	defer func() {
 		if added {
-			_ = gitRun(repo, "worktree", "remove", "--force", worktree)
+			_ = forkspace.GitRefCommand(context.Background(), repo, "worktree", "remove", "--force", worktree).Run()
 		}
 		_ = os.RemoveAll(tempRoot)
 	}()
 
-	neutral := forkspace.DriverNeutralizer(repo)
-	addArgs := append(append([]string{}, neutral...), "worktree", "add", "--detach", "--quiet", worktree, oldHead)
-	if err := gitRun(repo, addArgs...); err != nil {
+	// The worktree list lives in the real git dir, so it is added there — without a checkout: the
+	// files are then populated under the trusted view of the new worktree, so the repository's
+	// config can name no filter or driver for that checkout to run.
+	if err := forkspace.GitRefCommand(context.Background(), repo, "worktree", "add", "--no-checkout", "--detach", "--quiet", worktree, oldHead).Run(); err != nil {
 		return 0, fmt.Errorf("create clean signing worktree: %w", err)
 	}
 	added = true
-	args := append(append(append([]string{}, forkspace.TrustedSignArgs()...), neutral...), "rebase", "-f", "--gpg-sign", base)
+	if _, err := gitOutErr(worktree, "reset", "--hard", "--quiet", oldHead); err != nil {
+		return 0, fmt.Errorf("populate clean signing worktree: %w", err)
+	}
+	args := append(append([]string{}, forkspace.TrustedSignArgs()...), "rebase", "-f", "--gpg-sign", base)
 	if err := gitSign(worktree, args...); err != nil {
+		_ = gitRun(worktree, "rebase", "--abort") // leave no rebase state behind for the next signing worktree in this slot
 		return 0, fmt.Errorf("re-signing %s..HEAD failed (a signing key/agent issue?): %w", base, err)
 	}
 	newHead := gitOut(worktree, "rev-parse", "--verify", "HEAD^{commit}")
@@ -125,7 +131,7 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	if newHead == "" || oldTrees == "" || newTrees == "" || oldTrees != newTrees {
 		return 0, errors.New("re-signing changed one or more committed trees; refusing to update the branch")
 	}
-	if err := gitRun(repo, "worktree", "remove", "--force", worktree); err != nil {
+	if err := forkspace.GitRefCommand(context.Background(), repo, "worktree", "remove", "--force", worktree).Run(); err != nil {
 		return 0, fmt.Errorf("remove signing worktree before updating the branch: %w", err)
 	}
 	added = false
@@ -147,7 +153,7 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	if currentRef := gitOut(repo, "symbolic-ref", "--quiet", "HEAD"); currentRef != branchRef {
 		return 0, fmt.Errorf("checked-out branch changed during re-signing (%s to %s); refusing to update it", branchRef, currentRef)
 	}
-	if err := gitRun(repo, "update-ref", "-m", "coop: re-sign commits", branchRef, newHead, oldHead); err != nil {
+	if err := forkspace.GitRefCommand(context.Background(), repo, "update-ref", "-m", "coop: re-sign commits", branchRef, newHead, oldHead).Run(); err != nil {
 		return 0, fmt.Errorf("branch moved during re-signing; signed candidate was not applied: %w", err)
 	}
 	return n, nil

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -141,14 +142,6 @@ func unknownErr(noun, token string, valid []string) error {
 	return fmt.Errorf("unknown %s %q — use: %s", noun, token, strings.Join(valid, ", "))
 }
 
-// gitArgs builds `git -C dir <hardening> <args>`. The hardening goes first so a caller's own
-// trailing -c flags (e.g. forkspace.TrustedSignArgs) still win — git's last -c for a key takes effect.
-// The list itself lives in internal/forkspace, next to the clone that creates a fork, so the whole
-// repo has exactly one hardening set to audit.
-func gitArgs(dir string, args []string) []string {
-	return append(append([]string{"-C", dir}, forkspace.GitHardening...), args...)
-}
-
 // gitOut runs `git -C dir <args>` hardened and returns trimmed stdout, or "" on error. Every repo
 // coop runs git against is agent-writable, so hardening is the default; to read a value coop will
 // execute or read a host file from, read the trusted GLOBAL scope (`git config --global`), never the
@@ -166,7 +159,11 @@ func gitOut(dir string, args ...string) string {
 // looks clean). The message carries git's own stderr — os/exec caps that capture at 32KB — because a
 // caller surfacing this to a human has nothing else to explain the failure with.
 func gitOutErr(dir string, args ...string) (string, error) {
-	out, err := exec.Command("git", gitArgs(dir, args)...).Output()
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -179,9 +176,23 @@ func gitOutErr(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// gitOutputBytes is gitOutErr for NUL-separated or whitespace-significant output: the raw bytes,
+// untrimmed, from the same trusted-view command.
+func gitOutputBytes(dir string, args ...string) ([]byte, error) {
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return nil, err
+	}
+	return cmd.Output()
+}
+
 // gitRun runs `git -C dir <args>` hardened, for effect, returning its error.
 func gitRun(dir string, args ...string) error {
-	return exec.Command("git", gitArgs(dir, args)...).Run()
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return err
+	}
+	return cmd.Run()
 }
 
 // gitSign runs a hardened git command (like a rebase with signing), wiring Stdin
@@ -192,7 +203,10 @@ func gitSign(dir string, args ...string) error {
 }
 
 func gitSignTo(stderr io.Writer, dir string, args ...string) error {
-	cmd := exec.Command("git", gitArgs(dir, args)...)
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = os.Stdin
 	out, err := cmd.CombinedOutput()
 	trace := strings.TrimSpace(os.Getenv("GIT_TRACE"))

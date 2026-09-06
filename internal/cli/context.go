@@ -12,7 +12,6 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/contextc"
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -162,9 +161,7 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 // gitChangedPaths returns the repo-relative paths git reports as changed (staged, unstaged, or
 // untracked). A requested --changed scope must not look empty when Git actually failed.
 func gitChangedPaths(repo string) ([]string, error) {
-	args := append([]string{"-C", repo}, forkspace.GitHardening...)
-	args = append(args, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	out, err := exec.Command("git", args...).Output()
+	out, err := gitOutputBytes(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

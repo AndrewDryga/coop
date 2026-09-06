@@ -75,7 +75,7 @@ func propagateGitEnvContext(ctx context.Context, repo, ws string) error {
 			return fmt.Errorf("read parent Git %s: %w", k, err)
 		}
 		if ok && v != "" {
-			if err := gitRunContext(ctx, ws, "config", k, v); err != nil {
+			if err := GitRefCommand(ctx, ws, "config", k, v).Run(); err != nil { // the fork's own config: the real git dir
 				return fmt.Errorf("set fork Git %s: %w", k, err)
 			}
 		}
@@ -110,7 +110,7 @@ func PropagateGitIdentityContext(ctx context.Context, repo, ws string) error {
 			return fmt.Errorf("read parent Git %s: %w", key, err)
 		}
 		if ok && value != "" {
-			if err := gitRunContext(ctx, ws, "config", key, value); err != nil {
+			if err := GitRefCommand(ctx, ws, "config", key, value).Run(); err != nil {
 				return fmt.Errorf("set fork Git %s: %w", key, err)
 			}
 		}
@@ -151,7 +151,7 @@ func appendFile(path string, data []byte) error {
 // teardown is driven by the fork's own compose file, so once the workspace is deleted there is
 // nothing left to drive it.
 func Destroy(repo, name string) error {
-	_ = gitRun(repo, "branch", "-q", "-D", "review/"+name)
+	_ = GitRefCommand(context.Background(), repo, "branch", "-q", "-D", "review/"+name).Run() // a packed ref: the real git dir, never the view
 	if err := os.RemoveAll(Workspace(repo, name)); err != nil {
 		return err
 	}

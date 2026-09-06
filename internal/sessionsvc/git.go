@@ -1,7 +1,7 @@
 package sessionsvc
 
 import (
-	"os/exec"
+	"context"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
@@ -15,5 +15,9 @@ func gitArgs(dir string, args []string) []string {
 
 // gitRun runs `git -C dir <args>` hardened, for effect, returning its error.
 func gitRun(dir string, args ...string) error {
-	return exec.Command("git", gitArgs(dir, args)...).Run()
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return err
+	}
+	return cmd.Run()
 }

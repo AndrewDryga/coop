@@ -15,6 +15,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/zlib"
+	"context"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -89,7 +91,10 @@ func TaskTrailerCommits(repo, rangeExpr string, reverse bool) ([]TaskTrailerComm
 	if rangeExpr != "" {
 		args = append(args, rangeExpr)
 	}
-	cmd := exec.Command("git", gitArgs(repo, args)...)
+	cmd, err := forkspace.GitCommand(context.Background(), repo, args...)
+	if err != nil {
+		return nil, err
+	}
 	raw, err := auditCommandOutput(cmd, auditHistoryOutputLimit)
 	if err != nil {
 		return nil, fmt.Errorf("git log: %w", err) // git's own diagnostic went to stderr as it ran
@@ -1085,8 +1090,11 @@ func semanticRawHistoryChangeTrees(repo string, history []rawAuditCommit) ([]str
 		return nil, fmt.Errorf("validate exact raw audit history trees: %w", err)
 	}
 	defer os.RemoveAll(treeSnapshot)
-	cmd := exec.Command("git", gitArgs(treeSnapshot,
-		[]string{"diff-tree", "--stdin", "--root", "--always", "--raw", "-z", "-r", "--no-renames"})...)
+	cmd, err := forkspace.GitCommand(context.Background(), treeSnapshot,
+		"diff-tree", "--stdin", "--root", "--always", "--raw", "-z", "-r", "--no-renames")
+	if err != nil {
+		return nil, err
+	}
 	cmd.Stdin = strings.NewReader(input.String())
 	raw, err := auditCommandOutput(cmd, auditDiffOutputLimit)
 	if err != nil {
@@ -1152,7 +1160,7 @@ func snapshotAuditTreeDAGs(repo string, roots []string) (snapshot string, err er
 	if objectIDBytes == sha256.Size {
 		initArgs = append(initArgs, "--object-format=sha256")
 	}
-	initCmd := exec.Command("git", gitArgs(snapshot, initArgs)...)
+	initCmd := forkspace.GitRefCommand(context.Background(), snapshot, initArgs...) // no repository exists yet to view
 	if _, err = auditCommandOutput(initCmd, auditMetadataOutputLimit); err != nil {
 		return "", fmt.Errorf("initialize audit tree snapshot: %w", err)
 	}
@@ -1490,7 +1498,11 @@ type auditCommitBatch struct {
 
 func openAuditCommitBatch(repo string) (*auditCommitBatch, error) {
 	batch := &auditCommitBatch{}
-	batch.cmd = exec.Command("git", gitArgs(repo, []string{"cat-file", "--batch"})...)
+	cmd, err := forkspace.GitCommand(context.Background(), repo, "cat-file", "--batch")
+	if err != nil {
+		return nil, err
+	}
+	batch.cmd = cmd
 	input, err := batch.cmd.StdinPipe()
 	if err != nil {
 		return nil, err

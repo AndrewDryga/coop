@@ -2,6 +2,7 @@ package forkctl
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -187,8 +188,13 @@ func restoreCandidateWorkspace(repo, ws, name string, candidate tasks.ForkCandid
 	if err := recoverInterruptedRebase(repo, ws, name); err != nil {
 		return err
 	}
-	args := append(forkspace.DriverNeutralizer(ws), "checkout", "-B", name, candidate.Head)
-	if err := gitRun(ws, args...); err != nil {
+	// `checkout -B` split in two: HEAD is rewritten on the real git dir (a view would keep that to
+	// itself), then the branch, index and files reset under the view, where the repository's
+	// config can name no filter for the checkout to run.
+	if err := forkspace.GitRefCommand(context.Background(), ws, "update-ref", "refs/heads/"+name, candidate.Head).Run(); err != nil {
+		return fmt.Errorf("%s: restore reviewed candidate after interrupted land: %w", name, err)
+	}
+	if err := forkspace.GitSwitchBranch(context.Background(), ws, name); err != nil {
 		return fmt.Errorf("%s: restore reviewed candidate after interrupted land: %w", name, err)
 	}
 	return nil

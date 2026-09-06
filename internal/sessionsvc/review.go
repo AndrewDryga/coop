@@ -479,8 +479,11 @@ func validSessionReviewObject(value string) bool {
 }
 
 func sessionReviewIsAncestor(dir, base, head string) (bool, error) {
-	cmd := exec.Command("git", gitArgs(dir, []string{"merge-base", "--is-ancestor", base, head})...)
-	err := cmd.Run()
+	cmd, err := forkspace.GitCommand(context.Background(), dir, "merge-base", "--is-ancestor", base, head)
+	if err != nil {
+		return false, err
+	}
+	err = cmd.Run()
 	if err == nil {
 		return true, nil
 	}
@@ -643,7 +646,7 @@ type reviewScratch struct {
 func (c reviewScratch) cleanup() { _ = os.RemoveAll(c.dir) }
 
 func (c reviewScratch) detachBase() error {
-	return gitRun(c.dir, "checkout", "--quiet", "--detach", c.base)
+	return forkspace.GitDetach(context.Background(), c.dir, c.base)
 }
 
 func newReviewScratch(repo string) (reviewScratch, error) {
@@ -807,7 +810,10 @@ func (s *Service) writeReviewPatchArtifact(
 		"diff", "--binary", "--no-ext-diff", "--no-textconv",
 		parentHead, candidateHead, "--",
 	}
-	cmd := exec.Command("git", gitArgs(dir, args)...)
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return sessionReviewPatchArtifact{}, err
+	}
 	cmd.Stdout = writer
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {

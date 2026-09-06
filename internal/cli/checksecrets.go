@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -142,8 +141,7 @@ func scanVisibleTree(repo string, includeIgnored bool) ([]string, error) {
 // excluded). Empty when git is unavailable or repo is not a work tree: nothing is then known to
 // be committable, so a shadowed file stays skipped as before.
 func commitCandidateSet(repo string) map[string]bool {
-	args := gitArgs(repo, []string{"ls-files", "--cached", "--others", "--exclude-standard", "-z"})
-	out, err := exec.Command("git", args...).Output()
+	out, err := gitOutputBytes(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
 	if err != nil {
 		return nil
 	}
@@ -169,8 +167,7 @@ func candidateFiles(repo string, includeIgnored bool) ([]string, error) {
 		// core.fsmonitor on the host — the repo's .git is agent-writable, so a prior box run can plant
 		// it. Keep the raw .Output() (not gitOut) so "git failed" (→ filesystem fallback) stays
 		// distinct from "git succeeded, empty list"; gitOut deliberately collapses both to "".
-		args := gitArgs(repo, []string{"ls-files", "--cached", "--others", "--exclude-standard", "-z"})
-		if out, err := exec.Command("git", args...).Output(); err == nil {
+		if out, err := gitOutputBytes(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"); err == nil {
 			var rels []string
 			for _, p := range strings.Split(string(out), "\x00") {
 				if p != "" {
@@ -195,8 +192,7 @@ func candidateFiles(repo string, includeIgnored bool) ([]string, error) {
 // already untracked/tracked and in the default set). .agent/kb/rules + .agent/skills are tracked, so
 // they arrive via --cached, not here.
 func ignoredAgentFiles(repo string) []string {
-	args := gitArgs(repo, []string{"ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", ".agent"})
-	out, err := exec.Command("git", args...).Output()
+	out, err := gitOutputBytes(repo, "ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", ".agent")
 	if err != nil {
 		return nil
 	}

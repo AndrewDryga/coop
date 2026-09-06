@@ -1,6 +1,7 @@
 package forkctl
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -633,24 +634,28 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 	if err := gitRun(ws, "fetch", "--quiet", repo); err != nil {
 		return fmt.Errorf("%s: fetching parent into the fork: %w", name, err)
 	}
-	// Blank any filter/merge/diff driver the fork's .git/config defines before the rebase checks
-	// the tree out — an in-tree .gitattributes + a fork-local driver would otherwise run host code
-	// on checkout/merge/diff (the residual forkspace.GitHardening can't close, since the names are
-	// arbitrary).
-	neut := forkspace.DriverNeutralizer(ws)
-	withNeut := func(args ...string) []string { return append(append([]string{}, neut...), args...) }
-	// Rebase the fork's branch by NAME, not whatever the agent left checked out — `git rebase
-	// <upstream> <branch>` checks out and rebases exactly `name`, so the branch we sign and rebase
-	// is provably the same one the parent fast-forwards to (an agent that `git checkout`ed a
-	// different branch in the ws can't make us land un-rebased, unsigned commits).
+	// Rebase the fork's branch by NAME, not whatever the agent left checked out, so the branch we
+	// sign and rebase is provably the same one the parent fast-forwards to (an agent that `git
+	// checkout`ed a different branch in the ws can't make us land un-rebased, unsigned commits).
+	// The switch itself happens on the real git dir (HEAD is rewritten there; the trusted view
+	// would keep it to itself) and only on a clean tree; the rebase then runs under the view, where
+	// the repository's config can name no filter, merge, or diff driver for it to run.
+	if current := gitOut(ws, "symbolic-ref", "--quiet", "--short", "HEAD"); current != name {
+		if gitDirty(ws) {
+			return fmt.Errorf("%s: the fork has %q checked out with uncommitted changes — commit or discard them, then re-run", name, current)
+		}
+		if err := forkspace.GitSwitchBranch(context.Background(), ws, name); err != nil {
+			return fmt.Errorf("%s: switching the fork to its own branch: %w", name, err)
+		}
+	}
 	var rebaseErr error
 	if forkspace.WantsSigning() {
-		rebaseErr = gitSign(ws, withNeut(append(forkspace.TrustedSignArgs(), "rebase", "-f", "--gpg-sign", head, name)...)...)
+		rebaseErr = gitSign(ws, append(forkspace.TrustedSignArgs(), "rebase", "-f", "--gpg-sign", head, name)...)
 	} else {
-		rebaseErr = gitRun(ws, withNeut("rebase", head, name)...)
+		rebaseErr = gitRun(ws, "rebase", head, name)
 	}
 	if rebaseErr != nil {
-		_ = gitRun(ws, withNeut("rebase", "--abort")...)
+		_ = gitRun(ws, "rebase", "--abort")
 		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (cd %q && git rebase %s %s), then re-run", name, gitBranch(repo), ws, head, name)
 	}
 	return nil
@@ -675,12 +680,32 @@ func leftoverRebaseState(ws string) string {
 	return ""
 }
 
+// untrustedRebaseState is rebase state sitting in the fork's OWN git dir rather than coop's
+// trusted view of it — left by a rebase run outside coop (or planted). Coop never aborts it:
+// an abort checks files out with that git dir's config, which is exactly what the view exists to
+// keep off the host. It is named so the human can finish it by hand.
+func untrustedRebaseState(ws string) string {
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		out, err := forkspace.GitRefCommand(context.Background(), ws, "rev-parse", "--path-format=absolute", "--git-path", dir).Output()
+		if err != nil {
+			continue
+		}
+		if path := strings.TrimSpace(string(out)); path != "" && pathExists(path) {
+			return path
+		}
+	}
+	return ""
+}
+
 // recoverInterruptedRebase clears rebase state a CRASHED land left in the fork's clone, so the next
 // merge recovers instead of failing on it forever. Recovery is destructive — `rebase --abort` resets
 // that worktree — so it runs only when the fork's lifecycle state names nobody who could still be
 // running (same pid + start-token test the stop path signals by; see forkspace.StateOwner). Both
 // outcomes are loud: what was found and what was done, or who owns it and how to stop them.
 func recoverInterruptedRebase(repo, ws, name string) error {
+	if dir := untrustedRebaseState(ws); dir != "" {
+		return fmt.Errorf("%s: could not abort the unfinished rebase in %s: its state (%s) is in the fork's own git dir, which coop does not run checkouts against — finish it by hand (cd %q && git status; git rebase --abort), then re-run the merge", name, ws, filepath.Base(dir), ws)
+	}
 	dir := leftoverRebaseState(ws)
 	if dir == "" {
 		return nil
@@ -694,7 +719,7 @@ func recoverInterruptedRebase(repo, ws, name string) error {
 	}
 	ui.Warn("fork %s has an unfinished rebase (%s) from an interrupted land — aborting it to recover the worktree", name, filepath.Base(dir))
 	// gitOutErr, not gitRun: git's own stderr is the only explanation a human gets for a failed abort.
-	if _, err := gitOutErr(ws, append(forkspace.DriverNeutralizer(ws), "rebase", "--abort")...); err != nil {
+	if _, err := gitOutErr(ws, "rebase", "--abort"); err != nil {
 		return fmt.Errorf("%s: could not abort the unfinished rebase in %s: %w — finish it by hand (cd %q && git status; git rebase --abort), then re-run the merge", name, filepath.Base(dir), err, ws)
 	}
 	ui.Detail("aborted the unfinished rebase; %s is back on its branch", name)

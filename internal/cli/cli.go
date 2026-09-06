@@ -14,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -77,6 +78,7 @@ func Main(argv []string) int {
 		// Once a day, check for a newer coop in the background and mention it as the command's
 		// parting line (deferred, so it runs on every return path). See startUpdateCheck.
 		defer startUpdateCheck(cfg, argv)()
+		defer forkspace.CloseGitViews() // the trusted git views of every repository this process touched
 		// Sweep temp entries no box is using. Per-run cleanup is a deferred call
 		// and a killed process skips it, so what supervision and restarts leave
 		// behind accumulates until it fills the volume.

@@ -21,10 +21,10 @@ import (
 // global excludesfile — must not come from the agent-writable repo at all: those use gitGlobalOut
 // to read your trusted global config, never these helpers.
 //
-// The one residual GitHardening alone can't blank (the driver names are arbitrary) — an in-tree
-// .gitattributes plus a fork-local filter/merge/diff driver that runs on the land rebase's
-// checkout — is closed by DriverNeutralizer, which enumerates the fork's driver names and
-// blanks each before that rebase. policyScan stays the human-facing backstop for the .gitattributes.
+// The residual GitHardening alone can't blank (driver names are arbitrary: an in-tree
+// .gitattributes plus a filter/merge/diff driver in the repository's config) is closed by the
+// trusted git view (gitview.go): host git never reads the repository's config at all.
+// policyScan stays the human-facing backstop for the .gitattributes.
 //
 // It lives here, with the clone that creates a fork, because this leaf is the lowest thing in the
 // tree that runs git — internal/cli's own helpers build on this ONE list, so there is exactly one
@@ -38,6 +38,7 @@ var GitHardening = []string{
 	"-c", "core.editor=true",
 	"-c", "sequence.editor=true",
 	"-c", "diff.external=",
+	"-c", "core.alternateRefsCommand=",
 	"-c", "uploadpack.packObjectsHook=",
 	"-c", "protocol.ext.allow=never",
 	"-c", "rebase.updateRefs=false",
@@ -62,27 +63,18 @@ func GitCloneContext(ctx context.Context, src, dst string) error {
 	return err
 }
 
+// gitCheckoutNewBranchContext runs on the real git dir: `checkout -b` rewrites HEAD, which a view
+// would keep to itself. It checks out no files (the new branch is the current commit).
 func gitCheckoutNewBranchContext(ctx context.Context, repo, branch string) error {
-	return gitRunContext(ctx, repo, "checkout", "--quiet", "-b", branch)
-}
-
-// gitArgs builds `git -C dir <hardening> <args>`, the same shape internal/cli uses.
-func gitArgs(dir string, args []string) []string {
-	return append(append([]string{"-C", dir}, GitHardening...), args...)
-}
-
-// gitOut runs `git -C dir <args>` hardened and returns trimmed stdout, or "" on error.
-func gitOut(dir string, args ...string) string {
-	return gitOutContext(context.Background(), dir, args...)
-}
-
-func gitOutContext(ctx context.Context, dir string, args ...string) string {
-	out, _ := gitOutputContext(ctx, dir, args...)
-	return out
+	return GitRefCommand(ctx, repo, "checkout", "--quiet", "-b", branch).Run()
 }
 
 func gitOutputContext(ctx context.Context, dir string, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", gitArgs(dir, args)...).Output()
+	cmd, err := GitCommand(ctx, dir, args...)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.Output()
 	if ctx.Err() != nil {
 		return "", errors.Join(ctx.Err(), err)
 	}
@@ -92,8 +84,12 @@ func gitOutputContext(ctx context.Context, dir string, args ...string) (string, 
 	return strings.TrimSpace(string(out)), nil
 }
 
+// gitConfigContext reads one key of the repository's OWN config, on the real git dir: the value
+// is data coop reads, never something it executes (those come from gitGlobalOut), and the view
+// only carries the allowlisted operational subset.
 func gitConfigContext(ctx context.Context, dir, key string) (string, bool, error) {
-	out, err := gitOutputContext(ctx, dir, "config", "--get", key)
+	raw, err := GitRefCommand(ctx, dir, "config", "--get", key).Output()
+	out := strings.TrimSpace(string(raw))
 	if err == nil {
 		return out, true, nil
 	}
@@ -102,15 +98,6 @@ func gitConfigContext(ctx context.Context, dir, key string) (string, bool, error
 		return "", false, nil
 	}
 	return "", false, err
-}
-
-// gitRun runs `git -C dir <args>` hardened, for effect, returning its error.
-func gitRun(dir string, args ...string) error {
-	return gitRunContext(context.Background(), dir, args...)
-}
-
-func gitRunContext(ctx context.Context, dir string, args ...string) error {
-	return exec.CommandContext(ctx, "git", gitArgs(dir, args)...).Run()
 }
 
 // gitGlobalOut reads from the host user's GLOBAL git config (`git config --global …`) — the
@@ -175,52 +162,4 @@ func TrustedSignArgs() []string {
 		}
 	}
 	return args
-}
-
-// DriverNeutralizer returns -c flags that blank every filter/merge/diff driver defined in dir's OWN
-// (local) git config, by name. GitHardening can't cover these — the driver names are arbitrary —
-// but they're enumerable: an in-tree .gitattributes assigning `filter=x` (or merge/diff) to a path
-// plus a repo-local filter.x.smudge / merge.x.driver / diff.x.command runs host code on the
-// checkout/merge/diff of the land rebase. We read the repo's local driver names and blank each
-// (filter.required=false so a blanked smudge doesn't hard-fail the checkout). A legit clone has no
-// local filter/merge/diff config — those live in your global — so this blanks only what the agent
-// planted; policyScan stays the human-facing backstop for the committed .gitattributes.
-func DriverNeutralizer(dir string) []string {
-	keys := gitOut(dir, "config", "--local", "--name-only", "--get-regexp", `^(filter|merge|diff)\.`)
-	if keys == "" {
-		return nil
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, key := range strings.Split(keys, "\n") {
-		var typ string
-		for _, t := range []string{"filter", "merge", "diff"} {
-			if strings.HasPrefix(key, t+".") {
-				typ = t
-				break
-			}
-		}
-		if typ == "" {
-			continue
-		}
-		rest := key[len(typ)+1:] // "<name>.<leaf>"
-		dot := strings.LastIndex(rest, ".")
-		if dot <= 0 {
-			continue // a 2-part key (e.g. diff.external) has no <name> driver to neutralize
-		}
-		name := rest[:dot]
-		if id := typ + "\x00" + name; !seen[id] {
-			seen[id] = true
-			switch typ {
-			case "filter":
-				out = append(out, "-c", "filter."+name+".smudge=", "-c", "filter."+name+".clean=",
-					"-c", "filter."+name+".process=", "-c", "filter."+name+".required=false")
-			case "merge":
-				out = append(out, "-c", "merge."+name+".driver=")
-			case "diff":
-				out = append(out, "-c", "diff."+name+".command=", "-c", "diff."+name+".textconv=")
-			}
-		}
-	}
-	return out
 }

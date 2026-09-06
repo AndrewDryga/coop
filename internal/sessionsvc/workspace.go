@@ -144,14 +144,43 @@ func runSessionWorkspaceGitWithEnv(
 	)
 }
 
+// runSessionWorkspaceGitRealContext asks the repository's REAL git dir — for the path queries
+// (`rev-parse --git-common-dir`, `--git-path`) whose answer under the trusted view would name the
+// view. Nothing executes on a path lookup; the hardening still applies.
+func runSessionWorkspaceGitRealContext(
+	ctx context.Context, dir string, limit int, env []string, args ...string,
+) ([]byte, bool, error) {
+	stdout := &sessionWorkspaceLimitedWriter{limit: limit}
+	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
+	cmd := forkspace.GitRefCommand(ctx, dir, args...)
+	if env != nil {
+		cmd.Env = env
+	}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = errors.Join(ctx.Err(), err)
+		}
+		if detail := strings.TrimSpace(stderr.buf.String()); detail != "" {
+			return nil, false, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, detail)
+		}
+		return nil, false, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	return stdout.buf.Bytes(), stdout.truncated, nil
+}
+
 func runSessionWorkspaceGitWithEnvContext(
 	ctx context.Context, dir string, limit int, env []string, args ...string,
 ) ([]byte, bool, error) {
 	stdout := &sessionWorkspaceLimitedWriter{limit: limit}
 	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	cmd := exec.CommandContext(ctx, "git", gitArgs(dir, args)...)
-	if env != nil {
-		cmd.Env = env
+	if env == nil {
+		env = os.Environ()
+	}
+	cmd, err := forkspace.GitCommandWithEnv(ctx, dir, env, args...)
+	if err != nil {
+		return nil, false, err
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -206,7 +235,10 @@ func runSessionWorkspaceGitWindow(
 		limit:  int64(limit),
 	}
 	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	cmd := exec.Command("git", gitArgs(dir, args)...)
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return nil, 0, "", false, err
+	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -1121,7 +1153,10 @@ func sessionWorkspaceUnmergedFromParent(repo, workspace, parentHead string) (boo
 	if err != nil {
 		return false, err
 	}
-	cmd := exec.Command("git", gitArgs(workspace, []string{"merge-base", "--is-ancestor", head, parentHead})...)
+	cmd, err := forkspace.GitCommand(context.Background(), workspace, "merge-base", "--is-ancestor", head, parentHead)
+	if err != nil {
+		return false, err
+	}
 	err = cmd.Run()
 	if err == nil {
 		return false, nil

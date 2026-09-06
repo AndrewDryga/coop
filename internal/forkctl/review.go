@@ -1,6 +1,7 @@
 package forkctl
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -54,7 +55,7 @@ func (o forkReviewGateOutcome) exitCode() int {
 func (c forkReviewCandidate) cleanup() { _ = os.RemoveAll(c.dir) }
 
 func (c forkReviewCandidate) detachBase() error {
-	return gitRun(c.dir, "checkout", "--quiet", "--detach", c.base)
+	return forkspace.GitDetach(context.Background(), c.dir, c.base)
 }
 
 // prepareForkReviewCandidate clones the parent's committed HEAD, fetches the fork's named branch,

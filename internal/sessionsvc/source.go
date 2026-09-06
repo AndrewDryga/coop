@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 )
 
@@ -351,8 +351,11 @@ func (s *Service) pinDiscardSessionParent(
 func runSessionSourceGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	stdout := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceGitOutputLimit}
 	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	cmd := exec.CommandContext(ctx, "git", gitArgs(dir, args)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd, err := forkspace.GitCommand(ctx, dir, args...)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0")
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {

@@ -3066,8 +3066,11 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 			head := gitOut(repo, "rev-parse", "HEAD")
 			hideParents(t, repo, metadata, base)
 
-			if got := CommitsForTask(repo, head, "task-a"); len(got) != 1 {
-				t.Fatalf("fixture did not hide the older binding from Git traversal: %v", got)
+			// The trusted git view honors a real shallow file but never a repository's info/grafts
+			// (an agent-writable history rewrite the view does not carry), so only the shallow
+			// fixture still fools the ordinary traversal; either way the raw audit must not be.
+			if got := CommitsForTask(repo, head, "task-a"); (len(got) != 1) == (metadata == "shallow") {
+				t.Fatalf("%s fixture: ordinary traversal = %v", metadata, got)
 			}
 			if got, _ := unbindableTasks(repo, base, head, []string{"task-a"}, nil); !slices.Equal(got, []string{"task-a"}) {
 				t.Fatalf("hidden older duplicate = %v, want [task-a]", got)
@@ -3083,8 +3086,8 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 			head := gitOut(repo, "rev-parse", "HEAD")
 			hideParents(t, repo, metadata, head)
 
-			if got := CommitsForTask(repo, base+".."+head, "task-a"); len(got) != 0 {
-				t.Fatalf("fixture did not hide the in-range binding from Git traversal: %v", got)
+			if got := CommitsForTask(repo, base+".."+head, "task-a"); (len(got) != 0) == (metadata == "shallow") {
+				t.Fatalf("%s fixture: ordinary traversal = %v", metadata, got)
 			}
 			if got, _ := unbindableTasks(repo, base, head, []string{"task-a"}, nil); len(got) != 0 {
 				t.Fatalf("raw in-range binding was hidden: %v", got)
@@ -3113,8 +3116,8 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 			if got := CommitsForTask(repo, base+".."+head, "task-a"); len(got) != 1 {
 				t.Fatalf("fixture lost the visible task-a binding: commits = %v", got)
 			}
-			if got := CommitsForTask(repo, base+".."+head, "task-b"); len(got) != 0 {
-				t.Fatalf("fixture did not hide the foreign task-b binding from a plain traversal: commits = %v", got)
+			if got := CommitsForTask(repo, base+".."+head, "task-b"); (len(got) != 0) == (metadata == "shallow") {
+				t.Fatalf("%s fixture: plain traversal of the foreign task-b binding = %v", metadata, got)
 			}
 			if got, tol := unbindableTasks(repo, base, head, []string{"task-a"}, map[string]bool{"task-b": true}); !slices.Equal(got, []string{"task-a"}) || len(tol) != 0 {
 				t.Fatalf("hidden foreign binding = %v, tolerated = %v, want [task-a] and none", got, tol)
@@ -3725,15 +3728,14 @@ func TestOrdinaryAuditBindingIdentityRejectsGraftedDecoy(t *testing.T) {
 	if !ok || len(raw["task-a"]) != 1 || raw["task-a"][0] != subject {
 		t.Fatalf("decoy fixture ordinary=%v raw=%v ok=%v", ordinary, raw, ok)
 	}
-	// Git versions disagree on whether the configured "=" separator yields the grafted decoy or
-	// no binding. Either way, the config-sensitive traversal must not identify the raw subject.
-	for _, sha := range ordinary {
-		if gitOut(repo, "rev-parse", "--verify", sha+"^{commit}") == subject {
-			t.Fatalf("configured traversal unexpectedly identified raw subject: ordinary=%v", ordinary)
-		}
+	// Neither the repository's trailer.separators nor its info/grafts reach host git under the
+	// trusted view, so the ordinary traversal sees exactly what the raw audit sees: the subject,
+	// and never the "=" decoy. The two must agree.
+	if len(ordinary) != 1 || gitOut(repo, "rev-parse", "--verify", ordinary[0]+"^{commit}") != subject {
+		t.Fatalf("ordinary traversal under the trusted view = %v; want only the raw subject %s", ordinary, subject)
 	}
-	if ordinaryBindingMatchesRaw(repo, subject, "task-a") {
-		t.Fatal("grafted ordinary decoy matched the distinct raw audit subject")
+	if !ordinaryBindingMatchesRaw(repo, subject, "task-a") {
+		t.Fatal("ordinary traversal disagrees with the raw audit subject although the decoy config is inert")
 	}
 }
 

@@ -1,6 +1,7 @@
 package forkctl
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,16 +10,6 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
-
-// gitArgs builds `git -C dir <hardening> <args>`. The hardening goes first so a caller's own
-// trailing -c flags (e.g. forkspace.TrustedSignArgs) still win — git's last -c for a key takes
-// effect. The list itself lives in internal/forkspace, next to the clone that creates a fork, so
-// the whole repo has exactly one hardening set to audit; internal/cli, internal/tasks and
-// internal/sessionsvc each keep their own copy of these thin runners atop the same list (see their
-// util.go/git.go) rather than exporting one across a package boundary.
-func gitArgs(dir string, args []string) []string {
-	return append(append([]string{"-C", dir}, forkspace.GitHardening...), args...)
-}
 
 // gitOut runs `git -C dir <args>` hardened and returns trimmed stdout, or "" on error. Every repo
 // coop runs git against is agent-writable, so hardening is the default; to read a value coop will
@@ -41,7 +32,11 @@ func gitOutErr(dir string, args ...string) (string, error) {
 
 // Path and NUL-record consumers must retain significant whitespace in Git output.
 func gitRawOutErr(dir string, args ...string) (string, error) {
-	out, err := exec.Command("git", gitArgs(dir, args)...).Output()
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -56,13 +51,20 @@ func gitRawOutErr(dir string, args ...string) (string, error) {
 
 // gitRun runs `git -C dir <args>` hardened, for effect, returning its error.
 func gitRun(dir string, args ...string) error {
-	return exec.Command("git", gitArgs(dir, args)...).Run()
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return err
+	}
+	return cmd.Run()
 }
 
 // gitInteractive runs a hardened git command wired to the real stdio (a diff to the terminal, a
 // signing pinentry prompt, etc).
 func gitInteractive(dir string, args ...string) error {
-	cmd := exec.Command("git", gitArgs(dir, args)...)
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return err
+	}
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
 	return cmd.Run()
 }
@@ -71,7 +73,10 @@ func gitInteractive(dir string, args ...string) error {
 // still works, but capturing CombinedOutput to silence benign chatter. The captured output is
 // replayed to Stderr only on failure, or if GIT_TRACE is set.
 func gitSign(dir string, args ...string) error {
-	cmd := exec.Command("git", gitArgs(dir, args)...)
+	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = os.Stdin
 	out, err := cmd.CombinedOutput()
 	trace := strings.TrimSpace(os.Getenv("GIT_TRACE"))

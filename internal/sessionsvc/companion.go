@@ -197,11 +197,9 @@ func createSessionCompanionWithHistoryLimit(
 	if err := os.Mkdir(emptyTemplate, 0o700); err != nil {
 		return fmt.Errorf("create empty companion Git template: %w", err)
 	}
-	initCmd := exec.CommandContext(ctx,
-		"git", gitArgs(stage, []string{
-			"init", "--quiet", "--object-format=" + objectFormat,
-			"--template=" + emptyTemplate,
-		})...,
+	initCmd := forkspace.GitRefCommand(ctx, stage, // no repository exists yet to view
+		"init", "--quiet", "--object-format="+objectFormat,
+		"--template="+emptyTemplate,
 	)
 	for _, entry := range sessionCompanionGitEnv() {
 		if !strings.HasPrefix(entry, "GIT_TEMPLATE_DIR=") {
@@ -240,9 +238,14 @@ func createSessionCompanionWithHistoryLimit(
 			return fmt.Errorf("write companion shallow boundary: %w", err)
 		}
 	}
+	// Detach on the real git dir (HEAD is rewritten there), then populate the files under the
+	// trusted view with attributes fully off, so the checkout is byte-exact and driver-free.
+	if err := forkspace.GitRefCommand(ctx, stage, "update-ref", "--no-deref", "HEAD", binding.BaseCommit).Run(); err != nil {
+		return fmt.Errorf("checkout companion commit: %w", err)
+	}
 	if _, _, err := runSessionWorkspaceGitWithEnvContext(
 		ctx, stage, sessionWorkspaceGitOutputLimit, sessionCompanionCheckoutGitEnv(),
-		"checkout", "--quiet", "--detach", binding.BaseCommit,
+		"reset", "--hard", "--quiet", binding.BaseCommit,
 	); err != nil {
 		return fmt.Errorf("checkout companion commit: %w", err)
 	}
@@ -283,12 +286,10 @@ func materializeSessionCompanionObjects(
 ) (returnErr error) {
 	packPrefix := filepath.Join(stage, ".git", "objects", "pack", "pack")
 	if !history.shallow() {
-		packCmd := exec.CommandContext(ctx,
-			"git", gitArgs(
-				binding.Repository,
-				[]string{"pack-objects", "--quiet", "--revs", packPrefix},
-			)...,
-		)
+		packCmd, err := forkspace.GitCommand(ctx, binding.Repository, "pack-objects", "--quiet", "--revs", packPrefix)
+		if err != nil {
+			return err
+		}
 		packCmd.Env = sessionCompanionGitEnv()
 		packCmd.Stdin = strings.NewReader(binding.BaseCommit + "\n")
 		if out, err := packCmd.CombinedOutput(); err != nil {
@@ -333,10 +334,11 @@ func materializeSessionCompanionObjects(
 		}
 	}
 	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	listCmd := exec.CommandContext(ctx,
-		"git", gitArgs(binding.Repository, listArgs)...,
-	)
-	listCmd.Env = sessionCompanionGitEnv()
+	listCmd, err := forkspace.GitCommand(ctx, binding.Repository, listArgs...)
+	if err != nil {
+		return err
+	}
+	listCmd.Env = append(listCmd.Env, sessionCompanionGitEnvExtras()...)
 	listCmd.Stdout = objectList
 	listCmd.Stderr = stderr
 	if err := listCmd.Run(); err != nil {
@@ -352,14 +354,10 @@ func materializeSessionCompanionObjects(
 	if _, err := objectList.Seek(0, 0); err != nil {
 		return fmt.Errorf("rewind companion object list: %w", err)
 	}
-	packCmd := exec.CommandContext(ctx,
-		"git", gitArgs(
-			binding.Repository,
-			[]string{
-				"pack-objects", "--quiet", "--window=0", "--depth=0", packPrefix,
-			},
-		)...,
-	)
+	packCmd, err := forkspace.GitCommand(ctx, binding.Repository, "pack-objects", "--quiet", "--window=0", "--depth=0", packPrefix)
+	if err != nil {
+		return err
+	}
 	packCmd.Env = sessionCompanionGitEnv()
 	packCmd.Stdin = objectList
 	if out, err := packCmd.CombinedOutput(); err != nil {
@@ -494,13 +492,11 @@ func sessionCompanionHistoryWithinLimit(
 	ctx context.Context, binding session.CompanionRepository, limit uint64, since string,
 ) (bool, error) {
 	listStderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	listCmd := exec.CommandContext(ctx,
-		"git", gitArgs(
-			binding.Repository,
-			sessionCompanionHistoryRevListArgs(binding.BaseCommit, since,
-				"--objects", "--no-object-names"),
-		)...,
-	)
+	listCmd, err := forkspace.GitCommand(ctx, binding.Repository,
+		sessionCompanionHistoryRevListArgs(binding.BaseCommit, since, "--objects", "--no-object-names")...)
+	if err != nil {
+		return false, err
+	}
 	listCmd.Env = sessionCompanionGitEnv()
 	objectIDs, err := listCmd.StdoutPipe()
 	if err != nil {
@@ -508,12 +504,10 @@ func sessionCompanionHistoryWithinLimit(
 	}
 	listCmd.Stderr = listStderr
 	sizeStderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	sizeCmd := exec.CommandContext(ctx,
-		"git", gitArgs(
-			binding.Repository,
-			[]string{"cat-file", "--buffer", "--batch-check=%(objectsize)"},
-		)...,
-	)
+	sizeCmd, err := forkspace.GitCommand(ctx, binding.Repository, "cat-file", "--buffer", "--batch-check=%(objectsize)")
+	if err != nil {
+		return false, err
+	}
 	sizeCmd.Env = sessionCompanionGitEnv()
 	sizeCmd.Stdin = objectIDs
 	sizeCmd.Stderr = sizeStderr
@@ -573,14 +567,19 @@ func sessionCompanionGitEnv() []string {
 			env = append(env, entry)
 		}
 	}
-	return append(
-		env,
+	return append(env, sessionCompanionGitEnvExtras()...)
+}
+
+// sessionCompanionGitEnvExtras is what companion transfers add on top of any base environment —
+// including the trusted git view's, which already carries GIT_DIR and friends.
+func sessionCompanionGitEnvExtras() []string {
+	return []string{
 		"GIT_NO_LAZY_FETCH=1",
 		"GIT_TERMINAL_PROMPT=0",
-		"GIT_CONFIG_GLOBAL="+os.DevNull,
-		"GIT_CONFIG_SYSTEM="+os.DevNull,
+		"GIT_CONFIG_GLOBAL=" + os.DevNull,
+		"GIT_CONFIG_SYSTEM=" + os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
-	)
+	}
 }
 
 func runSessionCompanionGitContext(
@@ -656,8 +655,11 @@ func verifySessionCompanionContext(ctx context.Context, binding session.Companio
 		return errors.New("companion workspace has invalid Git metadata")
 	}
 	root, err := realSessionCompanionRepositoryContext(ctx, binding.Workspace)
-	if err != nil || root != binding.Workspace {
-		return errors.New("companion workspace is not an exact Git checkout")
+	if err != nil {
+		return fmt.Errorf("companion workspace is not an exact Git checkout: %w", err)
+	}
+	if root != binding.Workspace {
+		return fmt.Errorf("companion workspace is not an exact Git checkout: top level %s is not %s", root, binding.Workspace)
 	}
 	workspaceCommon, err := sessionCompanionGitCommonDirContext(ctx, binding.Workspace)
 	if err != nil {
@@ -849,8 +851,8 @@ func sessionCompanionStatusContext(
 	if objectFormat != "sha1" && objectFormat != "sha256" {
 		return nil, false, errors.New("companion status object format is invalid")
 	}
-	objectsBytes, err := sessionCompanionGitTextContext(ctx,
-		binding.Workspace, sessionWorkspaceGitOutputLimit,
+	objectsBytes, _, err := runSessionWorkspaceGitRealContext(ctx,
+		binding.Workspace, sessionWorkspaceGitOutputLimit, sessionCompanionGitEnv(),
 		"rev-parse", "--path-format=absolute", "--git-path", "objects",
 	)
 	if err != nil {
@@ -1077,10 +1079,10 @@ func sessionCompanionLFSPointer(pointer []byte) (string, int64, bool) {
 
 func sessionCompanionGitlinksCleanContext(ctx context.Context, workspace string, env []string) (bool, error) {
 	stderr := &sessionWorkspaceLimitedWriter{limit: sessionWorkspaceErrorLimit}
-	cmd := exec.CommandContext(ctx,
-		"git", gitArgs(workspace, []string{"ls-files", "--stage", "-z"})...,
-	)
-	cmd.Env = env
+	cmd, err := forkspace.GitCommandWithEnv(ctx, workspace, env, "ls-files", "--stage", "-z")
+	if err != nil {
+		return false, err
+	}
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -1155,8 +1157,8 @@ func sessionCompanionGitlinksCleanContext(ctx context.Context, workspace string,
 }
 
 func sessionCompanionGitCommonDirContext(ctx context.Context, workspace string) (string, error) {
-	out, err := sessionCompanionGitTextContext(ctx,
-		workspace, sessionWorkspaceGitOutputLimit,
+	out, _, err := runSessionWorkspaceGitRealContext(ctx,
+		workspace, sessionWorkspaceGitOutputLimit, sessionCompanionGitEnv(),
 		"rev-parse", "--path-format=absolute", "--git-common-dir",
 	)
 	if err != nil {
@@ -1259,12 +1261,7 @@ func removeSessionCompanion(binding session.CompanionRepository) error {
 	}
 
 	// Legacy linked companions must be unregistered from the source repository.
-	cmd := exec.Command(
-		"git", gitArgs(
-			binding.Repository,
-			[]string{"worktree", "remove", "--force", "--", binding.Workspace},
-		)...,
-	)
+	cmd := forkspace.GitRefCommand(context.Background(), binding.Repository, "worktree", "remove", "--force", "--", binding.Workspace)
 	cmd.Env = sessionCompanionGitEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf(

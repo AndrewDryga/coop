@@ -1,6 +1,7 @@
 package forkctl
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -701,7 +702,13 @@ func forkWithInterruptedRebase(t *testing.T) (string, string) {
 	}
 	git(t, ws, "add", "-A")
 	git(t, ws, "commit", "-qm", "sibling work")
-	if out, err := exec.Command("git", "-C", ws, "rebase", "sibling", "perf").CombinedOutput(); err == nil {
+	// Strand it the way a killed coop would: through the trusted git view, where coop's own
+	// rebases keep their state (a later coop process finds it there and aborts it).
+	rebase, err := forkspace.GitCommand(context.Background(), ws, "rebase", "sibling", "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := rebase.CombinedOutput(); err == nil {
 		t.Fatalf("fixture: the rebase was meant to conflict:\n%s", out)
 	}
 	if leftoverRebaseState(ws) == "" {
