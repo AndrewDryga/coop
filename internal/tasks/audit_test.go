@@ -2823,7 +2823,7 @@ func TestOwnerRecordFailurePaths(t *testing.T) {
 	t.Run("owned and foreign-leased is reported once as owned, not also busy", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), ".agent", "tasks")
 		item := taskForLease(t, root, StateInProgress, "double-guarded")
-		if err := claimTaskOwnerRecord(root, item.ID); err != nil {
+		if _, err := claimTaskOwnerRecord(root, item.ID, claimOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		foreign, _, err := TryTaskLease(root, item, testLeaseOwner())

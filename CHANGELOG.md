@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A claim made by an agent is bound to the agent's process.** `coop tasks claim` run without a
+  terminal records the claiming process — coop's parent, or the nearest non-shell ancestor, so an
+  IDE agent's tool shell is never the owner — as a pid plus start token. `--as <label>` names it,
+  `--pid <n>` picks it, and `--force` takes over a live claim. `ls` and `watch` show
+  "claimed by codex (pid 812)" and "owner process gone", a second claim by a different live process
+  is refused, and `coop loop --preflight` releases claims whose process is gone so the loop resumes
+  them from `state.md`. A claim made at a terminal is a person's: bound to nothing and never
+  released by the loop.
+
 - Long worker IDs no longer stop polling as the sequence grows. Poll references stay within
   protocol limits while preserving the advertised identity and exact response matching.
 

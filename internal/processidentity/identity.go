@@ -51,3 +51,10 @@ func Inspect(pid int, token string) State {
 	}
 	return Match
 }
+
+// Parent returns pid's parent pid, or 0 when it cannot be read.
+func Parent(pid int) int { return platformParent(pid) }
+
+// Command returns the kernel's short command name for pid (the executable's basename, truncated the
+// way the kernel truncates it), or "" when it cannot be read.
+func Command(pid int) string { return platformCommand(pid) }

@@ -5,10 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
@@ -193,6 +195,37 @@ func TestLoopTaskLimitWithNoActionableTaskNeedsNoImage(t *testing.T) {
 	code, err := c.Run(RunSpec{Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, Preflight: true, MaxTasks: 3})
 	if err != nil || code != 0 {
 		t.Fatalf("idle task-limited loop = (%d, %v), want success without an image", code, err)
+	}
+}
+
+// Pre-flight releases a claim whose owning process is gone, so the loop can resume that task
+// instead of skipping it forever as "claimed".
+func TestLoopPreflightReleasesGoneOwnerClaims(t *testing.T) {
+	t.Setenv(tasks.TestLeaseAuthorityRootEnv, t.TempDir())
+	repo := t.TempDir()
+	root := filepath.Join(repo, tasksRoot)
+	writeTaskFile(t, filepath.Join(root, stateTodo, "2026-01-01-orphan", "task.md"), "# Orphan\n")
+	sleeper := exec.Command("sleep", "60")
+	if err := sleeper.Start(); err != nil {
+		t.Skipf("cannot start a sleeper: %v", err)
+	}
+	if !processidentity.Stable(processidentity.StartToken(sleeper.Process.Pid)) {
+		_ = sleeper.Process.Kill()
+		_ = sleeper.Wait()
+		t.Skip("no stable process identity on this platform")
+	}
+	if code, err := tasks.CmdTasksFolder(repo, root, []string{"claim", "2026-01-01-orphan", "--as", "codex", "--pid", strconv.Itoa(sleeper.Process.Pid)}); code != 0 || err != nil {
+		t.Fatalf("claim bound to the sleeper = %d, %v", code, err)
+	}
+	_ = sleeper.Process.Kill()
+	_ = sleeper.Wait()
+
+	c := New(&config.Config{RepoOverride: repo}, runtime.Runtime{Name: "false"}, "test", Host{})
+	// The task becomes actionable once released, so the run then fails on the missing image; the
+	// release itself is what this proves.
+	code, runErr := c.Run(RunSpec{Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, Preflight: true, MaxTasks: 1})
+	if _, owned, err := tasks.ReadTaskOwnerRecord(root, "2026-01-01-orphan"); err != nil || owned {
+		t.Fatalf("owner record after pre-flight = owned %t, err %v; want the dead owner's claim released (run = %d, %v)", owned, err, code, runErr)
 	}
 }
 

@@ -208,13 +208,8 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// unblock answered decisions, since that is host-only and can make work actionable.
 	preflightBuiltinRan := false
 	if limit.enabled() && preflight && len(custom) == 0 {
-		ui.Info("pre-flight: resolving answered blockers")
-		ids, err := tasks.UnblockResolved(hosts)
-		if err != nil {
+		if err := builtinPreflight(hosts); err != nil {
 			return 1, err
-		}
-		if len(ids) > 0 {
-			ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
 		}
 		preflightBuiltinRan = true
 	}
@@ -363,13 +358,8 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// custom work.command (not the agent's headless form).
 	if preflight && len(custom) == 0 {
 		if !preflightBuiltinRan {
-			ui.Info("pre-flight: resolving answered blockers")
-			ids, err := tasks.UnblockResolved(hosts)
-			if err != nil {
+			if err := builtinPreflight(hosts); err != nil {
 				return 1, err
-			}
-			if len(ids) > 0 {
-				ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
 			}
 		}
 		// An agent runs only for a CUSTOM cleanup (loop.yaml preflight.prompt) — extra instructions
@@ -1222,4 +1212,27 @@ func (c *Control) advanceStall(repo string, hosts []string, prevHead string, set
 		return prevHead, settledBaseline, stalls, fmt.Errorf("no task finished, blocked, or committed in %d iterations — stopping (stuck on %q?)", maxStalls, active)
 	}
 	return prevHead, newBase, newStalls, nil
+}
+
+// builtinPreflight is the host-side pre-loop tidy: no box, no model, no tokens. It returns blocked
+// tasks whose decision.md now carries a Resolution to todo, and releases claims whose owning
+// process is gone — both make work actionable again, so both run before the loop decides whether
+// there is anything to do.
+func builtinPreflight(hosts []string) error {
+	ui.Info("pre-flight: resolving answered blockers")
+	ids, err := tasks.UnblockResolved(hosts)
+	if err != nil {
+		return err
+	}
+	if len(ids) > 0 {
+		ui.Info("pre-flight: unblocked %s — resolution filled in", strings.Join(ids, ", "))
+	}
+	released, err := tasks.ReleaseGoneOwners(hosts)
+	if err != nil {
+		return err
+	}
+	if len(released) > 0 {
+		ui.Info("pre-flight: released %s — the claiming process is gone", strings.Join(released, ", "))
+	}
+	return nil
 }

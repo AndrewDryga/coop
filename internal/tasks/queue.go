@@ -496,7 +496,16 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 	// The id is the first positional token; with none, delegate as-is so the subcommand's own
 	// usage error (e.g. "usage: coop tasks claim <id>") is what the user sees.
 	id := removal.id
-	if sub != "rm" {
+	switch sub {
+	case "rm":
+	case "claim":
+		// claim's flags take values (--as codex), so the first non-flag token is not the id.
+		parsed, _, err := parseClaimArgs(args)
+		if err != nil {
+			return 2, err
+		}
+		id = parsed
+	default:
 		for _, x := range args {
 			if !strings.HasPrefix(x, "-") {
 				id = x

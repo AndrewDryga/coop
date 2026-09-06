@@ -41,3 +41,31 @@ func linuxStartTicks(stat []byte) (string, bool) {
 	}
 	return start, true
 }
+
+func platformParent(pid int) int {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0
+	}
+	endComm := strings.LastIndexByte(string(b), ')')
+	if endComm < 0 {
+		return 0
+	}
+	fields := strings.Fields(string(b[endComm+1:]))
+	if len(fields) < 2 { // field 3 (state) is index 0 here; ppid is field 4, index 1
+		return 0
+	}
+	ppid, err := strconv.Atoi(fields[1])
+	if err != nil || ppid < 0 {
+		return 0
+	}
+	return ppid
+}
+
+func platformCommand(pid int) string {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}

@@ -216,7 +216,7 @@ spelled out here (there's room to render them).
 |---|---|
 | `coop tasks ls` | show the queue, grouped by state (a folder per task; its directory *is* its state) |
 | `coop tasks watch` | one live board for canonical tasks and every local/fork/ACP/session sandbox (auto-exits when work drains; Ctrl-C anytime) |
-| `coop tasks add "<title>"` · `claim` · `release` · `block` · `unblock` · `done` · `rm` | move one task through its states (moving its folder is the state change); `release` hands a claim back without finishing it |
+| `coop tasks add "<title>"` · `claim [--as <label>] [--pid <n>] [--force]` · `release` · `block` · `unblock` · `done` · `rm` | move one task through its states (moving its folder is the state change); an agent's claim binds to its process so `ls`/`watch` show who holds the task and whether it is still alive, and `coop loop --preflight` releases a claim whose process is gone; `release` hands a claim back without finishing it |
 | `coop tasks decisions [-i]` · `lint` | what's blocked on a decision (`-i` to answer) · check the canonical tree |
 | `coop backlog` · `add "<title>"` · `promote <id>` · `rm <id>` | park unscheduled ideas in the `xx_backlog/` drawer — same folder format, but outside the lifecycle (never auto-worked, never nagged); `promote` moves one into `00_todo/` when it's ready |
 

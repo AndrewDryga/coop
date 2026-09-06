@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/processidentity"
 )
 
 const (
@@ -69,6 +70,15 @@ type TaskOwnerRecord struct {
 	User      string    `json:"user,omitempty"`
 	Host      string    `json:"host,omitempty"`
 	ClaimedAt time.Time `json:"claimed_at,omitempty"`
+
+	// A claim made by an agent process (no terminal) is bound to that process: Actor is the label
+	// the queue shows (the process's command name unless --as named it), ActorPID/ActorStart its
+	// kernel identity, read back through processidentity so a reused pid never counts as the same
+	// owner. Liveness is inspected when a row is rendered, never stored. All three stay empty for
+	// a person's claim.
+	Actor      string `json:"actor,omitempty"`
+	ActorPID   int    `json:"actor_pid,omitempty"`
+	ActorStart string `json:"actor_start,omitempty"`
 
 	Fork *ForkTaskOwner `json:"fork,omitempty"`
 }
@@ -130,7 +140,8 @@ func validateTaskOwnerRecord(record TaskOwnerRecord, id string) error {
 	switch record.Version {
 	case taskOwnerRecordVersion:
 		if record.Kind != "" || record.Task != nil || record.Fork != nil || record.Source == "" ||
-			strings.TrimSpace(record.User) == "" || strings.TrimSpace(record.Host) == "" || record.ClaimedAt.IsZero() {
+			strings.TrimSpace(record.User) == "" || strings.TrimSpace(record.Host) == "" || record.ClaimedAt.IsZero() ||
+			record.Actor != "" || record.ActorPID != 0 || record.ActorStart != "" {
 			return errors.New("invalid legacy task owner record")
 		}
 		return nil
@@ -148,10 +159,16 @@ func validateTaskOwnerRecord(record TaskOwnerRecord, id string) error {
 				record.ClaimedAt.IsZero() {
 				return errors.New("invalid human task owner record")
 			}
+			if record.Actor != claimActorLabel(record.Actor) ||
+				(record.ActorPID != 0) != (record.ActorStart != "") ||
+				(record.ActorPID != 0 && (record.ActorPID <= 1 || !processidentity.Stable(record.ActorStart))) {
+				return errors.New("invalid claim actor identity")
+			}
 		case TaskOwnerFork:
 			owner := record.Fork
 			if owner == nil || record.Source != "" || record.User != "" || record.Host != "" ||
-				!record.ClaimedAt.IsZero() || owner.Fork.Name == "" ||
+				!record.ClaimedAt.IsZero() || record.Actor != "" || record.ActorPID != 0 || record.ActorStart != "" ||
+				owner.Fork.Name == "" ||
 				!forkspace.ValidGeneration(owner.Fork.Generation) || !validAssignmentID(owner.AssignmentID) ||
 				!validForkPhase(owner.Phase) || !filepath.IsAbs(owner.Projection) ||
 				filepath.Clean(owner.Projection) != owner.Projection || !validCommitID(owner.BaselineHead) ||
@@ -379,11 +396,25 @@ func UpdateForkTaskAssignment(root, id string, expected ForkTaskOwner, update fu
 	return record, nil
 }
 
+// TaskOwnerLabel renders who holds a task. A human claim names its actor — the claiming agent's
+// process, or the user when the claim was made at a terminal — and, when the claim is bound to a
+// process, whether that process still exists. Liveness is read here, at render time, never stored.
 func TaskOwnerLabel(record TaskOwnerRecord) string {
 	if record.Kind == TaskOwnerFork && record.Fork != nil {
 		return "assigned to fork " + record.Fork.Fork.Name + " (" + string(record.Fork.Phase) + ")"
 	}
-	return "claimed by " + record.User
+	who := record.User
+	if record.Actor != "" {
+		who = record.Actor
+	}
+	if record.ActorPID == 0 {
+		return "claimed by " + who
+	}
+	label := fmt.Sprintf("claimed by %s (pid %d)", who, record.ActorPID)
+	if !ownerProcessLive(record) {
+		label += " · owner process gone"
+	}
+	return label
 }
 
 func refuseForkTaskOwner(root, id, action string) error {

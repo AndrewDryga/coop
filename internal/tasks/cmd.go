@@ -10,6 +10,7 @@ import (
 	osuser "os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -32,12 +33,12 @@ type taskArgSpec struct {
 
 // taskArgSpecs validates the structured `coop tasks` subcommands so an unsupported flag or a stray
 // argument fails loudly instead of being silently ignored or mistaken for an id. add takes a
-// free-form title that may start with "-"; rm, unblock and decisions validate their own grammar, so
-// those commands are intentionally absent.
+// free-form title that may start with "-"; claim, rm, unblock and decisions validate their own
+// grammar, so those commands are intentionally absent.
 var taskArgSpecs = map[string]taskArgSpec{
-	"ls":    {lsFlags, 0},
-	"lint":  {nil, 0},
-	"claim": {nil, 1}, "release": {nil, 1}, "path": {nil, 1},
+	"ls":      {lsFlags, 0},
+	"lint":    {nil, 0},
+	"release": {nil, 1}, "path": {nil, 1},
 	"block": {nil, 1}, "done": {nil, 1},
 }
 
@@ -130,7 +131,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "add":
 		return tasksFolderAdd(root, args, StateTodo, "tasks add")
 	case "claim":
-		return tasksFolderMove(root, args, StateInProgress, "claim", "claimed")
+		return tasksFolderClaim(root, args)
 	case "release":
 		return tasksFolderRelease(root, args)
 	case "block":
@@ -459,50 +460,159 @@ func taskOwnerIdentity() (user, host string) {
 	return user, host
 }
 
+// claimOptions is what `coop tasks claim` learned from its flags and its own process tree: the
+// actor the claim binds to (zero for a person at a terminal) and whether a live competing claim
+// may be taken over.
+type claimOptions struct {
+	actor ClaimActor
+	force bool
+}
+
+var errTaskClaimedByOther = errors.New("task is claimed by another live process")
+
+// competingClaim reports whether an existing claim blocks a new one: only a claim bound to a
+// process that is still alive and is not the claimer's own does. A person's claim (no process) or
+// a claim whose process is gone is taken over silently, as every re-claim was before claims
+// carried an identity — the point of binding is to tell "someone is on this" from "someone was".
+func competingClaim(existing TaskOwnerRecord, actor ClaimActor) bool {
+	if existing.Kind != TaskOwnerHuman || existing.ActorPID == 0 || !ownerProcessLive(existing) {
+		return false
+	}
+	return existing.ActorPID != actor.PID || existing.ActorStart != actor.StartToken
+}
+
 // claimTaskOwnerRecord writes durable evidence that a HUMAN — not a loop-adopted process — owns
 // this task, so assignLoopTaskOnly refuses to adopt it even long after the `coop tasks claim`
 // process that called this has exited. Called ONLY from the interactive claim path below: the
 // loop's own todo->in_progress adoption (assignLoopTaskOnly -> moveTaskDir) must never call this, or
-// the loop would lock itself out of its own resumed work.
-func claimTaskOwnerRecord(root, id string) error {
+// the loop would lock itself out of its own resumed work. It returns the label of a previous owner
+// whose process was gone, so the caller can say the claim was a takeover.
+func claimTaskOwnerRecord(root, id string, opts claimOptions) (string, error) {
 	lock, err := lockTaskOwner(root, id)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer lock.Close()
+	replaced := ""
 	if record, ok, err := lock.Read(); err != nil {
-		return err
+		return "", err
 	} else if ok && record.Kind == TaskOwnerFork {
-		return fmt.Errorf("%w: %s", ErrTaskSandboxOwned, TaskOwnerLabel(record))
+		return "", fmt.Errorf("%w: %s", ErrTaskSandboxOwned, TaskOwnerLabel(record))
+	} else if ok && !opts.force && competingClaim(record, opts.actor) {
+		return "", fmt.Errorf("%w: %s is %s — release it first (coop tasks release %s) or take it over with --force",
+			errTaskClaimedByOther, id, TaskOwnerLabel(record), id)
+	} else if ok && record.ActorPID != 0 && !ownerProcessLive(record) {
+		replaced = TaskOwnerLabel(record)
 	}
 	item, ok, err := CurrentTask(root, id)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !ok {
-		return errors.New("task changed before its claim could be recorded")
+		return "", errors.New("task changed before its claim could be recorded")
 	}
 	instance, err := EnsureTaskInstance(root, item)
 	if err != nil {
-		return err
+		return "", err
 	}
 	user, host := taskOwnerIdentity()
-	return lock.Write(TaskOwnerRecord{
-		Version:   taskOwnershipRecordVersion,
-		TaskID:    id,
-		Kind:      TaskOwnerHuman,
-		Task:      &instance,
-		Source:    taskOwnerSourceInteractiveClaim,
-		User:      user,
-		Host:      host,
-		ClaimedAt: time.Now(),
+	return replaced, lock.Write(TaskOwnerRecord{
+		Version:    taskOwnershipRecordVersion,
+		TaskID:     id,
+		Kind:       TaskOwnerHuman,
+		Task:       &instance,
+		Source:     taskOwnerSourceInteractiveClaim,
+		User:       user,
+		Host:       host,
+		ClaimedAt:  time.Now(),
+		Actor:      opts.actor.Label,
+		ActorPID:   opts.actor.PID,
+		ActorStart: opts.actor.StartToken,
 	})
+}
+
+// claimSuffix names the actor a claim bound to, for the success line.
+func claimSuffix(actor ClaimActor) string {
+	switch {
+	case actor.PID != 0:
+		return fmt.Sprintf(" as %s (pid %d)", actor.Label, actor.PID)
+	case actor.Label != "":
+		return " as " + actor.Label
+	}
+	return ""
+}
+
+// parseClaimArgs reads `coop tasks claim <id> [--as <label>] [--pid <n>] [--force]`.
+func parseClaimArgs(args []string) (string, claimOptions, error) {
+	var id string
+	var opts claimOptions
+	for i := 0; i < len(args); i++ {
+		key, value, hasValue := strings.Cut(args[i], "=")
+		switch key {
+		case "--as", "--pid":
+			if !hasValue {
+				if i+1 >= len(args) {
+					return "", opts, fmt.Errorf("coop tasks claim: %s needs a value", key)
+				}
+				i++
+				value = args[i]
+			}
+			if key == "--as" {
+				if label := claimActorLabel(value); label == "" || label != value {
+					return "", opts, errors.New("coop tasks claim: --as takes a short label of letters, digits, and - _ @ . :")
+				}
+				opts.actor.Label = value
+				continue
+			}
+			n, err := strconv.Atoi(value)
+			if err != nil || n <= 1 {
+				return "", opts, errors.New("coop tasks claim: --pid takes the process id of the claiming agent")
+			}
+			opts.actor.PID = n
+		case "--force":
+			opts.force = true
+		default:
+			if strings.HasPrefix(args[i], "-") && args[i] != "-" {
+				return "", opts, fmt.Errorf("coop tasks claim: unknown flag %q (supported: --as, --pid, --force)", args[i])
+			}
+			if id != "" {
+				return "", opts, errors.New("coop tasks claim: too many arguments (expected one task id)")
+			}
+			id = args[i]
+		}
+	}
+	if id == "" {
+		return "", opts, errors.New("usage: coop tasks claim <id> [--as <label>] [--pid <n>] [--force]")
+	}
+	return id, opts, nil
+}
+
+// tasksFolderClaim is the `coop tasks claim` entry: it binds the claim to the process that made it
+// (see captureClaimActor) before the move so the queue can show who holds the task and whether
+// they are still alive.
+func tasksFolderClaim(root string, args []string) (int, error) {
+	id, opts, err := parseClaimArgs(args)
+	if err != nil {
+		return 2, err
+	}
+	requested := opts.actor.PID
+	opts.actor = captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), opts.actor)
+	if requested != 0 && opts.actor.PID == 0 {
+		return 1, fmt.Errorf("coop tasks claim: no live process with a readable identity at pid %d — is it running?", requested)
+	}
+	return tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", "claimed", opts)
 }
 
 // tasksFolderMove relocates a task's folder to newState (claim/done). verb is the imperative used
 // in the usage line ("claim"); pastVerb is the past tense for the success note ("claimed"). Moving
 // to the state it's already in is a no-op note, not an error.
 func tasksFolderMove(root string, args []string, newState, verb, pastVerb string) (int, error) {
+	return tasksFolderMoveWith(root, args, newState, verb, pastVerb, claimOptions{})
+}
+
+// tasksFolderMoveWith is tasksFolderMove with the claim's actor and takeover choice; done and every
+// non-CLI claim pass an empty claimOptions, which binds the claim to nothing.
+func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb string, opts claimOptions) (int, error) {
 	if len(args) < 1 {
 		return 2, fmt.Errorf("usage: coop tasks %s <id>", verb)
 	}
@@ -521,10 +631,18 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 			// Re-claiming a task already in progress (yours, or one the loop currently holds) is a
 			// legitimate take-over, not a no-op: it (re)asserts durable ownership regardless of who
 			// put it there.
-			if err := claimTaskOwnerRecord(root, t.ID); err != nil {
+			replaced, err := claimTaskOwnerRecord(root, t.ID, opts)
+			if errors.Is(err, errTaskClaimedByOther) {
+				return 1, err
+			}
+			if err != nil {
 				return -1, fmt.Errorf("%s is already in progress, but recording your claim failed: %w", t.ID, err)
 			}
-			ui.OK("claimed %s — already in progress; the loop won't adopt it again until you release it", t.ID)
+			if replaced != "" {
+				ui.OK("claimed %s%s — took over from %s", t.ID, claimSuffix(opts.actor), replaced)
+			} else {
+				ui.OK("claimed %s%s — already in progress; the loop won't adopt it again until you release it", t.ID, claimSuffix(opts.actor))
+			}
 		default:
 			ui.Note("%s is already %s", t.ID, StateLabel(newState))
 		}
@@ -541,7 +659,10 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 		// blocking the loop forever: fail-closed cuts both ways here (no gap while claiming, no
 		// orphan record when claiming fails).
 		if newState == StateInProgress {
-			if err := claimTaskOwnerRecord(root, t.ID); err != nil {
+			if _, err := claimTaskOwnerRecord(root, t.ID, opts); err != nil {
+				if errors.Is(err, errTaskClaimedByOther) {
+					return 1, err
+				}
 				return -1, fmt.Errorf("record claim ownership for %s: %w", t.ID, err)
 			}
 		}
@@ -558,7 +679,11 @@ func tasksFolderMove(root string, args []string, newState, verb, pastVerb string
 			return -1, err
 		}
 	}
-	ui.OK("%s %s", pastVerb, t.ID)
+	suffix := ""
+	if newState == StateInProgress {
+		suffix = claimSuffix(opts.actor)
+	}
+	ui.OK("%s %s%s", pastVerb, t.ID, suffix)
 	return 0, nil
 }
 

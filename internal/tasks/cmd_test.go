@@ -653,7 +653,7 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := claimTaskOwnerRecord(root, task.ID); err != nil {
+	if _, err := claimTaskOwnerRecord(root, task.ID, claimOptions{}); err != nil {
 		t.Fatal(err)
 	}
 

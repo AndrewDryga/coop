@@ -3051,8 +3051,8 @@ func skipOwnedCandidate(root, id string, noted map[string]bool) (bool, error) {
 		if rec.Kind == TaskOwnerFork {
 			ui.Info("%s is %s — the local loop will not adopt it", id, TaskOwnerLabel(rec))
 		} else {
-			ui.Info("%s is claimed by %s@%s — the loop will not adopt it; release it first: coop tasks release %s",
-				id, rec.User, rec.Host, id)
+			ui.Info("%s is %s — the loop will not adopt it; release it first: coop tasks release %s",
+				id, TaskOwnerLabel(rec), id)
 		}
 	}
 	return true, nil
@@ -3336,6 +3336,64 @@ func UnblockResolved(hosts []string) ([]string, error) {
 		}
 	}
 	return ids, nil
+}
+
+// ReleaseGoneOwners is the pre-flight tidy for process-bound claims: a human claim whose owning
+// process is provably gone (a dead pid, or a reused pid with a different start token) is released
+// so the loop can resume the task from its state.md. A claim with no process identity — a person
+// at a keyboard — is never touched, and an identity that cannot be inspected counts as alive.
+// Returns the released ids in readTaskTree order.
+func ReleaseGoneOwners(hosts []string) ([]string, error) {
+	var ids []string
+	for _, host := range hosts {
+		items, err := ReadTaskTree(host)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range items {
+			if t.State != StateInProgress {
+				continue
+			}
+			record, owned, err := ReadTaskOwnerRecord(host, t.ID)
+			if err != nil {
+				ui.Warn("pre-flight: could not read the owner of %s: %v — claim left in place", t.ID, err)
+				continue
+			}
+			if !owned || record.Kind != TaskOwnerHuman || record.ActorPID == 0 || ownerProcessLive(record) {
+				continue
+			}
+			released, err := releaseGoneOwner(host, t.ID, record)
+			if err != nil {
+				ui.Warn("pre-flight: could not release %s: %v", t.ID, err)
+				continue
+			}
+			if !released {
+				continue
+			}
+			appendTaskLog(t.Dir, fmt.Sprintf("preflight: released the claim — %s", TaskOwnerLabel(record)))
+			ids = append(ids, t.ID)
+		}
+	}
+	return ids, nil
+}
+
+// releaseGoneOwner removes one process-bound human claim under the owner lock, re-reading the
+// record and re-inspecting the process there so a claim replaced or revived in between survives.
+func releaseGoneOwner(root, id string, expected TaskOwnerRecord) (bool, error) {
+	lock, err := lockTaskOwner(root, id)
+	if err != nil {
+		return false, err
+	}
+	defer lock.Close()
+	record, ok, err := lock.Read()
+	if err != nil || !ok {
+		return false, err
+	}
+	if record.Kind != TaskOwnerHuman || record.ActorPID != expected.ActorPID ||
+		record.ActorStart != expected.ActorStart || ownerProcessLive(record) {
+		return false, nil
+	}
+	return true, removeTaskOwnerRecordFile(root, id)
 }
 
 func AppendTaskLogStrict(taskDir, note string) error {
