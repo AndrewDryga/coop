@@ -30,6 +30,7 @@ type ProjectTaskSnapshot struct {
 	Path         string                           `json:"path"`
 	Task         *TaskInstance                    `json:"task,omitempty"`
 	Owner        string                           `json:"owner,omitempty"`
+	Lease        string                           `json:"lease,omitempty"`
 	Fork         *forkspace.Identity              `json:"fork,omitempty"`
 	AssignmentID string                           `json:"assignment_id,omitempty"`
 	Phase        ForkAssignmentPhase              `json:"phase,omitempty"`
@@ -180,6 +181,12 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 				view.Task = &instance
 				view.QueueID = instance.Ref.QueueID
 				key = snapshotTaskKey(instance.Ref.QueueID, instance.Ref.TaskID, root, item.ID)
+			}
+			if item.State == StateInProgress {
+				// Only a HELD lock is a lease (busy or stalled); an unleased task carries no field.
+				if lease := observeTaskLease(item, time.Now()); lease.State != leaseUnleased {
+					view.Lease = lease.label()
+				}
 			}
 			owner, owned, ownerErr := ReadTaskOwnerRecord(root, item.ID)
 			if ownerErr != nil {

@@ -2,7 +2,7 @@
 name: task-authority-model
 description: four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 subsystem: tasks
-sources: [internal/tasks/claimactor.go, internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/loop/lock.go]
+sources: [internal/tasks/lease_cmd.go, internal/tasks/claimactor.go, internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/loop/lock.go]
 updated: 2026-09-06
 ---
 Coop has FOUR separate authorities over a task and its checkout. Each answers a different question,
@@ -13,7 +13,7 @@ own top-of-file comment (`audit.go`) points back here rather than repeating it.
 | # | Authority | Mechanism | Where | Held for | Kind |
 |---|-----------|-----------|-------|----------|------|
 | 1 | **Owner** | typed durable record, `<key>.owner.json` | `internal/tasks/owner.go`; human claim (bound to the claiming process — pid + start token, `internal/tasks/claimactor.go` — when made without a terminal) or exact fork assignment | until human release, exact land, journaled discard, or `coop loop --preflight` finding the bound process gone (`ReleaseGoneOwners`, `internal/tasks/audit.go`) | record |
-| 2 | **Lease** | kernel flock, `<key>.lock` | `internal/tasks/lease.go` (`lockLeaseAuthority`, :458; `TryTaskLease`, :1218) | one loop iteration | process lock |
+| 2 | **Lease** | kernel flock, `<key>.lock` | `internal/tasks/lease.go` (`lockLeaseAuthority`, `TryTaskLease`); an outside agent holds the same lock through `coop tasks lease` (`internal/tasks/lease_cmd.go`) | one loop iteration, or one outside holder's command/process | process lock |
 | 3 | **Checkout** | kernel flock, `.locks/loop-<sha>.lock` | `lockLoopCheckout`, `internal/loop/lock.go:25` | one whole `coop loop` run | process lock |
 | 4 | **Ref** | kernel flock, `.locks/ref-<sha>.lock` | `LockRefAuthority`/`EnterRefAuthorityWindow`, `internal/tasks/refauthority.go:36,134` | validate→finalize→consume only (short) | process lock |
 
@@ -151,3 +151,4 @@ lifecycle STATE; these four decide who may act on it.
   `internal/cli/commands.go:94` (`internal/cli/fork_loop.go` is retired). Both bodies are unchanged,
   and the four-authority model is untouched.
 - 2026-09-06 — an agent's claim is bound to its process identity and released by pre-flight once that process is gone; a person's claim (made at a terminal) stays unbound. The lease stays the only live-work authority.
+- 2026-09-06 — `coop tasks lease` lets an outside agent hold the iteration lock; the loop treats it like another iteration (skip, then resume once released).

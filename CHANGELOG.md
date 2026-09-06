@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An agent working outside the loop can hold a task's lease.** `coop tasks lease <id>` takes the
+  same per-task lock a loop iteration takes and holds it for a command's lifetime
+  (`-- <command...>`), or, without one, until the bound process exits, the task leaves
+  in_progress, or the holder is stopped; the lock dies with the holder, so an abandoned agent can
+  never leave a task looking busy. `ls`, `watch`, and the `--json` snapshot show "busy <label>"
+  beside the claim, a `coop loop` in the same checkout skips the task meanwhile, and `coop tasks
+  done` or `block` run by the same agent stop its own holder first instead of refusing. `watch`
+  also stops printing "unleased" beside a claimed task, where it wrongly suggested the loop might
+  take it.
+
 - **A claim made by an agent is bound to the agent's process.** `coop tasks claim` run without a
   terminal records the claiming process — coop's parent, or the nearest non-shell ancestor, so an
   IDE agent's tool shell is never the owner — as a pid plus start token. `--as <label>` names it,

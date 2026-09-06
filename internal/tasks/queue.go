@@ -354,7 +354,7 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 			return tasksLintAll(repo, rels)
 		case "decisions":
 			return tasksDecisionsAll(repo, rels, rest[1:])
-		case "claim", "release", "block", "unblock", "done", "path", "rm":
+		case "claim", "release", "lease", "block", "unblock", "done", "path", "rm":
 			return tasksAcrossQueues(repo, rels, sub, rest)
 		case "":
 			return tasksListAll(repo, rels, nil)
@@ -505,6 +505,12 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 			return 2, err
 		}
 		id = parsed
+	case "lease":
+		parsed, err := parseLeaseArgs(args)
+		if err != nil {
+			return 2, err
+		}
+		id = parsed.id
 	default:
 		for _, x := range args {
 			if !strings.HasPrefix(x, "-") {

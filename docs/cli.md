@@ -361,6 +361,11 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
                    claim a task before you start it (todo -> in_progress); an agent's claim binds to
                    its process (--as names it, --pid picks it, --force takes over a live claim)
   release <id>     hand back a claim without finishing it (stays in_progress; the loop can adopt it)
+  lease <id> [--as <label>] [--pid <n>] [-- <command...>]
+                   hold the task's work lock — the one a loop iteration holds — for a command's
+                   lifetime, or until the bound process exits or the task moves; ls/watch show
+                   'busy <label>' and a loop in this checkout skips the task meanwhile ('done'
+                   and 'block' run by the same agent stop its own holder first)
   block <id>       park it on a decision (-> blocked) and write a decision.md stub
   unblock <id>     move it back to todo; add "<answer>" to record in decision.md
   done <id>        move it to done (the archive)
@@ -374,7 +379,9 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
   parent, or the nearest non-shell ancestor — so 'claimed by codex (pid 812)' says who holds the
   task, 'owner process gone' says that process died, a second claim by another live process is
   refused, and 'coop loop --preflight' releases claims whose process is gone. A claim made at a
-  terminal is a person's: bound to nothing, and never released by the loop.
+  terminal is a person's: bound to nothing, and never released by the loop. 'coop tasks lease'
+  adds the live half for an agent working outside the loop: the same kernel lock a loop iteration
+  holds, dying with the holder, so 'busy codex' can never outlive the process it names.
 
   A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
   numeric prefix just sorts 'ls' in lifecycle order — so each transition is a folder move.

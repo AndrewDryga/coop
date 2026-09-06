@@ -134,12 +134,16 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderClaim(root, args)
 	case "release":
 		return tasksFolderRelease(root, args)
+	case "lease":
+		return tasksFolderLease(root, args)
 	case "block":
 		return tasksFolderBlock(root, args)
 	case "unblock":
 		return tasksFolderUnblock(root, args)
 	case "done":
-		return tasksFolderMove(root, args, StateDone, "done", "done")
+		return tasksFolderMoveWith(root, args, StateDone, "done", "done", claimOptions{
+			actor: captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{}),
+		})
 	case "path":
 		return tasksFolderPath(root, args)
 	case "rm":
@@ -154,7 +158,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 // tasksVerbs are the canonical `coop tasks` subcommands (primary spellings, no aliases): the single
 // source for the unknown-subcommand suggester and isTasksSubcommand, so the two can't drift. `watch`
 // belongs here even though cmdTasks (not cmdTasksFolder) handles it — a mistype of it should suggest it.
-var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "block", "unblock", "done", "watch", "queues", "path", "rm", "decisions"}
+var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "lease", "block", "unblock", "done", "watch", "queues", "path", "rm", "decisions"}
 
 // isTasksSubcommand reports whether s names a `coop tasks` subcommand. cmdTasks uses it to catch
 // `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path. v3 keeps no
@@ -559,7 +563,7 @@ func parseClaimArgs(args []string) (string, claimOptions, error) {
 			}
 			if key == "--as" {
 				if label := claimActorLabel(value); label == "" || label != value {
-					return "", opts, errors.New("coop tasks claim: --as takes a short label of letters, digits, and - _ @ . :")
+					return "", opts, errors.New("coop tasks claim: --as takes a short label made of letters, digits, and the characters -_@.: only")
 				}
 				opts.actor.Label = value
 				continue
@@ -598,7 +602,7 @@ func tasksFolderClaim(root string, args []string) (int, error) {
 	requested := opts.actor.PID
 	opts.actor = captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), opts.actor)
 	if requested != 0 && opts.actor.PID == 0 {
-		return 1, fmt.Errorf("coop tasks claim: no live process with a readable identity at pid %d — is it running?", requested)
+		return 1, fmt.Errorf("coop tasks claim: no live process with a readable identity at pid %d — it is not running, or its identity cannot be read", requested)
 	}
 	return tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", "claimed", opts)
 }
@@ -649,6 +653,9 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		return 0, nil
 	}
 	if newState == StateDone {
+		if _, err := stopOwnLeaseHolder(root, t, opts.actor); err != nil {
+			return -1, err
+		}
 		if err := CompleteTrustedTask(root, t); err != nil {
 			return -1, trustedCompletionError(err, t.ID)
 		}
@@ -1362,6 +1369,9 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 		// Assignment and human block contend on the same task authority. Hold it together with the
 		// owner lock through check, move, and owner removal so preparing cannot appear after a stale
 		// precheck and become stranded in blocked.
+		if _, err := stopOwnLeaseHolder(root, t, captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{})); err != nil {
+			return -1, err
+		}
 		authority, err := lockLeaseAuthority(root, t.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
 		if err != nil {
 			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
@@ -1894,10 +1904,14 @@ func listMarkers(p ui.Palette, t Item) string {
 // adoption gate, so it degrades gracefully instead of failing the whole listing.
 func inProgressMarker(t Item) string {
 	root := filepath.Dir(filepath.Dir(t.Dir))
+	lease := observeTaskLease(t, time.Now())
 	if rec, owned, err := ReadTaskOwnerRecord(root, t.ID); err == nil && owned {
+		if lease.State != leaseUnleased {
+			return TaskOwnerLabel(rec) + " · " + lease.label() // claimed AND actively held
+		}
 		return TaskOwnerLabel(rec)
 	}
-	return observeTaskLease(t, time.Now()).label()
+	return lease.label()
 }
 
 func tasksFolderDecisions(root string, args []string) (int, error) {

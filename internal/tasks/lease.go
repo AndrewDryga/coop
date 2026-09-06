@@ -70,6 +70,13 @@ type TaskLeaseOwner struct {
 	Target   string
 	Now      func() time.Time
 	Ticker   func(time.Duration) (<-chan time.Time, func())
+
+	// An outside holder (`coop tasks lease`) also records its own start token and the agent
+	// identity it is bound to, so `coop tasks done` run by that same agent can tell the holder
+	// to stand down instead of refusing the completion. Loop iterations leave these empty.
+	ControllerStart string
+	ActorPID        int
+	ActorStart      string
 }
 
 func (o TaskLeaseOwner) now() time.Time {
@@ -80,13 +87,16 @@ func (o TaskLeaseOwner) now() time.Time {
 }
 
 type taskLeaseMetadata struct {
-	Version       int       `json:"version"`
-	RunID         string    `json:"run_id"`
-	ControllerPID int       `json:"controller_pid"`
-	Provider      string    `json:"provider"`
-	Target        string    `json:"target"`
-	AcquiredAt    time.Time `json:"acquired_at"`
-	HeartbeatAt   time.Time `json:"heartbeat_at"`
+	Version         int       `json:"version"`
+	RunID           string    `json:"run_id"`
+	ControllerPID   int       `json:"controller_pid"`
+	ControllerStart string    `json:"controller_start,omitempty"`
+	Provider        string    `json:"provider"`
+	Target          string    `json:"target"`
+	ActorPID        int       `json:"actor_pid,omitempty"`
+	ActorStart      string    `json:"actor_start,omitempty"`
+	AcquiredAt      time.Time `json:"acquired_at"`
+	HeartbeatAt     time.Time `json:"heartbeat_at"`
 }
 
 // TaskLease holds the host-only authoritative flock for one agent iteration. Metadata is keyed by
@@ -986,13 +996,16 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 		id:        item.ID,
 		authority: authority,
 		meta: taskLeaseMetadata{
-			Version:       leaseMetadataVersion,
-			RunID:         owner.RunID,
-			ControllerPID: owner.PID,
-			Provider:      owner.Provider,
-			Target:        owner.Target,
-			AcquiredAt:    now,
-			HeartbeatAt:   now,
+			Version:         leaseMetadataVersion,
+			RunID:           owner.RunID,
+			ControllerPID:   owner.PID,
+			ControllerStart: owner.ControllerStart,
+			Provider:        owner.Provider,
+			Target:          owner.Target,
+			ActorPID:        owner.ActorPID,
+			ActorStart:      owner.ActorStart,
+			AcquiredAt:      now,
+			HeartbeatAt:     now,
 		},
 		now:    owner.now,
 		ticker: owner.Ticker,
@@ -1063,7 +1076,7 @@ func leaseProvider(provider string) string {
 		return "unknown"
 	}
 	for _, r := range p {
-		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && r != '-' && r != '_' {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && !strings.ContainsRune("-_@.:", r) {
 			return "unknown"
 		}
 	}

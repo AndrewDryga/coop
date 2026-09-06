@@ -64,7 +64,7 @@ var allowedEdges = map[string][]string{
 	"session":               nil,
 	"sessionsvc":            {"agent", "box", "config", "forkspace", "ladder", "mcp", "runtime", "session", "tasks", "workerproto"},
 	"secretscan":            {},
-	"tasks":                 {"box", "config", "forkspace", "project", "taskstate", "ui"},
+	"tasks":                 {"box", "config", "forkspace", "processidentity", "project", "taskstate", "ui"},
 	"taskstate":             nil,
 	"testutil/gitrepo":      nil,
 	"testutil/liveprovider": {"agent", "config", "liveprocess", "processidentity", "testutil/procharness"},

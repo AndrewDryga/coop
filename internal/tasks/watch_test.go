@@ -348,10 +348,25 @@ func TestTaskWatchNamesHumanOwnerAndCanonicalQueue(t *testing.T) {
 		Item:  Item{Title: "Apply schema", State: StateInProgress},
 		owner: "claimed by alice", queue: "api/.agent/tasks",
 	}}, 0, 100)[0]
-	for _, want := range []string{"claimed by alice", "queue api/.agent/tasks", "unleased"} {
+	for _, want := range []string{"claimed by alice", "queue api/.agent/tasks"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("human-owned multi-queue row lost %q: %q", want, line)
 		}
+	}
+	// A claim is ownership; "unleased" beside it would wrongly suggest the loop may take the task.
+	if strings.Contains(line, "unleased") {
+		t.Fatalf("a claimed row must not read unleased: %q", line)
+	}
+	held := mergedQueue(ui.Palette{}, []mergedTask{{
+		Item:  Item{Title: "Apply schema", State: StateInProgress},
+		owner: "claimed by codex (pid 812)", lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex"},
+	}}, 0, 100)[0]
+	if !strings.Contains(held, "claimed by codex (pid 812)") || !strings.Contains(held, "busy codex") {
+		t.Fatalf("a claimed task with a held lease must show both: %q", held)
+	}
+	unclaimed := mergedQueue(ui.Palette{}, []mergedTask{{Item: Item{Title: "Apply schema", State: StateInProgress}}}, 0, 100)[0]
+	if !strings.Contains(unclaimed, "unleased") {
+		t.Fatalf("an unclaimed, unleased task still says so: %q", unclaimed)
 	}
 }
 
