@@ -747,8 +747,7 @@ func (s *Store) CompleteCreateSessionOperation(
 	req CreateSessionRequest,
 ) (Session, error) {
 	req = normalizeCreateRequest(req)
-	requestHash, err := CanonicalRequestHash(req)
-	if err != nil {
+	if _, err := CanonicalRequestHash(req); err != nil {
 		return Session{}, err
 	}
 	if expected.ID == "" || expected.Method != "CreateRemoteSession" || expected.State != OperationRunning {
@@ -804,12 +803,11 @@ func (s *Store) CompleteCreateSessionOperation(
 		}
 	case err != nil:
 		return Session{}, fmt.Errorf("read existing remote session: %w", err)
-	case !initialSessionMatchesRequest(sess, req):
-		return Session{}, ErrOperationIntentConflict
 	default:
-		if err := s.validateHistoricalSplitSessionTx(ctx, tx, expected, requestHash, req, sess); err != nil {
-			return Session{}, err
-		}
+		// A session that already exists for a still-running create can only be the retired
+		// two-operation shape, whose recovery needed freshness receipts no such crash could have
+		// recorded: it is an intent conflict, never finished by hand.
+		return Session{}, ErrOperationIntentConflict
 	}
 	result, err := json.Marshal(sess)
 	if err != nil {
@@ -840,50 +838,6 @@ func (s *Store) CompleteCreateSessionOperation(
 		return Session{}, fmt.Errorf("commit remote session creation: %w", err)
 	}
 	return sess, nil
-}
-
-func (s *Store) validateHistoricalSplitSessionTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	outer Operation,
-	requestHash string,
-	req CreateSessionRequest,
-	sess Session,
-) error {
-	inner, err := scanOperation(tx.QueryRowContext(ctx, `
-		SELECT id, method, idempotency_key, request_hash, state, resource_type,
-		       resource_id, result, error_code, error_detail, created_at, updated_at
-		FROM operations WHERE idempotency_key = ?`, "create-session-"+outer.ID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrOperationIntentConflict
-	}
-	if err != nil {
-		return fmt.Errorf("read historical inner create operation: %w", err)
-	}
-	if inner.Method != "CreateSession" || inner.State != OperationSucceeded ||
-		!historicalCreateRequestHashMatches(inner.RequestHash, requestHash, req, sess) ||
-		inner.ResourceType != "session" || inner.ResourceID != sess.ID {
-		return ErrOperationIntentConflict
-	}
-	innerSession, err := s.replaySession(inner)
-	if err != nil || !initialSessionMatchesRequest(innerSession, req) ||
-		!innerSession.CreatedAt.Equal(sess.CreatedAt) {
-		return ErrOperationIntentConflict
-	}
-	var eventType, turnID string
-	var eventVersion int
-	var payload []byte
-	if err := tx.QueryRowContext(ctx, `
-		SELECT turn_id, type, version, payload FROM events
-		WHERE session_id = ? AND sequence = 1`, sess.ID).
-		Scan(&turnID, &eventType, &eventVersion, &payload); err != nil {
-		return fmt.Errorf("read existing remote session creation event: %w", err)
-	}
-	if turnID != "" || EventType(eventType) != EventSessionCreated || eventVersion != 1 ||
-		!bytes.Equal(payload, mustJSON(map[string]any{"target": sess.Target})) {
-		return ErrOperationIntentConflict
-	}
-	return nil
 }
 
 func (s *Store) initialSession(req CreateSessionRequest) Session {
@@ -989,24 +943,6 @@ func initialSessionMatchesRequest(sess Session, req CreateSessionRequest) bool {
 
 func equalRepositoryFreshness(left, right []RepositoryFreshnessReceipt) bool {
 	return slices.Equal(left, right)
-}
-
-func historicalCreateRequestHashMatches(
-	storedHash string,
-	currentHash string,
-	req CreateSessionRequest,
-	sess Session,
-) bool {
-	if storedHash == currentHash {
-		return true
-	}
-	if sess.AuthorityDigest != "" || req.AuthorityDigest == "" {
-		return false
-	}
-	legacy := req
-	legacy.AuthorityDigest = ""
-	legacyHash, err := CanonicalRequestHash(legacy)
-	return err == nil && storedHash == legacyHash
 }
 
 func equalResponderBinding(left, right *ResponderBinding) bool {
@@ -3322,6 +3258,53 @@ func (s *Store) MarkSessionDiscarded(ctx context.Context, sessionID string) (Ses
 	}
 	if err := tx.Commit(); err != nil {
 		return Session{}, fmt.Errorf("commit session discard: %w", err)
+	}
+	return sess, nil
+}
+
+// RetireQuarantinedSession tombstones a session the daemon quarantined at start. Unlike
+// MarkSessionDiscarded it accepts any live state: a quarantined session can never run, so its
+// queued turns are exhausted the way a discard exhausts them and a turn that was active when the
+// daemon lost authority stays in history as it was, with the session's active pointer cleared.
+// Nothing on disk is touched here; the caller has already established that Coop holds no
+// authority over the workspace.
+func (s *Store) RetireQuarantinedSession(ctx context.Context, sessionID string) (Session, error) {
+	if sessionID == "" || !validBoundedText(sessionID, MaxIDBytes) {
+		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "session id is required"}
+	}
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Session{}, fmt.Errorf("begin quarantined session retirement: %w", err)
+	}
+	defer tx.Rollback()
+	sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", sessionID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrSessionNotFound
+	}
+	if err != nil {
+		return Session{}, fmt.Errorf("read session for retirement: %w", err)
+	}
+	if sess.State == SessionDiscarded {
+		return sess, nil
+	}
+	now := s.now()
+	if err := s.exhaustQueuedTx(ctx, tx, sessionID, now); err != nil {
+		return Session{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state = ?, activity = ?, active_turn_id = '', revision = revision + 1, updated_at = ? WHERE id = ?`,
+		string(SessionDiscarded), string(ActivityParked), now.UnixNano(), sessionID); err != nil {
+		return Session{}, fmt.Errorf("retire quarantined session: %w", err)
+	}
+	if _, err := s.appendEventTx(ctx, tx, sessionID, "", EventWorkspaceDiscarded, 1,
+		mustJSON(map[string]any{"state": string(SessionDiscarded), "retired": true})); err != nil {
+		return Session{}, fmt.Errorf("append workspace.discarded: %w", err)
+	}
+	sess, err = scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", sessionID))
+	if err != nil {
+		return Session{}, fmt.Errorf("read retired session: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Session{}, fmt.Errorf("commit quarantined session retirement: %w", err)
 	}
 	return sess, nil
 }

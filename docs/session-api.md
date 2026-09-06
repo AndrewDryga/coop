@@ -747,6 +747,23 @@ Discard first proves that the plan belongs to the path session. It then compares
 refuses a stale/replaced/running workspace, deletes the fork workspace and private ACP state, and
 leaves a durable discarded session tombstone. A failed comparison does not delete anything.
 
+A session the daemon quarantined at start — a record from before fork generations were persisted,
+or one whose generation record or workspace is gone — can be neither planned nor discarded this
+way, because Coop cannot prove it owns the workspace. Retire the record instead:
+
+```bash
+curl --unix-socket "$SOCKET" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: responder:retire:01J...' \
+  -d '{"retire_quarantined":true,"expected_revision":16}' \
+  http://localhost/v1/sessions/remote_.../discard
+```
+
+This tombstones the session row only: queued turns are exhausted, a turn that was active when the
+daemon lost authority stays in history as it was, and the workspace, sidecar services, and private
+ACP state stay on disk for the operator to inspect and remove. A session that is not quarantined
+is refused with `invalid_session_state`.
+
 ## Errors
 
 Errors have one shape:

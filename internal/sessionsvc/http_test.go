@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1242,5 +1243,38 @@ func TestSessionHTTPFenceReportsServiceFailuresAsInternal(t *testing.T) {
 	)
 	if malformed.Code != http.StatusBadRequest || !strings.Contains(malformed.Body.String(), "fenced request is invalid") {
 		t.Fatalf("an undecodable fence request = %d %s; want 400", malformed.Code, malformed.Body.String())
+	}
+}
+
+func TestSessionHTTPDiscardRetireQuarantinedBody(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	handler := NewHTTPHandler(service)
+	response := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"retire body"}`,
+		"create-retire-body", "application/json",
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("create status = %d body=%s", response.Code, response.Body.String())
+	}
+	var created sessionMutationSessionResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	healthy := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/discard",
+		`{"retire_quarantined":true,"expected_revision":`+strconv.FormatInt(created.Session.Revision, 10)+`}`,
+		"retire-healthy", "application/json",
+	)
+	if healthy.Code != http.StatusConflict || !strings.Contains(healthy.Body.String(), `"code":"invalid_session_state"`) {
+		t.Fatalf("retire of a healthy session over HTTP = %d %s", healthy.Code, healthy.Body.String())
+	}
+	mixed := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/discard",
+		`{"retire_quarantined":true,"plan_operation_id":"op_x"}`,
+		"retire-mixed", "application/json",
+	)
+	if mixed.Code != http.StatusBadRequest {
+		t.Fatalf("retire mixed with a plan = %d %s; want 400", mixed.Code, mixed.Body.String())
 	}
 }

@@ -43,7 +43,10 @@ Otherwise it quarantines the record: session/turn history remains readable, but 
 turns, inspect or review the workspace, clean its runtime or services, close it, or discard it.
 This prevents a deleted and recreated same-named fork from being mistaken for the old session.
 Inspect and preserve the quarantined workspace directly, then create a new remote session; never
-fabricate a generation or reservation file to make the old record attach.
+fabricate a generation or reservation file to make the old record attach. When you are done with
+the record, retire it: `POST /v1/sessions/<id>/discard` with
+`{"retire_quarantined":true,"expected_revision":<n>}` tombstones the row and leaves the workspace to
+you. The same applies to a session Coop quarantines later because its workspace vanished.
 
 ## The next release: strict `coop.conf`, one removal verb, schema v20
 

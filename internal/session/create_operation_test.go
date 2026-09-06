@@ -136,37 +136,6 @@ func TestCompleteCreateSessionOperationRejectsMissingRepositoryFreshness(t *test
 	}
 }
 
-func TestCompleteCreateSessionOperationFinishesAnExactHistoricalSplitCreate(t *testing.T) {
-	store := openTestStore(t, t.TempDir())
-	defer store.Close()
-	ctx := context.Background()
-	op := runningRemoteCreateOperation(t, store, "historical-outer")
-	req := remoteCreateSessionRequest("historical-session")
-	innerKey := "create-session-" + op.ID
-	inner, err := store.CreateSession(ctx, innerKey, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	completed, err := store.CompleteCreateSessionOperation(ctx, op, req)
-	if err != nil || completed.ID != inner.ID {
-		t.Fatalf("complete historical split create = %+v err=%v", completed, err)
-	}
-	innerOperation, err := store.GetOperation(ctx, innerKey)
-	if err != nil || innerOperation.State != OperationSucceeded || innerOperation.ResourceID != inner.ID {
-		t.Fatalf("historical inner operation = %+v err=%v", innerOperation, err)
-	}
-	var operations, events int
-	if err := store.db.QueryRow(`SELECT count(*) FROM operations`).Scan(&operations); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.db.QueryRow(`SELECT count(*) FROM events WHERE session_id = ?`, req.ID).Scan(&events); err != nil {
-		t.Fatal(err)
-	}
-	if operations != 2 || events != 1 {
-		t.Fatalf("historical rows changed: operations=%d events=%d", operations, events)
-	}
-}
-
 func TestCompleteCreateSessionOperationRejectsAnUnprovenExistingSession(t *testing.T) {
 	store := openTestStore(t, t.TempDir())
 	defer store.Close()

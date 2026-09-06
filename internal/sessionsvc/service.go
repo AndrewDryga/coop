@@ -2912,6 +2912,14 @@ func replayPlanDiscard(op session.Operation) (PlanDiscardResult, error) {
 
 type DiscardRequest struct {
 	PlanOperationID string `json:"plan_operation_id"`
+
+	// RetireQuarantined retires a session the daemon quarantined at start — a legacy record with
+	// no fork ownership proof, or one whose workspace is gone — as a discarded tombstone WITHOUT
+	// touching a workspace or service Coop cannot prove it owns. SessionID and ExpectedRevision
+	// name the exact record; the ordinary plan-then-discard path is refused for such sessions.
+	RetireQuarantined bool   `json:"retire_quarantined,omitempty"`
+	SessionID         string `json:"session_id,omitempty"`
+	ExpectedRevision  int64  `json:"expected_revision,omitempty"`
 }
 
 func (s *Service) Discard(ctx context.Context, key string, req DiscardRequest) (session.Session, error) {
@@ -2942,7 +2950,44 @@ type discardIntent struct {
 	Plan PlanDiscardResult `json:"plan"`
 }
 
+// executeRetireQuarantined tombstones a quarantined session's record. Quarantine means Coop could
+// not prove workspace authority at start, so nothing on disk is touched: the workspace, services,
+// and private ACP state stay exactly where the operator can inspect them. A session that is not
+// quarantined must go through plan-then-discard, which does hold that authority.
+func (s *Service) executeRetireQuarantined(ctx context.Context, op session.Operation, req DiscardRequest) (session.Session, error) {
+	if req.PlanOperationID != "" || req.SessionID == "" || req.ExpectedRevision <= 0 {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code: session.CodeInvalidRequest, Detail: "retiring a quarantined session takes session_id and expected_revision, not a plan",
+		})
+	}
+	sess, err := s.store.GetSession(ctx, req.SessionID)
+	if err != nil {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	if !s.sessionQuarantined(sess.ID) {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code: session.CodeInvalidSessionState, Detail: "session is not quarantined; plan and execute an ordinary discard",
+		})
+	}
+	if sess.Revision != req.ExpectedRevision {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code: session.CodeRevisionConflict, Detail: "session revision changed",
+		})
+	}
+	sess, err = s.store.RetireQuarantinedSession(ctx, sess.ID)
+	if err != nil {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	s.mu.Lock()
+	delete(s.quarantined, sess.ID)
+	s.mu.Unlock()
+	return s.completeDiscardOperation(ctx, op.ID, sess)
+}
+
 func (s *Service) executeDiscardRequest(ctx context.Context, op session.Operation, req DiscardRequest) (session.Session, error) {
+	if req.RetireQuarantined {
+		return s.executeRetireQuarantined(ctx, op, req)
+	}
 	if req.PlanOperationID == "" {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidRequest, Detail: "discard plan operation id is required"})
 	}

@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A quarantined session can be retired.** `POST /v1/sessions/{id}/discard` with
+  `{"retire_quarantined":true,"expected_revision":n}` tombstones a session the daemon quarantined
+  at start — a legacy record with no fork ownership proof, or one whose workspace is gone — without
+  touching a workspace or service Coop cannot prove it owns; such rows previously stayed in the
+  listing forever because neither close nor discard would accept them. Ordinary sessions still go
+  through plan-then-discard.
+
 - **Session receipts carry the Responder binding digest, never the bearer.** A session's private
   Responder token now lives in its canonical row only: the create, extend, close, and exhaust
   operation receipts, and any session replayed from them, serialize `responder_binding_digest`
@@ -262,7 +269,9 @@
 - **Remote session creation now has one durable operation.** The session row, first event, and
   public `CreateRemoteSession` receipt commit in one transaction instead of creating a hidden
   `CreateSession` operation with a duplicate result first. Existing operation history remains
-  readable, and restart recovery can finish an exact pre-change split create without adding one.
+  readable; a create that crashed mid-way under the old two-operation shape is reported as an
+  intent conflict on restart instead of being finished by hand, since no such crash can carry the
+  repository freshness receipts creation now requires.
 
 - **Turn retries no longer duplicate private prompts.** Submit, validation, and cancellation
   operations now keep a compact public replay receipt while canonical turns remain unchanged.

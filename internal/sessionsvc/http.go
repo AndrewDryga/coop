@@ -1162,9 +1162,30 @@ func (h *sessionHTTPHandler) discard(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 	var body struct {
-		PlanOperationID string `json:"plan_operation_id"`
+		PlanOperationID   string `json:"plan_operation_id"`
+		RetireQuarantined bool   `json:"retire_quarantined"`
+		ExpectedRevision  int64  `json:"expected_revision"`
 	}
 	if !decodeSessionJSON(w, r, &body) {
+		return
+	}
+	if body.RetireQuarantined {
+		if body.PlanOperationID != "" || body.ExpectedRevision <= 0 {
+			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "retire_quarantined takes expected_revision and no plan")
+			return
+		}
+		sess, err := h.service.Discard(r.Context(), sessionIdempotencyKey(r), DiscardRequest{
+			RetireQuarantined: true, SessionID: sessionID, ExpectedRevision: body.ExpectedRevision,
+		})
+		if err != nil {
+			writeSessionServiceError(w, err)
+			return
+		}
+		op, ok := h.operationForKey(w, r, sessionIdempotencyKey(r))
+		if !ok {
+			return
+		}
+		writeSessionJSON(w, http.StatusOK, sessionMutationSessionResponse{Operation: publicOperation(op), Session: publicSession(sess)})
 		return
 	}
 	if !validSessionHTTPPathID(body.PlanOperationID) {
