@@ -6,9 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -62,16 +64,27 @@ func TestRuntimeEntrypointDescendantSupervision(t *testing.T) {
 	// distinguishes it; both the consult timeout and the watchdog are unlimited by default now.
 	t.Run("stranded consult is reaped instead of draining", func(t *testing.T) {
 		start := time.Now()
+		// The provider stamps its own exit, so a slow run can be attributed: the supervision phase
+		// (provider exit → container exit, the part this test is about) versus container
+		// create/start/teardown under a starved runtime, which the whole-run bound also counts.
 		code, err := run(
-			"COOP_CONSULT_OWNED=1 setsid setsid sh -c 'trap \"\" TERM; while :; do sleep 1; done' &",
+			"COOP_CONSULT_OWNED=1 setsid setsid sh -c 'trap \"\" TERM; while :; do sleep 1; done' & "+
+				"date +%s.%N > /workspace/provider-exit",
 			"-e", "COOP_DESCENDANT_TIMEOUT=30",
 		)
+		finished := time.Now()
 		if err != nil || code != 0 {
 			t.Fatalf("stranded consult = exit %d, err %v; want exit 0 (reaped, no handoff)", code, err)
 		}
+		supervision := runtimeInitPhaseSince(t, filepath.Join(repo, "provider-exit"), finished)
+		t.Logf("stranded consult: whole run %s, provider exit → container exit %s", finished.Sub(start).Round(time.Millisecond), supervision.Round(time.Millisecond))
+		// The supervision itself is TERM → 1s → KILL → one 0.1s rescan: seconds, never the window.
+		if supervision > 10*time.Second {
+			t.Fatalf("supervision of a coop-owned consult took %s after the provider exited; want it reaped in seconds, not drained", supervision)
+		}
 		// It must not have sat through the 30s window it would get as agent background work.
-		if elapsed := time.Since(start); elapsed > 20*time.Second {
-			t.Fatalf("a coop-owned consult consumed the agent drain window: %s", elapsed)
+		if elapsed := finished.Sub(start); elapsed > 20*time.Second {
+			t.Fatalf("a coop-owned consult run took %s, of which supervision was %s — the rest is container create/start/teardown (a starved runtime), not the drain window", elapsed, supervision)
 		}
 	})
 
@@ -242,6 +255,22 @@ func TestRuntimeInitProbeTarget(t *testing.T) {
 				tc.platform, got, err, tc.want, tc.wantErr)
 		}
 	}
+}
+
+// runtimeInitPhaseSince reads a `date +%s.%N` stamp the provider wrote inside the box and returns
+// how long after it the host observed the container gone. Host and box share wall-clock time.
+func runtimeInitPhaseSince(t *testing.T, marker string, until time.Time) time.Duration {
+	t.Helper()
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("provider exit stamp: %v", err)
+	}
+	stamp, err := strconv.ParseFloat(strings.TrimSpace(string(data)), 64)
+	if err != nil {
+		t.Fatalf("provider exit stamp %q: %v", data, err)
+	}
+	sec, frac := math.Modf(stamp)
+	return until.Sub(time.Unix(int64(sec), int64(frac*1e9)))
 }
 
 func buildRuntimeInitProbe(t *testing.T, rt runtime.Runtime) string {
