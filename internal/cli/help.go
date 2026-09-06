@@ -662,10 +662,12 @@ var commandHelp = map[string]string{
   with .coopignore.
 
   By default it scans the commit-candidate files (tracked + untracked; gitignored
-  excluded). A 'coop run'/'shell'/'loop' mounts the WHOLE tree, though, so a
-  gitignored-but-not-shadowed file is still visible to the agent — pass
-  --include-ignored to scan the full visible tree too (deps/build dirs and
-  shadowed files are still skipped).`,
+  excluded) — including a file coop shadows from the box by name (an id_ed25519,
+  a *.pem): the box never sees it, but a push would commit it. A 'coop
+  run'/'shell'/'loop' mounts the WHOLE tree, though, so a gitignored-but-not-
+  shadowed file is still visible to the agent — pass --include-ignored to scan
+  the full visible tree too (deps/build dirs and shadowed files git would not
+  commit are still skipped). A .coopignore entry silences a file in both modes.`,
 
 	"loop": `coop loop [<target|preset>] — work the task queue until done, then sign off.
 

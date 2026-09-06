@@ -108,20 +108,52 @@ func scanVisibleTree(repo string, includeIgnored bool) ([]string, error) {
 		return nil, err
 	}
 	shadowed := box.NewShadowDecider(repo)
+	coopignored := box.NewCoopignoreDecider(repo)
+	committable := commitCandidateSet(repo)
 	var findings []string
 	for _, rel := range rels {
-		if shadowed(rel) {
-			continue // hidden from the box → already protected
+		if coopignored(rel) {
+			continue // the user's explicit hide rule — an intended file, silenced on purpose
+		}
+		// A file coop shadows by NAME (an id_ed25519, a *.pem) is hidden from the box, but that
+		// protects only the box: when git would commit it, the push leaks it just the same, so
+		// it is scanned like any other commit candidate. A shadowed file git would not commit
+		// (gitignored, or coop's own .agent/ state) is protected on both sides and skipped.
+		byName := shadowed(rel)
+		if byName && !committable[rel] {
+			continue
 		}
 		content, ok := readScannable(filepath.Join(repo, filepath.FromSlash(rel)))
 		if !ok {
 			continue // binary, oversized, or unreadable
 		}
 		for _, s := range box.ScanSecrets(content) {
-			findings = append(findings, fmt.Sprintf("possible secret in %s:%d (%s)", rel, s.Line, s.Kind))
+			finding := fmt.Sprintf("possible secret in %s:%d (%s)", rel, s.Line, s.Kind)
+			if byName {
+				finding += " — shadowed from the box by name, but git would commit it"
+			}
+			findings = append(findings, finding)
 		}
 	}
 	return findings, nil
+}
+
+// commitCandidateSet is the set of files git would commit (tracked + untracked, gitignored
+// excluded). Empty when git is unavailable or repo is not a work tree: nothing is then known to
+// be committable, so a shadowed file stays skipped as before.
+func commitCandidateSet(repo string) map[string]bool {
+	args := gitArgs(repo, []string{"ls-files", "--cached", "--others", "--exclude-standard", "-z"})
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return nil
+	}
+	set := map[string]bool{}
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			set[p] = true
+		}
+	}
+	return set
 }
 
 // candidateFiles lists the repo-relative paths worth scanning. The default is the

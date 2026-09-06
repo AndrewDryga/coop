@@ -120,6 +120,23 @@ func NewShadowDecider(repo string) func(relSlash string) bool {
 // basename patterns match anywhere in its subtree, and its path patterns are matched
 // against the path relative to that directory (so sub/.coopignore's "config/x" means
 // sub/config/x). loadDir caches the per-directory globs.
+// NewCoopignoreDecider is the .coopignore half of NewShadowDecider alone: the user's explicit,
+// authoritative hide rules, without the built-in secret-name globs. check-secrets uses it to tell
+// "hidden on purpose" from "shadowed by name" — the latter is still worth scanning when git would
+// commit the file.
+func NewCoopignoreDecider(repo string) func(relSlash string) bool {
+	cache := map[string]UserGlobs{}
+	loadDir := func(dirRel string) UserGlobs {
+		if g, ok := cache[dirRel]; ok {
+			return g
+		}
+		g := LoadUserGlobs(filepath.Join(repo, filepath.FromSlash(dirRel)))
+		cache[dirRel] = g
+		return g
+	}
+	return func(relSlash string) bool { return shadowedByCoopignore(relSlash, loadDir) }
+}
+
 func shadowedByCoopignore(relSlash string, loadDir func(string) UserGlobs) bool {
 	base := relSlash
 	if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {

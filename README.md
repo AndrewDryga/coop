@@ -279,8 +279,10 @@ vault/                   # a directory — its contents are hidden whole
 binds your *whole* working tree, so a gitignored-but-present file (e.g. a
 `serviceAccount.json`) is **fully visible** to the agent — shadow it with `.coopignore`.
 For a token hiding *inside* a file, `coop check-secrets` scans by content (`file:line`,
-exit 1 on a hit); `--include-ignored` widens it to the whole visible tree. Prove your
-setup holds with [`coop doctor`](#prove-it-coop-doctor).
+exit 1 on a hit) — a file coop shadows by name (an `id_ed25519`, a `*.pem`) is still
+reported when git would commit it, since shadowing protects the box, not the push;
+`--include-ignored` widens the scan to the whole visible tree. Prove your setup holds
+with [`coop doctor`](#prove-it-coop-doctor).
 
 > Full walkthrough — subdirectory scoping, template re-hiding, the fork exception:
 > [**coop.dryga.com/docs.html#secrets**](https://coop.dryga.com/docs.html#secrets).
