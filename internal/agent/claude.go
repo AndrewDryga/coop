@@ -65,7 +65,8 @@ func (claudeAgent) ACPSessionDirs() []string {
 }
 
 // ACPFinalChunk: every assistant chunk is answer text — claude's adapter streams no separate commentary phase.
-func (claudeAgent) ACPFinalChunk(json.RawMessage) bool { return true }
+func (claudeAgent) ACPFinalChunk(json.RawMessage) bool    { return true }
+func (claudeAgent) ACPProgressChunk(json.RawMessage) bool { return false }
 
 func (claudeAgent) PresetSessionID() bool { return true }
 

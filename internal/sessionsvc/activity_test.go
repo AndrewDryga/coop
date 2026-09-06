@@ -3,6 +3,7 @@ package sessionsvc
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -57,6 +58,121 @@ func activityPayload(t *testing.T, event session.Event) map[string]any {
 	return payload
 }
 
+// A large public progress frame must not silently lose its tail at the narration boundary.
+func TestPublicProgressKeepsOneLogicalMessageForSafeRedaction(t *testing.T) {
+	store, sess := newActivityTestStore(t)
+	activity := newSessionActivity(store, sess.ID, "turn-progress")
+	text := strings.Repeat("🙂", 1023) + "opaque-configured-secret" + strings.Repeat("é ", 4000)
+	raw, err := json.Marshal(map[string]any{"update": map[string]any{
+		"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": text},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activity.observePublicMessage(raw, func(json.RawMessage) bool { return true })
+	activity.close(context.Background())
+	events, err := store.ListEvents(context.Background(), sess.ID, 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retained strings.Builder
+	count := 0
+	for _, event := range events {
+		if event.Type == session.EventModelProgress {
+			count++
+			part, _ := activityPayload(t, event)["text"].(string)
+			if len(part) > 64<<10 {
+				t.Fatal("unbounded progress event")
+			}
+			retained.WriteString(part)
+		}
+	}
+	// Splitting at 4 KiB divided a configured secret across rows, bypassing the
+	// downstream whole-secret redactor even though each individual row looked safe.
+	if count != 1 {
+		t.Fatalf("one logical message must be redacted atomically, got %d events", count)
+	}
+	if retained.String() != text {
+		t.Fatalf("progress lost bytes: have %d, want %d", retained.Len(), len(text))
+	}
+}
+
+func TestOversizedPublicProgressIsExplicitlyElidedWithoutPartialSecrets(t *testing.T) {
+	store, sess := newActivityTestStore(t)
+	activity := newSessionActivity(store, sess.ID, "turn-progress")
+	for range 20 {
+		activity.observePublicMessage(json.RawMessage(`{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"`+strings.Repeat("x", 4096)+`"}}}`), func(json.RawMessage) bool { return true })
+	}
+	activity.close(context.Background())
+	events, err := store.ListEvents(context.Background(), sess.ID, 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Type == session.EventModelProgress {
+			t.Fatal("oversized logical message exposed partial text")
+		}
+		if event.Type == session.EventActivityElided {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing explicit activity elision")
+	}
+}
+
+func TestProgressPrecedesFollowingToolCompletionAndPermission(t *testing.T) {
+	for _, next := range []string{"completion", "permission"} {
+		t.Run(next, func(t *testing.T) {
+			store, sess := newActivityTestStore(t)
+			activity := newSessionActivity(store, sess.ID, "turn-progress")
+			activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"t1","status":"pending"}}`))
+			activity.observePublicMessage(json.RawMessage(`{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Checking the result."}}}`), func(json.RawMessage) bool { return true })
+			if next == "completion" {
+				activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed"}}`))
+			} else {
+				activity.permission("t1", "selected", "allow", "allow_once")
+			}
+			activity.close(context.Background())
+			events, err := store.ListEvents(context.Background(), sess.ID, 0, 1000)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seen := false
+			for _, event := range events {
+				if event.Type == session.EventModelProgress {
+					seen = true
+				}
+				if (event.Type == session.EventToolCompleted || event.Type == session.EventPermission) && !seen {
+					t.Fatal("later event overtook public progress")
+				}
+			}
+		})
+	}
+}
+
+func TestEscapeHeavyToolEvidenceRetainsIdentityWithinEncodedBudget(t *testing.T) {
+	store, sess := newActivityTestStore(t)
+	activity := newSessionActivity(store, sess.ID, "turn-tool")
+	field := `{"text":"` + strings.Repeat("&", 16000) + `"}`
+	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"t1","status":"failed","rawInput":` + field + `,"rawOutput":` + field + `,"content":` + field + `}}`))
+	activity.close(context.Background())
+	events := activityEvents(t, store, sess.ID)
+	completed := events[len(events)-1]
+	payload := activityPayload(t, completed)
+	if completed.Type != session.EventToolCompleted || payload["tool_call_id"] != "t1" || payload["status"] != "failed" || payload["output"] == nil {
+		t.Fatalf("encoded size handling erased tool failure evidence: %v", payload)
+	}
+	if len(completed.Payload) > session.MaxEventPayloadBytes {
+		t.Fatal("event exceeded encoded budget")
+	}
+	oversized := activity.request(session.EventToolCompleted, map[string]any{"tool_call_id": strings.Repeat("x", session.MaxEventPayloadBytes+1)})
+	if oversized.Type != session.EventActivityElided || !strings.Contains(string(oversized.Payload), `"dropped":1`) {
+		t.Fatal("overflow must not emit a malformed typed event")
+	}
+}
+
 // A tool call is narrated once at its start and once when it reaches a
 // terminal status, carrying the title from the opening frame even though the
 // terminal update does not repeat it.
@@ -101,6 +217,50 @@ func TestSessionActivityNarratesToolCall(t *testing.T) {
 		if event.TurnID != "turn-1" {
 			t.Fatalf("event %s lost its turn: %q", event.Type, event.TurnID)
 		}
+	}
+}
+
+// 87 retained failures had no output in the Sept 6 Responder investigation.
+// Late inputs and native edits use the same update stream as MCP calls.
+func TestSessionActivityRetainsLateArgumentsAndFailureEvidence(t *testing.T) {
+	store, sess := newActivityTestStore(t)
+	activity := newSessionActivity(store, sess.ID, "turn-1")
+	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"exec-fea1da1f","title":"responder-state · plan_goal","kind":"mcp"}}`))
+	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"exec-fea1da1f","rawInput":{"arguments":{"read_only_repositories":["emisar"]}},"status":"in_progress"}}`))
+	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"exec-fea1da1f","rawOutput":{"error":"unauthorized"},"status":"failed"}}`))
+	activity.close(context.Background())
+	events := activityEvents(t, store, sess.ID)
+	completed := activityPayload(t, events[len(events)-1])
+	if completed["output"] == nil || completed["input"] == nil {
+		t.Fatalf("failed tool must retain arguments and error: %v", completed)
+	}
+	if completed["output"].(map[string]any)["error"] != "unauthorized" {
+		t.Fatal("failure reason lost")
+	}
+	// Check the real events endpoint, not just the store or the DTO type.
+	response := sessionHTTPTestRequest(t, NewHTTPHandler(&Service{store: store}), http.MethodGet,
+		"/v1/sessions/"+sess.ID+"/events?after=0&limit=100", "", "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("events response: %d %s", response.Code, response.Body.String())
+	}
+	var wire []struct {
+		Type    string         `json:"type"`
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range wire {
+		if event.Type == string(session.EventToolCompleted) {
+			found = true
+			if event.Payload["input"] == nil || event.Payload["output"].(map[string]any)["error"] != "unauthorized" {
+				t.Fatalf("wire lost tool evidence: %v", event.Payload)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("events endpoint omitted tool completion")
 	}
 }
 
@@ -214,9 +374,8 @@ func TestSessionActivityRecordsPlanAndPermission(t *testing.T) {
 	}
 }
 
-// An oversized tool input is dropped whole rather than cut: half a JSON object
-// is not evidence, and it is the one field an agent can make arbitrarily large.
-func TestSessionActivityDropsOversizedToolInput(t *testing.T) {
+// An oversized field is explicitly partial, never silently absent or a turn failure.
+func TestSessionActivityLabelsOversizedToolInput(t *testing.T) {
 	store, sess := newActivityTestStore(t)
 	activity := newSessionActivity(store, sess.ID, "turn-1")
 	huge := strings.Repeat("x", sessionActivityInputBytes+1)
@@ -229,8 +388,9 @@ func TestSessionActivityDropsOversizedToolInput(t *testing.T) {
 		t.Fatalf("want one start, got %d", len(events))
 	}
 	payload := activityPayload(t, events[0])
-	if payload["input"] != nil {
-		t.Fatalf("oversized input was kept: %v", payload["input"])
+	input, ok := payload["input"].(map[string]any)
+	if !ok || input["truncated"] != true || input["preview"] == nil {
+		t.Fatal("oversized input must have a labeled partial preview")
 	}
 	if payload["title"] != "Write" {
 		t.Fatalf("dropping the input must not drop the call: %v", payload)

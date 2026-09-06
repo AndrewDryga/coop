@@ -147,6 +147,7 @@ const (
 	EventToolCompleted  EventType = "tool.completed"
 	EventModelPlan      EventType = "model.plan"
 	EventModelThought   EventType = "model.thought"
+	EventModelProgress  EventType = "model.progress"
 	EventPermission     EventType = "permission.decided"
 	EventActivityElided EventType = "activity.elided"
 	// EventProviderBackoff narrates a rate-limit decision mid-turn: a rung

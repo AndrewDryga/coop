@@ -21,6 +21,9 @@ func TestACPFinalChunk(t *testing.T) {
 		if got := codex.ACPFinalChunk(json.RawMessage(meta)); got != want {
 			t.Errorf("codex ACPFinalChunk(%s) = %v, want %v", meta, got, want)
 		}
+		if got := codex.ACPProgressChunk(json.RawMessage(meta)); got != (meta == `{"codex":{"phase":"commentary"}}`) {
+			t.Errorf("progress classification must exclude final/private/unknown phases: %s", meta)
+		}
 	}
 	for _, name := range Names() {
 		if name == "codex" {

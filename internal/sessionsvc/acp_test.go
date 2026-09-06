@@ -21,8 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/testutil/wait"
-
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -30,6 +28,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
@@ -142,6 +141,19 @@ func TestStructuredResultExcludesCodexProgressCommentary(t *testing.T) {
 	}
 	if got := countStrings(readSessionACPLog(t, fixture.childLog), "session/prompt"); got != 1 {
 		t.Fatalf("session/prompt calls = %d, want no repair for valid final answer", got)
+	}
+	events, err := fixture.store.ListEvents(context.Background(), fixture.session.ID, 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range events {
+		if string(event.Type) == "model.progress" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("public commentary must survive as progress, separately from the final answer")
 	}
 }
 

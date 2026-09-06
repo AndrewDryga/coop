@@ -262,6 +262,19 @@ func TestDoneStopsTheCallersOwnLeaseHolderOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+		// The lock precedes identity publication. Waiting only for "busy" raced the
+		// holder's startup in 9/10 race runs and tested an unauthenticated holder.
+		deadline := time.Now().Add(wait.Deadline)
+		for {
+			meta, ok := readLeaseAuthorityMetadata(root, id)
+			if ok && meta.ControllerPID == cmd.Process.Pid && meta.ActorPID == actor.PID && meta.ActorStart == actor.StartToken {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("holder did not publish its identity")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 		return cmd
 	}
 

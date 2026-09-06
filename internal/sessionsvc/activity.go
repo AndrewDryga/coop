@@ -1,6 +1,7 @@
 package sessionsvc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -44,15 +45,14 @@ const (
 	// table needs its own ceiling rather than shrinking as calls complete.
 	sessionActivityMaxTools   = 512
 	sessionActivityTitleBytes = 200
-	// sessionActivityInputBytes bounds a recorded tool input. Arguments say
-	// which action ran against which target, which is the difference between
-	// "ran an Emisar action" and a fact an operator can check. Results are
-	// excluded entirely: they dominate transcript size and routinely carry
-	// credentials and log bodies into what is ultimately a browser page.
-	sessionActivityInputBytes   = 2 << 10
+	// Bound each evidence field independently; oversized evidence remains an
+	// explicitly partial JSON preview, never an execution failure.
+	sessionActivityInputBytes   = 16 << 10
 	sessionActivityThoughtBytes = 4 << 10
-	sessionActivityPlanEntries  = 32
-	sessionActivityPlanBytes    = 300
+	// A public message must remain whole for downstream secret redaction.
+	sessionActivityProgressBytes = 64 << 10
+	sessionActivityPlanEntries   = 32
+	sessionActivityPlanBytes     = 300
 	// sessionActivityAliveInterval is how long a turn may stream without saying
 	// anything before the transport itself becomes the news. A minute is far
 	// longer than the gap between a healthy turn's own narration, so an ordinary
@@ -65,9 +65,10 @@ const (
 // its start has already been narrated. Titles arrive on the opening frame and a
 // terminal update need not repeat them, so they are remembered per id.
 type sessionActivityTool struct {
-	title, kind string
-	started     bool
-	finished    bool
+	title, kind                       string
+	started                           bool
+	finished                          bool
+	input, output, content, locations json.RawMessage
 }
 
 type sessionActivity struct {
@@ -76,15 +77,17 @@ type sessionActivity struct {
 	turnID    string
 	now       func() time.Time
 
-	mu         sync.Mutex
-	pending    []session.AppendEventRequest
-	tools      map[string]*sessionActivityTool
-	thought    []byte
-	budget     int
-	dropped    int
-	closed     bool
-	frames     int
-	frameBytes int
+	mu               sync.Mutex
+	pending          []session.AppendEventRequest
+	tools            map[string]*sessionActivityTool
+	thought          []byte
+	progress         []byte
+	progressOverflow bool
+	budget           int
+	dropped          int
+	closed           bool
+	frames           int
+	frameBytes       int
 	// narratedAt is when this turn last said anything — the window the alive
 	// heartbeat measures against, so activity that already told the story
 	// suppresses it instead of doubling it.
@@ -165,6 +168,8 @@ func (a *sessionActivity) observe(raw json.RawMessage) {
 			Kind          string          `json:"kind"`
 			Status        string          `json:"status"`
 			RawInput      json.RawMessage `json:"rawInput"`
+			RawOutput     json.RawMessage `json:"rawOutput"`
+			Locations     json.RawMessage `json:"locations"`
 			Content       json.RawMessage `json:"content"`
 			Entries       json.RawMessage `json:"entries"`
 		} `json:"update"`
@@ -175,7 +180,7 @@ func (a *sessionActivity) observe(raw json.RawMessage) {
 	update := envelope.Update
 	switch update.SessionUpdate {
 	case "tool_call", "tool_call_update":
-		a.observeTool(update.ToolCallID, update.Title, update.Kind, update.Status, update.RawInput)
+		a.observeTool(update.ToolCallID, update.Title, update.Kind, update.Status, update.RawInput, update.RawOutput, update.Content, update.Locations)
 	case "agent_thought_chunk", "assistant_thought_chunk":
 		a.observeThought(update.Content)
 	case "plan":
@@ -183,7 +188,7 @@ func (a *sessionActivity) observe(raw json.RawMessage) {
 	}
 }
 
-func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput json.RawMessage) {
+func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, rawOutput, content, locations json.RawMessage) {
 	if id == "" {
 		return
 	}
@@ -204,6 +209,16 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput j
 	if kind != "" {
 		tool.kind = boundedActivityText(kind, sessionActivityTitleBytes)
 	}
+	for _, field := range []struct {
+		source json.RawMessage
+		target *json.RawMessage
+	}{
+		{rawInput, &tool.input}, {rawOutput, &tool.output}, {content, &tool.content}, {locations, &tool.locations},
+	} {
+		if len(field.source) > 0 {
+			*field.target = boundedActivityInput(field.source)
+		}
+	}
 	if !tool.started {
 		tool.started = true
 		// A thought that preceded an action belongs before it, so the story
@@ -214,7 +229,7 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput j
 			"tool_call_id": id,
 			"title":        tool.title,
 			"kind":         tool.kind,
-			"input":        boundedActivityInput(rawInput),
+			"input":        tool.input,
 		})
 	}
 	switch status {
@@ -228,11 +243,16 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput j
 	// Kept, not deleted. An agent that repeats a terminal update would
 	// otherwise be handed a fresh entry and narrate the whole call again.
 	tool.finished = true
+	a.flushProgressLocked()
 	a.enqueueLocked(session.EventToolCompleted, map[string]any{
 		"tool_call_id": id,
 		"title":        tool.title,
 		"kind":         tool.kind,
 		"status":       status,
+		"input":        tool.input,
+		"output":       tool.output,
+		"content":      tool.content,
+		"locations":    tool.locations,
 	})
 }
 
@@ -243,6 +263,7 @@ func (a *sessionActivity) observeThought(content json.RawMessage) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.flushProgressLocked()
 	a.thought = append(a.thought, text...)
 	if len(a.thought) >= sessionActivityThoughtBytes {
 		a.flushThoughtLocked()
@@ -298,6 +319,7 @@ func (a *sessionActivity) permission(toolCallID, outcome, optionID, optionKind s
 	if tool := a.tools[toolCallID]; tool != nil {
 		title = tool.title
 	}
+	a.flushProgressLocked()
 	a.enqueueLocked(session.EventPermission, map[string]any{
 		"tool_call_id": boundedActivityText(toolCallID, session.MaxIDBytes),
 		"title":        title,
@@ -392,16 +414,30 @@ func (a *sessionActivity) enqueueLocked(eventType session.EventType, payload map
 }
 
 func (a *sessionActivity) request(eventType session.EventType, payload map[string]any) session.AppendEventRequest {
-	encoded, err := json.Marshal(payload)
+	encoded, err := encodeActivityPayload(payload)
 	if err != nil || len(encoded) > session.MaxEventPayloadBytes {
-		encoded = []byte(`{}`)
+		// Never emit an empty typed tool event: consumers need its identity to
+		// advance their cursor. An explicit gap is valid and diagnosable.
+		eventType = session.EventActivityElided
+		encoded = []byte(`{"dropped":1,"reason":"activity exceeded the encoded event limit"}`)
 	}
 	return session.AppendEventRequest{
 		SessionID: a.sessionID, TurnID: a.turnID, Type: eventType, Version: 1, Payload: encoded,
 	}
 }
 
+func encodeActivityPayload(payload any) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	// This is stored JSON, not HTML. HTML escaping can expand several valid
+	// bounded evidence fields beyond the enclosing event's byte limit.
+	encoder.SetEscapeHTML(false)
+	err := encoder.Encode(payload)
+	return buffer.Bytes(), err
+}
+
 func (a *sessionActivity) flushThoughtLocked() {
+	a.flushProgressLocked()
 	text := strings.TrimSpace(string(a.thought))
 	a.thought = nil
 	if text == "" {
@@ -410,6 +446,56 @@ func (a *sessionActivity) flushThoughtLocked() {
 	a.enqueueLocked(session.EventModelThought, map[string]any{
 		"text": boundedActivityText(text, sessionActivityThoughtBytes),
 	})
+}
+
+// Explicit provider commentary is public progress. Final/unknown/private phases
+// never enter this buffer, even though some adapters use the same chunk type.
+func (a *sessionActivity) observePublicMessage(raw json.RawMessage, public func(json.RawMessage) bool) {
+	if a == nil || public == nil {
+		return
+	}
+	var envelope struct {
+		Update struct {
+			SessionUpdate string          `json:"sessionUpdate"`
+			Content       json.RawMessage `json:"content"`
+			Meta          json.RawMessage `json:"_meta"`
+		} `json:"update"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil {
+		return
+	}
+	update := envelope.Update
+	if update.SessionUpdate != "agent_message_chunk" && update.SessionUpdate != "assistant_message_chunk" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !public(update.Meta) {
+		a.flushProgressLocked()
+		return
+	}
+	text := activityContentText(update.Content)
+	if a.progressOverflow || len(a.progress)+len(text) > sessionActivityProgressBytes {
+		a.progressOverflow = true
+		a.progress = nil
+		return
+	}
+	a.progress = append(a.progress, text...)
+}
+
+func (a *sessionActivity) flushProgressLocked() {
+	text := strings.ToValidUTF8(string(a.progress), "�")
+	a.progress = nil
+	if a.progressOverflow {
+		a.progressOverflow = false
+		a.enqueueLocked(session.EventActivityElided, map[string]any{
+			"dropped": 1, "reason": "public progress exceeded the complete-message limit",
+		})
+		return
+	}
+	if text != "" {
+		a.enqueueLocked(session.EventModelProgress, map[string]any{"text": text})
+	}
 }
 
 func activityContentText(content json.RawMessage) string {
@@ -426,12 +512,14 @@ func activityContentText(content json.RawMessage) string {
 	return parsed.Text
 }
 
-// boundedActivityInput keeps a tool's arguments only when they are small
-// enough to be a label rather than a payload. An oversized input is dropped
-// whole instead of cut, because half a JSON object is not evidence.
+// boundedActivityInput preserves valid structured evidence or labels its partial preview.
 func boundedActivityInput(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 || len(raw) > sessionActivityInputBytes || !json.Valid(raw) {
+	if len(raw) == 0 || !json.Valid(raw) {
 		return nil
+	}
+	if len(raw) > sessionActivityInputBytes {
+		encoded, _ := encodeActivityPayload(map[string]any{"truncated": true, "bytes": len(raw), "preview": boundedActivityText(string(raw), sessionActivityInputBytes)})
+		return encoded
 	}
 	return raw
 }

@@ -53,7 +53,8 @@ func (geminiAgent) ACP(cfg *config.Config) []string {
 func (geminiAgent) ACPSessionDirs() []string { return []string{"tmp"} }
 
 // ACPFinalChunk: every assistant chunk is answer text — gemini's adapter streams no separate commentary phase.
-func (geminiAgent) ACPFinalChunk(json.RawMessage) bool { return true }
+func (geminiAgent) ACPFinalChunk(json.RawMessage) bool    { return true }
+func (geminiAgent) ACPProgressChunk(json.RawMessage) bool { return false }
 
 func (geminiAgent) PresetSessionID() bool { return true }
 

@@ -2376,6 +2376,9 @@ func (r *sessionTurnRunner) runACP(
 					if amount, ok := sessionACPReportedCost(envelope.Params); ok {
 						cumulativeCostUSD, costRecorded = amount, true
 					}
+					if rungAgent != nil {
+						activity.observePublicMessage(envelope.Params, rungAgent.ACPProgressChunk)
+					}
 					activity.observe(envelope.Params)
 				}
 				transcriptBytes += sessionACPUpdateTranscriptBytes(

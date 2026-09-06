@@ -258,6 +258,8 @@ type Agent interface {
 	// adapter answers true, the ACP-compatible append behavior. Coop applies this to the assistant
 	// text of every admitted prompt, not only structured-output turns.
 	ACPFinalChunk(meta json.RawMessage) bool
+	// ACPProgressChunk accepts only explicitly public commentary, never reasoning or unknown phases.
+	ACPProgressChunk(meta json.RawMessage) bool
 	// Resume re-enters a fork's interactive session, scoped to ws; the bool reports
 	// whether a session was found (else the caller starts fresh via StartSession). id
 	// is the persisted session id for this (fork, agent, account): preset-id agents resume the

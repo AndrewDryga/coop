@@ -76,7 +76,8 @@ func (grokAgent) ACP(cfg *config.Config) []string {
 func (grokAgent) ACPSessionDirs() []string { return []string{"sessions"} }
 
 // ACPFinalChunk: every assistant chunk is answer text — grok's adapter streams no separate commentary phase.
-func (grokAgent) ACPFinalChunk(json.RawMessage) bool { return true }
+func (grokAgent) ACPFinalChunk(json.RawMessage) bool    { return true }
+func (grokAgent) ACPProgressChunk(json.RawMessage) bool { return false }
 
 // PresetSessionID: grok's -s/--session-id names a NEW conversation by UUID and --resume
 // re-enters one, so coop can pin its own id like claude/gemini.

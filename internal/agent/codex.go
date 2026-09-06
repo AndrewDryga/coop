@@ -92,6 +92,15 @@ func (codexAgent) ACPFinalChunk(meta json.RawMessage) bool {
 	return m.Codex.Phase == "" || m.Codex.Phase == "final_answer"
 }
 
+func (codexAgent) ACPProgressChunk(meta json.RawMessage) bool {
+	var m struct {
+		Codex struct {
+			Phase string `json:"phase"`
+		} `json:"codex"`
+	}
+	return json.Unmarshal(meta, &m) == nil && m.Codex.Phase == "commentary"
+}
+
 // PresetSessionID is false: codex has no flag to start a session under a caller-chosen id (it mints
 // its own UUIDv7), so coop records the uniquely new native ID after the run and validates it on resume.
 func (codexAgent) PresetSessionID() bool { return false }
