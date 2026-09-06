@@ -384,8 +384,8 @@ func readProcessTrace(t *testing.T, path string) []*processTrace {
 // on its way in (loop, fork, build) adds exactly one runtime `ps` — and nothing else.
 const (
 	directTraceEvents = 7
-	sweptTraceEvents  = directTraceEvents + 1
-	sweepsOrphanBoxes = true  // this command reaps boxes whose coop process is gone before it starts
+	sweptTraceEvents  = directTraceEvents + 2
+	sweepsOrphanBoxes = true  // this command reaps orphaned boxes and networks before it starts
 	noOrphanBoxSweep  = false // a direct provider run makes no runtime call of its own before `run`
 )
 
@@ -414,8 +414,9 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, sweep b
 	}
 	wantPrefix := [][]string{{"image", "inspect", "fixture-image"}}
 	if sweep {
-		// The orphan-box sweep: one label-filtered listing, taken before the box work begins.
-		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"})
+		// The orphan sweep, before the box work begins: one label-filtered container listing, then
+		// one for the compose networks a dead session leaves holding a subnet.
+		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"}, []string{"network", "<validated>"})
 	}
 	wantPrefix = append(wantPrefix, []string{"info"})
 	last := len(wantPrefix)

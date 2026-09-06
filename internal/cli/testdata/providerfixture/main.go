@@ -237,7 +237,7 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		// The daemon probe opens every box run, so it is the harness's handle on HOST-side box
 		// setup — the work a test holds to prove no provider clock is running during it.
 		return holdHostSetup(root, trace)
-	case "inspect":
+	case "inspect", "network-ls":
 		return nil
 	case "labels":
 		labels, err := runtimeContainerLabels(root, parsed.IDs[0])
@@ -368,6 +368,17 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 	// answers the same `inspect --format` docker does rather than rejecting the call.
 	if len(args) == 4 && args[0] == "inspect" && args[1] == "--format" && args[2] == containerLabelsFormat {
 		return runtimeCommand{Kind: "labels", IDs: []string{args[3]}}, nil
+	}
+	// The orphan-NETWORK sweep lists compose networks by label before any box work (box.
+	// ReapOrphanNetworks). The fixture has no networks, so it answers with none — which is also
+	// what proves the sweep asks once and then leaves the runtime alone.
+	if len(args) > 0 && args[0] == "network" {
+		if len(args) != 4 || args[1] != "ls" || args[2] != "-q" || args[3] != "--filter" {
+			if len(args) != 5 || args[1] != "ls" || args[2] != "-q" || args[3] != "--filter" || !strings.HasPrefix(args[4], "label=") {
+				return runtimeCommand{}, fmt.Errorf("unsupported network command %q", strings.Join(args, " "))
+			}
+		}
+		return runtimeCommand{Kind: "network-ls"}, nil
 	}
 	if len(args) > 0 && args[0] == "ps" {
 		filters, err := parsePS(args[1:])
@@ -1110,6 +1121,8 @@ func traceRuntimeArgv(root, image string, args []string) []string {
 			return []string{"<rejected>"}
 		case "ps", "rm", "kill":
 			return []string{args[0], "<validated>"}
+		case "network":
+			return []string{"network", "<validated>"}
 		default:
 			return []string{"<rejected>"}
 		}
