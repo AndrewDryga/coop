@@ -69,6 +69,7 @@ The traps the code does not make obvious:
   controller redelivers.
 
 ## Changelog
+- 2026-09-06 — target-side placement fence: `Execute` refuses a still-leased `submit_turn`/`ensure_workspace` whose generation is below the journal's create origin for the session ref with a definite `placement_superseded` failure (`internal/workerconnector/executor.go`); reads and cleanup for the old generation stay allowed.
 - 2026-09-06 — reproduced a valid 244-byte ID failing at poll 1000000; bounded the shared formatter
   and covered the full protocol ID range, maximum sequence, disjoint identities and wrong-echo custody.
 - 2026-09-06 — reproduced TLS enrollment redirecting a synthetic token to plaintext, then fenced

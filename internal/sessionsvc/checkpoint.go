@@ -191,6 +191,18 @@ func validateRestoreWorkspaceSession(
 	if sess.WorkspaceTask == nil && sess.Revision != req.ExpectedRevision {
 		return &session.Error{Code: session.CodeRevisionConflict, Detail: "session revision changed"}
 	}
+	if bound := sess.WorkspaceTask; bound != nil {
+		// A bound session takes only its own checkpoint again (an exact re-restore). Anything else
+		// is refused here, before reset --hard and clean would replace the files it already holds:
+		// the store's own refusal comes after the workspace is rewritten, so it alone would leave the
+		// files from one checkpoint under a session record bound to another.
+		task := req.Checkpoint.Task
+		if task.QueueID != bound.QueueID || task.TaskID != bound.TaskID || task.ID != bound.ID ||
+			req.Checkpoint.BaseRevision != sess.BaseCommit {
+			return &session.Error{Code: session.CodeInvalidSessionState,
+				Detail: "session is already bound to another restored workspace task"}
+		}
+	}
 	base, err := sessionWorkspaceCommit(sess.Repository, req.Checkpoint.BaseRevision)
 	if err != nil || base != req.Checkpoint.BaseRevision {
 		return &session.Error{Code: session.CodeInvalidSessionState,

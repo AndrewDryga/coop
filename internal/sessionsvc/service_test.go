@@ -886,6 +886,57 @@ func TestReplacementWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(
 	if err != nil || replayed.ID != restored.ID || replayed.Revision != restored.Revision {
 		t.Fatalf("restore replay = %+v, err=%v", replayed, err)
 	}
+
+	// A bound but still unused session must refuse a DIFFERENT checkpoint before touching the
+	// workspace. The revision fence is skipped for task-bound sessions, and the store's "already
+	// bound to another task" refusal used to come only after reset --hard and clean had already
+	// replaced the restored files — leaving the workspace holding one checkpoint and the session
+	// record another.
+	t.Run("other checkpoint onto a bound unused session", func(t *testing.T) {
+		other, err := service.CreateRemoteSession(context.Background(), "restore-other-create", CreateRemoteSessionRequest{
+			Policy: "responder", Task: "record:task_offer:restore-other",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err = service.EnsureWorkspaceTask(context.Background(), "restore-other-ensure", EnsureWorkspaceTaskRequest{
+			SessionID: other.ID, ExpectedRevision: other.Revision, Task: tasks.ControllerTaskDraft{
+				OfferRef: "record:task_offer:restore-other", Title: "Another task entirely",
+				Prompt: "Different work.", SuccessChecks: []string{"focused tests pass"},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(other.Workspace, "other-only.txt", "from the other checkpoint\n", 0o644)
+		otherCaptured, err := service.CheckpointWorkspace(context.Background(), "restore-other-checkpoint", CheckpointWorkspaceRequest{
+			SessionID: other.ID, SessionRef: "work-session-other", ExpectedRevision: other.Revision,
+			PlacementGeneration: 1, RepositoryRef: "responder",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		otherBundle, err := service.OpenWorkspaceCheckpointBundle(context.Background(), otherCaptured.OperationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current := mustSession(t, service, restored.ID)
+		_, err = service.RestoreWorkspaceCheckpoint(context.Background(), "restore-target-other", RestoreWorkspaceCheckpointRequest{
+			SessionID: restored.ID, ExpectedRevision: current.Revision, Checkpoint: otherCaptured.Checkpoint, Bundle: otherBundle,
+		})
+		if err == nil || !strings.Contains(err.Error(), "already bound to another restored workspace task") {
+			t.Fatalf("other checkpoint restore error = %v; want the binding refusal", err)
+		}
+		if got, err := os.ReadFile(filepath.Join(restored.Workspace, "helper.sh")); err != nil || string(got) != "#!/bin/sh\necho restored\n" {
+			t.Fatalf("refused restore still replaced the workspace: helper.sh = %q, %v", got, err)
+		}
+		if _, err := os.Stat(filepath.Join(restored.Workspace, "other-only.txt")); !os.IsNotExist(err) {
+			t.Fatalf("refused restore wrote the other checkpoint's files: %v", err)
+		}
+		if after := mustSession(t, service, restored.ID); after.Revision != current.Revision || *after.WorkspaceTask != *restored.WorkspaceTask {
+			t.Fatalf("refused restore changed the session: %+v", after)
+		}
+	})
 }
 
 func createLegacyBoundSession(

@@ -100,6 +100,18 @@ func (e *Executor) Execute(ctx context.Context, command workerproto.Command) (wo
 		return *entry.Result, nil
 	}
 
+	if command.Kind == "submit_turn" || command.Kind == "ensure_workspace" {
+		// The target-side placement fence: once this worker holds a newer generation for the
+		// session ref, a still-leased command from an older one must not mutate its session — a
+		// late turn or a stale restore gets a definite failure the controller stops redelivering.
+		// Reads and cleanup for the old generation stay allowed; a move checkpoints the old
+		// placement after the new one exists.
+		if origin, err := e.journal.readCreateOrigin(e.journal.createOriginPath(command.SessionRef)); err == nil &&
+			origin.PlacementGeneration > command.PlacementGeneration {
+			return e.complete(entry, failureResult(command, "placement_superseded",
+				fmt.Sprintf("placement generation %d was superseded by %d on this worker", command.PlacementGeneration, origin.PlacementGeneration)))
+		}
+	}
 	if command.Kind == "get_output_artifact" {
 		result := e.transferOutputArtifact(ctx, command)
 		return e.complete(entry, result)
