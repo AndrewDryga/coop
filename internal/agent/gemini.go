@@ -52,6 +52,9 @@ func (geminiAgent) ACP(cfg *config.Config) []string {
 // ACPSessionDirs: gemini stores chats under ~/.gemini/tmp/<bucket>/chats (best-effort).
 func (geminiAgent) ACPSessionDirs() []string { return []string{"tmp"} }
 
+// ACPFinalChunk: every assistant chunk is answer text — gemini's adapter streams no separate commentary phase.
+func (geminiAgent) ACPFinalChunk(json.RawMessage) bool { return true }
+
 func (geminiAgent) PresetSessionID() bool { return true }
 
 func (a geminiAgent) StartSession(cfg *config.Config, id string) []string {

@@ -77,6 +77,21 @@ func (codexAgent) ACP(*config.Config) []string {
 // story is weaker than claude's; sharing the dir is the most we can do without a preset-id).
 func (codexAgent) ACPSessionDirs() []string { return []string{"sessions"} }
 
+// ACPFinalChunk: codex-acp streams progress commentary and the final answer through the same
+// agent_message_chunk event and marks the host-owned phase in `_meta.codex.phase`; only the final
+// phase is the answer. A chunk without a phase is treated as answer text, as any other adapter's.
+func (codexAgent) ACPFinalChunk(meta json.RawMessage) bool {
+	var m struct {
+		Codex struct {
+			Phase string `json:"phase"`
+		} `json:"codex"`
+	}
+	if len(meta) == 0 || json.Unmarshal(meta, &m) != nil {
+		return true
+	}
+	return m.Codex.Phase == "" || m.Codex.Phase == "final_answer"
+}
+
 // PresetSessionID is false: codex has no flag to start a session under a caller-chosen id (it mints
 // its own UUIDv7), so coop records the uniquely new native ID after the run and validates it on resume.
 func (codexAgent) PresetSessionID() bool { return false }

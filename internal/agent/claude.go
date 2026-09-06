@@ -64,6 +64,9 @@ func (claudeAgent) ACPSessionDirs() []string {
 	return []string{"projects", "sessions", "session-env", "file-history"}
 }
 
+// ACPFinalChunk: every assistant chunk is answer text — claude's adapter streams no separate commentary phase.
+func (claudeAgent) ACPFinalChunk(json.RawMessage) bool { return true }
+
 func (claudeAgent) PresetSessionID() bool { return true }
 
 func (a claudeAgent) StartSession(cfg *config.Config, id string) []string {

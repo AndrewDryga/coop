@@ -4,7 +4,7 @@ description: "a coding agent is one self-registering file in `internal/agent`, n
 scope: architecture
 sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go]
 check: "go test ./internal/agent -run TestRegistry"
-updated: 2026-08-25
+updated: 2026-09-06
 ---
 
 # A coding agent is one file in internal/agent — never a switch elsewhere
@@ -30,6 +30,10 @@ adding an agent a single new file.
 - Guard production code only: `rg '\"(claude|codex|gemini|grok)\"' internal -g '!**/*_test.go' -g '!internal/agent/**' -g '!internal/cli/testdata/providerfixture/**' -g '!internal/acpproxy/testdata/acpfixture/**'` should return nothing.
 
 ## Changelog
+- 2026-09-06 — re-verified: the Codex commentary/final-answer phase filter that had grown inside
+  `internal/sessionsvc/acp.go` moved behind `Agent.ACPFinalChunk(meta)` (codex answers from
+  `_meta.codex.phase`, every other adapter says true); the guard grep fell from 27 hits to 26. The
+  remaining hits are the fixture oracles and registry-side literals this card already allows.
 - 2026-08-25 — removed the Fleet-board-only `Badge` presentation exception after deleting the
   board and the adapter method; all remaining per-agent production behavior stays in one file.
 - 2026-08-10 — path-only: the fleet board (and with it `agentBadgeColors` +

@@ -2605,7 +2605,7 @@ func TestAccumulateSessionACPUpdateDecodesContentByUpdateType(t *testing.T) {
 			"content":[{"type":"terminal","terminalId":"terminal-1"}]
 		}
 	}`)
-	if err := accumulateSessionACPUpdate(toolCall, "native-1", &assistant); err != nil {
+	if err := accumulateSessionACPUpdate(nil, toolCall, "native-1", &assistant); err != nil {
 		t.Fatalf("valid tool-call update = %v", err)
 	}
 	if len(assistant) != 0 {
@@ -2619,7 +2619,7 @@ func TestAccumulateSessionACPUpdateDecodesContentByUpdateType(t *testing.T) {
 			"content":{"type":"text","text":"verified result"}
 		}
 	}`)
-	if err := accumulateSessionACPUpdate(message, "native-1", &assistant); err != nil {
+	if err := accumulateSessionACPUpdate(nil, message, "native-1", &assistant); err != nil {
 		t.Fatalf("agent message update = %v", err)
 	}
 	if got, want := string(assistant), "verified result"; got != want {
@@ -2633,6 +2633,7 @@ func TestAccumulateSessionACPUpdateDecodesContentByUpdateType(t *testing.T) {
 // explicitly, so only final_answer is part of the caller-visible assistant result.
 func TestAccumulateSessionACPUpdateIgnoresCodexCommentary(t *testing.T) {
 	var assistant []byte
+	codex, _ := agents.Get("codex")
 	commentary := json.RawMessage(`{
 		"sessionId":"native-1",
 		"update":{
@@ -2642,7 +2643,7 @@ func TestAccumulateSessionACPUpdateIgnoresCodexCommentary(t *testing.T) {
 			"_meta":{"codex":{"phase":"commentary"}}
 		}
 	}`)
-	if err := accumulateSessionACPUpdate(commentary, "native-1", &assistant); err != nil {
+	if err := accumulateSessionACPUpdate(codex, commentary, "native-1", &assistant); err != nil {
 		t.Fatalf("commentary update = %v", err)
 	}
 
@@ -2655,7 +2656,7 @@ func TestAccumulateSessionACPUpdateIgnoresCodexCommentary(t *testing.T) {
 			"_meta":{"codex":{"phase":"final_answer"}}
 		}
 	}`)
-	if err := accumulateSessionACPUpdate(final, "native-1", &assistant); err != nil {
+	if err := accumulateSessionACPUpdate(codex, final, "native-1", &assistant); err != nil {
 		t.Fatalf("final-answer update = %v", err)
 	}
 

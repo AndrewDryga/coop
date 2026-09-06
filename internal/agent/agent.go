@@ -252,6 +252,12 @@ type Agent interface {
 	// credential-independent copy of each so switching the credential mid-session doesn't lose the
 	// conversation — session/load still finds it. Empty → no sharing for this agent.
 	ACPSessionDirs() []string
+	// ACPFinalChunk reports whether an ACP assistant/agent message chunk carrying meta (the
+	// update's `_meta`, possibly empty) is part of the answer. An adapter that streams progress
+	// commentary and the final answer through the same chunk event marks them there; every other
+	// adapter answers true, the ACP-compatible append behavior. Coop applies this to the assistant
+	// text of every admitted prompt, not only structured-output turns.
+	ACPFinalChunk(meta json.RawMessage) bool
 	// Resume re-enters a fork's interactive session, scoped to ws; the bool reports
 	// whether a session was found (else the caller starts fresh via StartSession). id
 	// is the persisted session id for this (fork, agent, account): preset-id agents resume the

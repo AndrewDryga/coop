@@ -2321,6 +2321,7 @@ func (r *sessionTurnRunner) runACP(
 	// The adapter's own rate-limit markers, resolved from the rung this child is running.
 	limitTarget, _ := agents.ParseTarget(bound.Target)
 	limitProvider := limitTarget.Provider
+	rungAgent, _ := agents.Get(limitProvider) // nil for an unknown provider: every chunk then counts as answer text
 	var transcriptBytes int
 	var assistant []byte
 	var outputArtifacts []session.OutputArtifact
@@ -2368,7 +2369,7 @@ func (r *sessionTurnRunner) runACP(
 			if envelope.Method == "session/update" {
 				if collectAssistant {
 					var err error
-					imageFrame, err = accumulateSessionACPUpdateArtifacts(envelope.Params, expectedSession, &assistant, &outputArtifacts)
+					imageFrame, err = accumulateSessionACPUpdateArtifacts(rungAgent, envelope.Params, expectedSession, &assistant, &outputArtifacts)
 					if err != nil {
 						return nil, "", err
 					}
@@ -2889,22 +2890,21 @@ func chooseSessionACPAllow(options []permOption) string {
 	return ""
 }
 
-func accumulateSessionACPUpdate(raw json.RawMessage, expectedSession string, assistant *[]byte) error {
-	_, err := accumulateSessionACPUpdateArtifacts(raw, expectedSession, assistant, nil)
+func accumulateSessionACPUpdate(agent agents.Agent, raw json.RawMessage, expectedSession string, assistant *[]byte) error {
+	_, err := accumulateSessionACPUpdateArtifacts(agent, raw, expectedSession, assistant, nil)
 	return err
 }
 
-func accumulateSessionACPUpdateArtifacts(raw json.RawMessage, expectedSession string, assistant *[]byte, artifacts *[]session.OutputArtifact) (bool, error) {
+// accumulateSessionACPUpdateArtifacts folds one session/update into the assistant text and output
+// artifacts of the admitted prompt. agent (nil when the rung's provider is unknown) decides which
+// assistant chunks are answer text rather than progress commentary — see Agent.ACPFinalChunk.
+func accumulateSessionACPUpdateArtifacts(agent agents.Agent, raw json.RawMessage, expectedSession string, assistant *[]byte, artifacts *[]session.OutputArtifact) (bool, error) {
 	var envelope struct {
 		SessionID string `json:"sessionId"`
 		Update    struct {
 			SessionUpdate string          `json:"sessionUpdate"`
 			Content       json.RawMessage `json:"content"`
-			Meta          struct {
-				Codex struct {
-					Phase string `json:"phase"`
-				} `json:"codex"`
-			} `json:"_meta"`
+			Meta          json.RawMessage `json:"_meta"`
 		} `json:"update"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
@@ -2920,11 +2920,10 @@ func accumulateSessionACPUpdateArtifacts(raw json.RawMessage, expectedSession st
 	if envelope.Update.SessionUpdate != "assistant_message_chunk" && envelope.Update.SessionUpdate != "agent_message_chunk" {
 		return imageFrame, nil
 	}
-	// Codex ACP uses the same agent_message_chunk event for progress commentary and the final
-	// answer, but preserves their host-owned phase in metadata. Only the final phase belongs to
-	// the output-contract candidate. Adapters without phase metadata retain the ACP-compatible
-	// append behavior below.
-	if phase := envelope.Update.Meta.Codex.Phase; phase != "" && phase != "final_answer" {
+	// An adapter that streams progress commentary and the final answer through the same chunk
+	// event marks them in _meta; only answer chunks join the assistant text. This runs for every
+	// admitted prompt (the whole caller-visible reply, not just an output-contract candidate).
+	if agent != nil && !agent.ACPFinalChunk(envelope.Update.Meta) {
 		return imageFrame, nil
 	}
 	var content struct {
