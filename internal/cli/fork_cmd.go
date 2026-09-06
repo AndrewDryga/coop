@@ -981,6 +981,14 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 		if _, exists, err := tasks.ReadForkCandidate(repo, identity); err != nil {
 			return 1, err
 		} else if exists {
+			// After a red merge gate the fix lands as new commits on top of the reviewed candidate;
+			// retire that candidate so the work below can be reviewed and republished at the new HEAD.
+			if retired, err := tasks.RetireStaleForkCandidate(repo, identity, head); err != nil {
+				return 1, err
+			} else if retired {
+				ui.Note("fork %s moved past its reviewed candidate — retired it; the next signoff republishes the new HEAD", name)
+				continue
+			}
 			if _, _, err := tasks.PublishForkCandidate(repo, identity, head, tree); err != nil {
 				return 1, err
 			}

@@ -1277,3 +1277,70 @@ func TestMergeGateBlamesTheDaemonNotTheImage(t *testing.T) {
 		})
 	}
 }
+
+// A red merge gate restores the reviewed candidate; the fix then lands as commits on top of it.
+// Retiring the stale candidate returns its owners to reviewing so the next signoff republishes
+// the new HEAD and the merge lands the fixed fork — while a HEAD that does not descend from the
+// candidate still fails closed.
+func TestTaskCandidateCanBeFixedAndRemergedAfterARedGate(t *testing.T) {
+	repo, ws, root, identity, c := prepareForkTaskCandidate(t, "task-red-gate-fix")
+	candidate, ok, err := tasks.ReadForkCandidate(repo, identity)
+	if err != nil || !ok {
+		t.Fatalf("read candidate: ok=%v err=%v", ok, err)
+	}
+	c.gateOK = func(_, _, _ string) bool { return false }
+	if landed, err := mergeOneForTest(t, c, repo, "gate-img", identity.Name, false); landed || err == nil || !strings.Contains(err.Error(), "candidate restored") {
+		t.Fatalf("red-gate merge = (%v, %v)", landed, err)
+	}
+	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, gitOut(ws, "rev-parse", "HEAD")); retired || err != nil {
+		t.Fatalf("retire at the candidate's own HEAD = (%v, %v); want nothing to retire", retired, err)
+	}
+
+	// History rewritten under the candidate: not a descendant, so the candidate stays.
+	git(t, ws, "commit", "-q", "--amend", "-m", "rewritten candidate\n\nCoop-Task: canonical-task")
+	rewritten := gitOut(ws, "rev-parse", "HEAD")
+	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, rewritten); retired || err == nil || !strings.Contains(err.Error(), "no longer descends") {
+		t.Fatalf("retire on rewritten history = (%v, %v); want a fail-closed refusal", retired, err)
+	}
+	if _, ok, err := tasks.ReadForkCandidate(repo, identity); err != nil || !ok {
+		t.Fatalf("candidate lost on a refused retirement: ok=%v err=%v", ok, err)
+	}
+	git(t, ws, "reset", "-q", "--hard", candidate.Head)
+
+	// The real fix: commits on top of the reviewed candidate.
+	if err := os.WriteFile(filepath.Join(ws, "fix.txt"), []byte("gate fixed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "fix.txt")
+	git(t, ws, "commit", "-qm", "fix the gate\n\nCoop-Task: canonical-task")
+	fixedHead, fixedTree := gitOut(ws, "rev-parse", "HEAD"), gitOut(ws, "rev-parse", "HEAD^{tree}")
+	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, fixedHead); !retired || err != nil {
+		t.Fatalf("retire after the fix = (%v, %v); want the stale candidate retired", retired, err)
+	}
+	if _, ok, err := tasks.ReadForkCandidate(repo, identity); err != nil || ok {
+		t.Fatalf("stale candidate survives: ok=%v err=%v", ok, err)
+	}
+	record, owned, err := tasks.ReadTaskOwnerRecord(root, "canonical-task")
+	if err != nil || !owned || record.Fork == nil || record.Fork.Phase != tasks.ForkAssignmentReviewing || record.Fork.CandidateID != "" {
+		t.Fatalf("owner after retirement = %+v, owned=%v err=%v; want reviewing with no candidate", record.Fork, owned, err)
+	}
+	// Retiring again is a no-op: nothing is published, nothing changes.
+	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, fixedHead); retired || err != nil {
+		t.Fatalf("second retirement = (%v, %v)", retired, err)
+	}
+
+	// The next signoff republishes the fixed HEAD, and a green gate lands it.
+	if _, published, err := tasks.PublishForkCandidate(repo, identity, fixedHead, fixedTree); err != nil || !published {
+		t.Fatalf("republish after the fix: published=%v err=%v", published, err)
+	}
+	c.gateOK = func(_, _, _ string) bool { return true }
+	if landed, err := mergeOneForTest(t, c, repo, "gate-img", identity.Name, false); !landed || err != nil {
+		t.Fatalf("merge after the fix = (%v, %v)", landed, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(repo, "fix.txt")); err != nil || string(data) != "gate fixed\n" {
+		t.Fatalf("fix did not land: %q, %v", data, err)
+	}
+	if item, ok := mustCurrentTask(t, root, "canonical-task"); !ok || item.State != tasks.StateDone {
+		t.Fatalf("canonical task after the fixed merge = %+v, ok=%v", item, ok)
+	}
+}

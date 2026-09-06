@@ -305,6 +305,54 @@ func PublishForkCandidate(repo string, identity forkspace.Identity, head, tree s
 	return candidate, true, nil
 }
 
+// RetireStaleForkCandidate lets a fork be fixed after a red merge gate. A published candidate
+// freezes the reviewed HEAD; once the fork's HEAD has moved PAST it — the fix commits descend from
+// candidate.Head — the candidate is retired: every owner it made ready returns to reviewing and the
+// record is removed, so the next signoff republishes the new HEAD and `coop fork merge` lands
+// that. A HEAD that does not descend from the candidate (rewritten history, a different branch)
+// still fails closed. Owners move before the record so a crash in between replays cleanly:
+// re-entry retires again, skipping owners already reviewing. Returns whether a candidate was retired.
+func RetireStaleForkCandidate(repo string, identity forkspace.Identity, head string) (bool, error) {
+	unlock, err := forkspace.LockState(repo, identity.Name)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	if err := forkspace.ValidateGenerationWorkspace(repo, identity); err != nil {
+		return false, err
+	}
+	candidate, exists, err := ReadForkCandidate(repo, identity)
+	if err != nil || !exists || candidate.Head == head {
+		return false, err
+	}
+	workspace := forkspace.Workspace(repo, identity.Name)
+	if _, err := gitOutErr(workspace, "merge-base", "--is-ancestor", candidate.Head, head); err != nil {
+		return false, errors.New("fork HEAD no longer descends from its reviewed candidate; merge or discard it before more work")
+	}
+	for _, assignment := range candidate.Assignments {
+		root, id := assignment.Index.CanonicalRoot, assignment.Index.Task.Ref.ID
+		record, owned, err := ReadTaskOwnerRecord(root, id)
+		if err != nil || !owned || record.Fork == nil || record.Fork.Fork != identity {
+			return false, errors.Join(err, fmt.Errorf("candidate task %s is no longer owned by this fork", id))
+		}
+		expected := *record.Fork
+		if expected.Phase != ForkAssignmentReady || expected.CandidateID != candidate.ID {
+			continue // already reviewing (a replay), or ready for a candidate this is not
+		}
+		if _, err := UpdateForkTaskAssignment(root, id, expected, func(owner *ForkTaskOwner) error {
+			owner.Phase = ForkAssignmentReviewing
+			owner.CandidateID = ""
+			return nil
+		}); err != nil {
+			return false, err
+		}
+	}
+	if err := RemoveForkCandidateIfMatchesLocked(repo, candidate); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func RemoveForkCandidateIfMatchesLocked(repo string, expected ForkCandidate) error {
 	current, ok, err := ReadForkCandidate(repo, expected.Fork)
 	if err != nil || !ok {
