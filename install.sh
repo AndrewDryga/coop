@@ -38,6 +38,20 @@ verify_checksum() {
   return 0
 }
 
+# bundle_required VER — whether release VER ships a Sigstore bundle (checksums.txt.bundle) that the
+# installer must therefore verify when cosign is present. Every tag from v2.2.2 on is signed by the
+# release workflow, so for those a missing bundle is a tampered or incomplete release, never an
+# optional extra: an attacker who can replace the archive and checksums.txt can just as easily omit
+# the bundle. A tag that does not parse as a version fails closed too. Pure, unit-testable by
+# sourcing with COOP_INSTALL_LIB=1.
+bundle_required() {
+  br_ver=${1#v}
+  case "$br_ver" in
+    *[!0-9.]*|'') return 0 ;; # not a plain version: assume signed, verify or abort
+  esac
+  echo "$br_ver" | awk -F. '{ if ($1+0 > 2 || ($1+0 == 2 && ($2+0 > 2 || ($2+0 == 2 && $3+0 >= 2)))) exit 0; exit 1 }'
+}
+
 # atomic_install SRC DEST — install SRC to DEST by staging a temp file in DEST's own
 # directory (same filesystem) and rename(2)-ing it over DEST. The rename swaps inodes
 # atomically, so replacing the *running* coop during a self-update can't hit ETXTBSY
@@ -98,11 +112,13 @@ curl -fsSL "$url" -o "$tmp/coop.tar.gz" || { echo "coop: download failed: $url" 
 # Verify the download against the release's published checksums — defends against a
 # tampered or MITM'd asset. Fails closed on a mismatch, a missing entry, or a host with no
 # sha256 tool to check it.
-# When cosign is present we first verify checksums.txt's Sigstore signature, so the
-# checksum file itself is trusted (not just internally consistent) — an attacker who
-# swapped both the archive and checksums.txt would be caught here. Without cosign we
-# fall back to the plain checksum and say the signature was not verified. The checksum
-# file itself is mandatory either way: no release metadata means no install.
+# When cosign is present we first verify checksums.txt's Sigstore signature, so the checksum
+# file itself is trusted (not just internally consistent) — an attacker who swapped both the
+# archive and checksums.txt would be caught here. For a release that ships a bundle (every tag
+# from v2.2.2 on) a missing bundle is then a failure, not a downgrade: omitting it is the one move
+# left to that attacker. Without cosign we fall back to the plain checksum and say the signature
+# was not verified. The checksum file itself is mandatory either way: no release metadata means
+# no install.
 if ! curl -fsSL "https://github.com/$repo/releases/download/$ver/checksums.txt" -o "$tmp/checksums.txt"; then
   echo "coop: could not fetch checksums.txt for $ver — aborting" >&2
   exit 1
@@ -119,8 +135,11 @@ if command -v cosign >/dev/null 2>&1; then
       echo "coop: checksums.txt failed cosign signature verification — aborting" >&2
       exit 1
     fi
+  elif bundle_required "$ver"; then
+    echo "coop: no checksums.txt.bundle for $ver, which every release since v2.2.2 ships — aborting (a release missing its signature bundle is not trusted; retry, or set COOP_VERSION to a release that has one)" >&2
+    exit 1
   else
-    echo "coop: no checksums.txt.bundle for $ver; skipping signature verification" >&2
+    echo "coop: no checksums.txt.bundle for $ver (releases before v2.2.2 were not signed); skipping signature verification" >&2
   fi
 else
   echo "coop: cosign not found; skipping signature check (see README → Verifying a download)" >&2

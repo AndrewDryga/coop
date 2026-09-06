@@ -171,3 +171,27 @@ func inodeOf(t *testing.T, path string) uint64 {
 	}
 	return uint64(st.Ino)
 }
+
+// TestInstallBundleRequired pins the installer's Sigstore policy: every release from v2.2.2 on
+// ships checksums.txt.bundle, so with cosign present a missing bundle aborts the install instead
+// of downgrading to a warning; older tags, which were never signed, still install on the checksum
+// alone; a tag that is not a plain version fails closed.
+func TestInstallBundleRequired(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	required := func(tag string) bool {
+		cmd := exec.Command("sh", "-c", `. ./install.sh; bundle_required "$1"`, "sh", tag)
+		cmd.Env = append(os.Environ(), "COOP_INSTALL_LIB=1")
+		return cmd.Run() == nil
+	}
+	for tag, want := range map[string]bool{
+		"v2.2.2": true, "v2.2.10": true, "v2.10.0": true, "v9.1.0": true, "v10.0.0": true,
+		"v2.2.1": false, "v1.9.9": false, "v0.1.0": false,
+		"latest": true, "": true, "v2.2.2-rc1": true,
+	} {
+		if got := required(tag); got != want {
+			t.Errorf("bundle_required(%q) = %v, want %v", tag, got, want)
+		}
+	}
+}

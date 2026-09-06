@@ -85,8 +85,10 @@ The one-line command executes the mutable `main/install.sh` first, so that boots
 trusts GitHub and the repository's current `main` branch. The script then requires the
 release's `checksums.txt` and verifies the downloaded archive with `sha256sum` or
 `shasum`; it aborts if either the metadata or tool is missing. When
-[cosign](https://github.com/sigstore/cosign) and the release bundle are available, it
-also authenticates the checksum file to the exact release workflow and requested tag.
+[cosign](https://github.com/sigstore/cosign) is installed, it also authenticates the
+checksum file to the exact release workflow and requested tag — and, for every release from
+v2.2.2 on (all of them ship a bundle), refuses to install when the bundle is missing rather than
+falling back to the checksum alone. Without cosign it says the signature was not verified.
 
 For verification *before* executing project code, download the release artifacts by
 hand. Set `VER` and `ASSET` for your platform — e.g.
