@@ -38,7 +38,13 @@ const (
 	DefaultStopTimeout = 5 * time.Second
 )
 
-var errLegacySessionForkUnproven = errors.New("legacy remote session has no immutable fork ownership proof")
+// errSessionForkUnproven marks a session whose workspace authority cannot be proved at start —
+// its generation record or workspace is gone, or the fork was recreated under the same name. The
+// daemon quarantines such a session (every operation on it keeps failing the live authority
+// check) instead of refusing to start for everyone else; its durable history stays untouched.
+var errSessionForkUnproven = errors.New("remote session workspace authority is unproven")
+
+var errLegacySessionForkUnproven = fmt.Errorf("%w: legacy remote session has no immutable fork ownership proof", errSessionForkUnproven)
 
 const (
 	sessionPolicyVersion             = 1
@@ -1038,8 +1044,8 @@ func (s *Service) Start(parent context.Context) error {
 		}
 		bound, bindErr := s.ensureSessionForkAuthority(parent, sessions[index])
 		if bindErr != nil {
-			if errors.Is(bindErr, errLegacySessionForkUnproven) {
-				s.host.warnf("remote session %s is quarantined: %v; its workspace and services were left untouched", sessions[index].ID, bindErr)
+			if errors.Is(bindErr, errSessionForkUnproven) {
+				s.host.warnf("remote session %s is quarantined: %v; its durable history, workspace, and services were left untouched", sessions[index].ID, bindErr)
 				quarantined[sessions[index].ID] = struct{}{}
 				quarantinedIDs = append(quarantinedIDs, sessions[index].ID)
 				continue
@@ -1180,6 +1186,9 @@ func (s *Service) Start(parent context.Context) error {
 	}
 	s.mu.Lock()
 	for _, sess := range sessions {
+		if _, isQuarantined := quarantined[sess.ID]; isQuarantined {
+			continue // no worker for a session whose workspace authority is unproven
+		}
 		if sess.QueuedTurnCount > 0 && requireSessionForkAuthority(sess) == nil {
 			s.ensureWorkerLocked(sess.ID)
 		}
@@ -1230,14 +1239,17 @@ func (s *Service) ensureSessionForkAuthority(ctx context.Context, bound session.
 		}
 		return bound, nil
 	}
+	// A missing record, a recreated fork, or a vanished workspace is state that is gone, not a
+	// corrupt binding: quarantine this session (its live authority check keeps refusing every
+	// operation) rather than refuse to start the daemon for every other session.
 	if !ok {
-		return session.Session{}, errors.New("session workspace generation record is missing")
+		return session.Session{}, fmt.Errorf("%w: workspace generation record is missing", errSessionForkUnproven)
 	}
 	if forkspace.Generation(bound.ForkGeneration) != identity.Generation {
-		return session.Session{}, errors.New("session workspace generation changed")
+		return session.Session{}, fmt.Errorf("%w: workspace generation changed", errSessionForkUnproven)
 	}
 	if err := forkspace.ValidateGenerationWorkspace(bound.Repository, identity); err != nil {
-		return session.Session{}, err
+		return session.Session{}, fmt.Errorf("%w: %v", errSessionForkUnproven, err)
 	}
 	reservation := forkspace.WorkspaceReservation{
 		Version: forkspace.WorkspaceReservationVersion, Fork: identity,

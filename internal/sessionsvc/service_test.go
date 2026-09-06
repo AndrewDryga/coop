@@ -5896,3 +5896,54 @@ func TestSubmitTurnDoesNotWaitForARunningTurn(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// One session whose workspace vanished out of band — or whose discard crashed between removing
+// the workspace and marking the row — must not keep the daemon from starting for everyone else.
+func TestStartQuarantinesASessionWhoseWorkspaceVanished(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	state := filepath.Join(t.TempDir(), "state")
+	service := newTestSessionService(t, state, testSessionPolicies(repo), nil)
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := service.CreateRemoteSession(context.Background(), "create-gone", CreateRemoteSessionRequest{Policy: "responder", Task: "gone"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := service.CreateRemoteSession(context.Background(), "create-kept", CreateRemoteSessionRequest{Policy: "responder", Task: "kept"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Close(context.Background(), "close-gone", session.CloseSessionRequest{SessionID: gone.ID, ExpectedRevision: gone.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(gone.Workspace); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := newTestSessionService(t, state, testSessionPolicies(repo), nil)
+	defer restarted.Stop()
+	if err := restarted.Start(context.Background()); err != nil {
+		t.Fatalf("the daemon refused to start over one vanished workspace: %v", err)
+	}
+	if !restarted.sessionQuarantined(gone.ID) {
+		t.Fatal("the session without a workspace must be quarantined")
+	}
+	if restarted.sessionQuarantined(kept.ID) {
+		t.Fatal("a healthy session must not be quarantined")
+	}
+	current, err := restarted.GetSession(context.Background(), kept.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.SubmitTurn(context.Background(), "kept-turn", session.SubmitTurnRequest{SessionID: kept.ID, ExpectedRevision: current.Revision, Prompt: "still works"}); err != nil {
+		t.Fatalf("healthy session refused a turn after the restart: %v", err)
+	}
+	if _, err := restarted.GetChanges(context.Background(), gone.ID); session.CodeOf(err) != session.CodeInvalidSessionState {
+		t.Fatalf("changes on the vanished session = %v, want invalid_session_state", err)
+	}
+}

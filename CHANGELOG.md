@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **One session's vanished workspace no longer stops the daemon.** `coop sessions serve` used to
+  refuse to start when any non-discarded session's generation record or workspace was gone — a
+  workspace removed out of band, or a discard that crashed between removing the workspace and
+  marking the row. Such a session is now quarantined with a warning, exactly like a legacy session:
+  its history stays untouched, every operation on it keeps failing the live authority check, and
+  every other session binds and runs.
+
 - **A turn submitted while one runs queues instead of waiting.** Turn admission no longer holds
   the session's runtime lock, so a submit during a running turn returns the queued turn at once (up
   to `max_queued_turns`) instead of blocking the request until the turn ends, and a review requested
