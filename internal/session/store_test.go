@@ -2267,3 +2267,42 @@ func TestRotateTurnTargetSwapsTheRungAndDropsAForeignTranscript(t *testing.T) {
 		t.Fatalf("settled turn rotation error = %v", err)
 	}
 }
+
+// The bearer lives in the session row exactly once: an operation receipt, and any session
+// replayed from it, carries only the binding digest.
+func TestSessionReceiptsCarryTheBindingDigestNotTheBearer(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	token := strings.Repeat("s", 48)
+	sess, err := store.CreateSession(context.Background(), "create-receipt", CreateSessionRequest{
+		Target: "target", PolicyDigest: strings.Repeat("a", 64), AuthorityDigest: strings.Repeat("b", 64),
+		TurnTimeout: 3 * time.Minute, MaxPatchBytes: 1234,
+		ResponderBinding: &ResponderBinding{Endpoint: "https://responder.example/v1/state-tools/mcp", Token: token},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ResponderBinding == nil || sess.ResponderBinding.Token != token || sess.ResponderBindingDigest != ResponderBindingDigest(sess.ResponderBinding) {
+		t.Fatalf("created session binding/digest = %+v / %q", sess.ResponderBinding, sess.ResponderBindingDigest)
+	}
+	op, err := store.GetOperation(context.Background(), "create-receipt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(op.Result), token) {
+		t.Fatalf("the create receipt duplicates the bearer:\n%s", op.Result)
+	}
+	if !strings.Contains(string(op.Result), `"responder_binding_digest":"`+sess.ResponderBindingDigest+`"`) {
+		t.Fatalf("the create receipt lacks the binding digest:\n%s", op.Result)
+	}
+	var replayed Session
+	if err := json.Unmarshal(op.Result, &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ResponderBinding != nil || replayed.ResponderBindingDigest != sess.ResponderBindingDigest {
+		t.Fatalf("replayed session = binding %+v, digest %q", replayed.ResponderBinding, replayed.ResponderBindingDigest)
+	}
+	reopened, err := store.GetSession(context.Background(), sess.ID)
+	if err != nil || reopened.ResponderBinding == nil || reopened.ResponderBinding.Token != token {
+		t.Fatalf("the canonical row must still hold the bearer: %+v, %v", reopened.ResponderBinding, err)
+	}
+}

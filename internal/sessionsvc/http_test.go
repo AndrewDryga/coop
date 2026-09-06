@@ -1215,3 +1215,32 @@ func shortSessionSocketRoot(t *testing.T) string {
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	return root
 }
+
+// A fence that decoded but failed inside the service is the daemon's failure, not a malformed
+// request: a controller revoking authority must keep retrying rather than stop on a false 400.
+func TestSessionHTTPFenceReportsServiceFailuresAsInternal(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	handler := NewHTTPHandler(service)
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	response := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/operations/fence",
+		`{"method":"CreateRemoteSession","request":{"policy":"responder","task":"after stop"}}`,
+		"fenced-after-stop", "application/json",
+	)
+	if response.Code == http.StatusBadRequest || strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
+		t.Fatalf("a service failure was reported as the caller's fault: %d %s", response.Code, response.Body.String())
+	}
+	if response.Code < 500 {
+		t.Fatalf("fence after the service stopped = %d %s; want a 5xx", response.Code, response.Body.String())
+	}
+	malformed := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/operations/fence",
+		`{"method":"CreateRemoteSession","request":{"policy":"responder","task":"x","bogus":1}}`,
+		"fenced-malformed", "application/json",
+	)
+	if malformed.Code != http.StatusBadRequest || !strings.Contains(malformed.Body.String(), "fenced request is invalid") {
+		t.Fatalf("an undecodable fence request = %d %s; want 400", malformed.Code, malformed.Body.String())
+	}
+}

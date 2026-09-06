@@ -889,34 +889,35 @@ func (s *Store) validateHistoricalSplitSessionTx(
 func (s *Store) initialSession(req CreateSessionRequest) Session {
 	now := s.now()
 	sess := Session{
-		ID:                  req.ID,
-		ExternalRef:         req.ExternalRef,
-		Target:              req.Target,
-		Policy:              req.Policy,
-		PolicyDigest:        req.PolicyDigest,
-		AuthorityDigest:     req.AuthorityDigest,
-		ProjectEnv:          !req.OmitEnv,
-		ProjectMCP:          !req.OmitMCP,
-		ResponderBinding:    cloneResponderBinding(req.ResponderBinding),
-		RepositoryReadOnly:  req.RepositoryReadOnly,
-		Repository:          req.Repository,
-		Workspace:           req.Workspace,
-		ForkName:            req.ForkName,
-		ForkGeneration:      req.ForkGeneration,
-		BaseCommit:          req.BaseCommit,
-		RepositoryFreshness: append([]RepositoryFreshnessReceipt(nil), req.RepositoryFreshness...),
-		PullRequest:         clonePullRequestBinding(req.PullRequest),
-		Companions:          append([]CompanionRepository(nil), req.Companions...),
-		TurnTimeout:         req.TurnTimeout,
-		MaxPatchBytes:       req.MaxPatchBytes,
-		Revision:            1,
-		State:               SessionOpen,
-		Activity:            ActivityParked,
-		MaxTurns:            normalized(req.MaxTurns, DefaultMaxTurns),
-		MaxQueuedTurns:      normalized(req.MaxQueuedTurns, DefaultMaxQueuedTurns),
-		MaxQueuedBytes:      normalized(req.MaxQueuedBytes, DefaultMaxQueuedBytes),
-		CreatedAt:           now,
-		UpdatedAt:           now,
+		ID:                     req.ID,
+		ExternalRef:            req.ExternalRef,
+		Target:                 req.Target,
+		Policy:                 req.Policy,
+		PolicyDigest:           req.PolicyDigest,
+		AuthorityDigest:        req.AuthorityDigest,
+		ProjectEnv:             !req.OmitEnv,
+		ProjectMCP:             !req.OmitMCP,
+		ResponderBinding:       cloneResponderBinding(req.ResponderBinding),
+		ResponderBindingDigest: ResponderBindingDigest(req.ResponderBinding),
+		RepositoryReadOnly:     req.RepositoryReadOnly,
+		Repository:             req.Repository,
+		Workspace:              req.Workspace,
+		ForkName:               req.ForkName,
+		ForkGeneration:         req.ForkGeneration,
+		BaseCommit:             req.BaseCommit,
+		RepositoryFreshness:    append([]RepositoryFreshnessReceipt(nil), req.RepositoryFreshness...),
+		PullRequest:            clonePullRequestBinding(req.PullRequest),
+		Companions:             append([]CompanionRepository(nil), req.Companions...),
+		TurnTimeout:            req.TurnTimeout,
+		MaxPatchBytes:          req.MaxPatchBytes,
+		Revision:               1,
+		State:                  SessionOpen,
+		Activity:               ActivityParked,
+		MaxTurns:               normalized(req.MaxTurns, DefaultMaxTurns),
+		MaxQueuedTurns:         normalized(req.MaxQueuedTurns, DefaultMaxQueuedTurns),
+		MaxQueuedBytes:         normalized(req.MaxQueuedBytes, DefaultMaxQueuedBytes),
+		CreatedAt:              now,
+		UpdatedAt:              now,
 	}
 	if sess.ID == "" {
 		sess.ID = s.id("ses")
@@ -1406,6 +1407,7 @@ func scanSession(row rowScanner) (Session, error) {
 	}
 	if responderEndpointValue != "" {
 		sess.ResponderBinding = &ResponderBinding{Endpoint: responderEndpointValue, Token: responderTokenValue}
+		sess.ResponderBindingDigest = ResponderBindingDigest(sess.ResponderBinding)
 	}
 	if workspaceTaskValue != "" {
 		var binding WorkspaceTaskBinding

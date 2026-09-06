@@ -265,41 +265,45 @@ type Operation struct {
 }
 
 type Session struct {
-	ID                  string                       `json:"id"`
-	ExternalRef         string                       `json:"external_ref"`
-	Target              string                       `json:"target"`
-	Policy              string                       `json:"policy"`
-	PolicyDigest        string                       `json:"policy_digest"`
-	AuthorityDigest     string                       `json:"authority_digest"`
-	ProjectEnv          bool                         `json:"project_env"`
-	ProjectMCP          bool                         `json:"project_mcp"`
-	ResponderBinding    *ResponderBinding            `json:"responder_binding,omitempty"`
-	WorkspaceTask       *WorkspaceTaskBinding        `json:"workspace_task,omitempty"`
-	RepositoryReadOnly  bool                         `json:"repository_read_only"`
-	Repository          string                       `json:"repository"`
-	Workspace           string                       `json:"workspace"`
-	ForkName            string                       `json:"fork_name"`
-	ForkGeneration      string                       `json:"fork_generation,omitempty"`
-	BaseCommit          string                       `json:"base_commit"`
-	RepositoryFreshness []RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
-	PullRequest         *PullRequestBinding          `json:"pull_request,omitempty"`
-	Companions          []CompanionRepository        `json:"companions,omitempty"`
-	NativeSessionID     string                       `json:"native_session_id"`
-	TurnTimeout         time.Duration                `json:"turn_timeout"`
-	MaxPatchBytes       int                          `json:"max_patch_bytes"`
-	Revision            int64                        `json:"revision"`
-	State               SessionState                 `json:"state"`
-	Activity            ActivityState                `json:"activity"`
-	MaxTurns            int                          `json:"max_turns"`
-	MaxQueuedTurns      int                          `json:"max_queued_turns"`
-	MaxQueuedBytes      int                          `json:"max_queued_bytes"`
-	TurnsUsed           int                          `json:"turns_used"`
-	QueuedTurnCount     int                          `json:"queued_turn_count"`
-	QueuedPromptBytes   int                          `json:"queued_prompt_bytes"`
-	ActiveTurnID        string                       `json:"active_turn_id"`
-	LastEventSequence   int64                        `json:"last_event_sequence"`
-	CreatedAt           time.Time                    `json:"created_at"`
-	UpdatedAt           time.Time                    `json:"updated_at"`
+	ID              string `json:"id"`
+	ExternalRef     string `json:"external_ref"`
+	Target          string `json:"target"`
+	Policy          string `json:"policy"`
+	PolicyDigest    string `json:"policy_digest"`
+	AuthorityDigest string `json:"authority_digest"`
+	ProjectEnv      bool   `json:"project_env"`
+	ProjectMCP      bool   `json:"project_mcp"`
+	// ResponderBinding is controller-owned authority the canonical session row keeps privately.
+	// It never rides in JSON: operation receipts and replays carry ResponderBindingDigest instead,
+	// so the bearer is stored exactly once.
+	ResponderBinding       *ResponderBinding            `json:"-"`
+	ResponderBindingDigest string                       `json:"responder_binding_digest,omitempty"`
+	WorkspaceTask          *WorkspaceTaskBinding        `json:"workspace_task,omitempty"`
+	RepositoryReadOnly     bool                         `json:"repository_read_only"`
+	Repository             string                       `json:"repository"`
+	Workspace              string                       `json:"workspace"`
+	ForkName               string                       `json:"fork_name"`
+	ForkGeneration         string                       `json:"fork_generation,omitempty"`
+	BaseCommit             string                       `json:"base_commit"`
+	RepositoryFreshness    []RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
+	PullRequest            *PullRequestBinding          `json:"pull_request,omitempty"`
+	Companions             []CompanionRepository        `json:"companions,omitempty"`
+	NativeSessionID        string                       `json:"native_session_id"`
+	TurnTimeout            time.Duration                `json:"turn_timeout"`
+	MaxPatchBytes          int                          `json:"max_patch_bytes"`
+	Revision               int64                        `json:"revision"`
+	State                  SessionState                 `json:"state"`
+	Activity               ActivityState                `json:"activity"`
+	MaxTurns               int                          `json:"max_turns"`
+	MaxQueuedTurns         int                          `json:"max_queued_turns"`
+	MaxQueuedBytes         int                          `json:"max_queued_bytes"`
+	TurnsUsed              int                          `json:"turns_used"`
+	QueuedTurnCount        int                          `json:"queued_turn_count"`
+	QueuedPromptBytes      int                          `json:"queued_prompt_bytes"`
+	ActiveTurnID           string                       `json:"active_turn_id"`
+	LastEventSequence      int64                        `json:"last_event_sequence"`
+	CreatedAt              time.Time                    `json:"created_at"`
+	UpdatedAt              time.Time                    `json:"updated_at"`
 }
 
 // RepositoryFreshnessReceipt is the non-secret proof captured by the Coop

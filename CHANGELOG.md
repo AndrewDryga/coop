@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Session receipts carry the Responder binding digest, never the bearer.** A session's private
+  Responder token now lives in its canonical row only: the create, extend, close, and exhaust
+  operation receipts, and any session replayed from them, serialize `responder_binding_digest`
+  instead of the binding. Receipts written by earlier releases are not rewritten. Separately,
+  `POST /v1/operations/fence` reports a failure inside the daemon as `internal_error` (500) and
+  reserves `invalid_request` for a request it could not decode, so a controller revoking authority
+  keeps retrying instead of concluding its request was malformed.
+
 - **One session's vanished workspace no longer stops the daemon.** `coop sessions serve` used to
   refuse to start when any non-discarded session's generation record or workspace was gone — a
   workspace removed out of band, or a discard that crashed between removing the workspace and

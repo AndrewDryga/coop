@@ -370,6 +370,9 @@ func (h *sessionHTTPHandler) fenceOperation(w http.ResponseWriter, r *http.Reque
 	if !decodeSessionJSONLimit(w, r, &envelope, sessionHTTPFenceMaxBody) {
 		return
 	}
+	// Only a request that cannot be decoded is the caller's fault. A fence that decoded but failed
+	// inside the service (a store or transaction error) is reported as the internal failure it is,
+	// so a controller revoking authority keeps retrying instead of concluding its request was wrong.
 	var (
 		op  session.Operation
 		err error
@@ -377,32 +380,30 @@ func (h *sessionHTTPHandler) fenceOperation(w http.ResponseWriter, r *http.Reque
 	switch envelope.Method {
 	case "CreateRemoteSession":
 		var request CreateRemoteSessionRequest
-		if err = decodeSessionJSONValue(envelope.Request, &request); err == nil {
-			op, err = h.service.FenceCreateRemoteSession(
-				r.Context(), sessionIdempotencyKey(r), request,
-			)
+		if err = decodeSessionJSONValue(envelope.Request, &request); err != nil {
+			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "fenced request is invalid")
+			return
 		}
+		op, err = h.service.FenceCreateRemoteSession(r.Context(), sessionIdempotencyKey(r), request)
 	case "SubmitTurn":
 		var request operationFenceSubmitTurnRequest
-		if err = decodeSessionJSONValue(envelope.Request, &request); err == nil {
-			op, err = h.service.FenceSubmitTurn(
-				r.Context(), sessionIdempotencyKey(r), session.SubmitTurnRequest{
-					SessionID: request.SessionID, ExpectedRevision: request.ExpectedRevision,
-					Prompt: request.Prompt, Artifacts: request.Artifacts,
-					MinTargetIndex: request.MinTargetIndex, RewindTarget: request.RewindTarget,
-					OutputContract: request.OutputContract, ResponderBinding: request.ResponderBinding,
-				},
-			)
+		if err = decodeSessionJSONValue(envelope.Request, &request); err != nil {
+			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "fenced request is invalid")
+			return
 		}
+		op, err = h.service.FenceSubmitTurn(
+			r.Context(), sessionIdempotencyKey(r), session.SubmitTurnRequest{
+				SessionID: request.SessionID, ExpectedRevision: request.ExpectedRevision,
+				Prompt: request.Prompt, Artifacts: request.Artifacts,
+				MinTargetIndex: request.MinTargetIndex, RewindTarget: request.RewindTarget,
+				OutputContract: request.OutputContract, ResponderBinding: request.ResponderBinding,
+			},
+		)
 	default:
 		err = &session.Error{Code: session.CodeInvalidRequest, Detail: "operation method cannot be fenced"}
 	}
 	if err != nil {
-		if session.CodeOf(err) == "" {
-			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "fenced request is invalid")
-		} else {
-			writeSessionServiceError(w, err)
-		}
+		writeSessionServiceError(w, err)
 		return
 	}
 	writeSessionJSON(w, http.StatusOK, publicOperation(op))
@@ -1382,7 +1383,7 @@ func publicSession(value session.Session) SessionDTO {
 		PolicyDigest: value.PolicyDigest, AuthorityDigest: value.AuthorityDigest,
 		ProjectEnv: value.ProjectEnv, ProjectMCP: value.ProjectMCP,
 		RepositoryReadOnly:        value.RepositoryReadOnly,
-		ResponderBindingDigest:    session.ResponderBindingDigest(value.ResponderBinding),
+		ResponderBindingDigest:    sessionResponderBindingDigest(value),
 		WorkspaceTask:             publicWorkspaceTask(value.WorkspaceTask),
 		BaseCommit:                value.BaseCommit,
 		RepositoryFreshnessStatus: repositoryFreshnessStatus(value.RepositoryFreshness),
@@ -1412,6 +1413,16 @@ func publicWorkspaceTask(value *session.WorkspaceTaskBinding) *SessionWorkspaceT
 		QueueID: value.QueueID, TaskID: value.TaskID, ID: value.ID,
 		OfferRef: value.OfferRef, DraftSHA256: value.DraftSHA256,
 	}
+}
+
+// sessionResponderBindingDigest reads the digest from the private binding when the session came
+// from its canonical row, and from the receipt field when it was replayed from an operation
+// result, which carries the digest and never the bearer.
+func sessionResponderBindingDigest(value session.Session) string {
+	if value.ResponderBinding != nil {
+		return session.ResponderBindingDigest(value.ResponderBinding)
+	}
+	return value.ResponderBindingDigest
 }
 
 func publicTurn(value session.Turn) TurnDTO {
