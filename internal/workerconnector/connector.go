@@ -2,6 +2,7 @@ package workerconnector
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"time"
@@ -34,7 +35,7 @@ func NewConnector(config ConnectorConfig) (*Connector, error) {
 		return nil, errors.New("worker connector configuration is incomplete")
 	}
 	hello := config.Hello(context.Background(), config.Now())
-	poll := workerproto.Poll{Version: workerproto.Version, PollRef: "poll:" + hello.ID + ":0", Worker: hello}
+	poll := workerproto.Poll{Version: workerproto.Version, PollRef: pollReference(hello.ID, 0), Worker: hello}
 	if err := poll.Validate(); err != nil {
 		return nil, fmt.Errorf("validate worker connector hello: %w", err)
 	}
@@ -44,9 +45,18 @@ func NewConnector(config ConnectorConfig) (*Connector, error) {
 	}, nil
 }
 
+func pollReference(workerID string, sequence uint64) string {
+	// Reserve all 20 uint64 digits up front so sequence growth cannot exceed the
+	// protocol's 256-byte bound. Keep hashed IDs outside the legacy poll: namespace.
+	if len(workerID) > 256-len("poll::")-20 {
+		return fmt.Sprintf("poll-sha256:%x:%d", sha256.Sum256([]byte(workerID)), sequence)
+	}
+	return fmt.Sprintf("poll:%s:%d", workerID, sequence)
+}
+
 func (c *Connector) PollOnce(ctx context.Context) error {
 	c.sequence++
-	pollRef := fmt.Sprintf("poll:%s:%d", c.workerID, c.sequence)
+	pollRef := pollReference(c.workerID, c.sequence)
 	poll := workerproto.Poll{
 		Version: workerproto.Version, PollRef: pollRef, Worker: c.hello(ctx, c.now()),
 		AcknowledgedCommandIDs: []string{}, CommandResults: []workerproto.CommandResult{},

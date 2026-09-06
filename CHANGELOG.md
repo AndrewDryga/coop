@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Long worker IDs no longer stop polling as the sequence grows. Poll references stay within
+  protocol limits while preserving the advertised identity and exact response matching.
+
 - Worker enrollment, renewal, polling and artifact transfers now refuse HTTP redirects, including
   same-origin redirects, so credentials and command data stay on their exact configured API routes.
 

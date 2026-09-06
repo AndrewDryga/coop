@@ -14,6 +14,12 @@ and never listens on TCP or accepts a shell command (`internal/cli/worker_cmd.go
 
 The traps the code does not make obvious:
 
+- **Poll references are opaque correlation, not worker identity.** Config validation, connector
+  construction and polling share one formatter. IDs up to 230 bytes keep the legacy
+  `poll:<ID>:<sequence>` shape, reserving all 20 uint64 digits. Longer IDs use
+  `poll-sha256:<SHA256(ID)>:<sequence>`, a disjoint namespace so hash-like short IDs cannot collide.
+  The full Worker.ID is still validated and advertised. Exact response echo remains mandatory
+  before receipt deletion, scan advancement or command execution; persistence semantics are unchanged.
 - **Redirects are not controller authority.** The shared production identity-client factory
   removes response Location before Go's client can parse or follow it, including malformed URLs
   that otherwise leak into errors before CheckRedirect. The original status and body remain for
@@ -63,6 +69,8 @@ The traps the code does not make obvious:
   controller redelivers.
 
 ## Changelog
+- 2026-09-06 — reproduced a valid 244-byte ID failing at poll 1000000; bounded the shared formatter
+  and covered the full protocol ID range, maximum sequence, disjoint identities and wrong-echo custody.
 - 2026-09-06 — reproduced TLS enrollment redirecting a synthetic token to plaintext, then fenced
   the shared identity-client factory; exercised every transport operation and retained poll custody.
 - 2026-09-06 — added operator enrollment/recovery guide and real TLS/Unix integration with

@@ -106,7 +106,7 @@ func LoadConfig(path, buildVersion string, now time.Time) (Config, error) {
 		PolicyAuthorityDigests: raw.PolicyAuthorityDigests,
 		Repositories:           raw.Repositories, Capabilities: configuredCapabilities(raw.Capabilities), Capacity: raw.Capacity, State: "eligible",
 	}
-	probe := workerproto.Poll{Version: workerproto.Version, PollRef: "poll:" + raw.WorkerID + ":config", Worker: hello}
+	probe := workerproto.Poll{Version: workerproto.Version, PollRef: pollReference(raw.WorkerID, 0), Worker: hello}
 	if err := probe.Validate(); err != nil {
 		return Config{}, fmt.Errorf("validate worker authority configuration: %w", err)
 	}
