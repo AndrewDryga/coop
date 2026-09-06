@@ -4,6 +4,7 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks watch` fails on an unreadable queue instead of calling it drained.** A queue the task reader refuses (a symlinked or unreadable entry, a lifecycle directory that is not a real directory) used to appear as zero counts: the live board exited 0 as "drained" and `--json` reported an empty queue with the error tucked under `problems`. Every view now still shows what it could read, then exits 1 naming the unreadable queue; the `--json` snapshot records the failure in a per-queue `error` field beside its zero counts.
 - **One unexecutable worker command no longer stalls its poll batch.** When the outbound worker cannot execute one command in a batch — an expired placement lease, a redelivery meant for another worker, a conflicting receipt, an artifact fetch that failed for now — it reports that command by id and keeps going: the remaining commands execute and the event acknowledgements still apply, instead of the whole batch being abandoned until the next poll.
 - **The worker's private request cap matches the daemon's.** The outbound worker admits the
   12 MiB turn and fence bodies the daemon accepts instead of refusing anything over 1 MiB before

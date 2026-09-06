@@ -1,6 +1,9 @@
 package tasks
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -386,5 +389,59 @@ func TestTaskWatchRendersSandboxAsLabeledBlock(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("sandbox block lost %q:\n%s", want, joined)
 		}
+	}
+}
+
+func TestTasksWatchExitsNonzeroOnAnUnreadableQueue(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	root := filepath.Join(repo, TasksRoot)
+	if err := ScaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	captured, err := os.CreateTemp(t.TempDir(), "stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = captured
+	t.Cleanup(func() { os.Stdout = stdout })
+
+	// A healthy, empty queue is drained: both single-shot views exit 0.
+	if code, err := TasksWatch(Host{}, repo, []string{root}, true); code != 0 || err != nil {
+		t.Fatalf("healthy --json watch = (%d, %v); want (0, nil)", code, err)
+	}
+	if code, err := TasksWatch(Host{}, repo, []string{root}); code != 0 || err != nil {
+		t.Fatalf("healthy piped watch = (%d, %v); want (0, nil)", code, err)
+	}
+
+	// An entry the task reader refuses makes the queue unreadable: zero counts are unknown work,
+	// so the watch fails instead of reporting a drain — while the snapshot still names the failure.
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, StateTodo, "redirected")); err != nil {
+		t.Fatal(err)
+	}
+	if err := captured.Truncate(0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captured.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	code, err := TasksWatch(Host{}, repo, []string{root}, true)
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "queue "+root+" is unreadable") {
+		t.Fatalf("unreadable --json watch = (%d, %v); want exit 1 naming the unreadable queue", code, err)
+	}
+	output, err := os.ReadFile(captured.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot ProjectSnapshot
+	if err := json.Unmarshal(output, &snapshot); err != nil {
+		t.Fatalf("--json output is not one snapshot: %v\n%s", err, output)
+	}
+	if len(snapshot.Queues) != 1 || !strings.Contains(snapshot.Queues[0].Error, "is not a real directory") ||
+		snapshot.Queues[0].Counts != (TaskCounts{}) {
+		t.Fatalf("snapshot queues = %+v; want the read failure recorded beside zero counts", snapshot.Queues)
+	}
+	if code, err := TasksWatch(Host{}, repo, []string{root}); code != 1 || err == nil {
+		t.Fatalf("unreadable piped watch = (%d, %v); want exit 1", code, err)
 	}
 }

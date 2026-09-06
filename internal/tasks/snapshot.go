@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,6 +19,20 @@ type ProjectQueueSnapshot struct {
 	Label  string     `json:"label"`
 	ID     string     `json:"queue_id,omitempty"`
 	Counts TaskCounts `json:"counts"`
+	// Error is why the queue could not be read; its Counts are then zero, not empty.
+	Error string `json:"error,omitempty"`
+}
+
+// QueueError reports every queue the snapshot could not read. Zero counts from an unreadable
+// queue are unknown work, never a drained queue, so watchers fail instead of settling on them.
+func (s ProjectSnapshot) QueueError() error {
+	var errs []error
+	for _, queue := range s.Queues {
+		if queue.Error != "" {
+			errs = append(errs, fmt.Errorf("queue %s is unreadable: %s", queue.Root, queue.Error))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 type ProjectTaskSnapshot struct {
@@ -154,8 +169,10 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 	taskIndexesByReadableID := map[string][]int{}
 	for _, root := range queueRoots {
 		items, err := ReadTaskTree(root)
+		queueError := ""
 		if err != nil {
 			appendSnapshotProblem(&snapshot, "queue "+root, err)
+			queueError = err.Error()
 		}
 		counts, _ := TaskTreeCounts(items)
 		label := queueSnapshotLabel(repo, root)
@@ -165,7 +182,7 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 		} else if !errors.Is(identityErr, os.ErrNotExist) {
 			appendSnapshotProblem(&snapshot, "queue "+root+" identity", identityErr)
 		}
-		snapshot.Queues = append(snapshot.Queues, ProjectQueueSnapshot{Root: root, Label: label, ID: queueID, Counts: counts})
+		snapshot.Queues = append(snapshot.Queues, ProjectQueueSnapshot{Root: root, Label: label, ID: queueID, Counts: counts, Error: queueError})
 		for _, item := range items {
 			view := ProjectTaskSnapshot{
 				Queue: root, QueueLabel: label, QueueID: queueID,

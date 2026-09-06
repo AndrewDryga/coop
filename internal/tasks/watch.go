@@ -83,11 +83,20 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		return snapshot, sources, merged, running, starting
 	}
 
+	// An unreadable queue is unknown work, never a drained one: every view still shows what it
+	// could read (the snapshot names the failure), then exits 1 instead of reporting a drain.
+	// ReadTaskTree already retries a torn read, so a failure here is durable, not a race.
 	if len(jsonOutput) > 0 && jsonOutput[0] {
 		snapshot, _, _, _, _ := read()
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return 0, enc.Encode(snapshot)
+		if err := enc.Encode(snapshot); err != nil {
+			return 0, err
+		}
+		if err := snapshot.QueueError(); err != nil {
+			return 1, err
+		}
+		return 0, nil
 	}
 
 	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) {
@@ -96,21 +105,30 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		for _, line := range tasksWatchFrameWithSnapshot(sources, merged, snapshot, 0, 120) {
 			fmt.Println(line)
 		}
+		if err := snapshot.QueueError(); err != nil {
+			return 1, err
+		}
 		return 0, nil
 	}
 	if snapshot, _, merged, _, _ := read(); len(merged) == 0 && !snapshotHasVisibleActivity(snapshot) {
 		ui.Note("no tasks yet — add one with 'coop tasks add \"<title>\"'")
 		return 0, nil
+	} else if err := snapshot.QueueError(); err != nil {
+		return 1, err
 	}
 
 	width := func() int { return ui.TermWidth(os.Stdout) }
 	screen := ui.NewAltScreen(os.Stdout, width)
 	sawActive, sawFork := false, false // concurrent-fork startup guard — see tasksWatchSettling
+	var queueErr error                 // a queue that turned unreadable mid-watch ends the board with exit 1
 	tick := func(spin int) ([]string, bool) {
 		snapshot, sources, merged, running, starting := read()
 		c := mergedCounts(merged)
 		frame := tasksWatchFrameWithSnapshot(sources, merged, snapshot, spin, width())
 		screen.Frame(frame)
+		if queueErr = snapshot.QueueError(); queueErr != nil {
+			return frame, true // settle on the failure so the loop's debounce still bounds the exit
+		}
 		if running > 0 || c.Doing > 0 {
 			sawActive = true // a fork/loop is on it — work has started
 		}
@@ -121,9 +139,15 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		// guard so just-launched forks don't conclude "drained" before one claims.
 		return frame, tasksWatchSettling(c, running, sawActive, sawFork)
 	}
-	return host.runWatchLoop(screen, tick, func() {
-		ui.OK("queue drained — every task is done")
+	code, err := host.runWatchLoop(screen, tick, func() {
+		if queueErr == nil {
+			ui.OK("queue drained — every task is done")
+		}
 	})
+	if err == nil && queueErr != nil {
+		return 1, queueErr
+	}
+	return code, err
 }
 
 func snapshotHasVisibleActivity(snapshot ProjectSnapshot) bool {

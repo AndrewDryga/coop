@@ -354,7 +354,8 @@ coop tasks — drive the task queue (a folder per task under .agent/tasks/).
                    list tasks by state, with counts (recent done capped; --all shows all). Pass one
                    or more state flags to show only those. Task ids link to the folder — click to open.
   watch [--json]   live board: canonical tasks + every active sandbox (auto-exits when done);
-                   --json prints the same project snapshot once for automation
+                   --json prints the same project snapshot once for automation; a queue
+                   that cannot be read exits 1 instead of counting as drained
   add [--project <name>] "<title>"
                    scaffold a task folder in todo (or fill it inline: --context/--acceptance/--approach/--subtask)
   claim <id> [--as <label>] [--pid <n>] [--force]
