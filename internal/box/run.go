@@ -1383,6 +1383,10 @@ You run inside a coop container: a Debian box that IS your sandbox and security 
   work. Never stage, commit, check out, or git restore those paths: it would replace real
   repository content with an empty file. Leave them untouched and unstaged, and don't reach for a
   blanket "git add -A" / "git commit -a" that would sweep them in.
+- Sibling services (.agent/compose.yml) get those same decoys for any secret-looking file they
+  bind. A service that dies reading a key or certificate it mounts from the repo ("missing BEGIN
+  PRIVATE KEY" and the like) is hitting the decoy, not a broken file: say so and ask the human to
+  run "coop up" outside the box and approve that file — no change you make in here can grant it.
 `
 
 // agentBaseInstructions is what an agent receives as its global instructions: the always-on
