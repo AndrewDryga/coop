@@ -53,11 +53,7 @@ func (a *app) cmdPresets(args []string) (int, error) {
 			fmt.Printf("  %s  %s\n", label, pal.Red("broken: "+err.Error()))
 			continue
 		}
-		leadTarget := p.Lead()
-		lead := leadTarget.Provider
-		if m := p.LeadModel(); m != "" {
-			lead += "/" + m
-		}
+		lead := p.Lead().String() // the wire form, so the summary is a target you can paste
 		var roles []string
 		for _, r := range p.Roles {
 			roles = append(roles, fmt.Sprintf("%s (%s %s)", r.Name, r.Mode, r.Primary().Provider))

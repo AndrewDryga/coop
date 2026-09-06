@@ -47,7 +47,7 @@ func TestCmdPresets(t *testing.T) {
 			t.Errorf("cmdPresets() = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{"frontier", "lead claude/claude-fable-5", "critic (consult codex)", "fast (delegate gemini)", "broken", "lead.agent: is required"} {
+	for _, want := range []string{"frontier", "lead claude:claude-fable-5", "critic (consult codex)", "fast (delegate gemini)", "broken", "lead.agent: is required"} {
 		if !strings.Contains(list, want) {
 			t.Errorf("listing missing %q:\n%s", want, list)
 		}
@@ -122,7 +122,7 @@ func TestCmdPresetsInit(t *testing.T) {
 			t.Errorf("cmdPresets() after init = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{"frontier", "lead claude/claude-fable-5", "thinker (native claude)", "critic (consult codex)", "fast (delegate gemini)"} {
+	for _, want := range []string{"frontier", "lead claude:claude-fable-5", "thinker (native claude)", "critic (consult codex)", "fast (delegate gemini)"} {
 		if !strings.Contains(list, want) {
 			t.Errorf("scaffolded preset should list cleanly, missing %q:\n%s", want, list)
 		}
