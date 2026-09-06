@@ -98,7 +98,11 @@ build-all: ## Compile every package (a package no test imports can still break t
 # p.mu-guarded state) — a data race there does not fail the plain `make test` run. Its own
 # target so a race failure is legible; -race is ~2-3× slower, which is why it runs last.
 race: ## Full unit suite under the race detector (the slowest gate step)
-	@go test -race ./...
+	@# -p 4: the race detector multiplies each test binary's CPU, and running every package at
+	@# once oversubscribes the host badly enough that production grace periods (a 3 s TERM wait
+	@# before a fork's box is reaped) expire in tests that pass alone. Bounded parallelism, not a
+	@# longer grace, is the fix: the gate must fail on a real regression, not on a busy laptop.
+	@go test -race -p 4 ./...
 
 # THE GATE. One recipe, run identically on a laptop, in a box, and by CI's check job — which
 # installs the pinned tools and then calls this target. A new check belongs HERE, never in the
