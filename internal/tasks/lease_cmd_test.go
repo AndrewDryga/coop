@@ -60,7 +60,11 @@ func waitLease(t *testing.T, item Item, state taskLeaseState) TaskLeaseObservati
 	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		observed := observeTaskLease(item, time.Now())
-		if observed.State == state || time.Now().After(deadline) {
+		// A holder takes the flock first and writes its metadata after, so a busy lease can be
+		// observed for a moment as "busy unknown"; the tests assert the holder's identity, so wait
+		// for the metadata too.
+		settled := observed.State == state && (state != leaseBusy || observed.Provider != "unknown")
+		if settled || time.Now().After(deadline) {
 			return observed
 		}
 		time.Sleep(10 * time.Millisecond)
