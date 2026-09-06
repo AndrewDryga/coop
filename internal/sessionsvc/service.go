@@ -198,10 +198,16 @@ func validateSessionPolicyAncestry(path string) error {
 			return fmt.Errorf("inspect session policy ancestry: %w", err)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("session policy ancestry contains a symlink")
+			// Name the link and where it points: /tmp and a dotfile-managed ~/.config are the usual
+			// culprits, and the fix is to pass the real path, not to remove the link.
+			hint := ""
+			if real, err := filepath.EvalSymlinks(current); err == nil {
+				hint = " — pass its real path instead (--policies " + filepath.Join(real, strings.TrimPrefix(path, current)) + ")"
+			}
+			return fmt.Errorf("session policy path %s: %s is a symlink%s", path, current, hint)
 		}
 		if !info.IsDir() {
-			return errors.New("session policy ancestry is not a directory")
+			return fmt.Errorf("session policy path %s: %s is not a directory", path, current)
 		}
 		owner, ownerOK := sessionFileOwner(info)
 		// A trusted sticky directory such as /tmp lets others create their own entries,
@@ -209,12 +215,12 @@ func validateSessionPolicyAncestry(path string) error {
 		trustedSticky := info.Mode()&os.ModeSticky != 0 && ownerOK &&
 			(owner == uint64(os.Geteuid()) || owner == 0)
 		if info.Mode().Perm()&0o022 != 0 && !trustedSticky {
-			return errors.New("session policy ancestry is group/world writable")
+			return fmt.Errorf("session policy path %s: %s is group/world writable", path, current)
 		}
 		if !ownerOK {
-			return errors.New("session policy ancestry owner is unavailable")
+			return fmt.Errorf("session policy path %s: the owner of %s is unavailable", path, current)
 		} else if owner != uint64(os.Geteuid()) && owner != 0 {
-			return errors.New("session policy ancestry is foreign-owned")
+			return fmt.Errorf("session policy path %s: %s is owned by another user", path, current)
 		}
 		parent := filepath.Dir(current)
 		if parent == current {

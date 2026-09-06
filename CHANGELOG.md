@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Session policy path errors name the component at fault.** "session policy ancestry contains a
+  symlink" and its siblings now say which directory is the link, is writable by others, or is owned
+  by someone else — and, for a link such as `/tmp` or a dotfile-managed `~/.config`, offer the real
+  path to pass with `--policies`.
+
 - **A quarantined session can be retired.** `POST /v1/sessions/{id}/discard` with
   `{"retire_quarantined":true,"expected_revision":n}` tombstones a session the daemon quarantined
   at start — a legacy record with no fork ownership proof, or one whose workspace is gone — without

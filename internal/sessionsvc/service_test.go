@@ -5840,3 +5840,35 @@ func TestRetireQuarantinedSessionTombstonesWithoutTouchingTheWorkspace(t *testin
 		t.Fatalf("retire of a healthy session = %v, want invalid_session_state", err)
 	}
 }
+
+// The ancestry error names the component at fault and, for a link, the real path to pass — /tmp
+// on macOS and a dotfile-managed ~/.config are links, and the operator needs the fix, not a riddle.
+func TestPolicyAncestryErrorsNameTheOffendingComponent(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(real) // the temp root itself may be a link (macOS /var)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateSessionPolicyAncestry(filepath.Join(link, "policies.yaml"))
+	if err == nil || !strings.Contains(err.Error(), link+" is a symlink") || !strings.Contains(err.Error(), "--policies "+filepath.Join(resolved, "policies.yaml")) {
+		t.Fatalf("symlinked ancestor error = %v; want the link named and the real path offered", err)
+	}
+	loose := filepath.Join(base, "loose")
+	if err := os.MkdirAll(loose, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(loose, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSessionPolicyAncestry(filepath.Join(loose, "policies.yaml")); err == nil || !strings.Contains(err.Error(), loose+" is group/world writable") {
+		t.Fatalf("writable ancestor error = %v; want the directory named", err)
+	}
+}
