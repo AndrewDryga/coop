@@ -98,8 +98,20 @@ func snapshotComposeArgs(workspace, file string, repoReadOnly bool, exposedRoots
 		cleanup()
 		return nil, nil, err
 	}
-	return []string{"compose", "-p", ComposeProject(workspace),
-		"--project-directory", filepath.Dir(abs), "--env-file", os.DevNull, "-f", path}, cleanup, nil
+	args := []string{"compose", "-p", ComposeProject(workspace),
+		"--project-directory", filepath.Dir(abs), "--env-file", os.DevNull, "-f", path}
+	// The sidecars get the box's secret shadowing too: a decoy over every hidden path a repo bind
+	// would otherwise hand them raw (see serviceShadowOverride). Every compose invocation — start,
+	// port discovery, teardown — carries it, so the project definition is one and the same.
+	shadow, needed, err := serviceShadowOverride(workspace, abs, data, dir)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("project secret shadowing into sibling services: %w", err)
+	}
+	if needed {
+		args = append(args, "-f", shadow)
+	}
+	return args, cleanup, nil
 }
 
 func privateWorkspaceTempDir(workspace, pattern string, exposedRoots ...string) (string, error) {

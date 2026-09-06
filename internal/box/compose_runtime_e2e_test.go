@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -62,5 +63,54 @@ func TestRuntimeComposeSnapshot(t *testing.T) {
 	}
 	if len(db.Ports) != 1 || db.Ports[0].HostIP != "127.0.0.1" {
 		t.Fatalf("automatic publication lost loopback: %+v", db.Ports)
+	}
+}
+
+// Real Compose merges the shadow override by target: a directory bind of the repo hands the sidecar
+// a decoy at .env, and a direct bind of .env is replaced by the decoy — the raw file never reaches it.
+func TestRuntimeComposeShadowsRepoSecretsIntoSidecars(t *testing.T) {
+	rt, err := runtime.Detect(os.Getenv("COOP_RUNTIME"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, source := writeCompose(t, `services:
+  db:
+    image: alpine
+    volumes: ["../:/repo:ro", "../.env:/env:ro"]
+`)
+	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("COOP_SYNTHETIC_CANARY=not-a-real-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args, cleanup, err := snapshotComposeArgs(repo, source, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	var out, stderr bytes.Buffer
+	if err := runCompose(rt, &out, &stderr, "config", append(args, "config", "--format", "json")); err != nil {
+		t.Fatalf("compose config: %v\n%s", err, stderr.String())
+	}
+	var doc struct {
+		Services map[string]struct {
+			Volumes []struct{ Source, Target, Type string }
+		}
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	byTarget := map[string]string{}
+	for _, v := range doc.Services["db"].Volumes {
+		byTarget[v.Target] = v.Source
+	}
+	realRepo, _ := filepath.EvalSymlinks(repo)
+	fromRepo := func(src string) bool { return strings.HasPrefix(src, repo) || strings.HasPrefix(src, realRepo) }
+	for _, target := range []string{"/env", "/repo/.env"} {
+		src := byTarget[target]
+		if src == "" || fromRepo(src) || !strings.HasSuffix(src, "/decoy") {
+			t.Errorf("%s is bound from %q; want the decoy, never the repo's .env\n%s", target, src, out.String())
+		}
+	}
+	if src := byTarget["/repo"]; !fromRepo(src) {
+		t.Errorf("/repo is bound from %q; want the repo itself", src)
 	}
 }

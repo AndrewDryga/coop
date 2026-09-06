@@ -1529,7 +1529,10 @@ host`, `env_file`, `build`, a `0.0.0.0` port, an escaping symlink. A session who
 mounted read-only (an investigation, a review candidate) still gets its sidecars, but any bind of
 the repository into one must be read-only too (`:ro` or `read_only: true`) — a writable bind is
 refused for that session, since it would be a write path into a checkout the agent itself cannot
-write. So the file is safe to auto-run no matter who wrote it: an agent can scaffold services for you, and a prompt-injected
+write. A bind of the repo (or any directory in it) into a sidecar gets the box's own secret
+shadowing: every `.env`, key, and `.coopignore`'d path under it is an empty decoy inside the
+sidecar too, and a bind whose source is itself a secret file is replaced by one. So the file is
+safe to auto-run no matter who wrote it: an agent can scaffold services for you, and a prompt-injected
 one still can't turn `.agent/compose.yml` into host root. (Need something outside that subset?
 Run it yourself — coop only auto-runs the safe subset.)
 
