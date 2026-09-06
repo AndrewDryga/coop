@@ -5830,7 +5830,7 @@ func TestSubmitTurnDoesNotWaitForARunningTurn(t *testing.T) {
 	}
 
 	close(release)
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		current, err := service.GetSession(context.Background(), sess.ID)
 		if err != nil {

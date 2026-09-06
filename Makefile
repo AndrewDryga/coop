@@ -19,7 +19,9 @@ install: ## Build from source and install to ~/.local/bin/coop
 	@echo "installed $(HOME)/.local/bin/coop ($(VERSION)) — run 'coop build' to build the box image"
 
 test: ## Run unit tests (no container runtime needed)
-	@go test ./...
+	@# -p 4 for the same reason as the race target: every package at once oversubscribes a laptop
+	@# until fixture guards and production grace periods expire in tests that pass alone.
+	@go test -p 4 ./...
 
 cover: ## Run unit tests with a coverage summary
 	@go test -cover ./...

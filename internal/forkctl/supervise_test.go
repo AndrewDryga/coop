@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -561,7 +563,7 @@ while :; do sleep 10; done
 				}
 			})
 
-			deadline := time.Now().Add(2 * time.Second)
+			deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 			for {
 				data, _ := os.ReadFile(events)
 				if strings.Contains(string(data), "worker:ready\n") {

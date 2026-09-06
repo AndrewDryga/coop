@@ -14,8 +14,11 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/AndrewDryga/coop/internal/processidentity"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/processidentity"
 )
 
 func TestParseLeaseArgs(t *testing.T) {
@@ -54,7 +57,7 @@ func inProgressTask(t *testing.T, root, id string) Item {
 // waitLease polls the task's lease until it reaches state (busy/unleased) or the deadline passes.
 func waitLease(t *testing.T, item Item, state taskLeaseState) TaskLeaseObservation {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		observed := observeTaskLease(item, time.Now())
 		if observed.State == state || time.Now().After(deadline) {

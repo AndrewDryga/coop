@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -369,7 +371,7 @@ func runtimeInitTestRepo(t *testing.T) string {
 
 func awaitRuntimeInitMarker(t *testing.T, path, want string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for time.Now().Before(deadline) {
 		if data, err := os.ReadFile(path); err == nil && string(data) == want {
 			return

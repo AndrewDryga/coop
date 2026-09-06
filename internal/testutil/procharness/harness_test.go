@@ -193,7 +193,7 @@ func TestStartSignalGroupAndWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer process.Cleanup()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		if _, err := os.Stat(ready); err == nil {
 			break
@@ -368,7 +368,7 @@ func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'
 
 func awaitGone(t *testing.T, pid int) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for ProcessAlive(pid) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -392,7 +392,7 @@ func awaitFileExists(t *testing.T, path string) {
 // content and returns it.
 func awaitFileContent(t *testing.T, path string) string {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
 			return string(data)

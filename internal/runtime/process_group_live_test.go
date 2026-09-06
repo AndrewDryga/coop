@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 )
 
@@ -84,7 +86,7 @@ func TestLiveProcessGroupHelper(t *testing.T) {
 		defer cancel()
 		ready := os.Getenv("COOP_TEST_LIVE_RUNTIME_READY")
 		go func() {
-			deadline := time.Now().Add(5 * time.Second)
+			deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 			for time.Now().Before(deadline) {
 				if _, err := os.Stat(ready); err == nil {
 					cancel()

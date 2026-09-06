@@ -279,7 +279,7 @@ fi
 	}()
 
 	var data []byte
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		var err error
 		data, err = os.ReadFile(childPIDFile)

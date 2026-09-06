@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
@@ -65,7 +67,7 @@ func detachedHandoffReadyAndWait() error {
 	if err := os.WriteFile(os.Getenv(detachedHandoffReadyEnv), []byte("ready\n"), 0o600); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		if _, err := os.Stat(os.Getenv(detachedHandoffReleaseEnv)); err == nil {
 			return nil

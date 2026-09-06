@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkctl"
@@ -363,7 +365,7 @@ func awaitProcessEventCount(t *testing.T, path, source, event string, count int,
 
 func awaitPathState(t *testing.T, path string, exists bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for time.Now().Before(deadline) {
 		if pathExists(path) == exists {
 			return

@@ -253,7 +253,7 @@ exec "$REAL_MV" "$@"
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_ = cmd.Wait()
 	})
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		if _, err := os.Stat(ready); err == nil {
 			break
@@ -476,7 +476,7 @@ func reapConsultFixtureGroup(t *testing.T, pidFile string) {
 		return // already exited and reaped
 	}
 	_ = syscall.Kill(-pid, syscall.SIGKILL)
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for syscall.Kill(pid, 0) == nil {
 		if time.Now().After(deadline) {
 			t.Errorf("consult fixture provider pid %d survived test cleanup", pid)
@@ -488,7 +488,7 @@ func reapConsultFixtureGroup(t *testing.T, pidFile string) {
 
 func waitForConsultTestFile(t *testing.T, path string, cmd *exec.Cmd) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		if _, err := os.Stat(path); err == nil {
 			return

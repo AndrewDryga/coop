@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+
 	"github.com/AndrewDryga/coop/internal/consult"
 )
 
@@ -1023,7 +1025,7 @@ func TestDelegateWrapperKernelLockReleasesAfterUncleanGroupExit(t *testing.T) {
 			}
 		}
 	}()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		matches, err := filepath.Glob(filepath.Join(h.dir, "coop-delegate-FAST-*", "active-pid"))
 		if err != nil {
@@ -1072,7 +1074,7 @@ func TestDelegateWrapperKernelLockReleasesAfterUncleanGroupExit(t *testing.T) {
 	if err := syscall.Kill(-providerGroup, syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	releaseDeadline := time.Now().Add(2 * time.Second)
+	releaseDeadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {

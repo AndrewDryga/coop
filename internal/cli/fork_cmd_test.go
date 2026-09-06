@@ -1307,7 +1307,7 @@ func TestDetachedWorkerHandoffRaceOrderings(t *testing.T) {
 
 func awaitTestPath(t *testing.T, path string, exists bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 	for {
 		_, err := os.Stat(path)
 		if (err == nil) == exists || (errors.Is(err, os.ErrNotExist) && !exists) {

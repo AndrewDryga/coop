@@ -236,7 +236,7 @@ func TestLiveACPProcessHelper(t *testing.T) {
 			if err := os.WriteFile(recorded, nil, 0o600); err != nil {
 				panic(err)
 			}
-			deadline := time.Now().Add(5 * time.Second)
+			deadline := time.Now().Add(wait.Deadline) // a fixture guard, not the behavior under test
 			for {
 				if _, err := os.Stat(release); err == nil {
 					return
