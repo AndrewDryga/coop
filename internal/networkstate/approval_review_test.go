@@ -12,44 +12,48 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 )
 
-func TestApprovalReviewPublishesOnlyCapturedRules(t *testing.T) {
+// approve is the ordinary host sequence: review the diff, then commit exactly
+// the view that was reviewed.
+func approve(s *Store, project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle) error {
+	review, err := s.ReviewApproval(project, mode, requests, bundles)
+	if err != nil {
+		return err
+	}
+	return s.Approve(context.Background(), project, mode, requests, bundles, review.Digest)
+}
+
+func TestApprovalReviewPublishesOnlyReviewedRules(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
 	requests := []egress.Rule{rule("reviewed.example.com")}
 	before := inventory(t, s)
 	review, err := s.ReviewApproval(project, egress.Filtered, requests, nil)
-	if err != nil || review.Before() != nil {
+	if err != nil || review.Before != nil || review.After == nil || !lowerHex(review.Digest, 64) {
 		t.Fatal(review, err)
 	}
 	if !reflect.DeepEqual(before, inventory(t, s)) {
-		t.Fatal("preview published authority")
+		t.Fatal("review published authority")
 	}
-	requests[0].To.Domain = "mutated.example.com"
-	requests[0].Ports[0] = 8443
-	display := review.After()
-	display.Posture = egress.Open
-	display.Envelope[0].To.Domain = "changed-display.example.com"
-	display.Envelope[0].Ports[0] = 9443
-	if err := review.Commit(context.Background()); err != nil {
+	// Neither the displayed copy nor the caller's slice is the stored decision.
+	review.After.Posture = egress.Open
+	review.After.Envelope[0].To.Domain = "changed-display.example.com"
+	review.After.Envelope[0].Ports[0] = 9443
+	if err := s.Approve(context.Background(), project, egress.Filtered, requests, nil, review.Digest); err != nil {
 		t.Fatal(err)
 	}
 	approval, err := s.Approval(project)
 	if err != nil || approval.Posture != egress.Filtered || !reflect.DeepEqual(approval.Envelope, []egress.Rule{rule("reviewed.example.com")}) {
-		t.Fatal("caller or display mutation became a grant", approval, err)
+		t.Fatal("display mutation became a grant", approval, err)
 	}
-	if err := review.Commit(context.Background()); err == nil {
-		t.Fatal("review committed twice")
+	// The same digest describes a view that no longer exists.
+	if err := s.Approve(context.Background(), project, egress.Filtered, requests, nil, review.Digest); !errors.Is(err, ErrApprovalChanged) {
+		t.Fatal("stale review published again", err)
 	}
 	mode := egress.Filtered
 	captured, err := s.Admit(project, Admission{InvocationMode: &mode, Requests: approval.Envelope})
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := s.ReviewApproval(project, egress.None, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	next.Before().Envelope[0].To.Domain = "changed-before.example.com"
-	if err := next.Commit(context.Background()); err != nil {
+	if err := approve(s, project, egress.None, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	retained, err := s.LoadSnapshot(project, captured.Fingerprint)
@@ -58,48 +62,52 @@ func TestApprovalReviewPublishesOnlyCapturedRules(t *testing.T) {
 	}
 }
 
-func TestApprovalReviewConcurrentOwnersCannotPublishStaleDiff(t *testing.T) {
+func TestApprovalDigestBindsTheExactReviewedRequest(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
+	requests := []egress.Rule{rule("reviewed.example.com")}
+	review, err := s.ReviewApproval(project, egress.Filtered, requests, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes := map[string]func() error{
+		"other rules": func() error {
+			return s.Approve(context.Background(), project, egress.Filtered, []egress.Rule{rule("other.example.com")}, nil, review.Digest)
+		},
+		"other mode": func() error { return s.Approve(context.Background(), project, egress.Open, nil, nil, review.Digest) },
+		"other digest": func() error {
+			return s.Approve(context.Background(), project, egress.Filtered, requests, nil, strings.Repeat("a", 64))
+		},
+		"no digest": func() error { return s.Approve(context.Background(), project, egress.Filtered, requests, nil, "") },
+	}
+	for name, change := range changes {
+		t.Run(name, func(t *testing.T) {
+			if err := change(); err == nil {
+				t.Fatal("a decision made against another view was published")
+			}
+			if got, err := s.Approval(project); err != nil || got != nil {
+				t.Fatal("refused approval left authority", got, err)
+			}
+		})
+	}
+	// A concurrent owner's commit invalidates a review taken before it.
 	other, err := OpenExisting(s.Path(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer other.Close()
-	first, err := s.ReviewApproval(project, egress.Filtered, []egress.Rule{rule("first.example.com")}, nil)
-	if err != nil {
+	if err := approve(other, project, egress.Filtered, []egress.Rule{rule("second.example.com")}, nil); err != nil {
 		t.Fatal(err)
 	}
-	second, err := other.ReviewApproval(project, egress.Filtered, []egress.Rule{rule("second.example.com")}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	start, results := make(chan struct{}), make(chan error, 2)
-	for _, review := range []*ApprovalReview{first, second} {
-		go func() { <-start; results <- review.Commit(context.Background()) }()
-	}
-	close(start)
-	success, conflict := 0, 0
-	for range 2 {
-		err := <-results
-		switch {
-		case err == nil:
-			success++
-		case errors.Is(err, ErrApprovalChanged):
-			conflict++
-		default:
-			t.Fatal(err)
-		}
-	}
-	if success != 1 || conflict != 1 {
-		t.Fatalf("success=%d conflict=%d", success, conflict)
+	if err := s.Approve(context.Background(), project, egress.Filtered, requests, nil, review.Digest); !errors.Is(err, ErrApprovalChanged) {
+		t.Fatal("stale review overwrote a concurrent decision", err)
 	}
 	approval, err := s.Approval(project)
-	if err != nil || len(approval.Envelope) != 1 {
+	if err != nil || len(approval.Envelope) != 1 || approval.Envelope[0].To.Domain != "second.example.com" {
 		t.Fatal("concurrent reviews merged grants", approval, err)
 	}
 }
 
-func TestApprovalReviewRefusesLostIdentityAndCancellation(t *testing.T) {
+func TestApprovalRefusesLostIdentityAndCancellation(t *testing.T) {
 	for _, change := range []string{"key", "root", "project", "alias", "cancel"} {
 		t.Run(change, func(t *testing.T) {
 			s, project := openStore(t), t.TempDir()
@@ -110,10 +118,12 @@ func TestApprovalReviewRefusesLostIdentityAndCancellation(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			review, err := s.ReviewApproval(argument, egress.Filtered, []egress.Rule{rule("reviewed.example.com")}, nil)
+			requests := []egress.Rule{rule("reviewed.example.com")}
+			review, err := s.ReviewApproval(argument, egress.Filtered, requests, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
+			projectID := review.After.ProjectID
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			switch change {
@@ -137,14 +147,11 @@ func TestApprovalReviewRefusesLostIdentityAndCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := review.Commit(ctx); err == nil {
+			if err := s.Approve(ctx, argument, egress.Filtered, requests, nil, review.Digest); err == nil {
 				t.Fatal("changed identity or cancellation published a grant")
 			}
-			if _, err := os.Stat(filepath.Join(s.Path(), "approval-"+review.after.ProjectID+".json")); !os.IsNotExist(err) {
-				t.Fatal("refused review left approval authority", err)
-			}
-			if err := review.Commit(context.Background()); err == nil {
-				t.Fatal("failed review was reusable")
+			if _, err := os.Stat(filepath.Join(s.Path(), "approval-"+projectID+".json")); !os.IsNotExist(err) {
+				t.Fatal("refused approval left authority", err)
 			}
 		})
 	}

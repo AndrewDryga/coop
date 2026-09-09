@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/mcp"
 )
 
@@ -376,3 +377,11 @@ func (geminiAgent) DelegateExec() string {
 
 func (geminiAgent) ShellPrelude() string  { return "" }
 func (geminiAgent) InstallScript() string { return "" }
+
+// LockedClients is nil: gemini has no qualified locked client build yet, so
+// restricted networking cannot launch it.
+func (geminiAgent) LockedClients(ClientPlatform) []LockedClient { return nil }
+
+func (a geminiAgent) NetworkBundle(NetworkBundleInput) (egress.Bundle, error) {
+	return egress.Bundle{}, fmt.Errorf("%s is unsupported for restricted networking", a.Name())
+}

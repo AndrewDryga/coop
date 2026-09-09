@@ -1,18 +1,10 @@
 package networkstate
 
 import (
-	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"os"
 	"slices"
 	"strings"
 )
-
-const maxCandidateBytes = 16 << 10
 
 // RuntimeBinding is owner-private qualification identity, not a public runtime
 // capability or permission to replay on another worker. No semver compatibility
@@ -30,7 +22,8 @@ type RuntimeBinding struct {
 
 // CandidateSpec contains construction observations from the bound host builder.
 // Image labels, user-supplied tags and remote requests cannot supply these facts.
-// The trusted builder is responsible for observing the exact returned images.
+// The trusted builder is responsible for observing the exact returned images. It
+// is inlined into the qualification that proves it; there is no separate record.
 type CandidateSpec struct {
 	Runtime          RuntimeBinding `json:"runtime"`
 	ClientImage      string         `json:"client_image"`
@@ -41,14 +34,6 @@ type CandidateSpec struct {
 	Libc             string         `json:"libc"`
 	NodeBase         string         `json:"node_base"`
 	GoBase           string         `json:"go_base"`
-}
-
-// Candidate is an immutable owner-bound image pair. It has no qualified state:
-// completed runtime/provider evidence belongs in a separate qualification.
-type Candidate struct {
-	Version int           `json:"version"`
-	ID      string        `json:"id"`
-	Spec    CandidateSpec `json:"spec"`
 }
 
 func canonicalRuntimeBinding(binding RuntimeBinding) (RuntimeBinding, error) {
@@ -103,78 +88,4 @@ func canonicalCandidate(spec CandidateSpec) (CandidateSpec, error) {
 		return CandidateSpec{}, errors.New("network candidate requires an exact constructed image pair and closure")
 	}
 	return spec, nil
-}
-
-func (s *Store) candidateID(spec CandidateSpec) string {
-	data, _ := json.Marshal(spec)
-	mac := hmac.New(sha256.New, s.key)
-	_, _ = mac.Write([]byte("network-candidate-v1\x00"))
-	_, _ = mac.Write(data)
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-// RecordCandidate is called only by the trusted host construction workflow.
-// Idempotent publication confirms durability even after a previous ambiguous
-// directory-sync failure. Any error returns no usable candidate reference.
-func (s *Store) RecordCandidate(spec CandidateSpec) (Candidate, error) {
-	if err := s.intactAuthority(); err != nil {
-		return Candidate{}, err
-	}
-	spec, err := canonicalCandidate(spec)
-	if err != nil {
-		return Candidate{}, err
-	}
-	record := Candidate{Version: 1, ID: s.candidateID(spec), Spec: spec}
-	data, err := json.Marshal(record)
-	if err != nil || len(data) > maxCandidateBytes {
-		return Candidate{}, errors.New("network candidate exceeds its byte bound")
-	}
-	name := "candidate-" + record.ID + ".json"
-	if err := s.publish(name, data, false); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return Candidate{}, err
-		}
-		previous, err := s.read(name, maxCandidateBytes)
-		if err != nil || !bytes.Equal(previous, data) {
-			return Candidate{}, errors.New("network candidate identity collision or invalid stored content")
-		}
-	}
-	// Also covers an existing equal publication; never return authority merely
-	// because the file is visible after an earlier failed directory sync.
-	if err := s.confirmPublication(); err != nil {
-		return Candidate{}, err
-	}
-	if err := s.intactAuthority(); err != nil {
-		return Candidate{}, err
-	}
-	return record, nil
-}
-
-func (s *Store) Candidate(id string) (Candidate, error) {
-	if !lowerHex(id, 64) {
-		return Candidate{}, errors.New("invalid network candidate reference")
-	}
-	if err := s.intactAuthority(); err != nil {
-		return Candidate{}, err
-	}
-	data, err := s.read("candidate-"+id+".json", maxCandidateBytes)
-	if err != nil {
-		return Candidate{}, err
-	}
-	var record Candidate
-	if err := strictJSON(data, &record); err != nil {
-		return Candidate{}, err
-	}
-	spec, err := canonicalCandidate(record.Spec)
-	if err != nil || record.Version != 1 || record.ID != id || !equalJSON(spec, record.Spec) ||
-		!hmac.Equal([]byte(s.candidateID(spec)), []byte(id)) {
-		return Candidate{}, errors.New("invalid owner-bound network candidate")
-	}
-	if err := s.confirmPublication(); err != nil {
-		return Candidate{}, err
-	}
-	if err := s.intactAuthority(); err != nil {
-		return Candidate{}, err
-	}
-	return record, nil
 }

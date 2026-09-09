@@ -123,6 +123,15 @@ type RunSpec struct {
 	Stderr               io.Writer // capture/discard the container's stderr; nil means inherit os.Stderr
 	ExtraArgs            []string  // extra runtime args for this run (e.g. doctor's probe mount)
 
+	// CapturedEgress is host-owned frozen network authority, produced by
+	// AdmitNetwork before launch. It is never populated from a request or a
+	// serialized spec: a box cannot grant itself network access.
+	CapturedEgress *CapturedEgress `json:"-"`
+	// networkTrial is the qualification permit. Unexported on purpose: only the
+	// in-package setup workflow can drive a trial through this same engine, so
+	// what a trial proves is exactly what a workload later gets.
+	networkTrial *networkTrialLaunch
+
 	// Ctx, when non-nil, makes the run cancelable: the container runs in its own process group
 	// and canceling Ctx tears it down (SIGTERM→SIGKILL). The loop sets this so a second Ctrl-C
 	// stops the current iteration now; every other caller leaves it nil — the plain, today's run.
@@ -200,9 +209,13 @@ func instructionFile(name string) string {
 }
 
 type compositionArtifactOps struct {
-	writeFile         func(string) (string, error)
+	// parent is the directory generated artifacts are created in. Empty uses
+	// the system temp dir; a filtered run points it at the execution's private
+	// artifact directory so exact-owned cleanup covers everything it mounts.
+	parent            string
+	writeFile         func(parent, content string) (string, error)
 	chmod             func(string, os.FileMode) error
-	assembleAgentsDir func([]genFile) (string, error)
+	assembleAgentsDir func(parent string, files []genFile) (string, error)
 	gitHookDir        func() (string, error)
 }
 
@@ -237,10 +250,18 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	return runWithCompositionArtifacts(cfg, rt, spec, defaultCompositionArtifactOps())
 }
 
+// runWithNetworkTrial is the private qualification entry point. The setup
+// workflow drives the ordinary launch engine with a trial permit; nothing
+// outside this package can construct one, and RunSpec exposes no bypass.
+func runWithNetworkTrial(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifacts compositionArtifactOps, trial *networkTrialLaunch) (int, error) {
+	spec.networkTrial = trial
+	return runWithCompositionArtifacts(cfg, rt, spec, artifacts)
+}
+
 // runWithCompositionArtifacts keeps failure injection local to composition tests. Declared
 // orchestration files are part of the requested program, so any assembly error must surface before
 // the box and provider start.
-func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifacts compositionArtifactOps) (int, error) {
+func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifacts compositionArtifactOps) (exitCode int, result error) {
 	// Checked before any host work, not just between later phases: an already-canceled Ctx (the
 	// loop's second Ctrl-C landing between iterations) must never begin projecting a box it would
 	// only have to tear down.
@@ -263,6 +284,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	if spec.ForkWorker && spec.ForkGeneration == "" {
 		return -1, errors.New("detached fork worker label requires a fork generation")
+	}
+	if spec.networkTrial != nil && spec.CapturedEgress == nil {
+		return -1, errors.New("network qualification trial requires a filtered capture")
+	}
+	// Restricted networking fails CLOSED at the box boundary: the gateway is
+	// installed by the host before any agent starts, so a filtered posture that
+	// reached Run without a host capture never launches.
+	if cfg.Egress == "filtered" && spec.CapturedEgress == nil {
+		return -1, errors.New("restricted networking requires host policy capture before box launch")
 	}
 	policyRepo := projectPolicyRepo(spec)
 	p, err := project.Load(policyRepo)
@@ -356,15 +386,43 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 
+	var filtered *filteredExecution
+	var execution forkspace.ExecutionRecord
+	if spec.CapturedEgress != nil {
+		if len(cfg.ExtraRunArgs) != 0 || len(spec.ExtraArgs) != 0 {
+			return -1, errors.New("restricted networking does not yet qualify extra runtime arguments")
+		}
+		if spec.Ctx == nil {
+			spec.Ctx = context.Background()
+		}
+		filtered, err = prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, composeFile, spec.networkTrial)
+		if filtered != nil {
+			defer func() {
+				workload := filtered.workloadOutcome(exitCode, result, spec.Ctx.Err() != nil)
+				gone, cleanupErr := filtered.cleanup(workload)
+				result = errors.Join(result, cleanupErr)
+				if execution.ID != "" && gone {
+					result = errors.Join(result, forkspace.EndExecution(spec.ActivityRepo, execution))
+				}
+			}()
+		}
+		if err != nil {
+			return -1, err
+		}
+		// The workload runs the qualified client image, never a repo image.
+		spec.Image = filtered.image
+		artifacts.parent = filtered.runfiles
+	}
+
 	// A single empty read-only file shadows every secret file; a single empty read-only
 	// dir shadows every secret directory (an RO bind, not --tmpfs, so it holds on podman).
-	decoy, err := os.CreateTemp("", "coop-decoy-")
+	decoy, err := os.CreateTemp(artifacts.parent, "coop-decoy-")
 	if err != nil {
 		return -1, err
 	}
 	decoy.Close()
 	defer os.Remove(decoy.Name())
-	decoyDir, err := os.MkdirTemp("", "coop-decoy-dir-")
+	decoyDir, err := os.MkdirTemp(artifacts.parent, "coop-decoy-dir-")
 	if err != nil {
 		return -1, err
 	}
@@ -398,7 +456,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	var mcpMounts []extraMount
 	rawMCP := false
 	if mcpPresent {
-		path, err := artifacts.writeFile(string(mcpSnapshot))
+		path, err := artifacts.writeFile(artifacts.parent, string(mcpSnapshot))
 		if err != nil {
 			return -1, fmt.Errorf("snapshot mcp.json: %w", err)
 		}
@@ -443,7 +501,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			rawMCP = true
 		}
 		for _, m := range wiring.Mounts {
-			p, err := artifacts.writeFile(m.Content)
+			p, err := artifacts.writeFile(artifacts.parent, m.Content)
 			if err != nil {
 				if mcpPresent {
 					return -1, fmt.Errorf("write MCP config for %s: %w", name, err)
@@ -470,7 +528,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, fmt.Errorf("assemble lead instruction for %s: %w", spec.ConsultLead, err)
 		}
 		if ok {
-			p, err := artifacts.writeFile(content)
+			p, err := artifacts.writeFile(artifacts.parent, content)
 			if err != nil {
 				return -1, fmt.Errorf("assemble lead instruction for %s: %w", spec.ConsultLead, err)
 			}
@@ -486,7 +544,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// lead's `coop-consult <peer|role>` calls resolve.
 	// It carries the per-agent session-id mechanics for cross-turn continuity.
 	if consultWired {
-		p, err := artifacts.writeFile(consult.ConsultWrapper())
+		p, err := artifacts.writeFile(artifacts.parent, consult.ConsultWrapper())
 		if err != nil {
 			return -1, fmt.Errorf("assemble consult wrapper: %w", err)
 		}
@@ -519,7 +577,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	var instructionMounts []extraMount
 	for _, it := range plan {
-		p, err := artifacts.writeFile(it.content)
+		p, err := artifacts.writeFile(artifacts.parent, it.content)
 		if err != nil {
 			return -1, fmt.Errorf("assemble instruction for %s: %w", it.agent, err)
 		}
@@ -569,7 +627,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		excludesPath := ""
 		if gi := hostGlobalGitignore(); gi != "" {
-			if p, err := artifacts.writeFile(gi); err == nil {
+			if p, err := artifacts.writeFile(artifacts.parent, gi); err == nil {
 				tmpFiles = append(tmpFiles, p)
 				excludesPath = filepath.Join(cfg.HomeInBox, boxGitIgnoreName)
 				gitMounts = append(gitMounts, extraMount{p, excludesPath})
@@ -577,7 +635,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				ui.Warn("global Git ignore: could not copy into box; continuing without it: %v", err)
 			}
 		}
-		p, err := artifacts.writeFile(gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask))
+		p, err := artifacts.writeFile(artifacts.parent, gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask))
 		if err != nil {
 			return -1, fmt.Errorf("prepare box Git config: %w", err)
 		}
@@ -619,7 +677,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	switch {
 	case len(projectEnv) > 0:
-		p, err := writeMergedEnvFile(projectEnv, userEnvFile, drop)
+		p, err := writeMergedEnvFile(artifacts.parent, projectEnv, userEnvFile, drop)
 		if err != nil {
 			return -1, fmt.Errorf("prepare project box env: %w", err)
 		}
@@ -628,7 +686,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	case userEnvFile != "" && len(drop) == 0:
 		envFile = userEnvFile
 	case userEnvFile != "":
-		if p, err := writeFilteredEnvFile(userEnvFile, drop); err == nil {
+		if p, err := writeFilteredEnvFile(artifacts.parent, userEnvFile, drop); err == nil {
 			tmpFiles = append(tmpFiles, p)
 			envFile = p
 		} else {
@@ -644,10 +702,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// Publish before any sibling service or runtime side effect. Fork-bound publication takes the
 	// same lifecycle lock as rm/fresh/merge and validates the exact workspace generation, so either
 	// the reservation wins and mutation refuses, or mutation wins and this launch fails closed.
-	var execution forkspace.ExecutionRecord
 	reviewServicesAttempted := false
 	finish := func(code int, runErr error) (int, error) {
-		if execution.ID != "" {
+		// A filtered run ends its activity only after exact runtime cleanup has
+		// confirmed the workload is gone.
+		if execution.ID != "" && filtered == nil {
 			if cleanupErr := forkspace.EndExecution(spec.ActivityRepo, execution); cleanupErr != nil {
 				ui.Warn("sandbox activity %s cleanup failed: %v — work result preserved; inspect 'coop tasks watch --json'", execution.ID, cleanupErr)
 			}
@@ -677,6 +736,18 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return finish(-1, fmt.Errorf("publish sandbox activity: %w", err))
 		}
 		spec.activityID = execution.ID
+	}
+	if filtered != nil {
+		options := assembleOptions(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, rawMCP,
+			mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts, "", envFile, boxLimits(cfg, rt)...)
+		generated := append([]string{decoy.Name()}, tmpFiles...)
+		for _, mount := range synthMounts {
+			generated = append(generated, mount.host) // includes exact fallback-file leaves
+		}
+		if err := filtered.validateMounts(options, generated, append([]string{decoyDir}, tmpDirs...)); err != nil {
+			return finish(-1, err)
+		}
+		return finish(filtered.launch(spec.Ctx, spec, options, stdin, stdout, stderr))
 	}
 	// Bring sibling services up first, so the box can reach them by name. Every launch path —
 	// agent, ACP, loop, and fork — funnels through box.Run, so this one call covers
@@ -838,49 +909,14 @@ type MCPSourceRoot struct {
 // endpoint that the caller must pass to mcp.ReadValidatedSnapshot. Reopening source itself would
 // reintroduce the parent-symlink race this resolution closes.
 func ResolveMCPSource(sourcePath string, roots []MCPSourceRoot) (string, error) {
-	for _, component := range strings.Split(sourcePath, string(filepath.Separator)) {
-		if component == ".." {
-			return "", fmt.Errorf("mcp.json source %q contains a parent path component; set COOP_MCP_FILE to a canonical path without '..'", sourcePath)
-		}
+	source, err := resolveHostFileSource(sourcePath, "mcp.json", roots)
+	if source.overlap != nil {
+		return "", fmt.Errorf("mcp.json source %q is inside %s %q; move the file and set COOP_MCP_FILE to a path outside directories exposed to agents", sourcePath, source.overlap.Kind, source.overlap.Path)
 	}
-	lexicalSource, err := filepath.Abs(sourcePath)
 	if err != nil {
-		return "", fmt.Errorf("resolve configured mcp.json source: %w", err)
+		return "", err
 	}
-	lexicalSource = filepath.Clean(lexicalSource)
-	source, traversed, err := resolvePathTrace(lexicalSource)
-	if err != nil {
-		return "", fmt.Errorf("resolve configured mcp.json source: %w", err)
-	}
-	candidates := append([]string{lexicalSource, source}, traversed...)
-	for _, root := range roots {
-		if root.Path == "" {
-			continue
-		}
-		absoluteRoot, err := filepath.Abs(root.Path)
-		if err != nil {
-			return "", fmt.Errorf("resolve %s %q: %w", root.Kind, root.Path, err)
-		}
-		realRoot, _, err := resolvePathTrace(absoluteRoot)
-		if err != nil {
-			return "", fmt.Errorf("resolve %s %q: %w", root.Kind, root.Path, err)
-		}
-		for _, candidate := range candidates {
-			inside, err := futurePathWithin(realRoot, candidate)
-			if err != nil {
-				return "", fmt.Errorf("compare mcp.json source with %s %q: %w", root.Kind, root.Path, err)
-			}
-			if inside {
-				return "", fmt.Errorf("mcp.json source %q is inside %s %q; move the file and set COOP_MCP_FILE to a path outside directories exposed to agents", sourcePath, root.Kind, root.Path)
-			}
-		}
-	}
-	if info, err := os.Lstat(sourcePath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("mcp.json source %q is a symbolic link; replace it with a private regular file and retry", sourcePath)
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("inspect configured mcp.json source %q: %w", sourcePath, err)
-	}
-	return source, nil
+	return source.path, nil
 }
 
 // resolvePathTrace walks one absolute Unix path component by component and records each entry
@@ -1206,7 +1242,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 	// YAML parser and the wrapper enforces commit:never / concurrent:never itself.
 	delegates := spec.Preset.Delegates()
 	if len(delegates) > 0 {
-		p, writeErr := artifacts.writeFile(preset.DelegateWrapper())
+		p, writeErr := artifacts.writeFile(artifacts.parent, preset.DelegateWrapper())
 		if writeErr != nil {
 			err = fmt.Errorf("assemble delegate wrapper: %w", writeErr)
 			return
@@ -1220,7 +1256,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 		for _, role := range delegates {
 			key := preset.EnvKey(role.Name)
 			dst := cfg.HomeInBox + "/.coop/delegate/" + role.Name + ".md"
-			cp, writeErr := artifacts.writeFile(preset.RoleContract(&role))
+			cp, writeErr := artifacts.writeFile(artifacts.parent, preset.RoleContract(&role))
 			if writeErr != nil {
 				err = fmt.Errorf("assemble delegate role %q contract: %w", role.Name, writeErr)
 				return
@@ -1243,7 +1279,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 		// The adapter renders its native-role files and owns their in-home destination. They mount
 		// from a disposable read-only directory, separate from the repo's own live artifacts.
 		if gen := generatedSubagentFiles(spec.Preset, lead, support); len(gen) > 0 {
-			dir, assembleErr := artifacts.assembleAgentsDir(gen)
+			dir, assembleErr := artifacts.assembleAgentsDir(artifacts.parent, gen)
 			if assembleErr != nil {
 				err = fmt.Errorf("assemble native roles for %s: %w", lead, assembleErr)
 				return
@@ -1261,7 +1297,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 		key := preset.EnvKey(role.Name)
 		if body := preset.ConsultBody(&role); body != "" {
 			dst := cfg.HomeInBox + "/.coop/consult/" + role.Name + ".md"
-			cp, writeErr := artifacts.writeFile(body)
+			cp, writeErr := artifacts.writeFile(artifacts.parent, body)
 			if writeErr != nil {
 				err = fmt.Errorf("assemble consult role %q persona: %w", role.Name, writeErr)
 				return
@@ -1644,8 +1680,8 @@ func generatedSubagentFiles(p *preset.Preset, lead string, support agents.Native
 
 // assembleAgentsDir builds a host temp dir holding only adapter-rendered native role files. The
 // caller mounts it read-only at the adapter-owned user-level destination and cleans it up.
-func assembleAgentsDir(gen []genFile) (string, error) {
-	dir, err := os.MkdirTemp("", "coop-agents-")
+func assembleAgentsDir(parent string, gen []genFile) (string, error) {
+	dir, err := os.MkdirTemp(parent, "coop-agents-")
 	if err != nil {
 		return "", err
 	}
@@ -1718,7 +1754,7 @@ func applyProjectPolicy(cfg *config.Config, p *project.Project, spec *RunSpec) *
 	}
 	c := *cfg
 	if b.Egress != "" && !cfg.Explicit("COOP_EGRESS") {
-		c.Egress = b.Egress // validated open|none by project.Load; open never loosens an explicit none
+		c.Egress = b.Egress // validated open|filtered|none by project.Load; AdmitNetwork marks its resolved posture explicit
 	}
 	if b.AutoUp != nil && !cfg.Explicit("COOP_AUTO_UP") {
 		c.AutoUp = *b.AutoUp
@@ -1901,7 +1937,28 @@ func acpSharedDir(cfg *config.Config, agent string) string {
 }
 
 func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, rawMCP bool, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
-	args := []string{"run", "--rm"}
+	// Egress fails CLOSED at the box boundary: full/services networking only when COOP_EGRESS is
+	// explicitly "open" — any other value (the normalized "none", or a value that somehow skipped
+	// config.normalizeEgress) cuts the box off the network entirely (--network none), so a missed
+	// normalization can never silently grant outbound. "open" keeps the runtime's bridge (full
+	// outbound) plus any services-net join; the agent needs npm/the model API, so it's opt-in.
+	// A filtered run never reaches here: its network is the gateway's own namespace.
+	network := "none"
+	if cfg.Egress == "open" {
+		network = networkName // "" → default bridge (full outbound); else the joined services net
+	}
+	args := append([]string{"run", "--rm"}, assembleOptions(cfg, initProcess, spec, mounts, decoy, decoyDir, workdir,
+		mode, rawMCP, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts, network, envFile, limits...)...)
+	return append(append(args, spec.Image), spec.Cmd...)
+}
+
+// assembleOptions composes the workload options without a runtime verb, removal
+// policy, image or command, so a filtered launch can create the same container
+// inside its gateway namespace. Its networkName is already resolved: filtered
+// callers pass "" and attach their controller namespace themselves. Never
+// manufacture create arguments by stripping strings out of a run invocation.
+func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, rawMCP bool, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
+	var args []string
 	if initProcess {
 		// Docker and Podman provide the same runtime-native contract: this PID 1 forwards
 		// signals to the workload and reaps descendants orphaned by killed provider processes.
@@ -2040,17 +2097,8 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 	if spec.Serve {
 		args = appendPublish(args, cfg, spec, hostPortFree)
 	}
-	// Egress fails CLOSED at the box boundary: full/services networking only when COOP_EGRESS is
-	// explicitly "open" — any other value (the normalized "none", or a value that somehow skipped
-	// config.normalizeEgress) cuts the box off the network entirely (--network none), so a missed
-	// normalization can never silently grant outbound. "open" keeps the runtime's bridge (full
-	// outbound) plus any services-net join; the agent needs npm/the model API, so it's opt-in.
-	net := "none"
-	if cfg.Egress == "open" {
-		net = networkName // "" → default bridge (full outbound); else the joined services net
-	}
-	if net != "" {
-		args = append(args, "--network", net)
+	if networkName != "" {
+		args = append(args, "--network", networkName)
 	}
 	if spec.Cache {
 		args = append(args, "-v", "coop-cache:"+cfg.HomeInBox+"/.cache")
@@ -2061,8 +2109,7 @@ func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []M
 	if spec.Homes && spec.Image == cfg.BaseImage {
 		args = append(args, "-v", "coop-asdf:"+cfg.HomeInBox+"/.asdf")
 	}
-	args = append(args, "-w", workdir, spec.Image)
-	return append(args, spec.Cmd...)
+	return append(args, "-w", workdir)
 }
 
 // hostTimezone resolves the host's IANA zone name ("America/Merida"): $TZ when set,
@@ -2085,8 +2132,8 @@ func hostTimezone() string {
 	return ""
 }
 
-func writeTempFile(content string) (string, error) {
-	f, err := os.CreateTemp("", "coop-mcp-")
+func writeTempFile(parent, content string) (string, error) {
+	f, err := os.CreateTemp(parent, "coop-mcp-")
 	if err != nil {
 		return "", err
 	}

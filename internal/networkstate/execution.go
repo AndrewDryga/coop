@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	ExecutionVersion     = 2
+	ExecutionVersion     = 1
 	ExecutionPageSize    = 100
 	ExecutionLockTimeout = 5 * time.Second
 )
@@ -63,26 +63,21 @@ type Execution struct {
 	DaemonID              string               `json:"daemon_id"`
 	Endpoint              string               `json:"endpoint"`
 	GatewayImage          string               `json:"gateway_image"`
-	ClientImage           string               `json:"client_image,omitempty"`
-	CandidateID           string               `json:"candidate_id,omitempty"`
+	ClientImage           string               `json:"client_image"`
 	QualificationID       string               `json:"qualification_id,omitempty"`
-	QualificationContract string               `json:"qualification_contract,omitempty"`
-	Purpose               string               `json:"purpose,omitempty"`
+	QualificationContract string               `json:"qualification_contract"`
+	Purpose               string               `json:"purpose"`
 	TrialGroup            string               `json:"trial_group,omitempty"`
 	TrialCase             string               `json:"trial_case,omitempty"`
 	TrialClient           *QualifiedClient     `json:"trial_client,omitempty"`
 	WorkloadStarted       bool                 `json:"workload_started,omitempty"`
-	SessionWorkloadGone   bool                 `json:"session_workload_gone,omitempty"`
 	ReadySequence         networkview.Count    `json:"ready_sequence,omitempty"`
-	InputsID              string               `json:"inputs_id,omitempty"`
 	SessionID             string               `json:"session_id,omitempty"`
 	AttemptID             string               `json:"attempt_id,omitempty"`
-	AuthorityDigest       string               `json:"authority_digest"`
 	BundleReferences      []string             `json:"bundle_references"`
 	StartedAt             time.Time            `json:"started_at"`
 	Resources             []Resource           `json:"resources"`
-	LaunchConfig          LaunchArtifact       `json:"launch_config"`
-	RunFiles              RunFiles             `json:"run_files"`
+	Artifact              Artifact             `json:"artifact"`
 	Snapshot              networkview.Snapshot `json:"snapshot"`
 	ObserverAfterWorkload bool                 `json:"observer_after_workload"`
 	Receipt               *networkview.Receipt `json:"receipt,omitempty"`
@@ -90,17 +85,8 @@ type Execution struct {
 
 type ExecutionSpec struct {
 	Project, PolicyFingerprint, Runtime, DaemonID, Endpoint, GatewayImage string
-	SessionID, AttemptID, AuthorityDigest, InputsID                       string
+	SessionID, AttemptID                                                  string
 	QualificationID, ClientImage                                          string
-}
-
-// LaunchArtifact is a single immutable helper-readable file under the private
-// authority root. It has separate custody from container/volume identities.
-type LaunchArtifact struct {
-	Name   string `json:"name"`
-	State  string `json:"state"`
-	Digest string `json:"digest,omitempty"`
-	Size   int    `json:"size"`
 }
 
 // Evidence cannot create resources, grant authority, or replace live snapshots.
@@ -159,27 +145,21 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, trial *
 	if err := requireTrialClientPolicy(trialClient, policy); err != nil {
 		return Execution{}, err
 	}
-	if _, err := s.Inputs(spec.InputsID); err != nil {
-		return Execution{}, err
-	}
-	var candidate Candidate
+	var candidate CandidateSpec
 	if trial == nil {
 		qualification, err := s.Qualification(spec.QualificationID)
 		if err != nil {
 			return Execution{}, err
 		}
-		if err := qualification.RequirePolicy(policy); err != nil {
+		if err := qualification.requirePolicy(policy, policy.Dependencies, nil); err != nil {
 			return Execution{}, err
 		}
-		candidate, err = s.Candidate(qualification.CandidateID)
-		if err != nil {
-			return Execution{}, err
-		}
+		candidate = qualification.Candidate
 	} else {
 		candidate = trial.candidate
 	}
-	if spec.Runtime != "docker" || spec.DaemonID != candidate.Spec.Runtime.DaemonID || spec.Endpoint != candidate.Spec.Runtime.Endpoint ||
-		spec.GatewayImage != candidate.Spec.GatewayImage || spec.ClientImage != candidate.Spec.ClientImage {
+	if spec.Runtime != "docker" || spec.DaemonID != candidate.Runtime.DaemonID || spec.Endpoint != candidate.Runtime.Endpoint ||
+		spec.GatewayImage != candidate.GatewayImage || spec.ClientImage != candidate.ClientImage {
 		return Execution{}, errors.New("network execution differs from its exact candidate image pair or runtime")
 	}
 	project, err := canonicalPath(spec.Project)
@@ -204,11 +184,12 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, trial *
 	now := time.Now().UTC()
 	record := Execution{Version: ExecutionVersion, Revision: 1, ID: id, Epoch: epoch, Project: project, Scope: policy.Scope,
 		Supervisor: owner, Runtime: spec.Runtime, DaemonID: spec.DaemonID, Endpoint: spec.Endpoint, GatewayImage: spec.GatewayImage, SessionID: spec.SessionID,
-		AttemptID: spec.AttemptID, AuthorityDigest: spec.AuthorityDigest, InputsID: spec.InputsID, StartedAt: now,
-		Purpose: "workload", ClientImage: spec.ClientImage, CandidateID: candidate.ID, QualificationID: spec.QualificationID,
+		AttemptID: spec.AttemptID, StartedAt: now,
+		Purpose:               "workload",
+		ClientImage:           spec.ClientImage,
+		QualificationID:       spec.QualificationID,
 		QualificationContract: QualificationContract,
-		LaunchConfig:          LaunchArtifact{Name: "launch-" + id + ".json", State: "planned"},
-		RunFiles:              RunFiles{Name: "runfiles-" + id, State: "planned"},
+		Artifact:              Artifact{Name: "artifacts-" + id, State: "planned"},
 		Snapshot: networkview.Snapshot{Version: networkview.Version, RunID: id, Epoch: epoch, Mode: policy.Mode,
 			PolicyFingerprint: policy.Fingerprint, Availability: "starting", AsOf: now, Scope: "not-observed", Projection: "owner-local"}}
 	if trial != nil {
@@ -269,58 +250,41 @@ func (s *Store) execution(id string) (Execution, error) {
 }
 
 func validExecution(record Execution) error {
-	if record.Purpose == SessionUnobservedPurpose {
-		return validUnobservedSessionExecution(record)
-	}
-	if (record.Version != 1 && record.Version != ExecutionVersion) || !lowerHex(record.ID, 32) || !lowerHex(record.Epoch, 32) || record.Revision == 0 ||
+	if record.Version != ExecutionVersion || !lowerHex(record.ID, 32) || !lowerHex(record.Epoch, 32) || record.Revision == 0 ||
 		!lowerHex(record.Scope, 64) || !filepath.IsAbs(record.Project) || filepath.Clean(record.Project) != record.Project ||
 		record.Supervisor.PID <= 1 || !processidentity.Stable(record.Supervisor.StartToken) || record.StartedAt.IsZero() || record.Runtime != "docker" ||
 		!safeRecordToken(record.DaemonID, 128) || !localEndpoint(record.Endpoint) || !strings.HasPrefix(record.GatewayImage, "sha256:") || !lowerHex(strings.TrimPrefix(record.GatewayImage, "sha256:"), 64) ||
 		record.Snapshot.Version != networkview.Version || record.Snapshot.RunID != record.ID || record.Snapshot.Epoch != record.Epoch || record.Snapshot.Mode != egress.Filtered ||
 		!lowerHex(record.Snapshot.PolicyFingerprint, 64) || len(record.Resources) != 5 || len(record.BundleReferences) > egress.MaxGrants ||
-		record.SessionID != "" && !safeRecordToken(record.SessionID, 128) || record.AttemptID != "" && !safeRecordToken(record.AttemptID, 128) ||
-		record.AuthorityDigest != "" && !lowerHex(record.AuthorityDigest, 64) ||
-		record.InputsID != "" && !lowerHex(record.InputsID, 64) || record.SessionWorkloadGone {
+		record.SessionID != "" && !safeRecordToken(record.SessionID, 128) || record.AttemptID != "" && !safeRecordToken(record.AttemptID, 128) {
 		return errors.New("invalid network execution identity")
 	}
-	if record.Version == ExecutionVersion {
-		if !imageDigest(record.ClientImage) || !lowerHex(record.CandidateID, 64) || !lowerHex(record.InputsID, 64) || !safeRecordToken(record.QualificationContract, 128) {
-			return errors.New("network execution lacks exact launch binding")
-		}
-		if record.ReadySequence > record.Snapshot.Sequence || record.WorkloadStarted && record.Resources[2].ID == "" {
-			return errors.New("invalid network execution startup evidence")
-		}
-		switch record.Purpose {
-		case "workload":
-			if !lowerHex(record.QualificationID, 64) || record.TrialGroup != "" || record.TrialCase != "" || record.TrialClient != nil {
-				return errors.New("invalid qualified workload binding")
-			}
-		case "qualification":
-			if record.QualificationID != "" || !lowerHex(record.TrialGroup, 32) || !validQualificationCase(record.TrialCase) ||
-				(record.TrialClient != nil) != slices.Contains([]string{"provider-start", "provider-resume", "mcp"}, record.TrialCase) {
-				return errors.New("invalid qualification trial binding")
-			}
-			if record.TrialClient != nil {
-				canonical, err := canonicalQualifiedClient(*record.TrialClient)
-				if err != nil || !equalJSON(canonical, *record.TrialClient) {
-					return errors.New("invalid trial client coverage")
-				}
-			}
-		default:
-			return errors.New("unknown network execution purpose")
-		}
-	} else if record.CandidateID != "" || record.QualificationID != "" || record.QualificationContract != "" || record.ClientImage != "" || record.Purpose != "" ||
-		record.TrialGroup != "" || record.TrialCase != "" || record.TrialClient != nil {
-		return errors.New("legacy network execution cannot carry launch authority")
+	if !imageDigest(record.ClientImage) || !safeRecordToken(record.QualificationContract, 128) {
+		return errors.New("network execution lacks exact launch binding")
 	}
-	artifact := record.LaunchConfig
-	if artifact.Name != "launch-"+record.ID+".json" || !slices.Contains([]string{"planned", "creating", "ready", "gone"}, artifact.State) ||
-		artifact.State == "planned" && (artifact.Digest != "" || artifact.Size != 0) ||
-		(artifact.State == "creating" || artifact.State == "ready") && (!lowerHex(artifact.Digest, 64) || artifact.Size < 1 || artifact.Size > maxPrivateRecordBytes) ||
-		artifact.State == "gone" && (artifact.Digest == "" && artifact.Size != 0 || artifact.Digest != "" && (!lowerHex(artifact.Digest, 64) || artifact.Size < 1 || artifact.Size > maxPrivateRecordBytes)) {
-		return errors.New("invalid network launch artifact custody")
+	if record.ReadySequence > record.Snapshot.Sequence || record.WorkloadStarted && record.Resources[2].ID == "" {
+		return errors.New("invalid network execution startup evidence")
 	}
-	if err := validRunFiles(record); err != nil {
+	switch record.Purpose {
+	case "workload":
+		if !lowerHex(record.QualificationID, 64) || record.TrialGroup != "" || record.TrialCase != "" || record.TrialClient != nil {
+			return errors.New("invalid qualified workload binding")
+		}
+	case "qualification":
+		if record.QualificationID != "" || !lowerHex(record.TrialGroup, 32) || !validQualificationCase(record.TrialCase) ||
+			(record.TrialClient != nil) != slices.Contains([]string{"provider-start", "provider-resume", "mcp"}, record.TrialCase) {
+			return errors.New("invalid qualification trial binding")
+		}
+		if record.TrialClient != nil {
+			canonical, err := canonicalQualifiedClient(*record.TrialClient)
+			if err != nil || !equalJSON(canonical, *record.TrialClient) {
+				return errors.New("invalid trial client coverage")
+			}
+		}
+	default:
+		return errors.New("unknown network execution purpose")
+	}
+	if err := validArtifact(record); err != nil {
 		return err
 	}
 	for i, role := range []string{"controller", "guard", "agent", "ipc", "observations"} {
@@ -485,12 +449,6 @@ func (s *Store) writeExecution(record *Execution, changed bool) error {
 		return err
 	}
 	return s.publish("execution-"+record.ID+".json", data, true)
-}
-
-// ConfirmExecution verifies the caller's reread revision and its directory
-// durability after an ambiguous publication error, without repeating creation.
-func (s *Store) ConfirmExecution(ctx context.Context, id string, revision networkview.Count) (Execution, error) {
-	return s.mutateExecution(ctx, id, revision, func(*Execution) (bool, error) { return false, nil })
 }
 
 type ExecutionPage struct {

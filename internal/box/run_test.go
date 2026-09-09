@@ -465,12 +465,12 @@ func TestRunAbortsAtNextBoundaryOnMidSetupCancelAndCleansUpArtifacts(t *testing.
 	artifacts := defaultCompositionArtifactOps()
 	var created []string
 	canceled := false
-	artifacts.writeFile = func(content string) (string, error) {
+	artifacts.writeFile = func(_, content string) (string, error) {
 		if !canceled {
 			canceled = true
 			cancel() // a Ctrl-C racing in mid-phase — the write below still completes normally
 		}
-		path, err := writeTempFile(content)
+		path, err := writeTempFile("", content)
 		if err == nil {
 			created = append(created, path)
 		}
@@ -1283,8 +1283,8 @@ func TestRunUsesOneValidatedMCPSnapshotAfterSourceMutation(t *testing.T) {
 	var snapshotPath string
 	var written []string
 	originalWrite := artifacts.writeFile
-	artifacts.writeFile = func(content string) (string, error) {
-		path, err := originalWrite(content)
+	artifacts.writeFile = func(_, content string) (string, error) {
+		path, err := originalWrite("", content)
 		if err != nil {
 			return "", err
 		}
@@ -2333,11 +2333,11 @@ func TestRunDeclaredCompositionArtifactFailuresStopBeforeProvider(t *testing.T) 
 			recorder := filepath.Join(t.TempDir(), "runtime-args")
 			artifacts := defaultCompositionArtifactOps()
 			var created []string
-			artifacts.writeFile = func(content string) (string, error) {
+			artifacts.writeFile = func(_, content string) (string, error) {
 				if tc.failWrite != nil && tc.failWrite(content) {
 					return "", sentinel
 				}
-				path, err := writeTempFile(content)
+				path, err := writeTempFile("", content)
 				if err == nil {
 					created = append(created, path)
 				}
@@ -2347,7 +2347,7 @@ func TestRunDeclaredCompositionArtifactFailuresStopBeforeProvider(t *testing.T) 
 				artifacts.chmod = func(string, os.FileMode) error { return sentinel }
 			}
 			if tc.failAgents {
-				artifacts.assembleAgentsDir = func([]genFile) (string, error) { return "", sentinel }
+				artifacts.assembleAgentsDir = func(string, []genFile) (string, error) { return "", sentinel }
 			}
 
 			code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), tc.spec, artifacts)
@@ -2441,11 +2441,11 @@ func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
 	t.Run("selected provider instruction write", func(t *testing.T) {
 		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
 		originalWrite := artifacts.writeFile
-		artifacts.writeFile = func(content string) (string, error) {
+		artifacts.writeFile = func(_, content string) (string, error) {
 			if strings.HasPrefix(content, boxEnvNote) {
 				return "", sentinel
 			}
-			return originalWrite(content)
+			return originalWrite("", content)
 		}
 		assertStopped(t, cfg, spec, artifacts, recorder, rt, "assemble instruction for codex", true)
 	})
@@ -2493,11 +2493,11 @@ func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
 	t.Run("box Git config", func(t *testing.T) {
 		cfg, spec, artifacts, recorder, rt := newFixture(t, "")
 		originalWrite := artifacts.writeFile
-		artifacts.writeFile = func(content string) (string, error) {
+		artifacts.writeFile = func(_, content string) (string, error) {
 			if strings.Contains(content, "[commit]\n\tgpgsign = false") {
 				return "", sentinel
 			}
-			return originalWrite(content)
+			return originalWrite("", content)
 		}
 		assertStopped(t, cfg, spec, artifacts, recorder, rt, "prepare box Git config", true)
 	})
@@ -2529,11 +2529,11 @@ func TestRunUnusedProviderArtifactsAndOptionalGitIgnoreDoNotBlock(t *testing.T) 
 
 	artifacts := defaultCompositionArtifactOps()
 	originalWrite := artifacts.writeFile
-	artifacts.writeFile = func(content string) (string, error) {
+	artifacts.writeFile = func(_, content string) (string, error) {
 		if content == ignoreBody {
 			return "", errors.New("fixture optional ignore failure")
 		}
-		return originalWrite(content)
+		return originalWrite("", content)
 	}
 	var notices []string
 	ui.SetLiveSink(func(line string) { notices = append(notices, line) })
@@ -2602,8 +2602,8 @@ func TestRunActiveMCPArtifactFailuresStopBeforeProvider(t *testing.T) {
 		artifacts := defaultCompositionArtifactOps()
 		var created []string
 		originalWrite := artifacts.writeFile
-		artifacts.writeFile = func(content string) (string, error) {
-			path, err := originalWrite(content)
+		artifacts.writeFile = func(_, content string) (string, error) {
+			path, err := originalWrite("", content)
 			if err == nil {
 				created = append(created, path)
 			}
@@ -2634,12 +2634,12 @@ func TestRunActiveMCPArtifactFailuresStopBeforeProvider(t *testing.T) {
 		var created []string
 		originalWrite := artifacts.writeFile
 		writes := 0
-		artifacts.writeFile = func(content string) (string, error) {
+		artifacts.writeFile = func(_, content string) (string, error) {
 			writes++
 			if writes == 3 { // shared snapshot, Codex overlay, then Grok overlay
 				return "", sentinel
 			}
-			path, err := originalWrite(content)
+			path, err := originalWrite("", content)
 			if err == nil {
 				created = append(created, path)
 			}
@@ -3151,7 +3151,7 @@ func TestGeneratedSubagentFiles(t *testing.T) {
 // agents mount. The repo's own .claude/agents is deliberately NOT copied in: it stays the live repo
 // mount, so deleting/editing the user's subagents never drags coop's preset roles along.
 func TestAssembleAgentsDir(t *testing.T) {
-	dir, err := assembleAgentsDir([]genFile{{"coop-thinker.md", "generated"}})
+	dir, err := assembleAgentsDir("", []genFile{{"coop-thinker.md", "generated"}})
 	if err != nil {
 		t.Fatal(err)
 	}

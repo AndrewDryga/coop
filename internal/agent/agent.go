@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 )
 
 // StreamFormat identifies the provider-owned NDJSON schema emitted by a headless agent.
@@ -344,6 +345,15 @@ type Agent interface {
 	// Packages are the npm packages the box image installs for this agent — its CLI and
 	// (if separate) its ACP adapter.
 	Packages() []string
+	// LockedClients declares this adapter's exact pinned installations for one
+	// platform, used to build the qualified client image restricted networking
+	// launches. Nil where the adapter has no qualified locked client.
+	LockedClients(platform ClientPlatform) []LockedClient
+	// NetworkBundle derives the release-owned core endpoints an already selected
+	// target needs. It is connectivity, not activation: it neither authorizes an
+	// action nor reads a credential, and an unsupported tuple fails rather than
+	// warning. Optional features stay explicit operator requests.
+	NetworkBundle(NetworkBundleInput) (egress.Bundle, error)
 	// ACPRateLimitSignals are the STRUCTURED markers this agent's ACP adapter embeds in
 	// a JSON-RPC error to signal a rate/usage limit — proof the ACP controller rotates
 	// on without parsing prose. The output-token axis (finishReason/stopReason =

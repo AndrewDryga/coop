@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -37,6 +38,30 @@ func init() { register(codexAgent{}) }
 
 func (codexAgent) Name() string        { return "codex" }
 func (codexAgent) DisplayName() string { return "Codex" }
+
+// LockedClients pins the exact CLI and ACP adapter builds the qualified client
+// image installs. Both drive the same vendored native codex executable.
+func (codexAgent) LockedClients(platform ClientPlatform) []LockedClient {
+	if !platform.valid() {
+		return nil
+	}
+	cpu, target := "arm64", "aarch64-unknown-linux-musl"
+	if platform.Architecture == "amd64" {
+		cpu, target = "x64", "x86_64-unknown-linux-musl"
+	}
+	native := lockedClientRoot + "/node_modules/@openai/codex-linux-" + cpu + "/vendor/" + target + "/bin/codex"
+	return []LockedClient{
+		{Client: egress.ClientCLI, Package: "@openai/codex", Version: "0.153.4", Binary: "codex", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@openai/codex/bin/codex.js"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.153.4-linux-" + cpu}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/codex-acp", Version: "1.10.0", Binary: "codex-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/codex-acp/dist/index.js"}, UnsetEnv: []string{"CODEX_PATH"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.153.4-linux-" + cpu}}},
+	}
+}
+
+// NetworkBundle covers the ChatGPT backend plus its login/token host.
+func (a codexAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
+	return directNetworkBundle(a.Name(), "chatgpt-file", input,
+		[]string{"chatgpt.com", "auth.openai.com"},
+		[]string{"https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/model-provider-info/src/lib.rs", "https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/login/src/auth/manager.rs"})
+}
 
 // Stream: codex keys every item lifecycle event on the item id, so command_execution, MCP, and
 // collab calls report their own start and completion — a tool lifecycle the watchdog can pair.

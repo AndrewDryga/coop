@@ -12,10 +12,10 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 )
 
-// CheckBundles pins canonical content under a provider/client/backend/auth/version identity.
+// checkBundles pins canonical content under a provider/client/backend/auth/version identity.
 // A new trusted version may serve new captures. Changed content under an existing
 // version is integrity drift, not an update or a request the operator can approve.
-func (s *Store) CheckBundles(bundles []egress.Bundle) error {
+func (s *Store) checkBundles(bundles []egress.Bundle) error {
 	if err := s.authorityAvailable(); err != nil {
 		return err
 	}

@@ -27,7 +27,7 @@ func TestInspectionAggregateObservationProvisionalIdentityAndProjection(t *testi
 	r := got.AggregateObservation.Receipt
 	if got.Receipt != nil || got.AggregateObservation.Revision != record.Revision ||
 		r.ID != record.ID || !r.StartedAt.Equal(record.StartedAt) || r.SessionID != record.SessionID ||
-		r.AuthorityDigest != record.AuthorityDigest || r.Finality != "provisional" ||
+		r.Finality != "provisional" ||
 		r.Completeness != "partial" || r.Digest == "" || r.DigestScope != "destinations-withheld" {
 		t.Fatalf("invalid provisional aggregate: %+v", got.AggregateObservation)
 	}

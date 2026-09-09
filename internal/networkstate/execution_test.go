@@ -22,11 +22,7 @@ func executionFixture(t *testing.T) (*Store, Execution) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputsID, err := s.RecordInputs(LaunchInputs{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	record, err := executionTrial(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint, InputsID: inputsID,
+	record, err := executionTrial(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
 		Runtime: "docker", DaemonID: "fixture-daemon", Endpoint: "unix:///fixture.sock", GatewayImage: "sha256:" + strings.Repeat("a", 64), ClientImage: "sha256:" + strings.Repeat("b", 64)}, "enforcement", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -38,11 +34,7 @@ func executionTrial(t *testing.T, s *Store) *QualificationTrial {
 	t.Helper()
 	spec := candidateFixture()
 	spec.ClientImage, spec.GatewayImage = spec.GatewayImage, spec.ClientImage
-	candidate, err := s.RecordCandidate(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	trial, err := s.BeginQualification(candidate.ID)
+	trial, err := s.BeginQualification(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,11 +181,10 @@ func TestEvidenceKeyLossPreservesReadsAndCleanupButNotAuthority(t *testing.T) {
 		t.Fatal("key loss regenerated authority")
 	}
 	if _, err := s.CreateExecution(ctx, ExecutionSpec{Project: record.Project, PolicyFingerprint: record.Snapshot.PolicyFingerprint,
-		InputsID: record.InputsID,
-		Runtime:  record.Runtime, DaemonID: record.DaemonID, Endpoint: record.Endpoint, GatewayImage: record.GatewayImage}); err == nil {
+		Runtime: record.Runtime, DaemonID: record.DaemonID, Endpoint: record.Endpoint, GatewayImage: record.GatewayImage}); err == nil {
 		t.Fatal("stale open Store reused missing key for a new launch")
 	}
-	if err := s.Approve(record.Project, egress.Open, nil, nil); err == nil {
+	if err := approve(s, record.Project, egress.Open, nil, nil); err == nil {
 		t.Fatal("stale open Store approved access after key loss")
 	}
 	if err := os.Remove(record.Project); err != nil {
@@ -302,13 +293,16 @@ func TestExecutionRenameBeforeFsyncErrorRetainsIntentForDurableReconciliation(t 
 	if err != nil || got.Resources[0].State != "creating" || got.Revision != record.Revision+1 {
 		t.Fatal("rename-before-sync outcome silently treated as absent", err)
 	}
-	if _, err := s.ConfirmExecution(context.Background(), got.ID, got.Revision); !errors.Is(err, wanted) {
-		t.Fatal("read alone was mistaken for durable publication")
+	// Reading the intent back is not proof it was published durably, and the
+	// retained intent refuses a second create rather than repeating it.
+	if _, err := s.BeginResourceCreation(context.Background(), got.ID, got.Revision, "controller"); err == nil ||
+		!strings.Contains(err.Error(), "already intended") {
+		t.Fatal("uncertain outcome authorized a second runtime operation", err)
 	}
 	s.syncDir = nil
-	confirmed, err := s.ConfirmExecution(context.Background(), got.ID, got.Revision)
-	if err != nil || confirmed.Revision != got.Revision {
-		t.Fatal("reconciliation repeated the operation or failed", err)
+	confirmed, err := s.RecordResourceCreated(context.Background(), got.ID, got.Revision, "controller", strings.Repeat("a", 64))
+	if err != nil || confirmed.Revision != got.Revision+1 || confirmed.Resources[0].State != "created" {
+		t.Fatal("reconciliation could not settle the uncertain outcome", err)
 	}
 }
 
@@ -316,8 +310,7 @@ func TestExecutionListingHasBoundedSummaryPagesAndContinuation(t *testing.T) {
 	s, record := executionFixture(t)
 	for range ExecutionPageSize {
 		if _, err := executionTrial(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: record.Project, PolicyFingerprint: record.Snapshot.PolicyFingerprint,
-			InputsID: record.InputsID,
-			Runtime:  record.Runtime, DaemonID: record.DaemonID, Endpoint: record.Endpoint, GatewayImage: record.GatewayImage, ClientImage: record.ClientImage}, "enforcement", nil); err != nil {
+			Runtime: record.Runtime, DaemonID: record.DaemonID, Endpoint: record.Endpoint, GatewayImage: record.GatewayImage, ClientImage: record.ClientImage}, "enforcement", nil); err != nil {
 			t.Fatal(err)
 		}
 	}

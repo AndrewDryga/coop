@@ -57,7 +57,7 @@ func TestQualificationCannotInventProviderPolicyOrResumeRelationship(t *testing.
 }
 
 func TestQualificationLossBlocksStartsNotInspectionOrCleanup(t *testing.T) {
-	for _, lost := range []string{"qualification", "candidate", "inputs", "contract"} {
+	for _, lost := range []string{"qualification", "contract"} {
 		t.Run(lost, func(t *testing.T) {
 			trial, spec, proofs := qualificationFixture(t, nil)
 			q, err := trial.Complete(nil, proofs)
@@ -73,10 +73,6 @@ func TestQualificationLossBlocksStartsNotInspectionOrCleanup(t *testing.T) {
 			switch lost {
 			case "qualification":
 				err = trial.store.root.Remove("qualification-" + q.ID + ".json")
-			case "candidate":
-				err = trial.store.root.Remove("candidate-" + q.CandidateID + ".json")
-			case "inputs":
-				err = trial.store.root.Remove("inputs-" + r.InputsID + ".json")
 			case "contract":
 				r.QualificationContract = "historical-contract"
 				data, _ := json.Marshal(r)
@@ -145,8 +141,5 @@ func TestExecutionAmbiguousIntentCannotAuthorizeAnotherSubmission(t *testing.T) 
 	}
 	if _, err := s.BeginResourceCreation(context.Background(), r.ID, r.Revision, "controller"); err == nil {
 		t.Fatal("unknown create outcome authorized a repeated external submission")
-	}
-	if _, err := s.ConfirmExecution(context.Background(), r.ID, r.Revision); err != nil {
-		t.Fatal("durability confirmation requires no repeated submission", err)
 	}
 }

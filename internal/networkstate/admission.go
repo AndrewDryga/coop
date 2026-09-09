@@ -48,13 +48,13 @@ func PreviewAdmissionMode(path, project string, exposed []string, input Admissio
 	if store.key == nil {
 		return input.preview(nil)
 	}
-	return store.AdmissionMode(project, input)
+	return store.admissionMode(project, input)
 }
 
-// AdmissionMode is preparation only: it lets the host avoid capturing provider
-// credentials for open/offline work. Admit rereads approval and performs the
-// actual authorization after all filtered dependencies have been captured.
-func (s *Store) AdmissionMode(project string, input Admission) (egress.Mode, error) {
+// admissionMode is preparation only: it lets the host resolve posture before
+// deriving any filtered dependency. Admit rereads approval and performs the
+// actual authorization once those dependencies exist.
+func (s *Store) admissionMode(project string, input Admission) (egress.Mode, error) {
 	if err := s.authorityAvailable(); err != nil {
 		return "", err
 	}

@@ -90,11 +90,8 @@ func aggregateObservation(record Execution, exportDestinations bool) (networkvie
 	receipt := networkview.Receipt{Version: networkview.Version, ID: record.ID, Snapshot: record.Snapshot,
 		StartedAt: record.StartedAt, Finality: "provisional", Completeness: provisionalCompleteness(record.Snapshot),
 		Cleanup: inspectedCleanup(record), Runtime: record.Runtime, GatewayImage: record.GatewayImage,
-		SessionID: record.SessionID, AttemptID: record.AttemptID, AuthorityDigest: record.AuthorityDigest,
+		SessionID: record.SessionID, AttemptID: record.AttemptID,
 		CollectorVersion: "gateway-v1", BundleReferences: record.BundleReferences}
-	if record.Purpose == SessionUnobservedPurpose {
-		receipt.CollectorVersion = ""
-	}
 	if record.Receipt != nil {
 		receipt = *record.Receipt
 	}
@@ -151,18 +148,12 @@ func currentNetwork(snapshot networkview.Snapshot) *CurrentNetwork {
 // absence. Cleanup that finishes after sealing shows here; the immutable
 // receipt keeps the outcome it was sealed with.
 func inspectedCleanup(record Execution) string {
-	if record.Purpose == SessionUnobservedPurpose {
-		if !record.SessionWorkloadGone || record.RunFiles.State != "gone" {
-			return "pending"
-		}
-		return "complete"
-	}
 	for _, resource := range record.Resources {
 		if resource.State != "gone" {
 			return "pending"
 		}
 	}
-	if record.LaunchConfig.State != "gone" || record.RunFiles.State != "gone" {
+	if record.Artifact.State != "gone" {
 		return "pending"
 	}
 	return "complete"

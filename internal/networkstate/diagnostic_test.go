@@ -28,7 +28,7 @@ func diagnosticFixture(t *testing.T) (*Store, *Evidence, Execution) {
 		t.Fatal(err)
 	}
 	record, err := executionTrial(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: old.Project, PolicyFingerprint: policy.Fingerprint,
-		InputsID: old.InputsID, Runtime: "docker", DaemonID: "fixture-daemon", Endpoint: "unix:///fixture.sock",
+		Runtime: "docker", DaemonID: "fixture-daemon", Endpoint: "unix:///fixture.sock",
 		GatewayImage: old.GatewayImage, ClientImage: old.ClientImage}, "enforcement", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func diagnosticFixture(t *testing.T) (*Store, *Evidence, Execution) {
 func TestNetworkWhyUsesOnlyRetainedPolicyAfterKeyAndProjectLoss(t *testing.T) {
 	s, evidence, record := diagnosticFixture(t)
 	// A new approval is not the captured run's policy, even when it denies all.
-	if err := s.Approve(record.Project, egress.None, nil, nil); err != nil {
+	if err := approve(s, record.Project, egress.None, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(s.Path(), "owner.key")); err != nil {

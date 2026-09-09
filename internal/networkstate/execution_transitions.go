@@ -13,9 +13,6 @@ import (
 )
 
 func (s *Store) ownedExecution(record *Execution) error {
-	if record.Purpose == SessionUnobservedPurpose {
-		return errors.New("unobserved session execution has no gateway runtime authority")
-	}
 	if len(s.key) != 32 || record.Supervisor.PID != os.Getpid() || record.Supervisor.StartToken != processidentity.StartToken(os.Getpid()) {
 		return errors.New("network execution is not owned by this supervisor")
 	}
@@ -55,22 +52,19 @@ func (s *Store) resourceTransition(ctx context.Context, id string, revision netw
 			return false, err
 		}
 		if resource.Kind == "container" && (after == "creating" || after == "starting") {
-			if record.LaunchConfig.State != "ready" {
-				return false, errors.New("network helper configuration is not durably ready")
+			if record.Artifact.State != "prepared" {
+				return false, errors.New("network launch artifacts are not durably prepared")
 			}
-			if _, _, err := s.readLaunchArtifact(record.LaunchConfig); err != nil {
+			if _, err := s.readArtifactLaunch(record.Artifact); err != nil {
 				return false, err
 			}
-		}
-		if role == "agent" && (after == "creating" || after == "starting") {
-			if record.RunFiles.State != "ready" {
-				return false, errors.New("network workload files have not completed composition")
+			if role == "agent" {
+				files, err := s.openArtifactFiles(record.Artifact)
+				if err != nil {
+					return false, err
+				}
+				_ = files.Close()
 			}
-			file, _, err := s.openRunFiles(record.RunFiles)
-			if err != nil {
-				return false, err
-			}
-			_ = file.Close()
 		}
 		if resource.State == after {
 			if after == "creating" || after == "starting" {
@@ -89,28 +83,23 @@ func (s *Store) resourceTransition(ctx context.Context, id string, revision netw
 	})
 }
 
-// Read/cleanup stay structural. Only new runtime mutations require the retained
-// qualification and inputs; losing either must not hide exact resource custody.
+// Read/cleanup stay structural. Only new runtime mutations recheck the retained
+// qualification; losing it must not hide exact resource custody.
 func (s *Store) executionLaunchAuthority(record Execution) error {
-	if record.Version != ExecutionVersion || record.QualificationContract != QualificationContract {
+	if record.QualificationContract != QualificationContract {
 		return errors.New("historical network execution is inspection and cleanup only")
 	}
-	if _, err := s.Inputs(record.InputsID); err != nil {
-		return err
+	if record.Purpose != "workload" {
+		return nil
 	}
-	candidate, err := s.Candidate(record.CandidateID)
+	qualification, err := s.Qualification(record.QualificationID)
 	if err != nil {
-		return err
+		return errors.New("completed network qualification is unavailable or changed")
 	}
-	if candidate.Spec.ClientImage != record.ClientImage || candidate.Spec.GatewayImage != record.GatewayImage ||
-		candidate.Spec.Runtime.DaemonID != record.DaemonID || candidate.Spec.Runtime.Endpoint != record.Endpoint {
+	candidate := qualification.Candidate
+	if candidate.ClientImage != record.ClientImage || candidate.GatewayImage != record.GatewayImage ||
+		candidate.Runtime.DaemonID != record.DaemonID || candidate.Runtime.Endpoint != record.Endpoint {
 		return errors.New("network execution launch binding changed")
-	}
-	if record.Purpose == "workload" {
-		qualification, err := s.Qualification(record.QualificationID)
-		if err != nil || qualification.CandidateID != record.CandidateID {
-			return errors.New("completed network qualification is unavailable or changed")
-		}
 	}
 	return nil
 }
@@ -272,9 +261,6 @@ func (e *Evidence) RecoverInterrupted(ctx context.Context, id string, revision n
 		if state != processidentity.Gone && state != processidentity.Mismatch {
 			return false, errors.New("network supervisor is live or its identity is uncertain")
 		}
-		if record.Purpose == SessionUnobservedPurpose {
-			return sealUnobservedSessionExecution(record, "supervisor_lost")
-		}
 		return sealExecution(record, "supervisor_lost", true)
 	})
 }
@@ -325,7 +311,7 @@ func sealExecution(record *Execution, workload string, interrupted bool) (bool, 
 			cleanup = "pending"
 		}
 	}
-	if record.LaunchConfig.State != "gone" || record.RunFiles.State != "gone" {
+	if record.Artifact.State != "gone" {
 		cleanup = "pending"
 	}
 	completeness := "partial"
@@ -335,7 +321,7 @@ func sealExecution(record *Execution, workload string, interrupted bool) (bool, 
 	now := time.Now().UTC()
 	receipt := networkview.Receipt{Version: networkview.Version, ID: record.ID, Snapshot: snapshot, StartedAt: record.StartedAt, EndedAt: &now,
 		Finality: "final", Completeness: completeness, Workload: workload, Cleanup: cleanup, Runtime: record.Runtime,
-		GatewayImage: record.GatewayImage, SessionID: record.SessionID, AttemptID: record.AttemptID, AuthorityDigest: record.AuthorityDigest,
+		GatewayImage: record.GatewayImage, SessionID: record.SessionID, AttemptID: record.AttemptID,
 		CollectorVersion: "gateway-v1", BundleReferences: slices.Clone(record.BundleReferences), DigestScope: "owner-local"}
 	if err := receipt.SealDigest(); err != nil {
 		return false, err

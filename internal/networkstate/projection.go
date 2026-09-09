@@ -10,7 +10,7 @@ import (
 // MCPProjection binds a validated private transport shape to this owner.
 // A public fingerprint cannot be used as a dictionary oracle for private URLs.
 func (s *Store) MCPProjection(shape []byte) (string, error) {
-	if len(shape) == 0 || len(shape) > MaxInputBytes {
+	if len(shape) == 0 || len(shape) > maxPrivateRecordBytes {
 		return "", errors.New("invalid MCP qualification shape")
 	}
 	if err := s.intactAuthority(); err != nil {

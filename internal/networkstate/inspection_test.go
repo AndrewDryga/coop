@@ -170,7 +170,7 @@ func TestInspectionRedactsPrivateEvidenceAndSharesNoMutableState(t *testing.T) {
 	}
 	for _, secret := range []string{"private.example", "blocked.example", "203.0.113.7", "cand-private", "rule-private",
 		sealed.Receipt.Digest, record.Project, record.Endpoint, record.DaemonID, record.Supervisor.StartToken,
-		record.LaunchConfig.Name, record.RunFiles.Name, record.Resources[0].Name} {
+		record.Artifact.Name, record.Resources[0].Name} {
 		if secret != "" && strings.Contains(string(encoded), secret) {
 			t.Fatalf("inspection leaked private evidence: %s", secret)
 		}
@@ -248,10 +248,7 @@ func TestInspectionCleanupAfterFinalLeavesTheSealedReceiptUnchanged(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	if record, err = evidence.RemoveLaunchConfig(ctx, record.ID, record.Revision); err != nil {
-		t.Fatal(err)
-	}
-	if record, err = evidence.CleanupRunFiles(ctx, record.ID, record.Revision); err != nil {
+	if record, err = evidence.CleanupArtifacts(ctx, record.ID, record.Revision); err != nil {
 		t.Fatal(err)
 	}
 	complete, err := evidence.Inspect(record.ID, now, true)

@@ -125,17 +125,17 @@ func envKeysOutsideScope(cfg *config.Config, scope []string) map[string]bool {
 // preserved verbatim. Returns the temp path the caller must clean up. Both `KEY=val` and a
 // BARE `KEY` line are stripped: docker --env-file treats a bare key as "import it from the
 // current environment", so leaving one in would leak a peer key from coop's own env.
-func writeFilteredEnvFile(path string, drop map[string]bool) (string, error) {
+func writeFilteredEnvFile(parent, path string, drop map[string]bool) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	return writeTempFile(filteredEnvContent(data, drop))
+	return writeTempFile(parent, filteredEnvContent(data, drop))
 }
 
 // writeMergedEnvFile renders deterministic project defaults followed by the trusted user env.
 // Later duplicate entries win in Docker/Podman env files, so agents/env remains authoritative.
-func writeMergedEnvFile(projectEnv map[string]string, userPath string, drop map[string]bool) (string, error) {
+func writeMergedEnvFile(parent string, projectEnv map[string]string, userPath string, drop map[string]bool) (string, error) {
 	keys := make([]string, 0, len(projectEnv))
 	for key := range projectEnv {
 		keys = append(keys, key)
@@ -155,7 +155,7 @@ func writeMergedEnvFile(projectEnv map[string]string, userPath string, drop map[
 		}
 		b.WriteString(filteredEnvContent(data, drop))
 	}
-	return writeTempFile(b.String())
+	return writeTempFile(parent, b.String())
 }
 
 func filteredEnvContent(data []byte, drop map[string]bool) string {

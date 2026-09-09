@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -26,12 +25,8 @@ func qualificationExecutionSpec(t *testing.T, trial *QualificationTrial) Executi
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputs, err := trial.store.RecordInputs(LaunchInputs{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec := trial.candidate.Spec
-	return ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint, InputsID: inputs, Runtime: "docker",
+	spec := trial.candidate
+	return ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint, Runtime: "docker",
 		DaemonID: spec.Runtime.DaemonID, Endpoint: spec.Runtime.Endpoint, ClientImage: spec.ClientImage, GatewayImage: spec.GatewayImage}
 }
 
@@ -53,7 +48,7 @@ func qualificationProofFixture(t *testing.T, trial *QualificationTrial, spec Exe
 				resource.ID = strings.Repeat("a", 64)
 			}
 		}
-		r.LaunchConfig.State, r.RunFiles.State = "gone", "gone"
+		r.Artifact.State = "gone"
 		r.Snapshot.Terminal = true
 		r.WorkloadStarted, r.ObserverAfterWorkload = name != "init-failure", true
 		if r.WorkloadStarted {
@@ -94,7 +89,7 @@ func qualificationProofFixture(t *testing.T, trial *QualificationTrial, spec Exe
 	if err != nil {
 		t.Fatal(err)
 	}
-	return QualificationProof{Case: name, RunID: r.ID, Epoch: r.Epoch, InputsID: r.InputsID, ReceiptDigest: r.Receipt.Digest,
+	return QualificationProof{Case: name, RunID: r.ID, Epoch: r.Epoch, ReceiptDigest: r.Receipt.Digest,
 		EvidenceDigest: digest, Client: client}
 }
 
@@ -169,7 +164,6 @@ func TestNetworkQualificationRequiresCompletedBoundTrials(t *testing.T) {
 	for name, change := range map[string]func([]QualificationProof) []QualificationProof{
 		"missing case": func(p []QualificationProof) []QualificationProof { return p[1:] },
 		"wrong epoch":  func(p []QualificationProof) []QualificationProof { p[0].Epoch = strings.Repeat("f", 32); return p },
-		"wrong inputs": func(p []QualificationProof) []QualificationProof { p[0].InputsID = strings.Repeat("f", 64); return p },
 		"wrong receipt": func(p []QualificationProof) []QualificationProof {
 			p[0].ReceiptDigest = strings.Repeat("f", 64)
 			return p
@@ -194,7 +188,7 @@ func TestNetworkQualificationRequiresCompletedBoundTrials(t *testing.T) {
 	}
 	spec.QualificationID = q.ID
 	r, err := trial.store.CreateExecution(context.Background(), spec)
-	if err != nil || r.Purpose != "workload" || r.ClientImage != spec.ClientImage || r.CandidateID != q.CandidateID || r.TrialGroup != "" {
+	if err != nil || r.Purpose != "workload" || r.ClientImage != spec.ClientImage || r.TrialGroup != "" {
 		t.Fatal("qualified launch lost exact binding", err)
 	}
 	for _, change := range []func(*ExecutionSpec){
@@ -237,7 +231,7 @@ func TestNetworkQualificationRejectsWrongOutcomeAndUnresolvedCustody(t *testing.
 					r.Receipt.Completeness = "partial"
 				},
 				"live resource":   func(r *Execution) { r.Resources[0].State = "started" },
-				"remaining files": func(r *Execution) { r.RunFiles.State = "planned" },
+				"remaining files": func(r *Execution) { r.Artifact.State = "planned" },
 			} {
 				var changed Execution
 				data, _ := json.Marshal(r)
@@ -268,7 +262,7 @@ func TestNetworkQualificationClientCoverageIsExactAndSeparateFromGrants(t *testi
 		t.Fatal(err)
 	}
 	policy := egress.Snapshot{Mode: egress.Filtered, Dependencies: []egress.Dependency{client.Dependency}}
-	if err := q.RequirePolicy(policy); err != nil {
+	if err := q.requirePolicy(policy, policy.Dependencies, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, change := range []func(*egress.Dependency){
@@ -279,18 +273,19 @@ func TestNetworkQualificationClientCoverageIsExactAndSeparateFromGrants(t *testi
 	} {
 		dependency := client.Dependency
 		change(&dependency)
-		if err := q.RequirePolicy(egress.Snapshot{Mode: egress.Filtered, Dependencies: []egress.Dependency{dependency}}); err == nil {
+		policy := egress.Snapshot{Mode: egress.Filtered, Dependencies: []egress.Dependency{dependency}}
+		if err := q.requirePolicy(policy, policy.Dependencies, nil); err == nil {
 			t.Fatal("another provider variant borrowed coverage")
 		}
 	}
 	rule := egress.Rule{To: egress.Destination{Domain: "extra.example.com"}, Protocol: "tls", Ports: []int{443}}
 	policy.Grants = []egress.Grant{{Rule: rule, Origins: []egress.Origin{{Kind: "owner", Provider: client.Dependency.Provider, Client: client.Dependency.Client, Backend: client.Dependency.Backend,
 		AuthMode: client.Dependency.AuthMode, BundleVersion: client.Dependency.Version, Feature: "other-feature"}}}}
-	if err := q.RequirePolicy(policy); err == nil {
+	if err := q.requirePolicy(policy, policy.Dependencies, nil); err == nil {
 		t.Fatal("unqualified optional feature accepted")
 	}
 	policy.Grants = []egress.Grant{{Rule: rule, Origins: []egress.Origin{{Kind: "owner", Name: "extra.example"}}}}
-	if err := q.RequirePolicy(policy); err != nil {
+	if err := q.requirePolicy(policy, policy.Dependencies, nil); err != nil {
 		t.Fatal("explicit destination falsely changed provider coverage", err)
 	}
 }
@@ -318,42 +313,6 @@ func TestNetworkQualificationCannotSpliceFeaturesAndMCPFromDifferentTrials(t *te
 	}
 }
 
-func TestNetworkQualificationSelectionUsesOneMemberOfUnion(t *testing.T) {
-	a := egress.Dependency{Provider: "claude", Client: egress.ClientCLI, Backend: "direct", AuthMode: "oauth-file", Version: "fixture"}
-	b := a
-	b.Client = egress.ClientACP
-	projection := strings.Repeat("a", 64)
-	policy := egress.Snapshot{Mode: egress.Filtered, Dependencies: []egress.Dependency{a, b}}
-	q := Qualification{Coverage: []QualifiedClient{{Dependency: a, MCPProjection: "none"}, {Dependency: b, MCPProjection: projection}}}
-	if err := q.RequirePolicy(policy); err != nil {
-		t.Fatal(err)
-	}
-	if err := q.RequireSelection(policy, []egress.Dependency{a}, "none"); err != nil {
-		t.Fatal("unrelated member projection contaminated selection", err)
-	}
-	if err := q.RequireSelection(policy, []egress.Dependency{b}, projection); err != nil {
-		t.Fatal(err)
-	}
-	if err := q.RequireLaunch(policy, projection); err == nil {
-		t.Fatal("whole-policy check silently became a subset check")
-	}
-	outside := a
-	outside.Version = "unselected"
-	q.Coverage = append(q.Coverage, QualifiedClient{Dependency: outside, MCPProjection: "none"})
-	if err := q.RequireSelection(policy, []egress.Dependency{outside}, "none"); err == nil {
-		t.Fatal("coverage granted dependency absent from policy")
-	}
-	policy.Grants = []egress.Grant{{Rule: egress.Rule{To: egress.Destination{Domain: "mcp.example.com"}, Protocol: "tls", Ports: []int{443}},
-		Origins: []egress.Origin{{Kind: "owner", Provider: b.Provider, Client: b.Client, Backend: b.Backend, AuthMode: b.AuthMode, BundleVersion: b.Version, Feature: "cloud-mcp"}}}}
-	q.Coverage = append(q.Coverage, QualifiedClient{Dependency: b, Features: []string{"cloud-mcp"}, MCPProjection: "none"})
-	if err := q.RequireSelection(policy, []egress.Dependency{b}, projection); err == nil {
-		t.Fatal("selection spliced feature and MCP witnesses")
-	}
-	if err := q.RequireSelection(policy, []egress.Dependency{a}, "none"); err != nil {
-		t.Fatal("another member's feature contaminated selection", err)
-	}
-}
-
 func TestNetworkQualificationRejectsTamperAndFilesystemTraps(t *testing.T) {
 	for _, kind := range []string{"content", "unknown-field", "noncanonical", "symlink", "fifo", "oversized", "public", "key-loss"} {
 		t.Run(kind, func(t *testing.T) {
@@ -369,7 +328,7 @@ func TestNetworkQualificationRejectsTamperAndFilesystemTraps(t *testing.T) {
 			}
 			switch kind {
 			case "content":
-				q.CandidateID = strings.Repeat("f", 64)
+				q.Candidate.ClientImage = "sha256:" + strings.Repeat("f", 64)
 				data, _ = json.Marshal(q)
 			case "unknown-field":
 				data = append([]byte(`{"passed":true,`), data[1:]...)
@@ -438,50 +397,13 @@ func TestNetworkQualificationPublicationConfirmsDurability(t *testing.T) {
 	}
 }
 
-func TestNetworkQualificationRecoveryNeedsDepartedRealSupervisor(t *testing.T) {
-	if root := os.Getenv("COOP_QUALIFICATION_CHILD_ROOT"); root != "" {
-		s, err := Open(root, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		trial := executionTrial(t, s)
-		spec := qualificationExecutionSpec(t, trial)
-		r, err := trial.CreateExecution(context.Background(), spec, "recovery", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := os.Stdout.WriteString(r.ID); err != nil {
-			t.Fatal(err)
-		}
-		os.Exit(0)
-	}
+func TestNetworkQualificationTrialIsAPrivateHostCapability(t *testing.T) {
 	s := openStore(t)
 	trial := executionTrial(t, s)
-	r, err := trial.CreateExecution(context.Background(), qualificationExecutionSpec(t, trial), "recovery", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.RecoverQualification(r.ID); err == nil {
-		t.Fatal("live supervisor lost trial ownership")
-	}
-	binary, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := exec.Command(binary, "-test.run=^TestNetworkQualificationRecoveryNeedsDepartedRealSupervisor$")
-	command.Env = append(os.Environ(), "COOP_QUALIFICATION_CHILD_ROOT="+s.Path())
-	output, err := command.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	recovered, err := s.RecoverQualification(strings.TrimSpace(string(output)))
-	if err != nil || recovered.group == trial.group {
-		t.Fatal("cannot recover departed child trial", err)
-	}
 	// A containing DTO must not accidentally serialize the host capability.
 	data, _ := json.Marshal(struct {
 		Trial *QualificationTrial `json:"trial"`
-	}{Trial: recovered})
+	}{Trial: trial})
 	if string(data) != `{"trial":{}}` {
 		t.Fatal("trial capability serialized")
 	}
@@ -489,12 +411,15 @@ func TestNetworkQualificationRecoveryNeedsDepartedRealSupervisor(t *testing.T) {
 	if _, err := empty.CreateExecution(context.Background(), ExecutionSpec{}, "enforcement", nil); err == nil {
 		t.Fatal("zero capability authorized trial")
 	}
+	// A crashed setup is rerun, never resumed: nothing recovers a trial group.
 	evidence, err := OpenEvidence(s.Path(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer evidence.Close()
-	if _, exists := reflect.TypeOf(evidence).MethodByName("RecoverQualification"); exists {
-		t.Fatal("keyless handle can create trial authority")
+	for _, value := range []any{s, evidence} {
+		if _, exists := reflect.TypeOf(value).MethodByName("RecoverQualification"); exists {
+			t.Fatal("a departed trial can be resumed")
+		}
 	}
 }

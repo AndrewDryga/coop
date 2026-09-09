@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/mcp"
 )
 
@@ -396,4 +397,12 @@ func (grokAgent) ShellPrelude() string { return "" }
 func (grokAgent) InstallScript() string {
 	return `curl -fsSL https://x.ai/cli/install.sh | bash` +
 		` && b="$(readlink -f /usr/local/bin/grok)" && rm -f /usr/local/bin/grok && install -m 0755 "$b" /usr/local/bin/grok`
+}
+
+// LockedClients is nil: grok has no qualified locked client build yet, so
+// restricted networking cannot launch it.
+func (grokAgent) LockedClients(ClientPlatform) []LockedClient { return nil }
+
+func (a grokAgent) NetworkBundle(NetworkBundleInput) (egress.Bundle, error) {
+	return egress.Bundle{}, fmt.Errorf("%s is unsupported for restricted networking", a.Name())
 }

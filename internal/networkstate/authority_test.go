@@ -46,7 +46,7 @@ func TestApprovalRequestsNeverGrantAndPostureSurvivesRemoval(t *testing.T) {
 	if _, err := s.CheckRequests(project, requests, nil); err == nil {
 		t.Fatal("unapproved requests gained authority")
 	}
-	if err := s.Approve(project, egress.Filtered, requests, nil); err != nil {
+	if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, current := range [][]egress.Rule{requests, requests[:1], nil, requests} {
@@ -61,10 +61,10 @@ func TestApprovalRequestsNeverGrantAndPostureSurvivesRemoval(t *testing.T) {
 	if _, err := s.CheckRequests(t.TempDir(), requests, nil); err == nil {
 		t.Fatal("another project reused approval")
 	}
-	if err := s.Approve(project, egress.Open, requests, nil); err == nil {
+	if err := approve(s, project, egress.Open, requests, nil); err == nil {
 		t.Fatal("open posture ignored rules")
 	}
-	if err := s.Approve(project, egress.Open, nil, nil); err != nil {
+	if err := approve(s, project, egress.Open, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	approval, err := s.CheckRequests(project, nil, nil)
@@ -80,7 +80,7 @@ func TestApprovalPermitsNarrowerRulesWithoutWidening(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
 	approved := rule("*.example.com")
 	approved.Ports = []int{443, 8443}
-	if err := s.Approve(project, egress.Filtered, []egress.Rule{approved}, nil); err != nil {
+	if err := approve(s, project, egress.Filtered, []egress.Rule{approved}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CheckRequests(project, []egress.Rule{rule("a.example.com")}, nil); err != nil {
@@ -103,7 +103,7 @@ func TestCaptureChecksRequestsAndBindsProjectWithoutExportingKey(t *testing.T) {
 	if got, err := s.Admit(project, Admission{InvocationMode: &mode, Requests: requests}); err == nil || got.Fingerprint != "" {
 		t.Fatal("capture compiled an unapproved request")
 	}
-	if err := s.Approve(project, egress.Filtered, requests, nil); err != nil {
+	if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := s.Admit(project, Admission{InvocationMode: &mode, Requests: requests})
@@ -113,7 +113,7 @@ func TestCaptureChecksRequestsAndBindsProjectWithoutExportingKey(t *testing.T) {
 	if _, err := s.LoadSnapshot(t.TempDir(), snapshot.Fingerprint); err == nil {
 		t.Fatal("reused another project's captured authority")
 	}
-	if err := s.Approve(project, egress.None, nil, nil); err != nil {
+	if err := approve(s, project, egress.None, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	old, err := s.LoadSnapshot(project, snapshot.Fingerprint)
@@ -201,7 +201,7 @@ func TestBundleMaintenanceAndFrozenSnapshots(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
 	bundle := egress.Bundle{Provider: "model", Client: egress.ClientCLI, Version: "1", Backend: "direct", AuthMode: "key", Core: []egress.Rule{rule("api.example.com")}, Features: map[string][]egress.Rule{"cloud-mcp": {rule("mcp.example.com")}}}
 	requests := []egress.Rule{{To: egress.Destination{Provider: "model", Features: []string{"cloud-mcp"}}}}
-	if err := s.Approve(project, egress.Filtered, requests, []egress.Bundle{bundle}); err != nil {
+	if err := approve(s, project, egress.Filtered, requests, []egress.Bundle{bundle}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := s.Admit(project, Admission{Bundles: []egress.Bundle{bundle}})
@@ -215,7 +215,7 @@ func TestBundleMaintenanceAndFrozenSnapshots(t *testing.T) {
 		t.Fatal("idempotent capture:", err)
 	}
 	bundle.Core = append(bundle.Core, rule("new.example.com"))
-	if err := s.CheckBundles([]egress.Bundle{bundle}); err == nil {
+	if err := s.checkBundles([]egress.Bundle{bundle}); err == nil {
 		t.Fatal("same-version content drift accepted")
 	}
 	bundle.Version = "2"
@@ -318,7 +318,7 @@ func TestConcurrentInitializationAndKeyLoss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Approve(t.TempDir(), egress.Filtered, nil, nil); err != nil {
+	if err := approve(s, t.TempDir(), egress.Filtered, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = s.Close()

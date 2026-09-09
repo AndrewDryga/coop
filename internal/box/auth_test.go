@@ -252,7 +252,7 @@ func TestEnvKeysOutsideScopeStripsTokenFromNamedAccount(t *testing.T) {
 	if err := os.WriteFile(src, []byte("ANTHROPIC_API_KEY=global\nOPENAI_API_KEY=keep\nMY_VAR=value\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	filtered, err := writeFilteredEnvFile(src, drop)
+	filtered, err := writeFilteredEnvFile("", src, drop)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestEnvKeysOutsideScopeMarkerBackedDefaultWinsMatrix(t *testing.T) {
 				if err := os.WriteFile(src, []byte(source+"=global\nSHARED=value\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				filtered, err := writeFilteredEnvFile(src, drop)
+				filtered, err := writeFilteredEnvFile("", src, drop)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -360,7 +360,7 @@ func TestWriteFilteredEnvFile(t *testing.T) {
 	src := filepath.Join(dir, "env")
 	os.WriteFile(src, []byte("# creds\nANTHROPIC_API_KEY=keep\nOPENAI_API_KEY=secret\nGEMINI_API_KEY\nMY_VAR=v\nMY_FLAG\n"), 0o644)
 
-	out, err := writeFilteredEnvFile(src, map[string]bool{"OPENAI_API_KEY": true, "GEMINI_API_KEY": true})
+	out, err := writeFilteredEnvFile("", src, map[string]bool{"OPENAI_API_KEY": true, "GEMINI_API_KEY": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +384,7 @@ func TestWriteMergedEnvFileProjectDefaultsBeforeUserOverrides(t *testing.T) {
 	if err := os.WriteFile(user, []byte("# user\nPGHOST=localhost\nOPENAI_API_KEY=drop\nMY_FLAG\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := writeMergedEnvFile(
+	out, err := writeMergedEnvFile("",
 		map[string]string{"PGPORT": "5432", "PGHOST": "db"},
 		user,
 		map[string]bool{"OPENAI_API_KEY": true},

@@ -90,6 +90,18 @@ type Config struct {
 // always wins, and — since the built-in egress default is the loosest — a repo can only tighten.
 func (c *Config) Explicit(key string) bool { return c.explicit[key] }
 
+// SetEgress records the posture the host resolved for this launch (network
+// admission folds the repo's request, the remembered approval and the operator's
+// flags into one decision). Marking it explicit keeps a later project-policy
+// overlay from deciding the mode a second time.
+func (c *Config) SetEgress(mode string) {
+	if c.explicit == nil {
+		c.explicit = map[string]bool{}
+	}
+	c.Egress = mode
+	c.explicit["COOP_EGRESS"] = true
+}
+
 // Cmd resolves a command setting (COOP_<NAME>_CMD) the same way Load resolves every
 // other: environment variable, then conf file, then the built-in default — then splits
 // it into words. It lets an agent adapter own its own default command without config

@@ -21,7 +21,19 @@ import (
 // .tool-versions at runtime, with no per-project Dockerfile needed. It runs as the
 // non-root `node` user and is built from stdin, so the base never needs a checkout.
 func BaseDockerfile() string {
-	return fmt.Sprintf(baseDockerfileTemplate, strings.Join(agents.Packages(), " "), installLayer())
+	return renderBaseDockerfile(baseImageParts{
+		packageArg: fmt.Sprintf("ARG AGENT_PACKAGES=%q", strings.Join(agents.Packages(), " ")),
+		install:    "npm install -g ${AGENT_PACKAGES}", browserDeps: "npx -y playwright install-deps chromium",
+		provision: baseProvisioningScript, scripts: installLayer(),
+		loginPath: `printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`,
+		pathEnv:   `/home/node/.asdf/shims:${PATH}`,
+	})
+}
+
+type baseImageParts struct{ packageArg, files, install, browserDeps, loginPath, provision, pathEnv, scripts string }
+
+func renderBaseDockerfile(parts baseImageParts) string {
+	return fmt.Sprintf(baseDockerfileTemplate, parts.packageArg, parts.files, parts.install, parts.browserDeps, parts.loginPath, parts.provision, parts.pathEnv, parts.scripts)
 }
 
 // installLayer renders a RUN line for each agent whose CLI installs via a script rather than
@@ -50,10 +62,9 @@ const (
 	floatingGoImage   = "golang:1.26.6-bookworm"
 )
 
-// baseDockerfileTemplate is BaseDockerfile with %s for the npm package list. The
-// FROM images (NODE_IMAGE and GO_IMAGE) and the agent npm specs (AGENT_PACKAGES) are
-// build args so a build can pin them; the defaults preserve the floating behavior for
-// a raw build.
+// baseDockerfileTemplate shares OS tools and process supervision. Explicit slots
+// select ordinary or locked installation and optional startup provisioning; the
+// ordinary renderer retains its existing package and base-image build arguments.
 const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
 ARG GO_IMAGE=golang:1.26.6-bookworm
 
@@ -72,7 +83,8 @@ COPY --from=go-tools-builder /out/govulncheck /usr/local/bin/govulncheck
 COPY --from=go-tools-builder /out/jv /usr/local/bin/jv
 
 ARG ASDF_VERSION=0.19.0
-ARG AGENT_PACKAGES="%s"
+%s
+%s
 
 # Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or
 # compile toolchains a repo pins in .tool-versions at runtime. A Postgres client,
@@ -104,64 +116,19 @@ RUN apt-get update \
  && command -v flock >/dev/null \
  && ln -s "$(command -v fdfind)" /usr/local/bin/fd \
  && ln -s "$(command -v pip3)" /usr/local/bin/pip \
- && npm install -g ${AGENT_PACKAGES} \
- && npx -y playwright install-deps chromium \
+ && %s \
+ && %s \
  && curl -fsSL "https://github.com/asdf-vm/asdf/releases/download/v${ASDF_VERSION}/asdf-v${ASDF_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \
       | tar -C /usr/local/bin -xzf - asdf \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
  && git config --system --add safe.directory '*' \
  && mkdir -p /home/node/.asdf /home/node/.cache && chown node:node /home/node/.asdf /home/node/.cache \
- && printf 'export PATH="/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh
+ && %s
 
-# Entrypoint: install whatever a repo's .tool-versions (or ~/.tool-versions) pins
-# via asdf, then run the requested command. A no-op when there is no .tool-versions.
-# The first install of a toolchain can be slow (e.g. Erlang compiles), but it
-# persists in the mounted ~/.asdf volume and is reused across runs and repos.
+# Entrypoint: optional toolchain provisioning, then shared process supervision.
 COPY <<'ENTRY' /usr/local/bin/coop-entry
 #!/bin/sh
-if command -v asdf >/dev/null 2>&1; then
-  if [ -z "$COOP_NO_ASDF" ]; then
-    f=; d=$PWD
-    while :; do [ -f "$d/.tool-versions" ] && { f=$d/.tool-versions; break; }; [ "$d" = / ] && break; d=$(dirname "$d"); done
-    [ -z "$f" ] && [ -f "$HOME/.tool-versions" ] && f=$HOME/.tool-versions
-    if [ -n "$f" ]; then
-      # Only provision (and say so) when a pinned tool is actually missing. Otherwise this
-      # ran on every launch and printed a "provisioning" line with nothing to do — just spam.
-      need=
-      while read -r t v _; do
-        case "$t" in ''|'#'*) continue ;; esac
-        [ -d "${ASDF_DATA_DIR:-$HOME/.asdf}/installs/$t/$v" ] || { need=1; break; }
-      done < "$f"
-      if [ -n "$need" ]; then
-        # COOP_QUIET (set by coop acp) provisions silently: ACP's consumer is an editor over
-        # stdio, not a human. Otherwise narrate with a dimmed coop: prefix (matching ui).
-        log=/dev/stderr
-        if [ -n "$COOP_QUIET" ]; then
-          log=/dev/null
-        else
-          if [ -t 2 ]; then d=$(printf '\033[2m'); r=$(printf '\033[0m'); else d=; r=; fi
-          echo "${d}coop:${r} provisioning toolchain from $f (first run may compile; cached after)" >&2
-        fi
-        for t in $(awk 'NF && $1 !~ /^#/ {print $1}' "$f"); do
-          asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >"$log" 2>&1 || true
-        done
-        asdf install >"$log" 2>&1 || true
-      fi
-      asdf reshim >/dev/null 2>&1 || true
-    fi
-  fi
-  # The agent CLIs are Node apps, so a bare node must always resolve. A prior repo's
-  # nodejs pin leaves a node shim in the persisted ~/.asdf volume; in a repo that does not
-  # pin nodejs (and with no global) that shim shadows the image node and errors with
-  # "No version is set for command node". COOP_NO_ASDF skips provisioning, not this repair.
-  # If node is broken but asdf has a nodejs installed, set the newest as the global fallback
-  # -- a repo's own .tool-versions still overrides it, so a pinned project node keeps winning.
-  if ! node --version >/dev/null 2>&1; then
-    v=$(asdf list nodejs 2>/dev/null | tr -cd '0-9.\n ' | tr ' ' '\n' | grep . | sort -V | tail -n1)
-    [ -n "$v" ] && asdf set --home nodejs "$v" >/dev/null 2>&1 && asdf reshim nodejs >/dev/null 2>&1
-  fi
-fi
-# Sidecar forwarders: for each COOP_FORWARD entry "<hostport>:<service>:<containerport>", listen on
+%s# Sidecar forwarders: for each COOP_FORWARD entry "<hostport>:<service>:<containerport>", listen on
 # the box's own 127.0.0.1:<hostport> and forward raw TCP to <service>:<containerport> on the compose
 # network. Raw TCP passes TLS through untouched, so the app in the box reaches a sidecar at the SAME
 # localhost:<hostport> URL the host browser uses (OIDC issuer match).
@@ -177,7 +144,7 @@ forward_sessions=
 if [ -n "$COOP_FORWARD" ] && command -v socat >/dev/null 2>&1; then
   oldifs=$IFS; IFS=,
   for forward in $COOP_FORWARD; do
-    IFS=$oldifs; hp=${forward%%:*}; rest=${forward#*:}; svc=${rest%%:*}; sp=${rest#*:}
+    IFS=$oldifs; hp=${forward%%%%:*}; rest=${forward#*:}; svc=${rest%%%%:*}; sp=${rest#*:}
     [ -n "$hp" ] && [ -n "$svc" ] && [ -n "$sp" ] || { IFS=,; continue; }
     # Each forwarder gets its own session. Supervision authenticates an exemption with this
     # session leader's PID *and* Linux start token, never with a spoofable executable name.
@@ -217,7 +184,7 @@ live_jobs() {
     [ "$pid" = 1 ] || [ "$pid" = "$$" ] || [ "$parent" = "$$" ] && continue
     exempt=
     for record in $forward_sessions; do
-      leader=${record%%:*}; token=${record#*:}
+      leader=${record%%%%:*}; token=${record#*:}
       current=
       if IFS= read -r leader_stat < "/proc/$leader/stat"; then
         leader_fields=${leader_stat##*) }
@@ -362,7 +329,7 @@ ENTRY
 RUN chmod +x /usr/local/bin/coop-entry
 
 ENV ASDF_DATA_DIR=/home/node/.asdf \
-    PATH="/home/node/.asdf/shims:${PATH}" \
+    PATH="%s" \
     LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8 \
     KERL_BUILD_DOCS=no \
     KERL_CONFIGURE_OPTIONS="--without-wx --without-observer --without-debugger --without-et --without-megaco --without-javac"
@@ -373,6 +340,50 @@ ENV ASDF_DATA_DIR=/home/node/.asdf \
 USER node
 ENTRYPOINT ["/usr/local/bin/coop-entry"]
 WORKDIR /workspace
+`
+
+const baseProvisioningScript = `if command -v asdf >/dev/null 2>&1; then
+  if [ -z "$COOP_NO_ASDF" ]; then
+    f=; d=$PWD
+    while :; do [ -f "$d/.tool-versions" ] && { f=$d/.tool-versions; break; }; [ "$d" = / ] && break; d=$(dirname "$d"); done
+    [ -z "$f" ] && [ -f "$HOME/.tool-versions" ] && f=$HOME/.tool-versions
+    if [ -n "$f" ]; then
+      # Only provision (and say so) when a pinned tool is actually missing. Otherwise this
+      # ran on every launch and printed a "provisioning" line with nothing to do — just spam.
+      need=
+      while read -r t v _; do
+        case "$t" in ''|'#'*) continue ;; esac
+        [ -d "${ASDF_DATA_DIR:-$HOME/.asdf}/installs/$t/$v" ] || { need=1; break; }
+      done < "$f"
+      if [ -n "$need" ]; then
+        # COOP_QUIET (set by coop acp) provisions silently: ACP's consumer is an editor over
+        # stdio, not a human. Otherwise narrate with a dimmed coop: prefix (matching ui).
+        log=/dev/stderr
+        if [ -n "$COOP_QUIET" ]; then
+          log=/dev/null
+        else
+          if [ -t 2 ]; then d=$(printf '\033[2m'); r=$(printf '\033[0m'); else d=; r=; fi
+          echo "${d}coop:${r} provisioning toolchain from $f (first run may compile; cached after)" >&2
+        fi
+        for t in $(awk 'NF && $1 !~ /^#/ {print $1}' "$f"); do
+          asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >"$log" 2>&1 || true
+        done
+        asdf install >"$log" 2>&1 || true
+      fi
+      asdf reshim >/dev/null 2>&1 || true
+    fi
+  fi
+  # The agent CLIs are Node apps, so a bare node must always resolve. A prior repo's
+  # nodejs pin leaves a node shim in the persisted ~/.asdf volume; in a repo that does not
+  # pin nodejs (and with no global) that shim shadows the image node and errors with
+  # "No version is set for command node". COOP_NO_ASDF skips provisioning, not this repair.
+  # If node is broken but asdf has a nodejs installed, set the newest as the global fallback
+  # -- a repo's own .tool-versions still overrides it, so a pinned project node keeps winning.
+  if ! node --version >/dev/null 2>&1; then
+    v=$(asdf list nodejs 2>/dev/null | tr -cd '0-9.\n ' | tr ' ' '\n' | grep . | sort -V | tail -n1)
+    [ -n "$v" ] && asdf set --home nodejs "$v" >/dev/null 2>&1 && asdf reshim nodejs >/dev/null 2>&1
+  fi
+fi
 `
 
 // ImageForRepo decides which image a repo runs in: an explicit override wins; a

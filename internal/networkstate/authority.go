@@ -4,7 +4,6 @@ package networkstate
 
 import (
 	"bytes"
-	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -474,16 +473,6 @@ func (s *Store) approval(id string) (*Approval, error) {
 	return &approval, nil
 }
 
-// Approve is a host operation. Its arguments must be the same snapshot the
-// operator reviewed; never re-read repository YAML after displaying the diff.
-func (s *Store) Approve(project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle) error {
-	review, err := s.ReviewApproval(project, mode, requests, bundles)
-	if err != nil {
-		return err
-	}
-	return review.Commit(context.Background())
-}
-
 func (s *Store) CheckRequests(project string, requests []egress.Rule, bundles []egress.Bundle) (*Approval, error) {
 	if err := s.authorityAvailable(); err != nil {
 		return nil, err
@@ -496,7 +485,7 @@ func (s *Store) CheckRequests(project string, requests []egress.Rule, bundles []
 }
 
 func (s *Store) checkRequests(approval *Approval, requests []egress.Rule, bundles []egress.Bundle) (*Approval, error) {
-	if err := s.CheckBundles(bundles); err != nil {
+	if err := s.checkBundles(bundles); err != nil {
 		return nil, err
 	}
 	rules, err := checkRequestEnvelope(approval, requests)

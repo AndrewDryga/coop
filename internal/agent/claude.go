@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/mcp"
 )
 
@@ -25,6 +26,29 @@ func init() { register(claudeAgent{}) }
 
 func (claudeAgent) Name() string        { return "claude" }
 func (claudeAgent) DisplayName() string { return "Claude Code" }
+
+// LockedClients pins the exact CLI and ACP adapter builds the qualified client
+// image installs. The ACP adapter carries its own separately versioned SDK.
+func (claudeAgent) LockedClients(platform ClientPlatform) []LockedClient {
+	if !platform.valid() {
+		return nil
+	}
+	cpu := platform.Architecture
+	if cpu == "amd64" {
+		cpu = "x64"
+	}
+	return []LockedClient{
+		{Client: egress.ClientCLI, Package: "@anthropic-ai/claude-code", Version: "2.1.260", Binary: "claude", Exec: []string{lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude", Version: "2.1.260"}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.75.1", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.257"}}},
+	}
+}
+
+// NetworkBundle covers the direct Anthropic API plus its OAuth token endpoint.
+func (a claudeAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
+	return directNetworkBundle(a.Name(), "oauth-file", input,
+		[]string{"api.anthropic.com", "platform.claude.com"},
+		[]string{"https://code.claude.com/docs/en/network-config", "https://platform.claude.com/v1/oauth/token"})
+}
 
 // Stream: claude's stream-json carries the full tool lifecycle — a `tool_use` block names both the
 // tool and the id its `tool_result` arrives under — so the watchdog can supervise foreground tools.

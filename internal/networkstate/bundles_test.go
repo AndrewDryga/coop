@@ -22,7 +22,7 @@ func TestOversizedBundleSelectionCannotPartiallyPublish(t *testing.T) {
 	for i := range egress.MaxConstraints {
 		second.Sources = append(second.Sources, fmt.Sprintf("https://example.com/%d/", i)+strings.Repeat("a", 1500))
 	}
-	if err := s.CheckBundles([]egress.Bundle{first, second}); err == nil {
+	if err := s.checkBundles([]egress.Bundle{first, second}); err == nil {
 		t.Fatal("oversized bundle accepted")
 	}
 	files, err := os.ReadDir(s.Path())
@@ -41,14 +41,14 @@ func TestBundleSourceOrderAndEmptyShapeDoNotCauseIntegrityDrift(t *testing.T) {
 	bundle := featureBundle(egress.ClientCLI, "key")
 	for _, sources := range [][]string{nil, {}} {
 		bundle.Sources = sources
-		if err := s.CheckBundles([]egress.Bundle{bundle}); err != nil {
+		if err := s.checkBundles([]egress.Bundle{bundle}); err != nil {
 			t.Fatal("empty shape caused false drift", err)
 		}
 	}
 	bundle.Version = "2"
 	for _, sources := range [][]string{{"https://b.example.com", "https://a.example.com"}, {"https://a.example.com", "https://b.example.com", "https://a.example.com"}} {
 		bundle.Sources = sources
-		if err := s.CheckBundles([]egress.Bundle{bundle}); err != nil {
+		if err := s.checkBundles([]egress.Bundle{bundle}); err != nil {
 			t.Fatal("source order caused false drift", err)
 		}
 	}
@@ -78,7 +78,7 @@ func TestHistoricalApprovalSurvivesSuffixChangesButNewAuthoringDoesNot(t *testin
 	if got, err := s.Admit(project, Admission{Requests: []egress.Rule{rule("*.github.io")}}); err == nil || got.Fingerprint != "" {
 		t.Fatal("new wildcard request bypassed today's catalog", err)
 	}
-	if err := s.Approve(project, egress.Filtered, []egress.Rule{rule("*.github.io")}, nil); err == nil {
+	if err := approve(s, project, egress.Filtered, []egress.Rule{rule("*.github.io")}, nil); err == nil {
 		t.Fatal("new approval bypassed today's catalog")
 	}
 }
@@ -87,7 +87,7 @@ func TestFeatureApprovalBindsVariantButAllowsUnchangedReleaseExpansion(t *testin
 	s, project := openStore(t), t.TempDir()
 	bundles := []egress.Bundle{featureBundle(egress.ClientCLI, "key"), featureBundle(egress.ClientACP, "oauth")}
 	requests := []egress.Rule{{To: egress.Destination{Provider: "model", Features: []string{"cloud-mcp"}}}}
-	if err := s.Approve(project, egress.Filtered, requests, bundles); err != nil {
+	if err := approve(s, project, egress.Filtered, requests, bundles); err != nil {
 		t.Fatal(err)
 	}
 	first, err := s.Approval(project)
@@ -95,7 +95,7 @@ func TestFeatureApprovalBindsVariantButAllowsUnchangedReleaseExpansion(t *testin
 		t.Fatal("approval lost selected variants", first, err)
 	}
 	slices.Reverse(bundles)
-	if err := s.Approve(project, egress.Filtered, requests, bundles); err != nil {
+	if err := approve(s, project, egress.Filtered, requests, bundles); err != nil {
 		t.Fatal(err)
 	}
 	second, err := s.Approval(project)
@@ -132,16 +132,16 @@ func TestBundleIntegrityIncludesClientAndValidationPrecedesPersistence(t *testin
 	s := openStore(t)
 	cli, acp := featureBundle(egress.ClientCLI, "oauth"), featureBundle(egress.ClientACP, "oauth")
 	acp.Core = []egress.Rule{rule("acp.example.com")}
-	if err := s.CheckBundles([]egress.Bundle{cli, acp}); err != nil {
+	if err := s.checkBundles([]egress.Bundle{cli, acp}); err != nil {
 		t.Fatal("different clients collided", err)
 	}
 	cli.Core = []egress.Rule{rule("changed.example.com")}
-	if err := s.CheckBundles([]egress.Bundle{cli}); err == nil {
+	if err := s.checkBundles([]egress.Bundle{cli}); err == nil {
 		t.Fatal("same client/version drift accepted")
 	}
 	clean := openStore(t)
 	acp.Client = ""
-	if err := clean.CheckBundles([]egress.Bundle{cli, acp}); err == nil {
+	if err := clean.checkBundles([]egress.Bundle{cli, acp}); err == nil {
 		t.Fatal("missing client accepted")
 	}
 	files, err := os.ReadDir(clean.Path())

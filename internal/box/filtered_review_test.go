@@ -1,0 +1,216 @@
+package box
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
+)
+
+type cancelledVolumeDaemon struct {
+	*filteredDaemonFixture
+	cancel context.CancelFunc
+}
+
+func (d cancelledVolumeDaemon) CreateVolume(ctx context.Context, ref runtime.DockerRef) (runtime.DockerVolume, error) {
+	volume, err := d.filteredDaemonFixture.CreateVolume(ctx, ref)
+	d.cancel()
+	return volume, err
+}
+
+func TestFilteredConfirmedVolumeSurvivesCallerCancellation(t *testing.T) {
+	f, daemon := filteredFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.docker = cancelledVolumeDaemon{filteredDaemonFixture: daemon, cancel: cancel}
+	if err := f.createVolume(ctx, "ipc"); !errors.Is(err, context.Canceled) {
+		t.Fatal("successful create hid caller cancellation", err)
+	}
+	record, err := f.store.Execution(f.record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range record.Resources {
+		if resource.Role == "ipc" && (resource.State != "created" || resource.ID != resource.Name) {
+			t.Fatal("confirmed volume identity lost after cancellation", resource)
+		}
+	}
+	if gone, err := f.cleanup("launch_failed"); err != nil || !gone || len(daemon.volumes) != 0 {
+		t.Fatal("cancelled create left cleanup debt", gone, err)
+	}
+}
+
+func TestFilteredUnsubmittedCreationLeavesNoCleanupDebt(t *testing.T) {
+	for _, role := range []string{"ipc", "observations", "controller", "guard", "agent"} {
+		t.Run(role, func(t *testing.T) {
+			f, d := filteredFixture(t)
+			d.notAttempted = role
+			_, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
+			if !errors.Is(err, runtime.ErrDockerCreateNotAttempted) {
+				t.Fatal("fixture did not stop before create submission", err)
+			}
+			gone, err := f.cleanup("launch_failed")
+			if err != nil || !gone || len(d.volumes) != 0 || len(d.containers) != 0 {
+				t.Fatal("unsubmitted create leaked runtime custody", gone, err)
+			}
+			record, err := f.store.Execution(f.record.ID)
+			if err != nil || record.Receipt == nil || record.Receipt.Cleanup != "complete" {
+				t.Fatal("unsubmitted create left a pending receipt", err)
+			}
+		})
+	}
+}
+
+func TestFilteredTransientHealthProbeDoesNotKillHealthyWork(t *testing.T) {
+	f, d := filteredFixture(t)
+	d.holdAgent, d.transientProbes = true, 2
+	d.probeRecovered = make(chan struct{}, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := f.launch(ctx, RunSpec{}, nil, nil, io.Discard, io.Discard); done <- err }()
+	select {
+	case <-d.probeRecovered:
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatal("cancellation was lost", err)
+		}
+	case err := <-done:
+		t.Fatal("transient daemon loss killed healthy work", err)
+	case <-ctx.Done():
+		<-done
+		t.Fatal("fixture health never recovered")
+	}
+	if gone, err := f.cleanup("cancelled"); err != nil || !gone || d.stopGrace["agent"] != 10 {
+		t.Fatal("provider lost its bounded graceful stop", gone, err, d.stopGrace)
+	}
+}
+
+func TestFilteredHostTopologyDriftRemainsFailClosed(t *testing.T) {
+	for _, kind := range []string{"changed", "unavailable", "empty"} {
+		t.Run(kind, func(t *testing.T) {
+			f, d := filteredFixture(t)
+			if err := f.checkTopology(); err != nil {
+				t.Fatal("initial fixture topology", err)
+			}
+			failure := errors.New("fixture host inventory unavailable")
+			f.hostAddresses = func() ([]netip.Prefix, error) {
+				if kind == "unavailable" {
+					return nil, failure
+				}
+				if kind == "empty" {
+					return nil, nil
+				}
+				return []netip.Prefix{netip.MustParsePrefix("192.0.2.2/32")}, nil
+			}
+			if err := f.checkTopology(); err == nil {
+				t.Fatal("topology change was ignored")
+			}
+			_, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
+			if err == nil || f.startAttempted {
+				t.Fatal("changed topology started workload", err)
+			}
+			if gone, err := f.cleanup("launch_failed"); err != nil || !gone || len(d.containers) != 0 || len(d.volumes) != 0 {
+				t.Fatal("topology refusal lost cleanup", err)
+			}
+		})
+	}
+}
+
+func TestFilteredRemovedHostAddressKeepsOriginalProtection(t *testing.T) {
+	f, d := filteredFixture(t)
+	removed := netip.MustParsePrefix("192.0.2.2/32")
+	f.protected = append(f.protected, removed)
+	f.hostAddresses = func() ([]netip.Prefix, error) { return []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}, nil }
+	if err := f.checkTopology(); err != nil {
+		t.Fatal("removing an address falsely weakened the retained deny set", err)
+	}
+	if len(f.protected) != 2 || f.protected[1] != removed {
+		t.Fatal("topology check changed installed protection")
+	}
+	f.hostAddresses = func() ([]netip.Prefix, error) { return append([]netip.Prefix{}, f.protected...), nil }
+	if err := f.checkTopology(); err != nil {
+		t.Fatal("original protected address could not reappear", err)
+	}
+	code, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
+	if err != nil || code != 7 {
+		t.Fatal("safe interface removal stopped normal work", code, err)
+	}
+	if gone, err := f.cleanup("exited"); err != nil || !gone || len(d.containers) != 0 || len(d.volumes) != 0 {
+		t.Fatal("interface removal lost cleanup", err)
+	}
+}
+
+func TestFilteredDuplicateHardeningCannotCauseFalseRefusal(t *testing.T) {
+	f, d := filteredFixture(t)
+	options := []string{"--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
+	code, err := f.launch(context.Background(), RunSpec{}, options, nil, io.Discard, io.Discard)
+	if err != nil || code != 7 {
+		t.Fatal("equivalent duplicate hardening was rejected", code, err)
+	}
+	if len(d.containers[f.ref("agent").Name].CapDrop) != 2 {
+		t.Fatal("fixture normalized away the adversarial daemon shape")
+	}
+	if gone, err := f.cleanup("exited"); err != nil || !gone {
+		t.Fatal("cleanup", err)
+	}
+}
+
+func TestFilteredNamedVolumesAreAdmittedOnlyAfterExposureInspection(t *testing.T) {
+	cfg := &config.Config{BaseImage: "base", HomeInBox: "/home/node"}
+	spec := RunSpec{Image: "base", Repo: t.TempDir(), Homes: true, Cache: true}
+	options := assembleOptions(cfg, false, spec, nil, "", "", spec.Repo, ttyNone, false, nil, nil, nil, nil, nil, "", "")
+	joined := strings.Join(options, " ")
+	if !strings.Contains(joined, "coop-cache:") || !strings.Contains(joined, "coop-asdf:") {
+		t.Fatal("ordinary named volumes disappeared from the workload plan", joined)
+	}
+	// A daemon-managed volume has no host path to expose, so it is admitted.
+	f, d := filteredFixture(t)
+	plan := []string{"-v", "coop-cache:/home/node/.cache", "-v", "coop-asdf:/home/node/.asdf"}
+	if err := f.validateMounts(plan, nil, nil); err != nil {
+		t.Fatal("managed named volume refused", err)
+	}
+	if !slices.Contains(d.log, "volume-exposure") {
+		t.Fatal("named volumes were admitted without inspecting the daemon")
+	}
+	// A local-driver volume backed by a host path inside the project is a way
+	// back into agent-writable storage; refuse it rather than bind it blind.
+	f, _ = filteredFixture(t)
+	nested := filepath.Join(f.record.Project, "cache")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.(*filteredDaemonFixture).volumeExposure = runtime.VolumeExposure{Sources: []string{nested}, BindSources: []string{nested}}
+	if err := f.validateMounts(plan, nil, nil); err == nil {
+		t.Fatal("named volume rooted in agent-writable storage was admitted")
+	}
+}
+
+func TestFilteredReadinessPreservesCallerCancellation(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		f, _ := filteredFixture(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		want := context.Canceled
+		if expired {
+			cancel()
+			ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			want = context.DeadlineExceeded
+		} else {
+			cancel()
+		}
+		err := f.waitReady(ctx)
+		cancel()
+		if !errors.Is(err, want) {
+			t.Fatal("readiness hid caller cancellation", err)
+		}
+	}
+}

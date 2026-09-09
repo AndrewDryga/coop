@@ -28,7 +28,7 @@ func TestAdmissionPreviewChecksEnvelopeWithoutReadingFeatureBundles(t *testing.T
 	}
 	defer s.Close()
 	bundle := egress.Bundle{Provider: "model", Client: egress.ClientCLI, Backend: "direct", AuthMode: "key", Version: "1", Features: map[string][]egress.Rule{"cloud-mcp": {rule("mcp.example.com")}}}
-	if err := s.Approve(project, egress.Filtered, input.Requests, []egress.Bundle{bundle}); err != nil {
+	if err := approve(s, project, egress.Filtered, input.Requests, []egress.Bundle{bundle}); err != nil {
 		t.Fatal(err)
 	}
 	if mode, err := PreviewAdmissionMode(root, project, nil, input); err != nil || mode != egress.Filtered {
@@ -54,7 +54,7 @@ func TestAdmissionPreviewDoesNotCreateOrRepairAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Approve(project, egress.None, nil, nil); err != nil {
+	if err := approve(store, project, egress.None, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
@@ -194,7 +194,7 @@ func TestAdmissionRejectsInvalidShadowedModesAndRuleConflicts(t *testing.T) {
 
 func TestAdmitKeepsPostureWithoutRewritingOrRecapturing(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
-	if err := s.Approve(project, egress.Filtered, []egress.Rule{rule("example.com")}, nil); err != nil {
+	if err := approve(s, project, egress.Filtered, []egress.Rule{rule("example.com")}, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, input := range []Admission{
@@ -224,7 +224,7 @@ func TestAdmitKeepsPostureWithoutRewritingOrRecapturing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Approve(project, egress.None, nil, nil); err != nil {
+	if err := approve(s, project, egress.None, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	old, err := s.LoadSnapshot(project, snapshot.Fingerprint)
@@ -236,14 +236,14 @@ func TestAdmitKeepsPostureWithoutRewritingOrRecapturing(t *testing.T) {
 func TestAdmitUsesOneApprovalForModeAndEnvelope(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
 	requests := []egress.Rule{rule("example.com")}
-	if err := s.Approve(project, egress.Filtered, requests, nil); err != nil {
+	if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
 		t.Fatal(err)
 	}
 	changed := false
 	s.syncDir = func(dir *os.File) error {
 		if !changed {
 			changed = true
-			if err := s.Approve(project, egress.None, nil, nil); err != nil {
+			if err := approve(s, project, egress.None, nil, nil); err != nil {
 				return err
 			}
 		}
@@ -264,7 +264,7 @@ func TestAdmitFailsClosedWithoutUsableAuthority(t *testing.T) {
 	for _, failure := range []string{"corrupt-approval", "missing-key", "unapproved", "ceiling", "policy"} {
 		t.Run(failure, func(t *testing.T) {
 			s, project := openStore(t), t.TempDir()
-			if err := s.Approve(project, egress.Filtered, nil, nil); err != nil {
+			if err := approve(s, project, egress.Filtered, nil, nil); err != nil {
 				t.Fatal(err)
 			}
 			input := Admission{}
@@ -321,12 +321,12 @@ func TestBundlePublicationRetryConfirmsDurability(t *testing.T) {
 	bundles := []egress.Bundle{{Provider: "model", Client: egress.ClientCLI, Version: "1", Backend: "direct", AuthMode: "key"}}
 	s.syncDir = func(*os.File) error { return errors.New("fixture storage failure") }
 	for attempt := 0; attempt < 3; attempt++ {
-		if err := s.CheckBundles(bundles); err == nil {
+		if err := s.checkBundles(bundles); err == nil {
 			t.Fatal("bundle retry ignored persistent directory sync failure", attempt)
 		}
 	}
 	s.syncDir = nil
-	if err := s.CheckBundles(bundles); err != nil {
+	if err := s.checkBundles(bundles); err != nil {
 		t.Fatal("bundle publication failed after storage recovered", err)
 	}
 }

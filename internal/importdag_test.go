@@ -43,8 +43,8 @@ const (
 var allowedEdges = map[string][]string{
 	"acpctl":                {"acpproxy", "agent", "config", "ladder", "liveprocess", "preset", "processidentity"},
 	"acpproxy":              nil,
-	"agent":                 {"config", "mcp"},
-	"box":                   {"agent", "config", "consult", "forkspace", "mcp", "preset", "processidentity", "project", "runtime", "secretscan", "ui"},
+	"agent":                 {"config", "egress", "mcp"},
+	"box":                   {"agent", "config", "consult", "egress", "forkspace", "gatewayimage", "mcp", "networkgateway", "networkstate", "networkview", "preset", "processidentity", "project", "runtime", "secretscan", "ui"},
 	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "forkctl", "forkspace", "hostsurface", "ladder", "liveprocess", "loop", "loopcfg", "preset", "project", "runtime", "scaffold", "sessionsvc", "tasks", "ui", "workerconnector", "workerproto"},
 	"config":                nil,
 	"contextc":              {"project"},

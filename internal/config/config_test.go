@@ -860,3 +860,11 @@ func TestModelForTiers(t *testing.T) {
 		t.Errorf("cleared fallback falls to env: got %q", got)
 	}
 }
+
+func TestSetEgressMarksThePostureExplicit(t *testing.T) {
+	var c Config
+	c.SetEgress("filtered")
+	if c.Egress != "filtered" || !c.Explicit("COOP_EGRESS") {
+		t.Fatalf("SetEgress left Egress=%q explicit=%v", c.Egress, c.Explicit("COOP_EGRESS"))
+	}
+}

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -146,10 +145,10 @@ func TestQualificationMCPProjectionRequiresASelectedClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := q.RequireSelection(policy, nil, "none"); err != nil {
+	if err := q.RequireLaunch(policy, "none"); err != nil {
 		t.Fatal("raw launch without MCP should require no client witness", err)
 	}
-	if err := q.RequireSelection(policy, nil, strings.Repeat("a", 64)); err == nil {
+	if err := q.RequireLaunch(policy, strings.Repeat("a", 64)); err == nil {
 		t.Fatal("enabled MCP projection qualified with no selected client")
 	}
 }
@@ -349,40 +348,25 @@ func TestQualificationMaximumPlanFitsRecordBound(t *testing.T) {
 	t.Logf("32-client, 105-proof canonical record: %d bytes", len(data))
 }
 
-func TestQualificationDiscoverySkipsOnlyAuthenticatedObsoleteRecords(t *testing.T) {
+func TestQualificationDiscoveryRefusesAnUnauthenticatedRecord(t *testing.T) {
 	trial, _, proofs := qualificationFixture(t, nil)
 	current, err := trial.Complete(nil, proofs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := current
-	old.Version, old.Contract, old.ID = 1, "visible-sni-tls443-v1", ""
-	old.Proofs = slices.DeleteFunc(slices.Clone(old.Proofs), func(p QualificationProof) bool { return p.Case == "short-flow" || p.Case == "observation-baseline" })
-	for i := range old.Proofs {
-		old.Proofs[i].Observation = nil
-	}
-	old, err = canonicalQualificationFrame(old, false, true)
-	if err != nil {
+	forged := current
+	forged.CompletedAt = forged.CompletedAt.Add(time.Second)
+	forged.ID = strings.Repeat("f", 64)
+	data, _ := json.Marshal(forged)
+	if err := trial.store.publish("qualification-"+forged.ID+".json", data, false); err != nil {
 		t.Fatal(err)
 	}
-	old.ID = trial.store.qualificationID(old)
-	data, _ := json.Marshal(old)
-	if err := trial.store.publish("qualification-"+old.ID+".json", data, false); err != nil {
-		t.Fatal(err)
+	if _, err := trial.store.Qualification(forged.ID); err == nil {
+		t.Fatal("forged record became launch authority")
 	}
-	if _, err := trial.store.Qualification(old.ID); !errors.Is(err, errObsoleteQualification) {
-		t.Fatal("obsolete record became current launch authority", err)
-	}
-	all, err := trial.store.Qualifications(context.Background())
-	if err != nil || len(all) != 1 || all[0].ID != current.ID {
-		t.Fatal("valid obsolete record poisoned current discovery", err)
-	}
-	old.CompletedAt = old.CompletedAt.Add(time.Second)
-	data, _ = json.Marshal(old)
-	if err := trial.store.publish("qualification-"+old.ID+".json", data, true); err != nil {
-		t.Fatal(err)
-	}
+	// Discovery refuses instead of silently skipping: a reader must never see a
+	// shorter index and conclude that no qualification exists.
 	if _, err := trial.store.Qualifications(context.Background()); err == nil {
-		t.Fatal("untrusted obsolete-looking record silently ignored")
+		t.Fatal("untrusted record silently ignored during discovery")
 	}
 }

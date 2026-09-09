@@ -43,9 +43,6 @@ func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
 				continue
 			}
 			q, err := s.Qualification(id)
-			if errors.Is(err, errObsoleteQualification) {
-				continue
-			}
 			if err != nil {
 				return nil, err
 			}
