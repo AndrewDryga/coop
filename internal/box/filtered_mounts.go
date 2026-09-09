@@ -12,14 +12,17 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-// filteredExtraMounts reduces COOP_RUN_ARGS and a run's own extra arguments to
-// the one thing a filtered launch can still honor: bind mounts. They are then
-// ordinary extra mounts — the same exposure, parent and inode checks apply, so
-// nothing here is a hole in the boundary. Anything else is refused BY NAME:
-// a runtime argument this release has not qualified could hand the workload
-// another network, another user or another capability, and a filtered run that
-// quietly dropped it would enforce a policy the operator never chose.
-func filteredExtraMounts(configured, spec []string) ([]string, error) {
+// filteredExtraArgs reduces COOP_RUN_ARGS and a run's own extra arguments to
+// the two things a filtered launch can still honor: bind mounts and explicit
+// environment assignments. A mount becomes an ordinary extra mount — the same
+// exposure, parent and inode checks apply. An environment variable is not a
+// network decision at all: the GATEWAY is the boundary, so a review run's
+// `-e COOP_REVIEW=1` changes what the workload knows, never what it can reach.
+// Anything else is refused BY NAME: a runtime argument this release has not
+// qualified could hand the workload another network, another user or another
+// capability, and a filtered run that quietly dropped it would enforce a policy
+// the operator never chose.
+func filteredExtraArgs(configured, spec []string) ([]string, error) {
 	all := append(append([]string{}, configured...), spec...)
 	var out []string
 	for i := 0; i < len(all); i++ {
@@ -27,27 +30,53 @@ func filteredExtraMounts(configured, spec []string) ([]string, error) {
 		// Recognize the argument BEFORE consuming anything after it: a bare
 		// boolean flag has no value, and reporting it as "needs a value" would
 		// name the wrong problem.
-		if name != "-v" && name != "--volume" && name != "--mount" {
-			return nil, fmt.Errorf("restricted networking accepts bind mounts only in extra runtime arguments; %q is not one — drop it, or run this box without filtered egress", name)
+		want := "a bind mount"
+		switch name {
+		case "-v", "--volume", "--mount":
+		case "-e", "--env":
+			want = "a KEY=VALUE assignment"
+		default:
+			return nil, fmt.Errorf("restricted networking accepts bind mounts and KEY=VALUE environment in extra runtime arguments; %q is not one — drop it, or run this box without filtered egress", name)
 		}
 		value := inline
 		if !hasInline {
 			if i+1 >= len(all) {
-				return nil, fmt.Errorf("restricted networking: %s needs a bind mount", name)
+				return nil, fmt.Errorf("restricted networking: %s needs %s", name, want)
 			}
 			i++
 			value = all[i]
 		}
-		if name == "--mount" {
+		switch name {
+		case "--mount":
 			mount, err := bindMountShorthand(value)
 			if err != nil {
 				return nil, err
 			}
-			value = mount
+			out = append(out, "-v", mount)
+		case "-e", "--env":
+			if err := checkEnvAssignment(value); err != nil {
+				return nil, err
+			}
+			out = append(out, "-e", value)
+		default:
+			out = append(out, "-v", value)
 		}
-		out = append(out, "-v", value)
 	}
 	return out, nil
+}
+
+// checkEnvAssignment refuses the pass-through spelling (`-e KEY`), which imports
+// whatever the operator's shell happens to be holding into a box built to be
+// reproducible, and any value the argument list could not carry intact.
+func checkEnvAssignment(value string) error {
+	key, _, ok := strings.Cut(value, "=")
+	if !ok {
+		return fmt.Errorf("restricted networking: -e %s must be a complete KEY=VALUE assignment, not a pass-through of the host's environment", value)
+	}
+	if key == "" || strings.ContainsAny(value, "\x00\r\n") {
+		return errors.New("restricted networking: -e needs a plain KEY=VALUE assignment")
+	}
+	return nil
 }
 
 // bindMountShorthand rewrites one --mount descriptor into the -v form the

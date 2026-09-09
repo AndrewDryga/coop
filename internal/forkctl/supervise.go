@@ -207,8 +207,9 @@ func recordStartedFork(repo, name string, cmd *exec.Cmd, generation ...forkspace
 // (absolute, resolved by the caller) is forwarded so the worker selects the same canonical queue; an
 // empty tasks (the monorepo-aware default) is omitted so the worker re-derives it. The
 // who-runs slot (a preset name or the composed target) and the --peer set are forwarded too,
-// so the worker re-loads the same recipe and scope.
-func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, effort, presetName string, peers []string, identities ...forkspace.Identity) (int, error) {
+// so the worker re-loads the same recipe and scope. network carries the launch's
+// egress flags verbatim, because the worker admits its own policy at loop start.
+func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, effort, presetName string, peers, network []string, identities ...forkspace.Identity) (int, error) {
 	var generation forkspace.Generation
 	if len(identities) > 0 {
 		if identities[0].Name != name || !forkspace.ValidGeneration(identities[0].Generation) {
@@ -268,6 +269,7 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 	for _, peer := range peers { // one --peer per named peer (repeatable), re-resolved by the worker
 		reExec = append(reExec, "--peer", peer)
 	}
+	reExec = append(reExec, network...) // the worker admits this policy itself, at its own loop start
 	cmd := exec.Command(self, reExec...)
 	cmd.Dir = repo // ResolveRepo finds the parent repo, then the worker resumes the fork
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = logf, logf, nil

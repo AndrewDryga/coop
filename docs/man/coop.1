@@ -462,7 +462,7 @@ coop backlog — park the genuinely LARGE as task folders (.agent/tasks/xx_backl
 
 coop loop [<target|preset>] — work the task queue until done, then sign off.
 
-  Usage: coop loop [<target|preset>] [--tasks <path>]... [--peer <target>...] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail]
+  Usage: coop loop [<target|preset>] [--tasks <path>]... [--peer <target>...] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail] [--egress <mode>] [--allow-domain <domain>]...
 
   A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
   signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
@@ -584,6 +584,14 @@ coop loop [<target|preset>] — work the task queue until done, then sign off.
                     is loop.yaml mcp: false)
   --debug-on-fail   on a failure at a terminal, open a box shell, then retry
                     on exit (a no-op in unattended runs)
+  --egress <mode>   open | filtered | none for this run ('coop help net'). Restricted egress
+                    is admitted ONCE at the start: the operator's grants, the project's
+                    approved requests, and the core endpoints of every rung the run may
+                    rotate onto are frozen into one policy every iteration, review and
+                    pre-flight box launches under. Refusals print between iterations and
+                    once more at the end; the receipts are in 'coop net ls'
+  --allow-domain    an exact name this run may reach over TLS 443 (repeatable)
+  --egress-rules    a file of universal rules for this run only
 
   Exit codes: 0 = queue verified done or an intentional --max-tasks pause; 1 = failure;
   2 = usage; 3 = stopped with a task blocked on a human decision (including one the
@@ -678,10 +686,12 @@ coop net — restricted egress: only the destinations you allowed.
     coop run --egress filtered --allow-domain example.com -- curl https://example.com
     coop claude --egress filtered
     coop claude --egress-rules /operator/extra-rules.yaml
+    coop loop --egress filtered
 
   Every other destination is denied at the gateway, not inside the box. The box
   is told its policy up front, and a refused run ends with what was refused and
-  how to ask for it.
+  how to ask for it. A loop admits ONCE and every iteration, review and pre-flight
+  box runs under that one frozen policy — rotating targets never re-admits.
 
   A project asks for destinations in .agent/project.yaml:
 

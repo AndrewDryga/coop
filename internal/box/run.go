@@ -128,6 +128,12 @@ type RunSpec struct {
 	// AdmitNetwork before launch. It is never populated from a request or a
 	// serialized spec: a box cannot grant itself network access.
 	CapturedEgress *CapturedEgress `json:"-"`
+	// OnNetworkReport, when set, receives this run's filtered-networking summary
+	// once cleanup sealed the receipt — in EVERY mode, including the batch and
+	// quiet ones this package prints nothing for. A caller that owns its own
+	// output (the loop) surfaces the refusals there; a nil hook is the ordinary
+	// run. Host-side only, like the capture it reports on.
+	OnNetworkReport func(NetworkReport) `json:"-"`
 	// NetworkClient is the client kind this run launches, so filtered admission
 	// asks each provider for the endpoints that client actually needs. Empty is
 	// the ordinary CLI; an ACP launch sets it explicitly.
@@ -396,11 +402,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	var filtered *filteredExecution
 	var execution forkspace.ExecutionRecord
 	if spec.CapturedEgress != nil {
-		// COOP_RUN_ARGS and this run's own extra arguments become ordinary extra
-		// mounts, checked by the same filtered exposure rules as every other
-		// bind. Everything else is refused: an unqualified runtime argument can
-		// undo the boundary the capture was frozen for.
-		extra, argErr := filteredExtraMounts(cfg.ExtraRunArgs, spec.ExtraArgs)
+		// COOP_RUN_ARGS and this run's own extra arguments are reduced to bind
+		// mounts and environment assignments, checked by the same filtered
+		// exposure rules as every other bind. Everything else is refused: an
+		// unqualified runtime argument can undo the boundary the capture was
+		// frozen for.
+		extra, argErr := filteredExtraArgs(cfg.ExtraRunArgs, spec.ExtraArgs)
 		if argErr != nil {
 			return -1, argErr
 		}
@@ -419,9 +426,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				}
 				// After sealing, so the summary reports the receipt's own
 				// evidence rather than a snapshot cleanup was still amending.
-				// The loop and every quiet embedding get their own surface.
+				// The hook fires in every mode — the loop and every quiet
+				// embedding surface the same facts in their own output — while
+				// the terminal summary belongs to a run coop prints for.
+				report := filtered.report()
+				if report.RunID != "" && spec.OnNetworkReport != nil {
+					spec.OnNetworkReport(report)
+				}
 				if !spec.Quiet && !spec.Batch {
-					filtered.report()
+					report.print()
 				}
 			}()
 		}
@@ -2114,7 +2127,7 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	}
 	if spec.CapturedEgress == nil {
 		// A filtered launch already folded COOP_RUN_ARGS into spec.ExtraArgs,
-		// as bind mounts and nothing else (filteredExtraMounts).
+		// as bind mounts and environment assignments only (filteredExtraArgs).
 		args = append(args, cfg.ExtraRunArgs...)
 	}
 	args = append(args, spec.ExtraArgs...)

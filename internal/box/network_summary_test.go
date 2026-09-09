@@ -29,12 +29,17 @@ func TestRunReportGroupsRefusalsByDestinationAndBasis(t *testing.T) {
 	}}
 	report := networkRunReport("run1", snapshot)
 	want := []string{"example.org (dns) ×2", "example.org (tls)", "other.example (dns)"}
+	// The count stays a number, so the loop's closing summary can add it up
+	// across runs instead of parsing a rendered line.
+	if report.Denials[0].Count != 2 || report.Denials[0].Destination != "example.org" || report.Denials[0].Basis != "dns" {
+		t.Errorf("grouped denial = %+v, want example.org/dns counted twice", report.Denials[0])
+	}
 	if len(report.Denials) != len(want) {
 		t.Fatalf("denial lines = %q, want %q", report.Denials, want)
 	}
 	for i, line := range want {
-		if report.Denials[i] != line {
-			t.Errorf("denial line %d = %q, want %q", i, report.Denials[i], line)
+		if got := report.Denials[i].String(); got != line {
+			t.Errorf("denial line %d = %q, want %q", i, got, line)
 		}
 	}
 	// The refusal that carries a draft rule is the one worth opening, even
@@ -42,7 +47,7 @@ func TestRunReportGroupsRefusalsByDestinationAndBasis(t *testing.T) {
 	if report.Event != "a3" {
 		t.Errorf("explain pointer = %q, want the drafted event a3", report.Event)
 	}
-	if report.quiet() {
+	if report.Quiet() {
 		t.Error("a run with refusals must not report as quiet")
 	}
 }
@@ -68,7 +73,7 @@ func TestRunReportNeverFabricatesZeroTraffic(t *testing.T) {
 	if !strings.Contains(report.Allowed, "UNKNOWN") {
 		t.Fatalf("allowed line = %q, want UNKNOWN with no counters", report.Allowed)
 	}
-	if !report.quiet() {
+	if !report.Quiet() {
 		t.Error("a run with no refusals and no alerts must be quiet")
 	}
 	sent := networkview.Count(12)
@@ -91,7 +96,7 @@ func TestRunReportSummarizesAlerts(t *testing.T) {
 			t.Errorf("alert line %q is missing %q", report.Alerts[0], want)
 		}
 	}
-	if report.quiet() {
+	if report.Quiet() {
 		t.Error("an alert alone must break the quiet line")
 	}
 }

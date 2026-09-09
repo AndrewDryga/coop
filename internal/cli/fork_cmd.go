@@ -187,6 +187,9 @@ type forkArgs struct {
 	preset      string   // the orchestration preset this fork runs under (named in the who-runs positional)
 	worker      bool     // internal: this process IS the detached loop worker (--_detached=<reservation>)
 	reservation []byte   // exact launched reservation inherited from the detaching parent
+	// network is the fork loop's --egress/--allow-domain/--egress-rules, admitted
+	// once by the loop it starts (foreground or detached worker alike).
+	network networkFlags
 }
 
 func parseForkCreate(args []string) (forkArgs, error) {
@@ -196,6 +199,13 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	}
 	fa.name = args[0]
 	rest := args[1:]
+	// The egress flags share ONE parser with every other launch, so the fork
+	// grammar below sees only its own arguments and cannot spell them differently.
+	network, rest, err := extractNetworkFlags(rest)
+	if err != nil {
+		return fa, err
+	}
+	fa.network = network
 	for i := 0; i < len(rest); i++ {
 		x := rest[i]
 		switch {
@@ -300,6 +310,12 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	// --peer names loop peers; an interactive fork has no ad-hoc peer set (name them on a loop).
 	if len(fa.peers) > 0 && !fa.loop {
 		return fa, errors.New("coop fork --peer only applies with --loop (name each peer: --peer <target>)")
+	}
+	// Restricted networking is admitted once per LOOP run. An interactive fork is
+	// an ordinary session launch this release has not wired it into; say so rather
+	// than accept a flag that would quietly do nothing.
+	if fa.network.set() && !fa.loop {
+		return fa, errors.New("coop fork: --egress/--allow-domain/--egress-rules only apply with --loop")
 	}
 	return fa, nil
 }
@@ -639,11 +655,18 @@ func (a *app) forkCreate(args []string) (int, error) {
 		}
 		switch {
 		case fa.worker:
-			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, true)
+			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, true)
 		case fa.detach:
-			return fc.DetachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, fa.preset, fa.peers, forkIdentity)
+			// The worker admits at its own loop start, exactly like a foreground
+			// loop, so it needs the flags themselves — not a capture the parent
+			// took and could not hand across a process boundary.
+			network, argErr := fa.network.args()
+			if argErr != nil {
+				return 2, argErr
+			}
+			return fc.DetachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, fa.preset, fa.peers, network, forkIdentity)
 		default:
-			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, false)
+			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, false)
 		}
 	}
 	// Pin this interactive session's account/model/effort from the positional target, below any
@@ -917,7 +940,7 @@ func readOnlySessionOutputMountArgs(workspace string) ([]string, error) {
 // credential/model are the fork target's decomposed one-off (model@account allowed);
 // the fork's preset (already loaded into a.preset by forkCreate) supplies the rotation
 // ladder when neither flag is given; consult opts each iteration into peer consultation.
-func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, tasksPath, credential, model, effort string, peers []agents.Target, detached bool) (int, error) {
+func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, tasksPath, credential, model, effort string, peers []agents.Target, network networkFlags, detached bool) (int, error) {
 	name := identity.Name
 	controllerRole := forkspace.ExecutionRoleController
 	if detached {
@@ -1074,6 +1097,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkLoop, ActivityTask: activityTask,
 			ProposalOutbox: proposalRel,
 			Rotation:       rot, Queues: []string{queueRel}, Preset: a.preset, Peers: peers, Sink: sink,
+			Network: network.admission(),
 		})
 		if runErr != nil || code != 0 {
 			// A provider or final-signoff failure is never review authority. If the execution-local

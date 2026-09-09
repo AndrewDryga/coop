@@ -20,12 +20,16 @@ const (
 	maxNoteGrants     = 8
 )
 
-// networkReport is the end-of-run networking summary for one filtered run. It
+// NetworkReport is the end-of-run networking summary for one filtered run. It
 // reports only what was observed: a missing counter is unknown, never zero, and
 // an empty detail list is not proof that nothing was refused.
-type networkReport struct {
+//
+// It is exported because a run coop does not print for — a loop iteration, any
+// batch embedding — still has to surface a refusal in ITS own output, through
+// RunSpec.OnNetworkReport.
+type NetworkReport struct {
 	RunID    string
-	Denials  []string
+	Denials  []NetworkDenial
 	Omitted  int
 	Allowed  string
 	Alerts   []string
@@ -33,21 +37,38 @@ type networkReport struct {
 	Truncate bool
 }
 
-func (r networkReport) quiet() bool { return len(r.Denials) == 0 && len(r.Alerts) == 0 }
+// NetworkDenial is one refused destination as the retained evidence recorded
+// it: where the box tried to go, where the refusal was seen, and how many
+// attempts that grouped. The count stays a number so a caller that aggregates
+// across runs — the loop's closing summary — never has to parse a rendered line.
+type NetworkDenial struct {
+	Destination string
+	Basis       string // dns | tls | socket | admission | unknown
+	Count       int
+}
+
+func (d NetworkDenial) String() string {
+	line := d.Destination + " (" + d.Basis + ")"
+	if d.Count > 1 {
+		line += " ×" + strconv.Itoa(d.Count)
+	}
+	return line
+}
+
+// Quiet reports a run that never reached the boundary. Nothing refused and no
+// alert costs one dim line at most — never a block, and never a line per
+// iteration in an overnight drain.
+func (r NetworkReport) Quiet() bool { return len(r.Denials) == 0 && len(r.Alerts) == 0 }
 
 // networkRunReport folds a run's retained evidence into the lines a human reads
 // when their box could not reach something. Denials are grouped by destination
 // and kind so one refused name that retried forty times is one line.
-func networkRunReport(runID string, snapshot networkview.Snapshot) networkReport {
-	out := networkReport{RunID: runID, Truncate: snapshot.Loss.DetailTruncated}
-	type group struct {
-		label string
-		count int
-		order int
-	}
-	groups := map[string]*group{}
+func networkRunReport(runID string, snapshot networkview.Snapshot) NetworkReport {
+	out := NetworkReport{RunID: runID, Truncate: snapshot.Loss.DetailTruncated}
+	groups := map[string]*NetworkDenial{}
+	var ordered []*NetworkDenial // first-seen order, which is the order evidence arrived
 	first, drafted := "", ""
-	for i, denial := range snapshot.Denials {
+	for _, denial := range snapshot.Denials {
 		basis := denialBasis(denial.Kind)
 		where := denial.Name
 		if where == "" {
@@ -66,29 +87,22 @@ func networkRunReport(runID string, snapshot networkview.Snapshot) networkReport
 		}
 		key := basis + "\x00" + where
 		if existing, ok := groups[key]; ok {
-			existing.count++
+			existing.Count++
 			continue
 		}
-		groups[key] = &group{label: where + " (" + basis + ")", count: 1, order: i}
+		group := &NetworkDenial{Destination: where, Basis: basis, Count: 1}
+		groups[key] = group
+		ordered = append(ordered, group)
 	}
 	if out.Event = drafted; out.Event == "" {
 		out.Event = first
 	}
-	ordered := make([]*group, 0, len(groups))
-	for _, g := range groups {
-		ordered = append(ordered, g)
-	}
-	slices.SortFunc(ordered, func(a, b *group) int { return a.order - b.order })
 	for i, g := range ordered {
 		if i >= maxSummaryDenials {
 			out.Omitted = len(ordered) - maxSummaryDenials
 			break
 		}
-		line := g.label
-		if g.count > 1 {
-			line += " ×" + strconv.Itoa(g.count)
-		}
-		out.Denials = append(out.Denials, line)
+		out.Denials = append(out.Denials, *g)
 	}
 	out.Allowed = allowedTraffic(snapshot.Counters)
 	for i, alert := range snapshot.Alerts {
@@ -146,27 +160,36 @@ func alertLine(alert networkview.Alert) string {
 	return line
 }
 
-// report prints the run's networking outcome on stderr, where coop's own voice
-// lives: never on stdout, which may be carrying provider JSON or an ACP frame.
-// A clean run costs one dim line; a run that hit the boundary explains itself
-// and names both ways forward — read the evidence, or ask for the destination.
-func (f *filteredExecution) report() {
+// report folds this execution's retained evidence into the run's summary. Call
+// it after cleanup sealed the receipt: until then the snapshot is still being
+// amended, so an earlier read would report a history nobody kept.
+func (f *filteredExecution) report() NetworkReport {
 	if f == nil || f.record.ID == "" {
-		return
+		return NetworkReport{}
 	}
 	snapshot := f.record.Snapshot
 	if f.record.Receipt != nil {
 		snapshot = f.record.Receipt.Snapshot
 	}
-	r := networkRunReport(f.record.ID, snapshot)
-	if r.quiet() {
+	return networkRunReport(f.record.ID, snapshot)
+}
+
+// print writes the run's networking outcome on stderr, where coop's own voice
+// lives: never on stdout, which may be carrying provider JSON or an ACP frame.
+// A clean run costs one dim line; a run that hit the boundary explains itself
+// and names both ways forward — read the evidence, or ask for the destination.
+func (r NetworkReport) print() {
+	if r.RunID == "" {
+		return
+	}
+	if r.Quiet() {
 		ui.Detail("network run %s — nothing was refused (coop net inspect %s)", r.RunID, r.RunID)
 		return
 	}
 	if len(r.Denials) > 0 {
 		ui.Warn("restricted networking refused %s in this box:", ui.Count(len(r.Denials), "destination"))
-		for _, line := range r.Denials {
-			ui.Detail("%s", line)
+		for _, denial := range r.Denials {
+			ui.Detail("%s", denial)
 		}
 		if r.Omitted > 0 {
 			ui.Detail("… and %s (coop net inspect %s)", ui.Count(r.Omitted, "more destination"), r.RunID)

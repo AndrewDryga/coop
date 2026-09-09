@@ -219,7 +219,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			return 1, err
 		}
 		if cf.Todo+cf.Doing == 0 {
-			fmt.Fprintln(os.Stderr, loopTaskLimitBanner(cf, limit))
+			c.closeWith(loopTaskLimitBanner(cf, limit))
 			return loopExitCode(cf), nil
 		}
 	}
@@ -269,6 +269,22 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if err != nil {
 		return 2, fmt.Errorf("verify agent: %w", err)
 	}
+	// Restricted networking is admitted ONCE, here, for the whole run: the
+	// operator's --egress choice, the project's approved requests, and the core
+	// endpoints of every rung this run may rotate onto are frozen into one policy,
+	// and every box below launches under it (see runBox). Re-admitting per
+	// iteration would let an approval or a config edit landing at 3am change what
+	// an unattended run may reach — and a rotation would have to re-qualify
+	// mid-drain. An open or offline run gets a nil capture and proceeds as today.
+	c.net = newNetworkLog()
+	defer c.net.summary()
+	capture, err := box.AdmitNetwork(c.cfg, c.rt,
+		networkAdmissionSpec(c.cfg, repo, img, agent, c.preset, peers, rot, signoffRot, betweenRot, verifyRot), spec.Network)
+	if err != nil {
+		return 1, err
+	}
+	defer capture.Close()
+	c.capture = capture
 	// A per-run id keys this run's telemetry file (.agent/runs/<runid>.jsonl) — one JSON-Lines
 	// record per stage, so the harness's own behavior (which target ran, reopen/retry counts) is
 	// measurable. Best-effort throughout; a telemetry hiccup never touches the work.
@@ -941,7 +957,7 @@ reviewAgain:
 			if err != nil {
 				return 1, err
 			}
-			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
+			c.closeWith(loopInterruptedBanner(cf))
 			return LoopInterruptedExitCode, nil
 		}
 		if limit.enabled() {
@@ -949,7 +965,7 @@ reviewAgain:
 			if err != nil {
 				return 1, err
 			}
-			fmt.Fprintln(os.Stderr, loopTaskLimitBanner(cf, limit))
+			c.closeWith(loopTaskLimitBanner(cf, limit))
 			if limit.settled == 0 {
 				return loopExitCode(cf), nil
 			}
@@ -996,7 +1012,7 @@ reviewAgain:
 			if err != nil {
 				return 1, err
 			}
-			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
+			c.closeWith(loopInterruptedBanner(cf))
 			return LoopInterruptedExitCode, nil
 		}
 		if serr != nil {
@@ -1008,7 +1024,7 @@ reviewAgain:
 			if err != nil {
 				return 1, err
 			}
-			fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
+			c.closeWith(loopInterruptedBanner(cf))
 			return LoopInterruptedExitCode, nil
 		}
 		health.noteReopen(reopenedIDs)
@@ -1099,7 +1115,7 @@ reviewAgain:
 				if err != nil {
 					return 1, err
 				}
-				fmt.Fprintln(os.Stderr, loopInterruptedBanner(cf))
+				c.closeWith(loopInterruptedBanner(cf))
 				return LoopInterruptedExitCode, nil
 			}
 			if errors.Is(verr, tasks.ErrCompletionWindowSetup) || errors.Is(verr, tasks.ErrCompletionWindowAudit) {
@@ -1153,8 +1169,16 @@ reviewAgain:
 			fmt.Fprintln(os.Stderr, nudge)
 		}
 	}
-	fmt.Fprintln(os.Stderr, loopClosingBanner(cf, completed))
+	c.closeWith(loopClosingBanner(cf, completed))
 	return loopExitCode(cf), nil
+}
+
+// closeWith prints the run's final banner, flushing the networking summary first
+// so the banner stays the LAST line however the run ended — drained, capped,
+// or interrupted. Every exit that has a banner goes through here.
+func (c *Control) closeWith(banner string) {
+	c.net.summary()
+	fmt.Fprintln(os.Stderr, banner)
 }
 
 // rememberPreflightLimit carries a failed custom pre-flight's provider limit into the work

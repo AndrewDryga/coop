@@ -49,6 +49,9 @@ type StageRecord struct {
 	QueueTodo  int      `json:"queue_todo"`
 	QueueDoing int      `json:"queue_doing"`
 	QueueDone  int      `json:"queue_done"`
+	// NetworkRunID is the filtered run this stage's box was, so its receipt in
+	// `coop net ls` and this row name the same thing. Empty outside filtered mode.
+	NetworkRunID string `json:"network_run_id,omitempty"`
 }
 
 // buildStageRecord assembles a record from a stage's EFFECTIVE target (the post-rotation Target, so
@@ -175,6 +178,7 @@ func openRunsRoot(repo string, create bool) (*os.Root, error) {
 func (c *Control) recordStage(repo, run, stage, outcome string, tgt agents.Target, start time.Time, exit, retries, reopened int, headBefore string, hosts, finished, gateFiles []string, res *iterResult) {
 	cnt, _, _ := tasks.QueueProgress(hosts)
 	rec := buildStageRecord(run, stage, outcome, c.version, tgt, start, time.Now(), exit, retries, reopened, headBefore, gitOut(repo, "rev-parse", "HEAD"), cnt, finished, gateFiles)
+	rec.NetworkRunID = c.net.runID()
 	if res != nil { // the box run's result-event tally (nil for stages that had no stream-json result)
 		rec.CostUSD, rec.InTok, rec.OutTok = res.CostUSD, res.InTok, res.OutTok
 	}

@@ -25,7 +25,7 @@ func (c *Control) debugShell(repo, img, agent, forkName string) {
 	if forkName != "" {
 		kind = forkspace.ExecutionForkInteractive
 	}
-	_, _ = box.Run(c.cfg, c.rt, box.RunSpec{
+	_, _ = c.runBox(box.RunSpec{
 		Image: img, Repo: repo, Cmd: []string{c.cfg.Shell}, Agent: agent,
 		Homes: c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
 		ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration,
@@ -110,6 +110,10 @@ func (p *claudePlainLimitProbe) limited(code int) bool {
 // the agent's output is funneled into the scroll history above a sticky progress bar (a
 // Docker-build-style live view). Non-terminal output goes straight to the destination unchanged.
 func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming, agentCommand bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {
+	// Registered FIRST, so it is the LAST deferred step: a filtered box's
+	// refusals print after the live bar is torn down and the ui sink is plain
+	// stderr again, alongside the loop's other between-iteration lines.
+	defer c.net.finishIteration()
 	if windowMode == completionWindowReview {
 		windows, err = tasks.BeginReviewCompletionWindows(hosts, reviewSubjects)
 	} else if windowMode == completionWindowWork {
@@ -239,7 +243,7 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 		armWatchdog = watchdog.armStart
 		boxCtx = childCtx
 	}
-	code, err = box.Run(c.cfg, c.rt, box.RunSpec{
+	code, err = c.runBox(box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: peers, Preset: c.preset, RunID: c.runID, AssignedTask: assignedTask,
 		ForkWorker: c.forkWorker, ActivityRepo: c.activityRepo, ActivityKind: c.activityKind,
 		ActivityTask: c.iterationActivityTask(assignedTask), ActivitySource: c.runID,

@@ -9,7 +9,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 )
 
-func TestFilteredExtraMountsAcceptsEveryBindSpelling(t *testing.T) {
+func TestFilteredExtraArgsAcceptEveryBindSpelling(t *testing.T) {
 	cases := []struct {
 		name  string
 		given []string
@@ -21,15 +21,18 @@ func TestFilteredExtraMountsAcceptsEveryBindSpelling(t *testing.T) {
 		{"mount", []string{"--mount", "type=bind,source=/src,target=/dst"}, []string{"-v", "/src:/dst"}},
 		{"mount readonly", []string{"--mount", "type=bind,source=/src,target=/dst,readonly"}, []string{"-v", "/src:/dst:ro"}},
 		{"mount aliases", []string{"--mount", "type=bind,src=/src,dst=/dst"}, []string{"-v", "/src:/dst"}},
+		{"env", []string{"-e", "COOP_REVIEW=1"}, []string{"-e", "COOP_REVIEW=1"}},
+		{"env long", []string{"--env", "K=v"}, []string{"-e", "K=v"}},
+		{"env inline", []string{"--env=K=a=b"}, []string{"-e", "K=a=b"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := filteredExtraMounts(tc.given, nil)
+			got, err := filteredExtraArgs(tc.given, nil)
 			if err != nil {
-				t.Fatalf("filteredExtraMounts(%q) = %v", tc.given, err)
+				t.Fatalf("filteredExtraArgs(%q) = %v", tc.given, err)
 			}
 			if !slices.Equal(got, tc.want) {
-				t.Errorf("filteredExtraMounts(%q) = %q, want %q", tc.given, got, tc.want)
+				t.Errorf("filteredExtraArgs(%q) = %q, want %q", tc.given, got, tc.want)
 			}
 		})
 	}
@@ -37,21 +40,22 @@ func TestFilteredExtraMountsAcceptsEveryBindSpelling(t *testing.T) {
 
 // A filtered run must not silently drop an argument the operator set: it would
 // enforce a shape nobody chose. Every refusal NAMES what it refused.
-func TestFilteredExtraMountsRefusesEverythingElseByName(t *testing.T) {
+func TestFilteredExtraArgsRefuseEverythingElseByName(t *testing.T) {
 	cases := map[string]string{
 		"--privileged":                    `"--privileged"`,
 		"--network host":                  `"--network"`,
-		"-e SECRET=1":                     `"-e"`,
 		"--user 0:0":                      `"--user"`,
+		"-e HOME":                         "complete KEY=VALUE assignment",
+		"-e =1":                           "plain KEY=VALUE assignment",
 		"--mount type=tmpfs,target=/t":    "--mount type=tmpfs",
 		"--mount type=bind,source=/src":   "source= and target=",
 		"--mount type=bind,fake=1,src=/a": `"fake"`,
 	}
 	for given, want := range cases {
 		t.Run(given, func(t *testing.T) {
-			_, err := filteredExtraMounts(strings.Fields(given), nil)
+			_, err := filteredExtraArgs(strings.Fields(given), nil)
 			if err == nil {
-				t.Fatalf("filteredExtraMounts(%q) was accepted", given)
+				t.Fatalf("filteredExtraArgs(%q) was accepted", given)
 			}
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error %q does not name %q", err, want)
@@ -60,22 +64,30 @@ func TestFilteredExtraMountsRefusesEverythingElseByName(t *testing.T) {
 	}
 }
 
-func TestFilteredExtraMountsCombinesConfigAndRunArguments(t *testing.T) {
-	got, err := filteredExtraMounts([]string{"-v", "/a:/a:ro"}, []string{"-v", "/b:/b"})
+func TestFilteredExtraArgsCombineConfigAndRunArguments(t *testing.T) {
+	got, err := filteredExtraArgs([]string{"-v", "/a:/a:ro"}, []string{"-v", "/b:/b"})
 	if err != nil {
-		t.Fatalf("filteredExtraMounts: %v", err)
+		t.Fatalf("filteredExtraArgs: %v", err)
 	}
 	if !slices.Equal(got, []string{"-v", "/a:/a:ro", "-v", "/b:/b"}) {
 		t.Errorf("got %q", got)
 	}
-	if _, err := filteredExtraMounts(nil, []string{"-e", "COOP_REVIEW=1"}); err == nil {
-		t.Error("a run's own extra arguments follow the same rule; -e was accepted")
+	// A review run carries COOP_REVIEW=1 through its own extra arguments. The
+	// gateway is the boundary, so the environment passes; nothing else does.
+	if got, err := filteredExtraArgs(nil, []string{"-e", "COOP_REVIEW=1"}); err != nil || !slices.Equal(got, []string{"-e", "COOP_REVIEW=1"}) {
+		t.Errorf("review environment = (%q, %v), want it accepted", got, err)
 	}
-	if got, err := filteredExtraMounts(nil, nil); err != nil || got != nil {
+	if _, err := filteredExtraArgs(nil, []string{"--env-file", "/etc/env"}); err == nil {
+		t.Error("--env-file is not a KEY=VALUE assignment; it was accepted")
+	}
+	if got, err := filteredExtraArgs(nil, nil); err != nil || got != nil {
 		t.Errorf("no extra arguments = (%q, %v), want (nil, nil)", got, err)
 	}
-	if _, err := filteredExtraMounts([]string{"-v"}, nil); err == nil {
+	if _, err := filteredExtraArgs([]string{"-v"}, nil); err == nil {
 		t.Error("a dangling -v was accepted")
+	}
+	if _, err := filteredExtraArgs([]string{"-e"}, nil); err == nil {
+		t.Error("a dangling -e was accepted")
 	}
 }
 

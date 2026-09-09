@@ -15,6 +15,7 @@ import (
 	"io"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
@@ -98,6 +99,26 @@ type Control struct {
 	runID          string // COOP_RUN_ID, so a consult peer's usage lands in this run's cost digest
 	streamSeq      int    // streaming box attempt sequence within runID
 	streamOff      bool   // an open failure disables best-effort tracing for the rest of the run
+
+	// capture is the run's frozen network policy, admitted ONCE at the top of Run
+	// (nil outside filtered mode); net accumulates what each box could not reach.
+	capture *box.CapturedEgress
+	net     *networkLog
+	// boxRun indirects box.Run so the engine's own suite can prove what every
+	// stage's launch carries without a container runtime. nil in production.
+	boxRun func(box.RunSpec) (int, error)
+}
+
+// runBox launches one of this run's boxes. Every loop launch goes through here,
+// which is what makes "admit once, run many" a property of the code rather than
+// a convention: the frozen capture and the report hook are attached in ONE place.
+func (c *Control) runBox(spec box.RunSpec) (int, error) {
+	spec.CapturedEgress = c.capture
+	spec.OnNetworkReport = c.net.record
+	if c.boxRun != nil {
+		return c.boxRun(spec)
+	}
+	return box.Run(c.cfg, c.rt, spec)
 }
 
 // New binds the engine to the caller's config, its runtime as detected so far, the running coop's
@@ -138,4 +159,9 @@ type RunSpec struct {
 	DebugOnFail bool // open a shell in the box after a failed iteration
 	Preflight   bool // run the pre-flight probe before the first work iteration
 	MaxTasks    int  // stop after this many settled tasks, 0 for the whole queue
+
+	// Network is this launch's --egress/--allow-domain/--egress-rules. It is
+	// HOST-side input, resolved once at the start of the run: every iteration,
+	// review and pre-flight box then launches under the same frozen policy.
+	Network box.NetworkAdmission
 }

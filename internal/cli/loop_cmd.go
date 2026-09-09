@@ -49,13 +49,20 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, pr
 			}
 			maxTasks = n
 		default:
-			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<target|preset>] [--tasks <path>] [--peer <target>]... [--max-tasks <n>] [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail])", x)
+			return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, fmt.Errorf("coop loop: unexpected argument %q (usage: coop loop [<target|preset>] [--tasks <path>] [--peer <target>]... [--max-tasks <n>] [--preflight|--no-preflight] [--no-mcp] [--debug-on-fail] [--egress <mode>] [--allow-domain <domain>]... [--egress-rules <file>])", x)
 		}
 	}
 	return t, hasTarget, presetName, debugOnFail, preflight, noMCP, maxTasks, nil
 }
 
 func (a *app) cmdLoop(args []string) (int, error) {
+	// The launch's own egress flags, stripped before the loop's grammar sees them
+	// and resolved ONCE by loop.Control.Run — every iteration of the drain then
+	// runs under the same frozen policy.
+	args, err := a.takeNetworkFlags(args)
+	if err != nil {
+		return 2, err
+	}
 	flags, rest, err := tasks.ExtractTasksFlags(args)
 	if err != nil {
 		return 2, err
@@ -148,6 +155,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		Repo: repo, Image: img, Agent: agent,
 		Rotation: rot, Queues: queues, Preset: a.preset, Peers: peers,
 		DebugOnFail: debugOnFail, Preflight: preflight, MaxTasks: maxTasks,
+		Network: a.network.admission(),
 	})
 }
 

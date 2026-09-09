@@ -12,6 +12,7 @@
 package ladder
 
 import (
+	"slices"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -77,6 +78,12 @@ func (r *Rotation) AuthFailedTargets() []agents.Target {
 }
 
 func (r *Rotation) Active() agents.Target { return r.targets[r.idx] }
+
+// Targets returns every rung in ladder order — cooling and dead ones included.
+// A caller that must cover the whole ladder UP FRONT needs them all: restricted
+// networking freezes one policy per run, so a rung it never saw would meet a
+// denial mid-run instead of a refusal at launch.
+func (r *Rotation) Targets() []agents.Target { return slices.Clone(r.targets) }
 
 // Members renders the rotation in wire form (provider:model@account), for messages and tests.
 func (r *Rotation) Members() []string {

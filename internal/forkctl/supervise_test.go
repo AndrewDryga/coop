@@ -81,7 +81,7 @@ func TestDetachStartFailureReleasesReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Control{cfg: &config.Config{RepoOverride: repo}}
-	if code, err := a.DetachForkLoop(repo, name, "codex", "", "", "", "", "", nil); code != -1 || err == nil {
+	if code, err := a.DetachForkLoop(repo, name, "codex", "", "", "", "", "", nil, nil); code != -1 || err == nil {
 		t.Fatalf("detach with unwritable log target = (%d, %v), want startup failure", code, err)
 	}
 	if pathExists(forkspace.PidPath(repo, name)) {
@@ -156,7 +156,7 @@ func TestDetachReclaimsAbandonedReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Control{cfg: &config.Config{RepoOverride: repo}}
-	code, err := a.DetachForkLoop(repo, name, "codex", "", "", "", "", "", nil)
+	code, err := a.DetachForkLoop(repo, name, "codex", "", "", "", "", "", nil, nil)
 	if code != -1 || err == nil || strings.Contains(err.Error(), "coop fork stop") {
 		t.Fatalf("detach over an abandoned reservation = (%d, %v), want the reclaim to proceed to startup", code, err)
 	}
@@ -698,7 +698,7 @@ func TestDetachForkLoopRefusesDoubleStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Control{cfg: &config.Config{}}
-	code, err := a.DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil)
+	code, err := a.DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil)
 	if err == nil {
 		t.Fatal("DetachForkLoop started a second worker for an already-running fork")
 	}
