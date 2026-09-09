@@ -30,7 +30,10 @@ func (p ClientPlatform) valid() bool {
 
 // LockedClient is adapter-owned construction data. Exec is an absolute argv
 // prefix; callers append native arguments without shell interpretation.
+// Provider is stamped by the closure from the registry, never by the adapter:
+// a build cannot claim to belong to another agent.
 type LockedClient struct {
+	Provider                 string
 	Client                   egress.Client
 	Package, Version, Binary string
 	Exec, UnsetEnv           []string
@@ -68,7 +71,10 @@ func LockedClientClosure(platform ClientPlatform) (ClientClosure, error) {
 	}
 	var clients []LockedClient
 	for _, name := range Names() {
-		clients = append(clients, registry[name].LockedClients(platform)...)
+		for _, client := range registry[name].LockedClients(platform) {
+			client.Provider = name
+			clients = append(clients, client)
+		}
 	}
 	if err := validateClientClosure(files, clients); err != nil {
 		return ClientClosure{}, err
@@ -122,7 +128,7 @@ func validateClientClosure(files map[string][]byte, clients []LockedClient) erro
 	expected := map[string]string{"playwright": "1.63.0"}
 	binaries := make(map[string]bool)
 	for _, client := range clients {
-		if (client.Client != egress.ClientCLI && client.Client != egress.ClientACP) || !lockedVersion.MatchString(client.Version) || client.Binary == "" || strings.Trim(client.Binary, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" || binaries[client.Binary] || len(client.Exec) < 1 || len(client.Exec) > 2 {
+		if client.Provider == "" || (client.Client != egress.ClientCLI && client.Client != egress.ClientACP) || !lockedVersion.MatchString(client.Version) || client.Binary == "" || strings.Trim(client.Binary, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" || binaries[client.Binary] || len(client.Exec) < 1 || len(client.Exec) > 2 {
 			return invalid
 		}
 		if _, ok := expected[client.Package]; ok {

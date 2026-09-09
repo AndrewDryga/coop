@@ -8,77 +8,79 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkview"
 )
 
-// QualificationContract changes when the host qualification harness changes its
-// enforcement or functional acceptance contract. Endpoint bundle releases and
-// installed client closures have their own independent identities.
+// QualificationContract changes when the host preflight changes what it accepts.
+// Endpoint bundle releases and installed client closures have their own
+// independent identities.
 const QualificationContract = "visible-sni-tls443-v2"
 
 const maxQualificationBytes = 256 << 10
 
-// QualifiedClient is functional coverage, not a grant. MCPProjection identifies
-// the captured transport/routing shape without access tokens or account names.
-// "none" is explicit; omission cannot mean that arbitrary MCP is supported.
+// QualifiedClient is one client build the qualified image actually contains,
+// read off the locked closure: the provider it belongs to, the client kind it
+// launches and the exact package version. It is coverage, not a grant, and the
+// version is a record of what was installed, not a per-host compatibility claim.
 type QualifiedClient struct {
-	Dependency    egress.Dependency `json:"dependency"`
-	Features      []string          `json:"features"`
-	MCPProjection string            `json:"mcp_projection"`
+	Provider string        `json:"provider"`
+	Client   egress.Client `json:"client"`
+	Version  string        `json:"version"`
 }
 
-// QualificationProof is supplied by the trusted host harness after checking its
-// fixed case. EvidenceDigest covers a retained bounded host observation artifact,
-// never agent output or a requester's passed:true. Storage verifies its bytes and
-// run custody; the harness owns protocol and fault-causality interpretation.
+// QualificationProof is the ONE smoke run this host record rests on. The
+// release's tagged runtime suite is the published fault and provider matrix;
+// this proves the images work on this daemon. EvidenceDigest covers a retained
+// bounded host observation, never agent output or a requester's passed:true.
 type QualificationProof struct {
-	Case           string                    `json:"case"`
-	RunID          string                    `json:"run_id"`
-	Epoch          string                    `json:"epoch"`
-	ReceiptDigest  string                    `json:"receipt_digest"`
-	EvidenceDigest string                    `json:"evidence_digest"`
-	ResumesRunID   string                    `json:"resumes_run_id,omitempty"`
-	Client         *QualifiedClient          `json:"client,omitempty"`
-	Observation    *QualificationObservation `json:"observation,omitempty"`
+	RunID          string `json:"run_id"`
+	Epoch          string `json:"epoch"`
+	ReceiptDigest  string `json:"receipt_digest"`
+	EvidenceDigest string `json:"evidence_digest"`
 }
 
-// Qualification inlines the exact image pair and runtime binding it proves.
-// There is no separate candidate record: an unproven build is not a reference
-// anything can launch from.
+// Qualification is the per-host preflight record `coop net setup` publishes. It
+// inlines the exact image pair and runtime binding it proves: an unproven build
+// is not a reference anything can launch from.
 type Qualification struct {
-	Version     int                  `json:"version"`
-	ID          string               `json:"id"`
-	Candidate   CandidateSpec        `json:"candidate"`
-	Contract    string               `json:"contract"`
-	TrialGroup  string               `json:"trial_group"`
-	CompletedAt time.Time            `json:"completed_at"`
-	Coverage    []QualifiedClient    `json:"coverage"`
-	Proofs      []QualificationProof `json:"proofs"`
+	Version     int                `json:"version"`
+	ID          string             `json:"id"`
+	Contract    string             `json:"contract"`
+	Candidate   CandidateSpec      `json:"candidate"`
+	Clients     []QualifiedClient  `json:"clients"`
+	Smoke       QualificationProof `json:"smoke"`
+	CompletedAt time.Time          `json:"completed_at"`
 }
 
-// QualificationTrial is a host-only capability. Its zero value and serialized
-// form confer no authority. It cannot be reconstructed from a worker request or
-// used to restart an old trial epoch. A crashed setup is not resumable: cleanup
-// runs through execution custody and the whole trial group is simply rerun.
-type QualificationTrial struct {
+// QualificationSmoke is a host-only capability. Its zero value and serialized
+// form confer no authority, and it cannot be reconstructed from a worker
+// request. A crashed setup is not resumable: cleanup runs through execution
+// custody and the whole preflight is simply rerun.
+type QualificationSmoke struct {
 	store     *Store
 	candidate CandidateSpec
-	group     string
+	clients   []QualifiedClient
+	runID     string
 }
 
-func (t *QualificationTrial) Candidate() CandidateSpec {
+func (t *QualificationSmoke) Candidate() CandidateSpec {
 	if t == nil {
 		return CandidateSpec{}
 	}
 	return t.candidate
 }
 
-func (s *Store) BeginQualification(candidate CandidateSpec) (*QualificationTrial, error) {
+// BeginQualification opens the preflight for one constructed image pair and the
+// client builds its closure installed. Nothing is published until the smoke run
+// proves the pair on this daemon.
+func (s *Store) BeginQualification(candidate CandidateSpec, clients []QualifiedClient) (*QualificationSmoke, error) {
 	if err := s.intactAuthority(); err != nil {
 		return nil, err
 	}
@@ -86,16 +88,16 @@ func (s *Store) BeginQualification(candidate CandidateSpec) (*QualificationTrial
 	if err != nil {
 		return nil, err
 	}
-	group, err := randomExecutionID()
+	clients, err = canonicalQualifiedClients(clients)
 	if err != nil {
 		return nil, err
 	}
-	return &QualificationTrial{store: s, candidate: candidate, group: group}, nil
+	return &QualificationSmoke{store: s, candidate: candidate, clients: clients}, nil
 }
 
-func (t *QualificationTrial) intact() error {
-	if t == nil || t.store == nil || !lowerHex(t.group, 32) {
-		return errors.New("qualification requires a private host trial")
+func (t *QualificationSmoke) intact() error {
+	if t == nil || t.store == nil {
+		return errors.New("qualification requires a private host preflight")
 	}
 	candidate, err := canonicalCandidate(t.candidate)
 	if err != nil || !equalJSON(candidate, t.candidate) {
@@ -104,189 +106,89 @@ func (t *QualificationTrial) intact() error {
 	return t.store.intactAuthority()
 }
 
-func validQualificationCase(name string) bool {
-	return slices.Contains([]string{"enforcement", "guard-loss", "collector-loss", "cancel", "init-failure", "recovery", "concurrency", "observation-baseline", "short-flow", "provider-start", "provider-resume", "mcp"}, name)
+// CreateExecution registers the smoke through the ordinary engine, so what the
+// preflight proves is exactly what a workload later gets. One preflight runs one
+// smoke: a second attempt needs a new setup.
+func (t *QualificationSmoke) CreateExecution(ctx context.Context, spec ExecutionSpec) (Execution, error) {
+	if err := t.intact(); err != nil {
+		return Execution{}, err
+	}
+	if spec.QualificationID != "" || t.runID != "" {
+		return Execution{}, errors.New("invalid private network preflight launch")
+	}
+	record, err := t.store.createExecution(ctx, spec, t)
+	if record.ID != "" {
+		t.runID = record.ID
+	}
+	return record, err
 }
 
-func canonicalQualifiedClient(client QualifiedClient) (QualifiedClient, error) {
-	d := client.Dependency
-	_, err := egress.SelectedBundles([]egress.Bundle{{Provider: d.Provider, Client: d.Client, Version: d.Version, Backend: d.Backend, AuthMode: d.AuthMode}})
-	if err != nil || len(client.Features) > egress.MaxConstraints || client.MCPProjection != "none" && !lowerHex(client.MCPProjection, 64) {
-		return QualifiedClient{}, errors.New("invalid network qualification client coverage")
+func (t *QualificationSmoke) RecordEvidence(runID string, data []byte) (string, error) {
+	if err := t.intact(); err != nil {
+		return "", err
 	}
-	client.Features = append([]string{}, client.Features...)
-	for _, feature := range client.Features {
-		if !safeRecordToken(feature, 63) || strings.Trim(feature, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" || strings.HasPrefix(feature, "-") || strings.HasSuffix(feature, "-") {
-			return QualifiedClient{}, errors.New("invalid qualified provider feature")
+	if len(data) == 0 || len(data) > MaxQualificationEvidenceBytes || !json.Valid(data) {
+		return "", errors.New("qualification observations require bounded JSON")
+	}
+	r, err := t.store.Execution(runID)
+	if err != nil || runID != t.runID || r.Purpose != "qualification" || r.ClientImage != t.candidate.ClientImage ||
+		r.QualificationContract != QualificationContract || r.Receipt == nil {
+		return "", errors.New("qualification observations require a sealed owned smoke run")
+	}
+	if err := validateQualificationEvidence(data, r.Receipt); err != nil {
+		return "", err
+	}
+	name := "qualification-evidence-" + runID + ".json"
+	if err := t.store.publish(name, data, false); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return "", err
+		}
+		prior, err := t.store.read(name, MaxQualificationEvidenceBytes)
+		if err != nil || !bytes.Equal(prior, data) {
+			return "", errors.New("qualification observations cannot be replaced")
 		}
 	}
-	slices.Sort(client.Features)
-	client.Features = slices.Compact(client.Features)
-	return client, nil
+	if err := t.store.confirmPublication(); err != nil {
+		return "", err
+	}
+	if err := t.intact(); err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]), nil
 }
 
-func qualificationKey(value any) string { data, _ := json.Marshal(value); return string(data) }
-
-// QualificationCoverage validates the explicit host plan before running any
-// canary. The aggregate bound leaves room for its repeated per-case descriptors
-// and fixed proof references in the final immutable record.
-func QualificationCoverage(clients []QualifiedClient) ([]QualifiedClient, error) {
-	if len(clients) > 32 {
-		return nil, errors.New("too many network qualification client variants")
-	}
-	clients = append([]QualifiedClient{}, clients...)
-	for i, client := range clients {
-		var err error
-		clients[i], err = canonicalQualifiedClient(client)
-		if err != nil {
-			return nil, err
-		}
-	}
-	slices.SortFunc(clients, func(a, b QualifiedClient) int { return strings.Compare(qualificationKey(a), qualificationKey(b)) })
-	for i := 1; i < len(clients); i++ {
-		if equalJSON(clients[i-1], clients[i]) {
-			return nil, errors.New("duplicate qualified client coverage")
-		}
-	}
-	data, err := json.Marshal(clients)
-	if err != nil || len(data) > 8<<10 {
-		return nil, errors.New("network qualification client plan exceeds its byte bound")
-	}
-	return clients, nil
-}
-
-func canonicalQualification(q Qualification) (Qualification, error) {
-	return canonicalQualificationFrame(q, true)
-}
-
-func canonicalQualificationFrame(q Qualification, observations bool) (Qualification, error) {
-	if q.Version != 1 || q.Contract != QualificationContract || !lowerHex(q.TrialGroup, 32) ||
-		q.CompletedAt.IsZero() || len(q.Proofs) > 128 {
-		return Qualification{}, errors.New("invalid network qualification identity or bounds")
-	}
-	var err error
-	q.Candidate, err = canonicalCandidate(q.Candidate)
-	if err != nil {
-		return Qualification{}, err
-	}
-	q.Coverage, err = QualificationCoverage(q.Coverage)
-	if err != nil {
-		return Qualification{}, err
-	}
-	needed := map[string]bool{}
-	for _, name := range []string{"enforcement", "guard-loss", "collector-loss", "cancel", "init-failure", "recovery", "concurrency", "observation-baseline", "short-flow"} {
-		needed[name] = true
-	}
-	for _, client := range q.Coverage {
-		for _, name := range []string{"provider-start", "provider-resume"} {
-			needed[name+qualificationKey(client)] = true
-		}
-		if client.MCPProjection != "none" {
-			needed["mcp"+qualificationKey(client)] = true
-		}
-	}
-	q.Proofs = append([]QualificationProof{}, q.Proofs...)
-	runs := map[string]bool{}
-	for i, proof := range q.Proofs {
-		if !validQualificationCase(proof.Case) || !lowerHex(proof.RunID, 32) || !lowerHex(proof.Epoch, 32) ||
-			!lowerHex(proof.ReceiptDigest, 64) || !lowerHex(proof.EvidenceDigest, 64) || runs[proof.RunID] ||
-			(proof.Case == "provider-resume" && !lowerHex(proof.ResumesRunID, 32)) || (proof.Case != "provider-resume" && proof.ResumesRunID != "") {
-			return Qualification{}, errors.New("invalid or repeated qualification proof")
-		}
-		runs[proof.RunID] = true
-		key := proof.Case
-		if proof.Client != nil {
-			client, err := canonicalQualifiedClient(*proof.Client)
-			if err != nil {
-				return Qualification{}, err
-			}
-			proof.Client = &client
-			key += qualificationKey(client)
-		}
-		if !needed[key] {
-			return Qualification{}, errors.New("unexpected or duplicate qualification case")
-		}
-		delete(needed, key)
-		if observations || proof.Observation != nil {
-			if err := validateQualificationObservation(proof.Observation); err != nil {
-				return Qualification{}, err
-			}
-		}
-		q.Proofs[i] = proof
-	}
-	if len(needed) != 0 {
-		return Qualification{}, errors.New("qualification lacks mandatory runtime or selected client cases")
-	}
-	slices.SortFunc(q.Proofs, func(a, b QualificationProof) int { return strings.Compare(qualificationKey(a), qualificationKey(b)) })
-	return q, nil
-}
-
-func (s *Store) qualificationID(q Qualification) string {
-	q.ID = ""
-	data, _ := json.Marshal(q)
-	mac := hmac.New(sha256.New, s.key)
-	_, _ = mac.Write([]byte("network-qualification-v1\x00"))
-	_, _ = mac.Write(data)
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-// Complete validates sealed trial receipts and current cleanup custody before
-// publishing immutable proof summaries. Subsequent qualification reads do not
-// depend on retained traffic detail or receipts that may legitimately expire.
-func (t *QualificationTrial) Complete(coverage []QualifiedClient, proofs []QualificationProof) (Qualification, error) {
+// Complete publishes the record once the smoke's own sealed receipt shows the
+// workload ran to a clean end, nothing is still owned, the proxy accounted for
+// every byte, and the gateway both allowed the smoke domain and denied
+// something. Later reads never depend on receipts that may legitimately expire.
+func (t *QualificationSmoke) Complete(domain string) (Qualification, error) {
 	if err := t.intact(); err != nil {
 		return Qualification{}, err
 	}
-	q := Qualification{Version: 1, Candidate: t.candidate, Contract: QualificationContract, TrialGroup: t.group,
-		CompletedAt: time.Unix(1, 0).UTC(), Coverage: coverage, Proofs: proofs}
-	q, err := canonicalQualificationFrame(q, false)
+	r, err := t.store.Execution(t.runID)
 	if err != nil {
 		return Qualification{}, err
 	}
-	for i, proof := range q.Proofs {
-		r, err := t.store.Execution(proof.RunID)
-		if err != nil || r.Purpose != "qualification" || r.QualificationContract != QualificationContract || r.TrialGroup != t.group || r.TrialCase != proof.Case ||
-			r.Epoch != proof.Epoch || !equalJSON(r.TrialClient, proof.Client) ||
-			r.ClientImage != t.candidate.ClientImage || r.GatewayImage != t.candidate.GatewayImage ||
-			r.DaemonID != t.candidate.Runtime.DaemonID || r.Endpoint != t.candidate.Runtime.Endpoint ||
-			r.Receipt == nil || r.Receipt.Digest != proof.ReceiptDigest {
-			return Qualification{}, errors.New("qualification proof does not match a sealed trial execution")
-		}
-		if err := validateQualificationOutcome(r); err != nil {
-			return Qualification{}, err
-		}
-		claim, err := t.store.read(t.caseFile(proof.Case, proof.Client), 32)
-		if err != nil || string(claim) != proof.RunID {
-			return Qualification{}, errors.New("qualification proof is not the unique reserved case attempt")
-		}
-		evidence, err := t.store.read("qualification-evidence-"+proof.RunID+".json", MaxQualificationEvidenceBytes)
-		digest := sha256.Sum256(evidence)
-		if err != nil || hex.EncodeToString(digest[:]) != proof.EvidenceDigest {
-			return Qualification{}, errors.New("qualification observation artifact is unavailable or changed")
-		}
-		if err := validateQualificationEvidence(evidence, r.Receipt); err != nil {
-			return Qualification{}, err
-		}
-		observation, err := qualificationObservation(r.Receipt)
-		if err != nil {
-			return Qualification{}, err
-		}
-		if proof.Observation != nil && !equalJSON(proof.Observation, observation) {
-			return Qualification{}, errors.New("supplied qualification observation differs from its sealed receipt")
-		}
-		q.Proofs[i].Observation = observation
-		if proof.Client != nil && !slices.Contains(r.BundleReferences, dependencyReference(proof.Client.Dependency)) {
-			return Qualification{}, errors.New("trial policy did not contain the claimed provider dependency")
-		}
-		if proof.Case == "provider-resume" && !slices.ContainsFunc(q.Proofs, func(start QualificationProof) bool {
-			return start.Case == "provider-start" && start.RunID == proof.ResumesRunID && equalJSON(start.Client, proof.Client)
-		}) {
-			return Qualification{}, errors.New("provider resume does not reference its exact qualified startup")
-		}
-		if r.Receipt.EndedAt.After(q.CompletedAt) {
-			q.CompletedAt = *r.Receipt.EndedAt
-		}
+	if r.Purpose != "qualification" || r.QualificationContract != QualificationContract ||
+		r.ClientImage != t.candidate.ClientImage || r.GatewayImage != t.candidate.GatewayImage ||
+		r.DaemonID != t.candidate.Runtime.DaemonID || r.Endpoint != t.candidate.Runtime.Endpoint {
+		return Qualification{}, errors.New("smoke run does not match the constructed candidate")
 	}
+	if err := validateSmokeOutcome(r, domain); err != nil {
+		return Qualification{}, err
+	}
+	evidence, err := t.store.read("qualification-evidence-"+r.ID+".json", MaxQualificationEvidenceBytes)
+	if err != nil {
+		return Qualification{}, errors.New("qualification observation artifact is unavailable")
+	}
+	if err := validateQualificationEvidence(evidence, r.Receipt); err != nil {
+		return Qualification{}, err
+	}
+	digest := sha256.Sum256(evidence)
+	q := Qualification{Version: 1, Contract: QualificationContract, Candidate: t.candidate, Clients: t.clients,
+		Smoke:       QualificationProof{RunID: r.ID, Epoch: r.Epoch, ReceiptDigest: r.Receipt.Digest, EvidenceDigest: hex.EncodeToString(digest[:])},
+		CompletedAt: *r.Receipt.EndedAt}
 	q, err = canonicalQualification(q)
 	if err != nil {
 		return Qualification{}, err
@@ -315,52 +217,95 @@ func (t *QualificationTrial) Complete(coverage []QualifiedClient, proofs []Quali
 	return q, nil
 }
 
-func validateQualificationOutcome(r Execution) error {
-	if r.Receipt == nil || r.Receipt.EndedAt == nil || r.Receipt.Finality != "final" {
-		return errors.New("qualification requires a final sealed receipt")
+// validateSmokeOutcome reads the sealed receipt only. A caller cannot assert any
+// of it: "complete" already means terminal, unlossy, exactly covered evidence
+// whose agent container is gone.
+func validateSmokeOutcome(r Execution, domain string) error {
+	if r.Receipt == nil || r.Receipt.EndedAt == nil || r.Receipt.Finality != "final" ||
+		r.Receipt.Workload != "exited" || r.Receipt.Completeness != "complete" {
+		return errors.New("network setup requires a final sealed receipt of a clean smoke run")
+	}
+	if !r.WorkloadStarted || r.ReadySequence == 0 {
+		return errors.New("smoke run never reached its workload behind a ready gateway")
 	}
 	for _, resource := range r.Resources {
 		if resource.State != "gone" {
-			return errors.New("qualification still owns unresolved runtime resources")
+			return errors.New("smoke run still owns unresolved runtime resources")
 		}
 	}
 	if r.Artifact.State != "gone" {
-		return errors.New("qualification still owns unresolved launch artifacts")
+		return errors.New("smoke run still owns unresolved launch artifacts")
 	}
-	workload, completeness := "exited", "complete"
-	var reasons []string
-	switch r.TrialCase {
-	case "guard-loss":
-		workload, completeness = "runtime_failed", "partial"
-		reasons = []string{"observer_end_after_workload_unproven", "terminal_observation_unavailable"}
-	case "collector-loss":
-		completeness = "partial"
-		reasons = []string{"terminal_observation_unavailable"}
-	case "init-failure":
-		workload, completeness = "launch_failed", "partial"
-		reasons = []string{"observer_end_after_workload_unproven", "terminal_observation_unavailable"}
-	case "recovery":
-		workload, completeness = "supervisor_lost", "partial"
-		reasons = []string{"terminal_observation_unavailable"}
-	case "cancel":
-		workload = "cancelled"
+	s := r.Receipt.Snapshot
+	if s.Coverage.ProxyBytes.Status != "exact" || s.Coverage.ProxyBytes.Reason != "" {
+		return errors.New("smoke run did not account for every proxied byte")
 	}
-	if r.Receipt.Workload != workload || completeness == "partial" && r.Receipt.Completeness != completeness ||
-		completeness == "partial" && !r.Receipt.Snapshot.Loss.Unknown ||
-		slices.ContainsFunc(reasons, func(reason string) bool { return !slices.Contains(r.Receipt.Snapshot.Loss.Reasons, reason) }) {
-		return errors.New("qualification receipt does not establish the expected evidence coverage")
-	}
-	if r.TrialCase == "init-failure" {
-		if r.WorkloadStarted || r.Resources[2].ID != "" {
-			return errors.New("initialization fault did not precede workload creation")
-		}
-	} else if !r.WorkloadStarted || r.ReadySequence == 0 {
-		return errors.New("qualification case never reached its intended workload")
-	}
-	if completeness == "complete" {
-		return validateFunctionalQualification(r)
+	allowed := slices.ContainsFunc(s.Connections, func(c networkview.Connection) bool {
+		return c.Name == domain && c.NameSource == "sni" && c.State == "closed" && !c.Partial && c.RuleID != "" &&
+			c.SentBytes != nil && *c.SentBytes > 0 && c.ReceivedBytes != nil && *c.ReceivedBytes > 0
+	})
+	denied := slices.ContainsFunc(s.Denials, func(d networkview.Denial) bool { return d.Basis == "observed" })
+	if !allowed || !denied {
+		return errors.New("smoke run lacks a measured allowed connection or an observed denial")
 	}
 	return nil
+}
+
+func canonicalQualifiedClient(client QualifiedClient) (QualifiedClient, error) {
+	if !safeRecordToken(client.Provider, 64) || client.Client != egress.ClientCLI && client.Client != egress.ClientACP ||
+		!safeRecordToken(client.Version, 128) {
+		return QualifiedClient{}, errors.New("invalid qualified client identity")
+	}
+	return client, nil
+}
+
+func canonicalQualifiedClients(clients []QualifiedClient) ([]QualifiedClient, error) {
+	if len(clients) == 0 || len(clients) > 32 {
+		return nil, errors.New("the qualified image must contain between one and 32 client builds")
+	}
+	clients = slices.Clone(clients)
+	for i, client := range clients {
+		var err error
+		if clients[i], err = canonicalQualifiedClient(client); err != nil {
+			return nil, err
+		}
+	}
+	slices.SortFunc(clients, func(a, b QualifiedClient) int {
+		data, _ := json.Marshal(a)
+		other, _ := json.Marshal(b)
+		return strings.Compare(string(data), string(other))
+	})
+	for i := 1; i < len(clients); i++ {
+		if clients[i-1] == clients[i] {
+			return nil, errors.New("duplicate qualified client build")
+		}
+	}
+	return clients, nil
+}
+
+func canonicalQualification(q Qualification) (Qualification, error) {
+	if q.Version != 1 || q.Contract != QualificationContract || q.CompletedAt.IsZero() ||
+		!lowerHex(q.Smoke.RunID, 32) || !lowerHex(q.Smoke.Epoch, 32) ||
+		!lowerHex(q.Smoke.ReceiptDigest, 64) || !lowerHex(q.Smoke.EvidenceDigest, 64) {
+		return Qualification{}, errors.New("invalid network qualification identity or bounds")
+	}
+	var err error
+	if q.Candidate, err = canonicalCandidate(q.Candidate); err != nil {
+		return Qualification{}, err
+	}
+	if q.Clients, err = canonicalQualifiedClients(q.Clients); err != nil {
+		return Qualification{}, err
+	}
+	return q, nil
+}
+
+func (s *Store) qualificationID(q Qualification) string {
+	q.ID = ""
+	data, _ := json.Marshal(q)
+	mac := hmac.New(sha256.New, s.key)
+	_, _ = mac.Write([]byte("network-qualification-v1\x00"))
+	_, _ = mac.Write(data)
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func (s *Store) Qualification(id string) (Qualification, error) {
@@ -391,138 +336,70 @@ func (s *Store) Qualification(id string) (Qualification, error) {
 	return q, nil
 }
 
-// requirePolicy checks frozen provider/feature coverage without treating extra
-// explicitly approved TLS destinations as new provider compatibility claims.
-func (q Qualification) requirePolicy(policy egress.Snapshot, selected []egress.Dependency, projection *string) error {
+// Qualifications returns the host's completed records, newest first. It lists
+// the private directory and performs no probe, canary or runtime mutation.
+func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
+	if err := s.intactAuthority(); err != nil {
+		return nil, err
+	}
+	dir, err := s.root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	names, err := dir.Readdirnames(65536)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if len(names) == 65536 {
+		return nil, errors.New("network qualification index exceeds its directory scan limit")
+	}
+	var result []Qualification
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		base, ok := strings.CutSuffix(name, ".json")
+		if !ok {
+			continue
+		}
+		id, ok := strings.CutPrefix(base, "qualification-")
+		if !ok || !lowerHex(id, 64) {
+			continue
+		}
+		q, err := s.Qualification(id)
+		if err != nil {
+			return nil, err
+		}
+		if len(result) >= 256 {
+			return nil, errors.New("network qualification index exceeds its retained record limit")
+		}
+		result = append(result, q)
+	}
+	slices.SortFunc(result, func(a, b Qualification) int { return b.CompletedAt.Compare(a.CompletedAt) })
+	return result, nil
+}
+
+// RequireLaunch is the per-host preflight match. The release's bundle metadata
+// is the version claim for a provider's endpoints; what this host proved is that
+// the image it will launch contains that provider's selected client at all.
+func (q Qualification) RequireLaunch(policy egress.Snapshot) error {
+	if q.Contract != QualificationContract {
+		return errors.New("network setup predates this release's enforcement contract; run `coop net setup`")
+	}
 	if err := policy.RequireTLS443(true); err != nil {
 		return err
 	}
-	for _, dependency := range selected {
-		if !slices.Contains(policy.Dependencies, dependency) {
-			return errors.New("selected dependency is absent from the captured network policy")
-		}
-		var features []string
-		for _, grant := range policy.Grants {
-			for _, origin := range grant.Origins {
-				if origin.Provider == dependency.Provider && origin.Client == dependency.Client && origin.Backend == dependency.Backend &&
-					origin.AuthMode == dependency.AuthMode && origin.BundleVersion == dependency.Version && origin.Feature != "" {
-					features = append(features, origin.Feature)
-				}
-			}
-		}
-		covered := slices.ContainsFunc(q.Coverage, func(client QualifiedClient) bool {
-			return client.Dependency == dependency && (projection == nil || client.MCPProjection == *projection) &&
-				!slices.ContainsFunc(features, func(feature string) bool { return !slices.Contains(client.Features, feature) })
-		})
-		if !covered {
-			return errors.New("selected provider, feature or MCP configuration has no matching completed network qualification")
+	for _, dependency := range policy.Dependencies {
+		if !slices.ContainsFunc(q.Clients, func(client QualifiedClient) bool {
+			return client.Provider == dependency.Provider && client.Client == dependency.Client
+		}) {
+			return errors.New("the qualified client image contains no " + dependency.Provider + " " + string(dependency.Client) + " build")
 		}
 	}
 	return nil
-}
-
-// RequireLaunch requires ONE tested combination of provider, features and MCP
-// configuration. Separate successful combinations cannot be spliced together:
-// each selected dependency needs a single witness covering every applicable
-// feature and this launch's MCP projection.
-func (q Qualification) RequireLaunch(policy egress.Snapshot, projection string) error {
-	if projection != "none" && !lowerHex(projection, 64) {
-		return errors.New("invalid captured MCP qualification projection")
-	}
-	if len(policy.Dependencies) == 0 && projection != "none" {
-		return errors.New("MCP qualification requires a selected provider client")
-	}
-	return q.requirePolicy(policy, policy.Dependencies, &projection)
 }
 
 func dependencyReference(d egress.Dependency) string {
 	return d.Provider + "@" + d.Version + "/" + string(d.Client) + "/" + d.Backend + "/" + d.AuthMode
-}
-
-func requireTrialClientPolicy(client *QualifiedClient, policy egress.Snapshot) error {
-	if client == nil {
-		return nil
-	}
-	if !slices.Contains(policy.Dependencies, client.Dependency) {
-		return errors.New("qualification client is absent from its frozen trial policy")
-	}
-	for _, feature := range client.Features {
-		found := false
-		for _, grant := range policy.Grants {
-			for _, origin := range grant.Origins {
-				d := client.Dependency
-				found = found || origin.Provider == d.Provider && origin.Client == d.Client && origin.Backend == d.Backend &&
-					origin.AuthMode == d.AuthMode && origin.BundleVersion == d.Version && origin.Feature == feature
-			}
-		}
-		if !found {
-			return errors.New("qualification feature is absent from its frozen trial policy")
-		}
-	}
-	return nil
-}
-
-func (t *QualificationTrial) caseFile(name string, client *QualifiedClient) string {
-	digest := sha256.Sum256([]byte(name + "\x00" + qualificationKey(client)))
-	return "qualification-case-" + t.group + "-" + hex.EncodeToString(digest[:]) + ".json"
-}
-
-// Reserve before publishing execution intent. Even an ambiguous failed attempt
-// consumes this case: retry uses a new group, never cherry-picks a lucky pass.
-func (t *QualificationTrial) reserveCase(name string, client *QualifiedClient, runID string) error {
-	return t.store.publish(t.caseFile(name, client), []byte(runID), false)
-}
-
-func (t *QualificationTrial) RecordEvidence(runID string, data []byte) (string, error) {
-	if err := t.intact(); err != nil {
-		return "", err
-	}
-	if len(data) == 0 || len(data) > MaxQualificationEvidenceBytes || !json.Valid(data) {
-		return "", errors.New("qualification observations require bounded JSON")
-	}
-	r, err := t.store.Execution(runID)
-	if err != nil || r.Purpose != "qualification" || r.TrialGroup != t.group || r.ClientImage != t.candidate.ClientImage || r.QualificationContract != QualificationContract || r.Receipt == nil {
-		return "", errors.New("qualification observations require a sealed owned trial")
-	}
-	if err := validateQualificationEvidence(data, r.Receipt); err != nil {
-		return "", err
-	}
-	name := "qualification-evidence-" + runID + ".json"
-	if err := t.store.publish(name, data, false); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return "", err
-		}
-		prior, err := t.store.read(name, MaxQualificationEvidenceBytes)
-		if err != nil || !bytes.Equal(prior, data) {
-			return "", errors.New("qualification observations cannot be replaced")
-		}
-	}
-	if err := t.store.confirmPublication(); err != nil {
-		return "", err
-	}
-	if err := t.intact(); err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(data)
-	return hex.EncodeToString(digest[:]), nil
-}
-
-func (t *QualificationTrial) CreateExecution(ctx context.Context, spec ExecutionSpec, caseName string, client *QualifiedClient) (Execution, error) {
-	if err := t.intact(); err != nil {
-		return Execution{}, err
-	}
-	if !validQualificationCase(caseName) || spec.QualificationID != "" || (client != nil) != slices.Contains([]string{"provider-start", "provider-resume", "mcp"}, caseName) {
-		return Execution{}, errors.New("invalid private qualification trial case")
-	}
-	if client != nil {
-		canonical, err := canonicalQualifiedClient(*client)
-		if err != nil {
-			return Execution{}, err
-		}
-		client = &canonical
-		if caseName == "mcp" && client.MCPProjection == "none" {
-			return Execution{}, errors.New("MCP qualification requires an enabled MCP projection")
-		}
-	}
-	return t.store.createExecution(ctx, spec, t, caseName, client)
 }

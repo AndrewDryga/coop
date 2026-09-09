@@ -45,7 +45,7 @@ type filteredDaemonFixture struct {
 	probeRecovered                         chan struct{}
 	attached                               chan struct{}
 	volumeExposure                         runtime.VolumeExposure
-	trial                                  *networkstate.QualificationTrial
+	smoke                                  *networkstate.QualificationSmoke
 }
 
 func filteredFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture) {
@@ -65,16 +65,17 @@ func filteredFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture) 
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	trial, err := store.BeginQualification(networkstate.CandidateSpec{
+	smoke, err := store.BeginQualification(networkstate.CandidateSpec{
 		Runtime:     networkstate.RuntimeBinding{HostFamily: "darwin", Endpoint: "unix:///fixture.sock", DaemonID: "fixture-daemon", OS: "linux", Architecture: "arm64", ServerVersion: "29.4.0", KernelVersion: "fixture"},
 		ClientImage: "sha256:" + strings.Repeat("b", 64), GatewayImage: "sha256:" + strings.Repeat("a", 64),
 		ClientDefinition: strings.Repeat("c", 64), ClientClosure: strings.Repeat("d", 64), GatewaySource: strings.Repeat("e", 64),
-		Libc: "glibc", NodeBase: "node@sha256:" + strings.Repeat("f", 64), GoBase: "golang@sha256:" + strings.Repeat("0", 64)})
+		Libc: "glibc", NodeBase: "node@sha256:" + strings.Repeat("f", 64), GoBase: "golang@sha256:" + strings.Repeat("0", 64)},
+		[]networkstate.QualifiedClient{{Provider: "claude", Client: egress.ClientCLI, Version: "2.1.260"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := trial.CreateExecution(ctx, networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
-		Runtime: "docker", DaemonID: "fixture-daemon", Endpoint: "unix:///fixture.sock", GatewayImage: "sha256:" + strings.Repeat("a", 64), ClientImage: "sha256:" + strings.Repeat("b", 64)}, "enforcement", nil)
+	record, err := smoke.CreateExecution(ctx, networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
+		Runtime: "docker", DaemonID: "fixture-daemon", Endpoint: "unix:///fixture.sock", GatewayImage: "sha256:" + strings.Repeat("a", 64), ClientImage: "sha256:" + strings.Repeat("b", 64)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func filteredFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture) 
 	}
 	f.protected = []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}
 	f.hostAddresses = func() ([]netip.Prefix, error) { return slices.Clone(f.protected), nil }
-	d := &filteredDaemonFixture{f: f, trial: trial, containers: map[string]runtime.DockerContainer{}, volumes: map[string]runtime.DockerVolume{}, attached: make(chan struct{})}
+	d := &filteredDaemonFixture{f: f, smoke: smoke, containers: map[string]runtime.DockerContainer{}, volumes: map[string]runtime.DockerVolume{}, attached: make(chan struct{})}
 	f.docker = d
 	return f, d
 }

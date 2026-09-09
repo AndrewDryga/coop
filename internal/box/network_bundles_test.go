@@ -10,7 +10,6 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
-	"github.com/AndrewDryga/coop/internal/networkstate"
 )
 
 // Core dependencies follow the credential scope this run actually mounts, not
@@ -48,15 +47,16 @@ func TestNetworkProviderBundlesFollowTheMountedCredentialScope(t *testing.T) {
 		Peers: []agents.Target{{Provider: "gemini"}}}); err == nil || !strings.Contains(err.Error(), "unsupported for restricted networking") {
 		t.Fatal("unqualified provider was admitted", err)
 	}
+	// The client kind rides the spec: an ACP launch is a different variant and
+	// must not silently inherit the CLI's captured endpoints.
+	acp, err := NetworkProviderBundles(cfg, RunSpec{Repo: repo, Agent: "claude", Homes: true, NetworkClient: egress.ClientACP})
+	if err != nil || len(acp) != 1 || acp[0].Client != egress.ClientACP {
+		t.Fatal("declared client variant was ignored", acp, err)
+	}
 }
 
-func mcpDependencyFixture(t *testing.T, snapshot string) (*config.Config, RunSpec, *networkstate.Store) {
+func mcpDependencyFixture(t *testing.T, snapshot string) (*config.Config, RunSpec) {
 	t.Helper()
-	store, err := networkstate.Open(filepath.Join(t.TempDir(), "network"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
 	if snapshot != "" {
 		cfg.MCPFile = filepath.Join(t.TempDir(), "mcp.json")
@@ -64,14 +64,14 @@ func mcpDependencyFixture(t *testing.T, snapshot string) (*config.Config, RunSpe
 			t.Fatal(err)
 		}
 	}
-	return cfg, RunSpec{Repo: t.TempDir(), Agent: "claude", Homes: true}, store
+	return cfg, RunSpec{Repo: t.TempDir(), Agent: "claude", Homes: true}
 }
 
 // The operator chooses the servers; their hostnames are derived automatically
 // from the trusted shared configuration, and only for HTTP transports.
-func TestNetworkMCPDependenciesDeriveHostsAndAStableProjection(t *testing.T) {
-	cfg, spec, store := mcpDependencyFixture(t, `{"mcpServers":{"local":{"command":"tool"},"remote":{"url":"https://mcp.example.com"}}}`)
-	automatic, projection, err := NetworkMCPDependencies(cfg, spec, store)
+func TestNetworkMCPDependenciesDeriveTheirHosts(t *testing.T) {
+	cfg, spec := mcpDependencyFixture(t, `{"mcpServers":{"local":{"command":"tool"},"remote":{"url":"https://mcp.example.com"}}}`)
+	automatic, err := NetworkMCPDependencies(cfg, spec)
 	if err != nil || len(automatic) != 1 {
 		t.Fatal("HTTP dependency derivation", automatic, err)
 	}
@@ -82,34 +82,19 @@ func TestNetworkMCPDependenciesDeriveHostsAndAStableProjection(t *testing.T) {
 	if !slices.Equal(automatic[0].Rules[0].Ports, []int{443}) || automatic[0].Rules[0].Protocol != "tls" {
 		t.Fatal("derived dependency left the qualified TLS443 subset", automatic[0].Rules[0])
 	}
-	if projection == "none" || len(projection) != 64 {
-		t.Fatal("routing shape was not projected", projection)
-	}
-	// The same configuration yields the same projection; a changed transport
-	// yields a different one, so a stale qualification cannot be reused.
-	again, sameProjection, err := NetworkMCPDependencies(cfg, spec, store)
-	if err != nil || sameProjection != projection || len(again) != 1 {
-		t.Fatal("projection is not stable across reads", err)
-	}
-	changed, _, _ := mcpDependencyFixture(t, `{"mcpServers":{"remote":{"url":"https://other.example.com"}}}`)
-	cfg.MCPFile = changed.MCPFile
-	_, other, err := NetworkMCPDependencies(cfg, spec, store)
-	if err != nil || other == projection {
-		t.Fatal("a changed MCP destination reused its projection", err)
-	}
 }
 
 func TestNetworkMCPDependenciesAreAbsentWithoutTrustedConfiguration(t *testing.T) {
-	cfg, spec, store := mcpDependencyFixture(t, "")
-	automatic, projection, err := NetworkMCPDependencies(cfg, spec, store)
-	if err != nil || automatic != nil || projection != "none" {
-		t.Fatal("absent MCP configuration derived dependencies", automatic, projection, err)
+	cfg, spec := mcpDependencyFixture(t, "")
+	automatic, err := NetworkMCPDependencies(cfg, spec)
+	if err != nil || automatic != nil {
+		t.Fatal("absent MCP configuration derived dependencies", automatic, err)
 	}
 	// A bare run omits both the configuration and anything derived from it.
-	cfg, spec, store = mcpDependencyFixture(t, `{"mcpServers":{"remote":{"url":"https://mcp.example.com"}}}`)
+	cfg, spec = mcpDependencyFixture(t, `{"mcpServers":{"remote":{"url":"https://mcp.example.com"}}}`)
 	spec.Homes = false
-	if automatic, projection, err = NetworkMCPDependencies(cfg, spec, store); err != nil || automatic != nil || projection != "none" {
-		t.Fatal("a no-tools run inherited MCP dependencies", automatic, projection, err)
+	if automatic, err = NetworkMCPDependencies(cfg, spec); err != nil || automatic != nil {
+		t.Fatal("a no-tools run inherited MCP dependencies", automatic, err)
 	}
 }
 
@@ -120,34 +105,9 @@ func TestNetworkMCPDependenciesRefuseUnqualifiedRouting(t *testing.T) {
 		`{"mcpServers":{"remote":{"url":"http://mcp.example.com"}}}`,
 		`{"mcpServers":{"remote":{"url":"https://mcp.example.com","headersHelper":"helper"}}}`,
 	} {
-		cfg, spec, store := mcpDependencyFixture(t, snapshot)
-		if _, _, err := NetworkMCPDependencies(cfg, spec, store); err == nil {
+		cfg, spec := mcpDependencyFixture(t, snapshot)
+		if _, err := NetworkMCPDependencies(cfg, spec); err == nil {
 			t.Fatal("unqualified MCP routing was admitted:", snapshot)
 		}
-	}
-}
-
-// The projection identifies the routing shape, including which authentication
-// reference is in use — never the rotating value behind it.
-func TestNetworkMCPProjectionBindsTheAuthenticationShape(t *testing.T) {
-	// One owner key throughout: a differing projection then means a differing
-	// routing shape, not a differing store.
-	cfg, spec, store := mcpDependencyFixture(t, `{"mcpServers":{"remote":{"url":"https://mcp.example.com"}}}`)
-	shape := func(snapshot string) string {
-		t.Helper()
-		if err := os.WriteFile(cfg.MCPFile, []byte(snapshot), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		_, projection, err := NetworkMCPDependencies(cfg, spec, store)
-		if err != nil || len(projection) != 64 {
-			t.Fatal("projection", projection, err)
-		}
-		return projection
-	}
-	plain := shape(`{"mcpServers":{"remote":{"url":"https://mcp.example.com"}}}`)
-	bearer := shape(`{"mcpServers":{"remote":{"url":"https://mcp.example.com","bearer_token_env_var":"TOOL_TOKEN"}}}`)
-	other := shape(`{"mcpServers":{"remote":{"url":"https://mcp.example.com","bearer_token_env_var":"OTHER_TOKEN"}}}`)
-	if plain == bearer || bearer == other {
-		t.Fatal("authentication shape is absent from the projection")
 	}
 }

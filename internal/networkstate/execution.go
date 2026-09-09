@@ -67,9 +67,6 @@ type Execution struct {
 	QualificationID       string               `json:"qualification_id,omitempty"`
 	QualificationContract string               `json:"qualification_contract"`
 	Purpose               string               `json:"purpose"`
-	TrialGroup            string               `json:"trial_group,omitempty"`
-	TrialCase             string               `json:"trial_case,omitempty"`
-	TrialClient           *QualifiedClient     `json:"trial_client,omitempty"`
 	WorkloadStarted       bool                 `json:"workload_started,omitempty"`
 	ReadySequence         networkview.Count    `json:"ready_sequence,omitempty"`
 	SessionID             string               `json:"session_id,omitempty"`
@@ -125,10 +122,10 @@ func lowerHex(value string, size int) bool {
 }
 
 func (s *Store) CreateExecution(ctx context.Context, spec ExecutionSpec) (Execution, error) {
-	return s.createExecution(ctx, spec, nil, "", nil)
+	return s.createExecution(ctx, spec, nil)
 }
 
-func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, trial *QualificationTrial, trialCase string, trialClient *QualifiedClient) (Execution, error) {
+func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, smoke *QualificationSmoke) (Execution, error) {
 	if err := s.authorityAvailable(); err != nil {
 		return Execution{}, err
 	}
@@ -142,21 +139,18 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, trial *
 	if err := policy.RequireTLS443(true); err != nil {
 		return Execution{}, err
 	}
-	if err := requireTrialClientPolicy(trialClient, policy); err != nil {
-		return Execution{}, err
-	}
 	var candidate CandidateSpec
-	if trial == nil {
+	if smoke == nil {
 		qualification, err := s.Qualification(spec.QualificationID)
 		if err != nil {
 			return Execution{}, err
 		}
-		if err := qualification.requirePolicy(policy, policy.Dependencies, nil); err != nil {
+		if err := qualification.RequireLaunch(policy); err != nil {
 			return Execution{}, err
 		}
 		candidate = qualification.Candidate
 	} else {
-		candidate = trial.candidate
+		candidate = smoke.candidate
 	}
 	if spec.Runtime != "docker" || spec.DaemonID != candidate.Runtime.DaemonID || spec.Endpoint != candidate.Runtime.Endpoint ||
 		spec.GatewayImage != candidate.GatewayImage || spec.ClientImage != candidate.ClientImage {
@@ -192,8 +186,8 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, trial *
 		Artifact:              Artifact{Name: "artifacts-" + id, State: "planned"},
 		Snapshot: networkview.Snapshot{Version: networkview.Version, RunID: id, Epoch: epoch, Mode: policy.Mode,
 			PolicyFingerprint: policy.Fingerprint, Availability: "starting", AsOf: now, Scope: "not-observed", Projection: "owner-local"}}
-	if trial != nil {
-		record.Purpose, record.TrialGroup, record.TrialCase, record.TrialClient = "qualification", trial.group, trialCase, trialClient
+	if smoke != nil {
+		record.Purpose = "qualification"
 	}
 	for _, role := range []string{"controller", "guard", "agent", "ipc", "observations"} {
 		kind := "container"
@@ -207,11 +201,6 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, trial *
 	}
 	if err := validExecution(record); err != nil {
 		return Execution{}, err
-	}
-	if trial != nil {
-		if err := trial.reserveCase(trialCase, trialClient, id); err != nil {
-			return Execution{}, err
-		}
 	}
 	err = s.lockExecution(ctx, id, func() error {
 		data, err := json.Marshal(record)
@@ -267,19 +256,12 @@ func validExecution(record Execution) error {
 	}
 	switch record.Purpose {
 	case "workload":
-		if !lowerHex(record.QualificationID, 64) || record.TrialGroup != "" || record.TrialCase != "" || record.TrialClient != nil {
+		if !lowerHex(record.QualificationID, 64) {
 			return errors.New("invalid qualified workload binding")
 		}
 	case "qualification":
-		if record.QualificationID != "" || !lowerHex(record.TrialGroup, 32) || !validQualificationCase(record.TrialCase) ||
-			(record.TrialClient != nil) != slices.Contains([]string{"provider-start", "provider-resume", "mcp"}, record.TrialCase) {
-			return errors.New("invalid qualification trial binding")
-		}
-		if record.TrialClient != nil {
-			canonical, err := canonicalQualifiedClient(*record.TrialClient)
-			if err != nil || !equalJSON(canonical, *record.TrialClient) {
-				return errors.New("invalid trial client coverage")
-			}
+		if record.QualificationID != "" {
+			return errors.New("invalid host preflight binding")
 		}
 	default:
 		return errors.New("unknown network execution purpose")

@@ -1,7 +1,6 @@
 package box
 
 import (
-	"encoding/json"
 	"errors"
 	"net/url"
 
@@ -9,8 +8,16 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/mcp"
-	"github.com/AndrewDryga/coop/internal/networkstate"
 )
+
+// networkClient is the client kind a run launches. The zero value is the
+// ordinary CLI, so an ACP or session path must name its variant deliberately.
+func (s RunSpec) networkClient() egress.Client {
+	if s.NetworkClient == "" {
+		return egress.ClientCLI
+	}
+	return s.NetworkClient
+}
 
 // NetworkProviderBundles derives the release-owned core endpoints for the
 // providers this run actually mounts credentials for — the lead plus the exact
@@ -26,9 +33,7 @@ func NetworkProviderBundles(cfg *config.Config, spec RunSpec) ([]egress.Bundle, 
 		if !ok {
 			return nil, errors.New("unknown provider in the restricted credential scope")
 		}
-		// Only the ordinary CLI is qualified in this slice; an ACP launch is a
-		// separate client variant that its own qualification case must cover.
-		bundle, err := ag.NetworkBundle(agents.NetworkBundleInput{Client: egress.ClientCLI})
+		bundle, err := ag.NetworkBundle(agents.NetworkBundleInput{Client: spec.networkClient()})
 		if err != nil {
 			return nil, err
 		}
@@ -38,28 +43,19 @@ func NetworkProviderBundles(cfg *config.Config, spec RunSpec) ([]egress.Bundle, 
 }
 
 // NetworkMCPDependencies returns the automatic HTTP destinations of the trusted
-// shared MCP configuration plus the owner-keyed projection of its routing shape.
-// The hosts are Admission.Automatic, never operator requests: the operator
-// chose the servers, not their hostnames. The projection identifies the exact
-// configuration a qualification covered, so an edited MCP file cannot silently
-// reuse a qualification taken against a different transport.
+// shared MCP configuration. They are Admission.Automatic, never operator
+// requests: the operator chose the servers, not their hostnames.
 //
-// Both admission and launch call this, so a configuration change between them
-// surfaces as a qualification mismatch instead of an unqualified launch.
-func NetworkMCPDependencies(cfg *config.Config, spec RunSpec, store *networkstate.Store) ([]egress.Input, string, error) {
-	if store == nil {
-		return nil, "", errors.New("MCP dependency derivation requires host network state")
-	}
+// Only what admission froze is enforced, so editing the MCP file after a launch
+// was admitted can produce a visible denial — never a wider policy.
+func NetworkMCPDependencies(cfg *config.Config, spec RunSpec) ([]egress.Input, error) {
 	snapshot, err := networkMCPSnapshot(cfg, spec)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	servers, err := mcp.NetworkServers(snapshot)
 	if err != nil {
-		return nil, "", err
-	}
-	if len(servers) == 0 {
-		return nil, "none", nil
+		return nil, err
 	}
 	var dependencies []egress.Input
 	for _, server := range servers {
@@ -69,16 +65,11 @@ func NetworkMCPDependencies(cfg *config.Config, spec RunSpec, store *networkstat
 		parsed, _ := url.Parse(server.URL) // NetworkServers validated the literal URL
 		rules, err := egress.NormalizeRules([]egress.Rule{{To: egress.Destination{Domain: parsed.Hostname()}, Protocol: "tls", Ports: []int{443}}})
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		dependencies = append(dependencies, egress.Input{Origin: egress.Origin{Kind: "mcp", Name: server.Name}, Rules: rules})
 	}
-	shape, err := json.Marshal(servers)
-	if err != nil {
-		return nil, "", err
-	}
-	projection, err := store.MCPProjection(shape)
-	return dependencies, projection, err
+	return dependencies, nil
 }
 
 // networkMCPSnapshot reads the same validated shared configuration box.Run

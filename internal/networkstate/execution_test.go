@@ -22,23 +22,12 @@ func executionFixture(t *testing.T) (*Store, Execution) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := executionTrial(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
-		Runtime: "docker", DaemonID: "fixture-daemon", Endpoint: "unix:///fixture.sock", GatewayImage: "sha256:" + strings.Repeat("a", 64), ClientImage: "sha256:" + strings.Repeat("b", 64)}, "enforcement", nil)
+	record, err := executionSmoke(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
+		Runtime: "docker", DaemonID: "fixture-daemon", Endpoint: "unix:///fixture.sock", GatewayImage: "sha256:" + strings.Repeat("a", 64), ClientImage: "sha256:" + strings.Repeat("b", 64)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s, record
-}
-
-func executionTrial(t *testing.T, s *Store) *QualificationTrial {
-	t.Helper()
-	spec := candidateFixture()
-	spec.ClientImage, spec.GatewayImage = spec.GatewayImage, spec.ClientImage
-	trial, err := s.BeginQualification(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return trial
 }
 
 func TestExecutionIntentsBindExactResourcesWithoutRestartOrRebind(t *testing.T) {
@@ -309,8 +298,8 @@ func TestExecutionRenameBeforeFsyncErrorRetainsIntentForDurableReconciliation(t 
 func TestExecutionListingHasBoundedSummaryPagesAndContinuation(t *testing.T) {
 	s, record := executionFixture(t)
 	for range ExecutionPageSize {
-		if _, err := executionTrial(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: record.Project, PolicyFingerprint: record.Snapshot.PolicyFingerprint,
-			Runtime: record.Runtime, DaemonID: record.DaemonID, Endpoint: record.Endpoint, GatewayImage: record.GatewayImage, ClientImage: record.ClientImage}, "enforcement", nil); err != nil {
+		if _, err := executionSmoke(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: record.Project, PolicyFingerprint: record.Snapshot.PolicyFingerprint,
+			Runtime: record.Runtime, DaemonID: record.DaemonID, Endpoint: record.Endpoint, GatewayImage: record.GatewayImage, ClientImage: record.ClientImage}); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -2486,7 +2486,7 @@ func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
 	t.Run("assigned task Git hook", func(t *testing.T) {
 		cfg, spec, artifacts, recorder, rt := newFixture(t, "")
 		spec.AssignedTask = "2026-09-02-required-hook"
-		artifacts.gitHookDir = func() (string, error) { return "", sentinel }
+		artifacts.gitHookDir = func(string) (string, error) { return "", sentinel }
 		assertStopped(t, cfg, spec, artifacts, recorder, rt, "prepare box Git hook", true)
 	})
 

@@ -124,10 +124,12 @@ func boxCommitTrailer(cfg *config.Config, spec RunSpec) string {
 	return "coop (" + desc + ") <noreply@coop.dev>"
 }
 
-// gitHookDir writes the coop prepare-commit-msg hook (executable) into a fresh temp dir, for
-// mounting as the box's core.hooksPath. The caller cleans it up (tmpDirs).
-func gitHookDir() (string, error) {
-	dir, err := os.MkdirTemp("", "coop-githooks-")
+// gitHookDir writes the coop prepare-commit-msg hook (executable) into a fresh temp dir under
+// parent, for mounting as the box's core.hooksPath. Empty parent means the system temp dir; a
+// filtered run passes the execution's private artifact directory so exact-owned cleanup covers
+// every generated mount. The caller cleans it up (tmpDirs).
+func gitHookDir(parent string) (string, error) {
+	dir, err := os.MkdirTemp(parent, "coop-githooks-")
 	if err != nil {
 		return "", err
 	}

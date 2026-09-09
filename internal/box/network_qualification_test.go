@@ -70,37 +70,37 @@ func TestNetworkQualificationBindsCurrentDefinitionAndEntireRuntime(t *testing.T
 	}
 }
 
-func TestNetworkTrialCannotFallThroughToOpenRun(t *testing.T) {
-	code, err := runWithNetworkTrial(&config.Config{}, runtime.Runtime{}, RunSpec{Ctx: context.Background()}, defaultCompositionArtifactOps(), &networkTrialLaunch{})
+func TestNetworkSmokeCannotFallThroughToOpenRun(t *testing.T) {
+	code, err := runWithNetworkSmoke(&config.Config{}, runtime.Runtime{}, RunSpec{Ctx: context.Background()}, defaultCompositionArtifactOps(), &networkSmokeLaunch{})
 	if code != -1 || err == nil || !strings.Contains(err.Error(), "requires a filtered capture") {
-		t.Fatal("trial reached ordinary host work", code, err)
+		t.Fatal("preflight reached ordinary host work", code, err)
 	}
-	for _, name := range []string{"AllowUnqualified", "Trial", "TrialPurpose"} {
+	for _, name := range []string{"AllowUnqualified", "Smoke", "SmokePurpose"} {
 		if _, found := reflect.TypeFor[RunSpec]().FieldByName(name); found {
-			t.Fatal("public run spec contains trial bypass")
+			t.Fatal("public run spec contains a preflight bypass")
 		}
 	}
 }
 
-// A built image pair is construction, not proof. Only a completed qualification
-// record can hand a workload an image, and a missing or forged reference fails.
+// A built image pair is construction, not proof. Only a completed host record
+// can hand a workload an image, and a missing or forged reference fails.
 func TestNetworkCaptureRequiresACompletedQualification(t *testing.T) {
 	f, d := filteredFixture(t)
 	capture := &CapturedEgress{Store: f.store, Project: f.record.Project, Fingerprint: f.policy.Fingerprint}
 	for _, id := range []string{"", strings.Repeat("f", 64)} {
 		capture.QualificationID = id
-		if got, err := capturedNetworkCandidate(capture, f.policy, "none", nil); err == nil || got.ClientImage != "" {
+		if got, err := capturedNetworkCandidate(capture, f.policy, nil); err == nil || got.ClientImage != "" {
 			t.Fatal("missing or forged reference became qualification")
 		}
 	}
-	// A trial launch carries its own unproven candidate, and only when the
-	// capture claims no completed qualification of its own.
-	trial := &networkTrialLaunch{authority: d.trial}
-	got, err := capturedNetworkCandidate(&CapturedEgress{Store: f.store}, f.policy, "none", trial)
+	// A preflight launch carries its own unproven candidate, and only when the
+	// capture claims no completed record of its own.
+	smoke := &networkSmokeLaunch{authority: d.smoke}
+	got, err := capturedNetworkCandidate(&CapturedEgress{Store: f.store}, f.policy, smoke)
 	if err != nil || got.ClientImage != f.image {
-		t.Fatal("trial permit lost its candidate", got, err)
+		t.Fatal("preflight permit lost its candidate", got, err)
 	}
-	if _, err := capturedNetworkCandidate(capture, f.policy, "none", trial); err == nil {
-		t.Fatal("trial permit reused a workload qualification reference")
+	if _, err := capturedNetworkCandidate(capture, f.policy, smoke); err == nil {
+		t.Fatal("preflight permit reused a workload record reference")
 	}
 }

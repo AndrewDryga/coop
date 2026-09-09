@@ -89,7 +89,7 @@ type filteredDocker interface {
 
 // All policy and exposure checks precede runtime mutation. A returned execution
 // on error still owns any published intent; the caller must run its cleanup.
-func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtime.Runtime, spec RunSpec, capture *CapturedEgress, composeFile string, trial *networkTrialLaunch) (*filteredExecution, error) {
+func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtime.Runtime, spec RunSpec, capture *CapturedEgress, composeFile string, smoke *networkSmokeLaunch) (*filteredExecution, error) {
 	if capture == nil || capture.Store == nil || ctx == nil {
 		return nil, errors.New("filtered launch requires a trusted captured network policy")
 	}
@@ -124,14 +124,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if err := capture.Store.CheckExposure(exposed); err != nil {
 		return nil, err
 	}
-	// Re-derive the MCP routing shape from the same trusted source admission
-	// used. A configuration edited in between fails the qualification match
-	// here rather than launching against an unqualified transport.
-	_, projection, err := NetworkMCPDependencies(cfg, spec, capture.Store)
-	if err != nil {
-		return nil, err
-	}
-	candidate, err := capturedNetworkCandidate(capture, policy, projection, trial)
+	candidate, err := capturedNetworkCandidate(capture, policy, smoke)
 	if err != nil {
 		return nil, err
 	}
@@ -168,16 +161,16 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		QualificationID: capture.QualificationID, ClientImage: f.image,
 		Runtime: "docker", DaemonID: docker.Info().ID, Endpoint: docker.Endpoint(), GatewayImage: candidate.GatewayImage,
 		SessionID: capture.SessionID, AttemptID: capture.AttemptID}
-	if trial == nil {
+	if smoke == nil {
 		f.record, err = f.store.CreateExecution(ctx, executionSpec)
 	} else {
-		f.record, err = trial.authority.CreateExecution(ctx, executionSpec, trial.caseName, trial.client)
+		f.record, err = smoke.authority.CreateExecution(ctx, executionSpec)
 	}
 	if err != nil {
 		return f, err
 	}
-	if trial != nil && trial.registered != nil {
-		trial.registered(f.record)
+	if smoke != nil && smoke.registered != nil {
+		smoke.registered(f.record)
 	}
 	launch := networkgateway.LaunchConfig{Version: 1, RunID: f.record.ID, Epoch: f.record.Epoch, Policy: policy, Protected: protected}
 	if err := launch.Validate(); err != nil {

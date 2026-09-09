@@ -116,9 +116,9 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-			} else if err == nil || !strings.Contains(err.Error(), "run explicit network setup") {
+			} else if err == nil || !strings.Contains(err.Error(), "run `coop net setup`") {
 				// Filtered resolution is proved by the refusal that follows it:
-				// there is no completed qualification on this host.
+				// there is no completed setup on this host.
 				t.Fatal("filtered resolution did not reach qualification matching", err)
 			}
 			if cfg.Egress != test.want {
@@ -205,7 +205,7 @@ func TestAdmitNetworkClassifiesOperatorInputBeforeCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := admitFixture(t, cfg, repo, NetworkAdmission{RulesFile: outside}); err == nil ||
-		!strings.Contains(err.Error(), "run explicit network setup") {
+		!strings.Contains(err.Error(), "run `coop net setup`") {
 		t.Fatal("an operator rules file did not grant its own authority", err)
 	}
 }

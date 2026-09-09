@@ -19,6 +19,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/preset"
@@ -127,10 +128,14 @@ type RunSpec struct {
 	// AdmitNetwork before launch. It is never populated from a request or a
 	// serialized spec: a box cannot grant itself network access.
 	CapturedEgress *CapturedEgress `json:"-"`
-	// networkTrial is the qualification permit. Unexported on purpose: only the
-	// in-package setup workflow can drive a trial through this same engine, so
-	// what a trial proves is exactly what a workload later gets.
-	networkTrial *networkTrialLaunch
+	// NetworkClient is the client kind this run launches, so filtered admission
+	// asks each provider for the endpoints that client actually needs. Empty is
+	// the ordinary CLI; an ACP launch sets it explicitly.
+	NetworkClient egress.Client
+	// networkSmoke is the host preflight permit. Unexported on purpose: only the
+	// in-package setup workflow can drive a smoke through this same engine, so
+	// what it proves is exactly what a workload later gets.
+	networkSmoke *networkSmokeLaunch
 
 	// Ctx, when non-nil, makes the run cancelable: the container runs in its own process group
 	// and canceling Ctx tears it down (SIGTERM→SIGKILL). The loop sets this so a second Ctrl-C
@@ -216,7 +221,7 @@ type compositionArtifactOps struct {
 	writeFile         func(parent, content string) (string, error)
 	chmod             func(string, os.FileMode) error
 	assembleAgentsDir func(parent string, files []genFile) (string, error)
-	gitHookDir        func() (string, error)
+	gitHookDir        func(parent string) (string, error)
 }
 
 func defaultCompositionArtifactOps() compositionArtifactOps {
@@ -250,11 +255,11 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	return runWithCompositionArtifacts(cfg, rt, spec, defaultCompositionArtifactOps())
 }
 
-// runWithNetworkTrial is the private qualification entry point. The setup
-// workflow drives the ordinary launch engine with a trial permit; nothing
-// outside this package can construct one, and RunSpec exposes no bypass.
-func runWithNetworkTrial(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifacts compositionArtifactOps, trial *networkTrialLaunch) (int, error) {
-	spec.networkTrial = trial
+// runWithNetworkSmoke is the private preflight entry point. The setup workflow
+// drives the ordinary launch engine with a smoke permit; nothing outside this
+// package can construct one, and RunSpec exposes no bypass.
+func runWithNetworkSmoke(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifacts compositionArtifactOps, smoke *networkSmokeLaunch) (int, error) {
+	spec.networkSmoke = smoke
 	return runWithCompositionArtifacts(cfg, rt, spec, artifacts)
 }
 
@@ -285,8 +290,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if spec.ForkWorker && spec.ForkGeneration == "" {
 		return -1, errors.New("detached fork worker label requires a fork generation")
 	}
-	if spec.networkTrial != nil && spec.CapturedEgress == nil {
-		return -1, errors.New("network qualification trial requires a filtered capture")
+	if spec.networkSmoke != nil && spec.CapturedEgress == nil {
+		return -1, errors.New("network preflight requires a filtered capture")
 	}
 	// Restricted networking fails CLOSED at the box boundary: the gateway is
 	// installed by the host before any agent starts, so a filtered posture that
@@ -395,7 +400,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if spec.Ctx == nil {
 			spec.Ctx = context.Background()
 		}
-		filtered, err = prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, composeFile, spec.networkTrial)
+		filtered, err = prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, composeFile, spec.networkSmoke)
 		if filtered != nil {
 			defer func() {
 				workload := filtered.workloadOutcome(exitCode, result, spec.Ctx.Err() != nil)
@@ -617,7 +622,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		coAuthor := boxCommitTrailer(cfg, spec)
 		hooksPath := ""
 		if coAuthor != "" || spec.AssignedTask != "" {
-			dir, err := artifacts.gitHookDir()
+			dir, err := artifacts.gitHookDir(artifacts.parent)
 			if err != nil {
 				return -1, fmt.Errorf("prepare box Git hook: %w", err)
 			}

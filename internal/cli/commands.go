@@ -73,6 +73,18 @@ func (a *app) runInBox(cmd []string, agent string, peers []agents.Target) (int, 
 	return a.runInBoxMode(cmd, agent, peers, false)
 }
 
+// takeNetworkFlags strips coop's own --egress/--allow-domain/--egress-rules from
+// a launch's arguments and remembers them for the admission this run performs.
+// Parsing stops at `--`: everything after it belongs to the agent or command.
+func (a *app) takeNetworkFlags(args []string) ([]string, error) {
+	flags, rest, err := extractNetworkFlags(args)
+	if err != nil {
+		return nil, err
+	}
+	a.network = flags
+	return rest, nil
+}
+
 func (a *app) runAgentInBox(cmd []string, agent string, peers []agents.Target) (int, error) {
 	return a.runInBoxMode(cmd, agent, peers, true)
 }
@@ -179,6 +191,16 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 		spec.ForkGeneration = string(forkIdentity.Generation)
 		spec.ForkOwner = forkctl.ForkContainerOwner(activityRepo, forkIdentity.Name, forkIdentity.Generation)
 	}
+	// Network admission runs on the HOST, before any container: it resolves this
+	// launch's posture and, for filtered mode, freezes the policy the gateway
+	// will enforce. An open or offline run gets a nil capture and proceeds
+	// exactly as it does today.
+	capture, err := box.AdmitNetwork(a.cfg, a.rt, spec, a.network.admission())
+	if err != nil {
+		return 1, err
+	}
+	defer capture.Close()
+	spec.CapturedEgress = capture
 	code, err := box.Run(a.cfg, a.rt, spec)
 	// An interactive/run box makes unsigned commits; sign what THIS session produced on exit so a
 	// protected remote accepts them. Best-effort, session-scoped, skipped for a dirty tree.
@@ -214,6 +236,10 @@ func sessionCompanionRepositoriesFromEnvironment() ([]box.CompanionRepository, e
 }
 
 func (a *app) cmdRun(args []string) (int, error) {
+	args, err := a.takeNetworkFlags(args)
+	if err != nil {
+		return 2, err
+	}
 	// Intercept the meta cases before entering the box. We can't lean on the dispatch's --help
 	// handling here: it's `--`-blind, so it would mistake `coop run -- --help` (run --help in the
 	// box) for a help request. Honor -- ourselves.
@@ -243,6 +269,10 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 		return 2, err
 	}
 	tool := t.Provider
+	args, err = a.takeNetworkFlags(args)
+	if err != nil {
+		return 2, err
+	}
 	peerVals, args, err := extractPeer(args)
 	if err != nil {
 		return 2, err
@@ -278,6 +308,10 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 // ad-hoc read-only peers on top of the preset's own consult roles.
 func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 	tool := p.Lead().Provider
+	args, err := a.takeNetworkFlags(args)
+	if err != nil {
+		return 2, err
+	}
 	peerVals, args, err := extractPeer(args)
 	if err != nil {
 		return 2, err

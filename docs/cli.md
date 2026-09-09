@@ -60,6 +60,7 @@ SERVICES — the box's .agent/compose.yml sidecars
 SAFETY — prove the box holds, catch committed secrets
   coop doctor                       attack the box, prove isolation holds
   coop check-secrets                scan the working tree for committed secrets
+  coop net setup                    prepare restricted egress for this host
 
 SETUP & MAINTENANCE
   coop init [--stack asdf]          scaffold queue, hooks, skills, agent dirs

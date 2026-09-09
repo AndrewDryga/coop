@@ -33,7 +33,7 @@ func TestPrepareCommitMsgHook(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	dir, err := gitHookDir()
+	dir, err := gitHookDir("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestPrepareCommitMsgHookStampsAssignedTask(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	dir, err := gitHookDir()
+	dir, err := gitHookDir("")
 	if err != nil {
 		t.Fatal(err)
 	}

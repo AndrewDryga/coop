@@ -3,88 +3,57 @@ package networkstate
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/AndrewDryga/coop/internal/egress"
 )
 
-func TestQualificationMCPRequiresProjectionBeforeReservation(t *testing.T) {
-	client := QualifiedClient{Dependency: egress.Dependency{Provider: "anthropic", Client: egress.ClientCLI, Backend: "direct", AuthMode: "api-key", Version: "2026-09-08"}, MCPProjection: "none"}
-	trial, spec, _ := qualificationFixture(t, []QualifiedClient{client})
-	if got, err := trial.CreateExecution(context.Background(), spec, "mcp", &client); err == nil || got.ID != "" {
-		t.Fatal("MCP trial without an MCP projection accepted", err)
+func TestQualificationCannotRerunItsSmokeOrReplaceObservations(t *testing.T) {
+	smoke, spec := qualificationFixture(t)
+	if got, err := smoke.CreateExecution(context.Background(), spec); err == nil || got.ID != "" {
+		t.Fatal("a preflight cherry-picked a repeated smoke attempt")
 	}
-	if _, err := trial.store.root.Stat(trial.caseFile("mcp", &client)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("invalid MCP trial consumed a case reservation", err)
-	}
-}
-
-func TestQualificationCannotRetryCaseOrReplaceObservations(t *testing.T) {
-	trial, spec, proofs := qualificationFixture(t, nil)
-	if got, err := trial.CreateExecution(context.Background(), spec, "enforcement", nil); err == nil || got.ID != "" {
-		t.Fatal("one group can cherry-pick repeated case attempts")
-	}
-	if _, err := trial.RecordEvidence(proofs[0].RunID, []byte(`{"changed":true}`)); err == nil {
+	if _, err := smoke.RecordEvidence(smoke.runID, []byte(`{"changed":true}`)); err == nil {
 		t.Fatal("completed observations replaced")
 	}
-	if err := trial.store.root.Remove("qualification-evidence-" + proofs[0].RunID + ".json"); err != nil {
+	if err := smoke.store.root.Remove("qualification-evidence-" + smoke.runID + ".json"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := trial.Complete(nil, proofs); err == nil || got.ID != "" {
+	if got, err := smoke.Complete(smokeDomain); err == nil || got.ID != "" {
 		t.Fatal("absent observation artifact qualified")
-	}
-}
-
-func TestQualificationCannotInventProviderPolicyOrResumeRelationship(t *testing.T) {
-	client := QualifiedClient{Dependency: egress.Dependency{Provider: "anthropic", Client: egress.ClientCLI, Backend: "direct", AuthMode: "api-key", Version: "2026-09-08"}, MCPProjection: "none"}
-	trial := executionTrial(t, openStore(t))
-	if got, err := trial.CreateExecution(context.Background(), qualificationExecutionSpec(t, trial), "provider-start", &client); err == nil || got.ID != "" {
-		t.Fatal("trial declared a provider absent from its policy")
-	}
-	trial, _, proofs := qualificationFixture(t, []QualifiedClient{client})
-	for i := range proofs {
-		if proofs[i].Case == "provider-resume" {
-			proofs[i].ResumesRunID = strings.Repeat("f", 32)
-		}
-	}
-	if got, err := trial.Complete([]QualifiedClient{client}, proofs); err == nil || got.ID != "" {
-		t.Fatal("unrelated session qualified as resume")
 	}
 }
 
 func TestQualificationLossBlocksStartsNotInspectionOrCleanup(t *testing.T) {
 	for _, lost := range []string{"qualification", "contract"} {
 		t.Run(lost, func(t *testing.T) {
-			trial, spec, proofs := qualificationFixture(t, nil)
-			q, err := trial.Complete(nil, proofs)
+			smoke, spec := qualificationFixture(t)
+			q, err := smoke.Complete(smokeDomain)
 			if err != nil {
 				t.Fatal(err)
 			}
 			spec.QualificationID = q.ID
-			r, err := trial.store.CreateExecution(context.Background(), spec)
+			r, err := smoke.store.CreateExecution(context.Background(), spec)
 			if err != nil {
 				t.Fatal(err)
 			}
-			r = prepareFixtureLaunch(t, trial.store, r)
+			r = prepareFixtureLaunch(t, smoke.store, r)
 			switch lost {
 			case "qualification":
-				err = trial.store.root.Remove("qualification-" + q.ID + ".json")
+				err = smoke.store.root.Remove("qualification-" + q.ID + ".json")
 			case "contract":
 				r.QualificationContract = "historical-contract"
 				data, _ := json.Marshal(r)
-				err = trial.store.publish("execution-"+r.ID+".json", data, true)
+				err = smoke.store.publish("execution-"+r.ID+".json", data, true)
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := trial.store.BeginResourceCreation(context.Background(), r.ID, r.Revision, "controller"); err == nil {
+			if _, err := smoke.store.BeginResourceCreation(context.Background(), r.ID, r.Revision, "controller"); err == nil {
 				t.Fatal("missing qualification authorized new runtime work")
 			}
-			evidence, err := OpenEvidence(trial.store.Path(), nil)
+			evidence, err := OpenEvidence(smoke.store.Path(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

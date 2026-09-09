@@ -27,9 +27,9 @@ func diagnosticFixture(t *testing.T) (*Store, *Evidence, Execution) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := executionTrial(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: old.Project, PolicyFingerprint: policy.Fingerprint,
+	record, err := executionSmoke(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: old.Project, PolicyFingerprint: policy.Fingerprint,
 		Runtime: "docker", DaemonID: "fixture-daemon", Endpoint: "unix:///fixture.sock",
-		GatewayImage: old.GatewayImage, ClientImage: old.ClientImage}, "enforcement", nil)
+		GatewayImage: old.GatewayImage, ClientImage: old.ClientImage})
 	if err != nil {
 		t.Fatal(err)
 	}

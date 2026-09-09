@@ -157,6 +157,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	group("SAFETY — prove the box holds, catch committed secrets")
 	row("coop doctor", "attack the box, prove isolation holds")
 	row("coop check-secrets", "scan the working tree for committed secrets")
+	row("coop net setup", "prepare restricted egress for this host")
 
 	group("SETUP & MAINTENANCE")
 	row("coop init [--stack asdf]", "scaffold queue, hooks, skills, agent dirs")
@@ -859,6 +860,23 @@ var commandHelp = map[string]string{
   depth (**/.agent/*) and commits kb/ (including kb/rules/), skills/, presets/, claude/,
   and loop.yaml at any depth too (a large member MAY add its own), keeping only project.yaml
   top-level. Never clobbers existing files.`,
+
+	"net": `coop net — restricted egress: only the destinations you allowed.
+
+  Usage: coop net setup
+
+  'setup' prepares this host: it builds the pinned gateway and the locked
+  client image for your Docker daemon, then proves them with one smoke run
+  (an allowed name works without proxy variables; a denied name, a raw IP,
+  the metadata address and denied DNS are all refused) and records what it
+  proved. Run it once per machine, and again after a coop or Docker upgrade.
+
+  Then any launch can ask for it:
+
+    coop run --egress filtered --allow-domain example.com -- curl https://example.com
+    coop claude --egress filtered
+
+  Every other destination is denied at the gateway, not inside the box.`,
 
 	"doctor": `coop doctor — prove the box's isolation: attack it, inside and from the host.
 

@@ -46,6 +46,7 @@ type app struct {
 	sweptRepos           map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
 	sweptNetworks        bool                                         // orphaned coop networks already swept this process (they are not per repo)
 	preset               *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
+	network              networkFlags                                 // this launch's --egress/--allow-domain/--egress-rules, resolved by box.AdmitNetwork
 	beforeSignRefUpdate  func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
 	afterDetachedPublish func()                                       // test seam for state replacement before repeated child validation
 	acpModels            func(agent string) ([]acpctl.Model, error)   // test seam for Claude/Gemini model refresh; nil → a real ACP box
@@ -190,6 +191,10 @@ func (a *app) dispatch(argv []string) (int, error) {
 	case "run":
 		return a.cmdRun(rest)
 	case "shell":
+		rest, err := a.takeNetworkFlags(rest)
+		if err != nil {
+			return 2, err
+		}
 		if err := rejectArgs("shell", rest); err != nil {
 			return 2, err
 		}
@@ -222,6 +227,8 @@ func (a *app) dispatch(argv []string) (int, error) {
 		return a.cmdInit(rest)
 	case "doctor":
 		return a.cmdDoctor(rest)
+	case "net": // host-wide: restricted networking setup (no project needed)
+		return a.cmdNet(rest)
 	case "check-secrets":
 		return a.cmdCheckSecrets(rest)
 	case "build":

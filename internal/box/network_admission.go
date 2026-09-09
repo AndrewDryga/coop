@@ -160,16 +160,16 @@ func checkFilteredSupport(cfg *config.Config, spec RunSpec, p *project.Project) 
 	return nil
 }
 
-// admitFilteredNetwork completes the capture: operator and project rules, the
-// provider core bundles the selected targets need, and the automatic MCP hosts,
-// authorized in ONE store.Admit so posture and envelope come from one decision.
+// admitFilteredNetwork completes the capture: operator and project rules and
+// the provider core bundles the selected targets need, authorized in ONE
+// store.Admit so posture and envelope come from one decision.
 func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, store *networkstate.Store, canonicalProject string, input networkstate.Admission) (*CapturedEgress, error) {
 	bundles, err := NetworkProviderBundles(cfg, spec)
 	if err != nil {
 		return nil, err
 	}
 	input.Bundles = bundles
-	automatic, projection, err := NetworkMCPDependencies(cfg, spec, store)
+	automatic, err := NetworkMCPDependencies(cfg, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -185,19 +185,20 @@ func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// Match coverage before touching the runtime: a project with no completed
-	// setup should say so, not fail on a Docker inspection it never needed.
+	// Match the record's own clients before touching the runtime: a selection
+	// this host never set up should say so, not fail on a Docker inspection it
+	// never needed.
 	qualifications, err := store.Qualifications(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var covered []networkstate.Qualification
 	for _, qualification := range qualifications {
-		if qualification.RequireLaunch(policy, projection) == nil {
+		if qualification.RequireLaunch(policy) == nil {
 			covered = append(covered, qualification)
 		}
 	}
-	unqualified := errors.New("no completed network qualification matches this runtime, provider and MCP configuration; run explicit network setup")
+	unqualified := errors.New("no completed network setup matches this runtime and provider selection; run `coop net setup`")
 	if len(covered) == 0 {
 		return nil, unqualified
 	}

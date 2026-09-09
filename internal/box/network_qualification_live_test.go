@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
@@ -20,10 +21,10 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-// This opt-in test proves the private trial launch seam against an explicitly
-// constructed image pair. It does NOT publish qualification: its two runs cover
-// only a subset of the full enforcement/provider/MCP acceptance matrix.
-func TestRestrictedNetworkTrialRuntime(t *testing.T) {
+// This opt-in test is the release-level runtime matrix, not the per-host
+// preflight: it drives the private smoke seam against an explicitly constructed
+// image pair and publishes nothing. `coop net setup` records the host proof.
+func TestRestrictedNetworkRuntime(t *testing.T) {
 	root := os.Getenv("COOP_NETWORK_TRIAL_STATE")
 	if root == "" {
 		t.Skip("requires COOP_NETWORK_TRIAL_STATE and a local Docker daemon")
@@ -35,7 +36,7 @@ func TestRestrictedNetworkTrialRuntime(t *testing.T) {
 	defer store.Close()
 	build, cancelBuild := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancelBuild()
-	docker, err := runtime.InspectDocker(build, runtime.Runtime{Name: "docker"})
+	docker, err := runtime.BindDocker(build, runtime.Runtime{Name: "docker"}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,9 +45,17 @@ func TestRestrictedNetworkTrialRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	closure, err := agents.LockedClientClosure(agents.ClientPlatform{OS: candidate.Runtime.OS, Architecture: candidate.Runtime.Architecture, Libc: candidate.Libc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clients []networkstate.QualifiedClient
+	for _, client := range closure.Clients {
+		clients = append(clients, networkstate.QualifiedClient{Provider: client.Provider, Client: client.Client, Version: client.Version})
+	}
 	for _, name := range []string{"enforcement", "guard-loss"} {
 		t.Run(name, func(t *testing.T) {
-			trial, err := store.BeginQualification(candidate)
+			smoke, err := store.BeginQualification(candidate, clients)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -64,7 +73,7 @@ func TestRestrictedNetworkTrialRuntime(t *testing.T) {
 			defer cancel()
 			var registered networkstate.Execution
 			registeredCh := make(chan string, 1)
-			permit := &networkTrialLaunch{authority: trial, caseName: name, registered: func(r networkstate.Execution) { registered = r; registeredCh <- r.ID }}
+			permit := &networkSmokeLaunch{authority: smoke, registered: func(r networkstate.Execution) { registered = r; registeredCh <- r.ID }}
 			faultDone := make(chan error, 1)
 			if name == "guard-loss" {
 				go func() {
@@ -93,7 +102,7 @@ if curl -q --proxy '' --noproxy '*' --silent --max-time 3 --resolve example.org:
 				t.Fatal(err)
 			}
 			started := time.Now()
-			code, runErr := runWithNetworkTrial(cfg, runtime.Runtime{Name: "docker"}, RunSpec{
+			code, runErr := runWithNetworkSmoke(cfg, runtime.Runtime{Name: "docker"}, RunSpec{
 				Repo: repo, Workdir: "/workspace", Batch: true, Quiet: true, Ctx: ctx, Stdout: &output, Stderr: io.Discard,
 				CapturedEgress: &CapturedEgress{Store: store, Project: repo, Fingerprint: policy.Fingerprint}, Cmd: []string{"sh", "-c", script},
 			}, defaultCompositionArtifactOps(), permit)
@@ -141,7 +150,7 @@ if curl -q --proxy '' --noproxy '*' --silent --max-time 3 --resolve example.org:
 				}
 				checkQualifiedTraffic(t, r.Receipt.Snapshot, policy.Grants[0].ID)
 			}
-			t.Logf("trial=%s run=%s image=%s duration_ms=%d receipt=%s cleanup=complete", name, r.ID, candidate.ClientImage, time.Since(started).Milliseconds(), r.Receipt.Completeness)
+			t.Logf("case=%s run=%s image=%s duration_ms=%d receipt=%s cleanup=complete", name, r.ID, candidate.ClientImage, time.Since(started).Milliseconds(), r.Receipt.Completeness)
 		})
 	}
 }
