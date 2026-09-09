@@ -4,12 +4,88 @@ import (
 	"context"
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
+
+// filteredExtraMounts reduces COOP_RUN_ARGS and a run's own extra arguments to
+// the one thing a filtered launch can still honor: bind mounts. They are then
+// ordinary extra mounts — the same exposure, parent and inode checks apply, so
+// nothing here is a hole in the boundary. Anything else is refused BY NAME:
+// a runtime argument this release has not qualified could hand the workload
+// another network, another user or another capability, and a filtered run that
+// quietly dropped it would enforce a policy the operator never chose.
+func filteredExtraMounts(configured, spec []string) ([]string, error) {
+	all := append(append([]string{}, configured...), spec...)
+	var out []string
+	for i := 0; i < len(all); i++ {
+		name, inline, hasInline := strings.Cut(all[i], "=")
+		// Recognize the argument BEFORE consuming anything after it: a bare
+		// boolean flag has no value, and reporting it as "needs a value" would
+		// name the wrong problem.
+		if name != "-v" && name != "--volume" && name != "--mount" {
+			return nil, fmt.Errorf("restricted networking accepts bind mounts only in extra runtime arguments; %q is not one — drop it, or run this box without filtered egress", name)
+		}
+		value := inline
+		if !hasInline {
+			if i+1 >= len(all) {
+				return nil, fmt.Errorf("restricted networking: %s needs a bind mount", name)
+			}
+			i++
+			value = all[i]
+		}
+		if name == "--mount" {
+			mount, err := bindMountShorthand(value)
+			if err != nil {
+				return nil, err
+			}
+			value = mount
+		}
+		out = append(out, "-v", value)
+	}
+	return out, nil
+}
+
+// bindMountShorthand rewrites one --mount descriptor into the -v form the
+// filtered mount plan already validates, so there is one mount grammar here and
+// not two. Only type=bind is accepted: every other mount type is a different
+// qualification question.
+func bindMountShorthand(value string) (string, error) {
+	fields, err := csv.NewReader(strings.NewReader(value)).Read()
+	if err != nil {
+		return "", errors.New("restricted networking: --mount descriptor is not readable")
+	}
+	var source, target string
+	readonly := false
+	for _, field := range fields {
+		key, field, _ := strings.Cut(field, "=")
+		switch key {
+		case "type":
+			if field != "bind" {
+				return "", fmt.Errorf("restricted networking accepts bind mounts only; --mount type=%s is not one", field)
+			}
+		case "source", "src":
+			source = field
+		case "target", "destination", "dst":
+			target = field
+		case "readonly", "ro":
+			readonly = field == "" || field == "true"
+		default:
+			return "", fmt.Errorf("restricted networking: --mount field %q is not qualified", key)
+		}
+	}
+	if source == "" || target == "" {
+		return "", errors.New("restricted networking: --mount needs source= and target=")
+	}
+	if readonly {
+		return source + ":" + target + ":ro", nil
+	}
+	return source + ":" + target, nil
+}
 
 // Check the complete emitted mount plan, not only its config ancestors. The
 // sole authority-tree exception is an exact, locally generated mount source

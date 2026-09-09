@@ -27,57 +27,80 @@ type Admission struct {
 	ExportDestinations bool
 }
 
-// PreviewAdmissionMode performs no publication and returns no authority handle.
-// It lets ordinary launches inspect volume exposure before a first owner key is
+// AdmissionPreview separates two questions a launch answers at once: which
+// posture these inputs resolve to, and whether the project's current request
+// already fits its remembered approval. A read-only posture view needs them
+// apart — a pending request is exactly what it exists to show, so refusing to
+// describe the project would hide the one fact the operator came for.
+type AdmissionPreview struct {
+	Mode egress.Mode
+	// Pending is non-nil when the request needs review before a launch. It is
+	// never a reason to widen anything: Admit fails on the same condition.
+	Pending error
+}
+
+// PreviewAdmission performs no publication and returns no authority handle. It
+// lets ordinary launches inspect volume exposure before a first owner key is
 // created. The caller must still Admit, and refuse if preparation changes mode.
-func PreviewAdmissionMode(path, project string, exposed []string, input Admission) (egress.Mode, error) {
+func PreviewAdmission(path, project string, exposed []string, input Admission) (AdmissionPreview, error) {
 	if err := CheckPathExposure(path, exposed); err != nil {
-		return "", err
+		return AdmissionPreview{}, err
 	}
 	store, err := openFiles(path, exposed, false)
 	if errors.Is(err, os.ErrNotExist) {
 		return input.preview(nil)
 	}
 	if err != nil {
-		return "", err
+		return AdmissionPreview{}, err
 	}
 	defer store.Close()
 	if err := store.loadKey(false); err != nil {
-		return "", err
+		return AdmissionPreview{}, err
 	}
 	if store.key == nil {
 		return input.preview(nil)
 	}
-	return store.admissionMode(project, input)
+	return store.admissionPreview(project, input)
 }
 
-// admissionMode is preparation only: it lets the host resolve posture before
+// PreviewAdmissionMode is the launch caller's form: a pending request is a
+// failure there, because admission is about to happen.
+func PreviewAdmissionMode(path, project string, exposed []string, input Admission) (egress.Mode, error) {
+	preview, err := PreviewAdmission(path, project, exposed, input)
+	if err != nil {
+		return "", err
+	}
+	if preview.Pending != nil {
+		return "", preview.Pending
+	}
+	return preview.Mode, nil
+}
+
+// admissionPreview is preparation only: it lets the host resolve posture before
 // deriving any filtered dependency. Admit rereads approval and performs the
 // actual authorization once those dependencies exist.
-func (s *Store) admissionMode(project string, input Admission) (egress.Mode, error) {
+func (s *Store) admissionPreview(project string, input Admission) (AdmissionPreview, error) {
 	if err := s.authorityAvailable(); err != nil {
-		return "", err
+		return AdmissionPreview{}, err
 	}
 	id, err := s.projectID(project)
 	if err != nil {
-		return "", err
+		return AdmissionPreview{}, err
 	}
 	approval, err := s.approval(id)
 	if err != nil {
-		return "", err
+		return AdmissionPreview{}, err
 	}
 	return input.preview(approval)
 }
 
-func (a Admission) preview(approval *Approval) (egress.Mode, error) {
+func (a Admission) preview(approval *Approval) (AdmissionPreview, error) {
 	mode, err := a.resolveMode(approval)
 	if err != nil {
-		return "", err
+		return AdmissionPreview{}, err
 	}
-	if _, err := checkRequestEnvelope(approval, a.Requests); err != nil {
-		return "", err
-	}
-	return mode, nil
+	_, pending := checkRequestEnvelope(approval, a.Requests)
+	return AdmissionPreview{Mode: mode, Pending: pending}, nil
 }
 
 // Admit is the shared new-run authority boundary. Read one approval for both

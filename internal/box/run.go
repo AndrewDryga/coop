@@ -385,7 +385,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// validates it host-side before auto-running it (box.ValidateComposeFile in EnsureServices), so
 	// it can only ever declare a repo-scoped, loopback-only container — never host root. That
 	// removes the read-only decoy that used to strand an empty .agent/compose.yml in the repo.
-	if !spec.Batch && !spec.Quiet {
+	// A filtered run launches the qualified client image, not this repo's — so a
+	// stale-image nudge would point at a rebuild that changes nothing about it.
+	if !spec.Batch && !spec.Quiet && spec.CapturedEgress == nil {
 		for _, nudge := range StalenessNudges(cfg, spec.Repo, spec.Image) {
 			ui.Info("%s", nudge)
 		}
@@ -394,9 +396,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	var filtered *filteredExecution
 	var execution forkspace.ExecutionRecord
 	if spec.CapturedEgress != nil {
-		if len(cfg.ExtraRunArgs) != 0 || len(spec.ExtraArgs) != 0 {
-			return -1, errors.New("restricted networking does not yet qualify extra runtime arguments")
+		// COOP_RUN_ARGS and this run's own extra arguments become ordinary extra
+		// mounts, checked by the same filtered exposure rules as every other
+		// bind. Everything else is refused: an unqualified runtime argument can
+		// undo the boundary the capture was frozen for.
+		extra, argErr := filteredExtraMounts(cfg.ExtraRunArgs, spec.ExtraArgs)
+		if argErr != nil {
+			return -1, argErr
 		}
+		spec.ExtraArgs = extra
 		if spec.Ctx == nil {
 			spec.Ctx = context.Background()
 		}
@@ -409,6 +417,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				if execution.ID != "" && gone {
 					result = errors.Join(result, forkspace.EndExecution(spec.ActivityRepo, execution))
 				}
+				// After sealing, so the summary reports the receipt's own
+				// evidence rather than a snapshot cleanup was still amending.
+				// The loop and every quiet embedding get their own surface.
+				if !spec.Quiet && !spec.Batch {
+					filtered.report()
+				}
 			}()
 		}
 		if err != nil {
@@ -417,6 +431,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// The workload runs the qualified client image, never a repo image.
 		spec.Image = filtered.image
 		artifacts.parent = filtered.runfiles
+	}
+	// Whatever a box may reach is fully known before it starts, so the launch
+	// instructions say it. An agent that learns its own boundary by being
+	// refused burns a turn and reports policy as a broken tool or a dead host.
+	networkNote := ""
+	if filtered != nil {
+		networkNote = networkInstructionNote(filtered.policy)
 	}
 
 	// A single empty read-only file shadows every secret file; a single empty read-only
@@ -528,7 +549,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	var consultMounts []extraMount
 	consultWired := false
 	if spec.Homes && spec.ConsultLead != "" {
-		content, file, wired, ok, err := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers))
+		content, file, wired, ok, err := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers), networkNote)
 		if err != nil {
 			return -1, fmt.Errorf("assemble lead instruction for %s: %w", spec.ConsultLead, err)
 		}
@@ -576,7 +597,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// override if present, else the shared INSTRUCTIONS.md), mounted at its native global path
 	// — so it never burns a turn rediscovering the box. The consult lead is handled above, with its
 	// augmented file.
-	plan, err := instructionPlan(cfg, spec)
+	plan, err := instructionPlan(cfg, spec, networkNote)
 	if err != nil {
 		return -1, err
 	}
@@ -1433,7 +1454,7 @@ You run inside a coop container: a Debian box that IS your sandbox and security 
 // agentBaseInstructions is what an agent receives as its global instructions: the always-on
 // box environment note, followed by the user's instructions — a per-agent override if present,
 // else the shared INSTRUCTIONS.md. Consult and preset routing augment this; they do not replace it.
-func agentBaseInstructions(cfg *config.Config, agent, file string) (string, error) {
+func agentBaseInstructions(cfg *config.Config, agent, file, network string) (string, error) {
 	user := ""
 	data, present, err := readOptionalRegularFile(filepath.Join(cfg.AgentDir(agent), file))
 	if err != nil {
@@ -1451,9 +1472,9 @@ func agentBaseInstructions(cfg *config.Config, agent, file string) (string, erro
 		}
 	}
 	if strings.TrimSpace(user) == "" {
-		return boxEnvNote, nil
+		return boxEnvNote + network, nil
 	}
-	return boxEnvNote + "\n" + user, nil
+	return boxEnvNote + network + "\n" + user, nil
 }
 
 // readOptionalRegularFile distinguishes a missing override from a present file Coop could not
@@ -1642,7 +1663,7 @@ func synthHomeFallbackMounts(repo, homeInBox string, agentNames []string, expose
 // note plus the user's instructions (per agentBaseInstructions). The consult lead is excluded —
 // it gets its augmented file instead. Pure (no temp files / mounts),
 // so the selection and content are unit-testable; Run writes + mounts the result.
-func instructionPlan(cfg *config.Config, spec RunSpec) ([]instructionItem, error) {
+func instructionPlan(cfg *config.Config, spec RunSpec, network string) ([]instructionItem, error) {
 	if !spec.Homes {
 		return nil, nil
 	}
@@ -1652,7 +1673,7 @@ func instructionPlan(cfg *config.Config, spec RunSpec) ([]instructionItem, error
 			continue
 		}
 		if file := instructionFile(agent); file != "" {
-			content, err := agentBaseInstructions(cfg, agent, file)
+			content, err := agentBaseInstructions(cfg, agent, file, network)
 			if err != nil {
 				return nil, err
 			}
@@ -1707,12 +1728,12 @@ func assembleAgentsDir(parent string, gen []genFile) (string, error) {
 // reports whether coop-consult is reachable through either a preset role or an explicit peer.
 // ok is false only when the agent has no native instruction file. Pure, so the "no named peer
 // still mounts the base" invariant is unit-tested without a container.
-func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, peers []string) (content, file string, wired, ok bool, err error) {
+func leadInstructionMount(cfg *config.Config, lead string, p *preset.Preset, peers []string, network string) (content, file string, wired, ok bool, err error) {
 	file = instructionFile(lead)
 	if file == "" {
 		return "", "", false, false, nil
 	}
-	base, err := agentBaseInstructions(cfg, lead, file)
+	base, err := agentBaseInstructions(cfg, lead, file, network)
 	if err != nil {
 		return "", "", false, false, err
 	}
@@ -2091,7 +2112,11 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
 	}
-	args = append(args, cfg.ExtraRunArgs...)
+	if spec.CapturedEgress == nil {
+		// A filtered launch already folded COOP_RUN_ARGS into spec.ExtraArgs,
+		// as bind mounts and nothing else (filteredExtraMounts).
+		args = append(args, cfg.ExtraRunArgs...)
+	}
 	args = append(args, spec.ExtraArgs...)
 	args = append(args, "-e", "COOP_BOX=1")
 	if spec.SuperviseDescendants {

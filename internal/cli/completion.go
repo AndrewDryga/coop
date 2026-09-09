@@ -162,6 +162,28 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) > 1 && prev[len(prev)-1] == "--peer" {
 			return a.targetCandidates(cur, true, false)
 		}
+	case "net":
+		if len(prev) == 1 {
+			return netCommands
+		}
+		if len(prev) == 2 && (prev[1] == "inspect" || prev[1] == "watch" || prev[1] == "receipt") {
+			return a.netRunIDs()
+		}
+		if len(prev) > 1 && prev[len(prev)-1] == "--run" {
+			return a.netRunIDs()
+		}
+		switch prev[1] {
+		case "ls":
+			return []string{"--all", "--json"}
+		case "inspect", "watch":
+			return []string{"--json"}
+		case "receipt":
+			return []string{"--json", "--destinations"}
+		case "why", "explain":
+			return []string{"--run", "--json"}
+		case "approve":
+			return []string{"--mode"}
+		}
 	case "login", "credentials", "models":
 		if len(prev) == 1 {
 			return agents.Names()
@@ -296,6 +318,27 @@ func taskIDVerb(v string) bool {
 }
 
 // taskIDs lists the task ids across the configured queue(s) — local reads, for `__complete`.
+// netRunIDs completes a run id from this project's recorded runs, newest first.
+// Best-effort like every other candidate lookup: a host with no evidence root
+// simply completes nothing.
+func (a *app) netRunIDs() []string {
+	page, err := netExecutions()
+	if err != nil {
+		return nil
+	}
+	runs := page.Executions
+	if repo, err := netProject(a.cfg.RepoOverride); err == nil {
+		if scoped := netFilterProject(runs, netResolvedPath(repo)); len(scoped) > 0 {
+			runs = scoped
+		}
+	}
+	ids := make([]string, 0, len(runs))
+	for _, run := range runs {
+		ids = append(ids, run.ID)
+	}
+	return ids
+}
+
 func (a *app) taskIDs() []string {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {

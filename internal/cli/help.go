@@ -158,6 +158,8 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop doctor", "attack the box, prove isolation holds")
 	row("coop check-secrets", "scan the working tree for committed secrets")
 	row("coop net setup", "prepare restricted egress for this host")
+	row("coop net", "egress posture + pending requests")
+	row("coop net ls", "the filtered runs recorded here")
 
 	group("SETUP & MAINTENANCE")
 	row("coop init [--stack asdf]", "scaffold queue, hooks, skills, agent dirs")
@@ -863,7 +865,15 @@ var commandHelp = map[string]string{
 
 	"net": `coop net — restricted egress: only the destinations you allowed.
 
-  Usage: coop net setup
+  Usage: coop net                              this project's posture + requests
+         coop net setup                        prepare this host, once
+         coop net approve [--mode <m>]         review + remember the request
+         coop net ls [--all] [--json]          the filtered runs recorded here
+         coop net inspect <run> [--json]       requested, effective, observed
+         coop net watch <run> [--json]         follow a run until it seals
+         coop net receipt <run> [--json]       the sealed receipt
+         coop net why <domain> --run <run>     would its policy have allowed it?
+         coop net explain <event> --run <run>  why a refusal happened
 
   'setup' prepares this host: it builds the pinned gateway and the locked
   client image for your Docker daemon, then proves them with one smoke run
@@ -875,8 +885,33 @@ var commandHelp = map[string]string{
 
     coop run --egress filtered --allow-domain example.com -- curl https://example.com
     coop claude --egress filtered
+    coop claude --egress-rules /operator/extra-rules.yaml
 
-  Every other destination is denied at the gateway, not inside the box.`,
+  Every other destination is denied at the gateway, not inside the box. The box
+  is told its policy up front, and a refused run ends with what was refused and
+  how to ask for it.
+
+  A project asks for destinations in .agent/project.yaml:
+
+    box:
+      egress: filtered
+      egress_rules:
+        - to: {domain: "docs.example.com"}
+          protocol: tls
+          ports: [443]
+
+  That is a REQUEST. 'coop net approve' shows it against what is already
+  remembered and, once you confirm at a terminal, stores your decision outside
+  the repository — so editing or deleting the file cannot widen access, and an
+  unattended run can never approve itself. Approvals apply to NEW runs; boxes
+  already running keep the policy they launched with.
+
+  'why' evaluates a name against a run's captured policy without sending a
+  packet; 'explain' opens a refusal that actually happened, with the draft rule
+  a human could add. A receipt withholds destination names by default (even a
+  refused name can encode a secret) — 'receipt --destinations' is you asking for
+  them on your own machine. Unknown means unknown: a metric nobody measured is
+  never shown as zero.`,
 
 	"doctor": `coop doctor — prove the box's isolation: attack it, inside and from the host.
 

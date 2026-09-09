@@ -1,0 +1,165 @@
+package box
+
+import (
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkstate"
+)
+
+func TestFilteredExtraMountsAcceptsEveryBindSpelling(t *testing.T) {
+	cases := []struct {
+		name  string
+		given []string
+		want  []string
+	}{
+		{"short", []string{"-v", "/src:/dst:ro"}, []string{"-v", "/src:/dst:ro"}},
+		{"long", []string{"--volume", "/src:/dst"}, []string{"-v", "/src:/dst"}},
+		{"inline", []string{"--volume=/src:/dst"}, []string{"-v", "/src:/dst"}},
+		{"mount", []string{"--mount", "type=bind,source=/src,target=/dst"}, []string{"-v", "/src:/dst"}},
+		{"mount readonly", []string{"--mount", "type=bind,source=/src,target=/dst,readonly"}, []string{"-v", "/src:/dst:ro"}},
+		{"mount aliases", []string{"--mount", "type=bind,src=/src,dst=/dst"}, []string{"-v", "/src:/dst"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := filteredExtraMounts(tc.given, nil)
+			if err != nil {
+				t.Fatalf("filteredExtraMounts(%q) = %v", tc.given, err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("filteredExtraMounts(%q) = %q, want %q", tc.given, got, tc.want)
+			}
+		})
+	}
+}
+
+// A filtered run must not silently drop an argument the operator set: it would
+// enforce a shape nobody chose. Every refusal NAMES what it refused.
+func TestFilteredExtraMountsRefusesEverythingElseByName(t *testing.T) {
+	cases := map[string]string{
+		"--privileged":                    `"--privileged"`,
+		"--network host":                  `"--network"`,
+		"-e SECRET=1":                     `"-e"`,
+		"--user 0:0":                      `"--user"`,
+		"--mount type=tmpfs,target=/t":    "--mount type=tmpfs",
+		"--mount type=bind,source=/src":   "source= and target=",
+		"--mount type=bind,fake=1,src=/a": `"fake"`,
+	}
+	for given, want := range cases {
+		t.Run(given, func(t *testing.T) {
+			_, err := filteredExtraMounts(strings.Fields(given), nil)
+			if err == nil {
+				t.Fatalf("filteredExtraMounts(%q) was accepted", given)
+			}
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name %q", err, want)
+			}
+		})
+	}
+}
+
+func TestFilteredExtraMountsCombinesConfigAndRunArguments(t *testing.T) {
+	got, err := filteredExtraMounts([]string{"-v", "/a:/a:ro"}, []string{"-v", "/b:/b"})
+	if err != nil {
+		t.Fatalf("filteredExtraMounts: %v", err)
+	}
+	if !slices.Equal(got, []string{"-v", "/a:/a:ro", "-v", "/b:/b"}) {
+		t.Errorf("got %q", got)
+	}
+	if _, err := filteredExtraMounts(nil, []string{"-e", "COOP_REVIEW=1"}); err == nil {
+		t.Error("a run's own extra arguments follow the same rule; -e was accepted")
+	}
+	if got, err := filteredExtraMounts(nil, nil); err != nil || got != nil {
+		t.Errorf("no extra arguments = (%q, %v), want (nil, nil)", got, err)
+	}
+	if _, err := filteredExtraMounts([]string{"-v"}, nil); err == nil {
+		t.Error("a dangling -v was accepted")
+	}
+}
+
+func TestNetworkRuleDiffIsAPlainSetDifference(t *testing.T) {
+	rule := func(domain string) egress.Rule {
+		return egress.Rule{To: egress.Destination{Domain: domain}, Protocol: "tls", Ports: []int{443}}
+	}
+	add, remove := NetworkRuleDiff([]egress.Rule{rule("a.example"), rule("b.example")}, []egress.Rule{rule("b.example"), rule("c.example")})
+	if len(add) != 1 || add[0].To.Domain != "c.example" {
+		t.Errorf("add = %+v, want c.example", add)
+	}
+	if len(remove) != 1 || remove[0].To.Domain != "a.example" {
+		t.Errorf("remove = %+v, want a.example", remove)
+	}
+	if add, remove := NetworkRuleDiff(nil, nil); add != nil || remove != nil {
+		t.Errorf("empty diff = (%+v, %+v)", add, remove)
+	}
+}
+
+func TestNetworkRuleTextAndYAMLReadLikeTheConfiguration(t *testing.T) {
+	tls := egress.Rule{To: egress.Destination{Domain: "docs.example.com"}, Protocol: "tls", Ports: []int{443}}
+	if got := NetworkRuleText(tls); got != "docs.example.com tls/443" {
+		t.Errorf("NetworkRuleText = %q", got)
+	}
+	yaml := NetworkRuleYAML(tls)
+	for _, want := range []string{"- to:", `domain: "docs.example.com"`, "protocol: tls", "ports: [443]"} {
+		if !strings.Contains(yaml, want) {
+			t.Errorf("NetworkRuleYAML is missing %q:\n%s", want, yaml)
+		}
+	}
+	raw := egress.Rule{To: egress.Destination{CIDR: "10.0.0.0/24"}, Protocol: "udp", Ports: []int{123, 124}}
+	if got := NetworkRuleText(raw); got != "10.0.0.0/24 udp/123,124" {
+		t.Errorf("NetworkRuleText(cidr) = %q", got)
+	}
+	provider := egress.Rule{To: egress.Destination{Provider: "claude", Features: []string{"cloud-mcp"}}}
+	if got := NetworkRuleText(provider); got != "claude features cloud-mcp" {
+		t.Errorf("NetworkRuleText(provider) = %q", got)
+	}
+}
+
+// The label must name the input that actually decided the mode, in the order
+// admission resolves them — a remembered approval outranks the repository.
+func TestPostureSourceNamesTheDecidingInput(t *testing.T) {
+	filtered, open := egress.Filtered, egress.Open
+	approval := &networkstate.Approval{Posture: egress.Filtered}
+	rule := egress.Rule{To: egress.Destination{Domain: "a.example"}, Protocol: "tls", Ports: []int{443}}
+	cases := []struct {
+		name     string
+		input    networkstate.Admission
+		approval *networkstate.Approval
+		want     string
+	}{
+		{"nothing", networkstate.Admission{}, nil, PostureFromDefault},
+		{"approval wins", networkstate.Admission{HostPreference: &open, ProjectMode: &filtered}, approval, PostureFromApproval},
+		{"host preference", networkstate.Admission{HostPreference: &open, ProjectMode: &filtered}, nil, PostureFromHost},
+		{"project mode", networkstate.Admission{ProjectMode: &filtered}, nil, PostureFromProject},
+		{"project rules", networkstate.Admission{Requests: []egress.Rule{rule}}, nil, PostureFromProject},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := postureSource(tc.input, tc.approval); got != tc.want {
+				t.Errorf("postureSource = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestApprovalModeAsksAboutTheRepositorysOwnRequest(t *testing.T) {
+	filtered, none, open := egress.Filtered, egress.None, egress.Open
+	rule := egress.Rule{To: egress.Destination{Domain: "a.example"}, Protocol: "tls", Ports: []int{443}}
+	remembered := &networkstate.Approval{Posture: egress.None}
+	if got := approvalMode(networkstate.Admission{ProjectMode: &filtered}, remembered, &open); got != egress.Open {
+		t.Errorf("explicit --mode = %q, want open", got)
+	}
+	if got := approvalMode(networkstate.Admission{ProjectMode: &none}, remembered, nil); got != egress.None {
+		t.Errorf("project mode = %q, want none", got)
+	}
+	if got := approvalMode(networkstate.Admission{Requests: []egress.Rule{rule}}, nil, nil); got != egress.Filtered {
+		t.Errorf("rules alone = %q, want filtered", got)
+	}
+	if got := approvalMode(networkstate.Admission{}, remembered, nil); got != egress.None {
+		t.Errorf("silent project = %q, want the remembered posture", got)
+	}
+	if got := approvalMode(networkstate.Admission{}, nil, nil); got != egress.Filtered {
+		t.Errorf("nothing at all = %q, want filtered", got)
+	}
+}

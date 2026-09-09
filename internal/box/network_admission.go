@@ -56,12 +56,9 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		return nil, errors.New("network admission requires host configuration")
 	}
 	policyRepo := projectPolicyRepo(spec)
-	canonical, err := filepath.Abs(policyRepo)
-	if err == nil {
-		canonical, err = filepath.EvalSymlinks(canonical)
-	}
+	canonical, err := canonicalProjectDir(policyRepo)
 	if err != nil {
-		return nil, errors.New("restricted networking requires an existing canonical project directory")
+		return nil, err
 	}
 	p, err := project.Load(policyRepo)
 	if err != nil {
@@ -102,6 +99,21 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		return nil, err
 	}
 	return capture, nil
+}
+
+// canonicalProjectDir is the one project identity every network read and write
+// binds to: an absolute, symlink-resolved directory. Two aliases of the same
+// tree must never look like two projects, and a path that does not exist is not
+// a project at all.
+func canonicalProjectDir(repo string) (string, error) {
+	canonical, err := filepath.Abs(repo)
+	if err == nil {
+		canonical, err = filepath.EvalSymlinks(canonical)
+	}
+	if err != nil {
+		return "", errors.New("restricted networking requires an existing canonical project directory")
+	}
+	return canonical, nil
 }
 
 // networkAdmissionInput separates presence from default and authority from
