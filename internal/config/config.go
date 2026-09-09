@@ -54,7 +54,7 @@ type Config struct {
 	CPUs            string // COOP_CPUS — cpu cap, e.g. "2" (empty = unset)
 	Pids            string // COOP_PIDS — pids-limit (fork-bomb cap), default 4096; "0"/"unlimited"/"" = off
 	NoNewPrivileges bool   // COOP_NO_NEW_PRIVILEGES — pass --security-opt no-new-privileges (default on)
-	Egress          string // COOP_EGRESS — "open" (default, full outbound) or "none" (--network none, offline)
+	Egress          string // COOP_EGRESS — open, filtered (host-qualified), or none
 
 	ConsultTimeout string // COOP_CONSULT_TIMEOUT — per-peer coop-consult timeout in seconds (empty/0 = unlimited)
 
@@ -979,8 +979,8 @@ func parsePids(value string) (string, error) {
 
 func parseEgress(value string) (string, error) {
 	value = strings.TrimSpace(value)
-	if value != "open" && value != "none" {
-		return "", fmt.Errorf("expected open or none")
+	if value != "open" && value != "filtered" && value != "none" {
+		return "", fmt.Errorf("expected open, filtered or none")
 	}
 	return value, nil
 }

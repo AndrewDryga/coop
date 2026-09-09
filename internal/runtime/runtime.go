@@ -166,13 +166,19 @@ func (r Runtime) RunInterruptible(ctx context.Context, stdin io.Reader, stdout, 
 	cmd := exec.Command(r.Name, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	cmd.Env = interruptibleProcessEnvironment()
+	return runInterruptibleCommand(ctx, cmd)
+}
+
+// runInterruptibleCommand is RunInterruptible's process-group supervision for an
+// already assembled command, shared with the exact-owned Docker adapter.
+func runInterruptibleCommand(ctx context.Context, cmd *exec.Cmd) (int, error) {
 	processGroup, err := interruptibleProcessGroup()
 	if err != nil {
 		return -1, err
 	}
 	cmd.SysProcAttr = processGroup
 	if err := cmd.Start(); err != nil {
-		return -1, fmt.Errorf("%s: %w", r.Name, err)
+		return -1, fmt.Errorf("%s: %w", cmd.Path, err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -182,7 +188,7 @@ func (r Runtime) RunInterruptible(ctx context.Context, stdin io.Reader, stdout, 
 		cleanupErr := killGroup(cmd.Process.Pid, done)
 		return -1, errors.Join(ctx.Err(), beforeErr, cleanupErr)
 	case err := <-done:
-		return exitCode(r.Name, err)
+		return exitCode(cmd.Path, err)
 	}
 }
 

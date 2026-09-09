@@ -27,12 +27,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
+	"github.com/AndrewDryga/coop/internal/egress"
+	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 )
 
 // File is the repo-relative path of the project config.
 const File = ".agent/project.yaml"
+
+// Bound hostile repository input before YAML allocation or decoding.
+const maxProjectBytes = 1 << 20
 
 // Default box-input paths when project.yaml doesn't set box.dockerfile / box.compose. Both live
 // under .agent/ (coop's committed home) — the Dockerfile alongside the sidecar compose file.
@@ -97,12 +103,13 @@ type Box struct {
 	Compose    string            `yaml:"compose"`    // sidecar services compose file, repo-relative ("" ⇒ .agent/compose.yml)
 	Env        map[string]string `yaml:"env"`        // literal box-only environment defaults
 
-	Egress  string `yaml:"egress"`  // "" (unset) | "open" | "none" — anything else fails Load
-	AutoUp  *bool  `yaml:"auto_up"` // auto-start .agent/compose.yml services (default true)
-	Network *bool  `yaml:"network"` // join the sibling-services network (default true)
-	Memory  string `yaml:"memory"`  // docker --memory syntax, passed through (e.g. 4g)
-	CPUs    string `yaml:"cpus"`    // docker --cpus value
-	Pids    string `yaml:"pids"`    // --pids-limit: a positive integer, or ""/0/unlimited for none
+	Egress      string        `yaml:"egress"`       // "" (unset) | "open" | "filtered" | "none"
+	EgressRules []egress.Rule `yaml:"egress_rules"` // requests only; host approval supplies authority
+	AutoUp      *bool         `yaml:"auto_up"`      // auto-start .agent/compose.yml services (default true)
+	Network     *bool         `yaml:"network"`      // join the sibling-services network (default true)
+	Memory      string        `yaml:"memory"`       // docker --memory syntax, passed through (e.g. 4g)
+	CPUs        string        `yaml:"cpus"`         // docker --cpus value
+	Pids        string        `yaml:"pids"`         // --pids-limit: a positive integer, or ""/0/unlimited for none
 }
 
 // Review is the trusted, committed environment used only for a disposable review candidate.
@@ -146,11 +153,43 @@ func Load(repo string) (*Project, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s must be a regular file", path)
 	}
-	data, err := os.ReadFile(path)
+	data, err := readProjectFile(path, dirInfo, info)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	return Parse(data)
+}
+
+func readProjectFile(path string, parent, before os.FileInfo) ([]byte, error) {
+	dir, err := os.OpenFile(filepath.Dir(path), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	info, err := dir.Stat()
+	if err != nil || !info.IsDir() || !os.SameFile(parent, info) {
+		return nil, errors.New("project config parent changed during capture")
+	}
+	// Open relative to the pinned directory, not a path an agent can replace
+	// after the metadata checks. NONBLOCK also makes a FIFO swap fail promptly.
+	fd, err := unix.Openat(int(dir.Fd()), filepath.Base(path), unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	info, err = file.Stat()
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) || info.Size() > maxProjectBytes {
+		return nil, errors.New("project config changed or exceeds its 1 MiB limit")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxProjectBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxProjectBytes {
+		return nil, errors.New("project config exceeds its 1 MiB limit")
+	}
+	return data, nil
 }
 
 // Parse validates one exact project.yaml byte sequence. Load owns filesystem policy; callers that
@@ -190,9 +229,18 @@ func Parse(data []byte) (*Project, error) {
 		p.Services.RequireRealFiles[i] = filepath.ToSlash(clean)
 	}
 	switch p.Box.Egress {
-	case "", "open", "none":
+	case "", "open", "filtered", "none":
 	default:
-		return nil, fmt.Errorf("%s: box.egress %q — use open or none", File, p.Box.Egress)
+		return nil, fmt.Errorf("%s: box.egress %q — use open, filtered or none", File, p.Box.Egress)
+	}
+	if len(p.Box.EgressRules) > 0 {
+		if p.Box.Egress != "" && p.Box.Egress != "filtered" {
+			return nil, fmt.Errorf("%s: box.egress_rules require filtered mode", File)
+		}
+		p.Box.EgressRules, err = egress.NormalizeRules(p.Box.EgressRules)
+		if err != nil {
+			return nil, fmt.Errorf("%s: box.egress_rules: %w", File, err)
+		}
 	}
 	switch p.Box.Pids {
 	case "", "0", "unlimited":

@@ -796,10 +796,12 @@ func TestParseEgress(t *testing.T) {
 		wantErr bool
 	}{
 		{"open", "open", false},
+		{"filtered", "filtered", false},
 		{"none", "none", false},
 		{" open ", "open", false},
 		{"\tnone\n", "none", false},
 		{"None", "", true},
+		{"Filtered", "", true},
 		{"off", "", true},
 		{"", "", true},
 	} {

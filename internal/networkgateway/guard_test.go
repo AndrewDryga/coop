@@ -1,0 +1,389 @@
+package networkgateway
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"io"
+	"net"
+	"net/netip"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
+
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
+)
+
+type guardFixture struct {
+	guard      *Guard
+	tls, dns   net.Listener
+	udp        net.PacketConn
+	private    *net.UnixListener
+	done       <-chan error
+	controller context.CancelFunc
+}
+
+func startGuardFixture(t *testing.T) guardFixture {
+	return startGuardClockFixture(t, testBootClock(), 60)
+}
+
+func startGuardClockFixture(t *testing.T, clock *BootClock, ttl uint32) guardFixture {
+	t.Helper()
+	c := testController(t, func(context.Context, string) error { return nil })
+	c.clock, c.now, c.identity.Clock = clock, clock.instant, clock.Domain()
+	if err := c.Initialize(context.Background(), netip.MustParseAddr("1.1.1.1")); err != nil {
+		t.Fatal(err)
+	}
+	control, stopController, _ := startControlFixture(t, c, func(*net.UnixConn) bool { return true })
+	r, err := NewResolver(c.policy, nil, clock, answerExchange(t, func(name string) []dnsmessage.Resource {
+		return []dnsmessage.Resource{aRecord(name, "93.184.216.34", ttl)}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := NewGuard(c.policy, c.clock, r, control, NewGuardEvents(c.clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listen := func() net.Listener {
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = listener.Close() })
+		return listener
+	}
+	fixture := guardFixture{guard: g, tls: listen(), dns: listen(), controller: stopController}
+	fixture.udp, err = net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fixture.udp.Close() })
+	fixture.private, err = net.ListenUnix("unix", &net.UnixAddr{Name: shortControlPath(t), Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fixture.private.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	done, ready := make(chan error, 1), make(chan struct{})
+	fixture.done = done
+	go func() {
+		done <- g.serve(ctx, fixture.tls, fixture.dns, fixture.udp, fixture.private.Addr().String(), func() { close(ready) })
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(wait.Deadline):
+			t.Error("guard fixture leaked")
+		}
+	})
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("guard startup: %v", err)
+	case <-time.After(wait.Deadline):
+		t.Fatal("guard did not start")
+	}
+	return fixture
+}
+
+func guardClient(t *testing.T, address string) *net.TCPConn {
+	t.Helper()
+	conn, err := net.Dial("tcp4", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if err := conn.SetDeadline(time.Now().Add(wait.Deadline)); err != nil {
+		t.Fatal(err)
+	}
+	return conn.(*net.TCPConn)
+}
+
+func guardPrivate(t *testing.T, fixture guardFixture, hello []byte) (*net.TCPConn, *net.UnixConn, string) {
+	t.Helper()
+	client := guardClient(t, fixture.tls.Addr().String())
+	if err := writeAll(client, hello); err != nil {
+		t.Fatal(err)
+	}
+	_ = fixture.private.SetDeadline(time.Now().Add(wait.Deadline))
+	private, err := fixture.private.AcceptUnix()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = private.Close() })
+	_ = private.SetDeadline(time.Now().Add(wait.Deadline))
+	header := make([]byte, 63)
+	if _, err := io.ReadFull(private, header); err != nil {
+		t.Fatal(err)
+	}
+	flowID := string(header[31:])
+	wanted, err := ProxyHeader(netip.MustParseAddr("93.184.216.34"), flowID)
+	if err != nil || !bytes.Equal(header, wanted) {
+		t.Fatal("private PROXY destination or flow ID differs from admitted peer")
+	}
+	replayed := make([]byte, len(hello))
+	if _, err := io.ReadFull(private, replayed); err != nil || !bytes.Equal(replayed, hello) {
+		t.Fatalf("ClientHello changed: %v", err)
+	}
+	return client, private, flowID
+}
+
+func TestGuardReplaysExactAdmissionAndPreservesStreamingHalfClose(t *testing.T) {
+	fixture := startGuardFixture(t)
+	client, private, flowID := guardPrivate(t, fixture, clientHello(t, "api.example.com"))
+	payload := bytes.Repeat([]byte("opaque post-hello stream"), 1000)
+	if err := writeAll(client, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(private)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("forward stream/half-close: %v", err)
+	}
+	if err := writeAll(private, []byte("response after client half-close")); err != nil {
+		t.Fatal(err)
+	}
+	_ = private.CloseWrite()
+	got, err = io.ReadAll(client)
+	if err != nil || string(got) != "response after client half-close" {
+		t.Fatalf("response half-close: %q %v", got, err)
+	}
+	var events []GuardEvent
+	wait.For(t, "closed private flow evidence", func() bool {
+		batch, _ := fixture.guard.events.Drain(MaxGuardEvents)
+		events = append(events, batch...)
+		return len(events) >= 2
+	})
+	if len(events) != 2 || events[0].Kind != "flow_registered" || events[1].Kind != "private_flow_closed" || events[0].FlowID != flowID || events[1].FlowID != flowID {
+		t.Fatalf("flow evidence: %#v", events)
+	}
+}
+
+func TestGuardListenerOrControllerLossClosesExistingStream(t *testing.T) {
+	for _, failure := range []string{"tls", "dns_tcp", "dns_udp", "controller"} {
+		t.Run(failure, func(t *testing.T) {
+			fixture := startGuardFixture(t)
+			client, private, _ := guardPrivate(t, fixture, clientHello(t, "api.example.com"))
+			switch failure {
+			case "tls":
+				_ = fixture.tls.Close()
+			case "dns_tcp":
+				_ = fixture.dns.Close()
+			case "dns_udp":
+				_ = fixture.udp.Close()
+			case "controller":
+				fixture.controller()
+			}
+			select {
+			case err := <-fixture.done:
+				if err == nil {
+					t.Fatal("component loss reported success")
+				}
+			case <-time.After(wait.Deadline):
+				t.Fatal("failed listener waited forever on its active flow")
+			}
+			for _, conn := range []net.Conn{client, private} {
+				var buffer [1]byte
+				if n, err := conn.Read(buffer[:]); n != 0 || err == nil {
+					t.Fatal("component loss left streaming socket open")
+				}
+			}
+		})
+	}
+}
+
+func TestGuardRefusesBeforePrivateDial(t *testing.T) {
+	fixture := startGuardFixture(t)
+	for _, wire := range [][]byte{
+		clientHello(t, "forbidden.example.com"), clientHello(t, ""),
+		addExtension(t, clientHello(t, "api.example.com"), echExtension, nil),
+		[]byte("GET / HTTP/1.1\r\n\r\n"),
+	} {
+		client := guardClient(t, fixture.tls.Addr().String())
+		if err := writeAll(client, wire); err != nil {
+			t.Fatal(err)
+		}
+		_ = client.CloseWrite()
+		var buffer [1]byte
+		if n, err := client.Read(buffer[:]); n != 0 || err == nil {
+			t.Fatal("refused TLS wrote data")
+		}
+	}
+	events, totals := fixture.guard.events.Drain(MaxGuardEvents)
+	if totals.DeniedTLS != 4 || len(events) != 4 {
+		t.Fatalf("missing refusal accounting: %#v %#v", totals, events)
+	}
+	queries, _ := fixture.guard.resolver.MaintenanceCounts()
+	if queries != 0 {
+		t.Fatal("refused hello leaked resolver traffic")
+	}
+	for _, event := range events {
+		if event.Kind != "tls_denied" || event.FlowID != "" {
+			t.Fatal("refused hello registered a private flow")
+		}
+	}
+}
+
+func TestGuardServesBoundedDNSOverTCPAndUDP(t *testing.T) {
+	fixture := startGuardFixture(t)
+	for _, transport := range []string{"tcp4", "udp4"} {
+		for _, name := range []string{"api.example.com", "denied.example.com"} {
+			query, _ := makeQuery(name)
+			wire, _ := query.Pack()
+			address := fixture.dns.Addr().String()
+			if transport == "udp4" {
+				address = fixture.udp.LocalAddr().String()
+			} else {
+				wire = append([]byte{byte(len(wire) >> 8), byte(len(wire))}, wire...)
+			}
+			conn, err := net.Dial(transport, address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+			_ = conn.SetDeadline(time.Now().Add(wait.Deadline))
+			if err := writeAll(conn, wire); err != nil {
+				t.Fatal(err)
+			}
+			reply := make([]byte, MaxDNSMessage)
+			if transport == "tcp4" {
+				var prefix [2]byte
+				if _, err := io.ReadFull(conn, prefix[:]); err != nil {
+					t.Fatal(err)
+				}
+				reply = reply[:int(binary.BigEndian.Uint16(prefix[:]))]
+				_, err = io.ReadFull(conn, reply)
+			} else {
+				var n int
+				n, err = conn.Read(reply)
+				reply = reply[:n]
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var answer dnsmessage.Message
+			if err := answer.Unpack(reply); err != nil || answer.ID != query.ID {
+				t.Fatalf("DNS response: %v", err)
+			}
+			if name == "api.example.com" && len(answer.Answers) != 1 || name != "api.example.com" && answer.RCode != dnsmessage.RCodeRefused {
+				t.Fatalf("DNS policy not enforced over %s: %#v", transport, answer)
+			}
+		}
+	}
+	bomb := make([]byte, 12)
+	binary.BigEndian.PutUint16(bomb[4:6], 65535)
+	if reply := fixture.guard.dnsAnswer(context.Background(), bomb); reply != nil {
+		t.Fatal("header bomb accepted by diagnostic parser")
+	}
+	events, totals := fixture.guard.events.Drain(MaxGuardEvents)
+	if totals.DeniedDNS != 3 || len(events) != 3 || events[2].Name != "" || events[2].Reason != "dns_query_invalid" {
+		t.Fatalf("DNS diagnostics: %#v %#v", totals, events)
+	}
+}
+
+func TestGuardEventQueueBoundsSequencesAndReportsLoss(t *testing.T) {
+	queue := NewGuardEvents(testBootClock())
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Go(func() {
+			for range MaxGuardEvents {
+				queue.emit(GuardEvent{Kind: "tls_denied"})
+			}
+		})
+	}
+	workers.Wait()
+	events, totals := queue.Drain(MaxGuardEvents * 8)
+	if len(events) != MaxGuardEvents || totals.Sequence != 8*MaxGuardEvents || totals.Lost != 7*MaxGuardEvents || totals.DeniedTLS != 8*MaxGuardEvents {
+		t.Fatalf("unbounded/lost accounting: %d %#v", len(events), totals)
+	}
+	for i, event := range events {
+		if event.Sequence != uint64(i+1) {
+			t.Fatal("concurrent event order differed from sequence")
+		}
+	}
+	queue.totals.Sequence = ^uint64(0)
+	queue.emit(GuardEvent{Kind: "tls_denied"})
+	events, totals = queue.Drain(1)
+	if len(events) != 0 || !totals.Saturated || totals.Sequence != ^uint64(0) {
+		t.Fatal("sequence saturation reused an identity")
+	}
+}
+
+func TestGuardRefusesResolverFromDifferentClockDomain(t *testing.T) {
+	fixture := startGuardFixture(t)
+	r := newTestResolver(t, func(context.Context, []byte) ([]byte, error) { return nil, io.EOF })
+	r.domain.TimeNamespace = "67890"
+	g := fixture.guard
+	if _, err := NewGuard(g.policy, g.clock, r, g.controller, NewGuardEvents(g.clock)); err == nil {
+		t.Fatal("guard accepted resolver TTLs from another time namespace")
+	}
+}
+
+func TestGuardRefreshesShortTTLWithinKernelAdmissionMargin(t *testing.T) {
+	var instant atomic.Int64
+	instant.Store(int64(testBootNow()))
+	clock := testBootClock()
+	clock.read = func() (BootInstant, error) { return BootInstant(instant.Load()), nil }
+	fixture := startGuardClockFixture(t, clock, 1)
+	if _, err := fixture.guard.resolver.Resolve(context.Background(), "api.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	for range 4 {
+		instant.Add(int64(800 * time.Millisecond))
+		client, private, _ := guardPrivate(t, fixture, clientHello(t, "api.example.com"))
+		_ = client.Close()
+		_ = private.Close()
+	}
+	queries, _ := fixture.guard.resolver.MaintenanceCounts()
+	if queries != 5 {
+		t.Fatalf("short-TTL cache became outage or query storm: %d", queries)
+	}
+}
+
+type replayClockConn struct {
+	wireConn
+	onWrite  func()
+	deadline time.Time
+}
+
+func (c *replayClockConn) Write(p []byte) (int, error) {
+	c.onWrite()
+	return c.wireConn.Write(p)
+}
+
+func (c *replayClockConn) SetWriteDeadline(value time.Time) error {
+	c.deadline = value
+	return nil
+}
+
+func TestGuardReplayRechecksBootClockAfterStalledWrite(t *testing.T) {
+	for _, advanceAfter := range []int{1, 2} {
+		now := testBootNow()
+		until := now.Add(time.Second)
+		clock := testBootClock()
+		clock.read = func() (BootInstant, error) { return now, nil }
+		g := Guard{clock: clock}
+		writes := 0
+		conn := &replayClockConn{onWrite: func() {
+			writes++
+			if writes == advanceAfter {
+				now = until
+			}
+		}}
+		ctx, cancel := context.WithTimeout(context.Background(), GuardAdmissionTimeout)
+		started := time.Now()
+		err := g.replay(ctx, conn, []byte("private header"), []byte("hello"), until)
+		cancel()
+		if err != Failure("dns_ttl_expired") || conn.deadline.IsZero() || conn.deadline.After(started.Add(2*time.Second)) || writes != advanceAfter {
+			t.Fatalf("stalled replay reached streaming or retained 10s deadline: %v %v %d", err, conn.deadline, writes)
+		}
+	}
+}

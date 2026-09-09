@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -27,6 +28,54 @@ func TestLoadMissing(t *testing.T) {
 	}
 	if len(p.Subprojects) != 0 || len(p.Serve.Ports) != 0 {
 		t.Errorf("missing file must yield empty project, got %+v", p)
+	}
+}
+
+func TestLoadBoundsRepositoryInput(t *testing.T) {
+	repo := writeProject(t, "#"+strings.Repeat("x", maxProjectBytes))
+	if _, err := Load(repo); err == nil || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("oversized config: %v", err)
+	}
+}
+
+func TestProjectCaptureRejectsReplacedSources(t *testing.T) {
+	for _, replacement := range []string{"parent", "file", "symlink", "fifo"} {
+		t.Run(replacement, func(t *testing.T) {
+			repo := writeProject(t, "box:\n  egress: none\n")
+			path := filepath.Join(repo, File)
+			parent, err := os.Lstat(filepath.Dir(path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if replacement == "parent" {
+				if err := os.Rename(filepath.Dir(path), filepath.Join(repo, "original")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Rename(path, path+".original"); err != nil {
+				t.Fatal(err)
+			}
+			switch replacement {
+			case "parent", "file":
+				err = os.WriteFile(path, []byte("box:\n  egress: open\n"), 0o600)
+			case "symlink":
+				err = os.Symlink(path+".original", path)
+			case "fifo":
+				err = syscall.Mkfifo(path, 0o600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := readProjectFile(path, parent, before); err == nil {
+				t.Fatal("captured a replaced source")
+			}
+		})
 	}
 }
 
