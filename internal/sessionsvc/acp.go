@@ -2714,10 +2714,15 @@ func sessionACPTerminalFailureError(version int, failure *sessionACPTerminalFail
 
 	switch failure.Category {
 	case "limit":
-		if sessionACPFailureHasAction(failure, "retry") {
+		// Subscription exhaustion can offer account settings instead of retry.
+		// Its typed provider diagnostic still permits the configured fallback;
+		// output exhaustion belongs to the current turn and must never rotate.
+		hint := ladder.DetectLimit(failure.Title, time.Now())
+		if !hint.OutputLimited && (sessionACPFailureHasAction(failure, "retry") || hint.Limited) {
 			return &sessionACPFailure{
-				code:   sessionACPRateLimited,
-				detail: sessionACPBoundedDetail("provider rate limited the turn", failure.Title),
+				code:    sessionACPRateLimited,
+				detail:  sessionACPBoundedDetail("provider rate limited the turn", failure.Title),
+				resetAt: hint.ResetAt,
 			}
 		}
 		return acpFailure(sessionACPProtocolError,

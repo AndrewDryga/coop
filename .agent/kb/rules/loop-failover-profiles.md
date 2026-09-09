@@ -4,7 +4,7 @@ description: "loop, editor ACP, and remote sessions share target rotation but ke
 scope: architecture
 sources: [internal/ladder/ladder.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/loop.go, internal/acpctl/control.go, internal/sessionsvc/acp.go, internal/session/store.go]
 check: "none"
-updated: 2026-09-03
+updated: 2026-09-09
 ---
 
 # Preserve each surface's session lifecycle when rotating targets
@@ -41,12 +41,18 @@ or durable replay behavior as if it were obsolete compatibility.
   transcript carry, and durable-write policy with the owning surface.
 - Do not infer a limit from arbitrary prose. Each provider's structured/owned signals feed the
   shared detector, and a loop rotation still requires a failed attempt.
+- A typed terminal `limit` failure can prove subscription exhaustion without offering a `retry`
+  action. Recognize its provider-owned title with the shared detector, preserve any parsed reset
+  time, and exclude output exhaustion even when the provider offers retry.
 - Resolve every selected account through the private credential store; targets may name accounts,
   but credentials themselves never enter repository state.
 
 Related: [[model-is-the-rotation-axis]] and [[credentials-not-profiles]].
 
 ## Changelog
+- 2026-09-09 — Responder admission exhausted every attempt on a typed Codex subscription limit
+  without a retry action. Added the terminal-limit classification contract and verified fallback,
+  output-limit denial, warning/access boundaries, and reset preservation in sessionsvc tests.
 - 2026-09-03 — rewrote the card after sweeping the loop, ACP control, and remote-session runner.
   Replaced the retired profile-only/remote-only model with the three current continuation
   lifecycles; added the ACP and durable-store sources. No runtime behavior changed.

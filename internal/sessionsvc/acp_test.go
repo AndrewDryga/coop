@@ -2820,7 +2820,23 @@ func TestSessionACPChildHelper(t *testing.T) {
 		case "session/prompt":
 			promptCount++
 			switch scenario {
-			case "typed-provider-failure", "typed-provider-rate-limit":
+			case "typed-provider-failure", "typed-provider-rate-limit", "typed-provider-subscription-limit-once":
+				if scenario == "typed-provider-subscription-limit-once" {
+					marker := os.Getenv("COOP_TEST_SESSION_LIMIT_MARKER")
+					if _, err := os.Stat(marker); err == nil {
+						send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+							"sessionId": frame.Params.SessionID, "update": map[string]any{
+								"sessionUpdate": "agent_message_chunk",
+								"content":       map[string]string{"type": "text", "text": "rotated answer"},
+							},
+						}})
+						send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
+						break
+					}
+					if err := os.WriteFile(marker, []byte("limited"), 0o600); err != nil {
+						os.Exit(1)
+					}
+				}
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
 					"sessionId": frame.Params.SessionID, "update": map[string]any{
 						"sessionUpdate": "agent_message_chunk",
@@ -2828,8 +2844,11 @@ func TestSessionACPChildHelper(t *testing.T) {
 					},
 				}})
 				category, title := "service", "upstream temporarily unavailable"
+				actions := []string{"retry"}
 				if scenario == "typed-provider-rate-limit" {
 					category, title = "limit", "provider rate limited the turn"
+				} else if scenario == "typed-provider-subscription-limit-once" {
+					category, title, actions = "limit", recordedSubscriptionLimit, nil
 				}
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
 					"stopReason": "end_turn",
@@ -2837,7 +2856,7 @@ func TestSessionACPChildHelper(t *testing.T) {
 						"version": 1,
 						"sessionFailure": map[string]any{
 							"id": "turn:error", "revision": 1, "category": category,
-							"severity": "error", "title": title, "actions": []string{"retry"},
+							"severity": "error", "title": title, "actions": actions,
 						},
 					}}},
 				}})
