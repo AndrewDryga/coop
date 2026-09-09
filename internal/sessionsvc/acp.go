@@ -522,9 +522,6 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		runErr = acpFailure(sessionACPInvalidTurn, "turn is not an un-sent leased turn")
 		return result, runErr
 	}
-	if leased.ResponderBinding != nil {
-		bound.ResponderBinding = cloneResponderBinding(leased.ResponderBinding)
-	}
 	deadline, hasDeadline := ctx.Deadline()
 	if !hasDeadline {
 		runErr = acpFailure(sessionACPTimeoutError, "turn deadline is required")
@@ -575,6 +572,13 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 	}
 
 	for {
+		// Target rotation reloads the durable session, not the current turn's
+		// capability overlay. Reapply it before every credential/MCP projection
+		// so failover and initial rung selection cannot silently remove tools.
+		// A nil turn binding deliberately leaves the session binding intact.
+		if leased.ResponderBinding != nil {
+			bound.ResponderBinding = cloneResponderBinding(leased.ResponderBinding)
+		}
 		target, err := agents.ParseTarget(bound.Target)
 		if err != nil || len(target.Accounts) > 1 {
 			runErr = acpFailure(sessionACPInvalidTarget, "session target must be one explicit provider and credential")

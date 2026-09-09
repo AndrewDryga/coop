@@ -1490,6 +1490,58 @@ func TestSessionTurnRunnerReusesWarmACPProcessAcrossTurns(t *testing.T) {
 	}
 }
 
+// Two fresh Responder checks on 2026-09-09 lost every state tool after quota
+// failover. The semantic retry restored the turn binding and worked, hiding
+// the host defect behind a mandatory model correction on every fresh session.
+func TestTurnStateToolsSurviveEveryTargetRotation(t *testing.T) {
+	for _, test := range []struct {
+		name, scenario, initial, wantTarget string
+		floor                               int
+		rewind                              bool
+	}{
+		{name: "quota failover", scenario: "rate-limited-once", initial: "codex@work", wantTarget: "codex@backup"},
+		{name: "escalation floor", scenario: "normal", initial: "codex@work", wantTarget: "codex@backup", floor: 1},
+		{name: "explicit failback", scenario: "normal", initial: "codex@backup", wantTarget: "codex@work", rewind: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newSessionACPFixture(t, test.scenario, test.initial)
+			fixture.signIn(t, "codex", "work")
+			fixture.signIn(t, "codex", "backup")
+			t.Setenv("COOP_TEST_SESSION_LIMIT_MARKER", filepath.Join(t.TempDir(), "limited"))
+			binding := &session.ResponderBinding{
+				Endpoint: "https://responder.example/v1/state-tools/mcp",
+				Token:    strings.Repeat("a", 48),
+			}
+			turn := fixture.submitRequest(t, session.SubmitTurnRequest{
+				Prompt: "read available automations", ResponderBinding: binding,
+				MinTargetIndex: test.floor, RewindTarget: test.rewind,
+			})
+			ctx := ladderContext(t, contextWithTurnDeadline(t), "codex@work", "codex@backup")
+			ctx = context.WithValue(ctx, sessionWarmIdleTimeoutContextKey{}, time.Minute)
+			t.Cleanup(func() { _ = fixture.runner.CloseWarmSessions() })
+			result, err := fixture.runner.Run(ctx, fixture.session, turn)
+			if err != nil || result.State != session.TurnCompleted {
+				t.Fatalf("rotated turn failed: state=%s, err=%v", result.State, err)
+			}
+			projectedEnv := readFile(t, filepath.Join(fixture.private, "env"))
+			if !strings.Contains(projectedEnv, mcp.ResponderStateTokenEnv+"="+binding.Token+"\n") {
+				t.Fatal("target rotation dropped the active turn's state-tool credential")
+			}
+			projectedMCP := readFile(t, filepath.Join(fixture.private, "mcp.json"))
+			if !strings.Contains(projectedMCP, binding.Endpoint) || strings.Contains(projectedMCP, binding.Token) {
+				t.Fatal("target rotation lost the state-tool server or leaked its credential into MCP config")
+			}
+			stored, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+			if err != nil || stored.Target != test.wantTarget {
+				t.Fatalf("rotated target=%q, want %q, err=%v", stored.Target, test.wantTarget, err)
+			}
+			if stored.ResponderBinding != nil {
+				t.Fatal("turn-scoped capability was widened into a persisted session binding")
+			}
+		})
+	}
+}
+
 func TestSessionTurnRunnerReplacesWarmACPProcessWhenTurnResponderBindingChanges(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	warmContext := func() context.Context {

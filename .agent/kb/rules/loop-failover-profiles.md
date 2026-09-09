@@ -46,10 +46,16 @@ or durable replay behavior as if it were obsolete compatibility.
   time, and exclude output exhaustion even when the provider offers retry.
 - Resolve every selected account through the private credential store; targets may name accounts,
   but credentials themselves never enter repository state.
+- Reapply the active turn's Responder binding after a target rotation reloads the durable session
+  and before projecting credentials or MCP. A turn-scoped endpoint/token must survive quota
+  failover, escalation floors and explicit failback without being persisted as session authority.
 
 Related: [[model-is-the-rotation-axis]] and [[credentials-not-profiles]].
 
 ## Changelog
+- 2026-09-09 — two fresh live Responder checks lost state tools on quota failover and recovered only
+  on semantic correction. Swept quota, floor and explicit-failback paths; the same session reload
+  dropped all three overlays. The execution-loop overlay fixes them with a three-path regression.
 - 2026-09-09 — Responder admission exhausted every attempt on a typed Codex subscription limit
   without a retry action. Added the terminal-limit classification contract and verified fallback,
   output-limit denial, warning/access boundaries, and reset preservation in sessionsvc tests.
