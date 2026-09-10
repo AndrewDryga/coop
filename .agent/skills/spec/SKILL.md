@@ -15,6 +15,9 @@ you'll touch **before** planning — plan against the real code, not a guess.
 Before *how*, settle *whether* and *what*:
 - What's the job-to-be-done, and who for?
 - What's the **smallest slice** that delivers it? Cut everything else into "later".
+- That cut belongs before approval. Once the human has approved the whole feature, optimize the
+  path, not the deliverable — never defer an approved part or weaken verification to finish
+  sooner without them saying so.
 - Does this already exist? If so it's a small edit, not a project.
 
 If the request is vague or oversized, say so and propose the thin slice.

@@ -33,5 +33,8 @@ If there's no plan yet and the change is non-trivial, run `/spec` first.
 - **Greenfield.** Replacing code → delete the old and update every caller in the
   same change; no shims for behavior nothing depends on yet.
 
-When the change is green and reviewable, hand back for review (or, in a `/sweep`
-run, self-review the diff, commit, and tick the task).
+When the requested change is green and reviewable, hand back for review (or, in a `/sweep`
+run, self-review the diff, commit, and tick the task). If the human asked for the full outcome
+— review, integration, tests, docs — a green substep is a checkpoint, not the handback: keep
+going. A real blocker or a decision needing new authority still earns a pause; a finished
+internal slice does not.

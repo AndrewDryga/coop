@@ -15,6 +15,7 @@
 
 ## Use the agent stack
 - **Set the objective.** For anything longer than a quick answer, set the runtime's persistent goal/tracker if it exists (`/goal` or equivalent), and keep it current. If your agent does not have that feature, use `.agent/tasks/` as the durable goal state. A goal is the stop condition, not a substitute for a plan.
+- **Finish the requested outcome.** When the human asks for full implementation, verified substeps are progress checkpoints, not stopping points. Continue through the requested integration, review, tests, and docs; pause only for a genuine blocker or a decision requiring new authority. See `.agent/kb/rules/requested-outcome-controls-stopping.md`.
 - **Batch independent reads.** Use tool batching (`/batch`, parallel tool calls, or backgrounded shell reads) for independent searches, file reads, log collection, and docs lookups. Do not batch dependent steps or mutating commands that can race.
 - **Keep supervised output static and bounded.** For long loops, gates, builds, watches, and tests, follow `.agent/kb/rules/static-bounded-supervision.md`: disable repainting where supported, redirect the full log, preserve the exit status, and inspect only bounded tails or targeted filters.
 - **Delegate thinking, keep ownership.** Use native subagents/Task workers for broad research, codebase surveys, second opinions, review, and root-cause hypotheses. Treat them as read-only advisors unless your runtime explicitly gives them an isolated workspace. The lead agent makes the decision, edits files, runs the gate, and owns the result.
