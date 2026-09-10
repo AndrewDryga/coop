@@ -38,6 +38,7 @@ func init() { register(codexAgent{}) }
 
 func (codexAgent) Name() string        { return "codex" }
 func (codexAgent) DisplayName() string { return "Codex" }
+func (codexAgent) Vendor() string      { return "OpenAI" }
 
 // LockedClients pins the exact CLI and ACP adapter builds the qualified client
 // image installs. Both drive the same vendored native codex executable.

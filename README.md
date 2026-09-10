@@ -1646,6 +1646,16 @@ an already-current or newer binary, or a coop installed somewhere unwritable (a
 package-manager prefix) skips the self-update with a note and still rebuilds the image.
 The binary swap takes effect on your next `coop` run.
 
+**A newer coop repairs its own box.** When the shared image was built by a coop whose box
+definition differs from the one you are running (`coop update --self-only`, a `go install`),
+the next interactive launch that runs it rebuilds it before the agent starts, in one
+`Checking the Coop box` section that names both versions and ends with `✓ Box updated` (a
+filtered box runs the qualified client image instead, so it never triggers this). A current
+image prints nothing; an image that is merely old is still only nudged toward `coop update` under
+that heading, never rebuilt unasked; an image coop did not build (`COOP_IMAGE`) is never
+replaced. If the repair cannot run — Docker is not answering — the launch stops there and says
+what to start before you repeat the same command.
+
 **Stable vs fresh.** `coop build` is the *stable* path: it pins the base image to a
 specific Node digest, so a rebuild gets the same OS/runtime every time, and the cache
 holds the agent CLIs steady between builds. `coop update` is the *fresh* path: it floats

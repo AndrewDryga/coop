@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"slices"
@@ -44,6 +45,7 @@ type app struct {
 	cfg                  *config.Config
 	rt                   runtime.Runtime
 	rtSet                bool                                         // whether rt has been detected yet (ensureRuntime is lazy — see below)
+	argv                 []string                                     // the invocation, so a remedy can name the command to repeat
 	sweptRepos           map[string]bool                              // repos already swept for orphaned boxes this process (see sweepOrphanBoxes)
 	sweptNetworks        bool                                         // orphaned coop networks already swept this process (they are not per repo)
 	preset               *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
@@ -139,10 +141,14 @@ func Main(argv []string) int {
 
 	// The runtime is detected lazily (a.ensureRuntime), only by box-running commands — so pure-local
 	// families work with no container runtime installed. See dispatch and resolveImage.
-	a := &app{cfg: cfg}
+	a := &app{cfg: cfg, argv: argv}
 	code, err := a.dispatch(argv)
 	if err != nil {
-		ui.Error("%v", err)
+		// A launch section renders its own failure where it happened (ui.Fail); the fallback
+		// line is for everything else.
+		if !errors.Is(err, ui.ErrReported) {
+			ui.Error("%v", err)
+		}
 		if code == 0 {
 			code = 1
 		}

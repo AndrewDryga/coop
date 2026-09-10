@@ -2,7 +2,7 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture, and which surface reads which evidence
 subsystem: networking
-sources: [internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
+sources: [internal/networkreport/report.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
 updated: 2026-09-10
 ---
 
@@ -94,7 +94,11 @@ at all, and the daemon owns the destination projection every one of them applies
 `watch` show names, as the local operator view. An event that has aged out of a run's bounded
 ring reports `event_not_retained` — which is not proof the id ever existed.
 
-The human `inspect` projection (`cli/net_result.go`, `writeNetRun`) is destination-first and
+The human run projection lives in `internal/networkreport` (`WriteRun`), BELOW both `cli` and
+`box`, because both render it: standalone `coop net inspect` on stdout with no prefix, and an
+interactive box on stderr after cleanup sealed its receipt, under `coop: Network run <id>`
+(`View.Prefix`; `box/network_summary.go`, `printRun`, fed from the record the supervisor already
+holds through `networkstate.InspectExecution` — no reopen). It is destination-first and
 exception-only: the `Allowed` aggregate, then every PROVEN workload destination — only
 `NameSource == "sni"` rows, grouped by (name, port, transport) then by peer, bytes UNKNOWN when
 any member is unmeasured; a row in state `failed` is "N attempts failed — <reason>" and
@@ -105,13 +109,37 @@ cleanup still owed), then `Full details: … --json`. Coop's own resolver socket
 (`trusted-maintenance`) and an ownerless closing kernel block (`socket-inventory`) are explained
 internals and cost no line. A terminal run's `stopped` gateway is normal teardown, not a warning;
 a run whose supervisor is still alive (recovery reported `Live`) is `● Live`, not a lost record.
-The inline end-of-box report in `box/network_summary.go` is still the older refusal-only summary:
-`internal/box` cannot import `internal/cli`, so sharing this projection means moving it below both.
+The old refusal-only end-of-box summary is gone; `box.NetworkReport` survives only as the bounded
+DATA the loop (`OnNetworkReport`, between-iteration lines, closing summary pointing at `coop net
+runs`) and the session daemon fold into their own output. The projection prints only for a box that
+reached its main process: a launch that failed earlier has no traffic to report.
+
+An interactive launch (`!Batch && !Quiet && !ForceNoTTY`, `box/launch_sections.go`) is narrated in
+bold unprefixed sections before agent output — `Protecting secrets` (the exact shadow count),
+`Internet access` (filtered: one row per selected provider's endpoints from `policy.Dependencies`
+and each agent's `Vendor()`, the approved websites/services counted over `project`/`operator`
+origins, the MCP servers over `mcp` origins, an unrecognized origin counted as "other", THEN
+`✓ Everything else blocked`; open/offline: one `⚠` row under the same heading), `Starting <agent>`
+— and `Checking the Coop box` first: in `box.Run` the remaining image nudges (age, a project
+Dockerfile that drifted) as `⚠` rows, and in the cli (`cli/launch_box.go`, after admission and only
+for a run that will use the repo's image — a filtered box runs the qualified client image) the
+automatic `box.Build` when `BaseImageSkew` reports a definition mismatch, never for an age nudge
+or an unstamped image. `runInBoxMode` only: the interactive fork path (`fork_cmd.go`) and the
+restricted modes (`restricted.go`) still print the old `coop: shadowed …` line and get no box
+check. A failure before the main process is rendered once as a nested `ui.Fail` under its
+section, AFTER the deferred cleanup has joined its own error into the reason, and comes back as
+`ui.Reported(err)`, which `cli.Main` does not print again; a cancellation the stop line named is
+marked the same way when teardown added nothing. Teardown prints exactly one
+`coop: stopping the box — …` line for a box that reached its main process (`filtered.started()`, the
+daemon's StartedAt evidence; the open path's plain client exit): the recorded host signal
+(`hostInterrupt`, which replaced the anonymous `signal.NotifyContext`) or the exit status as a
+number — never Ctrl-C inferred from 130.
 
 ## Changelog
 - 2026-09-10 — `approve` reviews the exact project-file snapshot with no `--mode` and skips a no-op; the
   pending check it shares with `coop init`, bare `coop net` and every `AdmitNetwork` launch lives in
   `networkstate` (`pendingApproval`); a filtered launch qualifies the host itself. Rows above updated.
+- 2026-09-10 — the run projection moved to `internal/networkreport` and the interactive box renders it inline after `coop: stopping the box — …`; launch sections, the failure/`ui.Reported` contract and the `hostInterrupt` recorder recorded. Re-verified against the sources above.
 - 2026-09-10 — the `coop net` family regrouped into ACCESS/RUNS/REPAIR (`runs` replaces `ls`, `check` replaces `why`, `export` replaces `receipt`, `explain` takes a host); `inspect` renders the destination-first exception-only projection and makes one bounded recovery attempt before reporting cleanup. Re-verified the consumer facts above against their sources.
 - 2026-09-10 — resolving moved from load-time-only to every request as well: what a daemon advertises is what a create would accept now (`service.go` PolicyNetworks).
 - 2026-09-10 — a session policy's RESOLVED network fingerprint is published at load

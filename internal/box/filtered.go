@@ -68,6 +68,7 @@ type filteredExecution struct {
 	record         networkstate.Execution
 	attempted      map[string]bool
 	startAttempted bool // monotonic host launch boundary, independent of registry publication
+	mainStarted    bool // the daemon reported the workload running: teardown may then speak of its main process
 	bindSources    map[string]os.FileInfo
 	unsafeRoots    []string
 	publish        []string // -p options the controller carries for serve.ports

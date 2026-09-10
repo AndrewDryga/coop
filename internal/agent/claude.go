@@ -26,6 +26,7 @@ func init() { register(claudeAgent{}) }
 
 func (claudeAgent) Name() string        { return "claude" }
 func (claudeAgent) DisplayName() string { return "Claude Code" }
+func (claudeAgent) Vendor() string      { return "Anthropic" }
 
 // LockedClients pins the exact CLI and ACP adapter builds the qualified client
 // image installs. The ACP adapter carries its own separately versioned SDK.

@@ -2,7 +2,7 @@
 name: inspection-reports-exceptions-only
 description: "an inspection leads with what happened and prints exceptions only; a qualification prints the checks it proved"
 scope: cli-output
-sources: [internal/cli/net_result.go, internal/cli/net_cmd.go, internal/box/network_setup.go, internal/cli/doctor.go]
+sources: [internal/networkreport/report.go, internal/cli/net_cmd.go, internal/box/network_summary.go, internal/box/network_setup.go, internal/cli/doctor.go]
 check: "go test ./internal/cli -run 'TestInspectCleanRunIsDestinationFirstAndSilentAboutHealth|TestInspectLifecycleExceptionsAppearOnlyWhenPresent|TestInspectCleanupIsReportedOnlyWhenStillOwed'"
 updated: 2026-09-10
 ---
@@ -53,6 +53,11 @@ fact) and [[tag-exceptions-not-every-row]] (the listing form of the same instinc
   `writeSetupChecks`): one `✓`/`✗` line per property the smoke reached, one bold verdict, no
   runtime/image/timing ledger; a failure claims nothing past the failed check. The pending note
   below is settled. Swept the file: 0 healthy-fact lines remain in the transcript.
+- 2026-09-10 — the projection moved to `internal/networkreport` so the interactive box renders the
+  same body after its receipt is sealed (`coop: Network run <id>`); the old refusal-only
+  `NetworkReport.print` — which printed `nothing was refused` as a healthy fact on every clean box —
+  is deleted. The `check:` tests stayed in `internal/cli` beside their fixtures and drive the moved
+  code; `TestInlineRunViewIsTheStandaloneBodyUnderCoopsAnchor` proves the two views share one body.
 - 2026-09-10 — created from the network-output redesign. Swept `internal/cli/net_cmd.go`,
   `net_result.go`, `net_diagnostic.go`: 0 remaining healthy-fact lines in the run projection, the
   run listing or bare `coop net`; `coop net setup`'s transcript (`internal/box/network_setup.go`,

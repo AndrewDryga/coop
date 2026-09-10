@@ -75,6 +75,10 @@ func TestRegistry(t *testing.T) {
 		if d := a.DisplayName(); d == "" || d == n {
 			t.Errorf("%s: DisplayName() = %q, want a human product name (e.g. Codex)", n, d)
 		}
+		// And the company behind it, for the launch line that says whose endpoints a box may reach.
+		if v := a.Vendor(); v == "" || v == n || v == a.DisplayName() {
+			t.Errorf("%s: Vendor() = %q, want the provider company (e.g. OpenAI)", n, v)
+		}
 	}
 	// Packages is the union across agents (claude 2 + codex 2 + gemini 1; grok is a native
 	// binary, not npm, so it adds none).

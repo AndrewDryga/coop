@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/signal"
 	"path"
 	"path/filepath"
 	"sort"
@@ -423,17 +422,26 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			"-e", "COOP_COMPANION_REPOSITORIES_JSON="+string(data),
 		)
 	}
-	if n := ShadowCount(mounts); n > 0 && !spec.Quiet {
+	// An interactive launch is narrated in sections (launch_sections.go); every other embedding
+	// keeps its one-line log. A filtered run launches the qualified client image, not this
+	// repo's — so a stale-image nudge would point at a rebuild that changes nothing about it.
+	sections := newLaunchSections(spec)
+	var nudges []string
+	if !spec.Batch && !spec.Quiet && spec.CapturedEgress == nil {
+		nudges = StalenessNudges(cfg, spec.Repo, spec.Image)
+	}
+	sections.box(nudges)
+	if n := ShadowCount(mounts); sections.on {
+		sections.secrets(n)
+	} else if n > 0 && !spec.Quiet {
 		ui.Info("shadowed %d secret path(s)", n)
 	}
 	// The sibling-services compose file is NOT shadowed: an in-box agent may author it, but coop
 	// validates it host-side before auto-running it (box.ValidateComposeFile in EnsureServices), so
 	// it can only ever declare a repo-scoped, loopback-only container — never host root. That
 	// removes the read-only decoy that used to strand an empty .agent/compose.yml in the repo.
-	// A filtered run launches the qualified client image, not this repo's — so a
-	// stale-image nudge would point at a rebuild that changes nothing about it.
-	if !spec.Batch && !spec.Quiet && spec.CapturedEgress == nil {
-		for _, nudge := range StalenessNudges(cfg, spec.Repo, spec.Image) {
+	if !sections.on {
+		for _, nudge := range nudges {
 			ui.Info("%s", nudge)
 		}
 	}
@@ -452,6 +460,22 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 
 	var filtered *filteredExecution
 	var execution forkspace.ExecutionRecord
+	var interrupt *hostInterrupt // the host signal that cancelled this run, if one did
+	// A failure from here to the main process is rendered once, under the section in progress,
+	// after every cleanup below has said its piece — so the reason names all of it — and comes
+	// back marked reported. A failure AFTER the main process started is the run's own; only a
+	// cancellation the stop line already explained is marked, and only when teardown added
+	// nothing a person still has to read.
+	started := false
+	var teardownErr error
+	defer func() {
+		switch {
+		case !started:
+			result = sections.failed(result)
+		case teardownErr == nil:
+			result = sections.explained(result, interrupt)
+		}
+	}()
 	if spec.CapturedEgress != nil {
 		// COOP_RUN_ARGS and this run's own extra arguments are reduced to bind
 		// mounts and environment assignments, checked by the same filtered
@@ -464,36 +488,33 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		spec.ExtraArgs = extra
 		if spec.Ctx == nil {
-			// A filtered box is torn down by THIS process: its gateway, volumes and
-			// receipt are exact-owned, and none of it is --rm. So an interrupt has to
-			// arrive as a cancellation the cleanup below can act on, not as a signal
-			// that kills coop where it stands and strands three containers. A second
-			// interrupt takes the default action, so a wedged teardown is still
-			// escapable.
-			interrupted, restore := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			go func() { <-interrupted.Done(); restore() }()
-			spec.Ctx = interrupted
+			// A filtered box is torn down by THIS process, so an interrupt has to arrive
+			// as a cancellation the cleanup below can act on — and teardown names the
+			// signal it was (hostInterrupt).
+			spec.Ctx, interrupt = newHostInterrupt()
 		}
 		filtered, err = prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, composeFile, spec.networkSmoke)
 		if filtered != nil {
 			defer func() {
 				workload := filtered.workloadOutcome(exitCode, result, spec.Ctx.Err() != nil)
 				gone, cleanupErr := filtered.cleanup(workload)
-				result = errors.Join(result, cleanupErr)
 				if execution.ID != "" && gone {
-					result = errors.Join(result, forkspace.EndExecution(spec.ActivityRepo, execution))
+					cleanupErr = errors.Join(cleanupErr, forkspace.EndExecution(spec.ActivityRepo, execution))
 				}
+				result, teardownErr = errors.Join(result, cleanupErr), cleanupErr
 				// After sealing, so the summary reports the receipt's own
 				// evidence rather than a snapshot cleanup was still amending.
 				// The hook fires in every mode — the loop and every quiet
 				// embedding surface the same facts in their own output — while
-				// the terminal summary belongs to a run coop prints for.
+				// the full run projection belongs to an interactive box that
+				// reached its main process: before that there is no traffic to
+				// report, and the failure is the whole story.
 				report := filtered.report()
 				if report.RunID != "" && spec.OnNetworkReport != nil {
 					spec.OnNetworkReport(report)
 				}
-				if !spec.Quiet && !spec.Batch {
-					report.print()
+				if sections.on && filtered.started() {
+					filtered.printRun()
 				}
 			}()
 		}
@@ -504,6 +525,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		spec.Image = filtered.image
 		artifacts.parent = filtered.runfiles
 	}
+	var policy *egress.Snapshot
+	if filtered != nil {
+		policy = &filtered.policy
+	}
+	sections.internet(cfg, spec, policy)
 	// Whatever a box may reach is fully known before it starts, so the launch
 	// instructions say it. An agent that learns its own boundary by being
 	// refused burns a turn and reports policy as a broken tool or a dead host.
@@ -839,7 +865,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if err := filtered.validateMounts(options, generated, append([]string{decoyDir}, tmpDirs...)); err != nil {
 			return finish(-1, err)
 		}
-		return finish(filtered.launch(spec.Ctx, spec, options, stdin, stdout, stderr))
+		sections.starting()
+		code, launchErr := filtered.launch(spec.Ctx, spec, options, stdin, stdout, stderr)
+		if started = filtered.started(); started {
+			sections.stopping(stopReason(code, launchErr, interrupt))
+		}
+		return finish(code, launchErr)
 	}
 	// Bring sibling services up first, so the box can reach them by name. Every launch path —
 	// agent, ACP, loop, and fork — funnels through box.Run, so this one call covers
@@ -964,6 +995,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if spec.OnRuntimeLaunch != nil {
 		spec.OnRuntimeLaunch()
 	}
+	sections.starting()
 	if spec.Ctx != nil {
 		code, runErr := rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
 		if spec.Ctx.Err() == nil || spec.RunID == "" {
@@ -977,6 +1009,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return finish(code, errors.Join(runErr, cleanupErr))
 	}
 	code, runErr := rt.Run(stdin, stdout, stderr, args...)
+	// The plain client ran the box to its end, so its exit status is the main process's. A client
+	// that could not start is the one case with no box to stop; the deferred narration above
+	// renders that failure.
+	if started = runErr == nil; started {
+		sections.stopping(stopReason(code, nil, nil))
+	}
 	return finish(code, runErr)
 }
 

@@ -44,8 +44,8 @@ var allowedEdges = map[string][]string{
 	"acpctl":                {"acpproxy", "agent", "config", "ladder", "liveprocess", "preset", "processidentity"},
 	"acpproxy":              nil,
 	"agent":                 {"config", "egress", "mcp"},
-	"box":                   {"agent", "config", "consult", "egress", "forkspace", "gatewayimage", "mcp", "networkgateway", "networkstate", "networkview", "preset", "processidentity", "project", "runtime", "secretscan", "taskchannel", "ui"},
-	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "egress", "forkctl", "forkspace", "hostsurface", "ladder", "liveprocess", "loop", "loopcfg", "networkstate", "networkview", "preset", "project", "runtime", "scaffold", "sessionsvc", "taskmcp", "tasks", "ui", "workerconnector", "workerproto"},
+	"box":                   {"agent", "config", "consult", "egress", "forkspace", "gatewayimage", "mcp", "networkgateway", "networkreport", "networkstate", "networkview", "preset", "processidentity", "project", "runtime", "secretscan", "taskchannel", "ui"},
+	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "egress", "forkctl", "forkspace", "hostsurface", "ladder", "liveprocess", "loop", "loopcfg", "networkreport", "networkstate", "networkview", "preset", "project", "runtime", "scaffold", "sessionsvc", "taskmcp", "tasks", "ui", "workerconnector", "workerproto"},
 	"config":                nil,
 	"contextc":              {"project"},
 	"egress":                nil,
@@ -60,6 +60,7 @@ var allowedEdges = map[string][]string{
 	"loopcfg":               {"agent"},
 	"mcp":                   nil,
 	"networkgateway":        {"egress", "networkview"},
+	"networkreport":         {"networkstate", "networkview", "ui"},
 	"networkstate":          {"egress", "networkview", "processidentity"},
 	"networkview":           {"egress"},
 	"preset":                {"agent"},
@@ -92,12 +93,15 @@ var allowedEdges = map[string][]string{
 // so the terminal came with them. loop is the strongest case of all: its output IS a multi-hour streaming
 // interface — a sticky live bar (ui.Region/ui.SetLiveSink) with the agent's own stdout scrolling
 // above it — and "return data and let the caller print it" cannot express an incremental render
-// that runs for twelve hours.
+// that runs for twelve hours. networkreport IS presentation and nothing else: the one human
+// projection of a network run, rendered by cli (standalone, stdout) and by box (after an
+// interactive run, stderr) — it takes the stream's ui.Palette so there is one styling system, not
+// a line-role abstraction each caller colors again.
 //
 // Deliberately a SECOND list, not derived from allowedEdges: granting a package the ui edge has to
 // cost two edits, so "just add it to the table" can't quietly move presentation back into a
 // library.
-var uiPresentationOwners = []string{"box", "cli", "forkctl", "loop", "scaffold", "tasks"}
+var uiPresentationOwners = []string{"box", "cli", "forkctl", "loop", "networkreport", "scaffold", "tasks"}
 
 // TestInternalImportDAG diffs the real tree against the frozen table in both directions: an
 // unexpected edge fails, and so does an edge the table still expects but the code has dropped, so

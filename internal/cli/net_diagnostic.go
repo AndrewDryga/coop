@@ -17,6 +17,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkreport"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -170,7 +171,7 @@ func netQueryHost(value string) (string, int, error) {
 		if text := parsed.Port(); text != "" {
 			port, _ = strconv.Atoi(text)
 		}
-	} else if h, p, ok := netSplitPeer(value); ok {
+	} else if h, p, ok := networkreport.SplitPeer(value); ok {
 		host = h
 		port, _ = strconv.Atoi(p)
 	}
@@ -357,7 +358,7 @@ func writeNetHistoricalCheck(w io.Writer, p ui.Palette, result networkstate.Poli
 	case result.Protocol == "icmp":
 		transport = " with an ICMP echo-request"
 	}
-	run := "Run " + netShortID(result.RunID)
+	run := "Run " + networkreport.ShortID(result.RunID)
 	verdict, cause := run+" could not reach "+destination+transport, netSentence(result.Message)
 	if result.Allowed {
 		verdict, cause = run+" could reach "+destination+transport, "Allowed by "+netCheckOrigin(result)+"."
@@ -436,7 +437,7 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 			}
 			return 1, netRunErr(runID, err)
 		}
-		explanation := netExplanation{Version: networkview.Version, RunID: runID, Host: netDestination(result.Event.Name, result.Event.Peer, result.Event.DestinationID),
+		explanation := netExplanation{Version: networkview.Version, RunID: runID, Host: networkreport.Destination(result.Event.Name, result.Event.Peer, result.Event.DestinationID),
 			Causes: []netExplainCause{{Count: 1, Explanation: result}}}
 		if opts.json {
 			return 0, netWriteJSON(os.Stdout, explanation)
@@ -480,7 +481,7 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 	}
 	scope := "this project's recorded runs"
 	if opts.run != "" {
-		scope = "run " + netShortID(runs[0])
+		scope = "run " + networkreport.ShortID(runs[0])
 	}
 	ui.Note("nothing blocked %s in %s — 'coop net check %s' says whether a new run can reach it", opts.query, scope, opts.query)
 	return 0, nil
@@ -506,7 +507,7 @@ func netExplainHost(evidence *networkstate.Evidence, runID, host string) (netExp
 		if denial.Name != host {
 			continue
 		}
-		key := netRefusalLabel(denial)
+		key := networkreport.RefusalLabel(denial)
 		if index[key] == nil {
 			index[key] = &group{newest: denial}
 			order = append(order, key)
@@ -538,13 +539,13 @@ func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation n
 		title += ":" + strconv.Itoa(*first.Port)
 	}
 	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan(title+" was blocked")))
-	fmt.Fprintf(w, "  %s\n", p.Dim("Run "+netShortID(explanation.RunID)+" · "+netWhen(now, first.At)))
+	fmt.Fprintf(w, "  %s\n", p.Dim("Run "+networkreport.ShortID(explanation.RunID)+" · "+networkreport.When(now, first.At)))
 	var candidate *networkview.Candidate
 	for _, cause := range explanation.Causes {
 		event := cause.Explanation.Event
 		line := netSentence(cause.Explanation.Message)
 		if len(explanation.Causes) > 1 {
-			line = netRefusalLabel(event)
+			line = networkreport.RefusalLabel(event)
 			if cause.Count > 1 {
 				line += " ×" + strconv.Itoa(cause.Count)
 			}

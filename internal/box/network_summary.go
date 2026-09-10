@@ -2,11 +2,15 @@ package box
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkreport"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -151,7 +155,7 @@ func allowedTraffic(counters *networkview.Counters) string {
 		return "allowed: UNKNOWN — nothing was recorded for this run"
 	}
 	return fmt.Sprintf("allowed: %s, %s sent, %s received",
-		connectionText(counters.Connections), byteText(counters.SentBytes), byteText(counters.ReceivedBytes))
+		networkreport.ConnectionCount(counters.Connections), networkreport.ByteCount(counters.SentBytes), networkreport.ByteCount(counters.ReceivedBytes))
 }
 
 // rawRefusals reports the packets the kernel refused. It deliberately names no
@@ -165,7 +169,7 @@ func rawRefusals(counters *networkview.Counters) string {
 		return ""
 	}
 	return fmt.Sprintf("%s refused too, with no destination recorded (%s of them to protected addresses)",
-		pluralText(uint64(*counters.DeniedPackets), "raw packet"), countText(counters.ProtectedPackets))
+		networkreport.Plural(uint64(*counters.DeniedPackets), "raw packet"), countText(counters.ProtectedPackets))
 }
 
 // countText renders a retained counter as a decimal string, matching how it is
@@ -175,29 +179,6 @@ func countText(value *networkview.Count) string {
 		return "UNKNOWN"
 	}
 	return strconv.FormatUint(uint64(*value), 10)
-}
-
-// pluralText counts without narrowing a stored counter to an int, so a total
-// past the platform's int range still reads correctly.
-func pluralText(value uint64, noun string) string {
-	if value == 1 {
-		return "1 " + noun
-	}
-	return strconv.FormatUint(value, 10) + " " + noun + "s"
-}
-
-func connectionText(value *networkview.Count) string {
-	if value == nil {
-		return "UNKNOWN connections"
-	}
-	return pluralText(uint64(*value), "connection")
-}
-
-func byteText(value *networkview.Count) string {
-	if value == nil {
-		return "UNKNOWN"
-	}
-	return ui.Bytes(uint64(*value))
 }
 
 // alertLine states the observed facts, the window and the threshold that fired,
@@ -225,41 +206,33 @@ func (f *filteredExecution) report() NetworkReport {
 	return networkRunReport(f.record.ID, snapshot)
 }
 
-// print writes the run's networking outcome on stderr, where coop's own voice
-// lives: never on stdout, which may be carrying provider JSON or an ACP frame.
-// A clean run costs one dim line; a run that hit the boundary explains itself
-// and names both ways forward — read the evidence, or ask for the destination.
-func (r NetworkReport) print() {
-	if r.RunID == "" {
+// started reports whether the daemon ever ran this execution's workload.
+func (f *filteredExecution) started() bool {
+	if f == nil {
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mainStarted
+}
+
+// printRun writes the sealed run on stderr, where coop's own voice lives — never
+// on stdout, which may be carrying provider output. It is the SAME projection
+// `coop net inspect` prints, fed from the record this supervisor already holds,
+// under the `coop:` anchor because it follows arbitrary agent output. A record
+// that cannot be projected is reported as that, not as a run with no traffic.
+func (f *filteredExecution) printRun() {
+	if f == nil || f.record.ID == "" {
 		return
 	}
-	if r.Quiet() {
-		ui.Detail("nothing was refused in this box (coop net inspect %s)", r.RunID)
+	inspection, err := networkstate.InspectExecution(f.record, time.Now(), true)
+	if err != nil {
+		ui.Warn("network run %s: %v — 'coop net inspect %s' reads the record", networkreport.ShortID(f.record.ID), err, networkreport.ShortID(f.record.ID))
 		return
 	}
-	if len(r.Denials) > 0 {
-		ui.Warn("%s refused in this box", ui.Count(len(r.Denials)+r.Omitted, "destination was", "destinations were"))
-		for _, denial := range r.Denials {
-			ui.Detail("%s", denial)
-		}
-		if r.Omitted > 0 {
-			ui.Detail("… and %s (coop net inspect %s)", ui.Count(r.Omitted, "more"), r.RunID)
-		}
-	}
-	for _, line := range r.Alerts {
-		ui.Warn("network alert: %s", line)
-	}
-	ui.Detail("%s", r.Allowed)
-	if r.Raw != "" {
-		ui.Detail("%s", r.Raw)
-	}
-	if r.Truncate {
-		ui.Detail("only part of the detail was kept — the list above is not the whole history")
-	}
-	if r.Event != "" {
-		ui.Detail("coop net explain %s --run %s   # why", r.Event, r.RunID)
-	}
-	ui.Detail("to allow one: add it under box.egress_rules in .agent/project.yaml, then run 'coop net approve' on the host")
+	p := ui.For(os.Stderr)
+	view := networkreport.View{ID: f.record.ID, Prefix: p.Bold(p.Cyan("coop:")) + " "}
+	networkreport.WriteRun(os.Stderr, p, view, inspection)
 }
 
 // networkInstructionNote is the Network section every agent in a filtered box

@@ -2,9 +2,9 @@
 name: command-output-tiers
 description: "dim progress log, one `coop:` anchor, a bright next-steps block; standalone results use the outcome glyphs"
 scope: cli-output
-sources: [internal/ui/ui.go, internal/cli/commands.go]
+sources: [internal/ui/ui.go, internal/ui/section.go, internal/box/launch_sections.go, internal/cli/launch_box.go, internal/cli/commands.go]
 check: "none"
-updated: 2026-08-25
+updated: 2026-09-10
 ---
 
 # Command output: dim log, one `coop:` anchor, a bright "next steps" block
@@ -27,6 +27,17 @@ tiers, so the log of what happened never drowns out what the user must do next:
   `ui.Error` (red ✗) a failure, `ui.Note` (plain) a neutral note. State the *result* — `tasks lint:
   clean` becomes `✓ no issues — 12 tasks checked`. (A command that interleaves with an agent —
   fork/loop/run — or runs multi-step still uses the `coop:`-prefixed `ui.Info`.)
+- **An interactive launch's sections** — the host-side work a person watches BEFORE the agent's
+  output begins (`coop claude`, `coop run`) — are bold, unprefixed headings (`ui.Section`) with
+  indented results (`ui.Pass` ✓ / `ui.Caution` ⚠), and no `coop:` on any line: the invocation
+  already says who is speaking. `Checking the Coop box` (only when there is a repair to do),
+  `Protecting secrets`, one `Internet access` heading whatever the mode, `Starting <Agent>` with no
+  success glyph because the agent's output IS the result. A section that fails ends with `ui.Fail`:
+  the indented red ✗ headline, a blank line, the concrete reason six spaces further in, a blank
+  line, the remedy one level under the section — reason and remedy never dimmed — and the error
+  comes back `ui.Reported`, so the dispatcher's fallback `✗` does not repeat it. The `coop:`
+  anchor returns only AFTER agent output, where the speaker is no longer obvious: `coop: stopping
+  the box — …`, `coop: Network run <id>`.
 
 **Why:** the user pasted 28 identical `coop:` lines and said "it makes it very hard to see what
 user needs to do and what is actual log… add some spacing, coloring and formatting." A flat,
@@ -54,10 +65,20 @@ the command-name echo, and errors that name the fix.
   `coop fork review`, `coop tasks watch` — is NOT one of these; use the plain/glyph voice.
 - Next-step actions → collect a `[]string` in the command and pass it to `ui.Steps`; derive each
   step from real state (see `initNextSteps` in `internal/cli/commands.go`).
+- Pre-launch work on an interactive run → `ui.Section` / `ui.Pass` / `ui.Caution` / `ui.Fail`
+  (`internal/box/launch_sections.go`, `internal/cli/launch_box.go`), gated on the run being
+  interactive (`!Batch && !Quiet && !ForceNoTTY`) so a loop, a probe and an ACP child keep their
+  bounded one-line log. A remedy names the command to REPEAT (`run 'coop codex' again`), never a
+  manual detour the launch retries itself (`coop build`).
 
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-09-10 — added the interactive-launch sections tier (`ui.Section`/`Pass`/`Caution`/`Fail`,
+  `ui.Reported`) from the network-output redesign: the user asked for named sections instead of
+  isolated `coop:` status lines and a `coop build` nag on every launch. Swept `internal/box/run.go`
+  and `internal/cli/commands.go`: the `shadowed N secret path(s)` and skew-nudge `ui.Info` lines
+  became sections on the interactive path; the loop/ACP/quiet paths keep theirs by design.
 - 2026-08-25 — replaced Fleet watch examples with the surviving task watch standalone result;
   output-tier guidance is unchanged.
 - 2026-06-19 — created

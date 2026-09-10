@@ -4,7 +4,7 @@ description: "a coding agent is one self-registering file in `internal/agent`, n
 scope: architecture
 sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go]
 check: "go test ./internal/agent -run TestRegistry"
-updated: 2026-09-06
+updated: 2026-09-10
 ---
 
 # A coding agent is one file in internal/agent — never a switch elsewhere
@@ -30,6 +30,10 @@ adding an agent a single new file.
 - Guard production code only: `rg '\"(claude|codex|gemini|grok)\"' internal -g '!**/*_test.go' -g '!internal/agent/**' -g '!internal/cli/testdata/providerfixture/**' -g '!internal/acpproxy/testdata/acpfixture/**'` should return nothing.
 
 ## Changelog
+- 2026-09-10 — `Vendor()` joined the interface (the company behind the product: Anthropic, OpenAI,
+  Google, xAI) for the launch line that says whose endpoints a filtered box may reach and who an
+  offline agent cannot reach — the per-agent fact went behind the interface, not into a map in
+  `box`. Guard grep unchanged: 0 new production literals outside `internal/agent`.
 - 2026-09-06 — re-verified: the Codex commentary/final-answer phase filter that had grown inside
   `internal/sessionsvc/acp.go` moved behind `Agent.ACPFinalChunk(meta)` (codex answers from
   `_meta.codex.phase`, every other adapter says true); the guard grep fell from 27 hits to 26. The

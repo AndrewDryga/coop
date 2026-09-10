@@ -416,14 +416,24 @@ def scene_claude():
     """One sandboxed agent, brakes off — your secrets shadowed. Scripted to mirror a real
     `coop claude -p` run: print mode does the task and prints the result (the streamed tool view is
     the loop's; -p prints the final answer)."""
-    c = Cast("claude", cols=92, rows=11, title="coop claude — a sandboxed agent, brakes off")
+    c = Cast("claude", cols=92, rows=17, title="coop claude — a sandboxed agent, brakes off")
     c.command('coop claude -p "Redact card numbers from the request logger; keep the gate green"')
-    c.line(coop("shadowed 2 secret path(s)"), after=0.9)
-    c.line(after=0.7)
+    # The launch narrates its host-side work as sections (ui.Section/Pass), no coop: prefix before
+    # the agent speaks; the coop: anchor returns only after its output, on the stop line.
+    c.line(after=0.3)
+    c.line(bold("Protecting secrets"), after=0.1)
+    c.line(chk("2 secret paths hidden from the box"), after=0.5)
+    c.line(after=0.2)
+    c.line(bold("Internet access"), after=0.1)
+    c.line(chk("Anthropic endpoints allowed"), after=0.3)
+    c.line(chk("Everything else blocked"), after=0.5)
+    c.line(after=0.2)
+    c.line(bold("Starting Claude Code"), after=0.9)
     c.line("Gate is green (gofmt clean, vet/build/tests pass).", after=1.1)
     c.line(after=0.4)
     c.line("Card-like digit runs in logged request bodies are now masked to the last 4 (a Luhn check keeps", after=0.5)
     c.line("order ids untouched); added a test with a sample PAN asserting it never reaches the logs.", after=1.3)
+    c.line(coop("stopping the box — main process exited with status 0"), after=0.6)
     c.write()
 
 

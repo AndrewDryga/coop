@@ -297,6 +297,10 @@ type Agent interface {
 	// DisplayName is the human product name for UX surfaces (the ACP toolbar dropdowns):
 	// "Claude Code", "Codex", … Name() stays the grammar token everywhere a value is parsed.
 	DisplayName() string
+	// Vendor is the company whose service the agent reaches — "Anthropic", "OpenAI" — for the
+	// launch line that says whose endpoints a box may reach ("OpenAI endpoints allowed",
+	// "Codex cannot reach OpenAI"). DisplayName names the product; this names who is behind it.
+	Vendor() string
 	// Interactive is the autonomous default command — what `coop <agent>` runs.
 	Interactive(cfg *config.Config) []string
 	// Headless is the one-shot, non-interactive form carrying a prompt (the loop).

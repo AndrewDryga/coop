@@ -272,6 +272,9 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	}
 	f.startAttempted = true
 	code, runErr := f.docker.StartAttached(run, f.ref("agent"), stdin, stdout, stderr, func() error {
+		f.mu.Lock()
+		f.mainStarted = true
+		f.mu.Unlock()
 		return f.transition(run, "agent", "started")
 	})
 	cancel()

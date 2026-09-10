@@ -161,6 +161,14 @@ transport, each resolved peer with its connection count and bytes sent and recei
 only what went wrong: blocked attempts, alerts, gaps in the evidence, a layer that did not run
 normally, a cleanup still owed. A clean run prints nothing else; `--json` keeps every field.
 
+An interactive filtered box prints that same view itself, on stderr, once its teardown has
+sealed the receipt — under `coop: Network run <id>`, because it follows the agent's own output.
+Before it, one line says why the box is being torn down: `coop: stopping the box — main process
+exited with status 0`, or `— interrupted by Ctrl-C` when a signal reached coop (never guessed
+from an exit status). The sections before the agent started — `Protecting secrets`, `Internet
+access` listing each provider's endpoints, the approved sites/services and the configured MCP
+servers before `✓ Everything else blocked`, then `Starting <agent>` — carry no prefix at all.
+
 - **TLS flows are observed.** The gateway sees each connection, so a destination row is the name
   the workload asked for, the address it resolved to, and the bytes that crossed. A blocked name
   becomes a retained event, and `coop net explain <host>` opens the newest one for that host in

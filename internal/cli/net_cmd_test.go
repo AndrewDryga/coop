@@ -11,6 +11,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkreport"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -58,9 +59,9 @@ func netTestClean() networkstate.Inspection {
 		ReadAt: time.Date(2026, 9, 10, 18, 0, 0, 0, time.UTC), Cleanup: "complete"}
 }
 
-func renderNetRun(view netRunView, inspection networkstate.Inspection) string {
+func renderNetRun(view networkreport.View, inspection networkstate.Inspection) string {
 	var b bytes.Buffer
-	writeNetRun(&b, ui.Palette{}, view, inspection)
+	networkreport.WriteRun(&b, ui.Palette{}, view, inspection)
 	return b.String()
 }
 
@@ -69,7 +70,7 @@ func renderNetRun(view netRunView, inspection networkstate.Inspection) string {
 // No glyph, no status, no zero, no healthy or invariant fact — and no ESC byte
 // when the palette is off.
 func TestInspectCleanRunIsDestinationFirstAndSilentAboutHealth(t *testing.T) {
-	got := renderNetRun(netRunView{ID: netTestRun}, netTestClean())
+	got := renderNetRun(networkreport.View{ID: netTestRun}, netTestClean())
 	want := "Network run " + netTestRun + "\n" +
 		"\n" +
 		"  Allowed   1 connection · 773 B sent · 5.3 KB received\n" +
@@ -103,7 +104,7 @@ func TestInspectGroupsRepeatsKeepsPeersAndSortsDeterministically(t *testing.T) {
 		netTestConnection("c6", "example.com.au", "104.20.23.155:443", 7, 8),
 	}
 	inspection.Observed.Counters.Connections = networkview.Value(6)
-	got := renderNetRun(netRunView{ID: netTestRun}, inspection)
+	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	body := strings.SplitN(got, "\n\n", 3)[1]
 	want := "  Allowed   6 connections · 773 B sent · 5.3 KB received\n" +
 		"    api.anthropic.com:443 · TLS\n" +
@@ -133,7 +134,7 @@ func TestInspectSeparatesFailedAndInFlightAttemptsFromConnections(t *testing.T) 
 	connecting := netTestConnection("c9", "example.com", "104.20.23.154:443", 0, 0)
 	connecting.State, connecting.Reason, connecting.SentBytes, connecting.ReceivedBytes = "connecting", "", nil, nil
 	inspection.Observed.Connections = append(inspection.Observed.Connections, failed, failedAgain, connecting)
-	got := renderNetRun(netRunView{ID: netTestRun}, inspection)
+	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	want := "  Allowed   1 connection · 773 B sent · 5.3 KB received\n" +
 		"    api.example.com:443 · TLS\n" +
 		"      203.0.113.5:443 · 2 attempts failed — the destination did not answer\n" +
@@ -157,7 +158,7 @@ func TestInspectNeverInventsATotal(t *testing.T) {
 	unknown.SentBytes, unknown.ReceivedBytes = nil, nil
 	saturated := netTestConnection("c3", "big.example", "198.51.100.7:443", ^uint64(0), 1)
 	inspection.Observed.Connections = []networkview.Connection{inspection.Observed.Connections[0], unknown, saturated}
-	got := renderNetRun(netRunView{ID: netTestRun}, inspection)
+	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	for _, want := range []string{
 		"      198.51.100.7:443 · 1 connection · ≥ 18446744.1 TB sent · 1 B received\n",
 		"      104.20.23.154:443 · 2 connections · UNKNOWN sent · UNKNOWN received\n",
@@ -167,12 +168,12 @@ func TestInspectNeverInventsATotal(t *testing.T) {
 		}
 	}
 	inspection.Observed.Counters = nil
-	got = renderNetRun(netRunView{ID: netTestRun}, inspection)
+	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	if !strings.Contains(got, "  Allowed   UNKNOWN — no totals were recorded for this run\n") || strings.Contains(got, "0 B sent") {
 		t.Errorf("missing counters were rendered as a number:\n%s", got)
 	}
 	empty := networkstate.Inspection{Freshness: networkstate.FreshnessNotObserved}
-	got = renderNetRun(netRunView{ID: "run1"}, empty)
+	got = renderNetRun(networkreport.View{ID: "run1"}, empty)
 	if !strings.Contains(got, "  Allowed   UNKNOWN — nothing was recorded for this run\n") || !strings.Contains(got, "Full details: coop net inspect run1 --json") {
 		t.Errorf("an unobserved run:\n%s", got)
 	}
@@ -191,7 +192,7 @@ func TestInspectKeepsNonWorkloadRowsOutOfAllowed(t *testing.T) {
 		networkview.Connection{ID: "u1", State: "unknown", Reason: "unattributed_socket", Transport: "tcp", NameSource: "unattributed", Peer: "198.51.100.9:443", Partial: true},
 		networkview.Connection{ID: "u2", State: "unknown", Reason: "unattributed_socket", Transport: "tcp", NameSource: "unattributed-history", Peer: "198.51.100.9:443", Partial: true},
 	)
-	got := renderNetRun(netRunView{ID: netTestRun}, inspection)
+	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	want := "  Allowed   1 connection · 773 B sent · 5.3 KB received\n" +
 		"    example.com:443 · TLS\n" +
 		"      104.20.23.154:443 · 1 connection · 773 B sent · 5.3 KB received\n" +
@@ -216,7 +217,7 @@ func TestInspectShowsRawTrafficPerRuleWithoutInventingHosts(t *testing.T) {
 		{RuleID: "aaaa1111bbbb2222cccc3333dddd4444", Packets: 12, Bytes: 9000},
 		{RuleID: "eeee5555ffff6666aaaa7777bbbb8888"},
 	}
-	got := renderNetRun(netRunView{ID: netTestRun}, inspection)
+	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	want := "\n  Raw traffic — counted per rule, no destination is recorded\n" +
 		"    rule aaaa1111 · 12 packets · 9.0 KB\n" +
 		"\nFull details:"
@@ -227,7 +228,7 @@ func TestInspectShowsRawTrafficPerRuleWithoutInventingHosts(t *testing.T) {
 		t.Errorf("a grant that carried nothing got a row:\n%s", got)
 	}
 	inspection.Observed.AddressGrants = nil
-	if got := renderNetRun(netRunView{ID: netTestRun}, inspection); strings.Contains(got, "Raw traffic") {
+	if got := renderNetRun(networkreport.View{ID: netTestRun}, inspection); strings.Contains(got, "Raw traffic") {
 		t.Errorf("a run with no raw grants printed the raw block:\n%s", got)
 	}
 }
@@ -238,7 +239,7 @@ func TestInspectZeroTrafficIsStillAResult(t *testing.T) {
 	inspection := netTestClean()
 	inspection.Observed.Connections = nil
 	inspection.Observed.Counters = &networkview.Counters{Connections: networkview.Value(0), SentBytes: networkview.Value(0), ReceivedBytes: networkview.Value(0), DeniedPackets: networkview.Value(0)}
-	got := renderNetRun(netRunView{ID: netTestRun}, inspection)
+	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	want := "Network run " + netTestRun + "\n\n  Allowed   no external connections\n\nFull details: coop net inspect " + netTestRun + " --json\n"
 	if got != want {
 		t.Errorf("zero-traffic run:\n%s\nwant:\n%s", got, want)
@@ -260,7 +261,7 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 		{ID: "d4", Source: "socket-inventory", Kind: "direct_tcp_attempt", Reason: "fixed_egress_policy", Peer: "203.0.113.5:8443", Port: &port},
 	}
 	inspection.Observed.Counters.DeniedPackets = networkview.Value(3)
-	got := renderNetRun(netRunView{ID: netTestRun}, inspection)
+	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	want := "\n⚠ 2 destinations were blocked\n" +
 		"  raw.githubusercontent.com · DNS ×2\n" +
 		"  raw.githubusercontent.com · DNS — a protected address\n" +
@@ -280,7 +281,7 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 		Reason: "unapproved_name", Name: "registry.example.com", Port: &port,
 		Candidate: &networkview.Candidate{ID: "c1", EvidenceID: "d5", AppliesTo: "next_run",
 			Rule: egress.Rule{To: egress.Destination{Domain: "registry.example.com"}, Protocol: "tls", Ports: []int{443}}}})
-	got = renderNetRun(netRunView{ID: netTestRun}, inspection)
+	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	for _, want := range []string{"⚠ 3 destinations were blocked\n", "  registry.example.com:443 · TLS\n",
 		"  coop net explain registry.example.com --run e644f07a   # why\n",
 		"  To allow it: add the rule shown by 'coop net explain', then run 'coop net approve'\n"} {
@@ -290,9 +291,42 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 	}
 	// Refused raw packets alone are still the boundary being hit.
 	inspection.Observed.Denials = nil
-	got = renderNetRun(netRunView{ID: netTestRun}, inspection)
+	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	if !strings.Contains(got, "\n⚠ 3 raw packets were blocked with no destination recorded\n") || strings.Contains(got, "coop net explain") {
 		t.Errorf("raw-only refusals:\n%s", got)
+	}
+}
+
+// Acceptance: the interactive box's inline result and standalone inspect are
+// ONE projection — the same traffic and exception body from the same
+// snapshot, differing only by coop's anchor on the heading. Allowed traffic
+// leads, the refusal rows follow with the hostname-based explain action, and
+// the footer is the same exact line.
+func TestInlineRunViewIsTheStandaloneBodyUnderCoopsAnchor(t *testing.T) {
+	port := 443
+	inspection := netTestClean()
+	inspection.Observed.Denials = []networkview.Denial{
+		{ID: "d1", Source: "guard", Kind: "tls_denied", Reason: "unapproved_name", Name: "unapproved.example.org", Port: &port},
+		{ID: "d2", Source: "guard", Kind: "tls_denied", Reason: "unapproved_name", Name: "unapproved.example.org", Port: &port},
+	}
+	standalone := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
+	inline := renderNetRun(networkreport.View{ID: netTestRun, Prefix: "coop: "}, inspection)
+	if inline != "coop: "+standalone {
+		t.Fatalf("inline view:\n%s\nis not the standalone body under coop's anchor:\n%s", inline, standalone)
+	}
+	allowed, blocked := strings.Index(inline, "  Allowed   1 connection"), strings.Index(inline, "\n⚠ 1 destination was blocked\n")
+	if allowed < 0 || blocked < allowed {
+		t.Fatalf("allowed traffic must lead and the refusal follow:\n%s", inline)
+	}
+	for _, want := range []string{"coop: Network run " + netTestRun + "\n", "    example.com:443 · TLS\n",
+		"  unapproved.example.org:443 · TLS ×2\n", "  coop net explain unapproved.example.org --run e644f07a   # why\n",
+		"\nFull details: coop net inspect " + netTestRun + " --json\n"} {
+		if !strings.Contains(inline, want) {
+			t.Errorf("inline view is missing %q:\n%s", want, inline)
+		}
+	}
+	if strings.Contains(inline, "coop net approve") || strings.Contains(inline, "nothing was refused") || strings.Contains(inline, "\x1b") {
+		t.Fatalf("inline view offers unproven approval guidance, the retired filler, or ANSI off a terminal:\n%s", inline)
 	}
 }
 
@@ -303,7 +337,7 @@ func TestInspectLifecycleExceptionsAppearOnlyWhenPresent(t *testing.T) {
 	live := netTestClean()
 	live.Receipt, live.Observed.Terminal, live.Freshness, live.Cleanup = nil, false, networkstate.FreshnessFresh, "pending"
 	live.Observed.Health.Gateway = networkview.Health{Status: "ready"}
-	got := renderNetRun(netRunView{ID: netTestRun}, live)
+	got := renderNetRun(networkreport.View{ID: netTestRun}, live)
 	if !strings.HasPrefix(got, "Network run "+netTestRun+"\n● Live — totals are still changing\n\n  Allowed") {
 		t.Errorf("a live run lacks its one context line:\n%s", got)
 	}
@@ -313,13 +347,13 @@ func TestInspectLifecycleExceptionsAppearOnlyWhenPresent(t *testing.T) {
 
 	stale := live
 	stale.Freshness = networkstate.FreshnessStale
-	got = renderNetRun(netRunView{ID: netTestRun}, stale)
+	got = renderNetRun(networkreport.View{ID: netTestRun}, stale)
 	if !strings.Contains(got, "\n⚠ Some network activity may be missing — no final record was sealed — the last observation was at 2026-09-10T14:49:38Z\n") || strings.Contains(got, "● Live") {
 		t.Errorf("a stale unsealed run:\n%s", got)
 	}
 	// The same evidence while its supervisor is still running is a run in
 	// progress, not a lost one: coop's recovery attempt learned that.
-	owned := netRunView{ID: netTestRun, Cleanup: netCleanup{Expected: true}}
+	owned := networkreport.View{ID: netTestRun, Cleanup: networkreport.Cleanup{Expected: true}}
 	got = renderNetRun(owned, stale)
 	if !strings.Contains(got, "\n● Live — last observed today 14:49\n") || strings.Contains(got, "⚠") {
 		t.Errorf("a stale run with a live supervisor:\n%s", got)
@@ -333,7 +367,7 @@ func TestInspectLifecycleExceptionsAppearOnlyWhenPresent(t *testing.T) {
 
 	partial := netTestClean()
 	partial.Receipt.Completeness = "partial"
-	got = renderNetRun(netRunView{ID: netTestRun}, partial)
+	got = renderNetRun(networkreport.View{ID: netTestRun}, partial)
 	if !strings.Contains(got, "\n⚠ Some network activity may be missing — the record was sealed with partial evidence\n") {
 		t.Errorf("a partial receipt:\n%s", got)
 	}
@@ -341,7 +375,7 @@ func TestInspectLifecycleExceptionsAppearOnlyWhenPresent(t *testing.T) {
 	lossy := netTestClean()
 	lossy.Observed.Loss = networkview.Loss{Records: 2, DetailTruncated: true, OmittedDetails: networkview.Value(40), Reasons: []string{"kernel_terminal_sample_unavailable"}}
 	lossy.Observed.Coverage.BoundaryAttribution = networkview.MetricCoverage{Status: "lower-bound", Reason: "unattributed_socket"}
-	got = renderNetRun(netRunView{ID: netTestRun}, lossy)
+	got = renderNetRun(networkreport.View{ID: netTestRun}, lossy)
 	want := "\n⚠ Some network activity may be missing\n" +
 		"  2 observation records were lost\n" +
 		"  only part of the connection and blocked-attempt detail was kept (40 details dropped)\n" +
@@ -355,7 +389,7 @@ func TestInspectLifecycleExceptionsAppearOnlyWhenPresent(t *testing.T) {
 	alerting.Observed.Alerts = []networkview.Alert{{ID: "a1", Category: "denial_burst_dns", Severity: "warning", State: "active", WindowMillis: 60000,
 		Threshold: networkview.AlertThreshold{Value: 20, Unit: "denied_dns_queries"}, Facts: networkview.AlertFacts{DNSQueries: 24}}}
 	alerting.Observed.Loss.SuppressedAlerts = 1
-	got = renderNetRun(netRunView{ID: netTestRun}, alerting)
+	got = renderNetRun(networkreport.View{ID: netTestRun}, alerting)
 	want = "\n⚠ 1 alert was raised\n" +
 		"  a burst of blocked DNS lookups (warning) — 24 in 1m, over a threshold of 20\n" +
 		"  1 more alert exceeded this run's alert budget and was not recorded\n"
@@ -365,11 +399,11 @@ func TestInspectLifecycleExceptionsAppearOnlyWhenPresent(t *testing.T) {
 
 	unhealthy := live
 	unhealthy.Observed.Health.Enforcer = networkview.Health{Status: "unknown", Reason: "unexpected_agent_connection"}
-	got = renderNetRun(netRunView{ID: netTestRun}, unhealthy)
+	got = renderNetRun(networkreport.View{ID: netTestRun}, unhealthy)
 	if !strings.Contains(got, "\n⚠ The packet filter was unknown — the agent opened a connection outside the gateway's capture\n") {
 		t.Errorf("an unhealthy enforcer:\n%s", got)
 	}
-	if got := renderNetRun(netRunView{ID: netTestRun}, netTestClean()); strings.Contains(got, "gateway") {
+	if got := renderNetRun(networkreport.View{ID: netTestRun}, netTestClean()); strings.Contains(got, "gateway") {
 		t.Errorf("a terminal run's stopped gateway was reported:\n%s", got)
 	}
 }
@@ -380,17 +414,17 @@ func TestInspectLifecycleExceptionsAppearOnlyWhenPresent(t *testing.T) {
 // continuation, and never tells the operator to run recovery.
 func TestInspectCleanupIsReportedOnlyWhenStillOwed(t *testing.T) {
 	clean := netTestClean()
-	if got := renderNetRun(netRunView{ID: netTestRun}, clean); strings.Contains(got, "leanup") {
+	if got := renderNetRun(networkreport.View{ID: netTestRun}, clean); strings.Contains(got, "leanup") {
 		t.Errorf("finished cleanup got a line:\n%s", got)
 	}
 	live := clean
 	live.Receipt, live.Observed.Terminal, live.Freshness, live.Cleanup = nil, false, networkstate.FreshnessFresh, "pending"
-	if got := renderNetRun(netRunView{ID: netTestRun}, live); strings.Contains(got, "leanup") {
+	if got := renderNetRun(networkreport.View{ID: netTestRun}, live); strings.Contains(got, "leanup") {
 		t.Errorf("a live run's pending cleanup got a warning:\n%s", got)
 	}
 	owed := clean
 	owed.Cleanup = "pending"
-	got := renderNetRun(netRunView{ID: netTestRun, Cleanup: netCleanup{Blocker: "Docker is unavailable", Remedy: "Start Docker; Coop will retry automatically"}}, owed)
+	got := renderNetRun(networkreport.View{ID: netTestRun, Cleanup: networkreport.Cleanup{Blocker: "Docker is unavailable", Remedy: "Start Docker; Coop will retry automatically"}}, owed)
 	want := "\n⚠ Cleanup incomplete — Docker is unavailable\n  Start Docker; Coop will retry automatically\n\nFull details:"
 	if !strings.Contains(got, want) {
 		t.Errorf("unresolved cleanup:\n%s\nwant to contain:\n%s", got, want)
@@ -398,28 +432,28 @@ func TestInspectCleanupIsReportedOnlyWhenStillOwed(t *testing.T) {
 	if strings.Contains(got, "coop net recover") {
 		t.Errorf("the operator was told to run routine recovery:\n%s", got)
 	}
-	if got := renderNetRun(netRunView{ID: netTestRun, Cleanup: netCleanup{Expected: true}}, owed); strings.Contains(got, "leanup") {
+	if got := renderNetRun(networkreport.View{ID: netTestRun, Cleanup: networkreport.Cleanup{Expected: true}}, owed); strings.Contains(got, "leanup") {
 		t.Errorf("a supervisor still cleaning up was reported as incomplete:\n%s", got)
 	}
 	// A view that made no attempt of its own (the watch's sealed projection)
 	// still names who retries, never a bare headline.
-	if got := renderNetRun(netRunView{ID: netTestRun}, owed); !strings.Contains(got, "\n⚠ Cleanup incomplete\n  Coop will retry automatically\n") {
+	if got := renderNetRun(networkreport.View{ID: netTestRun}, owed); !strings.Contains(got, "\n⚠ Cleanup incomplete\n  Coop will retry automatically\n") {
 		t.Errorf("cleanup owed with no attempt of this view's own:\n%s", got)
 	}
 	// The recovery result maps onto those terms: a live supervisor is expected,
 	// a skipped daemon names itself, a failed removal keeps its cause.
 	for _, tc := range []struct {
 		result box.NetworkRecovery
-		want   netCleanup
+		want   networkreport.Cleanup
 	}{
-		{box.NetworkRecovery{Live: true, Skipped: "its supervisor (pid 7) is still running or its identity is uncertain"}, netCleanup{Expected: true}},
+		{box.NetworkRecovery{Live: true, Skipped: "its supervisor (pid 7) is still running or its identity is uncertain"}, networkreport.Cleanup{Expected: true}},
 		{box.NetworkRecovery{Skipped: "the runtime it ran on is unavailable: Cannot connect to the Docker daemon"},
-			netCleanup{Blocker: "the runtime it ran on is unavailable: Cannot connect to the Docker daemon", Remedy: "Coop will retry automatically once that Docker daemon is back"}},
+			networkreport.Cleanup{Blocker: "the runtime it ran on is unavailable: Cannot connect to the Docker daemon", Remedy: "Coop will retry automatically once that Docker daemon is back"}},
 		{box.NetworkRecovery{Failures: []error{errors.New("guard: permission denied")}, Pending: []string{"guard"}},
-			netCleanup{Blocker: "guard: permission denied", Remedy: "Coop will retry automatically"}},
+			networkreport.Cleanup{Blocker: "guard: permission denied", Remedy: "Coop will retry automatically"}},
 		{box.NetworkRecovery{Pending: []string{"ipc", "observations"}},
-			netCleanup{Blocker: "still to remove: ipc, observations", Remedy: "Coop will retry automatically"}},
-		{box.NetworkRecovery{Removed: []string{"agent"}, Sealed: true}, netCleanup{}},
+			networkreport.Cleanup{Blocker: "still to remove: ipc, observations", Remedy: "Coop will retry automatically"}},
+		{box.NetworkRecovery{Removed: []string{"agent"}, Sealed: true}, networkreport.Cleanup{}},
 	} {
 		if got := netCleanupOf(tc.result); got != tc.want {
 			t.Errorf("netCleanupOf(%+v) = %+v, want %+v", tc.result, got, tc.want)
@@ -882,7 +916,7 @@ func TestNetWhenReadsLikeAClock(t *testing.T) {
 		"yesterday 23:59":  time.Date(2026, 9, 9, 23, 59, 0, 0, time.UTC),
 		"2026-09-08 14:49": time.Date(2026, 9, 8, 14, 49, 0, 0, time.UTC),
 	} {
-		if got := netWhen(now, at); got != want {
+		if got := networkreport.When(now, at); got != want {
 			t.Errorf("netWhen = %q, want %q", got, want)
 		}
 	}

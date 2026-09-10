@@ -46,6 +46,16 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-10 — **+1 package, +3 edges, +2 consumer edges, +1 `uiPresentationOwners` grant:
+  `internal/networkreport`** (`{"networkstate", "networkview", "ui"}`), imported by `box` and `cli`.
+  The human projection of a network run (`WriteRun`, formerly `cli/net_result.go`) is rendered by
+  BOTH the standalone `coop net inspect` (stdout) and the interactive box after its receipt is
+  sealed (stderr, under `coop:`), and nothing may import `cli`, so the shared piece got its own leaf.
+  It could not live in `networkview` (the read model cannot import `networkstate`, whose
+  `Inspection` is the projection's input, nor `ui`), and it is presentation and nothing else — it
+  takes the stream's `ui.Palette` so one styling system serves both callers instead of a line-role
+  abstraction each recolors — hence the grant, with the reason beside the list. Swept with
+  `TestInternalImportDAG`; these were the only new edges.
 - 2026-09-10 — **+2 packages, +3 edges** for the in-box task channel (task
   2026-09-08-give-an-in-box-agent-a-coop-owned-task-mcp-serve): new leaf `taskchannel` (the
   transport: helper-stdio multiplexer, no task/MCP knowledge, so `box` can import it), new

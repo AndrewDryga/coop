@@ -62,6 +62,16 @@ func (e *Evidence) Inspect(id string, now time.Time, exportDestinations bool) (I
 	return inspect(record, now, exportDestinations)
 }
 
+// InspectExecution is Inspect for a record the caller already holds — the
+// launch supervisor's own, refreshed by every update it made — so a box can
+// render its sealed run without reopening the evidence it just closed.
+func InspectExecution(record Execution, now time.Time, exportDestinations bool) (Inspection, error) {
+	if now.IsZero() {
+		return Inspection{}, errors.New("network inspection requires the reader's observation time")
+	}
+	return inspect(record, now, exportDestinations)
+}
+
 func inspect(record Execution, now time.Time, exportDestinations bool) (Inspection, error) {
 	observation, err := aggregateObservation(record, exportDestinations)
 	if err != nil {

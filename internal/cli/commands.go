@@ -208,6 +208,13 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	}
 	defer capture.Close()
 	spec.CapturedEgress = capture
+	// A filtered box runs the qualified client image, so the shared image's currency is not its
+	// concern; an open or offline one runs this repo's, repaired here when its definition drifted.
+	if capture == nil {
+		if err := a.checkCoopBox(repo, img); err != nil {
+			return 1, err
+		}
+	}
 	code, err := box.Run(a.cfg, a.rt, spec)
 	// An interactive/run box makes unsigned commits; sign what THIS session produced on exit so a
 	// protected remote accepts them. Best-effort, session-scoped, skipped for a dirty tree.
