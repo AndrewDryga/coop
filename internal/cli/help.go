@@ -102,7 +102,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	group("CREDENTIALS, MODELS & PRESETS")
 	row("coop login <agent>", "sign in an agent (a subscription)")
 	row("coop credentials [<agent>]", "the accounts Coop can use")
-	row("coop models [<agent>]", "the model menu per agent")
+	row("coop models [<agent>]", "the models available to each agent")
 	row("coop presets [<preset>]", "orchestration recipes (lead + roles)")
 
 	group("THE BOX")
@@ -440,39 +440,57 @@ var commandHelp = map[string]string{
   any agent launch: 'coop claude@work', 'coop claude@work --peer codex', and
   'coop acp claude@work' (so an editor entry can pin an account).`,
 
-	"models": `coop models [<agent>] — the model menu per agent.
+	"models": `coop models — list models available to each agent
 
-  Usage: coop models [<claude|codex|gemini|grok>] [--refresh]
+Usage:
+  coop models [<claude|codex|gemini|grok>] [--refresh]
 
-  A block per agent: its models and when that list was last refreshed. A fresh per-agent
-  cache shows the agent's real list; a never- (or stale-) refreshed list is the curated
-  static examples — model ids churn, so ANY id the agent's CLI accepts works either way
-  (coop never validates a model id). A model is an axis of its own — set it inline in the
-  target (claude:opus) or in a preset's lead agent: ladder, never on a credential.
+List models
+  coop models                    all agents
+  coop models claude             Claude only
+  coop models claude --refresh   refresh Claude models list now
 
-  Plain 'coop models' is instant and never needs the container runtime — it only reads
-  the cache. '--refresh' runs grok/codex's native catalog CLI on the host ('grok models',
-  'codex debug models') and asks claude/gemini's ACP adapter in a short-lived credential-
-  scoped box. Normal 'coop acp' sessions also refresh claude/gemini opportunistically.
-  Refresh is best-effort: an unavailable CLI/runtime, timeout, or parse error falls back
-  to the last cache or the static list, noted on that block — it never errors or hangs.
+Use a model
+  Put :model after the agent name. This works anywhere Coop accepts an agent.
 
-  Pick per run inline in the target on any launch: 'coop claude:fable',
-  'coop claude:opus --peer codex', 'coop loop claude:haiku',
-  'coop fork risky claude:opus --loop', 'coop acp claude:sonnet'.
+  coop claude:opus
+  coop loop claude:haiku
+  coop fork risky claude:opus --loop
 
-  Precedence: the target's :model > the active rotation entry's model (a loop stepping
-  through a preset's lead agent: ladder, or loop.yaml work.agent) > COOP_<AGENT>_MODEL
-  (agent-wide) > a model baked into COOP_<AGENT>_CMD > the agent CLI's own default.
-  An account rides the SAME target (claude:opus@work). coop never validates a model
-  id — a bad one fails in the agent's own error.
+  You can use any model accepted by the agent, even if it is not listed.
 
-  Reasoning effort is a sibling axis, set with /effort in the same target
-  (claude:opus/xhigh, codex/high): low, medium, high, xhigh, or max — coop passes the
-  level through and the agent's CLI validates it (claude, codex, and grok have it; gemini
-  has none, so a /effort on gemini errors). One axis carries both — a target and
-  COOP_<AGENT>_MODEL take model[/effort] (e.g. opus/high), so there is no separate effort
-  var. Precedence mirrors the model: the target's /effort > a rotation rung's effort > those.`,
+Set reasoning effort
+  Add /effort after the model, or directly after the agent to use its default model.
+
+  coop codex:gpt-6-astra/high
+  coop codex/high
+
+  Claude, Codex, and Grok support reasoning effort. Gemini does not.
+
+Choose an account
+  Add @account after the model.
+
+  coop claude:opus@work
+  coop credentials
+
+Full syntax
+  coop <provider>:<model>/<effort>@<account>
+  coop codex:gpt-6-astra/high@personal
+
+Set a default model
+  export COOP_CLAUDE_MODEL=opus
+
+Automatic rotation
+  Loops and presets can try models in order when one is rate-limited.
+  Leave off @account to let Coop also try another signed-in account.
+  Add @account when you want to use only that account.
+
+  coop loop claude:opus
+  coop loop claude:opus@work
+
+  For more details:
+    coop help presets
+    coop help loop`,
 
 	"acp": `coop acp <target|preset> — serve as an ACP agent over stdio (for editors).
 
@@ -1052,7 +1070,7 @@ func printHelpPage(text string) {
 
 // selfContainedHelp are the commandHelp pages that end with their own pointer, so they print
 // without the all-commands footer. Membership travels with the page's last line.
-var selfContainedHelp = map[string]bool{"presets": true}
+var selfContainedHelp = map[string]bool{"presets": true, "models": true, "init": true}
 
 // printTopicHelp is the ONE way a static page reaches the terminal, so `coop presets --help`,
 // `coop help presets` and a bare group can never disagree about the footer.

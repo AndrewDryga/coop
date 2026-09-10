@@ -18,60 +18,87 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
-// TestModelsCacheRoundTrip: a written cache reads back live; an empty write is a no-op that
-// never clobbers a good cache; a cache older than the TTL reads as not-live (→ static).
+// TestModelsCacheRoundTrip: a written cache reads back current, carrying both stamps; the
+// synthetic "default" choice never reaches the ids; an empty write is a no-op that never clobbers
+// a good cache.
 func TestModelsCacheRoundTrip(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	if _, ok := loadModelsCache(cfg, "claude"); ok {
-		t.Fatal("cold cache must not read as live")
+		t.Fatal("a cold cache must not read as present")
 	}
-	want := []acpctl.Model{{ID: "opus", Name: "Opus"}, {ID: "sonnet", Name: "Sonnet"}}
+	want := []acpctl.Model{{ID: "default", Name: "Default (recommended)"}, {ID: "opus"}, {ID: "sonnet"}}
 	if err := writeModelsCache(cfg, "claude", want); err != nil {
 		t.Fatal(err)
 	}
 	got, ok := loadModelsCache(cfg, "claude")
-	if !ok || len(got.Models) != 2 || got.Models[0].ID != "opus" || got.Models[1].ID != "sonnet" {
-		t.Fatalf("warm cache = (%v, %v), want the two written models live", got, ok)
+	if !ok || len(got.Models) != 3 {
+		t.Fatalf("warm cache = (%v, %v), want the three written models", got, ok)
 	}
-	if got.FetchedAt.IsZero() {
-		t.Error("a live cache should carry its FetchedAt for the Last-refreshed line")
+	if ids := got.ids(); len(ids) != 2 || ids[0] != "opus" || ids[1] != "sonnet" {
+		t.Errorf("ids() = %v, want the synthetic default dropped", ids)
+	}
+	now := time.Now()
+	if !got.current(now) || !got.usable(now) || got.due(now) {
+		t.Errorf("a just-written cache should be current, usable and not due: %+v", got)
+	}
+	if got.AttemptedAt.IsZero() || got.AttemptError != "" {
+		t.Errorf("a success should stamp the attempt and clear any failure: %+v", got)
 	}
 	// An empty fetch is a no-op — it must not wipe the good cache.
 	if err := writeModelsCache(cfg, "claude", nil); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := loadModelsCache(cfg, "claude"); !ok || len(got.Models) != 2 {
+	if got, ok := loadModelsCache(cfg, "claude"); !ok || len(got.Models) != 3 {
 		t.Fatalf("empty write clobbered the cache: (%v, %v)", got, ok)
 	}
 }
 
-// TestModelsCacheExpiry: a cache stamped past the TTL is not "live" — coop falls back to
-// static — but its FetchedAt survives so the menu can say how stale the last fetch is.
-func TestModelsCacheExpiry(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir()}
-	stale := modelsCache{
-		Models:    []acpctl.Model{{ID: "opus"}},
-		FetchedAt: time.Now().Add(-modelsCacheTTL - time.Hour),
+// TestModelsCacheAges: the three ages answer different questions — refresh-due at 24h, still
+// presentable as last-known until the retention horizon, and never both.
+func TestModelsCacheAges(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		name                          string
+		age                           time.Duration
+		current, usable, due, showsID bool
+	}{
+		{"fresh", time.Hour, true, true, false, true},
+		{"past the refresh age", 30 * time.Hour, false, true, true, true},
+		{"past retention", modelsCacheRetention + time.Hour, false, false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := modelsApp(t)
+			seedModelsCache(t, a.cfg, "claude", now.Add(-tc.age), time.Time{}, "", "cached-id")
+			mc, _ := loadModelsCache(a.cfg, "claude")
+			if mc.current(now) != tc.current || mc.usable(now) != tc.usable || mc.due(now) != tc.due {
+				t.Errorf("current/usable/due = %v/%v/%v, want %v/%v/%v",
+					mc.current(now), mc.usable(now), mc.due(now), tc.current, tc.usable, tc.due)
+			}
+			out := captureStdout(t, func() { _, _ = a.cmdModels([]string{"claude"}) })
+			if strings.Contains(out, "cached-id") != tc.showsID {
+				t.Errorf("cached id shown = %v, want %v:\n%s", !tc.showsID, tc.showsID, out)
+			}
+		})
 	}
-	b, _ := json.Marshal(stale)
-	dir := filepath.Join(cfg.ConfigDir, "claude")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+}
+
+// seedModelsCache writes agent's cache file with exactly the stamps a test needs — the only way to
+// reach an age or a recorded failure without waiting for one.
+func seedModelsCache(t *testing.T, cfg *config.Config, agent string, fetched, attempted time.Time, attemptErr string, ids ...string) {
+	t.Helper()
+	mc := modelsCache{FetchedAt: fetched, AttemptedAt: attempted, AttemptError: attemptErr}
+	for _, id := range ids {
+		mc.Models = append(mc.Models, acpctl.Model{ID: id})
+	}
+	b, err := json.Marshal(mc)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(modelsCachePath(cfg, "claude"), b, 0o600); err != nil {
+	if err := os.MkdirAll(filepath.Join(cfg.ConfigDir, agent), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	mc, ok := loadModelsCache(cfg, "claude")
-	if ok {
-		t.Error("an expired cache must not read as live")
-	}
-	if mc.FetchedAt.IsZero() {
-		t.Error("an expired cache should keep FetchedAt for the stale note")
-	}
-	// And the menu says so: static examples with a "stale" Last-refreshed line.
-	out := captureStdout(t, func() { (&app{cfg: cfg}).cmdModels([]string{"claude"}) })
-	if !strings.Contains(out, "— stale") || !strings.Contains(out, "claude-sonnet-5") {
-		t.Errorf("an expired cache should show the static list with a stale note:\n%s", out)
+	if err := os.WriteFile(modelsCachePath(cfg, agent), b, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -94,6 +121,25 @@ not a bullet line
 		if got[i].ID != id || got[i].Name != id {
 			t.Errorf("model %d = %+v, want id/name %q", i, got[i], id)
 		}
+	}
+	if grokUnauthenticated([]byte(out)) {
+		t.Error("a real catalog must not read as logged out")
+	}
+}
+
+// TestGrokUnauthenticated: a logged-out `grok models` still exits 0 and prints ONE placeholder
+// build. Taking that as a catalog would replace a good list with an id that is not a model, so it
+// has to read as a failed fetch. Recorded verbatim from a signed-out host CLI.
+func TestGrokUnauthenticated(t *testing.T) {
+	out := `You are not authenticated.
+
+Default model: grok-build
+
+Available models:
+  * grok-build (default)
+`
+	if !grokUnauthenticated([]byte(out)) {
+		t.Errorf("a logged-out grok answer should not be taken as a catalog:\n%s", out)
 	}
 }
 
@@ -289,57 +335,117 @@ func TestRefreshModelsUsesACPFetcher(t *testing.T) {
 		}
 		a.acpModels = func(string) ([]acpctl.Model, error) { return nil, errors.New("box down") }
 		out := captureStdout(t, func() { _, _ = a.cmdModels([]string{"claude", "--refresh"}) })
-		if !strings.Contains(out, "still-good") || !strings.Contains(out, "refresh failed") {
+		if !strings.Contains(out, "still-good") || !strings.Contains(out, "could not refresh") {
 			t.Fatalf("failed refresh did not preserve/describe the cache:\n%s", out)
 		}
 	})
 
-	t.Run("plain stays local", func(t *testing.T) {
-		a := modelsApp(t)
-		a.acpModels = func(string) ([]acpctl.Model, error) { panic("plain models invoked ACP") }
-		if code, err := a.cmdModels([]string{"claude"}); code != 0 || err != nil {
-			t.Fatalf("plain cmdModels = (%d, %v)", code, err)
-		}
-	})
 }
 
-// TestModelsDisplayPrefersLiveCache: with a warm cache, an agent's block shows the cached
-// ids and a fresh "Last refreshed"; with no cache it shows the static Models() and says the
-// list was never refreshed — freshness is an explicit fact, not a tag.
-func TestModelsDisplayPrefersLiveCache(t *testing.T) {
-	a := modelsApp(t)
-	// Cold: the claude block shows the static list and "never".
-	cold := captureStdout(t, func() { a.cmdModels([]string{"claude"}) })
-	if !strings.Contains(cold, "claude-sonnet-5") || !strings.Contains(cold, "Last refreshed: never") {
-		t.Errorf("cold block should show the static list and a never-refreshed line:\n%s", cold)
-	}
-	// Warm: the claude block shows the cached id and when it was fetched.
-	if err := writeModelsCache(a.cfg, "claude", []acpctl.Model{{ID: "opus-live-xyz"}}); err != nil {
-		t.Fatal(err)
-	}
-	warm := captureStdout(t, func() { a.cmdModels([]string{"claude"}) })
-	if !strings.Contains(warm, "opus-live-xyz") || !strings.Contains(warm, "Last refreshed: just now") {
-		t.Errorf("warm block should show the cached id and a just-now refresh line:\n%s", warm)
+// TestModelsRefreshesOnlyWhatIsDue is the upkeep contract of the plain menu: a catalog inside the
+// refresh age costs no fetch, an older one is refetched silently, and a failure inside the retry
+// window is not paid for twice — while --refresh ignores both.
+func TestModelsRefreshesOnlyWhatIsDue(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		name              string
+		fetched, attempts time.Time
+		args              []string
+		wantCalls         int
+	}{
+		{"fresh costs no fetch", now.Add(-time.Hour), time.Time{}, []string{"claude"}, 0},
+		{"stale is refetched", now.Add(-30 * time.Hour), time.Time{}, []string{"claude"}, 1},
+		{"a recent failure backs off", now.Add(-30 * time.Hour), now.Add(-time.Minute), []string{"claude"}, 0},
+		{"--refresh ignores freshness", now.Add(-time.Hour), time.Time{}, []string{"claude", "--refresh"}, 1},
+		{"--refresh ignores the backoff", now.Add(-30 * time.Hour), now.Add(-time.Minute), []string{"claude", "--refresh"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := modelsApp(t)
+			seedModelsCache(t, a.cfg, "claude", tc.fetched, tc.attempts, "provider was down", "cached-id")
+			calls := 0
+			a.acpModels = func(string) ([]acpctl.Model, error) {
+				calls++
+				return []acpctl.Model{{ID: "refetched-id"}}, nil
+			}
+			out := captureStdout(t, func() {
+				if code, err := a.cmdModels(tc.args); code != 0 || err != nil {
+					t.Fatalf("cmdModels = (%d, %v)", code, err)
+				}
+			})
+			if calls != tc.wantCalls {
+				t.Errorf("provider fetches = %d, want %d", calls, tc.wantCalls)
+			}
+			if tc.wantCalls > 0 {
+				// A successful refresh shows the new ids and says nothing about having done it.
+				if !strings.Contains(out, "refetched-id") || strings.Contains(out, "⚠") {
+					t.Errorf("a successful refresh should be silent and current:\n%s", out)
+				}
+			}
+		})
 	}
 }
 
-// TestRefreshFallsBackToStatic: --refresh for an agent whose native CLI is absent (codex/grok
-// not on PATH under a scrubbed PATH) writes no cache, so the block stays static and its
-// Last-refreshed line says the refresh failed — never an error, never a blank menu.
-func TestRefreshFallsBackToStatic(t *testing.T) {
-	t.Setenv("PATH", t.TempDir()) // no codex/grok binary reachable → every native fetch fails
+// TestModelsBacksOffWithTheRecordedCause: inside the retry window the menu still explains itself —
+// last-known ids, one warning on that agent, naming the cause the failed attempt recorded.
+func TestModelsBacksOffWithTheRecordedCause(t *testing.T) {
 	a := modelsApp(t)
+	seedModelsCache(t, a.cfg, "claude", time.Now().Add(-50*time.Hour), time.Now().Add(-time.Minute),
+		"Docker is not running", "cached-id")
+	a.acpModels = func(string) ([]acpctl.Model, error) { t.Fatal("backed-off agent was refetched"); return nil, nil }
+	out := captureStdout(t, func() { _, _ = a.cmdModels([]string{"claude"}) })
+	want := "  ⚠ could not refresh — showing the list saved 2 days ago\n    Docker is not running\n"
+	if !strings.Contains(out, want) || !strings.Contains(out, "cached-id") {
+		t.Errorf("menu missing %q with its last-known ids:\n%s", want, out)
+	}
+}
+
+// TestModelsFailureWarnsOnlyTheAffectedAgent: one provider's refresh failing keeps the command
+// useful — its own last-known list under one honest warning — and leaves every other agent alone.
+func TestModelsFailureWarnsOnlyTheAffectedAgent(t *testing.T) {
+	a := modelsApp(t)
+	seedModelsCache(t, a.cfg, "claude", time.Now().Add(-30*time.Hour), time.Time{}, "", "still-good")
+	seedModelsCache(t, a.cfg, "gemini", time.Now().Add(-time.Hour), time.Time{}, "", "gemini-fresh-id")
+	a.acpModels = func(agent string) ([]acpctl.Model, error) {
+		return nil, errors.New("box down")
+	}
+	out := captureStdout(t, func() { _, _ = a.cmdModels(nil) })
+	if !strings.Contains(out, "still-good") {
+		t.Errorf("a failed refresh must keep the last-known list:\n%s", out)
+	}
+	if n := strings.Count(out, "⚠"); n != 3 { // claude (last-known) + codex and grok (no CLI on PATH)
+		t.Errorf("warnings = %d, want one per affected agent:\n%s", n, out)
+	}
+	gemini := out[strings.Index(out, "Gemini"):]
+	if strings.Contains(gemini[:strings.Index(gemini, "Grok")], "⚠") {
+		t.Errorf("a fresh agent must not be turned into a warning:\n%s", out)
+	}
+	// The failure is recorded so the next read backs off instead of paying the same timeout.
+	mc, _ := loadModelsCache(a.cfg, "claude")
+	if mc.AttemptedAt.IsZero() || mc.due(time.Now()) {
+		t.Errorf("a failed attempt should be stamped and back off: %+v", mc)
+	}
+	if len(mc.ids()) != 1 || mc.ids()[0] != "still-good" {
+		t.Errorf("a failed attempt must not disturb the models it holds: %+v", mc)
+	}
+}
+
+// TestRefreshFallsBackToExamples: a forced refresh for an agent whose native CLI is absent writes
+// no catalog, so the block shows the bundled examples under one warning that names the real cause
+// — never an error, never a blank menu.
+func TestRefreshFallsBackToExamples(t *testing.T) {
+	a := modelsApp(t) // modelsApp already scrubs PATH: no codex binary is reachable
 	out := captureStdout(t, func() {
 		if code, err := a.cmdModels([]string{"codex", "--refresh"}); code != 0 || err != nil {
 			t.Fatalf("cmdModels --refresh = (%d, %v), want a clean (0, nil)", code, err)
 		}
 	})
-	if _, ok := loadModelsCache(a.cfg, "codex"); ok {
-		t.Error("a failed refresh must not write a cache")
+	if mc, _ := loadModelsCache(a.cfg, "codex"); len(mc.Models) != 0 {
+		t.Error("a failed refresh must not write a catalog")
 	}
+	want := "  ⚠ could not refresh — showing bundled examples\n    the codex CLI is not installed\n"
 	if !strings.Contains(out, "gpt-5.6-sol") || !strings.Contains(out, "gpt-5.3-codex-spark") ||
-		!strings.Contains(out, "refresh failed") {
-		t.Errorf("after a failed refresh the codex block should stay static and note the failure:\n%s", out)
+		!strings.Contains(out, want) {
+		t.Errorf("after a failed refresh the codex block should show examples and %q:\n%s", want, out)
 	}
 	for _, removed := range []string{"gpt-5-codex", "gpt-5 ·", "o4-mini"} {
 		if strings.Contains(out, removed) {

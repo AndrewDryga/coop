@@ -1,26 +1,36 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// cmdModels is the model MENU: a block per agent — a bold-cyan header, its models (the
-// fresh cached list, else the curated static example Models()), and an explicit "Last
-// refreshed" fact (green when fresh, yellow when stale, with the refresh channel as the
-// hint) — then one caption and a short how-to. A model is picked in a launch target or an
-// `agent:` ladder; coop never validates the id against any list, so any id the agent's CLI
-// accepts works.
+// modelSep joins the ids in one wrapped row; modelIndent indents every line inside an agent block.
+const (
+	modelSep    = " · "
+	modelIndent = "  "
+)
+
+// cmdModels is the model MENU: one title-cased block per agent listing the ids you can put in a
+// target, then how to start that agent with a model and where models are configured to stay. coop
+// never validates a model id against this list — any id the agent's CLI accepts works — so the
+// menu is a memory aid, not a contract.
 //
-// The plain command stays instant and Docker-free: it only reads the per-agent cache, never
-// spawning a box. `coop models --refresh [<agent>]` updates the cache from each agent's
-// real catalog source (grok/codex's native host CLI; claude/gemini's boxed ACP adapter)
-// and folds each outcome into that block's "Last refreshed" line.
+// Keeping it current is coop's job, not a chore it teaches the user: every invocation refreshes,
+// in parallel, only the catalogs it is about to render that are missing or older than
+// modelsRefreshAfter, and says nothing when that works. `--refresh` forces the same fetch now,
+// ignoring both freshness and the failure backoff.
 func (a *app) cmdModels(args []string) (int, error) {
 	refresh := false
 	var rest []string
@@ -41,44 +51,64 @@ func (a *app) cmdModels(args []string) (int, error) {
 			return 2, fmt.Errorf("unexpected argument %q (usage: coop models [<agent>] [--refresh]; pick a model inline like claude:opus, or in a preset)", rest[1])
 		}
 	}
+	causes := a.refreshDueCatalogs(names, refresh)
 	p := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean
-	var notes map[string]string
-	if refresh {
-		notes = a.refreshModels(names)
-	}
+	width := ui.TermWidth(os.Stdout) - utf8.RuneCountInString(modelIndent)
 	for _, agent := range names {
 		ag, _ := agents.Get(agent)
-		ids, fetchedAt, live := a.agentModels(agent, ag)
-		fmt.Println(p.Bold(p.Cyan(titleName(agent))))
-		fmt.Println("  " + p.Dim("Models:") + " " + strings.Join(ids, p.Dim(" · ")))
-		fmt.Println("  " + p.Dim("Last refreshed:") + " " + refreshedLine(fetchedAt, live, notes[agent], p))
-		// The agent-wide env default is config, not repo state — surface it only when set.
+		cause, failed := causes[agent]
+		ids, issue, why := a.modelMenuEntry(agent, ag, cause, failed)
+		fmt.Println(p.Bold(displayAgentName(agent)))
+		// Wrap the PLAIN ids, then style the separator — ANSI must never count toward a width.
+		for _, row := range wrapModelIDs(ids, width) {
+			fmt.Println(modelIndent + strings.Join(row, p.Dim(modelSep)))
+		}
+		if issue != "" {
+			fmt.Println(modelIndent + p.Yellow("⚠ "+issue))
+			if why != "" { // the reason, aligned under the warning's text, not under its glyph
+				fmt.Println(modelIndent + "  " + p.Dim(why))
+			}
+		}
+		// A standing COOP_<AGENT>_MODEL is configuration, not a catalog entry — say it as a fact.
 		if def := a.cfg.AgentModelDefault(agent); def != "" {
-			fmt.Println("  " + p.Dim("Default:") + " " + def + " " + p.Dim("(COOP_"+strings.ToUpper(agent)+"_MODEL)"))
+			fmt.Printf("%sDefault for %s runs: %s\n", modelIndent, displayAgentName(agent), def)
 		}
 		fmt.Println()
 	}
-	fmt.Println(p.Dim("  any model id the agent's CLI accepts works — an unrefreshed list shows examples"))
-	// A short how-to instead of a wall: the queried agent (or the first) seeds the examples.
+	// The example agent is the one that was asked for, else the first block rendered; its first
+	// static id is a stable alias, so the line stays copyable whatever the live catalog holds.
 	ex, _ := agents.Get(names[0])
-	model := ex.Models()[0] // the static list is always non-empty — a stable example id
-	rows := []struct{ label, cmd, note string }{
-		{"one run", "coop " + names[0] + ":" + model, "fork, loop, and acp take it too"},
-		{"standing", "a preset's agent: ladder", "coop help presets"},
-		{"loop steps", ".agent/loop.yaml agent: ladders", "coop help loop"},
-		{"everywhere", "COOP_" + strings.ToUpper(names[0]) + "_MODEL=" + model, "the agent-wide default"},
-	}
-	labels, cmds := make([]string, len(rows)), make([]string, len(rows))
-	for i, r := range rows {
-		labels[i], cmds[i] = r.label, r.cmd
-	}
-	lw, cw := colWidth(labels, 0, 12), colWidth(cmds, 0, 44)
-	fmt.Println()
-	for _, r := range rows {
-		// Pad plain, then style — ANSI bytes inside a padded cell would break the columns.
-		fmt.Printf("  %s  %s  %s\n", p.Dim(padRight(r.label, lw)), p.Cyan(padRight(r.cmd, cw)), p.Dim("("+r.note+")"))
-	}
+	fmt.Printf("Start %s with a model\n", displayAgentName(names[0]))
+	fmt.Printf("%s%s coop %s:%s\n\n", modelIndent, p.Cyan("→"), names[0], ex.Models()[0])
+	fmt.Println("Set models for presets and loops")
+	fmt.Printf("%s%s coop help models\n", modelIndent, p.Cyan("→"))
 	return 0, nil
+}
+
+// wrapModelIDs packs ids into rows at most width visible columns wide, joined by modelSep, never
+// splitting an id (a model id you cannot copy whole is worse than a short row). It measures plain
+// text and returns the rows unjoined, so the caller can style the separator afterwards.
+func wrapModelIDs(ids []string, width int) [][]string {
+	sep := utf8.RuneCountInString(modelSep)
+	var rows [][]string
+	var row []string
+	used := 0
+	for _, id := range ids {
+		n := utf8.RuneCountInString(id)
+		switch {
+		case len(row) == 0:
+			row, used = []string{id}, n
+		case used+sep+n <= width:
+			row, used = append(row, id), used+sep+n
+		default:
+			rows = append(rows, row)
+			row, used = []string{id}, n
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 // titleName renders an agent id as its block header — "claude" → "Claude" (ids are ASCII).
@@ -89,78 +119,167 @@ func titleName(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// agoStr says how long ago t was, in the coarsest unit that keeps meaning — the menu needs
-// fresh-vs-stale, not seconds.
-func agoStr(t time.Time) string {
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+// modelChoices are the ids to offer for a cached catalog, and whether they came from it: the
+// fetched list while it is still safe to present as this agent's own, else the release-bundled
+// examples. Pure, so the caller can reuse the cache it already read.
+func modelChoices(mc modelsCache, ag agents.Agent, now time.Time) ([]string, bool) {
+	if ids := mc.ids(); len(ids) > 0 && mc.usable(now) {
+		return ids, true
 	}
+	return ag.Models(), false
 }
 
-// refreshedLine renders a block's "Last refreshed" value: the age of the live list (green),
-// "never", or the stale age (yellow). An unrefreshed block names the command that now works for
-// every provider. note is --refresh's failure for this agent, if any; it replaces the hint (the
-// user just ran --refresh — say what went wrong instead).
-func refreshedLine(fetchedAt time.Time, live bool, note string, p ui.Palette) string {
-	hint := ""
-	var s string
-	switch {
-	case live:
-		s = p.Green(agoStr(fetchedAt))
-	case fetchedAt.IsZero():
-		s = "never"
-		hint = "coop models --refresh"
-	default:
-		s = p.Yellow(agoStr(fetchedAt) + " — stale")
-		hint = "coop models --refresh"
-	}
-	if note != "" {
-		return s + " " + p.Yellow("(refresh failed — "+note+")")
-	}
-	if hint != "" {
-		return s + " " + p.Dim("("+hint+")")
-	}
-	return s
+// agentModels are the ids to offer for an agent, cache-only — it never fetches, so shell
+// completion stays instant and runtime-free.
+func (a *app) agentModels(agent string, ag agents.Agent) ([]string, bool) {
+	mc, _ := loadModelsCache(a.cfg, agent)
+	return modelChoices(mc, ag, time.Now())
 }
 
-// agentModels returns the ids to show for an agent — the fresh cached list, else the curated
-// static example Models() — plus when a cache was last written (zero: never) and whether it
-// is live. Read-only and Docker-free — the cache is populated elsewhere (coop acp; --refresh).
-func (a *app) agentModels(agent string, ag agents.Agent) ([]string, time.Time, bool) {
-	mc, live := loadModelsCache(a.cfg, agent)
-	if !live {
-		return ag.Models(), mc.FetchedAt, false
+// modelMenuEntry picks the ids to show for an agent and, when they are not a current catalog, the
+// honest warning: a headline saying WHICH kind of list is on screen, and the reason it could not
+// be made current when there is one worth printing. failed reports that THIS invocation tried and
+// could not (cause is its reason, "" when the error says nothing useful) — so a forced refresh
+// that fails is never silent, even over a list still inside its refresh age. A catalog that is
+// current and was not just refused says nothing: upkeep that worked is not news.
+func (a *app) modelMenuEntry(agent string, ag agents.Agent, cause string, failed bool) (ids []string, issue, why string) {
+	mc, _ := loadModelsCache(a.cfg, agent)
+	now := time.Now()
+	ids, cached := modelChoices(mc, ag, now)
+	if !failed && mc.current(now) {
+		return ids, "", ""
 	}
-	ids := make([]string, 0, len(mc.Models))
-	for _, m := range mc.Models {
-		ids = append(ids, m.ID)
+	issue = "could not refresh — showing bundled examples"
+	if cached {
+		issue = "could not refresh — showing the list saved " + humanAge(mc.FetchedAt)
 	}
-	return ids, mc.FetchedAt, true
+	if cause == "" {
+		cause = mc.AttemptError // an earlier failure, still inside its retry window
+	}
+	return ids, issue, cause
 }
 
-// refreshModels fetches live models for each named agent via its provider-specific source and
-// writes the cache, returning a short failure note per agent that couldn't — the menu folds
-// it into that block's "Last refreshed" line. Best-effort: a note never becomes an error,
-// and the display falls back to the last cache or the static list.
-func (a *app) refreshModels(names []string) map[string]string {
-	notes := make(map[string]string, len(names))
+// refreshDueCatalogs brings the catalogs cmdModels is about to render up to date, and returns the
+// human cause for each agent it could not refresh (success is silent). Only DUE agents are fetched
+// — missing or older than modelsRefreshAfter — unless forced, which also ignores the backoff a
+// failed attempt left behind. The fetches run in parallel: each writes its own agent's cache, so
+// one slow provider never gates the others.
+func (a *app) refreshDueCatalogs(names []string, forced bool) map[string]string {
+	var due []string
 	for _, agent := range names {
-		models, err := a.fetchModelCatalog(agent)
-		if err != nil || len(models) == 0 {
-			notes[agent] = "source unavailable or no models"
-			continue
-		}
-		if err := writeModelsCache(a.cfg, agent, models); err != nil {
-			notes[agent] = "cache write failed"
+		mc, _ := loadModelsCache(a.cfg, agent)
+		if forced || mc.due(time.Now()) {
+			due = append(due, agent)
 		}
 	}
-	return notes
+	if len(due) == 0 {
+		return nil
+	}
+	// Detect the container runtime ONCE, before the fan-out: a.rt is a plain field, so two boxed
+	// probes racing ensureRuntime would be a data race — and a runtime that is down is one cause
+	// for every provider that needs it, not one bounded timeout each.
+	var boxDown error
+	for _, agent := range due {
+		if a.fetchNeedsBox(agent) {
+			boxDown = a.probeBoxRuntime()
+			break
+		}
+	}
+	causes, failed := make([]string, len(due)), make([]bool, len(due))
+	var wg sync.WaitGroup
+	for i, agent := range due {
+		blocked := error(nil)
+		if a.fetchNeedsBox(agent) {
+			blocked = boxDown
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			causes[i], failed[i] = a.refreshCatalog(agent, blocked)
+		}()
+	}
+	wg.Wait()
+	out := make(map[string]string, len(due))
+	for i, agent := range due {
+		if failed[i] {
+			out[agent] = causes[i] // present-but-empty: it failed, with nothing nameable to say
+		}
+	}
+	return out
+}
+
+// refreshCatalog fetches one agent's catalog and persists the outcome: the models on success, the
+// attempt and its cause on failure — so the next menu read backs off instead of paying the same
+// bounded timeout again. blocked short-circuits the fetch with a cause already known (an
+// unavailable runtime), which still counts as the attempt. It reports whether the fetch failed and
+// the human cause when there is one.
+func (a *app) refreshCatalog(agent string, blocked error) (string, bool) {
+	var models []acpctl.Model
+	err := blocked
+	if err == nil {
+		models, err = a.fetchModelCatalog(agent)
+		if err == nil && len(models) == 0 {
+			err = modelFetchError{cause: agent + " returned no models"}
+		}
+	}
+	if err == nil {
+		if writeErr := writeModelsCache(a.cfg, agent, models); writeErr != nil {
+			err = modelFetchError{cause: "the cache could not be written", err: writeErr}
+		} else {
+			return "", false
+		}
+	}
+	cause := modelFetchCause(agent, err)
+	_ = recordModelsFetchFailure(a.cfg, agent, cause) // best-effort: a lost note costs one refetch
+	return cause, true
+}
+
+// fetchNeedsBox reports whether refreshing agent has to launch a container — the ACP-only
+// providers, unless a test seam has replaced the fetch.
+func (a *app) fetchNeedsBox(agent string) bool {
+	return a.acpModels == nil && nativeModelFetchers[agent] == nil
+}
+
+// probeBoxRuntime resolves the container runtime a boxed catalog fetch needs, naming what is
+// missing so the menu can say it in one line instead of surfacing a paragraph of remedy.
+func (a *app) probeBoxRuntime() error {
+	if err := a.ensureRuntime(); err != nil {
+		return modelFetchError{cause: "no container runtime is installed", err: err}
+	}
+	if err := a.rt.EnsureDaemon(); err != nil {
+		return modelFetchError{cause: "Docker is not running", err: err}
+	}
+	return nil
+}
+
+// modelFetchError carries a fetch failure the menu can explain in a few words. The wrapped error
+// keeps the full detail for anything that logs it.
+type modelFetchError struct {
+	cause string
+	err   error
+}
+
+func (e modelFetchError) Error() string {
+	if e.err == nil {
+		return e.cause
+	}
+	return e.cause + ": " + e.err.Error()
+}
+
+func (e modelFetchError) Unwrap() error { return e.err }
+
+// modelFetchCause reduces a failed fetch to the few words that help — "" when nothing about the
+// error is actionable, because a menu that invents a reason is worse than one that admits the
+// list is old.
+func modelFetchCause(agent string, err error) string {
+	var named modelFetchError
+	switch {
+	case errors.As(err, &named):
+		return named.cause
+	case errors.Is(err, exec.ErrNotFound):
+		return "the " + agent + " CLI is not installed"
+	case errors.Is(err, context.DeadlineExceeded):
+		return displayAgentName(agent) + " did not answer in time"
+	}
+	return ""
 }

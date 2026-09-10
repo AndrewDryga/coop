@@ -178,7 +178,7 @@ func TestCLIConformance(t *testing.T) {
 			"agent help":       "[options] [-- <claude-args>...]",
 			"credentials help": "coop credentials [<agent> [<credential>]]",
 			"login help":       "coop login <agent>[@<account>]",
-			"models help":      "coop models [<agent>]",
+			"models help":      "coop models [<" + strings.Join(agents.Names(), "|") + ">]",
 			// The presets page names its one slot <name>: inside a page where every value is a
 			// preset, the resource-name placeholder is the plain one (usage-placeholder-style).
 			"presets help":      "coop presets init [<name>]",

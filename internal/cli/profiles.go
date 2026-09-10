@@ -181,8 +181,8 @@ func (a *app) credentialAge(agent, profile string) string {
 }
 
 // humanAge is a duration a person reads without decoding it — "7 hours ago", "yesterday",
-// "19 days ago" — for facts an operator judges by feel rather than by arithmetic. The compressed
-// `7h`/`19d` form stays where a column is scanned for drift (a model catalog's freshness).
+// "19 days ago" — for facts an operator judges by feel rather than by arithmetic. Shared with the
+// model menu, which says the same way how old a list it could not refresh is.
 func humanAge(t time.Time) string {
 	d := time.Since(t)
 	switch {

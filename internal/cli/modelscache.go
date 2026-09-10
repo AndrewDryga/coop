@@ -23,23 +23,67 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
-// modelsCacheTTL is how long a fetched model list counts as "live" for `coop models`. Past
-// it, coop falls back to the curated static Models() — honest examples beat a stale
-// "(live)". The cache refreshes opportunistically on `coop acp` and on demand with
-// `coop models --refresh` through each provider's real catalog source.
-const modelsCacheTTL = 14 * 24 * time.Hour
+// The three ages that drive `coop models`, kept apart on purpose:
+//   - modelsRefreshAfter — past this a catalog is refetched on the next menu read, so upkeep is
+//     coop's job and not a chore the help has to teach.
+//   - modelsCacheRetention — past this a list is too old to show even as last-known, and the
+//     release-bundled examples are the honest thing to print.
+//   - modelsRetryAfter — how long a FAILED attempt suppresses the next one, so an uninstalled CLI
+//     or a stopped runtime is paid for once an hour, not on every invocation.
+const (
+	modelsRefreshAfter   = 24 * time.Hour
+	modelsCacheRetention = 14 * 24 * time.Hour
+	modelsRetryAfter     = time.Hour
+)
 
-// modelFetchTimeout bounds both native-CLI probes and the Claude/Gemini ACP handshake so
-// `coop models --refresh` can never hang.
+// modelFetchTimeout bounds both native-CLI probes and the Claude/Gemini ACP handshake so a
+// catalog refresh can never hang the menu.
 const modelFetchTimeout = 15 * time.Second
 
-// modelsCache is the per-agent live model list coop keeps under the agent's config dir. Models is
+// modelsCache is the per-agent model list coop keeps under the agent's config dir. Models is
 // acpctl.Model — the DTO moved to internal/acpctl (models.go) since it's a pure parser output the
 // ACP control also caches opportunistically; this file keeps the on-disk cache format and the
 // non-ACP fetch/parse paths (grok/codex native CLIs), which stay app-spine-bound.
+//
+// FetchedAt is the last SUCCESS; AttemptedAt/AttemptError are the last try, success or not. They
+// are separate fields because they answer different questions — how old is this list, versus
+// should we pay for another fetch right now.
 type modelsCache struct {
-	Models    []acpctl.Model `json:"models"`
-	FetchedAt time.Time      `json:"fetchedAt"`
+	Models       []acpctl.Model `json:"models"`
+	FetchedAt    time.Time      `json:"fetchedAt"`
+	AttemptedAt  time.Time      `json:"attemptedAt,omitempty"`
+	AttemptError string         `json:"attemptError,omitempty"`
+}
+
+// ids are the model ids to offer a human: the catalog's own order, minus the synthetic "default"
+// choice — leaving a model out of a target already selects the provider's default, so listing it
+// as an id only invites someone to type a word that isn't a model.
+func (mc modelsCache) ids() []string {
+	out := make([]string, 0, len(mc.Models))
+	for _, m := range mc.Models {
+		if m.ID == "" || m.ID == "default" {
+			continue
+		}
+		out = append(out, m.ID)
+	}
+	return out
+}
+
+// current reports whether the cached list still counts as this agent's catalog — a successful
+// fetch inside modelsRefreshAfter. Anything older is shown as last-known, never as current.
+func (mc modelsCache) current(now time.Time) bool {
+	return !mc.FetchedAt.IsZero() && now.Sub(mc.FetchedAt) < modelsRefreshAfter
+}
+
+// usable reports whether the cached list is still safe to present as last-known.
+func (mc modelsCache) usable(now time.Time) bool {
+	return !mc.FetchedAt.IsZero() && now.Sub(mc.FetchedAt) < modelsCacheRetention
+}
+
+// due reports whether this agent's catalog should be refetched now: not current, and not inside
+// the retry window a failed attempt left behind.
+func (mc modelsCache) due(now time.Time) bool {
+	return !mc.current(now) && now.Sub(mc.AttemptedAt) >= modelsRetryAfter
 }
 
 // modelsCachePath is <ConfigDir>/<agent>/models_cache.json — sibling to the agent's
@@ -48,41 +92,53 @@ func modelsCachePath(cfg *config.Config, agent string) string {
 	return filepath.Join(cfg.ConfigDir, agent, "models_cache.json")
 }
 
-// loadModelsCache reads agent's cached model list. The bool reports whether the list is
-// USABLE as live — present, parseable, non-empty, and within the TTL — so a caller trusts
-// mc.Models only on true. An expired cache returns (mc, false) with FetchedAt intact, so
-// the menu can say HOW stale it is; anything unreadable returns a zero modelsCache. The
-// caller falls back to the static Models(). Never blocks or spawns anything.
+// loadModelsCache reads agent's cache. The bool reports only whether the file was there and
+// parseable — freshness, usability and whether a refetch is due are the modelsCache methods above,
+// because a caller that wants the attempt stamps needs them even when the list itself is empty.
+// Anything unreadable returns a zero modelsCache. Never blocks or spawns anything.
 func loadModelsCache(cfg *config.Config, agent string) (modelsCache, bool) {
 	b, err := os.ReadFile(modelsCachePath(cfg, agent))
 	if err != nil {
 		return modelsCache{}, false
 	}
 	var mc modelsCache
-	if json.Unmarshal(b, &mc) != nil || len(mc.Models) == 0 {
+	if json.Unmarshal(b, &mc) != nil {
 		return modelsCache{}, false
-	}
-	if time.Since(mc.FetchedAt) > modelsCacheTTL {
-		return mc, false
 	}
 	return mc, true
 }
 
-// writeModelsCache atomically replaces agent's cache with models, stamped now. Best-effort:
-// --refresh surfaces a returned error; the free opportunistic ACP path ignores it. An empty
-// list is a no-op — a failed fetch must never clobber a good cache. A unique temp file plus
-// rename keeps a concurrent writer (the ACP box→editor goroutine) from corrupting the file.
-// No fsync (unlike config.WriteFileAtomic): this is a TTL'd cache of a remote catalog, so a
-// crash losing the last write costs one refetch — paying for durability would be theater.
+// writeModelsCache atomically records a SUCCESSFUL fetch: models, stamped now as both the last
+// success and the last attempt, clearing any recorded failure. An empty list is a no-op — a failed
+// fetch must never clobber a good cache.
 func writeModelsCache(cfg *config.Config, agent string, models []acpctl.Model) error {
 	if len(models) == 0 {
 		return nil
 	}
+	now := time.Now()
+	return storeModelsCache(cfg, agent, modelsCache{Models: models, FetchedAt: now, AttemptedAt: now})
+}
+
+// recordModelsFetchFailure stamps a FAILED fetch on agent's cache without touching the models it
+// already holds: the attempt time is what backs the next read off, and cause is what that read
+// shows beside the agent instead of pretending the list is current.
+func recordModelsFetchFailure(cfg *config.Config, agent, cause string) error {
+	mc, _ := loadModelsCache(cfg, agent)
+	mc.AttemptedAt, mc.AttemptError = time.Now(), cause
+	return storeModelsCache(cfg, agent, mc)
+}
+
+// storeModelsCache atomically replaces agent's cache file. Best-effort: a forced refresh surfaces
+// a returned error; the free opportunistic ACP path ignores it. A unique temp file plus rename
+// keeps a concurrent writer (the ACP box→editor goroutine) from corrupting the file. No fsync
+// (unlike config.WriteFileAtomic): this is a cache of a remote catalog, so a crash losing the last
+// write costs one refetch — paying for durability would be theater.
+func storeModelsCache(cfg *config.Config, agent string, mc modelsCache) error {
 	dir := filepath.Join(cfg.ConfigDir, agent)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	b, err := json.Marshal(modelsCache{Models: models, FetchedAt: time.Now()})
+	b, err := json.Marshal(mc)
 	if err != nil {
 		return err
 	}
@@ -110,10 +166,11 @@ var nativeModelFetchers = map[string]func() ([]acpctl.Model, error){
 	"codex": fetchCodexModels,
 }
 
-// runModelCLI runs an agent's auth-free list command on the host and returns its stdout,
-// timeout-bounded. An error (CLI not on PATH, non-zero exit, timeout) tells the caller to
-// keep the cached/static list. The catalog these commands print is credential-independent,
-// so the host's own login (or none) suffices and these two provider probes need no box.
+// runModelCLI runs an agent's list command on the host and returns its stdout, timeout-bounded. An
+// error (CLI not on PATH, non-zero exit, timeout) tells the caller to keep the cached/static list.
+// These two probes need no box because they ask the HOST's own CLI — which is also why each
+// fetcher has to judge the answer: codex prints its full catalog either way, grok answers a
+// logged-out CLI with a placeholder (see grokUnauthenticated).
 func runModelCLI(name string, args ...string) ([]byte, error) {
 	if _, err := exec.LookPath(name); err != nil {
 		return nil, err
@@ -129,7 +186,19 @@ func fetchGrokModels() ([]acpctl.Model, error) {
 	if err != nil {
 		return nil, err
 	}
+	if grokUnauthenticated(out) {
+		return nil, modelFetchError{cause: "the host grok CLI is not signed in"}
+	}
 	return parseGrokModels(out), nil
+}
+
+// grokUnauthenticated reports whether `grok models` answered without a login. It exits 0 either
+// way, printing a single placeholder build in place of the real catalog — so a refresh that took
+// it at face value would replace a good list with one id that is not a model. Only the host's own
+// grok login is at stake here (this probe runs on the host, not in a credential-scoped box), so
+// the honest outcome is a failed fetch that keeps whatever list coop already had.
+func grokUnauthenticated(out []byte) bool {
+	return bytes.Contains(out, []byte("not authenticated"))
 }
 
 // fetchCodexModels lists codex's models via `codex debug models`.
@@ -195,18 +264,17 @@ func (a *app) fetchACPModelCatalog(agent string) ([]acpctl.Model, error) {
 			cleanupErr = forkspace.RemoveDeadExecutionsBySource(authorityRepo, superID)
 		}
 	}
+	// A failed probe reports the cleanup problem too — it may be the reason (errors.Join drops a
+	// nil). A probe that ANSWERED does not: it has a real catalog, and cleanup is coop's own
+	// housekeeping — the two ACP probes now run side by side, so one sweeping the execution
+	// registry can momentarily see the other's record vanish mid-scan. Blaming a provider for
+	// that would be a lie, and a record left behind is swept by any later run.
 	if fetchErr != nil {
-		if cleanupErr != nil {
-			return nil, errors.Join(fetchErr, cleanupErr)
-		}
-		return nil, fetchErr
-	}
-	if cleanupErr != nil {
-		return nil, cleanupErr
+		return nil, errors.Join(fetchErr, cleanupErr)
 	}
 	models := parseACPModelResult(agent, result)
 	if len(models) == 0 {
-		return nil, errors.New("ACP session advertised no models")
+		return nil, errors.Join(errors.New("ACP session advertised no models"), cleanupErr)
 	}
 	return models, nil
 }

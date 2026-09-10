@@ -240,7 +240,7 @@ func (a *app) targetCandidates(cur string, includeModels, includeAccounts bool) 
 		if !wantModels {
 			continue
 		}
-		models, _, _ := a.agentModels(name, ag)
+		models, _ := a.agentModels(name, ag)
 		for _, model := range models {
 			base := name + ":" + model
 			add(base)

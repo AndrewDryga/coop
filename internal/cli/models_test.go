@@ -1,23 +1,34 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/acpctl"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
 // modelsApp builds an app whose vault has one claude credential ("work"), so the
 // credential path grammar has a real credential to act on.
+//
+// No unit test may reach a real provider: `coop models` now refreshes a due catalog by itself, so
+// the app comes with an empty PATH (no agent CLI to probe) and a failing ACP fetcher stub (so no
+// container runtime is ever detected, let alone a box spawned). A test that wants a fetch to
+// succeed replaces a.acpModels; one that wants no fetch at all writes a fresh cache first.
 func modelsApp(t *testing.T) *app {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "claude", "profiles", "work"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return &app{cfg: &config.Config{ConfigDir: dir}}
+	t.Setenv("PATH", filepath.Join(dir, "no-agent-cli"))
+	return &app{
+		cfg:       &config.Config{ConfigDir: dir},
+		acpModels: func(string) ([]acpctl.Model, error) { return nil, errors.New("no provider in tests") },
+	}
 }
 
 // TestCredentialsModelIsNotAnAttribute: v3 dropped model-on-credential — a credential is just an
@@ -75,27 +86,73 @@ func TestModelsCommandIsReadOnly(t *testing.T) {
 	}
 }
 
-// TestModelsIsAMenuNotAProfileDump: `coop models` shows the per-agent menu and how-to —
-// not a row per credential (the dense wall the menu once drowned under).
-func TestModelsIsAMenuNotAProfileDump(t *testing.T) {
+// TestModelsIsACompactMenu: `coop models` is a block of ids per agent plus two copyable footers —
+// no title, no repeated field labels, no healthy cache age, no credential rows, and none of the
+// old one-run/standing/loop-steps/everywhere table.
+func TestModelsIsACompactMenu(t *testing.T) {
 	a := modelsApp(t)
 	out := captureStdout(t, func() {
 		if code, err := a.cmdModels(nil); code != 0 || err != nil {
 			t.Errorf("cmdModels = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{"fable", "gpt-5", "gemini-2.5-pro", "one run", "preset"} {
+	for _, want := range []string{
+		"Claude\n", "fable", "gpt-5", "gemini-2.5-pro",
+		"Start Claude with a model\n  → coop claude:fable\n",
+		"Set models for presets and loops\n  → coop help models\n",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("menu missing %q:\n%s", want, out)
 		}
 	}
-	// The old dump rendered one row per credential ("  work  … (mark: …)" + a "(default
-	// profile)" tag). "\n  work" anchors the name as a row, not a substring — the caption's
-	// "works" must not trip it.
-	for _, reject := range []string{"\n  work", "mark:", "(default profile)"} {
+	// The old shapes: a title, per-block labels, a healthy age, the env var, the how-to table, and
+	// the per-credential dump ("\n  work" anchors the name as a row, not a substring).
+	for _, reject := range []string{
+		"Models:", "Last refreshed", "COOP_CLAUDE_MODEL", "one run", "loop steps", "everywhere",
+		"\n  work", "mark:", "(default profile)", "--refresh",
+	} {
 		if strings.Contains(out, reject) {
-			t.Errorf("menu still dumps per-credential rows (%q):\n%s", reject, out)
+			t.Errorf("menu still shows %q:\n%s", reject, out)
 		}
+	}
+}
+
+// TestModelsShowsStandingDefaultAsAFact: a configured COOP_<AGENT>_MODEL is a human sentence in
+// that agent's block — never a synthetic id in the list, never the env var's name.
+func TestModelsShowsStandingDefaultAsAFact(t *testing.T) {
+	a := modelsApp(t)
+	t.Setenv("COOP_CLAUDE_MODEL", "fable/high") // the effort rides the same var; the fact is the model
+	out := captureStdout(t, func() {
+		if code, err := a.cmdModels([]string{"claude"}); code != 0 || err != nil {
+			t.Errorf("cmdModels = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(out, "\n  Default for Claude runs: fable\n") {
+		t.Errorf("menu missing the standing-default fact:\n%s", out)
+	}
+	if strings.Contains(out, "COOP_") {
+		t.Errorf("the normal menu must not name the env var:\n%s", out)
+	}
+}
+
+// TestWrapModelIDs: ids wrap to the terminal width without ever being split, and the width is
+// measured on plain text — the caller styles the separator afterwards (no-color-in-width-fields).
+func TestWrapModelIDs(t *testing.T) {
+	ids := []string{"opus[1m]", "claude-fable-5", "sonnet", "haiku"}
+	rows := wrapModelIDs(ids, 30) // "opus[1m] · claude-fable-5" is 25; adding " · sonnet" is 34
+	want := [][]string{{"opus[1m]", "claude-fable-5"}, {"sonnet", "haiku"}}
+	if len(rows) != len(want) {
+		t.Fatalf("wrapModelIDs(30) = %v, want %v", rows, want)
+	}
+	for i := range want {
+		if strings.Join(rows[i], "|") != strings.Join(want[i], "|") {
+			t.Errorf("row %d = %v, want %v", i, rows[i], want[i])
+		}
+	}
+	// An id wider than the whole terminal still comes out whole — a model id you cannot copy is
+	// worse than a long row.
+	if rows := wrapModelIDs(ids, 4); len(rows) != 4 || rows[1][0] != "claude-fable-5" {
+		t.Errorf("wrapModelIDs(4) = %v, want one whole id per row", rows)
 	}
 }
 
