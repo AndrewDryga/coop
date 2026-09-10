@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -85,6 +87,50 @@ exit $failed
 `, fixture)
 		runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script,
 			compose: transportEchoCompose(candidate.ClientImage)})
+	})
+
+	// TLS is not only 443. The upstream port is the kernel's redirect record, so
+	// a name granted on 853 reaches DNS-over-TLS, the SAME name on 443 is refused
+	// even though the name is approved, and a direct dial at the guard's own
+	// listener — which declares no port at all — is refused and counted.
+	// cloudflare-dns.com is deliberately NOT the fixture here: it is the
+	// gateway's own pinned maintenance resolver name, and this case must not be
+	// able to pass on the guard's traffic. A container on the bridge cannot
+	// stand in for a public endpoint either: a lease must be a public address.
+	t.Run("tls-ports", func(t *testing.T) {
+		rules := []egress.Rule{
+			{To: egress.Destination{Domain: "dns.google"}, Protocol: "tls", Ports: []int{853, 8443}},
+			{To: egress.Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{443}},
+		}
+		script := transportProbe + `
+expect ALLOWED  "tls dns.google:853 with visible SNI"  "$(handshake dns.google 853)"
+expect REFUSED  "the same name on 443"                 "$(handshake dns.google 443)"
+expect ALLOWED  "example.com on its granted 443"       "$(tls example.com)"
+expect REFUSED  "example.com on the captured 853"      "$(handshake example.com 853)"
+expect REFUSED  "a direct dial at the guard listener"  "$(handshake dns.google 15443 127.0.0.1)"
+exit $failed
+`
+		record := runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script})
+		snapshot := record.Receipt.Snapshot
+		if !slices.ContainsFunc(snapshot.Connections, func(c networkview.Connection) bool {
+			return c.Name == "dns.google" && c.NameSource == "sni" && c.Transport == "tls" && strings.HasSuffix(c.Peer, ":853") &&
+				c.SentBytes != nil && *c.SentBytes > 0 && c.ReceivedBytes != nil && *c.ReceivedBytes > 0
+		}) {
+			t.Fatalf("no measured TLS connection on the granted non-443 port: %+v", snapshot.Connections)
+		}
+		// Every refusal is counted with the port the kernel recorded, including
+		// the direct dial, whose port is the guard's own listener.
+		for _, want := range []struct {
+			name, reason string
+			port         int
+		}{{"dns.google", "unapproved_name", 443}, {"example.com", "unapproved_name", 853}, {"", "tls_direct_dial_refused", 15443}} {
+			if !slices.ContainsFunc(snapshot.Denials, func(d networkview.Denial) bool {
+				return d.Source == "guard" && d.Kind == "tls_denied" && d.Basis == "observed" && d.Name == want.name &&
+					d.Reason == want.reason && d.Port != nil && *d.Port == want.port
+			}) {
+				t.Fatalf("missing counted %s refusal for %q on port %d: %+v", want.reason, want.name, want.port, snapshot.Denials)
+			}
+		}
 	})
 
 	t.Run("protected-beats-granted-cidr", func(t *testing.T) {
@@ -236,6 +282,9 @@ expect() {
   else printf 'FAIL %-42s want %s got %s\n' "$2" "$1" "$3"; failed=1; fi
 }
 tls() { curl -q --proxy '' --noproxy '*' -sS --max-time 12 -o /dev/null "https://$1" 2>/dev/null && echo ALLOWED || echo REFUSED; }
+# One TLS handshake with visible SNI on ANY port: $1 is the name, $2 the port,
+# and $3 an optional address to dial instead of the name (a direct dial).
+handshake() { timeout 15 openssl s_client -connect "${3:-$1}:$2" -servername "$1" -verify_return_error -brief </dev/null >/dev/null 2>&1 && echo ALLOWED || echo REFUSED; }
 http() { curl -q --proxy '' --noproxy '*' -sS --max-time 8 -o /dev/null "http://$1/" 2>/dev/null && echo ALLOWED || echo REFUSED; }
 probe() { python3 -c '
 import socket, struct, sys

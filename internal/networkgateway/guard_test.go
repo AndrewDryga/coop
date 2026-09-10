@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"golang.org/x/net/dns/dnsmessage"
 
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
@@ -24,6 +26,19 @@ type guardFixture struct {
 	private    *net.UnixListener
 	done       <-chan error
 	controller context.CancelFunc
+	// port is the destination port the fixture's fake capture reports, which is
+	// what an admitted flow must carry all the way into the PROXY header.
+	port uint16
+}
+
+// captureTo installs the kernel record a redirect would have left on every
+// accepted connection. Nothing redirects on a test host, so this is the only
+// way to exercise the guard's port decisions; it is restored after the test.
+func captureTo(t *testing.T, destination func(net.Conn) (netip.AddrPort, error)) {
+	t.Helper()
+	previous := originalDestination
+	originalDestination = destination
+	t.Cleanup(func() { originalDestination = previous })
 }
 
 func startGuardFixture(t *testing.T) guardFixture {
@@ -31,8 +46,15 @@ func startGuardFixture(t *testing.T) guardFixture {
 }
 
 func startGuardClockFixture(t *testing.T, clock *BootClock, ttl uint32) guardFixture {
+	return startGuardPolicyFixture(t, testPolicy(t), clock, ttl, 443)
+}
+
+func startGuardPolicyFixture(t *testing.T, policy egress.Snapshot, clock *BootClock, ttl uint32, port uint16) guardFixture {
 	t.Helper()
-	c := testController(t, func(context.Context, string) error { return nil })
+	captureTo(t, func(net.Conn) (netip.AddrPort, error) {
+		return netip.AddrPortFrom(netip.MustParseAddr("93.184.216.34"), port), nil
+	})
+	c := newTestController(t, policy, func(context.Context, string) error { return nil })
 	c.clock, c.now, c.identity.Clock = clock, clock.instant, clock.Domain()
 	if err := c.Initialize(context.Background(), netip.MustParseAddr("1.1.1.1")); err != nil {
 		t.Fatal(err)
@@ -56,7 +78,7 @@ func startGuardClockFixture(t *testing.T, clock *BootClock, ttl uint32) guardFix
 		t.Cleanup(func() { _ = listener.Close() })
 		return listener
 	}
-	fixture := guardFixture{guard: g, tls: listen(), dns: listen(), controller: stopController}
+	fixture := guardFixture{guard: g, tls: listen(), dns: listen(), controller: stopController, port: port}
 	fixture.udp, err = net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +145,7 @@ func guardPrivate(t *testing.T, fixture guardFixture, hello []byte) (*net.TCPCon
 		t.Fatal(err)
 	}
 	flowID := string(header[31:])
-	wanted, err := ProxyHeader(netip.MustParseAddr("93.184.216.34"), flowID)
+	wanted, err := ProxyHeader(netip.AddrPortFrom(netip.MustParseAddr("93.184.216.34"), fixture.port), flowID)
 	if err != nil || !bytes.Equal(header, wanted) {
 		t.Fatal("private PROXY destination or flow ID differs from admitted peer")
 	}
@@ -229,6 +251,90 @@ func TestGuardRefusesBeforePrivateDial(t *testing.T) {
 		if event.Kind != "tls_denied" || event.FlowID != "" {
 			t.Fatal("refused hello registered a private flow")
 		}
+	}
+}
+
+// The upstream port comes from the kernel's redirect record and from nowhere
+// else: a name granted on 8443 is routed to 8443, and the SAME name on a port
+// the policy does not grant is refused even though the name is approved.
+func TestGuardRoutesTheCapturedPortAndRefusesAnUngrantedOne(t *testing.T) {
+	policy := transportPolicy(t, egress.Rule{To: egress.Destination{Domain: "api.example.com"}, Protocol: "tls", Ports: []int{853, 8443}})
+	fixture := startGuardPolicyFixture(t, policy, testBootClock(), 60, 8443)
+	client, _, _ := guardPrivate(t, fixture, clientHello(t, "api.example.com"))
+	_ = client.Close()
+	events, _ := fixture.guard.events.Drain(MaxGuardEvents)
+	if len(events) == 0 || events[0].Kind != "flow_registered" || events[0].Port != 8443 {
+		t.Fatalf("the admitted flow lost the captured port: %#v", events)
+	}
+	// Same guard, same name, a port this policy does not grant for it.
+	captureTo(t, func(net.Conn) (netip.AddrPort, error) {
+		return netip.AddrPortFrom(netip.MustParseAddr("93.184.216.34"), 443), nil
+	})
+	refused := guardClient(t, fixture.tls.Addr().String())
+	if err := writeAll(refused, clientHello(t, "api.example.com")); err != nil {
+		t.Fatal(err)
+	}
+	_ = refused.CloseWrite()
+	var buffer [1]byte
+	if n, err := refused.Read(buffer[:]); n != 0 || err == nil {
+		t.Fatal("an ungranted port was forwarded")
+	}
+	wait.For(t, "refusal evidence for the ungranted port", func() bool {
+		batch, _ := fixture.guard.events.Drain(MaxGuardEvents)
+		events = append(events, batch...)
+		return slices.ContainsFunc(events, func(e GuardEvent) bool {
+			return e.Kind == "tls_denied" && e.Name == "api.example.com" && e.Port == 443 && e.Reason == "unapproved_name"
+		})
+	})
+}
+
+// spec §5: a direct dial cannot select an upstream port. A connection nobody
+// redirected reports THIS listener as its original destination, so the guard
+// refuses it and counts it instead of falling back to a port of its own.
+func TestGuardRefusesADirectDialToItsListener(t *testing.T) {
+	fixture := startGuardFixture(t)
+	captureTo(t, func(conn net.Conn) (netip.AddrPort, error) {
+		return conn.LocalAddr().(*net.TCPAddr).AddrPort(), nil
+	})
+	client := guardClient(t, fixture.tls.Addr().String())
+	if err := writeAll(client, clientHello(t, "api.example.com")); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.CloseWrite()
+	var buffer [1]byte
+	if n, err := client.Read(buffer[:]); n != 0 || err == nil {
+		t.Fatal("a direct dial to the guard was forwarded")
+	}
+	events, totals := fixture.guard.events.Drain(MaxGuardEvents)
+	listener := uint16(netip.MustParseAddrPort(fixture.tls.Addr().String()).Port())
+	if totals.DeniedTLS != 1 || len(events) != 1 || events[0].Kind != "tls_denied" ||
+		events[0].Reason != "tls_direct_dial_refused" || events[0].Port != int(listener) || events[0].Name != "" {
+		t.Fatalf("direct dial accounting: %#v %#v", totals, events)
+	}
+	queries, _ := fixture.guard.resolver.MaintenanceCounts()
+	if queries != 0 {
+		t.Fatal("a direct dial reached the resolver")
+	}
+}
+
+// An unreadable destination is not a reason to guess one.
+func TestGuardRefusesAConnectionWithNoKernelDestination(t *testing.T) {
+	fixture := startGuardFixture(t)
+	captureTo(t, func(net.Conn) (netip.AddrPort, error) {
+		return netip.AddrPort{}, Failure("gateway_destination_unknown")
+	})
+	client := guardClient(t, fixture.tls.Addr().String())
+	if err := writeAll(client, clientHello(t, "api.example.com")); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.CloseWrite()
+	var buffer [1]byte
+	if n, err := client.Read(buffer[:]); n != 0 || err == nil {
+		t.Fatal("a connection with no kernel record was forwarded")
+	}
+	events, _ := fixture.guard.events.Drain(MaxGuardEvents)
+	if len(events) != 1 || events[0].Kind != "tls_denied" || events[0].Reason != "gateway_destination_unknown" || events[0].Port != 0 {
+		t.Fatalf("unknown destination accounting: %#v", events)
 	}
 }
 

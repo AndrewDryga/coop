@@ -161,7 +161,7 @@ func TestResolverPinsFreshAnswersAndNeverReturnsStaleOnRebinding(t *testing.T) {
 	}))
 	r.now = func() BootInstant { return now }
 	first, err := r.Resolve(context.Background(), "API.EXAMPLE.COM.")
-	if err != nil || first.Name != "api.example.com" || first.RuleID == "" || first.Cached || first.Expires != now.Add(10*time.Second) {
+	if err != nil || first.Name != "api.example.com" || first.Cached || first.Expires != now.Add(10*time.Second) {
 		t.Fatalf("initial resolution: %#v %v", first, err)
 	}
 	first.Addresses[0] = netip.MustParseAddr("1.1.1.1")

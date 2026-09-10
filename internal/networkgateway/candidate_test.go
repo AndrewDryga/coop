@@ -73,7 +73,7 @@ func TestCandidateNeedsExactObservedTLSNameAndPort(t *testing.T) {
 func TestCandidateIngestIsBoundedPrivateAndNeverChangesPolicy(t *testing.T) {
 	c, now := collectorFixture(t)
 	for i := range MaxDenialDetails + 1 {
-		e := GuardEvent{Sequence: uint64(i + 1), BootAt: *now, Kind: "tls_denied", Reason: "unapproved_name", Name: "blocked.example.net"}
+		e := GuardEvent{Sequence: uint64(i + 1), BootAt: *now, Kind: "tls_denied", Reason: "unapproved_name", Name: "blocked.example.net", Port: 443}
 		c.ingest([]GuardEvent{e}, GuardTotals{Sequence: e.Sequence, DeniedTLS: e.Sequence}, nil, EnvoyTotals{})
 	}
 	publishFixture(c, *now, nil)

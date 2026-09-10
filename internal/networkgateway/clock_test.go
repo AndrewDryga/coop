@@ -107,7 +107,7 @@ func TestControllerBootClockFailureAndSuspendAreTerminal(t *testing.T) {
 				t.Fatal(err)
 			}
 			updating = true
-			if _, err := c.Admit(context.Background(), Lease{Name: "api.example.com", Peer: netip.MustParseAddr("93.184.216.34"), Expires: now.Add(time.Minute)}); err == nil || c.Ready() {
+			if _, err := c.Admit(context.Background(), Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: now.Add(time.Minute)}); err == nil || c.Ready() {
 				t.Fatal("uncertain boot-clock update retained authority")
 			}
 		})

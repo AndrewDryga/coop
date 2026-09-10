@@ -119,11 +119,6 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if cfg.Egress != "open" && cfg.Egress != "filtered" {
 		return nil, errors.New("filtered capture conflicts with the offline network ceiling")
 	}
-	if spec.Serve {
-		if err := checkFilteredServePorts(spec.servePorts); err != nil {
-			return nil, err
-		}
-	}
 	runRepo, err := filepath.Abs(projectPolicyRepo(spec))
 	if err == nil {
 		runRepo, err = filepath.EvalSymlinks(runRepo)
@@ -145,6 +140,13 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	}
 	if err := policy.RequireSupported(); err != nil {
 		return nil, err
+	}
+	// The captured policy decides which ports this run captures, so the serve
+	// check needs it — and it still runs before anything is created.
+	if spec.Serve {
+		if err := checkFilteredServePorts(spec.servePorts, policy.TLSPorts()); err != nil {
+			return nil, err
+		}
 	}
 	approvedServices := serviceGrants(policy)
 	// box.network is the old join-everything switch; in filtered mode a sidecar

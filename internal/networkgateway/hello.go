@@ -37,7 +37,9 @@ type Hello struct {
 // Inspect uses Go's maintained TLS parser and returns the exact bytes to replay
 // unchanged into the private forwarding connection. No TLS alert or server
 // handshake reaches the client: only an explicit accepted callback can succeed.
-func Inspect(ctx context.Context, conn net.Conn, policy egress.Snapshot) (Hello, error) {
+// The port is the kernel's record of this connection's original destination,
+// never anything the ClientHello carries — the caller reads it before any byte.
+func Inspect(ctx context.Context, conn net.Conn, policy egress.Snapshot, port int) (Hello, error) {
 	ctx, cancel := context.WithTimeout(ctx, HelloTimeout)
 	defer cancel()
 	deadline, _ := ctx.Deadline()
@@ -70,7 +72,7 @@ func Inspect(ctx context.Context, conn net.Conn, policy egress.Snapshot) (Hello,
 				return nil, reason
 			}
 			result.Name = name // safe observed SNI is evidence even when refused
-			decision := policy.Domain(name, 443)
+			decision := policy.Domain(name, port)
 			if !decision.Allowed {
 				reason = Failure(decision.Reason)
 				return nil, reason

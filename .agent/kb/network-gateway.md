@@ -2,7 +2,7 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go]
+sources: [internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/gatewayimage/image.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go]
 updated: 2026-09-10
 ---
 
@@ -11,9 +11,11 @@ A filtered run adds two helper containers from one pinned image, both running `c
 
 **Controller** — UID `0:65532`, `CAP_ADD NET_ADMIN` and nothing else, on the bridge
 (`box/filtered_launch.go:86`, `:128`). It owns nftables table `coop_net`
-(`networkgateway/controller.go:305`): a nat/output `capture` chain redirects the agent's
-(skuid 1000) TCP 443 to the guard's `:15443` and 53 tcp+udp to its `:15353`; a filter/output chain
-drops by default. Its order is the contract (`controller.go:368`): the agent's OWN loopback is
+(`networkgateway/controller.go:316`): a nat/output `capture` chain redirects the agent's
+(skuid 1000) TCP on every port the policy grants TLS on — `tcp dport { 443, 853, … }` — to the
+guard's `:15443`, and 53 tcp+udp to its `:15353`; a filter/output chain drops by default. A policy
+with no `tls` grant renders NO redirect rule at all (an empty nft set is a syntax error, and a
+default one would be an invention). Its order is the contract (`controller.go:368`): the agent's OWN loopback is
 accepted first (`oifname "lo"` plus `ip daddr 127.0.0.0/8`, so a test server on 127.0.0.1:3000 is
 not an attempt on a protected address), then an approved `service:` grant's one container address,
 THEN the `protected4` interval set, then every other grant, then the deny. `protected4` is host
@@ -27,14 +29,26 @@ conservative lower bound to the guard (`controller.go:268`), so a slow kernel co
 extend DNS authority.
 
 **Guard** — UID `65532:65532`, capless, read-only rootfs, sharing the controller's namespace
-(`filtered_launch.go:132`). It terminates nothing: it parses the ClientHello for SNI, refuses every
-ECH offer including empty and GREASE ones (`hello.go:57`), then replays the original bytes to Envoy
-over a private filesystem socket with a PROXY v2 header carrying the validated destination and a
-`PP2_TYPE_UNIQUE_ID` correlation TLV (`proxy.go:28`). Envoy's `original_dst` cluster restores that
-peer and pins `upstream_port_override: 443` (`envoy.go:69`). Its DNS side admits the name first,
-then resolves upstream over DoH to a pinned peer.
+(`filtered_launch.go:132`). It terminates nothing: it reads the connection's ORIGINAL destination
+before any byte (`SO_ORIGINAL_DST` through a raw `getsockopt`, `destination_linux.go:16`), parses
+the ClientHello for SNI, refuses every ECH offer including empty and GREASE ones (`hello.go:61`),
+then replays the original bytes to Envoy over a private filesystem socket with a PROXY v2 header
+carrying the validated destination AND port plus a `PP2_TYPE_UNIQUE_ID` correlation TLV
+(`proxy.go:15`). Envoy's `original_dst` cluster dials exactly that address:port — there is no
+`upstream_port_override` any more, so the port cannot come from anywhere but the kernel. Its DNS
+side admits the NAME alone (`AdmitsName`, never a port: a client must resolve before the kernel can
+record which granted port it dialed), then resolves upstream over DoH to a pinned peer.
 
 Facts the code cannot say twice, all still true:
+
+- The upstream PORT is the kernel's, never the client's. `policy.Domain(name, port)` runs in the
+  guard (`guard.go:173`), again in the controller before any element is installed
+  (`controller.go:198`), and leases are `ipv4_addr . inet_service` pairs (`ip daddr . tcp dport
+  @leases4 accept`), so one address on two granted ports is two leases. A connection whose original
+  destination IS the listener was dialed straight at the guard — nothing redirected it, so it
+  declares no port — and is refused as `tls_direct_dial_refused` and counted (`guard.go:144`). That
+  is spec §5's "a direct dial cannot select an upstream port", and it is why the guard's own egress
+  rule is port-agnostic only for ESTABLISHED flows.
 
 - The pinned Envoy 1.39.1 `tls_inspector` caps ClientHello at 16 KiB, so both inspection layers use
   the same bound (`hello.go:18`, `envoy.go:37`).
@@ -90,6 +104,10 @@ checkout, so a stale tar is a red gate, and a filtered launch only ever runs the
 [[restricted-networking]] qualification names.
 
 ## Changelog
+- 2026-09-10 — TLS on non-standard ports: the capture set, the lease set and the PROXY header all
+  carry the port; the guard reads it with SO_ORIGINAL_DST and refuses a direct dial; Envoy's
+  `upstream_port_override` is gone; `visible-sni-tls-ports-v3` is the new qualification contract, so
+  every host re-runs `coop net setup`. Proved live against `dns.google:853`.
 - 2026-09-10 — S7c: chain order documented (agent loopback and approved services BEFORE the
   protected drop, address grants after), protected set now includes the daemon's subnets and
   gateways, served ports accept only the bridge gateway, the closed-flow fold expires, cleanup

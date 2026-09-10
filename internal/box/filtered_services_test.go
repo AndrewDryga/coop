@@ -21,8 +21,8 @@ func TestUnsupportedRequestsAreRefusedBeforeAdmission(t *testing.T) {
 		rule egress.Rule
 		want string
 	}{
-		"tls on another port": {egress.Rule{To: egress.Destination{Domain: "api.example.com"}, Protocol: "tls", Ports: []int{8443}},
-			"TLS on port 8443 is not supported yet"},
+		"tls on the DNS port": {egress.Rule{To: egress.Destination{Domain: "api.example.com"}, Protocol: "tls", Ports: []int{53}},
+			"tls on port 53 is not supported"},
 		"ipv6 destination": {egress.Rule{To: egress.Destination{IP: "2606:4700:4700::1111"}, Protocol: "tcp", Ports: []int{5432}},
 			"IPv6 destinations are refused"},
 		"icmpv6": {egress.Rule{To: egress.Destination{CIDR: "2001:db8::/32"}, Protocol: "icmpv6", Types: []string{"echo-request"}},
@@ -53,6 +53,7 @@ func TestUnsupportedRequestsAreRefusedBeforeAdmission(t *testing.T) {
 	}
 	supported := networkstate.Admission{Requests: []egress.Rule{
 		{To: egress.Destination{Domain: "*.example.com"}, Protocol: "tls", Ports: []int{443}},
+		{To: egress.Destination{Domain: "dot.example.com"}, Protocol: "tls", Ports: []int{853, 8443}},
 		{To: egress.Destination{CIDR: "10.42.9.0/24"}, Protocol: "udp", Ports: []int{123}},
 		{To: egress.Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}},
 	}}
@@ -70,14 +71,15 @@ func mustNormalize(t *testing.T, rule egress.Rule) egress.Rule {
 	return normalized[0]
 }
 
-// The gateway captures TLS 443 and DNS 53 for the whole box, so a project that
-// serves on one of them is told before anything is created.
+// The gateway captures DNS 53, TLS 443 and every other port this policy grants
+// TLS on, so a project that serves on one of them is told before anything is
+// created.
 func TestFilteredServePortsCannotCollideWithTheCapture(t *testing.T) {
-	if err := checkFilteredServePorts([]int{3000, 8080}); err != nil {
+	if err := checkFilteredServePorts([]int{3000, 8080}, []int{443}); err != nil {
 		t.Fatal(err)
 	}
-	for _, port := range []int{443, 53} {
-		err := checkFilteredServePorts([]int{3000, port})
+	for _, port := range []int{443, 53, 8443} {
+		err := checkFilteredServePorts([]int{3000, port}, []int{443, 8443})
 		if err == nil || !strings.Contains(err.Error(), "captured TLS/DNS ports") {
 			t.Errorf("serve port %d was accepted: %v", port, err)
 		}

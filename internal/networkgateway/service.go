@@ -108,7 +108,7 @@ func (c LaunchConfig) Validate() error {
 			return Failure("gateway_configuration_invalid")
 		}
 	}
-	if validServePorts(c.Serve) != nil {
+	if validServePorts(c.Serve, c.Policy.TLSPorts()) != nil {
 		return Failure("gateway_configuration_invalid")
 	}
 	if len(c.Serve) != 0 && (!c.Ingress.Is4() || !c.Ingress.IsValid()) {

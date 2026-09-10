@@ -99,8 +99,8 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 }
 
 // netPolicyQuery decides which hypothetical the user asked for. A domain is
-// TLS on 443 and nothing else; an address carries no implied transport, so it
-// requires the operator to say which one they mean.
+// TLS — on 443 unless --port names another granted port; an address carries no
+// implied transport, so it requires the operator to say which one they mean.
 func netPolicyQuery(opts netDiagnosticOptions) (netDiagnosticOptions, error) {
 	if address, err := netip.ParseAddr(opts.query); err == nil {
 		if opts.policy.Protocol == "" {
@@ -109,15 +109,19 @@ func netPolicyQuery(opts netDiagnosticOptions) (netDiagnosticOptions, error) {
 		opts.policy.Address = address
 		return opts, opts.policy.Validate()
 	}
-	if opts.policy.Protocol != "" || opts.policy.Port != 0 {
-		return opts, errors.New("net why on a domain is TLS on 443; --protocol/--port/--icmp apply to an IP address")
+	if opts.policy.Protocol != "" && opts.policy.Protocol != "tls" {
+		return opts, errors.New("net why on a domain is TLS; --protocol tcp|udp and --icmp apply to an IP address")
 	}
 	name, err := egress.NormalizeDomain(opts.query, false)
 	if err != nil {
 		return opts, errors.New("net why needs one exact ASCII domain or one IP address — not a URL, a wildcard or a port")
 	}
-	opts.query, opts.policy = name, networkstate.PolicyQuery{Domain: name, Protocol: "tls", Port: 443}
-	return opts, nil
+	port := opts.policy.Port
+	if port == 0 {
+		port = 443
+	}
+	opts.query, opts.policy = name, networkstate.PolicyQuery{Domain: name, Protocol: "tls", Port: port}
+	return opts, opts.policy.Validate()
 }
 
 func netEvidenceID(value string) bool {
@@ -253,7 +257,7 @@ func netNoDraftReason(reason string) string {
 		return "This is an availability failure, not a policy denial. Another allow rule would not fix it."
 	default:
 		return "No rule is drafted: this evidence does not establish a transport or port. A DNS refusal alone\n" +
-			"cannot prove the destination is TLS on 443 — decide that yourself before adding a rule."
+			"cannot prove the destination is TLS, or on which port — decide that yourself before adding a rule."
 	}
 }
 

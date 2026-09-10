@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/netip"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -242,19 +243,21 @@ func TestProtectedAddressesOverrideGrants(t *testing.T) {
 
 func TestUnsupportedCapabilitiesRejectWholePolicy(t *testing.T) {
 	unsupported := map[string]Rule{
-		"tls on another port": {To: Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{8443}},
-		"raw tcp on 443":      {To: Destination{IP: "10.0.0.1"}, Protocol: "tcp", Ports: []int{443}},
-		"raw udp on 53":       {To: Destination{IP: "10.0.0.1"}, Protocol: "udp", Ports: []int{53}},
-		"ipv6 address":        {To: Destination{IP: "2001:4860:4860::8888"}, Protocol: "tcp", Ports: []int{5432}},
-		"icmpv6":              {To: Destination{CIDR: "2001:db8::/32"}, Protocol: "icmpv6", Types: []string{"echo-request"}},
-		"icmp beyond echo":    {To: Destination{IP: "10.0.0.1"}, Protocol: "icmp", Types: []string{"3"}},
-		"protected loopback":  {To: Destination{IP: "127.0.0.1"}, Protocol: "tcp", Ports: []int{5432}},
-		"protected metadata":  {To: Destination{CIDR: "169.254.0.0/16"}, Protocol: "tcp", Ports: []int{80}},
-		"service on captured": {To: Destination{Service: "web"}, Protocol: "tcp", Ports: []int{443}},
+		"tls on the DNS port":            {To: Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{53}},
+		"raw tcp on 443":                 {To: Destination{IP: "10.0.0.1"}, Protocol: "tcp", Ports: []int{443}},
+		"raw tcp on a captured TLS port": {To: Destination{IP: "10.0.0.1"}, Protocol: "tcp", Ports: []int{8443}},
+		"raw udp on 53":                  {To: Destination{IP: "10.0.0.1"}, Protocol: "udp", Ports: []int{53}},
+		"ipv6 address":                   {To: Destination{IP: "2001:4860:4860::8888"}, Protocol: "tcp", Ports: []int{5432}},
+		"icmpv6":                         {To: Destination{CIDR: "2001:db8::/32"}, Protocol: "icmpv6", Types: []string{"echo-request"}},
+		"icmp beyond echo":               {To: Destination{IP: "10.0.0.1"}, Protocol: "icmp", Types: []string{"3"}},
+		"protected loopback":             {To: Destination{IP: "127.0.0.1"}, Protocol: "tcp", Ports: []int{5432}},
+		"protected metadata":             {To: Destination{CIDR: "169.254.0.0/16"}, Protocol: "tcp", Ports: []int{80}},
+		"service on captured":            {To: Destination{Service: "web"}, Protocol: "tcp", Ports: []int{443}},
 	}
 	for name, rule := range unsupported {
 		t.Run(name, func(t *testing.T) {
-			s, err := Compile("test", Filtered, []Input{{Rules: []Rule{tlsRule("api.example.com"), rule}, Origin: Origin{Kind: "operator"}}}, nil, false, ownerKey())
+			rules := []Rule{tlsRule("api.example.com"), {To: Destination{Domain: "ports.example.com"}, Protocol: "tls", Ports: []int{8443}}, rule}
+			s, err := Compile("test", Filtered, []Input{{Rules: rules, Origin: Origin{Kind: "operator"}}}, nil, false, ownerKey())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -265,9 +268,49 @@ func TestUnsupportedCapabilitiesRejectWholePolicy(t *testing.T) {
 	}
 }
 
+// The TLS port set is what the gateway captures and what a decision is made
+// against: a name granted on one port is not granted on another, and the set
+// itself is sorted, deduplicated and empty for a policy with no tls grant.
+func TestTLSPortsAreTheCaptureSetAndDecideEachName(t *testing.T) {
+	s, err := Compile("test", Filtered, []Input{{Origin: Origin{Kind: "operator"}, Rules: []Rule{
+		{To: Destination{Domain: "dot.example.com"}, Protocol: "tls", Ports: []int{853, 443}},
+		{To: Destination{Domain: "alt.example.com"}, Protocol: "tls", Ports: []int{8443, 853}},
+		{To: Destination{IP: "10.0.0.1"}, Protocol: "tcp", Ports: []int{5432}},
+	}}}, nil, false, ownerKey())
+	if err != nil || s.RequireSupported() != nil {
+		t.Fatal(err, s.RequireSupported())
+	}
+	if got := s.TLSPorts(); !slices.Equal(got, []int{443, 853, 8443}) {
+		t.Fatalf("capture set: %v", got)
+	}
+	for _, tc := range []struct {
+		name    string
+		port    int
+		allowed bool
+	}{
+		{"dot.example.com", 443, true}, {"dot.example.com", 853, true}, {"dot.example.com", 8443, false},
+		{"alt.example.com", 8443, true}, {"alt.example.com", 443, false}, {"alt.example.com", 0, false},
+	} {
+		if s.Domain(tc.name, tc.port).Allowed != tc.allowed {
+			t.Errorf("%s on %d: wanted allowed=%t", tc.name, tc.port, tc.allowed)
+		}
+		// DNS admission is the name alone: a client must resolve before the
+		// kernel can record which granted port it dialed.
+		if !s.AdmitsName(tc.name) {
+			t.Errorf("%s was refused by DNS admission", tc.name)
+		}
+	}
+	empty, err := Compile("test", Filtered, []Input{{Origin: Origin{Kind: "operator"},
+		Rules: []Rule{{To: Destination{IP: "10.0.0.1"}, Protocol: "tcp", Ports: []int{5432}}}}}, nil, false, ownerKey())
+	if err != nil || len(empty.TLSPorts()) != 0 {
+		t.Fatal("a policy with no tls grant captures no TLS port", err)
+	}
+}
+
 func TestSupportedTransportsAreEnforceable(t *testing.T) {
 	supported := []Rule{
 		tlsRule("api.example.com"), tlsRule("*.example.com"),
+		{To: Destination{Domain: "dot.example.com"}, Protocol: "tls", Ports: []int{853, 8443}},
 		{To: Destination{IP: "10.0.0.1"}, Protocol: "tcp", Ports: []int{5432}},
 		{To: Destination{CIDR: "10.42.9.0/24"}, Protocol: "udp", Ports: []int{123}},
 		{To: Destination{CIDR: "10.0.0.0/8"}, Protocol: "icmp", Types: []string{"echo-request"}},

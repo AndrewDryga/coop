@@ -19,7 +19,11 @@ type GuardEvent struct {
 	Name     string
 	RuleID   string
 	Peer     netip.Addr
-	Reason   string
+	// Port is the connection's original destination port as the kernel recorded
+	// it: the upstream port of a registered flow, and the port a refused attempt
+	// was made on.
+	Port   int
+	Reason string
 }
 
 type GuardTotals struct {

@@ -59,9 +59,11 @@ Traps:
   the environment, is the boundary — and a bind that IS or CONTAINS the runtime's control surface
   (`/var/run`, `/run`, `/proc`, `/sys`, `/dev`, `/`, the bound endpoint's socket) is refused too
   (`box/filtered_mounts.go:429`): one curl over a daemon socket starts a container no gateway sees.
-- 443 and 53 are the gateway's own capture: a raw `tcp`/`udp` grant on either
-  (`egress/snapshot.go:502`) or a published `serve` port on either
-  (`networkgateway/controller.go:133`) is refused.
+- The gateway captures every TLS port the policy grants (`Snapshot.TLSPorts`, `egress/snapshot.go:292`)
+  plus DNS on 53; the upstream port comes from the kernel's redirect record (SO_ORIGINAL_DST),
+  never from the client, and a dial straight at the guard listener is refused. A raw `tcp` grant
+  on a captured TLS port, a raw grant on 53, `tls` on 53, and a published `serve` port on a
+  captured port are refused (`SupportedRule`, `egress/snapshot.go:485`).
 - IPv6 is refused everywhere on this runtime — address, CIDR or `icmpv6`
   (`egress/snapshot.go:469`) — because the reference Docker bridge has none.
 
@@ -74,3 +76,4 @@ direct runs and remote sessions consume one. [[box-egress-poc]] is the retired e
   runtime's control surfaces, and the never-produced hard ceiling is gone. Re-verified.
 - 2026-09-10 — created for the shipped feature (S0–S6, 54be097…f3e1d96), replacing eleven cards
   written for the abandoned custody design. Verified against the sources above.
+- 2026-09-10 — TLS on any granted port: the capture set follows `TLSPorts`, ports come from SO_ORIGINAL_DST; refs refreshed (SupportedRule moved to snapshot.go:485).

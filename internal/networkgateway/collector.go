@@ -30,7 +30,7 @@ const (
 
 type collectedFlow struct {
 	row           networkview.Connection
-	peer          netip.Addr
+	peer          netip.AddrPort
 	tuple         SocketTuple
 	connectionID  string
 	connected     bool
@@ -212,9 +212,10 @@ func (c *Collector) ingest(guards []GuardEvent, gt GuardTotals, proxies []EnvoyE
 				continue
 			}
 			at := event.At
-			c.flows[event.FlowID] = &collectedFlow{peer: event.Peer, lastBoot: event.BootAt,
+			peer := netip.AddrPortFrom(event.Peer, uint16(event.Port))
+			c.flows[event.FlowID] = &collectedFlow{peer: peer, lastBoot: event.BootAt,
 				row: networkview.Connection{ID: c.opaque("flow", event.FlowID), DestinationID: c.opaque("destination", event.Name),
-					State: "connecting", Transport: "tls", Name: event.Name, NameSource: "sni", Peer: netip.AddrPortFrom(event.Peer, 443).String(),
+					State: "connecting", Transport: "tls", Name: event.Name, NameSource: "sni", Peer: peer.String(),
 					RuleID: event.RuleID, StartedAt: &at, ObservedAt: event.At}}
 		case "private_flow_closed":
 			if f := c.flows[event.FlowID]; f != nil {
@@ -226,8 +227,11 @@ func (c *Collector) ingest(guards []GuardEvent, gt GuardTotals, proxies []EnvoyE
 			if event.Name != "" {
 				row.DestinationID = c.opaque("destination", event.Name)
 			}
-			if event.Kind == "tls_denied" {
-				port := 443
+			if event.Kind == "tls_denied" && event.Port != 0 {
+				// The port a refused attempt was made on is the kernel's redirect
+				// record, so it is evidence like the name — including when it is
+				// this guard's own listener, which is what a direct dial reports.
+				port := event.Port
 				row.Port = &port
 			}
 			row.Candidate = c.candidate(row)
@@ -259,7 +263,7 @@ func (c *Collector) ingest(guards []GuardEvent, gt GuardTotals, proxies []EnvoyE
 			continue
 		}
 		f.connectionID = event.ConnectionID
-		if event.Peer.IsValid() && (event.Peer.Addr() != f.peer || event.Peer.Port() != 443) {
+		if event.Peer.IsValid() && event.Peer != f.peer {
 			c.markProxyPartial("proxy_peer_mismatch")
 			f.row.Partial = true
 			continue

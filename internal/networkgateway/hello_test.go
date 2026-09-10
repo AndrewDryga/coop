@@ -63,7 +63,7 @@ func TestInspectTLSUsesMaintainedParserWithoutWritingOrChangingBytes(t *testing.
 		t.Run(name, func(t *testing.T) {
 			wire := clientHello(t, name)
 			conn := &wireConn{Reader: bytes.NewReader(wire)}
-			got, err := Inspect(context.Background(), conn, policy)
+			got, err := Inspect(context.Background(), conn, policy, 443)
 			if err != nil || got.Name == "" || got.RuleID == "" || !bytes.Equal(got.Bytes, wire) {
 				t.Fatalf("inspection: %#v, %v", got, err)
 			}
@@ -78,13 +78,13 @@ func TestInspectRefusesNamesAndInvalidModes(t *testing.T) {
 	policy := testPolicy(t)
 	for _, name := range []string{"", "other.example.com", "services.example.com", "a.b.services.example.com", "badservices.example.com", "127.0.0.1"} {
 		conn := &wireConn{Reader: bytes.NewReader(clientHello(t, name))}
-		if got, err := Inspect(context.Background(), conn, policy); err == nil || len(got.Bytes) != 0 || conn.written.Len() != 0 {
+		if got, err := Inspect(context.Background(), conn, policy, 443); err == nil || len(got.Bytes) != 0 || conn.written.Len() != 0 {
 			t.Fatalf("admitted %q: %#v %v", name, got, err)
 		}
 	}
 	for _, mode := range []egress.Mode{egress.None, "", "garbage"} {
 		policy.Mode = mode
-		if _, err := Inspect(context.Background(), &wireConn{Reader: bytes.NewReader(clientHello(t, "api.example.com"))}, policy); err == nil {
+		if _, err := Inspect(context.Background(), &wireConn{Reader: bytes.NewReader(clientHello(t, "api.example.com"))}, policy, 443); err == nil {
 			t.Fatalf("admitted mode %q", mode)
 		}
 	}
@@ -122,7 +122,7 @@ func TestInspectRejectsEveryECHOffer(t *testing.T) {
 	for _, body := range [][]byte{nil, {0}, {1}, {0, 0, 1, 0, 1, 0, 0, 0, 0}, bytes.Repeat([]byte{1}, 128)} {
 		wire := addExtension(t, clientHello(t, "api.example.com"), echExtension, body)
 		conn := &wireConn{Reader: bytes.NewReader(wire)}
-		if _, err := Inspect(context.Background(), conn, policy); err == nil {
+		if _, err := Inspect(context.Background(), conn, policy, 443); err == nil {
 			t.Fatal("admitted ECH extension")
 		}
 		if conn.written.Len() != 0 {
@@ -131,7 +131,7 @@ func TestInspectRejectsEveryECHOffer(t *testing.T) {
 	}
 	// Unknown ordinary GREASE is not ECH and must remain compatible.
 	wire := addExtension(t, clientHello(t, "api.example.com"), 0x4a4a, []byte{0, 1})
-	if _, err := Inspect(context.Background(), &wireConn{Reader: bytes.NewReader(wire)}, policy); err != nil {
+	if _, err := Inspect(context.Background(), &wireConn{Reader: bytes.NewReader(wire)}, policy, 443); err != nil {
 		t.Fatalf("ordinary GREASE rejected: %v", err)
 	}
 }
@@ -146,12 +146,12 @@ func TestInspectFragmentedTruncatedAndOversizedHello(t *testing.T) {
 		fragmented = append(fragmented, payload[:n]...)
 		payload = payload[n:]
 	}
-	got, err := Inspect(context.Background(), &wireConn{Reader: bytes.NewReader(fragmented)}, policy)
+	got, err := Inspect(context.Background(), &wireConn{Reader: bytes.NewReader(fragmented)}, policy, 443)
 	if err != nil || !bytes.Equal(got.Bytes, fragmented) {
 		t.Fatalf("fragmented hello: %v", err)
 	}
 	for _, invalid := range [][]byte{nil, []byte("GET / HTTP/1.1\r\n\r\n"), wire[:len(wire)-1], bytes.Repeat([]byte{22}, MaxHelloBytes+1)} {
-		if _, err := Inspect(context.Background(), &wireConn{Reader: bytes.NewReader(invalid)}, policy); err == nil {
+		if _, err := Inspect(context.Background(), &wireConn{Reader: bytes.NewReader(invalid)}, policy, 443); err == nil {
 			t.Fatal("admitted invalid input")
 		}
 	}
@@ -165,7 +165,7 @@ func TestInspectFragmentedTruncatedAndOversizedHello(t *testing.T) {
 		records = append(records, oversized[:n]...)
 		oversized = oversized[n:]
 	}
-	if _, err := Inspect(context.Background(), &wireConn{Reader: bytes.NewReader(records)}, policy); err == nil {
+	if _, err := Inspect(context.Background(), &wireConn{Reader: bytes.NewReader(records)}, policy, 443); err == nil {
 		t.Fatal("admitted over-budget fragmented hello")
 	}
 }
@@ -176,7 +176,7 @@ func TestInspectCancellationReleasesSilentClient(t *testing.T) {
 	defer client.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := Inspect(ctx, server, testPolicy(t)); err == nil {
+	if _, err := Inspect(ctx, server, testPolicy(t), 443); err == nil {
 		t.Fatal("cancelled inspection succeeded")
 	}
 }
@@ -189,7 +189,7 @@ func FuzzInspectNeverApprovesWithoutCapturedName(f *testing.F) {
 			t.Skip()
 		}
 		conn := &wireConn{Reader: bytes.NewReader(wire)}
-		got, err := Inspect(context.Background(), conn, testPolicy(t))
+		got, err := Inspect(context.Background(), conn, testPolicy(t), 443)
 		if conn.written.Len() != 0 || len(got.Bytes) > MaxHelloBytes || (err == nil && (got.Name == "" || got.RuleID == "")) {
 			t.Fatal("inspection violated its boundary")
 		}

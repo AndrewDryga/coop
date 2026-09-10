@@ -16,6 +16,7 @@ Start with `coop net setup` once per machine, then `coop net` for this project's
 | --- | --- | --- |
 | `to: {domain: "api.example.com"}` · `protocol: tls` · `ports: [443]` | that exact name over TLS 443 | visible-SNI routing to a validated IPv4 address |
 | `to: {domain: "*.example.com"}` · `protocol: tls` · `ports: [443]` | one label under that name — `www.example.com`, but never the apex and never `a.b.example.com` | the same matcher in DNS admission and SNI routing |
+| `to: {domain: "dns.google"}` · `protocol: tls` · `ports: [853, 8443]` | that name over TLS on those ports, and on no other | the capture chain redirects exactly those ports; the guard reads the port back from the kernel |
 | `to: {ip: "10.42.8.12"}` / `to: {cidr: "10.42.9.0/24"}` · `protocol: tcp\|udp` · `ports: [...]` | raw TCP or UDP to those IPv4 addresses on those ports | an nftables accept rule with its own kernel counter |
 | `to: {ip: ...}` / `to: {cidr: ...}` · `protocol: icmp` · `types: [echo-request]` | IPv4 ping to those addresses | an nftables accept rule; echo replies return on conntrack |
 | `to: {provider: claude}` | that provider's maintained core endpoints | expanded from the trusted release bundle into concrete TLS rules |
@@ -33,6 +34,13 @@ about to run. Rewriting `db:` into something else — a proxy image with ordinar
 refused with `compose service "db" changed since it was approved; review it with coop net approve`,
 and `coop net` shows it as a pending change. Editing an unrelated service changes nothing.
 
+**TLS is not only 443.** A `tls` rule names the ports it wants — `[443]`, `[853]`, `[443, 8443]` —
+and the gateway captures exactly that set. The port an upstream is dialed on comes from the
+kernel's own record of the redirect (`SO_ORIGINAL_DST`), never from the client: the same name on a
+port the rule does not name is refused with its port in the event, and a connection made straight
+to the guard's listener declares no port at all, so it is refused and counted too. Port 53 stays
+the gateway's own, and a `serve` port may not collide with a captured one.
+
 **Inside the box, localhost is yours.** A test server on `127.0.0.1:3000` and a `curl` to it never
 touch the boundary: the box's loopback is its own namespace, not a host surface. Only what leaves
 the box meets the gateway.
@@ -42,8 +50,10 @@ the box meets the gateway.
 | Requested | Message |
 | --- | --- |
 | IPv6 address, CIDR, or `icmpv6` | `IPv6 destinations are refused: this runtime is qualified for IPv4 only` |
-| `tls` on any port but 443 | `TLS on port N is not supported yet; only 443 is qualified` |
+| `tls` on port 53 | `tls on port 53 is not supported: the gateway captures port 53 for its own DNS handling` |
 | raw `tcp`/`udp` on port 443 or 53 | `raw tcp to <dest> port 443 is not supported: the gateway captures port 443 for its own TLS and DNS handling` |
+| raw `tcp` on a port a `tls` rule also names | `raw tcp to <dest> port 8443 is not supported alongside a tls grant on port 8443: the gateway captures that port for TLS` |
+| a `serve` port on a captured TLS/DNS port | `serve port 8443 collides with the gateway's captured TLS/DNS ports; serve it on another port in filtered mode` |
 | ICMP beyond echo-request | `ICMP type N to <dest> is not supported yet; only echo-request is qualified` |
 | `cidr: 0.0.0.0/0` | `a /0 grant is not filtered access; use explicit open egress for that intent` |
 | a host, loopback, link-local or metadata range | `<range> is a protected address range (host, loopback, link-local or metadata); no rule can grant it` |
@@ -87,8 +97,8 @@ socket would start a container the gateway never sees.
 - **Unknown means unknown.** A metric nobody measured is reported as UNKNOWN, never as zero.
 
 `coop net why <destination> --run <id>` evaluates the run's captured policy without sending a
-packet. A domain is TLS on 443; an address has no implied transport, so pass
-`--protocol tcp|udp --port <n>`, or `--icmp` for echo-request.
+packet. A domain is TLS on 443 unless `--port <n>` names another; an address has no implied
+transport, so pass `--protocol tcp|udp --port <n>`, or `--icmp` for echo-request.
 
 ## Asking for access
 
@@ -101,8 +111,8 @@ launched with.
 For a single invocation, the operator can pass `--allow-domain <name>` (exact TLS 443) or
 `--egress-rules <file>` with a full rule document. A file inside an agent mount is a request, not a
 grant — where the file lives decides its authority. `coop net approve` applies the same capability
-gate a launch does, so a rule this runtime could never enforce (`tls` on 8443, say) is refused at
-review instead of being remembered and refused at every launch.
+gate a launch does, so a rule this runtime could never enforce (an IPv6 destination, say) is
+refused at review instead of being remembered and refused at every launch.
 
 An approval is bound to the project DIRECTORY, not to its path: moving the approved checkout aside
 and putting another there refuses the next launch until a human reviews it again.

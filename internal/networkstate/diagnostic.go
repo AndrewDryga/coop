@@ -46,8 +46,9 @@ type PolicyExplanation struct {
 }
 
 // PolicyQuery is the hypothetical this check evaluates. Exactly one of Domain
-// or Address is set. An address needs an explicit transport: a bare IP does not
-// imply TLS on 443, and guessing one would answer a question nobody asked.
+// or Address is set. A domain is TLS on the port asked about, 443 unless the
+// operator names another. An address needs an explicit transport: a bare IP
+// does not imply TLS, and guessing one would answer a question nobody asked.
 type PolicyQuery struct {
 	Domain   string
 	Address  netip.Addr
@@ -58,12 +59,12 @@ type PolicyQuery struct {
 // Validate is the one place a hypothetical is checked, so the CLI refuses a
 // nonsense transport before opening any evidence.
 func (q PolicyQuery) Validate() error {
-	invalid := errors.New("why needs one exact ASCII domain (TLS on 443), or one IPv4 address with --protocol tcp|udp --port <n>, or --icmp")
+	invalid := errors.New("why needs one exact ASCII domain (TLS, port 443 unless --port says otherwise), or one IPv4 address with --protocol tcp|udp --port <n>, or --icmp")
 	switch {
 	case q.Domain != "" && q.Address.IsValid():
 		return invalid
 	case q.Domain != "":
-		if q.Protocol != "tls" || q.Port != 443 {
+		if q.Protocol != "tls" || q.Port < 1 || q.Port > 65535 {
 			return invalid
 		}
 	case !q.Address.IsValid() || q.Address.Is4In6() || q.Address.Zone() != "":
@@ -131,7 +132,7 @@ func (e *Evidence) Why(runID string, query PolicyQuery, exportDestinations bool)
 	if query.Domain != "" {
 		var err error
 		if name, err = egress.NormalizeDomain(query.Domain, false); err != nil {
-			return PolicyExplanation{}, errors.New("why requires one exact ASCII domain; the hypothetical transport is TLS on port 443")
+			return PolicyExplanation{}, errors.New("why requires one exact ASCII domain; the hypothetical transport is TLS on the asked-about port")
 		}
 	}
 	record, err := e.Execution(runID)
@@ -142,7 +143,7 @@ func (e *Evidence) Why(runID string, query PolicyQuery, exportDestinations bool)
 	if err != nil {
 		return PolicyExplanation{}, err
 	}
-	decision := policy.Domain(name, 443)
+	decision := policy.Domain(name, query.Port)
 	if name == "" {
 		// Echo-request is the one qualified ICMP message, so the hypothetical
 		// uses exactly it rather than inventing a type the grammar would refuse.
@@ -263,7 +264,10 @@ func validateDiagnosticDenial(d networkview.Denial, fingerprint string) error {
 			return bad
 		}
 		if d.Kind == "tls_denied" {
-			if d.Port == nil || *d.Port != 443 {
+			// The port is the kernel's redirect record, so a refused attempt the
+			// capture chain delivered has one — and an attempt whose record could
+			// not be read has none at all rather than an invented 443.
+			if d.Port != nil && (*d.Port < 1 || *d.Port > 65535) {
 				return bad
 			}
 		} else if d.Port != nil {
@@ -289,7 +293,10 @@ func validateDiagnosticDenial(d networkview.Denial, fingerprint string) error {
 		}
 	}
 	if c := d.Candidate; c != nil {
-		expected := egress.Rule{To: egress.Destination{Domain: d.Name}, Protocol: "tls", Ports: []int{443}}
+		if d.Port == nil {
+			return bad // a draft names the observed port, so it needs one
+		}
+		expected := egress.Rule{To: egress.Destination{Domain: d.Name}, Protocol: "tls", Ports: []int{*d.Port}}
 		if d.Source != "guard" || d.Kind != "tls_denied" || d.Reason != "unapproved_name" || d.Name == "" ||
 			!lowerHex(c.ID, 32) || c.EvidenceID != d.ID || c.PolicyFingerprint != fingerprint || c.AppliesTo != "next_run" || !equalJSON(c.Rule, expected) {
 			return bad

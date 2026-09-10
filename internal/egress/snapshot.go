@@ -288,6 +288,28 @@ func (s Snapshot) Domain(name string, port int) Decision {
 	return Decision{Reason: "unapproved_name", Resolution: "not_evaluated"}
 }
 
+// TLSPorts is the exact set of ports this policy grants TLS on, sorted. It is
+// what the gateway captures and therefore what the guard may be asked to route:
+// a port outside it never reaches the guard, and the guard refuses one anyway.
+func (s Snapshot) TLSPorts() []int {
+	var ports []int
+	if s.Mode != Filtered {
+		return nil
+	}
+	for _, grant := range s.Grants {
+		if grant.Rule.Protocol != "tls" {
+			continue
+		}
+		for _, port := range grant.Rule.Ports {
+			if !slices.Contains(ports, port) {
+				ports = append(ports, port)
+			}
+		}
+	}
+	slices.Sort(ports)
+	return ports
+}
+
 // AdmitsName is a DNS admission check, deliberately not an inferred TLS attempt.
 func (s Snapshot) AdmitsName(name string) bool {
 	normalized, err := NormalizeDomain(name, false)
@@ -404,7 +426,35 @@ func (s Snapshot) RequireSupported() error {
 			counters[name] = true
 		}
 	}
+	// The gateway captures the agent's TCP on every port a tls grant names, so a
+	// raw tcp grant on one of those ports would be redirected to the guard and
+	// never reach its destination. That is the unenforced grant this gate exists
+	// to refuse, and only the whole policy can see the collision.
+	captured := s.TLSPorts()
+	for _, grant := range s.Grants {
+		rule := grant.Rule
+		if rule.Protocol != "tcp" {
+			continue
+		}
+		for _, port := range rule.Ports {
+			if slices.Contains(captured, port) {
+				return fmt.Errorf("raw tcp to %s port %d is not supported alongside a tls grant on port %d: the gateway captures that port for TLS", ruleDestination(rule), port, port)
+			}
+		}
+	}
 	return nil
+}
+
+// ruleDestination is the destination as a user wrote it, for a message about a
+// rule this runtime refuses.
+func ruleDestination(rule Rule) string {
+	switch {
+	case rule.To.Service != "":
+		return "service " + rule.To.Service
+	case rule.To.Domain != "":
+		return rule.To.Domain
+	}
+	return rule.To.CIDR
 }
 
 // CounterName is the kernel counter this address grant's packets are counted
@@ -442,8 +492,8 @@ func SupportedRule(rule Rule) error {
 			return errors.New("tls requires a domain; TLS to a bare address is not supported")
 		}
 		for _, port := range rule.Ports {
-			if port != 443 {
-				return fmt.Errorf("TLS on port %d is not supported yet; only 443 is qualified", port)
+			if port == 53 {
+				return errors.New("tls on port 53 is not supported: the gateway captures port 53 for its own DNS handling")
 			}
 		}
 		return nil

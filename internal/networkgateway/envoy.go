@@ -3,7 +3,9 @@ package networkgateway
 // EnvoyBootstrap is fixed trusted configuration for the pinned 1.39.1 binary.
 // The capless guard is the sole filesystem-socket caller and has already checked
 // the shared canonical name matcher, ECH and the concrete controller lease.
-// No destination is selected from client metadata or HTTP application fields.
+// No destination is selected from client metadata or HTTP application fields:
+// the original_dst cluster dials the address AND port of the PROXY v2 header the
+// guard wrote, which carries the kernel's own record of the redirect.
 const EnvoyBootstrap = `admin:
   address:
     pipe: {path: /private/admin.sock, mode: 384}
@@ -66,5 +68,4 @@ static_resources:
         name: envoy.clusters.original_dst
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.clusters.original_dst.v3.OriginalDstCluster
-          upstream_port_override: 443
 `

@@ -56,7 +56,7 @@ func TestPrivateControllerAPIAuthenticatesBoundsAndTerminates(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	lease := Lease{Name: "api.example.com", Peer: netip.MustParseAddr("93.184.216.34"), Expires: testBootNow().Add(time.Minute)}
+	lease := Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: testBootNow().Add(time.Minute)}
 	until, err := client.Admit(ctx, lease)
 	if err != nil || !until.After(testBootNow()) || until.After(lease.Expires) {
 		t.Fatalf("lease reply: %s %v", until, err)
@@ -88,7 +88,7 @@ func TestControllerSequentialRepliesReleaseKernelSlot(t *testing.T) {
 	}
 	client, _, _ := startControlFixture(t, c, func(*net.UnixConn) bool { return true })
 	for range 100 {
-		lease := Lease{Name: "api.example.com", Peer: netip.MustParseAddr("93.184.216.34"), Expires: testBootNow().Add(time.Minute)}
+		lease := Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: testBootNow().Add(time.Minute)}
 		if _, err := client.Admit(context.Background(), lease); err != nil {
 			t.Fatalf("sequential accepted request was spuriously busy: %v", err)
 		}
@@ -148,7 +148,7 @@ func TestLeaseSlowFramesCannotStarveIndependentHeartbeat(t *testing.T) {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(ControlTimeout))
-	request := controlRequest{Identity: c.identity, Version: 1, Operation: "lease", Lease: &Lease{Name: "api.example.com", Peer: netip.MustParseAddr("93.184.216.34"), Expires: testBootNow().Add(time.Minute)}}
+	request := controlRequest{Identity: c.identity, Version: 1, Operation: "lease", Lease: &Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: testBootNow().Add(time.Minute)}}
 	if err := json.NewEncoder(conn).Encode(request); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestPrivateControllerRejectsSwappedRunAndReportsShutdownUncertainty(t *test
 	if wrong.Ready(context.Background()) == nil {
 		t.Fatal("wrong gateway epoch reported ready")
 	}
-	if _, err := wrong.Admit(context.Background(), Lease{Name: "api.example.com", Peer: netip.MustParseAddr("93.184.216.34"), Expires: testBootNow().Add(time.Minute)}); err == nil {
+	if _, err := wrong.Admit(context.Background(), Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: testBootNow().Add(time.Minute)}); err == nil {
 		t.Fatal("wrong gateway epoch granted a lease")
 	}
 	c.mu.Lock()

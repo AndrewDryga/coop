@@ -101,10 +101,11 @@ func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (opt
 }
 
 // checkFilteredServePorts refuses a serve port the gateway itself captures,
-// before anything is created. 443 and 53 belong to the TLS and DNS boundary.
-func checkFilteredServePorts(ports []int) error {
+// before anything is created: 443 and 53 always belong to the TLS and DNS
+// boundary, and so does every port this policy grants TLS on.
+func checkFilteredServePorts(ports, captured []int) error {
 	for _, port := range ports {
-		if port == 443 || port == 53 {
+		if port == 443 || port == 53 || slices.Contains(captured, port) {
 			return errors.New("serve port " + strconv.Itoa(port) + " collides with the gateway's captured TLS/DNS ports; serve it on another port in filtered mode")
 		}
 	}

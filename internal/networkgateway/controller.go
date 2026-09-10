@@ -28,10 +28,19 @@ const (
 // deadline-bound, fixed /usr/sbin/nft -f - subprocess; no shell or agent argv.
 type ApplyRules func(context.Context, string) error
 
+// Lease is one admitted name/address/port triple. The port is the destination
+// the KERNEL recorded for the redirected connection, not one a client asked
+// for: the guard reads it back with SO_ORIGINAL_DST and the controller checks
+// it against the frozen policy again before any element is installed.
 type Lease struct {
 	Name    string      `json:"name"`
 	Peer    netip.Addr  `json:"peer"`
+	Port    int         `json:"port"`
 	Expires BootInstant `json:"expires_boot_ns"`
+}
+
+func (l Lease) destination() netip.AddrPort {
+	return netip.AddrPortFrom(l.Peer, uint16(l.Port))
 }
 
 type Controller struct {
@@ -46,7 +55,7 @@ type Controller struct {
 	serve       []int
 	ingress     netip.Addr
 	leases      map[string]Lease
-	installed   map[netip.Addr]BootInstant
+	installed   map[netip.AddrPort]BootInstant
 	ready       atomic.Bool
 	closed      atomic.Bool
 	initialized bool
@@ -61,7 +70,7 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 	if err != nil {
 		return nil, err
 	}
-	if err := validServePorts(serve); err != nil {
+	if err := validServePorts(serve, policy.TLSPorts()); err != nil {
 		return nil, err
 	}
 	if len(serve) != 0 && !ingress.Is4() {
@@ -132,14 +141,16 @@ func addressGrants(policy egress.Snapshot, services []ServiceBinding) ([]address
 }
 
 // A published serve port is host ingress to the box, not egress: it opens the
-// exact container ports the project asked to serve and nothing else.
-func validServePorts(ports []int) error {
+// exact container ports the project asked to serve and nothing else. It may not
+// be a port this run captures — 53 and 443 always, plus every port a tls grant
+// names — because the agent's own connection to it would be redirected instead.
+func validServePorts(ports, captured []int) error {
 	if len(ports) > egress.MaxConstraints {
 		return errors.New("too many published serve ports")
 	}
 	for i, port := range ports {
-		if port < 1 || port > 65535 || port == 443 || port == 53 || slices.Index(ports, port) != i {
-			return errors.New("published serve ports must be unique, in 1..65535 and outside the gateway's captured 443/53")
+		if port < 1 || port > 65535 || port == 443 || port == 53 || slices.Contains(captured, port) || slices.Index(ports, port) != i {
+			return errors.New("published serve ports must be unique, in 1..65535 and outside the gateway's captured TLS/DNS ports")
 		}
 	}
 	return nil
@@ -184,7 +195,7 @@ func (c *Controller) Initialize(ctx context.Context, maintenance netip.Addr) err
 // independently checks scope, protected addresses, lifetime and cardinality.
 func (c *Controller) Admit(ctx context.Context, lease Lease) (BootInstant, error) {
 	name, err := egress.NormalizeDomain(lease.Name, false)
-	if err != nil || name != lease.Name || !c.policy.Domain(name, 443).Allowed || !lease.Peer.Is4() || !egress.PublicAnswer(lease.Peer, c.protected) {
+	if err != nil || name != lease.Name || !c.policy.Domain(name, lease.Port).Allowed || !lease.Peer.Is4() || !egress.PublicAnswer(lease.Peer, c.protected) {
 		return 0, Failure("gateway_lease_refused")
 	}
 	c.mu.Lock()
@@ -204,9 +215,9 @@ func (c *Controller) Admit(ctx context.Context, lease Lease) (BootInstant, error
 	if remaining <= ControllerUpdateTimeout+KernelTickAllowance+time.Millisecond || remaining > MaxDNSTTL {
 		return 0, Failure("dns_ttl_expired")
 	}
-	key := name + "\x00" + lease.Peer.String()
-	if prior, ok := c.leases[key]; ok && !prior.Expires.Before(lease.Expires) && c.installed[lease.Peer].After(now) {
-		return minTime(lease.Expires, c.installed[lease.Peer]), nil
+	key := name + "\x00" + lease.destination().String()
+	if prior, ok := c.leases[key]; ok && !prior.Expires.Before(lease.Expires) && c.installed[lease.destination()].After(now) {
+		return minTime(lease.Expires, c.installed[lease.destination()]), nil
 	}
 	updated := make(map[string]Lease, len(c.leases)+1)
 	for key, prior := range c.leases {
@@ -236,7 +247,7 @@ func (c *Controller) Admit(ctx context.Context, lease Lease) (BootInstant, error
 	if !c.ready.Load() || c.closed.Load() {
 		return 0, Failure("enforcement_unavailable")
 	}
-	validUntil := minTime(lease.Expires, installed[lease.Peer])
+	validUntil := minTime(lease.Expires, installed[lease.destination()])
 	if !c.now().Before(validUntil) {
 		return 0, Failure("dns_ttl_expired")
 	}
@@ -273,15 +284,15 @@ func (c *Controller) CloseAdmission(ctx context.Context) error {
 	return nil
 }
 
-func leaseRules(leases map[string]Lease, now BootInstant) (string, map[netip.Addr]BootInstant) {
-	peers := map[netip.Addr]BootInstant{}
+func leaseRules(leases map[string]Lease, now BootInstant) (string, map[netip.AddrPort]BootInstant) {
+	peers := map[netip.AddrPort]BootInstant{}
 	for _, lease := range leases {
-		if lease.Expires.After(peers[lease.Peer]) {
-			peers[lease.Peer] = lease.Expires
+		if lease.Expires.After(peers[lease.destination()]) {
+			peers[lease.destination()] = lease.Expires
 		}
 	}
 	var elements []string
-	installed := map[netip.Addr]BootInstant{}
+	installed := map[netip.AddrPort]BootInstant{}
 	for peer, expires := range peers {
 		// The relative kernel timeout starts at commit, not at rendering.
 		// Reserve the entire bounded commit budget, including for old peers.
@@ -290,7 +301,7 @@ func leaseRules(leases map[string]Lease, now BootInstant) (string, map[netip.Add
 		// for a final freshness check after the IPC roundtrip.
 		millis := (expires.Sub(now) - ControllerUpdateTimeout).Milliseconds()
 		if millis > KernelTickAllowance.Milliseconds() {
-			elements = append(elements, fmt.Sprintf("%s timeout %dms", peer, millis))
+			elements = append(elements, fmt.Sprintf("%s . %d timeout %dms", peer.Addr(), peer.Port(), millis))
 			installed[peer] = now.Add(time.Duration(millis)*time.Millisecond - KernelTickAllowance)
 		}
 	}
@@ -311,6 +322,18 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
 	}
 	slices.Sort(protected)
 	protected = slices.Compact(protected)
+	// The set of ports the policy grants TLS on IS the capture chain: the agent's
+	// TCP to one of them is redirected to the guard, which reads the port back
+	// from the kernel. A policy with no tls grant captures no TLS port at all.
+	// Upstream replies arrive from those same ports, plus 443 for the guard's
+	// own pinned DoH resolver.
+	captured, capture := c.policy.TLSPorts(), ""
+	if len(captured) != 0 {
+		capture = fmt.Sprintf("  meta nfproto ipv4 meta skuid 1000 tcp dport %s ip daddr != @protected4 redirect to :15443\n", portSet(captured))
+	}
+	replies := append(slices.Clone(captured), 443)
+	slices.Sort(replies)
+	replies = slices.Compact(replies)
 	var counters, egressRules, ingressRules, serviceEgress, serviceIngress strings.Builder
 	for _, grant := range c.grants {
 		fmt.Fprintf(&counters, " counter %s { }\n", grant.counter)
@@ -355,14 +378,13 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
   type ipv4_addr; flags interval; auto-merge;
   elements = { %s }
  }
- set leases4 { type ipv4_addr; flags timeout; size 4096; gc-interval 1s; }
+ set leases4 { type ipv4_addr . inet_service; flags timeout; size 4096; gc-interval 1s; }
  chain shutdown {
   type filter hook output priority -5; policy accept;
  }
  chain capture {
   type nat hook output priority -110; policy accept;
-  meta nfproto ipv4 meta skuid 1000 tcp dport 443 ip daddr != @protected4 redirect to :15443
-  meta nfproto ipv4 meta skuid 1000 udp dport 53 redirect to :15353
+%s  meta nfproto ipv4 meta skuid 1000 udp dport 53 redirect to :15353
   meta nfproto ipv4 meta skuid 1000 tcp dport 53 redirect to :15353
  }
  chain output {
@@ -377,9 +399,9 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
   meta nfproto ipv6 counter name denied_service drop
   ct state invalid counter name denied_service drop
   ip daddr @protected4 counter name denied_service drop
-  meta skuid 65532 tcp dport 443 ct state established accept
+  meta skuid 65532 meta l4proto tcp ct state established accept
   meta skuid 65532 ip daddr %s tcp dport 443 accept
-  meta skuid 65532 ip daddr @leases4 tcp dport 443 accept
+  meta skuid 65532 ip daddr . tcp dport @leases4 accept
   counter name denied_service drop
  }
  chain input {
@@ -389,7 +411,7 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
   iifname "lo" accept
   ip protocol icmp icmp type destination-unreachable icmp code 4 ct state related accept
 %s  ip saddr @protected4 counter name denied_ingress drop
-  tcp sport 443 ct state established accept
+  tcp sport %s ct state established accept
 %s  counter name denied_ingress drop
  }
  chain forward {
@@ -397,5 +419,6 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
   counter name denied_ingress drop
  }
 }
-`, counters.String(), strings.Join(protected, ", "), serviceEgress.String(), egressRules.String(), maintenance, serviceIngress.String(), ingressRules.String())
+`, counters.String(), strings.Join(protected, ", "), capture, serviceEgress.String(), egressRules.String(), maintenance,
+		serviceIngress.String(), portSet(replies), ingressRules.String())
 }

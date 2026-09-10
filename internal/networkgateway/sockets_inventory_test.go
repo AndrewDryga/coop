@@ -37,7 +37,7 @@ func TestSocketInventoryIPv6WordsMappedAddressesAndCapturePredicate(t *testing.T
 		{"[::ffff:169.254.169.254]:443", 1}, {"[2001:4860:4860::8888]:443", 1},
 		{"[2001:4860:4860::8888]:53", 1},
 	} {
-		rows, err := parseSocketTables([]socketTable{{reader: strings.NewReader(procHeader + proc6Row(tc.peer, 1000, 42)), ipv6: true}}, boundary{})
+		rows, err := parseSocketTables([]socketTable{{reader: strings.NewReader(procHeader + proc6Row(tc.peer, 1000, 42)), ipv6: true}}, boundary{tlsPorts: []int{443}})
 		if err != nil || len(rows) != tc.rows {
 			t.Fatalf("capture predicate %s: rows=%d err=%v", tc.peer, len(rows), err)
 		}

@@ -36,7 +36,6 @@ type Exchange func(context.Context, []byte) ([]byte, error)
 
 type Resolution struct {
 	Name       string
-	RuleID     string
 	Addresses  []netip.Addr
 	Expires    BootInstant
 	Cached     bool
@@ -140,9 +139,10 @@ func (r *Resolver) Resolve(ctx context.Context, name string) (Resolution, error)
 	if err != nil {
 		return Resolution{}, Failure("dns_name_invalid")
 	}
-	decision := r.policy.Domain(name, 443)
-	if !decision.Allowed {
-		return Resolution{}, Failure(decision.Reason)
+	// DNS admission is the NAME, not a port: a client has to resolve a name
+	// before the kernel can record which granted port it is dialing.
+	if !r.policy.AdmitsName(name) {
+		return Resolution{}, Failure("unapproved_name")
 	}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -190,7 +190,7 @@ func (r *Resolver) Resolve(ctx context.Context, name string) (Resolution, error)
 		r.mu.Unlock()
 
 		result, err := r.lookup(ctx, name)
-		result.Name, result.RuleID = name, decision.RuleID
+		result.Name = name
 		result.generation = new(resolutionGeneration)
 		r.mu.Lock()
 		completed := r.now()
@@ -432,8 +432,8 @@ func (r *Resolver) Answer(ctx context.Context, wire []byte) ([]byte, string) {
 		name, err := egress.NormalizeDomain(question.Name.String(), false)
 		if err != nil {
 			response.RCode, reason = dnsmessage.RCodeRefused, "dns_name_invalid"
-		} else if decision := r.policy.Domain(name, 443); !decision.Allowed {
-			response.RCode, reason = dnsmessage.RCodeRefused, decision.Reason
+		} else if !r.policy.AdmitsName(name) {
+			response.RCode, reason = dnsmessage.RCodeRefused, "unapproved_name"
 		}
 	} else if question.Type != dnsmessage.TypeA {
 		response.RCode, reason = dnsmessage.RCodeRefused, "dns_type_unsupported"

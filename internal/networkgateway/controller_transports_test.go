@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
 )
@@ -146,9 +147,16 @@ func TestRenderedRulesEnforceEveryAcceptedTransport(t *testing.T) {
 func TestATLSOnlyPolicyRendersNoPacketFilterGrants(t *testing.T) {
 	policy := transportPolicy(t, egress.Rule{To: egress.Destination{Domain: "api.example.com"}, Protocol: "tls", Ports: []int{443}})
 	rules := transportController(t, policy, nil, nil).initialRules(netip.MustParseAddr("1.1.1.1"))
-	for _, unwanted := range []string{"grant_", "ct state new,established", "icmp type echo-request", "sport {"} {
+	for _, unwanted := range []string{"grant_", "ct state new,established", "icmp type echo-request"} {
 		if strings.Contains(rules, unwanted) {
 			t.Errorf("a TLS-only policy rendered %q:\n%s", unwanted, rules)
+		}
+	}
+	// The only return rules a TLS-only policy renders are the guard's own; a
+	// per-grant one is scoped to its source address, and there is no grant.
+	for _, line := range strings.Split(rules, "\n") {
+		if strings.Contains(line, "ip saddr") && !strings.Contains(line, "@protected4") {
+			t.Errorf("a TLS-only policy rendered a per-grant return rule: %s", line)
 		}
 	}
 	if !strings.Contains(rules, " counter denied_service { }\n set protected4 {") {
@@ -157,8 +165,68 @@ func TestATLSOnlyPolicyRendersNoPacketFilterGrants(t *testing.T) {
 	if !strings.Contains(rules, "protected_agent reject with icmpx type admin-prohibited\n  meta skuid 1000 counter name denied_agent") {
 		t.Errorf("the agent deny no longer follows the protected drop directly:\n%s", rules)
 	}
-	if !strings.Contains(rules, "tcp sport 443 ct state established accept\n  counter name denied_ingress drop") {
+	if !strings.Contains(rules, "tcp sport { 443 } ct state established accept\n  counter name denied_ingress drop") {
 		t.Errorf("the ingress deny no longer follows the TLS return rule directly:\n%s", rules)
+	}
+}
+
+// The capture chain IS the policy's TLS port set, and the lease set is keyed by
+// address AND port: nothing in the kernel grants a port the policy did not.
+func TestRenderedRulesCaptureExactlyTheGrantedTLSPorts(t *testing.T) {
+	policy := transportPolicy(t,
+		egress.Rule{To: egress.Destination{Domain: "dot.example.com"}, Protocol: "tls", Ports: []int{853, 8443}},
+		egress.Rule{To: egress.Destination{Domain: "api.example.com"}, Protocol: "tls", Ports: []int{443}},
+	)
+	rules := transportController(t, policy, nil, nil).initialRules(netip.MustParseAddr("1.1.1.1"))
+	for _, line := range []string{
+		"  meta nfproto ipv4 meta skuid 1000 tcp dport { 443, 853, 8443 } ip daddr != @protected4 redirect to :15443",
+		" set leases4 { type ipv4_addr . inet_service; flags timeout; size 4096; gc-interval 1s; }",
+		"  meta skuid 65532 ip daddr . tcp dport @leases4 accept",
+		"  meta skuid 65532 meta l4proto tcp ct state established accept",
+		"  tcp sport { 443, 853, 8443 } ct state established accept",
+	} {
+		if !strings.Contains(rules, line+"\n") {
+			t.Errorf("rendered ruleset is missing:\n%s\n--- got ---\n%s", line, rules)
+		}
+	}
+	// A port nobody granted is captured nowhere, and the guard's upstream leg
+	// matches a leased address AND port, never an address on a bare port.
+	for _, unwanted := range []string{"8444", "@leases4 tcp dport", "ip daddr @leases4"} {
+		if strings.Contains(rules, unwanted) {
+			t.Errorf("rendered ruleset contains %q:\n%s", unwanted, rules)
+		}
+	}
+	// A policy with no tls grant captures no TLS port at all — an empty set
+	// would be a kernel syntax error, and a default one would be an invention.
+	raw := transportPolicy(t, egress.Rule{To: egress.Destination{IP: "1.1.1.1"}, Protocol: "tcp", Ports: []int{853}})
+	rendered := transportController(t, raw, nil, nil).initialRules(netip.MustParseAddr("1.1.1.1"))
+	if strings.Contains(rendered, "redirect to :15443") || !strings.Contains(rendered, "  tcp sport { 443 } ct state established accept") {
+		t.Errorf("a policy with no tls grant still captured a TLS port:\n%s", rendered)
+	}
+	// The elements the controller installs carry the port with the address.
+	now := testBootNow()
+	elements, installed := leaseRules(map[string]Lease{
+		"a": {Name: "dot.example.com", Peer: netip.MustParseAddr("93.184.216.34"), Port: 853, Expires: now.Add(10 * time.Second)},
+		"b": {Name: "dot.example.com", Peer: netip.MustParseAddr("93.184.216.34"), Port: 8443, Expires: now.Add(10 * time.Second)},
+	}, now)
+	if !strings.Contains(elements, "{ 93.184.216.34 . 8443 timeout 9750ms, 93.184.216.34 . 853 timeout 9750ms }") || len(installed) != 2 {
+		t.Fatalf("one address on two granted ports is two leases: %q %v", elements, installed)
+	}
+}
+
+// A serve port may not collide with a port this policy captures: the agent's own
+// connection to it would be redirected to the guard instead of reaching it.
+func TestServePortsCannotCollideWithACapturedTLSPort(t *testing.T) {
+	policy := transportPolicy(t, egress.Rule{To: egress.Destination{Domain: "dot.example.com"}, Protocol: "tls", Ports: []int{8443}})
+	clock := testBootClock()
+	identity := Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint}
+	for _, port := range []int{443, 53, 8443} {
+		if _, err := NewController(identity, policy, nil, nil, []int{port}, serveIngress, clock, func(context.Context, string) error { return nil }); err == nil {
+			t.Errorf("serve port %d was accepted alongside the capture", port)
+		}
+	}
+	if _, err := NewController(identity, policy, nil, nil, []int{8000}, serveIngress, clock, func(context.Context, string) error { return nil }); err != nil {
+		t.Fatal("an uncaptured serve port was refused", err)
 	}
 }
 

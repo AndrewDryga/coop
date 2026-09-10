@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,11 @@ const (
 	GuardDNSAddress       = "127.0.0.1:15353"
 	EnvoyDataSocket       = "/private/data.sock"
 )
+
+// originalDestination is the kernel's record of where a redirected connection
+// was going. It is a package variable only so a test can drive the guard's port
+// decisions without a redirecting kernel; nothing reassigns it in production.
+var originalDestination = readOriginalDestination
 
 // Guard owns only capless data-plane work. Policy and clocks are frozen before
 // construction. Envoy process supervision and host resource ownership are above
@@ -51,7 +57,7 @@ func NewGuard(policy egress.Snapshot, clock *BootClock, resolver *Resolver, cont
 // which addresses are permanently denied, and which raw destinations a grant
 // lets the agent dial without a proxied leg to correlate.
 func (g *Guard) boundary() boundary {
-	return boundary{protected: g.resolver.protected, policy: g.policy}
+	return boundary{protected: g.resolver.protected, policy: g.policy, tlsPorts: g.policy.TLSPorts()}
 }
 
 func (g *Guard) Serve(ctx context.Context, ready func()) error {
@@ -135,12 +141,35 @@ func (g *Guard) accept(ctx context.Context, listener net.Listener, limit int, se
 	}
 }
 
+// destination is where the kernel recorded this connection was going before the
+// capture chain redirected it. A connection whose original destination is this
+// listener was dialed straight at the guard: nothing redirected it, so no port
+// was ever declared, and a client must not get to pick one. Both refusals carry
+// the observed port so the refusal reads as an attempt, not as an absence.
+func (g *Guard) destination(client net.Conn) (netip.AddrPort, error) {
+	local, ok := client.LocalAddr().(*net.TCPAddr)
+	original, err := originalDestination(client)
+	if !ok || err != nil || !original.Addr().Is4() {
+		return netip.AddrPort{}, Failure("gateway_destination_unknown")
+	}
+	if original == netip.AddrPortFrom(local.AddrPort().Addr().Unmap(), local.AddrPort().Port()) {
+		return original, Failure("tls_direct_dial_refused")
+	}
+	return original, nil
+}
+
 func (g *Guard) forward(ctx context.Context, client net.Conn, dataSocket string) {
 	admission, cancel := context.WithTimeout(ctx, GuardAdmissionTimeout)
 	defer cancel()
-	hello, err := Inspect(admission, client, g.policy)
+	destination, err := g.destination(client)
 	if err != nil {
-		g.events.emit(GuardEvent{Kind: "tls_denied", Name: hello.Name, Reason: safeReason(err)})
+		g.events.emit(GuardEvent{Kind: "tls_denied", Port: int(destination.Port()), Reason: safeReason(err)})
+		return
+	}
+	port := int(destination.Port())
+	hello, err := Inspect(admission, client, g.policy, port)
+	if err != nil {
+		g.events.emit(GuardEvent{Kind: "tls_denied", Name: hello.Name, Port: port, Reason: safeReason(err)})
 		return
 	}
 	resolution, err := g.resolver.Resolve(admission, hello.Name)
@@ -156,7 +185,7 @@ func (g *Guard) forward(ctx context.Context, client net.Conn, dataSocket string)
 	var until BootInstant
 	refreshed := false
 	for {
-		until, err = g.controller.Admit(admission, Lease{Name: resolution.Name, Peer: peer, Expires: resolution.Expires})
+		until, err = g.controller.Admit(admission, Lease{Name: resolution.Name, Peer: peer, Port: port, Expires: resolution.Expires})
 		if err == Failure("dns_ttl_expired") && !refreshed {
 			// The controller reserves a kernel-commit margin before DNS expiry.
 			// Do not turn that safe margin into a recurring short-TTL outage.
@@ -193,7 +222,7 @@ func (g *Guard) forward(ctx context.Context, client net.Conn, dataSocket string)
 		return
 	}
 	flowID := hex.EncodeToString(random[:])
-	header, err := ProxyHeader(peer, flowID)
+	header, err := ProxyHeader(netip.AddrPortFrom(peer, destination.Port()), flowID)
 	if err != nil {
 		g.events.emit(GuardEvent{Kind: "admission_failed", Reason: safeReason(err)})
 		return
@@ -206,7 +235,7 @@ func (g *Guard) forward(ctx context.Context, client net.Conn, dataSocket string)
 	defer private.Close()
 	stop := context.AfterFunc(ctx, func() { _ = private.Close() })
 	defer stop()
-	g.events.emit(GuardEvent{Kind: "flow_registered", FlowID: flowID, Name: hello.Name, RuleID: hello.RuleID, Peer: peer})
+	g.events.emit(GuardEvent{Kind: "flow_registered", FlowID: flowID, Name: hello.Name, RuleID: hello.RuleID, Peer: peer, Port: port})
 	defer g.events.emit(GuardEvent{Kind: "private_flow_closed", FlowID: flowID})
 	if err := g.replay(admission, private, header, hello.Bytes, minTime(until, resolution.Expires)); err != nil {
 		g.events.emit(GuardEvent{Kind: "admission_failed", FlowID: flowID, Name: hello.Name, Reason: safeReason(err)})

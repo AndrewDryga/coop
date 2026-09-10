@@ -907,9 +907,9 @@ var commandHelp = map[string]string{
     box:
       egress: filtered
       egress_rules:
-        - to: {domain: "docs.example.com"}    # TLS 443, exact or *.wildcard
+        - to: {domain: "docs.example.com"}    # TLS, exact or *.wildcard
           protocol: tls
-          ports: [443]
+          ports: [443, 8443]                  # any port but the captured 53
         - to: {cidr: "10.42.9.0/24"}          # raw TCP/UDP to IPv4, not 443/53
           protocol: udp
           ports: [123]
@@ -927,7 +927,8 @@ var commandHelp = map[string]string{
   already running keep the policy they launched with.
 
   'why' evaluates a destination against a run's captured policy without sending
-  a packet — a name is TLS on 443, an IP address needs the transport too
+  a packet — a name is TLS on 443 unless '--port <n>' says otherwise, and an IP
+  address needs the transport too
   ('--protocol tcp|udp --port <n>', or '--icmp' for echo-request);
   'explain' opens a refusal that actually happened, with the draft rule
   a human could add. A receipt withholds destination names by default (even a
@@ -936,12 +937,13 @@ var commandHelp = map[string]string{
   never shown as zero. Raw tcp/udp/icmp refusals are COUNTED by the kernel, not
   attributed to a destination — there is no event for 'explain' to open.
 
-  Supported today: TLS 443 to exact and *.wildcard names; raw tcp/udp to IPv4
-  addresses and CIDRs on any port except the captured 443 and 53; ICMP
-  echo-request to IPv4; published serve.ports; one Compose sidecar per approved
-  'service:' grant. Refused with a message: IPv6 destinations, TLS on any other
-  port, a project Dockerfile, COOP_IMAGE and non-Docker runtimes. See
-  docs/networking.md for the full matrix.`,
+  Supported today: TLS to exact and *.wildcard names on any port the rule names
+  (443 by default, 853 or 8443 just as well); raw tcp/udp to IPv4 addresses and
+  CIDRs on any port except the captured 443 and 53; ICMP echo-request to IPv4;
+  published serve.ports; one Compose sidecar per approved 'service:' grant.
+  Refused with a message: IPv6 destinations, TLS on 53, a project Dockerfile,
+  COOP_IMAGE and non-Docker runtimes. See docs/networking.md for the full
+  matrix.`,
 
 	"doctor": `coop doctor — prove the box's isolation: attack it, inside and from the host.
 

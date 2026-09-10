@@ -21,7 +21,7 @@ import (
 // QualificationContract changes when the host preflight changes what it accepts.
 // Endpoint bundle releases and installed client closures have their own
 // independent identities.
-const QualificationContract = "visible-sni-tls443-v2"
+const QualificationContract = "visible-sni-tls-ports-v3"
 
 const maxQualificationBytes = 256 << 10
 

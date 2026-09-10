@@ -167,8 +167,8 @@ func TestReviewHonorsAnExplicitMode(t *testing.T) {
 // operator learns now instead of at the next unattended run.
 func TestReviewRefusesARuleNoLaunchCouldEnforce(t *testing.T) {
 	for _, test := range []struct{ yaml, want string }{
-		{"box:\n  egress_rules:\n    - to:\n        domain: api.example.com\n      protocol: tls\n      ports: [8443]\n",
-			"TLS on port 8443 is not supported yet"},
+		{"box:\n  egress_rules:\n    - to:\n        domain: api.example.com\n      protocol: tls\n      ports: [53]\n",
+			"tls on port 53 is not supported"},
 		{"box:\n  egress_rules:\n    - to:\n        cidr: 169.254.0.0/16\n      protocol: tcp\n      ports: [80]\n",
 			"is a protected address range"},
 		{"box:\n  egress_rules:\n    - to:\n        ip: 2606:4700:4700::1111\n      protocol: tcp\n      ports: [5432]\n",

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -168,13 +169,16 @@ func parseSocketTable(table socketTable, b boundary, retained [3][]SocketRow) ([
 type boundary struct {
 	protected []netip.Prefix
 	policy    egress.Snapshot
+	// tlsPorts is the policy's TLS port set — what the capture chain redirects —
+	// held here because the inventory asks about it once per row per sample.
+	tlsPorts []int
 }
 
 // captured reports a socket the boundary accounts for. An agent socket the
-// gateway redirects (TLS 443, DNS 53) is one; so is an agent socket an address
-// grant permits directly — a raw grant has no proxied leg to correlate, so
-// treating it as an unattributed flow would report an allowed connection as an
-// evidence gap and, mid-handshake, as a denial that never happened.
+// gateway redirects (a granted TLS port, DNS 53) is one; so is an agent socket
+// an address grant permits directly — a raw grant has no proxied leg to
+// correlate, so treating it as an unattributed flow would report an allowed
+// connection as an evidence gap and, mid-handshake, as a denial that never happened.
 func (b boundary) captured(uid uint32, local, peer netip.AddrPort) bool {
 	if uid == 1000 && peer.Addr().Is4() {
 		// The run's own namespace loopback is permitted, not a protected host
@@ -184,7 +188,7 @@ func (b boundary) captured(uid uint32, local, peer netip.AddrPort) bool {
 		if peer.Addr().IsLoopback() {
 			return true
 		}
-		if peer.Port() == 53 || peer.Port() == 443 && !protectedSocketPeer(peer.Addr(), b.protected) {
+		if peer.Port() == 53 || slices.Contains(b.tlsPorts, int(peer.Port())) && !protectedSocketPeer(peer.Addr(), b.protected) {
 			return true
 		}
 		if b.policy.Address(peer.Addr(), "tcp", int(peer.Port()), 0, 0, b.protected).Allowed {

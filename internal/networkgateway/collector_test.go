@@ -39,7 +39,7 @@ func collectorFixture(t *testing.T) (*Collector, *BootInstant) {
 }
 
 func registration(sequence uint64, now BootInstant, flow string) GuardEvent {
-	return GuardEvent{Sequence: sequence, BootAt: now, At: time.Unix(100, 0), Kind: "flow_registered", FlowID: flow, Name: "api.example.com", RuleID: "rule", Peer: netip.MustParseAddr("93.184.216.34")}
+	return GuardEvent{Sequence: sequence, BootAt: now, At: time.Unix(100, 0), Kind: "flow_registered", FlowID: flow, Name: "api.example.com", RuleID: "rule", Peer: netip.MustParseAddr("93.184.216.34"), Port: 443}
 }
 func proxyEvent(sequence uint64, now BootInstant, flow, phase string, sent, received, duration uint64) EnvoyEvent {
 	return EnvoyEvent{Sequence: sequence, BootAt: now, At: time.Unix(100, 0), FlowID: flow, ConnectionID: "1", Phase: phase,

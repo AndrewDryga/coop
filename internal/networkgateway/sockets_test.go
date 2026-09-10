@@ -25,7 +25,7 @@ func procRow(uid int, state string, inode int) string {
 }
 
 func TestSocketInventoryExcludesLocalNATLegAndQueuesAreNotBytes(t *testing.T) {
-	rows, err := parseSocketInventory(strings.NewReader(procHeader+procRow(1000, "01", 1)+procRow(65532, "01", 2)+procRow(65532, "06", 0)), boundary{})
+	rows, err := parseSocketInventory(strings.NewReader(procHeader+procRow(1000, "01", 1)+procRow(65532, "01", 2)+procRow(65532, "06", 0)), boundary{tlsPorts: []int{443}})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("inventory double-counted local NAT leg or TIME_WAIT: %#v %v", rows, err)
 	}
@@ -47,7 +47,7 @@ func TestSocketInventoryMatchesEveryFixedLocalCaptureLeg(t *testing.T) {
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("local DNS/accepted guard legs counted external: %#v %v", rows, err)
 	}
-	rows, err = parseSocketInventory(strings.NewReader(procHeader+procRow(1000, "02", 3)), boundary{protected: []netip.Prefix{netip.MustParsePrefix("1.1.1.0/24")}})
+	rows, err = parseSocketInventory(strings.NewReader(procHeader+procRow(1000, "02", 3)), boundary{tlsPorts: []int{443}, protected: []netip.Prefix{netip.MustParsePrefix("1.1.1.0/24")}})
 	if err != nil || len(rows) != 1 {
 		t.Fatal("protected public endpoint was silently treated as TLS redirect")
 	}
