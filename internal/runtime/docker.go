@@ -26,6 +26,10 @@ type Docker struct {
 	info                           DockerInfo
 	launchAllowed                  bool
 	closed                         atomic.Bool
+	// OnSlowStart, when set, is called once if the daemon has not reported the
+	// attached workload started yet. A slow start is not a failure — this is how
+	// the operator hears about it instead of watching a silent terminal.
+	OnSlowStart func(time.Duration)
 }
 
 type DockerInfo struct {

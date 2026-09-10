@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -20,6 +21,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // CapturedEgress is trusted host-selected authority, never a remote request DTO.
@@ -176,6 +178,13 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	docker, err := runtime.BindDocker(ctx, rt, candidate.Runtime.Endpoint, "")
 	if err != nil {
 		return nil, err
+	}
+	if !spec.Quiet {
+		// One line, once: a filtered launch waiting on a busy daemon should say
+		// so rather than look hung.
+		docker.OnSlowStart = func(elapsed time.Duration) {
+			ui.Detail("waiting for Docker to start this box (%s so far)", elapsed.Round(time.Second))
+		}
 	}
 	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, attempted: map[string]bool{}}
 	f.unsafeRoots = []string{spec.Repo, project}

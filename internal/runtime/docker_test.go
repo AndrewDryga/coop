@@ -209,6 +209,12 @@ func TestDockerFixtureProcess(t *testing.T) {
 			if fixture.Mode == "no-start" {
 				os.Exit(1)
 			}
+			if fixture.Mode == "late-start" {
+				// The daemon accepted the attach but has not started the workload
+				// yet: every inspection in this window reads the created state the
+				// test wrote, with no StartedAt.
+				time.Sleep(300 * time.Millisecond)
+			}
 			fixture.Container.State = DockerContainerState{Status: "exited", StartedAt: time.Now().UTC(), FinishedAt: time.Now().UTC(), ExitCode: 7}
 			if fixture.Mode == "detach" || fixture.Mode == "hold" {
 				fixture.Container.State.Status, fixture.Container.State.Running = "running", true
@@ -622,5 +628,30 @@ func TestDockerVolumeOwnershipAndPrivateConfigLifetime(t *testing.T) {
 				t.Fatal("closed Docker binding remained usable")
 			}
 		})
+	}
+}
+
+// A daemon that takes its time starting the workload is slow, not broken. An
+// ordinary `docker run` waits on exactly that with no bound, so a filtered launch
+// must not turn it into a failed run — it may only stop being silent about it.
+func TestDockerLateWorkloadStartIsReportedNotFailed(t *testing.T) {
+	previous := slowStartupAfter
+	slowStartupAfter = 20 * time.Millisecond
+	t.Cleanup(func() { slowStartupAfter = previous })
+	rt, _ := fixtureDocker(t, dockerFixture{Mode: "late-start", Container: dockerFixtureContainer()})
+	d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	notices := 0
+	d.OnSlowStart = func(time.Duration) { notices++ }
+	started := 0
+	code, err := d.StartAttached(context.Background(), dockerFixtureRef(), nil, io.Discard, io.Discard, func() error { started++; return nil })
+	if err != nil || code != 7 || started != 1 {
+		t.Fatal("a late start was not carried to its real workload outcome", code, started, err)
+	}
+	if notices != 1 {
+		t.Fatal("the operator was told about the wait either never or more than once", notices)
 	}
 }

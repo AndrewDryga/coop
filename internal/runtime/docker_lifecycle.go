@@ -134,6 +134,10 @@ func (d *Docker) StartContainer(ctx context.Context, ref DockerRef) error {
 	return nil
 }
 
+// slowStartupAfter is when an unwitnessed start stops being silent, not when it
+// becomes an error. Overridden in tests.
+var slowStartupAfter = 15 * time.Second
+
 // StartAttached attaches before the daemon starts the workload. onStarted is
 // called once, only after daemon evidence, including a fast-exited workload. A
 // client error/cancel is not proof of container death: caller owns exact teardown.
@@ -158,14 +162,22 @@ func (d *Docker) StartAttached(ctx context.Context, ref DockerRef, stdin io.Read
 		code, err := runInterruptibleCommand(ctx, cmd)
 		done <- result{code, err}
 	}()
-	started := false
-	startDeadline := time.Now().Add(15 * time.Second)
+	started, noticed := false, false
+	attachedAt := time.Now()
 	observe := func() error {
 		if started {
 			return nil
 		}
-		if time.Now().After(startDeadline) {
-			return errors.New("Docker workload startup exceeded its deadline; outcome unknown")
+		// A daemon that has not started the workload yet is slow, not broken: an
+		// ordinary `docker run` waits on exactly this with no bound, and a
+		// loaded host, a cold bind mount or a busy VM routinely take longer than
+		// any number picked here. The caller's context is the bound; all this
+		// does is stop the wait from being silent.
+		if elapsed := time.Since(attachedAt); !noticed && elapsed >= slowStartupAfter {
+			noticed = true
+			if d.OnSlowStart != nil {
+				d.OnSlowStart(elapsed)
+			}
 		}
 		probe, stop := context.WithTimeout(ctx, 2*time.Second)
 		defer stop()
@@ -229,8 +241,8 @@ func (d *Docker) StartAttached(ctx context.Context, ref DockerRef, stdin io.Read
 			return outcome.code, outcome.err
 		case <-ticker.C:
 			if err := observe(); err != nil {
-				if errors.Is(err, errDockerStartupProbe) && ctx.Err() == nil && time.Now().Before(startDeadline) {
-					continue // bounded retry; slow daemon observation is not workload failure
+				if errors.Is(err, errDockerStartupProbe) && ctx.Err() == nil {
+					continue // a failed observation is not workload failure; the context bounds the wait
 				}
 				cancel()
 				outcome := <-done

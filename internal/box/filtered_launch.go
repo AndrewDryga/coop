@@ -17,7 +17,10 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-const filteredControlTimeout = 15 * time.Second
+// filteredControlTimeout bounds one exact-owned runtime control call (create,
+// start, inspect). It is generous on purpose: these calls carry a box's whole
+// mount set, and a loaded host makes a slow create look like a broken one.
+const filteredControlTimeout = 60 * time.Second
 
 func networkMount(kind, source, target string, readonly bool) string {
 	fields := []string{"type=" + kind, "source=" + source, "target=" + target}
