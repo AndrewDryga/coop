@@ -293,8 +293,8 @@ func TestInitRestoresEmptySkillDir(t *testing.T) {
 	if fi, err := os.Stat(filepath.Join(repo, ".agent/skills/spec/SKILL.md")); err != nil || fi.Size() == 0 {
 		t.Fatalf("an empty skill dir was left empty: %v", err)
 	}
-	if !strings.Contains(logged, "restored skill /spec") {
-		t.Errorf("restoring an empty skill should say so, not report it kept:\n%s", logged)
+	if logged != "" {
+		t.Errorf("restoring a skill is routine scaffold work and says nothing:\n%s", logged)
 	}
 	// A skill with its SKILL.md is still left alone, edits and all.
 	custom := filepath.Join(repo, ".agent/skills/work/SKILL.md")
@@ -316,8 +316,8 @@ func TestInitSubproject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "wrote member/.agent/tasks/README.md"; !strings.Contains(logged, want) {
-		t.Errorf("member scaffold log = %q, want %q", logged, want)
+	if logged != "" {
+		t.Errorf("a member scaffold prints no per-file log, got %q", logged)
 	}
 	for _, rel := range []string{".agent/tasks/00_todo", ".agent/tasks/99_done", ".agent/tasks/README.md"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
@@ -370,8 +370,10 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "wrote .agent/tasks/README.md"; !strings.Contains(logged, want) {
-		t.Errorf("single-repo scaffold log = %q, want %q", logged, want)
+	// The caller owns the result. Scaffolding says nothing at all — the per-file/symlink/skill/
+	// gitignore ledger it used to print is exactly the wall `coop init` no longer shows.
+	if logged != "" {
+		t.Errorf("scaffold printed a progress ledger:\n%s", logged)
 	}
 
 	// Core files exist with content.
@@ -903,26 +905,17 @@ func TestInitIdempotent(t *testing.T) {
 	os.WriteFile(claudeSettings, []byte("MY CLAUDE SETTINGS"), 0o644)
 	os.WriteFile(claudeGate, []byte("#!/bin/sh\n# MY CLAUDE GATE\n"), 0o755)
 
-	// A re-run that changes nothing must SAY nothing changed. It reports one "kept N" total, and
-	// no action verb anywhere — an unchanged symlink read as "linked", or a present file as
-	// "wrote", made every routine init look like it had rewritten the repo.
+	// A re-run that changes nothing says nothing: not the action verbs (an unchanged symlink read
+	// as "linked", a present file as "wrote") and not a "kept N" tally either, which is still a
+	// line whose whole content is that nothing happened.
 	out, err := captureScaffoldStderr(t, func() error {
 		return Init(repo, "", nil, []string{"claude", "codex", "gemini"})
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, verb := range []string{"linked ", "wrote ", "added skill", "restored skill", "set core.hooksPath"} {
-		if strings.Contains(out, verb) {
-			t.Errorf("re-run reported %q, but nothing changed:\n%s", verb, out)
-		}
-	}
-	if !strings.Contains(out, "kept ") {
-		t.Errorf("re-run should report what it kept as one total:\n%s", out)
-	}
-	// One line, not one per file — the wall of "kept existing" is the thing being removed.
-	if n := strings.Count(out, "kept "); n != 1 {
-		t.Errorf("kept-total should be a single line, got %d:\n%s", n, out)
+	if out != "" {
+		t.Errorf("a re-run that changed nothing printed:\n%s", out)
 	}
 
 	if b, _ := os.ReadFile(readme); string(b) != "MY EDITS" {

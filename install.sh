@@ -155,6 +155,20 @@ case ":$PATH:" in
   *) printf "\n  %s is not on your PATH — add to your shell rc:\n    export PATH=\"%s:\$PATH\"\n\n" "$bindir" "$bindir" ;;
 esac
 
+# Zsh only, and only ever as instructions: the installer never edits a shell startup file.
+# The generated integration must be SOURCED (after compinit), not merely autoloaded — the
+# `alias coop='nocorrect coop'` inside it has to exist before Zsh parses the command line, or
+# CORRECT_ALL offers to "correct" `coop codex` to the repo's own .codex/ directory.
+case "${SHELL:-}" in
+  *zsh)
+    printf "\n  Zsh completion (optional) — coop does not edit your shell files. Run once:\n"
+    printf "    coop completion zsh > \"\${fpath[1]}/_coop\"\n"
+    printf "  then add this to ~/.zshrc, AFTER your compinit line:\n"
+    printf "    source \"\${fpath[1]}/_coop\"\n"
+    printf "  Spelling correction stays on everywhere; only coop's own arguments are exempt.\n\n"
+    ;;
+esac
+
 # Build the sandbox image + verify, when a container runtime is available.
 if [ "${COOP_NO_BUILD:-0}" = 1 ]; then
   echo "coop: skipped image build (COOP_NO_BUILD=1) — next: coop build && coop doctor"

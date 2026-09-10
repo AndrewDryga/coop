@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -1024,16 +1024,38 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// repo often enough (after a coop upgrade, or just from a subdirectory) that interrogating the
 	// user each time is pure friction. --services / --stack still work explicitly.
 	already := scaffold.Initialized(repo)
+	// A --stack coop can't honor is refused before it says a word or asks a question: nothing is
+	// worse than answering three prompts and then being told the flag was wrong.
+	if err := scaffold.CheckStack(repo, stack); err != nil {
+		return 0, err
+	}
 	// Detect the repo's stack(s) for the commit gate; if nothing's detected and we're at a
 	// terminal, ask rather than guess — coop never imposes a check the repo doesn't use.
 	langs := scaffold.DetectStacks(repo)
-	if len(langs) == 0 && !already && ui.IsTerminal(os.Stdin) {
-		langs = promptGateLangs(os.Stdin)
+	if !already {
+		// Name the directory coop is about to change before changing it: `coop init` acts on the
+		// git ROOT, so run from a subdirectory it works somewhere other than where you're standing.
+		ui.Note("Setting up Coop for %s", repo)
 	}
-	// Sibling services (db/redis) are opt-in — coop doesn't add a compose file a project may
-	// not want. Ask at a terminal unless --services already said.
-	if !servicesSet && !already && ui.IsTerminal(os.Stdin) {
-		services = promptServices(os.Stdin)
+	if !already && ui.IsTerminal(os.Stdin) {
+		// ONE reader for every first-run question: a second bufio.Scanner over the same stdin
+		// buffers past its own line and eats the next prompt's answer.
+		ask := bufio.NewScanner(os.Stdin)
+		// Git first, and only with an explicit yes: the tracked hooks below need a repo to point
+		// core.hooksPath at, and a piped/declining run must never have one created behind its back.
+		if !pathExists(filepath.Join(repo, ".git")) {
+			if err := askGitInit(ask, repo); err != nil {
+				return 0, err
+			}
+		}
+		if len(langs) == 0 {
+			langs = promptGateLangs(ask)
+		}
+		// Sibling services (db/redis) are opt-in — coop doesn't add a compose file a project may
+		// not want. Ask at a terminal unless --services already said.
+		if !servicesSet {
+			services = promptServices(ask)
+		}
 	}
 	// Without an explicit --agents list, scaffold dirs for the signed-in agents. Others aren't
 	// clutter you delete later — a box synthesizes a missing agent's skills from the repo's shared
@@ -1057,6 +1079,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if _, err := scaffold.WriteProject(repo, subs); err != nil {
 		return 0, err
 	}
+	var monorepo []string
 	for _, s := range subs {
 		// Members get only the minimal set — their own task queue (plus a backlog drawer on demand)
 		// — since they share the root's AGENTS.md, skills, rules, hooks, box, and its single
@@ -1073,10 +1096,10 @@ func (a *app) cmdInit(args []string) (int, error) {
 		if err != nil {
 			return 0, err
 		}
+		monorepo = append(monorepo, fmt.Sprintf("Task queues aggregated from %s: %s", ui.Count(len(subs), "member"), strings.Join(subs, ", ")))
 		if len(added) > 0 {
-			ui.Detail("registered in subprojects: %s", strings.Join(added, ", "))
+			monorepo = append(monorepo, "Registered under 'subprojects:' in .agent/project.yaml: "+strings.Join(added, ", "))
 		}
-		ui.Detail("monorepo: %d member(s) (%s) — .agent/project.yaml aggregates their task queues", len(subs), strings.Join(subs, ", "))
 		// Only if the edit couldn't be placed (a hand-restructured project.yaml) does the advisory
 		// remain — coop never silently drops a member on the floor.
 		if pj, err := project.Load(repo); err == nil {
@@ -1091,50 +1114,122 @@ func (a *app) cmdInit(args []string) (int, error) {
 			}
 		}
 	}
-	if len(agentDirs) > 0 {
-		ui.Detail("per-agent dirs: %s — missing artifacts synthesize in-box from shared sources on demand", strings.Join(agentDirs, ", "))
-	} else {
-		ui.Detail("no agents signed in — scaffolded .agent/ only; sign in and run, or `coop init --agents claude,codex`")
-	}
-	// One "coop:" anchor closes the dim per-file log; then the optional Docker-box guidance
-	// (only when the repo has its own Docker and no .agent/Dockerfile yet); then the actions you
-	// need to take next stand on their own — derived from what actually landed, not a fixed script.
+	// One result, not a ledger: what this project now is, what a box may reach, and only the
+	// actions its ACTUAL state still needs. The optional Docker-box guidance goes between them
+	// (only when the repo has its own Docker and no .agent/Dockerfile yet).
 	if already {
-		// Name the repo explicitly: `coop init` scaffolds the git ROOT, so run from a subdirectory
-		// it acts somewhere other than where you're standing, and saying so is the whole message.
-		ui.Info("already initialized at %s — anything missing above was added", repo)
+		ui.OK("Coop project updated")
+		ui.Detail("%s — existing files kept, anything missing added", repo)
+		for _, line := range monorepo {
+			ui.Detail("%s", line)
+		}
 	} else {
-		ui.Info("scaffolded into %s", repo)
+		ui.OK("Coop project created")
+		ui.Detail("%s", initSharedLine(agentDirs))
+		if len(langs) > 0 {
+			ui.Detail("Formatting checked before every commit: %s", strings.Join(langs, ", "))
+		}
+		if len(services) > 0 {
+			ui.Detail("Services for agents to use: %s", strings.Join(services, ", "))
+		}
+		for _, line := range monorepo {
+			ui.Detail("%s", line)
+		}
+		// Say once what a filtered box can reach, in the terms a newcomer arrives with: their
+		// agents keep working, everything else waits for them. New project files select filtered.
+		ui.Note("")
+		ui.Note("Internet access is filtered.")
+		if reach := initProviderLine(agentDirs); reach != "" {
+			ui.Note("%s", reach)
+		}
+		ui.Note("Other websites and services are blocked until you approve them.")
 	}
 	scaffold.SuggestDocker(repo)
-	// "review .agent/Dockerfile, then `coop build`" is first-run advice. On a repo that has been
-	// building for weeks it's noise at best and misleading at worst.
-	if !already {
-		ui.Steps(initNextSteps(repo, services)...)
+	for _, g := range initActions(a.cfg, repo, services, !already) {
+		ui.Actions(g.title, g.actions...)
 	}
 	a.netPendingNotice(repo) // only when this project asks for network access nobody approved
 	return 0, nil
 }
 
-// initNextSteps is the short list of actions to run after scaffolding, built from what landed: a
-// build step when there's a .agent/Dockerfile, a `coop up` when sibling services were added, and
-// always the edit-then-loop step. Assembled here (not in scaffold) so the whole list is shown in
-// one block.
-func initNextSteps(repo string, services []string) []string {
-	var steps []string
-	// coop runs forks and the loop on top of git (worktrees, rebase-merge); a repo that
-	// isn't initialized yet needs that first, so lead with it.
+// initAction is one job the user still has to do, with the commands that do it.
+type initAction struct {
+	title   string
+	actions []string
+}
+
+// initActions is what this project actually needs next, derived from real state — no Git repo, no
+// signed-in agent, a box image to build, services to start — followed on a first run by the two
+// jobs every new project has: prove the sandbox, then start working. A repo that needs none of the
+// first four prints only those two.
+func initActions(cfg *config.Config, repo string, services []string, fresh bool) []initAction {
+	var out []initAction
+	// coop runs forks and the loop on top of git (worktrees, rebase-merge), and the commit gate
+	// needs core.hooksPath — which only the re-init after `git init` can set. Lead with both.
 	if !pathExists(filepath.Join(repo, ".git")) {
-		steps = append(steps, "`git init`  (coop's forks and loop need a git repo)")
+		out = append(out, initAction{"Finish setup — Coop needs a Git repository", []string{"git init", "coop init"}})
+	}
+	if len(box.AuthedAgents(cfg)) == 0 {
+		out = append(out, initAction{"Sign in to an agent", []string{"coop login claude"}})
 	}
 	if dfRel := project.DockerfilePath(repo); fileExists(filepath.Join(repo, dfRel)) {
-		steps = append(steps, fmt.Sprintf("review %s, then `coop build`", dfRel))
+		out = append(out, initAction{"Build the box", []string{fmt.Sprintf("review %s, then coop build", dfRel)}})
 	}
 	if len(services) > 0 {
-		steps = append(steps, fmt.Sprintf("`coop up`  (starts %s for the box)", strings.Join(services, " + ")))
+		out = append(out, initAction{"Start " + joinAnd(services), []string{"coop up"}})
 	}
-	steps = append(steps, "`coop tasks add \"<title>\"`, then `coop loop`")
-	return steps
+	// First-run advice only. On a repo that has been building for weeks it's noise at best.
+	if fresh {
+		out = append(out,
+			initAction{"Verify the sandbox", []string{"coop doctor"}},
+			initAction{"Start working", []string{`coop tasks add "Describe your first task"`, "coop loop"}},
+		)
+	}
+	return out
+}
+
+// initSharedLine says what the selected agents now share. A repo that scaffolded no per-agent dir
+// still gets the shared set — a box synthesizes a missing agent's artifacts from it on demand.
+func initSharedLine(agentDirs []string) string {
+	names := make([]string, 0, len(agentDirs))
+	for _, name := range agentDirs {
+		names = append(names, titleName(name))
+	}
+	switch len(names) {
+	case 0:
+		return "Instructions, skills, and one task queue are ready for any agent."
+	case 1:
+		return names[0] + " has instructions, skills, and one task queue."
+	default:
+		return joinAnd(names) + " share instructions, skills, and one task queue."
+	}
+}
+
+// initProviderLine names, per selected agent, the one vendor a filtered box lets it reach — so the
+// sentence fits the project ("Claude can reach Anthropic") instead of listing agents it never uses.
+func initProviderLine(agentDirs []string) string {
+	var clauses []string
+	for _, name := range agentDirs {
+		if ag, ok := agents.Get(name); ok {
+			clauses = append(clauses, fmt.Sprintf("%s can reach %s", titleName(name), ag.Vendor()))
+		}
+	}
+	if len(clauses) == 0 {
+		return ""
+	}
+	return joinAnd(clauses) + "."
+}
+
+// joinAnd renders a list as English prose: "a", "a and b", "a, b, and c".
+func joinAnd(items []string) string {
+	switch len(items) {
+	case 0, 1:
+		return strings.Join(items, "")
+	case 2:
+		return items[0] + " and " + items[1]
+	default:
+		return strings.Join(items[:len(items)-1], ", ") + ", and " + items[len(items)-1]
+	}
 }
 
 // writeMCPStub seeds an empty shared mcp.json — coop's one MCP source of truth, translated to
@@ -1159,44 +1254,99 @@ func (a *app) writeMCPStub() error {
 	if err := os.WriteFile(path, []byte("{\n  \"mcpServers\": {}\n}\n"), 0o600); err != nil {
 		return err
 	}
-	ui.Detail("wrote %s — add MCP servers under \"mcpServers\" to share them with every agent", path)
 	return nil
 }
 
-// promptServices asks (on a tty) which sibling services to scaffold into .agent/compose.yml.
-// Blank → none (coop adds no db/redis you didn't ask for); unknown tokens are ignored.
-func promptServices(in io.Reader) []string {
-	fmt.Fprintf(os.Stderr, "add sibling services for the box? [%s] (space-separated, blank for none): ",
-		strings.Join(scaffold.ComposeServices, " "))
-	sc := bufio.NewScanner(in)
-	if !sc.Scan() {
+// askGitInit says in two plain sentences why Coop needs Git, then creates the repository only on
+// an explicit yes — before the tracked hooks are installed, so core.hooksPath lands in this same
+// run and no hook-activation command is left stranded in the result. A decline, or a closed stdin,
+// creates nothing: the result then names `git init` as the action that finishes setup.
+func askGitInit(ask *bufio.Scanner, repo string) error {
+	ui.Note("")
+	ui.Note("This folder is not a Git repository.")
+	ui.Note("Coop uses Git for tasks, forks, and commit checks.")
+	ui.Note("")
+	answer, ok := askOneOK(ask, "Initialize Git here? [Y/n] ")
+	if !ok || !ui.ConfirmationResponse(answer, true) {
 		return nil
 	}
-	var chosen []string
-	for _, tok := range strings.Fields(strings.ToLower(sc.Text())) {
-		if slices.Contains(scaffold.ComposeServices, tok) && !slices.Contains(chosen, tok) {
-			chosen = append(chosen, tok)
-		}
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		return fmt.Errorf("git init failed in %s: %v: %s", repo, err, strings.TrimSpace(string(out)))
 	}
-	return chosen
+	return nil
 }
 
-// promptGateLangs asks (on a tty) which commit format gate(s) to scaffold when coop couldn't
-// detect a stack. Blank → none; unknown tokens are ignored. Reads one line from in.
-func promptGateLangs(in io.Reader) []string {
-	fmt.Fprintf(os.Stderr, "no stack detected — add a commit format gate? [%s] (space-separated, blank for none): ",
-		strings.Join(scaffold.GateLangs, " "))
-	sc := bufio.NewScanner(in)
-	if !sc.Scan() {
-		return nil
+// promptServices asks (on a tty) which services the project's agents should have alongside them.
+// Blank → none (coop adds no db/redis you didn't ask for).
+func promptServices(ask *bufio.Scanner) []string {
+	return promptExactTokens(ask, []string{
+		"Coop can run services alongside your agents.",
+		"Choose any this project needs, or press Enter for none.",
+	}, scaffold.ComposeServices, "service", "Services")
+}
+
+// promptGateLangs asks (on a tty) which languages the project will use, when coop couldn't detect
+// a stack — the commit format checks follow from the answer. Blank → no formatting check.
+func promptGateLangs(ask *bufio.Scanner) []string {
+	return promptExactTokens(ask, []string{
+		"Coop couldn't detect which languages this project will use.",
+		"Choose one or more. Coop will check their formatting before every commit.",
+	}, scaffold.GateLangs, "language", "Languages")
+}
+
+// promptExactTokens asks for a space-separated subset of valid and keeps asking until every token
+// is one of them. The menu lists ONLY accepted tokens: a second word in a choice row (the formatter
+// a language implies, say) reads as selectable even though the parser would reject it. An unknown
+// answer is NAMED and the question repeats — silently dropping half an answer leaves the user
+// believing they chose something they didn't. Blank means none; input order is kept, duplicates
+// dropped. EOF means none too, so a closed stdin can never hang the prompt.
+func promptExactTokens(ask *bufio.Scanner, intro, valid []string, noun, label string) []string {
+	ui.Note("")
+	for _, line := range intro {
+		ui.Note("%s", line)
 	}
-	var chosen []string
-	for _, tok := range strings.Fields(strings.ToLower(sc.Text())) {
-		if slices.Contains(scaffold.GateLangs, tok) && !slices.Contains(chosen, tok) {
-			chosen = append(chosen, tok)
+	ui.Note("")
+	for _, v := range valid {
+		ui.Note("  %s", v)
+	}
+	question := fmt.Sprintf("\n%s (space-separated, or press Enter for none): ", label)
+	for {
+		line, ok := askOneOK(ask, question)
+		if !ok {
+			return nil
 		}
+		var chosen []string
+		unknown := ""
+		for _, tok := range strings.Fields(strings.ToLower(line)) {
+			switch {
+			case !slices.Contains(valid, tok):
+				unknown = tok
+			case !slices.Contains(chosen, tok):
+				chosen = append(chosen, tok)
+			}
+			if unknown != "" {
+				break
+			}
+		}
+		if unknown == "" {
+			return chosen
+		}
+		ui.Note("")
+		ui.Error("Unknown %s “%s”.", noun, unknown)
+		ui.Note("  Choose from: %s", strings.Join(valid, ", "))
+		question = "\n" + label + ": "
 	}
-	return chosen
+}
+
+// askOneOK writes a question to the terminal and reads one answer back. The false it returns on a
+// closed stdin is what a repeating prompt needs to stop asking, and what keeps a Ctrl-D from
+// reading as the default yes.
+func askOneOK(ask *bufio.Scanner, question string) (string, bool) {
+	fmt.Fprint(os.Stderr, question)
+	if !ask.Scan() {
+		return "", false
+	}
+	return ask.Text(), true
 }
 
 // cmdPrompt prints a compact, single-line status of this repo for embedding in a shell prompt, a

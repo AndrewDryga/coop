@@ -833,34 +833,78 @@ func TestWriteMCPStub(t *testing.T) {
 	}
 }
 
-func TestInitNextSteps(t *testing.T) {
-	// In a git repo (no box Dockerfile, no services) → just the edit-then-loop step.
+func TestInitActions(t *testing.T) {
+	// A ready repo (git, an agent signed in, no box Dockerfile, no services) has only the two
+	// jobs every new project has.
+	cfg := &config.Config{ConfigDir: t.TempDir()}
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := initNextSteps(repo, nil); len(got) != 1 || !strings.Contains(got[0], "coop loop") {
-		t.Errorf("git repo steps = %v, want only the loop step", got)
+	titles := func(groups []initAction) []string {
+		var out []string
+		for _, g := range groups {
+			out = append(out, g.title)
+		}
+		return out
 	}
-	// A scaffolded .agent/Dockerfile + sibling services → build, up (naming the services), loop.
+	got := initActions(cfg, repo, nil, true)
+	if len(got) != 3 || !strings.HasPrefix(titles(got)[0], "Sign in") {
+		t.Fatalf("ready repo actions = %v", titles(got))
+	}
+	if !strings.Contains(got[1].actions[0], "coop doctor") || !strings.Contains(got[2].actions[1], "coop loop") {
+		t.Errorf("fresh repo should verify then start working: %+v", got)
+	}
+	// A re-init keeps only the actions real state still needs — no first-run advice.
+	if got := initActions(cfg, repo, nil, false); len(got) != 1 || !strings.HasPrefix(got[0].title, "Sign in") {
+		t.Errorf("re-init actions = %v, want only the sign-in job", titles(got))
+	}
+	// A scaffolded .agent/Dockerfile + services → build, then start them (named), before the
+	// first-run jobs.
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := initNextSteps(repo, []string{"postgres", "redis"})
-	if len(got) != 3 {
-		t.Fatalf("want 3 steps, got %v", got)
+	got = initActions(cfg, repo, []string{"postgres", "redis"}, true)
+	if want := []string{"Sign in to an agent", "Build the box", "Start postgres and redis", "Verify the sandbox", "Start working"}; !slices.Equal(titles(got), want) {
+		t.Errorf("actions = %v, want %v", titles(got), want)
 	}
-	if !strings.Contains(got[0], "coop build") ||
-		!strings.Contains(got[1], "coop up") || !strings.Contains(got[1], "postgres + redis") ||
-		!strings.Contains(got[2], "coop loop") {
-		t.Errorf("steps wrong or out of order: %v", got)
+	if !strings.Contains(got[1].actions[0], "coop build") || got[2].actions[0] != "coop up" {
+		t.Errorf("build/up actions wrong: %+v", got)
 	}
-	// Outside a git repo, the first step is `git init` — forks and the loop need one.
-	if steps := initNextSteps(t.TempDir(), nil); len(steps) == 0 || !strings.Contains(steps[0], "git init") {
-		t.Errorf("non-git repo should lead with `git init`, got %v", steps)
+	// Outside a git repo the first job is the one that finishes setup — the exact two commands,
+	// in order, because only the re-init can set core.hooksPath.
+	got = initActions(cfg, t.TempDir(), nil, true)
+	if len(got) == 0 || !strings.HasPrefix(got[0].title, "Finish setup") || !slices.Equal(got[0].actions, []string{"git init", "coop init"}) {
+		t.Errorf("non-git repo should lead with git init then coop init, got %+v", got)
+	}
+}
+
+// The collapsed result names only the agents this project selected, and the vendor each of them
+// may reach — never all three in a single-agent project.
+func TestInitResultSentences(t *testing.T) {
+	cases := []struct {
+		agents        []string
+		shared, reach string
+	}{
+		{nil, "Instructions, skills, and one task queue are ready for any agent.", ""},
+		{[]string{"claude"}, "Claude has instructions, skills, and one task queue.", "Claude can reach Anthropic."},
+		{[]string{"claude", "codex"}, "Claude and Codex share instructions, skills, and one task queue.", "Claude can reach Anthropic and Codex can reach OpenAI."},
+		{
+			[]string{"claude", "codex", "gemini"},
+			"Claude, Codex, and Gemini share instructions, skills, and one task queue.",
+			"Claude can reach Anthropic, Codex can reach OpenAI, and Gemini can reach Google.",
+		},
+	}
+	for _, c := range cases {
+		if got := initSharedLine(c.agents); got != c.shared {
+			t.Errorf("initSharedLine(%v) = %q, want %q", c.agents, got, c.shared)
+		}
+		if got := initProviderLine(c.agents); got != c.reach {
+			t.Errorf("initProviderLine(%v) = %q, want %q", c.agents, got, c.reach)
+		}
 	}
 }
 

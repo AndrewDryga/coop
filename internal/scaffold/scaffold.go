@@ -28,8 +28,9 @@ var templates embed.FS
 // .tool-versions: with no --stack a present .tool-versions auto-scaffolds the asdf
 // .agent/Dockerfile; `--stack asdf` forces it. gateLangs are the stacks the commit hooks
 // check (from DetectStacks, or the caller's interactive prompt); empty means a neutral gate.
-// Per-file progress prints as faint ui.Detail lines; the caller prints the summary and the
-// next-step actions. Existing files are never clobbered.
+// Routine per-artifact progress is NOT printed: the caller states the outcome once and lists
+// the actions it left. Only an exception a person must act on (a hooks path or prepare hook
+// coop refused to take over) speaks. Existing files are never clobbered.
 func Init(repo, stack string, gateLangs, agentDirs []string) error {
 	dockerfile, detected, err := initDockerfile(repo, stack)
 	if err != nil {
@@ -154,16 +155,9 @@ func Init(repo, stack string, gateLangs, agentDirs []string) error {
 		}
 	}
 
-	// One line for everything that was already in place, instead of one line each. A re-init used
-	// to print twenty "kept existing" lines — a wall of text whose entire content was "nothing
-	// happened", which buried the one line that mattered when something DID change.
-	if s.kept > 0 {
-		ui.Detail("kept %d existing file(s)", s.kept)
-	}
-
-	// The "scaffolded into …" summary, the optional Docker-box suggestion, and the next-step
-	// actions are all printed by the caller (cmdInit), which has the full picture (services,
-	// mcp) and orders them as one block after the faint per-file log.
+	// The result line, the optional Docker-box suggestion, and the next actions are all printed
+	// by the caller (cmdInit), which has the full picture (agents, languages, services) and
+	// orders them as one block.
 	return nil
 }
 
@@ -187,6 +181,14 @@ func initDockerfile(repo, stack string) (content string, detected bool, err erro
 	}
 	content, err = asdfDockerfile(toolVersions(repo))
 	return content, detected, err
+}
+
+// CheckStack validates a --stack argument and its prerequisites without writing or printing
+// anything, so the caller can refuse an unusable value BEFORE it names the project it is about to
+// change or asks the user a single first-run question. Init re-checks it on the write path.
+func CheckStack(repo, stack string) error {
+	_, _, err := initDockerfile(repo, stack)
+	return err
 }
 
 // Initialized reports whether repo already carries a coop scaffold. `coop init` uses it to stay
@@ -228,13 +230,6 @@ func skillsSource(repo string) string {
 	return agentSkills
 }
 
-func (s *scaffolder) rel(p string) string {
-	if r, err := filepath.Rel(s.repo, p); err == nil {
-		return r
-	}
-	return p
-}
-
 func (s *scaffolder) writeIfAbsent(dest, embedPath string, perm os.FileMode) error {
 	data, err := templates.ReadFile(embedPath)
 	if err != nil {
@@ -262,7 +257,6 @@ func (s *scaffolder) writeNewFile(dest string, data []byte, perm os.FileMode) er
 		return nil
 	}
 	s.changed = true
-	ui.Detail("wrote %s", s.rel(dest))
 	return nil
 }
 
@@ -362,7 +356,6 @@ func (s *scaffolder) linkIfAbsent(target, link string) error {
 			return err
 		}
 		s.changed = true
-		ui.Detail("linked %s -> %s", s.rel(link), target)
 	default:
 		s.keep()
 	}
@@ -399,19 +392,10 @@ func (s *scaffolder) copySkills() error {
 			s.keep()
 			continue
 		}
-		restored := false
-		if info, err := os.Stat(dest); err == nil && info.IsDir() {
-			restored = true
-		}
 		if err := s.copyEmbedDir("templates/skills/"+name, dest); err != nil {
 			return err
 		}
 		s.changed = true
-		if restored {
-			ui.Detail("restored skill /%s (was empty)", name)
-		} else {
-			ui.Detail("added skill /%s", name)
-		}
 	}
 	return nil
 }
@@ -420,11 +404,6 @@ func (s *scaffolder) copySkills() error {
 // copy when the repo keeps a .claude/ adapter, the .agent/claude/ fallback otherwise. A repo with
 // no detected stack gets a neutral gate. A user's custom hooksPath or existing hook is never clobbered.
 func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
-	if len(langs) > 0 {
-		ui.Detail("commit gate: %s", strings.Join(langs, ", "))
-	} else {
-		ui.Detail("commit gate: no language detected — left neutral (edit .githooks/pre-commit to add checks)")
-	}
 	if err := s.writeContentIfAbsent(filepath.Join(s.repo, ".githooks", "pre-commit"), preCommitHook(langs), 0o755); err != nil {
 		return err
 	}
@@ -455,7 +434,8 @@ func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 		return err
 	}
 	if !gitRepo(s.repo) {
-		ui.Detail("not a git repo yet — after 'git init', run: git config core.hooksPath .githooks")
+		// Nothing to point core.hooksPath at yet. The caller says so once, as the action that
+		// finishes setup ('git init', then 'coop init'), rather than half-explaining it here.
 		return nil
 	}
 	switch current := gitConfigGet(s.repo, "core.hooksPath"); current {
@@ -463,19 +443,18 @@ func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 		if err := gitConfigSet(s.repo, "core.hooksPath", ".githooks"); err != nil {
 			return err
 		}
-		// Only report it as an action when it WAS one — re-announcing a setting that already held
-		// makes every re-init look like it reconfigured your repo.
 		if current == "" {
 			s.changed = true
-			ui.Detail("set core.hooksPath=.githooks (pre-commit format gate for every committer)")
 		} else {
 			s.keep()
 		}
+		// The two hook exceptions still speak: coop declined to take something over, so only the
+		// user can finish the composition. Everything else it did is routine and stays silent.
 		if prepareExists && !prepareIsStock {
-			ui.Detail("kept existing .githooks/prepare-commit-msg; chain $HOME/.coop-git-hooks/prepare-commit-msg from it for coop box attribution")
+			ui.Warn("kept your .githooks/prepare-commit-msg — chain $HOME/.coop-git-hooks/prepare-commit-msg from it for coop box attribution")
 		}
 	default:
-		ui.Detail("kept your core.hooksPath=%q; copy or chain .githooks/pre-commit and .githooks/prepare-commit-msg there", current)
+		ui.Warn("kept your core.hooksPath=%q — copy or chain .githooks/pre-commit and .githooks/prepare-commit-msg there", current)
 	}
 	return nil
 }
@@ -584,7 +563,6 @@ func (s *scaffolder) updateGitignore(wantGemini bool) error {
 	if err := os.WriteFile(gi, []byte(out), 0o644); err != nil {
 		return err
 	}
-	ui.Detail("updated .gitignore (.agent state ignored at any depth; kb/skills/presets/claude/loop + project.yaml + the tasks README tracked)")
 	return nil
 }
 

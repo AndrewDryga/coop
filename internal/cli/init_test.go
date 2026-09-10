@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -13,15 +14,139 @@ import (
 	"github.com/AndrewDryga/coop/internal/scaffold"
 )
 
-func TestPromptGateLangs(t *testing.T) {
-	// Recognized tokens are kept in order (deduped); unknown ignored.
-	if got := promptGateLangs(strings.NewReader("terraform go go bogus\n")); !slices.Equal(got, []string{"terraform", "go"}) {
-		t.Errorf("prompt = %v, want [terraform go]", got)
+// The first-run menus offer the exact tokens they accept, and refuse to guess at anything else:
+// an unknown answer is named and the question comes back, so half an answer is never silently
+// applied as if it were the whole one.
+func TestPromptExactTokens(t *testing.T) {
+	ask := func(input string) (string, []string, []string) {
+		t.Helper()
+		sc := bufio.NewScanner(strings.NewReader(input))
+		var langs, services []string
+		out := captureStderr(t, func() {
+			langs = promptGateLangs(sc)
+			services = promptServices(sc)
+		})
+		return out, langs, services
 	}
-	// Blank / unknown-only / no input → nil (no gate imposed).
-	for _, in := range []string{"\n", "nonsense\n", ""} {
-		if got := promptGateLangs(strings.NewReader(in)); got != nil {
-			t.Errorf("%q → %v, want nil", in, got)
+	// One prompt's menu holds only the accepted tokens — never the formatter a language implies,
+	// which would read as a fifth choice the parser rejects.
+	out, langs, services := ask("terraform go go\npostgres\n")
+	if !slices.Equal(langs, []string{"terraform", "go"}) || !slices.Equal(services, []string{"postgres"}) {
+		t.Errorf("answers = %v / %v, want [terraform go] / [postgres]", langs, services)
+	}
+	for _, absent := range []string{"gofmt", "terraform fmt", "mix format", "rustfmt"} {
+		if strings.Contains(out, absent) {
+			t.Errorf("the menu offered %q, which is not an accepted answer:\n%s", absent, out)
+		}
+	}
+	for _, want := range []string{"  go\n", "  terraform\n", "  elixir\n", "  rust\n", "  postgres\n", "  redis\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the menu is missing the accepted token %q:\n%s", want, out)
+		}
+	}
+	// An unknown token is named and the SAME question repeats; the retry's answer is what counts.
+	out, langs, _ = ask("rustfmt\ngo rust\n\n")
+	if !slices.Equal(langs, []string{"go", "rust"}) {
+		t.Errorf("re-prompt answer = %v, want [go rust]", langs)
+	}
+	if !strings.Contains(out, "Unknown language “rustfmt”") || !strings.Contains(out, "Choose from: go, terraform, elixir, rust") {
+		t.Errorf("an unknown token was not named with its choices:\n%s", out)
+	}
+	if strings.Count(out, "Languages") < 2 {
+		t.Errorf("the question did not repeat after an unknown token:\n%s", out)
+	}
+	// Blank means none. So does a closed stdin — a prompt with nothing left to read stops asking
+	// instead of spinning on its own error.
+	for _, in := range []string{"\n\n", ""} {
+		if _, langs, services := ask(in); langs != nil || services != nil {
+			t.Errorf("%q → %v / %v, want no selection", in, langs, services)
+		}
+	}
+}
+
+// Git is created only on an explicit yes, before the hooks that need it. A decline or a closed
+// stdin creates nothing at all — coop never invents consent to touch a directory this way.
+func TestAskGitInit(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "none"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "none"))
+	for _, c := range []struct {
+		answer string
+		want   bool
+	}{{"y\n", true}, {"yes\n", true}, {"\n", true}, {"n\n", false}, {"no\n", false}, {"", false}} {
+		repo := t.TempDir()
+		out := captureStderr(t, func() {
+			if err := askGitInit(bufio.NewScanner(strings.NewReader(c.answer)), repo); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if got := pathExists(filepath.Join(repo, ".git")); got != c.want {
+			t.Errorf("answer %q → .git exists = %v, want %v", c.answer, got, c.want)
+		}
+		for _, want := range []string{"This folder is not a Git repository.", "Coop uses Git for tasks, forks, and commit checks.", "Initialize Git here? [Y/n]"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the Git question is missing %q:\n%s", want, out)
+			}
+		}
+	}
+}
+
+// A run with no terminal asks nothing, creates no .git behind the user's back, and still says
+// exactly what would finish setup. The result is one outcome, not the file-by-file ledger.
+func TestInitWithoutTerminalAsksNothingAndNamesTheMissingStep(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir, cfgDir := t.TempDir(), t.TempDir()
+	a := &app{cfg: &config.Config{RepoOverride: dir, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
+	out := captureStderr(t, func() {
+		if code, err := a.cmdInit([]string{"--services", "none", "--agents", "claude,codex"}); code != 0 || err != nil {
+			t.Fatalf("cmdInit = (%d, %v)", code, err)
+		}
+	})
+	if pathExists(filepath.Join(dir, ".git")) {
+		t.Error("a non-interactive init created a Git repository nobody asked for")
+	}
+	for _, want := range []string{
+		"Setting up Coop for " + dir,
+		"✓ Coop project created",
+		"Claude and Codex share instructions, skills, and one task queue.",
+		"Internet access is filtered.",
+		"Claude can reach Anthropic and Codex can reach OpenAI.",
+		"Other websites and services are blocked until you approve them.",
+		"Finish setup",
+		"→ git init",
+		"→ coop init",
+		"Verify the sandbox\n  → coop doctor",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("init result is missing %q:\n%s", want, out)
+		}
+	}
+	for _, absent := range []string{
+		"Initialize Git here?", "Languages", "Services (",
+		"wrote AGENTS.md", "linked CLAUDE.md", "added skill", "updated .gitignore", "commit gate:",
+		"coop net setup", "kept ",
+	} {
+		if strings.Contains(out, absent) {
+			t.Errorf("init result should not contain %q:\n%s", absent, out)
+		}
+	}
+	// A re-init keeps every file and repeats none of the first-run explanation.
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStderr(t, func() {
+		if code, err := a.cmdInit(nil); code != 0 || err != nil {
+			t.Fatalf("re-init = (%d, %v)", code, err)
+		}
+	})
+	if data, err := os.ReadFile(filepath.Join(dir, "AGENTS.md")); err != nil || string(data) != "mine\n" {
+		t.Errorf("re-init clobbered AGENTS.md: %q, %v", data, err)
+	}
+	if !strings.Contains(out, "✓ Coop project updated") {
+		t.Errorf("re-init did not report the update:\n%s", out)
+	}
+	for _, absent := range []string{"Setting up Coop for", "Internet access is filtered.", "Start working", "Coop project created"} {
+		if strings.Contains(out, absent) {
+			t.Errorf("re-init repeated first-run output %q:\n%s", absent, out)
 		}
 	}
 }

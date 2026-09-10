@@ -627,43 +627,40 @@ coop down [-v] — stop the repo's sibling services.
 
   -v, --volumes   also remove the services' volumes (their data)
 
-coop init [--stack asdf] — scaffold coop's working set into the repo.
+coop init — set up Coop in this project
 
-  Usage: coop init [--stack asdf] [--services postgres,redis] [--agents claude,codex|all]
+Usage:
+  coop init
+  coop init [--stack asdf] [--services <service,...>] [--agents <agent,...>|all]
 
-  Per-agent dirs (.claude/.codex/.gemini) are scaffolded only for the agents you're
-  signed in to — or the --agents list ("all" for every one). A repo you keep on
-  only .agent/ still works: a box synthesizes missing skills from .agent/skills on
-  demand, and Claude also gets fallback settings + hooks from .agent/claude. If a
-  real .claude/skills already exists and .agent/skills does not, init keeps it as
-  the shared source instead of creating a competing skills tree.
+Coop sets up
 
-  Writes AGENTS.md, the .agent/ queue, the Claude + git commit hooks, and the
-  workflow skills. Subagents are left to you: a preset generates its own
-  coop-<role> in the box, so init commits none to the repo (see the README's
-  "orchestrator pattern"). The commit hooks' format gate matches the repo's stack —
-  detected from go.mod / *.tf / mix.exs / Cargo.toml or .tool-versions (gofmt,
-  terraform fmt, mix format, cargo fmt). With nothing detected the gate is left
-  neutral (it imposes no checks); at a terminal it asks which gate to add. A
-  .tool-versions (or --stack asdf) also scaffolds an asdf .agent/Dockerfile.
-  Sibling services (db/redis) are opt-in: at a terminal it asks which to add as a
-  .agent/compose.yml — none by default, or pass --services. If the repo already has
-  its own Docker and no .agent/Dockerfile yet, it suggests how to build the box on it.
-  Also seeds an empty ~/.config/coop/agents/mcp.json (the shared MCP source of truth,
-  inert until you add a server) so there's an obvious place to declare MCP servers.
-  Writes the TOP-LEVEL .agent/project.yaml (committed): in a monorepo — detected by any
-  dir at ANY depth that is itself a coop project (it has a .agent/), so a nested layout
-  like terraform/environments/va1 is found too — it lists them under 'subprojects:' so
-  coop aggregates their task queues automatically (no COOP_TASKS). A member you add later
-  is registered on the next init, in place, leaving the file's comments intact. The walk
-  skips hidden dirs and dependency/build output; a member may hold members of its own.
-  coop init scaffolds each member with ONLY its own task queue + backlog
-  (it shares the root's AGENTS.md/.claude); the member's queue is for its own work, the
-  root's for changes spanning members. A single repo gets a project.yaml template with
-  commented serve/subprojects examples. The .gitignore ignores .agent/ state at any
-  depth (**/.agent/*) and commits kb/ (including kb/rules/), skills/, presets/, claude/,
-  and loop.yaml at any depth too (a large member MAY add its own), keeping only project.yaml
-  top-level. Never clobbers existing files.
+- Shared instructions and skills for all your AI agents.
+
+- A file-based task system — agents can pick up work, save progress, and hand
+  it to another agent or session.
+
+- Commit checks — Coop verifies formatting for the languages it detects or
+  you choose.
+
+- Project settings for sandboxed runs, including filtered internet access.
+
+- An optional starter Docker Compose file for supporting services; you can
+  extend it with anything else your project needs.
+
+Without options, Coop detects what it can and asks before initializing Git,
+adding formatting checks, or adding Postgres or Redis.
+
+Options
+  --agents <list>    set up Claude, Codex, Gemini, or all
+                     default: agents you are signed in to
+
+  --services <list>  add Postgres, Redis, or both
+
+  --stack asdf       install tools from .tool-versions in the Coop box
+
+You can run coop init again at any time.
+Coop keeps your existing project files and adds anything missing.
 
 coop doctor — prove the box's isolation: attack it, inside and from the host.
 

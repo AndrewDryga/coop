@@ -88,6 +88,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [usage-placeholder-style](usage-placeholder-style.md) — usage metavariables use angle brackets and stable names; optionality stays outside the placeholder
 - [bare-subcommand-shows-help](bare-subcommand-shows-help.md) — a bare group prints help or its default view, never an empty-token error
 - [bare-flag-routes-to-default-view](bare-flag-routes-to-default-view.md) — a leading flag where a subcommand goes routes to the group's default listing
+- [menus-offer-only-accepted-tokens](menus-offer-only-accepted-tokens.md) — an interactive menu shows only the tokens the parser accepts, and names an unknown answer instead of dropping it
 
 **CLI output** — what the terminal shows
 - [help-output-style](help-output-style.md) — UPPERCASE headers, one command per line, no `·`, command cell ≤ 32 runes

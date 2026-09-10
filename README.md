@@ -257,8 +257,11 @@ spelled out here (there's room to render them).
 
 For Zsh, generate with `coop completion zsh > "${fpath[1]}/_coop"`, then source that
 file after `compinit` in `.zshrc`: `source "${fpath[1]}/_coop"`. Existing file-only
-installs need the source line too; it keeps Zsh spelling correction on globally while
-marking only `coop` arguments `nocorrect`.
+installs need the source line too — autoloading alone registers completion but never
+runs the file's `alias coop='nocorrect coop'`, so `CORRECT_ALL` still offers to correct
+`coop codex` to your `.codex/` directory. Sourcing keeps Zsh spelling correction on
+globally while marking only `coop` arguments `nocorrect`. Neither coop nor its installer
+edits your shell startup files; the source line is yours to add.
 
 ## The sandbox
 

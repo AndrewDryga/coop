@@ -197,18 +197,22 @@ func Detail(format string, a ...any) {
 	emit(fmt.Sprintf("  %s%s%s\n", cDim, fmt.Sprintf(format, a...), cReset))
 }
 
-// Steps prints a blank line, a bold "next steps:" header, then each action on its own cyan-arrow
-// line — so what you need to do next stands clear of the log of what just happened. No-op when
-// there are no steps.
-func Steps(steps ...string) {
-	if len(steps) == 0 {
+// Actions prints a blank line, a bold header naming the job, then each action on its own
+// cyan-arrow line — so what you need to do next stands clear of the log of what just happened.
+// A command with several distinct jobs left (finish setup, then verify, then start working)
+// prints one block per job. No-op when there are no actions.
+func Actions(header string, actions ...string) {
+	if len(actions) == 0 {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\n%snext steps:%s\n", cBold, cReset)
-	for _, s := range steps {
+	fmt.Fprintf(os.Stderr, "\n%s%s%s\n", cBold, header, cReset)
+	for _, s := range actions {
 		fmt.Fprintf(os.Stderr, "  %s→%s %s\n", cCyan, cReset, s)
 	}
 }
+
+// Steps is the one-block form of Actions, under the standard "next steps:" header.
+func Steps(steps ...string) { Actions("next steps:", steps...) }
 
 // Color wrappers, used to compose richer output (e.g. the doctor report).
 func Bold(s string) string    { return cBold + s + cReset }

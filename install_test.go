@@ -195,3 +195,33 @@ func TestInstallBundleRequired(t *testing.T) {
 		}
 	}
 }
+
+// TestInstallZshGuidanceOnly pins the supported Zsh setup path: the installer TELLS a Zsh user
+// where the generated integration goes — sourced after compinit, because autoloading alone never
+// runs the file's nocorrect alias — and never edits a shell startup file itself.
+func TestInstallZshGuidanceOnly(t *testing.T) {
+	script, err := os.ReadFile("install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	for _, want := range []string{
+		`coop completion zsh > \"\${fpath[1]}/_coop\"`,
+		"AFTER your compinit line",
+		`source \"\${fpath[1]}/_coop\"`,
+		"coop does not edit your shell files",
+		"Spelling correction stays on everywhere",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("install.sh is missing the Zsh guidance %q", want)
+		}
+	}
+	// The guidance is printed, never applied: no redirect at any shell startup file.
+	for _, rc := range []string{".zshrc", ".bashrc", ".bash_profile", ".profile", ".zprofile"} {
+		for _, line := range strings.Split(text, "\n") {
+			if strings.Contains(line, rc) && (strings.Contains(line, ">>") || strings.Contains(line, "tee")) {
+				t.Errorf("install.sh writes to %s — setup guidance must stay guidance: %s", rc, line)
+			}
+		}
+	}
+}

@@ -198,8 +198,12 @@ func TestZshCompletionSuppressesOnlyCoopCorrection(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".codex"), 0o755); err != nil {
-		t.Fatal(err)
+	// The real collision: a Coop project holds a directory named after every agent it set up, so
+	// CORRECT_ALL reads `coop claude` as a misspelled `.claude`.
+	for _, dir := range []string{".claude", ".codex", ".gemini"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	bin := filepath.Join(root, "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
@@ -239,12 +243,14 @@ proc start_shell {zsh setup} {
 
 # Prove the fixture reproduces the reported correction before installing Coop's integration.
 start_shell $zsh "setopt correct_all"
-send -- "coop loop codex\r"
-expect {
-  -re {correct 'codex' to '.codex'} { send -- "n\r" }
-  timeout { puts stderr "baseline did not reproduce Zsh correction"; exit 10 }
+foreach agent {claude codex gemini} {
+  send -- "coop $agent\r"
+  expect {
+    -re "correct '$agent' to '\\.$agent'" { send -- "n\r" }
+    timeout { puts stderr "baseline did not reproduce Zsh correction for $agent"; exit 10 }
+  }
+  expect -re "STUB:$agent"
 }
-expect -re {STUB:loop codex}
 send -- "exit\r"
 expect eof
 
@@ -257,6 +263,16 @@ expect {
   -re {correct 'codex' to '.codex'} { puts stderr "coop argument correction was not suppressed"; exit 11 }
   -re {STUB:loop codex} {}
   timeout { puts stderr "completed coop command did not reach the stub"; exit 12 }
+}
+
+# Every agent argument now reaches the shim with no correction prompt in the way.
+foreach agent {claude codex gemini} {
+  send -- "coop $agent\r"
+  expect {
+    -re "correct '$agent' to '\\.$agent'" { puts stderr "coop $agent was still corrected"; exit 14 }
+    -re "STUB:$agent" {}
+    timeout { puts stderr "coop $agent did not reach the stub"; exit 15 }
+  }
 }
 
 # The alias is command-local: correction remains active for another command.
