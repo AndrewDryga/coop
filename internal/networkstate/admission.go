@@ -111,36 +111,79 @@ func (a Admission) preview(approval *Approval) (AdmissionPreview, error) {
 	return AdmissionPreview{Mode: mode, Pending: pending}, nil
 }
 
-// Admit is the shared new-run authority boundary. Read one approval for both
-// posture and envelope checks: rereading between them could combine two different
-// operator decisions. A concurrent approval change applies to subsequent captures.
+// A bundle this host has never seen is pinned the first time an admission uses it, and every
+// later admission must match that copy exactly (integrity drift, not an update).
+const (
+	pinFirstSeenBundles = true
+	matchPinnedBundles  = false
+)
+
+// Admit is the shared new-run authority boundary. A concurrent approval change
+// applies to subsequent captures.
 func (s *Store) Admit(project string, input Admission) (egress.Snapshot, error) {
-	if err := s.authorityAvailable(); err != nil {
+	id, mode, operator, err := s.authorized(project, input, pinFirstSeenBundles)
+	if err != nil {
 		return egress.Snapshot{}, err
+	}
+	return s.capture(project, id, mode, input.Requests, operator, input.Bundles, input.ExportDestinations)
+}
+
+// Resolve compiles exactly what Admit would authorize and returns it WITHOUT
+// publishing: no approval is written, no snapshot is saved, and the caller must
+// have opened the store without creating an owner key. It answers "what would
+// this launch run under" for a host that has to publish a fence before anyone
+// asks for a launch. A launch still has to Admit.
+func (s *Store) Resolve(project string, input Admission) (egress.Snapshot, error) {
+	id, mode, operator, err := s.authorized(project, input, matchPinnedBundles)
+	if err != nil {
+		return egress.Snapshot{}, err
+	}
+	return s.compile(project, id, mode, input.Requests, operator, input.Bundles, input.ExportDestinations)
+}
+
+// authorized is the ONE input assembly behind both of them. Read one approval
+// for both posture and envelope checks: rereading between them could combine two
+// different operator decisions. Publishing is the only difference between Admit
+// and Resolve, so a resolved fingerprint cannot describe authority the capture
+// would have compiled differently.
+//
+// pinBundles is the one thing the two cannot share: a bundle this host has never seen is pinned
+// the first time an admission uses it, and a resolve is not a use.
+func (s *Store) authorized(project string, input Admission, pinBundles bool) (string, egress.Mode, []egress.Input, error) {
+	if err := s.authorityAvailable(); err != nil {
+		return "", "", nil, err
 	}
 	id, canonical, info, err := s.projectIdentity(project)
 	if err != nil {
-		return egress.Snapshot{}, err
+		return "", "", nil, err
 	}
 	approval, err := s.approval(id)
 	if err != nil {
-		return egress.Snapshot{}, err
+		return "", "", nil, err
 	}
 	if err := approval.checkDirectory(canonical, info); err != nil {
-		return egress.Snapshot{}, err
+		return "", "", nil, err
 	}
 	mode, err := input.resolveMode(approval)
 	if err != nil {
-		return egress.Snapshot{}, err
+		return "", "", nil, err
+	}
+	if pinBundles {
+		err = s.checkBundles(input.Bundles)
+	} else {
+		err = s.matchBundles(input.Bundles)
+	}
+	if err != nil {
+		return "", "", nil, err
 	}
 	if _, err := s.checkRequests(approval, input.Requests, input.Bundles); err != nil {
-		return egress.Snapshot{}, err
+		return "", "", nil, err
 	}
 	operator := append([]egress.Input{}, input.Operator...)
 	if mode == egress.Filtered {
 		operator = append(operator, input.Automatic...)
 	}
-	return s.capture(project, id, mode, input.Requests, operator, input.Bundles, input.ExportDestinations)
+	return id, mode, operator, nil
 }
 
 func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {

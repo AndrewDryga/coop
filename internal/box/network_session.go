@@ -78,8 +78,87 @@ type SessionNetworkAdmission struct {
 // open and offline ones). Unlike the direct-launch path it does NOT mutate cfg:
 // the daemon's configuration is shared by every session it serves.
 func AdmitSessionNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options SessionNetworkAdmission) (egress.Mode, *CapturedEgress, error) {
+	plan, err := planSessionNetwork(cfg, spec, options)
+	if err != nil {
+		return "", nil, err
+	}
+	mode, err := networkstate.PreviewAdmissionMode(plan.root, plan.project, plan.exposed, plan.input)
+	if err != nil {
+		return "", nil, err
+	}
+	if mode != egress.Filtered {
+		return mode, nil, nil
+	}
+	if err := plan.prepareFiltered(cfg, spec, options); err != nil {
+		return "", nil, err
+	}
+	store, err := networkstate.Open(plan.root, plan.exposed)
+	if err != nil {
+		return "", nil, err
+	}
+	capture, err := admitFilteredNetwork(cfg, rt, spec, store, plan.project, plan.input)
+	if err != nil {
+		_ = store.Close()
+		return "", nil, err
+	}
+	return mode, capture, nil
+}
+
+// ResolveSessionNetwork answers what one session policy reaches on THIS host right now — the
+// posture, plus for a filtered policy the fingerprint AdmitSessionNetwork would freeze — and
+// writes nothing at all: no approval, no published snapshot, not even an owner key. It is how a
+// daemon publishes a fence before anyone asks for a session, and how a create refuses a stale one.
+//
+// A policy it cannot resolve — no approval for the project, no host setup record, a rule this
+// runtime cannot enforce — is an error, never a quiet open answer.
+func ResolveSessionNetwork(cfg *config.Config, spec RunSpec, options SessionNetworkAdmission) (egress.Mode, string, error) {
+	plan, err := planSessionNetwork(cfg, spec, options)
+	if err != nil {
+		return "", "", err
+	}
+	mode, err := networkstate.PreviewAdmissionMode(plan.root, plan.project, plan.exposed, plan.input)
+	if err != nil {
+		return "", "", err
+	}
+	if mode != egress.Filtered {
+		return mode, "", nil
+	}
+	if err := plan.prepareFiltered(cfg, spec, options); err != nil {
+		return "", "", err
+	}
+	// OpenExisting, never Open: asking what a policy resolves to must not be the act that creates
+	// this host's owner key. A host with no network authority yet has no fingerprint to report.
+	store, err := networkstate.OpenExisting(plan.root, plan.exposed)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", "", errors.New("this host has no network records to resolve against — run 'coop net setup', then 'coop net approve' in the project")
+	}
+	if err != nil {
+		return "", "", err
+	}
+	defer store.Close()
+	policy, err := resolveFilteredNetwork(cfg, spec, store, plan.project, plan.input)
+	if err != nil {
+		return "", "", err
+	}
+	return mode, policy.Fingerprint, nil
+}
+
+// sessionNetworkPlan is what a session policy resolves to before any store is opened: the
+// owner-private authority root, the project the approval belongs to, everything this launch
+// exposes wholesale, and the admission inputs the policy and the repository contribute.
+type sessionNetworkPlan struct {
+	root    string
+	project string
+	exposed []string
+	input   networkstate.Admission
+}
+
+// planSessionNetwork assembles that once for BOTH the publishing and the non-publishing path, so
+// a fingerprint the daemon published and the one a create freezes cannot come from different
+// inputs. Nothing here reads or writes the owner store.
+func planSessionNetwork(cfg *config.Config, spec RunSpec, options SessionNetworkAdmission) (sessionNetworkPlan, error) {
 	if cfg == nil {
-		return "", nil, errors.New("restricted networking needs host configuration")
+		return sessionNetworkPlan{}, errors.New("restricted networking needs host configuration")
 	}
 	// An absent policy mode is not "open": it means the operator wrote no posture at all, so
 	// the project's remembered one still decides. Only a written mode is explicit authority.
@@ -87,26 +166,26 @@ func AdmitSessionNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, o
 	if options.Mode != "" {
 		parsed, err := egress.ParseMode(string(options.Mode))
 		if err != nil {
-			return "", nil, err
+			return sessionNetworkPlan{}, err
 		}
 		policyMode = &parsed
 	}
 	policyRepo := projectPolicyRepo(spec)
 	canonical, err := canonicalProjectDir(policyRepo)
 	if err != nil {
-		return "", nil, err
+		return sessionNetworkPlan{}, err
 	}
 	p, err := project.Load(policyRepo)
 	if err != nil {
-		return "", nil, err
+		return sessionNetworkPlan{}, err
 	}
 	root, err := NetworkStatePath()
 	if err != nil {
-		return "", nil, err
+		return sessionNetworkPlan{}, err
 	}
 	exposed, err := networkExposureRoots(cfg, spec)
 	if err != nil {
-		return "", nil, err
+		return sessionNetworkPlan{}, err
 	}
 	input := networkstate.Admission{
 		PolicyMode: policyMode, Requests: p.Box.EgressRules,
@@ -118,42 +197,34 @@ func AdmitSessionNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, o
 	if p.Box.Egress != "" {
 		requested, err := egress.ParseMode(p.Box.Egress)
 		if err != nil {
-			return "", nil, err
+			return sessionNetworkPlan{}, err
 		}
 		input.ProjectMode = &requested
 	}
 	if len(options.Rules) != 0 {
 		rules, err := egress.NormalizeRules(options.Rules)
 		if err != nil {
-			return "", nil, err
+			return sessionNetworkPlan{}, err
 		}
 		input.Operator = append(input.Operator, egress.Input{
 			Rules: rules, Origin: egress.Origin{Kind: "operator", Name: "session-policy"},
 		})
 	}
-	mode, err := networkstate.PreviewAdmissionMode(root, canonical, exposed, input)
-	if err != nil {
-		return "", nil, err
-	}
-	if mode != egress.Filtered {
-		return mode, nil, nil
-	}
+	return sessionNetworkPlan{root: root, project: canonical, exposed: exposed, input: input}, nil
+}
+
+// prepareFiltered adds what only a filtered launch derives: the support gate this release can
+// enforce, and the shared MCP hosts the box will actually be able to call.
+func (plan *sessionNetworkPlan) prepareFiltered(cfg *config.Config, spec RunSpec, options SessionNetworkAdmission) error {
 	if err := checkFilteredSupport(cfg); err != nil {
-		return "", nil, err
+		return err
 	}
-	if input.Automatic, err = sessionAutomaticDependencies(cfg, spec, options); err != nil {
-		return "", nil, err
-	}
-	store, err := networkstate.Open(root, exposed)
+	automatic, err := sessionAutomaticDependencies(cfg, spec, options)
 	if err != nil {
-		return "", nil, err
+		return err
 	}
-	capture, err := admitFilteredNetwork(cfg, rt, spec, store, canonical, input)
-	if err != nil {
-		_ = store.Close()
-		return "", nil, err
-	}
-	return mode, capture, nil
+	plan.input.Automatic = automatic
+	return nil
 }
 
 // sessionAutomaticDependencies is what this session's box will actually be able

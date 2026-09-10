@@ -227,13 +227,20 @@ type sessionPoliciesResult struct {
 // sessionPolicyNetwork is what a policy's sessions may reach. It is printed beside the digests
 // because it IS authority: an operator authorizing a fleet worker has to see the posture and the
 // rules the same way they see the repository and the target.
+//
+// Fingerprint is the reach RESOLVED on this host — the project's remembered approval and the
+// provider and MCP dependencies included — which is the value a placement pins and the daemon
+// publishes. Unresolved carries the reason instead, for a policy this host cannot resolve at all;
+// the daemon refuses to serve that policy, and this read says why.
 type sessionPolicyNetwork struct {
 	Mode               string   `json:"mode"`
 	Rules              []string `json:"rules,omitempty"`
 	ExportDestinations bool     `json:"export_destinations,omitempty"`
+	Fingerprint        string   `json:"fingerprint,omitempty"`
+	Unresolved         string   `json:"unresolved,omitempty"`
 }
 
-func sessionPolicyNetworkOf(policy sessionsvc.Policy) sessionPolicyNetwork {
+func sessionPolicyNetworkOf(cfg *config.Config, policy sessionsvc.Policy) sessionPolicyNetwork {
 	out := sessionPolicyNetwork{
 		Mode: string(policy.Egress.Mode), ExportDestinations: policy.Egress.ExportDestinations,
 	}
@@ -242,6 +249,15 @@ func sessionPolicyNetworkOf(policy sessionsvc.Policy) sessionPolicyNetwork {
 	}
 	for _, rule := range policy.Egress.Rules {
 		out.Rules = append(out.Rules, box.NetworkRuleText(rule))
+	}
+	resolved, err := sessionsvc.ResolvePolicyNetwork(cfg, policy)
+	switch {
+	case err != nil:
+		out.Unresolved = err.Error()
+	case resolved.Fingerprint != "":
+		out.Mode, out.Fingerprint = string(resolved.Mode), resolved.Fingerprint
+	default:
+		out.Mode = string(resolved.Mode)
 	}
 	return out
 }
@@ -266,7 +282,7 @@ func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) 
 		names = append(names, name)
 		result.PolicyDigests[name] = sessionsvc.ResolvedPolicyDigest(policy)
 		result.PolicyAuthorityDigests[name] = sessionsvc.ResolvedPolicyAuthorityDigest(policy)
-		result.PolicyNetworks[name] = sessionPolicyNetworkOf(policy)
+		result.PolicyNetworks[name] = sessionPolicyNetworkOf(cfg, policy)
 	}
 	if jsonOutput {
 		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
@@ -296,6 +312,12 @@ func renderSessionPolicies(w io.Writer, p ui.Palette, result sessionPoliciesResu
 		}
 		if network.ExportDestinations {
 			fmt.Fprintf(w, "  %s            %s\n", p.Dim("export:"), "destinations are exported to the authorized worker")
+		}
+		switch {
+		case network.Unresolved != "":
+			fmt.Fprintf(w, "  %s       %s\n", p.Dim("Fingerprint:"), "unresolved on this host — "+network.Unresolved)
+		case network.Fingerprint != "":
+			fmt.Fprintf(w, "  %s       %s\n", p.Dim("Fingerprint:"), network.Fingerprint)
 		}
 	}
 }

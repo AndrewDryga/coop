@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -608,6 +609,11 @@ type CreateRemoteSessionRequest struct {
 	// are unchanged.
 	ExpectedPolicyDigest    string `json:"expected_policy_digest,omitempty"`
 	ExpectedAuthorityDigest string `json:"expected_authority_digest,omitempty"`
+	// ExpectedNetworkFingerprint pins the create to the network reach the caller was authorized
+	// against — the value this daemon published for that policy. Unlike the digests it covers HOST
+	// state the policy text cannot express, so an approval edited on this host between the
+	// placement and the create refuses instead of running under rules nobody pinned.
+	ExpectedNetworkFingerprint string `json:"expected_network_fingerprint,omitempty"`
 }
 
 type EnsureWorkspaceTaskRequest struct {
@@ -818,9 +824,13 @@ type runtimeCleanupCandidate struct {
 }
 
 type Service struct {
-	store               *session.Store
-	stateRoot           string
-	policies            map[string]Policy
+	store     *session.Store
+	stateRoot string
+	policies  map[string]Policy
+	// policyNetworks is each policy's reach as it resolved when this daemon loaded them: the
+	// published fence a placement pins. A create resolves again and compares, so this is what the
+	// daemon ADVERTISES, never what it authorizes.
+	policyNetworks      map[string]PolicyNetwork
 	sourceCfg           *config.Config
 	rt                  runtime.Runtime
 	executable          string
@@ -853,7 +863,10 @@ type Service struct {
 	// testAdmitNetwork replaces create-time network admission. Real admission needs an owner
 	// key, an approval and a Docker qualification; a test that only cares what the create path
 	// does with the answer injects one. nil in production.
-	testAdmitNetwork       func(policy Policy, workspace, forkName string) (sessionNetworkBinding, error)
+	testAdmitNetwork func(policy Policy, workspace, forkName string) (sessionNetworkBinding, error)
+	// testResolveNetwork replaces the create fence's fresh resolution, for the same reason and
+	// with the same rule: nil in production.
+	testResolveNetwork     func(policy Policy) (PolicyNetwork, error)
 	runtimeMu              sync.Mutex
 	runtimeLocks           map[string]*sessionOperationLock
 	restoring              map[string]bool // sessions whose workspace a restore is rewriting right now
@@ -890,13 +903,20 @@ func NewService(cfg Config) (*Service, error) {
 			return nil, err
 		}
 	}
+	bound := cloneSessionPolicies(policies)
+	// Resolve each policy's network reach BEFORE any state root exists: a policy this host cannot
+	// resolve is refused here, with its reason, rather than served with no fence at all.
+	networks, err := resolvePolicyNetworks(bound, sourceCfg)
+	if err != nil {
+		return nil, err
+	}
 	store, err := session.Open(cfg.StateRoot)
 	if err != nil {
 		return nil, err
 	}
 	service := &Service{
 		store: store, stateRoot: cfg.StateRoot,
-		policies: cloneSessionPolicies(policies), sourceCfg: sourceCfg,
+		policies: bound, policyNetworks: networks, sourceCfg: sourceCfg,
 		rt: cfg.Runtime, executable: cfg.Executable, host: cfg.Host, runner: cfg.Runner,
 		reviewGate:          cfg.ReviewGate,
 		stopTimeout:         cfg.StopTimeout,
@@ -957,6 +977,40 @@ func fenceExpectedPolicyDigests(policy Policy, req CreateRemoteSessionRequest) e
 			Detail: fmt.Sprintf("policy %q no longer resolves to the expected authority digest; its repository, companions, environment, write mode, or accounts changed since the caller was authorized", policy.Name)}
 	}
 	return nil
+}
+
+// fenceExpectedNetworkFingerprint refuses a create whose caller pinned a network reach this host
+// no longer resolves to. It resolves FRESH — the published value is what the daemon advertised at
+// startup, and the whole point is to catch an approval edited since then — and it writes nothing
+// doing so. Like the digest fence it runs at intent capture, so the refusal precedes every side
+// effect: no journaled intent, no workspace, no session row.
+func (s *Service) fenceExpectedNetworkFingerprint(policy Policy, req CreateRemoteSessionRequest) error {
+	if req.ExpectedNetworkFingerprint == "" {
+		return nil // pinned nothing: admission still decides the reach, exactly as before.
+	}
+	network, err := s.resolvePolicyNetwork(policy)
+	if err != nil {
+		// A pin nobody can confirm is not a pin. The host's own authority is what failed, so this
+		// is the same unavailability a create would meet at admission — reported before the work.
+		return &session.Error{Code: session.CodeNetworkUnavailable,
+			Detail: fmt.Sprintf("policy %q network cannot be resolved on this host: %v", policy.Name, err)}
+	}
+	if req.ExpectedNetworkFingerprint == network.Fingerprint {
+		return nil
+	}
+	return &session.Error{Code: session.CodeNetworkFingerprintMismatch,
+		Detail: fmt.Sprintf(
+			"policy %q now resolves to network %s, not the fingerprint the caller was authorized against; this host's approval changed — run 'coop net approve' in %s to see it, then place again against the published fingerprint",
+			policy.Name, sessionNetworkReach(network), policy.Repository)}
+}
+
+// sessionNetworkReach names the reach in the refusal: an open or offline policy has no
+// fingerprint, and saying "" there would read as though the daemon had lost it.
+func sessionNetworkReach(network PolicyNetwork) string {
+	if network.Fingerprint == "" {
+		return string(network.Mode) + " with no captured rules"
+	}
+	return string(network.Mode) + " " + network.Fingerprint
 }
 
 // validSessionDigest is the shape every pinned digest takes: lowercase hex SHA-256.
@@ -1987,6 +2041,16 @@ func boundedSessionServiceError(err error) string {
 	return detail
 }
 
+// PolicyNetworks is what this daemon advertises for the policies it serves: each policy's mode and,
+// for a filtered one, the fingerprint a create may pin. It is a copy of the resolution taken at
+// load — a create resolves again and refuses a value this host no longer produces.
+func (s *Service) PolicyNetworks() map[string]PolicyNetwork {
+	if len(s.policyNetworks) == 0 {
+		return nil
+	}
+	return maps.Clone(s.policyNetworks)
+}
+
 func (s *Service) policy(name string) (Policy, error) {
 	if name == "" {
 		return Policy{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "policy name is required"}
@@ -2074,7 +2138,7 @@ func (s *Service) beginCreateOperation(
 	if err := session.ValidateResponderBinding(req.ResponderBinding); err != nil {
 		return session.Operation{}, err
 	}
-	for _, expected := range []string{req.ExpectedPolicyDigest, req.ExpectedAuthorityDigest} {
+	for _, expected := range []string{req.ExpectedPolicyDigest, req.ExpectedAuthorityDigest, req.ExpectedNetworkFingerprint} {
 		if expected != "" && !validSessionDigest(expected) {
 			return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "expected policy digests must be lowercase hex SHA-256"}
 		}
@@ -2160,6 +2224,9 @@ func (s *Service) captureCreateIntent(op session.Operation, req CreateRemoteSess
 		return sessionCreateIntent{}, err
 	}
 	if err := fenceExpectedPolicyDigests(policy, req); err != nil {
+		return sessionCreateIntent{}, err
+	}
+	if err := s.fenceExpectedNetworkFingerprint(policy, req); err != nil {
 		return sessionCreateIntent{}, err
 	}
 	sessionID := deterministicSessionID(op.ID)

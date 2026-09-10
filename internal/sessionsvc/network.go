@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"slices"
 	"time"
 
@@ -70,6 +71,73 @@ func (s *Service) admitSessionNetwork(policy Policy, workspace, forkName string,
 		return sessionNetworkBinding{Mode: mode}, nil
 	}
 	return sessionNetworkBinding{Mode: mode, Fingerprint: capture.Fingerprint, Qualification: capture.QualificationID}, nil
+}
+
+// PolicyNetwork is one policy's effective network reach on THIS host: the posture its sessions
+// run under, and — for a filtered policy — the owner-keyed fingerprint of the exact rules a create
+// would freeze. A caller cannot compute that fingerprint from the policy file: the project's
+// remembered approval, the provider core bundles and the trusted MCP hosts all feed it. So the
+// daemon publishes it and a placement pins the value it was authorized against.
+//
+// An open or offline policy has no fingerprint, because nothing is captured for one.
+type PolicyNetwork struct {
+	Mode        egress.Mode `json:"mode"`
+	Fingerprint string      `json:"fingerprint,omitempty"`
+}
+
+// ResolvePolicyNetwork compiles what this policy reaches without writing any host state: no
+// approval, no published snapshot, no owner key. The daemon calls it once per policy when it loads
+// them and again on a fenced create, so an approval edited on the host between those two moments
+// becomes an explicit refusal instead of a session running under rules nobody pinned.
+func ResolvePolicyNetwork(cfg *config.Config, policy Policy) (PolicyNetwork, error) {
+	if cfg == nil {
+		// No host configuration means no credentials, no runtime and no authority root to
+		// resolve against — the same answer admission gives.
+		if policy.Egress.configured() && policy.Egress.resolvedMode() != egress.Open {
+			return PolicyNetwork{}, errors.New("restricted networking requires host configuration")
+		}
+		return PolicyNetwork{Mode: egress.Open}, nil
+	}
+	// The session's own workspace, fork and companions do not exist yet, and none of them reach
+	// the compile: they describe what a launch MOUNTS, while the fingerprint is compiled from the
+	// project's approval, the policy's rules, the provider bundles and the shared MCP hosts. The
+	// policy's repository stands in for them, which is the project the approval belongs to anyway.
+	mode, fingerprint, err := box.ResolveSessionNetwork(cfg,
+		sessionNetworkAdmissionSpec(cfg, policy, policy.Repository, "", nil),
+		box.SessionNetworkAdmission{
+			Mode:               sessionPolicyEgressMode(policy),
+			Rules:              policy.Egress.Rules,
+			ExportDestinations: policy.Egress.ExportDestinations,
+			OmitMCP:            policy.OmitMCP,
+		})
+	if err != nil {
+		return PolicyNetwork{}, err
+	}
+	return PolicyNetwork{Mode: mode, Fingerprint: fingerprint}, nil
+}
+
+// resolvePolicyNetwork is the daemon's own resolution of one policy, fresh from host state.
+func (s *Service) resolvePolicyNetwork(policy Policy) (PolicyNetwork, error) {
+	if s.testResolveNetwork != nil {
+		return s.testResolveNetwork(policy)
+	}
+	return ResolvePolicyNetwork(s.sourceCfg, policy)
+}
+
+// resolvePolicyNetworks resolves every policy the daemon is about to serve. A policy whose network
+// cannot be resolved — no approval for its project, no host setup, a rule this release cannot
+// enforce — refuses the whole load with its own reason, exactly as an unparsable or credential-less
+// policy does: serving it unfenced would advertise a reach nobody could pin.
+func resolvePolicyNetworks(policies map[string]Policy, cfg *config.Config) (map[string]PolicyNetwork, error) {
+	networks := make(map[string]PolicyNetwork, len(policies))
+	for _, name := range slices.Sorted(maps.Keys(policies)) {
+		network, err := ResolvePolicyNetwork(cfg, policies[name])
+		if err != nil {
+			return nil, fmt.Errorf("policy %q: %w", name, err)
+		}
+		networks[name] = network
+	}
+	return networks, nil
 }
 
 // sessionPolicyEgressMode returns the operator's EXPLICIT posture, or "" when the policy file

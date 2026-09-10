@@ -11,6 +11,10 @@ import (
 
 type sessionCapabilities struct {
 	RepositoryFreshnessReceiptVersions []int `json:"repository_freshness_receipt_versions"`
+	// Policies is the daemon's published per-policy network reach. The connector does not consume
+	// it — a controller reads it from the API — but this decode is strict, so the field has to be
+	// named here or a daemon that publishes one would look like a different document entirely.
+	Policies map[string]json.RawMessage `json:"policies,omitempty"`
 }
 
 // LiveCapabilities adds implementation capabilities only after the exact local

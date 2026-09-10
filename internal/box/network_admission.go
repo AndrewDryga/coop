@@ -214,15 +214,8 @@ func checkSupportedRequests(input networkstate.Admission) error {
 // already put this launch's automatic dependencies on input, because only it
 // knows which configuration the box will actually mount.
 func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, store *networkstate.Store, canonicalProject string, input networkstate.Admission) (*CapturedEgress, error) {
-	bundles, err := NetworkProviderBundles(cfg, spec)
+	input, err := filteredNetworkSources(cfg, spec, input)
 	if err != nil {
-		return nil, err
-	}
-	input.Bundles = bundles
-	// Refuse an unsupported transport BEFORE any approval is read or written:
-	// a rule this runtime cannot enforce must fail the launch by name, not be
-	// remembered as authority and then silently dropped by the gateway.
-	if err := checkSupportedRequests(input); err != nil {
 		return nil, err
 	}
 	policy, err := store.Admit(canonicalProject, input)
@@ -232,26 +225,10 @@ func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, 
 	if policy.Mode != egress.Filtered {
 		return nil, errors.New("this project's egress changed while the box was starting — run it again")
 	}
-	ctx := spec.Ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	// Match the record's own clients before touching the runtime: a selection
-	// this host never set up should say so, not fail on a Docker inspection it
-	// never needed.
-	qualifications, err := store.Qualifications(ctx)
+	ctx := networkAdmissionContext(spec)
+	covered, err := coveringQualifications(ctx, store, policy)
 	if err != nil {
 		return nil, err
-	}
-	var covered []networkstate.Qualification
-	for _, qualification := range qualifications {
-		if qualification.RequireLaunch(policy) == nil {
-			covered = append(covered, qualification)
-		}
-	}
-	unqualified := errors.New("this host is not set up for filtered runs with this Docker and these agents — run 'coop net setup'")
-	if len(covered) == 0 {
-		return nil, unqualified
 	}
 	docker, err := runtime.InspectDocker(ctx, rt)
 	if err != nil {
@@ -265,5 +242,74 @@ func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, 
 		}
 		return &CapturedEgress{Store: store, Project: canonicalProject, Fingerprint: policy.Fingerprint, QualificationID: qualification.ID}, nil
 	}
-	return nil, unqualified
+	return nil, errUnqualifiedNetworkHost
+}
+
+// resolveFilteredNetwork is admitFilteredNetwork's non-publishing twin: the same sources, the
+// same authority, the same host setup requirement — compiled and returned instead of captured.
+// It stops before the runtime inspection, because which qualified image this Docker will run is a
+// launch's question, not a fence's.
+func resolveFilteredNetwork(cfg *config.Config, spec RunSpec, store *networkstate.Store, canonicalProject string, input networkstate.Admission) (egress.Snapshot, error) {
+	input, err := filteredNetworkSources(cfg, spec, input)
+	if err != nil {
+		return egress.Snapshot{}, err
+	}
+	policy, err := store.Resolve(canonicalProject, input)
+	if err != nil {
+		return egress.Snapshot{}, err
+	}
+	if policy.Mode != egress.Filtered {
+		return egress.Snapshot{}, errors.New("this project's egress resolves to a posture that captures no rules")
+	}
+	if _, err := coveringQualifications(networkAdmissionContext(spec), store, policy); err != nil {
+		return egress.Snapshot{}, err
+	}
+	return policy, nil
+}
+
+// filteredNetworkSources completes the inputs every filtered compile shares: the provider core
+// bundles this run's targets need, gated by the transports this release can actually enforce.
+//
+// Refuse an unsupported transport BEFORE any approval is read or written: a rule this runtime
+// cannot enforce must fail by name, not be remembered as authority and then silently dropped by
+// the gateway.
+func filteredNetworkSources(cfg *config.Config, spec RunSpec, input networkstate.Admission) (networkstate.Admission, error) {
+	bundles, err := NetworkProviderBundles(cfg, spec)
+	if err != nil {
+		return networkstate.Admission{}, err
+	}
+	input.Bundles = bundles
+	if err := checkSupportedRequests(input); err != nil {
+		return networkstate.Admission{}, err
+	}
+	return input, nil
+}
+
+var errUnqualifiedNetworkHost = errors.New("this host is not set up for filtered runs with this Docker and these agents — run 'coop net setup'")
+
+// coveringQualifications is the host's own setup records that cover this compiled policy. Match
+// the record's own clients before touching the runtime: a selection this host never set up should
+// say so, not fail on a Docker inspection it never needed.
+func coveringQualifications(ctx context.Context, store *networkstate.Store, policy egress.Snapshot) ([]networkstate.Qualification, error) {
+	qualifications, err := store.Qualifications(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var covered []networkstate.Qualification
+	for _, qualification := range qualifications {
+		if qualification.RequireLaunch(policy) == nil {
+			covered = append(covered, qualification)
+		}
+	}
+	if len(covered) == 0 {
+		return nil, errUnqualifiedNetworkHost
+	}
+	return covered, nil
+}
+
+func networkAdmissionContext(spec RunSpec) context.Context {
+	if spec.Ctx == nil {
+		return context.Background()
+	}
+	return spec.Ctx
 }

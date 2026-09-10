@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
@@ -105,7 +106,10 @@ func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 	}
 }
 
-func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersions(t *testing.T) {
+// The capabilities document is the caller's negotiation surface AND the published half of the
+// network fence: the freshness versions a client must match, plus each served policy's resolved
+// reach. An open policy reports its mode and no fingerprint — there is nothing captured to pin.
+func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersionsAndPolicyNetworks(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
 	response := sessionHTTPTestRequest(
@@ -119,8 +123,16 @@ func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersions(t *testing.
 		t.Fatal(err)
 	}
 	versions, ok := document["repository_freshness_receipt_versions"].([]any)
-	if !ok || len(document) != 1 || len(versions) != 1 || versions[0] != float64(2) {
+	if !ok || len(document) != 2 || len(versions) != 1 || versions[0] != float64(2) {
 		t.Fatalf("capabilities = %#v", document)
+	}
+	policies, ok := document["policies"].(map[string]any)
+	if !ok || len(policies) != 1 {
+		t.Fatalf("capabilities policies = %#v", document["policies"])
+	}
+	responder, ok := policies["responder"].(map[string]any)
+	if !ok || len(responder) != 1 || responder["mode"] != string(egress.Open) {
+		t.Fatalf("open policy network = %#v; want its mode and no fingerprint", policies["responder"])
 	}
 }
 

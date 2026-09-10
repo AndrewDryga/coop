@@ -531,13 +531,15 @@ func (s *Store) CheckRequests(project string, requests []egress.Rule, bundles []
 	if err != nil {
 		return nil, err
 	}
-	return s.checkRequests(approval, requests, bundles)
-}
-
-func (s *Store) checkRequests(approval *Approval, requests []egress.Rule, bundles []egress.Bundle) (*Approval, error) {
 	if err := s.checkBundles(bundles); err != nil {
 		return nil, err
 	}
+	return s.checkRequests(approval, requests, bundles)
+}
+
+// checkRequests proves the request fits the approval. The bundle content check is the CALLER's,
+// because pinning a first-seen bundle is a write and not every caller may perform one.
+func (s *Store) checkRequests(approval *Approval, requests []egress.Rule, bundles []egress.Bundle) (*Approval, error) {
 	rules, err := checkRequestEnvelope(approval, requests)
 	if err != nil {
 		return nil, err
@@ -595,6 +597,20 @@ func featureApprovals(rules []egress.Rule, bundles []egress.Bundle) ([]FeatureAp
 }
 
 func (s *Store) capture(project, id string, mode egress.Mode, requests []egress.Rule, operator []egress.Input, bundles []egress.Bundle, exportDestinations bool) (egress.Snapshot, error) {
+	snapshot, err := s.compile(project, id, mode, requests, operator, bundles, exportDestinations)
+	if err != nil {
+		return egress.Snapshot{}, err
+	}
+	if err := s.saveSnapshot(snapshot); err != nil {
+		return egress.Snapshot{}, err
+	}
+	return snapshot, nil
+}
+
+// compile is the authority itself and touches nothing on disk. Both a capture
+// and a non-publishing Resolve end here, so the fingerprint one publishes is the
+// fingerprint the other reports.
+func (s *Store) compile(project, id string, mode egress.Mode, requests []egress.Rule, operator []egress.Input, bundles []egress.Bundle, exportDestinations bool) (egress.Snapshot, error) {
 	if err := s.authorityAvailable(); err != nil {
 		return egress.Snapshot{}, err
 	}
@@ -606,14 +622,7 @@ func (s *Store) capture(project, id string, mode egress.Mode, requests []egress.
 	if len(requests) != 0 {
 		inputs = append(inputs, egress.Input{Rules: requests, Origin: egress.Origin{Kind: "project", Name: id}})
 	}
-	snapshot, err := egress.Compile(id, mode, inputs, bundles, exportDestinations, s.key)
-	if err != nil {
-		return egress.Snapshot{}, err
-	}
-	if err := s.saveSnapshot(snapshot); err != nil {
-		return egress.Snapshot{}, err
-	}
-	return snapshot, nil
+	return egress.Compile(id, mode, inputs, bundles, exportDestinations, s.key)
 }
 
 func (s *Store) saveSnapshot(snapshot egress.Snapshot) error {

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -1034,7 +1035,7 @@ func TestCreateSessionForwardsThePinnedPolicyDigests(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := createCommand(now.Add(time.Minute))
-	command.Payload = json.RawMessage(`{"external_ref":"episode-1","policy":"work-read-only","policy_digest":"` + repeatedDigest("b") + `","authority_digest":"` + repeatedDigest("c") + `"}`)
+	command.Payload = json.RawMessage(`{"external_ref":"episode-1","policy":"work-read-only","policy_digest":"` + repeatedDigest("b") + `","authority_digest":"` + repeatedDigest("c") + `","network_fingerprint":"` + repeatedDigest("d") + `"}`)
 	if _, err := executor.Execute(context.Background(), command); err != nil {
 		t.Fatal(err)
 	}
@@ -1045,10 +1046,11 @@ func TestCreateSessionForwardsThePinnedPolicyDigests(t *testing.T) {
 	if err := json.Unmarshal(api.requests[0].Body, &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["expected_policy_digest"] != repeatedDigest("b") || body["expected_authority_digest"] != repeatedDigest("c") {
-		t.Fatalf("create body = %v; want both pinned digests forwarded", body)
+	if body["expected_policy_digest"] != repeatedDigest("b") || body["expected_authority_digest"] != repeatedDigest("c") ||
+		body["expected_network_fingerprint"] != repeatedDigest("d") {
+		t.Fatalf("create body = %v; want both pinned digests and the network fingerprint forwarded", body)
 	}
-	// Without an authority digest in the command, only the policy digest is pinned.
+	// Without an authority digest or a network fingerprint, only the policy digest is pinned.
 	bareAPI := &fakeAPI{response: api.response}
 	bareExecutor, err := NewExecutor(ExecutorConfig{
 		API: bareAPI, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
@@ -1063,7 +1065,39 @@ func TestCreateSessionForwardsThePinnedPolicyDigests(t *testing.T) {
 	if err := json.Unmarshal(bareAPI.requests[0].Body, &body); err != nil {
 		t.Fatal(err)
 	}
-	if _, present := body["expected_authority_digest"]; present || body["expected_policy_digest"] != repeatedDigest("b") {
-		t.Fatalf("create body without an authority digest = %v; want only the policy digest pinned", body)
+	_, authorityPinned := body["expected_authority_digest"]
+	_, networkPinned := body["expected_network_fingerprint"]
+	if authorityPinned || networkPinned || body["expected_policy_digest"] != repeatedDigest("b") {
+		t.Fatalf("create body without the optional pins = %v; want only the policy digest pinned", body)
+	}
+	// A fingerprint that is not a digest is not this contract: refuse the command instead of
+	// letting the daemon decide what a malformed pin means.
+	malformed := createCommand(now.Add(time.Minute))
+	malformed.Payload = json.RawMessage(`{"external_ref":"episode-1","policy":"work-read-only","policy_digest":"` + repeatedDigest("b") + `","network_fingerprint":"nope"}`)
+	if _, err := prepareRequest(context.Background(), malformed, nil); err == nil {
+		t.Fatal("a malformed network fingerprint was forwarded")
+	}
+}
+
+// The daemon's typed refusal reaches the controller as a definite failure carrying that code, so
+// a placement pinned to a reach this host no longer resolves to is not retried forever.
+func TestCreateSessionReportsANetworkFingerprintMismatch(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	api := &fakeAPI{err: &APIError{
+		Status: http.StatusConflict, Code: "network_fingerprint_mismatch",
+		Detail: "policy \"work-read-only\" now resolves to network filtered abc; run 'coop net approve'",
+	}}
+	executor, err := NewExecutor(ExecutorConfig{
+		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := createCommand(now.Add(time.Minute))
+	command.Payload = json.RawMessage(`{"external_ref":"episode-1","policy":"work-read-only","policy_digest":"` + repeatedDigest("b") + `","network_fingerprint":"` + repeatedDigest("d") + `"}`)
+	result, err := executor.Execute(context.Background(), command)
+	if err != nil || result.State != "failed" || !strings.Contains(string(result.Error), "network_fingerprint_mismatch") ||
+		!strings.Contains(string(result.Error), "coop net approve") {
+		t.Fatalf("stale network pin = %+v, %v; want a definite network_fingerprint_mismatch failure", result, err)
 	}
 }

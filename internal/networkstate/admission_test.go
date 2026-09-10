@@ -1,9 +1,13 @@
 package networkstate
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -305,5 +309,76 @@ func TestBundlePublicationRetryConfirmsDurability(t *testing.T) {
 	s.syncDir = nil
 	if err := s.checkBundles(bundles); err != nil {
 		t.Fatal("bundle publication failed after storage recovered", err)
+	}
+}
+
+// storeDigest is every byte of the owner-private tree, plus each entry's name and mode: the
+// evidence a resolve wrote nothing at all — not an approval, not a snapshot, not a key.
+func storeDigest(t *testing.T, path string) string {
+	t.Helper()
+	sum := sha256.New()
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(path, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(sum, "%s\x00%o\x00%d\x00", entry.Name(), info.Mode().Perm(), len(data))
+		sum.Write(data)
+	}
+	return hex.EncodeToString(sum.Sum(nil))
+}
+
+// Resolve answers what Admit would authorize and writes nothing doing it. The two share one input
+// assembly, so the fingerprint a host publishes before a launch is the fingerprint that launch
+// freezes — and the published one costs no approval, no snapshot and no owner key.
+func TestResolveCompilesTheAdmittedAuthorityWithoutPublishingIt(t *testing.T) {
+	s, project := openStore(t), t.TempDir()
+	requests := []egress.Rule{rule("example.com")}
+	if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
+		t.Fatal(err)
+	}
+	bundle := egress.Bundle{Provider: "model", Client: egress.ClientCLI, Version: "1", Backend: "direct", AuthMode: "key", Core: []egress.Rule{rule("api.example.net")}}
+	input := Admission{Requests: requests, Bundles: []egress.Bundle{bundle}}
+
+	before := storeDigest(t, s.Path())
+	resolved, err := s.Resolve(project, input)
+	if err != nil || resolved.Mode != egress.Filtered || !resolved.Domain("example.com", 443).Allowed {
+		t.Fatalf("resolve = %+v, %v; want the filtered authority Admit would compile", resolved, err)
+	}
+	if after := storeDigest(t, s.Path()); after != before {
+		t.Fatal("resolving the fingerprint wrote host state")
+	}
+	if _, err := s.LoadSnapshot(project, resolved.Fingerprint); err == nil {
+		t.Fatal("resolve published its snapshot; only a capture may")
+	}
+
+	admitted, err := s.Admit(project, input)
+	if err != nil || admitted.Fingerprint != resolved.Fingerprint {
+		t.Fatalf("admit = %q, %v; want the resolved fingerprint %q", admitted.Fingerprint, err, resolved.Fingerprint)
+	}
+	if _, err := s.LoadSnapshot(project, admitted.Fingerprint); err != nil {
+		t.Fatalf("admitted snapshot is not retrievable: %v", err)
+	}
+	if storeDigest(t, s.Path()) == before {
+		t.Fatal("admit published nothing; the two paths are indistinguishable")
+	}
+
+	// A request outside the approved envelope resolves to nothing, and refusing costs nothing:
+	// resolving must never be the act that widens or remembers anything.
+	refused := storeDigest(t, s.Path())
+	widened := Admission{Requests: append(slices.Clone(requests), rule("elsewhere.example")), Bundles: input.Bundles}
+	if got, err := s.Resolve(project, widened); err == nil || got.Fingerprint != "" {
+		t.Fatalf("unapproved resolve = %+v, %v; want a refusal with no authority", got, err)
+	}
+	if storeDigest(t, s.Path()) != refused {
+		t.Fatal("a refused resolve wrote host state")
 	}
 }

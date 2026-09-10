@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
@@ -260,6 +261,72 @@ func TestSessionPoliciesPrintsDigestsFromTheTrustedPolicyFile(t *testing.T) {
 		if got, want := result.PolicyAuthorityDigests[name], sessionsvc.ResolvedPolicyAuthorityDigest(policy); got != want {
 			t.Errorf("policy %q authority digest = %q, want %q", name, got, want)
 		}
+		// The reach is RESOLVED against this host, exactly as the daemon publishes it. An open
+		// policy reports its mode and no fingerprint: there is nothing captured for one to pin.
+		network := result.PolicyNetworks[name]
+		if network.Mode != string(egress.Open) || network.Fingerprint != "" || network.Unresolved != "" {
+			t.Errorf("policy %q network = %+v; want the resolved open mode and no fingerprint", name, network)
+		}
+	}
+}
+
+// A policy whose network this host cannot resolve still lists — with the reason in place of the
+// fingerprint. The daemon refuses to SERVE it; this read is where the operator sees why.
+func TestSessionPolicyNetworkReportsWhatItCannotResolve(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	real, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configRoot := t.TempDir()
+	profile := filepath.Join(configRoot, "codex", "profiles", "work")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profile, "auth.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONFIG_DIR", configRoot)
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", conf)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "version: 1\npolicies:\n  filtered:\n    repository: " + real + "\n" +
+		"    target: codex@work\n    max_turns: 5\n    max_queued_turns: 2\n" +
+		"    max_queued_bytes: 2048\n    max_patch_bytes: 4096\n    turn_timeout: 30m\n" +
+		"    egress:\n      mode: filtered\n      rules:\n        - to: {domain: example.com}\n" +
+		"          protocol: tls\n          ports: [443]\n"
+	policyRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyPath := filepath.Join(policyRoot, "session-policies.yaml")
+	if err := os.WriteFile(policyPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policies, err := sessionsvc.LoadPolicies(policyPath, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	network := sessionPolicyNetworkOf(cfg, policies["filtered"])
+	if network.Fingerprint != "" || !strings.Contains(network.Unresolved, "coop net setup") {
+		t.Fatalf("unresolvable policy network = %+v; want no fingerprint and the reason", network)
+	}
+	var out bytes.Buffer
+	renderSessionPolicies(&out, ui.Palette{}, sessionPoliciesResult{
+		PolicyFile: policyPath, PolicyDigests: map[string]string{"filtered": "aaaa"},
+		PolicyAuthorityDigests: map[string]string{"filtered": "bbbb"},
+		PolicyNetworks:         map[string]sessionPolicyNetwork{"filtered": network},
+	}, []string{"filtered"})
+	if !strings.Contains(out.String(), "Fingerprint:       unresolved on this host — ") {
+		t.Fatalf("policies output hides the unresolved reach:\n%s", out.String())
 	}
 }
 
@@ -271,12 +338,16 @@ func TestRenderSessionPoliciesUsesLabeledBlocks(t *testing.T) {
 		PolicyFile:             "/etc/coop/session-policies.yaml",
 		PolicyDigests:          map[string]string{"observe": "aaaa", "engineer": "bbbb"},
 		PolicyAuthorityDigests: map[string]string{"observe": "cccc", "engineer": "dddd"},
+		PolicyNetworks: map[string]sessionPolicyNetwork{
+			"engineer": {Mode: "filtered", Fingerprint: "eeee"},
+			"observe":  {Mode: "open"},
+		},
 	}, []string{"engineer", "observe"})
 	got := out.String()
 	for _, want := range []string{
 		"Policy file: /etc/coop/session-policies.yaml",
-		"\nengineer\n  Policy digest:     bbbb\n  Authority digest:  dddd\n",
-		"\nobserve\n  Policy digest:     aaaa\n  Authority digest:  cccc\n",
+		"\nengineer\n  Policy digest:     bbbb\n  Authority digest:  dddd\n  Network:           filtered\n  Fingerprint:       eeee\n",
+		"\nobserve\n  Policy digest:     aaaa\n  Authority digest:  cccc\n  Network:           open\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("policies output lacks %q:\n%s", want, got)

@@ -200,10 +200,14 @@ const (
 	// CodeNetworkUnavailable means the host's own network authority could not answer: no
 	// approval for this project yet, no completed `coop net setup`, or a policy that disagrees
 	// with the remembered posture. The caller cannot fix any of those — an operator must.
-	CodeNetworkUnavailable   ErrorCode = "network_unavailable"
-	CodeOutputContractFailed ErrorCode = "output_contract_failed"
-	CodeSessionCleanupError  ErrorCode = "session_cleanup_error"
-	CodeInternal             ErrorCode = "internal_error"
+	CodeNetworkUnavailable ErrorCode = "network_unavailable"
+	// CodeNetworkFingerprintMismatch means the create pinned a network reach this host no longer
+	// resolves to: an approval was edited between the placement and the create. Nothing was
+	// journaled — the caller re-reads the daemon's published fingerprint and places again.
+	CodeNetworkFingerprintMismatch ErrorCode = "network_fingerprint_mismatch"
+	CodeOutputContractFailed       ErrorCode = "output_contract_failed"
+	CodeSessionCleanupError        ErrorCode = "session_cleanup_error"
+	CodeInternal                   ErrorCode = "internal_error"
 )
 
 // PublicErrorDetail removes implementation details that must not cross the

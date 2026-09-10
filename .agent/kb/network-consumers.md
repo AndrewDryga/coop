@@ -2,7 +2,7 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture, and which surface reads which evidence
 subsystem: networking
-sources: [internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/session/schema.go, internal/workerproto/protocol.go]
+sources: [internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/session/schema.go, internal/workerproto/protocol.go]
 updated: 2026-09-10
 ---
 
@@ -28,6 +28,21 @@ named peers (`loop/network.go:29`): a provider that rotates in mid-drain must al
 frozen policy, or it would meet a denial instead of a refusal at launch. Refusals accumulate during
 an iteration and print between iterations, never over the live bar, plus one ranked closing summary
 (`loop/network.go:91`, `:158`).
+
+A **session policy** is the one consumer that publishes its reach BEFORE anyone asks for a launch.
+The daemon resolves each policy's effective fingerprint when it loads them — the same inputs
+`Admit` compiles, through the same assembly (`box/network_session.go:159` builds the plan;
+`networkstate/admission.go:152` builds the authority), but through `Store.Resolve` instead of
+`Store.Admit`, so nothing is published: no approval, no snapshot, not even an owner key
+(`OpenExisting`, never `Open`, and a first-seen provider bundle is matched, not pinned). A policy it
+cannot resolve refuses the whole load by name, exactly as an unparsable one does
+(`sessionsvc/network.go:131`) — serving it would advertise a reach nobody could pin. The value
+reaches callers through `GET /v1/capabilities` and `coop sessions policies`, and a create pins it
+as `expected_network_fingerprint`: the fence resolves FRESH and refuses
+`network_fingerprint_mismatch` (409) beside the existing digest fence, before any intent is
+journaled (`sessionsvc/service.go:987`). The published value is the daemon's LOAD-time resolution,
+so after an approval edit it is stale until a restart; the refusal names the current one, and
+`coop sessions policies` (a fresh process) always resolves fresh.
 
 **Remote sessions** freeze the posture at create. The session row stores mode, owner-keyed
 fingerprint and qualification id (schema 21, `session/schema.go:245`); every later run — cold turn,
@@ -76,6 +91,10 @@ at all, and the daemon owns the destination projection every one of them applies
 out of a run's bounded ring reports `event_not_retained` — which is not proof the id ever existed.
 
 ## Changelog
+- 2026-09-10 — a session policy's RESOLVED network fingerprint is published at load
+  (`/v1/capabilities`, `coop sessions policies`) and pinned by a create through
+  `expected_network_fingerprint`; `networkstate.Store.Resolve` compiles what `Admit` would without
+  publishing, and a policy that cannot be resolved is refused instead of served unfenced.
 - 2026-09-10 — S7c: `coop acp --egress filtered` admits in the supervisor and hands each child a
   reference; incomplete session evidence fails the turn; `/network/connections` and
   `/network/explanations/{event}` (plus their worker commands) close the remote parity gap;

@@ -2,7 +2,12 @@ package sessionsvc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +16,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
@@ -668,5 +674,170 @@ func TestSessionNetworkConnectionAndExplanationRoutes(t *testing.T) {
 	response = sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/network/explanations", "", "", "")
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("explanations index status=%d, want 404", response.Code)
+	}
+}
+
+// hostStateDigest is every path under a host state root, with each file's bytes: the evidence that
+// resolving a policy's network reach wrote nothing — no owner key, no approval, no snapshot.
+func hostStateDigest(t *testing.T, root string) string {
+	t.Helper()
+	sum := sha256.New()
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(sum, "%s\x00%v\x00", rel, entry.IsDir())
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		sum.Write(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hex.EncodeToString(sum.Sum(nil))
+}
+
+// The daemon resolves every policy's network reach when it loads them, and writes nothing doing
+// it. A filtered policy this host cannot resolve — nothing is approved and no setup record exists
+// — refuses the load by name instead of being served with no fence at all, and the refusal itself
+// creates no authority: resolving is a compile, never an approval.
+func TestPolicyNetworksResolveAtLoadWithoutWritingHostState(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	repo := realGitRepoFixture(t)
+	runGitTest(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	policies := testSessionPolicies(repo)
+	filtered := policies["responder"]
+	filtered.Name = "filtered"
+	filtered.Egress = EgressPolicy{Mode: egress.Filtered, Rules: []egress.Rule{
+		{To: egress.Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{443}},
+	}}
+	policies["filtered"] = filtered
+
+	before := hostStateDigest(t, stateHome)
+	_, err := NewService(Config{StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies})
+	if err == nil || !strings.Contains(err.Error(), `policy "filtered"`) ||
+		!strings.Contains(err.Error(), "coop net setup") {
+		t.Fatalf("load with an unresolvable policy = %v; want it refused by name, with the fix", err)
+	}
+	if after := hostStateDigest(t, stateHome); after != before {
+		t.Fatal("refusing to serve a policy wrote host network state")
+	}
+
+	delete(policies, "filtered")
+	service, err := NewService(Config{StateRoot: filepath.Join(t.TempDir(), "state"), Policies: policies})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	networks := service.PolicyNetworks()
+	if len(networks) != 1 || networks["responder"].Mode != egress.Open || networks["responder"].Fingerprint != "" {
+		t.Fatalf("published policy networks = %+v; want the open mode and no fingerprint", networks)
+	}
+	if after := hostStateDigest(t, stateHome); after != before {
+		t.Fatal("resolving the served policies wrote host network state")
+	}
+}
+
+// A create may pin the network reach it was authorized against. The daemon resolves FRESH — an
+// approval edited since it published the value is exactly what this catches — and refuses a
+// mismatch with its typed code before any intent is journaled, any workspace exists, or a session row is written.
+func TestCreateRemoteSessionFencesTheResolvedNetworkFingerprint(t *testing.T) {
+	current, stale := strings.Repeat("c", 64), strings.Repeat("d", 64)
+	newFencedService := func(t *testing.T, resolve func(Policy) (PolicyNetwork, error)) (*Service, string) {
+		t.Helper()
+		service, repo := newHTTPTestSessionService(t)
+		t.Cleanup(func() { _ = service.Stop() })
+		service.testResolveNetwork = resolve
+		service.testAdmitNetwork = func(Policy, string, string) (sessionNetworkBinding, error) {
+			return sessionNetworkBinding{Mode: egress.Filtered, Fingerprint: current, Qualification: strings.Repeat("b", 64)}, nil
+		}
+		return service, repo
+	}
+	resolved := func(Policy) (PolicyNetwork, error) {
+		return PolicyNetwork{Mode: egress.Filtered, Fingerprint: current}, nil
+	}
+
+	for name, tc := range map[string]struct {
+		resolve func(Policy) (PolicyNetwork, error)
+		pin     string
+		code    session.ErrorCode
+	}{
+		"matching pin":  {resolve: resolved, pin: current},
+		"absent pin":    {resolve: resolved},
+		"stale pin":     {resolve: resolved, pin: stale, code: session.CodeNetworkFingerprintMismatch},
+		"malformed pin": {resolve: resolved, pin: "not-a-fingerprint", code: session.CodeInvalidRequest},
+		"unresolvable": {
+			resolve: func(Policy) (PolicyNetwork, error) { return PolicyNetwork{}, errNetworkFixture },
+			pin:     current, code: session.CodeNetworkUnavailable,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service, repo := newFencedService(t, tc.resolve)
+			key := "network-fence-" + strings.ReplaceAll(name, " ", "-")
+			req := CreateRemoteSessionRequest{
+				Policy: "responder", Task: "fence the reach", ExpectedNetworkFingerprint: tc.pin,
+			}
+			ctx := context.Background()
+			sess, err := service.CreateRemoteSession(ctx, key, req)
+			if tc.code == "" {
+				if err != nil || sess.ID == "" || sess.NetworkFingerprint != current {
+					t.Fatalf("create = %+v, %v; want a session bound to the resolved reach", sess, err)
+				}
+				return
+			}
+			if session.CodeOf(err) != tc.code {
+				t.Fatalf("create error = %v; want code %s", err, tc.code)
+			}
+			if tc.code == session.CodeNetworkFingerprintMismatch && !strings.Contains(err.Error(), "coop net approve") {
+				t.Fatalf("refusal = %v; want it to name what changed on the host", err)
+			}
+			if tc.code == session.CodeInvalidRequest {
+				return // rejected before an operation was ever reserved
+			}
+			// Nothing was journaled: the operation is a failed receipt with no resource, the
+			// session it would have been does not exist, and neither does its workspace.
+			op, opErr := service.GetOperation(ctx, key)
+			if opErr != nil || op.State != session.OperationFailed || op.ResourceID != "" || op.ErrorCode != tc.code {
+				t.Fatalf("refused create left operation %+v, %v; want a failed receipt with no session", op, opErr)
+			}
+			if _, err := service.store.GetSession(ctx, deterministicSessionID(op.ID)); !errors.Is(err, session.ErrSessionNotFound) {
+				t.Fatalf("refused create left a session: %v", err)
+			}
+			if _, err := os.Lstat(forkspace.Workspace(repo, deterministicForkName(op.ID))); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("refused create left a workspace: %v", err)
+			}
+			// Asynchronous admission refuses just the same, before anything is scheduled.
+			if _, err := service.CreateRemoteSessionAsync(ctx, key+"-async", req); session.CodeOf(err) != tc.code {
+				t.Fatalf("async create error = %v; want code %s", err, tc.code)
+			}
+		})
+	}
+}
+
+// The refusal reaches an API caller as a 409 with the typed code, which is what lets a fleet
+// worker report a definite failure instead of retrying a placement this host will never accept.
+func TestNetworkFingerprintMismatchIsAConflictOverHTTP(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	service.testResolveNetwork = func(Policy) (PolicyNetwork, error) {
+		return PolicyNetwork{Mode: egress.Filtered, Fingerprint: strings.Repeat("c", 64)}, nil
+	}
+	body := `{"policy":"responder","task":"fence","expected_network_fingerprint":"` + strings.Repeat("d", 64) + `"}`
+	response := sessionHTTPTestRequest(t, NewHTTPHandler(service), http.MethodPost, "/v1/sessions", body,
+		"network-fence-http", "application/json")
+	if response.Code != http.StatusConflict ||
+		!strings.Contains(response.Body.String(), `"code":"network_fingerprint_mismatch"`) {
+		t.Fatalf("stale pin over HTTP = %d %s", response.Code, response.Body.String())
 	}
 }

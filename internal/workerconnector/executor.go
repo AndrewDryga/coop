@@ -169,11 +169,14 @@ func (e *Executor) complete(entry journalEntry, result workerproto.CommandResult
 }
 
 type createSessionPayload struct {
-	ExternalRef      string            `json:"external_ref"`
-	Policy           string            `json:"policy"`
-	PolicyDigest     string            `json:"policy_digest"`
-	AuthorityDigest  string            `json:"authority_digest,omitempty"`
-	ResponderBinding *responderBinding `json:"responder_binding,omitempty"`
+	ExternalRef  string `json:"external_ref"`
+	Policy       string `json:"policy"`
+	PolicyDigest string `json:"policy_digest"`
+	// AuthorityDigest and NetworkFingerprint are the two authority pins a placement may carry:
+	// the policy's model-independent authority, and the network reach the daemon published for it.
+	AuthorityDigest    string            `json:"authority_digest,omitempty"`
+	NetworkFingerprint string            `json:"network_fingerprint,omitempty"`
+	ResponderBinding   *responderBinding `json:"responder_binding,omitempty"`
 }
 
 type responderBinding struct {
@@ -325,18 +328,24 @@ func prepareRequest(ctx context.Context, command workerproto.Command, artifacts 
 			return Request{}, err
 		}
 		if !reference(payload.ExternalRef, 1024) || !reference(payload.Policy, 1024) || !digest(payload.PolicyDigest) ||
-			(payload.AuthorityDigest != "" && !digest(payload.AuthorityDigest)) {
+			(payload.AuthorityDigest != "" && !digest(payload.AuthorityDigest)) ||
+			(payload.NetworkFingerprint != "" && !digest(payload.NetworkFingerprint)) {
 			return Request{}, errors.New("create_session payload identity is invalid")
 		}
 		// The digests the controller pinned this command to travel with the create, so the daemon
 		// refuses (before any workspace exists) when its same-name policy has changed since this
 		// worker was authorized — a stale hello or a later session response can never vouch for it.
+		// The network fingerprint pins the same way for what the policy TEXT cannot express: the
+		// reach this host's approval resolves it to, which an operator can edit between the two.
 		bodyDocument := map[string]any{
 			"policy": payload.Policy, "task": payload.ExternalRef,
 			"expected_policy_digest": payload.PolicyDigest,
 		}
 		if payload.AuthorityDigest != "" {
 			bodyDocument["expected_authority_digest"] = payload.AuthorityDigest
+		}
+		if payload.NetworkFingerprint != "" {
+			bodyDocument["expected_network_fingerprint"] = payload.NetworkFingerprint
 		}
 		if payload.ResponderBinding != nil {
 			if err := validateResponderBinding(*payload.ResponderBinding); err != nil {

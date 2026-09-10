@@ -226,6 +226,24 @@ workspace exists, so a daemon restarted with a changed same-name policy cannot r
 was authorized against the old one. A fleet worker forwards the digests its command was pinned to;
 a direct client that pins nothing is unchanged.
 
+Neither digest covers the network reach that policy text RESOLVES to on the serving host: the
+project's remembered approval, the provider core bundles and the trusted MCP hosts all feed it, so
+two daemons with identical policy files and different approvals advertise the same authority and
+grant different access. The daemon therefore resolves each policy's effective network fingerprint
+when it loads its policies and publishes it in `GET /v1/capabilities` and `coop sessions policies`.
+A policy whose network it cannot resolve — nothing approved for its project, no completed `coop net
+setup`, a rule this release cannot enforce — is refused at load with its reason rather than served
+unfenced. Resolving writes nothing: no approval, no published snapshot, no owner key.
+
+A create may pin that value as `expected_network_fingerprint`. The daemon resolves the policy again
+— freshly, because an approval edited since it published the value is exactly what this catches —
+and refuses with `network_fingerprint_mismatch` (409) before any intent is journaled or a workspace
+exists. The refusal names the fingerprint the policy resolves to now and `coop net approve` as the
+thing that changed on the host. An open or offline policy publishes its mode and no fingerprint,
+so pinning one for such a policy is itself a mismatch. The published value is the daemon's
+load-time resolution; the current one is always in `coop sessions policies` and in the refusal
+itself.
+
 On session creation Coop resolves all configured repositories concurrently. A repository with
 `remote` and `branch` is pinned to that remote branch's exact commit; otherwise Coop preserves the
 legacy local-`HEAD` behavior. Remote refresh imports only the immutable commit object and does not
@@ -467,10 +485,15 @@ host command, or return a host workspace path.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after controller startup |
-| `GET` | `/v1/capabilities` | `{"repository_freshness_receipt_versions":[2]}` for caller-side protocol negotiation |
+| `GET` | `/v1/capabilities` | `{"repository_freshness_receipt_versions":[2],"policies":{"<name>":{"mode":"filtered","fingerprint":"<64 hex>"}}}` for caller-side protocol negotiation and network placement |
+
+The `policies` map is each served policy's network reach as this daemon resolved it against this
+host; an open or offline policy reports its mode with no fingerprint. It is published because a
+caller cannot compute it — host approval feeds it — and a create pins it as
+`expected_network_fingerprint`.
 
 The outbound worker connector reports `repository-freshness` capability version `2` only after the
-session daemon on its configured Unix socket returns this exact document. It removes any configured
+session daemon on its configured Unix socket returns the freshness versions in this document. It removes any configured
 claim and drops the advertised capability again if live proof is unavailable. Responder therefore
 negotiates the exact worker and daemon currently serving a placed session during rolling upgrades.
 
@@ -504,7 +527,7 @@ operation-plus-session response.
 
 | Method | Path | Body/query |
 | --- | --- | --- |
-| `POST` | `/v1/sessions` | `policy`, `task`, optional `pull_request.number` + `pull_request.head_commit`, optional `expected_policy_digest` / `expected_authority_digest` |
+| `POST` | `/v1/sessions` | `policy`, `task`, optional `pull_request.number` + `pull_request.head_commit`, optional `expected_policy_digest` / `expected_authority_digest` / `expected_network_fingerprint` |
 | `GET` | `/v1/sessions?limit=100` | `limit` is `1..1000` |
 | `GET` | `/v1/sessions/{session_id}` | none |
 | `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; policy must enable warm execution |
@@ -888,14 +911,21 @@ Common status mapping:
 | --- | --- |
 | `400` | invalid or over-bounds request |
 | `404` | session, turn, or operation not found |
-| `409` | idempotency, operation fence, revision, state, queue, budget, resume, uncertainty, or discard conflict |
+| `409` | idempotency, operation fence, revision, state, queue, budget, resume, uncertainty, discard, policy digest, or network fingerprint conflict |
 | `413` | ordinary request body exceeds 128 KiB, or turn submission exceeds 12 MiB |
 | `500` | internal failure; host paths and raw internal errors are suppressed |
 | `503` | readiness is not ready, or repository/runtime/network authority is temporarily unavailable |
 
 `network_unavailable` is a `503` an operator has to clear, not a retryable one: the host has no
 approval for the project, no completed `coop net setup`, or the named policy disagrees with the
-project's remembered posture. Creation refuses rather than falling back to an open session.
+project's remembered posture. Creation refuses rather than falling back to an open session. A
+create that pinned `expected_network_fingerprint` reports it for the same reason: a pin nobody can
+confirm is not a pin.
+
+`network_fingerprint_mismatch` is a `409` with the same fix: the policy still resolves, but to a
+different reach than the caller was authorized against, because an approval on this host changed.
+Nothing was journaled, so the caller re-reads the fingerprint (from the refusal, or from
+`coop sessions policies`) and places again.
 
 Treat `operation_uncertain` and `turn.interrupted` as reconciliation states. Never retry a mutation
 under a new key merely because its result is unknown.

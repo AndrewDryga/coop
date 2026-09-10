@@ -291,6 +291,10 @@ type sessionReadyDTO struct {
 
 type sessionCapabilitiesDTO struct {
 	RepositoryFreshnessReceiptVersions []int `json:"repository_freshness_receipt_versions"`
+	// Policies is each served policy's network reach as this daemon resolved it: the mode, and for
+	// a filtered policy the fingerprint a create may pin. It is the published half of the network
+	// fence — a caller cannot compute it, because host approval feeds it.
+	Policies map[string]PolicyNetwork `json:"policies,omitempty"`
 }
 
 type sessionHTTPErrorBody struct {
@@ -349,6 +353,7 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeSessionJSON(w, http.StatusOK, sessionCapabilitiesDTO{
 			RepositoryFreshnessReceiptVersions: []int{2},
+			Policies:                           h.service.PolicyNetworks(),
 		})
 		return
 	}
@@ -752,12 +757,13 @@ func (h *sessionHTTPHandler) createSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		Policy                  string                    `json:"policy"`
-		Task                    string                    `json:"task"`
-		PullRequest             *RemotePullRequestBinding `json:"pull_request,omitempty"`
-		ResponderBinding        *session.ResponderBinding `json:"responder_binding,omitempty"`
-		ExpectedPolicyDigest    string                    `json:"expected_policy_digest,omitempty"`
-		ExpectedAuthorityDigest string                    `json:"expected_authority_digest,omitempty"`
+		Policy                     string                    `json:"policy"`
+		Task                       string                    `json:"task"`
+		PullRequest                *RemotePullRequestBinding `json:"pull_request,omitempty"`
+		ResponderBinding           *session.ResponderBinding `json:"responder_binding,omitempty"`
+		ExpectedPolicyDigest       string                    `json:"expected_policy_digest,omitempty"`
+		ExpectedAuthorityDigest    string                    `json:"expected_authority_digest,omitempty"`
+		ExpectedNetworkFingerprint string                    `json:"expected_network_fingerprint,omitempty"`
 	}
 	if !decodeSessionJSON(w, r, &body) {
 		return
@@ -766,6 +772,7 @@ func (h *sessionHTTPHandler) createSession(w http.ResponseWriter, r *http.Reques
 		Policy: body.Policy, Task: body.Task, PullRequest: body.PullRequest,
 		ResponderBinding:     body.ResponderBinding,
 		ExpectedPolicyDigest: body.ExpectedPolicyDigest, ExpectedAuthorityDigest: body.ExpectedAuthorityDigest,
+		ExpectedNetworkFingerprint: body.ExpectedNetworkFingerprint,
 	}
 	if sessionPreferAsync(r) {
 		op, err := h.service.CreateRemoteSessionAsync(
@@ -1683,7 +1690,7 @@ func sessionHTTPError(err error) (string, int, string) {
 		session.CodeOperationFenced,
 		session.CodeRevisionConflict, session.CodeInvalidSessionState, session.CodeQueueFull,
 		session.CodeBudgetExhausted, session.CodeTurnNotRunnable, session.CodeNativeSessionConflict,
-		session.CodeDiscardPlanStale, session.CodePolicyDigestMismatch:
+		session.CodeDiscardPlanStale, session.CodePolicyDigestMismatch, session.CodeNetworkFingerprintMismatch:
 		status = http.StatusConflict
 	case session.CodeInternal:
 		status = http.StatusInternalServerError
