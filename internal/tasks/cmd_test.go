@@ -1092,6 +1092,47 @@ func TestTasksFolderAddStructuredFlags(t *testing.T) {
 	}
 }
 
+// task.md's header is the fill-me INSTRUCTION, so it belongs only on the scaffold: a task added
+// filled from the content flags has no <…> left to replace, and the header would be the first thing
+// a fresh agent reads telling it to redo finished work. The title-only path still needs it.
+func TestTasksFolderAddHeaderOnlyOnTheScaffold(t *testing.T) {
+	add := func(t *testing.T, args ...string) (Item, string) {
+		t.Helper()
+		root := t.TempDir()
+		if code, err := tasksFolderAdd(root, args, StateTodo, "tasks add"); code != 0 || err != nil {
+			t.Fatalf("add %v: code=%d err=%v", args, code, err)
+		}
+		items := mustReadTaskTree(t, root)
+		if len(items) != 1 {
+			t.Fatalf("want 1 task, got %d", len(items))
+		}
+		return items[0], readFileString(filepath.Join(items[0].Dir, "task.md"))
+	}
+
+	filled, body := add(t, "wire auth",
+		"--context", "the login retries loop", "--acceptance", "gate green + a retry test",
+		"--approach", "cap attempts at 3", "--subtask", "add the cap")
+	// HasPrefix("---"), not just "no FIRST, BEFORE ANY CODE": a REWORDED header is still a header.
+	if !strings.HasPrefix(body, "---\nid: ") {
+		t.Errorf("a filled task.md must open straight at the frontmatter, got:\n%s", body)
+	}
+	// The header is what frontmatterLines skips over — without it the frontmatter must still parse.
+	if filled.Title != "wire auth" {
+		t.Errorf("title = %q, want %q — frontmatter regressed without the leading comment", filled.Title, "wire auth")
+	}
+	// log.md/state.md are format reminders, not orders to fill anything: they keep their headers.
+	for _, name := range []string{"log.md", "state.md"} {
+		if seeded := readFileString(filepath.Join(filled.Dir, name)); !strings.HasPrefix(seeded, "<!--") {
+			t.Errorf("%s should keep its explanatory header:\n%s", name, seeded)
+		}
+	}
+
+	_, scaffold := add(t, "wire auth")
+	if !strings.Contains(scaffold, "FIRST, BEFORE ANY CODE") || !strings.Contains(scaffold, "coop tasks block ") {
+		t.Errorf("the title-only scaffold still needs the full fill-me header, got:\n%s", scaffold)
+	}
+}
+
 // A REPEATED section flag must accumulate, not silently last-wins — a paste with several
 // --acceptance clauses used to keep only the last, dropping the rest (real data loss).
 func TestTasksFolderAddRepeatedSectionFlag(t *testing.T) {

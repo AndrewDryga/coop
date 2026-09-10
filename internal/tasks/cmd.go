@@ -289,23 +289,40 @@ func taskBody(values map[string]string, subtasks []string) string {
 	return b.String()
 }
 
+// sectionsFilled reports whether every taskSection already carries real content — i.e. taskBody will
+// render no `<…>` section placeholder, so the fill-me header would be an order with nothing left to do.
+func sectionsFilled(values map[string]string) bool {
+	for _, s := range taskSections {
+		if strings.TrimSpace(values[s.heading]) == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // newTaskFiles is the set of starter files `coop tasks add` writes into a new task folder: the
-// required task.md plus a seeded log.md and state.md. Each opens with an HTML-comment header
-// that explains the file and shows its format, so the file is self-documenting yet renders clean
-// once filled. The full reference with worked examples is .agent/tasks/README.md. decision.md is
-// NOT seeded here — `block` writes it, since a pending decision is what moves a task to
-// 50_blocked/ (and a decision.md on a todo task is a lint error). values/subtasks fill the body from
-// structured `add` flags; pass nil/empty for the placeholder scaffold.
+// required task.md plus a seeded log.md and state.md. log.md and state.md always open with an
+// HTML-comment header that explains the file and shows its format, so the file is self-documenting
+// yet renders clean once filled. task.md's header is the fill-me INSTRUCTION, so it's seeded only
+// for the placeholder scaffold: a task that arrives already filled (structured `add` flags, an
+// imported fork proposal) has nothing to replace, and the header would be the first thing its agent
+// reads telling it to redo work that's done. The full reference with worked examples is
+// .agent/tasks/README.md. decision.md is NOT seeded here — `block` writes it, since a pending
+// decision is what moves a task to 50_blocked/ (and a decision.md on a todo task is a lint error).
+// values/subtasks fill the body from structured `add` flags; pass nil/empty for the scaffold.
 func newTaskFiles(id, title, now string, values map[string]string, subtasks []string) map[string]string {
-	return map[string]string{
-		"task.md": "<!-- TASK SPEC — a fresh agent must work this from this file ALONE.\n" +
+	taskMD := "---\nid: " + id + "\ntitle: " + title + "\nlabels: []\nupdated: " + now + "\n---\n\n" +
+		"# " + title + "\n\n" + taskBody(values, subtasks)
+	if !sectionsFilled(values) {
+		taskMD = "<!-- TASK SPEC — a fresh agent must work this from this file ALONE.\n" +
 			"     FIRST, BEFORE ANY CODE: replace every <…> placeholder below — the real problem and\n" +
 			"     where it lives (Context), what proves it's done incl. a green gate (Acceptance), and\n" +
 			"     the boring plan (Approach). This thinking IS step one, not a formality. Can't fill it\n" +
 			"     honestly? It isn't ready — run: coop tasks block " + id + "\n" +
-			"     Full format + examples: .agent/tasks/README.md -->\n" +
-			"---\nid: " + id + "\ntitle: " + title + "\nlabels: []\nupdated: " + now + "\n---\n\n" +
-			"# " + title + "\n\n" + taskBody(values, subtasks),
+			"     Full format + examples: .agent/tasks/README.md -->\n" + taskMD
+	}
+	return map[string]string{
+		"task.md": taskMD,
 		"log.md": "<!-- Append-only working journal: what you did and WHY (decisions, dead ends,\n" +
 			"     surprises). Add to the BOTTOM; never rewrite history. The short \"where am I\n" +
 			"     now\" snapshot lives in state.md, not here. Example entry:\n" +
