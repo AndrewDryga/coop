@@ -602,11 +602,8 @@ func (a codexAgent) EnsureDefaults(cfg *config.Config, workdir string) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(string(data)) != "" {
-		var values map[string]any
-		if err := toml.Unmarshal(data, &values); err != nil {
-			return fmt.Errorf("parse %s: %w", path, err)
-		}
+	if err := validateCodexDefaults(data); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
 	}
 	hardenCodexSQLiteFeedbackLog(dir)
 	out, changed := ensureCodexTrust(string(data), workdir)
@@ -617,6 +614,16 @@ func (a codexAgent) EnsureDefaults(cfg *config.Config, workdir string) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// validateCodexDefaults refuses a config.toml coop cannot parse, so EnsureDefaults never appends a
+// trust stanza to a file it does not understand. A blank file is valid: it becomes the stanza.
+func validateCodexDefaults(data []byte) error {
+	if strings.TrimSpace(string(data)) == "" {
+		return nil
+	}
+	var values map[string]any
+	return toml.Unmarshal(data, &values)
 }
 
 func ensureCodexTrust(configTOML, workdir string) (string, bool) {
