@@ -84,7 +84,7 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 						break
 					}
 				}
-				if !strings.Contains(profileLine, "signed in") || strings.Contains(profileLine, "not signed in") {
+				if !strings.Contains(profileLine, "refreshed") || strings.Contains(profileLine, "signed in") {
 					t.Errorf("credentials listing does not recognize %s via %s:\n%s", name, source, out)
 				}
 				detail := captureStdout(t, func() {
@@ -92,7 +92,7 @@ func TestCredentialSourcesDriveProviderWorkflows(t *testing.T) {
 						t.Errorf("credential detail = (%d, %v)", code, err)
 					}
 				})
-				if !strings.Contains(detail, "signed in") || strings.Contains(detail, "not signed in") {
+				if !strings.Contains(detail, "refreshed") || strings.Contains(detail, "signed in") {
 					t.Errorf("credential detail does not recognize %s via %s:\n%s", name, source, detail)
 				}
 				if source != "file" && strings.Contains(detail, "  dir") {

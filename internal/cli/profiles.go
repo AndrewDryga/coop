@@ -43,70 +43,117 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 		}
 		names = []string{args[0]}
 	}
-	// One width per column across every agent's block, so the listing reads as one table:
-	// NAME · STATUS · (default). The status stays a short label — the re-login remedy for an
-	// expired token gets its own dim line under the block instead of blowing the row sideways.
-	var allProfiles []string
+	pal := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean
+	blocks := make([]accountBlock, 0, len(names))
 	for _, agent := range names {
-		allProfiles = append(allProfiles, box.EffectiveProfiles(a.cfg, agent)...)
+		blocks = append(blocks, a.accountBlock(agent))
 	}
-	pal := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean (p is the profile loop var below)
-	width := colWidth(allProfiles, 0, 40)
-	statusW := len("re-login required") // the widest short status label
-	first := true
-	for _, agent := range names {
-		if !first {
-			fmt.Println() // a blank line between agents, so each block scans on its own
+	// One width per column across EVERY block, so `default` starts at the same visible column
+	// down the whole listing. Pad the plain strings, then style — never color inside a width.
+	var profileW, factW int
+	for _, block := range blocks {
+		for _, row := range block.rows {
+			profileW = max(profileW, len([]rune(row.profile)))
+			factW = max(factW, len([]rune(row.fact)))
 		}
-		first = false
-		fmt.Println(pal.Bold(agent))
-		profiles := box.EffectiveProfiles(a.cfg, agent)
-		if len(profiles) == 0 {
-			fmt.Printf("  no credentials — run: coop login %s[@<account>]\n", agent)
+	}
+	fmt.Println(pal.Bold("Accounts available to Coop"))
+	for _, block := range blocks {
+		fmt.Println()
+		fmt.Println(pal.Bold(block.title))
+		if len(block.rows) == 0 {
+			fmt.Printf("  no accounts — run: coop login %s[@<account>]\n", block.agent)
 			continue
 		}
-		def := a.cfg.DefaultProfileOf(agent)
-		// List the marked default first, then the rest — the same order a loop's rotation fans
-		// out over accounts (accountsFor), so "see coop credentials" reflects the try order.
-		if slices.Contains(profiles, def) {
-			ordered := []string{def}
-			for _, p := range profiles {
-				if p != def {
-					ordered = append(ordered, p)
-				}
-			}
-			profiles = ordered
-		}
-		var relogin []string
-		for _, p := range profiles {
-			label, needsLogin := a.profileState(agent, p)
-			if needsLogin {
-				relogin = append(relogin, p)
-			}
+		for _, row := range block.rows {
+			// The leading accent makes the try-first account scannable; the explicit `default`
+			// in the fixed third column explains the accent without a legend. Neither is a
+			// success mark, so neither is green.
+			mark := "  "
 			tag := ""
-			if p == def {
-				tag = pal.Dim("  (default)")
+			if row.isDefault {
+				mark, tag = pal.Cyan("*")+" ", pal.Dim("default")
 			}
-			// How stale the token material is — the rotation clock behind a blast-radius fix. Only
-			// for a signed-in credential (a "not signed in" one has nothing to rotate). Dim, after the
-			// padded status so the column lines up across profiles.
-			rot := ""
-			if label != "not signed in" {
-				rot = pal.Dim("  rotated " + a.credentialAge(agent, p))
+			fact := padRight(row.fact, factW)
+			if row.issue {
+				fact = pal.Yellow(fact)
 			}
-			// Pad the plain strings (rune-aware), then style — never color inside a width.
-			fmt.Printf("  %s  %s%s%s\n", padRight(p, width), paintStatus(pal, padRight(label, statusW)), rot, tag)
+			line := fmt.Sprintf("  %s%s   %s   %s", mark, padRight(row.profile, profileW), fact, tag)
+			fmt.Println(strings.TrimRight(line, " ")) // a row with no tag ends at its last word
+			if row.remedy != "" {
+				fmt.Printf("      %s\n", pal.Dim(row.remedy))
+			}
 		}
-		for _, p := range relogin {
-			fmt.Printf("  %s\n", pal.Dim("↻ re-login: coop login "+agent+"@"+p))
-		}
-		// Surface a dangling default: the marked (or built-in) default points at a profile that
+		// Surface a dangling default: the marked (or built-in) default points at an account that
 		// doesn't exist, so an interactive run would land on nothing. Don't leave it silent.
-		if !slices.Contains(profiles, def) {
-			fmt.Printf("  %s\n", pal.Dim(fmt.Sprintf("default → %s (missing — set one: coop credentials %s <name> default)", def, agent)))
+		if block.missingDefault != "" {
+			fmt.Printf("  %s\n", pal.Yellow(fmt.Sprintf("default account %s is gone", block.missingDefault)))
+			fmt.Printf("      %s\n", pal.Dim(fmt.Sprintf("coop credentials %s <account> default", block.agent)))
 		}
 	}
 	return 0, nil
+}
+
+// accountBlock is one agent's accounts as the listing renders them. Building every block before
+// printing is what lets the columns be measured once across all of them.
+type accountBlock struct {
+	agent, title   string
+	rows           []accountRow
+	missingDefault string // the marked default, when no account of that name exists
+}
+
+// accountRow is one stored account: what a person needs to know about it, and — only when
+// something is wrong — the exact command that fixes it.
+type accountRow struct {
+	profile   string
+	fact      string // "refreshed 7 hours ago", or the problem in the same column
+	issue     bool
+	remedy    string
+	isDefault bool
+}
+
+// accountBlock reads one agent's accounts. Being listed here already says an account is usable,
+// so a healthy row carries no status word: it says when its token material last changed, which is
+// the one fact a person cannot see for themselves.
+func (a *app) accountBlock(agent string) accountBlock {
+	block := accountBlock{agent: agent, title: displayAgentName(agent)}
+	profiles := box.EffectiveProfiles(a.cfg, agent)
+	def := a.cfg.DefaultProfileOf(agent)
+	// The marked default first, then the rest — the same order a loop's rotation fans out over
+	// accounts (accountsFor), so this listing reflects the try order.
+	if slices.Contains(profiles, def) {
+		ordered := []string{def}
+		for _, p := range profiles {
+			if p != def {
+				ordered = append(ordered, p)
+			}
+		}
+		profiles = ordered
+	} else if len(profiles) > 0 {
+		block.missingDefault = def
+	}
+	for _, p := range profiles {
+		row := accountRow{profile: p, isDefault: p == def}
+		switch label, needsLogin := a.profileState(agent, p); {
+		case needsLogin:
+			row.fact, row.issue, row.remedy = "re-login required", true, "coop login "+agent+"@"+p
+		case label == "not signed in":
+			row.fact, row.issue, row.remedy = "not signed in", true, "coop login "+agent+"@"+p
+		default:
+			row.fact = "refreshed " + a.credentialAge(agent, p)
+		}
+		block.rows = append(block.rows, row)
+	}
+	return block
+}
+
+// displayAgentName title-cases an agent's own name for a block heading. Not DisplayName(), which
+// is the product ("Claude Code"): the heading names the accounts' agent as the command spells it.
+func displayAgentName(agent string) string {
+	if agent == "" {
+		return agent
+	}
+	return strings.ToUpper(agent[:1]) + agent[1:]
 }
 
 // profileState reports a profile's short sign-in label and whether it needs a re-login. Presence is
@@ -122,27 +169,37 @@ func (a *app) profileState(agent, p string) (label string, needsLogin bool) {
 	return "signed in", false
 }
 
-// credentialAge renders how long ago agent's profile token material last changed ("3d ago"), or
-// "—" when that's unknowable — an env-key login with no marker file, or a missing/unreadable one.
-// mtime is the honest proxy: a refresh or a fresh login rewrites the material and retires the old
-// token, which is exactly what the rotation clock should read. See box.ProfileTokenMtime.
+// credentialAge renders how long ago agent's profile token material last changed ("19 days ago"),
+// or "—" when that's unknowable — an env-key login with no marker file, or a missing/unreadable
+// one. mtime is the honest proxy: a refresh or a fresh login rewrites the material and retires the
+// old token, which is exactly what this clock should read. See box.ProfileTokenMtime.
 func (a *app) credentialAge(agent, profile string) string {
 	if t, ok := box.ProfileTokenMtime(a.cfg, agent, profile); ok {
-		return agoStr(t)
+		return humanAge(t)
 	}
 	return "—"
 }
 
-// paintStatus colors a profileState label (possibly padded): green signed in, yellow when a
-// re-login is required, dim otherwise.
-func paintStatus(pal ui.Palette, label string) string {
-	switch strings.TrimSpace(label) {
-	case "signed in":
-		return pal.Green(label)
-	case "re-login required":
-		return pal.Yellow(label)
+// humanAge is a duration a person reads without decoding it — "7 hours ago", "yesterday",
+// "19 days ago" — for facts an operator judges by feel rather than by arithmetic. The compressed
+// `7h`/`19d` form stays where a column is scanned for drift (a model catalog's freshness).
+func humanAge(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < 2*time.Minute:
+		return "a minute ago"
+	case d < time.Hour:
+		return fmt.Sprintf("%d minutes ago", int(d.Minutes()))
+	case d < 2*time.Hour:
+		return "an hour ago"
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d hours ago", int(d.Hours()))
+	case d < 48*time.Hour:
+		return "yesterday"
 	default:
-		return pal.Dim(label)
+		return fmt.Sprintf("%d days ago", int(d.Hours()/24))
 	}
 }
 
@@ -191,11 +248,17 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 		}
 	}
 	pal := ui.For(os.Stdout)
-	fmt.Println(pal.Bold(agent + " / " + profile))
+	fmt.Println(pal.Bold(displayAgentName(agent) + " / " + profile))
+	// The same vocabulary the listing uses, so narrowing the command never contradicts it: a
+	// healthy account says when it was refreshed, a broken one says what is wrong and how to fix it.
 	label, needsLogin := a.profileState(agent, profile)
-	fmt.Printf("  status     %s\n", paintStatus(pal, label))
-	if label != "not signed in" {
-		fmt.Printf("  rotated    %s\n", a.credentialAge(agent, profile))
+	switch {
+	case needsLogin:
+		fmt.Printf("  %s\n", pal.Yellow("re-login required"))
+	case label == "not signed in":
+		fmt.Printf("  %s\n", pal.Yellow("not signed in"))
+	default:
+		fmt.Printf("  refreshed  %s\n", a.credentialAge(agent, profile))
 	}
 	def := "no"
 	if profile == a.cfg.DefaultProfileOf(agent) {
@@ -207,8 +270,8 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 	} else {
 		fmt.Println("  source     env file")
 	}
-	if needsLogin {
-		fmt.Printf("  %s\n", ui.Dim("↻ re-login: coop login "+agent+"@"+profile))
+	if label == "not signed in" || needsLogin {
+		fmt.Printf("  %s\n", pal.Dim("coop login "+agent+"@"+profile))
 	}
 	return 0, nil
 }

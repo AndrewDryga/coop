@@ -101,7 +101,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 
 	group("CREDENTIALS, MODELS & PRESETS")
 	row("coop login <agent>", "sign in an agent (a subscription)")
-	row("coop credentials [<agent>]", "stored credentials + which are signed in")
+	row("coop credentials [<agent>]", "the accounts Coop can use")
 	row("coop models [<agent>]", "the model menu per agent")
 	row("coop presets [<preset>]", "orchestration recipes (lead + roles)")
 
@@ -376,7 +376,7 @@ var commandHelp = map[string]string{
   A CREDENTIAL is one stored account/login — a rate-limit slot. Orchestration
   recipes are PRESETS; see coop help presets.
   Each token narrows: no args lists every agent, an agent lists its credentials
-  (signed in? default? how long since its token last rotated?), a credential shows
+  (which one runs by default, when each was last refreshed), a credential shows
   its detail, and a trailing attribute reads or writes one property of it. A credential is one subscription; add more
   with 'coop login <agent>@<name>', then an unattended loop rotates across them on
   a rate limit (a bare model in a preset's lead agent: ladder). The model is a separate

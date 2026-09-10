@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -38,7 +39,7 @@ func TestCmdProfiles(t *testing.T) {
 	if code != 0 || err != nil {
 		t.Fatalf("cmdCredentials: code=%d err=%v", code, err)
 	}
-	for _, want := range []string{"work", "signed in", "personal", "not signed in"} {
+	for _, want := range []string{"Accounts available to Coop", "work", "refreshed", "personal", "not signed in", "coop login claude@personal"} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
@@ -62,8 +63,8 @@ func TestCmdProfilesDanglingDefault(t *testing.T) {
 	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
-	if !strings.Contains(string(out), "missing") || !strings.Contains(string(out), "ghost") {
-		t.Errorf("expected a dangling-default note naming ghost:\n%s", out)
+	if !strings.Contains(string(out), "default account ghost is gone") || !strings.Contains(string(out), "coop credentials claude <account> default") {
+		t.Errorf("expected a dangling-default note naming ghost and its remedy:\n%s", out)
 	}
 }
 
@@ -292,4 +293,98 @@ func TestCredentialOutputOffersReloginForInvalidMarker(t *testing.T) {
 
 func grokProfileCredential(expiresAt, refresh string) string {
 	return fmt.Sprintf(`{"issuer::id":{"key":"access","refresh_token":%q,"expires_at":%q,"auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-07-16T01:00:00Z"}}`, refresh, expiresAt)
+}
+
+// The listing is a human overview, not a status ledger: being listed says an account is usable,
+// so a healthy row carries no status word — only when it was last refreshed. The default is
+// marked twice on purpose (a leading accent and an explicit `default`), and every `default`
+// starts at the same column across ALL agent blocks, so the eye can run down it.
+func TestCredentialsListingIsAnOverviewNotALedger(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	for _, p := range []string{"personal", "backup"} {
+		if err := os.MkdirAll(cfg.AgentProfileDir("claude", p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(cfg.AgentProfileDir("claude", p), ".credentials.json"), []byte(`{"claudeAiOauth":{"accessToken":"x","refreshToken":"r","scopes":["user:inference"]}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A codex account with nothing in it: the one row that must say what is wrong and how to fix it.
+	if err := os.MkdirAll(cfg.AgentProfileDir("codex", "empty"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetDefaultProfile("claude", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if code, err := (&app{cfg: cfg}).cmdCredentials(nil); code != 0 || err != nil {
+			t.Fatalf("cmdCredentials = (%d, %v)", code, err)
+		}
+	})
+	if !strings.HasPrefix(out, "Accounts available to Coop\n") {
+		t.Errorf("listing does not open with its title:\n%s", out)
+	}
+	for _, unwanted := range []string{"rotated ", "(default)", "✓"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("healthy listing still carries %q:\n%s", unwanted, out)
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "signed in") && !strings.Contains(line, "not signed in") {
+			t.Errorf("a healthy row still claims a status:\n%s", out)
+		}
+	}
+	var defaults, issue, remedy int
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasSuffix(line, "default") && strings.Contains(line, "*") {
+			defaults++
+			if got := strings.Index(line, "default"); got != strings.Index(firstDefaultLine(out), "default") {
+				t.Errorf("`default` starts at a different column than the first block's:\n%s", out)
+			}
+		}
+		if strings.Contains(line, "not signed in") {
+			issue++
+		}
+		if strings.TrimSpace(line) == "coop login codex@empty" {
+			remedy++
+		}
+	}
+	if defaults == 0 || issue != 1 || remedy != 1 {
+		t.Errorf("defaults=%d issue=%d remedy=%d in:\n%s", defaults, issue, remedy, out)
+	}
+	if strings.Contains(out, "  \n") || strings.Contains(out, " \n") {
+		t.Errorf("a row ends in trailing whitespace:\n%q", out)
+	}
+}
+
+// firstDefaultLine is the first row carrying the `default` tag, for the column comparison above.
+func firstDefaultLine(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasSuffix(line, "default") && strings.Contains(line, "*") {
+			return line
+		}
+	}
+	return ""
+}
+
+// The human durations are the ones a person says out loud; the compressed form stays where a
+// column is scanned for drift.
+func TestHumanAgeReadsAloud(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		at   time.Time
+		want string
+	}{
+		{now.Add(-30 * time.Second), "just now"},
+		{now.Add(-90 * time.Second), "a minute ago"},
+		{now.Add(-7 * time.Minute), "7 minutes ago"},
+		{now.Add(-100 * time.Minute), "an hour ago"},
+		{now.Add(-7 * time.Hour), "7 hours ago"},
+		{now.Add(-30 * time.Hour), "yesterday"},
+		{now.Add(-19 * 24 * time.Hour), "19 days ago"},
+	} {
+		if got := humanAge(tc.at); got != tc.want {
+			t.Errorf("humanAge(%s) = %q, want %q", tc.at.Format(time.RFC3339), got, tc.want)
+		}
+	}
 }
