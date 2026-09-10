@@ -6,7 +6,7 @@ AGENTS
   coop <target>                     agent target in a box
   coop <preset>                     run a preset interactively (its lead leads)
   coop acp <target|preset>          serve as an editor agent (ACP; e.g. Zed)
-  coop <target> --peer <target>...  a read-only second opinion, named peers
+  coop <target> --peer <target>...  start with read-only peer agents
   coop <target> --readonly          read the repo, write only to scratch
   coop <target> --bare              Q&A only: no repo, no context, no tools
 

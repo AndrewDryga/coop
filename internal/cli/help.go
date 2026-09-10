@@ -95,7 +95,7 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop <target>", "agent target in a box")
 	row("coop <preset>", "run a preset interactively (its lead leads)")
 	row("coop acp <target|preset>", "serve as an editor agent (ACP; e.g. Zed)")
-	row("coop <target> --peer <target>...", "a read-only second opinion, named peers")
+	row("coop <target> --peer <target>...", "start with read-only peer agents")
 	row("coop <target> --readonly", "read the repo, write only to scratch")
 	row("coop <target> --bare", "Q&A only: no repo, no context, no tools")
 
