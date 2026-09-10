@@ -183,6 +183,11 @@ func (geminiAgent) ConsultCmd(question string) []string {
 	return []string{"gemini", "--approval-mode", "plan", "-p", question}
 }
 
+// RestrictedCommand: no restricted mode is qualified on this CLI yet (see unqualifiedRestrictedCommand).
+func (a geminiAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]string, error) {
+	return unqualifiedRestrictedCommand(a, mode, cmd)
+}
+
 // Packages is just the CLI: gemini's ACP mode is built in (gemini --acp).
 const geminiCLIPackage = "@google/gemini-cli@latest"
 

@@ -172,6 +172,7 @@ spelled out here (there's room to render them).
 | `coop <target> [args]` | a sandboxed Claude, Codex, Gemini, or Grok target (`<agent>[:model][/effort][@account]`) — its autonomous flags, plus any args you add |
 | `coop acp <target|preset>` | run as an [ACP](#drive-it-from-zed-acp) agent over stdio (for Zed) — coop owns the Preset/Provider/Account selectors, runs yolo, and rides out box restarts and rate limits for you; pin a per-entry model/effort/account in the target (or name a preset in the same slot); name each peer with `--peer <target>` (repeatable) to let it ask them read-only |
 | `coop <target> --peer <target>...` | [opt-in second opinion](#second-opinions---peer) — name each peer with `--peer <target>` (repeatable); may ask those peers on hard calls |
+| `coop <target> --readonly` / `--bare` | [a run that cannot change anything](#read-only-and-bare-runs) — `--readonly` mounts the repo read-only and writes only to in-memory scratch; `--bare` mounts no repo at all and gives the model no tools (Q&A only, works outside any Git repo) |
 | `coop <preset>` | run an [orchestration preset](#presets-the-whole-arrangement-in-one-yaml-file) interactively — its lead leads, its roles ride along (a preset name shares the who-runs slot with an agent target) |
 | `coop <agent>:<model>[/effort]` | [pick the model and reasoning effort](#picking-models) for that run — works on agent runs, forks, the loop, and acp |
 
@@ -289,6 +290,35 @@ with [`coop doctor`](#prove-it-coop-doctor). It also lists the changed files tha
 
 > Full walkthrough — subdirectory scoping, template re-hiding, the fork exception:
 > [**coop.dryga.com/docs.html#secrets**](https://coop.dryga.com/docs.html#secrets).
+
+### Read-only and bare runs
+
+Two launches take the sandbox further, for work that must not change anything:
+
+```bash
+coop claude --readonly                  # investigate this repo; every write to it fails
+coop claude --bare -- -p "..."          # Q&A with no repo, no project context, no tools
+coop run --readonly -- sh -c 'touch x'  # the same profile around a raw command: the probe
+```
+
+Both run the shared base image under one restricted filesystem profile: the container root is
+read-only, the only writable places are run-private in-memory scratch (the box home and `/tmp`,
+plus an empty `/workspace` for bare) that is discarded when the run ends, and every host path
+that enters the box enters read-only. Nothing the normal launch mounts writable exists here — no
+credential home, no dependency cache, no asdf volume, no skills copy, no ACP transcripts — and
+nothing the project defines is loaded: no `.agent/project.yaml` policy or env, services, hooks,
+MCP servers or `.tool-versions` provisioning. The provider gets a seed instead of its home: the
+access-only projection of the selected login (refresh authority stays on the host), its first-run
+defaults, and a note stating the mode's contract, copied into the tmpfs home before it starts.
+
+`--readonly` mounts the repository (git history included) and any approved companions read-only,
+so the agent can read, search and run experiments in scratch; `--bare` mounts no repository and
+adds the provider's own no-tools switch, so the model's request carries no tool — the conversation
+in, the answer out. Both refuse what they cannot enforce rather than launching on a promise: they
+run on Docker only, `claude` is the qualified provider, `--peer`, presets, `COOP_IMAGE` and
+`--egress filtered` are refused, and a `COOP_RUN_ARGS` entry other than `-e KEY=VALUE` stops the
+launch by name. The answer is the run's only output; a run that needs artifacts back is a normal
+run.
 
 ### Your git identity, not the box's
 

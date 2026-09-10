@@ -14,6 +14,8 @@ AGENTS
   coop <preset>                     run a preset interactively (its lead leads)
   coop acp <target|preset>          serve as an editor agent (ACP; e.g. Zed)
   coop <target> --peer <target>...  a read-only second opinion, named peers
+  coop <target> --readonly          read the repo, write only to scratch
+  coop <target> --bare              Q&A only: no repo, no context, no tools
 
 CREDENTIALS, MODELS & PRESETS
   coop login <agent>                sign in an agent (a subscription)
@@ -124,18 +126,23 @@ Run 'coop help' for all commands.
 
 coop run — run a raw command in the box.
 
-  Usage: coop run -- <cmd...>
+  Usage: coop run [--readonly|--bare] -- <cmd...>
 
   Everything after -- runs verbatim in the sandbox — same mounts, secret-shadowing,
   and network as an agent. "coop run echo hi" works too; use -- when the command has
   flags coop would otherwise read (e.g. coop run -- npm test --watch).
 
+  --readonly and --bare run the command under the restricted profile of the same-named
+  agent runs ('coop help claude'): a read-only root, the repo read-only or absent, scratch
+  in memory only. The deterministic way to prove what such a run can and cannot write.
+
 coop shell — open an interactive shell in the box.
 
-  Usage: coop shell
+  Usage: coop shell [--readonly|--bare]
 
   A shell in the sandbox at your repo — same mounts, secret-shadowing, and
-  network as an agent run. Exit to return.
+  network as an agent run. Exit to return. --readonly and --bare open it under
+  the restricted profile of the same-named agent runs ('coop help claude').
 
 coop login <agent> — sign in to an agent (token persists in the config dir).
 

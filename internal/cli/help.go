@@ -96,6 +96,8 @@ func renderHelp(cfg *config.Config, ref bool) string {
 	row("coop <preset>", "run a preset interactively (its lead leads)")
 	row("coop acp <target|preset>", "serve as an editor agent (ACP; e.g. Zed)")
 	row("coop <target> --peer <target>...", "a read-only second opinion, named peers")
+	row("coop <target> --readonly", "read the repo, write only to scratch")
+	row("coop <target> --bare", "Q&A only: no repo, no context, no tools")
 
 	group("CREDENTIALS, MODELS & PRESETS")
 	row("coop login <agent>", "sign in an agent (a subscription)")
@@ -222,11 +224,15 @@ func RenderManual(cfg *config.Config) string {
 // this instead. cmdRun (which honors --) and helpForCommand print it directly.
 const runHelp = `coop run — run a raw command in the box.
 
-  Usage: coop run -- <cmd...>
+  Usage: coop run [--readonly|--bare] -- <cmd...>
 
   Everything after -- runs verbatim in the sandbox — same mounts, secret-shadowing,
   and network as an agent. "coop run echo hi" works too; use -- when the command has
-  flags coop would otherwise read (e.g. coop run -- npm test --watch).`
+  flags coop would otherwise read (e.g. coop run -- npm test --watch).
+
+  --readonly and --bare run the command under the restricted profile of the same-named
+  agent runs ('coop help claude'): a read-only root, the repo read-only or absent, scratch
+  in memory only. The deterministic way to prove what such a run can and cannot write.`
 
 const sourceTreeConformance = `SOURCE-TREE CONFORMANCE
 
@@ -258,6 +264,14 @@ const agentHelp = `coop <target> — run a sandboxed coding agent (claude, codex
   These flags are coop's own, read before a -- (everything after -- goes to the agent):
     --peer <target>...   a read-only second opinion from NAMED peers (repeatable), e.g.
                          --peer codex:gpt-5.5 --peer gemini
+    --readonly           investigate: the repo (git history included) mounts read-only,
+                         the only writable places are private in-memory scratch (the box
+                         home and /tmp) discarded at exit; no cache, hooks, skills, MCP or
+                         services. The answer is the output. Exclusive with --bare.
+    --bare               Q&A only: no repository, no project context and no tools at all —
+                         the conversation in, the answer out. Works outside any Git repo.
+                         Both modes run the shared base image on Docker; claude is the
+                         qualified provider, --peer and presets are refused.
     --                   pass the rest verbatim to the agent, e.g. coop claude -- --help
 
   Sign in first with 'coop login <agent>'. For the agent's own flags: coop <agent> -- --help.`
@@ -335,10 +349,11 @@ var commandHelp = map[string]string{
 
 	"shell": `coop shell — open an interactive shell in the box.
 
-  Usage: coop shell
+  Usage: coop shell [--readonly|--bare]
 
   A shell in the sandbox at your repo — same mounts, secret-shadowing, and
-  network as an agent run. Exit to return.`,
+  network as an agent run. Exit to return. --readonly and --bare open it under
+  the restricted profile of the same-named agent runs ('coop help claude').`,
 
 	"login": `coop login <agent> — sign in to an agent (token persists in the config dir).
 

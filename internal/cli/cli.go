@@ -48,6 +48,7 @@ type app struct {
 	sweptNetworks        bool                                         // orphaned coop networks already swept this process (they are not per repo)
 	preset               *preset.Preset                               // the run's loaded preset (from the who-runs slot), carried into each RunSpec (see applyPreset)
 	network              networkFlags                                 // this launch's --egress/--allow-domain/--egress-rules, resolved by box.AdmitNetwork
+	mode                 agents.ExecutionMode                         // this launch's --readonly/--bare; "" (normal) is every launch that takes neither
 	acpCapture           *box.CapturedEgress                          // an ACP supervisor's frozen policy; every child it spawns gets a reference to this one
 	beforeSignRefUpdate  func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
 	afterDetachedPublish func()                                       // test seam for state replacement before repeated child validation
@@ -195,6 +196,9 @@ func (a *app) dispatch(argv []string) (int, error) {
 	case "shell":
 		rest, err := a.takeNetworkFlags(rest)
 		if err != nil {
+			return 2, err
+		}
+		if rest, err = a.takeExposureFlags(rest); err != nil {
 			return 2, err
 		}
 		if err := rejectArgs("shell", rest); err != nil {

@@ -135,6 +135,47 @@ func (claudeAgent) ConsultCmd(question string) []string {
 	return []string{"claude", "-p", "--permission-mode", "plan", question}
 }
 
+// claudeRestrictedConflicts are the caller flags that would hand back what a restricted run took
+// away: another settings source (hooks ride in settings), an MCP file, a plugin directory — and in
+// bare mode a tool set. Read out of `claude --help` (2.1.266), not recalled.
+var claudeRestrictedConflicts = map[ExecutionMode][]string{
+	ModeReadOnly: {"--mcp-config", "--settings", "--setting-sources", "--plugin-dir"},
+	ModeBare:     {"--mcp-config", "--settings", "--setting-sources", "--plugin-dir", "--tools", "--allowedTools", "--allowed-tools"},
+}
+
+// claudeBareSystemPrompt tells the model, on the same channel that carries its (empty) tool list,
+// what a bare session is. It is guidance for an honest answer, not the enforcement: `--tools ""`
+// is what leaves the request without a tool. Stated here rather than in the seeded CLAUDE.md
+// because a memory file that contradicts the CLI's own system prompt reads as an injection — a
+// live bare run refused a trivial prompt over exactly that.
+const claudeBareSystemPrompt = "This session's tool set is empty: no shell, file, web, MCP or subagent tool is available, " +
+	"and none can be enabled. Answer from the conversation. If asked to run, read, write or fetch " +
+	"something, say that this session cannot; do not write tool-call syntax or describe a command as having run."
+
+// RestrictedCommand: `--setting-sources user` loads only the seeded user settings, never the
+// repository's `.claude/settings.json` (hooks, permissions) or a local one; `--strict-mcp-config`
+// keeps MCP to the servers `--mcp-config` names, which is none. Bare adds `--tools ""`, Claude
+// Code's own "no built-in tools" spelling; it goes first so the empty variadic value is closed by
+// the next flag rather than by whatever the caller's command ends with.
+func (claudeAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]string, error) {
+	if mode == ModeNormal {
+		return cmd, nil
+	}
+	conflicts, ok := claudeRestrictedConflicts[mode]
+	if !ok {
+		return nil, fmt.Errorf("unknown execution mode %q", mode)
+	}
+	if flag := hasFlag(cmd, conflicts); flag != "" {
+		return nil, fmt.Errorf("claude: %s conflicts with a %s run — it would hand the model back what the mode takes away", flag, mode)
+	}
+	var args []string
+	if mode == ModeBare {
+		args = append(args, "--tools", "", "--append-system-prompt", claudeBareSystemPrompt)
+	}
+	args = append(args, "--strict-mcp-config", "--setting-sources", "user")
+	return appendBeforeSeparator(slices.Clone(cmd), args...), nil
+}
+
 const (
 	claudeCLIPackage = "@anthropic-ai/claude-code@latest"
 	claudeACPPackage = "@agentclientprotocol/claude-agent-acp@latest"

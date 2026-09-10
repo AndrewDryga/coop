@@ -164,6 +164,11 @@ func (codexAgent) ConsultCmd(question string) []string {
 	return []string{"codex", "exec", "-s", "read-only", question}
 }
 
+// RestrictedCommand: no restricted mode is qualified on this CLI yet (see unqualifiedRestrictedCommand).
+func (a codexAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]string, error) {
+	return unqualifiedRestrictedCommand(a, mode, cmd)
+}
+
 func (codexAgent) Packages() []string {
 	return []string{codexCLIPackage, codexACPPackage}
 }

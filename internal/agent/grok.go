@@ -172,6 +172,11 @@ func (grokAgent) ConsultCmd(question string) []string {
 	return []string{"grok", "--tools", grokReadOnlyTools, "-p", question}
 }
 
+// RestrictedCommand: no restricted mode is qualified on this CLI yet (see unqualifiedRestrictedCommand).
+func (a grokAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]string, error) {
+	return unqualifiedRestrictedCommand(a, mode, cmd)
+}
+
 // Packages is empty: grok is a native binary, not an npm package.
 func (grokAgent) Packages() []string { return nil }
 

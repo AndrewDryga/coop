@@ -64,6 +64,57 @@ type StreamSpec struct {
 // nobody probed gets the conservative policy rather than a deadline its schema cannot feed.
 func (s StreamSpec) TracksTools() bool { return s.ToolLifecycle == ToolLifecycleIDs }
 
+// ExecutionMode is how much of the host a run may reach and where it may write, fixed when the
+// run is created and never widened afterwards. Normal is every launch that existed before the
+// modes did. ReadOnly and Bare share one restricted filesystem profile — a read-only root, run-
+// private tmpfs scratch, nothing host-backed writable, no shared provider state — and differ in
+// what they expose: readonly mounts the selected repository read-only to be inspected, bare
+// mounts no repository and gives the model no tool at all.
+type ExecutionMode string
+
+const (
+	ModeNormal   ExecutionMode = "normal"
+	ModeReadOnly ExecutionMode = "readonly"
+	ModeBare     ExecutionMode = "bare"
+)
+
+// ParseExecutionMode accepts exactly the three spellings. The empty string is not a mode here:
+// a caller with none says ModeNormal itself, so a misspelled mode can never quietly run as the
+// widest one.
+func ParseExecutionMode(value string) (ExecutionMode, error) {
+	switch mode := ExecutionMode(value); mode {
+	case ModeNormal, ModeReadOnly, ModeBare:
+		return mode, nil
+	}
+	return "", fmt.Errorf("unknown execution mode %q — use normal, readonly, or bare", value)
+}
+
+// Restricted reports whether the mode runs under the restricted filesystem profile.
+func (m ExecutionMode) Restricted() bool { return m == ModeReadOnly || m == ModeBare }
+
+// unqualifiedRestrictedCommand is the answer of an adapter no restricted mode has been proven
+// on: normal passes through, anything else refuses by name. Qualification means a live run
+// showed the provider's own switch holds (see claudeAgent.RestrictedCommand); until then the
+// mode is not offered rather than offered on a promise.
+func unqualifiedRestrictedCommand(a Agent, mode ExecutionMode, cmd []string) ([]string, error) {
+	if mode == ModeNormal {
+		return cmd, nil
+	}
+	return nil, fmt.Errorf("%s is not qualified for a %s run — its CLI has no proven switch for the mode; use claude", a.Name(), mode)
+}
+
+// hasFlag reports the first of names present in cmd, split (`--flag v`) or joined (`--flag=v`).
+func hasFlag(cmd []string, names []string) string {
+	for _, arg := range cmd {
+		for _, name := range names {
+			if arg == name || strings.HasPrefix(arg, name+"=") {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
 // EffortFlagStyle is how an agent's command expresses one reasoning-effort value.
 type EffortFlagStyle uint8
 
@@ -279,6 +330,16 @@ type Agent interface {
 	// ConsultCmd is the read-only, non-interactive command to ask this agent a
 	// question as a consult peer — it returns analysis and never edits files.
 	ConsultCmd(question string) []string
+	// RestrictedCommand rewrites the agent's own command for a restricted ExecutionMode. The box
+	// has already fixed the filesystem — a read-only root and repository, run-private scratch —
+	// so what is left is what only the provider's own switches can say: in every restricted mode
+	// the CLI must ignore the extensions a repository or a home could define (project settings,
+	// hooks, project MCP servers), and in bare mode it must also disable every tool, built-in and
+	// MCP alike, so the model's request carries none. An adapter whose CLI has no such switch, or
+	// that finds a caller argument handing back what the mode takes away, returns an error and the
+	// run refuses: a mode the provider cannot enforce is not a weaker one, it is none. ModeNormal
+	// returns cmd unchanged.
+	RestrictedCommand(mode ExecutionMode, cmd []string) ([]string, error)
 	// InstructionFile is the agent's native global instruction filename, e.g.
 	// "CLAUDE.md" — where coop writes the shared or consult-augmented instructions.
 	InstructionFile() string

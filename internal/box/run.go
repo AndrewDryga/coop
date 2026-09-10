@@ -64,6 +64,11 @@ type RunSpec struct {
 	Repo    string   // host repo to mount
 	Workdir string   // where Repo mounts; empty defers to resolveWorkdir (the repo's real host path)
 	Cmd     []string // command + args to run in the box
+	// Mode is the execution mode, fixed at creation. Empty is ModeNormal — every field below
+	// then means what it always did. A restricted mode (readonly, bare) takes the separate
+	// launch in restricted.go: it honors Repo, Cmd, Agent, AgentCommand, Homes, the companions,
+	// labels, tty and stdio, and refuses the rest rather than widening what the box can reach.
+	Mode agents.ExecutionMode
 	// PolicyRepo is the trusted source for .agent/project.yaml box policy. Empty uses Repo.
 	PolicyRepo string
 	// RepoReadOnly mounts Repo read-only. Maintenance checks can inspect an isolated candidate
@@ -280,6 +285,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// only have to tear down.
 	if err := ctxStep(spec.Ctx, "filesystem projection"); err != nil {
 		return -1, err
+	}
+	// A restricted mode takes its own launch, whose whole point is that nothing below — homes,
+	// caches, services, project policy, generated mounts — is assembled for it.
+	if mode, err := executionMode(spec); err != nil {
+		return -1, err
+	} else if mode.Restricted() {
+		return runRestricted(cfg, rt, spec, artifacts, mode)
 	}
 	if !spec.Homes {
 		if spec.Preset != nil {
@@ -713,36 +725,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 	}
 
-	// Credential scope: the shared env file is passed in, but a scoped run strips token keys for
-	// agents it has no business reading and for a provider whose selected named account must not be
-	// shadowed by its global env token. Non-agent runtime vars always pass through. assembleArgs
-	// computes the same provider scope for the home mounts.
-	envFile := ""
-	userEnvFile := ""
-	drop := map[string]bool{}
-	if spec.Homes && fileExists(cfg.EnvFile()) {
-		userEnvFile = cfg.EnvFile()
-		drop = envKeysOutsideScope(cfg, credentialScope(cfg, spec))
+	envFile, envTmp, err := prepareBoxEnvFile(cfg, spec, artifacts, projectEnv)
+	if err != nil {
+		return -1, err
 	}
-	switch {
-	case len(projectEnv) > 0:
-		p, err := writeMergedEnvFile(artifacts.parent, projectEnv, userEnvFile, drop)
-		if err != nil {
-			return -1, fmt.Errorf("prepare project box env: %w", err)
-		}
-		tmpFiles = append(tmpFiles, p)
-		envFile = p
-	case userEnvFile != "" && len(drop) == 0:
-		envFile = userEnvFile
-	case userEnvFile != "":
-		if p, err := writeFilteredEnvFile(artifacts.parent, userEnvFile, drop); err == nil {
-			tmpFiles = append(tmpFiles, p)
-			envFile = p
-		} else {
-			// Fail closed: if the peer keys can't be stripped, omit the env file
-			// entirely rather than leak them into a scoped box.
-			ui.Info("env: omitted (could not filter peer API keys): %v", err)
-		}
+	if envTmp != "" {
+		tmpFiles = append(tmpFiles, envTmp)
 	}
 
 	if err := ctxStep(spec.Ctx, "sibling services"); err != nil {
@@ -935,6 +923,41 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	code, runErr := rt.Run(stdin, stdout, stderr, args...)
 	return finish(code, runErr)
+}
+
+// prepareBoxEnvFile picks the env file a run passes to the runtime. Credential scope: the shared
+// env file is passed in, but a scoped run strips token keys for agents it has no business reading
+// and for a provider whose selected named account must not be shadowed by its global env token.
+// Non-agent runtime vars always pass through; assembleArgs computes the same provider scope for
+// the home mounts. tmp is the generated file the caller removes after the run ("" when the shared
+// file is used as is, or none applies).
+func prepareBoxEnvFile(cfg *config.Config, spec RunSpec, artifacts compositionArtifactOps, projectEnv map[string]string) (envFile, tmp string, err error) {
+	userEnvFile := ""
+	drop := map[string]bool{}
+	if spec.Homes && fileExists(cfg.EnvFile()) {
+		userEnvFile = cfg.EnvFile()
+		drop = envKeysOutsideScope(cfg, credentialScope(cfg, spec))
+	}
+	switch {
+	case len(projectEnv) > 0:
+		p, err := writeMergedEnvFile(artifacts.parent, projectEnv, userEnvFile, drop)
+		if err != nil {
+			return "", "", fmt.Errorf("prepare project box env: %w", err)
+		}
+		return p, p, nil
+	case userEnvFile != "" && len(drop) == 0:
+		return userEnvFile, "", nil
+	case userEnvFile != "":
+		p, err := writeFilteredEnvFile(artifacts.parent, userEnvFile, drop)
+		if err != nil {
+			// Fail closed: if the peer keys can't be stripped, omit the env file
+			// entirely rather than leak them into a scoped box.
+			ui.Info("env: omitted (could not filter peer API keys): %v", err)
+			return "", "", nil
+		}
+		return p, p, nil
+	}
+	return "", "", nil
 }
 
 // validateMCPSourceIsolation rejects a configured source that traverses any directory this run

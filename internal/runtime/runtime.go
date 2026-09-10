@@ -116,6 +116,14 @@ func (r Runtime) SupportsRunLimits() bool {
 	return r.isDockerOrPodman()
 }
 
+// SupportsRestrictedFilesystem reports whether the restricted execution modes (a read-only root
+// with owned tmpfs scratch) are qualified on this runtime. Docker documents both primitives and
+// is the one proven live; Podman accepts the same spelling but has its own mount semantics to
+// test, and Apple's container CLI takes different flags — inferred parity is not qualification.
+func (r Runtime) SupportsRestrictedFilesystem() bool {
+	return r.kind() == runtimeDocker
+}
+
 // Run executes the runtime with the given stdio and returns its exit code. A
 // non-zero exit code comes back with a nil error (the command ran to
 // completion); err is non-nil only when the process could not be started.

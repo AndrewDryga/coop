@@ -61,6 +61,7 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [release-qualification](release-qualification.md) — tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity
 - [box-time-is-utc](box-time-is-utc.md) — boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local
 - [box-home-nested-mounts](box-home-nested-mounts.md) — avoid bind targets that make Docker create missing application-owned home parents as root
+- [restricted-execution-modes](restricted-execution-modes.md) — readonly and bare share one tmpfs-only filesystem profile; the provider is seeded through a read-only bind OUTSIDE the tmpfs home, because a bind under it would be root-owned
 - [box-entrypoint-descendant-handoff](box-entrypoint-descendant-handoff.md) — supervised loop/review boxes authenticate forwarder exemptions and hand off live detached jobs
 - [box-orphans-survive-pdeathsig](box-orphans-survive-pdeathsig.md) — Pdeathsig is not inherited across fork, so a forking worker orphans into the box and holds it open for the whole drain
 - [box-supervisor-label-and-orphan-sweep](box-supervisor-label-and-orphan-sweep.md) — every box records the host process supervising it; only a provably dead one authorizes a reap, scoped to the workspace that launched it

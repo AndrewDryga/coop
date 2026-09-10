@@ -3,7 +3,7 @@ name: box-home-nested-mounts
 description: Avoid bind targets that make Docker create missing application-owned home parents as root
 subsystem: box
 sources: [internal/box/run.go, internal/box/gitenv.go, internal/cli/doctor.go]
-updated: 2026-07-16
+updated: 2026-09-10
 ---
 
 Docker prepares bind targets before the image's non-root user starts. If a generated mount targets
@@ -17,5 +17,9 @@ nested, application-owned home parents unless their ownership is guaranteed for 
 images. `coop doctor` guards the underlying contract by writing a throwaway directory below
 `~/.config` from a normally composed non-root box.
 
+The same mechanism rules the restricted modes' tmpfs home: no bind may target anything under it,
+which is why their seed is bound outside the home and copied in ([[restricted-execution-modes]]).
+
 ## Changelog
+- 2026-09-10 — re-verified against run.go; noted the tmpfs-home consequence the restricted modes hit
 - 2026-07-16 — created after bisecting Chromium exit 133 to the nested Git bind targets
