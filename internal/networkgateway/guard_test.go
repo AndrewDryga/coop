@@ -34,11 +34,11 @@ type guardFixture struct {
 // captureTo installs the kernel record a redirect would have left on every
 // accepted connection. Nothing redirects on a test host, so this is the only
 // way to exercise the guard's port decisions; it is restored after the test.
-func captureTo(t *testing.T, destination func(net.Conn) (netip.AddrPort, error)) {
+func captureTo(t *testing.T, g *Guard, destination func(net.Conn) (netip.AddrPort, error)) {
 	t.Helper()
-	previous := originalDestination
-	originalDestination = destination
-	t.Cleanup(func() { originalDestination = previous })
+	previous := *g.original.Load()
+	g.setDestinationReader(destination)
+	t.Cleanup(func() { g.setDestinationReader(previous) })
 }
 
 func startGuardFixture(t *testing.T) guardFixture {
@@ -51,9 +51,6 @@ func startGuardClockFixture(t *testing.T, clock *BootClock, ttl uint32) guardFix
 
 func startGuardPolicyFixture(t *testing.T, policy egress.Snapshot, clock *BootClock, ttl uint32, port uint16) guardFixture {
 	t.Helper()
-	captureTo(t, func(net.Conn) (netip.AddrPort, error) {
-		return netip.AddrPortFrom(netip.MustParseAddr("93.184.216.34"), port), nil
-	})
 	c := newTestController(t, policy, func(context.Context, string) error { return nil })
 	c.clock, c.now, c.identity.Clock = clock, clock.instant, clock.Domain()
 	if err := c.Initialize(context.Background(), netip.MustParseAddr("1.1.1.1")); err != nil {
@@ -70,6 +67,9 @@ func startGuardPolicyFixture(t *testing.T, policy egress.Snapshot, clock *BootCl
 	if err != nil {
 		t.Fatal(err)
 	}
+	captureTo(t, g, func(net.Conn) (netip.AddrPort, error) {
+		return netip.AddrPortFrom(netip.MustParseAddr("93.184.216.34"), port), nil
+	})
 	listen := func() net.Listener {
 		listener, err := net.Listen("tcp4", "127.0.0.1:0")
 		if err != nil {
@@ -267,7 +267,7 @@ func TestGuardRoutesTheCapturedPortAndRefusesAnUngrantedOne(t *testing.T) {
 		t.Fatalf("the admitted flow lost the captured port: %#v", events)
 	}
 	// Same guard, same name, a port this policy does not grant for it.
-	captureTo(t, func(net.Conn) (netip.AddrPort, error) {
+	captureTo(t, fixture.guard, func(net.Conn) (netip.AddrPort, error) {
 		return netip.AddrPortFrom(netip.MustParseAddr("93.184.216.34"), 443), nil
 	})
 	refused := guardClient(t, fixture.tls.Addr().String())
@@ -293,7 +293,7 @@ func TestGuardRoutesTheCapturedPortAndRefusesAnUngrantedOne(t *testing.T) {
 // refuses it and counts it instead of falling back to a port of its own.
 func TestGuardRefusesADirectDialToItsListener(t *testing.T) {
 	fixture := startGuardFixture(t)
-	captureTo(t, func(conn net.Conn) (netip.AddrPort, error) {
+	captureTo(t, fixture.guard, func(conn net.Conn) (netip.AddrPort, error) {
 		return conn.LocalAddr().(*net.TCPAddr).AddrPort(), nil
 	})
 	client := guardClient(t, fixture.tls.Addr().String())
@@ -320,7 +320,7 @@ func TestGuardRefusesADirectDialToItsListener(t *testing.T) {
 // An unreadable destination is not a reason to guess one.
 func TestGuardRefusesAConnectionWithNoKernelDestination(t *testing.T) {
 	fixture := startGuardFixture(t)
-	captureTo(t, func(net.Conn) (netip.AddrPort, error) {
+	captureTo(t, fixture.guard, func(net.Conn) (netip.AddrPort, error) {
 		return netip.AddrPort{}, Failure("gateway_destination_unknown")
 	})
 	client := guardClient(t, fixture.tls.Addr().String())

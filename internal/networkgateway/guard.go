@@ -25,10 +25,11 @@ const (
 	EnvoyDataSocket       = "/private/data.sock"
 )
 
-// originalDestination is the kernel's record of where a redirected connection
-// was going. It is a package variable only so a test can drive the guard's port
-// decisions without a redirecting kernel; nothing reassigns it in production.
-var originalDestination = readOriginalDestination
+// destinationReader is the kernel's record of where a redirected connection
+// was going. A guard holds its own reader so a test can drive the port
+// decisions without a redirecting kernel, swapping it while the guard serves
+// without a data race; production guards only ever read the kernel.
+type destinationReader func(net.Conn) (netip.AddrPort, error)
 
 // Guard owns only capless data-plane work. Policy and clocks are frozen before
 // construction. Envoy process supervision and host resource ownership are above
@@ -40,7 +41,10 @@ type Guard struct {
 	controller ControllerClient
 	events     *GuardEvents
 	peerCursor atomic.Uint64
+	original   atomic.Pointer[destinationReader]
 }
+
+func (g *Guard) setDestinationReader(read destinationReader) { g.original.Store(&read) }
 
 func NewGuard(policy egress.Snapshot, clock *BootClock, resolver *Resolver, controller ControllerClient, events *GuardEvents) (*Guard, error) {
 	if err := policy.RequireSupported(); err != nil {
@@ -50,7 +54,9 @@ func NewGuard(policy egress.Snapshot, clock *BootClock, resolver *Resolver, cont
 		controller.Clock.Domain() != clock.Domain() || resolver.domain != clock.Domain() || controller.Identity.PolicyFingerprint != policy.Fingerprint || resolver.policy.Fingerprint != policy.Fingerprint {
 		return nil, Failure("gateway_configuration_invalid")
 	}
-	return &Guard{policy: policy.Clone(), clock: clock, resolver: resolver, controller: controller, events: events}, nil
+	g := &Guard{policy: policy.Clone(), clock: clock, resolver: resolver, controller: controller, events: events}
+	g.setDestinationReader(readOriginalDestination)
+	return g, nil
 }
 
 // boundary is the socket-attribution view of this guard's frozen authority:
@@ -148,7 +154,7 @@ func (g *Guard) accept(ctx context.Context, listener net.Listener, limit int, se
 // the observed port so the refusal reads as an attempt, not as an absence.
 func (g *Guard) destination(client net.Conn) (netip.AddrPort, error) {
 	local, ok := client.LocalAddr().(*net.TCPAddr)
-	original, err := originalDestination(client)
+	original, err := (*g.original.Load())(client)
 	if !ok || err != nil || !original.Addr().Is4() {
 		return netip.AddrPort{}, Failure("gateway_destination_unknown")
 	}
