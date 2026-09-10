@@ -106,6 +106,12 @@ func startTaskChannel(ctx context.Context, rt runtime.Runtime, image, volume, ru
 		return c, nil
 	case err := <-c.serving:
 		c.serving <- err
+		// The stream ended, so the helper is exiting — but its stderr is copied by the process
+		// wait, which may not have run yet; the detail is worth a moment's patience.
+		select {
+		case <-helper.Exited():
+		case <-time.After(2 * time.Second):
+		}
 		return nil, errors.Join(fmt.Errorf("task channel: helper exited before its socket was ready%s", c.stderrDetail()), c.close())
 	case <-timer.C:
 		return nil, errors.Join(fmt.Errorf("task channel: helper did not report ready within %s%s", taskChannelReadyTimeout, c.stderrDetail()), c.close())
