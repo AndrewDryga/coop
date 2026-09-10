@@ -74,7 +74,9 @@ func TestDetectSubprojectsAtAnyDepth(t *testing.T) {
 		"terraform/environments/va1/.agent/tasks",      // depth 3 — the shape that motivated this
 		"portal/.agent/tasks",                          // depth 1 still works
 		"node_modules/pkg/.agent/tasks",                // pruned: dependency tree
-		"portal/nested/.agent/tasks",                   // pruned: inside a member already
+		"portal/nested/.agent/tasks",                   // a member INSIDE a member is a member too
+		"portal/vendor/dep/.agent/tasks",               // pruned: build output, even inside a member
+		"portal/.agent/hidden/.agent/tasks",            // pruned: a member's own .agent is never walked
 		"terraform/environments/production/notamember", // no .agent/ — not a member
 	} {
 		if err := os.MkdirAll(filepath.Join(repo, filepath.FromSlash(d)), 0o755); err != nil {
@@ -82,9 +84,47 @@ func TestDetectSubprojectsAtAnyDepth(t *testing.T) {
 		}
 	}
 	got := DetectSubprojects(repo)
-	want := []string{"portal", "terraform/environments/va1"}
+	want := []string{"portal", "portal/nested", "terraform/environments/va1"}
 	if !slices.Equal(got, want) {
 		t.Errorf("DetectSubprojects = %v, want %v", got, want)
+	}
+}
+
+// The blitz-infra shape: six terraform roots, three of them nested under another root. Discovery
+// used to stop at the first member on each path, so the three nested ones were hand-maintained
+// forever and every `coop init` printed a count that contradicted the config it would not fix.
+func TestDetectSubprojectsFindsMembersNestedInsideAMember(t *testing.T) {
+	repo := t.TempDir()
+	members := []string{
+		"terraform/environments/gcp/blitz",
+		"terraform/environments/gcp/immersiveai",
+		"terraform/environments/va1",
+		"terraform/environments/va1/blitz-apps",
+		"terraform/environments/va1/immersive-apps-dev",
+		"terraform/environments/va1/immersive-apps-prod",
+	}
+	for _, m := range members {
+		if err := os.MkdirAll(filepath.Join(repo, filepath.FromSlash(m), ".agent", "tasks"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := DetectSubprojects(repo); !slices.Equal(got, members) {
+		t.Errorf("DetectSubprojects = %v, want all six, sorted", got)
+	}
+	// Registering against a project.yaml that already lists the parents adds only the three
+	// nested roots, in place, and a second run adds nothing.
+	if _, err := WriteProject(repo, []string{"terraform/environments/gcp/blitz", "terraform/environments/gcp/immersiveai", "terraform/environments/va1"}); err != nil {
+		t.Fatal(err)
+	}
+	added, err := RegisterSubprojects(repo, DetectSubprojects(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := members[3:]; !slices.Equal(added, want) {
+		t.Errorf("RegisterSubprojects added %v, want the nested three %v", added, want)
+	}
+	if again, err := RegisterSubprojects(repo, DetectSubprojects(repo)); err != nil || len(again) != 0 {
+		t.Errorf("second registration added %v (err %v), want nothing", again, err)
 	}
 }
 

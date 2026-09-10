@@ -43,11 +43,14 @@ func InitSubproject(repo, dir string) error {
 //
 // The walk goes to ANY depth, because a member is not always a direct child: an infra repo nests
 // its terraform roots (terraform/environments/va1), and requiring depth-1 meant those layouts had
-// to hand-edit .agent/project.yaml forever. Three prunes keep it cheap and correct:
+// to hand-edit .agent/project.yaml forever. A member can also sit INSIDE another member — the same
+// repo keeps terraform/environments/va1/blitz-apps as its own root with its own queue — so the walk
+// descends into a member too. That is safe because each member's queue is its own directory
+// (<member>/.agent/tasks): a nested member's tasks are never also its parent's, and the only place
+// nesting matters is which queue a path belongs to, where the nearest member wins. Two prunes keep
+// the walk cheap:
 //   - hidden dirs (.git, .agent, .terraform, …) — never members, and the heavy ones live there
 //   - the build/vendor dirs in subprojectSkipDirs, which can hold thousands of files
-//   - a member's own subtree: once a directory is a member, its children are ITS business, so
-//     nesting a member inside a member can't produce two overlapping queues for the same work
 func DetectSubprojects(repo string) []string {
 	var subs []string
 	var walk func(dir, rel string)
@@ -63,8 +66,7 @@ func DetectSubprojects(repo string) []string {
 			childRel := path.Join(rel, e.Name())
 			child := filepath.Join(dir, e.Name())
 			if fi, err := os.Stat(filepath.Join(child, ".agent")); err == nil && fi.IsDir() {
-				subs = append(subs, childRel) // a member — do not descend into it
-				continue
+				subs = append(subs, childRel) // a member — and it may hold members of its own
 			}
 			walk(child, childRel)
 		}

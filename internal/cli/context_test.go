@@ -198,3 +198,24 @@ func TestContextChangedGitStatusIsHardened(t *testing.T) {
 		t.Fatal("positive control failed: raw git status did not fire the planted fsmonitor")
 	}
 }
+
+// Members can nest, so a path under terraform/environments/va1/blitz-apps sits inside two declared
+// members. It belongs to the nearest one: scoping it to both would route the same work to two
+// queues, which is the overlap that discovery pruning used to prevent by not finding the nested
+// member at all.
+func TestNearestSubprojectWinsWhenMembersNest(t *testing.T) {
+	members := []string{"terraform/environments/va1", "terraform/environments/va1/blitz-apps", "portal"}
+	for _, tc := range []struct{ rel, want string }{
+		{filepath.FromSlash("terraform/environments/va1/blitz-apps/main.tf"), "terraform/environments/va1/blitz-apps"},
+		{filepath.FromSlash("terraform/environments/va1/blitz-apps"), "terraform/environments/va1/blitz-apps"},
+		{filepath.FromSlash("terraform/environments/va1/modules/x.tf"), "terraform/environments/va1"},
+		{filepath.FromSlash("portal/src/a.go"), "portal"},
+	} {
+		if got, ok := nearestSubproject(members, tc.rel); !ok || got != tc.want {
+			t.Errorf("nearestSubproject(%q) = %q, %v; want %q", tc.rel, got, ok, tc.want)
+		}
+	}
+	if got, ok := nearestSubproject(members, filepath.FromSlash("docs/readme.md")); ok {
+		t.Errorf("a path outside every member resolved to %q", got)
+	}
+}

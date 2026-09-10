@@ -114,11 +114,11 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 	}
 	cwd, _ := os.Getwd()
 	// Current subproject: if cwd sits inside a declared subproject, that subproject dir is in scope.
+	// Members can nest, so a cwd under terraform/environments/va1/blitz-apps is inside two of them;
+	// the NEAREST one is the queue that path belongs to, and only it goes in scope.
 	if rel, err := filepath.Rel(repo, cwd); err == nil && !strings.HasPrefix(rel, "..") {
-		for _, sub := range p.Subprojects {
-			if rel == sub || strings.HasPrefix(rel, sub+string(filepath.Separator)) {
-				add(sub)
-			}
+		if sub, ok := nearestSubproject(p.Subprojects, rel); ok {
+			add(sub)
 		}
 	}
 	// Explicit paths are repo-relative (that's what --changed/--task emit too). Absolute paths are
@@ -268,4 +268,19 @@ func contextRendered(repo string, sel []contextc.Selected) (int, error) {
 		fmt.Printf("===== %s =====\n%s\n\n", s.File, strings.TrimRight(string(data), "\n"))
 	}
 	return 0, nil
+}
+
+// nearestSubproject returns the declared member that contains rel and is the deepest such member:
+// with members that nest, a path belongs to the one closest to it, never to both.
+func nearestSubproject(subprojects []string, rel string) (string, bool) {
+	best, found := "", false
+	for _, sub := range subprojects {
+		if rel != sub && !strings.HasPrefix(rel, sub+string(filepath.Separator)) {
+			continue
+		}
+		if !found || len(sub) > len(best) {
+			best, found = sub, true
+		}
+	}
+	return best, found
 }

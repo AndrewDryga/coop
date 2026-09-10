@@ -644,7 +644,7 @@ coop init [--stack asdf] — scaffold coop's working set into the repo.
   like terraform/environments/va1 is found too — it lists them under 'subprojects:' so
   coop aggregates their task queues automatically (no COOP_TASKS). A member you add later
   is registered on the next init, in place, leaving the file's comments intact. The walk
-  skips hidden dirs, dependency/build output, and anything inside a member.
+  skips hidden dirs and dependency/build output; a member may hold members of its own.
   coop init scaffolds each member with ONLY its own task queue + backlog
   (it shares the root's AGENTS.md/.claude); the member's queue is for its own work, the
   root's for changes spanning members. A single repo gets a project.yaml template with
