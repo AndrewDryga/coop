@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/qualification.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_setup.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/run.go, docs/networking.md]
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/run.go, docs/networking.md]
 updated: 2026-09-10
 ---
 
@@ -28,7 +28,14 @@ binds three things beyond the rules: the project directory's dev+inode (a replac
 path is refused, `networkstate/authority.go:459`), the reviewed Compose stanza of every `service:`
 grant as a digest recomputed at launch (`box/composecheck.go:415`, `box/network_approval.go:276`),
 and the same capability gate a launch applies — an unenforceable rule is refused at review, not
-remembered (`box/network_approval.go:157`). Observed
+remembered (`box/network_approval.go:157`). `coop net forget` is the way back and the only caller of
+`Store.Forget` (`networkstate/approval_forget.go:59`): it removes exactly one approval file under the
+approval lock, proves the removal, and touches no evidence. It cannot sweep — a record is filed under
+a keyed hash of the canonical path and stores no path, so the store can answer "is this project
+approved?" and never "which projects are?" — and it derives that id LEXICALLY
+(`networkstate/approval_forget.go:34`), which is the only way to name the record a deleted checkout
+left behind. An approval made through a symlink is filed under its target, so once the link is gone
+its path locates nothing, and forget says so instead of removing another project's. Observed
 traffic is evidence, never a grant. Admission marks the resolved posture explicit through
 `cfg.SetEgress` (`box/network_admission.go:91`), so the project overlay cannot decide the mode a
 second time. A run that neither asks for filtered nor has a remembered posture writes NO host
@@ -93,6 +100,10 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-10 — `coop net forget` removes one project's remembered approval (lexical id derivation, so
+  a deleted checkout's record can still be named; a gone symlink locates nothing rather than removing
+  the wrong record), and `coop net` reports a replaced project directory as blocked instead of leaving
+  the refusal to the next launch. Verified on a real terminal against scratch repos.
 - 2026-09-10 — a project `.agent/Dockerfile` now runs under `--egress filtered`: built on the locked
   client image under its own tag, admitted only by a layer-prefix proof plus a byte-identical
   pinned-client proof, both read from the built image. Admission's Dockerfile refusal is gone;

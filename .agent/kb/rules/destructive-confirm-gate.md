@@ -4,7 +4,7 @@ description: "every unrecoverable delete routes through the one shared `ui.Destr
 scope: security
 sources: [internal/ui/confirm.go]
 check: "none"
-updated: 2026-08-10
+updated: 2026-09-10
 ---
 
 # Every unrecoverable delete goes through the one shared confirmation gate
@@ -34,6 +34,13 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 - Keep `--yes` (skip the prompt) distinct from `--force` (override a safety guard like unmerged/dirty).
   `--force` is never a prompt-skip; `--yes` is never a guard-override.
 - Deletion prompts default to **No**; only a land-then-remove flow may default Yes on the *land* step.
+- Narrow exception: a delete a human can simply redo is not this rule's subject. `coop net forget`
+  removes a remembered network approval, which `coop net approve` recreates in one command, so it
+  uses approve's own preview-and-confirm instead of the gate: `DestroyGate` would tell the operator
+  "this can't be undone", which is false, and its `--yes` would let an unattended run drop a
+  decision the networking contract says only a human makes. It is stricter where it counts — no
+  `--yes` at all, a terminal required, default No. Reach for the gate whenever redoing the thing
+  needs anything more than one command.
 - Narrow exception: `<task>/tmp/` is lifecycle-declared disposable scratch, not retained user state.
   Reaching done may remove exactly that containment-checked child without a second prompt (the loop
   cannot prompt), but it must preserve `artifacts/` and every other task file, refuse path escape or
@@ -72,3 +79,7 @@ See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-
   2026-08-09 entry's `tasks.go`/`taskcmd.go` paths are that extraction's pre-move names; the same
   sites are now `internal/tasks/queue.go` and `cmd.go`.) The gate's test moved with it to
   `internal/ui/confirm_test.go`. `check:` is still `none` — nothing mechanical catches a fourth copy.
+- 2026-09-10 — named the recoverable-delete exception after `coop net forget` landed with its own
+  preview-and-confirm: the gate's "can't be undone" wording and its `--yes` were both wrong for an
+  approval a human recreates with `coop net approve`. Swept the other destructive verbs; every one
+  of them (tasks rm, profiles rm, fork rm) destroys state no single command restores, so none moves.

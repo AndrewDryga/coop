@@ -292,6 +292,30 @@ func TestPostureViewNamesTheDecisionAndWhatIsPending(t *testing.T) {
 	}
 }
 
+// A launch can refuse for something the rule diff cannot show. The view says
+// so in its own line, with the command that fixes it — otherwise a project
+// whose directory was replaced reads as ready to go.
+func TestPostureViewSaysWhenTheApprovedDirectoryWasReplaced(t *testing.T) {
+	replaced := "the project directory at /private/tmp/p was replaced since it was approved — review it with 'coop net approve'"
+	posture := box.NetworkPosture{Project: "/private/tmp/p", Mode: egress.Filtered, Source: box.PostureFromApproval,
+		Approval: &networkstate.Approval{Posture: egress.Filtered}, Pending: errors.New(replaced),
+		Setup: &networkstate.Qualification{Contract: networkstate.QualificationContract, CompletedAt: time.Unix(0, 0).UTC()}}
+	var b bytes.Buffer
+	writeNetPosture(&b, ui.Palette{}, posture, nil)
+	for _, want := range []string{"Blocked", replaced} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("posture view is missing %q:\n%s", want, b.String())
+		}
+	}
+	// A project with nothing pending gets no such line.
+	var clean bytes.Buffer
+	posture.Pending = nil
+	writeNetPosture(&clean, ui.Palette{}, posture, nil)
+	if strings.Contains(clean.String(), "Blocked") {
+		t.Errorf("a project with nothing pending was reported blocked:\n%s", clean.String())
+	}
+}
+
 // A host with no setup record must be told to run setup, and a record from
 // another contract is a record, not a launch capability.
 func TestPostureViewGuidesAnEmptyHostAndAStaleRecord(t *testing.T) {

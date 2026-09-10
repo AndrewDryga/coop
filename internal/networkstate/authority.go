@@ -431,10 +431,19 @@ func (s *Store) projectIdentity(project string) (string, string, os.FileInfo, er
 	if err != nil || !info.IsDir() {
 		return "", "", nil, errors.New("network approval requires an existing project directory")
 	}
+	return s.projectKey(canonical), canonical, info, nil
+}
+
+// projectKey is the one derivation of a project's record id, so the path that
+// files an approval and the path that finds it can never drift apart. It takes
+// an already-canonical path: what makes an id is that path and the owner key.
+func (s *Store) projectKey(canonical string) string {
 	mac := hmac.New(sha256.New, s.key)
 	_, _ = mac.Write([]byte("project-v1\x00" + canonical))
-	return hex.EncodeToString(mac.Sum(nil)), canonical, info, nil
+	return hex.EncodeToString(mac.Sum(nil))
 }
+
+func approvalRecord(id string) string { return "approval-" + id + ".json" }
 
 type Approval struct {
 	Version   int           `json:"version"`
@@ -492,7 +501,7 @@ func (s *Store) Approval(project string) (*Approval, error) {
 }
 
 func (s *Store) approval(id string) (*Approval, error) {
-	data, err := s.read("approval-"+id+".json", maxPrivateRecordBytes)
+	data, err := s.read(approvalRecord(id), maxPrivateRecordBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

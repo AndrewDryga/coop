@@ -154,7 +154,7 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 		if err != nil {
 			return err
 		}
-		if err := s.publish("approval-"+current.After.ProjectID+".json", data, true); err != nil {
+		if err := s.publish(approvalRecord(current.After.ProjectID), data, true); err != nil {
 			return fmt.Errorf("publish reviewed approval: %w", err)
 		}
 		return s.intactAuthority()

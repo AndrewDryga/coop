@@ -134,6 +134,35 @@ func TestReviewAndApproveRemembersTheProjectRequest(t *testing.T) {
 	}
 }
 
+// A directory moved aside and replaced at the same path inherits nothing, so
+// the next launch refuses. Nothing in the rule diff can show that, which is why
+// the posture view reports it as pending in its own right.
+func TestPostureReportsAnApprovedDirectoryThatWasReplaced(t *testing.T) {
+	cfg, repo, _ := postureFixture(t, "")
+	approveFixture(t, cfg, repo)
+	if err := os.Rename(repo, repo+"-moved-aside"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	posture, err := ProjectNetworkPosture(context.Background(), cfg, repo)
+	if err != nil {
+		t.Fatalf("ProjectNetworkPosture: %v", err)
+	}
+	if posture.Pending == nil || !strings.Contains(posture.Pending.Error(), "was replaced since it was approved") {
+		t.Fatalf("pending = %v, want the replaced directory reported", posture.Pending)
+	}
+	if !strings.Contains(posture.Pending.Error(), "coop net approve") {
+		t.Errorf("pending = %v, want it to name the command that fixes it", posture.Pending)
+	}
+	// The rule diff is empty: without the pending line this view would look
+	// exactly like a project that is good to go.
+	if len(posture.Add) != 0 || len(posture.Remove) != 0 {
+		t.Errorf("add=%+v remove=%+v, want the notice to be the only sign", posture.Add, posture.Remove)
+	}
+}
+
 func TestReviewRefusesAnUnqualifiedProviderFeatureRequest(t *testing.T) {
 	cfg, repo, _ := postureFixture(t, "box:\n  egress: filtered\n  egress_rules:\n    - to:\n        provider: claude\n        features: [cloud-mcp]\n")
 	_, err := ReviewProjectNetwork(cfg, repo, nil)

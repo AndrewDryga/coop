@@ -45,7 +45,7 @@ const (
 	netWatchDeltaLines = 5
 )
 
-var netCommands = []string{"ls", "inspect", "watch", "receipt", "why", "explain", "approve", "setup", "recover"}
+var netCommands = []string{"ls", "inspect", "watch", "receipt", "why", "explain", "approve", "forget", "setup", "recover"}
 
 // cmdNet routes the restricted-networking family. Bare `coop net` is this
 // project's posture, not a listing: what a box may reach is the question a
@@ -69,6 +69,8 @@ func (a *app) cmdNet(args []string) (int, error) {
 		return netDiagnostic(verb, rest)
 	case "approve":
 		return a.cmdNetApprove(rest)
+	case "forget":
+		return a.cmdNetForget(rest)
 	case "recover":
 		return a.cmdNetRecover(rest)
 	default:
@@ -204,6 +206,13 @@ func writeNetPosture(w io.Writer, p ui.Palette, posture box.NetworkPosture, runs
 		for _, rule := range posture.Remove {
 			b.row("- " + box.NetworkRuleText(rule))
 		}
+	}
+	// A launch can also refuse for something no rule diff can show — the project
+	// directory replaced since it was approved, a Compose service that changed
+	// under its name. The branch above says its own; this is the one that would
+	// otherwise be silent, and each message names the command that fixes it.
+	if posture.Pending != nil && len(posture.Add) == 0 && len(posture.Remove) == 0 {
+		b.field("Blocked", posture.Pending.Error())
 	}
 	switch {
 	case posture.Setup == nil:

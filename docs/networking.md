@@ -142,7 +142,15 @@ gate a launch does, so a rule this runtime could never enforce (an IPv6 destinat
 refused at review instead of being remembered and refused at every launch.
 
 An approval is bound to the project DIRECTORY, not to its path: moving the approved checkout aside
-and putting another there refuses the next launch until a human reviews it again.
+and putting another there refuses the next launch until a human reviews it again. `coop net` reports
+that as blocked and names the command that fixes it.
+
+`coop net forget` takes an approval back. It shows what the project remembered, asks on the terminal,
+and removes exactly that one record: run it in the project, or pass `--project <path>` for a checkout
+that is already gone. The runs recorded here, their receipts and this host's setup stay, and the next
+filtered run asks for approval again. A path that was a *symlink* was approved as the directory it
+pointed at, so once both are gone the record can no longer be located from that path — forget says so
+instead of removing another project's.
 
 ## When a run is interrupted
 

@@ -876,6 +876,7 @@ var commandHelp = map[string]string{
   Usage: coop net                              what this project may reach
          coop net setup                        prepare this host, once
          coop net approve [--mode <m>]         review + remember the request
+         coop net forget [--project <path>]    drop this project's approval
          coop net ls [--all] [--json]          the filtered runs recorded here
          coop net inspect <run> [--json]       what one run was allowed and did
          coop net watch <run> [--json]         follow a run until it seals
@@ -925,6 +926,11 @@ var commandHelp = map[string]string{
   the repository — so editing or deleting the file cannot widen access, and an
   unattended run can never approve itself. Approvals apply to NEW runs; boxes
   already running keep the policy they launched with.
+
+  'forget' takes one back: it shows what this project remembered, asks, and
+  removes that one record — '--project <path>' for a checkout that is already
+  gone. The runs recorded here, their receipts and this host's setup stay, and
+  the next run asks for approval again.
 
   'why' checks a destination against the rules ONE run started with, without
   sending a packet — a name is TLS on 443 unless '--port <n>' says otherwise,
