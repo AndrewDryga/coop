@@ -204,8 +204,13 @@ func (codexAgent) NativeSubagents() NativeSubagentSupport { return NativeSubagen
 
 func (codexAgent) AuthMarker() (file, envKey string) { return "auth.json", "OPENAI_API_KEY" }
 
-// CredentialEnvKeys is Codex's only token env var.
-func (codexAgent) CredentialEnvKeys() []string { return []string{"OPENAI_API_KEY"} }
+// CredentialEnvKeys lists every env var Codex reads a token from: OPENAI_API_KEY plus the two
+// alternates native `codex exec` and the ACP adapter accept. Each is credential authority even
+// when a particular client ignores one — a name left off this list is never stripped, so the
+// token would ride into a box scoped to another provider.
+func (codexAgent) CredentialEnvKeys() []string {
+	return []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"}
+}
 
 func (codexAgent) LiveCredentials() LiveCredentialSpec {
 	return LiveCredentialSpec{

@@ -225,9 +225,30 @@ func TestEnvKeysOutsideScope(t *testing.T) {
 	}
 	// A raw run (empty scope) strips every agent key, alternates included.
 	all := envKeysOutsideScope(cfg, nil)
-	for _, k := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "XAI_API_KEY"} {
+	for _, k := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY", "XAI_API_KEY"} {
 		if !all[k] {
 			t.Errorf("empty scope should drop every agent key, missing %s: %v", k, all)
+		}
+	}
+}
+
+// Codex reads a token from CODEX_API_KEY and CODEX_ACCESS_TOKEN as well as OPENAI_API_KEY, so a
+// box scoped to a different provider must strip all three — an alternate name is the same live
+// credential, and a name missing from CredentialEnvKeys is never in the strip set at all.
+func TestEnvKeysOutsideScopeStripsCodexAlternateTokens(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	drop := envKeysOutsideScope(cfg, []string{"claude"})
+	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+		if !drop[key] {
+			t.Errorf("claude scope must drop Codex's %s, got %v", key, drop)
+		}
+	}
+	// In scope on the default account with no login marker, the env tokens ARE the account, so
+	// every one of them stays.
+	cx := envKeysOutsideScope(cfg, []string{"codex"})
+	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
+		if cx[key] {
+			t.Errorf("codex scope on the default account must keep %s, got %v", key, cx)
 		}
 	}
 }
