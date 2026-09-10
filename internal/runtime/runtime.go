@@ -126,6 +126,44 @@ func (r Runtime) Run(stdin io.Reader, stdout, stderr io.Writer, args ...string) 
 	return exitCode(r.Name, cmd.Run())
 }
 
+// runForegroundCommand runs a client that shares coop's controlling terminal, in coop's OWN
+// process group. It must not get a group of its own: a background process group is SUSPENDED the
+// moment it configures or reads the terminal (SIGTTOU/SIGTTIN), so an interactive box would hang
+// before the daemon was ever told to start it. Cancellation therefore signals this exact process
+// — the caller owns its containers by ID and removes them itself.
+func runForegroundCommand(ctx context.Context, cmd *exec.Cmd) (int, error) {
+	if err := cmd.Start(); err != nil {
+		return -1, fmt.Errorf("%s: %w", cmd.Path, err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-ctx.Done():
+		beforeErr := beforeInterruptibleCancel()
+		cleanupErr := killProcess(cmd.Process, done)
+		return -1, errors.Join(ctx.Err(), beforeErr, cleanupErr)
+	case err := <-done:
+		return exitCode(cmd.Path, err)
+	}
+}
+
+// killProcess ends one client: TERM, then KILL after the same grace a group gets. It never signals
+// a group, because this process shares coop's own.
+func killProcess(process *os.Process, done <-chan error) error {
+	if process == nil {
+		return nil
+	}
+	_ = process.Signal(syscall.SIGTERM)
+	if waitLeaderDone(done, killGrace) {
+		return nil
+	}
+	_ = process.Kill()
+	if !waitLeaderDone(done, leaderReapTimeout) {
+		return fmt.Errorf("runtime client %d did not reap after SIGKILL", process.Pid)
+	}
+	return nil
+}
+
 // contextCommand makes a context deadline tear down the runtime CLI's whole process group, not
 // just its direct process. Runtime wrappers may spawn helpers; leaving one alive would turn a
 // bounded cleanup into a process leak. WaitDelay is the final backstop if a killed child wedges.

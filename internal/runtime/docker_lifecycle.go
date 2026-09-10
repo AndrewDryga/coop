@@ -8,11 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type DockerCreate struct {
@@ -137,6 +140,25 @@ func (d *Docker) StartContainer(ctx context.Context, ref DockerRef) error {
 	return nil
 }
 
+// attachedToTerminal reports whether this attach shares coop's controlling terminal. A var so a
+// test can drive both branches without a pseudo-terminal.
+var attachedToTerminal = func(streams ...any) bool {
+	for _, stream := range streams {
+		if file, ok := stream.(*os.File); ok && fileIsTerminal(file) {
+			return true
+		}
+	}
+	return false
+}
+
+func fileIsTerminal(file *os.File) bool {
+	if file == nil {
+		return false
+	}
+	_, err := unix.IoctlGetTermios(int(file.Fd()), ioctlReadTermios)
+	return err == nil
+}
+
 // slowStartupAfter is when an unwitnessed start stops being silent, not when it
 // becomes an error. Overridden in tests.
 var slowStartupAfter = 15 * time.Second
@@ -160,9 +182,15 @@ func (d *Docker) StartAttached(ctx context.Context, ref DockerRef, stdin io.Read
 		code int
 		err  error
 	}
+	// A client attached to coop's terminal drives that terminal: it must run in coop's own
+	// foreground process group or the kernel suspends it (SIGTTOU) before it starts anything.
+	run := runInterruptibleCommand
+	if attachedToTerminal(stdin, stdout, stderr) {
+		run = runForegroundCommand
+	}
 	done := make(chan result, 1)
 	go func() {
-		code, err := runInterruptibleCommand(ctx, cmd)
+		code, err := run(ctx, cmd)
 		done <- result{code, err}
 	}()
 	started, noticed := false, false

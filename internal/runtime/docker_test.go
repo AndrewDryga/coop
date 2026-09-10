@@ -13,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"text/template"
 	"time"
@@ -214,6 +216,11 @@ func TestDockerFixtureProcess(t *testing.T) {
 			}
 			if fixture.Mode == "no-start" {
 				os.Exit(1)
+			}
+			if fixture.Mode == "pgid" {
+				// The client reports the process group it was started in: coop's own when it
+				// drives the terminal, a group of its own otherwise.
+				fmt.Fprintf(os.Stdout, "PGID=%d\n", syscall.Getpgrp())
 			}
 			if fixture.Mode == "late-start" {
 				// The daemon accepted the attach but has not started the workload
@@ -788,6 +795,45 @@ func TestDockerFileDigestIdentifiesOneRegularFile(t *testing.T) {
 			}
 			if err != nil || file.SHA256 != hex.EncodeToString(sum[:]) || file.Size != int64(len(body)) || file.Mode != 0o755 {
 				t.Fatal("one regular file was not identified", file, err)
+			}
+		})
+	}
+}
+
+// A client attached to coop's terminal must run in coop's OWN process group: a background group is
+// suspended by the kernel the moment it touches the terminal, which hangs an interactive box before
+// the daemon is ever told to start it. Every other client keeps its own group, so cancelling one
+// tears down the whole client tree.
+func TestAttachedClientJoinsCoopsGroupOnlyWhenItDrivesTheTerminal(t *testing.T) {
+	for _, terminal := range []bool{true, false} {
+		name := "own-group"
+		if terminal {
+			name = "coop-group"
+		}
+		t.Run(name, func(t *testing.T) {
+			previous := attachedToTerminal
+			attachedToTerminal = func(...any) bool { return terminal }
+			t.Cleanup(func() { attachedToTerminal = previous })
+			rt, _ := fixtureDocker(t, dockerFixture{Mode: "pgid", Container: dockerFixtureContainer()})
+			d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			var out bytes.Buffer
+			if _, err := d.StartAttached(context.Background(), dockerFixtureRef(), nil, &out, io.Discard, nil); err != nil {
+				t.Fatal(err)
+			}
+			_, value, found := strings.Cut(strings.TrimSpace(out.String()), "PGID=")
+			if !found {
+				t.Fatal("the client did not report its process group", out.String())
+			}
+			group, err := strconv.Atoi(strings.Fields(value)[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if shared := group == syscall.Getpgrp(); shared != terminal {
+				t.Fatalf("client group %d against coop's %d: shares=%v, want %v", group, syscall.Getpgrp(), shared, terminal)
 			}
 		})
 	}

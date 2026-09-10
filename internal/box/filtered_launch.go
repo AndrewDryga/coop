@@ -276,7 +276,14 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	})
 	cancel()
 	watchErr := <-watchDone
-	return code, errors.Join(runErr, watchErr)
+	outcome := errors.Join(runErr, watchErr)
+	// An interrupt is not a fault to describe twice: the workload and the watcher both stop on the
+	// same cancellation, and "context canceled context canceled" tells a person nothing. Cleanup
+	// still runs after this returns, so the box and its gateway are gone either way.
+	if ctx.Err() != nil && errors.Is(outcome, context.Canceled) {
+		return code, interruptedRun{}
+	}
+	return code, outcome
 }
 
 func (f *filteredExecution) watch(ctx context.Context, cancel context.CancelFunc) error {
@@ -343,3 +350,11 @@ func (f *filteredExecution) checkTopology() error {
 	}
 	return nil
 }
+
+// interruptedRun reads as one word to a person and is still a cancellation to code: the loop and
+// the session runner both decide what an interrupted attempt means by asking errors.Is.
+type interruptedRun struct{}
+
+func (interruptedRun) Error() string { return "interrupted" }
+
+func (interruptedRun) Unwrap() error { return context.Canceled }

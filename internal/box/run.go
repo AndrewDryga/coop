@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"sort"
@@ -413,7 +414,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		spec.ExtraArgs = extra
 		if spec.Ctx == nil {
-			spec.Ctx = context.Background()
+			// A filtered box is torn down by THIS process: its gateway, volumes and
+			// receipt are exact-owned, and none of it is --rm. So an interrupt has to
+			// arrive as a cancellation the cleanup below can act on, not as a signal
+			// that kills coop where it stands and strands three containers. A second
+			// interrupt takes the default action, so a wedged teardown is still
+			// escapable.
+			interrupted, restore := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			go func() { <-interrupted.Done(); restore() }()
+			spec.Ctx = interrupted
 		}
 		filtered, err = prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, composeFile, spec.networkSmoke)
 		if filtered != nil {
