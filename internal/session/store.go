@@ -925,10 +925,15 @@ func sameOperationSnapshot(current, expected Operation) bool {
 		current.CreatedAt.Equal(expected.CreatedAt) && current.UpdatedAt.Equal(expected.UpdatedAt)
 }
 
+// initialSessionMatchesRequest is the identity check behind an idempotent create replay: the
+// stored session must be the one the request describes, field for field. Every comparison is plain
+// equality on purpose — an "or it was blank" escape on the AUTHORITY digest would let a replay be
+// answered with a session that carries a different authority than the one it asked for. Blank
+// against blank still matches, so a caller that sends no digest is unaffected.
 func initialSessionMatchesRequest(sess Session, req CreateSessionRequest) bool {
 	return sess.ID == req.ID && sess.ExternalRef == req.ExternalRef && sess.Target == req.Target &&
 		sess.Policy == req.Policy && sess.PolicyDigest == req.PolicyDigest &&
-		(sess.AuthorityDigest == req.AuthorityDigest || sess.AuthorityDigest == "") &&
+		sess.AuthorityDigest == req.AuthorityDigest &&
 		sess.ProjectEnv == !req.OmitEnv && sess.ProjectMCP == !req.OmitMCP &&
 		equalResponderBinding(sess.ResponderBinding, req.ResponderBinding) &&
 		sess.RepositoryReadOnly == req.RepositoryReadOnly && sess.Repository == req.Repository &&

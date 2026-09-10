@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -188,5 +189,43 @@ func remoteCreateSessionRequest(id string) CreateSessionRequest {
 			StaleBaseStatus: "not_applicable",
 		}},
 		MaxTurns: 3, MaxQueuedTurns: 2, MaxQueuedBytes: 4096,
+	}
+}
+
+// A replayed create is an IDENTITY check: the stored session must be the one the request is asking
+// for, or the caller gets a conflict. A stored session with NO authority digest used to match ANY
+// requested digest, so a replay could quietly hand back a session under an authority it was never
+// created with instead of refusing.
+func TestCompleteCreateSessionOperationRefusesAReplayClaimingAnAuthority(t *testing.T) {
+	store := openTestStore(t, t.TempDir())
+	defer store.Close()
+	ctx := context.Background()
+	op := runningRemoteCreateOperation(t, store, "outer-create")
+	req := remoteCreateSessionRequest("remote-session") // carries no authority digest
+	sess, err := store.CompleteCreateSessionOperation(ctx, op, req)
+	if err != nil || sess.AuthorityDigest != "" {
+		t.Fatalf("create = %+v, %v; want a stored session with no authority digest", sess, err)
+	}
+	claimed := req
+	claimed.AuthorityDigest = strings.Repeat("ab", 32)
+	if _, err := store.CompleteCreateSessionOperation(ctx, op, claimed); CodeOf(err) != CodeOperationIntentConflict {
+		t.Fatalf("replay claiming an authority the session never had = %v, want an intent conflict", err)
+	}
+}
+
+// The strict comparison must not punish a caller that never sends a digest: blank against blank is
+// the same session, and pre-v19 operation results decode to a blank digest through `omitempty`.
+func TestCompleteCreateSessionOperationReplaysADigestLessCreate(t *testing.T) {
+	store := openTestStore(t, t.TempDir())
+	defer store.Close()
+	ctx := context.Background()
+	op := runningRemoteCreateOperation(t, store, "outer-create")
+	req := remoteCreateSessionRequest("remote-session")
+	if _, err := store.CompleteCreateSessionOperation(ctx, op, req); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := store.CompleteCreateSessionOperation(ctx, op, req)
+	if err != nil || replayed.ID != req.ID || replayed.AuthorityDigest != "" {
+		t.Fatalf("digest-less replay = %+v, %v; want the stored session back", replayed, err)
 	}
 }
