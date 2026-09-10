@@ -3,7 +3,9 @@ package networkstate
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 
 	"github.com/AndrewDryga/coop/internal/egress"
 )
@@ -18,8 +20,12 @@ type Admission struct {
 	ProjectMode    *egress.Mode
 	PolicyMode     *egress.Mode
 	Requests       []egress.Rule
-	Operator       []egress.Input
-	Bundles        []egress.Bundle
+	// Services is the reviewed identity of each Compose service Requests name, keyed by name. It
+	// is part of the exact request an approval covers: a `service:` grant names a definition, not
+	// a name, so the same rule over a rewritten stanza is a different request.
+	Services map[string]string
+	Operator []egress.Input
+	Bundles  []egress.Bundle
 	// Automatic is host-captured shared MCP connectivity. Like provider core
 	// dependencies it neither selects filtered mode nor creates offline exceptions.
 	Automatic          []egress.Input
@@ -28,14 +34,87 @@ type Admission struct {
 
 // AdmissionPreview separates two questions a launch answers at once: which
 // posture these inputs resolve to, and whether the project's current request
-// already fits its remembered approval. A read-only posture view needs them
+// is exactly what was approved. A read-only posture view needs them
 // apart — a pending request is exactly what it exists to show, so refusing to
 // describe the project would hide the one fact the operator came for.
 type AdmissionPreview struct {
 	Mode egress.Mode
 	// Pending is non-nil when the request needs review before a launch. It is
 	// never a reason to widen anything: Admit fails on the same condition.
-	Pending error
+	Pending *PendingApproval
+}
+
+// PendingApproval is the ONE condition every launch refuses on and every view
+// reports: what .agent/project.yaml asks for is not what a human approved. Reason
+// is a plain sentence that reads on its own or after "cannot start because"; it
+// never carries the remedy, which is always the same — `coop net approve`.
+type PendingApproval struct{ Reason string }
+
+func (p *PendingApproval) Error() string { return p.Reason }
+
+// pendingApproval compares the exact request — the mode the project names, its
+// normalized rules and the reviewed identity of each service — with the stored
+// approval. It is the same comparison `coop net approve` asks about, so a view
+// that reports nothing pending and an approve that finds nothing to approve can
+// never disagree. Without an approval only a widening needs a human: unrestricted
+// access, or any rule at all. A project asking for filtered or offline access with
+// no rules is inside what coop grants on its own.
+//
+// The mode the file names counts only where it would decide anything: an
+// explicit --egress, COOP_EGRESS or session policy outranks it, so under one the
+// file's "open" is moot and refusing the run over it would protect nothing.
+func (a Admission) pendingApproval(approval *Approval) (*PendingApproval, error) {
+	rules, err := egress.NormalizeRules(a.Requests)
+	if err != nil {
+		return nil, err
+	}
+	const asks = "this project asks for network access that has not been approved"
+	overridden := a.InvocationMode != nil || a.HostPreference != nil || a.PolicyMode != nil
+	if approval == nil {
+		if a.ProjectMode != nil && *a.ProjectMode == egress.Open && !overridden {
+			return &PendingApproval{Reason: "this project asks for unrestricted internet access, which has not been approved"}, nil
+		}
+		if len(rules) != 0 {
+			return &PendingApproval{Reason: asks}, nil
+		}
+		return nil, nil
+	}
+	// A project that names no mode keeps the one that was approved; rules alone
+	// imply filtered, exactly as they do when a launch resolves the mode.
+	mode := approval.Posture
+	switch {
+	case overridden:
+	case a.ProjectMode != nil:
+		mode = *a.ProjectMode
+	case len(rules) != 0:
+		mode = egress.Filtered
+	}
+	if mode != approval.Posture || !sameRules(rules, approval.Envelope) {
+		return &PendingApproval{Reason: asks}, nil
+	}
+	if !maps.Equal(a.Services, approval.Services) {
+		for name, digest := range approval.Services {
+			if current, ok := a.Services[name]; ok && current != digest {
+				return &PendingApproval{Reason: fmt.Sprintf("the Compose service %q changed since it was approved", name)}, nil
+			}
+		}
+		return &PendingApproval{Reason: asks}, nil
+	}
+	return nil, nil
+}
+
+// sameRules is set equality over canonical rules; both sides are normalized, so
+// the JSON of a rule is its identity.
+func sameRules(a, b []egress.Rule) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, rule := range a {
+		if !slices.ContainsFunc(b, func(other egress.Rule) bool { return equalJSON(rule, other) }) {
+			return false
+		}
+	}
+	return true
 }
 
 // PreviewAdmission performs no publication and returns no authority handle. It
@@ -63,7 +142,8 @@ func PreviewAdmission(path, project string, exposed []string, input Admission) (
 }
 
 // PreviewAdmissionMode is the launch caller's form: a pending request is a
-// failure there, because admission is about to happen.
+// failure there, because admission is about to happen. The error is the
+// *PendingApproval itself, so a caller can tell it from every other refusal.
 func PreviewAdmissionMode(path, project string, exposed []string, input Admission) (egress.Mode, error) {
 	preview, err := PreviewAdmission(path, project, exposed, input)
 	if err != nil {
@@ -107,7 +187,10 @@ func (a Admission) preview(approval *Approval) (AdmissionPreview, error) {
 	if err != nil {
 		return AdmissionPreview{}, err
 	}
-	_, pending := checkRequestEnvelope(approval, a.Requests)
+	pending, err := a.pendingApproval(approval)
+	if err != nil {
+		return AdmissionPreview{}, err
+	}
 	return AdmissionPreview{Mode: mode, Pending: pending}, nil
 }
 

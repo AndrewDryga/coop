@@ -41,7 +41,7 @@ func TestLoadBoundsRepositoryInput(t *testing.T) {
 func TestProjectCaptureRejectsReplacedSources(t *testing.T) {
 	for _, replacement := range []string{"parent", "file", "symlink", "fifo"} {
 		t.Run(replacement, func(t *testing.T) {
-			repo := writeProject(t, "box:\n  egress: none\n")
+			repo := writeProject(t, "box:\n  egress: offline\n")
 			path := filepath.Join(repo, File)
 			parent, err := os.Lstat(filepath.Dir(path))
 			if err != nil {
@@ -174,13 +174,14 @@ func TestLoadInvalid(t *testing.T) {
 		"bad port":        "serve:\n  ports:\n    - 70000\n",
 		"zero port":       "serve:\n  ports:\n    - 0\n",
 		"bad yaml":        "serve: [\n",
-		"second document": "---\n---\nbox:\n  egress: none\n",
+		"second document": "---\n---\nbox:\n  egress: offline\n",
 		"absolute sub":    "subprojects:\n  - /etc\n",
 		"escaping sub":    "subprojects:\n  - ../evil\n",
 		// KnownFields: an unknown key (a typo'd `subproject:`) errors instead of silently doing nothing.
 		"unknown key":                    "subproject:\n  - runner\n",
 		"unknown box key":                "box:\n  egres: none\n",
 		"bad egress":                     "box:\n  egress: full\n",
+		"retired egress spelling":        "box:\n  egress: none\n", // the file says offline; none is internal only
 		"bad pids":                       "box:\n  pids: lots\n",
 		"negative pids":                  "box:\n  pids: \"-5\"\n",
 		"no_new_privileges is not a key": "box:\n  no_new_privileges: false\n",
@@ -202,7 +203,7 @@ func TestLoadInvalid(t *testing.T) {
 // TestLoadBoxGate: the committed box policy + merge gate parse; pointer booleans keep absent ≠ false;
 // an all-comments file (the scaffolded template) is valid and empty.
 func TestLoadBoxGate(t *testing.T) {
-	p, err := Load(writeProject(t, "box:\n  env:\n    PGHOST: db\n    PGPORT: \"5432\"\n  egress: none\n  auto_up: false\n  memory: 4g\n  cpus: \"2\"\n  pids: 2048\nreview:\n  compose: dev/review-compose.yml\n  env:\n    CI: \"1\"\n    DATABASE_URL: postgres://postgres@db/test\ngate: make check\n"))
+	p, err := Load(writeProject(t, "box:\n  env:\n    PGHOST: db\n    PGPORT: \"5432\"\n  egress: offline\n  auto_up: false\n  memory: 4g\n  cpus: \"2\"\n  pids: 2048\nreview:\n  compose: dev/review-compose.yml\n  env:\n    CI: \"1\"\n    DATABASE_URL: postgres://postgres@db/test\ngate: make check\n"))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}

@@ -19,16 +19,28 @@ between that flag and `docker run`:
    filtered mode only, captures the frozen policy the gateway will enforce.
 4. **Launch** — `box.Run` branches once, on `spec.CapturedEgress` (`box/run.go:404`): non-nil takes
    the `filtered*.go` family, nil takes the open path byte for byte.
-5. **Per-host preflight** — `coop net setup` (`box/network_setup.go:63`).
+5. **Per-host qualification** — `SetupNetwork` (`box/network_setup.go`), run by the first filtered
+   launch that finds no current proof (`box/network_admission.go`, `ensureNetworkQualification`)
+   and by `coop net setup` on demand.
 
-Authority never comes from the repository or the box. A repo's `box.egress_rules`, and a rules file
-that lives inside an agent mount, are *requests*; a human turns one into a grant with
-`coop net approve`, the only caller of `Store.Approve` (`box/network_approval.go:202`). An approval
-binds three things beyond the rules: the project directory's dev+inode (a replacement at the same
-path is refused, `networkstate/authority.go:459`), the reviewed Compose stanza of every `service:`
-grant as a digest recomputed at launch (`box/composecheck.go:415`, `box/network_approval.go:276`),
-and the same capability gate a launch applies — an unenforceable rule is refused at review, not
-remembered (`box/network_approval.go:157`). `coop net forget` is the way back and the only caller of
+Authority never comes from the repository or the box. A repo's `box.egress`, its
+`box.egress_rules`, and a rules file that lives inside an agent mount, are *requests*; a human turns
+them into a grant with `coop net approve`, the only caller of `Store.Approve`
+(`box/network_approval.go`). The approval is the EXACT snapshot of the file — mode, normalized
+rules, and each named service's reviewed definition — and ONE read-only check decides whether the
+file and the approval differ: `Admission.pendingApproval` (`networkstate/admission.go`), surfaced
+as `AdmissionPreview.Pending` / `*PendingApproval`. `coop init`, bare `coop net`, `coop net approve`
+(which then has nothing to ask and writes nothing) and every launch through `AdmitNetwork` read the
+same answer, so no two of them can disagree. Without an approval only a widening is pending —
+`open`, or any rule; filtered/offline with no rules is what coop grants on its own, which is why a
+fresh `coop init` project (explicitly `filtered`) launches without a review. The file's mode counts
+only where it would decide anything: under `--egress`, `COOP_EGRESS` or a session policy the file's
+`open` is moot and is not pending. `approve` has no `--mode`: to change access you edit the file.
+An approval binds three things beyond the rules: the project directory's dev+inode (a replacement
+at the same path is pending, `networkstate/authority.go`, `checkDirectory`), the reviewed Compose
+stanza of every `service:` grant as a digest recomputed at launch (`box/composecheck.go:415`,
+`box/network_approval.go`, `requestedServiceDigests`), and the same capability gate a launch applies
+— an unenforceable rule is refused at review, not remembered. `coop net forget` is the way back and the only caller of
 `Store.Forget` (`networkstate/approval_forget.go:59`): it removes exactly one approval file under the
 approval lock, proves the removal, and touches no evidence. It cannot sweep — a record is filed under
 a keyed hash of the canonical path and stores no path, so the store can answer "is this project
@@ -43,19 +55,28 @@ state — the preview creates no owner key (`networkstate/admission.go:45`).
 
 The precedence ladder, one line: invocation `--egress` → remembered approval posture → explicit
 `COOP_EGRESS` → project `box.egress` → any rule present ⇒ filtered → open
-(`networkstate/admission.go:181`). There is no hard ceiling: nothing ever produced one, so the
-field and its clamp were deleted. A named session policy replaces the whole branch and refuses
-rather than reconcile with a disagreeing remembered posture (`networkstate/admission.go:170`).
+(`networkstate/admission.go`, `resolveMode`). There is no hard ceiling: nothing ever produced one,
+so the field and its clamp were deleted. A named session policy replaces the whole branch and
+refuses rather than reconcile with a disagreeing remembered posture. The project file spells
+no-network access `offline` — `project.Load` is the one place it becomes the internal `none`, with
+no alias (`internal/project/project.go`).
 
 Qualification has two halves. The release half is the `networkruntimee2e`-tagged suite —
 enforcement, denial, guard/collector faults, transports, credentialed providers — and it is what the
-published support matrix rests on. The per-host half is `coop net setup`: it builds the pinned
+published support matrix rests on. The per-host half is `SetupNetwork`: it builds the pinned
 gateway and locked client images for the bound daemon, runs ONE smoke through the ordinary launch
 engine (allowed TLS with no proxy variables; a denied name, a raw IP, metadata and the resolver all
-refused — `box/network_setup.go:43`), and records the runtime binding, image digests, contract and
-receipt. Admission then needs a record whose contract, transports and client builds cover this
-policy (`networkstate/qualification.go:386`). Nothing else builds an image or installs tooling at
-launch.
+refused — `smokeScript`, `setupChecks`), and records the runtime binding, image digests, contract
+and receipt. It is machinery, not a decision, so an ordinary filtered launch runs it itself when
+`currentQualification` finds no record that covers the policy, was made on this daemon by this
+coop's definitions AND still names an image pair that exists (`box/network_admission.go`); the
+launch continues on the record setup left. Setups serialize on `Store.LockSetup` (`setup-lock`
+under the root, 30 min bound), so two first launches never build the same images side by side.
+The session daemon passes no qualifier (`network_session.go`): an API request never builds images,
+so a host must be prepared with `coop net setup` before a filtered session. The transcript is the
+whole result — two sentences, one `✓`/`✗` line per proved property, one verdict; a check failure is
+`ErrNetworkSetupFailed`, which `cmdNetSetup` maps to exit 1 without repeating the verdict. Nothing
+else builds an image or installs tooling at launch.
 
 Traps:
 
@@ -73,8 +94,8 @@ Traps:
   the current closure — ~3s each on this host — so a read is memoized per image ID in the process
   AND recorded in the owner-private store (`networkstate/image_files.go`, keyed by the image id and
   the exact path set, so a release that pins one more path cannot be satisfied by an older record).
-  `coop net setup` records the locked image's set while it has the daemon in hand
-  (`box/network_setup.go:169`), and a launch records what it read out of the image it built, so a
+  host setup records the locked image's set while it has the daemon in hand
+  (`box/network_setup.go`, `setupClientFiles`), and a launch records what it read out of the image it built, so a
   first launch after a build reads one image (~8.2s here) and a repeat reads none (~5.9s, the same
   as a project with no Dockerfile) against ~11.9s before. A record that is missing, damaged or for
   another image is a MISS and the image is read; nothing there can make a file pass. `COOP_IMAGE` stays refused at
@@ -107,6 +128,13 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-10 — a filtered launch qualifies the host itself (`ensureNetworkQualification`, images
+  must still exist, serialized on `LockSetup`); `coop net setup` keeps the same transcript: two
+  sentences, one line per proved check, one verdict. Approval is an exact snapshot of the project
+  file (mode + rules + service digests) decided by ONE `pendingApproval` check shared by init, bare
+  `coop net`, `approve` (no `--mode`, no-op writes nothing) and every `AdmitNetwork` launch; a
+  repository `open` is a request. New projects scaffold `box.egress: filtered`; the file spells
+  `offline`. Re-verified against the sources above.
 - 2026-09-10 — the pinned-client digests a Dockerfile launch compares are now recorded per image id
   in the owner store (and by `coop net setup` for the locked image), so the added cost of a
   Dockerfile project falls from ~6.4s to ~2.6s on the first launch after a build and to ~0.4s on a

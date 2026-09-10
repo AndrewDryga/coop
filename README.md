@@ -1315,7 +1315,7 @@ except the knowledge tree (`kb/`, including `kb/rules/`), workflow assets (`skil
 | `kb/` | the committed descriptive knowledge base — subsystem maps, cross-cutting traps, and gotchas the code does not carry |
 | `kb/rules/` | the normative part of the knowledge tree — corrections graduate into “do X, not Y” rules here |
 | `claude/` | fallback user-level Claude settings and hooks for repos without matching project `.claude/` artifacts (committed) |
-| `project.yaml` | the committed per-project config: a monorepo's [`subprojects:`](#monorepos), the [`serve:` ports](#see-the-dev-server-in-your-browser), the box **policy** (`box:` — egress and [`egress_rules:`](docs/networking.md), resource caps, `auto_up`/`network`), and the merge `gate:`. `box:` and `gate:` fall *below* an explicit `COOP_*` env/conf setting, and — being committed and host-read — can only ever *tighten* your posture (egress pins to `none`, never widens; `no_new_privileges` isn't settable here) |
+| `project.yaml` | the committed per-project config: a monorepo's [`subprojects:`](#monorepos), the [`serve:` ports](#see-the-dev-server-in-your-browser), the box **policy** (`box:` — egress and [`egress_rules:`](docs/networking.md), resource caps, `auto_up`/`network`), and the merge `gate:`. `box:` and `gate:` fall *below* an explicit `COOP_*` env/conf setting, and — being committed and host-read — can only ever *tighten* your posture (egress pins `filtered` or `offline`; `open` is a request a human approves with `coop net approve`; `no_new_privileges` isn't settable here) |
 
 Upgrading a repo that still has a single `.agent/TASKS.md`? Convert it to the folder format
 by pasting the prompt in [MIGRATING.md](MIGRATING.md) to any coding agent in the repo.

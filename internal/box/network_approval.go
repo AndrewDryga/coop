@@ -32,31 +32,25 @@ type NetworkPosture struct {
 	Mode    egress.Mode
 	Source  string
 	// Approval is the remembered host-owned decision, nil when this project was
-	// never approved. Requested is the repo's current ask; Add and Remove are
-	// the difference a human would review.
-	Approval  *networkstate.Approval
-	Requested []egress.Rule
-	Add       []egress.Rule
-	Remove    []egress.Rule
-	// Setup is this host's newest preflight record, nil when `coop net setup`
-	// has never completed here.
-	Setup *networkstate.Qualification
-	// Pending is why a launch would refuse right now — a request outside the
-	// remembered approval. Describing that is the point of this view, so it is
-	// reported here rather than raised as an error nobody can act on.
-	Pending error
-}
-
-// SetupCurrent reports whether the newest host record was made by a coop that
-// accepts what this one does. A record from another contract is a record, not
-// a launch capability.
-func (p NetworkPosture) SetupCurrent() bool {
-	return p.Setup != nil && p.Setup.Contract == networkstate.QualificationContract
+	// never approved. Requested and RequestedMode are the repo's current ask —
+	// exactly what `coop net approve` would write; Add and Remove are the rule
+	// difference a human would review.
+	Approval      *networkstate.Approval
+	Requested     []egress.Rule
+	RequestedMode egress.Mode
+	Add           []egress.Rule
+	Remove        []egress.Rule
+	// Pending is why a launch would refuse right now — a request that is not
+	// what was approved. Describing that is the point of this view, so it is
+	// reported here rather than raised as an error nobody can act on. It is the
+	// same check every launch and `coop init` make.
+	Pending *networkstate.PendingApproval
 }
 
 // ProjectNetworkPosture answers `coop net` for one project. It reads the same
 // inputs admission does and resolves the mode through the same code, so the
-// posture shown is the posture a launch would get.
+// posture shown is the posture a launch would get. Host setup is not part of
+// it: a launch performs that itself, so its state is machinery, not a decision.
 func ProjectNetworkPosture(ctx context.Context, cfg *config.Config, repo string) (NetworkPosture, error) {
 	if ctx == nil || cfg == nil {
 		return NetworkPosture{}, errors.New("network posture requires host configuration and a cancelable context")
@@ -73,7 +67,7 @@ func ProjectNetworkPosture(ctx context.Context, cfg *config.Config, repo string)
 	out.Mode, out.Pending = preview.Mode, preview.Pending
 	store, err := networkstate.OpenExisting(root, nil)
 	if errors.Is(err, fs.ErrNotExist) {
-		out.Source, out.Add = postureSource(input, nil), out.Requested
+		out.Source, out.Add, out.RequestedMode = postureSource(input, nil), out.Requested, approvalMode(input, nil)
 		return out, nil
 	}
 	if err != nil {
@@ -83,20 +77,8 @@ func ProjectNetworkPosture(ctx context.Context, cfg *config.Config, repo string)
 	if out.Approval, err = store.Approval(canonical); err != nil {
 		return NetworkPosture{}, err
 	}
-	out.Source = postureSource(input, out.Approval)
+	out.Source, out.RequestedMode = postureSource(input, out.Approval), approvalMode(input, out.Approval)
 	out.Add, out.Remove = NetworkRuleDiff(approvedEnvelope(out.Approval), out.Requested)
-	// A drifted service is a pending change like any other: the rule still reads
-	// the same, but what it reaches does not.
-	if out.Pending == nil {
-		out.Pending = checkApprovedServices(out.Approval, ComposeFileAt(repo, p.ComposeRel()), repo, false)
-	}
-	records, err := store.Qualifications(ctx)
-	if err != nil {
-		return NetworkPosture{}, err
-	}
-	if len(records) > 0 {
-		out.Setup = &records[0] // Qualifications sorts newest first.
-	}
 	return out, nil
 }
 
@@ -120,26 +102,28 @@ func postureSource(input networkstate.Admission, approval *networkstate.Approval
 // before/after an operator is shown plus the digest that binds that view, so a
 // decision can never be applied to a request that changed underneath it.
 type ProjectNetworkApproval struct {
-	store    *networkstate.Store
-	project  string
-	mode     egress.Mode
-	requests []egress.Rule
-	services map[string]string
-	review   networkstate.ApprovalReview
-	used     bool
+	store     *networkstate.Store
+	project   string
+	mode      egress.Mode
+	requests  []egress.Rule
+	services  map[string]string
+	review    networkstate.ApprovalReview
+	unchanged bool
+	used      bool
 }
 
-// ReviewProjectNetwork prepares the approval a human confirms. It reads the
-// repository ONCE: Commit posts back the exact rules that were displayed, never
-// a fresh read of a file an agent could have rewritten during the prompt.
-func ReviewProjectNetwork(cfg *config.Config, repo string, explicit *egress.Mode) (_ *ProjectNetworkApproval, err error) {
+// ReviewProjectNetwork prepares the approval a human confirms. The mode and
+// the rules come from .agent/project.yaml and nowhere else: to change access,
+// edit the file and review it again. It reads the repository ONCE: Commit posts
+// back the exact rules that were displayed, never a fresh read of a file an
+// agent could have rewritten during the prompt.
+//
+// A request that is already exactly what was approved — the same check every
+// launch makes — returns a review with nothing to decide, before any authority
+// state exists: a no-op must not create an owner key or refresh a record.
+func ReviewProjectNetwork(cfg *config.Config, repo string) (_ *ProjectNetworkApproval, err error) {
 	if cfg == nil {
 		return nil, errors.New("network approval requires host configuration")
-	}
-	if explicit != nil {
-		if _, err := egress.ParseMode(string(*explicit)); err != nil {
-			return nil, err
-		}
 	}
 	canonical, p, root, exposed, input, err := networkProjectInputs(cfg, repo)
 	if err != nil {
@@ -157,6 +141,13 @@ func ReviewProjectNetwork(cfg *config.Config, repo string, explicit *egress.Mode
 	if err := checkSupportedRequests(input); err != nil {
 		return nil, err
 	}
+	preview, err := networkstate.PreviewAdmission(root, canonical, exposed, input)
+	if err != nil {
+		return nil, err
+	}
+	if preview.Pending == nil {
+		return &ProjectNetworkApproval{project: canonical, unchanged: true}, nil
+	}
 	// Approve is the explicit host operation that may create the authority
 	// root: a launch never does, so this is where an owner key is born.
 	store, err := networkstate.Open(root, exposed)
@@ -172,24 +163,22 @@ func ReviewProjectNetwork(cfg *config.Config, repo string, explicit *egress.Mode
 	if err != nil {
 		return nil, err
 	}
-	mode := approvalMode(input, before, explicit)
-	// The reviewed Compose definition is part of the decision: a `service:` rule
-	// approved by name alone would follow whatever that name later points at.
-	services, err := composeServiceDigests(ComposeFileAt(repo, p.ComposeRel()), repo, false, requestedServices(p.Box.EgressRules))
+	mode := approvalMode(input, before)
+	review, err := store.ReviewApproval(canonical, mode, p.Box.EgressRules, nil, input.Services)
 	if err != nil {
 		return nil, err
 	}
-	review, err := store.ReviewApproval(canonical, mode, p.Box.EgressRules, nil, services)
-	if err != nil {
-		return nil, err
-	}
-	return &ProjectNetworkApproval{store: store, project: canonical, mode: mode, requests: p.Box.EgressRules, services: services, review: review}, nil
+	return &ProjectNetworkApproval{store: store, project: canonical, mode: mode, requests: p.Box.EgressRules, services: input.Services, review: review}, nil
 }
 
 func (a *ProjectNetworkApproval) Project() string                { return a.project }
 func (a *ProjectNetworkApproval) Mode() egress.Mode              { return a.mode }
 func (a *ProjectNetworkApproval) Before() *networkstate.Approval { return a.review.Before }
 func (a *ProjectNetworkApproval) After() *networkstate.Approval  { return a.review.After }
+
+// Unchanged reports a request that is exactly what was approved already: there
+// is no security question to ask, and nothing was written to find that out.
+func (a *ProjectNetworkApproval) Unchanged() bool { return a != nil && a.unchanged }
 
 // Commit writes the reviewed approval. The store rechecks the digest, so a
 // request or a stored approval that moved during the prompt fails instead of
@@ -211,13 +200,11 @@ func (a *ProjectNetworkApproval) Close() error {
 	return store.Close()
 }
 
-// approvalMode picks the posture the review proposes. An explicit --mode wins;
-// otherwise the repo's own request is what the operator is being asked about,
-// and a project with no opinion keeps the posture already remembered.
-func approvalMode(input networkstate.Admission, before *networkstate.Approval, explicit *egress.Mode) egress.Mode {
+// approvalMode is the posture the repo's request asks about: the mode it names,
+// else filtered when it names rules, and a project with no opinion keeps the
+// posture already remembered. It mirrors the pending check's own derivation.
+func approvalMode(input networkstate.Admission, before *networkstate.Approval) egress.Mode {
 	switch {
-	case explicit != nil:
-		return *explicit
 	case input.ProjectMode != nil:
 		return *input.ProjectMode
 	case len(input.Requests) != 0:
@@ -256,7 +243,17 @@ func networkProjectInputs(cfg *config.Config, repo string) (string, *project.Pro
 	if err != nil {
 		return fail(err)
 	}
+	if input.Services, err = requestedServiceDigests(repo, p, false); err != nil {
+		return fail(err)
+	}
 	return canonical, p, root, exposed, input, nil
+}
+
+// requestedServiceDigests is the reviewed identity of every Compose service the
+// project's rules name — part of the exact request, so a `service:` rule
+// approved by name alone cannot follow whatever that name later points at.
+func requestedServiceDigests(repo string, p *project.Project, repoReadOnly bool) (map[string]string, error) {
+	return composeServiceDigests(ComposeFileAt(repo, p.ComposeRel()), repo, repoReadOnly, requestedServices(p.Box.EgressRules))
 }
 
 // requestedServices is every Compose service this request names, sorted, once.

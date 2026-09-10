@@ -8,9 +8,41 @@ Nothing here is a proxy setting. Every tool in the box — the provider CLI, `cu
 subprocess — hits the same boundary, with no `HTTPS_PROXY` to set or forget.
 
 `coop net` says what a new run in this project can reach and why; `coop net runs` lists what
-recorded runs did; `coop net --help` has the verbs. `coop net setup` prepares a host once per
-machine (and again after a coop or Docker upgrade) — run it ahead of time when you want the cost
-paid before an unattended run.
+recorded runs did; `coop net --help` has the verbs.
+
+A new project asks for filtered access from the start: `coop init` writes `box.egress: filtered`
+into `.agent/project.yaml`. The file's other spellings are `offline` (no network at all) and
+`open` (everything, unfiltered) — and `open` is a request like any rule: it takes effect only after
+a human approves it on the host. An existing project file is never rewritten by a re-init.
+
+## Setting up a host
+
+A filtered box needs this machine qualified once: coop builds (or reuses) the pinned gateway and
+locked client images for the bound Docker daemon, runs one smoke through the ordinary launch engine
+and records what it proved. The first filtered launch does this on its own, shows the transcript,
+and continues into the box once the five checks pass; a later launch on a host whose proof is
+current adds no output and no work. When Docker is not running, or a check fails, the launch stops
+before any box starts and says why. Qualification grants no project access — the approval below is
+a separate, human decision.
+
+`coop net setup` runs the same qualification now, for paying the cost ahead of an unattended run,
+rechecking a host after a Docker or coop upgrade, or diagnosing one:
+
+    Setting up restricted networking using Docker 29.4.0 on linux/arm64.
+    The gateway and client images are already available and will be reused.
+
+    checking filtered access
+      ✓ approved TLS access to example.com works
+      ✓ unapproved domains are blocked
+      ✓ direct IP connections cannot bypass domain rules
+      ✓ the cloud metadata address is blocked
+      ✓ DNS does not resolve unapproved domains
+
+    ✓ all 5 checks passed — this host is ready for filtered runs
+
+A failed check keeps the passes before it, names what actually happened in its place, claims
+nothing about the checks after it, and ends with `✗ this host is not ready for filtered runs` and
+`No setup was saved`. Images that need building say so up front, and Docker's build output follows.
 
 ## Supported today
 
@@ -32,9 +64,10 @@ anything — every other container on it stays behind the same default deny as t
 
 The approval captures the *definition* a human reviewed, not just the name: `coop net approve`
 records a digest of that service's Compose stanza, and a launch recomputes it from the file it is
-about to run. Rewriting `db:` into something else — a proxy image with ordinary egress, say — is
-refused with `the Compose service "db" changed since it was approved — review it with 'coop net approve'`,
-and `coop net` shows it as a pending change. Editing an unrelated service changes nothing.
+about to run. Rewriting `db:` into something else — a proxy image with ordinary egress, say — is a
+pending change like any other: a launch refuses with `the Compose service "db" changed since it was
+approved` and the review command, and `coop net` shows it the same way. Editing an unrelated
+service changes nothing.
 
 **TLS is not only 443.** A `tls` rule names the ports it wants — `[443]`, `[853]`, `[443, 8443]` —
 and the gateway captures exactly that set. The port an upstream is dialed on comes from the
@@ -66,7 +99,7 @@ your image inherits nothing from it except through those two proofs, which re-ru
 `COOP_IMAGE` stays refused — an arbitrary image has no such proof to offer.
 
 Copying those entry points out of an image costs a few seconds, so what a read found is recorded
-outside every agent mount, next to your approvals: `coop net setup` records what the locked image
+outside every agent mount, next to your approvals: host setup records what the locked image
 holds, and a launch records what it read out of the image your Dockerfile built. Both records are
 keyed by the image ID, which is a content address — a rebuilt image is a new ID and is read again,
 and a record that is missing, damaged or for another image is read past, never trusted. The
@@ -94,10 +127,11 @@ on your Docker. The two proofs bind what the box RUNS, not what a build may do �
 | a project image not built on the client image | `this project's .agent/Dockerfile did not build on coop's client image — start it with ARG COOP_BASE_IMAGE and FROM ${COOP_BASE_IMAGE} …` |
 | a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /usr/local/bin/claude — a filtered box runs the clients this host's setup qualified …` |
 | `COOP_IMAGE` | `a filtered box runs coop's own image — unset COOP_IMAGE to start one` |
-| a runtime other than Docker | `this host is not set up for filtered runs with this Docker and these agents — run 'coop net setup'` |
+| a runtime other than Docker | `restricted networking requires a local Docker runtime` |
 | `box.network: true` with no `service:` grant | `a filtered box does not join the shared services network — ask for the one sidecar you need with a to: {service: <name>} rule …` |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
-| an approved project directory replaced by another at the same path | `the project directory at <path> was replaced since it was approved — review it with 'coop net approve'` |
+| a project file that asks for access nobody approved (a rule, a change to one, or `open`) | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop net approve` |
+| an approved project directory replaced by another at the same path | `<Agent> cannot start because the project directory at <path> was replaced since it was approved` · `Review it: coop net approve` |
 
 A refused rule fails the launch itself, before any approval is written or any container is created.
 Coop never accepts a rule it cannot enforce and then quietly drops the constraint.
@@ -167,6 +201,23 @@ Put the rule in `.agent/project.yaml` under `box.egress_rules` and ask a human t
 outside the repository, so editing or deleting the file cannot widen access, and nothing inside a
 box can approve itself. Approvals apply to new runs; a box already running keeps the policy it
 launched with.
+
+The approval is the exact snapshot of the file — its mode, its rules and the reviewed definition
+of every `service:` it names. `coop net approve` has no flags: to change access, edit the file and
+review it again. The review is one diff against what is already approved, unchanged rows marked
+`already approved`, additions `new request`, removals `no longer requested`; a mode change is
+explained in plain words, and a request for `open` gets a red warning because nothing would be
+blocked. Confirm with `Approve these changes for new runs? [y/N]`. A file that is already exactly
+what was approved prints `No approval needed — this project's network access has not changed.`
+and writes nothing. Provider endpoints an agent brings with it are not part of this diff: coop
+grants those itself, and they are never shown as project access.
+
+While the file and the approval differ, the request is *pending*: `coop init` ends with
+`⚠ This project asks for network access that has not been approved` and `Review it: coop net
+approve`, bare `coop net` shows the same diff under `New runs cannot start until this project's
+network request is approved`, and every launch — `coop run`, a named agent, `coop acp`,
+`coop loop` — refuses before any box or main process starts, naming the same review. A project
+with nothing pending pays no line for any of this.
 
 For a single invocation, the operator can pass `--allow-domain <name>` (exact TLS 443) or
 `--egress-rules <file>` with a full rule document. A file inside an agent mount is a request, not a

@@ -96,7 +96,9 @@ func AdmitSessionNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, o
 	if err != nil {
 		return "", nil, err
 	}
-	capture, err := admitFilteredNetwork(cfg, rt, spec, store, plan.project, plan.input)
+	// The daemon answers an API request; it never builds images or runs a
+	// smoke on one, so a host nobody set up ahead of time is refused.
+	capture, err := admitFilteredNetwork(cfg, rt, spec, store, plan.project, plan.input, nil)
 	if err != nil {
 		_ = store.Close()
 		return "", nil, err
@@ -190,6 +192,9 @@ func planSessionNetwork(cfg *config.Config, spec RunSpec, options SessionNetwork
 	input := networkstate.Admission{
 		PolicyMode: policyMode, Requests: p.Box.EgressRules,
 		ExportDestinations: options.ExportDestinations,
+	}
+	if input.Services, err = requestedServiceDigests(policyRepo, p, spec.RepoReadOnly); err != nil {
+		return sessionNetworkPlan{}, err
 	}
 	// Without a policy mode the project's own request still speaks, exactly as it
 	// does for a direct launch in this repository. With one it is outranked: a

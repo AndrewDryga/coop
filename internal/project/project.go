@@ -103,7 +103,7 @@ type Box struct {
 	Compose    string            `yaml:"compose"`    // sidecar services compose file, repo-relative ("" ⇒ .agent/compose.yml)
 	Env        map[string]string `yaml:"env"`        // literal box-only environment defaults
 
-	Egress      string        `yaml:"egress"`       // "" (unset) | "open" | "filtered" | "none"
+	Egress      string        `yaml:"egress"`       // "" (unset) | "open" | "filtered" | "none" — the file spells none "offline"
 	EgressRules []egress.Rule `yaml:"egress_rules"` // requests only; host approval supplies authority
 	AutoUp      *bool         `yaml:"auto_up"`      // auto-start .agent/compose.yml services (default true)
 	Network     *bool         `yaml:"network"`      // join the sibling-services network (default true)
@@ -228,10 +228,14 @@ func Parse(data []byte) (*Project, error) {
 		}
 		p.Services.RequireRealFiles[i] = filepath.ToSlash(clean)
 	}
+	// The file says "offline" — the human word — and the rest of coop keeps its
+	// internal "none". This is the one place the two meet; there is no alias.
 	switch p.Box.Egress {
-	case "", "open", "filtered", "none":
+	case "", "open", "filtered":
+	case "offline":
+		p.Box.Egress = "none"
 	default:
-		return nil, fmt.Errorf("%s: box.egress %q — use open, filtered or none", File, p.Box.Egress)
+		return nil, fmt.Errorf("%s: box.egress %q — use filtered, offline or open", File, p.Box.Egress)
 	}
 	if len(p.Box.EgressRules) > 0 {
 		if p.Box.Egress != "" && p.Box.Egress != "filtered" {

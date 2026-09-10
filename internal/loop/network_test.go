@@ -118,7 +118,7 @@ func TestNetworkLogSummaryRanksAndPointsAtTheReceipts(t *testing.T) {
 		t.Errorf("summary headline missing from %q", out)
 	}
 	// Ranked by count across the whole run, bounded to three, ties by first seen.
-	for _, want := range []string{"b.example (tls) ×9", "a.example (dns) ×7", "c.example (dns) ×1", "coop net ls"} {
+	for _, want := range []string{"b.example (tls) ×9", "a.example (dns) ×7", "c.example (dns) ×1", "coop net runs"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("summary %q is missing %q", out, want)
 		}
@@ -216,7 +216,9 @@ func TestLoopRefusesAnUnqualifiedNetworkBeforeAnyBox(t *testing.T) {
 	if code != 1 || err == nil {
 		t.Fatalf("unadmitted filtered loop = (%d, %v), want a refusal", code, err)
 	}
-	if !strings.Contains(err.Error(), "coop net setup") {
-		t.Errorf("refusal %q does not say what to run", err)
+	// A filtered launch sets the host up itself; this fixture's runtime is not
+	// Docker, which is where that starts, so the refusal names Docker.
+	if !strings.Contains(err.Error(), "requires a local Docker runtime") {
+		t.Errorf("refusal %q does not name the real reason", err)
 	}
 }

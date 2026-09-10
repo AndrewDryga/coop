@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -37,6 +38,27 @@ var smokeExpectations = map[int]string{
 	36: "a denied name resolved through the gateway resolver",
 }
 
+// setupChecks are the five properties the smoke proves, in the order the script
+// tests them; each names the exit codes that mean it failed. The script stops at
+// the first failure, so an exit code says exactly which checks passed before it.
+type setupCheck struct {
+	property string
+	codes    []int
+}
+
+var setupChecks = []setupCheck{
+	{"approved TLS access to " + SmokeDomain + " works", []int{31, 32}},
+	{"unapproved domains are blocked", []int{33}},
+	{"direct IP connections cannot bypass domain rules", []int{34}},
+	{"the cloud metadata address is blocked", []int{35}},
+	{"DNS does not resolve unapproved domains", []int{36}},
+}
+
+// ErrNetworkSetupFailed marks a setup whose transcript already said everything:
+// which check failed, that the host is not ready and that nothing was saved. A
+// caller reports the exit status, not the verdict a second time.
+var ErrNetworkSetupFailed = errors.New("this host is not ready for filtered runs")
+
 // smokeScript runs entirely inside the qualified client image. curl gets no
 // proxy variables on purpose: an arbitrary tool must work transparently, and a
 // tool that only works because it was told about a proxy proves nothing.
@@ -51,15 +73,21 @@ if curl -q --proxy '' --noproxy '*' --silent --max-time 3 http://169.254.169.254
 if getent hosts example.org >/dev/null 2>&1; then exit 36; fi
 `
 
-// SetupNetwork is the per-host preflight behind `coop net setup`: it builds (or
-// reuses) the pinned gateway and locked client images for the bound Docker
-// daemon, proves them with ONE smoke run through the ordinary launch engine,
-// and records what it proved. Nothing else ever builds an image or installs
-// tooling for a filtered launch.
+// SetupNetwork is the per-host qualification behind `coop net setup`, and the
+// one an ordinary filtered launch performs itself when this host has no current
+// proof: it builds (or reuses) the pinned gateway and locked client images for
+// the bound Docker daemon, proves them with ONE smoke run through the ordinary
+// launch engine, and records what it proved. Nothing else ever builds an image
+// or installs tooling for a filtered launch.
 //
 // It is host-wide, not per project: the smoke runs against a private temporary
 // directory, which leaves no approval behind — approvals are written by
-// `coop net approve`, never by admitting a capture.
+// `coop net approve`, never by admitting a capture. Setups serialize across
+// processes, so two first launches never build and prove the same pair at once.
+//
+// The transcript on out is the whole result: what will happen in two sentences,
+// then one doctor-style line per property the smoke actually proved, then the
+// verdict. Colors follow out — a terminal gets them, a file or NO_COLOR does not.
 func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, out, errOut io.Writer) (networkstate.Qualification, error) {
 	if ctx == nil || cfg == nil {
 		return networkstate.Qualification{}, errors.New("coop net setup needs host configuration and a cancelable context")
@@ -70,7 +98,6 @@ func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, o
 	if errOut == nil {
 		errOut = io.Discard
 	}
-	started := time.Now()
 	root, err := NetworkStatePath()
 	if err != nil {
 		return networkstate.Qualification{}, err
@@ -90,9 +117,19 @@ func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, o
 		return networkstate.Qualification{}, err
 	}
 	defer store.Close()
-	setupStep(out, "records", "%s", store.Path())
+	var record networkstate.Qualification
+	err = store.LockSetup(ctx, func() error {
+		var err error
+		record, err = qualifyNetworkHost(ctx, cfg, rt, store, project, out, errOut)
+		return err
+	})
+	return record, err
+}
 
-	candidate, clients, err := setupImages(ctx, rt, store, out, errOut)
+func qualifyNetworkHost(ctx context.Context, cfg *config.Config, rt runtime.Runtime, store *networkstate.Store, project string, out, errOut io.Writer) (networkstate.Qualification, error) {
+	started := time.Now()
+	p := setupPalette(out)
+	candidate, clients, err := setupImages(ctx, rt, store, p, out, errOut)
 	if err != nil {
 		return networkstate.Qualification{}, err
 	}
@@ -100,8 +137,9 @@ func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, o
 	if err != nil {
 		return networkstate.Qualification{}, err
 	}
-	proof, err := runSetupSmoke(ctx, cfg, rt, store, smoke, project, out)
-	if err != nil {
+	fmt.Fprintf(out, "\n%s\n", p.Bold("checking filtered access"))
+	proof, code, runErr := runSetupSmoke(ctx, cfg, rt, store, smoke, project, out)
+	if err := writeSetupChecks(out, p, code, runErr); err != nil {
 		return networkstate.Qualification{}, err
 	}
 	facts := map[string]string{
@@ -122,18 +160,23 @@ func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, o
 	if _, err := smoke.RecordEvidence(proof.record.ID, evidence); err != nil {
 		return networkstate.Qualification{}, err
 	}
-	record, err := smoke.Complete(SmokeDomain)
-	if err != nil {
-		return networkstate.Qualification{}, err
+	return smoke.Complete(SmokeDomain)
+}
+
+// setupPalette colors the transcript for the stream it is written to, and not
+// at all for a buffer or a file.
+func setupPalette(out io.Writer) ui.Palette {
+	if f, ok := out.(*os.File); ok {
+		return ui.For(f)
 	}
-	printSetupSummary(out, record, proof)
-	return record, nil
+	return ui.Palette{}
 }
 
 // setupImages builds the pinned pair, or reports the exact pair already present.
 // A rebuild of unchanged inputs is a Docker cache hit, so the honest distinction
-// the operator cares about is whether the image existed before this run.
-func setupImages(ctx context.Context, rt runtime.Runtime, store *networkstate.Store, out, errOut io.Writer) (networkstate.CandidateSpec, []networkstate.QualifiedClient, error) {
+// the operator cares about is whether the image existed before this run — and
+// that is what the transcript says, in one sentence, before any build output.
+func setupImages(ctx context.Context, rt runtime.Runtime, store *networkstate.Store, p ui.Palette, out, errOut io.Writer) (networkstate.CandidateSpec, []networkstate.QualifiedClient, error) {
 	// Setup is the one path that may create runtime state, so it binds with
 	// launch authority. Admission keeps the read-only inventory binding.
 	docker, err := runtime.BindDocker(ctx, rt, "", "")
@@ -143,20 +186,20 @@ func setupImages(ctx context.Context, rt runtime.Runtime, store *networkstate.St
 	defer docker.Close()
 	info := docker.Info()
 	binding := networkRuntimeBinding(info, docker.Endpoint())
-	setupStep(out, "runtime", "docker %s · %s/%s · daemon %s", info.ServerVersion, binding.OS, binding.Architecture, binding.DaemonID)
 	definition, _, closure, err := lockedImageDefinition(agents.ClientPlatform{OS: binding.OS, Architecture: binding.Architecture, Libc: "glibc"})
 	if err != nil {
 		return networkstate.CandidateSpec{}, nil, err
 	}
 	gatewayPresent := networkImagePresent(ctx, docker, gatewayimage.Tag(), gatewayimage.BuildLabel, gatewayimage.Fingerprint())
 	clientPresent := networkImagePresent(ctx, docker, definition.Tag, "coop.clients.definition", definition.Labels["coop.clients.definition"])
+	fmt.Fprintf(out, "Setting up restricted networking using Docker %s on %s/%s.\n", info.ServerVersion, binding.OS, binding.Architecture)
+	fmt.Fprintln(out, setupImageSentence(gatewayPresent, clientPresent))
 	// The Docker build writes to the operator's terminal when there is one: a
 	// first client build takes minutes, and silence reads as a hang. When both
 	// images are already present the rebuild is a pure cache hit, so its progress
 	// log is noise.
 	var buildOut, buildErr *os.File
 	if !clientPresent || !gatewayPresent {
-		setupStep(out, "images", "building the pinned gateway and locked client images (first run takes several minutes)")
 		buildOut, _ = out.(*os.File)
 		buildErr, _ = errOut.(*os.File)
 	}
@@ -164,14 +207,29 @@ func setupImages(ctx context.Context, rt runtime.Runtime, store *networkstate.St
 	if err != nil {
 		return networkstate.CandidateSpec{}, nil, err
 	}
-	setupStep(out, "gateway", "%-6s %s", setupOrigin(gatewayPresent), candidate.GatewayImage)
-	setupStep(out, "clients", "%-6s %s", setupOrigin(clientPresent), candidate.ClientImage)
-	setupStep(out, "pinned", "%s", setupClientFiles(ctx, docker, store, candidate, closure))
+	if note := setupClientFiles(ctx, docker, store, candidate, closure); note != "" {
+		fmt.Fprintf(out, "  %s\n", p.Dim(note))
+	}
 	var qualified []networkstate.QualifiedClient
 	for _, client := range closure.Clients {
 		qualified = append(qualified, networkstate.QualifiedClient{Provider: client.Provider, Client: client.Client, Version: client.Version})
 	}
 	return candidate, qualified, nil
+}
+
+// setupImageSentence says what happens to each image, honestly: "first setup"
+// only when both are built, and each outcome by name when they differ.
+func setupImageSentence(gatewayPresent, clientPresent bool) string {
+	switch {
+	case gatewayPresent && clientPresent:
+		return "The gateway and client images are already available and will be reused."
+	case !gatewayPresent && !clientPresent:
+		return "The gateway and client images need to be built.\nThe first setup can take several minutes."
+	case gatewayPresent:
+		return "The gateway image will be reused; the client image needs to be built."
+	default:
+		return "The gateway image needs to be built; the client image will be reused."
+	}
 }
 
 // setupClientFiles reads every pinned client entry point out of the locked image
@@ -180,25 +238,18 @@ func setupImages(ctx context.Context, rt runtime.Runtime, store *networkstate.St
 // copying a few hundred megabytes back out of an image that cannot have changed:
 // an image id is a content address, so the same id is the same bytes.
 //
-// It is a memo, not a qualification. A read that fails says so and setup carries
-// on, because the launch that needs those digests reads them itself and refuses
-// by name when it cannot.
+// It is a memo, not a qualification, so it costs no line when it works. A read
+// that fails is a secondary note and setup carries on, because the launch that
+// needs those digests reads them itself and refuses by name when it cannot.
 func setupClientFiles(ctx context.Context, docker filteredDocker, store *networkstate.Store, candidate networkstate.CandidateSpec, closure agents.ClientClosure) string {
 	files := pinnedClientFiles(closure)
 	if len(files) == 0 {
-		return "this build pins no client entry points"
+		return ""
 	}
 	if _, err := imageFileDigests(ctx, docker, store, candidate.ClientImage, files); err != nil {
-		return fmt.Sprintf("could not be read (%v) — a project Dockerfile reads them at launch instead", err)
+		return fmt.Sprintf("the client entry points could not be recorded (%v) — a project Dockerfile reads them at launch instead", err)
 	}
-	return ui.Count(len(files), "client entry point") + " recorded, so a project Dockerfile is checked without re-reading this image"
-}
-
-func setupOrigin(present bool) string {
-	if present {
-		return "reused"
-	}
-	return "built"
+	return ""
 }
 
 func networkImagePresent(ctx context.Context, docker *runtime.Docker, ref, label, want string) bool {
@@ -215,17 +266,18 @@ type setupProof struct {
 // runSetupSmoke drives the ONE preflight run through the ordinary launch engine.
 // Its configuration is built here rather than copied from the operator's: an
 // image override or extra runtime argument must not reach what the record
-// claims to have proven.
-func runSetupSmoke(ctx context.Context, cfg *config.Config, rt runtime.Runtime, store *networkstate.Store, smoke *networkstate.QualificationSmoke, project string, out io.Writer) (setupProof, error) {
+// claims to have proven. It returns the workload's exit code — the verdict the
+// script encodes — and separately whether the run reached one at all.
+func runSetupSmoke(ctx context.Context, cfg *config.Config, rt runtime.Runtime, store *networkstate.Store, smoke *networkstate.QualificationSmoke, project string, out io.Writer) (setupProof, int, error) {
 	mode := egress.Filtered
 	rules, err := egress.NormalizeRules([]egress.Rule{{To: egress.Destination{Domain: SmokeDomain}, Protocol: "tls", Ports: []int{443}}})
 	if err != nil {
-		return setupProof{}, err
+		return setupProof{}, 0, err
 	}
 	policy, err := store.Admit(project, networkstate.Admission{InvocationMode: &mode,
 		Operator: []egress.Input{{Origin: egress.Origin{Kind: "operator", Name: "net-setup"}, Rules: rules}}})
 	if err != nil {
-		return setupProof{}, err
+		return setupProof{}, 0, err
 	}
 	home := cfg.HomeInBox
 	if home == "" {
@@ -235,7 +287,6 @@ func runSetupSmoke(ctx context.Context, cfg *config.Config, rt runtime.Runtime, 
 		Memory: cfg.Memory, CPUs: cfg.CPUs, Pids: cfg.Pids, NoNewPrivileges: cfg.NoNewPrivileges}
 	run, cancel := context.WithTimeout(ctx, smokeTimeout)
 	defer cancel()
-	setupStep(out, "checking", "%s is allowed, and a denied name, a raw IP, the metadata address and denied DNS are refused", SmokeDomain)
 	// The permit's callback runs on THIS goroutine, inside launch preparation, so
 	// runID needs no synchronization; the watcher gets its own copy.
 	var runID string
@@ -253,27 +304,63 @@ func runSetupSmoke(ctx context.Context, cfg *config.Config, rt runtime.Runtime, 
 	})
 	elapsed := time.Since(started)
 	if err != nil {
-		return setupProof{}, errors.Join(errors.New("the setup check did not finish"), err)
-	}
-	if reason, named := smokeExpectations[code]; named {
-		return setupProof{}, errors.New("this host is not set up: " + reason)
+		return setupProof{}, 0, errors.Join(errors.New("the setup check did not finish"), err)
 	}
 	if code != 0 {
-		return setupProof{}, fmt.Errorf("the setup check exited %d without reaching a verdict", code)
+		return setupProof{}, code, nil
 	}
 	record, err := store.Execution(runID)
 	if err != nil {
-		return setupProof{}, err
+		return setupProof{}, 0, err
 	}
 	if record.Receipt == nil {
-		return setupProof{}, errors.New("the setup check sealed no receipt")
+		return setupProof{}, 0, errors.New("the setup check sealed no receipt")
 	}
 	proof := setupProof{record: record, elapsed: elapsed}
 	select {
 	case proof.ready = <-ready:
 	default:
 	}
-	return proof, nil
+	return proof, 0, nil
+}
+
+// writeSetupChecks renders the verdicts the smoke reached and the final one.
+// Only checks the script actually ran are claimed: a failure shows the passes
+// before it and the failed property as its reason, and nothing after it. The
+// error it returns is ErrNetworkSetupFailed, because the transcript is the
+// report.
+func writeSetupChecks(out io.Writer, p ui.Palette, code int, runErr error) error {
+	failed := slices.IndexFunc(setupChecks, func(check setupCheck) bool { return slices.Contains(check.codes, code) })
+	passed := len(setupChecks)
+	switch {
+	case runErr != nil || (code != 0 && failed < 0):
+		passed = 0
+	case failed >= 0:
+		passed = failed
+	}
+	for _, check := range setupChecks[:passed] {
+		fmt.Fprintf(out, "  %s %s\n", p.Green("✓"), check.property)
+	}
+	if runErr == nil && code == 0 {
+		fmt.Fprintf(out, "\n%s\n", p.Bold(p.Green(fmt.Sprintf("✓ all %d checks passed — this host is ready for filtered runs", len(setupChecks)))))
+		return nil
+	}
+	reason := ""
+	switch {
+	case runErr != nil:
+		reason = runErr.Error()
+	case failed >= 0:
+		reason = smokeExpectations[code]
+		fmt.Fprintf(out, "  %s %s\n", p.Red("✗"), reason)
+	default:
+		reason = fmt.Sprintf("the setup check exited %d without reaching a verdict", code)
+	}
+	fmt.Fprintf(out, "\n%s\n", p.Bold(p.Red("✗ "+ErrNetworkSetupFailed.Error())))
+	if failed < 0 {
+		fmt.Fprintf(out, "  %s\n", reason)
+	}
+	fmt.Fprintln(out, "  No setup was saved")
+	return fmt.Errorf("%w: %s", ErrNetworkSetupFailed, reason)
 }
 
 // watchGatewayReady times the boundary the operator actually waits on: policy
@@ -306,22 +393,4 @@ func watchGatewayReady(ctx context.Context, store *networkstate.Store, registere
 		case <-ticker.C:
 		}
 	}
-}
-
-func setupStep(out io.Writer, label, format string, a ...any) {
-	fmt.Fprintf(out, "  %-9s %s\n", label, ui.Dim(fmt.Sprintf(format, a...)))
-}
-
-func printSetupSummary(out io.Writer, record networkstate.Qualification, proof setupProof) {
-	fmt.Fprintf(out, "\n%s\n", ui.Bold("this host is set up for filtered runs"))
-	fmt.Fprintf(out, "  %-9s docker %s · %s/%s · daemon %s\n", "runtime", record.Candidate.Runtime.ServerVersion,
-		record.Candidate.Runtime.OS, record.Candidate.Runtime.Architecture, record.Candidate.Runtime.DaemonID)
-	fmt.Fprintf(out, "  %-9s %s\n", "gateway", record.Candidate.GatewayImage)
-	fmt.Fprintf(out, "  %-9s %s\n", "clients", record.Candidate.ClientImage)
-	for _, client := range record.Clients {
-		fmt.Fprintf(out, "  %-9s %s %s %s\n", "", client.Provider, client.Client, client.Version)
-	}
-	fmt.Fprintf(out, "  %-9s %s allowed and every refusal held · gateway ready in %s · run %s\n", "checked",
-		SmokeDomain, proof.ready.Round(time.Millisecond), proof.elapsed.Round(time.Millisecond))
-	fmt.Fprintf(out, "  %-9s %s\n", "record", record.ID)
 }

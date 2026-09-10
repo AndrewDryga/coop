@@ -49,6 +49,10 @@ See also [[command-output-tiers]] (result glyphs belong to standalone results, n
 fact) and [[tag-exceptions-not-every-row]] (the listing form of the same instinct).
 
 ## Changelog
+- 2026-09-10 — `coop net setup` now prints the checks it proved (`internal/box/network_setup.go`,
+  `writeSetupChecks`): one `✓`/`✗` line per property the smoke reached, one bold verdict, no
+  runtime/image/timing ledger; a failure claims nothing past the failed check. The pending note
+  below is settled. Swept the file: 0 healthy-fact lines remain in the transcript.
 - 2026-09-10 — created from the network-output redesign. Swept `internal/cli/net_cmd.go`,
   `net_result.go`, `net_diagnostic.go`: 0 remaining healthy-fact lines in the run projection, the
   run listing or bare `coop net`; `coop net setup`'s transcript (`internal/box/network_setup.go`,

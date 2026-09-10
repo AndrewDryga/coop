@@ -601,7 +601,7 @@ func TestRunCanceledAfterServicesUpTearsDownAttemptedReviewCompose(t *testing.T)
 
 func TestRunUsesTrustedPolicyRepo(t *testing.T) {
 	repo, policyRepo := t.TempDir(), t.TempDir()
-	for dir, egress := range map[string]string{repo: "open", policyRepo: "none"} {
+	for dir, egress := range map[string]string{repo: "open", policyRepo: "offline"} {
 		if err := os.MkdirAll(filepath.Join(dir, ".agent"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -623,7 +623,7 @@ func TestRunUsesTrustedPolicyRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !containsSeq(strings.Fields(string(args)), []string{"--network", "none"}) {
-		t.Fatalf("trusted policy repo's egress:none missing from:\n%s", args)
+		t.Fatalf("trusted policy repo's egress:offline missing from:\n%s", args)
 	}
 }
 

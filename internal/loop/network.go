@@ -105,7 +105,7 @@ func (l *networkLog) finishIteration() {
 }
 
 // runID is the filtered run this stage's telemetry row binds to, so a receipt in
-// `coop net ls` and a loop stage can be related. Empty outside filtered mode.
+// `coop net runs` and a loop stage can be related. Empty outside filtered mode.
 func (l *networkLog) runID() string {
 	if l == nil {
 		return ""
@@ -182,7 +182,7 @@ func (l *networkLog) summary() {
 	for _, line := range topRefused(l.refused, l.order, maxLoopDenials) {
 		ui.Detail("%s", line)
 	}
-	ui.Detail("coop net ls   # every run and its receipt")
+	ui.Detail("coop net runs   # every run of this project")
 }
 
 // topRefused ranks destinations by how often they were refused, breaking ties by

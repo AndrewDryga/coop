@@ -84,15 +84,19 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 		domains     []string
 		want        string
 	}{
-		"built-in default":           {want: "open"},
-		"project request":            {projectYAML: "box:\n  egress: none\n", want: "none"},
-		"host preference over repo":  {explicitEnv: "none", projectYAML: "box:\n  egress: open\n", want: "none"},
-		"remembered over host":       {remembered: true, explicitEnv: "open", want: "filtered"},
-		"remembered survives repo":   {remembered: true, projectYAML: "box:\n  egress: open\n", want: "filtered"},
-		"invocation over remembered": {remembered: true, invocation: &open, want: "open"},
-		"invocation over preference": {explicitEnv: "none", invocation: &open, want: "open"},
-		"lone allow-domain implies":  {domains: []string{"example.com"}, want: "filtered"},
-		"explicit none":              {invocation: &none, want: "none"},
+		"built-in default":             {want: "open"},
+		"project request":              {projectYAML: "box:\n  egress: offline\n", want: "none"},
+		"host preference over repo":    {explicitEnv: "none", projectYAML: "box:\n  egress: open\n", want: "none"},
+		"remembered over host":         {remembered: true, explicitEnv: "open", want: "filtered"},
+		"remembered survives deletion": {remembered: true, want: "filtered"},
+		"invocation over remembered":   {remembered: true, invocation: &open, want: "open"},
+		"invocation over preference":   {explicitEnv: "none", invocation: &open, want: "open"},
+		"lone allow-domain implies":    {domains: []string{"example.com"}, want: "filtered"},
+		"explicit none":                {invocation: &none, want: "none"},
+		// A file that asks for more than a human approved is a pending review,
+		// not a posture: the launch refuses and names the review.
+		"repo widening is pending":   {remembered: true, projectYAML: "box:\n  egress: open\n", want: "pending"},
+		"unapproved open is pending": {projectYAML: "box:\n  egress: open\n", want: "pending"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg, repo, root := admissionFixture(t)
@@ -111,15 +115,27 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 			if test.remembered {
 				rememberFilteredPosture(t, root, repo, nil)
 			}
+			before := cfg.Egress
 			_, err := admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: test.invocation, Domains: test.domains})
-			if test.want != "filtered" {
+			switch test.want {
+			case "pending":
+				if err == nil || !strings.Contains(err.Error(), "cannot start because this project asks for") || !strings.Contains(err.Error(), "Review it: coop net approve") {
+					t.Fatal("an unapproved widening was not refused with the review command", err)
+				}
+				if cfg.Egress != before {
+					t.Fatalf("a refused launch still resolved a posture: %q", cfg.Egress)
+				}
+				return
+			case "filtered":
+				// Filtered resolution is proved by the refusal that follows it: this
+				// fixture's runtime is not Docker, which is where qualification starts.
+				if err == nil || !strings.Contains(err.Error(), "requires a local Docker runtime") {
+					t.Fatal("filtered resolution did not reach qualification matching", err)
+				}
+			default:
 				if err != nil {
 					t.Fatal(err)
 				}
-			} else if err == nil || !strings.Contains(err.Error(), "run 'coop net setup'") {
-				// Filtered resolution is proved by the refusal that follows it:
-				// there is no completed setup on this host.
-				t.Fatal("filtered resolution did not reach qualification matching", err)
 			}
 			if cfg.Egress != test.want {
 				t.Fatalf("resolved %q, want %q", cfg.Egress, test.want)
@@ -158,8 +174,8 @@ func TestAdmitNetworkUnapprovedProjectRulesRefuse(t *testing.T) {
 	writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"),
 		"box:\n  egress_rules:\n    - to: {domain: example.com}\n      protocol: tls\n      ports: [443]\n")
 	capture, err := admitFixture(t, cfg, repo, NetworkAdmission{})
-	if capture != nil || err == nil || !strings.Contains(err.Error(), "network_approval_required") {
-		t.Fatal("unapproved project request was admitted", err)
+	if capture != nil || err == nil || !strings.Contains(err.Error(), "This box cannot start because this project asks for network access that has not been approved\n\n  Review it: coop net approve") {
+		t.Fatal("unapproved project request was admitted, or refused without the review command", err)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatal("unapproved request created authority state", err)
@@ -180,9 +196,10 @@ func TestAdmitNetworkRefusesAnImageOverrideButNotAProjectDockerfile(t *testing.T
 			writeCopyFixture(t, filepath.Join(repo, ".agent", "Dockerfile"), "ARG COOP_BASE_IMAGE\nFROM ${COOP_BASE_IMAGE}\n")
 			filtered := egress.Filtered
 			_, err := admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: &filtered})
-			// This host fixture has no qualification, so admission gets that far
-			// and stops there — the point is that the Dockerfile is not the reason.
-			if err == nil || !strings.Contains(err.Error(), "this host is not set up for filtered runs") {
+			// This fixture's runtime is not Docker, so admission gets as far as
+			// qualification and stops there — the point is that the Dockerfile is
+			// not the reason.
+			if err == nil || !strings.Contains(err.Error(), "requires a local Docker runtime") {
 				t.Fatal("a project Dockerfile was refused at admission", err)
 			}
 		})
@@ -208,7 +225,7 @@ func TestAdmitNetworkClassifiesOperatorInputBeforeCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := admitFixture(t, cfg, repo, NetworkAdmission{RulesFile: inside}); err == nil ||
-		!strings.Contains(err.Error(), "network_approval_required") {
+		!strings.Contains(err.Error(), "has not been approved") {
 		t.Fatal("a repository rules file granted authority", err)
 	}
 	outside := filepath.Join(t.TempDir(), "rules.yaml")
@@ -216,7 +233,7 @@ func TestAdmitNetworkClassifiesOperatorInputBeforeCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := admitFixture(t, cfg, repo, NetworkAdmission{RulesFile: outside}); err == nil ||
-		!strings.Contains(err.Error(), "run 'coop net setup'") {
+		!strings.Contains(err.Error(), "requires a local Docker runtime") {
 		t.Fatal("an operator rules file did not grant its own authority", err)
 	}
 }

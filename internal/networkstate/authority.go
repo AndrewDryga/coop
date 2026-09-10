@@ -464,20 +464,21 @@ type Approval struct {
 
 // checkDirectory refuses an approval whose project directory is no longer the
 // one that was reviewed. An approval that never recorded that identity cannot
-// prove it either, so it is reviewed again rather than trusted.
-func (a *Approval) checkDirectory(canonical string, info os.FileInfo) error {
+// prove it either, so it is reviewed again rather than trusted. Both are
+// pending reviews, not corruption: the remedy is the same `coop net approve`.
+func (a *Approval) checkDirectory(canonical string, info os.FileInfo) *PendingApproval {
 	if a == nil {
 		return nil
 	}
 	device, inode, ok := directoryIdentity(info)
 	if !ok {
-		return errors.New("the project directory at " + canonical + " could not be read")
+		return &PendingApproval{Reason: "the project directory at " + canonical + " could not be read"}
 	}
 	if a.Inode == 0 {
-		return errors.New("the approval for " + canonical + " was remembered by an older coop — review it with 'coop net approve'")
+		return &PendingApproval{Reason: "the network approval for " + canonical + " was made by an older coop"}
 	}
 	if a.Device != device || a.Inode != inode {
-		return errors.New("the project directory at " + canonical + " was replaced since it was approved — review it with 'coop net approve'")
+		return &PendingApproval{Reason: "the project directory at " + canonical + " was replaced since it was approved"}
 	}
 	return nil
 }

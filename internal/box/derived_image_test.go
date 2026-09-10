@@ -287,7 +287,7 @@ func TestFilteredProjectImageSkipsAProjectWithoutADockerfile(t *testing.T) {
 	}
 	image, err = filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, d, nil,
 		RunSpec{Repo: repo}, fixtureCandidate())
-	if image != "" || err == nil || !strings.Contains(err.Error(), "coop net setup") {
+	if image != "" || err == nil || !strings.Contains(err.Error(), "disappeared while the box was starting") {
 		t.Fatal("a missing client image was built on anyway", image, err)
 	}
 }
@@ -407,9 +407,9 @@ func TestSetupRecordsTheLockedClientDigestsForTheFirstLaunch(t *testing.T) {
 	f, d := filteredFixture(t)
 	closure := derivedImageFixture(t, d)
 	files := len(pinnedClientFiles(closure))
-	line := setupClientFiles(context.Background(), d, f.store, fixtureCandidate(), closure)
-	if !strings.Contains(line, "recorded") || !strings.Contains(line, "without re-reading") {
-		t.Fatalf("setup line = %q", line)
+	// A memo that works costs the transcript no line.
+	if line := setupClientFiles(context.Background(), d, f.store, fixtureCandidate(), closure); line != "" {
+		t.Fatalf("setup line = %q, want silence", line)
 	}
 	if names := imageFileRecords(t, f.store); len(names) != 1 {
 		t.Fatalf("setup recorded %v, want exactly the locked image", names)
@@ -440,7 +440,7 @@ func TestSetupSaysWhenTheLockedClientDigestsCannotBeRead(t *testing.T) {
 	d.images[fixtureLockedImage] = image
 	d.mu.Unlock()
 	line := setupClientFiles(context.Background(), d, f.store, fixtureCandidate(), closure)
-	if !strings.Contains(line, "could not be read") || !strings.Contains(line, launcher) {
+	if !strings.Contains(line, "could not be recorded") || !strings.Contains(line, launcher) {
 		t.Fatalf("setup line = %q, want it to name the entry point it could not read", line)
 	}
 	if names := imageFileRecords(t, f.store); len(names) != 0 {

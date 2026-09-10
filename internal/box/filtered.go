@@ -208,7 +208,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	for _, expected := range []string{candidate.ClientImage, candidate.GatewayImage} {
 		observed, _, err := docker.Image(ctx, expected)
 		if err != nil || observed != expected {
-			return f, errors.New("the images this host was set up with are gone — run 'coop net setup' again")
+			return f, errors.New("the images this host was set up with disappeared while the box was starting — run it again")
 		}
 	}
 	f.image = candidate.ClientImage

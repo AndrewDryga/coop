@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
@@ -77,6 +80,9 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if err != nil {
 		return nil, err
 	}
+	if input.Services, err = requestedServiceDigests(policyRepo, p, spec.RepoReadOnly); err != nil {
+		return nil, err
+	}
 	// A direct launch mounts the trusted shared MCP configuration whenever it
 	// mounts homes at all, so its automatic dependencies are exactly that file's.
 	if input.Automatic, err = NetworkMCPDependencies(cfg, spec); err != nil {
@@ -84,8 +90,14 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	}
 	// The preview publishes nothing and creates no owner key, so it is safe on
 	// every launch. It still proves the authority root is outside every mount.
+	// A pending request fails closed HERE, before any box or main process, with
+	// the one review command that settles it.
 	mode, err := networkstate.PreviewAdmissionMode(root, canonical, exposed, input)
 	if err != nil {
+		var pending *networkstate.PendingApproval
+		if errors.As(err, &pending) {
+			return nil, fmt.Errorf("%s cannot start because %s\n\n  Review it: coop net approve", networkLaunchName(spec), pending.Reason)
+		}
 		return nil, err
 	}
 	cfg.SetEgress(string(mode))
@@ -99,12 +111,39 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if err != nil {
 		return nil, err
 	}
-	capture, err := admitFilteredNetwork(cfg, rt, spec, store, canonical, input)
+	// Host qualification is machinery, not a decision, so an ordinary launch
+	// performs it when no current proof exists — the same bounded work as
+	// `coop net setup`, transcript included — and continues. It grants nothing:
+	// the approval above was already settled without it.
+	capture, err := admitFilteredNetwork(cfg, rt, spec, store, canonical, input, func(ctx context.Context) error {
+		if _, err := SetupNetwork(ctx, cfg, rt, networkLaunchStderr(spec), networkLaunchStderr(spec)); err != nil {
+			return fmt.Errorf("%s cannot start — %w", networkLaunchName(spec), err)
+		}
+		return nil
+	})
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
 	return capture, nil
+}
+
+// networkLaunchName is who a refusal says cannot start: the agent by its
+// product name, or the box for a raw command.
+func networkLaunchName(spec RunSpec) string {
+	if agent, ok := agents.Get(spec.Agent); ok && spec.Agent != "" {
+		return agent.DisplayName()
+	}
+	return "This box"
+}
+
+// networkLaunchStderr is coop's own channel for this launch: the operator's
+// terminal unless the caller captures it.
+func networkLaunchStderr(spec RunSpec) io.Writer {
+	if spec.Stderr != nil {
+		return spec.Stderr
+	}
+	return os.Stderr
 }
 
 // canonicalProjectDir is the one project identity every network read and write
@@ -213,7 +252,12 @@ func checkSupportedRequests(input networkstate.Admission) error {
 // store.Admit so posture and envelope come from one decision. The caller has
 // already put this launch's automatic dependencies on input, because only it
 // knows which configuration the box will actually mount.
-func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, store *networkstate.Store, canonicalProject string, input networkstate.Admission) (*CapturedEgress, error) {
+//
+// qualify is how a launch obtains a host proof it does not have: an ordinary
+// launch passes the setup itself and continues once it passes; a caller that
+// cannot build images on someone else's behalf — the session daemon answering
+// an API request — passes nil and refuses instead.
+func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, store *networkstate.Store, canonicalProject string, input networkstate.Admission, qualify func(context.Context) error) (*CapturedEgress, error) {
 	input, err := filteredNetworkSources(cfg, spec, input)
 	if err != nil {
 		return nil, err
@@ -226,23 +270,71 @@ func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, 
 		return nil, errors.New("this project's egress changed while the box was starting — run it again")
 	}
 	ctx := networkAdmissionContext(spec)
-	covered, err := coveringQualifications(ctx, store, policy)
-	if err != nil {
-		return nil, err
-	}
+	// A Docker that is not running is the real reason a filtered box cannot
+	// start, and the one thing no setup can fix; it is reported as itself.
 	docker, err := runtime.InspectDocker(ctx, rt)
 	if err != nil {
 		return nil, err
 	}
+	defer docker.Close()
+	qualification, err := ensureNetworkQualification(ctx, func() (*networkstate.Qualification, error) {
+		return currentQualification(ctx, docker, store, policy, cfg.ImageOverride)
+	}, qualify)
+	if err != nil {
+		return nil, err
+	}
+	return &CapturedEgress{Store: store, Project: canonicalProject, Fingerprint: policy.Fingerprint, QualificationID: qualification.ID}, nil
+}
+
+// ensureNetworkQualification is the proof a launch runs under: the current one,
+// or — when there is none and this launch may set the host up — the one setup
+// leaves behind, read again rather than assumed. A launch that may not set the
+// host up is refused with the one preparation that would.
+func ensureNetworkQualification(ctx context.Context, current func() (*networkstate.Qualification, error), qualify func(context.Context) error) (*networkstate.Qualification, error) {
+	qualification, err := current()
+	if err != nil || qualification != nil {
+		return qualification, err
+	}
+	if qualify == nil {
+		return nil, errors.New("this host is not set up for filtered runs with this Docker and these agents — run 'coop net setup' first")
+	}
+	if err := qualify(ctx); err != nil {
+		return nil, err
+	}
+	if qualification, err = current(); err != nil {
+		return nil, err
+	}
+	if qualification == nil {
+		return nil, errors.New("this host's setup finished but does not cover this run — run it again")
+	}
+	return qualification, nil
+}
+
+// currentQualification is this host's newest setup record that proves THIS
+// launch: it covers the policy's clients, it was made on this daemon by this
+// coop's client and gateway definitions, and the image pair it names still
+// exists. Anything less is no proof, and the launch qualifies again.
+func currentQualification(ctx context.Context, docker *runtime.Docker, store *networkstate.Store, policy egress.Snapshot, imageOverride string) (*networkstate.Qualification, error) {
+	qualifications, err := store.Qualifications(ctx)
+	if err != nil {
+		return nil, err
+	}
 	binding := networkRuntimeBinding(docker.Info(), docker.Endpoint())
-	_ = docker.Close()
-	for _, qualification := range covered {
-		if verifyNetworkCandidate(qualification.Candidate, binding, cfg.ImageOverride) != nil {
+	for _, qualification := range qualifications { // newest first
+		if qualification.RequireLaunch(policy) != nil || verifyNetworkCandidate(qualification.Candidate, binding, imageOverride) != nil {
 			continue
 		}
-		return &CapturedEgress{Store: store, Project: canonicalProject, Fingerprint: policy.Fingerprint, QualificationID: qualification.ID}, nil
+		present := true
+		for _, image := range []string{qualification.Candidate.ClientImage, qualification.Candidate.GatewayImage} {
+			if id, _, err := docker.Image(ctx, image); err != nil || id != image {
+				present = false
+			}
+		}
+		if present {
+			return &qualification, nil
+		}
 	}
-	return nil, errUnqualifiedNetworkHost
+	return nil, nil
 }
 
 // resolveFilteredNetwork is admitFilteredNetwork's non-publishing twin: the same sources, the
@@ -261,8 +353,14 @@ func resolveFilteredNetwork(cfg *config.Config, spec RunSpec, store *networkstat
 	if policy.Mode != egress.Filtered {
 		return egress.Snapshot{}, errors.New("this project's egress resolves to a posture that captures no rules")
 	}
-	if _, err := coveringQualifications(networkAdmissionContext(spec), store, policy); err != nil {
+	// A fence is published before anyone asks for a launch, so it cannot set the
+	// host up on the way: it needs a record that already covers this policy.
+	qualifications, err := store.Qualifications(networkAdmissionContext(spec))
+	if err != nil {
 		return egress.Snapshot{}, err
+	}
+	if !slices.ContainsFunc(qualifications, func(q networkstate.Qualification) bool { return q.RequireLaunch(policy) == nil }) {
+		return egress.Snapshot{}, errors.New("this host is not set up for filtered runs with these agents — run 'coop net setup' first")
 	}
 	return policy, nil
 }
@@ -283,28 +381,6 @@ func filteredNetworkSources(cfg *config.Config, spec RunSpec, input networkstate
 		return networkstate.Admission{}, err
 	}
 	return input, nil
-}
-
-var errUnqualifiedNetworkHost = errors.New("this host is not set up for filtered runs with this Docker and these agents — run 'coop net setup'")
-
-// coveringQualifications is the host's own setup records that cover this compiled policy. Match
-// the record's own clients before touching the runtime: a selection this host never set up should
-// say so, not fail on a Docker inspection it never needed.
-func coveringQualifications(ctx context.Context, store *networkstate.Store, policy egress.Snapshot) ([]networkstate.Qualification, error) {
-	qualifications, err := store.Qualifications(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var covered []networkstate.Qualification
-	for _, qualification := range qualifications {
-		if qualification.RequireLaunch(policy) == nil {
-			covered = append(covered, qualification)
-		}
-	}
-	if len(covered) == 0 {
-		return nil, errUnqualifiedNetworkHost
-	}
-	return covered, nil
 }
 
 func networkAdmissionContext(spec RunSpec) context.Context {

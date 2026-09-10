@@ -133,7 +133,7 @@ func TestNetworkRulesFileRepositoryRequestRefusesBeforeRuntime(t *testing.T) {
 		_ = capture.Close()
 		t.Fatal("repository rules bypassed approval")
 	}
-	if !strings.Contains(err.Error(), "network_approval_required") {
+	if !strings.Contains(err.Error(), "has not been approved") {
 		t.Fatal("wrong refusal", err)
 	}
 	root, err := NetworkStatePath()

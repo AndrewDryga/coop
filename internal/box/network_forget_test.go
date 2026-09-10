@@ -13,7 +13,7 @@ import (
 
 func approveFixture(t *testing.T, cfg *config.Config, repo string) {
 	t.Helper()
-	review, err := ReviewProjectNetwork(cfg, repo, nil)
+	review, err := ReviewProjectNetwork(cfg, repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,10 @@ func TestForgetRemovesWhatAProjectRemembered(t *testing.T) {
 func TestForgetAProjectDirectoryThatIsGone(t *testing.T) {
 	cfg, parent, _ := postureFixture(t, "")
 	repo := filepath.Join(parent, "checkout")
-	if err := os.Mkdir(repo, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(requestFixtureYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	approveFixture(t, cfg, repo)

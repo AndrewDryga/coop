@@ -232,6 +232,11 @@ type Palette struct{ on bool }
 // For returns a Palette that emits color iff f is a real terminal.
 func For(f *os.File) Palette { return Palette{on: colorEnabled(f)} }
 
+// Colored is a Palette that always emits color, regardless of any stream. It is
+// for a renderer proving its styling where no terminal exists — a test — and
+// nothing else: production output gates on its own stream through For.
+func Colored() Palette { return Palette{on: true} }
+
 // Enabled reports whether this palette emits color (its stream is a terminal) — for callers
 // that add adornments meant only for a human at a terminal (rules, banners), not a pipe.
 func (p Palette) Enabled() bool { return p.on }

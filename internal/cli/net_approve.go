@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -14,38 +15,13 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-func parseNetApproveArgs(args []string) (*egress.Mode, error) {
-	var mode *egress.Mode
-	for i := 0; i < len(args); i++ {
-		name, value, inline := strings.Cut(args[i], "=")
-		if name != "--mode" {
-			return nil, unknownErr("net approve flag", args[i], []string{"--mode"})
-		}
-		if mode != nil {
-			return nil, errors.New("coop net approve takes --mode once")
-		}
-		if !inline {
-			i++
-			if i == len(args) {
-				return nil, errors.New("coop net approve --mode needs open, filtered or none")
-			}
-			value = args[i]
-		}
-		parsed, err := egress.ParseMode(value)
-		if err != nil {
-			return nil, fmt.Errorf("coop net approve --mode: %w", err)
-		}
-		mode = &parsed
-	}
-	return mode, nil
-}
-
 // cmdNetApprove is the ONE verb that turns a repository's request into host
-// authority. It requires a terminal on purpose: an approval is a human's
-// decision, and a pipe that answers "y" is not a human.
+// authority. The mode and the rules it approves come from .agent/project.yaml
+// and nowhere else — to change access, edit the file and review it again. It
+// requires a terminal on purpose: an approval is a human's decision, and a pipe
+// that answers "y" is not a human.
 func (a *app) cmdNetApprove(args []string) (int, error) {
-	mode, err := parseNetApproveArgs(args)
-	if err != nil {
+	if err := rejectArgs("net approve", args); err != nil {
 		return 2, err
 	}
 	if !ui.IsTerminal(os.Stdin) || !ui.IsTerminal(os.Stderr) {
@@ -55,9 +31,15 @@ func (a *app) cmdNetApprove(args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	review, err := box.ReviewProjectNetwork(a.cfg, repo, mode)
+	review, err := box.ReviewProjectNetwork(a.cfg, repo)
 	if err != nil {
 		return 1, err
+	}
+	if review.Unchanged() {
+		// No security question has an answer that could change anything, so
+		// none is asked and nothing is written — not even a fresher timestamp.
+		ui.Note("%s", netApproveUnchanged)
+		return 0, nil
 	}
 	err = confirmNetApproval(context.Background(), review, os.Stderr, func() bool {
 		return ui.Confirm(netApprovePrompt, false)
@@ -65,22 +47,22 @@ func (a *app) cmdNetApprove(args []string) (int, error) {
 	if err = errors.Join(err, review.Close()); err != nil {
 		return 1, err
 	}
-	ui.OK("%s", netApproveRemembered)
+	ui.OK("%s", netApproveApproved)
 	return 0, nil
 }
 
 // The question and the answer carry the one limit that matters — an approval
-// applies to NEW runs — so the review above it can be the diff and nothing else.
+// applies to NEW runs — so the review above them can be the change and nothing else.
 const (
-	netApprovePrompt     = "Remember this for new runs?"
-	netApproveRemembered = "remembered — applies to new runs; boxes already running keep their current rules"
+	netApprovePrompt    = "Approve these changes for new runs?"
+	netApproveApproved  = "Approved for new runs"
+	netApproveUnchanged = "No approval needed — this project's network access has not changed."
 )
 
 // netApprovalReview is what the confirmation needs from a review: the exact
 // before and after, and one commit that consumes it.
 type netApprovalReview interface {
 	Project() string
-	Mode() egress.Mode
 	Before() *networkstate.Approval
 	After() *networkstate.Approval
 	Commit(context.Context) error
@@ -93,43 +75,9 @@ func confirmNetApproval(ctx context.Context, review netApprovalReview, out io.Wr
 	}
 	var b strings.Builder
 	p := ui.For(os.Stderr)
-	block := newNetBlock(&b, p, "Network approval for "+review.Project())
-	before := review.Before()
-	switch {
-	case before == nil:
-		block.field("Egress", string(after.Posture)+" (nothing was remembered before)")
-	case before.Posture == after.Posture:
-		block.field("Egress", string(after.Posture)+" (unchanged)")
-	default:
-		block.field("Egress", string(before.Posture)+"  →  "+string(after.Posture))
-	}
-	add, remove := approvalRuleDiff(before, after)
-	switch {
-	case len(add) == 0 && len(remove) == 0 && len(after.Envelope) == 0:
-		block.field("Rules", "none — this project asks for no destinations of its own")
-	case len(add) == 0 && len(remove) == 0:
-		block.field("Rules", ui.Count(len(after.Envelope), "rule")+", unchanged")
-	default:
-		block.field("Rules", ui.Count(len(after.Envelope), "rule")+" after this change")
-	}
-	for _, rule := range add {
-		block.row(p.Green("+ " + box.NetworkRuleText(rule)))
-	}
-	for _, rule := range remove {
-		block.row(p.Red("- " + box.NetworkRuleText(rule)))
-	}
-	if before != nil && len(before.Features) != 0 && len(after.Features) == 0 {
-		block.field("Dropped", "the optional provider features approved before")
-	}
-	// One line, only where the word itself would mislead: "open" and "none" are
-	// not degrees of filtering, and a reader about to type y should know that.
-	switch after.Posture {
-	case egress.Open:
-		block.field("Note", "open is no filtering at all — every destination is reachable")
-	case egress.None:
-		block.field("Note", "none is offline — no provider or MCP connections either")
-	}
-	block.flush(&b)
+	fmt.Fprintf(&b, "%s\n  %s\n\n", p.Bold(p.Cyan("Network access changes for "+filepath.Base(review.Project()))), p.Dim(review.Project()))
+	writeNetAccessChange(&b, p, review.Before(), after.Posture, after.Envelope)
+	b.WriteString("\n")
 	if _, err := io.WriteString(out, b.String()); err != nil {
 		return err
 	}
@@ -137,16 +85,61 @@ func confirmNetApproval(ctx context.Context, review netApprovalReview, out io.Wr
 		return err
 	}
 	if !confirm() {
-		return errors.New("cancelled — nothing was remembered")
+		return errors.New("cancelled — nothing was approved")
 	}
 	return review.Commit(ctx)
 }
 
-// approvalRuleDiff is the plain before/after set difference a human reviews.
-func approvalRuleDiff(before, after *networkstate.Approval) (add, remove []egress.Rule) {
-	var previous []egress.Rule
+// writeNetAccessChange is the one review a person reads before approving, and
+// the same one bare `coop net` shows while it is pending: the access mode in
+// plain words — with the warning an unrestricted request earns — then the rule
+// diff against what is already approved.
+func writeNetAccessChange(w io.Writer, p ui.Palette, before *networkstate.Approval, mode egress.Mode, requested []egress.Rule) {
+	var approved []egress.Rule
+	var approvedMode egress.Mode
 	if before != nil {
-		previous = before.Envelope
+		approved, approvedMode = before.Envelope, before.Posture
 	}
-	return box.NetworkRuleDiff(previous, after.Envelope)
+	fmt.Fprintln(w, netModeChange(approvedMode, mode))
+	switch mode {
+	case egress.Filtered:
+		fmt.Fprintln(w, "Only approved websites and services can be reached.")
+	case egress.Open:
+		fmt.Fprintln(w, p.Red(netOpenWarning))
+	case egress.None:
+		fmt.Fprintln(w, "An agent cannot reach its provider.")
+	}
+	add, remove := box.NetworkRuleDiff(approved, requested)
+	if len(approved) != 0 || len(add) != 0 || len(remove) != 0 {
+		fmt.Fprintln(w)
+		writeNetRuleDiff(w, p, approved, add, remove)
+	}
+}
+
+// netOpenWarning is the one red line an unrestricted request earns: it is an
+// escalation, and a reader about to type y should see it without color too.
+const netOpenWarning = "⚠ Nothing will be blocked — an agent can reach any destination"
+
+// netModeChange says what the access mode becomes, against what it was: the
+// raw enums never reach the screen, and "offline" is the human word for none.
+func netModeChange(before, after egress.Mode) string {
+	switch {
+	case before == "":
+		return "Internet access will be " + netModeWord(after) + "."
+	case before == after:
+		return "Internet access remains " + netModeWord(after) + "."
+	default:
+		return "Internet access changes from " + netModeWord(before) + " to " + netModeWord(after) + "."
+	}
+}
+
+func netModeWord(mode egress.Mode) string {
+	switch mode {
+	case egress.Open:
+		return "unrestricted"
+	case egress.None:
+		return "offline — no external network access"
+	default:
+		return "filtered"
+	}
 }

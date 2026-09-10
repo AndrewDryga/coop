@@ -11,6 +11,10 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 )
 
+// requestFixtureYAML is a project asking for one website: the smallest request
+// that is pending until a human approves it.
+const requestFixtureYAML = "box:\n  egress_rules:\n    - to:\n        domain: \"docs.example.com\"\n      protocol: tls\n      ports: [443]\n"
+
 func postureFixture(t *testing.T, projectYAML string) (*config.Config, string, string) {
 	t.Helper()
 	state := t.TempDir()
@@ -39,11 +43,8 @@ func TestPostureOnAFreshHostCreatesNoAuthority(t *testing.T) {
 	if posture.Mode != egress.Open || posture.Source != PostureFromDefault {
 		t.Errorf("posture = %q from %q, want the built-in open default", posture.Mode, posture.Source)
 	}
-	if posture.Approval != nil || posture.Setup != nil || posture.Pending != nil {
-		t.Errorf("a fresh host reported approval=%v setup=%v pending=%v", posture.Approval, posture.Setup, posture.Pending)
-	}
-	if posture.SetupCurrent() {
-		t.Error("a host with no record claims to be set up")
+	if posture.Approval != nil || posture.Pending != nil {
+		t.Errorf("a fresh host reported approval=%v pending=%v", posture.Approval, posture.Pending)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Errorf("the authority root was created by a read: %v", err)
@@ -94,7 +95,7 @@ func TestPostureRefusesToDescribeADirectoryThatIsNotThere(t *testing.T) {
 // for, commit it, and see the posture become remembered host authority.
 func TestReviewAndApproveRemembersTheProjectRequest(t *testing.T) {
 	cfg, repo, root := postureFixture(t, "box:\n  egress: filtered\n  egress_rules:\n    - to:\n        domain: \"docs.example.com\"\n      protocol: tls\n      ports: [443]\n")
-	review, err := ReviewProjectNetwork(cfg, repo, nil)
+	review, err := ReviewProjectNetwork(cfg, repo)
 	if err != nil {
 		t.Fatalf("ReviewProjectNetwork: %v", err)
 	}
@@ -138,23 +139,29 @@ func TestReviewAndApproveRemembersTheProjectRequest(t *testing.T) {
 // the next launch refuses. Nothing in the rule diff can show that, which is why
 // the posture view reports it as pending in its own right.
 func TestPostureReportsAnApprovedDirectoryThatWasReplaced(t *testing.T) {
-	cfg, repo, _ := postureFixture(t, "")
+	cfg, repo, _ := postureFixture(t, "box:\n  egress_rules:\n    - to:\n        domain: \"docs.example.com\"\n      protocol: tls\n      ports: [443]\n")
 	approveFixture(t, cfg, repo)
 	if err := os.Rename(repo, repo+"-moved-aside"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(repo, 0o755); err != nil {
+	// The replacement asks for exactly the same thing, so nothing in the rule
+	// diff can show what changed.
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(requestFixtureYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	posture, err := ProjectNetworkPosture(context.Background(), cfg, repo)
 	if err != nil {
 		t.Fatalf("ProjectNetworkPosture: %v", err)
 	}
-	if posture.Pending == nil || !strings.Contains(posture.Pending.Error(), "was replaced since it was approved") {
+	if posture.Pending == nil || !strings.Contains(posture.Pending.Reason, "was replaced since it was approved") {
 		t.Fatalf("pending = %v, want the replaced directory reported", posture.Pending)
 	}
-	if !strings.Contains(posture.Pending.Error(), "coop net approve") {
-		t.Errorf("pending = %v, want it to name the command that fixes it", posture.Pending)
+	// The reason is a plain sentence; every view adds the one review command itself.
+	if strings.Contains(posture.Pending.Reason, "coop net") {
+		t.Errorf("pending = %v, want a reason without the remedy baked in", posture.Pending)
 	}
 	// The rule diff is empty: without the pending line this view would look
 	// exactly like a project that is good to go.
@@ -165,7 +172,7 @@ func TestPostureReportsAnApprovedDirectoryThatWasReplaced(t *testing.T) {
 
 func TestReviewRefusesAnUnqualifiedProviderFeatureRequest(t *testing.T) {
 	cfg, repo, _ := postureFixture(t, "box:\n  egress: filtered\n  egress_rules:\n    - to:\n        provider: claude\n        features: [cloud-mcp]\n")
-	_, err := ReviewProjectNetwork(cfg, repo, nil)
+	_, err := ReviewProjectNetwork(cfg, repo)
 	if err == nil {
 		t.Fatal("a provider feature request was reviewed")
 	}
@@ -174,20 +181,84 @@ func TestReviewRefusesAnUnqualifiedProviderFeatureRequest(t *testing.T) {
 	}
 }
 
-func TestReviewHonorsAnExplicitMode(t *testing.T) {
-	cfg, repo, _ := postureFixture(t, "")
-	open := egress.Open
-	review, err := ReviewProjectNetwork(cfg, repo, &open)
+// The mode comes from .agent/project.yaml and nowhere else. A request for open
+// access is a widening the repository cannot grant itself: it is pending until a
+// human approves exactly that, and the review says open because the file does.
+func TestReviewTakesTheModeFromTheProjectFileOnly(t *testing.T) {
+	cfg, repo, _ := postureFixture(t, "box:\n  egress: open\n")
+	posture, err := ProjectNetworkPosture(context.Background(), cfg, repo)
+	if err != nil {
+		t.Fatalf("ProjectNetworkPosture: %v", err)
+	}
+	if posture.Pending == nil || !strings.Contains(posture.Pending.Reason, "unrestricted") || posture.RequestedMode != egress.Open {
+		t.Fatalf("an unapproved open request is not pending: pending=%v requested=%q", posture.Pending, posture.RequestedMode)
+	}
+	review, err := ReviewProjectNetwork(cfg, repo)
 	if err != nil {
 		t.Fatalf("ReviewProjectNetwork: %v", err)
 	}
 	defer review.Close()
-	if review.Mode() != egress.Open || review.After().Posture != egress.Open {
-		t.Errorf("mode = %q, want the explicit open", review.Mode())
+	if review.Unchanged() || review.Mode() != egress.Open || review.After().Posture != egress.Open {
+		t.Errorf("mode = %q unchanged=%v, want the file's open", review.Mode(), review.Unchanged())
 	}
-	bad := egress.Mode("sideways")
-	if _, err := ReviewProjectNetwork(cfg, repo, &bad); err == nil {
-		t.Error("an invalid --mode was reviewed")
+	if err := review.Commit(context.Background()); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	posture, err = ProjectNetworkPosture(context.Background(), cfg, repo)
+	if err != nil || posture.Pending != nil || posture.Mode != egress.Open || posture.Source != PostureFromApproval {
+		t.Errorf("after approval: pending=%v mode=%q source=%q err=%v", posture.Pending, posture.Mode, posture.Source, err)
+	}
+}
+
+// A request that is exactly what was approved — or one that asks for nothing an
+// approval must cover — has no question to answer: the review says so without
+// creating authority state or touching the stored decision.
+func TestReviewOfAnUnchangedRequestWritesNothing(t *testing.T) {
+	for name, yaml := range map[string]string{"default": "", "filtered": "box:\n  egress: filtered\n", "offline": "box:\n  egress: offline\n"} {
+		t.Run(name, func(t *testing.T) {
+			cfg, repo, root := postureFixture(t, yaml)
+			review, err := ReviewProjectNetwork(cfg, repo)
+			if err != nil {
+				t.Fatalf("ReviewProjectNetwork: %v", err)
+			}
+			if !review.Unchanged() {
+				t.Fatal("a project asking for nothing beyond the safe posture was put up for approval")
+			}
+			if err := review.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(root); !os.IsNotExist(err) {
+				t.Errorf("a no-op review created the authority root: %v", err)
+			}
+		})
+	}
+	// Approved once, the same request is a no-op the next time, byte for byte.
+	cfg, repo, root := postureFixture(t, "box:\n  egress_rules:\n    - to:\n        domain: \"docs.example.com\"\n      protocol: tls\n      ports: [443]\n")
+	approveFixture(t, cfg, repo)
+	before, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := ReviewProjectNetwork(cfg, repo)
+	if err != nil {
+		t.Fatalf("ReviewProjectNetwork: %v", err)
+	}
+	if !review.Unchanged() {
+		t.Fatal("an approved request was put up for approval again")
+	}
+	after, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != len(after) {
+		t.Errorf("a no-op review changed the store: %d entries before, %d after", len(before), len(after))
+	}
+	for i := range before {
+		b, _ := before[i].Info()
+		a, _ := after[i].Info()
+		if before[i].Name() != after[i].Name() || !b.ModTime().Equal(a.ModTime()) {
+			t.Errorf("a no-op review touched %s", before[i].Name())
+		}
 	}
 }
 
@@ -204,7 +275,7 @@ func TestReviewRefusesARuleNoLaunchCouldEnforce(t *testing.T) {
 			"IPv6 destinations are not supported yet"},
 	} {
 		cfg, repo, root := postureFixture(t, test.yaml)
-		_, err := ReviewProjectNetwork(cfg, repo, nil)
+		_, err := ReviewProjectNetwork(cfg, repo)
 		if err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Fatalf("review = %v, want a refusal naming %q", err, test.want)
 		}
@@ -216,7 +287,7 @@ func TestReviewRefusesARuleNoLaunchCouldEnforce(t *testing.T) {
 	}
 	// The same shape, on a port this runtime does enforce, is reviewable.
 	cfg, repo, _ := postureFixture(t, "box:\n  egress_rules:\n    - to:\n        domain: api.example.com\n      protocol: tls\n      ports: [443]\n")
-	review, err := ReviewProjectNetwork(cfg, repo, nil)
+	review, err := ReviewProjectNetwork(cfg, repo)
 	if err != nil {
 		t.Fatalf("an enforceable request was refused: %v", err)
 	}

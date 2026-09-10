@@ -371,7 +371,7 @@ func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
 		// canonical frame and owner-bound id no longer verify under the current rules.
 		// Skip it instead of failing the whole listing, so one retired record cannot
 		// take every net verb down; the current-contract check in RequireLaunch still
-		// refuses to launch on it and points at `coop net setup`.
+		// refuses to launch on it, and a launch then sets the host up again.
 		if !s.qualificationIsCurrent(name) {
 			continue
 		}
@@ -393,7 +393,7 @@ func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
 // the image it will launch contains that provider's selected client at all.
 func (q Qualification) RequireLaunch(policy egress.Snapshot) error {
 	if q.Contract != QualificationContract {
-		return errors.New("this host was set up by an older coop — run 'coop net setup'")
+		return errors.New("this host's network setup was made by an older coop")
 	}
 	if err := policy.RequireSupported(); err != nil {
 		return err
@@ -402,7 +402,7 @@ func (q Qualification) RequireLaunch(policy egress.Snapshot) error {
 		if !slices.ContainsFunc(q.Clients, func(client QualifiedClient) bool {
 			return client.Provider == dependency.Provider && client.Client == dependency.Client
 		}) {
-			return errors.New("the box image this host was set up with has no " + dependency.Provider + " " + string(dependency.Client) + " in it — run 'coop net setup'")
+			return errors.New("the box image this host was set up with has no " + dependency.Provider + " " + string(dependency.Client) + " in it")
 		}
 	}
 	return nil

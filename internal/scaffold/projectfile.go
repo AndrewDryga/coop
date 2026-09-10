@@ -303,20 +303,29 @@ func projectYAML(subprojects []string) string {
 	b.WriteString("#   ports: [5173]\n")
 	b.WriteString(`
 # box: the posture every run in this repo inherits. An explicit COOP_* env/conf setting still
-# wins for a one-off, so a committed value can only TIGHTEN the default (egress's default is the
-# loosest — "open" — so a repo can pin none but never widen your explicit none).
-# box:
-#   dockerfile: <path>  # box image (default .agent/Dockerfile; or reuse a repo Dockerfile)
-#   compose: <path>     # sidecars (default .agent/compose.yml; or point at your own)
-#   env:                # committed, non-secret box defaults; agents/env wins; COOP_* is reserved
-#     PGHOST: db
-#     PGPORT: "5432"
-#   egress: none        # "open" = npm + model API (default); "none" cuts ALL network — forensics only, agents can't work
-#   auto_up: false      # auto-start the sidecar services (default true)
-#   network: false      # join the sibling-services network (default true)
-#   memory: 4g          # docker/podman resource caps (ignored on Apple container); default unset
-#   cpus: "4"
-#   pids: 2048          # the fork-bomb cap (default 4096; 0/unlimited turns it off)
+# wins for a one-off. Being committed, this file can ask but never grant: "open" takes effect
+# only after a human approves it on the host with 'coop net approve', and so does every rule.
+box:
+  # egress: what a run can reach. "filtered" = each agent's own provider plus the websites and
+  # services approved for this project (see egress_rules); "offline" = no network at all;
+  # "open" = everything, unfiltered — needs a host approval before it takes effect.
+  egress: filtered
+  # egress_rules: the websites and services this project asks for; a human approves them once
+  # with 'coop net approve', and the approval lives outside the repo.
+  # egress_rules:
+  #   - to: {domain: "docs.example.com"}
+  #     protocol: tls
+  #     ports: [443]
+  # dockerfile: <path>  # box image (default .agent/Dockerfile; or reuse a repo Dockerfile)
+  # compose: <path>     # sidecars (default .agent/compose.yml; or point at your own)
+  # env:                # committed, non-secret box defaults; agents/env wins; COOP_* is reserved
+  #   PGHOST: db
+  #   PGPORT: "5432"
+  # auto_up: false      # auto-start the sidecar services (default true)
+  # network: false      # join the sibling-services network (default true)
+  # memory: 4g          # docker/podman resource caps (ignored on Apple container); default unset
+  # cpus: "4"
+  # pids: 2048          # the fork-bomb cap (default 4096; 0/unlimited turns it off)
 
 # context: which committed docs 'coop context' compiles for a given scope. Canonical
 # AGENTS.md/CLAUDE.md are always included; each route adds its docs when a touched path matches

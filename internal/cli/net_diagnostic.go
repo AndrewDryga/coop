@@ -281,7 +281,7 @@ type netCheckAnswer struct {
 
 func netCurrentCheck(posture box.NetworkPosture, host string, port int, bundles map[string]egress.Bundle) netCheckAnswer {
 	target := host + ":" + strconv.Itoa(port)
-	if netApprovalPending(posture) {
+	if posture.Pending != nil {
 		// Answering against a policy that cannot launch would be a fiction.
 		return netCheckAnswer{Pending: true, Verdict: "No new run can start until this project's network request is approved",
 			Cause: "Review it: coop net approve"}

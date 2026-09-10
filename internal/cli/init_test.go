@@ -175,3 +175,50 @@ func TestInitStackPreflightPreservesTree(t *testing.T) {
 		}
 	}
 }
+
+// A fresh init selects filtered access explicitly and, asking for nothing a
+// human must approve, prints no network notice at all; once the file asks for a
+// website, a re-init adds exactly the two lines that say so — with no Docker
+// and no host setup anywhere in the picture.
+func TestInitReportsAPendingNetworkRequestOnlyWhenThereIsOne(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "none"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "none"))
+	repo, cfgDir := t.TempDir(), t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v, %s", err, out)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
+	initOutput := func() string {
+		t.Helper()
+		return captureStderr(t, func() {
+			if code, err := a.cmdInit([]string{"--services", "none", "--agents", "claude"}); code != 0 || err != nil {
+				t.Errorf("cmdInit = (%d, %v)", code, err)
+			}
+		})
+	}
+	out := initOutput()
+	for _, absent := range []string{"coop net", "approved", "network"} {
+		if strings.Contains(out, absent) {
+			t.Errorf("a fresh init mentioned %q:\n%s", absent, out)
+		}
+	}
+	project := filepath.Join(repo, ".agent", "project.yaml")
+	data, err := os.ReadFile(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "\n  egress: filtered\n") {
+		t.Errorf("a fresh project does not select filtered access:\n%s", data)
+	}
+	if err := os.WriteFile(project, []byte("box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: docs.example.com}\n      protocol: tls\n      ports: [443]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out := initOutput(); !strings.HasSuffix(out, "⚠ This project asks for network access that has not been approved\n  Review it: coop net approve\n") {
+		t.Errorf("a pending request did not end init with the two-line notice:\n%s", out)
+	}
+	// The file a human edited is not rewritten by the re-init.
+	if after, _ := os.ReadFile(project); !strings.Contains(string(after), "docs.example.com") {
+		t.Errorf("re-init rewrote project.yaml:\n%s", after)
+	}
+}

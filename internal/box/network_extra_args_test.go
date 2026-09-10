@@ -179,22 +179,23 @@ func TestPostureSourceNamesTheDecidingInput(t *testing.T) {
 }
 
 func TestApprovalModeAsksAboutTheRepositorysOwnRequest(t *testing.T) {
-	filtered, none, open := egress.Filtered, egress.None, egress.Open
+	none, open := egress.None, egress.Open
 	rule := egress.Rule{To: egress.Destination{Domain: "a.example"}, Protocol: "tls", Ports: []int{443}}
 	remembered := &networkstate.Approval{Posture: egress.None}
-	if got := approvalMode(networkstate.Admission{ProjectMode: &filtered}, remembered, &open); got != egress.Open {
-		t.Errorf("explicit --mode = %q, want open", got)
+	// The repository is the only place a mode comes from: there is no --mode.
+	if got := approvalMode(networkstate.Admission{ProjectMode: &open}, remembered); got != egress.Open {
+		t.Errorf("project mode open = %q, want open", got)
 	}
-	if got := approvalMode(networkstate.Admission{ProjectMode: &none}, remembered, nil); got != egress.None {
+	if got := approvalMode(networkstate.Admission{ProjectMode: &none}, remembered); got != egress.None {
 		t.Errorf("project mode = %q, want none", got)
 	}
-	if got := approvalMode(networkstate.Admission{Requests: []egress.Rule{rule}}, nil, nil); got != egress.Filtered {
+	if got := approvalMode(networkstate.Admission{Requests: []egress.Rule{rule}}, nil); got != egress.Filtered {
 		t.Errorf("rules alone = %q, want filtered", got)
 	}
-	if got := approvalMode(networkstate.Admission{}, remembered, nil); got != egress.None {
+	if got := approvalMode(networkstate.Admission{}, remembered); got != egress.None {
 		t.Errorf("silent project = %q, want the remembered posture", got)
 	}
-	if got := approvalMode(networkstate.Admission{}, nil, nil); got != egress.Filtered {
+	if got := approvalMode(networkstate.Admission{}, nil); got != egress.Filtered {
 		t.Errorf("nothing at all = %q, want filtered", got)
 	}
 }

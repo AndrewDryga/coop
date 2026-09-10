@@ -20,7 +20,7 @@ func TestAdmissionPreviewChecksEnvelopeWithoutReadingFeatureBundles(t *testing.T
 	root, project := filepath.Join(t.TempDir(), "network"), t.TempDir()
 	request := egress.Rule{To: egress.Destination{Provider: "model", Features: []string{"cloud-mcp"}}}
 	input := Admission{Requests: []egress.Rule{request}}
-	if _, err := PreviewAdmissionMode(root, project, nil, input); err == nil || !strings.Contains(err.Error(), "network_approval_required") {
+	if _, err := PreviewAdmissionMode(root, project, nil, input); err == nil || !strings.Contains(err.Error(), "has not been approved") {
 		t.Fatal("unapproved preview proceeded", err)
 	}
 	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
@@ -39,7 +39,7 @@ func TestAdmissionPreviewChecksEnvelopeWithoutReadingFeatureBundles(t *testing.T
 		t.Fatal("approved feature needs no bundle for preliminary envelope check", mode, err)
 	}
 	input.Requests = []egress.Rule{rule("outside.example.com")}
-	if _, err := PreviewAdmissionMode(root, project, nil, input); err == nil || !strings.Contains(err.Error(), "network_approval_required") {
+	if _, err := PreviewAdmissionMode(root, project, nil, input); err == nil || !strings.Contains(err.Error(), "has not been approved") {
 		t.Fatal("changed envelope proceeded", err)
 	}
 }
@@ -62,14 +62,20 @@ func TestAdmissionPreviewDoesNotCreateOrRepairAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	mode, err = PreviewAdmissionMode(root, project, nil, input)
+	// A project that names no mode keeps the remembered one; one that names a
+	// different mode than the human approved is a pending review, not a posture.
+	mode, err = PreviewAdmissionMode(root, project, nil, Admission{})
 	if err != nil || mode != egress.None {
 		t.Fatal("preview ignored remembered posture", mode, err)
+	}
+	var pending *PendingApproval
+	if _, err := PreviewAdmissionMode(root, project, nil, input); !errors.As(err, &pending) || !strings.Contains(pending.Reason, "has not been approved") {
+		t.Fatal("a file asking for a mode the human did not approve was not pending", err)
 	}
 	if err := os.Remove(filepath.Join(root, "owner.key")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PreviewAdmissionMode(root, project, nil, input); err == nil {
+	if _, err := PreviewAdmissionMode(root, project, nil, Admission{}); err == nil {
 		t.Fatal("preview reset lost key over existing approval")
 	}
 	if _, err := os.Stat(filepath.Join(root, "owner.key")); !errors.Is(err, os.ErrNotExist) {

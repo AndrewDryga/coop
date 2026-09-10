@@ -148,6 +148,9 @@ func (a *app) cmdNetRecover(args []string) (int, error) {
 	return code, nil
 }
 
+// cmdNetSetup qualifies this host now. A filtered launch does the same on its
+// own when it has to; this is for paying the cost ahead of an unattended run,
+// or for rechecking a host after a Docker or coop upgrade.
 func (a *app) cmdNetSetup() (int, error) {
 	if err := a.ensureRuntime(); err != nil {
 		return -1, err
@@ -155,8 +158,11 @@ func (a *app) cmdNetSetup() (int, error) {
 	if err := a.rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
-	ui.Info("setting up restricted networking for this host")
-	if _, err := box.SetupNetwork(context.Background(), a.cfg, a.rt, os.Stderr, os.Stderr); err != nil {
+	_, err := box.SetupNetwork(context.Background(), a.cfg, a.rt, os.Stderr, os.Stderr)
+	if errors.Is(err, box.ErrNetworkSetupFailed) {
+		return 1, nil // the transcript already named the failed check and the verdict
+	}
+	if err != nil {
 		return 1, err
 	}
 	return 0, nil
@@ -177,11 +183,31 @@ func (a *app) cmdNetPosture() (int, error) {
 	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetPosture(b, p, posture) })
 }
 
+// netPendingNotice is what `coop init` adds after its scaffold, and only when
+// this project's network request is actually pending — the same read-only check
+// every launch makes, so a fresh or unchanged project costs zero lines. It
+// needs no Docker and no store: a host that never ran a filtered box has
+// nothing to compare against and stays silent.
+func (a *app) netPendingNotice(repo string) {
+	posture, err := box.ProjectNetworkPosture(context.Background(), a.cfg, repo)
+	if err != nil {
+		ui.Warn("this project's network access could not be checked: %v", err)
+		return
+	}
+	if posture.Pending == nil {
+		return
+	}
+	reason := posture.Pending.Reason
+	ui.Warn("%s", strings.ToUpper(reason[:1])+reason[1:])
+	ui.Note("  Review it: coop net approve")
+}
+
 // writeNetPosture answers the one question a person arrives with: what can a
 // new run reach, and why. It says what decided the mode, names provider access
 // in one example, lists approved project access only when there is any, and
-// shows a pending request only when one exists. Healthy setup and run history
-// cost no lines: setup is machinery and `coop net runs` owns history.
+// shows a pending request — the same change `coop net approve` would show —
+// only when one exists. Setup and run history cost no lines: a launch sets the
+// host up itself, and `coop net runs` owns history.
 func writeNetPosture(w io.Writer, p ui.Palette, posture box.NetworkPosture) {
 	fmt.Fprintf(w, "%s\n  %s\n\n", p.Bold(p.Cyan("Network access for "+filepath.Base(posture.Project))), p.Dim(posture.Project))
 	fmt.Fprintln(w, netModeSentence(posture.Mode, posture.Source))
@@ -192,43 +218,36 @@ func writeNetPosture(w io.Writer, p ui.Palette, posture box.NetworkPosture) {
 	case egress.None:
 		fmt.Fprintln(w, "No external destination is reachable, so an agent cannot reach its provider.")
 	}
-	pending := netApprovalPending(posture)
+	if posture.Pending == nil {
+		if posture.Mode == egress.Filtered && posture.Approval != nil && len(posture.Approval.Envelope) != 0 {
+			fmt.Fprintln(w, "\nThis project can also reach:")
+			for _, rule := range posture.Approval.Envelope {
+				fmt.Fprintf(w, "  %s\n", netRuleText(rule))
+			}
+		}
+		return
+	}
+	// The same condition a launch refuses on, said where the operator can act:
+	// the request is not what was approved, so no new run starts. What the rule
+	// diff cannot show is said in a line: a mode change, or a reason like a
+	// replaced directory or a changed service.
+	fmt.Fprintf(w, "\n%s %s\n", p.Yellow("⚠"), p.Yellow("New runs cannot start until this project's network request is approved"))
 	var approved []egress.Rule
+	var approvedMode egress.Mode
 	if posture.Approval != nil {
-		approved = posture.Approval.Envelope
+		approved, approvedMode = posture.Approval.Envelope, posture.Approval.Posture
 	}
-	if posture.Mode == egress.Filtered && len(approved) != 0 && !pending {
-		fmt.Fprintln(w, "\nThis project can also reach:")
-		for _, rule := range approved {
-			fmt.Fprintf(w, "  %s\n", netRuleText(rule))
-		}
-	}
-	if pending {
-		// The same condition a launch refuses on, said where the operator can
-		// act: the request and its approval differ, so no new run starts.
-		fmt.Fprintf(w, "\n%s %s\n", p.Yellow("⚠"), p.Yellow("New runs cannot start until this project's network request is approved"))
-		if posture.Pending != nil && len(posture.Add) == 0 && len(posture.Remove) == 0 {
-			fmt.Fprintf(w, "  %s\n", posture.Pending.Error())
-		}
-		writeNetRuleDiff(w, p, approved, posture.Add, posture.Remove)
-		fmt.Fprintf(w, "  Review it: %s\n", p.Cyan("coop net approve"))
-	}
-	// Host qualification is machinery, not a decision, so a current record is
-	// silent. A host that cannot run a filtered box yet is the exception.
 	switch {
-	case posture.Mode != egress.Filtered:
-	case posture.Setup == nil:
-		fmt.Fprintf(w, "\n%s %s\n  %s\n", p.Yellow("⚠"), p.Yellow("This host is not set up for filtered runs yet"), "Prepare it once: coop net setup")
-	case !posture.SetupCurrent():
-		fmt.Fprintf(w, "\n%s %s\n  %s\n", p.Yellow("⚠"), p.Yellow("This host was set up by an older coop"), "Prepare it again: coop net setup")
+	case posture.RequestedMode != approvedMode && (posture.Approval != nil || posture.RequestedMode == egress.Open):
+		fmt.Fprintf(w, "  %s\n", netModeChange(approvedMode, posture.RequestedMode))
+		if posture.RequestedMode == egress.Open {
+			fmt.Fprintf(w, "  %s\n", p.Red(netOpenWarning))
+		}
+	case len(posture.Add) == 0 && len(posture.Remove) == 0:
+		fmt.Fprintf(w, "  %s\n", posture.Pending.Reason)
 	}
-}
-
-// netApprovalPending is the one condition a launch refuses on: the project's
-// request and its approval differ, or something no rule diff can show — a
-// replaced directory, a drifted service — needs review.
-func netApprovalPending(posture box.NetworkPosture) bool {
-	return posture.Pending != nil || len(posture.Add) != 0 || len(posture.Remove) != 0
+	writeNetRuleDiff(w, p, approved, posture.Add, posture.Remove)
+	fmt.Fprintf(w, "  Review it: %s\n", p.Cyan("coop net approve"))
 }
 
 // netModeSentence is the causal sentence: the mode in human words, and the

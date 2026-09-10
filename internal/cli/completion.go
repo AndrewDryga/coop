@@ -183,8 +183,6 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 			return []string{"--run", "--json", "--protocol", "--port", "--icmp"}
 		case "explain":
 			return []string{"--run", "--json"}
-		case "approve":
-			return []string{"--mode"}
 		}
 	case "login", "credentials", "models":
 		if len(prev) == 1 {

@@ -754,10 +754,9 @@ func TestPostureViewAnswersWhatANewRunCanReach(t *testing.T) {
 	rule := func(domain string) egress.Rule {
 		return egress.Rule{To: egress.Destination{Domain: domain}, Protocol: "tls", Ports: []int{443}}
 	}
-	setup := &networkstate.Qualification{Contract: networkstate.QualificationContract, CompletedAt: time.Unix(0, 0).UTC()}
 	approved := box.NetworkPosture{Project: "/private/tmp/coop", Mode: egress.Filtered, Source: box.PostureFromProject,
 		Approval:  &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{rule("github.com"), rule("registry.npmjs.org")}},
-		Requested: []egress.Rule{rule("github.com"), rule("registry.npmjs.org")}, Setup: setup}
+		Requested: []egress.Rule{rule("github.com"), rule("registry.npmjs.org")}, RequestedMode: egress.Filtered}
 	var b bytes.Buffer
 	writeNetPosture(&b, ui.Palette{}, approved)
 	want := "Network access for coop\n  /private/tmp/coop\n\n" +
@@ -773,7 +772,7 @@ func TestPostureViewAnswersWhatANewRunCanReach(t *testing.T) {
 	pending.Source = box.PostureFromApproval
 	pending.Requested = []egress.Rule{rule("github.com"), rule("api.example.com")}
 	pending.Add, pending.Remove = []egress.Rule{rule("api.example.com")}, []egress.Rule{rule("registry.npmjs.org")}
-	pending.Pending = errors.New("network_approval_required: project request exceeds the approved envelope")
+	pending.Pending = &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}
 	b.Reset()
 	writeNetPosture(&b, ui.Palette{}, pending)
 	want = "New runs use filtered internet access because that is what was approved for this project.\n" +
@@ -795,17 +794,50 @@ func TestPostureViewAnswersWhatANewRunCanReach(t *testing.T) {
 	// A launch can refuse for something no rule diff shows; that reason is the
 	// pending line's detail.
 	replaced := approved
-	replaced.Pending = errors.New("the project directory at /private/tmp/coop was replaced since it was approved — review it with 'coop net approve'")
+	replaced.Pending = &networkstate.PendingApproval{Reason: "the project directory at /private/tmp/coop was replaced since it was approved"}
 	b.Reset()
 	writeNetPosture(&b, ui.Palette{}, replaced)
-	if !strings.Contains(b.String(), "⚠ New runs cannot start until this project's network request is approved\n  the project directory at /private/tmp/coop was replaced") {
+	// The baseline is still shown: it is what the review re-binds to the directory that is there now.
+	if !strings.HasSuffix(b.String(), "⚠ New runs cannot start until this project's network request is approved\n"+
+		"  the project directory at /private/tmp/coop was replaced since it was approved\n"+
+		"  Access:\n      github.com:443 · TLS           already approved\n      registry.npmjs.org:443 · TLS   already approved\n"+
+		"  Review it: coop net approve\n") {
 		t.Errorf("replaced directory:\n%s", b.String())
+	}
+
+	// A mode change is the other thing no rule diff shows: an unapproved open
+	// request is named as the escalation it is, with the rules it drops.
+	widening := approved
+	widening.Source, widening.RequestedMode, widening.Requested = box.PostureFromApproval, egress.Open, nil
+	widening.Add, widening.Remove = nil, approved.Approval.Envelope
+	widening.Pending = &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}
+	b.Reset()
+	writeNetPosture(&b, ui.Palette{}, widening)
+	want = "⚠ New runs cannot start until this project's network request is approved\n" +
+		"  Internet access changes from filtered to unrestricted.\n" +
+		"  ⚠ Nothing will be blocked — an agent can reach any destination\n" +
+		"  Access:\n" +
+		"    - github.com:443 · TLS           no longer requested\n" +
+		"    - registry.npmjs.org:443 · TLS   no longer requested\n" +
+		"  Review it: coop net approve\n"
+	if !strings.HasSuffix(b.String(), want) {
+		t.Errorf("widening posture:\n%s\nwant to end with:\n%s", b.String(), want)
 	}
 
 	for _, forbidden := range []string{"This host", "set up", "Recent runs", "remembered", "Egress", "Rules none", "destinations of its own"} {
 		if strings.Contains(b.String(), forbidden) {
 			t.Errorf("posture printed %q:\n%s", forbidden, b.String())
 		}
+	}
+
+	// A never-approved file asking for open access: the mode is the whole change.
+	freshOpen := box.NetworkPosture{Project: "/p", Mode: egress.Open, Source: box.PostureFromProject, RequestedMode: egress.Open,
+		Pending: &networkstate.PendingApproval{Reason: "this project asks for unrestricted internet access, which has not been approved"}}
+	b.Reset()
+	writeNetPosture(&b, ui.Palette{}, freshOpen)
+	if !strings.HasSuffix(b.String(), "⚠ New runs cannot start until this project's network request is approved\n"+
+		"  Internet access will be unrestricted.\n  ⚠ Nothing will be blocked — an agent can reach any destination\n  Review it: coop net approve\n") {
+		t.Errorf("fresh open request:\n%s", b.String())
 	}
 
 	open := box.NetworkPosture{Project: "/p", Mode: egress.Open, Source: box.PostureFromDefault}
@@ -820,19 +852,13 @@ func TestPostureViewAnswersWhatANewRunCanReach(t *testing.T) {
 	if !strings.Contains(b.String(), "New runs are offline because COOP_EGRESS says so.\nNo external destination is reachable, so an agent cannot reach its provider.\n") {
 		t.Errorf("offline posture:\n%s", b.String())
 	}
-	// A host that cannot run a filtered box yet is the one setup fact worth a line.
-	unprepared := box.NetworkPosture{Project: "/p", Mode: egress.Filtered, Source: box.PostureFromProject}
+	// A fresh project is the common case: filtered, nothing approved, nothing
+	// pending — and host setup is a launch's own business, so nothing else.
+	fresh := box.NetworkPosture{Project: "/p", Mode: egress.Filtered, Source: box.PostureFromProject, RequestedMode: egress.Filtered}
 	b.Reset()
-	writeNetPosture(&b, ui.Palette{}, unprepared)
-	if !strings.HasSuffix(b.String(), "\n⚠ This host is not set up for filtered runs yet\n  Prepare it once: coop net setup\n") {
-		t.Errorf("unprepared host:\n%s", b.String())
-	}
-	stale := unprepared
-	stale.Setup = &networkstate.Qualification{Contract: "some-older-contract"}
-	b.Reset()
-	writeNetPosture(&b, ui.Palette{}, stale)
-	if !strings.Contains(b.String(), "⚠ This host was set up by an older coop\n  Prepare it again: coop net setup\n") {
-		t.Errorf("stale host:\n%s", b.String())
+	writeNetPosture(&b, ui.Palette{}, fresh)
+	if !strings.HasSuffix(b.String(), "Everything else is blocked.\n") || strings.Contains(b.String(), "coop net") {
+		t.Errorf("fresh project:\n%s", b.String())
 	}
 }
 

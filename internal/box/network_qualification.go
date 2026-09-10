@@ -30,7 +30,7 @@ func capturedNetworkCandidate(capture *CapturedEgress, policy egress.Snapshot, s
 	}
 	qualification, err := capture.Store.Qualification(capture.QualificationID)
 	if err != nil {
-		return networkstate.CandidateSpec{}, errors.New("restricted networking requires a completed host setup; run `coop net setup`")
+		return networkstate.CandidateSpec{}, errors.New("this host's network setup record disappeared while the box was starting — run it again")
 	}
 	if err := qualification.RequireLaunch(policy); err != nil {
 		return networkstate.CandidateSpec{}, err

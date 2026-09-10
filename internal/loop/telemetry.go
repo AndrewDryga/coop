@@ -50,7 +50,7 @@ type StageRecord struct {
 	QueueDoing int      `json:"queue_doing"`
 	QueueDone  int      `json:"queue_done"`
 	// NetworkRunID is the filtered run this stage's box was, so its receipt in
-	// `coop net ls` and this row name the same thing. Empty outside filtered mode.
+	// `coop net runs` and this row name the same thing. Empty outside filtered mode.
 	NetworkRunID string `json:"network_run_id,omitempty"`
 }
 

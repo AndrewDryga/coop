@@ -90,7 +90,7 @@ func TestCurrentCheckAnswersForANewRun(t *testing.T) {
 		{"two agents", filtered, "platform.claude.com", 443, "✓ Claude and Codex can reach platform.claude.com:443\n  Their provider access is included automatically.\n"},
 		{"open", box.NetworkPosture{Mode: egress.Open}, "anything.example", 443, "✓ New runs can reach anything.example:443\n  This project's network access is unrestricted.\n"},
 		{"offline", box.NetworkPosture{Mode: egress.None}, "api.anthropic.com", 443, "✗ New runs cannot reach api.anthropic.com:443\n  This project's runs are offline.\n"},
-		{"pending", box.NetworkPosture{Mode: egress.Filtered, Add: []egress.Rule{rule("new.example", 443)}}, "api.anthropic.com", 443,
+		{"pending", box.NetworkPosture{Mode: egress.Filtered, Add: []egress.Rule{rule("new.example", 443)}, Pending: &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}}, "api.anthropic.com", 443,
 			"✗ No new run can start until this project's network request is approved\n  Review it: coop net approve\n"},
 	}
 	for _, tc := range cases {

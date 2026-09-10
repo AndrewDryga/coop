@@ -9,10 +9,10 @@
 #   ports: [5173]
 
 # box: the posture every run in this repo inherits. An explicit COOP_* env/conf setting still
-# wins for a one-off, so a committed value can only TIGHTEN the default (egress's default is the
-# loosest — "open" — so a repo can pin none but never widen your explicit none).
+# wins for a one-off, and a committed value can only TIGHTEN the default: "filtered" or "offline"
+# take effect as written, while "open" is a request a human approves with 'coop net approve'.
 # box:
-#   egress: none        # outbound network: "open" (npm + model API) or "none" (offline)
+#   egress: offline     # outbound network: "filtered" (provider + approved sites), "offline", or "open"
 #   auto_up: false      # auto-start .agent/compose.yml sibling services (default true)
 #   network: false      # join the sibling-services network (default true)
 #   memory: 4g          # docker/podman resource caps (ignored on Apple container); default unset

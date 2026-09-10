@@ -15,7 +15,6 @@ import (
 	"errors"
 	"os"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,8 +35,8 @@ func TestProviderNetworkLiveCompatibility(t *testing.T) {
 // prompt and a native resume of that same conversation — then reads the sealed receipts back and
 // requires every destination the boxes actually reached to be one this policy granted.
 //
-// A host with no `coop net setup` record, no runtime or no credential SKIPS: an unqualified host
-// cannot fail a compatibility claim it never made.
+// A host that cannot be set up for filtered runs, has no runtime or no credential SKIPS: an
+// unqualified host cannot fail a compatibility claim it never made.
 func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, preflightReason string) liveprovider.ProviderResult {
 	result := liveprovider.ProviderResult{Provider: target.Provider}
 	fail := func(reason, phase, class string, code int) liveprovider.ProviderResult {
@@ -85,8 +84,9 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 	}
 	capture, err := box.AdmitNetwork(cfg, rt, spec, box.NetworkAdmission{InvocationMode: &filtered})
 	if err != nil {
-		// An unqualified host is a skip, not a compatibility failure.
-		if strings.Contains(err.Error(), "coop net setup") {
+		// A host that cannot be set up for filtered runs — admission tries that
+		// itself now — is a skip, not a compatibility failure.
+		if errors.Is(err, box.ErrNetworkSetupFailed) {
 			return skip(liveprovider.ReasonMissingImage, "network_setup")
 		}
 		return harnessFail("network_admission")

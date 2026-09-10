@@ -1105,6 +1105,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if !already {
 		ui.Steps(initNextSteps(repo, services)...)
 	}
+	a.netPendingNotice(repo) // only when this project asks for network access nobody approved
 	return 0, nil
 }
 

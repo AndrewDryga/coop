@@ -363,11 +363,33 @@ func (s *Store) lockRecord(ctx context.Context, kind, id string, operation func(
 	}
 	ctx, cancel := context.WithTimeout(ctx, ExecutionLockTimeout)
 	defer cancel()
+	value, _ := hex.DecodeString(id[:2])
+	return s.lockFile(ctx, fmt.Sprintf("%s-lock-%02x", kind, value[0]%64), operation)
+}
+
+// SetupLockTimeout bounds how long a launch waits for another process's host
+// setup: a first client-image build takes minutes, and waiting for it is cheaper
+// than building the same images beside it.
+const SetupLockTimeout = 30 * time.Minute
+
+// LockSetup serializes host qualification across processes. Two first launches
+// that both find no current proof must not build and prove the same image pair
+// at once: the second waits, then proves against images the first left behind.
+func (s *Store) LockSetup(ctx context.Context, operation func() error) error {
+	if ctx == nil {
+		return errors.New("network setup lock requires context")
+	}
+	ctx, cancel := context.WithTimeout(ctx, SetupLockTimeout)
+	defer cancel()
+	return s.lockFile(ctx, "setup-lock", operation)
+}
+
+// lockFile holds an exclusive flock on one private file under the store root
+// for the duration of operation, waiting until ctx expires.
+func (s *Store) lockFile(ctx context.Context, name string, operation func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	value, _ := hex.DecodeString(id[:2])
-	name := fmt.Sprintf("%s-lock-%02x", kind, value[0]%64)
 	dir, err := s.root.Open(".")
 	if err != nil {
 		return err
@@ -381,7 +403,7 @@ func (s *Store) lockRecord(ctx context.Context, kind, id string, operation func(
 		fd, err = unix.Openat(int(dir.Fd()), name, flags, 0)
 	}
 	if err != nil {
-		return fmt.Errorf("open network %s lock: %w", kind, err)
+		return fmt.Errorf("open network lock %s: %w", name, err)
 	}
 	file := os.NewFile(uintptr(fd), name)
 	defer file.Close()
@@ -400,7 +422,7 @@ func (s *Store) lockRecord(ctx context.Context, kind, id string, operation func(
 			break
 		}
 		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) {
-			return fmt.Errorf("acquire network %s lock: %w", kind, err)
+			return fmt.Errorf("acquire network lock %s: %w", name, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -411,7 +433,7 @@ func (s *Store) lockRecord(ctx context.Context, kind, id string, operation func(
 	defer unix.Flock(fd, unix.LOCK_UN)
 	current, err := s.root.Lstat(name)
 	if err != nil || !os.SameFile(info, current) {
-		return fmt.Errorf("network %s lock identity changed", kind)
+		return fmt.Errorf("network lock %s identity changed", name)
 	}
 	if err := ctx.Err(); err != nil {
 		return err

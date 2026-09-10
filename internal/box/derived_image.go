@@ -90,7 +90,7 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, docker filter
 	// replaced tag is caught here rather than deep inside a build. The layer
 	// proof below is the backstop either way.
 	if id, _, err := docker.Image(ctx, definition.Tag); err != nil || id != candidate.ClientImage {
-		return "", errors.New("the images this host was set up with are gone — run 'coop net setup' again")
+		return "", errors.New("the images this host was set up with disappeared while the box was starting — run it again")
 	}
 	tag := filteredProjectTag(repo, candidate.ClientImage)
 	var buildErrOut io.Writer

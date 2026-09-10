@@ -81,13 +81,13 @@ at all, and the daemon owns the destination projection every one of them applies
 
 | verb | reads |
 | --- | --- |
-| bare `coop net` | this project's mode and its cause, the approved project rules, a pending request; creates no owner key. Healthy setup and history cost no line |
-| `approve` | TTY only; the repo's request envelope diffed against the remembered approval, digest-fenced |
+| bare `coop net` | this project's mode and its cause, the approved project rules, and — only when the file and the approval differ — the same access change `approve` would show; creates no owner key. Setup health and history cost no line: a launch sets the host up itself |
+| `approve` | TTY only, no flags; the exact snapshot of `.agent/project.yaml` (mode, rules, service digests) diffed against the remembered approval, digest-fenced. Nothing pending → `No approval needed — …`, nothing written |
 | `check <url-or-host>` | with no `--run`, the approved project rules plus each agent's provider bundle (`cli/net_diagnostic.go`, `netCurrentCheck`); with `--run`, that run's captured policy evaluated hypothetically. Never sends a packet |
 | `forget` | one of three mutating verbs: removes one project's approval |
 | `runs` · `inspect` · `watch` · `export` | the keyless `Evidence` handle over retained execution records — no runtime, no DNS, no key. Any unique prefix of a run id resolves (`netResolveRun`); an ambiguous one is refused with the prefixes that settle it |
 | `explain <host>` | the newest RETAINED denial of that host in this project's runs (or in `--run`), grouped by boundary/reason/port; the exact event id still works with `--run`. A DNS-only refusal drafts no rule, because it cannot prove TLS/443 |
-| `setup` | mutating: builds the image pair and records the host qualification |
+| `setup` | mutating: builds the image pair and records the host qualification — the same work a filtered launch performs itself when this host has no current proof, so it is a prepare-ahead/recheck verb, not a prerequisite |
 | `recover [<run>]` | settles a run whose supervisor died — exact-owned removal, then a final `supervisor_lost` receipt (`box/network_recover.go:50`). The same pass runs from the orphan sweep at loop/fork start AND from `coop net inspect` before it reports a cleanup as incomplete (`cli/net_cmd.go`, `netSettleCleanup`) |
 
 `export` is redacted by default because it is the shareable artifact; `inspect`/`check`/`explain`/
@@ -109,6 +109,9 @@ The inline end-of-box report in `box/network_summary.go` is still the older refu
 `internal/box` cannot import `internal/cli`, so sharing this projection means moving it below both.
 
 ## Changelog
+- 2026-09-10 — `approve` reviews the exact project-file snapshot with no `--mode` and skips a no-op; the
+  pending check it shares with `coop init`, bare `coop net` and every `AdmitNetwork` launch lives in
+  `networkstate` (`pendingApproval`); a filtered launch qualifies the host itself. Rows above updated.
 - 2026-09-10 — the `coop net` family regrouped into ACCESS/RUNS/REPAIR (`runs` replaces `ls`, `check` replaces `why`, `export` replaces `receipt`, `explain` takes a host); `inspect` renders the destination-first exception-only projection and makes one bounded recovery attempt before reporting cleanup. Re-verified the consumer facts above against their sources.
 - 2026-09-10 — resolving moved from load-time-only to every request as well: what a daemon advertises is what a create would accept now (`service.go` PolicyNetworks).
 - 2026-09-10 — a session policy's RESOLVED network fingerprint is published at load

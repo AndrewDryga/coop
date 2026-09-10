@@ -4,7 +4,7 @@ description: "`coop init` generates for the detected stack and stays neutral whe
 scope: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go, internal/scaffold/projectfile.go]
 check: "none"
-updated: 2026-09-03
+updated: 2026-09-10
 ---
 
 # coop init scaffolds what the repo uses — it never imposes a stack
@@ -56,6 +56,10 @@ blocks. Guessing wrong is worse than doing nothing.
   exception: preserve it and print chaining guidance.
 
 ## Changelog
+- 2026-09-10 — pass-through for the explicit-filtered project file: `projectYAML` now writes an active
+  `box.egress: filtered` (a network posture every stack shares — not a stack guess, so detection is
+  untouched) with a leading comment, and the file spells no-network access `offline`. Re-init stays
+  the `writeNewRepoFile` no-clobber path; `TestScaffoldedProjectParses` proves an edited file is kept.
 - 2026-09-03 — replaced scaffold check-then-write calls with one `os.Root`-anchored exclusive
   creator. Existing regular files remain the supported re-init no-op; links and unsupported
   entries fail before any outside target can change. `RegisterSubprojects` now validates the exact
