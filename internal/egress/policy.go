@@ -399,6 +399,18 @@ func validLabel(value string) bool {
 	return true
 }
 
+// NormalizeLabel canonicalizes ONE DNS label — the grammar a `service:` grant
+// accepts — for a name that is not a domain, such as a Compose sidecar a box
+// asked its resolver for. It grants nothing; it only makes such a name safe to
+// print back, so a refusal reads as the label instead of withheld.
+func NormalizeLabel(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSuffix(value, "."))
+	if !validLabel(value) {
+		return "", errors.New("name is not one lowercase ASCII DNS label")
+	}
+	return value, nil
+}
+
 func NormalizeDomain(value string, wildcard bool) (string, error) {
 	value, err := canonicalDomain(value, wildcard)
 	if err != nil {

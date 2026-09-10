@@ -387,3 +387,37 @@ func TestGuardReplayRechecksBootClockAfterStalledWrite(t *testing.T) {
 		}
 	}
 }
+
+// A refused sidecar lookup is the one destination a human most wants named: the
+// label IS the question. Only the resolver's own bounded label grammar reaches
+// the summary, so a hostile question stays withheld rather than printed back.
+func TestGuardRefusedSingleLabelQueryIsNamedByItsLabel(t *testing.T) {
+	fixture := startGuardFixture(t)
+	cases := []struct{ question, name string }{
+		{"other", "other"}, {"OTHER", "other"}, {"ev\x07il", ""}, {"denied.example.com", "denied.example.com"},
+	}
+	for _, c := range cases {
+		query, err := makeQuery(c.question)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire, err := query.Pack()
+		if err != nil {
+			t.Fatal(err)
+		}
+		reply := fixture.guard.dnsAnswer(context.Background(), wire)
+		var answer dnsmessage.Message
+		if err := answer.Unpack(reply); err != nil || answer.RCode != dnsmessage.RCodeRefused {
+			t.Fatalf("%q was not refused: %v %#v", c.question, err, answer)
+		}
+	}
+	events, totals := fixture.guard.events.Drain(MaxGuardEvents)
+	if int(totals.DeniedDNS) != len(cases) || len(events) != len(cases) {
+		t.Fatalf("refusal accounting: %#v %#v", totals, events)
+	}
+	for i, event := range events {
+		if event.Kind != "dns_denied" || event.Name != cases[i].name {
+			t.Fatalf("query %q recorded as %q (%s)", cases[i].question, event.Name, event.Kind)
+		}
+	}
+}

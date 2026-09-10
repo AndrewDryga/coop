@@ -3,9 +3,12 @@ package networkgateway
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/networkview"
 )
 
 func TestCollectorDelayedConnectedEventReconcilesWithoutLosingProxyCounters(t *testing.T) {
@@ -128,8 +131,13 @@ func TestCollectorUnboundShortCloseDoesNotInventChangedInodeOrOwnership(t *testi
 	c.terminal = true
 	c.envoyTotals.Stopped = true
 	publishFixture(c, *now, nil)
-	if *c.snapshot.Counters.SentBytes != 3 || c.snapshot.Coverage.ProxyBytes.Status != "exact" || c.snapshot.Coverage.BoundaryAttribution.Status != "lower-bound" || !c.snapshot.Loss.Unknown {
-		t.Fatal("unjoined short lifetime erased its real meters or fabricated complete attribution")
+	// The flow's own authoritative close explains the socket at its tuple, so the
+	// join retires instead of expiring as unattributed. That is an explanation,
+	// not ownership: no inode was ever adopted and the meters stay the flow's.
+	if *c.snapshot.Counters.SentBytes != 3 || c.snapshot.Coverage.ProxyBytes.Status != "exact" ||
+		c.snapshot.Coverage.BoundaryAttribution.Status != "exact" || c.snapshot.Loss.Unknown ||
+		slices.ContainsFunc(c.closed, func(row networkview.Connection) bool { return row.NameSource == "unattributed-history" }) {
+		t.Fatal("unjoined short lifetime erased its real meters or kept a gap its own close explains")
 	}
 }
 
@@ -149,5 +157,101 @@ func TestCollectorMaintenanceBirthReconcilesOnlyTheSameRetainedInode(t *testing.
 	publishFixture(c, *now, nil)
 	if !c.snapshot.Loss.Unknown || c.snapshot.Coverage.ProxyBytes.Status != "exact" {
 		t.Fatal("unmatched maintenance history disappeared or became proxy meter loss")
+	}
+}
+
+// The live smoke run flaked here: a single curl finishes inside one sampling
+// interval, so the collector consumes the flow's connect and authoritative end
+// together while the kernel still holds the upstream socket. Its signature is a
+// terminal unattributed_socket at the exact peer of a cleanly closed flow.
+func TestCollectorClosedFlowExplainsItsLingeringUpstreamSocket(t *testing.T) {
+	for _, scenario := range []string{"lingering-into-terminal", "pending-before-close"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, now := collectorFixture(t)
+			flow := strings.Repeat("e", 32)
+			connected := proxyEvent(1, *now, flow, "TcpUpstreamConnected", 1, 2, 10)
+			end := proxyEvent(2, *now, flow, "TcpConnectionEnd", 3, 4, 20)
+			row := SocketRow{Tuple: SocketTuple{Local: connected.Local, Peer: connected.Peer}, UID: 65532, Inode: 42, State: "closing"}
+			lingering := []SocketRow{row}
+			if scenario == "pending-before-close" {
+				// The socket is sampled before any proxy event carries its tuple, so
+				// it opens a join the flow can no longer close once it has ended.
+				c.ingest([]GuardEvent{registration(1, *now, flow)}, GuardTotals{Sequence: 1}, nil, EnvoyTotals{})
+				publishFixture(c, *now, lingering)
+				if c.snapshot.PendingConnections != 1 || c.boundaryGap != "" {
+					t.Fatal("socket sampled before its flow's tuple did not open a bounded join")
+				}
+				lingering = nil // and the kernel releases it before the terminal sample
+			}
+			*now = now.Add(time.Second)
+			connected.BootAt, end.BootAt = *now, *now
+			c.ingest([]GuardEvent{registration(1, *now, flow)}, GuardTotals{Sequence: 1}, []EnvoyEvent{connected, end}, EnvoyTotals{Sequence: 2})
+			publishFixture(c, *now, lingering)
+			if c.boundaryGap != "" || c.snapshot.PendingConnections != 0 || *c.snapshot.UnknownConnections != 0 {
+				t.Fatalf("accounted remnant became an unknown external socket: gap=%q pending=%d", c.boundaryGap, c.snapshot.PendingConnections)
+			}
+			*now = now.Add(time.Second)
+			c.terminal = true
+			c.envoyTotals.Stopped = true
+			publishFixture(c, *now, lingering)
+			if c.snapshot.Loss.Unknown || c.snapshot.Coverage.BoundaryAttribution.Status != "exact" || len(c.snapshot.Loss.Reasons) != 0 {
+				t.Fatalf("terminal sample called a closed flow's own socket evidence loss: %v", c.snapshot.Loss)
+			}
+			if *c.snapshot.Counters.SentBytes != 3 || *c.snapshot.Counters.ReceivedBytes != 4 || c.snapshot.Coverage.ProxyBytes.Status != "exact" {
+				t.Fatal("reconciliation disturbed the measured proxy totals")
+			}
+			for _, connection := range c.snapshot.Connections {
+				if connection.NameSource == "unattributed" || connection.NameSource == "unattributed-history" {
+					t.Fatalf("accounted socket retained as unattributed history: %+v", connection)
+				}
+			}
+		})
+	}
+}
+
+func TestCollectorLingeringSocketWithoutItsOwnClosedFlowStaysUnattributed(t *testing.T) {
+	for _, scenario := range []string{"no-flow", "other-inode", "second-identity"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, now := collectorFixture(t)
+			flow := strings.Repeat("f", 32)
+			connected := proxyEvent(1, *now, flow, "TcpUpstreamConnected", 1, 2, 10)
+			end := proxyEvent(2, *now, flow, "TcpConnectionEnd", 3, 4, 20)
+			row := SocketRow{Tuple: SocketTuple{Local: connected.Local, Peer: connected.Peer}, UID: 65532, Inode: 42, State: "open"}
+			switch scenario {
+			case "other-inode":
+				// A sample bound this flow to inode 42, so a different socket at the
+				// same tuple is a second identity its close cannot account for.
+				c.ingest([]GuardEvent{registration(1, *now, flow)}, GuardTotals{Sequence: 1}, []EnvoyEvent{connected}, EnvoyTotals{Sequence: 1})
+				publishFixture(c, *now, []SocketRow{row})
+				if c.flows[flow].inode != 42 || c.snapshot.PendingConnections != 0 {
+					t.Fatal("live join did not settle the sampled inode")
+				}
+				*now = now.Add(time.Second)
+				c.ingest(nil, GuardTotals{Sequence: 1}, []EnvoyEvent{end}, EnvoyTotals{Sequence: 2})
+				row.Inode = 43
+			case "second-identity":
+				// One ended stream explains ONE kernel socket: the close pins the
+				// first identity it accounts for, never a later one at that tuple.
+				c.ingest([]GuardEvent{registration(1, *now, flow)}, GuardTotals{Sequence: 1}, []EnvoyEvent{connected, end}, EnvoyTotals{Sequence: 2})
+				publishFixture(c, *now, []SocketRow{row})
+				if c.snapshot.PendingConnections != 0 || *c.snapshot.UnknownConnections != 0 {
+					t.Fatal("the close did not account for its own lingering socket")
+				}
+				*now = now.Add(time.Second)
+				row.Inode = 43
+			}
+			publishFixture(c, *now, []SocketRow{row})
+			if c.snapshot.PendingConnections != 1 || *c.snapshot.UnknownConnections != 1 {
+				t.Fatal("unaccounted socket was hidden instead of joined")
+			}
+			*now = now.Add(time.Second)
+			c.terminal = true
+			c.envoyTotals.Stopped = true
+			publishFixture(c, *now, []SocketRow{row})
+			if !c.snapshot.Loss.Unknown || c.snapshot.Coverage.BoundaryAttribution.Reason != "unattributed_socket" ||
+				!slices.ContainsFunc(c.closed, func(row networkview.Connection) bool { return row.Reason == "socket_join_terminal" }) {
+				t.Fatalf("socket no closed flow claims lost its attribution gap: %v", c.snapshot.Loss)
+			}
+		})
 	}
 }

@@ -52,6 +52,16 @@ type pendingSocket struct {
 	expired   bool
 }
 
+// closedSocket is the upstream identity of a flow the proxy itself ended: the
+// exact tuple Envoy reported for it, plus the inode when some sample bound one.
+// The kernel keeps that socket around after the stream is fully accounted for,
+// and the inventory alone cannot tell such a remnant from a socket nobody
+// admitted. It explains a socket; it never attributes bytes or ownership.
+type closedSocket struct {
+	inode  uint64 // 0 when no sample ever bound one
+	closed BootInstant
+}
+
 // Collector owns bounded retained evidence, never egress authority. It consumes
 // each source once; snapshots are detached cached values and cannot cause I/O.
 type Collector struct {
@@ -69,7 +79,7 @@ type Collector struct {
 	inventory                   func() ([]SocketRow, error)
 	flows                       map[string]*collectedFlow
 	closed                      []networkview.Connection
-	closedJoins                 map[SocketTuple]uint64
+	closedSockets               map[SocketTuple]closedSocket
 	denials                     []networkview.Denial
 	guardCursor, envoyCursor    uint64
 	guardTotals                 GuardTotals
@@ -180,7 +190,6 @@ func (c *Collector) sample(ctx context.Context, ready, terminal bool, cutoff Boo
 }
 
 func (c *Collector) ingest(guards []GuardEvent, gt GuardTotals, proxies []EnvoyEvent, et EnvoyTotals) {
-	c.closedJoins = make(map[SocketTuple]uint64)
 	for _, event := range guards {
 		if event.Sequence <= c.guardCursor {
 			continue
@@ -326,8 +335,8 @@ func (c *Collector) ingest(guards []GuardEvent, gt GuardTotals, proxies []EnvoyE
 			}
 			f.row.Rate = nil
 			c.closed = append(c.closed, f.row)
-			if f.inode != 0 && f.tuple.Peer.IsValid() {
-				c.closedJoins[f.tuple] = f.inode
+			if f.tuple.Peer.IsValid() {
+				c.retainClosedSocket(f.tuple, f.inode, event.BootAt)
 			}
 			if len(c.closed) > MaxClosedDetails {
 				c.closed = c.closed[1:]
@@ -403,6 +412,42 @@ func (c *Collector) markBoundaryGap(reason string) {
 	if c.boundaryGap == "" {
 		c.boundaryGap = reason
 	}
+}
+
+// retainClosedSocket keeps a proxy-ended flow's upstream identity for the few
+// samples its kernel socket can outlive the stream. It is bounded by the joins
+// it can explain, and the oldest close is the first to go: losing an entry only
+// costs an explanation, it can never invent one.
+func (c *Collector) retainClosedSocket(tuple SocketTuple, inode uint64, at BootInstant) {
+	if c.closedSockets == nil {
+		c.closedSockets = make(map[SocketTuple]closedSocket)
+	}
+	if _, replaced := c.closedSockets[tuple]; !replaced && len(c.closedSockets) >= MaxPendingJoins {
+		oldest, found := SocketTuple{}, false
+		for key, value := range c.closedSockets {
+			if !found || value.closed < c.closedSockets[oldest].closed {
+				oldest, found = key, true
+			}
+		}
+		delete(c.closedSockets, oldest)
+	}
+	c.closedSockets[tuple] = closedSocket{inode: inode, closed: at}
+}
+
+// closeAccountsFor reports a socket the proxy's own evidence already explains:
+// the exact upstream tuple Envoy reported for a flow it ended, and — once any
+// sample bound one — the exact inode. A lingering remnant of an accounted flow
+// is not a boundary gap. The first socket a close explains pins its identity,
+// so one ended stream can never explain a second socket at the same tuple, and
+// a socket no closed flow claims stays unattributed.
+func (c *Collector) closeAccountsFor(key socketAttemptKey) bool {
+	closed, retained := c.closedSockets[key.Tuple]
+	if !retained || key.UID != 65532 || key.Inode == 0 || closed.inode != 0 && closed.inode != key.Inode {
+		return false
+	}
+	closed.inode = key.Inode
+	c.closedSockets[key.Tuple] = closed
+	return true
 }
 
 func (c *Collector) socketID(key socketAttemptKey) string {
@@ -669,16 +714,6 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 		}
 		return true
 	})
-	// The inventory can precede an authoritative close consumed in this same
-	// sample. Fold that newer close over only its exact retained inode/tuple;
-	// never classify the old sampled leg as a new unknown external socket.
-	rows = slices.DeleteFunc(slices.Clone(rows), func(row SocketRow) bool {
-		if row.UID == 65532 && row.Inode != 0 && c.closedJoins[row.Tuple] == row.Inode {
-			delete(c.pending, socketAttemptKey{Tuple: row.Tuple, UID: row.UID, Inode: row.Inode})
-			return true
-		}
-		return false
-	})
 	matched := make(map[SocketTuple]int, len(c.flows)+len(owned))
 	for _, f := range c.flows {
 		if f.tuple.Peer.IsValid() {
@@ -688,6 +723,22 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 	for _, m := range owned {
 		matched[m.Tuple]++
 	}
+	// A proxied flow's upstream socket can outlive its stream: the inventory can
+	// precede an authoritative close consumed in this same sample, and the kernel
+	// keeps the socket into later ones. Fold a retained close over its exact
+	// tuple/inode; never classify an accounted leg as a new unknown external
+	// socket, and never fold away a socket a live claim is still joining.
+	rows = slices.DeleteFunc(slices.Clone(rows), func(row SocketRow) bool {
+		key := socketAttemptKey{Tuple: row.Tuple, UID: row.UID, Inode: row.Inode}
+		if pending, joined := c.pending[key]; row.Inode == 0 || matched[row.Tuple] != 0 || joined && pending.expired {
+			return false // an expired join stays visible; a later close cannot retract it
+		}
+		if !c.closeAccountsFor(key) {
+			return false
+		}
+		delete(c.pending, key)
+		return true
+	})
 	present := make(map[SocketTuple]SocketRow, len(rows))
 	for _, row := range rows {
 		if row.UID == 65532 {
@@ -847,6 +898,13 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 	s.PendingConnections = 0
 	for key, pending := range c.pending {
 		_, present := currentUnknown[key]
+		// The proxy ending a flow retires its upstream socket, so that socket can
+		// no longer join a live one. Its close IS the accounting: expiring it as
+		// unattributed would report a measured stream as evidence loss.
+		if !pending.expired && c.closeAccountsFor(key) {
+			delete(c.pending, key)
+			continue
+		}
 		if !pending.expired && (c.terminal || !now.Valid() || !pending.firstSeen.Valid() || now.Before(pending.firstSeen) || now.Sub(pending.firstSeen) >= ObservationStaleAfter) {
 			c.markBoundaryGap("unattributed_socket")
 			reason := "socket_join_expired"

@@ -345,10 +345,15 @@ func (g *Guard) dnsUDP(ctx context.Context, conn net.PacketConn) error {
 func (g *Guard) dnsAnswer(ctx context.Context, query []byte) []byte {
 	reply, reason := g.resolver.Answer(ctx, query)
 	if reason != "" {
-		// Only normalized question metadata is retained, never raw DNS bytes.
+		// Only normalized question metadata is retained, never raw DNS bytes. A
+		// single label is not a domain, but it is the whole point of a refused
+		// sidecar lookup: record it so the summary names it instead of withholding.
 		name := ""
 		if message, err := parseQuery(query); err == nil {
-			name, _ = egress.NormalizeDomain(message.Questions[0].Name.String(), false)
+			question := message.Questions[0].Name.String()
+			if name, _ = egress.NormalizeDomain(question, false); name == "" {
+				name, _ = egress.NormalizeLabel(question)
+			}
 		}
 		kind := "admission_failed"
 		if reason == "unapproved_name" || reason == "dns_type_unsupported" || reason == "dns_name_invalid" || reason == "dns_query_invalid" {
