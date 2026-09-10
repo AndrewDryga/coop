@@ -526,3 +526,109 @@ fi
 		t.Fatalf("in-progress removal = %d, %v; want one proven-absent container", removed, err)
 	}
 }
+
+// A box started with --rm is reaped by the runtime itself, so coop's explicit `rm -f` routinely
+// loses that race and exits non-zero with "No such container" — reporting a teardown that fully
+// succeeded as a failure to fork stop, supervisor cleanup and the ACP reaper. Only an exact-id
+// query that SUCCEEDED and came back empty proves the container is gone; a broken daemon must
+// never read as absence.
+func TestRemoveContainerContextTreatsAProvenLostRaceAsSuccess(t *testing.T) {
+	id := strings.Repeat("ab", 32) // a complete 64-hex immutable id
+	for _, tc := range []struct {
+		name, query string
+		want        []string
+	}{
+		{name: "provably gone", query: "exit 0"},
+		{
+			name:  "query itself failed",
+			query: "echo 'daemon query broke' >&2; exit 42",
+			want:  []string{"No such container", "daemon query broke"},
+		},
+		{name: "still listed", query: "echo " + id + "; exit 0", want: []string{"No such container"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			// Named `docker` so the executable-name dialect check opts this fake into the re-check.
+			runtimeCLI := filepath.Join(dir, "docker")
+			events := filepath.Join(dir, "events")
+			if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
+if [ "$1" = rm ]; then
+	echo "Error response from daemon: No such container: $3" >&2
+	exit 1
+fi
+if [ "$1" = ps ]; then
+	eval "$COOP_TEST_QUERY"
+fi
+`), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("COOP_TEST_EVENTS", events)
+			t.Setenv("COOP_TEST_QUERY", tc.query)
+
+			err := (Runtime{Name: runtimeCLI}).RemoveContainerContext(context.Background(), id)
+			if len(tc.want) == 0 {
+				if err != nil {
+					t.Fatalf("a lost race against --rm = %v, want nil: the container is provably gone", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("removal error was swallowed; only an empty successful query proves absence")
+				}
+				for _, want := range tc.want {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error %v does not carry %q", err, want)
+					}
+				}
+			}
+			// The re-check must filter on the COMPLETE id, so it can never match another container.
+			calls, readErr := os.ReadFile(events)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if !strings.Contains(string(calls), "ps -q -a --filter id="+id) {
+				t.Errorf("runtime calls = %q, want an exact-id re-check after the failed remove", calls)
+			}
+		})
+	}
+}
+
+// The re-check is gated: it runs only for a Docker/Podman dialect AND a complete immutable id. An
+// abbreviated id or a container NAME could match a different container through `--filter id=`, and
+// an unknown runtime has no verified `ps --filter` dialect at all — neither may be re-checked, so
+// both keep failing loudly.
+func TestRemoveContainerContextDoesNotRecheckAnUnprovableTarget(t *testing.T) {
+	full := strings.Repeat("ab", 32)
+	for _, tc := range []struct{ name, cli, id string }{
+		{name: "container name", cli: "docker", id: "coop-box-perf"},
+		{name: "abbreviated id", cli: "docker", id: full[:12]},
+		{name: "unknown runtime dialect", cli: "runtime-wrapper", id: full},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			runtimeCLI := filepath.Join(dir, tc.cli)
+			events := filepath.Join(dir, "events")
+			if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$COOP_TEST_EVENTS"
+if [ "$1" = rm ]; then
+	echo "Error response from daemon: No such container: $3" >&2
+	exit 1
+fi
+`), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("COOP_TEST_EVENTS", events)
+
+			if err := (Runtime{Name: runtimeCLI}).RemoveContainerContext(context.Background(), tc.id); err == nil {
+				t.Fatalf("%s: a target coop cannot prove absent must keep reporting the failure", tc.name)
+			}
+			calls, readErr := os.ReadFile(events)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if strings.Contains(string(calls), "ps ") {
+				t.Errorf("runtime calls = %q, want no re-check for an unprovable target", calls)
+			}
+		})
+	}
+}

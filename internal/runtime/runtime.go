@@ -473,10 +473,28 @@ func (r Runtime) RemoveContainerContext(ctx context.Context, id string) error {
 	if err != nil {
 		if ctx.Err() != nil {
 			err = ctx.Err()
+		} else if r.isDockerOrPodman() && completeContainerID(id) {
+			// A box run with --rm is reaped by the runtime itself, so this remove routinely loses
+			// that race: the teardown succeeded and only the bookkeeping failed. Ask once, by the
+			// COMPLETE immutable id, and accept only an EMPTY answer from a query that itself
+			// succeeded — a failed query proves nothing, so a wedged daemon can never read as gone.
+			remaining, queryErr := r.containerIDsContext(ctx, true, "id="+id)
+			if queryErr == nil && len(remaining) == 0 {
+				return nil
+			}
+			err = errors.Join(err, queryErr)
 		}
 		return fmt.Errorf("run: %s rm -f %s: %w", r.Name, id, commandOutputError(err, out))
 	}
 	return nil
+}
+
+// completeContainerID reports whether id is a full 64-hex container id. Only such an id may be fed
+// back to `--filter id=`, because that filter answers about IDS and matches on part of one: a
+// container NAME matches nothing and would come back empty — reading as "gone" for a container
+// that is still there — and an abbreviated id can answer for some other container entirely.
+func completeContainerID(id string) bool {
+	return len(id) == 64 && strings.Trim(id, "0123456789abcdef") == ""
 }
 
 // RemoveByLabel force-removes (`rm -f`: stop then delete) every container whose label
