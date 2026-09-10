@@ -137,6 +137,72 @@ func TestCompleteCreateSessionOperationRejectsMissingRepositoryFreshness(t *test
 	}
 }
 
+// A bare create binds a policy and nothing repository-shaped: no fork, no pins, no freshness
+// receipt — and it is stored and replayed under exactly that mode. A bare request that carries
+// a repository binding, or a normal request that carries none, is refused before any row.
+func TestCompleteCreateSessionOperationAcceptsABareSessionWithoutARepository(t *testing.T) {
+	store := openTestStore(t, t.TempDir())
+	defer store.Close()
+	ctx := context.Background()
+	op := runningRemoteCreateOperation(t, store, "bare-create")
+	req := CreateSessionRequest{
+		ID: "bare-session", ExternalRef: "route", Target: "claude", Policy: "routing", Mode: "bare",
+		OmitEnv: true, OmitMCP: true, MaxTurns: 1, MaxQueuedTurns: 1, MaxQueuedBytes: 4096,
+	}
+	sess, err := store.CompleteCreateSessionOperation(ctx, op, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Mode != "bare" || sess.Repository != "" || sess.Workspace != "" || sess.ForkName != "" ||
+		sess.ForkGeneration != "" || sess.BaseCommit != "" || len(sess.RepositoryFreshness) != 0 {
+		t.Fatalf("bare session = %+v", sess)
+	}
+	stored, err := store.GetSession(ctx, sess.ID)
+	if err != nil || stored.Mode != "bare" {
+		t.Fatalf("stored bare session = %+v err=%v", stored, err)
+	}
+	if replayed, err := store.CompleteCreateSessionOperation(ctx, op, req); err != nil || replayed.ID != sess.ID {
+		t.Fatalf("bare replay = %+v err=%v", replayed, err)
+	}
+	// A replay that relabels the mode never gets the bare session back: without a repository it
+	// is not even a valid normal request, and the identity check refuses it regardless.
+	relabeled := req
+	relabeled.Mode = "normal"
+	if replayed, err := store.CompleteCreateSessionOperation(ctx, op, relabeled); err == nil || replayed.ID != "" {
+		t.Fatalf("a replay under another mode was answered: %+v, %v", replayed, err)
+	}
+	if !initialSessionMatchesRequest(stored, normalizeCreateRequest(req)) ||
+		initialSessionMatchesRequest(stored, normalizeCreateRequest(relabeled)) {
+		t.Fatal("the create identity check must bind the mode")
+	}
+
+	for name, edit := range map[string]func(*CreateSessionRequest){
+		"repository": func(r *CreateSessionRequest) { r.Repository = "/repo" },
+		"companion": func(r *CreateSessionRequest) {
+			r.Companions = []CompanionRepository{{Name: "docs", Repository: "/d", Workspace: "/w", BaseCommit: "c"}}
+		},
+		"pull request": func(r *CreateSessionRequest) {
+			r.PullRequest = &PullRequestBinding{Number: 1, Ref: "refs/pull/1/head", HeadCommit: strings.Repeat("a", 40)}
+		},
+		"freshness": func(r *CreateSessionRequest) {
+			r.RepositoryFreshness = remoteCreateSessionRequest("x").RepositoryFreshness
+		},
+	} {
+		bad := req
+		bad.ID = "bare-" + strings.ReplaceAll(name, " ", "-")
+		edit(&bad)
+		if _, err := store.CompleteCreateSessionOperation(ctx, runningRemoteCreateOperation(t, store, "bare-"+name), bad); CodeOf(err) != CodeInvalidRequest {
+			t.Errorf("bare request with a %s was accepted: %v", name, err)
+		}
+	}
+	// The normal shape still needs its receipt: only a bare session has no repository to be fresh about.
+	normal := remoteCreateSessionRequest("normal-session")
+	normal.RepositoryFreshness = nil
+	if _, err := store.CompleteCreateSessionOperation(ctx, runningRemoteCreateOperation(t, store, "normal-create"), normal); CodeOf(err) != CodeInvalidRequest {
+		t.Fatalf("normal request without freshness was accepted: %v", err)
+	}
+}
+
 func TestCompleteCreateSessionOperationRejectsAnUnprovenExistingSession(t *testing.T) {
 	store := openTestStore(t, t.TempDir())
 	defer store.Close()

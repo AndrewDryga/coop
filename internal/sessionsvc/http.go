@@ -48,6 +48,7 @@ type SessionDTO struct {
 	ProjectMCP                bool                                 `json:"project_mcp"`
 	ResponderBindingDigest    string                               `json:"responder_binding_digest,omitempty"`
 	WorkspaceTask             *SessionWorkspaceTaskDTO             `json:"workspace_task,omitempty"`
+	Mode                      string                               `json:"mode"`
 	RepositoryReadOnly        bool                                 `json:"repository_read_only"`
 	BaseCommit                string                               `json:"base_commit"`
 	RepositoryFreshnessStatus string                               `json:"repository_freshness_status"`
@@ -1493,6 +1494,7 @@ func publicSession(value session.Session) SessionDTO {
 		ID: value.ID, ExternalRef: value.ExternalRef, Target: value.Target, Policy: value.Policy,
 		PolicyDigest: value.PolicyDigest, AuthorityDigest: value.AuthorityDigest,
 		ProjectEnv: value.ProjectEnv, ProjectMCP: value.ProjectMCP,
+		Mode:                      normalizedSessionMode(value.Mode),
 		RepositoryReadOnly:        value.RepositoryReadOnly,
 		ResponderBindingDigest:    sessionResponderBindingDigest(value),
 		WorkspaceTask:             publicWorkspaceTask(value.WorkspaceTask),

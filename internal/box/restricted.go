@@ -14,6 +14,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -39,8 +40,10 @@ const (
 	// restrictedSeedPath is where the seed tree is bound read-only. Deliberately not under the
 	// home: see the note above.
 	restrictedSeedPath = "/coop/seed"
-	// bareWorkdir is bare's cwd, an empty owned tmpfs over the image's WORKDIR. Never a repository.
-	bareWorkdir = "/workspace"
+	// BareWorkdir is bare's cwd, an empty owned tmpfs over the image's WORKDIR. Never a
+	// repository. Exported because an ACP client outside the box (the session daemon) names the
+	// session's cwd in session/new, and for a bare session this is the only directory there is.
+	BareWorkdir = "/workspace"
 	// restrictedBoxUID is the shared base image's `node` user. A tmpfs is root-owned unless told
 	// otherwise, so every scratch mount names the user that must write it. Restricted modes run
 	// the base image only, which is what makes this a constant rather than an inspection.
@@ -48,11 +51,13 @@ const (
 	// restrictedScratchSize caps each scratch tmpfs. A cap, not an allocation: pages are charged
 	// only as they are written, and a runaway fills this rather than the runtime host's memory.
 	restrictedScratchSize = "1g"
-	// restrictedCredentialHorizon is how long the seeded access token must stay usable. The host
+	// RestrictedCredentialHorizon is how long the seeded access token must stay usable. The host
 	// renews an expiring login before projection, exactly as a session turn does with its own
 	// deadline; a run that outlives the token fails its next request explicitly rather than
-	// carrying refresh authority into the box.
-	restrictedCredentialHorizon = time.Hour
+	// carrying refresh authority into the box. Exported because the session daemon projects a
+	// session's credential BEFORE this launch re-checks it, against a deadline that must reach
+	// at least this far — the projection carries no refresh authority for the box to renew with.
+	RestrictedCredentialHorizon = time.Hour
 	restrictedArtifactLimit     = 1 << 20
 )
 
@@ -80,8 +85,14 @@ func checkRestrictedSpec(cfg *config.Config, rt runtime.Runtime, spec RunSpec, m
 	if spec.Preset != nil || spec.ConsultLead != "" || len(spec.Peers) > 0 {
 		return fmt.Errorf("a %s run consults no peers and runs no preset roles", mode)
 	}
-	if spec.ShareACPSessions || spec.SupervisorID != "" || (spec.Agent != "" && !spec.AgentCommand) {
-		return fmt.Errorf("a %s run drives the agent's own command; ACP and maintenance commands are not qualified", mode)
+	if spec.ShareACPSessions || spec.SupervisorID != "" {
+		return fmt.Errorf("a %s run shares no ACP transcript and answers to no editor supervisor", mode)
+	}
+	// The agent's own CLI, or its ACP adapter driven by one client outside the box (the session
+	// daemon, an editor) — each has an adapter-declared switch for the mode. A maintenance
+	// command run under an agent's credential scope has neither.
+	if spec.Agent != "" && !spec.AgentCommand && spec.NetworkClient != egress.ClientACP {
+		return fmt.Errorf("a %s run drives the agent's own command or its ACP adapter; maintenance commands are not qualified", mode)
 	}
 	if spec.Review || len(spec.RepoReadOnlyPaths) > 0 || spec.ActivityKind != "" {
 		return fmt.Errorf("a %s run takes no review stage, protected path or activity record", mode)
@@ -143,7 +154,7 @@ func restrictedFilesystemArgs(cfg *config.Config, mode agents.ExecutionMode) []s
 		"--tmpfs", cfg.HomeInBox + ":" + owned + ",mode=0700",
 		"--tmpfs", "/tmp:" + owned + ",mode=1777"}
 	if mode == agents.ModeBare {
-		args = append(args, "--tmpfs", bareWorkdir+":"+owned+",mode=0700")
+		args = append(args, "--tmpfs", BareWorkdir+":"+owned+",mode=0700")
 	}
 	return args
 }
@@ -247,7 +258,7 @@ func projectRestrictedCredential(ag agents.Agent, source, target string) error {
 	if len(live.Artifacts) == 0 || live.Portability == nil {
 		return fmt.Errorf("%s has no portable credential projection", ag.Name())
 	}
-	deadline := time.Now().Add(restrictedCredentialHorizon)
+	deadline := time.Now().Add(RestrictedCredentialHorizon)
 	if live.Prepare != nil {
 		if err := live.Prepare(source, deadline); err != nil {
 			return fmt.Errorf("%s credential needs sign-in or renewal: %w", ag.Name(), err)
@@ -282,7 +293,7 @@ func projectRestrictedCredential(ag agents.Agent, source, target string) error {
 		return fmt.Errorf("%s has no portable stored login — run 'coop login %s'", ag.Name(), ag.Name())
 	}
 	if live.Portability(target, deadline) != agents.CredentialPortable {
-		return fmt.Errorf("%s credential is not usable for the next %s without refresh authority — run 'coop login %s'", ag.Name(), restrictedCredentialHorizon, ag.Name())
+		return fmt.Errorf("%s credential is not usable for the next %s without refresh authority — run 'coop login %s'", ag.Name(), RestrictedCredentialHorizon, ag.Name())
 	}
 	return nil
 }
@@ -397,7 +408,7 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if spec.ExtraArgs, err = restrictedRuntimeArgs(spec.ExtraArgs, mode, "its own runtime arguments"); err != nil {
 		return -1, err
 	}
-	workdir := bareWorkdir
+	workdir := BareWorkdir
 	if mode == agents.ModeReadOnly {
 		workdir = resolveWorkdir(spec, cfg)
 	}
@@ -472,7 +483,14 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		if !ok {
 			return -1, fmt.Errorf("unknown agent %q", spec.Agent)
 		}
-		if cmd, err = ag.RestrictedCommand(mode, cmd); err != nil {
+		if spec.AgentCommand {
+			if cmd, err = ag.RestrictedCommand(mode, cmd); err != nil {
+				return -1, err
+			}
+		} else if _, err := ag.ACPRestrictedSessionMeta(mode); err != nil {
+			// The adapter takes no flags; its switches ride the session/new the client outside
+			// the box sends. The box still refuses an adapter with no proven switch, so an
+			// unqualified provider cannot be started under a mode nothing enforces.
 			return -1, err
 		}
 	}

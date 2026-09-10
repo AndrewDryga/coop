@@ -192,6 +192,9 @@ func validateRestoreWorkspaceSession(
 	sess session.Session,
 	req RestoreWorkspaceCheckpointRequest,
 ) error {
+	if err := requireSessionWorkspace(sess); err != nil {
+		return err
+	}
 	if err := validateSessionForkAuthority(ctx, sess); err != nil {
 		return &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
@@ -425,6 +428,9 @@ func (s *Service) executeCheckpointWorkspace(
 }
 
 func validateCheckpointSession(ctx context.Context, sess session.Session, expectedRevision int64) error {
+	if err := requireSessionWorkspace(sess); err != nil {
+		return err
+	}
 	if err := validateSessionForkAuthority(ctx, sess); err != nil {
 		return &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}

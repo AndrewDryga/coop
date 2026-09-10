@@ -67,7 +67,13 @@ const (
 // Policy is operator-owned authority for one remote session. It is intentionally small:
 // repository, target, and resource bounds are not request fields.
 type Policy struct {
-	Name               string
+	Name string
+	// Mode is the execution mode every session of this policy runs under — normal (the
+	// default, and every policy written before modes existed), readonly, or bare. It is fixed
+	// at creation and bound into both digests, so an edit rotates sessions rather than widening
+	// them. Readonly implies RepositoryReadOnly; bare implies no repository, no companions, and
+	// no shared environment or MCP (see validateRestrictedSessionPolicy).
+	Mode               agents.ExecutionMode
 	Repository         string
 	Remote             string
 	Branch             string
@@ -150,6 +156,7 @@ type rawSessionPolicyFile struct {
 }
 
 type rawSessionPolicy struct {
+	Mode               string                      `yaml:"mode"`
 	Repository         string                      `yaml:"repository"`
 	Remote             string                      `yaml:"remote"`
 	Branch             string                      `yaml:"branch"`
@@ -305,61 +312,23 @@ func parseSessionPolicies(data []byte, cfg *config.Config) (map[string]Policy, e
 }
 
 func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config) (Policy, error) {
-	if raw.Repository == "" || !filepath.IsAbs(raw.Repository) || filepath.Clean(raw.Repository) != raw.Repository {
-		return Policy{}, errors.New("repository must be an absolute, clean path")
+	mode := agents.ModeNormal
+	if raw.Mode != "" {
+		var err error
+		if mode, err = agents.ParseExecutionMode(raw.Mode); err != nil {
+			return Policy{}, fmt.Errorf("mode: %w", err)
+		}
 	}
-	realRepo, err := realGitRepository(raw.Repository)
-	if err != nil {
+	if err := validateRestrictedSessionPolicy(mode, raw); err != nil {
 		return Policy{}, err
 	}
-	if err := validateSessionRepositorySource(raw.Remote, raw.Branch); err != nil {
-		return Policy{}, err
-	}
-	if len(raw.Companions) > sessionPolicyMaxCompanions {
-		return Policy{}, fmt.Errorf(
-			"companions are limited to %d repositories",
-			sessionPolicyMaxCompanions,
-		)
-	}
-	companions := make([]CompanionPolicy, 0, len(raw.Companions))
-	seenNames := make(map[string]bool, len(raw.Companions))
-	seenRepositories := map[string]bool{realRepo: true}
-	for _, companion := range raw.Companions {
-		if !validCompanionRepositoryName(companion.Name) {
-			return Policy{}, fmt.Errorf(
-				"companion name %q must use 1-48 lowercase letters, numbers, hyphens, or underscores and cannot be primary",
-				companion.Name,
-			)
+	var realRepo string
+	var companions []CompanionPolicy
+	if mode != agents.ModeBare {
+		var err error
+		if realRepo, companions, err = validateSessionPolicyRepositories(raw); err != nil {
+			return Policy{}, err
 		}
-		if seenNames[companion.Name] {
-			return Policy{}, fmt.Errorf("companion name %q is duplicated", companion.Name)
-		}
-		if companion.Repository == "" || !filepath.IsAbs(companion.Repository) ||
-			filepath.Clean(companion.Repository) != companion.Repository {
-			return Policy{}, fmt.Errorf(
-				"companion %q repository must be an absolute, clean path",
-				companion.Name,
-			)
-		}
-		realCompanion, err := realGitRepository(companion.Repository)
-		if err != nil {
-			return Policy{}, fmt.Errorf("companion %q: %w", companion.Name, err)
-		}
-		if err := validateSessionRepositorySource(companion.Remote, companion.Branch); err != nil {
-			return Policy{}, fmt.Errorf("companion %q: %w", companion.Name, err)
-		}
-		if seenRepositories[realCompanion] {
-			return Policy{}, fmt.Errorf(
-				"companion %q repeats the primary or another companion repository",
-				companion.Name,
-			)
-		}
-		seenNames[companion.Name] = true
-		seenRepositories[realCompanion] = true
-		companions = append(companions, CompanionPolicy{
-			Name: companion.Name, Repository: realCompanion,
-			Remote: companion.Remote, Branch: companion.Branch,
-		})
 	}
 	ladder, err := sessionTargetLadder(&raw.Target)
 	if err != nil {
@@ -375,6 +344,11 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 		agent, ok := agents.Get(ladder[i].Provider)
 		if !ok || len(agent.ACP(checkCfg)) == 0 {
 			return Policy{}, fmt.Errorf("%s provider has no ACP adapter", label)
+		}
+		// Every rung must be able to run the mode, not just the one sessions start on: a
+		// rotation onto an unqualified provider would hand the model back what the mode took.
+		if _, err := agent.ACPRestrictedSessionMeta(mode); err != nil {
+			return Policy{}, fmt.Errorf("%s: %w", label, err)
 		}
 		if cfg != nil {
 			account := ladder[i].Account()
@@ -424,18 +398,120 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 		}
 	}
 	return Policy{
-		Name: name, Repository: realRepo, Remote: raw.Remote, Branch: raw.Branch,
-		Companions:         companions,
-		Targets:            ladder,
-		OmitEnv:            raw.ProjectEnv != nil && !*raw.ProjectEnv,
-		OmitMCP:            raw.ProjectMCP != nil && !*raw.ProjectMCP,
-		RepositoryReadOnly: raw.RepositoryReadOnly,
+		Name: name, Mode: mode, Repository: realRepo, Remote: raw.Remote, Branch: raw.Branch,
+		Companions: companions,
+		Targets:    ladder,
+		// Bare projects nothing a tool-less box could use, and readonly is the read-only bit
+		// made a mode: both are implied by the mode, never a second knob to keep in step.
+		OmitEnv:            (raw.ProjectEnv != nil && !*raw.ProjectEnv) || mode == agents.ModeBare,
+		OmitMCP:            (raw.ProjectMCP != nil && !*raw.ProjectMCP) || mode == agents.ModeBare,
+		RepositoryReadOnly: raw.RepositoryReadOnly || mode == agents.ModeReadOnly,
 		Egress:             networkPolicy,
 		MaxTurns:           raw.MaxTurns,
 		MaxQueuedTurns:     raw.MaxQueuedTurns, MaxQueuedBytes: raw.MaxQueuedBytes,
 		TurnTimeout: timeout, WarmIdleTimeout: warmIdleTimeout,
 		MaxPatchBytes: raw.MaxPatchBytes,
 	}, nil
+}
+
+// validateSessionPolicyRepositories resolves the primary repository and the companions a policy
+// mounts. Every path must be the real root of an existing Git worktree, and no repository may
+// appear twice under two names.
+func validateSessionPolicyRepositories(raw rawSessionPolicy) (string, []CompanionPolicy, error) {
+	if raw.Repository == "" || !filepath.IsAbs(raw.Repository) || filepath.Clean(raw.Repository) != raw.Repository {
+		return "", nil, errors.New("repository must be an absolute, clean path")
+	}
+	realRepo, err := realGitRepository(raw.Repository)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := validateSessionRepositorySource(raw.Remote, raw.Branch); err != nil {
+		return "", nil, err
+	}
+	if len(raw.Companions) > sessionPolicyMaxCompanions {
+		return "", nil, fmt.Errorf(
+			"companions are limited to %d repositories",
+			sessionPolicyMaxCompanions,
+		)
+	}
+	companions := make([]CompanionPolicy, 0, len(raw.Companions))
+	seenNames := make(map[string]bool, len(raw.Companions))
+	seenRepositories := map[string]bool{realRepo: true}
+	for _, companion := range raw.Companions {
+		if !validCompanionRepositoryName(companion.Name) {
+			return "", nil, fmt.Errorf(
+				"companion name %q must use 1-48 lowercase letters, numbers, hyphens, or underscores and cannot be primary",
+				companion.Name,
+			)
+		}
+		if seenNames[companion.Name] {
+			return "", nil, fmt.Errorf("companion name %q is duplicated", companion.Name)
+		}
+		if companion.Repository == "" || !filepath.IsAbs(companion.Repository) ||
+			filepath.Clean(companion.Repository) != companion.Repository {
+			return "", nil, fmt.Errorf(
+				"companion %q repository must be an absolute, clean path",
+				companion.Name,
+			)
+		}
+		realCompanion, err := realGitRepository(companion.Repository)
+		if err != nil {
+			return "", nil, fmt.Errorf("companion %q: %w", companion.Name, err)
+		}
+		if err := validateSessionRepositorySource(companion.Remote, companion.Branch); err != nil {
+			return "", nil, fmt.Errorf("companion %q: %w", companion.Name, err)
+		}
+		if seenRepositories[realCompanion] {
+			return "", nil, fmt.Errorf(
+				"companion %q repeats the primary or another companion repository",
+				companion.Name,
+			)
+		}
+		seenNames[companion.Name] = true
+		seenRepositories[realCompanion] = true
+		companions = append(companions, CompanionPolicy{
+			Name: companion.Name, Repository: realCompanion,
+			Remote: companion.Remote, Branch: companion.Branch,
+		})
+	}
+	return realRepo, companions, nil
+}
+
+// validateRestrictedSessionPolicy refuses, by name, every policy field a restricted mode would
+// otherwise silently drop. A bare policy mounts nothing, so any repository-shaped field is a
+// contradiction; a readonly policy needs the repository it mounts. Neither keeps a warm box
+// (each turn is a fresh box, so an idle lease would keep nothing) nor runs under restricted
+// networking, which the restricted profile is not qualified with.
+func validateRestrictedSessionPolicy(mode agents.ExecutionMode, raw rawSessionPolicy) error {
+	if !mode.Restricted() {
+		return nil
+	}
+	switch mode {
+	case agents.ModeBare:
+		if raw.Repository != "" || raw.Remote != "" || raw.Branch != "" || len(raw.Companions) > 0 {
+			return errors.New("a bare policy names no repository, remote, branch or companion — it mounts none")
+		}
+		if raw.RepositoryReadOnly {
+			return errors.New("a bare policy has no repository to mount read-only — drop repository_read_only")
+		}
+		if raw.ProjectEnv != nil && *raw.ProjectEnv {
+			return errors.New("a bare policy projects no shared environment — drop project_env")
+		}
+		if raw.ProjectMCP != nil && *raw.ProjectMCP {
+			return errors.New("a bare policy mounts no MCP — drop project_mcp")
+		}
+	case agents.ModeReadOnly:
+		if raw.Repository == "" {
+			return errors.New("a readonly policy needs the repository it mounts read-only")
+		}
+	}
+	if raw.WarmIdleTimeout != "" {
+		return fmt.Errorf("a %s policy is qualified cold only — each turn runs in a fresh box; drop warm_idle_timeout", mode)
+	}
+	if raw.Egress != nil && raw.Egress.Mode == string(egress.Filtered) {
+		return fmt.Errorf("a %s policy is not qualified under restricted networking — set egress.mode to open or none", mode)
+	}
+	return nil
 }
 
 // validateSessionEgress reads the policy's `egress:` block. A missing block is the built-in open
@@ -665,6 +741,9 @@ func (s *Service) executeEnsureWorkspaceTask(
 	}
 	sess, err := s.store.GetSession(ctx, req.SessionID)
 	if err != nil {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	if err := requireSessionWorkspace(sess); err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	if err := validateSessionForkAuthority(ctx, sess); err != nil {
@@ -1028,6 +1107,7 @@ func validSessionDigest(value string) bool {
 func resolvedSessionPolicyDigest(policy Policy) string {
 	canonical := struct {
 		Name               string            `json:"name"`
+		Mode               string            `json:"mode,omitempty"`
 		Repository         string            `json:"repository"`
 		Remote             string            `json:"remote,omitempty"`
 		Branch             string            `json:"branch,omitempty"`
@@ -1044,7 +1124,7 @@ func resolvedSessionPolicyDigest(policy Policy) string {
 		WarmIdleTimeout    int64             `json:"warm_idle_timeout_ns,omitempty"`
 		MaxPatchBytes      int               `json:"max_patch_bytes"`
 	}{
-		Name: policy.Name, Repository: policy.Repository,
+		Name: policy.Name, Mode: digestedSessionMode(policy.Mode), Repository: policy.Repository,
 		Remote: policy.Remote, Branch: policy.Branch, Companions: policy.Companions,
 		Target:  sessionTargetList(policy.Targets),
 		OmitEnv: policy.OmitEnv, OmitMCP: policy.OmitMCP,
@@ -1058,6 +1138,16 @@ func resolvedSessionPolicyDigest(policy Policy) string {
 	data, _ := json.Marshal(canonical)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// digestedSessionMode contributes the mode to a policy digest only when it is restricted. Normal
+// is every policy written before modes existed, and those must keep producing the digest their
+// sessions were bound with.
+func digestedSessionMode(mode agents.ExecutionMode) string {
+	if !mode.Restricted() {
+		return ""
+	}
+	return string(mode)
 }
 
 // digestedSessionEgress contributes the network block to a policy digest only when the operator
@@ -1096,6 +1186,7 @@ func ResolvedPolicyAuthorityDigest(policy Policy) string {
 		})
 	}
 	canonical := struct {
+		Mode               string            `json:"mode,omitempty"`
 		Repository         string            `json:"repository"`
 		Remote             string            `json:"remote,omitempty"`
 		Branch             string            `json:"branch,omitempty"`
@@ -1106,6 +1197,7 @@ func ResolvedPolicyAuthorityDigest(policy Policy) string {
 		RepositoryReadOnly bool              `json:"repository_read_only,omitempty"`
 		Egress             *EgressPolicy     `json:"egress,omitempty"`
 	}{
+		Mode:       digestedSessionMode(policy.Mode),
 		Repository: policy.Repository, Remote: policy.Remote, Branch: policy.Branch,
 		Companions: append([]CompanionPolicy(nil), policy.Companions...), Targets: targets,
 		OmitEnv: policy.OmitEnv, OmitMCP: policy.OmitMCP,
@@ -1547,6 +1639,30 @@ func validateSessionForkAuthorityState(ctx context.Context, bound session.Sessio
 		return errors.New("session workspace reservation changed")
 	}
 	return nil
+}
+
+// normalizedSessionMode reads a blank mode as normal: a session replayed from an operation
+// receipt written before modes existed carries none, and it ran as every session did then.
+func normalizedSessionMode(mode string) string {
+	if mode == "" {
+		return string(agents.ModeNormal)
+	}
+	return mode
+}
+
+// requireSessionWorkspace refuses a repository-specific operation on a session that has no
+// workspace: a bare session by design, or a store-only record nothing ever bound. One sentence,
+// one code (a state conflict, not a malformed request), so a client that asked a bare session
+// for its changes learns what the session is rather than what its request lacked.
+func requireSessionWorkspace(bound session.Session) error {
+	if bound.Workspace != "" {
+		return nil
+	}
+	detail := "session has no workspace"
+	if bound.Mode == string(agents.ModeBare) {
+		detail += ": its policy is bare"
+	}
+	return &session.Error{Code: session.CodeInvalidSessionState, Detail: detail}
 }
 
 // requireSessionForkAuthority is the runtime/destructive-operation fence for a persisted session.
@@ -2247,6 +2363,16 @@ func (s *Service) captureCreateIntent(op session.Operation, req CreateRemoteSess
 	if err := s.fenceExpectedNetworkFingerprint(policy, req); err != nil {
 		return sessionCreateIntent{}, err
 	}
+	if policy.Mode == agents.ModeBare {
+		if req.PullRequest != nil {
+			return sessionCreateIntent{}, &session.Error{Code: session.CodeInvalidRequest,
+				Detail: "a bare session has no repository to bind a pull request to"}
+		}
+		if req.ResponderBinding != nil {
+			return sessionCreateIntent{}, &session.Error{Code: session.CodeInvalidRequest,
+				Detail: "a bare session binds no Responder MCP endpoint — it runs no tool"}
+		}
+	}
 	sessionID := deterministicSessionID(op.ID)
 	companions := make([]session.CompanionRepository, 0, len(policy.Companions))
 	for _, companion := range policy.Companions {
@@ -2319,45 +2445,22 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		return s.rejectCreateIntent(ctx, op.ID, "create operation intent has no valid target")
 	}
 	expectedIntent := op.Result
-	if intent.BaseCommit == "" {
-		if intent.WorkspaceCommit != "" {
-			return s.rejectCreateIntent(ctx, op.ID, "create operation intent has incomplete repository pins")
-		}
-		var err error
-		intent, err = s.pinCreateIntent(ctx, op, intent)
-		if err != nil {
-			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-				return session.Session{}, err
-			}
-			return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
-		}
-		expectedIntent, err = json.Marshal(intent)
-		if err != nil {
-			return session.Session{}, err
-		}
-	} else if len(intent.RepositoryFreshness) == 0 {
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
-			Code:   session.CodeRepositoryUnavailable,
-			Detail: "repository freshness must be reacquired by a new session request",
-		})
+	createReq := session.CreateSessionRequest{
+		// A session starts on the ladder's first rung; a rate limit rotates it to the next.
+		ID: intent.SessionID, ExternalRef: intent.Task, Target: intent.Policy.Targets[0].String(), Policy: intent.Policy.Name,
+		PolicyDigest:       resolvedSessionPolicyDigest(intent.Policy),
+		AuthorityDigest:    ResolvedPolicyAuthorityDigest(intent.Policy),
+		Mode:               string(intent.Policy.Mode),
+		OmitEnv:            intent.Policy.OmitEnv,
+		OmitMCP:            intent.Policy.OmitMCP,
+		ResponderBinding:   cloneResponderBinding(intent.ResponderBinding),
+		RepositoryReadOnly: intent.Policy.RepositoryReadOnly,
+		MaxTurns:           intent.Policy.MaxTurns,
+		MaxQueuedTurns:     intent.Policy.MaxQueuedTurns, MaxQueuedBytes: intent.Policy.MaxQueuedBytes,
+		TurnTimeout: intent.Policy.TurnTimeout, MaxPatchBytes: intent.Policy.MaxPatchBytes,
 	}
-	workspaceCommit := intent.WorkspaceCommit
-	if workspaceCommit == "" {
-		// Compatibility with create intents reserved before workspace_commit was added.
-		workspaceCommit = intent.BaseCommit
-	}
-	if !validSessionWorkspaceCommit(intent.BaseCommit) ||
-		!validSessionWorkspaceCommit(workspaceCommit) {
-		return s.rejectCreateIntent(ctx, op.ID, "create operation intent has invalid repository pins")
-	}
-	workspace, err := ensureSessionWorkspaceContext(ctx, intent.Policy.Repository, intent.ForkName, workspaceCommit, intent.SessionID)
-	if err != nil {
-		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-			return session.Session{}, err
-		}
-		return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("ensure session workspace: %w", err))
-	}
-	companions := make([]session.CompanionRepository, 0, len(intent.Companions))
+	var workspace sessionWorkspace
+	var companions []session.CompanionRepository
 	failCreate := func(cause error) (session.Session, error) {
 		if ctx.Err() != nil && errors.Is(cause, ctx.Err()) {
 			// Deterministic intent and workspace names make restart recovery the
@@ -2365,52 +2468,99 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 			// race that recovery process.
 			return session.Session{}, cause
 		}
-		if cleanupErr := rollbackSessionCreate(workspace, companions); cleanupErr != nil {
-			cause = errors.Join(
-				cause,
-				fmt.Errorf("rollback partial session creation: %w", cleanupErr),
-			)
+		if workspace.Path != "" {
+			if cleanupErr := rollbackSessionCreate(workspace, companions); cleanupErr != nil {
+				cause = errors.Join(
+					cause,
+					fmt.Errorf("rollback partial session creation: %w", cleanupErr),
+				)
+			}
 		}
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, cause)
 	}
-	for _, companion := range intent.Companions {
-		resolved, err := ensureSessionCompanionContext(
-			ctx, s.store.Root(), intent.SessionID, companion,
-		)
-		if err != nil {
-			return failCreate(
-				fmt.Errorf("ensure companion %q: %w", companion.Name, err),
-			)
+	if intent.Policy.Mode == agents.ModeBare {
+		// A bare session has nothing to pin, fork, clone or admit: no Git runs, no workspace
+		// exists, and its network posture is the policy's own (open unless it wrote none) —
+		// there is no project whose remembered approval could widen or narrow it.
+		if intent.BaseCommit != "" || intent.WorkspaceCommit != "" || len(intent.RepositoryFreshness) != 0 ||
+			len(intent.Companions) != 0 || intent.PullRequest != nil || intent.Policy.Repository != "" {
+			return s.rejectCreateIntent(ctx, op.ID, "create operation intent names a repository for a bare policy")
 		}
-		companions = append(companions, resolved)
-	}
-	// Network admission runs on the HOST, once, now that the workspace this session will mount
-	// exists: it resolves the posture from the operator policy against the project's remembered
-	// approval and freezes the exact policy every run of this session will enforce. A refusal —
-	// no approval, no host setup, a policy that disagrees with the remembered posture — fails
-	// the create with its own reason instead of quietly creating an open session.
-	network, err := s.admitSessionNetwork(intent.Policy, workspace.Path, intent.ForkName, companions)
-	if err != nil {
-		return failCreate(&session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()})
-	}
-	createReq := session.CreateSessionRequest{
-		// A session starts on the ladder's first rung; a rate limit rotates it to the next.
-		ID: intent.SessionID, ExternalRef: intent.Task, Target: intent.Policy.Targets[0].String(), Policy: intent.Policy.Name,
-		PolicyDigest:       resolvedSessionPolicyDigest(intent.Policy),
-		AuthorityDigest:    ResolvedPolicyAuthorityDigest(intent.Policy),
-		OmitEnv:            intent.Policy.OmitEnv,
-		OmitMCP:            intent.Policy.OmitMCP,
-		ResponderBinding:   cloneResponderBinding(intent.ResponderBinding),
-		RepositoryReadOnly: intent.Policy.RepositoryReadOnly,
-		Repository:         intent.Policy.Repository, Workspace: workspace.Path, ForkName: intent.ForkName,
-		ForkGeneration: string(workspace.Fork.Generation),
-		BaseCommit:     intent.BaseCommit, PullRequest: intent.PullRequest, Companions: companions,
-		RepositoryFreshness: append([]session.RepositoryFreshnessReceipt(nil), intent.RepositoryFreshness...),
-		NetworkMode:         string(network.Mode), NetworkFingerprint: network.Fingerprint,
-		NetworkQualification: network.Qualification,
-		MaxTurns:             intent.Policy.MaxTurns,
-		MaxQueuedTurns:       intent.Policy.MaxQueuedTurns, MaxQueuedBytes: intent.Policy.MaxQueuedBytes,
-		TurnTimeout: intent.Policy.TurnTimeout, MaxPatchBytes: intent.Policy.MaxPatchBytes,
+		createReq.NetworkMode = string(intent.Policy.Egress.resolvedMode())
+	} else {
+		if intent.BaseCommit == "" {
+			if intent.WorkspaceCommit != "" {
+				return s.rejectCreateIntent(ctx, op.ID, "create operation intent has incomplete repository pins")
+			}
+			var err error
+			intent, err = s.pinCreateIntent(ctx, op, intent)
+			if err != nil {
+				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+					return session.Session{}, err
+				}
+				return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+			}
+			expectedIntent, err = json.Marshal(intent)
+			if err != nil {
+				return session.Session{}, err
+			}
+		} else if len(intent.RepositoryFreshness) == 0 {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+				Code:   session.CodeRepositoryUnavailable,
+				Detail: "repository freshness must be reacquired by a new session request",
+			})
+		}
+		workspaceCommit := intent.WorkspaceCommit
+		if workspaceCommit == "" {
+			// Compatibility with create intents reserved before workspace_commit was added.
+			workspaceCommit = intent.BaseCommit
+		}
+		if !validSessionWorkspaceCommit(intent.BaseCommit) ||
+			!validSessionWorkspaceCommit(workspaceCommit) {
+			return s.rejectCreateIntent(ctx, op.ID, "create operation intent has invalid repository pins")
+		}
+		var err error
+		workspace, err = ensureSessionWorkspaceContext(ctx, intent.Policy.Repository, intent.ForkName, workspaceCommit, intent.SessionID)
+		if err != nil {
+			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+				return session.Session{}, err
+			}
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("ensure session workspace: %w", err))
+		}
+		companions = make([]session.CompanionRepository, 0, len(intent.Companions))
+		for _, companion := range intent.Companions {
+			resolved, err := ensureSessionCompanionContext(
+				ctx, s.store.Root(), intent.SessionID, companion,
+			)
+			if err != nil {
+				return failCreate(
+					fmt.Errorf("ensure companion %q: %w", companion.Name, err),
+				)
+			}
+			companions = append(companions, resolved)
+		}
+		// Network admission runs on the HOST, once, now that the workspace this session will mount
+		// exists: it resolves the posture from the operator policy against the project's remembered
+		// approval and freezes the exact policy every run of this session will enforce. A refusal —
+		// no approval, no host setup, a policy that disagrees with the remembered posture — fails
+		// the create with its own reason instead of quietly creating an open session.
+		network, err := s.admitSessionNetwork(intent.Policy, workspace.Path, intent.ForkName, companions)
+		if err != nil {
+			return failCreate(&session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()})
+		}
+		if intent.Policy.Mode.Restricted() && network.Mode == egress.Filtered {
+			// The policy file refused an explicit filtered posture at load; this is the project's
+			// remembered one, which can change between the load and this create.
+			return failCreate(&session.Error{Code: session.CodeNetworkUnavailable, Detail: fmt.Sprintf(
+				"policy %q resolves to filtered networking on this host, which a %s session is not qualified under — set egress.mode to open or none",
+				intent.Policy.Name, intent.Policy.Mode)})
+		}
+		createReq.Repository, createReq.Workspace, createReq.ForkName = intent.Policy.Repository, workspace.Path, intent.ForkName
+		createReq.ForkGeneration = string(workspace.Fork.Generation)
+		createReq.BaseCommit, createReq.PullRequest, createReq.Companions = intent.BaseCommit, intent.PullRequest, companions
+		createReq.RepositoryFreshness = append([]session.RepositoryFreshnessReceipt(nil), intent.RepositoryFreshness...)
+		createReq.NetworkMode, createReq.NetworkFingerprint = string(network.Mode), network.Fingerprint
+		createReq.NetworkQualification = network.Qualification
 	}
 	latest, err := s.store.GetOperationByID(ctx, op.ID)
 	if err != nil {
@@ -2796,6 +2946,9 @@ func (s *Service) validateTurnEscalation(ctx context.Context, req session.Submit
 	if err := validateSessionForkAuthority(ctx, bound); err != nil {
 		return &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
+	if err := validateRestrictedTurn(bound, req); err != nil {
+		return err
+	}
 	if req.MinTargetIndex <= 0 {
 		return nil
 	}
@@ -2811,6 +2964,24 @@ func (s *Service) validateTurnEscalation(ctx context.Context, req session.Submit
 			"min_target_index %d is not a rung of this session's %d-rung target ladder",
 			req.MinTargetIndex, len(policy.Targets),
 		)}
+	}
+	return nil
+}
+
+// validateRestrictedTurn refuses, at admission, the two turn options a restricted session cannot
+// honor. Each of its turns runs in a fresh box whose provider history dies with it, so there is
+// no native session for a caller's semantic rejection to re-prompt; and a bare session runs no
+// tool, so a Responder state endpoint bound to its turn would be authority nothing can use.
+func validateRestrictedTurn(bound session.Session, req session.SubmitTurnRequest) error {
+	if !agents.ExecutionMode(bound.Mode).Restricted() {
+		return nil
+	}
+	if req.OutputContract != nil && req.OutputContract.RequireSemanticValidation {
+		return &session.Error{Code: session.CodeInvalidRequest, Detail: fmt.Sprintf(
+			"a %s session keeps no provider history to re-prompt, so require_semantic_validation is not available; validate the completed turn's assistant message instead", bound.Mode)}
+	}
+	if bound.Mode == string(agents.ModeBare) && req.ResponderBinding != nil {
+		return &session.Error{Code: session.CodeInvalidRequest, Detail: "a bare session binds no Responder MCP endpoint — it runs no tool"}
 	}
 	return nil
 }
@@ -3009,6 +3180,9 @@ func (s *Service) GetChanges(ctx context.Context, sessionID string) (WorkspaceCh
 	if err != nil {
 		return WorkspaceChanges{}, err
 	}
+	if err := requireSessionWorkspace(sess); err != nil {
+		return WorkspaceChanges{}, err
+	}
 	if err := validateSessionForkAuthority(ctx, sess); err != nil {
 		return WorkspaceChanges{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
@@ -3038,6 +3212,9 @@ func (s *Service) GetChangesPage(
 ) (WorkspaceChanges, error) {
 	sess, err := s.store.GetSession(ctx, sessionID)
 	if err != nil {
+		return WorkspaceChanges{}, err
+	}
+	if err := requireSessionWorkspace(sess); err != nil {
 		return WorkspaceChanges{}, err
 	}
 	if err := validateSessionForkAuthority(ctx, sess); err != nil {
@@ -3136,6 +3313,13 @@ func (s *Service) executePlanDiscard(ctx context.Context, op session.Operation, 
 	if sess.Revision != req.ExpectedRevision || sess.State != session.SessionClosed || sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidSessionState, Detail: "discard planning requires a closed idle session"})
 	}
+	if sess.Workspace == "" {
+		// Nothing to plan against: a bare session's discard removes its private state and
+		// retires the record. The plan still pins the revision the discard must find.
+		return s.completePlanDiscard(ctx, op, PlanDiscardResult{
+			OperationID: op.ID, Plan: DiscardPlan{SessionID: sess.ID, Revision: sess.Revision},
+		})
+	}
 	parentHead, err := s.pinDiscardSessionParent(ctx, sess)
 	if err != nil {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, err)
@@ -3160,13 +3344,16 @@ func (s *Service) executePlanDiscard(ctx context.Context, op session.Operation, 
 		}
 		companions = append(companions, companionPlan)
 	}
-	result := PlanDiscardResult{
+	return s.completePlanDiscard(ctx, op, PlanDiscardResult{
 		OperationID: op.ID,
 		Plan: DiscardPlan{
 			SessionID: sess.ID, Revision: sess.Revision,
 			Workspace: plan, Companions: companions,
 		},
-	}
+	})
+}
+
+func (s *Service) completePlanDiscard(ctx context.Context, op session.Operation, result PlanDiscardResult) (PlanDiscardResult, error) {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, err)
@@ -3174,7 +3361,7 @@ func (s *Service) executePlanDiscard(ctx context.Context, op session.Operation, 
 	if err := s.store.MarkOperationRunning(ctx, op.ID, data); err != nil {
 		return PlanDiscardResult{}, err
 	}
-	if err := s.store.CompleteOperation(ctx, op.ID, "discard_plan", sess.ID, data); err != nil {
+	if err := s.store.CompleteOperation(ctx, op.ID, "discard_plan", result.Plan.SessionID, data); err != nil {
 		return PlanDiscardResult{}, err
 	}
 	return result, nil
@@ -3323,6 +3510,9 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 	if sess.Revision != planned.Plan.Revision || sess.State != session.SessionClosed || sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeDiscardPlanStale, Detail: "discard plan no longer matches session state"})
 	}
+	if sess.Workspace == "" {
+		return s.retireWorkspacelessSession(ctx, op, sess)
+	}
 	workspacePlan := planned.Plan.Workspace
 	unlockWorkspace, err := forkspace.LockStateContext(ctx, workspacePlan.Repo, workspacePlan.Name)
 	if err != nil {
@@ -3376,9 +3566,33 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 	return completed, nil
 }
 
+// retireWorkspacelessSession is the discard of a session that never had a workspace (a bare
+// session): its private ACP state goes, the record is tombstoned, and no fork, service or
+// companion is touched because none exists.
+func (s *Service) retireWorkspacelessSession(ctx context.Context, op session.Operation, sess session.Session) (session.Session, error) {
+	if err := removePrivateSessionState(s.store.Root(), sess.ID); err != nil {
+		return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
+	}
+	sess, err := s.store.MarkSessionDiscarded(ctx, sess.ID)
+	if err != nil {
+		return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
+	}
+	completed, err := s.completeDiscardOperation(ctx, op.ID, sess)
+	if err != nil {
+		return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)
+	}
+	return completed, nil
+}
+
 func validateDiscardSessionBinding(sess session.Session, plan DiscardPlan) error {
 	if plan.SessionID != sess.ID || plan.Revision != sess.Revision {
 		return errors.New("discard plan does not belong to this session revision")
+	}
+	if sess.Workspace == "" && sess.Repository == "" && sess.ForkName == "" && sess.ForkGeneration == "" {
+		if plan.Workspace != (WorkspaceDiscardPlan{}) || len(plan.Companions) != 0 {
+			return errors.New("discard plan names a workspace for a session that has none")
+		}
+		return nil
 	}
 	workspace := plan.Workspace
 	if workspace.Repo != sess.Repository || workspace.Workspace != sess.Workspace || workspace.Name != sess.ForkName {

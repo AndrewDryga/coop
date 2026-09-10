@@ -1,8 +1,8 @@
 ---
 name: restricted-execution-modes
-description: readonly and bare share one tmpfs-only filesystem profile; the provider is seeded through a read-only bind OUTSIDE the tmpfs home, because a bind under it would be root-owned
+description: readonly and bare share one tmpfs-only filesystem profile; the provider is seeded through a read-only bind OUTSIDE the tmpfs home, because a bind under it would be root-owned; over ACP the provider's switches ride session/new, not the adapter's argv
 subsystem: box
-sources: [internal/box/restricted.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/runtime/runtime.go]
+sources: [internal/box/restricted.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go]
 updated: 2026-09-10
 ---
 
@@ -26,7 +26,7 @@ would leave `/home/node/.claude` root-owned and the provider unable to write bes
 bound OUTSIDE the home and copied in by a `sh -c 'cp -R /coop/seed/. "$1"/ && shift && exec "$@"'`
 prelude with positional parameters (`seedPrelude`) — no path or argument is shell-parsed. The
 seed holds the adapter's access-only credential projection (`LiveCredentials`, after `Prepare`
-renewed it for `restrictedCredentialHorizon`), `EnsureDefaults` rendered into an EMPTY profile
+renewed it for `RestrictedCredentialHorizon`), `EnsureDefaults` rendered into an EMPTY profile
 (so no hook or skill of the host profile travels), and the mode's instruction note. A profile
 with no marker seeds no credential and the scoped env file stays the login, as in normal mode.
 
@@ -40,7 +40,8 @@ answers "no tools" and does not role-play tool calls. The enforcement is `--tool
 session's `system/init` event shows `tools: []`, `mcp_servers: []` (stream-json, 2026-09-10).
 Caller flags that hand tools or settings back are refused by name. Every other adapter answers
 `unqualifiedRestrictedCommand` until a live run proves its switch. Docker is the only runtime
-(`Runtime.SupportsRestrictedFilesystem`); `--egress filtered`, peers, presets, ACP, review stages,
+(`Runtime.SupportsRestrictedFilesystem`); `--egress filtered`, peers, presets, shared ACP
+transcripts, an editor supervisor, maintenance commands under an agent scope, review stages,
 `COOP_IMAGE` and runtime arguments beyond `-e KEY=VALUE` are refused, never dropped — a host-wide
 `COOP_RUN_ARGS` bind (this host mounts Go caches) is the common refusal; the message names the
 one-run escape, an empty `COOP_RUN_ARGS=` in front of the command.
@@ -53,12 +54,66 @@ no tools. Expect one host-side change: a login whose access token expires inside
 renewed in the host profile BEFORE projection ([[renew-before-access-only-projection]]), so
 `.credentials.json` on the host may change; the box still receives only the access-only shape.
 
-What the CLI half does not do (the session half's work): persist the mode on a session record and
-project it in the API DTO, select it from a host-owned policy, run under ACP (`startChildWithRunID`)
-with the exact-runtime receipt, and register activity — a restricted CLI run has no
-`ActivityKind` and a bare one has no workspace scope label, so a sweep reports it, never reaps it.
+## The session API half
+
+A policy's `mode:` (`Policy.Mode`, parsed with `agents.ParseExecutionMode`; absent is normal) is
+bound into both digests only when restricted (`digestedSessionMode`), so every existing normal
+policy's digests are byte-identical — `TestExecutionModeIsBoundIntoPolicyDigestsOnlyWhenRestricted`
+pins the known cold digest. The mode is persisted on the session row (schema v22, `mode TEXT
+DEFAULT ''`; `normalizedMode` reads '' as normal, legacy rows are never rewritten) and projected
+as `"mode"` in `SessionDTO`, so a restarted daemon relaunches a session under the mode it was
+created with even after the policy was edited. `validateRestrictedSessionPolicy` is the list of
+refusals by name; `validateRestrictedTurn` refuses semantic validation on either mode and a
+Responder binding on bare at submit; `captureCreateIntent` refuses a pull request or Responder
+binding on a bare create.
+
+A bare create is the workspace-less branch of `executeCreateIntent`: no pin, no fork, no
+companions, no admission (its posture is the policy's own `egress` block, open by default —
+`admitSessionNetwork`/`ResolvePolicyNetwork` return early, since there is no project to admit
+against), and a `CreateSessionRequest` whose four repository bindings are empty; the store
+accepts that shape only for `Mode: "bare"` and demands no freshness receipt for it. Every
+repository-specific operation goes through `requireSessionWorkspace` first (changes, checkpoint,
+restore, workspace task; review refuses on its own bound-fork check) and answers
+`invalid_session_state` — a 409, not a 400: the client asked a bare session for something it is,
+not something its request lacked. Discard of a workspace-less session is `retireWorkspacelessSession`.
+
+The child is `coop acp <target> --bare` (`acpBare`: the plain adapter under the profile, no
+supervisor, no project — the dispatch guard skips `loadProject` for a bare launch) or
+`coop fork <name> acp <target> --readonly` (`forkACP` under the profile: the daemon's reservation
+is still required, the legacy writable `.coop-output` bind is never made, and no activity record
+is registered — the daemon's run label is the whole receipt). `startChildWithRunID` sends the
+adapter's `ACPRestrictedSessionMeta(mode)` as `_meta` on `session/new` with `cwd` = the fork path,
+or `box.BareWorkdir` for bare; claude-agent-acp spreads `_meta.claudeCode.options` into the SDK
+options and the SDK renders `settingSources: ["user"]`, `strictMcpConfig: true` and an empty
+`tools` array onto the claude argv as `--setting-sources=user --strict-mcp-config --tools ""`,
+and `_meta.systemPrompt.append` as `appendSystemPrompt` on the CLI's stream-json initialize
+request (read out of adapter 0.76.0 / SDK 0.3.257 and proved against a recording claude
+executable — task artifacts `acp-spike-3-argv-{bare,readonly}.log`). The daemon hands a bare
+session no MCP servers at all. `checkRestrictedSpec` admits the ACP launch through
+`NetworkClient == egress.ClientACP`, and `runRestricted` still asks the adapter for the meta, so
+an unqualified provider refuses in the box as well as at policy load.
+
+Four traps the API half found. The daemon ends a turn's child by closing its stdin and, a quarter
+second later, signalling its process group — and the seed directory (with the credential
+projection in it) is removed only when the child's own run returns, so the first live pass left
+one `coop-seed-*` per turn in TMPDIR. A restricted child now gets the bounded stop grace a
+filtered one gets (`sessionACPRestrictedStopGrace`: the adapter exits on EOF within a second or
+two, then the seed goes) and runs under a `signal.NotifyContext`, so a signal still becomes a
+cancellation `runRestricted` cleans up after. The restricted box re-checks the seeded access-only token against
+`RestrictedCredentialHorizon` and holds no refresh authority, so `Run` projects a restricted
+session's credential for at least that horizon — a short `turn_timeout` is not a short token.
+No native session is ever bound for a restricted session (`process.restricted`): the transcript
+died with the tmpfs, so every turn is `session/new`, and a schema repair regenerates from the
+admitted prompt instead of re-prompting a session nothing can load. And the `<coop-output>`
+preamble is omitted with the output root it names: a directory nothing can write is a prompt for
+a tool call. What the API half still does not do: register activity for a restricted session
+(the run label is the cleanup receipt), keep provider history across turns, or qualify codex,
+gemini or grok — each refuses by name until a live run proves its adapter's switch.
 
 ## Changelog
+- 2026-09-10 — the session API half: policy `mode`, persisted and projected; workspace-less bare
+  create and its refusals; the ACP child launches under the profile with the adapter's session
+  meta (mechanism read out of the adapter's dist and proved on a recording executable).
 - 2026-09-10 — phase 2 live qualification: added `exec` to the scratch tmpfs (Docker's default is
   noexec) and moved the bare no-tools statement to `--append-system-prompt`; recorded what a run
   proved and the host-side credential renewal a hash comparison will show.

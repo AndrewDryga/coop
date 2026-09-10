@@ -160,6 +160,67 @@ func TestRestrictedLaunchUsageErrors(t *testing.T) {
 	}
 }
 
+// `coop acp claude --bare` (the session daemon's bare child) serves the adapter under the bare
+// profile with no supervisor, no project and the adapter command untouched: its no-tools switch
+// rides the session/new the client sends. The run receipt from the daemon's environment becomes
+// the box label the daemon reaps by.
+func TestCmdACPBareServesTheAdapterWithoutAProject(t *testing.T) {
+	t.Chdir(t.TempDir())
+	runID := "session-" + strings.Repeat("ab", 12)
+	t.Setenv("COOP_SESSION_RUN_ID", runID)
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	a := restrictedApp(t, recorder)
+	if code, err := a.cmdACP([]string{"claude", "--bare"}); err != nil || code != 0 {
+		t.Fatalf("cmdACP = (%d, %v), want (0, nil)", code, err)
+	}
+	line := recordedRunLine(t, recorder)
+	for _, want := range []string{"--label coop.run=" + runID, " -i ", "--read-only", "--tmpfs /workspace:", "-w /workspace", ":/coop/seed:ro"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("bare ACP run missing %q:\n%s", want, line)
+		}
+	}
+	if !strings.HasSuffix(line, " coop-box sh -c cp -R /coop/seed/. \"$1\"/ && shift && exec \"$@\" coop-seed /home/node claude-agent-acp") {
+		t.Errorf("bare ACP run must end in the plain adapter command:\n%s", line)
+	}
+	if strings.Contains(line, "--tools") || strings.Contains(line, "coop.sup=") || strings.Contains(line, "-it") {
+		t.Errorf("bare ACP run carries a CLI switch, a supervisor label or a tty:\n%s", line)
+	}
+}
+
+// The ACP forms refuse by name what they do not offer: --readonly on a plain editor session, a
+// preset or peers with --bare, and --bare on a fork (it names no fork).
+func TestACPExposureUsageErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(a *app) (int, error)
+		want string
+	}{
+		{"acp readonly", func(a *app) (int, error) { return a.cmdACP([]string{"claude", "--readonly"}) }, "does not take --readonly"},
+		{"acp bare preset", func(a *app) (int, error) { return a.cmdACP([]string{"frontier", "--bare"}) }, "name its lead directly"},
+		{"acp bare peer", func(a *app) (int, error) { return a.cmdACP([]string{"claude", "--bare", "--peer", "codex"}) }, "no peers"},
+		{"acp bare no target", func(a *app) (int, error) { return a.cmdACP([]string{"--bare"}) }, "name the target"},
+		{"acp both", func(a *app) (int, error) { return a.cmdACP([]string{"claude", "--bare", "--readonly"}) }, "exclusive"},
+		{"fork acp bare", func(a *app) (int, error) { return a.forkACP("myfork", []string{"claude", "--bare"}) }, "names no fork"},
+		{"fork acp readonly peer", func(a *app) (int, error) {
+			return a.forkACP("myfork", []string{"claude", "--readonly", "--peer", "codex"})
+		}, "no peers"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			a := restrictedApp(t, recorder)
+			a.rt, a.rtSet = runtime.Runtime{}, false
+			code, err := c.run(a)
+			if code != 2 || err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("= (%d, %v), want (2, error naming %q)", code, err, c.want)
+			}
+			if _, statErr := os.Stat(recorder); statErr == nil {
+				t.Fatal("the runtime was invoked")
+			}
+		})
+	}
+}
+
 // A restricted raw command is the probe form: `coop run --readonly -- <cmd>` runs it verbatim
 // under the profile, with no seed and no agent switch.
 func TestCmdRunReadOnlyRawCommand(t *testing.T) {

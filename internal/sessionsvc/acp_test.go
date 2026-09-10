@@ -2435,12 +2435,20 @@ func writeSessionTestCredential(t *testing.T, source, target string) {
 // newSessionACPFixture builds a signed-in session on codex@work, or on the one target given.
 func newSessionACPFixture(t *testing.T, scenario string, target ...string) *sessionACPFixture {
 	t.Helper()
-	root := t.TempDir()
-	source := filepath.Join(root, "shared-agents")
 	sessionTarget := "codex@work"
 	if len(target) > 0 && target[0] != "" {
 		sessionTarget = target[0]
 	}
+	return newSessionACPFixtureUnder(t, scenario, sessionTarget, agents.ModeNormal)
+}
+
+// newSessionACPFixtureUnder builds the fixture's session under an execution mode. A bare session
+// is created as the service creates one: no fork, no workspace, no reservation, no repository
+// binding at all.
+func newSessionACPFixtureUnder(t *testing.T, scenario, sessionTarget string, mode agents.ExecutionMode) *sessionACPFixture {
+	t.Helper()
+	root := t.TempDir()
+	source := filepath.Join(root, "shared-agents")
 	writeSessionTestCredential(t, source, sessionTarget)
 	for name, body := range map[string]string{
 		"env": "EMISAR_TOKEN=observe-only\n",
@@ -2467,30 +2475,39 @@ func newSessionACPFixture(t *testing.T, scenario string, target ...string) *sess
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	sess, err := store.CreateSession(context.Background(), "create", session.CreateSessionRequest{
-		Target: sessionTarget, Policy: "policy", Repository: repo, Workspace: workspace, ForkName: "fork", BaseCommit: strings.Repeat("a", 40),
-	})
+	request := session.CreateSessionRequest{
+		Target: sessionTarget, Policy: "policy", Mode: string(mode),
+		Repository: repo, Workspace: workspace, ForkName: "fork", BaseCommit: strings.Repeat("a", 40),
+		RepositoryReadOnly: mode == agents.ModeReadOnly,
+	}
+	if mode == agents.ModeBare {
+		request.Repository, request.Workspace, request.ForkName, request.BaseCommit = "", "", "", ""
+		request.OmitEnv, request.OmitMCP = true, true
+	}
+	sess, err := store.CreateSession(context.Background(), "create", request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlockGeneration, err := forkspace.LockState(repo, "fork")
-	if err != nil {
-		t.Fatal(err)
-	}
-	identity, err := forkspace.EnsureGenerationLocked(repo, "fork")
-	if err == nil {
-		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
-			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
-			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: sess.ID, CreatedAt: time.Now().UTC(),
-		})
-	}
-	unlockGeneration()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess, err = store.AdoptSessionForkGeneration(context.Background(), sess.ID, string(identity.Generation))
-	if err != nil {
-		t.Fatal(err)
+	if mode != agents.ModeBare {
+		unlockGeneration, err := forkspace.LockState(repo, "fork")
+		if err != nil {
+			t.Fatal(err)
+		}
+		identity, err := forkspace.EnsureGenerationLocked(repo, "fork")
+		if err == nil {
+			err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
+				Version: forkspace.WorkspaceReservationVersion, Fork: identity,
+				Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: sess.ID, CreatedAt: time.Now().UTC(),
+			})
+		}
+		unlockGeneration()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sess, err = store.AdoptSessionForkGeneration(context.Background(), sess.ID, string(identity.Generation))
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	resolvedStateRoot, err := filepath.EvalSymlinks(stateRoot)
 	if err != nil {
@@ -2802,7 +2819,7 @@ func TestSessionACPChildHelper(t *testing.T) {
 			projected = append(projected, name)
 		}
 	}
-	fmt.Fprintf(env, "config=%s repo=%s mcp=%s openai=%s run=%s files=%s\n", os.Getenv("COOP_CONFIG_DIR"), os.Getenv("COOP_REPO"), os.Getenv("COOP_MCP_FILE"), os.Getenv("OPENAI_API_KEY"), os.Getenv("COOP_SESSION_RUN_ID"), strings.Join(projected, ","))
+	fmt.Fprintf(env, "config=%s repo=%s mcp=%s openai=%s run=%s files=%s ro=%s\n", os.Getenv("COOP_CONFIG_DIR"), os.Getenv("COOP_REPO"), os.Getenv("COOP_MCP_FILE"), os.Getenv("OPENAI_API_KEY"), os.Getenv("COOP_SESSION_RUN_ID"), strings.Join(projected, ","), os.Getenv("COOP_SESSION_REPOSITORY_READ_ONLY"))
 	env.Close()
 	privateNative := filepath.Join(os.Getenv("COOP_CONFIG_DIR"), "codex", "profiles", "work", "native-history")
 	_ = os.WriteFile(privateNative, []byte("native"), 0o600)

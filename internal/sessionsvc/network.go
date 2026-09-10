@@ -41,6 +41,12 @@ type sessionNetworkBinding struct {
 // It is the only place a session's network authority is decided, which is why the operator policy
 // arrives here as a value and the repository's own requests arrive as requests.
 func (s *Service) admitSessionNetwork(policy Policy, workspace, forkName string, companions []session.CompanionRepository) (sessionNetworkBinding, error) {
+	if policy.Mode == agents.ModeBare {
+		// No project, so no remembered approval to admit against and nothing to capture: the
+		// posture is the policy's own written one, open when it wrote none. Filtered was
+		// refused when the policy loaded.
+		return sessionNetworkBinding{Mode: policy.Egress.resolvedMode()}, nil
+	}
 	if s.testAdmitNetwork != nil {
 		return s.testAdmitNetwork(policy, workspace, forkName)
 	}
@@ -90,6 +96,10 @@ type PolicyNetwork struct {
 // them and again on a fenced create, so an approval edited on the host between those two moments
 // becomes an explicit refusal instead of a session running under rules nobody pinned.
 func ResolvePolicyNetwork(cfg *config.Config, policy Policy) (PolicyNetwork, error) {
+	if policy.Mode == agents.ModeBare {
+		// Nothing host-side feeds a bare policy's reach — see admitSessionNetwork.
+		return PolicyNetwork{Mode: policy.Egress.resolvedMode()}, nil
+	}
 	if cfg == nil {
 		// No host configuration means no credentials, no runtime and no authority root to
 		// resolve against — the same answer admission gives.
@@ -134,6 +144,12 @@ func resolvePolicyNetworks(policies map[string]Policy, cfg *config.Config) (map[
 		network, err := ResolvePolicyNetwork(cfg, policies[name])
 		if err != nil {
 			return nil, fmt.Errorf("policy %q: %w", name, err)
+		}
+		// A restricted policy that wrote no posture inherits the project's remembered one, and
+		// the restricted profile is not qualified under a filtered gateway: refuse the load, as
+		// an explicit `egress.mode: filtered` on the same policy already was.
+		if policies[name].Mode.Restricted() && network.Mode == egress.Filtered {
+			return nil, fmt.Errorf("policy %q: resolves to filtered networking on this host, which a %s session is not qualified under — set egress.mode to open or none", name, policies[name].Mode)
 		}
 		networks[name] = network
 	}

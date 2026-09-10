@@ -215,6 +215,31 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	return code, err
 }
 
+// restrictedImage is the one image a restricted launch may run — the shared base image, built —
+// with the usage refusals every restricted launch shares reported first, so a wrong flag is
+// reported as such and never as a missing docker. Bare has no project to admit a network policy
+// for, so it takes only an open or offline --egress; the code is the exit status to return.
+func (a *app) restrictedImage() (img string, code int, err error) {
+	mode := a.mode
+	if a.cfg.ImageOverride != "" {
+		return "", 2, fmt.Errorf("a %s run uses the shared base image — unset COOP_IMAGE", mode)
+	}
+	if mode == agents.ModeBare && (a.network.Domains != nil || a.network.RulesFile != "" || (a.network.Mode != nil && *a.network.Mode == egress.Filtered)) {
+		return "", 2, errors.New("a bare run has no project to admit network policy for — it takes --egress open or none only")
+	}
+	if err := a.ensureRuntime(); err != nil {
+		return "", -1, err
+	}
+	img = a.cfg.BaseImage
+	if !box.ImageExists(a.rt, img) {
+		if err := a.rt.EnsureDaemon(); err != nil { // as resolveImage: blame a stopped daemon, not the image
+			return "", -1, err
+		}
+		return "", 1, fmt.Errorf("image %q not built — run 'coop build'", img)
+	}
+	return img, 0, nil
+}
+
 // runRestrictedInBox is the launch behind --readonly and --bare. Both run the shared base image
 // under box's restricted filesystem profile and neither publishes activity, starts services or
 // signs on exit — there is nothing a read-only checkout could have committed. Readonly resolves
@@ -223,22 +248,9 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 // all — it must work outside any Git repository — so it takes only an open or offline --egress.
 func (a *app) runRestrictedInBox(cmd []string, agent string) (int, error) {
 	mode := a.mode
-	// Usage first, runtime second: a wrong flag is reported as such, never as a missing docker.
-	if a.cfg.ImageOverride != "" {
-		return 2, fmt.Errorf("a %s run uses the shared base image — unset COOP_IMAGE", mode)
-	}
-	if mode == agents.ModeBare && (a.network.Domains != nil || a.network.RulesFile != "" || (a.network.Mode != nil && *a.network.Mode == egress.Filtered)) {
-		return 2, errors.New("a bare run has no project to admit network policy for — it takes --egress open or none only")
-	}
-	if err := a.ensureRuntime(); err != nil {
-		return -1, err
-	}
-	img := a.cfg.BaseImage
-	if !box.ImageExists(a.rt, img) {
-		if err := a.rt.EnsureDaemon(); err != nil { // as resolveImage: blame a stopped daemon, not the image
-			return -1, err
-		}
-		return 1, fmt.Errorf("image %q not built — run 'coop build'", img)
+	img, code, err := a.restrictedImage()
+	if err != nil {
+		return code, err
 	}
 	spec := box.RunSpec{Image: img, Cmd: cmd, Agent: agent, AgentCommand: agent != "", Homes: a.cfg.Homes, Mode: mode}
 	switch mode {

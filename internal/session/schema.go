@@ -248,6 +248,13 @@ ALTER TABLE sessions ADD COLUMN network_fingerprint TEXT NOT NULL DEFAULT '';
 ALTER TABLE sessions ADD COLUMN network_qualification TEXT NOT NULL DEFAULT '';
 `
 
+// The execution mode is immutable session authority like the read-only bit above it: a
+// restarted daemon relaunches the session under the mode it was created with, never under
+// a policy edited since. A row from before modes existed stores an empty mode and reads as normal.
+const schemaV22 = `
+ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT '';
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -390,6 +397,12 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v21: %w", err)
 		}
 		version = 21
+	}
+	if version < 22 {
+		if _, err := tx.Exec(schemaV22); err != nil {
+			return fmt.Errorf("migrate schema v22: %w", err)
+		}
+		version = 22
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)

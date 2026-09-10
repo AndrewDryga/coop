@@ -176,6 +176,32 @@ func (claudeAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]string
 	return appendBeforeSeparator(slices.Clone(cmd), args...), nil
 }
 
+// ACPRestrictedSessionMeta is the same set of switches for a session driven through
+// claude-agent-acp, which takes no flags: the adapter reads `_meta.claudeCode.options` off
+// session/new and spreads it into the Agent SDK options, and the SDK renders them onto the very
+// argv RestrictedCommand builds — `settingSources: ["user"]` is `--setting-sources=user`,
+// `strictMcpConfig` is `--strict-mcp-config`, and an empty `tools` array is `--tools ""`. The
+// bare statement rides `_meta.systemPrompt.append`, which the adapter folds into the SDK's
+// claude_code preset and the SDK sends as `appendSystemPrompt` on the CLI's initialize request.
+// Read out of the adapter's dist (0.76.0, SDK 0.3.257) and proved against a recording claude
+// executable; the task artifacts hold both argv transcripts.
+func (claudeAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any, error) {
+	switch mode {
+	case ModeNormal:
+		return nil, nil
+	case ModeReadOnly, ModeBare:
+	default:
+		return nil, fmt.Errorf("unknown execution mode %q", mode)
+	}
+	options := map[string]any{"settingSources": []string{"user"}, "strictMcpConfig": true}
+	meta := map[string]any{"claudeCode": map[string]any{"options": options}}
+	if mode == ModeBare {
+		options["tools"] = []string{}
+		meta["systemPrompt"] = map[string]any{"append": claudeBareSystemPrompt}
+	}
+	return meta, nil
+}
+
 const (
 	claudeCLIPackage = "@anthropic-ai/claude-code@latest"
 	claudeACPPackage = "@agentclientprotocol/claude-agent-acp@latest"

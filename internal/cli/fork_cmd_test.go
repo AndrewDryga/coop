@@ -612,7 +612,7 @@ func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 		t.Errorf("fork ACP with repeatable peers = (%d, %v), want target account validation after peer extraction", code, err)
 	}
 	code, err = a.forkACP("myfork", []string{"claude", "--credential", "ghost"})
-	wantUsage := "usage: coop fork myfork acp <target> [--peer <target>...]"
+	wantUsage := "usage: coop fork myfork acp <target> [--readonly] [--peer <target>...]"
 	if code != 2 || err == nil || err.Error() != wantUsage {
 		t.Errorf("fork acp --credential = (%d, %v), want (2, %q)", code, err, wantUsage)
 	}
@@ -728,6 +728,82 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 	}
 	if !strings.Contains(string(args), outputRoot+":"+outputRoot+":rw") {
 		t.Fatalf("read-only session output root was not writable:\n%s", args)
+	}
+}
+
+// `coop fork <name> acp <target> --readonly` (the session daemon's readonly child) fronts the
+// fork under the restricted profile: the fork read-only, nothing writable, no output root, no
+// activity record, and the run receipt as the box's label. The reservation the daemon wrote for
+// the session is still required, exactly as for the normal child.
+func TestForkACPReadOnlyFrontsTheForkUnderTheRestrictedProfile(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "repo")
+	workspace := forkspace.Workspace(repo, "readonly")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runID := "session-" + strings.Repeat("cd", 12)
+	t.Setenv("COOP_SESSION_RUN_ID", runID)
+	recorder := filepath.Join(root, "runtime-args")
+	a := restrictedApp(t, recorder)
+	a.cfg.RepoOverride, a.cfg.Egress = repo, "none"
+	// No reservation yet: the daemon's own proof of ownership is required before any launch.
+	if code, runErr := a.forkACP("readonly", []string{"claude", "--readonly"}); code != 1 || runErr == nil ||
+		!strings.Contains(runErr.Error(), "reservation is absent") {
+		t.Fatalf("forkACP without a reservation = (%d, %v)", code, runErr)
+	}
+	unlock, err := forkspace.LockState(repo, "readonly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "readonly")
+	if err == nil {
+		err = forkspace.ReserveWorkspaceLocked(repo, forkspace.WorkspaceReservation{
+			Version: forkspace.WorkspaceReservationVersion, Fork: identity,
+			Kind: forkspace.WorkspaceReservationRemoteSession, OwnerID: "remote_1", CreatedAt: time.Now().UTC(),
+		})
+	}
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, runErr := a.forkACP("readonly", []string{"claude", "--readonly"}); runErr != nil || code != 0 {
+		t.Fatalf("forkACP = (%d, %v), want the restricted read-only session", code, runErr)
+	}
+	args, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := ""
+	for _, candidate := range strings.Split(string(args), "\n") {
+		if strings.HasPrefix(candidate, "run ") {
+			line = candidate
+		}
+	}
+	for _, want := range []string{
+		"--label coop.run=" + runID, "--label coop.fork=readonly", "--read-only", "--network none",
+		"-v " + workspace + ":" + workspace + ":ro", "-w " + workspace, ":/coop/seed:ro",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("readonly fork ACP run missing %q:\n%s", want, line)
+		}
+	}
+	if !strings.HasSuffix(line, " claude-agent-acp") {
+		t.Errorf("readonly fork ACP run must end in the plain adapter command:\n%s", line)
+	}
+	for _, forbidden := range []string{":rw ", ".coop-output", "coop.execution=", "coop-cache:", "--tools"} {
+		if strings.Contains(line, forbidden) {
+			t.Errorf("readonly fork ACP run carries %q:\n%s", forbidden, line)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(workspace, ".coop-output")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("readonly fork ACP prepared an output root: %v", err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(forkspace.StateDir(repo), "executions")); len(entries) != 0 {
+		t.Errorf("readonly fork ACP registered activity: %v", entries)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -195,6 +196,48 @@ func TestRunReadOnlyMountsRepoReadOnlyAndNothingWritable(t *testing.T) {
 	}
 }
 
+// The ACP form the session daemon launches: the same bare profile, the adapter's own command left
+// exactly as it is (its switches ride the session/new the client sends), stdin attached without a
+// tty, and the run label the daemon's receipt reaps by. No activity record and no fork label.
+func TestRunBareACPKeepsTheAdapterCommandAndRunLabel(t *testing.T) {
+	t.Setenv("TZ", "America/Merida")
+	cfg := restrictedConfig(t)
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	spec := RunSpec{
+		Image: "coop-box", Cmd: []string{"claude-agent-acp"}, Agent: "claude", NetworkClient: egress.ClientACP,
+		Homes: true, ForceNoTTY: true, Quiet: true, Mode: agents.ModeBare, RunID: "session-" + strings.Repeat("ab", 12),
+	}
+	if code, err := Run(cfg, dockerRecorder(t, recorder), spec); err != nil || code != 0 {
+		t.Fatalf("Run = %d, %v; want 0, nil", code, err)
+	}
+	got := recordedRun(t, recorder)
+	seed := seedFrom(t, got)
+	want := []string{
+		"run", "--rm", "--init", "--label", "coop=box",
+		"--label", "coop.run=" + spec.RunID,
+		"-i",
+		"-e", "TZ=America/Merida",
+		"--cap-drop", "ALL",
+		"--read-only",
+		"--tmpfs", "/home/node:" + ownedScratch + ",mode=0700",
+		"--tmpfs", "/tmp:" + ownedScratch + ",mode=1777",
+		"--tmpfs", "/workspace:" + ownedScratch + ",mode=0700",
+		"-e", "COOP_BOX=1",
+		"-w", "/workspace",
+		"-v", seed + ":/coop/seed:ro",
+		"-e", "COOP_NO_ASDF=1",
+		"-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
+		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
+		"-e", "CODEX_SQLITE_HOME=/home/node/.codex-state",
+		"coop-box",
+		"sh", "-c", seedScript, "coop-seed", "/home/node",
+		"claude-agent-acp",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("bare ACP run:\n got %q\nwant %q", got, want)
+	}
+}
+
 // A raw readonly command (no agent) gets the profile with no seed and no prelude: the probe form.
 func TestRunReadOnlyRawCommandHasNoSeed(t *testing.T) {
 	cfg := restrictedConfig(t)
@@ -260,7 +303,7 @@ func TestBuildRestrictedSeedProjectsLoginAndDefaultsOnly(t *testing.T) {
 	if string(host) != `{"hooks":{"PreToolUse":[]}}` {
 		t.Fatalf("host settings changed: %s", host)
 	}
-	bare, err := buildRestrictedSeed(cfg, "claude", agents.ModeBare, bareWorkdir, compositionArtifactOps{parent: t.TempDir()})
+	bare, err := buildRestrictedSeed(cfg, "claude", agents.ModeBare, BareWorkdir, compositionArtifactOps{parent: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,14 +324,14 @@ func TestBuildRestrictedSeedRefusesUnportableLogin(t *testing.T) {
 	}
 	// Renewal would reach for the provider; point it at a closed loopback port instead.
 	t.Setenv("CLAUDE_REFRESH_TOKEN_URL_OVERRIDE", "http://127.0.0.1:1/oauth/token")
-	if _, err := buildRestrictedSeed(cfg, "claude", agents.ModeBare, bareWorkdir, compositionArtifactOps{parent: t.TempDir()}); err == nil {
+	if _, err := buildRestrictedSeed(cfg, "claude", agents.ModeBare, BareWorkdir, compositionArtifactOps{parent: t.TempDir()}); err == nil {
 		t.Fatal("a refresh-only login has no access-only projection to seed")
 	}
 	// No marker at all: nothing to seed, the env file (if any) is the login. The seed still renders.
 	if err := os.Remove(filepath.Join(profile, ".credentials.json")); err != nil {
 		t.Fatal(err)
 	}
-	root, err := buildRestrictedSeed(cfg, "claude", agents.ModeBare, bareWorkdir, compositionArtifactOps{parent: t.TempDir()})
+	root, err := buildRestrictedSeed(cfg, "claude", agents.ModeBare, BareWorkdir, compositionArtifactOps{parent: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,14 +377,22 @@ func TestRunRestrictedRefusesWhatItDoesNotEnforce(t *testing.T) {
 			spec.Preset = &preset.Preset{Name: "p"}
 			return runtime.Runtime{}
 		}, "consults no peers"},
-		{"acp", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
+		{"maintenance under an agent scope", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
 			spec.AgentCommand = false
 			return runtime.Runtime{}
-		}, "ACP and maintenance"},
+		}, "maintenance commands are not qualified"},
 		{"shared sessions", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
 			spec.ShareACPSessions = true
 			return runtime.Runtime{}
-		}, "ACP and maintenance"},
+		}, "shares no ACP transcript"},
+		{"editor supervisor", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
+			spec.SupervisorID = "sup-1"
+			return runtime.Runtime{}
+		}, "no editor supervisor"},
+		{"unqualified ACP adapter", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
+			spec.Agent, spec.Cmd, spec.AgentCommand, spec.NetworkClient = "codex", []string{"codex-acp"}, false, egress.ClientACP
+			return runtime.Runtime{}
+		}, "not qualified for a readonly session"},
 		{"review", func(cfg *config.Config, spec *RunSpec) runtime.Runtime { spec.Review = true; return runtime.Runtime{} }, "review stage"},
 		{"protected paths", func(cfg *config.Config, spec *RunSpec) runtime.Runtime {
 			spec.RepoReadOnlyPaths = []string{".agent/tasks"}

@@ -17,6 +17,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/loop"
@@ -75,6 +76,7 @@ func forkHelpText(p ui.Palette) string {
 		{"-f, --force (rm/fresh)", "stop the worker; discard Git work, assignments, candidates, and pending proposals"},
 		{"-y, --yes", "merge/rm/--fresh: skip the delete confirm (required without a TTY)"},
 		{"-f, --follow", "logs: keep streaming new output"},
+		{"    --readonly", "acp: front the fork read-only under the restricted profile (writes to scratch only; no project hooks or MCP)"},
 	}
 	pad := func(s string, w int) string {
 		n := w - len(s)
@@ -832,11 +834,24 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		return -1, err
 	}
 	repositoryReadOnly := os.Getenv("COOP_SESSION_REPOSITORY_READ_ONLY") == "1"
+	// --readonly fronts the fork under the restricted profile: the fork and its companions mount
+	// read-only, the box writes only to run-private scratch, and the adapter is started under the
+	// mode's switches by the ACP client (the session daemon). It is a different contract from the
+	// legacy read-only session above, which keeps a writable output root. --bare names no fork.
+	if rest, err = a.takeExposureFlags(rest); err != nil {
+		return 2, err
+	}
+	if a.mode == agents.ModeBare {
+		return 2, errors.New("a bare run names no fork — it mounts no repository; serve one with 'coop acp <target> --bare'")
+	}
 	peerVals, rest, err := extractPeer(rest)
 	if err != nil {
 		return 2, err
 	}
-	usage := fmt.Sprintf("usage: coop fork %s acp <target> [--peer <target>...]", name)
+	if a.mode.Restricted() && len(peerVals) > 0 {
+		return 2, fmt.Errorf("a %s run consults no peers — drop --peer", a.mode)
+	}
+	usage := fmt.Sprintf("usage: coop fork %s acp <target> [--readonly] [--peer <target>...]", name)
 	if len(rest) == 0 {
 		return 2, fmt.Errorf("name the target — coop fork %s acp <target>; sign in with 'coop login <agent>' or see 'coop credentials'", name)
 	}
@@ -860,8 +875,16 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	// isTargetHead accepted only a registered provider, so the adapter lookup cannot miss.
 	cmd := acpCommand(a.cfg, agent)
-	repo, img, err := a.resolveImage()
-	if err != nil {
+	var repo, img string
+	if a.mode.Restricted() {
+		if repo, err = box.ResolveRepo(a.cfg.RepoOverride); err != nil {
+			return -1, err
+		}
+		var code int
+		if img, code, err = a.restrictedImage(); err != nil {
+			return code, err
+		}
+	} else if repo, img, err = a.resolveImage(); err != nil {
 		return -1, err
 	}
 	ws := forkspace.Workspace(repo, name)
@@ -869,7 +892,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		return -1, fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
 	}
 	var sessionOutputArgs []string
-	if repositoryReadOnly {
+	if repositoryReadOnly && !a.mode.Restricted() {
 		sessionOutputArgs, err = readOnlySessionOutputMountArgs(ws)
 		if err != nil {
 			return -1, err
@@ -919,6 +942,18 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		}(),
 		RunID: sessionsvc.RunIDFromEnv(), CompanionRepositories: companionRepositories,
 		ExtraArgs: sessionOutputArgs,
+	}
+	if a.mode.Restricted() {
+		// The restricted profile registers no activity record (it starts no service and joins no
+		// project); the daemon's receipt reaps it by the run label. The reservation check above
+		// still proved this fork is the session's own. The run owns a host seed directory holding
+		// the credential projection, so the signal the daemon ends a turn with has to arrive as a
+		// cancellation this run can clean up after — exactly as a filtered child's does.
+		spec.Mode, spec.RepoReadOnly, spec.NetworkClient = a.mode, true, egress.ClientACP
+		spec.ActivityRepo, spec.ActivityKind, spec.ActivityRole, spec.ActivityReservationOwner, spec.ActivitySource = "", "", "", "", ""
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer stop()
+		spec.Ctx = ctx
 	}
 	// A remote session's network authority arrives from the daemon that started
 	// this child, and only from there. Nothing in the box can set it, and the

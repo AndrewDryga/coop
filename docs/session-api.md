@@ -75,7 +75,32 @@ policies:
 
 The parser rejects unknown fields and requires:
 
-- `repository`: the absolute, canonical root of an existing Git worktree;
+- `mode`: optional execution mode, `normal` (the default, and every policy written before the
+  key existed), `readonly`, or `bare`. It is fixed at creation, bound into both digests and
+  persisted with the session, so an edit rotates new sessions and never changes an existing one.
+  Both restricted modes run the box under the restricted filesystem profile of `coop <target>
+  --readonly` / `--bare`: a read-only container root, run-private in-memory scratch discarded with
+  the box, every host path read-only, nothing project-defined loaded, and the provider seeded with
+  the access-only projection of its login. `readonly` pins and forks the repository exactly as a
+  normal policy does and mounts the fork and its companions read-only (`repository_read_only` is
+  implied). `bare` mounts nothing: it names no repository, remote, branch or companion, runs no
+  Git and creates no workspace, and it implies `project_env: false` and `project_mcp: false`. The
+  provider is started under the same switches the CLI proves — no repository or home extensions
+  in either mode, and in `bare` no tool at all (`claude --tools ""` plus a stated no-tools system
+  prompt) — sent on the ACP `session/new` the way the adapter reads them; only `claude` has a
+  proven switch, so every rung of a restricted policy's ladder must be `claude`. Refused by name:
+  a bare policy with any repository-shaped key, `repository_read_only`, `project_env: true` or
+  `project_mcp: true`; a readonly policy without a repository; either with `warm_idle_timeout`
+  (each turn is a fresh box) or `egress.mode: filtered` (the profile is not qualified under a
+  gateway; a readonly policy whose project resolves to filtered is refused at load, and at create
+  if the approval changed since). A restricted session keeps no provider history: every turn is a
+  fresh native session, so a turn's prompt must carry whatever earlier context it needs, and
+  `require_semantic_validation` is refused because there is no native session to re-prompt (a
+  schema-invalid structured result is regenerated from the admitted prompt, up to the same three
+  attempts). A bare session takes no `pull_request` and no `responder_binding`, at create or on a
+  turn. A legacy `repository_read_only: true` policy is not a readonly policy: it keeps its normal
+  mode and its writable output root;
+- `repository`: the absolute, canonical root of an existing Git worktree (omitted for `mode: bare`);
 - `remote` and `branch`: optional, paired fields that make Coop fetch and pin the exact current
   remote branch commit without switching, pulling, resetting, or otherwise changing the local
   checkout; a refresh failure stops session creation rather than falling back to stale `HEAD`;
@@ -420,7 +445,10 @@ create -> open/parked
 One worker owns a session. Turns are a bounded durable FIFO and only one runs at a time. Without
 `warm_idle_timeout`, Coop starts one short-lived `coop fork <name> acp <target>` child for a turn,
 resumes the exact recorded native session, records only its terminal assistant message for public
-consumption, and tears down the child and run-labeled box before parking.
+consumption, and tears down the child and run-labeled box before parking. A `readonly` session's
+child is `coop fork <name> acp <target> --readonly` and a `bare` session's is
+`coop acp <target> --bare`; neither resumes a native session (the restricted box keeps none), and
+a bare box is reaped by its run receipt alone, having no fork or project registry behind it.
 
 With `warm_idle_timeout`, Coop can prepare the authenticated ACP connection before the first turn
 and reuse that exact process and native session across serialized turns. The daemon retains at most
@@ -532,7 +560,9 @@ operation-plus-session response.
 | `GET` | `/v1/sessions/{session_id}` | none |
 | `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; policy must enable warm execution |
 
-The public session includes IDs, target, policy digest, the exact `project_env`, `project_mcp`, and
+The public session includes IDs, target, policy digest, its execution `mode` (`normal`,
+`readonly` or `bare`; a session created before modes existed reads `normal`), the exact
+`project_env`, `project_mcp`, and
 `repository_read_only` authority flags, its frozen `network` posture (`{"mode":"filtered",
 "fingerprint":"<64 hex>"}`, or just `{"mode":"open"}`), primary base commit, optional immutable pull-request
 number/ref/head binding, companion aliases, and one version-2 repository freshness receipt per
@@ -545,6 +575,15 @@ session fields include
 in-box paths and pinned commits, generated fork name, revision, state, activity, queue/budget
 counters, event cursor, and timestamps. It excludes host repository and workspace paths, native
 session ID, prompts, credentials, environment, caller-defined mounts, and runtime data.
+
+A `bare` session has no workspace: `fork_name` and `base_commit` are empty, its freshness is
+`unavailable` because there is no repository to be fresh about, and every repository-specific
+operation — `GET .../changes`, `POST .../checkpoint`, `POST .../workspace`,
+`POST .../workspace/restore`, and `POST .../review` — refuses it with `invalid_session_state`
+(409) and `session has no workspace: its policy is bare` (review answers with its own bound-fork
+refusal). Turns, events, budget, cancel, close, and the discard plan/discard pair work as for any
+session; a bare discard removes the session's private state and retires the record, since there is
+no fork to remove.
 
 ### Turns
 

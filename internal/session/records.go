@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 21
+	SchemaVersion = 22
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -292,19 +292,22 @@ type Session struct {
 	// ResponderBinding is controller-owned authority the canonical session row keeps privately.
 	// It never rides in JSON: operation receipts and replays carry ResponderBindingDigest instead,
 	// so the bearer is stored exactly once.
-	ResponderBinding       *ResponderBinding            `json:"-"`
-	ResponderBindingDigest string                       `json:"responder_binding_digest,omitempty"`
-	WorkspaceTask          *WorkspaceTaskBinding        `json:"workspace_task,omitempty"`
-	RepositoryReadOnly     bool                         `json:"repository_read_only"`
-	Repository             string                       `json:"repository"`
-	Workspace              string                       `json:"workspace"`
-	ForkName               string                       `json:"fork_name"`
-	ForkGeneration         string                       `json:"fork_generation,omitempty"`
-	BaseCommit             string                       `json:"base_commit"`
-	RepositoryFreshness    []RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
-	PullRequest            *PullRequestBinding          `json:"pull_request,omitempty"`
-	Companions             []CompanionRepository        `json:"companions,omitempty"`
-	NativeSessionID        string                       `json:"native_session_id"`
+	ResponderBinding       *ResponderBinding     `json:"-"`
+	ResponderBindingDigest string                `json:"responder_binding_digest,omitempty"`
+	WorkspaceTask          *WorkspaceTaskBinding `json:"workspace_task,omitempty"`
+	// Mode is the execution mode the session was created under — normal, readonly or bare —
+	// fixed for its life. A row written before modes existed reads as normal.
+	Mode                string                       `json:"mode"`
+	RepositoryReadOnly  bool                         `json:"repository_read_only"`
+	Repository          string                       `json:"repository"`
+	Workspace           string                       `json:"workspace"`
+	ForkName            string                       `json:"fork_name"`
+	ForkGeneration      string                       `json:"fork_generation,omitempty"`
+	BaseCommit          string                       `json:"base_commit"`
+	RepositoryFreshness []RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
+	PullRequest         *PullRequestBinding          `json:"pull_request,omitempty"`
+	Companions          []CompanionRepository        `json:"companions,omitempty"`
+	NativeSessionID     string                       `json:"native_session_id"`
 	// Network is this session's frozen egress posture. NetworkFingerprint and
 	// NetworkQualification are the owner-keyed snapshot and host setup record a
 	// filtered session's every run must match; both stay empty for open/none.
@@ -514,15 +517,17 @@ type Event struct {
 }
 
 type CreateSessionRequest struct {
-	ID                   string                       `json:"id"`
-	ExternalRef          string                       `json:"external_ref"`
-	Target               string                       `json:"target"`
-	Policy               string                       `json:"policy"`
-	PolicyDigest         string                       `json:"policy_digest"`
-	AuthorityDigest      string                       `json:"authority_digest,omitempty"`
-	OmitEnv              bool                         `json:"omit_env,omitempty"`
-	OmitMCP              bool                         `json:"omit_mcp,omitempty"`
-	ResponderBinding     *ResponderBinding            `json:"responder_binding,omitempty"`
+	ID               string            `json:"id"`
+	ExternalRef      string            `json:"external_ref"`
+	Target           string            `json:"target"`
+	Policy           string            `json:"policy"`
+	PolicyDigest     string            `json:"policy_digest"`
+	AuthorityDigest  string            `json:"authority_digest,omitempty"`
+	OmitEnv          bool              `json:"omit_env,omitempty"`
+	OmitMCP          bool              `json:"omit_mcp,omitempty"`
+	ResponderBinding *ResponderBinding `json:"responder_binding,omitempty"`
+	// Mode is the execution mode; empty is normal. A bare session names no repository binding.
+	Mode                 string                       `json:"mode,omitempty"`
 	RepositoryReadOnly   bool                         `json:"repository_read_only,omitempty"`
 	Repository           string                       `json:"repository"`
 	Workspace            string                       `json:"workspace"`

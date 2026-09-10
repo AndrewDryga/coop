@@ -188,6 +188,11 @@ func (a geminiAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]stri
 	return unqualifiedRestrictedCommand(a, mode, cmd)
 }
 
+// ACPRestrictedSessionMeta: nor on its ACP adapter (see unqualifiedRestrictedACPSession).
+func (a geminiAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any, error) {
+	return unqualifiedRestrictedACPSession(a, mode)
+}
+
 // Packages is just the CLI: gemini's ACP mode is built in (gemini --acp).
 const geminiCLIPackage = "@google/gemini-cli@latest"
 

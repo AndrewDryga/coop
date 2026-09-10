@@ -756,7 +756,7 @@ func (s *Store) CompleteCreateSessionOperation(
 	if req.ID == "" {
 		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "remote session id is required"}
 	}
-	if len(req.RepositoryFreshness) == 0 {
+	if len(req.RepositoryFreshness) == 0 && normalizedMode(req.Mode) != "bare" {
 		return Session{}, &Error{Code: CodeInvalidRequest, Detail: "remote session repository freshness is required"}
 	}
 	if err := validateCreateRequest(req); err != nil {
@@ -853,6 +853,7 @@ func (s *Store) initialSession(req CreateSessionRequest) Session {
 		ProjectMCP:             !req.OmitMCP,
 		ResponderBinding:       cloneResponderBinding(req.ResponderBinding),
 		ResponderBindingDigest: ResponderBindingDigest(req.ResponderBinding),
+		Mode:                   normalizedMode(req.Mode),
 		RepositoryReadOnly:     req.RepositoryReadOnly,
 		Repository:             req.Repository,
 		Workspace:              req.Workspace,
@@ -893,12 +894,12 @@ func (s *Store) insertInitialSessionTx(ctx context.Context, tx *sql.Tx, sess *Se
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
-		(id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions, repository_freshness,
+		(id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, mode, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions, repository_freshness,
 		 pull_request_number, pull_request_ref, pull_request_head_commit,
 		 network_mode, network_fingerprint, network_qualification,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
-		sess.Policy, sess.PolicyDigest, sess.AuthorityDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ResponderBinding), responderToken(sess.ResponderBinding), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		sess.Policy, sess.PolicyDigest, sess.AuthorityDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ResponderBinding), responderToken(sess.ResponderBinding), normalizedMode(sess.Mode), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
 		string(companions), string(repositoryFreshness), pullRequestNumber(sess.PullRequest), pullRequestRef(sess.PullRequest), pullRequestHead(sess.PullRequest),
 		normalizedNetworkMode(sess.NetworkMode), sess.NetworkFingerprint, sess.NetworkQualification,
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
@@ -936,6 +937,7 @@ func initialSessionMatchesRequest(sess Session, req CreateSessionRequest) bool {
 		sess.AuthorityDigest == req.AuthorityDigest &&
 		sess.ProjectEnv == !req.OmitEnv && sess.ProjectMCP == !req.OmitMCP &&
 		equalResponderBinding(sess.ResponderBinding, req.ResponderBinding) &&
+		sess.Mode == normalizedMode(req.Mode) &&
 		sess.RepositoryReadOnly == req.RepositoryReadOnly && sess.Repository == req.Repository &&
 		sess.Workspace == req.Workspace && sess.ForkName == req.ForkName &&
 		sess.ForkGeneration == req.ForkGeneration && sess.BaseCommit == req.BaseCommit &&
@@ -1066,7 +1068,14 @@ func validateCreateRequest(req CreateSessionRequest) error {
 			return &Error{Code: CodeInvalidRequest, Detail: "session binding is outside bounds"}
 		}
 	}
-	if boundCount != 0 && boundCount != len(bindings) {
+	if normalizedMode(req.Mode) == "bare" {
+		// A bare session is a policy with no repository behind it: the policy binds, the four
+		// repository bindings stay empty, and nothing repository-shaped may ride along.
+		if req.Policy == "" || boundCount != 1 || req.ForkGeneration != "" || req.PullRequest != nil ||
+			len(req.Companions) != 0 || len(req.RepositoryFreshness) != 0 {
+			return &Error{Code: CodeInvalidRequest, Detail: "a bare session binds a policy and no repository"}
+		}
+	} else if boundCount != 0 && boundCount != len(bindings) {
 		return &Error{Code: CodeInvalidRequest, Detail: "session bindings must be all-or-none"}
 	}
 	if req.ForkGeneration != "" {
@@ -1157,6 +1166,17 @@ func normalized(value, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+// normalizedMode reads the empty execution mode as normal: a create request from before modes
+// existed and a row migrated across schema v22 both stored nothing, and both ran as every
+// session did before modes existed. The value is not validated here — the service admits only
+// the three spellings — it is only never left blank.
+func normalizedMode(mode string) string {
+	if mode == "" {
+		return "normal"
+	}
+	return mode
 }
 
 // normalizedNetworkMode keeps a pre-network create request and a row migrated
@@ -1326,7 +1346,7 @@ func (s *Store) ListSessionRuntimeCleanupTurns(ctx context.Context, sessionID st
 	return turns, nil
 }
 
-const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, repository_read_only, repository, workspace, fork_name, fork_generation,
+const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, mode, repository_read_only, repository, workspace, fork_name, fork_generation,
 	   base_commit, companions, repository_freshness, pull_request_number, pull_request_ref, pull_request_head_commit,
 	   network_mode, network_fingerprint, network_qualification,
 	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
@@ -1345,7 +1365,7 @@ func scanSession(row rowScanner) (Session, error) {
 	var turnTimeout int64
 	var createdAt, updatedAt int64
 	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest, &sess.AuthorityDigest,
-		&sess.ProjectEnv, &sess.ProjectMCP, &responderEndpointValue, &responderTokenValue, &workspaceTaskValue, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions, &repositoryFreshness,
+		&sess.ProjectEnv, &sess.ProjectMCP, &responderEndpointValue, &responderTokenValue, &workspaceTaskValue, &sess.Mode, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions, &repositoryFreshness,
 		&pullRequestNumber, &pullRequestRef, &pullRequestHead,
 		&sess.NetworkMode, &sess.NetworkFingerprint, &sess.NetworkQualification, &sess.NativeSessionID,
 		&turnTimeout, &sess.MaxPatchBytes, &sess.Revision, &state, &activity, &sess.MaxTurns,
@@ -1376,6 +1396,7 @@ func scanSession(row rowScanner) (Session, error) {
 		}
 		sess.WorkspaceTask = &binding
 	}
+	sess.Mode = normalizedMode(sess.Mode)
 	sess.State = SessionState(state)
 	sess.Activity = ActivityState(activity)
 	sess.TurnTimeout = time.Duration(turnTimeout)

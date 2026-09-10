@@ -469,6 +469,13 @@ var commandHelp = map[string]string{
   from your editor. Preset consult roles use the same read-only wrapper and keep their
   role names, target ladders, and personas.
 
+  --bare serves a Q&A agent with no repository, no project context and no tools: the
+  shared base image under the restricted profile of 'coop <target> --bare', a target only
+  (no preset, no --peer), and no supervisor or toolbar — there is nothing to switch. Its
+  no-tools switch rides the ACP session/new the client sends, so it is what 'coop sessions
+  serve' launches for a bare policy; an editor entry gets the same box. --readonly is not
+  offered here: a fork fronts read-only with 'coop fork <name> acp <target> --readonly'.
+
   To make plain provider switching near-instant, coop keeps a box warm per OTHER signed-in
   provider (spawned in the background at session start), so a switch pays only the ACP
   replay, not a container + adapter cold-boot. Set COOP_ACP_WARM=0 to disable

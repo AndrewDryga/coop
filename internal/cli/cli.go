@@ -179,8 +179,12 @@ func (a *app) dispatch(argv []string) (int, error) {
 	// reported as such rather than as a missing runtime.
 	switch sub {
 	case "run", "shell", "login", "acp", "up", "down", "build":
-		if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
-			return -1, err
+		// A bare launch has no project: it must work outside any repository, so the eager
+		// project load is skipped for it (the command still refuses everything else by name).
+		if mode, _, err := extractExposureFlags(rest); err != nil || mode != agents.ModeBare {
+			if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
+				return -1, err
+			}
 		}
 		if err := a.ensureRuntime(); err != nil {
 			return -1, err

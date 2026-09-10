@@ -81,6 +81,9 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 	if version >= 20 {
 		ddl += schemaV20
 	}
+	if version >= 21 {
+		ddl += schemaV21
+	}
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("build v%d schema: %v", version, err)
 	}
@@ -174,6 +177,11 @@ func TestMigrationFromEachHistoricalVersionReachesCurrentSchema(t *testing.T) {
 			if sess.NetworkMode != "open" || sess.NetworkFingerprint != "" || sess.NetworkQualification != "" {
 				t.Fatalf("v%d legacy session network = %q/%q/%q, want open with no capture",
 					version, sess.NetworkMode, sess.NetworkFingerprint, sess.NetworkQualification)
+			}
+			// Likewise the execution mode: a session from before modes existed ran as every
+			// session did, so it reads as normal — never relabeled, never blank.
+			if sess.Mode != "normal" {
+				t.Fatalf("v%d legacy session mode = %q, want normal", version, sess.Mode)
 			}
 
 			turn, err := store.GetTurn(ctx, "legacy-session", "turn-legacy")

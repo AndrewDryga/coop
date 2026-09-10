@@ -46,7 +46,12 @@ const (
 	// two running containers and a receipt nothing can ever finalize, so it gets a bounded
 	// window to stop itself. Each teardown step is separately bounded inside the child.
 	sessionACPFilteredStopGrace = 30 * time.Second
-	sessionACPCleanupTimeout    = 2 * time.Second
+	// A restricted child owns a host seed directory holding the access-only credential projection
+	// and removes it only when its own run returns. Closing its input lets the adapter exit and
+	// that return happen; a signal in the first quarter second would strand the seed in TMPDIR,
+	// which the live qualification of 2026-09-10 showed three times over.
+	sessionACPRestrictedStopGrace = 10 * time.Second
+	sessionACPCleanupTimeout      = 2 * time.Second
 	// A completed model result is irreversible work, not best-effort cleanup. Under a recovery
 	// burst Coop's single SQLite connection can legitimately queue this receipt for a few seconds.
 	sessionACPCompletionTimeout = 10 * time.Second
@@ -629,6 +634,14 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			if warmIdleTimeout > 0 {
 				credentialDeadline = time.Now().Add(warmIdleTimeout + bound.TurnTimeout)
 			}
+			// A restricted box re-checks the seeded access-only token against its own horizon
+			// and holds no refresh authority to renew it with, so the host renews before
+			// projection for at least that long — a short turn timeout is not a short token.
+			if agents.ExecutionMode(bound.Mode).Restricted() {
+				if horizon := time.Now().Add(box.RestrictedCredentialHorizon); credentialDeadline.Before(horizon) {
+					credentialDeadline = horizon
+				}
+			}
 			projection, err := r.projectCredentials(bound, target, agent, credentialDeadline)
 			if err != nil && projection != nil {
 				_ = projection.remove()
@@ -678,7 +691,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 				outputArtifacts = carriedOutputArtifacts
 			}
 			usage = addSessionUsage(usage, candidateUsage)
-			if bound.NativeSessionID == "" {
+			if bound.NativeSessionID == "" && !execution.child.restricted {
 				bound.NativeSessionID = execution.child.nativeSessionID
 			}
 			if validator == nil {
@@ -710,6 +723,12 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 				return result, runErr
 			}
 			prompt = sessionOutputContractRepairPrompt(leased.OutputContract, schemaAttempt+1, validationErr)
+			if execution.child.restricted {
+				// No native session survives a restricted box, so there is no previous
+				// response to correct: the next attempt regenerates from the admitted prompt
+				// and contract in a fresh session, as a rotation onto another provider does.
+				prompt = sessionOutputContractInitialPrompt(leased.Prompt, leased.OutputContract)
+			}
 			checkpointSend = false
 			// A completed ACP prompt may leave the provider adapter unable to accept an
 			// immediate second prompt on the same process even though the native session
@@ -1003,6 +1022,11 @@ func (r *sessionTurnRunner) removeTurnBox(repo, runID string) error {
 			sessionACPBoundedDetail("runtime cleanup failed", err.Error()),
 		)
 	}
+	// A workspace-less (bare) session has no project registry to retire records from; its box
+	// registered none. The run label above is its whole receipt.
+	if repo == "" {
+		return nil
+	}
 	if err := forkspace.RemoveDeadExecutionsBySource(repo, runID); err != nil {
 		return acpFailure(sessionACPCleanupError, sessionACPBoundedDetail("activity cleanup failed", err.Error()))
 	}
@@ -1017,6 +1041,18 @@ func (r *sessionTurnRunner) removeTurnBox(repo, runID string) error {
 func (r *sessionTurnRunner) removeInterruptedTurnBoxes(bound session.Session, runID string) error {
 	if r.rt.Name == "" {
 		return acpFailure(sessionACPCleanupError, "runtime cleanup is unavailable")
+	}
+	if bound.Workspace == "" && bound.Repository == "" && bound.ForkName == "" && bound.ForkGeneration == "" {
+		// A bare session's box carried only the run label the daemon minted for this exact turn
+		// (validated by the caller against the session and turn ids), and no registry record
+		// could name it: the label is the whole receipt, and it is proven only once the
+		// runtime reports the removal.
+		ctx, cancel := context.WithTimeout(context.Background(), sessionRuntimeReapTimeout)
+		defer cancel()
+		if _, err := r.rt.RemoveByLabel(ctx, box.LabelRun, runID); err != nil {
+			return acpFailure(sessionACPCleanupError, sessionACPBoundedDetail("runtime cleanup failed", err.Error()))
+		}
+		return nil
 	}
 	identity := forkspace.Identity{Name: bound.ForkName, Generation: forkspace.Generation(bound.ForkGeneration)}
 	if bound.ID == "" || !forkspace.ValidExistingName(identity.Name) || !forkspace.ValidGeneration(identity.Generation) ||
@@ -1748,6 +1784,9 @@ func (r *sessionTurnRunner) stopSessionServices(parent context.Context, bound se
 	if bound.State == session.SessionDiscarded {
 		return nil
 	}
+	if bound.Workspace == "" && bound.Repository == "" && bound.ForkName == "" && bound.ForkGeneration == "" {
+		return nil // a workspace-less session has no project whose services could have started
+	}
 	if r == nil || r.rt.Name == "" || bound.Workspace == "" || bound.Repository == "" {
 		return acpFailure(sessionACPCleanupError, "session services cleanup is unavailable")
 	}
@@ -1903,26 +1942,39 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 			return nil, acpFailure(sessionACPProcessError, "Coop executable is unavailable")
 		}
 	}
-	if !filepath.IsAbs(bound.Repository) || !filepath.IsAbs(bound.Workspace) ||
-		bound.Workspace != forkspace.Workspace(bound.Repository, bound.ForkName) ||
-		!forkspace.ValidExistingName(bound.ForkName) || bound.Target == "" {
-		return nil, acpFailure(sessionACPProcessError, "bound fork identity is invalid")
+	mode, err := agents.ParseExecutionMode(normalizedSessionMode(bound.Mode))
+	if err != nil || bound.Target == "" {
+		return nil, acpFailure(sessionACPProcessError, "bound session mode or target is invalid")
 	}
-	identity, ok, generationErr := forkspace.ReadGeneration(bound.Repository, bound.ForkName)
-	if generationErr != nil || !ok || bound.ForkGeneration != "" && string(identity.Generation) != bound.ForkGeneration {
-		return nil, acpFailure(sessionACPProcessError, "bound fork generation is invalid")
-	}
-	if generationErr := forkspace.ValidateGenerationWorkspace(bound.Repository, identity); generationErr != nil {
-		return nil, acpFailure(sessionACPProcessError, "bound fork workspace was replaced")
-	}
-	if reservation, reserved, reserveErr := forkspace.ReadWorkspaceReservation(bound.Repository, identity); reserveErr != nil ||
-		!reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession || reservation.OwnerID != bound.ID {
-		return nil, acpFailure(sessionACPProcessError, "bound session workspace reservation is invalid")
+	if mode == agents.ModeBare {
+		if bound.Repository != "" || bound.Workspace != "" || bound.ForkName != "" || bound.ForkGeneration != "" {
+			return nil, acpFailure(sessionACPProcessError, "bare session must not be bound to a workspace")
+		}
+	} else {
+		if !filepath.IsAbs(bound.Repository) || !filepath.IsAbs(bound.Workspace) ||
+			bound.Workspace != forkspace.Workspace(bound.Repository, bound.ForkName) ||
+			!forkspace.ValidExistingName(bound.ForkName) {
+			return nil, acpFailure(sessionACPProcessError, "bound fork identity is invalid")
+		}
+		identity, ok, generationErr := forkspace.ReadGeneration(bound.Repository, bound.ForkName)
+		if generationErr != nil || !ok || bound.ForkGeneration != "" && string(identity.Generation) != bound.ForkGeneration {
+			return nil, acpFailure(sessionACPProcessError, "bound fork generation is invalid")
+		}
+		if generationErr := forkspace.ValidateGenerationWorkspace(bound.Repository, identity); generationErr != nil {
+			return nil, acpFailure(sessionACPProcessError, "bound fork workspace was replaced")
+		}
+		if reservation, reserved, reserveErr := forkspace.ReadWorkspaceReservation(bound.Repository, identity); reserveErr != nil ||
+			!reserved || reservation.Kind != forkspace.WorkspaceReservationRemoteSession || reservation.OwnerID != bound.ID {
+			return nil, acpFailure(sessionACPProcessError, "bound session workspace reservation is invalid")
+		}
 	}
 	if !validSessionRunID(runID) {
 		return nil, acpFailure(sessionACPProcessError, "session run identity is invalid")
 	}
-	if bound.RepositoryReadOnly {
+	// The legacy read-only session mounts a writable output root beside its read-only fork; a
+	// restricted session mounts nothing writable at all, so it neither prepares nor announces one.
+	legacyReadOnly := bound.RepositoryReadOnly && !mode.Restricted()
+	if legacyReadOnly {
 		if _, err := prepareSessionOutputRoot(bound.Workspace); err != nil {
 			return nil, errors.Join(
 				acpFailure(sessionACPProcessError, "read-only session output root is invalid"),
@@ -1937,7 +1989,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		return nil, errors.Join(acpFailure(sessionACPProcessError, "session network capture is invalid"), err)
 	}
 	env := append(sessionACPChildEnvironment(
-		bound.Repository, bound.Companions, bound.RepositoryReadOnly, privateRoot, runID,
+		bound.Repository, bound.Companions, legacyReadOnly, privateRoot, runID,
 		r.sourceCfg, r.rt.Name,
 	), network...)
 	activityRole := forkspace.ExecutionRoleActiveTurn
@@ -1945,7 +1997,18 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		activityRole = forkspace.ExecutionRoleWarm
 	}
 	env = append(env, "COOP_ACP_ACTIVITY_ROLE="+string(activityRole))
-	cmd := r.command(executable, "fork", bound.ForkName, "acp", bound.Target)
+	// The mode rides the child's command line as the same flag a hand launch takes, so the box
+	// it builds is exactly the restricted profile `coop <target> --readonly|--bare` proves. A
+	// bare session has no fork to front, so its child is the plain adapter launch.
+	var cmd *exec.Cmd
+	switch mode {
+	case agents.ModeBare:
+		cmd = r.command(executable, "acp", bound.Target, "--bare")
+	case agents.ModeReadOnly:
+		cmd = r.command(executable, "fork", bound.ForkName, "acp", bound.Target, "--readonly")
+	default:
+		cmd = r.command(executable, "fork", bound.ForkName, "acp", bound.Target)
+	}
 	if cmd == nil {
 		return nil, acpFailure(sessionACPProcessError, "Coop child could not be constructed")
 	}
@@ -1954,16 +2017,43 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if err := ctx.Err(); err != nil {
 		return nil, classifyContextFailure(err)
 	}
-	mcpServers, err := r.sessionACPMCPServers(bound, privateRoot)
+	target, err := agents.ParseTarget(bound.Target)
 	if err != nil {
-		return nil, err
+		return nil, acpFailure(sessionACPInvalidTarget, "session target must be one explicit provider and account")
+	}
+	agent, ok := agents.Get(target.Provider)
+	if !ok {
+		return nil, acpFailure(sessionACPInvalidTarget, "session target provider is unavailable")
+	}
+	// The adapter-declared switches for the mode — no repository extensions, and for bare no
+	// tool — sent with session/new. An adapter with no proven switch refuses here, before the
+	// child, exactly as the policy refused it at load.
+	sessionMeta, err := agent.ACPRestrictedSessionMeta(mode)
+	if err != nil {
+		return nil, acpFailure(sessionACPInvalidTarget, err.Error())
+	}
+	var mcpServers []map[string]any
+	if mode != agents.ModeBare {
+		// A bare session mounts no MCP at all: its policy withheld the shared file, and its turn
+		// can bind no endpoint, so there is nothing to ask the adapter for.
+		if mcpServers, err = r.sessionACPMCPServers(agent, privateRoot); err != nil {
+			return nil, err
+		}
 	}
 	process, err := startSessionACPProcess(cmd)
 	if process != nil {
 		process.runID = runID
 		process.mcpServers = mcpServers
+		process.sessionMeta = sessionMeta
+		process.cwd = bound.Workspace
+		if mode == agents.ModeBare {
+			process.cwd = box.BareWorkdir
+		}
+		process.restricted = mode.Restricted()
 		if bound.NetworkMode == string(egress.Filtered) {
 			process.stopGrace = sessionACPFilteredStopGrace
+		} else if process.restricted {
+			process.stopGrace = sessionACPRestrictedStopGrace
 		}
 	}
 	return process, err
@@ -1976,15 +2066,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 // Both inputs come from the session's OWN private root rather than the shared config: a policy
 // that withheld env or mcp.json from this session withholds them here too, and that root is
 // exactly what the box is started from, so a token resolved here is one the box also has.
-func (r *sessionTurnRunner) sessionACPMCPServers(bound session.Session, privateRoot string) ([]map[string]any, error) {
-	target, err := agents.ParseTarget(bound.Target)
-	if err != nil {
-		return nil, acpFailure(sessionACPInvalidTarget, "session target must be one explicit provider and account")
-	}
-	agent, ok := agents.Get(target.Provider)
-	if !ok {
-		return nil, acpFailure(sessionACPInvalidTarget, "session target provider is unavailable")
-	}
+func (r *sessionTurnRunner) sessionACPMCPServers(agent agents.Agent, privateRoot string) ([]map[string]any, error) {
 	values := box.EnvFileValues(filepath.Join(privateRoot, "env"))
 	servers, err := agent.ACPMCPServers(
 		filepath.Join(privateRoot, "mcp.json"),
@@ -2117,16 +2199,24 @@ func RunIDFromEnv() string {
 }
 
 type sessionACPProcess struct {
-	cmd                    *exec.Cmd
-	stdin                  io.WriteCloser
-	stdout                 io.ReadCloser
-	wait                   chan error
-	readStop               chan struct{}
-	frames                 chan sessionACPFrame
-	closeOnce              sync.Once
-	stopOnce               sync.Once
-	stopErr                error
-	runID                  string
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	stdout    io.ReadCloser
+	wait      chan error
+	readStop  chan struct{}
+	frames    chan sessionACPFrame
+	closeOnce sync.Once
+	stopOnce  sync.Once
+	stopErr   error
+	runID     string
+	// cwd is the session's working directory INSIDE the box: the fork's own host path, which
+	// mounts at the same place, or bare's scratch workdir. sessionMeta is the adapter's `_meta`
+	// for a restricted session (nil otherwise), and restricted says the box keeps no provider
+	// history and mounts no output root — so each turn is a fresh native session with no
+	// output directory announced.
+	cwd                    string
+	sessionMeta            map[string]any
+	restricted             bool
 	mcpServers             []map[string]any
 	nextID                 int64
 	initialized            bool
@@ -2583,7 +2673,11 @@ func (r *sessionTurnRunner) runACP(
 		mcpServers := sessionACPMCPServerParam(process.mcpServers)
 		nativeID := bound.NativeSessionID
 		if nativeID == "" {
-			result, err := request("session/new", map[string]any{"cwd": bound.Workspace, "mcpServers": mcpServers}, "")
+			params := map[string]any{"cwd": process.cwd, "mcpServers": mcpServers}
+			if process.sessionMeta != nil {
+				params["_meta"] = process.sessionMeta
+			}
+			result, err := request("session/new", params, "")
 			if err != nil {
 				return "", nil, session.Usage{}, err
 			}
@@ -2596,7 +2690,7 @@ func (r *sessionTurnRunner) runACP(
 			nativeID = created.SessionID
 		} else if !validACPSessionID(nativeID) {
 			return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "stored native session id is invalid")
-		} else if _, err := request("session/load", map[string]any{"sessionId": nativeID, "cwd": bound.Workspace, "mcpServers": mcpServers}, nativeID); err != nil {
+		} else if _, err := request("session/load", map[string]any{"sessionId": nativeID, "cwd": process.cwd, "mcpServers": mcpServers}, nativeID); err != nil {
 			return "", nil, session.Usage{}, err
 		}
 		process.nativeSessionID = nativeID
@@ -2609,7 +2703,9 @@ func (r *sessionTurnRunner) runACP(
 	if leased.ID == "" {
 		return "", nil, session.Usage{}, nil
 	}
-	if bound.NativeSessionID == "" {
+	// A restricted box's provider history dies with the box, so its native session is never
+	// bound: nothing could load it, and the next turn starts fresh rather than failing to resume.
+	if bound.NativeSessionID == "" && !process.restricted {
 		ctxBind, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
 		_, err := r.store.BindNativeSession(ctxBind, bound.ID, nativeID)
 		cancel()
@@ -2625,16 +2721,25 @@ func (r *sessionTurnRunner) runACP(
 			return "", nil, session.Usage{}, acpFailure(session.CodeInternal, "turn sent checkpoint failed")
 		}
 	}
-	outputDir, outputRelative, err := prepareSessionOutputDir(bound.Workspace, leased.ID)
-	if err != nil {
-		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "turn output directory could not be prepared")
-	}
-	defer removeSessionOutputDir(outputDir)
 	content, err := sessionACPInputContent(leased, process.imageCapable, process.embeddedContextCapable)
 	if err != nil {
 		return "", nil, session.Usage{}, err
 	}
-	content[0]["text"] = fmt.Sprintf("<coop-output>Save only final generated images and charts in %s. Use PNG, JPEG, WebP, or GIF; at most %d files and %d bytes total. Keep source data, virtual environments, caches, and other scratch content outside this directory. Do not put image bytes or data URLs in your reply. Refer to saved filenames in the structured response when the caller requests visuals. Direct image outputs returned by tools are captured in order as generated-1.png (or the matching image extension), generated-2.png, and so on.</coop-output>\n\n%s", outputRelative, session.MaxTurnArtifacts, session.MaxTurnArtifactBytes, promptText)
+	outputDir := ""
+	if !process.restricted {
+		// The output root is a writable bind beside the workspace, which a restricted box has
+		// none of: its only generated output is what rides the wire. The preamble that names the
+		// directory is omitted with it — a path nothing can write is a prompt for a tool call.
+		var outputRelative string
+		outputDir, outputRelative, err = prepareSessionOutputDir(bound.Workspace, leased.ID)
+		if err != nil {
+			return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "turn output directory could not be prepared")
+		}
+		defer removeSessionOutputDir(outputDir)
+		content[0]["text"] = fmt.Sprintf("<coop-output>Save only final generated images and charts in %s. Use PNG, JPEG, WebP, or GIF; at most %d files and %d bytes total. Keep source data, virtual environments, caches, and other scratch content outside this directory. Do not put image bytes or data URLs in your reply. Refer to saved filenames in the structured response when the caller requests visuals. Direct image outputs returned by tools are captured in order as generated-1.png (or the matching image extension), generated-2.png, and so on.</coop-output>\n\n%s", outputRelative, session.MaxTurnArtifacts, session.MaxTurnArtifactBytes, promptText)
+	} else {
+		content[0]["text"] = promptText
+	}
 	prompt := map[string]any{"sessionId": nativeID, "prompt": content}
 	id := next()
 	if err := writeRequest(id, "session/prompt", prompt); err != nil {
@@ -2692,12 +2797,14 @@ func (r *sessionTurnRunner) runACP(
 	if err != nil || len(payload) > session.MaxEventPayloadBytes {
 		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "assistant message exceeded its durable event bound")
 	}
-	files, err := collectSessionOutputDir(outputDir)
-	if err != nil {
-		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, err.Error())
-	}
-	for _, artifact := range files {
-		outputArtifacts = appendOutputArtifact(outputArtifacts, artifact.Name, artifact.MediaType, artifact.Data)
+	if outputDir != "" {
+		files, err := collectSessionOutputDir(outputDir)
+		if err != nil {
+			return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, err.Error())
+		}
+		for _, artifact := range files {
+			outputArtifacts = appendOutputArtifact(outputArtifacts, artifact.Name, artifact.MediaType, artifact.Data)
+		}
 	}
 	if len(outputArtifacts) > session.MaxTurnArtifacts {
 		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "turn produced too many output artifacts")

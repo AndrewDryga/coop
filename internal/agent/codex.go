@@ -169,6 +169,11 @@ func (a codexAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]strin
 	return unqualifiedRestrictedCommand(a, mode, cmd)
 }
 
+// ACPRestrictedSessionMeta: nor on its ACP adapter (see unqualifiedRestrictedACPSession).
+func (a codexAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any, error) {
+	return unqualifiedRestrictedACPSession(a, mode)
+}
+
 func (codexAgent) Packages() []string {
 	return []string{codexCLIPackage, codexACPPackage}
 }

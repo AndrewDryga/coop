@@ -103,6 +103,16 @@ func unqualifiedRestrictedCommand(a Agent, mode ExecutionMode, cmd []string) ([]
 	return nil, fmt.Errorf("%s is not qualified for a %s run — its CLI has no proven switch for the mode; use claude", a.Name(), mode)
 }
 
+// unqualifiedRestrictedACPSession is the ACP half of the same answer: normal sends no extra
+// session parameter, and a restricted mode refuses by name until a live session over the
+// adapter proved its switch (see claudeAgent.ACPRestrictedSessionMeta).
+func unqualifiedRestrictedACPSession(a Agent, mode ExecutionMode) (map[string]any, error) {
+	if mode == ModeNormal {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("%s is not qualified for a %s session — its ACP adapter has no proven switch for the mode; use claude", a.Name(), mode)
+}
+
 // hasFlag reports the first of names present in cmd, split (`--flag v`) or joined (`--flag=v`).
 func hasFlag(cmd []string, names []string) string {
 	for _, arg := range cmd {
@@ -340,6 +350,14 @@ type Agent interface {
 	// run refuses: a mode the provider cannot enforce is not a weaker one, it is none. ModeNormal
 	// returns cmd unchanged.
 	RestrictedCommand(mode ExecutionMode, cmd []string) ([]string, error)
+	// ACPRestrictedSessionMeta is RestrictedCommand for a session driven over ACP, where the
+	// adapter binary takes no flags: it is the `_meta` the ACP client sends with session/new so
+	// the adapter starts the provider under the same switches — no repository or home
+	// extensions in every restricted mode, no tool at all in bare. The client that launches the
+	// session (the session daemon) sends it; the adapter cannot be handed it from inside the box.
+	// ModeNormal returns nil; an adapter without a proven switch returns an error, and the
+	// session refuses, for the same reason RestrictedCommand does.
+	ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any, error)
 	// InstructionFile is the agent's native global instruction filename, e.g.
 	// "CLAUDE.md" — where coop writes the shared or consult-augmented instructions.
 	InstructionFile() string

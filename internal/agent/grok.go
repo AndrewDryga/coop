@@ -177,6 +177,11 @@ func (a grokAgent) RestrictedCommand(mode ExecutionMode, cmd []string) ([]string
 	return unqualifiedRestrictedCommand(a, mode, cmd)
 }
 
+// ACPRestrictedSessionMeta: nor on its ACP adapter (see unqualifiedRestrictedACPSession).
+func (a grokAgent) ACPRestrictedSessionMeta(mode ExecutionMode) (map[string]any, error) {
+	return unqualifiedRestrictedACPSession(a, mode)
+}
+
 // Packages is empty: grok is a native binary, not an npm package.
 func (grokAgent) Packages() []string { return nil }
 
