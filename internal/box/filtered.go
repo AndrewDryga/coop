@@ -104,6 +104,9 @@ type filteredDocker interface {
 	RemoveContainer(context.Context, runtime.DockerRef) error
 	ExecRead(context.Context, runtime.DockerRef, int, ...string) ([]byte, error)
 	CopyArchive(context.Context, runtime.DockerRef, string, int) ([]byte, error)
+	Image(context.Context, string) (string, map[string]string, error)
+	ImageLayers(context.Context, string) (string, []string, error)
+	FileDigest(context.Context, runtime.DockerRef, string, int64) (runtime.DockerFile, error)
 	ExistingNamedVolumeExposure(context.Context, []string) (runtime.VolumeExposure, error)
 	ConnectNetwork(context.Context, string, runtime.DockerRef) error
 	NetworkMembers(context.Context, string) (map[string]netip.Addr, error)
@@ -204,6 +207,20 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		}
 	}
 	f.image = candidate.ClientImage
+	// A project that ships its own box Dockerfile runs its own image, built on
+	// the locked client image and proven derived from it with its clients intact
+	// (derived_image.go) — before any container of this run exists. The preflight
+	// smoke is deliberately excluded: it qualifies the locked image itself, and
+	// what it proves must be that image, not a project's layers on top of it.
+	if smoke == nil {
+		derived, err := filteredProjectImage(ctx, rt, f.docker, spec, candidate)
+		if err != nil {
+			return f, err
+		}
+		if derived != "" {
+			f.image = derived
+		}
+	}
 	f.publish, servePorts, f.serveEnv = filteredPublish(cfg, spec, hostPortFree)
 	if len(approvedServices) != 0 {
 		privateRoots := append(ConfigExposureRoots(cfg), project)
@@ -236,8 +253,15 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if len(servePorts) != 0 && !ingress.IsValid() {
 		return f, errors.New("this Docker has no bridge gateway address, so a published serve port could not be limited to your host — drop serve.ports, or run without --egress filtered")
 	}
+	// The record stays bound to the QUALIFIED client image; a project image the
+	// two proofs accepted is recorded beside it as what the workload actually
+	// ran, never as what this run was qualified for.
+	projectImage := ""
+	if f.image != candidate.ClientImage {
+		projectImage = f.image
+	}
 	executionSpec := networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
-		QualificationID: capture.QualificationID, ClientImage: f.image,
+		QualificationID: capture.QualificationID, ClientImage: candidate.ClientImage, ProjectImage: projectImage,
 		Runtime: "docker", DaemonID: docker.Info().ID, Endpoint: docker.Endpoint(), GatewayImage: candidate.GatewayImage,
 		SessionID: capture.SessionID, AttemptID: capture.AttemptID, Protected: protected}
 	if smoke == nil {

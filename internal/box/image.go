@@ -476,6 +476,19 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 	return err
 }
 
+// buildProjectOnBase builds a repository's own box Dockerfile ON TOP of base, tagged tag, through
+// the same staged context, build arguments and error mapping `coop build` uses — a filtered launch
+// changes only which base image the Dockerfile inherits, never how it is built. It never reads
+// stdin or writes stdout: an ACP session speaks JSON-RPC over both.
+func buildProjectOnBase(rt runtime.Runtime, repo, dfRel, tag, base string, stderr io.Writer) error {
+	ctx, cleanup, err := stageBuildContext(repo)
+	if err != nil {
+		return fmt.Errorf("staging the build context: %w", err)
+	}
+	defer cleanup()
+	return buildErr(rt.Run(nil, nil, stderr, projectBuildArgs(ctx, dfRel, tag, base, true, false)...))
+}
+
 // projectBuildArgs assembles the `<runtime> build` args for a project Dockerfile at dfRel inside the
 // staged ctx, tagged img. When the Dockerfile inherits coop's base (usesBase), it passes the base as
 // a build-arg and, on --fresh, uses --no-cache WITHOUT --pull — the base is a local image tag, not a

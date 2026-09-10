@@ -92,7 +92,7 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if mode != egress.Filtered {
 		return nil, nil
 	}
-	if err := checkFilteredSupport(cfg, spec, p); err != nil {
+	if err := checkFilteredSupport(cfg); err != nil {
 		return nil, err
 	}
 	store, err := networkstate.Open(root, exposed)
@@ -167,11 +167,12 @@ func networkAdmissionInput(cfg *config.Config, p *project.Project, options Netwo
 // checkFilteredSupport refuses a combination this release cannot enforce, before
 // any host state or runtime resource exists. An unsupported tuple fails; it is
 // never downgraded to a warning and a wider policy.
-func checkFilteredSupport(cfg *config.Config, spec RunSpec, p *project.Project) error {
-	repo := projectPolicyRepo(spec)
-	if p.Box.Dockerfile != "" || repo != "" && fileExists(filepath.Join(repo, project.DockerfilePath(repo))) {
-		return errors.New("a filtered box runs coop's own image, so this project's .agent/Dockerfile cannot be used yet — run without --egress filtered")
-	}
+//
+// A project's own .agent/Dockerfile is NOT one of these: it is built on the
+// locked client image at launch and proven derived from it (derived_image.go).
+// An arbitrary COOP_IMAGE cannot be — nothing qualified it, and no proof can
+// turn an unrelated image into the one this host set up.
+func checkFilteredSupport(cfg *config.Config) error {
 	if cfg.ImageOverride != "" {
 		return errors.New("a filtered box runs coop's own image — unset COOP_IMAGE to start one")
 	}

@@ -56,18 +56,23 @@ type Resource struct {
 // Execution is OWNER-PRIVATE storage, never a public DTO. In particular Project,
 // Supervisor and runtime identities must not pass through worker/session JSON.
 type Execution struct {
-	Version               int               `json:"version"`
-	Revision              networkview.Count `json:"revision"`
-	ID                    string            `json:"id"`
-	Epoch                 string            `json:"epoch"`
-	Project               string            `json:"project"`
-	Scope                 string            `json:"scope"`
-	Supervisor            Supervisor        `json:"supervisor"`
-	Runtime               string            `json:"runtime"`
-	DaemonID              string            `json:"daemon_id"`
-	Endpoint              string            `json:"endpoint"`
-	GatewayImage          string            `json:"gateway_image"`
-	ClientImage           string            `json:"client_image"`
+	Version      int               `json:"version"`
+	Revision     networkview.Count `json:"revision"`
+	ID           string            `json:"id"`
+	Epoch        string            `json:"epoch"`
+	Project      string            `json:"project"`
+	Scope        string            `json:"scope"`
+	Supervisor   Supervisor        `json:"supervisor"`
+	Runtime      string            `json:"runtime"`
+	DaemonID     string            `json:"daemon_id"`
+	Endpoint     string            `json:"endpoint"`
+	GatewayImage string            `json:"gateway_image"`
+	ClientImage  string            `json:"client_image"`
+	// ProjectImage is the image the WORKLOAD container ran, when a project's own
+	// box Dockerfile was built on ClientImage and proven derived from it. Empty
+	// means the workload ran the qualified client image itself. It is evidence,
+	// never authority: ClientImage stays bound to the qualification either way.
+	ProjectImage          string            `json:"project_image,omitempty"`
 	QualificationID       string            `json:"qualification_id,omitempty"`
 	QualificationContract string            `json:"qualification_contract"`
 	Purpose               string            `json:"purpose"`
@@ -91,7 +96,7 @@ type Execution struct {
 type ExecutionSpec struct {
 	Project, PolicyFingerprint, Runtime, DaemonID, Endpoint, GatewayImage string
 	SessionID, AttemptID                                                  string
-	QualificationID, ClientImage                                          string
+	QualificationID, ClientImage, ProjectImage                            string
 	Protected                                                             []netip.Prefix
 }
 
@@ -162,7 +167,10 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, smoke *
 		candidate = smoke.candidate
 	}
 	if spec.Runtime != "docker" || spec.DaemonID != candidate.Runtime.DaemonID || spec.Endpoint != candidate.Runtime.Endpoint ||
-		spec.GatewayImage != candidate.GatewayImage || spec.ClientImage != candidate.ClientImage {
+		spec.GatewayImage != candidate.GatewayImage || spec.ClientImage != candidate.ClientImage ||
+		// The preflight qualifies the client image itself, so it may never run a
+		// project's layers on top of one.
+		smoke != nil && spec.ProjectImage != "" {
 		return Execution{}, errors.New("network execution differs from its exact candidate image pair or runtime")
 	}
 	project, err := canonicalPath(spec.Project)
@@ -190,6 +198,7 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, smoke *
 		AttemptID: spec.AttemptID, StartedAt: now, Protected: slices.Clone(spec.Protected),
 		Purpose:               "workload",
 		ClientImage:           spec.ClientImage,
+		ProjectImage:          spec.ProjectImage,
 		QualificationID:       spec.QualificationID,
 		QualificationContract: QualificationContract,
 		Artifact:              Artifact{Name: "artifacts-" + id, State: "planned"},
@@ -258,6 +267,9 @@ func validExecution(record Execution) error {
 		return errors.New("invalid network execution identity")
 	}
 	if !imageDigest(record.ClientImage) || !safeRecordToken(record.QualificationContract, 128) {
+		return errors.New("network execution lacks exact launch binding")
+	}
+	if record.ProjectImage != "" && (!imageDigest(record.ProjectImage) || record.ProjectImage == record.ClientImage || record.ProjectImage == record.GatewayImage) {
 		return errors.New("network execution lacks exact launch binding")
 	}
 	if len(record.Protected) > maxProtectedRanges {

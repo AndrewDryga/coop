@@ -268,6 +268,51 @@ func (d *Docker) output(ctx context.Context, limit int, args ...string) ([]byte,
 	return dockerOutput(ctx, d.binary, d.env, limit, append([]string{"--config", d.clientConfig, "--host", d.endpoint}, args...)...)
 }
 
+// read runs one finite Docker command and hands its stdout to consume as it
+// arrives. Unlike output it retains nothing: a file inside an image is far
+// larger than any bounded observation, so the consumer keeps a digest instead of
+// the bytes. The consumer pulls, so no copy goroutine outlives the call.
+func (d *Docker) read(ctx context.Context, timeout time.Duration, consume func(io.Reader) error, args ...string) error {
+	if d.closed.Load() {
+		return errors.Join(errDockerCommandNotStarted, errors.New("Docker lifecycle binding is closed"))
+	}
+	if ctx == nil || consume == nil {
+		return errors.Join(errDockerCommandNotStarted, errors.New("invalid bounded Docker read"))
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := contextCommand(ctx, d.binary, append([]string{"--config", d.clientConfig, "--host", d.endpoint}, args...)...)
+	cmd.Env, cmd.Stderr = d.env, io.Discard
+	stream, err := cmd.StdoutPipe()
+	if err != nil {
+		return errors.Join(errDockerCommandNotStarted, err)
+	}
+	if err := cmd.Start(); err != nil {
+		return errors.Join(errDockerCommandNotStarted, ctx.Err())
+	}
+	consumeErr := consume(stream)
+	// A consumer that stopped early leaves the rest of the stream unread. Kill
+	// the client rather than drain output nobody wants; a satisfied consumer has
+	// already read to EOF, so this drain returns at once.
+	if consumeErr != nil {
+		cancel()
+	} else if n, _ := io.Copy(io.Discard, io.LimitReader(stream, 1<<20)); n > 0 {
+		consumeErr = errors.New("Docker read left unclaimed output")
+		cancel()
+	}
+	waitErr := cmd.Wait()
+	if consumeErr != nil {
+		return consumeErr
+	}
+	if waitErr != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("Docker operation failed; outcome unknown")
+	}
+	return nil
+}
+
 func (d *Docker) readInfo(ctx context.Context) (DockerInfo, error) {
 	data, err := d.output(ctx, 8192, "info", "--format", dockerInfoFormat)
 	if err != nil {

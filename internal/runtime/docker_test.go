@@ -1,8 +1,11 @@
 package runtime
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +46,9 @@ type dockerFixture struct {
 	ClientToken               string
 	SharedVolume              *volumeDefinition
 	AfterVolumeID             string
+	Layers                    []string
+	Copy                      string
+	CopyBody                  string
 }
 
 func fixtureDocker(t *testing.T, value dockerFixture) (Runtime, string) {
@@ -240,6 +246,11 @@ func TestDockerFixtureProcess(t *testing.T) {
 				}
 			}
 			os.Exit(0) // deliberately differs from the workload's daemon exit code
+		case "cp":
+			if len(args) != 4 || args[3] != "-" || !strings.HasPrefix(args[2], strings.Repeat("a", 64)+":/") {
+				os.Exit(107)
+			}
+			writeCopyArchive(fixture)
 		case "rm":
 			if args[len(args)-1] != strings.Repeat("a", 64) {
 				os.Exit(98)
@@ -250,6 +261,11 @@ func TestDockerFixtureProcess(t *testing.T) {
 		default:
 			os.Exit(99)
 		}
+	case "image":
+		if !bound || args[1] != "inspect" {
+			os.Exit(108)
+		}
+		emit(map[string]any{"ID": "sha256:" + strings.Repeat("d", 64), "Labels": map[string]string{}, "Layers": fixture.Layers})
 	case "volume":
 		if fixture.Mode == "shared-volume" {
 			if !bound {
@@ -653,5 +669,126 @@ func TestDockerLateWorkloadStartIsReportedNotFailed(t *testing.T) {
 	}
 	if notices != 1 {
 		t.Fatal("the operator was told about the wait either never or more than once", notices)
+	}
+}
+
+// writeCopyArchive is the tar stream `docker cp <container>:<path> -` produces.
+// Each mode is one shape a replaced pinned client would arrive in.
+func writeCopyArchive(fixture dockerFixture) {
+	w := tar.NewWriter(os.Stdout)
+	body := []byte(fixture.CopyBody)
+	switch fixture.Copy {
+	case "missing":
+		os.Exit(1) // the daemon refuses a path that is not there
+	case "symlink":
+		_ = w.WriteHeader(&tar.Header{Name: "claude", Typeflag: tar.TypeSymlink, Linkname: "/tmp/theirs", Mode: 0o777})
+	case "directory":
+		_ = w.WriteHeader(&tar.Header{Name: "clients/", Typeflag: tar.TypeDir, Mode: 0o755})
+	case "two-entries":
+		_ = w.WriteHeader(&tar.Header{Name: "claude", Typeflag: tar.TypeReg, Mode: 0o755, Size: int64(len(body))})
+		_, _ = w.Write(body)
+		_ = w.WriteHeader(&tar.Header{Name: "claude.bak", Typeflag: tar.TypeReg, Mode: 0o755, Size: int64(len(body))})
+		_, _ = w.Write(body)
+	case "short":
+		_ = w.WriteHeader(&tar.Header{Name: "claude", Typeflag: tar.TypeReg, Mode: 0o755, Size: int64(len(body)) + 1})
+		_, _ = w.Write(body)
+	default:
+		_ = w.WriteHeader(&tar.Header{Name: "claude", Typeflag: tar.TypeReg, Mode: 0o755, Size: int64(len(body))})
+		_, _ = w.Write(body)
+	}
+	_ = w.Close()
+}
+
+// The layer chain is what proves one image was built on another, so an
+// observation that cannot carry that meaning is refused rather than trusted.
+func TestDockerImageLayersRefusesAnUnprovableChain(t *testing.T) {
+	good := []string{"sha256:" + strings.Repeat("1", 64), "sha256:" + strings.Repeat("2", 64)}
+	var beyond []string
+	for i := range maxDockerImageLayers + 1 {
+		beyond = append(beyond, fmt.Sprintf("sha256:%064x", i))
+	}
+	for name, layers := range map[string][]string{
+		"none":       nil,
+		"not hex":    {"sha256:" + strings.Repeat("z", 64)},
+		"unprefixed": {strings.Repeat("1", 64)},
+		"truncated":  {"sha256:" + strings.Repeat("1", 32)},
+		"beyond max": beyond,
+		"chain":      good,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rt, _ := fixtureDocker(t, dockerFixture{Layers: layers})
+			d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			id, got, err := d.ImageLayers(context.Background(), "coop-clients:pinned")
+			if name != "chain" {
+				if err == nil {
+					t.Fatal("an unprovable chain was accepted", got)
+				}
+				return
+			}
+			if err != nil || id != "sha256:"+strings.Repeat("d", 64) || !slices.Equal(got, good) {
+				t.Fatal("the chain this image reported was lost", id, got, err)
+			}
+		})
+	}
+	rt, _ := fixtureDocker(t, dockerFixture{Layers: good})
+	d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	for _, name := range []string{"", "-rm", strings.Repeat("x", 513)} {
+		if _, _, err := d.ImageLayers(context.Background(), name); err == nil {
+			t.Fatalf("an invalid reference was inspected: %q", name)
+		}
+	}
+}
+
+// One regular file, read out of a container that is never started. Anything else
+// is how a replaced pinned client hides, so it is refused, not summarized.
+func TestDockerFileDigestIdentifiesOneRegularFile(t *testing.T) {
+	body := "#!/bin/sh\nexec claude\n"
+	sum := sha256.Sum256([]byte(body))
+	for name, test := range map[string]struct {
+		mode, wantErr string
+		running       bool
+		limit         int64
+	}{
+		"regular":     {mode: "", limit: 1 << 20},
+		"symlink":     {mode: "symlink", limit: 1 << 20, wantErr: "ordinary file"},
+		"directory":   {mode: "directory", limit: 1 << 20, wantErr: "ordinary file"},
+		"two entries": {mode: "two-entries", limit: 1 << 20, wantErr: "more than one entry"},
+		"truncated":   {mode: "short", limit: 1 << 20, wantErr: "whole"},
+		"absent":      {mode: "missing", limit: 1 << 20, wantErr: "no file was copied out"},
+		"over limit":  {mode: "", limit: 4, wantErr: "readable size"},
+		"no limit":    {mode: "", limit: 0, wantErr: "unavailable"},
+		"beyond max":  {mode: "", limit: maxDockerFileEvidence + 1, wantErr: "unavailable"},
+		"running":     {mode: "", limit: 1 << 20, running: true, wantErr: "unavailable"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			container := dockerFixtureContainer()
+			if test.running {
+				container.State = DockerContainerState{Status: "running", Running: true, StartedAt: time.Now()}
+			}
+			rt, _ := fixtureDocker(t, dockerFixture{Container: container, Copy: test.mode, CopyBody: body})
+			d, err := BindDocker(context.Background(), rt, "unix:///fixture.sock", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			file, err := d.FileDigest(context.Background(), dockerFixtureRef(), "/usr/local/bin/claude", test.limit)
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("read %v, want a refusal naming %q: %v", file, test.wantErr, err)
+				}
+				return
+			}
+			if err != nil || file.SHA256 != hex.EncodeToString(sum[:]) || file.Size != int64(len(body)) || file.Mode != 0o755 {
+				t.Fatal("one regular file was not identified", file, err)
+			}
+		})
 	}
 }

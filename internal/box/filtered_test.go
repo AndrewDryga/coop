@@ -51,6 +51,8 @@ type filteredDaemonFixture struct {
 	networkMembers                         map[string]netip.Addr
 	composeServices                        map[string]string
 	connected                              []string
+	images                                 map[string]fixtureImage
+	layerReads, fileReads                  map[string]int
 }
 
 func (d *filteredDaemonFixture) ConnectNetwork(_ context.Context, network string, ref runtime.DockerRef) error {
@@ -139,9 +141,65 @@ func filteredFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture) 
 	}
 	f.protected = []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}
 	f.hostAddresses = func() ([]netip.Prefix, error) { return slices.Clone(f.protected), nil }
-	d := &filteredDaemonFixture{f: f, smoke: smoke, containers: map[string]runtime.DockerContainer{}, volumes: map[string]runtime.DockerVolume{}, attached: make(chan struct{})}
+	d := &filteredDaemonFixture{f: f, smoke: smoke, containers: map[string]runtime.DockerContainer{}, volumes: map[string]runtime.DockerVolume{},
+		images: map[string]fixtureImage{}, layerReads: map[string]int{}, fileReads: map[string]int{}, attached: make(chan struct{})}
 	f.docker = d
 	return f, d
+}
+
+// faultSelects reports whether a fixture fault names this role. An unset fault
+// names NO role — including the roleless container an image proof creates.
+func faultSelects(fault, role string) bool { return fault != "" && fault == role }
+
+// fixtureImage is one image this daemon has: what `image inspect` would report
+// plus the files an image proof may read out of it.
+type fixtureImage struct {
+	id     string
+	labels map[string]string
+	layers []string
+	files  map[string]runtime.DockerFile
+}
+
+func (d *filteredDaemonFixture) Image(_ context.Context, name string) (string, map[string]string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	image, ok := d.images[name]
+	if !ok {
+		return "", nil, errors.New("fixture has no image " + name)
+	}
+	return image.id, maps.Clone(image.labels), nil
+}
+
+func (d *filteredDaemonFixture) ImageLayers(_ context.Context, name string) (string, []string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	image, ok := d.images[name]
+	if !ok {
+		return "", nil, errors.New("fixture has no image " + name)
+	}
+	d.layerReads[image.id]++
+	return image.id, slices.Clone(image.layers), nil
+}
+
+// FileDigest answers from the image the named container was created from, and
+// only for a container that exists — the proof never starts one.
+func (d *filteredDaemonFixture) FileDigest(_ context.Context, ref runtime.DockerRef, source string, limit int64) (runtime.DockerFile, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	container, ok := d.containers[ref.Name]
+	if !ok || ref.ID == "" || limit <= 0 {
+		return runtime.DockerFile{}, errors.New("fixture has no created container " + ref.Name)
+	}
+	image, ok := d.images[container.Image]
+	if !ok {
+		return runtime.DockerFile{}, errors.New("fixture has no image " + container.Image)
+	}
+	file, ok := image.files[source]
+	if !ok {
+		return runtime.DockerFile{}, errors.New("no such file or directory")
+	}
+	d.fileReads[image.id]++
+	return file, nil
 }
 
 // ExistingNamedVolumeExposure reports no backing sources: the fixture's ordinary
@@ -164,7 +222,7 @@ func (d *filteredDaemonFixture) CreateVolume(_ context.Context, ref runtime.Dock
 	defer d.mu.Unlock()
 	role := ref.Labels["coop.network.role"]
 	d.log = append(d.log, "create:"+role)
-	if d.notAttempted == role {
+	if faultSelects(d.notAttempted, role) {
 		return runtime.DockerVolume{}, runtime.ErrDockerCreateNotAttempted
 	}
 	value := runtime.DockerVolume{Name: ref.Name, Driver: "local", Labels: ref.Labels}
@@ -182,7 +240,7 @@ func (d *filteredDaemonFixture) RemoveVolume(_ context.Context, ref runtime.Dock
 	defer d.mu.Unlock()
 	role := ref.Labels["coop.network.role"]
 	d.log = append(d.log, "remove:"+role)
-	if d.refuseRemoval == role {
+	if faultSelects(d.refuseRemoval, role) {
 		return errors.New("fixture removal unknown")
 	}
 	delete(d.volumes, ref.Name)
@@ -193,10 +251,10 @@ func (d *filteredDaemonFixture) CreateContainer(_ context.Context, spec runtime.
 	defer d.mu.Unlock()
 	role := spec.Ref.Labels["coop.network.role"]
 	d.log = append(d.log, "create:"+role)
-	if d.notAttempted == role {
+	if faultSelects(d.notAttempted, role) {
 		return "", runtime.ErrDockerCreateNotAttempted
 	}
-	if d.ambiguous == role {
+	if faultSelects(d.ambiguous, role) {
 		return "", errors.New("fixture ambiguous create")
 	}
 	hash := sha256.Sum256([]byte(spec.Ref.Name))
@@ -223,7 +281,7 @@ func (d *filteredDaemonFixture) CreateContainer(_ context.Context, spec runtime.
 			v.ReadonlyRootfs = true
 		}
 	}
-	if d.corruptRole == role {
+	if faultSelects(d.corruptRole, role) {
 		v.User = "0"
 	}
 	plan, err := networkMountPlan(spec.Options)
@@ -235,7 +293,7 @@ func (d *filteredDaemonFixture) CreateContainer(_ context.Context, spec runtime.
 			v.Mounts = append(v.Mounts, mount)
 		}
 	}
-	if d.corruptMount == role && len(v.Mounts) > 0 {
+	if faultSelects(d.corruptMount, role) && len(v.Mounts) > 0 {
 		v.Mounts[0].RW = !v.Mounts[0].RW
 	}
 	v.Tmpfs = map[string]string{}
@@ -317,7 +375,7 @@ func (d *filteredDaemonFixture) RemoveContainer(_ context.Context, ref runtime.D
 	defer d.mu.Unlock()
 	role := ref.Labels["coop.network.role"]
 	d.log = append(d.log, "remove:"+role)
-	if d.refuseRemoval == role {
+	if faultSelects(d.refuseRemoval, role) {
 		return errors.New("fixture removal unknown")
 	}
 	delete(d.containers, ref.Name)

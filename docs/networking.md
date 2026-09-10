@@ -45,6 +45,31 @@ the gateway's own, and a `serve` port may not collide with a captured one.
 touch the boundary: the box's loopback is its own namespace, not a host surface. Only what leaves
 the box meets the gateway.
 
+**Your project's image, on coop's clients.** A repo whose `.agent/Dockerfile` starts with
+`ARG COOP_BASE_IMAGE` / `FROM ${COOP_BASE_IMAGE}` runs its own image in filtered mode too. The
+launch builds it with coop's locked client image as the base, under its own tag
+(`coop-<repo>-filtered:<client image>`, never the tag `coop build` writes), and reuses it until the
+Dockerfile or the client image changes. Two proofs stand between that image and the box, and
+neither reads the Dockerfile — a `FROM` line is a claim about what was built, not evidence:
+
+- the locked image's layers must be the first layers of the built image, so the box is that exact
+  image plus your own; and
+- every pinned client entry point — each launcher, what it execs, and the native binaries it needs —
+  must be byte-for-byte the file in the locked image, read out of a container that is created and
+  never started, so nothing from the image runs to describe itself.
+
+Adding tools passes. Replacing, wrapping or deleting a pinned client is refused by name, and so is
+an image that was not built on the locked one. The host qualification keeps naming coop's own image:
+your image inherits nothing from it except through those two proofs, which re-run on every launch.
+`COOP_IMAGE` stays refused — an arbitrary image has no such proof to offer.
+
+Three practical notes. The base ends as the non-root box user, so a package install needs
+`USER root` … `USER node` around it. A repo with an `.agent/Dockerfile` still needs `coop build`
+once, exactly as every other coop command in that repo does. And the filtered build is run by the
+launch, not by a human `coop build`: its `RUN` lines execute as root, with ordinary network access,
+on your Docker. The two proofs bind what the box RUNS, not what a build may do — so treat
+`.agent/Dockerfile` as the code it is, and coop says so out loud when nobody has committed it.
+
 ## Refused, with the reason you will see
 
 | Requested | Message |
@@ -57,7 +82,9 @@ the box meets the gateway.
 | ICMP beyond echo-request | `ICMP N to <dest> is not supported yet — only echo-request is` |
 | `cidr: 0.0.0.0/0` | `a /0 rule allows everything, which is not filtering — use --egress open if that is what you want` |
 | a host, loopback, link-local or metadata range | `<range> is a protected range (your host, loopback, link-local or cloud metadata) — no rule can allow it` |
-| a project `Dockerfile`, or `COOP_IMAGE` | `a filtered box runs coop's own image, so this project's .agent/Dockerfile cannot be used yet …` |
+| a project image not built on the client image | `this project's .agent/Dockerfile did not build on coop's client image — start it with ARG COOP_BASE_IMAGE and FROM ${COOP_BASE_IMAGE} …` |
+| a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /usr/local/bin/claude — a filtered box runs the clients this host's setup qualified …` |
+| `COOP_IMAGE` | `a filtered box runs coop's own image — unset COOP_IMAGE to start one` |
 | a runtime other than Docker | `this host is not set up for filtered runs with this Docker and these agents — run 'coop net setup'` |
 | `box.network: true` with no `service:` grant | `a filtered box does not join the shared services network — ask for the one sidecar you need with a to: {service: <name>} rule …` |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |

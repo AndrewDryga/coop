@@ -138,7 +138,7 @@ func AdmitSessionNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, o
 	if mode != egress.Filtered {
 		return mode, nil, nil
 	}
-	if err := checkFilteredSupport(cfg, spec, p); err != nil {
+	if err := checkFilteredSupport(cfg); err != nil {
 		return "", nil, err
 	}
 	if input.Automatic, err = sessionAutomaticDependencies(cfg, spec, options); err != nil {

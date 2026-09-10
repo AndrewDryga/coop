@@ -1407,6 +1407,10 @@ Prefer to keep the box definition elsewhere — reuse a stage of your app's exis
 separate one? Set `box.dockerfile` / `box.compose` in `.agent/project.yaml` (repo-relative
 paths); they default to `.agent/Dockerfile` and `.agent/compose.yml`.
 
+Under `--egress filtered` the same Dockerfile is built on coop's locked client image instead of the
+shared base, under its own tag, and the built image must prove it — see
+[restricted networking](docs/networking.md).
+
 Put committed, non-secret defaults needed only inside the box under `box.env`. Values are literal
 strings; quote numeric-looking values. The user's `~/.config/coop/agents/env` overrides these
 defaults, and `COOP_*` names are reserved for Coop's runtime contract.

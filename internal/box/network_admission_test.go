@@ -166,25 +166,36 @@ func TestAdmitNetworkUnapprovedProjectRulesRefuse(t *testing.T) {
 	}
 }
 
-// Filtered mode runs the qualified client image. A project image is a support
-// gap, so say so before any state or runtime resource exists.
-func TestAdmitNetworkRefusesAProjectDockerfileInFilteredMode(t *testing.T) {
+// A project's own Dockerfile is built on the locked client image and proven at
+// launch (derived_image.go), so admission no longer refuses one. COOP_IMAGE has
+// no such proof available, so it still fails before any state or runtime
+// resource exists.
+func TestAdmitNetworkRefusesAnImageOverrideButNotAProjectDockerfile(t *testing.T) {
 	for _, kind := range []string{"policy", "file"} {
 		t.Run(kind, func(t *testing.T) {
-			cfg, repo, root := admissionFixture(t)
+			cfg, repo, _ := admissionFixture(t)
 			if kind == "policy" {
 				writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), "box:\n  dockerfile: .agent/Dockerfile\n")
 			}
-			writeCopyFixture(t, filepath.Join(repo, ".agent", "Dockerfile"), "FROM scratch\n")
+			writeCopyFixture(t, filepath.Join(repo, ".agent", "Dockerfile"), "ARG COOP_BASE_IMAGE\nFROM ${COOP_BASE_IMAGE}\n")
 			filtered := egress.Filtered
-			capture, err := admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: &filtered})
-			if capture != nil || err == nil || !strings.Contains(err.Error(), "this project's .agent/Dockerfile cannot be used yet") {
-				t.Fatal("project image reached a filtered launch", err)
-			}
-			if _, err := os.Stat(root); !os.IsNotExist(err) {
-				t.Fatal("refused support gap created authority state", err)
+			_, err := admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: &filtered})
+			// This host fixture has no qualification, so admission gets that far
+			// and stops there — the point is that the Dockerfile is not the reason.
+			if err == nil || !strings.Contains(err.Error(), "this host is not set up for filtered runs") {
+				t.Fatal("a project Dockerfile was refused at admission", err)
 			}
 		})
+	}
+	cfg, repo, root := admissionFixture(t)
+	cfg.ImageOverride = "someone-elses:latest"
+	filtered := egress.Filtered
+	capture, err := admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: &filtered})
+	if capture != nil || err == nil || !strings.Contains(err.Error(), "unset COOP_IMAGE") {
+		t.Fatal("an unqualified image override reached a filtered launch", err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatal("refused support gap created authority state", err)
 	}
 }
 

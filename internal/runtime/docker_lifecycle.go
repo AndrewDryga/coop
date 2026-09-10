@@ -1,7 +1,10 @@
 package runtime
 
 import (
+	"archive/tar"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -303,4 +306,95 @@ func (d *Docker) CopyArchive(ctx context.Context, ref DockerRef, source string, 
 		return nil, errors.Join(errors.New("Docker retained evidence source unavailable"), err)
 	}
 	return d.output(ctx, limit, "container", "cp", ref.ID+":"+source, "-")
+}
+
+// DockerFile is one regular file's identity inside an image: what the runtime
+// reports for it plus the SHA-256 of its bytes. Only these facts survive the
+// read, so comparing two of them compares the files themselves.
+type DockerFile struct {
+	Mode   int64
+	Size   int64
+	SHA256 string
+}
+
+// maxDockerFileEvidence bounds ONE file read. The pinned client entry points are
+// large native binaries, so the bound is the file's size, not a retained buffer.
+const maxDockerFileEvidence = 1 << 30
+
+// fileEvidenceTimeout covers copying one such binary out of a cold image.
+const fileEvidenceTimeout = 5 * time.Minute
+
+// FileDigest identifies one regular file inside a container that was created and
+// NEVER started: `container cp` streams that one path's tar entry out, and only
+// its mode, size and digest are kept. Nothing in the image runs — a tampered
+// image must never be the thing asked to describe itself. Anything but a single
+// regular file (a symlink, a directory, a hard link, a second entry) is refused
+// rather than summarized: those are exactly how a replaced file hides.
+func (d *Docker) FileDigest(ctx context.Context, ref DockerRef, source string, limit int64) (DockerFile, error) {
+	value, present, err := d.InspectContainer(ctx, ref)
+	if err != nil || ref.ID == "" || !present || value.State.Running || !strings.HasPrefix(source, "/") ||
+		strings.ContainsAny(source, "\x00\r\n") || limit <= 0 || limit > maxDockerFileEvidence {
+		return DockerFile{}, errors.Join(errors.New("Docker file evidence source unavailable"), err)
+	}
+	var file DockerFile
+	err = d.read(ctx, fileEvidenceTimeout, func(stream io.Reader) error {
+		reader := tar.NewReader(stream)
+		header, err := reader.Next()
+		if err != nil {
+			return errors.New("no file was copied out")
+		}
+		if header.Typeflag != tar.TypeReg || header.Size < 0 || header.Size > limit {
+			return errors.New("the path is not one ordinary file of a readable size")
+		}
+		digest := sha256.New()
+		copied, err := io.Copy(digest, reader)
+		if err != nil || copied != header.Size {
+			return errors.New("the file could not be read whole")
+		}
+		if _, err := reader.Next(); !errors.Is(err, io.EOF) {
+			return errors.New("the path copied out more than one entry")
+		}
+		file = DockerFile{Mode: header.Mode, Size: header.Size, SHA256: hex.EncodeToString(digest.Sum(nil))}
+		return nil
+	}, "container", "cp", ref.ID+":"+source, "-")
+	if err != nil {
+		return DockerFile{}, err
+	}
+	return file, nil
+}
+
+const dockerImageLayerFormat = `{"ID":{{json .Id}},"Layers":{{json .RootFS.Layers}}}`
+
+// maxDockerImageLayers bounds one chain. Docker's own limit is far lower; an
+// image claiming more is not one this host built.
+const maxDockerImageLayers = 256
+
+// ImageLayers returns an image's ID and its ordered rootfs layer chain. The
+// chain is the only proof of derivation the runtime can give: a derived image's
+// chain STARTS with its base's, and a `FROM` line is a claim, not evidence.
+func (d *Docker) ImageLayers(ctx context.Context, name string) (string, []string, error) {
+	if !dockerToken(name, 512) || strings.HasPrefix(name, "-") {
+		return "", nil, errors.New("invalid Docker image reference")
+	}
+	if err := d.Verify(ctx); err != nil {
+		return "", nil, err
+	}
+	data, err := d.output(ctx, 64<<10, "image", "inspect", "--format", dockerImageLayerFormat, name)
+	if err != nil {
+		return "", nil, err
+	}
+	var image struct {
+		ID     string
+		Layers []string
+	}
+	if json.Unmarshal(data, &image) != nil || !strings.HasPrefix(image.ID, "sha256:") || !dockerHexID(strings.TrimPrefix(image.ID, "sha256:")) ||
+		len(image.Layers) == 0 || len(image.Layers) > maxDockerImageLayers {
+		return "", nil, errors.New("invalid Docker image observation")
+	}
+	for _, layer := range image.Layers {
+		if !strings.HasPrefix(layer, "sha256:") || !dockerHexID(strings.TrimPrefix(layer, "sha256:")) {
+			return "", nil, errors.New("invalid Docker image observation")
+		}
+	}
+	return image.ID, image.Layers, nil
 }

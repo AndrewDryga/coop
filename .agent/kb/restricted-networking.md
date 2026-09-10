@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/qualification.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_setup.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/run.go, docs/networking.md]
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/qualification.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_setup.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/run.go, docs/networking.md]
 updated: 2026-09-10
 ---
 
@@ -52,8 +52,30 @@ launch.
 
 Traps:
 
-- A filtered run uses the LOCKED client image: a project `Dockerfile` or a `COOP_IMAGE` override is
-  refused by name at admission (`box/network_admission.go:173`), never downgraded to a warning.
+- A filtered run's box is the LOCKED client image, or that image plus the project's own layers.
+  A project `.agent/Dockerfile` is built at launch with `COOP_BASE_IMAGE` set to the locked image,
+  through the ordinary project build path, under its own tag `coop-<repo>-filtered:<hash of the
+  client image>` (`box/derived_image.go:67`) — so an ordinary and a filtered build never collide and
+  a new client image forces a rebuild. TWO proofs, both read from the BUILT image and never from the
+  Dockerfile text, gate it (`box/derived_image.go:118`): the locked image's `RootFS.Layers` must be a
+  PREFIX of the built image's, and every pinned client entry point (launcher, each `Exec` element
+  including `/usr/local/bin/node`, and every `RequiredExecutables` path) must be byte-identical in
+  both images. The file reads happen in a container that is CREATED AND NEVER STARTED
+  (`runtime.Docker.FileDigest`, `runtime/docker_lifecycle.go:333`): asking a tampered image to
+  describe itself is how the check would be defeated. They cost ~775 MB of `docker cp` per image on
+  the current closure, so the digests are memoized per image ID. `COOP_IMAGE` stays refused at
+  admission (`box/network_admission.go:175`): nothing qualified it and no proof can.
+- That build is run by the LAUNCH, not by a human `coop build`, and a Docker build has root and
+  ordinary network. The proofs bind what the box RUNS, not what the build may do, so an
+  agent-authored `.agent/Dockerfile` is a way out of the gateway at BUILD time (a `RUN` line can
+  post the staged context anywhere). The staged context omits every shadowed secret and `.git`
+  (`box/image.go:stageBuildContext`), and an untracked box definition is called out on the launch
+  line (`box/derived_image.go:102`) — but the trade-off is deliberate and unfenced: binding the
+  Dockerfile to `coop net approve` the way a `service:` grant is bound is the open design question.
+- The host qualification keeps naming the LOCKED image, and so does the execution record's
+  `ClientImage` — the derived image is recorded beside it as `ProjectImage`
+  (`networkstate/execution.go:75`), evidence of what ran, never authority. The preflight smoke may
+  never carry one; it qualifies the client image itself.
 - Extra runtime arguments (`COOP_RUN_ARGS`, `coop … -- …`) are reduced to bind mounts and
   `-e KEY=VALUE`; anything else is refused by name (`box/filtered_mounts.go:25`). The gateway, not
   the environment, is the boundary — and a bind that IS or CONTAINS the runtime's control surface
@@ -71,6 +93,11 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-10 — a project `.agent/Dockerfile` now runs under `--egress filtered`: built on the locked
+  client image under its own tag, admitted only by a layer-prefix proof plus a byte-identical
+  pinned-client proof, both read from the built image. Admission's Dockerfile refusal is gone;
+  `COOP_IMAGE`'s remains. Verified end-to-end on a scratch repo (a package the base lacks, `coop
+  claude`, a tampered launcher, a foreign base).
 - 2026-09-10 — S7c: an approval now binds the project directory's inode and each `service:` grant's
   reviewed Compose digest, `approve` applies the launch capability gate, filtered mounts refuse the
   runtime's control surfaces, and the never-produced hard ceiling is gone. Re-verified.
