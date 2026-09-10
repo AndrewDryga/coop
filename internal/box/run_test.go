@@ -3731,3 +3731,69 @@ func TestRunSkipsSidecarStartWhileAnotherBoxRuns(t *testing.T) {
 		t.Fatalf("already-running services were not discovered for the box:\n%s", args)
 	}
 }
+
+// A generated role file's NAME comes from the lead adapter's renderer, so it is data, not a path:
+// `filepath.Join(dir, "../x.md")` lands outside the temp dir coop mounts read-only. A name that is
+// not a plain local leaf is refused — never cleaned into something that happens to work.
+func TestAssembleAgentsDirRejectsNonLeafNames(t *testing.T) {
+	for _, tc := range []struct{ label, name string }{
+		{"parent escape", "../escape.md"},
+		{"subdirectory", "a/b.md"},
+		{"dot", "."},
+		{"dot dot", ".."},
+		{"absolute", "/etc/coop-role.md"},
+		{"empty", ""},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			parent := t.TempDir()
+			dir, err := assembleAgentsDir(parent, []genFile{{tc.name, "generated"}})
+			if err == nil {
+				t.Errorf("assembleAgentsDir accepted %q and built %s", tc.name, dir)
+			}
+			entries, readErr := os.ReadDir(parent)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if len(entries) != 0 {
+				var left []string
+				for _, e := range entries {
+					left = append(left, e.Name())
+				}
+				t.Errorf("name %q left %v under the parent; nothing may be written outside the temp dir, and the temp dir must be removed", tc.name, left)
+			}
+		})
+	}
+}
+
+// The companion inventory becomes one bind mount and one env pair each, straight onto the container
+// argv. It is bounded, and an inventory over the bound is REFUSED — a silently shortened list would
+// start a box missing repositories the caller believes it has.
+func TestCompanionRepositoryMountsBoundsTheInventory(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory := func(n int) []CompanionRepository {
+		out := make([]CompanionRepository, 0, n)
+		for i := range n {
+			name := fmt.Sprintf("repo%d", i)
+			host := filepath.Join(base, name)
+			if err := os.Mkdir(host, 0o755); err != nil && !os.IsExist(err) {
+				t.Fatal(err)
+			}
+			out = append(out, CompanionRepository{Name: name, HostPath: host, BaseCommit: strings.Repeat("a", 40)})
+		}
+		return out
+	}
+	mounts, environment, err := companionRepositoryMounts(inventory(MaxCompanionRepositories))
+	if err != nil || len(mounts) != MaxCompanionRepositories || len(environment) != MaxCompanionRepositories {
+		t.Fatalf("exactly %d companions = %d mounts, %d env, %v; want them all accepted", MaxCompanionRepositories, len(mounts), len(environment), err)
+	}
+	mounts, environment, err = companionRepositoryMounts(inventory(MaxCompanionRepositories + 1))
+	if err == nil || !strings.Contains(err.Error(), strconv.Itoa(MaxCompanionRepositories)) {
+		t.Fatalf("over-limit inventory = %v, want a refusal naming the %d limit", err, MaxCompanionRepositories)
+	}
+	if len(mounts) != 0 || len(environment) != 0 {
+		t.Fatalf("refused inventory still produced %d mounts and %d env entries; it must not be truncated to the cap", len(mounts), len(environment))
+	}
+}

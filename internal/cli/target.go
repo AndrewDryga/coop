@@ -92,6 +92,19 @@ func foldTarget(t agents.Target, model, profile *string) error {
 // lead rotates accounts). kind names the flag for the error message (always "--peer" now).
 // Unknown or unauthed → a usage error naming the peer + the fix; never a silent skip.
 func (a *app) resolvePeers(kind string, vals []string) ([]agents.Target, error) {
+	if len(vals) == 0 {
+		return nil, nil
+	}
+	// One credential scan for the whole slice: AuthedAgents walks every provider's profile and
+	// reads the env file, and its answer cannot change between two peers of one launch. Passing
+	// the result in is what keeps it out of the loop.
+	return resolvePeerTargets(kind, vals, box.AuthedAgents(a.cfg))
+}
+
+// resolvePeerTargets validates each --peer value against one already-taken list of signed-in
+// providers. A refusal names the peer AS TYPED, model and all: "codex" when the user wrote
+// "codex:gpt-5.6-sol" sends them looking for a peer they did not name.
+func resolvePeerTargets(kind string, vals, authed []string) ([]agents.Target, error) {
 	var peers []agents.Target
 	for _, v := range vals {
 		t, err := agents.ParseTarget(v)
@@ -101,8 +114,8 @@ func (a *app) resolvePeers(kind string, vals []string) ([]agents.Target, error) 
 		if len(t.Accounts) > 0 {
 			return nil, fmt.Errorf("%s %q: a peer runs on its default account — drop the @account (name it %s or %s:<model>)", kind, v, t.Provider, t.Provider)
 		}
-		if !slices.Contains(box.AuthedAgents(a.cfg), t.Provider) {
-			return nil, fmt.Errorf("%s %q isn't signed in — run: coop login %s (see 'coop credentials')", kind, t.Provider, t.Provider)
+		if !slices.Contains(authed, t.Provider) {
+			return nil, fmt.Errorf("%s %q isn't signed in — run: coop login %s (see 'coop credentials')", kind, t.String(), t.Provider)
 		}
 		peers = append(peers, t)
 	}

@@ -1105,9 +1105,21 @@ func pathComponentPrefix(root, candidate string) bool {
 	return true
 }
 
+// MaxCompanionRepositories bounds the companion inventory one box may mount. Each entry becomes a
+// bind mount and an env pair on the container argv, so the list is a real resource an untrusted
+// caller would otherwise set. An inventory over the bound is REFUSED, never shortened to fit: a box
+// silently missing repositories its caller believes it has is the worse failure.
+const MaxCompanionRepositories = 64
+
 func companionRepositoryMounts(
 	repositories []CompanionRepository,
 ) ([]Mount, []companionRepositoryEnvironment, error) {
+	if len(repositories) > MaxCompanionRepositories {
+		return nil, nil, fmt.Errorf(
+			"%d companion repositories exceeds the limit of %d",
+			len(repositories), MaxCompanionRepositories,
+		)
+	}
 	seen := make(map[string]bool, len(repositories))
 	mounts := make([]Mount, 0, len(repositories))
 	environment := make([]companionRepositoryEnvironment, 0, len(repositories))
@@ -1725,6 +1737,13 @@ func assembleAgentsDir(parent string, gen []genFile) (string, error) {
 		return "", err
 	}
 	for _, g := range gen {
+		// The name is adapter-rendered data, not a path: anything but a plain local leaf could
+		// place a file outside the dir coop mounts. Refuse it rather than clean it into a name
+		// that happens to land inside — a rewritten role file is not the role that was asked for.
+		if !filepath.IsLocal(g.name) || filepath.Base(g.name) != g.name || g.name == "." {
+			os.RemoveAll(dir)
+			return "", fmt.Errorf("generated role file %q must be a plain file name", g.name)
+		}
 		if err := os.WriteFile(filepath.Join(dir, g.name), []byte(g.content), 0o644); err != nil {
 			os.RemoveAll(dir)
 			return "", err

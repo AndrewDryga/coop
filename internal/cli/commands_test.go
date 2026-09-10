@@ -637,6 +637,35 @@ func TestResolvePeers(t *testing.T) {
 	}
 }
 
+// A refusal must name the peer the user actually typed. Reporting only the provider ("codex") for
+// a `--peer codex:gpt-5.6-sol` sends them hunting for a peer they never named. And the signed-in
+// set is taken ONCE for the whole slice: resolvePeerTargets receives it, so nothing in the loop can
+// re-scan the credential store per peer.
+func TestResolvePeersNamesTheFullPeerAndScansOnce(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "claude", "profiles", "default"), 0o755)
+	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
+	a := &app{cfg: &config.Config{ConfigDir: dir}}
+
+	_, err := a.resolvePeers("--peer", []string{"codex:gpt-5.6-sol"})
+	if err == nil || !strings.Contains(err.Error(), `"codex:gpt-5.6-sol"`) {
+		t.Fatalf("unauthed peer error = %v, want it to name the peer as typed", err)
+	}
+	if !strings.Contains(err.Error(), "coop login codex") {
+		t.Errorf("the remedy must still name the provider to log into, got %v", err)
+	}
+	// The list handed in is the only authority: claude IS signed in on disk, so a refusal here can
+	// only come from the passed slice — the scan is an input, never re-derived inside the loop.
+	if _, err := resolvePeerTargets("--peer", []string{"claude:opus-4.8"}, nil); err == nil ||
+		!strings.Contains(err.Error(), `"claude:opus-4.8"`) {
+		t.Errorf("resolvePeerTargets ignored the signed-in list it was given: %v", err)
+	}
+	peers, err := resolvePeerTargets("--peer", []string{"claude:opus-4.8", "codex"}, []string{"claude", "codex"})
+	if err != nil || len(peers) != 2 {
+		t.Fatalf("every peer in the given list = (%+v, %v), want both accepted", peers, err)
+	}
+}
+
 // TestCmdLoginTarget: the account rides the target (coop login claude@work); a stray --credential
 // is an unexpected arg; a :model has no meaning for login; an account ladder is loop-only. The happy
 // path parses and reaches loginTo (which then needs a TTY) — proof the target flowed through.

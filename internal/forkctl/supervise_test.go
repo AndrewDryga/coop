@@ -1007,3 +1007,34 @@ func TestForkLogsFollowReportsStreamFailure(t *testing.T) {
 		t.Fatalf("follow failure output = %q", got)
 	}
 }
+
+// A failed publish must release only the reservation THIS detach wrote. A bare remove of the pid
+// path deletes whatever claim is on disk — a replacement worker's, or another coop's — so the
+// clearing goes through clearForkClaimUnlocked, which verifies the state still names this process.
+func TestRecordStartedForkLeavesAnotherOwnersClaim(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	name := "perf"
+	foreign := forkspace.WorkerState{Pid: os.Getpid() + 1, Token: "foreign-start-token", Claim: true}
+	if err := forkspace.WriteWorkerState(repo, name, foreign); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(forkspace.PidPath(repo, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command("sleep", "60")
+	if err := child.Start(); err != nil {
+		t.Skipf("cannot start a child: %v", err)
+	}
+	// An invalid generation makes the publish fail deterministically, without touching the disk.
+	if err := recordStartedFork(repo, name, child, forkspace.Generation("not a generation")); err == nil {
+		t.Fatal("recordStartedFork with an invalid generation should fail")
+	}
+	after, err := os.ReadFile(forkspace.PidPath(repo, name))
+	if err != nil {
+		t.Fatalf("another owner's claim was removed by a failed start: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("another owner's claim changed: %q -> %q", before, after)
+	}
+}

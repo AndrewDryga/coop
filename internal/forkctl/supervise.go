@@ -196,8 +196,9 @@ func recordStartedFork(repo, name string, cmd *exec.Cmd, generation ...forkspace
 	if err := forkspace.WritePidUnlockedGeneration(repo, name, cmd.Process.Pid, currentGeneration); err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		_ = os.Remove(forkspace.PidPath(repo, name))
-		return err
+		// Release only OUR reservation: a bare remove would delete whatever claim is on disk,
+		// including a replacement worker's or another coop's.
+		return errors.Join(err, clearForkClaimUnlocked(repo, name))
 	}
 	return nil
 }
