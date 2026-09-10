@@ -215,6 +215,66 @@ func (r Runtime) RunInterruptible(ctx context.Context, stdin io.Reader, stdout, 
 	return runInterruptibleCommand(ctx, cmd)
 }
 
+// Helper is a long-lived runtime process whose stdin and stdout the caller owns — a `docker run
+// -i` helper container that talks to coop over its own stdio. It runs in its own process group,
+// like an interruptible box, so a terminal Ctrl-C reaches coop and not the helper; the owner
+// stops it (Close) and is the only thing that does.
+type Helper struct {
+	Stdin  io.WriteCloser
+	Stdout io.ReadCloser
+	cmd    *exec.Cmd
+	done   chan error    // the Wait result, consumed only by Close's teardown
+	exited chan struct{} // closed once the process has exited, for anyone watching
+}
+
+// StartHelper launches the runtime with args, stderr going to stderr, and returns the running
+// helper with its stdio pipes attached.
+func (r Runtime) StartHelper(stderr io.Writer, args ...string) (*Helper, error) {
+	cmd := exec.Command(r.Name, args...)
+	cmd.Stderr = stderr
+	cmd.Env = interruptibleProcessEnvironment()
+	processGroup, err := interruptibleProcessGroup()
+	if err != nil {
+		return nil, err
+	}
+	cmd.SysProcAttr = processGroup
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("%s: %w", cmd.Path, err)
+	}
+	h := &Helper{Stdin: stdin, Stdout: stdout, cmd: cmd, done: make(chan error, 1), exited: make(chan struct{})}
+	go func() {
+		h.done <- cmd.Wait()
+		close(h.exited)
+	}()
+	return h, nil
+}
+
+// Exited is closed once the helper process has exited, whatever the cause.
+func (h *Helper) Exited() <-chan struct{} { return h.exited }
+
+// Close stops the helper: stdin is closed first — a well-behaved helper exits on EOF — then,
+// after the interruptible grace, the process group is torn down like a canceled box. It always
+// reaps the process.
+func (h *Helper) Close() error {
+	_ = h.Stdin.Close()
+	timer := time.NewTimer(killGrace)
+	defer timer.Stop()
+	select {
+	case <-h.exited:
+		return nil
+	case <-timer.C:
+	}
+	return killGroup(h.cmd.Process.Pid, h.done)
+}
+
 // runInterruptibleCommand is RunInterruptible's process-group supervision for an
 // already assembled command, shared with the exact-owned Docker adapter.
 func runInterruptibleCommand(ctx context.Context, cmd *exec.Cmd) (int, error) {

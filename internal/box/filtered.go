@@ -74,6 +74,11 @@ type filteredExecution struct {
 	serveEnv       []string // COOP_SERVE_URL_* the agent container still gets
 	servicesNet    string   // the Compose network the controller joins, if any
 	services       []networkgateway.ServiceBinding
+	// taskVolume is the run-private task-channel volume coop created THIS run (taskchannel.go).
+	// It is coop-owned, holds only the coop socket, and is mounted read-only, so it is exempt from
+	// the workload volume-exposure check the same way this run's generated files are — its backing
+	// mountpoint lives inside the daemon VM and is not a host path an agent could redirect.
+	taskVolume string
 }
 
 func (f *filteredExecution) workloadOutcome(code int, err error, cancelled bool) string {
@@ -189,7 +194,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 			ui.Detail("waiting for Docker to start this box (%s so far)", elapsed.Round(time.Second))
 		}
 	}
-	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, attempted: map[string]bool{}}
+	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, attempted: map[string]bool{}, taskVolume: spec.taskVolume}
 	f.unsafeRoots = []string{spec.Repo, project}
 	if roots := ConfigExposureRoots(cfg); len(roots) > 1 {
 		f.unsafeRoots = append(f.unsafeRoots, roots[1:]...)

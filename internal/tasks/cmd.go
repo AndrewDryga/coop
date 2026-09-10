@@ -412,34 +412,12 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 			return 2, fmt.Errorf("coop %s: structured flags need every section — missing %s (or omit all flags to scaffold)", cmdLabel, strings.Join(missing, ", "))
 		}
 	}
-	id := time.Now().Format("2006-01-02") + "-" + slug
-	// An id is a stable, unique handle, so reject a collision in ANY state — the four lifecycle dirs
-	// AND xx_backlog — else a re-add (or a promote) would make two folders share an id, and
-	// findTask/findBacklogTask would silently shadow one.
-	for _, st := range TaskStates {
-		if pathExists(filepath.Join(root, st, id)) {
-			return 1, fmt.Errorf("task %q already exists in %s/", id, st)
+	id, err := createTaskFolder(root, state, slug, title, values, subtasks)
+	if err != nil {
+		if errors.As(err, &taskExistsError{}) {
+			return 1, err
 		}
-	}
-	if pathExists(filepath.Join(root, StateBacklog, id)) {
-		return 1, fmt.Errorf("task %q already exists in %s/ — promote it (coop backlog promote %s) instead of re-adding", id, StateBacklog, id)
-	}
-	// Ensure all four state dirs exist (the queue may be fresh, or predate the four-state scaffold), so
-	// the move-a-folder-between-states protocol always has a real dir to move into — same guarantee as
-	// `coop init`. Then the task's own todo dir.
-	if err := ScaffoldStateDirs(root); err != nil {
 		return -1, err
-	}
-	// The target dir: stateTodo lives under scaffoldStateDirs above; xx_backlog is created on demand
-	// here (like a fresh secondary queue), so `coop init` never has to scaffold an empty backlog drawer.
-	dir := filepath.Join(root, state, id)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return -1, err
-	}
-	for name, content := range newTaskFiles(id, title, time.Now().Format(time.RFC3339), values, subtasks) {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-			return -1, err
-		}
 	}
 	where := ""
 	if projectName != "" {
@@ -454,6 +432,47 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 		ui.OK("added %s%s — fill in its task.md (Context · Acceptance · Approach · Subtasks); log.md + state.md seeded", id, where)
 	}
 	return 0, nil
+}
+
+// taskExistsError is the id-collision refusal `coop tasks add` reports as a user error (exit 1).
+type taskExistsError struct{ msg string }
+
+func (e taskExistsError) Error() string { return e.msg }
+
+// createTaskFolder writes a new task folder <date>-<slug> under root/state from the given body values
+// and returns its id. Shared by `coop tasks add`, `coop backlog add`, and the in-box task channel, so
+// every path creates the same files with the same collision rule.
+func createTaskFolder(root, state, slug, title string, values map[string]string, subtasks []string) (string, error) {
+	id := time.Now().Format("2006-01-02") + "-" + slug
+	// An id is a stable, unique handle, so reject a collision in ANY state — the four lifecycle dirs
+	// AND xx_backlog — else a re-add (or a promote) would make two folders share an id, and
+	// findTask/findBacklogTask would silently shadow one.
+	for _, st := range TaskStates {
+		if pathExists(filepath.Join(root, st, id)) {
+			return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/", id, st)}
+		}
+	}
+	if pathExists(filepath.Join(root, StateBacklog, id)) {
+		return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/ — promote it (coop backlog promote %s) instead of re-adding", id, StateBacklog, id)}
+	}
+	// Ensure all four state dirs exist (the queue may be fresh, or predate the four-state scaffold), so
+	// the move-a-folder-between-states protocol always has a real dir to move into — same guarantee as
+	// `coop init`. Then the task's own todo dir.
+	if err := ScaffoldStateDirs(root); err != nil {
+		return "", err
+	}
+	// The target dir: stateTodo lives under scaffoldStateDirs above; xx_backlog is created on demand
+	// here (like a fresh secondary queue), so `coop init` never has to scaffold an empty backlog drawer.
+	dir := filepath.Join(root, state, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	for name, content := range newTaskFiles(id, title, time.Now().Format(time.RFC3339), values, subtasks) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			return "", err
+		}
+	}
+	return id, nil
 }
 
 // taskOwnerIdentity is the best-effort "who is claiming this" pair `coop tasks claim` records: no
@@ -1369,6 +1388,62 @@ func finalizeCompletedTask(id, taskDir string) error {
 	return nil
 }
 
+// ErrTaskLeased is the refusal every host mutation shares when another live controller holds the
+// task's authority flock: "task <id> is leased by another controller".
+var ErrTaskLeased = errors.New("leased by another controller")
+
+var errTaskChangedBeforeBlock = errors.New("task changed before it could be blocked")
+
+// BlockTrustedTask moves a live (non-done) task into 50_blocked/ under host task authority: it
+// stands down an own lease holder, takes the authority flock, and holds it together with the owner
+// lock through check, move, and owner-record removal, so an assignment cannot appear after a stale
+// precheck and become stranded in blocked. Shared by `coop tasks block` and the in-box task
+// channel; a task another controller leases is refused with errTaskLeasedElsewhere.
+func BlockTrustedTask(root string, t Item, actor ClaimActor) error {
+	if _, err := stopOwnLeaseHolder(root, t, actor); err != nil {
+		return err
+	}
+	authority, err := lockLeaseAuthority(root, t.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return fmt.Errorf("task %s is %w", t.ID, ErrTaskLeased)
+		}
+		return err
+	}
+	ownerLock, err := lockTaskOwner(root, t.ID)
+	if err != nil {
+		return errors.Join(err, unlockLeaseFile(authority))
+	}
+	current, ok, err := CurrentTask(root, t.ID)
+	if err != nil {
+		return errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
+	}
+	if !ok || current.State != t.State || current.Dir != t.Dir {
+		return errors.Join(errTaskChangedBeforeBlock, ownerLock.Close(), unlockLeaseFile(authority))
+	}
+	record, owned, err := ownerLock.Read()
+	if err != nil {
+		return errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
+	}
+	if owned && record.Kind == TaskOwnerFork {
+		return errors.Join(
+			fmt.Errorf("%w: cannot block %s while it is %s", ErrTaskSandboxOwned, t.ID, TaskOwnerLabel(record)),
+			ownerLock.Close(), unlockLeaseFile(authority),
+		)
+	}
+	if current.State != StateBlocked {
+		if err := MoveTaskDir(root, current, StateBlocked); err != nil {
+			return errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
+		}
+	}
+	if owned {
+		if err := removeTaskOwnerRecordFile(root, t.ID); err != nil {
+			return errors.Join(fmt.Errorf("task %s is now blocked, but clearing its owner record failed: %w", t.ID, err), ownerLock.Close(), unlockLeaseFile(authority))
+		}
+	}
+	return errors.Join(ownerLock.Close(), unlockLeaseFile(authority))
+}
+
 func tasksFolderBlock(root string, args []string) (int, error) {
 	if len(args) < 1 {
 		return 2, errors.New("usage: coop tasks block <id>")
@@ -1384,54 +1459,11 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 		if err := moveTrustedTaskFromDone(root, t, StateBlocked); err != nil {
 			return -1, err
 		}
-	} else {
-		// Assignment and human block contend on the same task authority. Hold it together with the
-		// owner lock through check, move, and owner removal so preparing cannot appear after a stale
-		// precheck and become stranded in blocked.
-		if _, err := stopOwnLeaseHolder(root, t, captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{})); err != nil {
-			return -1, err
+	} else if err := BlockTrustedTask(root, t, captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{})); err != nil {
+		if errors.Is(err, ErrTaskLeased) || errors.Is(err, ErrTaskSandboxOwned) || errors.Is(err, errTaskChangedBeforeBlock) {
+			return 1, err
 		}
-		authority, err := lockLeaseAuthority(root, t.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
-		if err != nil {
-			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-				return 1, fmt.Errorf("task %s is leased by another controller", t.ID)
-			}
-			return -1, err
-		}
-		ownerLock, err := lockTaskOwner(root, t.ID)
-		if err != nil {
-			return -1, errors.Join(err, unlockLeaseFile(authority))
-		}
-		current, ok, err := CurrentTask(root, t.ID)
-		if err != nil {
-			return -1, errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
-		}
-		if !ok || current.State != t.State || current.Dir != t.Dir {
-			return 1, errors.Join(errors.New("task changed before it could be blocked"), ownerLock.Close(), unlockLeaseFile(authority))
-		}
-		record, owned, err := ownerLock.Read()
-		if err != nil {
-			return -1, errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
-		}
-		if owned && record.Kind == TaskOwnerFork {
-			return 1, errors.Join(
-				fmt.Errorf("%w: cannot block %s while it is %s", ErrTaskSandboxOwned, t.ID, TaskOwnerLabel(record)),
-				ownerLock.Close(), unlockLeaseFile(authority),
-			)
-		}
-		if current.State != StateBlocked {
-			if err := MoveTaskDir(root, current, StateBlocked); err != nil {
-				return -1, errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
-			}
-		}
-		if owned {
-			if err := removeTaskOwnerRecordFile(root, t.ID); err != nil {
-				return -1, errors.Join(fmt.Errorf("task %s is now blocked, but clearing its owner record failed: %w", t.ID, err), ownerLock.Close(), unlockLeaseFile(authority))
-			}
-		}
-		if err := errors.Join(ownerLock.Close(), unlockLeaseFile(authority)); err != nil {
-			return -1, err
-		}
+		return -1, err
 	}
 	dec := filepath.Join(root, StateBlocked, t.ID, "decision.md")
 	if !fileExists(dec) {

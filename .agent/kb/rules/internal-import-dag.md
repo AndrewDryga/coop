@@ -46,6 +46,13 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-10 — **+2 packages, +3 edges** for the in-box task channel (task
+  2026-09-08-give-an-in-box-agent-a-coop-owned-task-mcp-serve): new leaf `taskchannel` (the
+  transport: helper-stdio multiplexer, no task/MCP knowledge, so `box` can import it), new
+  `taskmcp -> mcp, tasks` (the eight task tools over the lifecycle), `box -> taskchannel` (the
+  sandbox owner runs the helper), and `loop -> taskmcp`, `cli -> taskmcp` (the loop and doctor
+  build the server from the queue they own). No reverse edge into `box`. Swept with
+  `TestInternalImportDAG`; these were the only new edges.
 - 2026-09-10 — S5 (d2401e1): `sessionsvc -> egress, networkstate, networkview` — a remote session
   freezes its posture at create and reads run evidence back; `session` storage stays transport
   neutral and the API gains no approval path. `sessionsvc -> box` already existed. The WIP's

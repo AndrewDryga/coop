@@ -2,8 +2,8 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/box/auth.go, internal/box/run.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
-updated: 2026-09-05
+sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/box/auth.go, internal/box/run.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
+updated: 2026-09-10
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -34,6 +34,14 @@ credential-projection failures before the ACP child starts. Missing and server-e
 remain intentionally inert; malformed or ambiguous active configuration never degrades into a
 tool-free answer.
 
+`mcp.BindTaskTools` is a second coop-owned binding beside `BindResponderState`: for a loop work box
+it merges the reserved `coop-tasks` STDIO server (`{"command":"socat","args":["STDIO","UNIX-CONNECT:
+/coop/tasks/mcp.sock"]}`) into the same validated snapshot before the per-run artifact is written, so
+every projection — claude `--mcp-config`, codex TOML, gemini settings, ACP `session/new` — carries it
+unchanged. Unlike responder-state it needs no bearer token: the socket is mounted only into this run's
+box, so the mount is the authority. See [[in-box-task-channel]] for why the transport is a
+helper-container socket and not HTTP.
+
 Credential scope is not proof of command consumption. `credentialScope` answers whose login may be
 mounted, while `nestedAgentCommand` answers whether an explicit peer or consult/delegate/degraded
 native role can actually spawn that provider CLI. The raw snapshot mount exists only for an outer
@@ -48,6 +56,9 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-10 — added the second coop-owned binding, `mcp.BindTaskTools`: the box's `coop-tasks` STDIO
+  task server merges into the same snapshot before the artifact write, tokenless because the socket is
+  run-private. See in-box-task-channel.
 - 2026-08-26 — routed remote ACP session projection through the same canonical snapshot and made
   active-adapter errors fail before child launch
 - 2026-08-26 — centralized shared/native host reads behind the bounded regular-file boundary and

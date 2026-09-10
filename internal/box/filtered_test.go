@@ -923,3 +923,25 @@ func TestFilteredProtectedAddressesCoverTheRuntimeTopology(t *testing.T) {
 		t.Fatal("a topology beyond the qualified envelope was silently truncated")
 	}
 }
+
+// The task-channel volume coop created this run is exempt from the workload volume-exposure check:
+// it is coop-owned, run-private, and read-only, and its backing mountpoint lives in the daemon VM
+// (not a host path). A filtered loop iteration mounts it, so it must validate — while any OTHER
+// named volume still goes through the daemon exposure inspection.
+func TestFilteredMountsExemptTheOwnedTaskChannelVolume(t *testing.T) {
+	f, d := filteredFixture(t)
+	f.taskVolume = "coop-tasks-deadbeefdeadbeef"
+	if err := f.validateMounts([]string{"-v", f.taskVolume + ":/coop/tasks:ro"}, nil, nil); err != nil {
+		t.Fatalf("the owned task-channel volume was refused: %v", err)
+	}
+	if slices.Contains(d.log, "volume-exposure") {
+		t.Fatal("the exempt task-channel volume was still sent to the daemon exposure inspection")
+	}
+	// Any OTHER named volume is not exempt — it reaches the daemon exposure inspection.
+	if err := f.validateMounts([]string{"-v", "some-other-volume:/coop/tasks:ro"}, nil, nil); err != nil {
+		t.Fatalf("unexpected refusal for a fixture volume: %v", err)
+	}
+	if !slices.Contains(d.log, "volume-exposure") {
+		t.Fatal("an unowned named volume skipped the exposure inspection")
+	}
+}

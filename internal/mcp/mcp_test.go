@@ -803,3 +803,75 @@ func TestResponderStateBindingCannotBeShadowedBySharedConfiguration(t *testing.T
 		t.Fatalf("collision error = %v", err)
 	}
 }
+
+// The task-tools binding renders for every consumer: claude reads the bound file directly, codex
+// gets a [mcp_servers.coop-tasks] stdio table, gemini merges the same JSON shape, and ACP gets the
+// stdio server (no "type" key, which its adapter reads as stdio).
+func TestTaskToolsBindingRendersForEveryConsumer(t *testing.T) {
+	snapshot, err := BindTaskTools([]byte(`{"other":{"preserved":true},"mcpServers":{"shared":{"command":"true"}}}`), "/coop/tasks/mcp.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(snapshot), `"other":{"preserved":true}`) || !strings.Contains(string(snapshot), `"shared"`) {
+		t.Fatalf("bound snapshot lost content: %s", snapshot)
+	}
+	var root struct {
+		Servers map[string]struct {
+			Type    string   `json:"type"`
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(snapshot, &root); err != nil {
+		t.Fatal(err)
+	}
+	bound := root.Servers[TaskToolsServer]
+	if bound.Type != "" || bound.Command != "socat" || strings.Join(bound.Args, " ") != "STDIO UNIX-CONNECT:/coop/tasks/mcp.sock" {
+		t.Fatalf("coop-tasks definition = %+v", bound)
+	}
+	file := writeTmp(t, "bound.json", string(snapshot))
+	codex, err := GenerateCodex(file, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(codex, "[mcp_servers.coop-tasks]\ncommand = \"socat\"\nargs = [\"STDIO\", \"UNIX-CONNECT:/coop/tasks/mcp.sock\"]") {
+		t.Fatalf("codex TOML = %s", codex)
+	}
+	gemini, err := GenerateGemini(file, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gemini, `"coop-tasks"`) || !strings.Contains(gemini, `"socat"`) {
+		t.Fatalf("gemini settings = %s", gemini)
+	}
+	servers, err := ACPServers(file, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(servers)
+	if !strings.Contains(string(encoded), `{"args":["STDIO","UNIX-CONNECT:/coop/tasks/mcp.sock"],"command":"socat","name":"coop-tasks"}`) {
+		t.Fatalf("ACP servers = %s", encoded)
+	}
+	// Both coop bindings coexist on one snapshot.
+	both, err := BindResponderState(snapshot, "https://responder.example/v1/state-tools/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(both), `"coop-tasks"`) || !strings.Contains(string(both), `"responder-state"`) {
+		t.Fatalf("combined = %s", both)
+	}
+}
+
+func TestTaskToolsBindingCannotBeShadowedAndNeedsASocket(t *testing.T) {
+	if _, err := BindTaskTools([]byte(`{"mcpServers":{"coop-tasks":{"command":"attacker"}}}`), "/coop/tasks/mcp.sock"); err == nil || !strings.Contains(err.Error(), "reserves server") {
+		t.Fatalf("collision error = %v", err)
+	}
+	if _, err := BindTaskTools(nil, ""); err == nil {
+		t.Fatal("an empty socket path must be refused")
+	}
+	// An absent shared config is a valid (empty) snapshot: the binding alone makes it present.
+	snapshot, err := BindTaskTools(nil, "/coop/tasks/mcp.sock")
+	if err != nil || !strings.Contains(string(snapshot), `"coop-tasks"`) {
+		t.Fatalf("binding onto an empty snapshot = %s, %v", snapshot, err)
+	}
+}

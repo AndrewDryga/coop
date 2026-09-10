@@ -300,7 +300,7 @@ func CompleteTrustedTask(root string, task Item) (retErr error) {
 	authority, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return fmt.Errorf("task %s is leased by another controller", task.ID)
+			return fmt.Errorf("task %s is %w", task.ID, ErrTaskLeased)
 		}
 		return err
 	}
@@ -3414,7 +3414,19 @@ func releaseGoneOwner(root, id string, expected TaskOwnerRecord) (bool, error) {
 	return true, removeTaskOwnerRecordFile(root, id)
 }
 
+// AppendTaskLogStrict appends one host note to a task's log.md as a bullet line.
 func AppendTaskLogStrict(taskDir, note string) error {
+	return appendTaskLogChunk(taskDir, "\n- "+note+"\n")
+}
+
+// AppendTaskLogEntry appends an agent-authored entry (a heading, bullets, prose — any lines) to a
+// task's log.md, separated from what precedes it by a blank line. The in-box task channel uses it
+// so a box appends under the same single-link, size-bounded discipline as a host note.
+func AppendTaskLogEntry(taskDir, entry string) error {
+	return appendTaskLogChunk(taskDir, "\n"+strings.TrimRight(entry, "\n")+"\n")
+}
+
+func appendTaskLogChunk(taskDir, line string) error {
 	root, err := OpenTaskMetadataRoot(taskDir)
 	if err != nil {
 		return err
@@ -3445,7 +3457,6 @@ func AppendTaskLogStrict(taskDir, note string) error {
 		_ = f.Close()
 		return err
 	}
-	line := "\n- " + note + "\n"
 	if after.Size()+int64(len(line)) > taskMetadataFileLimit {
 		_ = f.Close()
 		return fmt.Errorf("task metadata file %q exceeds %d bytes", "log.md", taskMetadataFileLimit)

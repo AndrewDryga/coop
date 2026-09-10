@@ -109,7 +109,7 @@ func (p *claudePlainLimitProbe) limited(code int) bool {
 // live bar watches task counts while its explicit activity remains fixed. On interactive terminals
 // the agent's output is funneled into the scroll history above a sticky progress bar (a
 // Docker-build-style live view). Non-terminal output goes straight to the destination unchanged.
-func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming, agentCommand bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {
+func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming, agentCommand bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string, taskTools box.TaskToolServer) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {
 	// Registered FIRST, so it is the LAST deferred step: a filtered box's
 	// refusals print after the live bar is torn down and the ui sink is plain
 	// stderr again, alongside the loop's other between-iteration lines.
@@ -244,7 +244,7 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 		boxCtx = childCtx
 	}
 	code, err = c.runBox(box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: peers, Preset: c.preset, RunID: c.runID, AssignedTask: assignedTask,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: peers, Preset: c.preset, RunID: c.runID, AssignedTask: assignedTask, TaskTools: taskTools,
 		ForkWorker: c.forkWorker, ActivityRepo: c.activityRepo, ActivityKind: c.activityKind,
 		ActivityTask: c.iterationActivityTask(assignedTask), ActivitySource: c.runID,
 		AgentCommand:         agentCommand,

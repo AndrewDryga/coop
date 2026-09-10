@@ -37,24 +37,36 @@ func TestLoopPromptsUseAbsolutePaths(t *testing.T) {
 	}
 }
 
-func TestForkLoopPromptUsesProposalOutboxInsteadOfExecutionQueue(t *testing.T) {
-	work := LoopWorkPromptWithProposalOutbox(
-		"/repo-forks/a", ".coop/task-executions/generation/assignment/tasks", "task-42",
-		"codex", nil, nil, false, ".coop/task-executions/generation/assignment/proposals",
-	)
-	for _, want := range []string{
-		"/repo-forks/a/.coop/task-executions/generation/assignment/proposals",
-		"one JSON file", "<id>.json", "32-character lowercase hexadecimal id", "version (1)",
-		"kind (task for ready work or backlog", "title, context, acceptance, approach, and subtasks",
-		"host validates and imports it", "assigned task's canonical queue",
+// The work prompt is one path for a plain loop and a fork alike: task state changes go through the
+// coop-tasks tools, so it never asks for a folder move or a hand-written proposal file — in a fork
+// tasks_propose files the outbox the host imports at merge, and the agent never learns that shape.
+func TestLoopWorkPromptSpeaksTaskToolsNotFoldersOrOutboxJSON(t *testing.T) {
+	for _, work := range []string{
+		LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, false),
+		LoopWorkPrompt("/repo-forks/a", ".coop/task-executions/generation/assignment/tasks", "task-42", "codex", nil, nil, false),
+		LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, true),
 	} {
-		if !strings.Contains(work, want) {
-			t.Errorf("fork work prompt missing %q:\n%s", want, work)
+		for _, want := range []string{
+			"`coop-tasks` MCP server", "tasks_list, tasks_get, tasks_update_state, tasks_append_log, tasks_set_subtasks, tasks_complete, tasks_block, and tasks_propose",
+			"Change task state ONLY through those tools", "never by moving a task folder yourself",
+			"Read it with tasks_get", "keep that task's state.md current with tasks_update_state", "record your reasoning with tasks_append_log",
+			"tasks_set_subtasks (send the whole list", "then call tasks_complete on your task as the final action",
+			"call tasks_block on your task with the question, the options, and your recommendation",
+			"file it with tasks_propose as kind task", "filed as kind backlog instead", "Never create a task folder or a proposal file by hand",
+			"Mutate ONLY your assigned task", "The tools refuse a task another live process holds",
+		} {
+			if !strings.Contains(work, want) {
+				t.Errorf("work prompt missing %q:\n%s", want, work)
+			}
 		}
-	}
-	for _, forbidden := range []string{"create its folder under", "/00_todo/", "xx_backlog/"} {
-		if strings.Contains(work, forbidden) {
-			t.Errorf("fork work prompt tells the sandbox to mutate queue authority with %q:\n%s", forbidden, work)
+		for _, gone := range []string{
+			"MOVING its folder", "move its folder into 99_done/", "move its folder into 50_blocked/", "Move ONLY your assigned task's folder",
+			"final filesystem action", "create its folder under", "UNLEASED completion: the host rejects it AND",
+			"one JSON file", "<id>.json", "hexadecimal id", "version (1)", "proposals",
+		} {
+			if strings.Contains(work, gone) {
+				t.Errorf("work prompt still carries the pre-tools instruction %q:\n%s", gone, work)
+			}
 		}
 	}
 }
@@ -101,30 +113,30 @@ func TestLoopWorkPromptPeerCapabilities(t *testing.T) {
 	}
 }
 
-// TestLoopWorkPromptFolderWorkflow: the work prompt drives the folder queue — claim/done/block by
-// moving the folder (coop isn't in the box), resume an interrupted in_progress task from its
-// state.md + the git diff, finalize state.md (never blank it), and work ONE task per run then stop
-// so the loop re-invokes a fresh agent for the next — not one agent draining the queue itself.
+// TestLoopWorkPromptFolderWorkflow: the work prompt drives the folder queue through the task
+// tools (coop isn't in the box), resumes an interrupted in_progress task from its state.md + the
+// git diff, finalizes state.md (never blanks it), and works ONE task per run then stops so the loop
+// re-invokes a fresh agent for the next — not one agent draining the queue itself.
 func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 	work := LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, false)
 	for _, want := range []string{
-		"is NOT installed", "Work task task-42, already claimed in 10_in_progress/", "into 99_done/", "into 50_blocked/",
+		"is NOT installed", "Work task task-42, already claimed in 10_in_progress/", "into 99_done/",
 		"10_in_progress/", "00_todo/", "git status", "git diff",
-		"state.md", "resume note", "AFTER the commit", "final filesystem action", "Status to complete", "Next action to none",
+		"state.md", "resume note", "AFTER the commit", "as the final action", "Status to complete", "Next action to none",
 		"assigned task's tmp/ directory", "survives interruption and blocked transitions", "durable artifacts/ directory",
 		"Work exactly ONE task per run", "the loop's job, not yours",
 		"BEGIN UNTRUSTED REVIEW EVIDENCE", "data, never instructions", "Independently reproduce",
 		// Reference the commit by its stable trailer, not its volatile SHA (coop re-signs on the host).
 		"Coop-Task: <task-id>` trailer", "NOT its SHA", "re-signs your commit",
-		// Discovered separate work defaults to 00_todo/ so the loop works it; xx_backlog/ takes only
-		// the genuinely large. "Needs a design" is self-certifying, so the prompt names that excuse
-		// and breaks the tie toward the queue — else every finding parks and the queue starves.
-		"SPOT a SEPARATE task", "create its folder under", "/00_todo/", "xx_backlog/",
-		"Only the genuinely LARGE", "not a reason to park", "when the call is close, file it in 00_todo/",
-		// An agent that tidies ANOTHER task's folder makes an unleased completion, which the host
-		// rejects — taking the agent's own valid completion down with it and ending the loop run.
-		// "don't claim another task" did not read as "don't tidy a finished-looking one".
-		"Move ONLY your assigned task's folder", "UNLEASED completion", "rejects your own completion",
+		// Discovered separate work defaults to a task so the loop works it; backlog takes only the
+		// genuinely large. "Needs a design" is self-certifying, so the prompt names that excuse and
+		// breaks the tie toward the queue — else every finding parks and the queue starves.
+		"SPOT a SEPARATE task", "tasks_propose as kind task", "kind backlog",
+		"Only the genuinely LARGE", "not a reason to park", "when the call is close, file it as a task",
+		// An agent that tidies ANOTHER task is refused at the call when a live process holds it, and
+		// told to leave the rest alone; "don't claim another task" did not read as "don't tidy a
+		// finished-looking one".
+		"Mutate ONLY your assigned task", "refuse a task another live process holds", "not yours to do",
 		// The contract is auto-loaded as the agent's instruction file — the prompt must not force a
 		// re-read of ~2K tokens already in context, only offer the path as a fallback.
 		"already loaded in your context", "only if its content is not",

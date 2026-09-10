@@ -184,6 +184,12 @@ func (f *filteredExecution) validateMounts(options, files, directories []string)
 			// A named volume has no host path here. Its backing source is a
 			// daemon fact, inspected below, never guessed from this string.
 			if !looksLikePath(source) {
+				// The task-channel volume coop created this run is owned and run-private (it holds
+				// only coop's socket, mounted read-only); its backing mountpoint is inside the
+				// daemon VM, so it is exempt from host-path exposure like this run's generated files.
+				if f.taskVolume != "" && source == f.taskVolume {
+					continue
+				}
 				volumes = append(volumes, source)
 				continue
 			}

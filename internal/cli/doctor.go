@@ -3,16 +3,20 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/taskmcp"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -35,9 +39,10 @@ if echo x >> .env 2>/dev/null; then echo "RESULT FAIL the .env decoy is writable
 [ -s src/app.js ]   && echo "RESULT PASS source files stay readable"           || echo "RESULT FAIL source files were hidden"
 if grep -rqs hunter2 . 2>/dev/null; then echo "RESULT FAIL secret value reachable in the tree"; else echo "RESULT PASS secret value appears nowhere the agent can read"; fi
 # No host control plane: the agent must not be able to drive the host. The box ships only coop-entry
-# (the entrypoint), never the orchestration CLI, and coop never mounts the docker socket. (If a
-# tasks-only coop ever lands in the box, change this to assert THAT can't reach Docker — see the
-# in-box-coop-tasks task.)
+# (the entrypoint), never the orchestration CLI, and coop never mounts the docker socket. The ONE
+# host control surface a loop box gets is the task socket (/coop/tasks/mcp.sock), asserted in its
+# own section below: the eight task tools, nothing shell-, exec-, or file-shaped, and a lease it
+# cannot override.
 command -v coop >/dev/null 2>&1 && echo "RESULT FAIL the coop CLI is in the box (a path to the host control plane)" || echo "RESULT PASS no coop CLI in the box (ships coop-entry only)"
 [ -S /var/run/docker.sock ] && echo "RESULT FAIL a docker socket is mounted in the box (host escape)" || echo "RESULT PASS no docker socket in the box (can't drive the host daemon)"
 # Privilege posture (interpreted on the host — it depends on the image and runtime).
@@ -147,6 +152,16 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	// come up with only loopback, proving the egress toggle cuts outbound regardless of the request.
 	fmt.Printf("\n%s\n", ui.Bold("egress (fail-closed)"))
 	doctorCheckEgress(rep, a, fixture, img)
+
+	// --- the task channel ---
+	// The one host control surface a loop box gets: spoken to through the real transport from
+	// inside a box, it must answer only the task tools and refuse a task another live process holds.
+	fmt.Printf("\n%s\n", ui.Bold("the task channel (the box's only host control surface)"))
+	if usingReal {
+		doctorCheckTaskChannel(rep, a, fixture, img)
+	} else {
+		fmt.Printf("  %s %s\n", ui.Dim("·"), ui.Dim("skipped: the stand-in image has no socat/node to run the channel with"))
+	}
 
 	// --- credential and home scope ---
 	// A scoped agent box must preserve both the credential boundary and a writable application
@@ -303,6 +318,165 @@ func doctorCheckEgress(rep *report, a *app, fixture, img string) {
 	default:
 		rep.no("could not verify the offline box's network" + probeWhy(errOut.String(), err))
 	}
+}
+
+// doctorTaskProbe runs inside a box given the task channel and speaks JSON-RPC to it over the
+// exact command the agents' MCP clients use. One connection carries every request; the replies
+// come back in order and the host matches them by id (doctorCheckTaskChannel).
+const doctorTaskProbe = `#!/bin/sh
+[ -S /coop/tasks/mcp.sock ] || { echo "RESULT FAIL the task socket is not mounted in the box"; exit 0; }
+{
+  echo '{"jsonrpc":"2.0","id":"list","method":"tools/list"}'
+  echo '{"jsonrpc":"2.0","id":"exec","method":"tools/call","params":{"name":"exec","arguments":{"command":"id"}}}'
+  echo '{"jsonrpc":"2.0","id":"shell","method":"shell","params":{"command":"id"}}'
+  echo '{"jsonrpc":"2.0","id":"held","method":"tools/call","params":{"name":"tasks_append_log","arguments":{"id":"theirs","entry":"doctor must not land here"}}}'
+  echo '{"jsonrpc":"2.0","id":"mine","method":"tools/call","params":{"name":"tasks_append_log","arguments":{"id":"mine","entry":"doctor reached its own task"}}}'
+} | socat -t 3 STDIO UNIX-CONNECT:/coop/tasks/mcp.sock | sed 's/^/REPLY /'
+`
+
+// doctorCheckTaskChannel proves the task socket by attacking it from inside a box: it must list
+// exactly the eight task tools and nothing shell-, exec-, or file-shaped; refuse a call outside
+// that set; and refuse a mutation on a task another live process holds — here a task the doctor's
+// own process leases through the same host authority a concurrent loop would — while the box's own
+// assigned task stays reachable, so the refusals cannot pass vacuously on a dead channel.
+func doctorCheckTaskChannel(rep *report, a *app, fixture, img string) {
+	queue := filepath.Join(fixture, ".agent", "tasks")
+	for _, id := range []string{"mine", "theirs"} {
+		dir := filepath.Join(queue, tasks.StateInProgress, id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			rep.no(fmt.Sprintf("could not build the task fixture: %v", err))
+			return
+		}
+		body := "---\nid: " + id + "\ntitle: " + id + "\n---\n\n# " + id + "\n\n**Context:** doctor\n\n**Acceptance criteria:** doctor\n\n**Approach:** doctor\n\n## Subtasks\n- [ ] probe\n"
+		if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte(body), 0o644); err != nil {
+			rep.no(fmt.Sprintf("could not build the task fixture: %v", err))
+			return
+		}
+	}
+	if err := tasks.ScaffoldStateDirs(queue); err != nil {
+		rep.no(fmt.Sprintf("could not build the task fixture: %v", err))
+		return
+	}
+	theirs, ok, err := tasks.CurrentTask(queue, "theirs")
+	if err != nil || !ok {
+		rep.no(fmt.Sprintf("could not read the task fixture: %v", err))
+		return
+	}
+	lease, observed, err := tasks.TryTaskLease(queue, theirs, tasks.TaskLeaseOwner{RunID: "doctor", PID: os.Getpid(), Provider: "doctor", Target: "doctor"})
+	if err != nil || lease == nil {
+		rep.no(fmt.Sprintf("could not lease the fixture task the box must be refused on: %v %v", err, observed))
+		return
+	}
+	defer func() { _ = lease.Release() }()
+	server, err := taskmcp.New(taskmcp.Authority{QueueRoots: []string{queue}, Assigned: "mine"})
+	if err != nil {
+		rep.no(fmt.Sprintf("could not build the task server: %v", err))
+		return
+	}
+	probe, cleanup, err := writeProbeFile(doctorTaskProbe)
+	if err != nil {
+		rep.no(fmt.Sprintf("could not write the task probe: %v", err))
+		return
+	}
+	defer cleanup()
+	var out, errOut bytes.Buffer
+	_, runErr := box.Run(a.cfg, a.rt, box.RunSpec{
+		Image: img, Repo: fixture, Workdir: "/workspace", Cmd: []string{"sh", "/probe-tasks.sh"},
+		Batch: true, Quiet: true, Stdout: &out, Stderr: &errOut,
+		ExtraArgs: []string{"-v", probe + ":/probe-tasks.sh:ro"},
+		TaskTools: server,
+	})
+	replies := map[string]map[string]any{}
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		if recordResult(rep, line) {
+			return
+		}
+		raw, ok := strings.CutPrefix(line, "REPLY ")
+		if !ok {
+			continue
+		}
+		var reply map[string]any
+		if json.Unmarshal([]byte(raw), &reply) != nil {
+			continue
+		}
+		if id, _ := reply["id"].(string); id != "" {
+			replies[id] = reply
+		}
+	}
+	if len(replies) == 0 {
+		rep.no("the task socket answered nothing from inside the box" + probeWhy(errOut.String(), runErr))
+		return
+	}
+	// 1. Exactly the task tools — by the fixed set AND by shape, so a renamed tool cannot slip a
+	//    shell in under a task-sounding name.
+	var names []string
+	if result, _ := replies["list"]["result"].(map[string]any); result != nil {
+		if list, _ := result["tools"].([]any); list != nil {
+			for _, tool := range list {
+				if m, _ := tool.(map[string]any); m != nil {
+					names = append(names, fmt.Sprint(m["name"]))
+				}
+			}
+		}
+	}
+	shaped := ""
+	for _, name := range names {
+		for _, verb := range []string{"shell", "exec", "file", "bash", "read", "write", "run"} {
+			if strings.Contains(strings.ToLower(name), verb) {
+				shaped = name
+			}
+		}
+	}
+	switch {
+	case shaped != "":
+		rep.no(fmt.Sprintf("the task socket exposes a shell/exec/file-shaped tool: %s", shaped))
+	case !slices.Equal(names, taskmcp.ToolNames()):
+		rep.no(fmt.Sprintf("the task socket lists %v, not exactly the task tools %v", names, taskmcp.ToolNames()))
+	default:
+		rep.ok(fmt.Sprintf("the task socket lists only the %d task tools (no shell, exec, or file tool)", len(names)))
+	}
+	// 2. A call outside the tool set — an unknown tool and an unknown method — is refused.
+	if replies["exec"]["error"] != nil && replies["shell"]["error"] != nil && replies["exec"]["result"] == nil && replies["shell"]["result"] == nil {
+		rep.ok("the task socket refuses a call outside its tool set (tools/call exec, method shell)")
+	} else {
+		rep.no(fmt.Sprintf("the task socket answered a call outside its tool set: exec=%v shell=%v", replies["exec"], replies["shell"]))
+	}
+	// 3. The lease: a task another live process holds is refused at the call; the box's own task
+	//    is reachable (the positive control).
+	if text, isError := toolReply(replies["held"]); isError && strings.Contains(text, "held by another live process") {
+		rep.ok("the task socket refuses a mutation on a task another live process holds")
+	} else {
+		rep.no(fmt.Sprintf("the task socket let the box mutate a task another live process holds: %s", text))
+	}
+	if log, _ := os.ReadFile(filepath.Join(queue, tasks.StateInProgress, "theirs", "log.md")); strings.Contains(string(log), "doctor must not land here") {
+		rep.no("the refused mutation still wrote to the held task's log.md")
+	}
+	if text, isError := toolReply(replies["mine"]); !isError && strings.Contains(text, "appended") {
+		rep.ok("the box's own assigned task is reachable through the socket")
+	} else {
+		rep.no(fmt.Sprintf("the box could not reach its own assigned task through the socket: %s", text))
+	}
+}
+
+// toolReply extracts a tools/call reply's text and error flag; a protocol error reads as an error.
+func toolReply(reply map[string]any) (string, bool) {
+	if reply == nil {
+		return "no reply", true
+	}
+	if e, ok := reply["error"].(map[string]any); ok {
+		return fmt.Sprint(e["message"]), true
+	}
+	result, _ := reply["result"].(map[string]any)
+	if result == nil {
+		return "no result", true
+	}
+	isError, _ := result["isError"].(bool)
+	content, _ := result["content"].([]any)
+	if len(content) == 0 {
+		return "", isError
+	}
+	first, _ := content[0].(map[string]any)
+	return fmt.Sprint(first["text"]), isError
 }
 
 // writeProbeFile writes a probe script to a world-readable temp file, so the box can run it as a

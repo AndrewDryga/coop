@@ -41,6 +41,10 @@ const (
 	// ResponderStateTokenEnv is projected only into the session-private
 	// credential environment. The shared MCP file never contains the token.
 	ResponderStateTokenEnv = "COOP_RESPONDER_STATE_TOKEN"
+	// TaskToolsServer is reserved for coop's own task-tools binding (internal/taskmcp): the
+	// stdio server a loop box reaches its task queue through. Operator MCP configuration cannot
+	// shadow it either.
+	TaskToolsServer = "coop-tasks"
 )
 
 // server is the typed view of one entry, sufficient to emit Codex TOML and the ACP parameter.
@@ -482,6 +486,30 @@ func ReadValidatedSnapshot(path string) ([]byte, bool, error) {
 // fields, rejects an operator-owned collision, and returns canonical bytes so
 // every provider projection sees the same immutable server authority.
 func BindResponderState(snapshot []byte, endpoint string) ([]byte, error) {
+	return bindCoopServer(snapshot, ResponderStateServer, map[string]any{
+		"type": "http", "url": endpoint,
+		"bearer_token_env_var": ResponderStateTokenEnv,
+	})
+}
+
+// BindTaskTools merges coop's task-tools server into an already validated shared MCP snapshot:
+// a stdio server the box reaches with `socat STDIO UNIX-CONNECT:<socketPath>` — socat ships in
+// the image and needs no network, so the binding works under --network none. No token: the
+// socket is mounted only into this run's box, so the mount is the authority (see the
+// in-box-task-channel KB card). Same merge rules as BindResponderState.
+func BindTaskTools(snapshot []byte, socketPath string) ([]byte, error) {
+	if socketPath == "" {
+		return nil, errors.New("task tools binding needs the box-side socket path")
+	}
+	return bindCoopServer(snapshot, TaskToolsServer, map[string]any{
+		"command": "socat", "args": []string{"STDIO", "UNIX-CONNECT:" + socketPath},
+	})
+}
+
+// bindCoopServer adds one coop-owned server under a reserved name to the snapshot, preserving
+// unrelated root fields, refusing an operator-owned collision, and returning canonical bytes so
+// every provider projection sees the same immutable server authority.
+func bindCoopServer(snapshot []byte, name string, server map[string]any) ([]byte, error) {
 	root := map[string]json.RawMessage{}
 	if len(bytes.TrimSpace(snapshot)) > 0 {
 		if _, _, err := loadServerViewsData("session MCP snapshot", snapshot); err != nil {
@@ -498,17 +526,14 @@ func BindResponderState(snapshot []byte, endpoint string) ([]byte, error) {
 			return nil, fmt.Errorf("parsing session MCP snapshot mcpServers: %w", err)
 		}
 	}
-	if _, exists := definitions[ResponderStateServer]; exists {
-		return nil, fmt.Errorf("shared MCP config reserves server %q", ResponderStateServer)
+	if _, exists := definitions[name]; exists {
+		return nil, fmt.Errorf("shared MCP config reserves server %q", name)
 	}
-	definition, err := json.Marshal(map[string]any{
-		"type": "http", "url": endpoint,
-		"bearer_token_env_var": ResponderStateTokenEnv,
-	})
+	definition, err := json.Marshal(server)
 	if err != nil {
 		return nil, err
 	}
-	definitions[ResponderStateServer] = definition
+	definitions[name] = definition
 	encodedDefinitions, err := json.Marshal(definitions)
 	if err != nil {
 		return nil, err

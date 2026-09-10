@@ -19,6 +19,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
+	"github.com/AndrewDryga/coop/internal/taskmcp"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -137,7 +138,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		hosts[i] = filepath.Join(repo, q)
 	}
 	if c.proposalOutbox != "" {
-		proposalRoot := filepath.Join(repo, c.proposalOutbox)
+		proposalRoot := c.proposalOutboxPath(repo)
 		rel, relErr := filepath.Rel(repo, proposalRoot)
 		info, statErr := os.Lstat(proposalRoot)
 		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
@@ -388,7 +389,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			agent = c.applyTarget(rot)
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming, agentCommand := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
-			pfCode, _, _, pfClassification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, agentCommand, hosts, completionWindowReview, nil, false, sink, peers, "preflight", "")
+			pfCode, _, _, pfClassification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, agentCommand, hosts, completionWindowReview, nil, false, sink, peers, "preflight", "", nil)
 			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 				return 1, runErr
 			}
@@ -541,14 +542,24 @@ reviewAgain:
 					releaseErr,
 				)
 			}
-			work := LoopWorkPromptWithProposalOutbox(repo, assigned.Root, assigned.Item.ID, agent, peers, c.preset, lease.Reopen != nil, c.proposalOutbox)
+			work := LoopWorkPrompt(repo, assigned.Root, assigned.Item.ID, agent, peers, c.preset, lease.Reopen != nil)
 			iterWork := work
 			if pre := tasks.ResumePrefixFor(repo, assigned.Item.ID, assigned.Item.State, lease.Reopen); pre != "" {
 				iterWork = pre + "\n\n" + work
 			}
+			// The box's task tools: every queue this loop works, the leased task, and — in a fork —
+			// the proposal outbox the host imports at merge. Built here, where the lease lives; the
+			// box only carries the server.
+			taskTools, toolsErr := taskmcp.New(taskmcp.Authority{
+				QueueRoots: hosts, Assigned: assigned.Item.ID, ProposalOutbox: c.proposalOutboxPath(repo),
+				Owner: tasks.TaskLeaseOwner{RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: target.String()},
+			})
+			if toolsErr != nil {
+				return 1, errors.Join(toolsErr, lease.Release())
+			}
 			iterStart := time.Now()
 			cmd, streaming, agentCommand := iterCmd(agent, iterWork)
-			code, _, res, classification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowWork, []string{assigned.Item.ID}, false, sink, peers, active, assigned.Item.ID)
+			code, _, res, classification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowWork, []string{assigned.Item.ID}, false, sink, peers, active, assigned.Item.ID, taskTools)
 			if errors.Is(runErr, tasks.ErrCompletionWindowSetup) {
 				return 1, errors.Join(runErr, lease.Release())
 			}
@@ -1181,6 +1192,14 @@ reviewAgain:
 // closeWith prints the run's final banner, flushing the networking summary first
 // so the banner stays the LAST line however the run ended — drained, capped,
 // or interrupted. Every exit that has a banner goes through here.
+// proposalOutboxPath is the fork proposal outbox as an absolute path, or "" for a plain loop.
+func (c *Control) proposalOutboxPath(repo string) string {
+	if c.proposalOutbox == "" {
+		return ""
+	}
+	return filepath.Join(repo, c.proposalOutbox)
+}
+
 func (c *Control) closeWith(banner string) {
 	c.net.summary()
 	fmt.Fprintln(os.Stderr, banner)

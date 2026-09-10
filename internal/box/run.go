@@ -26,6 +26,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/taskchannel"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -173,6 +174,14 @@ type RunSpec struct {
 	// its Coop-Task trailer, so an agent that forgets one does not lose the whole completion.
 	// Empty outside a loop work iteration — nothing is assigned, so nothing is stamped.
 	AssignedTask string
+
+	// TaskTools, when set, gives the box coop's task tools: a run-private channel (taskchannel.go)
+	// serves this server — internal/taskmcp's, built by the caller from the queue it owns — the
+	// box mounts the channel's socket read-only, and, with Homes, the `coop-tasks` MCP server is
+	// bound into every provider projection. The loop sets it for a work iteration; nil everywhere
+	// else means nothing is mounted or bound.
+	TaskTools  TaskToolServer
+	taskVolume string // the channel's run-private volume name, chosen by Run
 
 	// Peers is the EXPLICIT peer set for this run — the targets named by repeatable
 	// --peer (a normal run, ACP, or a loop run), each provider[:model] (no
@@ -367,6 +376,22 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, fmt.Errorf("mcp.json: %w", err)
 		}
 	}
+	if spec.TaskTools != nil {
+		volume, err := taskChannelVolume()
+		if err != nil {
+			return -1, fmt.Errorf("task channel: %w", err)
+		}
+		spec.taskVolume = volume
+		if spec.Homes {
+			// Bound before the snapshot artifact is written below, so every provider projection —
+			// claude's --mcp-config, codex TOML, gemini settings, ACP — carries the server unchanged.
+			mcpSnapshot, err = mcp.BindTaskTools(mcpSnapshot, taskchannel.BoxSocketPath)
+			if err != nil {
+				return -1, fmt.Errorf("task channel: %w", err)
+			}
+			mcpPresent = true
+		}
+	}
 	mounts, err := ComputeMounts(spec.Repo, workdir)
 	if err != nil {
 		return -1, err
@@ -412,6 +437,18 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			ui.Info("%s", nudge)
 		}
 	}
+
+	// Registered before a filtered run's exact-owned cleanup so it runs AFTER it: the channel's
+	// volume can only go once the box that mounted it is gone, and a filtered workload is removed
+	// by that cleanup, not by --rm.
+	var channel *taskChannel
+	defer func() {
+		if channel != nil {
+			if err := channel.close(); err != nil {
+				ui.Warn("task channel: %v", err)
+			}
+		}
+	}()
 
 	var filtered *filteredExecution
 	var execution forkspace.ExecutionRecord
@@ -722,6 +759,24 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 					_ = os.MkdirAll(filepath.Join(acpSharedDir(cfg, runPrimary(spec)), name), 0o700)
 				}
 			}
+		}
+	}
+
+	// The task channel is a runtime side effect too, so it starts only now — and before the box,
+	// which must find the socket already listening.
+	if spec.TaskTools != nil {
+		script, err := writeTaskChannelScript(artifacts)
+		if err != nil {
+			return -1, err
+		}
+		tmpFiles = append(tmpFiles, script)
+		channelCtx := spec.Ctx
+		if channelCtx == nil {
+			channelCtx = context.Background()
+		}
+		channel, err = startTaskChannel(channelCtx, rt, spec.Image, spec.taskVolume, spec.RunID, spec.TaskTools, script)
+		if err != nil {
+			return -1, err
 		}
 	}
 
@@ -2214,6 +2269,12 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	}
 	if spec.Cache {
 		args = append(args, "-v", "coop-cache:"+cfg.HomeInBox+"/.cache")
+	}
+	// The task channel's socket, read-only: the box connects to it and can neither replace nor
+	// unlink it (connect needs write permission on the socket inode, which the helper set, not
+	// on the mount).
+	if spec.taskVolume != "" {
+		args = append(args, "-v", taskChannelMount(spec.taskVolume))
 	}
 	// The base box provisions a repo's .tool-versions toolchain via asdf at run
 	// time; persist ~/.asdf in a volume so installs survive the disposable box and

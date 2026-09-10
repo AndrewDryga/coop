@@ -887,6 +887,10 @@ type TaskLeaseObservation struct {
 	Provider string
 }
 
+// String names the holder the way `coop tasks` does ("busy claude", "stalled codex", "unleased"),
+// so a refusal built from an observation reads the same everywhere.
+func (o TaskLeaseObservation) String() string { return o.label() }
+
 func (o TaskLeaseObservation) label() string {
 	switch o.State {
 	case leaseStalled:

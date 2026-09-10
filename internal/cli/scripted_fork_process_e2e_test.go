@@ -490,12 +490,8 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proposalRel, err := tasks.ForkProposalOutboxRel(ws, owner)
-	if err != nil {
-		t.Fatal(err)
-	}
 	forkLoopArgv, forkLoopStreaming := loop.IterationCommand(provider,
-		loopProcessArgv(provider, model, effort, loop.LoopWorkPromptWithProposalOutbox(ws, projectionRel, taskID, provider, nil, nil, false, proposalRel)), nil)
+		loopProcessArgv(provider, model, effort, loop.LoopWorkPrompt(ws, projectionRel, taskID, provider, nil, nil, false)), nil)
 	if !forkLoopStreaming {
 		t.Fatalf("provider %s has no streaming loop command", provider)
 	}
