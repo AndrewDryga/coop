@@ -135,6 +135,7 @@ updated: <YYYY-MM-DD>                # last edit
 
 **Agent workflow** — how an agent works here, not what it ships
 - [requested-outcome-controls-stopping](requested-outcome-controls-stopping.md) — full implementation requests continue past verified slices through the requested final acceptance criteria
+- [run-the-real-invocation-last](run-the-real-invocation-last.md) — a green gate is not proof a feature works; the last check is the user’s own command, in a real repo, after the last commit
 - [fix-the-bug-not-the-feature](fix-the-bug-not-the-feature.md) — root-cause the misbehavior; deleting the feature is never the fix without the human
 - [gate-is-one-recipe](gate-is-one-recipe.md) — a new check goes in `make check`; CI installs the tools and calls that target, never its own step list
 - [small-work-to-the-queue](small-work-to-the-queue.md) — ready work goes to `00_todo/`; only the genuinely large or unscoped goes to the backlog
