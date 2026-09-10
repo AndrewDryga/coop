@@ -41,7 +41,7 @@ func (*inventoryTruncated) Error() string { return "socket_inventory_truncated" 
 
 // The qualified upstream envelope is IPv4 TCP. /proc queue lengths are not
 // transferred-byte counters and are deliberately absent from this model.
-func readSocketInventory(protected []netip.Prefix) ([]SocketRow, error) {
+func readSocketInventory(b boundary) ([]SocketRow, error) {
 	file, err := os.Open("/proc/net/tcp")
 	if err != nil {
 		return nil, Failure("socket_inventory_unavailable")
@@ -55,18 +55,18 @@ func readSocketInventory(protected []netip.Prefix) ([]SocketRow, error) {
 	} else {
 		return nil, Failure("socket_inventory_unavailable")
 	}
-	return parseSocketTables(tables, protected)
+	return parseSocketTables(tables, b)
 }
 
-func parseSocketInventory(reader io.Reader, protected []netip.Prefix) ([]SocketRow, error) {
-	return parseSocketTables([]socketTable{{reader: reader}}, protected)
+func parseSocketInventory(reader io.Reader, b boundary) ([]SocketRow, error) {
+	return parseSocketTables([]socketTable{{reader: reader}}, b)
 }
 
-func parseSocketTables(tables []socketTable, protected []netip.Prefix) ([]SocketRow, error) {
+func parseSocketTables(tables []socketTable, b boundary) ([]SocketRow, error) {
 	var retained [3][]SocketRow
 	var omitted uint64
 	for _, table := range tables {
-		rows, lost, err := parseSocketTable(table, protected, retained)
+		rows, lost, err := parseSocketTable(table, b, retained)
 		if err != nil {
 			return nil, err
 		}
@@ -81,7 +81,7 @@ func parseSocketTables(tables []socketTable, protected []netip.Prefix) ([]Socket
 	return rows, nil
 }
 
-func parseSocketTable(table socketTable, protected []netip.Prefix, retained [3][]SocketRow) ([3][]SocketRow, uint64, error) {
+func parseSocketTable(table socketTable, b boundary, retained [3][]SocketRow) ([3][]SocketRow, uint64, error) {
 	reader := table.reader
 	data, err := io.ReadAll(io.LimitReader(reader, MaxSocketBytes+1))
 	if err != nil || len(data) > MaxSocketBytes || len(data) == 0 || data[len(data)-1] != '\n' {
@@ -132,7 +132,7 @@ func parseSocketTable(table socketTable, protected []netip.Prefix, retained [3][
 		// /proc retains a NAT-captured socket's original public peer. Exclude
 		// only the fixed REDIRECT predicate; unexpected agent sockets remain
 		// visible as unknown attempts, not silently attributed external flows.
-		if capturedSocket(uint32(uid), local, peer, protected) {
+		if b.captured(uint32(uid), local, peer) {
 			continue
 		}
 		row := SocketRow{Tuple: SocketTuple{Local: local, Peer: peer}, UID: uint32(uid), Inode: inode, State: state}
@@ -162,9 +162,27 @@ func parseSocketTable(table socketTable, protected []netip.Prefix, retained [3][
 	return retained, omitted, nil
 }
 
-func capturedSocket(uid uint32, local, peer netip.AddrPort, protected []netip.Prefix) bool {
-	if uid == 1000 && peer.Addr().Is4() && (peer.Port() == 53 || peer.Port() == 443 && !protectedSocketPeer(peer.Addr(), protected)) {
-		return true
+// boundary is everything the inventory needs to recognize a socket this
+// gateway EXPECTS: the permanent denials, plus the frozen policy that says
+// which raw destinations this run may dial without passing through the guard.
+type boundary struct {
+	protected []netip.Prefix
+	policy    egress.Snapshot
+}
+
+// captured reports a socket the boundary accounts for. An agent socket the
+// gateway redirects (TLS 443, DNS 53) is one; so is an agent socket an address
+// grant permits directly — a raw grant has no proxied leg to correlate, so
+// treating it as an unattributed flow would report an allowed connection as an
+// evidence gap and, mid-handshake, as a denial that never happened.
+func (b boundary) captured(uid uint32, local, peer netip.AddrPort) bool {
+	if uid == 1000 && peer.Addr().Is4() {
+		if peer.Port() == 53 || peer.Port() == 443 && !protectedSocketPeer(peer.Addr(), b.protected) {
+			return true
+		}
+		if b.policy.Address(peer.Addr(), "tcp", int(peer.Port()), 0, 0, b.protected).Allowed {
+			return true
+		}
 	}
 	// The accepted guard-side leg is local even with a namespace peer IP.
 	return uid == 65532 && local.Addr() == netip.AddrFrom4([4]byte{127, 0, 0, 1}) && (local.Port() == 15443 || local.Port() == 15353)

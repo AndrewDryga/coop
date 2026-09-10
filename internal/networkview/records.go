@@ -77,6 +77,16 @@ type Counters struct {
 	MaintenanceReceivedBytes *Count `json:"maintenance_received_bytes"`
 }
 
+// AddressGrantObservation is what one raw tcp/udp/icmp grant actually passed.
+// A refusal is deliberately absent: refused raw packets are counted in
+// DeniedPackets/ProtectedPackets and never attributed to a destination, because
+// the packet filter drops them without recording where they were headed.
+type AddressGrantObservation struct {
+	RuleID  string `json:"rule_id"`
+	Packets Count  `json:"packets"`
+	Bytes   Count  `json:"bytes"`
+}
+
 // Coverage describes each measurement source independently. A retained total
 // can be a lower bound even while a different source remains exact.
 type MetricCoverage struct {
@@ -222,11 +232,13 @@ type Snapshot struct {
 	KernelClosingSockets *Count       `json:"kernel_closing_sockets"`
 	StaleConnections     Count        `json:"stale_connections"`
 	Connections          []Connection `json:"connections"`
-	Denials              []Denial     `json:"denials"`
-	Alerts               []Alert      `json:"alerts"`
-	Loss                 Loss         `json:"loss"`
-	Sources              []Source     `json:"sources"`
-	Projection           string       `json:"projection"`
+	// AddressGrants shares KernelPackets coverage: it is the same kernel sample.
+	AddressGrants []AddressGrantObservation `json:"address_grants,omitempty"`
+	Denials       []Denial                  `json:"denials"`
+	Alerts        []Alert                   `json:"alerts"`
+	Loss          Loss                      `json:"loss"`
+	Sources       []Source                  `json:"sources"`
+	Projection    string                    `json:"projection"`
 }
 
 type Receipt struct {
@@ -272,6 +284,8 @@ func (s Snapshot) Project(exportDestinations bool) Snapshot {
 	}
 	if exportDestinations {
 		out.Projection = "destinations-included"
+		// A grant ID names a private destination as surely as its address does.
+		out.AddressGrants = slices.Clone(s.AddressGrants)
 	}
 	for _, c := range s.Connections {
 		row := Connection{ID: c.ID, DestinationID: c.DestinationID, State: c.State, Reason: c.Reason, Transport: c.Transport,

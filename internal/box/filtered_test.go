@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -46,6 +47,34 @@ type filteredDaemonFixture struct {
 	attached                               chan struct{}
 	volumeExposure                         runtime.VolumeExposure
 	smoke                                  *networkstate.QualificationSmoke
+	networkMembers                         map[string]netip.Addr
+	composeServices                        map[string]string
+	connected                              []string
+}
+
+func (d *filteredDaemonFixture) ConnectNetwork(_ context.Context, network string, ref runtime.DockerRef) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if ref.ID == "" {
+		return errors.New("network attachment needs an exact container id")
+	}
+	d.connected = append(d.connected, network+"/"+ref.ID)
+	return nil
+}
+
+func (d *filteredDaemonFixture) NetworkMembers(context.Context, string) (map[string]netip.Addr, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return maps.Clone(d.networkMembers), nil
+}
+
+func (d *filteredDaemonFixture) ComposeServiceID(_ context.Context, _, service string) (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if id, ok := d.composeServices[service]; ok {
+		return id, nil
+	}
+	return "", errors.New("service " + service + " is not running as exactly one container")
 }
 
 func filteredFixture(t *testing.T) (*filteredExecution, *filteredDaemonFixture) {

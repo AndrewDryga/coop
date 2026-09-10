@@ -20,36 +20,81 @@ var ErrEventNotRetained = errors.New("event_not_retained: no matching event rema
 // PolicyExplanation is hypothetical admission, not an observed connection or
 // launch capability. The owner-private policy itself never crosses this API.
 type PolicyExplanation struct {
-	Version           int            `json:"version"`
-	Kind              string         `json:"kind"`
-	RunID             string         `json:"run_id"`
-	PolicyFingerprint string         `json:"policy_fingerprint"`
-	Integrity         string         `json:"integrity"`
-	Mode              egress.Mode    `json:"mode"`
-	Domain            string         `json:"domain,omitempty"`
-	Protocol          string         `json:"protocol"`
-	Port              int            `json:"port"`
-	Allowed           bool           `json:"allowed_by_policy"`
-	Reason            string         `json:"reason"`
-	Message           string         `json:"message"`
-	Resolution        string         `json:"resolution"`
-	CurrentPolicy     string         `json:"current_policy"`
-	RuleID            string         `json:"rule_id,omitempty"`
-	Rule              *PolicyTLSRule `json:"rule,omitempty"`
-	Origins           []PolicyOrigin `json:"origins,omitempty"`
-	Withheld          bool           `json:"destination_withheld"`
+	Version           int         `json:"version"`
+	Kind              string      `json:"kind"`
+	RunID             string      `json:"run_id"`
+	PolicyFingerprint string      `json:"policy_fingerprint"`
+	Integrity         string      `json:"integrity"`
+	Mode              egress.Mode `json:"mode"`
+	Domain            string      `json:"domain,omitempty"`
+	Peer              string      `json:"peer,omitempty"`
+	Protocol          string      `json:"protocol"`
+	Port              int         `json:"port,omitempty"`
+	// ProtectedScope says whether this run's host address inventory was
+	// available to the check. "not-retained" means the permanent denials were
+	// evaluated from the fixed ranges alone, so this verdict is narrower.
+	ProtectedScope string         `json:"protected_scope,omitempty"`
+	Allowed        bool           `json:"allowed_by_policy"`
+	Reason         string         `json:"reason"`
+	Message        string         `json:"message"`
+	Resolution     string         `json:"resolution"`
+	CurrentPolicy  string         `json:"current_policy"`
+	RuleID         string         `json:"rule_id,omitempty"`
+	Rule           *PolicyRule    `json:"rule,omitempty"`
+	Origins        []PolicyOrigin `json:"origins,omitempty"`
+	Withheld       bool           `json:"destination_withheld"`
+}
+
+// PolicyQuery is the hypothetical this check evaluates. Exactly one of Domain
+// or Address is set. An address needs an explicit transport: a bare IP does not
+// imply TLS on 443, and guessing one would answer a question nobody asked.
+type PolicyQuery struct {
+	Domain   string
+	Address  netip.Addr
+	Protocol string
+	Port     int
+}
+
+// Validate is the one place a hypothetical is checked, so the CLI refuses a
+// nonsense transport before opening any evidence.
+func (q PolicyQuery) Validate() error {
+	invalid := errors.New("why needs one exact ASCII domain (TLS on 443), or one IPv4 address with --protocol tcp|udp --port <n>, or --icmp")
+	switch {
+	case q.Domain != "" && q.Address.IsValid():
+		return invalid
+	case q.Domain != "":
+		if q.Protocol != "tls" || q.Port != 443 {
+			return invalid
+		}
+	case !q.Address.IsValid() || q.Address.Is4In6() || q.Address.Zone() != "":
+		return invalid
+	case q.Protocol == "icmp":
+		if q.Port != 0 || !q.Address.Is4() {
+			return invalid
+		}
+	case q.Protocol == "tcp" || q.Protocol == "udp":
+		if q.Port < 1 || q.Port > 65535 {
+			return invalid
+		}
+	default:
+		return invalid
+	}
+	return nil
 }
 
 // Diagnostic-owned projections deliberately do not embed authority types.
 // Extending a private rule or origin must not silently extend public output.
-type PolicyTLSRule struct {
-	To       PolicyDomain `json:"to"`
-	Protocol string       `json:"protocol"`
-	Ports    []int        `json:"ports"`
+type PolicyRule struct {
+	To       PolicyDestination `json:"to"`
+	Protocol string            `json:"protocol"`
+	Ports    []int             `json:"ports,omitempty"`
+	Types    []string          `json:"types,omitempty"`
 }
 
-type PolicyDomain struct {
-	Domain string `json:"domain"`
+type PolicyDestination struct {
+	Domain  string `json:"domain,omitempty"`
+	CIDR    string `json:"cidr,omitempty"`
+	Service string `json:"service,omitempty"`
 }
 
 type PolicyOrigin struct {
@@ -78,10 +123,16 @@ type EventExplanation struct {
 	DetailTruncated   bool               `json:"detail_truncated"`
 }
 
-func (e *Evidence) Why(runID, domain string, exportDestinations bool) (PolicyExplanation, error) {
-	name, err := egress.NormalizeDomain(domain, false)
-	if err != nil {
-		return PolicyExplanation{}, errors.New("why requires one exact ASCII domain; the hypothetical transport is TLS on port 443")
+func (e *Evidence) Why(runID string, query PolicyQuery, exportDestinations bool) (PolicyExplanation, error) {
+	if err := query.Validate(); err != nil {
+		return PolicyExplanation{}, err
+	}
+	name := ""
+	if query.Domain != "" {
+		var err error
+		if name, err = egress.NormalizeDomain(query.Domain, false); err != nil {
+			return PolicyExplanation{}, errors.New("why requires one exact ASCII domain; the hypothetical transport is TLS on port 443")
+		}
 	}
 	record, err := e.Execution(runID)
 	if err != nil {
@@ -92,23 +143,50 @@ func (e *Evidence) Why(runID, domain string, exportDestinations bool) (PolicyExp
 		return PolicyExplanation{}, err
 	}
 	decision := policy.Domain(name, 443)
+	if name == "" {
+		// Echo-request is the one qualified ICMP message, so the hypothetical
+		// uses exactly it rather than inventing a type the grammar would refuse.
+		kind := 0
+		if query.Protocol == "icmp" {
+			kind = 8
+		}
+		decision = policy.Address(query.Address, query.Protocol, query.Port, kind, 0, record.Protected)
+	}
 	out := PolicyExplanation{Version: networkview.Version, Kind: "hypothetical", RunID: record.ID,
 		PolicyFingerprint: policy.Fingerprint, Integrity: retainedIntegrity, Mode: policy.Mode,
-		Protocol: "tls", Port: 443, Allowed: decision.Allowed, Reason: decision.Reason,
+		Protocol: query.Protocol, Port: query.Port, Allowed: decision.Allowed, Reason: decision.Reason,
 		Message: diagnosticReason(decision.Reason), Resolution: "not_evaluated", CurrentPolicy: "not_evaluated", Withheld: !exportDestinations}
-	if exportDestinations {
-		out.Domain, out.RuleID = name, decision.RuleID
-		for _, grant := range policy.Grants {
-			if grant.ID == decision.RuleID {
-				out.Rule = &PolicyTLSRule{To: PolicyDomain{Domain: grant.Rule.To.Domain}, Protocol: grant.Rule.Protocol, Ports: slices.Clone(grant.Rule.Ports)}
-				for _, origin := range grant.Origins {
-					out.Origins = append(out.Origins, PolicyOrigin{Kind: origin.Kind, Name: origin.Name, Version: origin.Version,
-						Feature: origin.Feature, Provider: origin.Provider, Client: origin.Client, Backend: origin.Backend,
-						AuthMode: origin.AuthMode, BundleVersion: origin.BundleVersion})
-				}
-				break
-			}
+	if name == "" && decision.Reason == "rule_allowed" {
+		out.Message = "The captured policy permits this address, transport and port; nothing was dialed and reachability was not tested."
+	}
+	if name == "" {
+		out.ProtectedScope = "run-host-inventory"
+		if len(record.Protected) == 0 {
+			out.ProtectedScope = "not-retained"
 		}
+	}
+	if !exportDestinations {
+		return out, nil
+	}
+	out.RuleID = decision.RuleID
+	if name != "" {
+		out.Domain = name
+	} else {
+		out.Peer = query.Address.String()
+	}
+	for _, grant := range policy.Grants {
+		if grant.ID != decision.RuleID {
+			continue
+		}
+		r := grant.Rule
+		out.Rule = &PolicyRule{To: PolicyDestination{Domain: r.To.Domain, CIDR: r.To.CIDR, Service: r.To.Service},
+			Protocol: r.Protocol, Ports: slices.Clone(r.Ports), Types: slices.Clone(r.Types)}
+		for _, origin := range grant.Origins {
+			out.Origins = append(out.Origins, PolicyOrigin{Kind: origin.Kind, Name: origin.Name, Version: origin.Version,
+				Feature: origin.Feature, Provider: origin.Provider, Client: origin.Client, Backend: origin.Backend,
+				AuthMode: origin.AuthMode, BundleVersion: origin.BundleVersion})
+		}
+		break
 	}
 	return out, nil
 }

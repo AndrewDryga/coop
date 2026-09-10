@@ -37,7 +37,7 @@ func TestSocketInventoryIPv6WordsMappedAddressesAndCapturePredicate(t *testing.T
 		{"[::ffff:169.254.169.254]:443", 1}, {"[2001:4860:4860::8888]:443", 1},
 		{"[2001:4860:4860::8888]:53", 1},
 	} {
-		rows, err := parseSocketTables([]socketTable{{reader: strings.NewReader(procHeader + proc6Row(tc.peer, 1000, 42)), ipv6: true}}, nil)
+		rows, err := parseSocketTables([]socketTable{{reader: strings.NewReader(procHeader + proc6Row(tc.peer, 1000, 42)), ipv6: true}}, boundary{})
 		if err != nil || len(rows) != tc.rows {
 			t.Fatalf("capture predicate %s: rows=%d err=%v", tc.peer, len(rows), err)
 		}
@@ -50,12 +50,12 @@ func TestSocketInventoryCombinedBoundPrioritizesLiveServiceOverRemnants(t *testi
 		flood = strings.Replace(flood, "01010101:01BB", "01010101:0050", 1)
 		v4 := procHeader + strings.Repeat(flood, MaxSocketInventory+3)
 		v6 := procHeader + proc6Row("[2001:4860:4860::8888]:443", 65532, 4242)
-		rows, err := parseSocketTables([]socketTable{{reader: strings.NewReader(v4)}, {reader: strings.NewReader(v6), ipv6: true}}, nil)
+		rows, err := parseSocketTables([]socketTable{{reader: strings.NewReader(v4)}, {reader: strings.NewReader(v6), ipv6: true}}, boundary{})
 		var truncated *inventoryTruncated
 		if !errors.As(err, &truncated) || truncated.omitted != 4 || len(rows) != MaxSocketInventory || rows[0].Inode != 4242 {
 			t.Fatalf("combined bound lost live service row: rows=%d first=%+v err=%v", len(rows), rows[0], err)
 		}
-		rows, err = parseSocketTables([]socketTable{{reader: strings.NewReader(v4 + "bad trailing row\n")}}, nil)
+		rows, err = parseSocketTables([]socketTable{{reader: strings.NewReader(v4 + "bad trailing row\n")}}, boundary{})
 		if err == nil || rows != nil {
 			t.Fatal("overflow hid malformed trailing input")
 		}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,6 +42,8 @@ type Controller struct {
 	now         func() BootInstant
 	clock       *BootClock
 	mu          sync.Mutex
+	grants      []addressGrant
+	serve       []int
 	leases      map[string]Lease
 	installed   map[netip.Addr]BootInstant
 	ready       atomic.Bool
@@ -49,8 +52,15 @@ type Controller struct {
 	kernel      kernelEvents
 }
 
-func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, clock *BootClock, apply ApplyRules) (*Controller, error) {
-	if err := policy.RequireTLS443(true); err != nil {
+func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serve []int, clock *BootClock, apply ApplyRules) (*Controller, error) {
+	if err := policy.RequireSupported(); err != nil {
+		return nil, err
+	}
+	grants, err := addressGrants(policy, services)
+	if err != nil {
+		return nil, err
+	}
+	if err := validServePorts(serve); err != nil {
 		return nil, err
 	}
 	if apply == nil || len(protected) > MaxProtectedRanges || !identity.Valid() || identity.PolicyFingerprint != policy.Fingerprint || clock.Domain() != identity.Clock || !clock.instant().Valid() {
@@ -61,7 +71,78 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 			return nil, errors.New("invalid protected namespace prefix")
 		}
 	}
-	return &Controller{identity: identity, policy: policy.Clone(), protected: slices.Clone(protected), apply: apply, now: clock.instant, clock: clock, leases: map[string]Lease{}}, nil
+	return &Controller{identity: identity, policy: policy.Clone(), protected: slices.Clone(protected), grants: grants, serve: slices.Clone(serve),
+		apply: apply, now: clock.instant, clock: clock, leases: map[string]Lease{}}, nil
+}
+
+// addressGrant is one packet-filter grant as the kernel sees it: an exact IPv4
+// destination, the transport it permits and the counter its packets land on.
+// A `service:` grant is the same thing with the address the host resolved for
+// that container at launch — never a name the box could re-point.
+type addressGrant struct {
+	counter, target, protocol, display string
+	ports                              []int
+}
+
+func addressGrants(policy egress.Snapshot, services []ServiceBinding) ([]addressGrant, error) {
+	bound := map[string]ServiceBinding{}
+	for _, binding := range services {
+		if !binding.Address.Is4() || egress.Protected(binding.Address, nil) || bound[binding.RuleID].RuleID != "" {
+			return nil, errors.New("invalid or duplicate service address binding")
+		}
+		bound[binding.RuleID] = binding
+	}
+	var out []addressGrant
+	for _, grant := range policy.Grants {
+		counter := grant.CounterName()
+		if counter == "" {
+			continue
+		}
+		rule := grant.Rule
+		item := addressGrant{counter: counter, protocol: rule.Protocol, ports: rule.Ports}
+		if rule.To.Service != "" {
+			binding, ok := bound[grant.ID]
+			if !ok || binding.Name != rule.To.Service {
+				return nil, errors.New("an approved service grant has no launch address binding")
+			}
+			delete(bound, grant.ID)
+			item.target, item.display = binding.Address.String(), rule.To.Service
+		} else {
+			prefix, err := netip.ParsePrefix(rule.To.CIDR)
+			if err != nil || prefix != prefix.Masked() || !prefix.Addr().Is4() {
+				return nil, errors.New("address grant destination is not a canonical IPv4 prefix")
+			}
+			item.target, item.display = prefix.String(), prefix.String()
+		}
+		out = append(out, item)
+	}
+	if len(bound) != 0 {
+		return nil, errors.New("service address binding does not match any approved grant")
+	}
+	slices.SortFunc(out, func(a, b addressGrant) int { return strings.Compare(a.counter, b.counter) })
+	return out, nil
+}
+
+// A published serve port is host ingress to the box, not egress: it opens the
+// exact container ports the project asked to serve and nothing else.
+func validServePorts(ports []int) error {
+	if len(ports) > egress.MaxConstraints {
+		return errors.New("too many published serve ports")
+	}
+	for i, port := range ports {
+		if port < 1 || port > 65535 || port == 443 || port == 53 || slices.Index(ports, port) != i {
+			return errors.New("published serve ports must be unique, in 1..65535 and outside the gateway's captured 443/53")
+		}
+	}
+	return nil
+}
+
+func portSet(ports []int) string {
+	out := make([]string, 0, len(ports))
+	for _, port := range ports {
+		out = append(out, strconv.Itoa(port))
+	}
+	return "{ " + strings.Join(out, ", ") + " }"
 }
 
 // Initialize runs once before any guard/agent starts. Failure leaves readiness
@@ -222,12 +303,34 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
 	}
 	slices.Sort(protected)
 	protected = slices.Compact(protected)
+	var counters, egressRules, ingressRules strings.Builder
+	for _, grant := range c.grants {
+		fmt.Fprintf(&counters, " counter %s { }\n", grant.counter)
+		// The protected drop above already ran, so a granted CIDR never reaches
+		// a host, metadata or runtime address inside it. Return traffic is
+		// scoped to the same destination and to conntrack, never a bare port.
+		switch grant.protocol {
+		case "tcp", "udp":
+			fmt.Fprintf(&egressRules, "  meta skuid 1000 ip daddr %s %s dport %s counter name %s accept\n", grant.target, grant.protocol, portSet(grant.ports), grant.counter)
+			fmt.Fprintf(&ingressRules, "  ip saddr %s %s sport %s ct state established accept\n", grant.target, grant.protocol, portSet(grant.ports))
+		case "icmp":
+			fmt.Fprintf(&egressRules, "  meta skuid 1000 ip daddr %s icmp type echo-request counter name %s accept\n", grant.target, grant.counter)
+			fmt.Fprintf(&ingressRules, "  ip saddr %s icmp type echo-reply ct state established,related accept\n", grant.target)
+		}
+	}
+	if len(c.serve) != 0 {
+		// Published serve ports are ingress the operator asked for: the host
+		// reaches this exact container port, and the server's replies leave on
+		// that established flow only.
+		fmt.Fprintf(&ingressRules, "  tcp dport %s ct state new,established accept\n", portSet(c.serve))
+		fmt.Fprintf(&egressRules, "  meta skuid 1000 tcp sport %s ct state established accept\n", portSet(c.serve))
+	}
 	return fmt.Sprintf(`table inet coop_net {
  counter denied_agent { }
  counter protected_agent { }
  counter denied_ingress { }
  counter denied_service { }
- set protected4 {
+%s set protected4 {
   type ipv4_addr; flags interval; auto-merge;
   elements = { %s }
  }
@@ -249,7 +352,7 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
   meta skuid 1000 ip daddr 127.0.0.1 udp dport 15353 accept
   meta skuid 65532 oifname "lo" ct state established accept
   meta skuid 1000 ip daddr @protected4 counter name protected_agent reject with icmpx type admin-prohibited
-  meta skuid 1000 counter name denied_agent reject with icmpx type admin-prohibited
+%s  meta skuid 1000 counter name denied_agent reject with icmpx type admin-prohibited
   meta nfproto ipv6 counter name denied_service drop
   ct state invalid counter name denied_service drop
   ip daddr @protected4 counter name denied_service drop
@@ -266,12 +369,12 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
   ip protocol icmp icmp type destination-unreachable icmp code 4 ct state related accept
   ip saddr @protected4 counter name denied_ingress drop
   tcp sport 443 ct state established accept
-  counter name denied_ingress drop
+%s  counter name denied_ingress drop
  }
  chain forward {
   type filter hook forward priority 0; policy drop;
   counter name denied_ingress drop
  }
 }
-`, strings.Join(protected, ", "), maintenance)
+`, counters.String(), strings.Join(protected, ", "), egressRules.String(), maintenance, ingressRules.String())
 }

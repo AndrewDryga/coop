@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +25,9 @@ const (
 	MaxDNSInFlight   = 32
 	MaxDNSTTL        = 5 * time.Minute
 	DNSQueryTimeout  = 3 * time.Second
+	// A sidecar address is fixed for the run, so the TTL only bounds how long a
+	// client caches a fact that cannot change under it.
+	ServiceAnswerTTL = 60
 )
 
 // Exchange is trusted resolver plumbing, never an agent-selected URL or socket.
@@ -51,6 +55,7 @@ type cacheEntry struct {
 type Resolver struct {
 	policy           egress.Snapshot
 	protected        []netip.Prefix
+	services         map[string]netip.Addr
 	exchange         Exchange
 	domain           ClockDomain
 	now              func() BootInstant
@@ -64,15 +69,33 @@ type Resolver struct {
 	counterSaturated atomic.Bool
 }
 
-func NewResolver(policy egress.Snapshot, protected []netip.Prefix, clock *BootClock, exchange Exchange) (*Resolver, error) {
-	if err := policy.RequireTLS443(true); err != nil {
+func NewResolver(policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, clock *BootClock, exchange Exchange) (*Resolver, error) {
+	if err := policy.RequireSupported(); err != nil {
 		return nil, err
 	}
 	if exchange == nil || !clock.instant().Valid() {
 		return nil, errors.New("network resolver needs a trusted exchange")
 	}
-	return &Resolver{policy: policy.Clone(), protected: slices.Clone(protected), exchange: exchange, domain: clock.Domain(), now: clock.instant,
+	if _, err := addressGrants(policy, services); err != nil {
+		return nil, err
+	}
+	// A service answer is a fixed fact from the host, not DNS authority: this
+	// table is the ONLY name this resolver answers without an upstream query,
+	// and it can only return the address the launch already granted.
+	static := map[string]netip.Addr{}
+	for _, binding := range services {
+		static[binding.Name] = binding.Address
+	}
+	return &Resolver{policy: policy.Clone(), protected: slices.Clone(protected), services: static, exchange: exchange, domain: clock.Domain(), now: clock.instant,
 		cache: map[string]cacheEntry{}, active: map[string]chan struct{}{}, slots: make(chan struct{}, MaxDNSInFlight)}, nil
+}
+
+// serviceAnswer reports the pinned address for an approved Compose sidecar
+// name. The query name is matched exactly, case-insensitively, with at most one
+// terminal dot: no search-domain guessing and no partial match.
+func (r *Resolver) serviceAnswer(name string) (netip.Addr, bool) {
+	address, ok := r.services[strings.ToLower(strings.TrimSuffix(name, "."))]
+	return address, ok
 }
 
 // MaintenanceCounts exclude cache hits and agent DNS queries. A CNAME lookup
@@ -384,6 +407,25 @@ func (r *Resolver) Answer(ctx context.Context, wire []byte) ([]byte, string) {
 	question := query.Questions[0]
 	response := dnsmessage.Message{Header: dnsmessage.Header{ID: query.ID, Response: true, RecursionDesired: query.RecursionDesired, RecursionAvailable: true}, Questions: query.Questions}
 	reason := ""
+	service, isService := r.serviceAnswer(question.Name.String())
+	switch {
+	case question.Class != dnsmessage.ClassINET:
+	case !isService:
+	case question.Type == dnsmessage.TypeA:
+		response.Answers = append(response.Answers, dnsmessage.Resource{
+			Header: dnsmessage.ResourceHeader{Name: question.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: ServiceAnswerTTL},
+			Body:   &dnsmessage.AResource{A: service.As4()},
+		})
+		fallthrough
+	case question.Type == dnsmessage.TypeAAAA:
+		// NODATA for AAAA, exactly as for an admitted public name: the grant is
+		// IPv4 and a dual-stack client must not discard the A answer.
+		data, err := response.Pack()
+		if err != nil || len(data) > MaxDNSMessage {
+			return nil, "dns_answer_limit"
+		}
+		return data, ""
+	}
 	if question.Class != dnsmessage.ClassINET {
 		response.RCode, reason = dnsmessage.RCodeRefused, "dns_type_unsupported"
 	} else if question.Type == dnsmessage.TypeAAAA {

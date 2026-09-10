@@ -28,10 +28,13 @@ const (
 // batch embedding — still has to surface a refusal in ITS own output, through
 // RunSpec.OnNetworkReport.
 type NetworkReport struct {
-	RunID    string
-	Denials  []NetworkDenial
-	Omitted  int
-	Allowed  string
+	RunID   string
+	Denials []NetworkDenial
+	Omitted int
+	Allowed string
+	// Raw is the kernel's tally of refused raw packets. They are counted, never
+	// attributed: the filter drops them without recording a destination.
+	Raw      string
 	Alerts   []string
 	Event    string // the evidence id `coop net explain` can open, when one was retained
 	Truncate bool
@@ -105,6 +108,7 @@ func networkRunReport(runID string, snapshot networkview.Snapshot) NetworkReport
 		out.Denials = append(out.Denials, *g)
 	}
 	out.Allowed = allowedTraffic(snapshot.Counters)
+	out.Raw = rawRefusals(snapshot.Counters)
 	for i, alert := range snapshot.Alerts {
 		if i >= maxSummaryAlerts {
 			break
@@ -138,6 +142,16 @@ func allowedTraffic(counters *networkview.Counters) string {
 	}
 	return fmt.Sprintf("allowed traffic: %s connection(s), sent %s bytes, received %s bytes",
 		countText(counters.Connections), countText(counters.SentBytes), countText(counters.ReceivedBytes))
+}
+
+// rawRefusals reports the packets the kernel refused. It deliberately names no
+// destination: nothing recorded one, and a plausible guess would be a fiction.
+func rawRefusals(counters *networkview.Counters) string {
+	if counters == nil || counters.DeniedPackets == nil {
+		return "refused packets: UNKNOWN (no kernel counters were retained)"
+	}
+	return fmt.Sprintf("refused packets: %s (%s to protected addresses) — counted, not attributed to a destination",
+		countText(counters.DeniedPackets), countText(counters.ProtectedPackets))
 }
 
 // countText renders a retained counter as a decimal string, matching how it is
@@ -199,6 +213,9 @@ func (r NetworkReport) print() {
 		ui.Warn("network alert: %s", line)
 	}
 	ui.Detail("%s", r.Allowed)
+	if r.Raw != "" {
+		ui.Detail("%s", r.Raw)
+	}
 	if r.Truncate {
 		ui.Detail("retained detail was truncated — the list above is not the complete history")
 	}

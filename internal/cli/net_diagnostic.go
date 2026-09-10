@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -20,11 +21,12 @@ import (
 // resolves no name. `explain` reads one decision that actually happened, with
 // the policy of the day, and never reinterprets it under today's rules.
 
-var netDiagnosticFlags = []string{"--run", "--json"}
+var netDiagnosticFlags = []string{"--run", "--json", "--protocol", "--port", "--icmp"}
 
 type netDiagnosticOptions struct {
 	run, query string
 	json       bool
+	policy     networkstate.PolicyQuery
 }
 
 func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, error) {
@@ -49,6 +51,34 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 				return opts, errors.New("--json takes no value")
 			}
 			opts.json = true
+		case name == "--protocol", name == "--port":
+			if !inline {
+				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+					return opts, fmt.Errorf("%s needs a value", name)
+				}
+				i++
+				value = args[i]
+			}
+			if name == "--protocol" {
+				if opts.policy.Protocol != "" {
+					return opts, errors.New("net why accepts --protocol once")
+				}
+				opts.policy.Protocol = value
+				continue
+			}
+			port, err := strconv.Atoi(value)
+			if err != nil || opts.policy.Port != 0 {
+				return opts, errors.New("--port needs one port number, once")
+			}
+			opts.policy.Port = port
+		case name == "--icmp":
+			if inline {
+				return opts, errors.New("--icmp takes no value")
+			}
+			if opts.policy.Protocol != "" {
+				return opts, errors.New("--icmp and --protocol are the same choice; pass one")
+			}
+			opts.policy.Protocol = "icmp"
 		case strings.HasPrefix(args[i], "-"):
 			return opts, unknownErr("net "+verb+" flag", args[i], netDiagnosticFlags)
 		case opts.query != "":
@@ -61,14 +91,32 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 		return opts, fmt.Errorf("net %s needs one query and --run <id> (the run id from 'coop net ls')", verb)
 	}
 	if verb == "why" {
-		name, err := egress.NormalizeDomain(opts.query, false)
-		if err != nil {
-			return opts, errors.New("net why needs one exact ASCII domain — not a URL, an IP, a wildcard or a port")
-		}
-		opts.query = name
+		return netPolicyQuery(opts)
 	} else if !netEvidenceID(opts.query) {
 		return opts, errors.New("net explain needs an evidence id from that run's refused decisions ('coop net inspect <run>' lists them)")
 	}
+	return opts, nil
+}
+
+// netPolicyQuery decides which hypothetical the user asked for. A domain is
+// TLS on 443 and nothing else; an address carries no implied transport, so it
+// requires the operator to say which one they mean.
+func netPolicyQuery(opts netDiagnosticOptions) (netDiagnosticOptions, error) {
+	if address, err := netip.ParseAddr(opts.query); err == nil {
+		if opts.policy.Protocol == "" {
+			return opts, errors.New("net why on an address needs the transport too: --protocol tcp|udp --port <n>, or --icmp")
+		}
+		opts.policy.Address = address
+		return opts, opts.policy.Validate()
+	}
+	if opts.policy.Protocol != "" || opts.policy.Port != 0 {
+		return opts, errors.New("net why on a domain is TLS on 443; --protocol/--port/--icmp apply to an IP address")
+	}
+	name, err := egress.NormalizeDomain(opts.query, false)
+	if err != nil {
+		return opts, errors.New("net why needs one exact ASCII domain or one IP address — not a URL, a wildcard or a port")
+	}
+	opts.query, opts.policy = name, networkstate.PolicyQuery{Domain: name, Protocol: "tls", Port: 443}
 	return opts, nil
 }
 
@@ -90,7 +138,7 @@ func netDiagnostic(verb string, args []string) (int, error) {
 	if verb == "why" {
 		// The local operator view: this is the host, not an outbound export, so
 		// the name the caller just typed is not withheld from them.
-		result, err := evidence.Why(opts.run, opts.query, true)
+		result, err := evidence.Why(opts.run, opts.policy, true)
 		if err != nil {
 			return 1, netRunErr(opts.run, err)
 		}
@@ -120,7 +168,16 @@ func writeNetWhy(w io.Writer, p ui.Palette, result networkstate.PolicyExplanatio
 	if !result.Withheld {
 		destination = result.Domain
 	}
-	field("Destination", fmt.Sprintf("%s %s/%d", destination, result.Protocol, result.Port))
+	if !result.Withheld && result.Peer != "" {
+		destination = result.Peer
+	}
+	transport := result.Protocol
+	if result.Port != 0 {
+		transport += "/" + strconv.Itoa(result.Port)
+	} else if result.Protocol == "icmp" {
+		transport += " echo-request"
+	}
+	field("Destination", destination+" "+transport)
 	verdict := p.Red("no — outside the captured policy")
 	if result.Allowed {
 		verdict = p.Green("yes — the captured policy permits it")
@@ -128,13 +185,29 @@ func writeNetWhy(w io.Writer, p ui.Palette, result networkstate.PolicyExplanatio
 	field("Allowed", verdict+" ("+result.Reason+")")
 	field("Meaning", result.Message)
 	field("Policy", result.PolicyFingerprint+" (mode "+string(result.Mode)+")")
-	if result.Rule != nil {
-		field("Matched", result.Rule.To.Domain+" "+result.Rule.Protocol+"/"+netPortList(result.Rule.Ports))
+	if rule := result.Rule; rule != nil {
+		matched := rule.To.Domain + rule.To.CIDR
+		if rule.To.Service != "" {
+			matched = "service " + rule.To.Service
+		}
+		matched += " " + rule.Protocol
+		if len(rule.Ports) != 0 {
+			matched += "/" + netPortList(rule.Ports)
+		}
+		if len(rule.Types) != 0 {
+			matched += " types " + strings.Join(rule.Types, ",")
+		}
+		field("Matched", matched)
 	}
 	for _, origin := range result.Origins {
 		netRow(w, netOriginText(origin))
 	}
 	fmt.Fprintln(w, p.Dim("No DNS query, probe or connection was made, and current policy was not evaluated."))
+	if result.ProtectedScope == "not-retained" {
+		fmt.Fprintln(w, p.Dim("This run did not retain its host address inventory, so only the fixed protected ranges were applied here."))
+	} else if result.ProtectedScope != "" {
+		fmt.Fprintln(w, p.Dim("Host, metadata and runtime addresses this run protected were applied: a grant never covers them."))
+	}
 }
 
 func writeNetExplanation(w io.Writer, p ui.Palette, result networkstate.EventExplanation) {

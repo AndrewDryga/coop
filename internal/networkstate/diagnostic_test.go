@@ -53,7 +53,7 @@ func TestNetworkWhyUsesOnlyRetainedPolicyAfterKeyAndProjectLoss(t *testing.T) {
 		domain  string
 		allowed bool
 	}{{"API.EXAMPLE.COM.", true}, {"child.example.net", true}, {"example.net", false}, {"denied.example.org", false}} {
-		got, err := evidence.Why(record.ID, row.domain, true)
+		got, err := evidence.Why(record.ID, tlsQuery(row.domain), true)
 		if err != nil || got.Allowed != row.allowed || got.Kind != "hypothetical" || got.Resolution != "not_evaluated" || got.CurrentPolicy != "not_evaluated" || got.Integrity != retainedIntegrity {
 			t.Fatalf("wrong captured decision for %s: %+v %v", row.domain, got, err)
 		}
@@ -61,7 +61,7 @@ func TestNetworkWhyUsesOnlyRetainedPolicyAfterKeyAndProjectLoss(t *testing.T) {
 			t.Fatal("matched captured provenance missing")
 		}
 	}
-	redacted, err := evidence.Why(record.ID, "api.example.com", false)
+	redacted, err := evidence.Why(record.ID, tlsQuery("api.example.com"), false)
 	if err != nil || !redacted.Withheld || redacted.Domain != "" || redacted.RuleID != "" || redacted.Rule != nil || len(redacted.Origins) != 0 {
 		t.Fatal("hypothetical projection leaked destinations", redacted, err)
 	}
@@ -110,11 +110,15 @@ func TestNetworkWhyRefusesCorruptOrSubstitutedPolicy(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := evidence.Why(record.ID, "api.example.com", true); err == nil {
+			if _, err := evidence.Why(record.ID, tlsQuery("api.example.com"), true); err == nil {
 				t.Fatal("substituted policy evidence accepted")
 			}
 		})
 	}
+}
+
+func tlsQuery(domain string) PolicyQuery {
+	return PolicyQuery{Domain: domain, Protocol: "tls", Port: 443}
 }
 
 func TestNetworkExplainPreservesObservedFactsAndDraftBoundary(t *testing.T) {

@@ -122,8 +122,12 @@ func (f *filteredExecution) helperOptions(role string) []string {
 		"--memory", "256m", "--pids-limit", "64", "--log-driver", "local", "--log-opt", "max-size=1m", "--log-opt", "max-file=2",
 		"--mount", networkMount("bind", f.config, networkgateway.LaunchConfigPath, true)}
 	if role == "controller" {
-		return append(options, "--user", "0:65532", "--cap-add", "NET_ADMIN", "--network", "bridge",
+		// The controller owns the namespace the agent runs in, so a published
+		// serve port has to be published HERE. The agent still has no runtime
+		// authority of its own; it only inherits the namespace.
+		options = append(options, "--user", "0:65532", "--cap-add", "NET_ADMIN", "--network", "bridge",
 			"--mount", networkMount("volume", f.ref("ipc").Name, "/ipc", false))
+		return append(options, f.publish...)
 	}
 	return append(options, "--user", "65532:65532", "--network", "container:"+f.ref("controller").ID,
 		"--mount", networkMount("volume", f.ref("ipc").Name, "/ipc", true),
@@ -212,6 +216,18 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		if err := f.createContainer(ctx, role, f.record.GatewayImage, f.helperOptions(role), []string{role}); err != nil {
 			return -1, err
 		}
+		// The approved sidecar's network is attached before the controller runs,
+		// so the address the rules were rendered for exists from the first
+		// packet. Joining it grants nothing on its own: every other member of
+		// that network is still refused by the same default deny.
+		if role == "controller" && f.servicesNet != "" {
+			attach, stop := context.WithTimeout(ctx, filteredControlTimeout)
+			err := f.docker.ConnectNetwork(attach, f.servicesNet, f.ref("controller"))
+			stop()
+			if err != nil {
+				return -1, err
+			}
+		}
 		if err := f.startHelper(ctx, role); err != nil {
 			return -1, err
 		}
@@ -227,6 +243,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	}
 	options = append(slices.Clone(options), "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--network", "container:"+f.ref("controller").ID)
+	options = append(options, f.serveEnv...)
 	if err := f.createContainer(ctx, "agent", f.image, options, spec.Cmd); err != nil {
 		return -1, err
 	}

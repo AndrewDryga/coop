@@ -2137,7 +2137,9 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		// of either code to an ordinary failure before it reaches the host classifier.
 		args = append(args, "-e", "COOP_SUPERVISE_DESCENDANTS=1")
 	}
-	if spec.Serve {
+	// A filtered run publishes on its gateway controller instead: that container
+	// owns the network namespace this box runs in (filteredPublish).
+	if spec.Serve && spec.CapturedEgress == nil {
 		args = appendPublish(args, cfg, spec, hostPortFree)
 	}
 	if networkName != "" {

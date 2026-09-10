@@ -8,8 +8,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,6 +87,7 @@ type Collector struct {
 	previousAttempts            map[socketAttemptKey]struct{}
 	previousUnknown             map[socketAttemptKey]struct{}
 	pending                     map[socketAttemptKey]pendingSocket
+	boundary                    boundary
 	boundaryGap                 string
 	unexpectedAgent             bool
 	unverifiedAttempt           bool
@@ -104,8 +107,8 @@ func NewCollector(g *Guard, e *EnvoyEvents, doh *DoH) (*Collector, error) {
 		return nil, Failure("collector_configuration_invalid")
 	}
 	c := &Collector{identity: g.controller.Identity, clock: g.clock, started: g.clock.instant(), guard: g.events,
-		envoy: e, resolver: g.resolver, doh: doh, controller: g.controller,
-		inventory: func() ([]SocketRow, error) { return readSocketInventory(g.resolver.protected) }, flows: make(map[string]*collectedFlow)}
+		envoy: e, resolver: g.resolver, doh: doh, controller: g.controller, boundary: g.boundary(),
+		inventory: func() ([]SocketRow, error) { return readSocketInventory(g.boundary()) }, flows: make(map[string]*collectedFlow)}
 	if _, err := rand.Read(c.key[:]); err != nil || !c.started.Valid() {
 		return nil, Failure("collector_unavailable")
 	}
@@ -481,6 +484,44 @@ func producerRate(previous, now *uint64, receivedBefore, receivedNow BootInstant
 		WindowMillis: networkview.Count(millis), Measurement: "proxy-monotonic-window"}
 }
 
+// addressGrants attributes each kernel counter back to the grant that owns it.
+// A counter with no matching grant is dropped rather than shown against a
+// destination nobody approved.
+func (c *Collector) addressGrants(counts map[string]GrantCount) []networkview.AddressGrantObservation {
+	var out []networkview.AddressGrantObservation
+	for counter, count := range counts {
+		grant, ok := c.resolver.policy.GrantByCounter(counter)
+		if !ok {
+			continue
+		}
+		out = append(out, networkview.AddressGrantObservation{RuleID: grant.ID, Packets: count.Packets, Bytes: count.Bytes})
+	}
+	slices.SortFunc(out, func(a, b networkview.AddressGrantObservation) int { return strings.Compare(a.RuleID, b.RuleID) })
+	return out
+}
+
+func grantsRegressed(prior, current map[string]GrantCount) bool {
+	for counter, was := range prior {
+		now, ok := current[counter]
+		if !ok || now.Packets < was.Packets || now.Bytes < was.Bytes {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeGrants(prior, current map[string]GrantCount) map[string]GrantCount {
+	out := maps.Clone(current)
+	if out == nil {
+		out = map[string]GrantCount{}
+	}
+	for counter, was := range prior {
+		now := out[counter]
+		out[counter] = GrantCount{Packets: max(now.Packets, was.Packets), Bytes: max(now.Bytes, was.Bytes)}
+	}
+	return out
+}
+
 func exactCoverage() networkview.MetricCoverage { return networkview.MetricCoverage{Status: "exact"} }
 func partialCoverage(reason string) networkview.MetricCoverage {
 	return networkview.MetricCoverage{Status: "lower-bound", Reason: reason}
@@ -546,15 +587,17 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 	kernelFresh := kernelErr == nil && kernel.Counters != nil && kernel.BootAt.Valid() && now.Valid() && !now.Before(kernel.BootAt) && now.Sub(kernel.BootAt) <= ObservationStaleAfter
 	if kernelFresh {
 		prior, k := c.lastKernel.Counters, kernel.Counters
-		if prior != nil && (k.DeniedAgent < prior.DeniedAgent || k.ProtectedAgent < prior.ProtectedAgent || k.DeniedIngress < prior.DeniedIngress || k.DeniedService < prior.DeniedService || kernel.Sequence < c.lastKernel.Sequence) {
+		if prior != nil && (k.DeniedAgent < prior.DeniedAgent || k.ProtectedAgent < prior.ProtectedAgent || k.DeniedIngress < prior.DeniedIngress || k.DeniedService < prior.DeniedService || kernel.Sequence < c.lastKernel.Sequence || grantsRegressed(prior.Grants, k.Grants)) {
 			c.kernelPartial = true
 		}
 		if prior != nil && c.kernelPartial {
 			value := *k
 			value.DeniedAgent, value.ProtectedAgent = max(k.DeniedAgent, prior.DeniedAgent), max(k.ProtectedAgent, prior.ProtectedAgent)
 			value.DeniedIngress, value.DeniedService = max(k.DeniedIngress, prior.DeniedIngress), max(k.DeniedService, prior.DeniedService)
+			value.Grants = mergeGrants(prior.Grants, k.Grants)
 			k, kernel.Counters = &value, &value
 		}
+		s.AddressGrants = c.addressGrants(k.Grants)
 		denied := k.DeniedAgent
 		if !networkview.Add(&denied, uint64(k.ProtectedAgent)) {
 			c.kernelPartial = true
@@ -577,7 +620,7 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 		c.inventoryAt = &s.AsOf
 		current := make(map[socketAttemptKey]struct{})
 		rows = slices.DeleteFunc(slices.Clone(rows), func(row SocketRow) bool {
-			if row.UID != 1000 || row.State != "connecting" || capturedSocket(row.UID, row.Tuple.Local, row.Tuple.Peer, c.resolver.protected) {
+			if row.UID != 1000 || row.State != "connecting" || c.boundary.captured(row.UID, row.Tuple.Local, row.Tuple.Peer) {
 				return false
 			}
 			key := socketAttemptKey{Tuple: row.Tuple, UID: row.UID, Inode: row.Inode}

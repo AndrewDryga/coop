@@ -43,7 +43,7 @@ func answerExchange(t *testing.T, answers func(string) []dnsmessage.Resource) Ex
 
 func newTestResolver(t *testing.T, exchange Exchange) *Resolver {
 	t.Helper()
-	r, err := NewResolver(testPolicy(t), nil, testBootClock(), exchange)
+	r, err := NewResolver(testPolicy(t), nil, nil, testBootClock(), exchange)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestResolverRejectsWholeMixedUnsafeAndProtectedAnswers(t *testing.T) {
 			}
 		})
 	}
-	r, err := NewResolver(testPolicy(t), []netip.Prefix{netip.MustParsePrefix("93.184.216.0/24")}, testBootClock(), answerExchange(t, func(name string) []dnsmessage.Resource {
+	r, err := NewResolver(testPolicy(t), []netip.Prefix{netip.MustParsePrefix("93.184.216.0/24")}, nil, testBootClock(), answerExchange(t, func(name string) []dnsmessage.Resource {
 		return []dnsmessage.Resource{aRecord(name, "93.184.216.34", 30)}
 	}))
 	if err != nil {

@@ -14,7 +14,7 @@ func testController(t *testing.T, apply ApplyRules) *Controller {
 	t.Helper()
 	policy := testPolicy(t)
 	clock := testBootClock()
-	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint}, policy, nil, clock, apply)
+	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint}, policy, nil, nil, nil, clock, apply)
 	if err != nil {
 		t.Fatal(err)
 	}

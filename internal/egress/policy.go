@@ -51,9 +51,13 @@ func ParseMode(value string) (Mode, error) {
 }
 
 type Destination struct {
-	Domain   string   `json:"domain,omitempty" yaml:"domain,omitempty"`
-	IP       string   `json:"ip,omitempty" yaml:"ip,omitempty"`
-	CIDR     string   `json:"cidr,omitempty" yaml:"cidr,omitempty"`
+	Domain string `json:"domain,omitempty" yaml:"domain,omitempty"`
+	IP     string `json:"ip,omitempty" yaml:"ip,omitempty"`
+	CIDR   string `json:"cidr,omitempty" yaml:"cidr,omitempty"`
+	// Service names one Compose sidecar of THIS project. It is a request like
+	// any other: approval grants the named container's address and ports, never
+	// the services network or a neighbour that happens to sit on it.
+	Service  string   `json:"service,omitempty" yaml:"service,omitempty"`
 	Provider string   `json:"provider,omitempty" yaml:"provider,omitempty"`
 	Features []string `json:"features,omitempty" yaml:"features,omitempty"`
 }
@@ -69,12 +73,12 @@ type Rule struct {
 // Keep field presence until shape validation is complete. Decoding straight into
 // a struct would make an extra `ip: null` or forbidden `ports: []` disappear.
 func (d *Destination) UnmarshalYAML(node *yaml.Node) error {
-	fields, err := yamlFields(node, "domain", "ip", "cidr", "provider", "features")
+	fields, err := yamlFields(node, "domain", "ip", "cidr", "service", "provider", "features")
 	if err != nil {
 		return err
 	}
 	selectors := 0
-	for _, name := range []string{"domain", "ip", "cidr", "provider"} {
+	for _, name := range []string{"domain", "ip", "cidr", "service", "provider"} {
 		if _, ok := fields[name]; ok {
 			selectors++
 		}
@@ -257,13 +261,13 @@ func normalizeRule(rule Rule) (Rule, error) {
 
 func canonicalRule(rule Rule) (Rule, error) {
 	selectors := 0
-	for _, value := range []string{rule.To.Domain, rule.To.IP, rule.To.CIDR, rule.To.Provider} {
+	for _, value := range []string{rule.To.Domain, rule.To.IP, rule.To.CIDR, rule.To.Service, rule.To.Provider} {
 		if value != "" {
 			selectors++
 		}
 	}
 	if selectors != 1 {
-		return Rule{}, errors.New("to requires exactly one domain, ip, cidr or provider")
+		return Rule{}, errors.New("to requires exactly one domain, ip, cidr, service or provider")
 	}
 	if rule.To.Provider != "" {
 		if !validLabel(rule.To.Provider) || rule.Protocol != "" || len(rule.Ports)+len(rule.Types)+len(rule.Codes) != 0 {
@@ -286,7 +290,11 @@ func canonicalRule(rule Rule) (Rule, error) {
 		return Rule{}, errors.New("features require a provider selector")
 	}
 	var prefix netip.Prefix
-	if rule.To.Domain != "" {
+	if rule.To.Service != "" {
+		if !validLabel(rule.To.Service) {
+			return Rule{}, errors.New("service must be one lowercase Compose service name")
+		}
+	} else if rule.To.Domain != "" {
 		name, err := canonicalDomain(rule.To.Domain, true)
 		if err != nil {
 			return Rule{}, err
@@ -318,7 +326,7 @@ func canonicalRule(rule Rule) (Rule, error) {
 	switch rule.Protocol {
 	case "tls", "tcp", "udp":
 		if (rule.Protocol == "tls") != (rule.To.Domain != "") {
-			return Rule{}, errors.New("tls requires a domain; raw tcp/udp require an ip or cidr")
+			return Rule{}, errors.New("tls requires a domain; raw tcp/udp require an ip, cidr or service")
 		}
 		if len(rule.Types)+len(rule.Codes) != 0 {
 			return Rule{}, errors.New("transport rules forbid ICMP types/codes")

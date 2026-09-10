@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -233,4 +234,87 @@ func (d *Docker) RemoveVolume(ctx context.Context, ref DockerRef) error {
 		return nil
 	}
 	return errors.Join(errors.New("Docker volume cleanup remains pending"), removeErr, err)
+}
+
+// dockerNetworkName is the bounded Compose network spelling this launcher will
+// touch. It is never an operator string: the caller derives it from the run's
+// own Compose project.
+func dockerNetworkName(value string) bool {
+	if len(value) == 0 || len(value) > 128 || strings.HasPrefix(value, "-") {
+		return false
+	}
+	return strings.Trim(value, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") == ""
+}
+
+// ConnectNetwork attaches ONE exactly-owned container to one existing network.
+// It is not `docker network create`: a network this daemon does not already
+// have is an error, so a launch cannot invent connectivity for itself.
+func (d *Docker) ConnectNetwork(ctx context.Context, network string, ref DockerRef) error {
+	if !dockerNetworkName(network) || !ref.valid(false) || ref.ID == "" {
+		return errors.New("invalid exact Docker network attachment")
+	}
+	if err := d.VerifyLaunch(ctx); err != nil {
+		return err
+	}
+	// Confirm ownership before mutating: the ref's labels prove this is the
+	// container this run created, not another box that reused the name.
+	if _, present, err := d.InspectContainer(ctx, ref); err != nil || !present {
+		return errors.Join(errors.New("network attachment target is not this run's container"), err)
+	}
+	if _, err := d.output(ctx, 64<<10, "network", "connect", network, ref.ID); err != nil {
+		return errors.Join(errors.New("cannot attach the gateway to the project's services network"), err)
+	}
+	return nil
+}
+
+// NetworkMembers returns the IPv4 address each container on this network holds,
+// keyed by full container ID. It reads the runtime once, at launch: the box
+// never resolves a sidecar itself, so an address that changes later cannot
+// silently redirect a grant — the run keeps the address it was launched with.
+func (d *Docker) NetworkMembers(ctx context.Context, network string) (map[string]netip.Addr, error) {
+	if !dockerNetworkName(network) {
+		return nil, errors.New("invalid Docker network name")
+	}
+	if err := d.Verify(ctx); err != nil {
+		return nil, err
+	}
+	data, err := d.output(ctx, 256<<10, "network", "inspect", "--format", "{{json .Containers}}", network)
+	if err != nil {
+		return nil, errors.Join(errors.New("the project's services network is unavailable"), err)
+	}
+	var members map[string]struct{ IPv4Address string }
+	if json.Unmarshal(data, &members) != nil || len(members) > 512 {
+		return nil, errors.New("invalid Docker network observation")
+	}
+	out := make(map[string]netip.Addr, len(members))
+	for id, member := range members {
+		prefix, err := netip.ParsePrefix(member.IPv4Address)
+		if !dockerHexID(id) || err != nil || !prefix.Addr().Is4() {
+			continue // an IPv6-only or malformed endpoint is not an IPv4 grant
+		}
+		out[id] = prefix.Addr()
+	}
+	return out, nil
+}
+
+// ComposeServiceID resolves one Compose service of one project to its single
+// running container ID. Ambiguity fails: two replicas are two addresses, and a
+// grant names exactly one destination.
+func (d *Docker) ComposeServiceID(ctx context.Context, project, service string) (string, error) {
+	if !dockerToken(project, 256) || !dockerToken(service, 256) {
+		return "", errors.New("invalid Compose service reference")
+	}
+	if err := d.Verify(ctx); err != nil {
+		return "", err
+	}
+	data, err := d.output(ctx, 64<<10, "container", "ls", "--no-trunc", "--filter", "label=com.docker.compose.project="+project,
+		"--filter", "label=com.docker.compose.service="+service, "--format", "{{.ID}}")
+	if err != nil {
+		return "", err
+	}
+	ids := strings.Fields(string(data))
+	if len(ids) != 1 || !dockerHexID(ids[0]) {
+		return "", errors.New("service " + service + " is not running as exactly one container")
+	}
+	return ids[0], nil
 }

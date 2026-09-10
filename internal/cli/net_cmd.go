@@ -519,7 +519,9 @@ func writeNetInspection(w io.Writer, p ui.Palette, id string, inspection network
 			netCount(counters.SentBytes), netCount(counters.ReceivedBytes), netCount(counters.Connections)))
 		field("Denied", fmt.Sprintf("packets %s, dns %s, tls %s", netCount(counters.DeniedPackets),
 			netCount(counters.DeniedDNSQueries), netCount(counters.DeniedTLS)))
+		netRow(w, p.Dim(netRawRefusalNote))
 	}
+	writeNetAddressGrants(w, p, observed)
 	writeNetDenials(w, p, observed)
 	if len(observed.Alerts) == 0 {
 		field("Alerts", "none retained")
@@ -541,6 +543,24 @@ func writeNetInspection(w io.Writer, p ui.Palette, id string, inspection network
 		field("Receipt", "sealed "+inspection.Receipt.Finality+", "+inspection.Receipt.Completeness)
 	}
 	fmt.Fprintln(w, p.Dim("Full coverage, loss and per-source health: coop net inspect "+id+" --json"))
+}
+
+// The packet filter drops a refused raw datagram without recording where it
+// was going, so those packets are a count and nothing more. Saying so is the
+// honest alternative to inventing a destination for them.
+const netRawRefusalNote = "raw tcp/udp/icmp refusals are counted, not attributed to a destination — there is no event to explain"
+
+// writeNetAddressGrants shows what each raw grant actually carried. Bytes here
+// are kernel packet bytes, not application payload.
+func writeNetAddressGrants(w io.Writer, p ui.Palette, observed networkview.Snapshot) {
+	if len(observed.AddressGrants) == 0 {
+		return
+	}
+	netField(w, p, netLabelWidth, "Raw grants", ui.Count(len(observed.AddressGrants), "address grant")+" carried traffic")
+	for _, grant := range observed.AddressGrants {
+		netRow(w, fmt.Sprintf("%s  %s packet(s), %s byte(s)", grant.RuleID,
+			strconv.FormatUint(uint64(grant.Packets), 10), strconv.FormatUint(uint64(grant.Bytes), 10)))
+	}
 }
 
 func writeNetDenials(w io.Writer, p ui.Palette, observed networkview.Snapshot) {
@@ -579,9 +599,11 @@ func writeNetReceipt(w io.Writer, p ui.Palette, id string, receipt networkview.R
 			netCount(counters.SentBytes), netCount(counters.ReceivedBytes), netCount(counters.Connections)))
 		field("Denied", fmt.Sprintf("packets %s, dns %s, tls %s", netCount(counters.DeniedPackets),
 			netCount(counters.DeniedDNSQueries), netCount(counters.DeniedTLS)))
+		netRow(w, p.Dim(netRawRefusalNote))
 	} else {
 		field("Totals", "UNKNOWN (no counters were sealed with this receipt)")
 	}
+	writeNetAddressGrants(w, p, receipt.Snapshot)
 	writeNetDenials(w, p, receipt.Snapshot)
 	if receipt.Snapshot.Projection != "destinations-included" {
 		fmt.Fprintln(w, p.Dim("Destinations are withheld in this projection — even a refused name can encode a secret."))

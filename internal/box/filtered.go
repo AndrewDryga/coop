@@ -68,6 +68,10 @@ type filteredExecution struct {
 	startAttempted bool // monotonic host launch boundary, independent of registry publication
 	bindSources    map[string]os.FileInfo
 	unsafeRoots    []string
+	publish        []string // -p options the controller carries for serve.ports
+	serveEnv       []string // COOP_SERVE_URL_* the agent container still gets
+	servicesNet    string   // the Compose network the controller joins, if any
+	services       []networkgateway.ServiceBinding
 }
 
 func (f *filteredExecution) workloadOutcome(code int, err error, cancelled bool) string {
@@ -99,19 +103,25 @@ type filteredDocker interface {
 	ExecRead(context.Context, runtime.DockerRef, int, ...string) ([]byte, error)
 	CopyArchive(context.Context, runtime.DockerRef, string, int) ([]byte, error)
 	ExistingNamedVolumeExposure(context.Context, []string) (runtime.VolumeExposure, error)
+	ConnectNetwork(context.Context, string, runtime.DockerRef) error
+	NetworkMembers(context.Context, string) (map[string]netip.Addr, error)
+	ComposeServiceID(context.Context, string, string) (string, error)
 }
 
 // All policy and exposure checks precede runtime mutation. A returned execution
 // on error still owns any published intent; the caller must run its cleanup.
 func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtime.Runtime, spec RunSpec, capture *CapturedEgress, composeFile string, smoke *networkSmokeLaunch) (*filteredExecution, error) {
+	var servePorts []int
 	if capture == nil || capture.Store == nil || ctx == nil {
 		return nil, errors.New("filtered launch requires a trusted captured network policy")
 	}
 	if cfg.Egress != "open" && cfg.Egress != "filtered" {
 		return nil, errors.New("filtered capture conflicts with the offline network ceiling")
 	}
-	if spec.Network && (composeFile != "" || cfg.ServicesNet != "") || spec.Serve && len(spec.servePorts) != 0 {
-		return nil, errors.New("restricted networking does not yet qualify sibling services or published ports")
+	if spec.Serve {
+		if err := checkFilteredServePorts(spec.servePorts); err != nil {
+			return nil, err
+		}
 	}
 	runRepo, err := filepath.Abs(projectPolicyRepo(spec))
 	if err == nil {
@@ -129,8 +139,18 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if err != nil {
 		return nil, err
 	}
-	if policy.Mode != egress.Filtered || policy.RequireTLS443(true) != nil {
-		return nil, errors.New("network policy exceeds the qualified visible-SNI TLS443 subset")
+	if policy.Mode != egress.Filtered {
+		return nil, errors.New("filtered launch requires a filtered capture")
+	}
+	if err := policy.RequireSupported(); err != nil {
+		return nil, err
+	}
+	approvedServices := serviceGrants(policy)
+	// box.network is the old join-everything switch; in filtered mode a sidecar
+	// is reached through an approved `to: {service: <name>}` grant, one exact
+	// container at a time, never by joining a shared network.
+	if len(approvedServices) == 0 && spec.Network && (composeFile != "" || cfg.ServicesNet != "") {
+		return nil, errors.New("restricted networking does not join a shared services network; request the exact sidecar with a `to: {service: <name>}` rule in .agent/project.yaml and approve it")
 	}
 	exposed := []string{spec.Repo, project}
 	exposed = append(exposed, ConfigExposureRoots(cfg)...)
@@ -147,10 +167,6 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if err != nil {
 		return nil, err
 	}
-	protected, err := filteredHostAddresses()
-	if err != nil {
-		return nil, err
-	}
 	// The qualified candidate owns the endpoint. Replaying an admitted launch
 	// must not rediscover a later ambient Docker context. An empty daemon
 	// argument permits launch; the full candidate tuple is checked below.
@@ -158,7 +174,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if err != nil {
 		return nil, err
 	}
-	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, protected: protected, attempted: map[string]bool{}}
+	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, attempted: map[string]bool{}}
 	f.unsafeRoots = []string{spec.Repo, project}
 	if roots := ConfigExposureRoots(cfg); len(roots) > 1 {
 		f.unsafeRoots = append(f.unsafeRoots, roots[1:]...)
@@ -176,10 +192,29 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		}
 	}
 	f.image = candidate.ClientImage
+	f.publish, servePorts, f.serveEnv = filteredPublish(cfg, spec, hostPortFree)
+	if len(approvedServices) != 0 {
+		privateRoots := append(ConfigExposureRoots(cfg), project)
+		for _, companion := range spec.CompanionRepositories {
+			privateRoots = append(privateRoots, companion.HostPath)
+		}
+		f.servicesNet, f.services, err = resolveServiceBindings(ctx, docker, rt, spec, composeFile, approvedServices, privateRoots)
+		if err != nil {
+			return f, err
+		}
+	}
+	// The protection envelope is inventoried AFTER the approved sidecars are up:
+	// starting them can add a runtime network, and this run must protect the
+	// host topology it will actually launch into, not the one before it.
+	protected, err := filteredHostAddresses()
+	if err != nil {
+		return f, err
+	}
+	f.protected = protected
 	executionSpec := networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
 		QualificationID: capture.QualificationID, ClientImage: f.image,
 		Runtime: "docker", DaemonID: docker.Info().ID, Endpoint: docker.Endpoint(), GatewayImage: candidate.GatewayImage,
-		SessionID: capture.SessionID, AttemptID: capture.AttemptID}
+		SessionID: capture.SessionID, AttemptID: capture.AttemptID, Protected: protected}
 	if smoke == nil {
 		f.record, err = f.store.CreateExecution(ctx, executionSpec)
 	} else {
@@ -191,7 +226,8 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if smoke != nil && smoke.registered != nil {
 		smoke.registered(f.record)
 	}
-	launch := networkgateway.LaunchConfig{Version: 1, RunID: f.record.ID, Epoch: f.record.Epoch, Policy: policy, Protected: protected}
+	launch := networkgateway.LaunchConfig{Version: 1, RunID: f.record.ID, Epoch: f.record.Epoch, Policy: policy, Protected: protected,
+		Services: f.services, Serve: servePorts}
 	if err := launch.Validate(); err != nil {
 		return f, err
 	}

@@ -5,17 +5,22 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkview"
 )
 
 const (
 	MaxKernelCounterBytes = 64 << 10
-	KernelSampleTimeout   = 500 * time.Millisecond
+	// One counter per address grant, bounded by the policy's own grant limit.
+	MaxKernelGrantCounters = egress.MaxGrants
+	KernelSampleTimeout    = 500 * time.Millisecond
 )
 
 // These are disjoint packet counters, not connection or application-byte
@@ -25,6 +30,15 @@ type KernelCounters struct {
 	ProtectedAgent networkview.Count `json:"protected_agent"`
 	DeniedService  networkview.Count `json:"denied_service"`
 	DeniedIngress  networkview.Count `json:"denied_ingress"`
+	// Grants counts the packets each address grant actually passed, keyed by
+	// its kernel counter name. Bytes are real here — unlike a denial, an
+	// allowed raw flow is a measured volume, not a packet tally alone.
+	Grants map[string]GrantCount `json:"grants,omitempty"`
+}
+
+type GrantCount struct {
+	Packets networkview.Count `json:"packets"`
+	Bytes   networkview.Count `json:"bytes"`
 }
 
 type KernelSample struct {
@@ -51,6 +65,7 @@ func (k *kernelEvents) snapshot() KernelSample {
 	s := k.sample
 	if s.Counters != nil {
 		value := *s.Counters
+		value.Grants = maps.Clone(value.Grants)
 		s.Counters = &value
 	}
 	if s.Sequence == 0 {
@@ -162,22 +177,44 @@ func parseKernelCounters(data []byte) (KernelCounters, error) {
 			continue
 		}
 		target, ok := wanted[c.Name]
-		if !ok || seen[c.Name] {
+		// An unknown name still means a table that is not the one this gateway
+		// installed. Per-grant counters are named from the frozen policy, so
+		// their exact shape is checked here rather than accepted as a wildcard.
+		if !ok && !grantCounterName(c.Name) || seen[c.Name] {
 			return KernelCounters{}, invalid
 		}
 		packets, err := nftUnsigned(c.Packets)
 		if err != nil {
 			return KernelCounters{}, invalid
 		}
-		if _, err := nftUnsigned(c.Bytes); err != nil {
+		bytes, err := nftUnsigned(c.Bytes)
+		if err != nil {
 			return KernelCounters{}, invalid
 		}
-		*target, seen[c.Name] = networkview.Count(packets), true
+		seen[c.Name] = true
+		if !ok {
+			if len(result.Grants) >= MaxKernelGrantCounters {
+				return KernelCounters{}, invalid
+			}
+			if result.Grants == nil {
+				result.Grants = map[string]GrantCount{}
+			}
+			result.Grants[c.Name] = GrantCount{Packets: networkview.Count(packets), Bytes: networkview.Count(bytes)}
+			continue
+		}
+		*target = networkview.Count(packets)
 	}
-	if len(seen) != len(wanted) {
+	if len(seen) != len(wanted)+len(result.Grants) {
 		return KernelCounters{}, invalid
 	}
 	return result, nil
+}
+
+// grantCounterName is the exact spelling the policy derives: "grant_" plus the
+// first 24 lowercase hex characters of a stable rule ID.
+func grantCounterName(name string) bool {
+	rest, ok := strings.CutPrefix(name, "grant_")
+	return ok && len(rest) == 24 && strings.Trim(rest, "0123456789abcdef") == ""
 }
 
 func nftUnsigned(raw []byte) (uint64, error) {

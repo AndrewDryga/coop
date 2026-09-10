@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
@@ -45,14 +44,7 @@ func TestRestrictedNetworkRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closure, err := agents.LockedClientClosure(agents.ClientPlatform{OS: candidate.Runtime.OS, Architecture: candidate.Runtime.Architecture, Libc: candidate.Libc})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var clients []networkstate.QualifiedClient
-	for _, client := range closure.Clients {
-		clients = append(clients, networkstate.QualifiedClient{Provider: client.Provider, Client: client.Client, Version: client.Version})
-	}
+	clients := qualifiedClients(t, candidate)
 	for _, name := range []string{"enforcement", "guard-loss"} {
 		t.Run(name, func(t *testing.T) {
 			smoke, err := store.BeginQualification(candidate, clients)
@@ -146,7 +138,8 @@ if curl -q --proxy '' --noproxy '*' --silent --max-time 3 --resolve example.org:
 				}
 			} else {
 				if r.Receipt.Completeness != "complete" || r.Receipt.Workload != "exited" {
-					t.Fatal("normal traffic receipt incomplete")
+					t.Fatalf("normal traffic receipt incomplete: completeness=%s workload=%s loss=%v unknown=%t availability=%s",
+						r.Receipt.Completeness, r.Receipt.Workload, r.Receipt.Snapshot.Loss.Reasons, r.Receipt.Snapshot.Loss.Unknown, r.Receipt.Snapshot.Availability)
 				}
 				checkQualifiedTraffic(t, r.Receipt.Snapshot, policy.Grants[0].ID)
 			}

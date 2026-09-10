@@ -377,16 +377,132 @@ func PublicAnswer(ip netip.Addr, protected []netip.Prefix) bool {
 	return ip.Is4() || netip.MustParsePrefix("2000::/3").Contains(ip)
 }
 
-// RequireTLS443 is a capability gate, not a lossy compiler. Wider rules remain
-// rejected until the corresponding runtime and observation paths are qualified.
-func (s Snapshot) RequireTLS443(wildcards bool) error {
+// RequireSupported is the capability gate every accepted rule passes: this
+// runtime either enforces the rule or refuses it BY NAME. A grant that reaches
+// a gateway unenforced would be the one failure mode the design forbids, so the
+// same check runs at admission, at launch and inside the box.
+func (s Snapshot) RequireSupported() error {
 	if s.Mode != Filtered {
 		return errors.New("gateway requires filtered authority")
 	}
+	counters := map[string]bool{}
 	for _, grant := range s.Grants {
-		rule := grant.Rule
-		if rule.Protocol != "tls" || len(rule.Ports) != 1 || rule.Ports[0] != 443 || (!wildcards && strings.HasPrefix(rule.To.Domain, "*.")) {
-			return errors.New("unsupported_capability: this gateway requires qualified TLS443 domain rules")
+		if err := SupportedRule(grant.Rule); err != nil {
+			return err
+		}
+		if name := grant.CounterName(); name != "" {
+			if counters[name] {
+				return errors.New("two address grants share one kernel counter name")
+			}
+			counters[name] = true
+		}
+	}
+	return nil
+}
+
+// CounterName is the kernel counter this address grant's packets are counted
+// on, or "" for a rule the packet filter never sees by itself (a TLS name is
+// routed by the guard). nft counter names are bounded identifiers, so the
+// stable rule ID is truncated; the snapshot itself remains the ID mapping.
+func (g Grant) CounterName() string {
+	if g.Rule.Protocol == "tls" || g.Rule.To.Provider != "" || len(g.ID) < 24 {
+		return ""
+	}
+	return "grant_" + g.ID[:24]
+}
+
+// GrantByCounter maps an observed kernel counter back to the grant that owns
+// it. An unknown name belongs to no grant and is never attributed to one.
+func (s Snapshot) GrantByCounter(counter string) (Grant, bool) {
+	for _, grant := range s.Grants {
+		if name := grant.CounterName(); name != "" && name == counter {
+			return grant, true
+		}
+	}
+	return Grant{}, false
+}
+
+// SupportedRule reports whether the qualified runtime enforces this exact
+// combination. Its errors are the message a user sees, so each one names the
+// unsupported thing and does not suggest the rule was accepted.
+func SupportedRule(rule Rule) error {
+	if rule.To.Provider != "" {
+		return errors.New("provider selectors expand into concrete rules before enforcement")
+	}
+	switch rule.Protocol {
+	case "tls":
+		if rule.To.Domain == "" {
+			return errors.New("tls requires a domain; TLS to a bare address is not supported")
+		}
+		for _, port := range rule.Ports {
+			if port != 443 {
+				return fmt.Errorf("TLS on port %d is not supported yet; only 443 is qualified", port)
+			}
+		}
+		return nil
+	case "tcp", "udp":
+		if rule.To.Service != "" {
+			return supportedPorts(rule, "service "+rule.To.Service)
+		}
+		prefix, err := supportedPrefix(rule)
+		if err != nil {
+			return err
+		}
+		return supportedPorts(rule, prefix.String())
+	case "icmp":
+		prefix, err := supportedPrefix(rule)
+		if err != nil {
+			return err
+		}
+		for _, kind := range rule.Types {
+			if kind != "8" {
+				return fmt.Errorf("ICMP type %s to %s is not supported yet; only echo-request is qualified", kind, prefix)
+			}
+		}
+		for _, code := range rule.Codes {
+			if code != 0 {
+				return fmt.Errorf("ICMP code %d is not supported yet; echo-request uses code 0", code)
+			}
+		}
+		return nil
+	case "icmpv6":
+		return errors.New("IPv6 destinations are refused: this runtime is qualified for IPv4 only")
+	}
+	return errors.New("protocol must be tls, tcp, udp or icmp")
+}
+
+func supportedPrefix(rule Rule) (netip.Prefix, error) {
+	if rule.To.Service != "" {
+		return netip.Prefix{}, errors.New("a service grant is raw tcp or udp to that container, not ICMP")
+	}
+	prefix, err := netip.ParsePrefix(rule.To.CIDR)
+	if err != nil {
+		return netip.Prefix{}, errors.New("raw transports require a canonical ip or cidr destination")
+	}
+	if !prefix.Addr().Is4() {
+		return netip.Prefix{}, errors.New("IPv6 destinations are refused: this runtime is qualified for IPv4 only")
+	}
+	if prefix.Bits() == 0 {
+		return netip.Prefix{}, errors.New("a /0 grant is not filtered access; use explicit open egress for that intent")
+	}
+	// A destination entirely inside a permanent denial can never pass a packet:
+	// accepting it would be exactly the unenforced grant this gate exists for.
+	// A WIDER range that merely overlaps one stays valid — the kernel's
+	// protected drop still wins inside it.
+	for _, protected := range protectedPrefixes {
+		if protected.Bits() <= prefix.Bits() && protected.Contains(prefix.Addr()) {
+			return netip.Prefix{}, fmt.Errorf("%s is a protected address range (host, loopback, link-local or metadata); no rule can grant it", prefix)
+		}
+	}
+	return prefix, nil
+}
+
+// 443 and 53 belong to the gateway's own capture of agent TLS and DNS. A raw
+// grant on them would be silently redirected, so it is refused by name.
+func supportedPorts(rule Rule, destination string) error {
+	for _, port := range rule.Ports {
+		if port == 443 || port == 53 {
+			return fmt.Errorf("raw %s to %s port %d is not supported: the gateway captures port %d for its own TLS and DNS handling", rule.Protocol, destination, port, port)
 		}
 	}
 	return nil

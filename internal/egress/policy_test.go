@@ -128,7 +128,7 @@ func TestDecisionAPIsRejectInvalidModesEvenWithGrants(t *testing.T) {
 	}
 	for _, mode := range []Mode{"", "typo", None} {
 		s.Mode = mode
-		if s.Domain("example.com", 443).Allowed || s.AdmitsName("example.com") || s.Address(netip.MustParseAddr("10.0.0.1"), "tcp", 443, 0, 0, nil).Allowed || s.RequireTLS443(true) == nil {
+		if s.Domain("example.com", 443).Allowed || s.AdmitsName("example.com") || s.Address(netip.MustParseAddr("10.0.0.1"), "tcp", 443, 0, 0, nil).Allowed || s.RequireSupported() == nil {
 			t.Errorf("invalid mode %q gained access", mode)
 		}
 	}
@@ -241,14 +241,67 @@ func TestProtectedAddressesOverrideGrants(t *testing.T) {
 }
 
 func TestUnsupportedCapabilitiesRejectWholePolicy(t *testing.T) {
-	for _, rule := range []Rule{tlsRule("*.example.com"), {To: Destination{IP: "10.0.0.1"}, Protocol: "tcp", Ports: []int{443}}, {To: Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{8443}}} {
-		s, err := Compile("test", Filtered, []Input{{Rules: []Rule{tlsRule("api.example.com"), rule}, Origin: Origin{Kind: "operator"}}}, nil, false, ownerKey())
-		if err != nil {
-			t.Fatal(err)
+	unsupported := map[string]Rule{
+		"tls on another port": {To: Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{8443}},
+		"raw tcp on 443":      {To: Destination{IP: "10.0.0.1"}, Protocol: "tcp", Ports: []int{443}},
+		"raw udp on 53":       {To: Destination{IP: "10.0.0.1"}, Protocol: "udp", Ports: []int{53}},
+		"ipv6 address":        {To: Destination{IP: "2001:4860:4860::8888"}, Protocol: "tcp", Ports: []int{5432}},
+		"icmpv6":              {To: Destination{CIDR: "2001:db8::/32"}, Protocol: "icmpv6", Types: []string{"echo-request"}},
+		"icmp beyond echo":    {To: Destination{IP: "10.0.0.1"}, Protocol: "icmp", Types: []string{"3"}},
+		"protected loopback":  {To: Destination{IP: "127.0.0.1"}, Protocol: "tcp", Ports: []int{5432}},
+		"protected metadata":  {To: Destination{CIDR: "169.254.0.0/16"}, Protocol: "tcp", Ports: []int{80}},
+		"service on captured": {To: Destination{Service: "web"}, Protocol: "tcp", Ports: []int{443}},
+	}
+	for name, rule := range unsupported {
+		t.Run(name, func(t *testing.T) {
+			s, err := Compile("test", Filtered, []Input{{Rules: []Rule{tlsRule("api.example.com"), rule}, Origin: Origin{Kind: "operator"}}}, nil, false, ownerKey())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RequireSupported(); err == nil {
+				t.Fatalf("unsupported rule silently ignored: %#v", rule)
+			}
+		})
+	}
+}
+
+func TestSupportedTransportsAreEnforceable(t *testing.T) {
+	supported := []Rule{
+		tlsRule("api.example.com"), tlsRule("*.example.com"),
+		{To: Destination{IP: "10.0.0.1"}, Protocol: "tcp", Ports: []int{5432}},
+		{To: Destination{CIDR: "10.42.9.0/24"}, Protocol: "udp", Ports: []int{123}},
+		{To: Destination{CIDR: "10.0.0.0/8"}, Protocol: "icmp", Types: []string{"echo-request"}},
+		{To: Destination{Service: "web"}, Protocol: "tcp", Ports: []int{80}},
+	}
+	s, err := Compile("test", Filtered, []Input{{Rules: supported, Origin: Origin{Kind: "operator"}}}, nil, false, ownerKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequireSupported(); err != nil {
+		t.Fatal(err)
+	}
+	counters := map[string]string{}
+	for _, grant := range s.Grants {
+		name := grant.CounterName()
+		if grant.Rule.Protocol == "tls" {
+			if name != "" {
+				t.Errorf("a routed TLS name must not own a packet counter: %q", name)
+			}
+			continue
 		}
-		if s.RequireTLS443(false) == nil {
-			t.Fatalf("unsupported rule silently ignored: %#v", rule)
+		if len(name) != 30 || counters[name] != "" {
+			t.Fatalf("address grant counter %q is not a unique bounded name", name)
 		}
+		counters[name] = grant.ID
+		if back, ok := s.GrantByCounter(name); !ok || back.ID != grant.ID {
+			t.Fatalf("counter %q does not map back to its grant", name)
+		}
+	}
+	if len(counters) != 4 {
+		t.Fatalf("expected one counter per address grant, got %d", len(counters))
+	}
+	if _, ok := s.GrantByCounter("grant_" + strings.Repeat("f", 24)); ok {
+		t.Fatal("an unknown counter was attributed to a grant")
 	}
 }
 

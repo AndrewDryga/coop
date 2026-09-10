@@ -43,6 +43,19 @@ type LaunchConfig struct {
 	Epoch     string          `json:"gateway_epoch"`
 	Policy    egress.Snapshot `json:"policy"`
 	Protected []netip.Prefix  `json:"protected"`
+	// Services binds each approved `service:` grant to the ONE container
+	// address the host read from the runtime at launch. The box never resolves
+	// a service name itself, so a sidecar that moves cannot widen the grant.
+	Services []ServiceBinding `json:"services,omitempty"`
+	// Serve is this project's published container ports. They are ingress the
+	// operator asked for, not egress authority.
+	Serve []int `json:"serve,omitempty"`
+}
+
+type ServiceBinding struct {
+	Name    string     `json:"name"`
+	RuleID  string     `json:"rule_id"`
+	Address netip.Addr `json:"address"`
 }
 
 func ReadLaunchConfig(reader io.Reader) (LaunchConfig, error) {
@@ -61,14 +74,14 @@ func ReadLaunchConfig(reader io.Reader) (LaunchConfig, error) {
 
 func (c LaunchConfig) Validate() error {
 	if c.Version != 1 || !lowerHex(c.RunID, 32) || !lowerHex(c.Epoch, 32) || !lowerHex(c.Policy.Fingerprint, 64) || c.Policy.Version != egress.Version ||
-		len(c.Policy.Grants) > egress.MaxGrants || len(c.Protected) > MaxProtectedRanges || c.Policy.RequireTLS443(true) != nil {
+		len(c.Policy.Grants) > egress.MaxGrants || len(c.Protected) > MaxProtectedRanges || c.Policy.RequireSupported() != nil {
 		return Failure("gateway_configuration_invalid")
 	}
 	for _, grant := range c.Policy.Grants {
 		// The host authenticated this immutable capture. Reapplying today's
 		// suffix catalog here would change authority across helper upgrades.
 		rules, err := egress.CanonicalRules([]egress.Rule{grant.Rule})
-		if err != nil || len(rules) != 1 || grant.Rule.To.Domain == "" || !lowerHex(grant.ID, 32) {
+		if err != nil || len(rules) != 1 || !lowerHex(grant.ID, 32) {
 			return Failure("gateway_configuration_invalid")
 		}
 		original, _ := json.Marshal(grant.Rule)
@@ -81,6 +94,22 @@ func (c LaunchConfig) Validate() error {
 		if !prefix.IsValid() || prefix != prefix.Masked() || prefix.Addr().Is4In6() {
 			return Failure("gateway_configuration_invalid")
 		}
+	}
+	if len(c.Services) > egress.MaxGrants {
+		return Failure("gateway_configuration_invalid")
+	}
+	for _, binding := range c.Services {
+		if !lowerHex(binding.RuleID, 32) || binding.Name == "" || !binding.Address.Is4() {
+			return Failure("gateway_configuration_invalid")
+		}
+	}
+	if validServePorts(c.Serve) != nil {
+		return Failure("gateway_configuration_invalid")
+	}
+	// One construction, one meaning: the same grant/binding/port checks the
+	// controller applies decide whether this configuration is launchable.
+	if _, err := addressGrants(c.Policy, c.Services); err != nil {
+		return Failure("gateway_configuration_invalid")
 	}
 	return nil
 }
@@ -102,7 +131,7 @@ func RunController(ctx context.Context, config LaunchConfig) error {
 	if err := os.Mkdir("/ipc/controller", 0710); err != nil {
 		return Failure("controller_socket_unavailable")
 	}
-	c, err := NewController(config.identity(clock), config.Policy, config.Protected, clock, applyKernelRules)
+	c, err := NewController(config.identity(clock), config.Policy, config.Protected, config.Services, config.Serve, clock, applyKernelRules)
 	if err != nil {
 		return err
 	}
@@ -159,7 +188,7 @@ func NewGuardRuntime(config LaunchConfig) (*GuardRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	r, err := NewResolver(config.Policy, config.Protected, clock, doh.Exchange)
+	r, err := NewResolver(config.Policy, config.Protected, config.Services, clock, doh.Exchange)
 	if err != nil {
 		doh.Close()
 		return nil, err

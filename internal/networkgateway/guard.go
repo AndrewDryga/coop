@@ -37,7 +37,7 @@ type Guard struct {
 }
 
 func NewGuard(policy egress.Snapshot, clock *BootClock, resolver *Resolver, controller ControllerClient, events *GuardEvents) (*Guard, error) {
-	if err := policy.RequireTLS443(true); err != nil {
+	if err := policy.RequireSupported(); err != nil {
 		return nil, err
 	}
 	if resolver == nil || events == nil || events.clock.Domain() != clock.Domain() || !clock.instant().Valid() || clock.Domain() != controller.Identity.Clock ||
@@ -45,6 +45,13 @@ func NewGuard(policy egress.Snapshot, clock *BootClock, resolver *Resolver, cont
 		return nil, Failure("gateway_configuration_invalid")
 	}
 	return &Guard{policy: policy.Clone(), clock: clock, resolver: resolver, controller: controller, events: events}, nil
+}
+
+// boundary is the socket-attribution view of this guard's frozen authority:
+// which addresses are permanently denied, and which raw destinations a grant
+// lets the agent dial without a proxied leg to correlate.
+func (g *Guard) boundary() boundary {
+	return boundary{protected: g.resolver.protected, policy: g.policy}
 }
 
 func (g *Guard) Serve(ctx context.Context, ready func()) error {

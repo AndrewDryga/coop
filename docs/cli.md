@@ -670,7 +670,7 @@ coop net — restricted egress: only the destinations you allowed.
          coop net inspect <run> [--json]       requested, effective, observed
          coop net watch <run> [--json]         follow a run until it seals
          coop net receipt <run> [--json]       the sealed receipt
-         coop net why <domain> --run <run>     would its policy have allowed it?
+         coop net why <dest> --run <run>       would its policy have allowed it?
          coop net explain <event> --run <run>  why a refusal happened
 
   'setup' prepares this host: it builds the pinned gateway and the locked
@@ -696,9 +696,18 @@ coop net — restricted egress: only the destinations you allowed.
     box:
       egress: filtered
       egress_rules:
-        - to: {domain: "docs.example.com"}
+        - to: {domain: "docs.example.com"}    # TLS 443, exact or *.wildcard
           protocol: tls
           ports: [443]
+        - to: {cidr: "10.42.9.0/24"}          # raw TCP/UDP to IPv4, not 443/53
+          protocol: udp
+          ports: [123]
+        - to: {ip: "10.42.8.12"}              # ICMP echo-request
+          protocol: icmp
+          types: [echo-request]
+        - to: {service: "db"}                 # one Compose sidecar of this project
+          protocol: tcp
+          ports: [5432]
 
   That is a REQUEST. 'coop net approve' shows it against what is already
   remembered and, once you confirm at a terminal, stores your decision outside
@@ -706,12 +715,22 @@ coop net — restricted egress: only the destinations you allowed.
   unattended run can never approve itself. Approvals apply to NEW runs; boxes
   already running keep the policy they launched with.
 
-  'why' evaluates a name against a run's captured policy without sending a
-  packet; 'explain' opens a refusal that actually happened, with the draft rule
+  'why' evaluates a destination against a run's captured policy without sending
+  a packet — a name is TLS on 443, an IP address needs the transport too
+  ('--protocol tcp|udp --port <n>', or '--icmp' for echo-request);
+  'explain' opens a refusal that actually happened, with the draft rule
   a human could add. A receipt withholds destination names by default (even a
   refused name can encode a secret) — 'receipt --destinations' is you asking for
   them on your own machine. Unknown means unknown: a metric nobody measured is
-  never shown as zero.
+  never shown as zero. Raw tcp/udp/icmp refusals are COUNTED by the kernel, not
+  attributed to a destination — there is no event for 'explain' to open.
+
+  Supported today: TLS 443 to exact and *.wildcard names; raw tcp/udp to IPv4
+  addresses and CIDRs on any port except the captured 443 and 53; ICMP
+  echo-request to IPv4; published serve.ports; one Compose sidecar per approved
+  'service:' grant. Refused with a message: IPv6 destinations, TLS on any other
+  port, a project Dockerfile, COOP_IMAGE and non-Docker runtimes. See
+  docs/networking.md for the full matrix.
 
 coop check-secrets — scan the working tree for committed secrets, by content.
 

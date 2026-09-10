@@ -3,6 +3,7 @@ package box
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -177,6 +178,35 @@ func checkFilteredSupport(cfg *config.Config, spec RunSpec, p *project.Project) 
 	return nil
 }
 
+// checkSupportedRequests applies the runtime capability gate to every concrete
+// rule this launch would authorize. Provider selectors are skipped: they expand
+// from the trusted release bundle into concrete rules the same gate re-checks
+// on the compiled snapshot.
+func checkSupportedRequests(input networkstate.Admission) error {
+	sources := [][]egress.Rule{input.Requests}
+	for _, operator := range input.Operator {
+		sources = append(sources, operator.Rules)
+	}
+	for _, automatic := range input.Automatic {
+		sources = append(sources, automatic.Rules)
+	}
+	for _, rules := range sources {
+		normalized, err := egress.NormalizeRules(rules)
+		if err != nil {
+			return err
+		}
+		for _, rule := range normalized {
+			if rule.To.Provider != "" {
+				continue
+			}
+			if err := egress.SupportedRule(rule); err != nil {
+				return fmt.Errorf("%s: %w", NetworkRuleText(rule), err)
+			}
+		}
+	}
+	return nil
+}
+
 // admitFilteredNetwork completes the capture: operator and project rules and
 // the provider core bundles the selected targets need, authorized in ONE
 // store.Admit so posture and envelope come from one decision. The caller has
@@ -188,6 +218,12 @@ func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, 
 		return nil, err
 	}
 	input.Bundles = bundles
+	// Refuse an unsupported transport BEFORE any approval is read or written:
+	// a rule this runtime cannot enforce must fail the launch by name, not be
+	// remembered as authority and then silently dropped by the gateway.
+	if err := checkSupportedRequests(input); err != nil {
+		return nil, err
+	}
 	policy, err := store.Admit(canonicalProject, input)
 	if err != nil {
 		return nil, err

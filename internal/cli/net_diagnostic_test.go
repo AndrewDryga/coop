@@ -44,7 +44,7 @@ func TestWhyIsHypotheticalAndNamesItsProvenance(t *testing.T) {
 	result := networkstate.PolicyExplanation{Version: networkview.Version, Kind: "hypothetical", RunID: "run1",
 		PolicyFingerprint: "fp", Mode: egress.Filtered, Domain: "example.com", Protocol: "tls", Port: 443,
 		Allowed: true, Reason: "rule_allowed", Message: "permitted", Resolution: "not_evaluated",
-		Rule:    &networkstate.PolicyTLSRule{To: networkstate.PolicyDomain{Domain: "example.com"}, Protocol: "tls", Ports: []int{443}},
+		Rule:    &networkstate.PolicyRule{To: networkstate.PolicyDestination{Domain: "example.com"}, Protocol: "tls", Ports: []int{443}},
 		Origins: []networkstate.PolicyOrigin{{Kind: "operator", Name: "allow-domain"}},
 	}
 	var b bytes.Buffer

@@ -18,7 +18,7 @@ func collectorFixture(t *testing.T) (*Collector, *BootInstant) {
 	now := BootInstant(time.Hour)
 	controller := testController(t, func(context.Context, string) error { return nil })
 	controller.clock.read = func() (BootInstant, error) { return now, nil }
-	r, err := NewResolver(controller.policy, nil, controller.clock, func(context.Context, []byte) ([]byte, error) { return nil, Failure("unused_fixture") })
+	r, err := NewResolver(controller.policy, nil, nil, controller.clock, func(context.Context, []byte) ([]byte, error) { return nil, Failure("unused_fixture") })
 	if err != nil {
 		t.Fatal(err)
 	}

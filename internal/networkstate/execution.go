@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -23,6 +24,9 @@ import (
 )
 
 const (
+	// The kernel enforcer bounds its protected set the same way; this record
+	// only stores what that launch already accepted.
+	maxProtectedRanges   = 256
 	ExecutionVersion     = 1
 	ExecutionPageSize    = 100
 	ExecutionLockTimeout = 5 * time.Second
@@ -52,28 +56,32 @@ type Resource struct {
 // Execution is OWNER-PRIVATE storage, never a public DTO. In particular Project,
 // Supervisor and runtime identities must not pass through worker/session JSON.
 type Execution struct {
-	Version               int                  `json:"version"`
-	Revision              networkview.Count    `json:"revision"`
-	ID                    string               `json:"id"`
-	Epoch                 string               `json:"epoch"`
-	Project               string               `json:"project"`
-	Scope                 string               `json:"scope"`
-	Supervisor            Supervisor           `json:"supervisor"`
-	Runtime               string               `json:"runtime"`
-	DaemonID              string               `json:"daemon_id"`
-	Endpoint              string               `json:"endpoint"`
-	GatewayImage          string               `json:"gateway_image"`
-	ClientImage           string               `json:"client_image"`
-	QualificationID       string               `json:"qualification_id,omitempty"`
-	QualificationContract string               `json:"qualification_contract"`
-	Purpose               string               `json:"purpose"`
-	WorkloadStarted       bool                 `json:"workload_started,omitempty"`
-	ReadySequence         networkview.Count    `json:"ready_sequence,omitempty"`
-	SessionID             string               `json:"session_id,omitempty"`
-	AttemptID             string               `json:"attempt_id,omitempty"`
-	BundleReferences      []string             `json:"bundle_references"`
-	StartedAt             time.Time            `json:"started_at"`
-	Resources             []Resource           `json:"resources"`
+	Version               int               `json:"version"`
+	Revision              networkview.Count `json:"revision"`
+	ID                    string            `json:"id"`
+	Epoch                 string            `json:"epoch"`
+	Project               string            `json:"project"`
+	Scope                 string            `json:"scope"`
+	Supervisor            Supervisor        `json:"supervisor"`
+	Runtime               string            `json:"runtime"`
+	DaemonID              string            `json:"daemon_id"`
+	Endpoint              string            `json:"endpoint"`
+	GatewayImage          string            `json:"gateway_image"`
+	ClientImage           string            `json:"client_image"`
+	QualificationID       string            `json:"qualification_id,omitempty"`
+	QualificationContract string            `json:"qualification_contract"`
+	Purpose               string            `json:"purpose"`
+	WorkloadStarted       bool              `json:"workload_started,omitempty"`
+	ReadySequence         networkview.Count `json:"ready_sequence,omitempty"`
+	SessionID             string            `json:"session_id,omitempty"`
+	AttemptID             string            `json:"attempt_id,omitempty"`
+	BundleReferences      []string          `json:"bundle_references"`
+	StartedAt             time.Time         `json:"started_at"`
+	Resources             []Resource        `json:"resources"`
+	// Protected is the host address inventory this run's kernel refused on top
+	// of policy. Keeping it lets a later `why` say what the run really enforced
+	// instead of re-deriving today's interfaces.
+	Protected             []netip.Prefix       `json:"protected,omitempty"`
 	Artifact              Artifact             `json:"artifact"`
 	Snapshot              networkview.Snapshot `json:"snapshot"`
 	ObserverAfterWorkload bool                 `json:"observer_after_workload"`
@@ -84,6 +92,7 @@ type ExecutionSpec struct {
 	Project, PolicyFingerprint, Runtime, DaemonID, Endpoint, GatewayImage string
 	SessionID, AttemptID                                                  string
 	QualificationID, ClientImage                                          string
+	Protected                                                             []netip.Prefix
 }
 
 // Evidence cannot create resources, grant authority, or replace live snapshots.
@@ -136,7 +145,7 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, smoke *
 	if policy.Mode != egress.Filtered {
 		return Execution{}, errors.New("gateway execution requires a filtered capture")
 	}
-	if err := policy.RequireTLS443(true); err != nil {
+	if err := policy.RequireSupported(); err != nil {
 		return Execution{}, err
 	}
 	var candidate CandidateSpec
@@ -178,7 +187,7 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, smoke *
 	now := time.Now().UTC()
 	record := Execution{Version: ExecutionVersion, Revision: 1, ID: id, Epoch: epoch, Project: project, Scope: policy.Scope,
 		Supervisor: owner, Runtime: spec.Runtime, DaemonID: spec.DaemonID, Endpoint: spec.Endpoint, GatewayImage: spec.GatewayImage, SessionID: spec.SessionID,
-		AttemptID: spec.AttemptID, StartedAt: now,
+		AttemptID: spec.AttemptID, StartedAt: now, Protected: slices.Clone(spec.Protected),
 		Purpose:               "workload",
 		ClientImage:           spec.ClientImage,
 		QualificationID:       spec.QualificationID,
@@ -250,6 +259,14 @@ func validExecution(record Execution) error {
 	}
 	if !imageDigest(record.ClientImage) || !safeRecordToken(record.QualificationContract, 128) {
 		return errors.New("network execution lacks exact launch binding")
+	}
+	if len(record.Protected) > maxProtectedRanges {
+		return errors.New("invalid network execution protection envelope")
+	}
+	for _, prefix := range record.Protected {
+		if !prefix.IsValid() || prefix != prefix.Masked() || prefix.Addr().Is4In6() {
+			return errors.New("invalid network execution protection envelope")
+		}
 	}
 	if record.ReadySequence > record.Snapshot.Sequence || record.WorkloadStarted && record.Resources[2].ID == "" {
 		return errors.New("invalid network execution startup evidence")

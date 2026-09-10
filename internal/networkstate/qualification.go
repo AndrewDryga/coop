@@ -387,7 +387,7 @@ func (q Qualification) RequireLaunch(policy egress.Snapshot) error {
 	if q.Contract != QualificationContract {
 		return errors.New("network setup predates this release's enforcement contract; run `coop net setup`")
 	}
-	if err := policy.RequireTLS443(true); err != nil {
+	if err := policy.RequireSupported(); err != nil {
 		return err
 	}
 	for _, dependency := range policy.Dependencies {

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
@@ -24,7 +25,7 @@ func procRow(uid int, state string, inode int) string {
 }
 
 func TestSocketInventoryExcludesLocalNATLegAndQueuesAreNotBytes(t *testing.T) {
-	rows, err := parseSocketInventory(strings.NewReader(procHeader+procRow(1000, "01", 1)+procRow(65532, "01", 2)+procRow(65532, "06", 0)), nil)
+	rows, err := parseSocketInventory(strings.NewReader(procHeader+procRow(1000, "01", 1)+procRow(65532, "01", 2)+procRow(65532, "06", 0)), boundary{})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("inventory double-counted local NAT leg or TIME_WAIT: %#v %v", rows, err)
 	}
@@ -33,7 +34,7 @@ func TestSocketInventoryExcludesLocalNATLegAndQueuesAreNotBytes(t *testing.T) {
 	}
 	for _, value := range []string{procHeader + strings.TrimSuffix(procRow(65532, "01", 2), "\n"), procHeader + procRow(65532, "FF", 2),
 		procHeader + "short\n", strings.Repeat("x", MaxSocketBytes+1)} {
-		if rows, err := parseSocketInventory(strings.NewReader(value), nil); err == nil || rows != nil {
+		if rows, err := parseSocketInventory(strings.NewReader(value), boundary{}); err == nil || rows != nil {
 			t.Fatal("accepted partial or oversized inventory")
 		}
 	}
@@ -42,13 +43,36 @@ func TestSocketInventoryExcludesLocalNATLegAndQueuesAreNotBytes(t *testing.T) {
 func TestSocketInventoryMatchesEveryFixedLocalCaptureLeg(t *testing.T) {
 	dns := strings.Replace(procRow(1000, "01", 1), "01010101:01BB", "01010101:0035", 1)
 	accepted := strings.Replace(procRow(65532, "01", 2), "020011AC:C001", "0100007F:3C53", 1)
-	rows, err := parseSocketInventory(strings.NewReader(procHeader+dns+accepted), nil)
+	rows, err := parseSocketInventory(strings.NewReader(procHeader+dns+accepted), boundary{})
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("local DNS/accepted guard legs counted external: %#v %v", rows, err)
 	}
-	rows, err = parseSocketInventory(strings.NewReader(procHeader+procRow(1000, "02", 3)), []netip.Prefix{netip.MustParsePrefix("1.1.1.0/24")})
+	rows, err = parseSocketInventory(strings.NewReader(procHeader+procRow(1000, "02", 3)), boundary{protected: []netip.Prefix{netip.MustParsePrefix("1.1.1.0/24")}})
 	if err != nil || len(rows) != 1 {
 		t.Fatal("protected public endpoint was silently treated as TLS redirect")
+	}
+}
+
+// A raw grant has no proxied leg to correlate, so its socket must be accounted
+// for by the policy itself. Otherwise an allowed connection is reported as an
+// unattributed evidence gap and, sampled mid-handshake, as a denial.
+func TestAllowedRawSocketsAreAccountedForByTheirGrant(t *testing.T) {
+	granted := transportPolicy(t, egress.Rule{To: egress.Destination{IP: "1.1.1.1"}, Protocol: "tcp", Ports: []int{853}})
+	dot := strings.Replace(procRow(1000, "02", 7), "01010101:01BB", "01010101:0355", 1)
+	rows, err := parseSocketInventory(strings.NewReader(procHeader+dot), boundary{policy: granted})
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("an allowed raw socket was reported as an unattributed flow: %#v %v", rows, err)
+	}
+	other := strings.Replace(procRow(1000, "02", 8), "01010101:01BB", "01010101:2295", 1)
+	rows, err = parseSocketInventory(strings.NewReader(procHeader+other), boundary{policy: granted})
+	if err != nil || len(rows) != 1 || rows[0].Tuple.Peer.Port() != 8853 {
+		t.Fatalf("a socket outside every grant was hidden: %#v %v", rows, err)
+	}
+	// The permanent denials still win: a grant cannot make a protected peer an
+	// expected flow.
+	rows, err = parseSocketInventory(strings.NewReader(procHeader+dot), boundary{policy: granted, protected: []netip.Prefix{netip.MustParsePrefix("1.1.1.1/32")}})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("a protected peer inside a grant was treated as expected: %#v %v", rows, err)
 	}
 }
 

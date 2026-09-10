@@ -38,7 +38,7 @@ func startGuardClockFixture(t *testing.T, clock *BootClock, ttl uint32) guardFix
 		t.Fatal(err)
 	}
 	control, stopController, _ := startControlFixture(t, c, func(*net.UnixConn) bool { return true })
-	r, err := NewResolver(c.policy, nil, clock, answerExchange(t, func(name string) []dnsmessage.Resource {
+	r, err := NewResolver(c.policy, nil, nil, clock, answerExchange(t, func(name string) []dnsmessage.Resource {
 		return []dnsmessage.Resource{aRecord(name, "93.184.216.34", ttl)}
 	}))
 	if err != nil {

@@ -287,6 +287,8 @@ func NetworkRuleText(rule egress.Rule) string {
 		b.WriteString(rule.To.IP)
 	case rule.To.CIDR != "":
 		b.WriteString(rule.To.CIDR)
+	case rule.To.Service != "":
+		b.WriteString("service " + rule.To.Service)
 	case rule.To.Provider != "":
 		b.WriteString(rule.To.Provider)
 		if len(rule.To.Features) != 0 {
@@ -309,6 +311,13 @@ func NetworkRuleText(rule egress.Rule) string {
 	if len(rule.Types) != 0 {
 		b.WriteString(" types " + strings.Join(rule.Types, ","))
 	}
+	if len(rule.Codes) != 0 {
+		codes := make([]string, 0, len(rule.Codes))
+		for _, code := range rule.Codes {
+			codes = append(codes, strconv.Itoa(code))
+		}
+		b.WriteString(" codes " + strings.Join(codes, ","))
+	}
 	return b.String()
 }
 
@@ -325,6 +334,8 @@ func NetworkRuleYAML(rule egress.Rule) string {
 		fmt.Fprintf(&b, "        ip: %q\n", rule.To.IP)
 	case rule.To.CIDR != "":
 		fmt.Fprintf(&b, "        cidr: %q\n", rule.To.CIDR)
+	case rule.To.Service != "":
+		fmt.Fprintf(&b, "        service: %q\n", rule.To.Service)
 	case rule.To.Provider != "":
 		fmt.Fprintf(&b, "        provider: %q\n", rule.To.Provider)
 	}
@@ -337,6 +348,16 @@ func NetworkRuleYAML(rule egress.Rule) string {
 			ports = append(ports, strconv.Itoa(port))
 		}
 		fmt.Fprintf(&b, "      ports: [%s]\n", strings.Join(ports, ", "))
+	}
+	if len(rule.Types) != 0 {
+		fmt.Fprintf(&b, "      types: [%s]\n", strings.Join(rule.Types, ", "))
+	}
+	if len(rule.Codes) != 0 {
+		codes := make([]string, 0, len(rule.Codes))
+		for _, code := range rule.Codes {
+			codes = append(codes, strconv.Itoa(code))
+		}
+		fmt.Fprintf(&b, "      codes: [%s]\n", strings.Join(codes, ", "))
 	}
 	return b.String()
 }
