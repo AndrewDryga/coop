@@ -286,3 +286,95 @@ func TestCollectorClosedFlowExplanationExpires(t *testing.T) {
 		t.Fatalf("the expired close was retained: %v", stale.closedSockets)
 	}
 }
+
+// The gateway's own DoH connection is retired between samples — a failed
+// exchange, or an idle pool entry the transport drops — and the kernel keeps its
+// socket a moment longer. Its signature is a terminal unattributed_socket at the
+// pinned resolver upstream, for a leg whose bytes are already metered.
+func TestCollectorRetiredMaintenanceSocketExplainsItsOwnRemnant(t *testing.T) {
+	c, now := collectorFixture(t)
+	conn := c.doh.sockets.track(closeHookConn{closeHook: func() {}})
+	c.doh.sockets.sent.Store(4096) // the resolver's own wire bytes, metered before the release
+	c.doh.sockets.received.Store(8192)
+	row := SocketRow{UID: 65532, Inode: 42, State: "open", Tuple: SocketTuple{
+		Local: netip.MustParseAddrPort("172.17.0.2:49153"), Peer: netip.MustParseAddrPort("1.1.1.1:443")}}
+	publishOwnedFixture(c, *now, []SocketRow{row}, c.doh.sockets.snapshot())
+	if c.snapshot.PendingConnections != 0 || c.boundaryGap != "" || c.maintenanceInodes[1].inode != 42 {
+		t.Fatalf("a live maintenance socket did not bind its own inventory row: bound=%+v", c.maintenanceInodes)
+	}
+	if err := conn.Close(); err != nil { // the resolver releases the connection
+		t.Fatal(err)
+	}
+	*now = now.Add(time.Second)
+	row.State = "closing"
+	publishOwnedFixture(c, *now, []SocketRow{row}, c.doh.sockets.snapshot())
+	if c.boundaryGap != "" || c.snapshot.PendingConnections != 0 || *c.snapshot.UnknownConnections != 0 {
+		t.Fatalf("the resolver's own remnant became an unknown external socket: gap=%q pending=%d", c.boundaryGap, c.snapshot.PendingConnections)
+	}
+	*now = now.Add(time.Second)
+	c.terminal = true
+	c.envoyTotals.Stopped = true
+	publishOwnedFixture(c, *now, []SocketRow{row}, nil)
+	if c.snapshot.Loss.Unknown || c.snapshot.Coverage.BoundaryAttribution.Status != "exact" || len(c.snapshot.Loss.Reasons) != 0 {
+		t.Fatalf("terminal sample called the gateway's own DNS socket evidence loss: %v", c.snapshot.Loss)
+	}
+	if *c.snapshot.Counters.MaintenanceSentBytes != 4096 || *c.snapshot.Counters.MaintenanceReceivedBytes != 8192 ||
+		c.snapshot.Coverage.MaintenanceBytes.Status != "exact" || *c.snapshot.Counters.SentBytes != 0 {
+		t.Fatal("the explanation moved maintenance bytes out of the maintenance counters")
+	}
+	for _, connection := range c.snapshot.Connections {
+		if connection.NameSource == "unattributed" || connection.NameSource == "unattributed-history" {
+			t.Fatalf("retired maintenance socket retained as unattributed history: %+v", connection)
+		}
+	}
+}
+
+// A retired maintenance connection explains ITS socket, proved by the inode some
+// sample bound to it — never a socket that merely points at 1.1.1.1:443, and
+// never one the kernel handed out at that tuple long after the release.
+func TestCollectorMaintenanceRemnantNeedsItsOwnBoundIdentity(t *testing.T) {
+	for _, scenario := range []string{"never-bound", "other-inode", "stale"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, now := collectorFixture(t)
+			conn := c.doh.sockets.track(closeHookConn{closeHook: func() {}})
+			row := SocketRow{UID: 65532, Inode: 42, State: "open", Tuple: SocketTuple{
+				Local: netip.MustParseAddrPort("172.17.0.2:49153"), Peer: netip.MustParseAddrPort("1.1.1.1:443")}}
+			if scenario != "never-bound" {
+				// Bound: this inventory is the only proof of which kernel socket the
+				// resolver was holding.
+				publishOwnedFixture(c, *now, []SocketRow{row}, c.doh.sockets.snapshot())
+				if c.maintenanceInodes[1].inode != 42 {
+					t.Fatalf("live maintenance socket did not bind its inode: %+v", c.maintenanceInodes)
+				}
+			}
+			if err := conn.Close(); err != nil {
+				t.Fatal(err)
+			}
+			*now = now.Add(time.Second)
+			switch scenario {
+			case "other-inode":
+				row.Inode = 43 // a second socket at that tuple is not the one released
+			case "stale":
+				// The release is observed on its own, and the kernel hands that
+				// ephemeral tuple out again long after the remnant window.
+				publishOwnedFixture(c, *now, nil, nil)
+				*now = now.Add(ObservationStaleAfter + time.Second)
+			}
+			publishOwnedFixture(c, *now, []SocketRow{row}, nil)
+			if c.snapshot.PendingConnections != 1 || *c.snapshot.UnknownConnections != 1 {
+				t.Fatalf("socket the resolver cannot claim was hidden instead of joined: pending=%d", c.snapshot.PendingConnections)
+			}
+			if scenario == "stale" && len(c.retiredMaintenance) != 0 {
+				t.Fatalf("the expired maintenance identity was retained: %v", c.retiredMaintenance)
+			}
+			*now = now.Add(time.Second)
+			c.terminal = true
+			c.envoyTotals.Stopped = true
+			publishOwnedFixture(c, *now, []SocketRow{row}, nil)
+			if !c.snapshot.Loss.Unknown || c.snapshot.Coverage.BoundaryAttribution.Reason != "unattributed_socket" ||
+				!slices.ContainsFunc(c.closed, func(row networkview.Connection) bool { return row.Reason == "socket_join_terminal" }) {
+				t.Fatalf("socket no maintenance identity claims lost its attribution gap: %v", c.snapshot.Loss)
+			}
+		})
+	}
+}

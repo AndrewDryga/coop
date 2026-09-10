@@ -52,14 +52,23 @@ type pendingSocket struct {
 	expired   bool
 }
 
-// closedSocket is the upstream identity of a flow the proxy itself ended: the
-// exact tuple Envoy reported for it, plus the inode when some sample bound one.
-// The kernel keeps that socket around after the stream is fully accounted for,
-// and the inventory alone cannot tell such a remnant from a socket nobody
-// admitted. It explains a socket; it never attributes bytes or ownership.
-type closedSocket struct {
-	inode  uint64 // 0 when no sample ever bound one
-	closed BootInstant
+// retainedSocket is the identity of a socket whose owner is gone but whose
+// kernel remnant outlives it: the exact tuple its owner reported, the inode when
+// some sample bound one, and the boot instant the owner released it. The
+// inventory alone cannot tell such a remnant from a socket nobody admitted. It
+// explains a socket; it never attributes bytes or ownership.
+type retainedSocket struct {
+	inode    uint64 // 0 when no sample ever bound one
+	released BootInstant
+}
+
+// maintenanceIdentity is a live resolver socket an inventory has bound to an
+// exact kernel inode. A maintenance connection is born knowing only its tuple,
+// and that alone cannot tell its remnant from a stranger's socket at the same
+// tuple once the resolver releases it.
+type maintenanceIdentity struct {
+	tuple SocketTuple
+	inode uint64
 }
 
 // Collector owns bounded retained evidence, never egress authority. It consumes
@@ -79,7 +88,9 @@ type Collector struct {
 	inventory                   func() ([]SocketRow, error)
 	flows                       map[string]*collectedFlow
 	closed                      []networkview.Connection
-	closedSockets               map[SocketTuple]closedSocket
+	closedSockets               map[SocketTuple]retainedSocket
+	maintenanceInodes           map[uint64]maintenanceIdentity
+	retiredMaintenance          map[SocketTuple]retainedSocket
 	denials                     []networkview.Denial
 	guardCursor, envoyCursor    uint64
 	guardTotals                 GuardTotals
@@ -340,7 +351,7 @@ func (c *Collector) ingest(guards []GuardEvent, gt GuardTotals, proxies []EnvoyE
 			f.row.Rate = nil
 			c.closed = append(c.closed, f.row)
 			if f.tuple.Peer.IsValid() {
-				c.retainClosedSocket(f.tuple, f.inode, event.BootAt)
+				c.closedSockets = retainRemnant(c.closedSockets, f.tuple, f.inode, event.BootAt)
 			}
 			if len(c.closed) > MaxClosedDetails {
 				c.closed = c.closed[1:]
@@ -418,24 +429,90 @@ func (c *Collector) markBoundaryGap(reason string) {
 	}
 }
 
-// retainClosedSocket keeps a proxy-ended flow's upstream identity for the few
-// samples its kernel socket can outlive the stream. It is bounded by the joins
-// it can explain, and the oldest close is the first to go: losing an entry only
-// costs an explanation, it can never invent one.
-func (c *Collector) retainClosedSocket(tuple SocketTuple, inode uint64, at BootInstant) {
-	if c.closedSockets == nil {
-		c.closedSockets = make(map[SocketTuple]closedSocket)
+// retainRemnant keeps a released socket's identity for the few samples its
+// kernel socket can outlive its owner — a proxy-ended flow, or a maintenance
+// connection the resolver let go. It is bounded by the joins it can explain, and
+// the oldest release is the first to go: losing an entry only costs an
+// explanation, it can never invent one.
+func retainRemnant(set map[SocketTuple]retainedSocket, tuple SocketTuple, inode uint64, at BootInstant) map[SocketTuple]retainedSocket {
+	if set == nil {
+		set = make(map[SocketTuple]retainedSocket)
 	}
-	if _, replaced := c.closedSockets[tuple]; !replaced && len(c.closedSockets) >= MaxPendingJoins {
+	if _, replaced := set[tuple]; !replaced && len(set) >= MaxPendingJoins {
 		oldest, found := SocketTuple{}, false
-		for key, value := range c.closedSockets {
-			if !found || value.closed < c.closedSockets[oldest].closed {
+		for key, value := range set {
+			if !found || value.released < set[oldest].released {
 				oldest, found = key, true
 			}
 		}
-		delete(c.closedSockets, oldest)
+		delete(set, oldest)
 	}
-	c.closedSockets[tuple] = closedSocket{inode: inode, closed: at}
+	set[tuple] = retainedSocket{inode: inode, released: at}
+	return set
+}
+
+// reconcileMaintenance keeps the resolver's own sockets identifiable across the
+// sample that retires them. While a connection is owned, the first inventory
+// showing its exact tuple — claimed by nothing else — binds its inode; when the
+// resolver later releases it, that bound identity is retained the way a proxy
+// close is, so the remnant the kernel keeps is explained as maintenance instead
+// of an agent-flow gap. A connection no sample ever bound is retained as
+// nothing: its bytes are already in the maintenance counters, and its peer
+// address alone would explain any socket to the resolver's upstream.
+func (c *Collector) reconcileMaintenance(owned []maintenanceSocket, rows []SocketRow, matched map[SocketTuple]int, now BootInstant) {
+	if len(owned) == 0 && len(c.maintenanceInodes) == 0 {
+		return
+	}
+	live := make(map[uint64]struct{}, len(owned))
+	for _, m := range owned {
+		live[m.ID] = struct{}{}
+	}
+	for id, identity := range c.maintenanceInodes {
+		if _, owns := live[id]; owns {
+			continue
+		}
+		delete(c.maintenanceInodes, id)
+		c.retiredMaintenance = retainRemnant(c.retiredMaintenance, identity.tuple, identity.inode, now)
+	}
+	for _, m := range owned {
+		if _, bound := c.maintenanceInodes[m.ID]; bound || matched[m.Tuple] != 1 {
+			continue // a tuple two owners claim proves no identity
+		}
+		for _, row := range rows {
+			if row.Tuple != m.Tuple || row.UID != 65532 || row.Inode == 0 {
+				continue
+			}
+			if c.maintenanceInodes == nil {
+				c.maintenanceInodes = make(map[uint64]maintenanceIdentity, len(owned))
+			}
+			c.maintenanceInodes[m.ID] = maintenanceIdentity{tuple: m.Tuple, inode: row.Inode}
+			break
+		}
+	}
+}
+
+// maintenanceAccountsFor reports a socket the gateway's own resolver explains:
+// the exact tuple AND inode of a maintenance connection this collector watched
+// it release. Those bytes are already in the maintenance counters, so calling
+// the remnant an unattributed socket would report the gateway's own accounted
+// DNS leg as an agent-flow gap. Identity is the whole contract — a connection no
+// sample bound explains nothing, and another socket at the same peer, even the
+// pinned DoH upstream, is a stranger until its inode says otherwise. Like a
+// retained close it explains a REMNANT, so it expires on the same bound and an
+// unreadable clock folds nothing.
+func (c *Collector) maintenanceAccountsFor(key socketAttemptKey, now BootInstant) bool {
+	retired, held := c.retiredMaintenance[key.Tuple]
+	if !held {
+		return false
+	}
+	if !now.Valid() || !retired.released.Valid() {
+		return false
+	}
+	if now.Before(retired.released) || now.Sub(retired.released) > ObservationStaleAfter {
+		delete(c.retiredMaintenance, key.Tuple)
+		return false
+	}
+	return key.UID == 65532 && key.Inode != 0 && key.Inode == retired.inode
 }
 
 // closeAccountsFor reports a socket the proxy's own evidence already explains:
@@ -454,10 +531,10 @@ func (c *Collector) closeAccountsFor(key socketAttemptKey, now BootInstant) bool
 	if !retained {
 		return false
 	}
-	if !now.Valid() || !closed.closed.Valid() {
+	if !now.Valid() || !closed.released.Valid() {
 		return false
 	}
-	if now.Before(closed.closed) || now.Sub(closed.closed) > ObservationStaleAfter {
+	if now.Before(closed.released) || now.Sub(closed.released) > ObservationStaleAfter {
 		delete(c.closedSockets, key.Tuple)
 		return false
 	}
@@ -742,17 +819,20 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 	for _, m := range owned {
 		matched[m.Tuple]++
 	}
+	c.reconcileMaintenance(owned, rows, matched, now)
 	// A proxied flow's upstream socket can outlive its stream: the inventory can
 	// precede an authoritative close consumed in this same sample, and the kernel
-	// keeps the socket into later ones. Fold a retained close over its exact
-	// tuple/inode; never classify an accounted leg as a new unknown external
-	// socket, and never fold away a socket a live claim is still joining.
+	// keeps the socket into later ones. The gateway's own resolver leaves the same
+	// remnant behind when it releases a maintenance connection. Fold a retained
+	// close or a retired maintenance identity over its exact tuple/inode; never
+	// classify an accounted leg as a new unknown external socket, and never fold
+	// away a socket a live claim is still joining.
 	rows = slices.DeleteFunc(slices.Clone(rows), func(row SocketRow) bool {
 		key := socketAttemptKey{Tuple: row.Tuple, UID: row.UID, Inode: row.Inode}
 		if pending, joined := c.pending[key]; row.Inode == 0 || matched[row.Tuple] != 0 || joined && pending.expired {
 			return false // an expired join stays visible; a later close cannot retract it
 		}
-		if !c.closeAccountsFor(key, now) {
+		if !c.closeAccountsFor(key, now) && !c.maintenanceAccountsFor(key, now) {
 			return false
 		}
 		delete(c.pending, key)
@@ -917,10 +997,12 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 	s.PendingConnections = 0
 	for key, pending := range c.pending {
 		_, present := currentUnknown[key]
-		// The proxy ending a flow retires its upstream socket, so that socket can
-		// no longer join a live one. Its close IS the accounting: expiring it as
-		// unattributed would report a measured stream as evidence loss.
-		if !pending.expired && c.closeAccountsFor(key, now) {
+		// The proxy ending a flow — or the resolver releasing a maintenance
+		// connection — retires that upstream socket, so it can no longer join a
+		// live one. The release IS the accounting: expiring it as unattributed
+		// would report a measured stream, or the gateway's own metered DNS leg, as
+		// evidence loss.
+		if !pending.expired && (c.closeAccountsFor(key, now) || c.maintenanceAccountsFor(key, now)) {
 			delete(c.pending, key)
 			continue
 		}

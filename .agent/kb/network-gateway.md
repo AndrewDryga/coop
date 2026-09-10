@@ -73,15 +73,21 @@ only place bytes are metered), sampled `/proc/net/tcp` rows, and nftables counte
 observed; raw grants are only counted, per kernel counter; refused datagrams are a number with no
 destination, and Coop reports UNKNOWN rather than zero for anything unmeasured. Envoy is drained
 before the guard so a proxy event's admission registration is already eligible in the same sample
-(`collector.go:182`). A flow the proxy ended keeps its upstream socket in the kernel for a few
+(`collector.go:191`). A flow the proxy ended keeps its upstream socket in the kernel for a few
 samples; since 2026-09-10 the collector retains up to 128 such closed tuples and lets one explain
-exactly one lingering inode before it would be reported as a boundary gap (`collector.go:448`).
+exactly one lingering inode before it would be reported as a boundary gap (`collector.go:529`).
 That was worth fixing: the gap marked a fully metered smoke receipt partial and made `coop net
 setup` refuse a clean run about one time in three. A retained close expires after
 `ObservationStaleAfter` (3 s, three sampling intervals) and is evicted then, so a reused ephemeral
 port minutes later cannot hide a real gap; an unreadable clock folds nothing and evicts nothing.
-The sibling case is still open — a DoH maintenance socket the resolver already released is neither
-in `owned` nor retained as a close, so its remnant can still expire as `socket_join_terminal`.
+The resolver's own DoH connection leaves the same remnant, and is explained the same way — but only
+by exact identity. `owned` carries a tuple and no inode, so while a connection is owned the first
+inventory row at that tuple, claimed by nothing else, BINDS its inode; releasing the connection
+retains that tuple+inode pair under the same bound and the same expiry (`collector.go:462`,
+`:503`), and its bytes stay where they were metered, in the maintenance counters. A connection no
+sample ever bound explains nothing — the dial socket the collector can catch in SYN_SENT before
+`track()` registers it (`sockets.go:278`) is still `unattributed_socket`, because the only thing
+left to match it on is the peer address, and 1.1.1.1:443 is not an identity.
 
 **Cleanup** is exact-owned and ordered (`box/filtered_cleanup.go:30`): remove the agent, prove the
 guard still answers AFTER the agent is gone, stop it, copy the single `final.json` out of the
@@ -104,6 +110,11 @@ checkout, so a stale tar is a red gate, and a filtered launch only ever runs the
 [[restricted-networking]] qualification names.
 
 ## Changelog
+- 2026-09-10 — the retired-maintenance sibling is closed: an owned DoH connection binds its inode
+  from the first unambiguous inventory row, the release retains that exact identity like a proxy
+  close, and both folds share one bounded retain helper. A connection no sample bound (an in-flight
+  dial) stays `unattributed_socket` on purpose — recorded here because the peer address is the
+  tempting wrong key. Re-verified the closed-flow and cleanup facts above against their sources.
 - 2026-09-10 — TLS on non-standard ports: the capture set, the lease set and the PROXY header all
   carry the port; the guard reads it with SO_ORIGINAL_DST and refuses a direct dial; Envoy's
   `upstream_port_override` is gone; `visible-sni-tls-ports-v3` is the new qualification contract, so

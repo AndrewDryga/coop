@@ -46,7 +46,10 @@ func proxyEvent(sequence uint64, now BootInstant, flow, phase string, sent, rece
 		Peer: netip.MustParseAddrPort("93.184.216.34:443"), Local: netip.MustParseAddrPort("172.17.0.2:32000"), Sent: &sent, Received: &received, DurationMillis: &duration}
 }
 func publishFixture(c *Collector, now BootInstant, rows []SocketRow) {
-	c.publish(KernelSample{Sequence: 1, BootAt: now, At: time.Unix(100, 0), EnforcerReady: true, Counters: &KernelCounters{}}, nil, rows, nil, nil, true)
+	publishOwnedFixture(c, now, rows, nil)
+}
+func publishOwnedFixture(c *Collector, now BootInstant, rows []SocketRow, owned []maintenanceSocket) {
+	c.publish(KernelSample{Sequence: 1, BootAt: now, At: time.Unix(100, 0), EnforcerReady: true, Counters: &KernelCounters{}}, nil, rows, nil, owned, true)
 }
 
 func TestCollectorCumulativeReplayAndUnknownMeters(t *testing.T) {
