@@ -30,3 +30,4 @@ retrying it silently.
 - 2026-08-17 — created after sweeping both session-source files. The shared deadline was the one
   violation and is fixed here. The new positive test failed with `context deadline exceeded` before
   the split; the stalled-transfer test keeps the longer path bounded.
+- 2026-09-10 — the may-outlive-lookup regression now observes both budgets on the injected runner seam and completes a real fetch only after the lookup context has ended; a shared deadline and two near-misses fail instantly. No production timeout changed.

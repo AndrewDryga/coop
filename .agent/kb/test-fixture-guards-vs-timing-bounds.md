@@ -40,7 +40,20 @@ worker). And record how the fixture process actually ended (`worker:exit exit st
 `signal: killed`) so a failure shows signal-versus-exit evidence instead of a timestamp to guess
 from.
 
+A fourth: an injected production deadline is a timing bound in disguise when the code runs a REAL
+subprocess under it. `TestRepositoryFetchMayOutliveRemoteIdentityLookup` handed production a 250 ms
+lookup budget and then let it run a real `rev-parse` plus a real `ls-remote` inside that budget —
+two process startups that fit on a quiet host and not on a loaded one. Observe the budget on the
+injected runner's contexts instead (`fetchDeadline − lookupDeadline ≥ fetchTimeout − lookupTimeout`
+is monotonic arithmetic that holds under any load), keep the real Git transfer for what it proves
+(the object arrived), and model slow startup with a PATH shim (`sleep 0.3; exec git`) to show the
+old test fails and the new one does not (`internal/sessionsvc/source_test.go`).
+
 ## Changelog
+- 2026-09-10 — added the injected-deadline shape after the fetch-may-outlive-lookup regression blew
+  its 250 ms budget in a loaded gate; now observed on the seam, fails instantly against a shared
+  deadline and two near-misses, 20 focused runs and 3 package runs green (task
+  make-repository-fetch-timeout-regression-independent).
 - 2026-09-10 — added the deferred-trap shape after `TestForkStopReapsBoxAfterWorkerExit` failed
   once in a loaded gate (worker gone at 3.23 s, no acknowledgement); modelled deterministically
   with a child that ignores TERM (`signal: killed` at 3.25 s), fixed by backgrounding the sleep,

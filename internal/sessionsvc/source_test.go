@@ -3,6 +3,7 @@ package sessionsvc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,11 +12,17 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 // A production alert spent more than two hours retrying session creation because a repository
 // 265 commits behind needed longer to fetch than the cheap remote-ref lookup. The transfer is
 // valid work; finishing it after the lookup budget expires must not turn it into twenty retries.
+//
+// Neither budget bounds a subprocess here. The lookup is answered by the fixture and the budgets
+// are read off the contexts the runner receives, so the deadline arithmetic holds on any host: a
+// real ls-remote under a 250 ms budget failed one loaded gate and passed five reruns alone. The
+// fetch still moves real objects, under a fixture guard rather than a timing bound.
 func TestRepositoryFetchMayOutliveRemoteIdentityLookup(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
@@ -37,26 +44,48 @@ func TestRepositoryFetchMayOutliveRemoteIdentityLookup(t *testing.T) {
 	seedGit("push", "-q", "origin", "main")
 	want := gitOut(seed, "rev-parse", "HEAD")
 
-	lookupTimeout := 250 * time.Millisecond
+	lookupTimeout, fetchTimeout := time.Second, wait.Deadline
+	var lookup context.Context
+	fetched := false
 	runner := func(ctx context.Context, dir string, args ...string) ([]byte, error) {
-		if len(args) > 0 && args[0] == "fetch" {
-			select {
-			case <-time.After(lookupTimeout + 50*time.Millisecond):
-			case <-ctx.Done():
-				return nil, ctx.Err()
+		switch {
+		case len(args) > 0 && args[0] == "ls-remote":
+			lookup = ctx
+			return []byte(want + "\trefs/heads/main\n"), nil
+		case len(args) > 0 && args[0] == "fetch":
+			if lookup == nil {
+				return nil, errors.New("fetch ran before the remote identity lookup")
 			}
+			fetched = true
+			// A budget of its own starts no earlier than the lookup's, so it ends at least the
+			// difference later; the old shared deadline ended both at the same instant.
+			lookupDeadline, _ := lookup.Deadline()
+			fetchDeadline, _ := ctx.Deadline()
+			if gap := fetchDeadline.Sub(lookupDeadline); gap < fetchTimeout-lookupTimeout {
+				return nil, fmt.Errorf(
+					"fetch deadline is %s past the lookup deadline, want at least %s",
+					gap, fetchTimeout-lookupTimeout,
+				)
+			}
+			// The transfer starts only once the lookup context is over; it completes only if
+			// its own context is still live.
+			<-lookup.Done()
+			return runSessionSourceGit(ctx, dir, args...)
 		}
-		return runSessionSourceGit(ctx, dir, args...)
+		return nil, fmt.Errorf("unexpected git %v", args)
 	}
 	got, err := pinSessionRepositoryWithTimeouts(
 		context.Background(),
 		sessionRepositorySource{
 			label: "primary", repository: checkout, remote: "origin", branch: "main",
 		},
-		lookupTimeout, 2*time.Second, runner,
+		lookupTimeout, fetchTimeout, runner,
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !fetched {
+		t.Fatal("no transfer ran; the fixture already had the remote head locally")
 	}
 	if got != want {
 		t.Fatalf("pinned commit = %s, want %s", got, want)
