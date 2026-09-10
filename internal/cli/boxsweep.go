@@ -61,7 +61,7 @@ func (a *app) sweepOrphanBoxes(repo string) {
 			}
 		}
 		if recovered > 0 {
-			ui.Detail("recovered %s whose coop process is gone (coop net ls)",
+			ui.Detail("recovered %s whose coop process is gone (coop net runs)",
 				ui.Count(recovered, "interrupted filtered run"))
 		}
 	}

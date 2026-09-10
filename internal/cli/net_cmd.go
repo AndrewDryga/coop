@@ -17,8 +17,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
@@ -27,8 +29,10 @@ import (
 
 // The `coop net` reads answer from retained host evidence and nothing else: no
 // container, no daemon probe, no DNS lookup, no policy change, and no directory
-// created to report that nothing was found. `setup` and `approve` are the two
-// verbs that write, and both are explicit host operations.
+// created to report that nothing was found. `setup`, `approve` and `forget`
+// write, and `recover` — explicit, or coop's own bounded attempt before it
+// reports an interrupted run's cleanup as incomplete — removes exactly what
+// one dead run recorded.
 
 const (
 	// netEventMaxBytes bounds ONE rendered view or watch event — not the stream,
@@ -37,19 +41,21 @@ const (
 	// evidence is anomalous, not that the run was too busy.
 	netEventMaxBytes = 4 << 20
 	netWatchPoll     = time.Second
-	// netRecentRuns is how many of a project's runs `coop net` shows. It is a
-	// posture view with a tail, not the listing: `coop net ls` is that.
+	// netRecentRuns is how many of a project's runs `coop net runs` shows by
+	// default: the ones anybody asks about, not the whole history.
 	netRecentRuns = 5
 	// netWatchDeltaLines bounds what ONE poll may append. An agent can generate
 	// arbitrarily many distinct refused names; a watch is not a firehose.
 	netWatchDeltaLines = 5
 )
 
-var netCommands = []string{"ls", "inspect", "watch", "receipt", "why", "explain", "approve", "forget", "setup", "recover"}
+// netCommands is the family in the order its help groups them: what a new run
+// may reach, what recorded runs did, and the repair coop normally does itself.
+var netCommands = []string{"approve", "check", "forget", "runs", "inspect", "explain", "watch", "export", "setup", "recover"}
 
 // cmdNet routes the restricted-networking family. Bare `coop net` is this
-// project's posture, not a listing: what a box may reach is the question a
-// human actually arrives with, and `ls` is the only listing spelling.
+// project's access — what a new run may reach and why — not a listing: `runs`
+// owns history.
 func (a *app) cmdNet(args []string) (int, error) {
 	if len(args) == 0 {
 		return a.cmdNetPosture()
@@ -61,12 +67,14 @@ func (a *app) cmdNet(args []string) (int, error) {
 			return 2, err
 		}
 		return a.cmdNetSetup()
-	case "ls":
-		return a.cmdNetLs(rest)
-	case "inspect", "watch", "receipt":
+	case "runs":
+		return a.cmdNetRuns(rest)
+	case "inspect", "watch":
 		return a.cmdNetRun(verb, rest)
-	case "why", "explain":
-		return netDiagnostic(verb, rest)
+	case "export":
+		return a.cmdNetExport(rest)
+	case "check", "explain":
+		return a.netDiagnostic(verb, rest)
 	case "approve":
 		return a.cmdNetApprove(rest)
 	case "forget":
@@ -78,29 +86,32 @@ func (a *app) cmdNet(args []string) (int, error) {
 	}
 }
 
-// cmdNetRecover settles the runs a dead supervisor left behind. It is the only
-// verb besides setup/approve that changes anything, and what it changes is
-// exactly one interrupted run's own resources: containers and volumes by
-// recorded id and ownership labels, then a final `supervisor_lost` receipt.
+// cmdNetRecover settles the runs a dead supervisor left behind, on demand.
+// What it changes is exactly one interrupted run's own resources: containers
+// and volumes by recorded id and ownership labels, then a final
+// `supervisor_lost` receipt. `coop net inspect` makes the same bounded attempt
+// on its own before it reports a cleanup as incomplete.
 func (a *app) cmdNetRecover(args []string) (int, error) {
-	runID, all := "", false
+	ref := ""
 	for _, arg := range args {
 		switch {
-		case arg == "--all":
-			all = true
 		case strings.HasPrefix(arg, "-"):
-			return 2, unknownErr("net recover flag", arg, []string{"--all"})
-		case runID != "":
-			return 2, errors.New("coop net recover takes one run id, or --all")
+			return 2, fmt.Errorf("coop net recover takes a run, or nothing for every interrupted run — not %q", arg)
+		case ref != "":
+			return 2, errors.New("coop net recover takes one run, or nothing for every interrupted run")
 		default:
-			runID = arg
+			ref = arg
 		}
 	}
-	if runID == "" && !all {
-		return 2, errors.New("coop net recover needs a run id, or --all for every pending run")
-	}
-	if runID != "" && all {
-		return 2, errors.New("coop net recover takes a run id or --all, not both")
+	runID := ""
+	if ref != "" {
+		page, err := netExecutions()
+		if err != nil {
+			return 1, err
+		}
+		if runID, err = netResolveRun(page, ref); err != nil {
+			return 1, err
+		}
 	}
 	if err := a.ensureRuntime(); err != nil {
 		return -1, err
@@ -115,22 +126,23 @@ func (a *app) cmdNetRecover(args []string) (int, error) {
 	}
 	code := 0
 	for _, result := range results {
+		id := netShortID(result.RunID)
 		switch {
 		case result.Skipped != "":
-			ui.Warn("run %s left alone — %s", result.RunID, result.Skipped)
+			ui.Warn("run %s left alone — %s", id, result.Skipped)
 		case len(result.Failures) != 0 || len(result.Pending) != 0:
 			code = 1
-			ui.Warn("run %s is not settled yet — still to clean up: %s", result.RunID, strings.Join(result.Pending, ", "))
+			ui.Warn("run %s is not settled yet — still to clean up: %s", id, strings.Join(result.Pending, ", "))
 			for _, failure := range result.Failures {
 				ui.Detail("%v", failure)
 			}
 		case len(result.Removed) == 0:
-			ui.OK("run %s was already cleaned up — nothing left to remove", result.RunID)
+			ui.OK("run %s was already cleaned up — nothing left to remove", id)
 		default:
-			ui.OK("run %s settled — removed %s it left behind", result.RunID, ui.Count(len(result.Removed), "container or volume", "containers and volumes"))
+			ui.OK("run %s settled — removed %s it left behind", id, ui.Count(len(result.Removed), "container or volume", "containers and volumes"))
 		}
 		if result.Sealed {
-			ui.Detail("coop net receipt %s", result.RunID)
+			ui.Detail("coop net inspect %s", id)
 		}
 	}
 	return code, nil
@@ -147,11 +159,10 @@ func (a *app) cmdNetSetup() (int, error) {
 	if _, err := box.SetupNetwork(context.Background(), a.cfg, a.rt, os.Stderr, os.Stderr); err != nil {
 		return 1, err
 	}
-	ui.Steps("coop run --egress filtered --allow-domain example.com -- curl https://example.com")
 	return 0, nil
 }
 
-// ---------------------------------------------------------------- posture ---
+// ---------------------------------------------------------------- access ----
 
 func (a *app) cmdNetPosture() (int, error) {
 	repo, err := netProject(a.cfg.RepoOverride)
@@ -162,186 +173,215 @@ func (a *app) cmdNetPosture() (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	runs, listErr := netProjectRuns(posture.Project)
 	p := ui.For(os.Stdout)
-	if err := netRender(os.Stdout, func(b *bytes.Buffer) { writeNetPosture(b, p, posture, runs) }); err != nil {
-		return 1, err
-	}
-	if listErr != nil {
-		ui.Warn("this project's recorded runs could not be read: %v", listErr)
-	}
-	return 0, nil
+	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetPosture(b, p, posture) })
 }
 
-func writeNetPosture(w io.Writer, p ui.Palette, posture box.NetworkPosture, runs []netRun) {
-	b := newNetBlock(w, p, "Network for "+posture.Project)
-	b.field("Egress", string(posture.Mode)+" ("+netModeSource(posture.Source)+")")
-	switch {
-	case posture.Approval == nil:
-		b.field("Approved", "nothing remembered for this project yet")
-	case len(posture.Approval.Envelope) == 0:
-		b.field("Approved", string(posture.Approval.Posture)+", no destinations of its own")
-	default:
-		b.field("Approved", string(posture.Approval.Posture)+", "+ui.Count(len(posture.Approval.Envelope), "rule"))
-		for _, rule := range posture.Approval.Envelope {
-			b.row(box.NetworkRuleText(rule))
+// writeNetPosture answers the one question a person arrives with: what can a
+// new run reach, and why. It says what decided the mode, names provider access
+// in one example, lists approved project access only when there is any, and
+// shows a pending request only when one exists. Healthy setup and run history
+// cost no lines: setup is machinery and `coop net runs` owns history.
+func writeNetPosture(w io.Writer, p ui.Palette, posture box.NetworkPosture) {
+	fmt.Fprintf(w, "%s\n  %s\n\n", p.Bold(p.Cyan("Network access for "+filepath.Base(posture.Project))), p.Dim(posture.Project))
+	fmt.Fprintln(w, netModeSentence(posture.Mode, posture.Source))
+	switch posture.Mode {
+	case egress.Filtered:
+		fmt.Fprintln(w, "When you start an agent, it can reach its provider — for example, Claude can reach Anthropic.")
+		fmt.Fprintln(w, "Everything else is blocked.")
+	case egress.None:
+		fmt.Fprintln(w, "No external destination is reachable, so an agent cannot reach its provider.")
+	}
+	pending := netApprovalPending(posture)
+	var approved []egress.Rule
+	if posture.Approval != nil {
+		approved = posture.Approval.Envelope
+	}
+	if posture.Mode == egress.Filtered && len(approved) != 0 && !pending {
+		fmt.Fprintln(w, "\nThis project can also reach:")
+		for _, rule := range approved {
+			fmt.Fprintf(w, "  %s\n", netRuleText(rule))
 		}
 	}
-	switch {
-	case len(posture.Add) == 0 && len(posture.Remove) == 0 && len(posture.Requested) == 0:
-		b.field("Requested", "nothing — .agent/project.yaml has no box.egress_rules")
-	case len(posture.Add) == 0 && len(posture.Remove) == 0:
-		b.field("Requested", "same as approved — nothing to review")
-	default:
-		pending := "not approved yet — run 'coop net approve'"
-		if posture.Pending != nil {
-			// The same condition Admit fails on, said once: a request outside
-			// what was remembered is not a warning, it stops a launch.
-			pending = "not approved yet — a filtered run refuses until you run 'coop net approve'"
+	if pending {
+		// The same condition a launch refuses on, said where the operator can
+		// act: the request and its approval differ, so no new run starts.
+		fmt.Fprintf(w, "\n%s %s\n", p.Yellow("⚠"), p.Yellow("New runs cannot start until this project's network request is approved"))
+		if posture.Pending != nil && len(posture.Add) == 0 && len(posture.Remove) == 0 {
+			fmt.Fprintf(w, "  %s\n", posture.Pending.Error())
 		}
-		b.field("Requested", pending)
-		for _, rule := range posture.Add {
-			b.row("+ " + box.NetworkRuleText(rule))
-		}
-		for _, rule := range posture.Remove {
-			b.row("- " + box.NetworkRuleText(rule))
-		}
+		writeNetRuleDiff(w, p, approved, posture.Add, posture.Remove)
+		fmt.Fprintf(w, "  Review it: %s\n", p.Cyan("coop net approve"))
 	}
-	// A launch can also refuse for something no rule diff can show — the project
-	// directory replaced since it was approved, a Compose service that changed
-	// under its name. The branch above says its own; this is the one that would
-	// otherwise be silent, and each message names the command that fixes it.
-	if posture.Pending != nil && len(posture.Add) == 0 && len(posture.Remove) == 0 {
-		b.field("Blocked", posture.Pending.Error())
-	}
+	// Host qualification is machinery, not a decision, so a current record is
+	// silent. A host that cannot run a filtered box yet is the exception.
 	switch {
+	case posture.Mode != egress.Filtered:
 	case posture.Setup == nil:
-		b.field("This host", "not set up — run 'coop net setup' before a filtered run")
+		fmt.Fprintf(w, "\n%s %s\n  %s\n", p.Yellow("⚠"), p.Yellow("This host is not set up for filtered runs yet"), "Prepare it once: coop net setup")
 	case !posture.SetupCurrent():
-		b.field("This host", "set up by an older coop — run 'coop net setup' again")
-	default:
-		b.field("This host", "set up "+posture.Setup.CompletedAt.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "\n%s %s\n  %s\n", p.Yellow("⚠"), p.Yellow("This host was set up by an older coop"), "Prepare it again: coop net setup")
 	}
-	if len(runs) == 0 {
-		b.field("Recent runs", "none yet")
-		b.flush(w)
-		return
-	}
-	b.field("Recent runs", strconv.Itoa(len(runs))+", newest first")
-	for _, run := range runs {
-		b.row(netRunLine(p, run))
-	}
-	b.flush(w)
 }
 
-// netModeSource says, in the user's own words, what decided this mode. The
-// constants are the posture resolver's own labels; this is the one place they
-// become a sentence.
-func netModeSource(source string) string {
+// netApprovalPending is the one condition a launch refuses on: the project's
+// request and its approval differ, or something no rule diff can show — a
+// replaced directory, a drifted service — needs review.
+func netApprovalPending(posture box.NetworkPosture) bool {
+	return posture.Pending != nil || len(posture.Add) != 0 || len(posture.Remove) != 0
+}
+
+// netModeSentence is the causal sentence: the mode in human words, and the
+// input that decided it. The constants are the posture resolver's own labels;
+// this is the one place they become prose.
+func netModeSentence(mode egress.Mode, source string) string {
+	access := "use filtered internet access"
+	switch mode {
+	case egress.Open:
+		access = "have unrestricted internet access"
+	case egress.None:
+		access = "are offline"
+	}
+	cause := "because that is coop's default"
 	switch source {
 	case box.PostureFromApproval:
-		return "remembered for this project"
+		cause = "because that is what was approved for this project"
 	case box.PostureFromHost:
-		return "from COOP_EGRESS"
+		cause = "because COOP_EGRESS says so"
 	case box.PostureFromProject:
-		return "this project asks for it"
-	default:
-		return "coop's default"
+		cause = "because .agent/project.yaml says so"
 	}
+	return "New runs " + access + " " + cause + "."
+}
+
+// writeNetRuleDiff is the one shape a rule review takes: the approved baseline,
+// the additions and the removals, each row saying what it is. Rows sort by the
+// rule text so the same request always reads the same. Additions are yellow
+// because they expand access, removals dim because they reduce it — never
+// green for a new grant, and the markers carry the meaning without color.
+func writeNetRuleDiff(w io.Writer, p ui.Palette, approved, add, remove []egress.Rule) {
+	type row struct{ marker, text, label string }
+	var rows []row
+	for _, rule := range approved {
+		if !slices.ContainsFunc(remove, func(r egress.Rule) bool { return netRuleText(r) == netRuleText(rule) }) {
+			rows = append(rows, row{" ", netRuleText(rule), "already approved"})
+		}
+	}
+	for _, rule := range add {
+		rows = append(rows, row{"+", netRuleText(rule), "new request"})
+	}
+	for _, rule := range remove {
+		rows = append(rows, row{"-", netRuleText(rule), "no longer requested"})
+	}
+	if len(rows) == 0 {
+		return
+	}
+	slices.SortStableFunc(rows, func(x, y row) int { return strings.Compare(x.text, y.text) })
+	width := 0
+	for _, r := range rows {
+		width = max(width, utf8.RuneCountInString(r.text))
+	}
+	fmt.Fprintln(w, "  Access:")
+	for _, r := range rows {
+		// Pad the PLAIN text, then style the finished line.
+		line := "    " + r.marker + " " + padRight(r.text, width+2) + " " + r.label
+		switch r.marker {
+		case "+":
+			line = p.Yellow(line)
+		default:
+			line = p.Dim(line)
+		}
+		fmt.Fprintln(w, line)
+	}
+}
+
+// netRuleText renders a rule the way a destination row reads — the name or
+// address, its ports, and the transport — so what a run reached and what a
+// project may reach look like the same thing.
+func netRuleText(rule egress.Rule) string {
+	var target string
+	switch {
+	case rule.To.Domain != "":
+		target = rule.To.Domain
+	case rule.To.IP != "":
+		target = rule.To.IP
+	case rule.To.CIDR != "":
+		target = rule.To.CIDR
+	case rule.To.Service != "":
+		target = "service " + rule.To.Service
+	case rule.To.Provider != "":
+		target = rule.To.Provider + " provider access"
+		if len(rule.To.Features) != 0 {
+			target += " (" + strings.Join(rule.To.Features, ", ") + ")"
+		}
+		return target
+	default:
+		target = "(no destination)"
+	}
+	if len(rule.Ports) != 0 {
+		target += ":" + netPortList(rule.Ports)
+	}
+	if rule.Protocol != "" {
+		target += " · " + netTransportLabel(rule.Protocol)
+	}
+	if len(rule.Types) != 0 {
+		target += " " + strings.Join(rule.Types, ",")
+	}
+	return target
+}
+
+// ------------------------------------------------------------------ runs ----
+
+type netRunsOptions struct{ all, allProjects, json bool }
+
+func parseNetRunsFlags(args []string) (netRunsOptions, error) {
+	var opts netRunsOptions
+	for _, arg := range args {
+		switch arg {
+		case "--all":
+			opts.all = true
+		case "--all-projects":
+			opts.allProjects = true
+		case "--json":
+			opts.json = true
+		default:
+			return opts, unknownErr("net runs flag", arg, []string{"--all", "--all-projects", "--json"})
+		}
+	}
+	if opts.all && opts.allProjects {
+		return opts, errors.New("--all is every run of this project and --all-projects is every project's — pass one")
+	}
+	return opts, nil
 }
 
 // netRun is one recorded run as the listing shows it: the retained summary plus
-// the traffic that run actually saw.
+// what that run actually did, read from its own evidence.
 type netRun struct {
 	networkstate.ExecutionSummary
 	Outcome string
 }
 
-// netRunLine is the one-line summary of a recorded run, shared by the project
-// view and `ls`. A finished run says only what it did; the EXCEPTIONS — no
-// receipt, cleanup still owed — are what earn a word, and neither is a claim
-// that the run is still alive.
-func netRunLine(p ui.Palette, run netRun) string {
-	line := p.Bold(p.Cyan(run.ID)) + "  " + run.StartedAt.UTC().Format(time.RFC3339)
-	var flags []string
-	if !run.Final {
-		flags = append(flags, "no receipt yet")
-	}
-	if run.CleanupPending {
-		flags = append(flags, "cleanup pending")
-	}
-	if run.SessionID != "" {
-		flags = append(flags, "session "+run.SessionID)
-	}
-	if len(flags) != 0 {
-		line += "  " + p.Yellow(strings.Join(flags, ", "))
-	}
-	if run.Outcome != "" {
-		line += "  " + run.Outcome
-	}
-	return line
-}
-
-// netRunOutcome is what got through and what did not, from that run's own
-// retained evidence. The two counts are different units and are never added
-// together; a run nothing observed says so instead of showing two zeros.
-func netRunOutcome(inspection networkstate.Inspection) string {
-	observed := inspection.Observed
-	if observed.Sequence == 0 {
-		return "nothing observed"
-	}
-	allowed := "UNKNOWN"
-	if observed.Counters != nil {
-		allowed = netCount(observed.Counters.Connections)
-	}
-	refused := strconv.Itoa(len(observed.Denials))
-	if observed.Loss.DetailTruncated {
-		refused += "+" // the ring dropped detail; this is a lower bound
-	}
-	return allowed + " allowed, " + refused + " refused"
-}
-
-// --------------------------------------------------------------- listings ---
-
-type netListOptions struct{ all, json bool }
-
-func parseNetListFlags(args []string) (netListOptions, error) {
-	var opts netListOptions
-	for _, arg := range args {
-		switch arg {
-		case "--all":
-			opts.all = true
-		case "--json":
-			opts.json = true
-		default:
-			return opts, unknownErr("net ls flag", arg, []string{"--all", "--json"})
-		}
-	}
-	return opts, nil
-}
-
-func (a *app) cmdNetLs(args []string) (int, error) {
-	opts, err := parseNetListFlags(args)
+func (a *app) cmdNetRuns(args []string) (int, error) {
+	opts, err := parseNetRunsFlags(args)
 	if err != nil {
 		return 2, err
-	}
-	project := ""
-	if !opts.all {
-		repo, err := netProject(a.cfg.RepoOverride)
-		if err != nil {
-			return 1, err
-		}
-		if project, err = filepath.EvalSymlinks(repo); err != nil {
-			return 1, err
-		}
 	}
 	page, err := netExecutions()
 	if err != nil {
 		return 1, err
 	}
-	runs := page.Executions
-	if !opts.all {
+	runs, project := page.Executions, ""
+	if !opts.allProjects {
+		repo, err := netProject(a.cfg.RepoOverride)
+		if err != nil {
+			return 1, err
+		}
+		project = netResolvedPath(repo)
 		runs = netFilterProject(runs, project)
+	}
+	total := len(runs)
+	if !opts.all && !opts.allProjects && len(runs) > netRecentRuns {
+		runs = runs[:netRecentRuns]
 	}
 	if opts.json {
 		return 0, netWriteJSON(os.Stdout, netListingDTO(runs, page))
@@ -350,22 +390,9 @@ func (a *app) cmdNetLs(args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	p := ui.For(os.Stdout)
-	if err := netRender(os.Stdout, func(b *bytes.Buffer) {
-		for _, run := range listed {
-			fmt.Fprintf(b, "%s\n", netRunLine(p, run))
-		}
-	}); err != nil {
+	p, now := ui.For(os.Stdout), time.Now()
+	if err := netRender(os.Stdout, func(b *bytes.Buffer) { writeNetRuns(b, p, now, project, listed, total, opts) }); err != nil {
 		return 1, err
-	}
-	scope := "this project"
-	if opts.all {
-		scope = "every project"
-	}
-	if len(runs) == 0 {
-		ui.Note("no filtered runs recorded for %s — 'coop net' shows what this project may reach", scope)
-	} else {
-		ui.OK("%s recorded for %s", ui.Count(len(runs), "filtered run"), scope)
 	}
 	if page.Incomplete {
 		ui.Warn("some records could not be listed, so this list is not complete")
@@ -374,6 +401,108 @@ func (a *app) cmdNetLs(args []string) (int, error) {
 		ui.Warn("%s could not be read and are not shown", ui.Count(page.Unreadable, "record"))
 	}
 	return 0, nil
+}
+
+// writeNetRuns is the bounded history: one row per run, newest first, with the
+// short id every run command accepts. The cross-project view labels each
+// project by name and path so no run is unattributed.
+func writeNetRuns(w io.Writer, p ui.Palette, now time.Time, project string, runs []netRun, total int, opts netRunsOptions) {
+	if opts.allProjects {
+		fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan("Network runs on this host")))
+		if len(runs) == 0 {
+			fmt.Fprintln(w, "\n  no filtered run has been recorded on this host yet")
+			return
+		}
+		var order []string
+		byProject := map[string][]netRun{}
+		for _, run := range runs {
+			if _, seen := byProject[run.Project]; !seen {
+				order = append(order, run.Project)
+			}
+			byProject[run.Project] = append(byProject[run.Project], run)
+		}
+		for _, path := range order {
+			fmt.Fprintf(w, "\n%s\n  %s\n", p.Bold(filepath.Base(path)), p.Dim(path))
+			writeNetRunRows(w, p, now, byProject[path])
+		}
+		return
+	}
+	fmt.Fprintf(w, "%s\n\n", p.Bold(p.Cyan("Recent network runs for "+filepath.Base(project))))
+	if len(runs) == 0 {
+		fmt.Fprintln(w, "  no filtered run has been recorded for this project yet")
+		return
+	}
+	writeNetRunRows(w, p, now, runs)
+	if total > len(runs) {
+		fmt.Fprintf(w, "\n%s\n", p.Dim(fmt.Sprintf("Showing %d of %d · coop net runs --all", len(runs), total)))
+	}
+}
+
+func writeNetRunRows(w io.Writer, p ui.Palette, now time.Time, runs []netRun) {
+	width := 0
+	for _, run := range runs {
+		width = max(width, len(netWhen(now, run.StartedAt)))
+	}
+	for _, run := range runs {
+		line := "  " + p.Bold(p.Cyan(netShortID(run.ID))) + "  " + padRight(netWhen(now, run.StartedAt), width) + "   " + run.Outcome
+		// A finished run says only what it did. The EXCEPTIONS — no receipt,
+		// cleanup still owed — earn a word, and neither claims the run is alive.
+		var flags []string
+		if !run.Final {
+			flags = append(flags, "no receipt yet")
+		}
+		if run.CleanupPending {
+			flags = append(flags, "cleanup pending")
+		}
+		if len(flags) != 0 {
+			line += " · " + p.Yellow(strings.Join(flags, " · "))
+		}
+		fmt.Fprintln(w, line)
+	}
+}
+
+// netWhen says when a run started the way a person reads a clock: today's and
+// yesterday's runs by time of day, older ones by date, all in the reader's
+// zone.
+func netWhen(now, at time.Time) string {
+	at, now = at.In(now.Location()), now.In(now.Location())
+	day := func(t time.Time) string { return t.Format("2006-01-02") }
+	switch day(at) {
+	case day(now):
+		return "today " + at.Format("15:04")
+	case day(now.AddDate(0, 0, -1)):
+		return "yesterday " + at.Format("15:04")
+	}
+	return at.Format("2006-01-02 15:04")
+}
+
+// netRunOutcome is what got through and what did not, from that run's own
+// retained evidence. The two counts are different units and are never added
+// together; a measured zero says so in words, an unmeasured one stays UNKNOWN.
+func netRunOutcome(inspection networkstate.Inspection) string {
+	observed := inspection.Observed
+	if observed.Sequence == 0 {
+		return "nothing observed"
+	}
+	allowed := "UNKNOWN connections"
+	if counters := observed.Counters; counters != nil {
+		if counters.Connections != nil && *counters.Connections == 0 {
+			allowed = "no external connections"
+		} else {
+			allowed = netConnectionCount(counters.Connections)
+		}
+	}
+	if blocked := len(observed.Denials); blocked != 0 {
+		text := strconv.Itoa(blocked)
+		if observed.Loss.DetailTruncated {
+			text += "+" // the ring dropped detail; this is a lower bound
+		}
+		return allowed + " · " + text + " blocked"
+	}
+	if counters := observed.Counters; counters != nil && counters.DeniedPackets != nil && *counters.DeniedPackets != 0 {
+		return allowed + " · " + netPlural(uint64(*counters.DeniedPackets), "raw packet") + " blocked"
+	}
+	return allowed
 }
 
 type netRunJSON struct {
@@ -418,6 +547,10 @@ func netExecutions() (networkstate.ExecutionPage, error) {
 		return networkstate.ExecutionPage{}, err
 	}
 	defer evidence.Close()
+	return netExecutionsOf(evidence)
+}
+
+func netExecutionsOf(evidence *networkstate.Evidence) (networkstate.ExecutionPage, error) {
 	var all networkstate.ExecutionPage
 	after := ""
 	for range 128 {
@@ -437,20 +570,6 @@ func netExecutions() (networkstate.ExecutionPage, error) {
 		return y.StartedAt.Compare(x.StartedAt)
 	})
 	return all, nil
-}
-
-// netProjectRuns is the posture view's tail: the project's most recent runs,
-// each with its own outcome read from its own evidence.
-func netProjectRuns(project string) ([]netRun, error) {
-	page, err := netExecutions()
-	if err != nil {
-		return nil, err
-	}
-	summaries := netFilterProject(page.Executions, project)
-	if len(summaries) > netRecentRuns {
-		summaries = summaries[:netRecentRuns]
-	}
-	return netRunOutcomes(summaries)
 }
 
 // netRunOutcomes reads each run's own evidence for what got through and what
@@ -497,36 +616,112 @@ func netResolvedPath(path string) string {
 	return filepath.Clean(path)
 }
 
+// ------------------------------------------------------------- identity ----
+
+// netResolveRun turns the run a human typed into the one full id it names. A
+// full id passes through; a shorter hex prefix must match exactly one recorded
+// run — a collision is refused with the prefixes that would settle it, never
+// guessed. --json keeps full ids, so automation is never asked to guess either.
+func netResolveRun(page networkstate.ExecutionPage, ref string) (string, error) {
+	if netEvidenceID(ref) {
+		return ref, nil
+	}
+	if ref == "" || len(ref) > 32 || strings.Trim(ref, "0123456789abcdef") != "" {
+		return "", fmt.Errorf("%q is not a run id — 'coop net runs' shows them", ref)
+	}
+	var matches []string
+	for _, run := range page.Executions {
+		if strings.HasPrefix(run.ID, ref) {
+			matches = append(matches, run.ID)
+		}
+	}
+	switch {
+	case len(matches) == 1 && !page.Incomplete:
+		return matches[0], nil
+	case len(matches) == 0 && !page.Incomplete:
+		return "", fmt.Errorf("no recorded run starts with %q — 'coop net runs' shows them", ref)
+	case page.Incomplete:
+		return "", errors.New("the list of recorded runs could not be read whole, so a prefix cannot be trusted — use the full run id")
+	}
+	prefixes := make([]string, 0, len(matches))
+	for _, id := range matches {
+		prefixes = append(prefixes, netUniquePrefix(id, page.Executions))
+	}
+	return "", fmt.Errorf("%q matches %d runs — say which: %s", ref, len(matches), strings.Join(prefixes, ", "))
+}
+
+// netUniquePrefix is the shortest display prefix that names this run alone
+// among the recorded ones, never shorter than the ordinary short id.
+func netUniquePrefix(id string, runs []networkstate.ExecutionSummary) string {
+	for n := netShortIDLen; n < len(id); n++ {
+		prefix := id[:n]
+		unique := !slices.ContainsFunc(runs, func(run networkstate.ExecutionSummary) bool {
+			return run.ID != id && strings.HasPrefix(run.ID, prefix)
+		})
+		if unique {
+			return prefix
+		}
+	}
+	return id
+}
+
+// netSelectRun picks the run a verb acts on when none was named: the newest
+// recorded for this project, or for a watch the one that is still active. It
+// never picks across projects and never picks among several active runs.
+func (a *app) netSelectRun(verb string, page networkstate.ExecutionPage, ref string) (string, error) {
+	if ref != "" {
+		return netResolveRun(page, ref)
+	}
+	repo, err := netProject(a.cfg.RepoOverride)
+	if err != nil {
+		return "", fmt.Errorf("coop net %s needs a run outside a project — 'coop net runs --all-projects' shows them", verb)
+	}
+	if page.Incomplete {
+		return "", errors.New("the list of recorded runs could not be read whole — name the run")
+	}
+	runs := netFilterProject(page.Executions, netResolvedPath(repo))
+	if verb == "watch" {
+		var active, prefixes []string
+		for _, run := range runs {
+			if !run.Final {
+				active = append(active, run.ID)
+				prefixes = append(prefixes, netUniquePrefix(run.ID, page.Executions))
+			}
+		}
+		switch len(active) {
+		case 0:
+			return "", errors.New("no filtered run is active in this project — 'coop net inspect' shows the newest recorded one")
+		case 1:
+			return active[0], nil
+		}
+		return "", fmt.Errorf("%d runs are active in this project — say which: %s", len(active), strings.Join(prefixes, ", "))
+	}
+	if len(runs) == 0 {
+		return "", errors.New("no filtered run has been recorded for this project yet — 'coop net runs --all-projects' shows every project's")
+	}
+	return runs[0].ID, nil
+}
+
 // ------------------------------------------------------------- single run ---
 
 type netRunOptions struct {
-	json         bool
-	destinations bool
-	id           string
+	json bool
+	id   string
 }
 
 func parseNetRunArgs(verb string, args []string) (netRunOptions, error) {
 	var opts netRunOptions
-	valid := []string{"--json"}
-	if verb == "receipt" {
-		valid = append(valid, "--destinations")
-	}
 	for _, arg := range args {
 		switch {
 		case arg == "--json":
 			opts.json = true
-		case arg == "--destinations" && verb == "receipt":
-			opts.destinations = true
 		case strings.HasPrefix(arg, "-"):
-			return opts, unknownErr("net "+verb+" flag", arg, valid)
+			return opts, unknownErr("net "+verb+" flag", arg, []string{"--json"})
 		case opts.id != "":
 			return opts, fmt.Errorf("coop net %s reads one run, but got %q and %q", verb, opts.id, arg)
 		default:
 			opts.id = arg
 		}
-	}
-	if opts.id == "" {
-		return opts, fmt.Errorf("coop net %s needs a run id — list them with 'coop net ls'", verb)
 	}
 	return opts, nil
 }
@@ -541,182 +736,142 @@ func (a *app) cmdNetRun(verb string, args []string) (int, error) {
 		return 1, err
 	}
 	defer evidence.Close()
-	if verb == "watch" {
-		return netWatch(evidence, opts.id, opts.json)
-	}
-	// A receipt is the shareable artifact, so its default projection is the
-	// redacted one: even a denied name can encode a secret. --destinations is
-	// the operator saying, on their own machine, that they want the names.
-	inspection, err := evidence.Inspect(opts.id, time.Now(), verb != "receipt" || opts.destinations)
+	page, err := netExecutionsOf(evidence)
 	if err != nil {
-		return 1, netRunErr(opts.id, err)
+		return 1, err
 	}
-	if verb == "receipt" {
-		if inspection.Receipt == nil {
-			return 1, fmt.Errorf("run %q has no receipt yet — see what is recorded so far with 'coop net inspect %s'", opts.id, opts.id)
-		}
-		if opts.json {
-			return 0, netWriteJSON(os.Stdout, inspection.Receipt)
-		}
-		p := ui.For(os.Stdout)
-		return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetReceipt(b, p, opts.id, *inspection.Receipt) })
+	id, err := a.netSelectRun(verb, page, opts.id)
+	if err != nil {
+		return 1, err
+	}
+	if verb == "watch" {
+		return netWatch(evidence, id, opts.json)
+	}
+	// The local operator view: this is the host, not an outbound export, so
+	// destination names are not withheld from the person who ran the box.
+	inspection, err := evidence.Inspect(id, time.Now(), true)
+	if err != nil {
+		return 1, netRunErr(id, err)
 	}
 	if opts.json {
 		return 0, netWriteJSON(os.Stdout, inspection)
 	}
+	view := netRunView{ID: id}
+	// A run whose cleanup is still owed and that nothing is observing is what
+	// recovery exists for. Coop tries once itself, then reads the run again, so
+	// a dead supervisor's leftovers are reported only when something external
+	// kept coop from settling them.
+	if inspection.Cleanup == "pending" && !netRunLive(inspection) {
+		view.Cleanup = a.netSettleCleanup(id)
+		if again, err := evidence.Inspect(id, time.Now(), true); err == nil {
+			inspection = again
+		}
+	}
 	p := ui.For(os.Stdout)
-	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetInspection(b, p, opts.id, inspection) })
+	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetRun(b, p, view, inspection) })
+}
+
+// netSettleCleanup is coop's one bounded recovery attempt for a run. It goes
+// through the same ownership-checked path as `coop net recover` — a departed
+// supervisor, the exact daemon the run used, removals by recorded id — and
+// reports what it learned in the operator's terms. There is no retry loop here:
+// the next inspect, loop or fork start makes the next attempt.
+func (a *app) netSettleCleanup(id string) netCleanup {
+	if err := a.ensureRuntime(); err != nil {
+		return netCleanup{Blocker: err.Error(), Remedy: "Coop will retry automatically once a container runtime is available"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
+	defer cancel()
+	results, err := box.RecoverNetworkRuns(ctx, a.rt, id)
+	if err != nil {
+		return netCleanup{Blocker: err.Error(), Remedy: "Coop will retry automatically"}
+	}
+	for _, result := range results {
+		if result.RunID == id {
+			return netCleanupOf(result)
+		}
+	}
+	return netCleanup{}
+}
+
+// netCleanupOf translates a recovery result. A live supervisor means cleanup is
+// that process's job and nothing is owed yet; anything else that stopped the
+// attempt is named as it is, with the one thing only the operator can do.
+func netCleanupOf(result box.NetworkRecovery) netCleanup {
+	switch {
+	case result.Live:
+		return netCleanup{Expected: true}
+	case result.Skipped != "":
+		// A daemon that is stopped, and a daemon replaced by another at the
+		// recorded endpoint, are both "that daemon is not there"; the Skipped
+		// text says which.
+		return netCleanup{Blocker: result.Skipped, Remedy: "Coop will retry automatically once that Docker daemon is back"}
+	case len(result.Failures) != 0:
+		return netCleanup{Blocker: result.Failures[0].Error(), Remedy: "Coop will retry automatically"}
+	case len(result.Pending) != 0:
+		return netCleanup{Blocker: "still to remove: " + strings.Join(result.Pending, ", "), Remedy: "Coop will retry automatically"}
+	}
+	return netCleanup{}
 }
 
 func netRunErr(id string, err error) error {
 	if errors.Is(err, networkstate.ErrEvidenceUnavailable) || errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("no run %q was recorded here — list the runs with 'coop net ls --all'", id)
+		return fmt.Errorf("no run %q was recorded here — 'coop net runs' shows the recorded ones", id)
 	}
 	return fmt.Errorf("network run %q: %w", id, err)
 }
 
-// writeNetInspection is the human view of one run: what it was allowed to
-// reach, what it actually did, and what was refused. The full coverage, loss
-// and health tables live behind --json — they are an investigation, not a
-// status line.
-func writeNetInspection(w io.Writer, p ui.Palette, id string, inspection networkstate.Inspection) {
-	observed := inspection.Observed
-	b := newNetBlock(w, p, "Network run "+id)
-	b.field("Egress", netUnknownIfEmpty(string(observed.Mode))+", rules "+netUnknownIfEmpty(observed.PolicyFingerprint))
-	b.field("Gateway", "epoch "+netUnknownIfEmpty(observed.Epoch)+", watching "+netUnknownIfEmpty(observed.Scope))
-	if observed.Sequence == 0 || observed.AsOf.IsZero() {
-		never := "never — nothing was recorded for this run"
-		if inspection.Freshness != "" && inspection.Freshness != networkstate.FreshnessNotObserved {
-			never += " (" + inspection.Freshness + ")"
-		}
-		b.field("Observed", never)
-	} else {
-		b.field("Observed", observed.AsOf.UTC().Format(time.RFC3339)+" ("+inspection.Freshness+
-			", "+netUnknownIfEmpty(observed.Availability)+")")
-	}
-	b.field("Read at", inspection.ReadAt.UTC().Format(time.RFC3339))
-	b.field("Now", netCurrentSummary(inspection))
-	if current := inspection.Current; current != nil {
-		b.field("Open now", "live "+netCount(current.LiveConnections)+", unknown "+netCount(current.UnknownConnections)+
-			", pending "+netCount(current.PendingConnections))
-	}
-	b.field("Allowed", netAllowedTotals(observed.Counters, "nothing was recorded for this run"))
-	writeNetAddressGrants(b, observed)
-	writeNetDenials(b, p, observed)
-	if len(observed.Alerts) == 0 {
-		b.field("Alerts", "none")
-	} else {
-		b.field("Alerts", ui.Count(len(observed.Alerts), "alert"))
-		for _, alert := range observed.Alerts {
-			b.row(fmt.Sprintf("%s %s/%s %s (first %s, last %s)", alert.ID, alert.Category, alert.Severity,
-				alert.State, alert.FirstSeen.UTC().Format(time.RFC3339), alert.LastSeen.UTC().Format(time.RFC3339)))
+// ---------------------------------------------------------------- export ----
+
+// cmdNetExport writes the sealed record as the shareable JSON artifact. Its
+// default projection is the redacted one: even a blocked name can encode a
+// secret. --include-destinations is the operator saying, on their own machine,
+// that they want the names and addresses in it.
+func (a *app) cmdNetExport(args []string) (int, error) {
+	ref, include := "", false
+	for _, arg := range args {
+		switch {
+		case arg == "--include-destinations":
+			include = true
+		case strings.HasPrefix(arg, "-"):
+			return 2, unknownErr("net export flag", arg, []string{"--include-destinations"})
+		case ref != "":
+			return 2, fmt.Errorf("coop net export writes one run, but got %q and %q", ref, arg)
+		default:
+			ref = arg
 		}
 	}
-	if observed.Loss.Unknown || observed.Loss.Records != 0 || observed.Loss.DetailTruncated {
-		b.field("Missing", netLossSummary(observed.Loss))
+	if ref == "" {
+		return 2, errors.New("coop net export needs a run — 'coop net runs' shows them")
 	}
-	b.field("Health", netHealthSummary(observed.Health))
-	b.field("Cleanup", inspection.Cleanup)
+	evidence, err := openNetRunEvidence()
+	if err != nil {
+		return 1, err
+	}
+	defer evidence.Close()
+	page, err := netExecutionsOf(evidence)
+	if err != nil {
+		return 1, err
+	}
+	id, err := netResolveRun(page, ref)
+	if err != nil {
+		return 1, err
+	}
+	inspection, err := evidence.Inspect(id, time.Now(), include)
+	if err != nil {
+		return 1, netRunErr(id, err)
+	}
 	if inspection.Receipt == nil {
-		b.field("Receipt", "not sealed yet")
-	} else {
-		b.field("Receipt", inspection.Receipt.Finality+", "+inspection.Receipt.Completeness)
+		return 1, fmt.Errorf("run %s has no sealed record yet — 'coop net inspect %s' shows what is recorded so far", netShortID(id), netShortID(id))
 	}
-	b.flush(w)
-	fmt.Fprintln(w, p.Dim("everything recorded: coop net inspect "+id+" --json"))
-}
-
-// netAllowedTotals is what got through, in the units a person reads. A nil
-// counter is UNKNOWN — a metric nobody measured is not a measured zero.
-func netAllowedTotals(counters *networkview.Counters, missing string) string {
-	if counters == nil {
-		return "UNKNOWN — " + missing
-	}
-	return netConnectionCount(counters.Connections) + ", " + netByteCount(counters.SentBytes) +
-		" sent, " + netByteCount(counters.ReceivedBytes) + " received"
-}
-
-// netRefusedCounts is the kernel's own tally, kept apart from the decisions it
-// retained detail for: a refused raw packet has no destination to name.
-func netRefusedCounts(counters *networkview.Counters) string {
-	if counters == nil {
-		return ""
-	}
-	return netCount(counters.DeniedDNSQueries) + " dns, " + netCount(counters.DeniedTLS) +
-		" tls, " + netCount(counters.DeniedPackets) + " raw packets"
-}
-
-// The packet filter drops a refused raw datagram without recording where it
-// was going, so those packets are a count and nothing more. Saying so is the
-// honest alternative to inventing a destination for them.
-const netRawRefusalNote = "raw packets are counted only — the filter records no destination for them, so there is nothing to explain"
-
-// writeNetAddressGrants shows what each raw rule actually carried. Bytes here
-// are kernel packet bytes, not application payload.
-func writeNetAddressGrants(b *netBlock, observed networkview.Snapshot) {
-	if len(observed.AddressGrants) == 0 {
-		return
-	}
-	b.field("Raw rules", ui.Count(len(observed.AddressGrants), "rule")+" carried traffic")
-	for _, grant := range observed.AddressGrants {
-		b.row(fmt.Sprintf("%s  %s, %s", grant.RuleID,
-			netPlural(uint64(grant.Packets), "packet"), ui.Bytes(uint64(grant.Bytes))))
-	}
-}
-
-func writeNetDenials(b *netBlock, p ui.Palette, observed networkview.Snapshot) {
-	counts := netRefusedCounts(observed.Counters)
-	switch {
-	case len(observed.Denials) == 0 && counts == "":
-		b.field("Refused", "nothing recorded")
-	case len(observed.Denials) == 0:
-		b.field("Refused", counts)
-	default:
-		if counts != "" {
-			counts = " (" + counts + ")"
-		}
-		b.field("Refused", ui.Count(len(observed.Denials), "refusal")+counts)
-	}
-	for _, denial := range observed.Denials {
-		b.row(fmt.Sprintf("%s %s %s — %s at %s", denial.ID, netDestination(denial.Name, denial.Peer, denial.DestinationID),
-			denial.Kind, denial.Reason, denial.At.UTC().Format(time.RFC3339)))
-	}
-	if observed.Counters != nil && observed.Counters.DeniedPackets != nil && *observed.Counters.DeniedPackets > 0 {
-		b.row(p.Dim(netRawRefusalNote))
-	}
-}
-
-// writeNetReceipt renders the sealed outcome. Finality and completeness are
-// INDEPENDENT: final + partial is valid after a crash, and must never read as
-// a complete record.
-func writeNetReceipt(w io.Writer, p ui.Palette, id string, receipt networkview.Receipt) {
-	b := newNetBlock(w, p, "Receipt for run "+id)
-	b.field("Sealed", receipt.Finality+", "+receipt.Completeness)
-	b.field("Workload", receipt.Workload)
-	b.field("Cleanup", receipt.Cleanup)
-	b.field("Started", receipt.StartedAt.UTC().Format(time.RFC3339))
-	if receipt.EndedAt != nil {
-		b.field("Ended", receipt.EndedAt.UTC().Format(time.RFC3339))
-	}
-	b.field("Runtime", receipt.Runtime+", gateway "+receipt.GatewayImage)
-	b.field("Collector", receipt.CollectorVersion)
-	b.field("Shows", netUnknownIfEmpty(receipt.Snapshot.Projection))
-	b.field("Digest", receipt.Digest)
-	b.field("Allowed", netAllowedTotals(receipt.Snapshot.Counters, "no counters were sealed with this receipt"))
-	writeNetAddressGrants(b, receipt.Snapshot)
-	writeNetDenials(b, p, receipt.Snapshot)
-	b.flush(w)
-	if receipt.Snapshot.Projection != "destinations-included" {
-		fmt.Fprintln(w, p.Dim("destination names are held back here — even a refused name can carry a secret; add --destinations to see them"))
-	}
-	fmt.Fprintln(w, p.Dim("everything recorded: coop net receipt "+id+" --json"))
+	return 0, netWriteJSON(os.Stdout, inspection.Receipt)
 }
 
 // ----------------------------------------------------------------- watch ----
 
 // netWatch follows one run until its receipt is sealed. The human view APPENDS
-// coalesced lines and never repaints; --json emits one bounded NDJSON snapshot
-// per change, each carrying its own freshness and loss.
+// what newly happened and never repaints; --json emits one bounded NDJSON
+// snapshot per change, each carrying its own freshness and loss.
 func netWatch(evidence *networkstate.Evidence, id string, asJSON bool) (int, error) {
 	// Cancellation is a context, not a state change: Ctrl-C stops reading and
 	// leaves the evidence and the run exactly as they were.
@@ -781,6 +936,10 @@ func runNetWatch(d netWatchDeps) (int, error) {
 	}
 }
 
+// netWatchEmit writes one step of the stream. The human stream opens with the
+// heading and whatever the run already did, appends only what is new on every
+// later change, and closes with the shared run projection exactly once — no
+// heartbeat, no status ledger, no repeated report.
 func netWatchEmit(d netWatchDeps, previous *networkstate.Inspection, current networkstate.Inspection) error {
 	if d.json {
 		data, err := json.Marshal(current)
@@ -794,18 +953,18 @@ func netWatchEmit(d netWatchDeps, previous *networkstate.Inspection, current net
 		return netWriteAll(d.out, data)
 	}
 	var b bytes.Buffer
-	// The full block opens the watch and closes it; in between the view
-	// COALESCES — one appended line per poll that carries something new, so a
-	// long watch reads as history instead of the same screen twenty times.
-	if previous == nil || current.Receipt != nil {
-		fmt.Fprintln(&b)
-		writeNetInspection(&b, d.palette, d.id, current)
-	} else {
-		stamp := d.palette.Dim(current.ReadAt.UTC().Format(time.RFC3339))
-		for _, line := range netWatchDelta(*previous, current) {
-			fmt.Fprintf(&b, "%s %s\n", stamp, line)
+	switch {
+	case current.Receipt != nil:
+		if previous != nil {
+			fmt.Fprintln(&b)
 		}
-		fmt.Fprintf(&b, "%s %s\n", stamp, netWatchStatus(current))
+		writeNetRun(&b, d.palette, netRunView{ID: d.id}, current)
+	case previous == nil:
+		fmt.Fprintf(&b, "%s\n", d.palette.Bold(d.palette.Cyan("Network run "+d.id)))
+		fmt.Fprintf(&b, "%s\n", d.palette.Dim("● Live — following until the record is sealed; Ctrl-C stops reading and changes nothing"))
+		netWatchAppend(&b, d.palette, current.ReadAt, netWatchDelta(networkstate.Inspection{}, current))
+	default:
+		netWatchAppend(&b, d.palette, current.ReadAt, netWatchDelta(*previous, current))
 	}
 	if err := netEventBound(b.Len()); err != nil {
 		return err
@@ -813,58 +972,74 @@ func netWatchEmit(d netWatchDeps, previous *networkstate.Inspection, current net
 	return netWriteAll(d.out, b.Bytes())
 }
 
-// netWatchDelta names what appeared since the last poll. A refusal or an alert
-// is the reason anybody watches, so it gets its own line and its own name; the
-// rest is one status line.
+func netWatchAppend(b *bytes.Buffer, p ui.Palette, at time.Time, lines []string) {
+	stamp := p.Dim(at.UTC().Format("15:04:05"))
+	for _, line := range lines {
+		fmt.Fprintf(b, "%s %s\n", stamp, line)
+	}
+}
+
+// netWatchDelta names what appeared since the last poll: connections the
+// workload opened, attempts that were blocked, alerts that fired. Repeats of
+// one destination in one poll are ONE counted line, and each kind is bounded.
 func netWatchDelta(previous, current networkstate.Inspection) []string {
 	seen := map[string]bool{}
+	for _, c := range previous.Observed.Connections {
+		seen[c.ID] = true
+	}
+	var lines []string
+	fresh := networkview.Snapshot{}
+	for _, c := range current.Observed.Connections {
+		if !seen[c.ID] && c.NameSource == netWorkloadName {
+			fresh.Connections = append(fresh.Connections, c)
+		}
+	}
+	var opened []string
+	for _, group := range netWorkloadDestinations(fresh) {
+		count := 0
+		for _, peer := range group.peers {
+			count += peer.connections
+		}
+		line := "allowed " + group.label()
+		if count > 1 {
+			line += " ×" + strconv.Itoa(count)
+		}
+		opened = append(opened, line)
+	}
+	lines = append(lines, netWatchBound(opened, "…more connections just now")...)
 	for _, denial := range previous.Observed.Denials {
 		seen[denial.ID] = true
 	}
-	// One refused name retried four times in one second is ONE line: coalesce by
-	// destination and reason, and count the repeats.
-	var order []string
-	repeats := map[string]int{}
 	for _, denial := range current.Observed.Denials {
-		if seen[denial.ID] {
-			continue
+		if !seen[denial.ID] {
+			fresh.Denials = append(fresh.Denials, denial)
 		}
-		key := "refused " + netDestination(denial.Name, denial.Peer, denial.DestinationID) + " (" + denial.Reason + ")"
-		if repeats[key] == 0 {
-			order = append(order, key)
-		}
-		repeats[key]++
 	}
-	var lines []string
-	for _, key := range order {
-		if len(lines) >= netWatchDeltaLines {
-			lines = append(lines, "…more refusals just now — 'coop net inspect' has the whole list")
-			break
+	var blocked []string
+	for _, group := range netRefusalGroups(fresh.Denials) {
+		line := "blocked " + group.label
+		if group.count > 1 {
+			line += " ×" + strconv.Itoa(group.count)
 		}
-		if repeats[key] > 1 {
-			key += " ×" + strconv.Itoa(repeats[key])
-		}
-		lines = append(lines, key)
+		blocked = append(blocked, line)
 	}
+	lines = append(lines, netWatchBound(blocked, "…more blocked attempts just now")...)
 	for _, alert := range previous.Observed.Alerts {
 		seen[alert.ID] = true
 	}
 	for _, alert := range current.Observed.Alerts {
 		if !seen[alert.ID] {
-			lines = append(lines, "alert "+alert.Category+"/"+alert.Severity+" "+alert.State)
+			lines = append(lines, "alert: "+netAlertText(alert))
 		}
 	}
 	return lines
 }
 
-// netWatchStatus is the one-line heartbeat. UNKNOWN stays UNKNOWN: a poll that
-// measured nothing must not read as a measured zero.
-func netWatchStatus(current networkstate.Inspection) string {
-	status := current.Freshness + ", " + netCurrentSummary(current)
-	if counters := current.Observed.Counters; counters != nil {
-		status += ", " + netByteCount(counters.SentBytes) + " sent and " + netByteCount(counters.ReceivedBytes) + " received so far"
+func netWatchBound(lines []string, more string) []string {
+	if len(lines) <= netWatchDeltaLines {
+		return lines
 	}
-	return status
+	return append(lines[:netWatchDeltaLines], more+" — 'coop net inspect' has the whole list")
 }
 
 // netWatchFailure ends the watch on a failed update. A closed pipe means the
@@ -926,7 +1101,7 @@ func netProject(override string) (string, error) {
 	out, err := exec.Command("git", args...).Output()
 	top := strings.TrimSpace(string(out))
 	if err != nil || top == "" {
-		return "", errors.New("not inside a project — 'coop net ls --all' lists every recorded run")
+		return "", errors.New("not inside a project — 'coop net runs --all-projects' shows every recorded run")
 	}
 	return top, nil
 }
@@ -974,7 +1149,7 @@ func netEventBound(size int) error {
 }
 
 // netBlock is one net view: a title and its labeled facts. The label column is
-// sized to the longest label in THIS view, so a two-field block reads as tight
+// sized to the longest label in THIS view, so a one-field block reads as tight
 // as `coop credentials` instead of leaving a gap for a label it never prints.
 type netBlock struct {
 	p     ui.Palette
@@ -982,19 +1157,31 @@ type netBlock struct {
 }
 
 // netLine is either a labeled fact or a plain row indented under the last one —
-// a rule, a refusal, where a grant came from.
-type netLine struct{ label, value string }
+// a rule, a refusal, a destination and the peers beneath it. depth is in
+// two-space steps, so a destination's peers sit one level under their host.
+type netLine struct {
+	label, value string
+	depth        int
+}
 
 func newNetBlock(w io.Writer, p ui.Palette, title string) *netBlock {
 	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan(title)))
-	return &netBlock{p: p}
+	return netBlockOf(p)
 }
+
+// netBlockOf is the same block without a title, for a view that writes its own
+// heading — the run projection prints a live-context line under its own.
+func netBlockOf(p ui.Palette) *netBlock { return &netBlock{p: p} }
 
 func (b *netBlock) field(label, value string) {
 	b.lines = append(b.lines, netLine{label: label, value: value})
 }
 
-func (b *netBlock) row(text string) { b.lines = append(b.lines, netLine{value: text}) }
+func (b *netBlock) row(text string) { b.rowAt(2, text) }
+
+func (b *netBlock) rowAt(depth int, text string) {
+	b.lines = append(b.lines, netLine{value: text, depth: depth})
+}
 
 // flush writes the collected fields once the widest label is known. Callers that
 // print prose after the block flush first, so the two never interleave.
@@ -1007,7 +1194,7 @@ func (b *netBlock) flush(w io.Writer) {
 	}
 	for _, line := range b.lines {
 		if line.label == "" {
-			fmt.Fprintf(w, "    %s\n", line.value)
+			fmt.Fprintf(w, "%s%s\n", strings.Repeat("  ", line.depth), line.value)
 			continue
 		}
 		// Pad the PLAIN label, then dim the padded cell — styling inside a width
@@ -1024,16 +1211,6 @@ func netUnknownIfEmpty(value string) string {
 	return value
 }
 
-// netCount renders a retained counter as a decimal string, matching how it is
-// stored: a total above 2^53 must not round on its way to a reader. A nil
-// counter is UNKNOWN — a metric nobody measured is not a measured zero.
-func netCount(value *networkview.Count) string {
-	if value == nil {
-		return "UNKNOWN"
-	}
-	return strconv.FormatUint(uint64(*value), 10)
-}
-
 // netPlural counts a stored counter without narrowing it to an int, so a total
 // past the platform's int range still reads correctly.
 func netPlural(value uint64, noun string) string {
@@ -1043,6 +1220,7 @@ func netPlural(value uint64, noun string) string {
 	return strconv.FormatUint(value, 10) + " " + noun + "s"
 }
 
+// A nil counter is UNKNOWN — a metric nobody measured is not a measured zero.
 func netConnectionCount(value *networkview.Count) string {
 	if value == nil {
 		return "UNKNOWN connections"
@@ -1057,18 +1235,6 @@ func netByteCount(value *networkview.Count) string {
 	return ui.Bytes(uint64(*value))
 }
 
-func netCurrentSummary(inspection networkstate.Inspection) string {
-	if inspection.Current == nil {
-		return "UNKNOWN — nothing read recently"
-	}
-	rate := inspection.Current.Rate
-	if rate == nil {
-		return "UNKNOWN — not measured"
-	}
-	return fmt.Sprintf("%s/s out, %s/s in (over %dms)",
-		ui.Bytes(uint64(rate.SentPerSecond)), ui.Bytes(uint64(rate.ReceivedPerSecond)), uint64(rate.WindowMillis))
-}
-
 func netDestination(name, peer, id string) string {
 	switch {
 	case name != "":
@@ -1076,36 +1242,16 @@ func netDestination(name, peer, id string) string {
 	case peer != "":
 		return peer
 	case id != "":
-		return "name withheld (" + id + ")"
+		return "name withheld (" + netShortID(id) + ")"
 	default:
 		return "unknown destination"
 	}
 }
 
-func netLossSummary(loss networkview.Loss) string {
-	parts := []string{netPlural(uint64(loss.Records), "record") + " lost"}
-	if loss.Unknown {
-		parts = append(parts, "some loss is unknown")
+func netPortList(ports []int) string {
+	out := make([]string, 0, len(ports))
+	for _, port := range ports {
+		out = append(out, strconv.Itoa(port))
 	}
-	if loss.DetailTruncated {
-		parts = append(parts, "detail was truncated")
-	}
-	if len(loss.Reasons) > 0 {
-		parts = append(parts, strings.Join(loss.Reasons, ", "))
-	}
-	return strings.Join(parts, "; ")
-}
-
-func netHealthSummary(health networkview.HealthLayers) string {
-	parts := make([]string, 0, 4)
-	for _, layer := range []struct {
-		name  string
-		value networkview.Health
-	}{
-		{"enforcer", health.Enforcer}, {"gateway", health.Gateway},
-		{"resolver", health.Resolver}, {"collector", health.Collector},
-	} {
-		parts = append(parts, layer.name+" "+netUnknownIfEmpty(layer.value.Status))
-	}
-	return strings.Join(parts, ", ")
+	return strings.Join(out, ",")
 }

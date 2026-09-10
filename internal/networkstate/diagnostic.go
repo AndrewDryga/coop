@@ -59,7 +59,7 @@ type PolicyQuery struct {
 // Validate is the one place a hypothetical is checked, so the CLI refuses a
 // nonsense transport before opening any evidence.
 func (q PolicyQuery) Validate() error {
-	invalid := errors.New("coop net why takes one exact domain (checked as TLS on 443, unless --port says otherwise), or one IPv4 address with --protocol tcp|udp --port <n>, or --icmp")
+	invalid := errors.New("coop net check takes one exact domain (checked as TLS on 443, unless --port says otherwise), or one IPv4 address with --protocol tcp|udp --port <n>, or --icmp")
 	switch {
 	case q.Domain != "" && q.Address.IsValid():
 		return invalid
@@ -132,7 +132,7 @@ func (e *Evidence) Why(runID string, query PolicyQuery, exportDestinations bool)
 	if query.Domain != "" {
 		var err error
 		if name, err = egress.NormalizeDomain(query.Domain, false); err != nil {
-			return PolicyExplanation{}, errors.New("coop net why takes one exact domain, checked as TLS on the port you asked about")
+			return PolicyExplanation{}, errors.New("coop net check takes one exact domain, checked as TLS on the port you asked about")
 		}
 	}
 	record, err := e.Execution(runID)

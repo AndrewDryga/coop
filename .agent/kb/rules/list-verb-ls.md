@@ -4,7 +4,7 @@ description: "listing subcommands are `ls`, the only spelling (no `list` alias i
 scope: cli-grammar
 sources: [internal/cli/help.go, internal/cli/conformance_test.go]
 check: "go test ./internal/cli -run TestCLIConformance"
-updated: 2026-07-02
+updated: 2026-09-10
 ---
 
 # Listing subcommands use `ls` — the only spelling (no `list` alias in v3)
@@ -32,3 +32,4 @@ See also [[destructive-verb-rm]] (the sibling: rm is the only destructive verb) 
 - 2026-06-29 — created
 - 2026-07-02 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
+- 2026-09-10 — one deliberate non-`ls`: `coop net runs` (task 2026-09-10-make-network-inspection-destination-first). The `net` family is grouped by job (ACCESS/RUNS/REPAIR) and `runs` is a bounded five-row view of recorded runs, not a listing of `net` objects; there is no `net ls` alias. Every other listing verb is still `ls`.

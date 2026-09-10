@@ -22,6 +22,10 @@ type NetworkRecovery struct {
 	Sealed   bool
 	Skipped  string
 	Failures []error
+	// Live is set with Skipped when the run's supervisor is still running or
+	// its identity could not be proved: nothing was touched because cleanup is
+	// that process's job, not because anything external is in the way.
+	Live bool
 }
 
 // recoverDocker is the bounded exact-owner surface recovery needs. It removes
@@ -128,6 +132,7 @@ func recoverNetworkRun(ctx context.Context, evidence *networkstate.Evidence, rec
 	switch processidentity.Inspect(record.Supervisor.PID, record.Supervisor.StartToken) {
 	case processidentity.Gone, processidentity.Mismatch:
 	default:
+		out.Live = true
 		out.Skipped = "its supervisor (pid " + strconv.Itoa(record.Supervisor.PID) + ") is still running or its identity is uncertain"
 		return out
 	}

@@ -6,6 +6,7 @@ The complete command reference, identical to what \fBcoop help \-\-all\fR prints
 .PP
 .nf
 coop — run a coding agent all night long in a box it can't escape.
+
 Usage: coop <command> [<args>...]
 
 AGENTS
@@ -62,9 +63,7 @@ SERVICES — the box's .agent/compose.yml sidecars
 SAFETY — prove the box holds, catch committed secrets
   coop doctor                       attack the box, prove isolation holds
   coop check-secrets                scan the working tree for committed secrets
-  coop net setup                    prepare restricted egress for this host
-  coop net                          what this project may reach
-  coop net ls                       the filtered runs recorded here
+  coop net                          control network access, see what runs reach
 
 SETUP & MAINTENANCE
   coop init [--stack asdf]          scaffold queue, hooks, skills, agent dirs
@@ -589,7 +588,7 @@ coop loop [<target|preset>] — work the task queue until done, then sign off.
                     approved requests, and the core endpoints of every rung the run may
                     rotate onto are frozen into one policy every iteration, review and
                     pre-flight box launches under. Refusals print between iterations and
-                    once more at the end; the receipts are in 'coop net ls'
+                    once more at the end; 'coop net runs' has every run
   --allow-domain    an exact name this run may reach over TLS 443 (repeatable)
   --egress-rules    a file of universal rules for this run only
 
@@ -663,86 +662,61 @@ coop doctor — prove the box's isolation: attack it, inside and from the host.
   image, else a stock alpine stand-in (which skips the USER/toolchain checks
   and says so). Honors COOP_RUNTIME.
 
-coop net — restricted egress: only the destinations you allowed.
+coop net — control network access and see what happened.
 
-  Usage: coop net                              what this project may reach
-         coop net setup                        prepare this host, once
-         coop net approve [--mode <m>]         review + remember the request
-         coop net forget [--project <path>]    drop this project's approval
-         coop net ls [--all] [--json]          the filtered runs recorded here
-         coop net inspect <run> [--json]       what one run was allowed and did
-         coop net watch <run> [--json]         follow a run until it seals
-         coop net receipt <run> [--json]       the sealed receipt
-         coop net why <dest> --run <run>       would that run have allowed it?
-         coop net explain <event> --run <run>  why a refusal happened
-         coop net recover <run>|--all          settle a run a crash interrupted
+  Usage: coop net [<command>]
 
-  'setup' prepares this host: it builds the pinned gateway and the locked
-  client image for your Docker daemon, then checks them with one real run
-  (an allowed name works without proxy variables; a denied name, a raw IP,
-  the metadata address and denied DNS are all refused) and records what it
-  checked. Run it once per machine, and again after a coop or Docker upgrade.
+  ACCESS — control what new runs can reach
+    coop net                  show this project's current access
+    coop net approve          review and approve this project's network access
+    coop net check <url>      can a new run reach it? (--run <run>: that run)
+    coop net forget           drop this project's approval (--project <path>)
 
-  Then any launch can ask for it:
+  RUNS — inspect recorded network activity
+    coop net runs             show recent runs (--all, --all-projects)
+    coop net inspect [<run>]  show connections and blocked access (--json)
+    coop net explain <host>   explain why access was blocked (--run <run>)
+    coop net watch [<run>]    follow an active run until its record is sealed
+    coop net export <run>     export a shareable record (destinations withheld)
 
-    coop run --egress filtered --allow-domain example.com -- curl https://example.com
+  REPAIR — normally automatic
+    coop net setup            prepare or recheck this host now
+    coop net recover [<run>]  retry interrupted cleanup now
+
+  A filtered box reaches its agent's provider and the websites and services this
+  project asked for — nothing else. Every other destination is blocked at the
+  gateway, not inside the box; the box is told its policy up front, and the run
+  ends with what it reached and what was blocked. A loop admits ONCE and every
+  iteration, review and pre-flight box runs under that one frozen policy.
+
+  Ask for it on a launch, or make it the project's default:
+
     coop claude --egress filtered
-    coop claude --egress-rules /operator/extra-rules.yaml
-    coop loop --egress filtered
+    coop run --egress filtered --allow-domain example.com -- curl https://example.com
 
-  Every other destination is denied at the gateway, not inside the box. The box
-  is told its policy up front, and a refused run ends with what was refused and
-  how to ask for it. A loop admits ONCE and every iteration, review and pre-flight
-  box runs under that one frozen policy — rotating targets never re-admits.
-
-  A project asks for destinations in .agent/project.yaml:
+  A project asks for websites and services in .agent/project.yaml:
 
     box:
       egress: filtered
       egress_rules:
         - to: {domain: "docs.example.com"}    # TLS, exact or *.wildcard
           protocol: tls
-          ports: [443, 8443]                  # any port but 53, the DNS one
-        - to: {cidr: "10.42.9.0/24"}          # raw TCP/UDP to IPv4, not 443/53
-          protocol: udp
-          ports: [123]
-        - to: {ip: "10.42.8.12"}              # ICMP echo-request
-          protocol: icmp
-          types: [echo-request]
-        - to: {service: "db"}                 # one Compose sidecar of this project
-          protocol: tcp
-          ports: [5432]
+          ports: [443]
 
   That is a REQUEST. 'coop net approve' shows it against what is already
-  remembered and, once you confirm at a terminal, stores your decision outside
+  approved and, once you confirm at a terminal, stores your decision outside
   the repository — so editing or deleting the file cannot widen access, and an
   unattended run can never approve itself. Approvals apply to NEW runs; boxes
-  already running keep the policy they launched with.
+  already running keep the policy they launched with. 'forget' takes one back.
 
-  'forget' takes one back: it shows what this project remembered, asks, and
-  removes that one record — '--project <path>' for a checkout that is already
-  gone. The runs recorded here, their receipts and this host's setup stay, and
-  the next run asks for approval again.
-
-  'why' checks a destination against the rules ONE run started with, without
-  sending a packet — a name is TLS on 443 unless '--port <n>' says otherwise,
-  and an IP address needs the transport too
-  ('--protocol tcp|udp --port <n>', or '--icmp' for echo-request);
-  'explain' opens a refusal that actually happened, with the rule you could
-  add. A receipt holds back destination names by default (even a refused name
-  can carry a secret) — 'receipt --destinations' is you asking for them on your
-  own machine. Unknown means unknown: a metric nobody measured is never shown
-  as zero. Raw tcp/udp/icmp refusals are COUNTED by the kernel and never tied
-  to a destination — there is nothing for 'explain' to open.
-
-  Supported today: TLS to exact and *.wildcard names on any port the rule names
-  (443 by default, 853 or 8443 just as well); raw tcp/udp to IPv4 addresses and
-  CIDRs on any port except 443 and 53, which the gateway takes; ICMP
-  echo-request to IPv4; published serve.ports; one Compose sidecar per approved
-  'service:' rule.
-  Refused with a message: IPv6 destinations, TLS on 53, a project Dockerfile,
-  COOP_IMAGE and non-Docker runtimes. See docs/networking.md for the full
-  matrix.
+  Runs are named by any unique prefix of their id — the eight characters
+  'coop net runs' shows are enough. 'inspect' with no run reads the newest one
+  recorded for this project; 'explain' with no run finds the newest time that
+  host was blocked here and, when the evidence proves the name, port and
+  protocol, prints the exact rule to paste. Unknown means unknown: a metric
+  nobody measured is never shown as zero. Setup and recovery run on their own;
+  the REPAIR verbs are for doing it now. Protocols, ports and what is refused
+  by design are in docs/networking.md.
 
 coop check-secrets — scan the working tree for committed secrets, by content.
 

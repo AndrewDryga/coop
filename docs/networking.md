@@ -7,8 +7,10 @@ enforces today, what it refuses and why, what it measures, and how to ask for mo
 Nothing here is a proxy setting. Every tool in the box — the provider CLI, `curl`, an SDK, a
 subprocess — hits the same boundary, with no `HTTPS_PROXY` to set or forget.
 
-Start with `coop net setup` once per machine, then `coop net` for what this project may reach and
-`coop net --help` for the verbs.
+`coop net` says what a new run in this project can reach and why; `coop net runs` lists what
+recorded runs did; `coop net --help` has the verbs. `coop net setup` prepares a host once per
+machine (and again after a coop or Docker upgrade) — run it ahead of time when you want the cost
+paid before an unattended run.
 
 ## Supported today
 
@@ -119,20 +121,44 @@ socket would start a container the gateway never sees.
 
 ## Observed versus counted
 
-- **TLS flows are observed.** The gateway sees each connection, so `coop net inspect <run>` shows
-  live connections, names, byte counts and the rule that admitted them, and a refused name becomes
-  a retained event `coop net explain <event>` can open.
-- **Raw transports are counted.** Every address grant has its own kernel counter, reported per
-  grant (`Raw rules` in `coop net inspect`, `address_grants` in `--json`) as packets and bytes.
-- **Raw refusals are counted, not attributed.** The packet filter drops a refused datagram
-  without recording where it was going, so refused packets are a number — `N raw packets refused
-  too, with no destination recorded` in the end-of-run summary — and there is nothing for
-  `explain` to open. Coop will not invent a destination for them.
-- **Unknown means unknown.** A metric nobody measured is reported as UNKNOWN, never as zero.
+`coop net inspect [<run>]` (the newest run of this project when no run is named) leads with the
+traffic: the allowed aggregate, then every destination the workload reached — hostname and port,
+transport, each resolved peer with its connection count and bytes sent and received — and then
+only what went wrong: blocked attempts, alerts, gaps in the evidence, a layer that did not run
+normally, a cleanup still owed. A clean run prints nothing else; `--json` keeps every field.
 
-`coop net why <destination> --run <id>` checks the rules that run started with, without sending a
-packet. A domain is TLS on 443 unless `--port <n>` names another; an address has no implied
-transport, so pass `--protocol tcp|udp --port <n>`, or `--icmp` for echo-request.
+- **TLS flows are observed.** The gateway sees each connection, so a destination row is the name
+  the workload asked for, the address it resolved to, and the bytes that crossed. A blocked name
+  becomes a retained event, and `coop net explain <host>` opens the newest one for that host in
+  this project (`--run <run>` pins one run; the exact event id is kept in `--json`).
+- **Raw transports are counted.** Every address grant has its own kernel counter, reported per
+  grant (`Raw traffic` in `coop net inspect`, `address_grants` in `--json`) as packets and bytes.
+  No host inside a CIDR is recorded, so none is shown.
+- **Raw refusals are counted, not attributed.** The packet filter drops a refused datagram
+  without recording where it was going, so refused packets are a number — `N raw packets were
+  blocked with no destination recorded` — and there is nothing for `explain` to open. Coop will
+  not invent a destination for them.
+- **Unknown means unknown.** A metric nobody measured is reported as UNKNOWN, never as zero; a
+  group with one unmeasured member is UNKNOWN rather than a total that quietly counted it as zero.
+- **Only proven workload traffic is `Allowed`.** Coop's own resolver connection and an ownerless
+  closing kernel socket stay in `--json`; a socket that genuinely could not be attributed is
+  listed under `Other observed endpoints` with the reason, never as allowed traffic.
+
+Runs are named by any unique prefix of their id — the eight characters `coop net runs` shows are
+enough for every run command; an ambiguous prefix is refused with the prefixes that would settle
+it. `coop net runs` shows this project's five newest runs (`--all` for every one of them,
+`--all-projects` for every project's, labeled by name and path).
+
+`coop net check <url-or-host>` says whether a normal new run in this project can reach a
+destination — from the approved project rules and the provider access each agent brings — with one
+verdict and one cause. `--run <run>` asks the same of the rules that recorded run started with.
+Nothing is sent either way. An address has no implied transport, so it takes `--protocol tcp|udp
+--port <n>` (or `--icmp`) and a run, because a run's protected ranges are part of the answer.
+
+`coop net export <run>` writes the sealed record as JSON with destination names and addresses
+withheld — even a blocked name can carry a secret — and `--include-destinations` puts them back on
+your own machine. Its `digest` is a content checksum of that projection, not a signature or a
+claim that partial evidence is complete.
 
 ## Asking for access
 
@@ -162,12 +188,16 @@ instead of removing another project's.
 ## When a run is interrupted
 
 A filtered run's gateway containers, volumes and receipt are owned by the coop process that started
-it. If that process is killed (`SIGKILL`, a crash, a reboot) the run stays `cleanup pending`:
+it. If that process is killed (`SIGKILL`, a crash, a reboot) the run stays `cleanup pending` until
+coop settles it — which it does on its own: `coop net inspect` of that run makes one bounded
+recovery attempt before it says anything about cleanup, and every loop or fork start sweeps
+pending runs. A successful recovery is silent. Only something external — Docker stopped, a
+different daemon at the recorded endpoint, a removal that failed — is reported, as
+`⚠ Cleanup incomplete — <the blocker>` with what to do about it; coop retries itself.
 
-    coop net recover <run>     # settle one run
-    coop net recover --all     # settle every pending run
+    coop net recover           # settle every pending run now
+    coop net recover <run>     # settle one run now
 
 Recovery removes exactly the resources that run recorded — by id and ownership labels, never by
 name prefix, never a prune — and seals a final receipt marked `partial` with workload
-`supervisor_lost`. A run whose supervisor is still alive is refused with its pid. The same
-recovery runs automatically on the next `coop` start, alongside the ordinary orphan-box sweep.
+`supervisor_lost`. A run whose supervisor is still alive is left to that process.

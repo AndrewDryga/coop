@@ -75,24 +75,41 @@ whose payload is bounded by construction (refusals grouped and capped, alerts ca
 (`workerproto/protocol.go:29`). None of them is a path to authority: the API has no approval verb
 at all, and the daemon owns the destination projection every one of them applies.
 
-`coop net` is the host operator's read surface, and its verbs differ in what they read
-(`cli/net_cmd.go:49`):
+`coop net` is the host operator's read surface, grouped by the job a person arrives with
+(`cli/net_cmd.go:49`): ACCESS (what a new run may reach), RUNS (what recorded runs did), REPAIR
+(what coop normally does itself). Its verbs differ in what they read:
 
 | verb | reads |
 | --- | --- |
-| bare `coop net` | this project's remembered posture plus its pending request; creates no owner key |
-| `setup` | one of three mutating verbs: builds the image pair and records the host qualification |
-| `recover` | settles a run whose supervisor died — exact-owned removal, then a final `supervisor_lost` receipt (`box/network_recover.go:50`); the orphan sweep runs the same pass at the next start |
+| bare `coop net` | this project's mode and its cause, the approved project rules, a pending request; creates no owner key. Healthy setup and history cost no line |
 | `approve` | TTY only; the repo's request envelope diffed against the remembered approval, digest-fenced |
-| `ls` · `inspect` · `watch` · `receipt` | the keyless `Evidence` handle over retained execution records — no runtime, no DNS, no key |
-| `why` | the run's captured policy, evaluated hypothetically; it never sends a packet |
-| `explain` | one RETAINED denial event plus the draft rule a human could add; a DNS-only refusal drafts nothing, because it cannot prove TLS/443 |
+| `check <url-or-host>` | with no `--run`, the approved project rules plus each agent's provider bundle (`cli/net_diagnostic.go`, `netCurrentCheck`); with `--run`, that run's captured policy evaluated hypothetically. Never sends a packet |
+| `forget` | one of three mutating verbs: removes one project's approval |
+| `runs` · `inspect` · `watch` · `export` | the keyless `Evidence` handle over retained execution records — no runtime, no DNS, no key. Any unique prefix of a run id resolves (`netResolveRun`); an ambiguous one is refused with the prefixes that settle it |
+| `explain <host>` | the newest RETAINED denial of that host in this project's runs (or in `--run`), grouped by boundary/reason/port; the exact event id still works with `--run`. A DNS-only refusal drafts no rule, because it cannot prove TLS/443 |
+| `setup` | mutating: builds the image pair and records the host qualification |
+| `recover [<run>]` | settles a run whose supervisor died — exact-owned removal, then a final `supervisor_lost` receipt (`box/network_recover.go:50`). The same pass runs from the orphan sweep at loop/fork start AND from `coop net inspect` before it reports a cleanup as incomplete (`cli/net_cmd.go`, `netSettleCleanup`) |
 
-`receipt` is redacted by default because it is the export artifact;
-`inspect`/`why`/`explain`/`watch` show names, as the local operator view. An event that has aged
-out of a run's bounded ring reports `event_not_retained` — which is not proof the id ever existed.
+`export` is redacted by default because it is the shareable artifact; `inspect`/`check`/`explain`/
+`watch` show names, as the local operator view. An event that has aged out of a run's bounded
+ring reports `event_not_retained` — which is not proof the id ever existed.
+
+The human `inspect` projection (`cli/net_result.go`, `writeNetRun`) is destination-first and
+exception-only: the `Allowed` aggregate, then every PROVEN workload destination — only
+`NameSource == "sni"` rows, grouped by (name, port, transport) then by peer, bytes UNKNOWN when
+any member is unmeasured; a row in state `failed` is "N attempts failed — <reason>" and
+`connecting` is in flight, neither a connection — then, as their own blocks, `Other observed
+endpoints` (`unattributed*` rows with their reason) and `Raw traffic` (per-rule kernel counters,
+no host), then only what went wrong (blocked, alerts, evidence gaps, unhealthy enforcement,
+cleanup still owed), then `Full details: … --json`. Coop's own resolver socket
+(`trusted-maintenance`) and an ownerless closing kernel block (`socket-inventory`) are explained
+internals and cost no line. A terminal run's `stopped` gateway is normal teardown, not a warning;
+a run whose supervisor is still alive (recovery reported `Live`) is `● Live`, not a lost record.
+The inline end-of-box report in `box/network_summary.go` is still the older refusal-only summary:
+`internal/box` cannot import `internal/cli`, so sharing this projection means moving it below both.
 
 ## Changelog
+- 2026-09-10 — the `coop net` family regrouped into ACCESS/RUNS/REPAIR (`runs` replaces `ls`, `check` replaces `why`, `export` replaces `receipt`, `explain` takes a host); `inspect` renders the destination-first exception-only projection and makes one bounded recovery attempt before reporting cleanup. Re-verified the consumer facts above against their sources.
 - 2026-09-10 — resolving moved from load-time-only to every request as well: what a daemon advertises is what a create would accept now (`service.go` PolicyNetworks).
 - 2026-09-10 — a session policy's RESOLVED network fingerprint is published at load
   (`/v1/capabilities`, `coop sessions policies`) and pinned by a create through

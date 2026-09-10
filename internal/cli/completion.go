@@ -166,20 +166,22 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) == 1 {
 			return netCommands
 		}
-		if len(prev) == 2 && (prev[1] == "inspect" || prev[1] == "watch" || prev[1] == "receipt") {
+		if len(prev) == 2 && (prev[1] == "inspect" || prev[1] == "watch" || prev[1] == "export" || prev[1] == "recover") {
 			return a.netRunIDs()
 		}
 		if len(prev) > 1 && prev[len(prev)-1] == "--run" {
 			return a.netRunIDs()
 		}
 		switch prev[1] {
-		case "ls":
-			return []string{"--all", "--json"}
+		case "runs":
+			return []string{"--all", "--all-projects", "--json"}
 		case "inspect", "watch":
 			return []string{"--json"}
-		case "receipt":
-			return []string{"--json", "--destinations"}
-		case "why", "explain":
+		case "export":
+			return []string{"--include-destinations"}
+		case "check":
+			return []string{"--run", "--json", "--protocol", "--port", "--icmp"}
+		case "explain":
 			return []string{"--run", "--json"}
 		case "approve":
 			return []string{"--mode"}

@@ -96,6 +96,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [no-color-in-width-fields](no-color-in-width-fields.md) — pad plain text to the column width, then style; never style inside `%-16s`
 - [entity-blocks-with-labeled-fields](entity-blocks-with-labeled-fields.md) — multi-fact listings get one labeled block per entity, not one dense row
 - [tag-exceptions-not-every-row](tag-exceptions-not-every-row.md) — tag only the exceptional row; explain the scheme once in a dim caption
+- [inspection-reports-exceptions-only](inspection-reports-exceptions-only.md) — an inspection leads with what happened and prints exceptions only; a qualification prints the checks it proved
 - [list-output-echoes-source](list-output-echoes-source.md) — list output echoes the canonical shape and separates grouped sections with whitespace
 - [spinner-frames-animate-one-object](spinner-frames-animate-one-object.md) — spinner frames are successive states of one recognizable object
 - [nonzero-progress-segments-stay-visible](nonzero-progress-segments-stay-visible.md) — a positive live or blocked count always gets at least one bar cell

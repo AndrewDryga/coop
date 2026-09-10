@@ -488,7 +488,7 @@ func (a *app) reapACPBoxes(superID string) error {
 
 // acpChildCapture renders this supervisor's frozen network authority as the
 // reference ONE child launch proves. Each child gets its own attempt identity,
-// so `coop net ls` relates a run to the child that produced it; the session
+// so `coop net runs` relates a run to the child that produced it; the session
 // identity is the supervisor's, which is what the editor session is.
 func (a *app) acpChildCapture(superID string) (string, error) {
 	if a.acpCapture == nil {
