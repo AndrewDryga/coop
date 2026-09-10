@@ -92,7 +92,7 @@ func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, o
 	defer store.Close()
 	setupStep(out, "records", "%s", store.Path())
 
-	candidate, clients, err := setupImages(ctx, rt, out, errOut)
+	candidate, clients, err := setupImages(ctx, rt, store, out, errOut)
 	if err != nil {
 		return networkstate.Qualification{}, err
 	}
@@ -133,7 +133,7 @@ func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, o
 // setupImages builds the pinned pair, or reports the exact pair already present.
 // A rebuild of unchanged inputs is a Docker cache hit, so the honest distinction
 // the operator cares about is whether the image existed before this run.
-func setupImages(ctx context.Context, rt runtime.Runtime, out, errOut io.Writer) (networkstate.CandidateSpec, []networkstate.QualifiedClient, error) {
+func setupImages(ctx context.Context, rt runtime.Runtime, store *networkstate.Store, out, errOut io.Writer) (networkstate.CandidateSpec, []networkstate.QualifiedClient, error) {
 	// Setup is the one path that may create runtime state, so it binds with
 	// launch authority. Admission keeps the read-only inventory binding.
 	docker, err := runtime.BindDocker(ctx, rt, "", "")
@@ -166,11 +166,32 @@ func setupImages(ctx context.Context, rt runtime.Runtime, out, errOut io.Writer)
 	}
 	setupStep(out, "gateway", "%-6s %s", setupOrigin(gatewayPresent), candidate.GatewayImage)
 	setupStep(out, "clients", "%-6s %s", setupOrigin(clientPresent), candidate.ClientImage)
+	setupStep(out, "pinned", "%s", setupClientFiles(ctx, docker, store, candidate, closure))
 	var qualified []networkstate.QualifiedClient
 	for _, client := range closure.Clients {
 		qualified = append(qualified, networkstate.QualifiedClient{Provider: client.Provider, Client: client.Client, Version: client.Version})
 	}
 	return candidate, qualified, nil
+}
+
+// setupClientFiles reads every pinned client entry point out of the locked image
+// ONCE, here, where the daemon is already in hand. A project with its own
+// Dockerfile then compares its build against this host's own record instead of
+// copying a few hundred megabytes back out of an image that cannot have changed:
+// an image id is a content address, so the same id is the same bytes.
+//
+// It is a memo, not a qualification. A read that fails says so and setup carries
+// on, because the launch that needs those digests reads them itself and refuses
+// by name when it cannot.
+func setupClientFiles(ctx context.Context, docker filteredDocker, store *networkstate.Store, candidate networkstate.CandidateSpec, closure agents.ClientClosure) string {
+	files := pinnedClientFiles(closure)
+	if len(files) == 0 {
+		return "this build pins no client entry points"
+	}
+	if _, err := imageFileDigests(ctx, docker, store, candidate.ClientImage, files); err != nil {
+		return fmt.Sprintf("could not be read (%v) — a project Dockerfile reads them at launch instead", err)
+	}
+	return ui.Count(len(files), "client entry point") + " recorded, so a project Dockerfile is checked without re-reading this image"
 }
 
 func setupOrigin(present bool) string {

@@ -81,7 +81,7 @@ func tamperBuiltImage(d *filteredDaemonFixture, change func(*fixtureImage)) {
 func TestDerivedImageProvesDerivationAndPinnedClients(t *testing.T) {
 	_, d := filteredFixture(t)
 	closure := derivedImageFixture(t, d)
-	if err := proveDerivedImage(context.Background(), d, fixtureLockedImage, fixtureBuiltImage, closure, ".agent/Dockerfile"); err != nil {
+	if err := proveDerivedImage(context.Background(), d, nil, fixtureLockedImage, fixtureBuiltImage, closure, ".agent/Dockerfile"); err != nil {
 		t.Fatal("a project that only adds layers was refused", err)
 	}
 	launcher := closure.Clients[0].Launcher()
@@ -125,7 +125,7 @@ func TestDerivedImageProvesDerivationAndPinnedClients(t *testing.T) {
 			_, d := filteredFixture(t)
 			closure := derivedImageFixture(t, d)
 			tamperBuiltImage(d, test.change)
-			err := proveDerivedImage(context.Background(), d, fixtureLockedImage, fixtureBuiltImage, closure, ".agent/Dockerfile")
+			err := proveDerivedImage(context.Background(), d, nil, fixtureLockedImage, fixtureBuiltImage, closure, ".agent/Dockerfile")
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("refusal did not name %q: %v", test.want, err)
 			}
@@ -140,7 +140,7 @@ func TestDerivedImageProvesDerivationAndPinnedClients(t *testing.T) {
 		"unknown id": {fixtureLockedImage, "sha256:" + strings.Repeat("e", 64)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := proveDerivedImage(context.Background(), d, pair[0], pair[1], closure, ".agent/Dockerfile"); err == nil {
+			if err := proveDerivedImage(context.Background(), d, nil, pair[0], pair[1], closure, ".agent/Dockerfile"); err == nil {
 				t.Fatal("an image that proved nothing was accepted")
 			}
 		})
@@ -155,7 +155,7 @@ func TestPinnedClientProofReadsEachImageOnce(t *testing.T) {
 	closure := derivedImageFixture(t, d)
 	files := len(pinnedClientFiles(closure))
 	for range 3 {
-		if err := proveDerivedImage(context.Background(), d, fixtureLockedImage, fixtureBuiltImage, closure, ".agent/Dockerfile"); err != nil {
+		if err := proveDerivedImage(context.Background(), d, nil, fixtureLockedImage, fixtureBuiltImage, closure, ".agent/Dockerfile"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -173,7 +173,7 @@ func TestPinnedClientProofReadsEachImageOnce(t *testing.T) {
 	image.id = rebuilt
 	d.images[rebuilt] = image
 	d.mu.Unlock()
-	if err := proveDerivedImage(context.Background(), d, fixtureLockedImage, rebuilt, closure, ".agent/Dockerfile"); err != nil {
+	if err := proveDerivedImage(context.Background(), d, nil, fixtureLockedImage, rebuilt, closure, ".agent/Dockerfile"); err != nil {
 		t.Fatal(err)
 	}
 	d.mu.Lock()
@@ -274,7 +274,7 @@ func TestPinnedClientFilesCoverEveryEntryPointOnce(t *testing.T) {
 func TestFilteredProjectImageSkipsAProjectWithoutADockerfile(t *testing.T) {
 	_, d := filteredFixture(t)
 	repo := t.TempDir()
-	image, err := filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, d,
+	image, err := filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, d, nil,
 		RunSpec{Repo: repo}, fixtureCandidate())
 	if image != "" || err != nil {
 		t.Fatal("a project without a Dockerfile built an image", image, err)
@@ -285,9 +285,165 @@ func TestFilteredProjectImageSkipsAProjectWithoutADockerfile(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, ".agent", "Dockerfile")); err != nil {
 		t.Fatal(err)
 	}
-	image, err = filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, d,
+	image, err = filteredProjectImage(context.Background(), runtime.Runtime{Name: "must-not-execute"}, d, nil,
 		RunSpec{Repo: repo}, fixtureCandidate())
 	if image != "" || err == nil || !strings.Contains(err.Error(), "coop net setup") {
 		t.Fatal("a missing client image was built on anyway", image, err)
+	}
+}
+
+// imageFileRecords is every digest record this host has written, by file name.
+func imageFileRecords(t *testing.T, store *networkstate.Store) []string {
+	t.Helper()
+	entries, err := os.ReadDir(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "imagefiles-") {
+			names = append(names, entry.Name())
+		}
+	}
+	return names
+}
+
+// The durable half of the memo. A second PROCESS reads neither image again,
+// because this host already recorded what those exact image ids hold — and
+// every way that record can be wrong (gone, damaged, or for another image)
+// reads the image instead, which is the only fallback there is.
+func TestPinnedClientProofReusesThisHostsRecordInANewProcess(t *testing.T) {
+	f, d := filteredFixture(t)
+	closure := derivedImageFixture(t, d)
+	files := len(pinnedClientFiles(closure))
+	prove := func() error {
+		return proveDerivedImage(context.Background(), d, f.store, fixtureLockedImage, fixtureBuiltImage, closure, ".agent/Dockerfile")
+	}
+	reads := func() (int, int) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.fileReads[fixtureLockedImage], d.fileReads[fixtureBuiltImage]
+	}
+	if err := prove(); err != nil {
+		t.Fatal(err)
+	}
+	if locked, built := reads(); locked != files || built != files {
+		t.Fatalf("the first proof read %d locked and %d built files, want %d of each", locked, built, files)
+	}
+	if names := imageFileRecords(t, f.store); len(names) != 2 {
+		t.Fatalf("recorded %v, want one record per image", names)
+	}
+	// A NEW process: the in-memory memo is gone, this host's record is not.
+	resetPinnedDigests(t)
+	if err := prove(); err != nil {
+		t.Fatal(err)
+	}
+	if locked, built := reads(); locked != files || built != files {
+		t.Fatalf("a second process re-read the images (%d/%d) instead of using this host's record", locked, built)
+	}
+	// Damaged: the bytes are there and unusable. That is a miss, so the images
+	// are read again — and the proof still holds.
+	for _, name := range imageFileRecords(t, f.store) {
+		if err := os.WriteFile(filepath.Join(f.store.Path(), name), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resetPinnedDigests(t)
+	if err := prove(); err != nil {
+		t.Fatal(err)
+	}
+	if locked, built := reads(); locked != 2*files || built != 2*files {
+		t.Fatalf("a damaged record was used instead of read past (%d/%d)", locked, built)
+	}
+	// Gone: the same fallback, for the same reason.
+	for _, name := range imageFileRecords(t, f.store) {
+		if err := os.Remove(filepath.Join(f.store.Path(), name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resetPinnedDigests(t)
+	if err := prove(); err != nil {
+		t.Fatal(err)
+	}
+	if locked, built := reads(); locked != 3*files || built != 3*files {
+		t.Fatalf("a missing record did not fall back to reading (%d/%d)", locked, built)
+	}
+}
+
+// A record is keyed by the image ID, which is a content address: a rebuild that
+// changes a pinned client is a DIFFERENT id, so it is read, and refused by name.
+func TestPinnedClientProofReadsARebuiltImageItNeverRecorded(t *testing.T) {
+	f, d := filteredFixture(t)
+	closure := derivedImageFixture(t, d)
+	launcher := closure.Clients[0].Launcher()
+	if err := proveDerivedImage(context.Background(), d, f.store, fixtureLockedImage, fixtureBuiltImage, closure, ".agent/Dockerfile"); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt := "sha256:" + strings.Repeat("3", 64)
+	d.mu.Lock()
+	image := d.images[fixtureBuiltImage]
+	image.id, image.files = rebuilt, maps.Clone(image.files)
+	file := image.files[launcher]
+	file.SHA256 = strings.Repeat("9", 64)
+	image.files[launcher] = file
+	d.images[rebuilt] = image
+	d.mu.Unlock()
+	resetPinnedDigests(t)
+	err := proveDerivedImage(context.Background(), d, f.store, fixtureLockedImage, rebuilt, closure, ".agent/Dockerfile")
+	if err == nil || !strings.Contains(err.Error(), "changes claude's cli client at "+launcher) {
+		t.Fatalf("a rebuilt image that replaced a client was accepted: %v", err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.fileReads[rebuilt] == 0 {
+		t.Fatal("the rebuilt image was never read")
+	}
+}
+
+// What `coop net setup` contributes: the locked image is read once, at setup,
+// where the daemon is already in hand — so the FIRST filtered launch of a
+// project with its own Dockerfile reads only the image that Dockerfile built.
+func TestSetupRecordsTheLockedClientDigestsForTheFirstLaunch(t *testing.T) {
+	f, d := filteredFixture(t)
+	closure := derivedImageFixture(t, d)
+	files := len(pinnedClientFiles(closure))
+	line := setupClientFiles(context.Background(), d, f.store, fixtureCandidate(), closure)
+	if !strings.Contains(line, "recorded") || !strings.Contains(line, "without re-reading") {
+		t.Fatalf("setup line = %q", line)
+	}
+	if names := imageFileRecords(t, f.store); len(names) != 1 {
+		t.Fatalf("setup recorded %v, want exactly the locked image", names)
+	}
+	// A launch in another process: only the built image is read.
+	resetPinnedDigests(t)
+	if err := proveDerivedImage(context.Background(), d, f.store, fixtureLockedImage, fixtureBuiltImage, closure, ".agent/Dockerfile"); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.fileReads[fixtureLockedImage] != files || d.fileReads[fixtureBuiltImage] != files {
+		t.Fatalf("the first launch read %d locked and %d built files, want the locked side read only by setup",
+			d.fileReads[fixtureLockedImage], d.fileReads[fixtureBuiltImage])
+	}
+}
+
+// Setup is not the place a missing client entry point is refused: it says so and
+// carries on, because the launch that needs those digests reads them itself.
+func TestSetupSaysWhenTheLockedClientDigestsCannotBeRead(t *testing.T) {
+	f, d := filteredFixture(t)
+	closure := derivedImageFixture(t, d)
+	launcher := closure.Clients[0].Launcher()
+	d.mu.Lock()
+	image := d.images[fixtureLockedImage]
+	image.files = maps.Clone(image.files)
+	delete(image.files, launcher)
+	d.images[fixtureLockedImage] = image
+	d.mu.Unlock()
+	line := setupClientFiles(context.Background(), d, f.store, fixtureCandidate(), closure)
+	if !strings.Contains(line, "could not be read") || !strings.Contains(line, launcher) {
+		t.Fatalf("setup line = %q, want it to name the entry point it could not read", line)
+	}
+	if names := imageFileRecords(t, f.store); len(names) != 0 {
+		t.Fatalf("a partial read was recorded: %v", names)
 	}
 }

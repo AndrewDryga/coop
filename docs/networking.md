@@ -63,6 +63,13 @@ an image that was not built on the locked one. The host qualification keeps nami
 your image inherits nothing from it except through those two proofs, which re-run on every launch.
 `COOP_IMAGE` stays refused — an arbitrary image has no such proof to offer.
 
+Copying those entry points out of an image costs a few seconds, so what a read found is recorded
+outside every agent mount, next to your approvals: `coop net setup` records what the locked image
+holds, and a launch records what it read out of the image your Dockerfile built. Both records are
+keyed by the image ID, which is a content address — a rebuilt image is a new ID and is read again,
+and a record that is missing, damaged or for another image is read past, never trusted. The
+comparison itself still runs on every launch.
+
 Three practical notes. The base ends as the non-root box user, so a package install needs
 `USER root` … `USER node` around it. A repo with an `.agent/Dockerfile` still needs `coop build`
 once, exactly as every other coop command in that repo does. And the filtered build is run by the

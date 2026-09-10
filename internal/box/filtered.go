@@ -213,7 +213,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	// smoke is deliberately excluded: it qualifies the locked image itself, and
 	// what it proves must be that image, not a project's layers on top of it.
 	if smoke == nil {
-		derived, err := filteredProjectImage(ctx, rt, f.docker, spec, candidate)
+		derived, err := filteredProjectImage(ctx, rt, f.docker, f.store, spec, candidate)
 		if err != nil {
 			return f, err
 		}

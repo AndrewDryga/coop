@@ -71,7 +71,7 @@ func filteredProjectTag(repo, lockedImage string) string {
 // filteredProjectImage builds this project's box Dockerfile on the locked client
 // image and returns the built image's ID once both proofs hold. It returns ""
 // for a project with no Dockerfile, which runs the locked image itself.
-func filteredProjectImage(ctx context.Context, rt runtime.Runtime, docker filteredDocker, spec RunSpec, candidate networkstate.CandidateSpec) (string, error) {
+func filteredProjectImage(ctx context.Context, rt runtime.Runtime, docker filteredDocker, store *networkstate.Store, spec RunSpec, candidate networkstate.CandidateSpec) (string, error) {
 	repo := projectPolicyRepo(spec)
 	// The PROJECT's Dockerfile, not the workspace's: a remote session's box
 	// mounts a fork of this project, and what defines the box belongs to the
@@ -114,14 +114,14 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, docker filter
 	if err != nil {
 		return "", fmt.Errorf("the image %s built from this project's %s cannot be read back — run it again", tag, dfRel)
 	}
-	if err := proveDerivedImage(ctx, docker, candidate.ClientImage, built, closure, dfRel); err != nil {
+	if err := proveDerivedImage(ctx, docker, store, candidate.ClientImage, built, closure, dfRel); err != nil {
 		return "", err
 	}
 	return built, nil
 }
 
 // proveDerivedImage refuses everything the built image cannot show it inherited.
-func proveDerivedImage(ctx context.Context, docker filteredDocker, locked, built string, closure agents.ClientClosure, dfRel string) error {
+func proveDerivedImage(ctx context.Context, docker filteredDocker, store *networkstate.Store, locked, built string, closure agents.ClientClosure, dfRel string) error {
 	if locked == "" || built == "" || locked == built {
 		// The same image means the Dockerfile added nothing at all — and an image
 		// that adds nothing was not built on anything either.
@@ -130,7 +130,7 @@ func proveDerivedImage(ctx context.Context, docker filteredDocker, locked, built
 	if err := proveDerivedLayers(ctx, docker, locked, built, dfRel); err != nil {
 		return err
 	}
-	return provePinnedClients(ctx, docker, locked, built, closure, dfRel)
+	return provePinnedClients(ctx, docker, store, locked, built, closure, dfRel)
 }
 
 // proveDerivedLayers reads both layer chains from the runtime. A derived image
@@ -196,19 +196,19 @@ func pinnedClientFiles(closure agents.ClientClosure) []pinnedFile {
 // the same path in the locked one. A project that ADDS tools leaves every one of
 // them untouched; one that replaces, wraps or deletes a client changes exactly
 // these files.
-func provePinnedClients(ctx context.Context, docker filteredDocker, locked, built string, closure agents.ClientClosure, dfRel string) error {
+func provePinnedClients(ctx context.Context, docker filteredDocker, store *networkstate.Store, locked, built string, closure agents.ClientClosure, dfRel string) error {
 	files := pinnedClientFiles(closure)
 	if len(files) == 0 {
 		return errors.New("this host's setup qualified no clients at all — run 'coop net setup'")
 	}
-	pinned, err := imageFileDigests(ctx, docker, locked, files)
+	pinned, err := imageFileDigests(ctx, docker, store, locked, files)
 	if err != nil {
 		return fmt.Errorf("coop's own client image cannot be checked: %w — run 'coop net setup' again", err)
 	}
 	// A pinned entry point that cannot be read is a changed client, not a missing
 	// answer: deleting one, or replacing it with a symlink or a directory, lands
 	// here rather than on a digest that differs.
-	observed, err := imageFileDigests(ctx, docker, built, files)
+	observed, err := imageFileDigests(ctx, docker, store, built, files)
 	if err != nil {
 		return fmt.Errorf("the image this project's %s built cannot be checked: %w — a filtered box runs the clients this host's setup qualified, so add your tools instead of changing them", dfRel, err)
 	}
@@ -236,9 +236,16 @@ var pinnedDigests struct {
 // imageFileDigests identifies each pinned file inside one image, reading them
 // out of a container that is created and NEVER started. Running anything from
 // the image to describe itself would let a tampered image write its own proof.
-func imageFileDigests(ctx context.Context, docker filteredDocker, image string, files []pinnedFile) (map[string]runtime.DockerFile, error) {
+func imageFileDigests(ctx context.Context, docker filteredDocker, store *networkstate.Store, image string, files []pinnedFile) (map[string]runtime.DockerFile, error) {
 	if cached := cachedFileDigests(image, files); cached != nil {
 		return cached, nil
+	}
+	// This host may have read this exact image id before, in another process.
+	// Keep it in the process memo too, so a loop reads neither the image nor the
+	// store again for the boxes that follow.
+	if remembered := rememberedFileDigests(store, image, files); remembered != nil {
+		storeFileDigests(image, remembered)
+		return remembered, nil
 	}
 	nonce := make([]byte, 8)
 	if _, err := rand.Read(nonce); err != nil {
@@ -269,6 +276,7 @@ func imageFileDigests(ctx context.Context, docker filteredDocker, image string, 
 		digests[file.path] = digest
 	}
 	storeFileDigests(image, digests)
+	rememberFileDigests(store, image, files, digests)
 	return digests, nil
 }
 
@@ -297,4 +305,48 @@ func storeFileDigests(image string, digests map[string]runtime.DockerFile) {
 		pinnedDigests.images = make(map[string]map[string]runtime.DockerFile, maxPinnedDigestImages)
 	}
 	pinnedDigests.images[image] = digests
+}
+
+// rememberedFileDigests is the DURABLE half of the memo: what this host already
+// read out of this exact image id, kept in the owner-private store so the next
+// process does not copy the same few hundred megabytes back out. Nothing here
+// can make a changed file pass — a record is keyed by the image id and the exact
+// path set, so anything missing, unreadable or foreign is a miss, and a miss
+// reads the image.
+func rememberedFileDigests(store *networkstate.Store, image string, files []pinnedFile) map[string]runtime.DockerFile {
+	if store == nil {
+		return nil
+	}
+	remembered := store.ImageFileDigests(image, pinnedPaths(files))
+	if len(remembered) == 0 {
+		return nil
+	}
+	digests := make(map[string]runtime.DockerFile, len(remembered))
+	for path, file := range remembered {
+		digests[path] = runtime.DockerFile{Mode: file.Mode, Size: file.Size, SHA256: file.SHA256}
+	}
+	return digests
+}
+
+// rememberFileDigests keeps what a read cost, for the next process. A memo that
+// could not be written costs a re-read and nothing else: every store operation
+// this launch actually depends on would fail on the same fault, and each of
+// those is authority — this one is not.
+func rememberFileDigests(store *networkstate.Store, image string, files []pinnedFile, digests map[string]runtime.DockerFile) {
+	if store == nil {
+		return
+	}
+	record := make(map[string]networkstate.ImageFile, len(digests))
+	for path, file := range digests {
+		record[path] = networkstate.ImageFile{Mode: file.Mode, Size: file.Size, SHA256: file.SHA256}
+	}
+	_ = store.RememberImageFiles(image, pinnedPaths(files), record)
+}
+
+func pinnedPaths(files []pinnedFile) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.path)
+	}
+	return paths
 }

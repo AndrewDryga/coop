@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/run.go, docs/networking.md]
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/run.go, internal/networkstate/image_files.go, docs/networking.md]
 updated: 2026-09-10
 ---
 
@@ -70,7 +70,14 @@ Traps:
   both images. The file reads happen in a container that is CREATED AND NEVER STARTED
   (`runtime.Docker.FileDigest`, `runtime/docker_lifecycle.go:333`): asking a tampered image to
   describe itself is how the check would be defeated. They cost ~775 MB of `docker cp` per image on
-  the current closure, so the digests are memoized per image ID. `COOP_IMAGE` stays refused at
+  the current closure — ~3s each on this host — so a read is memoized per image ID in the process
+  AND recorded in the owner-private store (`networkstate/image_files.go`, keyed by the image id and
+  the exact path set, so a release that pins one more path cannot be satisfied by an older record).
+  `coop net setup` records the locked image's set while it has the daemon in hand
+  (`box/network_setup.go:169`), and a launch records what it read out of the image it built, so a
+  first launch after a build reads one image (~8.2s here) and a repeat reads none (~5.9s, the same
+  as a project with no Dockerfile) against ~11.9s before. A record that is missing, damaged or for
+  another image is a MISS and the image is read; nothing there can make a file pass. `COOP_IMAGE` stays refused at
   admission (`box/network_admission.go:175`): nothing qualified it and no proof can.
 - That build is run by the LAUNCH, not by a human `coop build`, and a Docker build has root and
   ordinary network. The proofs bind what the box RUNS, not what the build may do, so an
@@ -100,6 +107,10 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-10 — the pinned-client digests a Dockerfile launch compares are now recorded per image id
+  in the owner store (and by `coop net setup` for the locked image), so the added cost of a
+  Dockerfile project falls from ~6.4s to ~2.6s on the first launch after a build and to ~0.4s on a
+  repeat. Measured on this host; every refusal message is unchanged and re-proved live.
 - 2026-09-10 — `coop net forget` removes one project's remembered approval (lexical id derivation, so
   a deleted checkout's record can still be named; a gone symlink locates nothing rather than removing
   the wrong record), and `coop net` reports a replaced project directory as blocked instead of leaving
