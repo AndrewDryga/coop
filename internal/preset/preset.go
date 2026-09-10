@@ -39,6 +39,10 @@ type Role struct {
 	When       []string // routing hints injected into the lead contract
 	Subagent   string   // native only, OPTIONAL: reference an existing subagent; empty ⇒ coop generates coop-<Name>
 	PromptText string   // roles/<name>.md content, appended to the generated contract
+	// PromptPath is the configured prompt: as written, set only once its file loaded — so
+	// `coop presets <name>` can show the exact file execution appends and never a path it
+	// didn't read. An empty prompt: stays empty (the role uses the generated contract alone).
+	PromptPath string
 }
 
 // Preset is a loaded, validated orchestration preset.
@@ -54,6 +58,7 @@ type Preset struct {
 	// model across all accounts.
 	LeadTargets    []agents.Target
 	LeadPromptText string // lead.md content, appended after the generated block
+	LeadPromptPath string // the configured lead prompt:, set only once its file loaded (see Role.PromptPath)
 
 	Roles []Role // sorted by name for deterministic contracts
 }
@@ -261,6 +266,7 @@ func loadPreset(name, dir string, data []byte, readFile func(string) ([]byte, er
 	if p.LeadPromptText, err = promptText(y.Lead.Prompt, readFile); err != nil {
 		return nil, bad("lead.prompt: %v", err)
 	}
+	p.LeadPromptPath = y.Lead.Prompt
 
 	// Roles, in sorted order so generated contracts are deterministic.
 	names := make([]string, 0, len(y.Roles))
@@ -364,6 +370,7 @@ func loadRole(name string, y yamlRole, readFile func(string) ([]byte, error)) (R
 	if r.PromptText, err = promptText(y.Prompt, readFile); err != nil {
 		return r, bad("prompt: %v", err)
 	}
+	r.PromptPath = y.Prompt
 	return r, nil
 }
 

@@ -191,6 +191,9 @@ func (grokAgent) Models() []string {
 	return []string{"grok-4.5", "grok-composer-2.5-fast"}
 }
 
+// ExampleModel: the flagship id.
+func (grokAgent) ExampleModel() string { return "grok-4.5" }
+
 // ModelEnv: grok reads no default-model env var; the model is -m/--model or config.toml.
 func (grokAgent) ModelEnv() string { return "" }
 

@@ -78,9 +78,11 @@ func TestHelpTextAligned(t *testing.T) {
 func TestAllHelpAvoidsMiddleDots(t *testing.T) {
 	pages := map[string]string{
 		"top-level": helpText(&config.Config{}),
-		"agent":     agentHelp,
 		"run":       runHelp,
 		"fork":      forkHelpText(ui.Palette{}),
+	}
+	for _, name := range agents.Names() { // one generated page per agent, not one shared essay
+		pages["agent "+name] = agentHelp(name)
 	}
 	for name, help := range commandHelp {
 		pages[name] = help

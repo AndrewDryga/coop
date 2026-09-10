@@ -223,6 +223,9 @@ func (claudeAgent) Models() []string {
 	return []string{"fable", "opus", "sonnet", "haiku", "claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"}
 }
 
+// ExampleModel: the alias people recognize, and the one coop's examples have always used.
+func (claudeAgent) ExampleModel() string { return "opus" }
+
 // ModelEnv: Claude Code reads its default model from ANTHROPIC_MODEL — how the model
 // reaches the claude-agent-acp adapter (and any claude subprocess) that takes no flags.
 func (claudeAgent) ModelEnv() string { return "ANTHROPIC_MODEL" }

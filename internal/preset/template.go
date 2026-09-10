@@ -10,7 +10,7 @@ const Template = `# coop preset — an orchestration recipe: which agent LEADS a
 #   Run:      coop %[1]s
 #             coop loop %[1]s
 #   Inspect:  coop presets %[1]s
-#   Format:   coop help presets
+#   Learn how presets work: coop help presets
 # An explicit target on the command line (claude:opus@work) overrides the lead +
 # ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset
 # names models and accounts, never the secrets themselves.
@@ -75,8 +75,9 @@ roles:
     agent: codex:gpt-5.6-sol/xhigh
     # when — OPTIONAL routing hints.
     when: [plan-review, security, tradeoffs]
-    # prompt — OPTIONAL persona the peer adopts for this role's consults
-    # (e.g. prompt: roles/critic.md); omit and the peer answers as itself.
+    # prompt — the persona the peer adopts for this role's consults; delete this
+    # line (and the file) and the peer answers as itself.
+    prompt: roles/critic.md
 
   fast:
     # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the
@@ -142,6 +143,25 @@ const fastPrompt = `<!-- roles/fast.md — guidance for the "fast" delegate, app
   the lead to review.
 `
 
+// criticPrompt is the persona the "critic" consult adopts — the second opinion from another
+// vendor. Like the others it APPENDS to coop's generated contract, so it carries only the
+// stance, never the role's wiring.
+const criticPrompt = `<!-- roles/critic.md — the persona the "critic" consult adopts, appended to its
+     generated contract. Sensible defaults for any project; tune for yours, or delete
+     this file and the "prompt: roles/critic.md" line to drop it. -->
+
+## Working as the critic
+
+You are the second opinion, asked precisely because you did not write the plan.
+
+- Give the verdict first — does it hold? — then the strongest objection you have and
+  what would have to be true for it to matter.
+- Weigh the option that was not chosen; if it is better, say so in one sentence and why.
+- Name every one-way door: a schema, a file format, a published flag, stored data —
+  anything a later change cannot take back.
+- You read; you never edit. Answer in a few dense sentences, no preamble and no praise.
+`
+
 // thinkerPrompt is the generated coop-thinker subagent's system prompt (the native
 // "thinker" role has no subagent:, so coop generates one from this). Unlike lead/fast it
 // isn't appended to a contract — it IS the subagent's instructions, so it reads as one.
@@ -173,5 +193,6 @@ type templateFile struct {
 var templateFiles = []templateFile{
 	{"roles/lead.md", leadPrompt},
 	{"roles/thinker.md", thinkerPrompt},
+	{"roles/critic.md", criticPrompt},
 	{"roles/fast.md", fastPrompt},
 }

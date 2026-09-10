@@ -204,6 +204,9 @@ func (geminiAgent) Models() []string {
 	return []string{"gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash"}
 }
 
+// ExampleModel: the current default tier.
+func (geminiAgent) ExampleModel() string { return "gemini-3.5-flash" }
+
 // ModelEnv: the Gemini CLI reads its default model from GEMINI_MODEL; the flag in base()
 // covers coop-driven runs, this covers anything that takes no flags.
 func (geminiAgent) ModelEnv() string { return "GEMINI_MODEL" }

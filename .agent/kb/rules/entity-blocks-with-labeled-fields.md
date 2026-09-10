@@ -2,9 +2,9 @@
 name: entity-blocks-with-labeled-fields
 description: "multi-fact listings get one labeled block per entity, not one dense row"
 scope: cli-output
-sources: [internal/cli/models.go, internal/ui/ui.go]
+sources: [internal/cli/models.go, internal/cli/presetcmd.go, internal/ui/ui.go]
 check: "none"
-updated: 2026-08-09
+updated: 2026-09-11
 ---
 
 # Multi-fact listings: one labeled block per entity, not one dense row
@@ -37,6 +37,11 @@ per task in `coop tasks` would be noise (see [[tag-exceptions-not-every-row]]).
 See also [[command-output-tiers]], [[list-output-echoes-source]].
 
 ## Changelog
+- 2026-09-11 — a preset's roles became blocks too (`presetDetail`, presetcmd.go): the role name
+  leads, then `Mode:`/`Agent:`/`When:`/`Prompt:`. Two things the card had not said, learned from
+  the approved transcript: the LABELS align on one gutter measured across every entity, not just
+  within a block, and an optional field costs no line at all — an absent prompt prints nothing,
+  never "Coop default" or an empty label.
 - 2026-07-10 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-08-09 — validate-on-write backfill: read internal/cli/models.go in full (`cmdModels`, its

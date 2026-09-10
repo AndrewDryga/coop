@@ -134,7 +134,7 @@ func Main(argv []string) int {
 			return code
 		}
 		if h, ok := commandHelp[argv[0]]; ok {
-			printCommandHelp(h)
+			printTopicHelp(argv[0], h)
 			return 0
 		}
 	}
@@ -312,8 +312,10 @@ var topLevelCommands = []string{
 }
 
 // helpForCommand prints one command's help for `coop help <cmd>`, matching `coop <cmd> --help`:
-// fork's family help, a static commandHelp entry, a pointer for the agent/raw commands whose
-// --help forwards to the underlying CLI, or an unknown-command error (exit 2) for anything else.
+// fork's family help, a static commandHelp entry, the named agent's own page, a pointer for the
+// raw commands whose --help forwards to the underlying CLI, a preset's recipe, or an
+// unknown-command error (exit 2) for anything else. Resolution order is built-in command, then
+// registered agent, then preset — so a preset can never shadow a command someone typed.
 func helpForCommand(cmd string, cfg *config.Config) int {
 	switch {
 	case cmd == "fork":
@@ -328,25 +330,29 @@ func helpForCommand(cmd string, cfg *config.Config) int {
 		printHelp(cfg)
 		return 0
 	case commandHelp[cmd] != "":
-		printCommandHelp(commandHelp[cmd])
+		printTopicHelp(cmd, commandHelp[cmd])
 		return 0
 	case agents.Valid(cmd): // `coop help claude` documents coop's wrapper flags; the agent's own --help forwards
-		printCommandHelp(agentHelp)
+		printHelpPage(agentHelp(cmd))
 		return 0
 	case isKnownCommand(cmd):
 		// Registered agents forward --help to their own CLI, so coop keeps no
 		// static page — point there instead of inventing one.
 		fmt.Printf("coop %s forwards --help to the underlying CLI — run 'coop %s --help'.\n", cmd, cmd)
 		return 0
-	default:
-		candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
-		msg := fmt.Sprintf("unknown command %q", cmd)
-		if guess, ok := nearestCommand(cmd, candidates); ok {
-			msg += fmt.Sprintf("; did you mean %q?", guess)
-		}
-		ui.Error("%s — run 'coop help' for the list", msg)
-		return 2
 	}
+	// Anything runnable as `coop <preset>` is explainable as `coop help <preset>`: same roots and
+	// repo-over-global precedence as execution, files only — no runtime, no box.
+	if code, ok := helpForPreset(cmd, cfg); ok {
+		return code
+	}
+	candidates := append(append([]string{}, topLevelCommands...), agents.Names()...)
+	msg := fmt.Sprintf("unknown command %q", cmd)
+	if guess, ok := nearestCommand(cmd, candidates); ok {
+		msg += fmt.Sprintf("; did you mean %q?", guess)
+	}
+	ui.Error("%s — run 'coop help' for the list", msg)
+	return 2
 }
 
 // isKnownCommand reports whether cmd is one of coop's own subcommands or a coding agent.

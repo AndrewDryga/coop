@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // presetsRepo lays out a repo with one valid preset ("frontier") and one broken one.
@@ -19,12 +19,23 @@ func presetsRepo(t *testing.T) string {
 	if err := os.MkdirAll(good, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	yaml := "lead: {agent: claude:claude-fable-5@work}\n" +
+	yaml := "lead:\n" +
+		"  agent: [claude:claude-fable-5@work, codex:gpt-5.6-sol/xhigh]\n" +
+		"  prompt: roles/lead.md\n" +
 		"roles:\n" +
 		"  critic: {mode: consult, agent: [codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high]}\n" +
-		"  fast: {mode: delegate, agent: gemini:gemini-3.5-flash, when: [boilerplate]}\n"
+		"  fast: {mode: delegate, agent: gemini:gemini-3.5-flash, when: [boilerplate, bulk-edits], prompt: roles/fast.md}\n"
 	if err := os.WriteFile(filepath.Join(good, "preset.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	// The critic deliberately configures no prompt: its block must cost no Prompt line.
+	if err := os.MkdirAll(filepath.Join(good, "roles"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"lead.md", "fast.md"} {
+		if err := os.WriteFile(filepath.Join(good, "roles", f), []byte("extra\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	bad := filepath.Join(repo, ".agent", "presets", "broken")
 	if err := os.MkdirAll(bad, 0o755); err != nil {
@@ -53,20 +64,6 @@ func TestCmdPresets(t *testing.T) {
 		}
 	}
 
-	show := captureStdout(t, func() {
-		if code, err := a.cmdPresets([]string{"frontier"}); code != 0 || err != nil {
-			t.Errorf("cmdPresets(frontier) = (%d, %v)", code, err)
-		}
-	})
-	for _, want := range []string{"lead", "claude", "ladder claude:claude-fable-5@work", "consult", "ladder codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high", "delegate gemini", "model gemini-3.5-flash", "for: boilerplate", "coop loop frontier"} {
-		if !strings.Contains(show, want) {
-			t.Errorf("show missing %q:\n%s", want, show)
-		}
-	}
-	if strings.Contains(show, "gemini-3.5-flash/") {
-		t.Errorf("effort-free role has a dangling slash:\n%s", show)
-	}
-
 	if code, err := a.cmdPresets([]string{"ghost"}); code != 2 || err == nil || !strings.Contains(err.Error(), "no preset") {
 		t.Errorf("unknown preset = (%d, %v), want a loud miss", code, err)
 	}
@@ -89,24 +86,193 @@ func TestCmdPresets(t *testing.T) {
 	}
 }
 
-func TestRoleTuning(t *testing.T) {
-	for _, tc := range []struct {
-		name                string
-		role                preset.Role
-		wantKind, wantValue string
-	}{
-		{"model and effort", preset.Role{Targets: []agents.Target{{Model: "gpt-5.6-sol", Effort: "xhigh"}}}, "model", "gpt-5.6-sol/xhigh"},
-		{"model only", preset.Role{Targets: []agents.Target{{Model: "gemini-3.5-flash"}}}, "model", "gemini-3.5-flash"},
-		{"effort only", preset.Role{Targets: []agents.Target{{Effort: "high"}}}, "effort", "high"},
-		{"neither", preset.Role{}, "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			kind, value := roleTuning(tc.role)
-			if kind != tc.wantKind || value != tc.wantValue {
-				t.Errorf("roleTuning(%+v) = (%q, %q), want (%q, %q)",
-					tc.role, kind, value, tc.wantKind, tc.wantValue)
+// The preset projection is ONE renderer with two doors: `coop presets <name>` and
+// `coop help <name>` must print the same bytes, or the two will drift apart the first time
+// somebody edits one of them.
+func TestPresetDetailIsOneRendererBehindBothDoors(t *testing.T) {
+	repo := presetsRepo(t)
+	cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
+	a := &app{cfg: cfg}
+
+	show := captureStdout(t, func() {
+		if code, err := a.cmdPresets([]string{"frontier"}); code != 0 || err != nil {
+			t.Errorf("cmdPresets(frontier) = (%d, %v)", code, err)
+		}
+	})
+	help := captureStdout(t, func() {
+		if code := helpForCommand("frontier", cfg); code != 0 {
+			t.Errorf("helpForCommand(frontier) = %d, want 0", code)
+		}
+	})
+	if show != help {
+		t.Errorf("coop presets <name> and coop help <name> drifted:\n--- presets ---\n%s\n--- help ---\n%s", show, help)
+	}
+	want := `frontier — a preset for multiple models and providers to work together
+
+Run it
+  coop frontier
+  coop loop frontier
+  coop acp frontier
+
+Lead models — next selected when the previous is unavailable:
+  claude:claude-fable-5@work
+  codex:gpt-5.6-sol/xhigh
+  Prompt: .agent/presets/frontier/roles/lead.md
+
+Roles available to the lead
+  critic   Mode: consult — read-only advice
+           Agent: codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high
+
+  fast     Mode: delegate — edits files; never commits; runs one at a time
+           Agent: gemini:gemini-3.5-flash
+           When: boilerplate and bulk edits
+           Prompt: .agent/presets/frontier/roles/fast.md
+
+Edit this preset
+  .agent/presets/frontier/preset.yaml
+
+For a guide to creating and using presets:
+  coop help presets
+`
+	if show != want {
+		t.Errorf("preset projection drifted:\n--- got ---\n%s\n--- want ---\n%s", show, want)
+	}
+}
+
+// A role with no routing hints and no prompt costs no line — an absent prompt never prints
+// "Coop default" or an empty label — and every label starts at ONE column, however long the
+// longest role name is.
+func TestPresetDetailBlocksAlignOnTheLongestRoleName(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".agent", "presets", "wide")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "lead: {agent: claude}\n" +
+		"roles:\n" +
+		"  documentation-reviewer: {mode: consult, agent: codex, when: [docs]}\n" +
+		"  fast: {mode: delegate, agent: codex}\n"
+	if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := preset.Load(repo, "", "wide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := presetDetail(p, repo, ui.Palette{})
+	column := -1
+	for _, line := range strings.Split(out, "\n") {
+		for _, label := range []string{"Mode:", "Agent:", "When:"} {
+			at := strings.Index(line, label)
+			if at < 0 {
+				continue
 			}
-		})
+			if column == -1 {
+				column = at
+			}
+			if at != column {
+				t.Errorf("label %q starts at column %d, want %d (one gutter across the preset): %q", label, at, column, line)
+			}
+		}
+	}
+	if column != 2+len("documentation-reviewer")+3 {
+		t.Errorf("gutter = %d, want the longest role name plus its separator", column)
+	}
+	if strings.Contains(out, "Prompt:") {
+		t.Errorf("no role configures a prompt, so no Prompt row belongs here:\n%s", out)
+	}
+	if n := strings.Count(out, "When:"); n != 1 {
+		t.Errorf("only one role has routing hints, got %d When rows:\n%s", n, out)
+	}
+	// One lead target cannot fall back, so it never promises it will.
+	if strings.Contains(out, "Lead models") {
+		t.Errorf("a single lead target should read as one model:\n%s", out)
+	}
+}
+
+// `coop help <name>` resolves like a run does: a built-in command and a registered agent win a
+// name collision, then a project preset, then a global one. A name nobody claims is unknown
+// (exit 2), and a preset whose YAML is broken returns THAT error rather than pretending the
+// name doesn't exist. All of it is file-only — no runtime, no box.
+func TestHelpTopicResolutionOrder(t *testing.T) {
+	repo := t.TempDir()
+	global := t.TempDir()
+	write := func(root, name, body string) {
+		t.Helper()
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projectRoot := filepath.Join(repo, ".agent", "presets")
+	// A project preset and a global one under the same name, plus presets named after a
+	// command and an agent — neither may shadow the real page.
+	write(projectRoot, "shared", "lead: {agent: claude:opus}\n")
+	write(global, "shared", "lead: {agent: codex:gpt-5.6-sol}\n")
+	write(global, "onlyglobal", "lead: {agent: grok:grok-4.5}\n")
+	write(projectRoot, "loop", "lead: {agent: claude:opus}\n")
+	write(projectRoot, "gemini", "lead: {agent: claude:opus}\n")
+	write(projectRoot, "wrecked", "lead: {agent: claude}\nroles: {x: {mode: nonsense, agent: codex}}\n")
+
+	cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BoxHome: global}
+	t.Setenv("COOP_PRESETS_DIR", global)
+	run := func(topic string) (string, int) {
+		t.Helper()
+		var code int
+		out := captureStdout(t, func() { code = helpForCommand(topic, cfg) })
+		return out, code
+	}
+
+	if out, code := run("shared"); code != 0 || !strings.Contains(out, "claude:opus") {
+		t.Errorf("project preset should win over the global one: (%d)\n%s", code, out)
+	}
+	if out, code := run("onlyglobal"); code != 0 || !strings.Contains(out, "grok:grok-4.5") {
+		t.Errorf("a global preset is a help topic too: (%d)\n%s", code, out)
+	}
+	if out, code := run("loop"); code != 0 || !strings.Contains(out, "coop loop") || strings.Contains(out, "Run it") {
+		t.Errorf("the loop COMMAND keeps its page against a preset of the same name: (%d)\n%s", code, out)
+	}
+	if out, code := run("gemini"); code != 0 || !strings.Contains(out, "run Gemini in a sandboxed box") {
+		t.Errorf("the gemini AGENT keeps its page against a preset of the same name: (%d)\n%s", code, out)
+	}
+	if _, code := run("nonsense-name"); code != 2 {
+		t.Errorf("unknown topic = %d, want 2", code)
+	}
+	broken := captureStderr(t, func() {
+		if code := helpForCommand("wrecked", cfg); code != 2 {
+			t.Errorf("a broken preset = %d, want 2", code)
+		}
+	})
+	if !strings.Contains(broken, "mode \"nonsense\"") {
+		t.Errorf("a broken preset should surface its validation error, not an unknown command:\n%s", broken)
+	}
+}
+
+// A global preset's paths stay usable and its origin is labeled, so a file outside the checkout
+// is never mistaken for one inside it.
+func TestPresetDetailLabelsAGlobalOrigin(t *testing.T) {
+	repo := t.TempDir()
+	global := t.TempDir()
+	dir := filepath.Join(global, "review")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte("lead: {agent: claude:opus}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := preset.Load(repo, global, "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := presetDetail(p, repo, ui.Palette{})
+	if !strings.Contains(out, filepath.ToSlash(dir)+"/preset.yaml (global)") {
+		t.Errorf("a global preset shows its own path, labeled:\n%s", out)
+	}
+	if !strings.Contains(out, "review — a preset that runs Claude") {
+		t.Errorf("the summary comes from the preset's shape, not its name:\n%s", out)
 	}
 }
 
@@ -127,11 +293,11 @@ func TestCmdPresetsInit(t *testing.T) {
 			t.Errorf("scaffolded preset should list cleanly, missing %q:\n%s", want, list)
 		}
 	}
-	// init also writes the prompt files the recipe references (all under roles/), so the
-	// show view marks them.
-	for _, rel := range []string{filepath.Join("roles", "lead.md"), filepath.Join("roles", "fast.md")} {
-		if _, err := os.Stat(filepath.Join(a.cfg.RepoOverride, ".agent", "presets", "frontier", rel)); err != nil {
-			t.Errorf("init should scaffold %s: %v", rel, err)
+	// init also writes every prompt file the recipe references (all under roles/) — including
+	// the critic's, so the show view has a real path to print beneath all four.
+	for _, rel := range []string{"lead.md", "thinker.md", "critic.md", "fast.md"} {
+		if _, err := os.Stat(filepath.Join(a.cfg.RepoOverride, ".agent", "presets", "frontier", "roles", rel)); err != nil {
+			t.Errorf("init should scaffold roles/%s: %v", rel, err)
 		}
 	}
 	show := captureStdout(t, func() {
@@ -139,8 +305,10 @@ func TestCmdPresetsInit(t *testing.T) {
 			t.Errorf("cmdPresets(frontier) = (%d, %v)", code, err)
 		}
 	})
-	if !strings.Contains(show, "+roles/lead.md") || !strings.Contains(show, "+md") {
-		t.Errorf("show should mark the scaffolded prompt files (+roles/lead.md / +md):\n%s", show)
+	for _, rel := range []string{"lead.md", "thinker.md", "critic.md", "fast.md"} {
+		if !strings.Contains(show, "Prompt: .agent/presets/frontier/roles/"+rel) {
+			t.Errorf("show should point at the scaffolded roles/%s:\n%s", rel, show)
+		}
 	}
 	if code, err := a.cmdPresets([]string{"init"}); code != 2 || err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("re-init = (%d, %v), want a refusal", code, err)

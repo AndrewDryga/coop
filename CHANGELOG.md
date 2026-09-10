@@ -448,6 +448,33 @@
   session without an exact same-session reservation is quarantined instead of adopting whichever
   same-named fork happens to exist; its durable history and workspace remain untouched for manual
   recovery.
+- **`coop help <agent>` answers how to run that agent, and every preset is a help topic.** The
+  per-agent page used to open on a target grammar and explain providers, who-runs slots, mount
+  internals and preset leadership before it said anything about Claude. It now reads as one page
+  about one agent: `coop claude — run Claude in a sandboxed box`, the usage a person types, four
+  examples, the four coop flags read before a `--` (`--readonly` mounts the repository read-only,
+  `--bare` runs without the repository, project context or tools, and neither combines with the
+  other or with peers), then `coop models claude` / `coop credentials claude` / `coop login claude`
+  and a single pointer to `coop help presets`. Codex, Gemini and Grok get the same page generated
+  from their own adapter, so it advertises only what each one accepts — no `--readonly`/`--bare`
+  where the CLI has no proven switch, and no `/<effort>` for Gemini, which has none.
+- **`coop help presets` teaches the workflow instead of the orchestration internals.** It is now
+  usage, how to create a preset, how to run one, and one `Syntax:` block covering `agent:`,
+  `mode:` (the complete `native`/`consult`/`delegate` legend), `when:` and `prompt:`, closing with
+  where presets live and which wins. The runtime wrappers, session recovery, stream caps and
+  credential-mount walls are gone, and the target grammar is routed to `coop help models` rather
+  than restated. Both Frontier preset headers now say `Learn how presets work: coop help presets`.
+- **Anything you can run as `coop <preset>` you can now read as `coop help <preset>`.** Help
+  resolves a built-in command first, then a registered agent, then a project preset, then a global
+  one — the same roots and precedence a run uses, from files alone, with no container runtime. A
+  preset whose YAML is broken answers with its validation error instead of `unknown command`.
+  `coop help <preset>` and `coop presets <preset>` are one renderer, so they cannot drift: a
+  summary derived from the preset's own targets, how to run it, the lead's models in stored order,
+  then one labeled block per role — `Mode:` with what that mode does, `Agent:` (the whole target,
+  not just a model), the routing `When:`, and `Prompt:` only when a prompt file was really loaded
+  — with every label aligned on one gutter measured across the preset. The seeded and repository
+  Frontier presets now ship a `roles/critic.md`, so the critic's prompt line names a file
+  execution actually appends.
 
 ## 9.0.0
 

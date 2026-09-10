@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 )
 
@@ -294,21 +295,82 @@ func TestV3RetiredForms(t *testing.T) {
 	}
 }
 
-// `coop help <agent>` documents coop's OWN wrapper flags (the agent's real --help forwards elsewhere).
-func TestHelpForAgentShowsWrapperFlags(t *testing.T) {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	code := helpForCommand("claude", &config.Config{})
-	_ = w.Close()
-	os.Stdout = old
-	out, _ := io.ReadAll(r)
+// `coop help claude` is the approved page, to the byte: how to run Claude, the coop flags read
+// before a --, where its models and accounts live, and one pointer to presets. Pinned whole
+// because every line of it was chosen — a "contains" test would let the essay grow back.
+func TestHelpForAgentIsTheApprovedPage(t *testing.T) {
+	const want = `coop claude — run Claude in a sandboxed box
+
+Usage:
+  coop claude[:<model>][/<effort>][@<account>] [options] [-- <claude-args>...]
+
+Examples
+  coop claude
+  coop claude:opus
+  coop claude:opus/high@work
+  coop claude -- --help
+
+Options
+  --peer <target>  start with a read-only peer agent; repeat to add more
+  --readonly       mount the repository read-only
+  --bare           run without the repository, project context, or tools
+  --               pass all remaining arguments directly to Claude
+
+  --readonly and --bare cannot be combined or used with peers.
+
+Models and accounts
+  coop models claude        list Claude models
+  coop credentials claude   list Claude accounts
+  coop login claude         sign in to Claude
+
+For a guide to using multiple models and providers together:
+  coop help presets
+`
+	var code int
+	out := captureStdout(t, func() { code = helpForCommand("claude", &config.Config{}) })
 	if code != 0 {
 		t.Fatalf("helpForCommand(claude) = %d, want 0", code)
 	}
-	for _, want := range []string{"Usage: coop <target>", "an optional :model", "coop <preset>", "--peer <target>", "coop claude -- --help"} {
-		if !strings.Contains(string(out), want) {
-			t.Errorf("agent help missing %q:\n%s", want, out)
+	if out != want {
+		t.Errorf("coop help claude drifted from the approved page:\n--- got ---\n%s\n--- want ---\n%s", out, want)
+	}
+	// No generic all-commands footer: the page ends with its own pointer.
+	if strings.Contains(out, "Run 'coop help' for all commands") {
+		t.Errorf("agent help should not append the all-commands footer:\n%s", out)
+	}
+}
+
+// Every other agent gets the SAME page generated from its own adapter: its command, its human
+// name, its argument label — and only the flags it accepts. Codex refuses restricted runs today,
+// so its page must not advertise --readonly/--bare (nor the sentence about combining them), and
+// Gemini has no reasoning effort, so its usage carries no /<effort>.
+func TestHelpForAgentIsGeneratedPerAdapter(t *testing.T) {
+	codex := agentHelp("codex")
+	for _, want := range []string{
+		"coop codex — run Codex in a sandboxed box",
+		"coop codex[:<model>][/<effort>][@<account>] [options] [-- <codex-args>...]",
+		"coop codex:gpt-5.6-sol",
+		"pass all remaining arguments directly to Codex",
+		"coop models codex        list Codex models",
+	} {
+		if !strings.Contains(codex, want) {
+			t.Errorf("codex page missing %q:\n%s", want, codex)
+		}
+	}
+	for _, unsupported := range []string{"--readonly", "--bare", "cannot be combined"} {
+		if strings.Contains(codex, unsupported) {
+			t.Errorf("codex page advertises %q, which a codex run refuses:\n%s", unsupported, codex)
+		}
+	}
+	if gemini := agentHelp("gemini"); strings.Contains(gemini, "/<effort>") || strings.Contains(gemini, "/high") {
+		t.Errorf("gemini has no reasoning effort, so its page must not show one:\n%s", gemini)
+	}
+	// The rows still line up on the widest cell, whatever the agent's name length.
+	for _, name := range agents.Names() {
+		for _, line := range strings.Split(agentHelp(name), "\n") {
+			if strings.HasPrefix(line, "  coop models ") && !strings.Contains(line, "   list ") {
+				t.Errorf("%s: models row lost its column gap: %q", name, line)
+			}
 		}
 	}
 }

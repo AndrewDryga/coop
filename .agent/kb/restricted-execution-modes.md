@@ -2,8 +2,8 @@
 name: restricted-execution-modes
 description: readonly and bare share one tmpfs-only filesystem profile; the provider is seeded through a read-only bind OUTSIDE the tmpfs home, because a bind under it would be root-owned; over ACP the provider's switches ride session/new, not the adapter's argv
 subsystem: box
-sources: [internal/box/restricted.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go]
-updated: 2026-09-10
+sources: [internal/box/restricted.go, internal/box/run.go, internal/agent/agent.go, internal/agent/claude.go, internal/cli/help.go, internal/cli/commands.go, internal/cli/exposure_flags.go, internal/cli/acp_cmd.go, internal/cli/fork_cmd.go, internal/runtime/runtime.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/network.go, internal/session/records.go]
+updated: 2026-09-11
 ---
 
 `RunSpec.Mode` (`agents.ExecutionMode`: normal, readonly, bare; empty is normal) is fixed at
@@ -39,7 +39,10 @@ a live bare run refused a trivial prompt as "prompt injection"; on the CLI's cha
 answers "no tools" and does not role-play tool calls. The enforcement is `--tools ""` alone — the
 session's `system/init` event shows `tools: []`, `mcp_servers: []` (stream-json, 2026-09-10).
 Caller flags that hand tools or settings back are refused by name. Every other adapter answers
-`unqualifiedRestrictedCommand` until a live run proves its switch. Docker is the only runtime
+`unqualifiedRestrictedCommand` until a live run proves its switch — and `coop help <agent>` asks
+that same method (`restrictedModesOffered`, internal/cli/help.go) before it prints the
+`--readonly`/`--bare` rows, so qualifying an adapter publishes its own help and an unqualified one
+never advertises a flag its launch would reject. Docker is the only runtime
 (`Runtime.SupportsRestrictedFilesystem`); `--egress filtered`, peers, presets, shared ACP
 transcripts, an editor supervisor, maintenance commands under an agent scope, review stages,
 `COOP_IMAGE` and runtime arguments beyond `-e KEY=VALUE` are refused, never dropped — a host-wide
@@ -111,6 +114,9 @@ a tool call. What the API half still does not do: register activity for a restri
 gemini or grok — each refuses by name until a live run proves its adapter's switch.
 
 ## Changelog
+- 2026-09-11 — noted that per-agent help now derives the `--readonly`/`--bare` rows from
+  `RestrictedCommand` itself, so the qualification and its documentation cannot disagree. Added
+  internal/cli/help.go to `sources`.
 - 2026-09-10 — the session API half: policy `mode`, persisted and projected; workspace-less bare
   create and its refusals; the ACP child launches under the profile with the adapter's session
   meta (mechanism read out of the adapter's dist and proved on a recording executable).

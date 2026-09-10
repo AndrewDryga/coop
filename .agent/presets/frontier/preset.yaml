@@ -3,7 +3,7 @@
 #   Run:      coop frontier
 #             coop loop frontier
 #   Inspect:  coop presets frontier
-#   Format:   coop help presets
+#   Learn how presets work: coop help presets
 # An explicit target on the command line (claude:opus@work) overrides the lead +
 # ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset
 # names models and accounts, never the secrets themselves.
@@ -53,6 +53,8 @@ roles:
     agent: grok:grok-4.5/high
     # when — OPTIONAL routing hints.
     when: [plan-review, tradeoffs]
+    # prompt — Markdown appended to the role's generated contract.
+    prompt: roles/critic.md
 
   fast:
     # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the
@@ -63,7 +65,7 @@ roles:
     # left every file and Git history unchanged.
     agent: codex:gpt-5.6-luna/xhigh
     # when — OPTIONAL routing hints.
-    when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
+    when: [boilerplate, bulk-edits, test-scaffolding, repository-surveys]
     # commit — delegate-only; only "never" (the delegate never commits).
     commit: never
     # concurrent — delegate-only; only "never" (delegate runs are serialized).

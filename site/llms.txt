@@ -176,87 +176,58 @@ coop credentials — list stored credentials; a path grammar edits one.
   any agent launch: 'coop claude@work', 'coop claude@work --peer codex', and
   'coop acp claude@work' (so an editor entry can pin an account).
 
-coop presets — YAML orchestration recipes under .agent/presets/<name>/.
+coop presets — configure multiple models and providers to work together
 
-  Usage: coop presets [<preset>]        list them, or show one recipe in full
-         coop presets init [<preset>]   scaffold the frontier template (default name: frontier)
+Usage:
+  coop presets                 list presets
+  coop presets <name>          show a preset
+  coop presets init [<name>]   create a preset (default: frontier)
+  coop help <name>             explain a preset
 
-  A PRESET is a runtime recipe: which agent leads, and which roles it can route
-  work to — each role an agent: target or fallback list + routing hints. The lead's
-  agent: is a target, or a fallback ladder (even CROSS-PROVIDER, [claude:fable, codex:gpt-5.6-sol]):
-  a bare provider:model runs on EVERY signed-in account (rotating on a rate limit),
-  provider:model@account pins one. On a loop it rotates the ladder top-to-bottom, running each
-  rung's own agent; a single run uses the first entry (also the default agent). Accounts are your
-  local logins (see coop credentials) — presets name models, not secrets.
-  Cross-provider rungs rotate on the loop AND on ACP sessions (ACP re-creates the session on
-  the new provider and carries the thread best-effort as text). A non-rotating terminal run
-  pins the first rung.
+Create a preset
+  coop presets init
+  coop presets init review
 
-  Run one by NAMING it in the who-runs slot:
-    coop <name>
-    coop loop <name>
-    coop acp <name>
-    coop fork <fork> <name> --loop
-  A target (claude:opus@work) in that same slot runs the agent directly instead.
+Run a preset
+  coop frontier
+  coop loop frontier
+  coop acp frontier
+  coop fork risky frontier --loop
 
-  .agent/presets/frontier/preset.yaml:
+How to define a preset
 
-    lead:
-      # a target, or a ladder (cross-provider ok) — frontier models at xhigh effort
-      agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
-      prompt: roles/lead.md                 # Optional Markdown, appended to the generated contract.
-    roles:                                  # consult/delegate agent: may be a fallback list; default accounts
-      thinker:                              # native Claude subagent — deep thinking in-session
-        mode: native
-        agent: claude:claude-opus-4-8/xhigh # model + effort ride agent: (generates coop-thinker)
-        when: [architecture, debugging, code-review]
-        prompt: roles/thinker.md            # its system prompt (or set subagent: <name> to reuse one)
-      critic:                               # read-only peer via coop-consult
-        mode: consult
-        agent: [codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high]
-        when: [plan-review, security]
-      fast:                                 # write-capable delegate via coop-delegate
-        mode: delegate
-        agent: [gemini:gemini-3.5-flash, codex:gpt-5.4-mini]
-        when: [boilerplate, bulk-edits, test-scaffolding]
-        commit: never                       # the delegate edits; the LEAD reviews, gates, commits
-        concurrent: never                   # delegate runs are serialized
+  A preset is a YAML file that defines:
+  - One lead agent.
+  - Optional roles for focused work.
+  - Optional prompt extensions.
 
-  coop generates the lead's routing contract from this — each role, when to use it, and
-  its ROLE-ADDRESSED invocation (@coop-<role>, coop-consult <role>, coop-delegate <role>)
-  — and mounts the wrappers. Markdown prompt files (roles/lead.md, roles/<name>.md)
-  append to the generated text, never replace it. Required routing files, wrappers, and role
-  prompts assemble as one contract: any failure stops before the provider starts instead of
-  silently dropping a role. A native role generates a coop-<role>
-  Claude subagent in the box from itself (its model + when + prompt) — never written to
-  your repo; set subagent: <name> to reference an existing .claude/agents/ subagent
-  instead. Consult/delegate ladders advance once per target only after a failed command
-  proves a rate limit; ordinary failures stay visible. A delegate advances only from a
-  clean worktree when the limited rung left every file and Git history unchanged. A consult
-  remembers its successful rung and transcript for --continue. It publishes a native session id
-  only after a usable reply. A failed resume returns once, clears that uncertain id, and preserves
-  the transcript so the next --continue starts the same rung fresh. Provider stderr is diagnostic,
-  not reply text. Reply/diagnostic streams are capped at 1 MiB each; input, constructed prompts,
-  and saved transcripts are capped at 512 KiB each. Providers without mounted
-  credentials are skipped; every available rung's credential home is mounted in the lead box.
-  The role's prompt (if any) is its persona.
-  Native roles run inside the lead's session, so
-  under a codex/gemini/grok lead they degrade to exactly such a consult (same model + persona),
-  coop-consult <role> instead of @coop-<role>.
-  A delegate may edit the worktree but must not commit. coop-delegate verifies HEAD, refs,
-  reflogs, and the worktree before fallback; bounds prompt, output, and runtime; and fails
-  closed while preserving mutation evidence. The lead owns the diff review, gate, and commit.
-  Write-capable
-  delegation is one level deep: a nested coop-delegate fails before lock/provider launch;
-  configured read-only coop-consult remains available. Model ids: coop models.
-  Scaffold one: coop presets init.
+  When you run a preset, Coop starts the lead and tells it which roles are
+  available and when to use them. Each role runs with its configured agent,
+  model, mode, and prompt. The lead combines their work into the final result.
 
-  WHERE presets live — two locations, repo wins: a preset resolves first from the
-  repo's .agent/presets/<name>/, then from a per-user global dir ~/.config/coop/presets/
-  (COOP_PRESETS_DIR overrides it), so a recipe like frontier applies across every repo
-  without symlinking. A repo preset shadows a same-named global one (repo wins wholesale,
-  no merging); coop presets tags a global-sourced one (global). init scaffolds into the
-  repo — author a global preset by hand (or copy one there).
+  Syntax:
+
+    agent:   presets use Coop's standard model, effort, account, and
+             automatic-rotation syntax. For details, see:
+               coop help models
+
+    mode:    controls how a role works
+               native    runs inside the lead agent's session
+               consult   provides read-only advice from another agent
+               delegate  edits files for the lead; never commits; runs one at a time
+
+    when:    tells the lead when to use a role
+
+    prompt:  adds custom instructions to Coop's generated instructions for the
+             lead or role
+
+    If the lead does not support native roles, they run as consult roles.
+
+  Where presets live:
+    Project   .agent/presets/<name>/preset.yaml
+    Global    ~/.config/coop/presets/<name>/preset.yaml
+
+  A project preset overrides a global preset with the same name.
 
 coop models [<agent>] — the model menu per agent.
 

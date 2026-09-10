@@ -394,6 +394,9 @@ type Agent interface {
 	// coop releases, so ANY id the CLI accepts works with --model; coop never validates
 	// against this list.
 	Models() []string
+	// ExampleModel is the one id from Models() that reads best in help examples
+	// (`coop claude:opus`) — the familiar name, not necessarily the first or newest entry.
+	ExampleModel() string
 	// ModelEnv is the environment variable the agent's CLI reads a default model from
 	// ("" when it has none). box.Run exports it into the box when a model is resolved, so
 	// a separate adapter binary that takes no flags (claude-agent-acp) still honors the

@@ -41,7 +41,14 @@ def split_comment(raw):
         code = html.unescape(TAG.sub("", pre)).lstrip("> ").rstrip()
         return (pre, raw[i:]) if code else None
     m = re.match(r"^(.*\S) +(#.*)$", raw)  # plain: code # comment
-    return (m.group(1), m.group(2)) if m else None
+    if not m or quoted(m.group(1)):
+        return None  # a '#' inside a quoted string (tmux's '#{...}') is not a comment
+    return m.group(1), m.group(2)
+
+
+def quoted(pre):
+    """True when pre leaves a quote open, so the '#' after it sits inside a string."""
+    return pre.count("'") % 2 or pre.count('"') % 2
 
 
 def in_code_flags(lines, path):

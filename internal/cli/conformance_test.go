@@ -91,7 +91,7 @@ func TestCLIConformance(t *testing.T) {
 
 		surfaces := map[string]string{
 			"top-level help":        renderHelp(newApp().cfg, true),
-			"agent help":            agentHelp,
+			"agent help":            agentHelp("claude"),
 			"ACP help":              commandHelp["acp"],
 			"ACP usage error":       errText("extra ACP argument", acpUsageErr),
 			"loop help":             commandHelp["loop"],
@@ -116,7 +116,7 @@ func TestCLIConformance(t *testing.T) {
 		}
 		for name, want := range map[string]string{
 			"top-level help":        "coop <target> --peer <target>...",
-			"agent help":            "Usage: coop <target> [<coop-flags>]",
+			"agent help":            "coop claude[:<model>][/<effort>][@<account>]",
 			"ACP help":              "coop acp <target|preset> [--peer <target>...]",
 			"ACP usage error":       "coop acp <target|preset> [--peer <target>...]",
 			"loop help":             "coop loop [<target|preset>]",
@@ -153,7 +153,7 @@ func TestCLIConformance(t *testing.T) {
 		_, loginErr := a.cmdLogin(nil)
 		surfaces := map[string]string{
 			"top-level help":    renderHelp(a.cfg, true),
-			"agent help":        agentHelp,
+			"agent help":        agentHelp("claude"),
 			"credentials help":  commandHelp["credentials"],
 			"login help":        commandHelp["login"],
 			"models help":       commandHelp["models"],
@@ -174,12 +174,14 @@ func TestCLIConformance(t *testing.T) {
 			}
 		}
 		for name, want := range map[string]string{
-			"top-level help":    "Usage: coop <command> [<args>...]",
-			"agent help":        "Usage: coop <target> [<coop-flags>] [-- <agent-args>...]",
-			"credentials help":  "coop credentials [<agent> [<credential>]]",
-			"login help":        "coop login <agent>[@<account>]",
-			"models help":       "coop models [<agent>]",
-			"presets help":      "coop presets init [<preset>]",
+			"top-level help":   "Usage: coop <command> [<args>...]",
+			"agent help":       "[options] [-- <claude-args>...]",
+			"credentials help": "coop credentials [<agent> [<credential>]]",
+			"login help":       "coop login <agent>[@<account>]",
+			"models help":      "coop models [<agent>]",
+			// The presets page names its one slot <name>: inside a page where every value is a
+			// preset, the resource-name placeholder is the plain one (usage-placeholder-style).
+			"presets help":      "coop presets init [<name>]",
 			"context help":      "[<path>...]",
 			"preset error":      "coop presets [init] [<preset>]",
 			"preset init error": "coop presets init [<preset>]",

@@ -2,9 +2,9 @@
 name: help-output-style
 description: "UPPERCASE headers, one command per line, no `·`, command cell under 32 runes"
 scope: cli-output
-sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go]
+sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go]
 check: "none"
-updated: 2026-09-03
+updated: 2026-09-11
 ---
 
 # Help output: UPPERCASE section headers, one command per line, no "·"
@@ -29,6 +29,14 @@ updated: 2026-09-03
   flags from the cell — they live in the command's own help page.
 - A group with more than ~6 rows is a wall — split it by what the user is doing (e.g.
   AGENTS / CREDENTIALS, MODELS & PRESETS / THE BOX), not by implementation.
+- **A topic page is prose for one job, not an index.** The reference above is the top-level
+  table and the group pages that list commands. A page that answers "how do I use this one
+  thing" — `coop help <agent>`, `coop help presets`, `coop help <preset>` — uses Title-case
+  section headings (`Usage:`, `Examples`, `Options`, `Run it`, `Lead models`, `Edit this
+  preset`), says what the reader does rather than how coop implements it, and ENDS with the one
+  pointer that continues their work (`coop help presets`, `coop help models`) instead of the
+  generic `Run 'coop help' for all commands.` footer. Registering a page as self-contained is
+  `selfContainedHelp` in help.go; agent and preset pages print through their own renderer.
 
 **Why:** the top-level help is scanned, not read. Lowercase headers, collapsed verbs, and
 `·`-separated descriptions read as clutter; people expect a man-page-like reference where
@@ -47,6 +55,11 @@ services" hides the one thing that makes the row make sense.
 - Never put `·` in a help string. Runtime status/stat lines may still use it as a separator.
 
 ## Changelog
+- 2026-09-11 — added the topic-page tier from the approved per-agent/preset transcripts: Title-case
+  headings and a closing pointer instead of UPPERCASE headers and the all-commands footer. Swept
+  every page rendered through `printCommandHelp`: only the agent pages, `presets`, and the preset
+  projection are self-contained today; the command index and every group page keep the reference
+  shape unchanged.
 - 2026-09-03 — added `forkHelpText` and both test files to `sources`; replaced the false claim that
   `TestHelpRowsAlign` enforced the whole card with an exact test-to-claim map, and set `check: none`
   because the focused regressions do not enforce every page-level claim.

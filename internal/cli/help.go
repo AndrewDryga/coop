@@ -35,7 +35,7 @@ func printHelp(cfg *config.Config) { fmt.Print(helpText(cfg)) }
 // subcommand. See .agent/kb/rules/bare-subcommand-shows-help.md.
 func groupHelp(cmd string) (int, error) {
 	if h, ok := commandHelp[cmd]; ok {
-		printCommandHelp(h)
+		printTopicHelp(cmd, h)
 		return 0, nil
 	}
 	return 2, fmt.Errorf("no help registered for command group %q", cmd)
@@ -247,34 +247,81 @@ const sourceTreeConformance = `SOURCE-TREE CONFORMANCE
   and real quota. Strict '-all' forms, request counts, summaries, and triage are in
   README.md under Layout & development.`
 
-// agentHelp is `coop help <agent>`: it documents coop's OWN wrapper flags (the ones coop consumes
-// before a --), since `coop <agent> --help` forwards to the agent's real CLI. Kept short per
-// help-output-style — the detail is in coop credentials / coop models.
-const agentHelp = `coop <target> — run a sandboxed coding agent (claude, codex, gemini, or grok).
+// agentHelp is `coop help <agent>` — how to run THAT agent, in its own words: the command a
+// person types, four examples, the coop flags read before a `--`, and where its models and
+// accounts live. It documents coop's OWN flags because `coop <agent> --help` forwards to the
+// agent's real CLI. Every line is generated from the adapter (name, effort support, restricted
+// modes), so a new agent gets its page for free and none of them advertises a flag it refuses —
+// see .agent/kb/rules/agents-are-one-file.md. Orchestration lives in `coop help presets`, the
+// target grammar in `coop help models`; neither is restated here.
+func agentHelp(name string) string {
+	ag, ok := agents.Get(name)
+	if !ok {
+		return ""
+	}
+	title := titleName(name)
+	target := name + "[:<model>]"
+	example := name + ":" + ag.ExampleModel()
+	account := example + "@work"
+	if agents.SupportsEffort(ag) {
+		target += "[/<effort>]"
+		account = example + "/high@work"
+	}
+	restricted := restrictedModesOffered(ag)
 
-  Usage: coop <target> [<coop-flags>] [-- <agent-args>...]
-         coop <preset>   (run an orchestration preset interactively — its lead leads)
+	var b strings.Builder
+	fmt.Fprintf(&b, "coop %s — run %s in a sandboxed box\n\n", name, title)
+	fmt.Fprintf(&b, "Usage:\n  coop %s[@<account>] [options] [-- <%s-args>...]\n\n", target, name)
+	fmt.Fprintf(&b, "Examples\n  coop %s\n  coop %s\n  coop %s\n  coop %s -- --help\n\n", name, example, account, name)
 
-  The agent is a TARGET — a provider, an optional :model, an optional reasoning /effort,
-  an optional @account:
-    claude, claude:opus, claude:opus/xhigh, claude@work, claude:opus/high@work
-  In the SAME who-runs slot, a bare word that names a preset runs that recipe instead —
-  coop frontier (its lead + roles; see coop help presets). A run names one, never both.
+	options := [][2]string{{"--peer <target>", "start with a read-only peer agent; repeat to add more"}}
+	if restricted {
+		options = append(options,
+			[2]string{"--readonly", "mount the repository read-only"},
+			[2]string{"--bare", "run without the repository, project context, or tools"})
+	}
+	options = append(options, [2]string{"--", "pass all remaining arguments directly to " + title})
+	b.WriteString("Options\n")
+	b.WriteString(helpRows(options, 2))
+	if restricted {
+		b.WriteString("\n  --readonly and --bare cannot be combined or used with peers.\n")
+	}
 
-  These flags are coop's own, read before a -- (everything after -- goes to the agent):
-    --peer <target>...   a read-only second opinion from NAMED peers (repeatable), e.g.
-                         --peer codex:gpt-5.5 --peer gemini
-    --readonly           investigate: the repo (git history included) mounts read-only,
-                         the only writable places are private in-memory scratch (the box
-                         home and /tmp) discarded at exit; no cache, hooks, skills, MCP or
-                         services. The answer is the output. Exclusive with --bare.
-    --bare               Q&A only: no repository, no project context and no tools at all —
-                         the conversation in, the answer out. Works outside any Git repo.
-                         Both modes run the shared base image on Docker; claude is the
-                         qualified provider, --peer and presets are refused.
-    --                   pass the rest verbatim to the agent, e.g. coop claude -- --help
+	b.WriteString("\nModels and accounts\n")
+	b.WriteString(helpRows([][2]string{
+		{"coop models " + name, "list " + title + " models"},
+		{"coop credentials " + name, "list " + title + " accounts"},
+		{"coop login " + name, "sign in to " + title},
+	}, 3))
+	b.WriteString("\nFor a guide to using multiple models and providers together:\n  coop help presets")
+	return b.String()
+}
 
-  Sign in first with 'coop login <agent>'. For the agent's own flags: coop <agent> -- --help.`
+// helpRows renders a two-column block: every description starts past the widest command cell,
+// measured on plain text (see .agent/kb/rules/no-color-in-width-fields.md). gap is that block's
+// own column gap — the approved page sets the flags tight (2) and the commands airier (3),
+// because a flag column is read down and a command column is read across.
+func helpRows(rows [][2]string, gap int) string {
+	w := 0
+	for _, r := range rows {
+		if n := utf8.RuneCountInString(r[0]); n > w {
+			w = n
+		}
+	}
+	var b strings.Builder
+	for _, r := range rows {
+		fmt.Fprintf(&b, "  %s%s%s\n", padRight(r[0], w), strings.Repeat(" ", gap), r[1])
+	}
+	return b.String()
+}
+
+// restrictedModesOffered asks the adapter the same question a launch asks — an agent whose CLI
+// has no proven switch refuses ModeReadOnly — so help never advertises a mode that would be
+// rejected the moment someone typed it.
+func restrictedModesOffered(ag agents.Agent) bool {
+	_, err := ag.RestrictedCommand(agents.ModeReadOnly, nil)
+	return err == nil
+}
 
 // commandHelp is the focused text for `coop <cmd> --help`, per subcommand. fork has its
 // own richer forkHelp, run has runHelp, and the agents use agentHelp (their `--help` forwards to
@@ -494,87 +541,58 @@ var commandHelp = map[string]string{
   The log is size-capped and auto-rotated so it can't grow unbounded; it holds prompts
   and file contents, so treat it as sensitive.`,
 
-	"presets": `coop presets — YAML orchestration recipes under .agent/presets/<name>/.
+	"presets": `coop presets — configure multiple models and providers to work together
 
-  Usage: coop presets [<preset>]        list them, or show one recipe in full
-         coop presets init [<preset>]   scaffold the frontier template (default name: frontier)
+Usage:
+  coop presets                 list presets
+  coop presets <name>          show a preset
+  coop presets init [<name>]   create a preset (default: frontier)
+  coop help <name>             explain a preset
 
-  A PRESET is a runtime recipe: which agent leads, and which roles it can route
-  work to — each role an agent: target or fallback list + routing hints. The lead's
-  agent: is a target, or a fallback ladder (even CROSS-PROVIDER, [claude:fable, codex:gpt-5.6-sol]):
-  a bare provider:model runs on EVERY signed-in account (rotating on a rate limit),
-  provider:model@account pins one. On a loop it rotates the ladder top-to-bottom, running each
-  rung's own agent; a single run uses the first entry (also the default agent). Accounts are your
-  local logins (see coop credentials) — presets name models, not secrets.
-  Cross-provider rungs rotate on the loop AND on ACP sessions (ACP re-creates the session on
-  the new provider and carries the thread best-effort as text). A non-rotating terminal run
-  pins the first rung.
+Create a preset
+  coop presets init
+  coop presets init review
 
-  Run one by NAMING it in the who-runs slot:
-    coop <name>
-    coop loop <name>
-    coop acp <name>
-    coop fork <fork> <name> --loop
-  A target (claude:opus@work) in that same slot runs the agent directly instead.
+Run a preset
+  coop frontier
+  coop loop frontier
+  coop acp frontier
+  coop fork risky frontier --loop
 
-  .agent/presets/frontier/preset.yaml:
+How to define a preset
 
-    lead:
-      # a target, or a ladder (cross-provider ok) — frontier models at xhigh effort
-      agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
-      prompt: roles/lead.md                 # Optional Markdown, appended to the generated contract.
-    roles:                                  # consult/delegate agent: may be a fallback list; default accounts
-      thinker:                              # native Claude subagent — deep thinking in-session
-        mode: native
-        agent: claude:claude-opus-4-8/xhigh # model + effort ride agent: (generates coop-thinker)
-        when: [architecture, debugging, code-review]
-        prompt: roles/thinker.md            # its system prompt (or set subagent: <name> to reuse one)
-      critic:                               # read-only peer via coop-consult
-        mode: consult
-        agent: [codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high]
-        when: [plan-review, security]
-      fast:                                 # write-capable delegate via coop-delegate
-        mode: delegate
-        agent: [gemini:gemini-3.5-flash, codex:gpt-5.4-mini]
-        when: [boilerplate, bulk-edits, test-scaffolding]
-        commit: never                       # the delegate edits; the LEAD reviews, gates, commits
-        concurrent: never                   # delegate runs are serialized
+  A preset is a YAML file that defines:
+  - One lead agent.
+  - Optional roles for focused work.
+  - Optional prompt extensions.
 
-  coop generates the lead's routing contract from this — each role, when to use it, and
-  its ROLE-ADDRESSED invocation (@coop-<role>, coop-consult <role>, coop-delegate <role>)
-  — and mounts the wrappers. Markdown prompt files (roles/lead.md, roles/<name>.md)
-  append to the generated text, never replace it. Required routing files, wrappers, and role
-  prompts assemble as one contract: any failure stops before the provider starts instead of
-  silently dropping a role. A native role generates a coop-<role>
-  Claude subagent in the box from itself (its model + when + prompt) — never written to
-  your repo; set subagent: <name> to reference an existing .claude/agents/ subagent
-  instead. Consult/delegate ladders advance once per target only after a failed command
-  proves a rate limit; ordinary failures stay visible. A delegate advances only from a
-  clean worktree when the limited rung left every file and Git history unchanged. A consult
-  remembers its successful rung and transcript for --continue. It publishes a native session id
-  only after a usable reply. A failed resume returns once, clears that uncertain id, and preserves
-  the transcript so the next --continue starts the same rung fresh. Provider stderr is diagnostic,
-  not reply text. Reply/diagnostic streams are capped at 1 MiB each; input, constructed prompts,
-  and saved transcripts are capped at 512 KiB each. Providers without mounted
-  credentials are skipped; every available rung's credential home is mounted in the lead box.
-  The role's prompt (if any) is its persona.
-  Native roles run inside the lead's session, so
-  under a codex/gemini/grok lead they degrade to exactly such a consult (same model + persona),
-  coop-consult <role> instead of @coop-<role>.
-  A delegate may edit the worktree but must not commit. coop-delegate verifies HEAD, refs,
-  reflogs, and the worktree before fallback; bounds prompt, output, and runtime; and fails
-  closed while preserving mutation evidence. The lead owns the diff review, gate, and commit.
-  Write-capable
-  delegation is one level deep: a nested coop-delegate fails before lock/provider launch;
-  configured read-only coop-consult remains available. Model ids: coop models.
-  Scaffold one: coop presets init.
+  When you run a preset, Coop starts the lead and tells it which roles are
+  available and when to use them. Each role runs with its configured agent,
+  model, mode, and prompt. The lead combines their work into the final result.
 
-  WHERE presets live — two locations, repo wins: a preset resolves first from the
-  repo's .agent/presets/<name>/, then from a per-user global dir ~/.config/coop/presets/
-  (COOP_PRESETS_DIR overrides it), so a recipe like frontier applies across every repo
-  without symlinking. A repo preset shadows a same-named global one (repo wins wholesale,
-  no merging); coop presets tags a global-sourced one (global). init scaffolds into the
-  repo — author a global preset by hand (or copy one there).`,
+  Syntax:
+
+    agent:   presets use Coop's standard model, effort, account, and
+             automatic-rotation syntax. For details, see:
+               coop help models
+
+    mode:    controls how a role works
+               native    runs inside the lead agent's session
+               consult   provides read-only advice from another agent
+               delegate  edits files for the lead; never commits; runs one at a time
+
+    when:    tells the lead when to use a role
+
+    prompt:  adds custom instructions to Coop's generated instructions for the
+             lead or role
+
+    If the lead does not support native roles, they run as consult roles.
+
+  Where presets live:
+    Project   .agent/presets/<name>/preset.yaml
+    Global    ~/.config/coop/presets/<name>/preset.yaml
+
+  A project preset overrides a global preset with the same name.`,
 
 	"tasks": `coop tasks — drive the task queue (a folder per task under .agent/tasks/).
 
@@ -1016,13 +1034,34 @@ Coop keeps your existing project files and adds anything missing.`,
 // printCommandHelp prints one subcommand's focused help: synopsis line bolded, body as-is,
 // then a pointer to the full command list.
 func printCommandHelp(text string) {
+	printHelpPage(text)
+	fmt.Println("\nRun 'coop help' for all commands.")
+}
+
+// printHelpPage prints a page that ENDS ITSELF: synopsis line bolded, body as-is, and no
+// all-commands footer. A page that closes with its own pointer ("coop help presets") has already
+// told the reader where to go next; the generic footer would be a second, weaker answer.
+func printHelpPage(text string) {
 	p := ui.For(os.Stdout) // stdout view — keep pipes clean
 	if i := strings.IndexByte(text, '\n'); i >= 0 {
 		fmt.Println(p.Bold(text[:i]) + text[i:])
 	} else {
 		fmt.Println(p.Bold(text))
 	}
-	fmt.Println("\nRun 'coop help' for all commands.")
+}
+
+// selfContainedHelp are the commandHelp pages that end with their own pointer, so they print
+// without the all-commands footer. Membership travels with the page's last line.
+var selfContainedHelp = map[string]bool{"presets": true}
+
+// printTopicHelp is the ONE way a static page reaches the terminal, so `coop presets --help`,
+// `coop help presets` and a bare group can never disagree about the footer.
+func printTopicHelp(cmd, text string) {
+	if selfContainedHelp[cmd] {
+		printHelpPage(text)
+		return
+	}
+	printCommandHelp(text)
 }
 
 // tildeify shortens a path under the home dir to ~/… for readable help.
