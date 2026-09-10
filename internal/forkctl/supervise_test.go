@@ -538,10 +538,18 @@ fi
 			t.Setenv("COOP_TEST_CONTAINER_ID", tc.containerID)
 			t.Setenv("COOP_TEST_RUNTIME_FAILURE", tc.failure)
 
+			// The worker acknowledges TERM through a trap. The sleep runs in the BACKGROUND with the
+			// shell in `wait`, never as a foreground command: a POSIX shell defers a trap until its
+			// foreground child completes, so with `sleep 10` in the foreground the acknowledgement
+			// depended on the child dying from the same group signal. Any schedule where the child
+			// survives it — the bare-pid fallback, a signal landing between fork and exec — deferred
+			// the trap for the full ten seconds, past production's three-second grace, and the KILL
+			// that followed erased the acknowledgement the test asserts. `wait` is interruptible by a
+			// trap, so this shape acknowledges within milliseconds whatever the child does.
 			worker := exec.Command("sh", "-c", `
 trap 'printf "worker:term\n" >> "$COOP_TEST_EVENTS"; exit 0' TERM
 printf "worker:ready\n" >> "$COOP_TEST_EVENTS"
-while :; do sleep 10; done
+while :; do sleep 10 & wait $!; done
 `)
 			worker.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 			if err := worker.Start(); err != nil {
@@ -550,7 +558,21 @@ while :; do sleep 10; done
 			pid := worker.Process.Pid
 			workerDone := make(chan struct{})
 			go func() {
-				_ = worker.Wait()
+				// Record how the worker actually ended, so a failure shows signal versus exit
+				// evidence instead of leaving the schedule to be guessed at from timestamps.
+				err := worker.Wait()
+				state := "exit status 0"
+				if worker.ProcessState != nil {
+					state = worker.ProcessState.String()
+				}
+				if err != nil && worker.ProcessState == nil {
+					state = err.Error()
+				}
+				f, _ := os.OpenFile(events, os.O_APPEND|os.O_WRONLY, 0o644)
+				if f != nil {
+					fmt.Fprintf(f, "worker:exit %s\n", state)
+					f.Close()
+				}
 				close(workerDone)
 			}()
 			t.Setenv("COOP_TEST_WORKER_PID", strconv.Itoa(pid))
@@ -615,6 +637,11 @@ while :; do sleep 10; done
 			psAt := strings.Index(got, psCall)
 			if termAt < 0 || psAt < 0 || termAt >= psAt {
 				t.Errorf("worker TERM must precede the exact-fork reap:\n%s", got)
+			}
+			// The trap's `exit 0` is the acknowledgement; a worker reaped by SIGKILL never sent it,
+			// and this line says which happened rather than leaving it to the timing above.
+			if !strings.Contains(got, "worker:exit exit status 0\n") {
+				t.Errorf("worker did not exit through its TERM trap:\n%s", got)
 			}
 			if strings.Contains(got, "runtime:worker-still-alive\n") {
 				t.Errorf("runtime reap started before the worker exited:\n%s", got)
