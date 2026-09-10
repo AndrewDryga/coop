@@ -16,10 +16,12 @@ verification is the real invocation — the command from the README or the help 
 repository, with the operator's own environment (do not unset their `COOP_*` settings to make it
 pass), run AFTER the last commit of the series rather than somewhere in the middle of it.
 
-Two habits follow. Re-run it after the *last* commit, not the last one that touched the feature:
-a change three commits later can break the launch and every suite still passes. And when a new
-path grows a bound the old path never had — a deadline, a retry cap, a fixed timeout — treat that
-bound as a regression risk on its own and ask what the ordinary path does instead.
+Three habits follow. Run it in a REAL TERMINAL: redirecting output changes the command, because a
+terminal makes coop allocate a TTY and take a different path entirely. Re-run it after the *last*
+commit, not the last one that touched the feature: a change three commits later can break the
+launch while every suite still passes. And when a new path grows a bound the old path never had —
+a deadline, a retry cap, a fixed timeout — treat that bound as a regression risk on its own and
+ask what the ordinary path does instead.
 
 **Why:** on 2026-09-10 restricted networking was reported as working on the strength of a green
 `make check`, a green tagged runtime suite and a green `coop net setup`. The operator's next
@@ -34,6 +36,9 @@ cannot run it — no credentials, no runtime, needs their machine — say exactl
 reporting the suite as if it were the same thing.
 
 ## Changelog
+- 2026-09-10 — the same day, the redirected form hid a second and worse failure: in a terminal the
+  attached Docker client was suspended by the kernel and the box never started (fixed in d8634c4).
+  Added the real-terminal habit; a short `pty.fork` harness is enough when the shell has no tty.
 - 2026-09-10 — created after the filtered-run failure above (fixed in 2340d85). Swept the sources:
   AGENTS.md's "Done means verified, not done-once" and work's "gate before moving on" both stop at
   the gate, and sweep's completion bar is the gate plus self-review; none of them names the real
