@@ -95,10 +95,11 @@ type RunSpec struct {
 	// maintenance commands leave it false even when Agent scopes their credential home.
 	AgentCommand bool
 
-	ForceNoTTY   bool   // ACP: attach stdin (-i) but never allocate a tty
-	Serve        bool   // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
-	servePorts   []int  // validated project policy carried into argument assembly by Run
-	SupervisorID string // non-empty for a supervised inner box: tags it coop.supervised=1
+	ForceNoTTY   bool               // ACP: attach stdin (-i) but never allocate a tty
+	Serve        bool               // publish .agent/project.yaml serve.ports so a dev server in the box is reachable from the host
+	servePorts   []int              // validated project policy carried into argument assembly by Run
+	servePlan    []servePublication // each serve port's outcome, decided once by Run for the note and the publish args
+	SupervisorID string             // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
 	ShareACPSessions bool   // mount credential-independent ACP transcript dirs across account switches
 	ForkName         string // non-empty for a detached fork loop's box: readable runtime label
@@ -803,6 +804,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// runtime) plus COOP_AUTO_UP. Idempotent; progress goes to stderr (never stdout, which may
 	// carry ACP/JSON) and only when not Quiet; a failure warns but never blocks the session.
 	var servicePorts []ServicePort
+	var servicesErr error // set when the run continued without its services
 	servicesInspected := false
 	if autoUpServices(cfg, spec, rt.Name) {
 		// Only when no other box is running in this project: a running agent could swap a validated
@@ -851,6 +853,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 					return finish(-1, fmt.Errorf("start review services: %w", err))
 				}
 				ui.Info("services: %v — continuing without them (run 'coop up' to retry)", err)
+				servicesErr = err
 			} else {
 				servicePorts = started.ports
 			}
@@ -879,6 +882,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				}
 			}
 		}
+	}
+
+	// Decide each serve port ONCE, so the note below and the publish arguments agree, then tell the
+	// agent what this box actually got. The instruction files exist but are not mounted yet; the
+	// sidecars simply start after they are assembled, so their facts are appended here.
+	joined := cfg.Egress == "open" && spec.Network && rt.Name != "container"
+	spec.servePlan = servePublicationPlan(cfg, spec, hostPortFree)
+	if err := appendInstructionNote(instructionMounts, servicesNote(composeFile, servicePorts, servicesErr, joined, spec.servePlan)); err != nil {
+		return finish(-1, err)
 	}
 
 	networkName := ""
@@ -1896,20 +1908,24 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(in
 		fmt.Fprintf(os.Stderr, "coop: serve ports need network egress (COOP_EGRESS=open) — not publishing\n")
 		return args
 	}
-	for _, port := range spec.servePorts {
-		// Allocate from the WORKSPACE path (spec.Repo), not the policy repo: a fork inherits the
-		// parent's serve.ports config but must get its OWN distinct host ports (project.HostPort
-		// hashes the path), so two forks — or a fork and its parent — never collide on one host port.
-		host := project.HostPort(spec.Repo, port)
+	// Run decides publication once (the agent's note reads the same plan); a caller that assembled
+	// arguments without going through Run decides here. Host ports come from the WORKSPACE path
+	// (spec.Repo), not the policy repo: a fork inherits the parent's serve.ports but hashes to its
+	// own host ports, so two forks — or a fork and its parent — never collide on one.
+	plan := spec.servePlan
+	if plan == nil {
+		plan = servePublicationPlan(cfg, spec, free)
+	}
+	for _, s := range plan {
 		// The assigned host-facing URL is stable workspace discovery even when another process from
 		// this workspace already owns the port. Only the current box's publish mapping is conditional.
-		args = append(args, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", port, host))
-		if !free(host) {
-			fmt.Fprintf(os.Stderr, "coop: host port %d (for :%d) is in use — not publishing this box\n", host, port)
+		args = append(args, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", s.Port, s.Host))
+		if !s.Published {
+			fmt.Fprintf(os.Stderr, "coop: host port %d (for :%d) is in use — not publishing this box\n", s.Host, s.Port)
 			continue
 		}
-		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", host, port))
-		fmt.Fprintf(os.Stderr, "coop: serving box :%d at http://localhost:%d\n", port, host)
+		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", s.Host, s.Port))
+		fmt.Fprintf(os.Stderr, "coop: serving box :%d at http://localhost:%d\n", s.Port, s.Host)
 	}
 	return args
 }
