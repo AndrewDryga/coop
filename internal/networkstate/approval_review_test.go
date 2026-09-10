@@ -205,14 +205,14 @@ func TestApprovalRefusesAReplacedProjectDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := s.Admit(project, Admission{Requests: []egress.Rule{rule("example.com")}})
-	if err == nil || !strings.Contains(err.Error(), "was replaced since its approval") {
+	if err == nil || !strings.Contains(err.Error(), "was replaced since it was approved") {
 		t.Fatalf("a replacement at the approved path inherited its grants: %v", err)
 	}
 	preview, err := s.admissionPreview(project, Admission{Requests: []egress.Rule{rule("example.com")}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview.Pending == nil || !strings.Contains(preview.Pending.Error(), "was replaced since its approval") {
+	if preview.Pending == nil || !strings.Contains(preview.Pending.Error(), "was replaced since it was approved") {
 		t.Fatalf("coop net did not report the replacement: %+v", preview)
 	}
 	// Reviewing it again rebinds the approval to the directory that is there now.

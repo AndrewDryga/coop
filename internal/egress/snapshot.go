@@ -47,7 +47,7 @@ func Compile(scope string, mode Mode, inputs []Input, bundles []Bundle, exportDe
 			return err
 		}
 		if mode != Filtered && len(normalized) != 0 {
-			return errors.New("egress rules require filtered mode")
+			return errors.New("egress rules only apply in filtered mode")
 		}
 		for _, rule := range normalized {
 			if rule.To.Provider != "" {
@@ -91,7 +91,7 @@ func Compile(scope string, mode Mode, inputs []Input, bundles []Bundle, exportDe
 			return Snapshot{}, err
 		}
 		if mode != Filtered && len(rules) != 0 {
-			return Snapshot{}, errors.New("egress rules require filtered mode")
+			return Snapshot{}, errors.New("egress rules only apply in filtered mode")
 		}
 		if len(rules) != 0 && (!validOrigin(input.Origin) || input.Origin.Provider != "" || input.Origin.Client != "" ||
 			input.Origin.Backend != "" || input.Origin.AuthMode != "" || input.Origin.Feature != "" || input.Origin.BundleVersion != "") {
@@ -438,7 +438,7 @@ func (s Snapshot) RequireSupported() error {
 		}
 		for _, port := range rule.Ports {
 			if slices.Contains(captured, port) {
-				return fmt.Errorf("raw tcp to %s port %d is not supported alongside a tls grant on port %d: the gateway captures that port for TLS", ruleDestination(rule), port, port)
+				return fmt.Errorf("raw tcp to %s on port %d clashes with a TLS rule on the same port — the gateway takes that port for TLS; use another port", ruleDestination(rule), port)
 			}
 		}
 	}
@@ -489,11 +489,11 @@ func SupportedRule(rule Rule) error {
 	switch rule.Protocol {
 	case "tls":
 		if rule.To.Domain == "" {
-			return errors.New("tls requires a domain; TLS to a bare address is not supported")
+			return errors.New("tls needs a domain — TLS to a bare address is not supported; use a raw tcp rule for an address")
 		}
 		for _, port := range rule.Ports {
 			if port == 53 {
-				return errors.New("tls on port 53 is not supported: the gateway captures port 53 for its own DNS handling")
+				return errors.New("TLS on port 53 is not allowed here — the gateway takes 53 for DNS; use 443 or another port")
 			}
 		}
 		return nil
@@ -513,34 +513,34 @@ func SupportedRule(rule Rule) error {
 		}
 		for _, kind := range rule.Types {
 			if kind != "8" {
-				return fmt.Errorf("ICMP type %s to %s is not supported yet; only echo-request is qualified", kind, prefix)
+				return fmt.Errorf("ICMP %s to %s is not supported yet — only echo-request is", kind, prefix)
 			}
 		}
 		for _, code := range rule.Codes {
 			if code != 0 {
-				return fmt.Errorf("ICMP code %d is not supported yet; echo-request uses code 0", code)
+				return fmt.Errorf("ICMP code %d is not supported yet — echo-request uses code 0", code)
 			}
 		}
 		return nil
 	case "icmpv6":
-		return errors.New("IPv6 destinations are refused: this runtime is qualified for IPv4 only")
+		return errors.New("IPv6 destinations are not supported yet — a filtered box runs on IPv4 only")
 	}
 	return errors.New("protocol must be tls, tcp, udp or icmp")
 }
 
 func supportedPrefix(rule Rule) (netip.Prefix, error) {
 	if rule.To.Service != "" {
-		return netip.Prefix{}, errors.New("a service grant is raw tcp or udp to that container, not ICMP")
+		return netip.Prefix{}, errors.New("a service rule is raw tcp or udp to that container, not ICMP")
 	}
 	prefix, err := netip.ParsePrefix(rule.To.CIDR)
 	if err != nil {
-		return netip.Prefix{}, errors.New("raw transports require a canonical ip or cidr destination")
+		return netip.Prefix{}, errors.New("raw tcp/udp needs an exact ip or cidr destination")
 	}
 	if !prefix.Addr().Is4() {
-		return netip.Prefix{}, errors.New("IPv6 destinations are refused: this runtime is qualified for IPv4 only")
+		return netip.Prefix{}, errors.New("IPv6 destinations are not supported yet — a filtered box runs on IPv4 only")
 	}
 	if prefix.Bits() == 0 {
-		return netip.Prefix{}, errors.New("a /0 grant is not filtered access; use explicit open egress for that intent")
+		return netip.Prefix{}, errors.New("a /0 rule allows everything, which is not filtering — use --egress open if that is what you want")
 	}
 	// A destination entirely inside a permanent denial can never pass a packet:
 	// accepting it would be exactly the unenforced grant this gate exists for.
@@ -548,7 +548,7 @@ func supportedPrefix(rule Rule) (netip.Prefix, error) {
 	// protected drop still wins inside it.
 	for _, protected := range protectedPrefixes {
 		if protected.Bits() <= prefix.Bits() && protected.Contains(prefix.Addr()) {
-			return netip.Prefix{}, fmt.Errorf("%s is a protected address range (host, loopback, link-local or metadata); no rule can grant it", prefix)
+			return netip.Prefix{}, fmt.Errorf("%s is a protected range (your host, loopback, link-local or cloud metadata) — no rule can allow it", prefix)
 		}
 	}
 	return prefix, nil
@@ -559,7 +559,7 @@ func supportedPrefix(rule Rule) (netip.Prefix, error) {
 func supportedPorts(rule Rule, destination string) error {
 	for _, port := range rule.Ports {
 		if port == 443 || port == 53 {
-			return fmt.Errorf("raw %s to %s port %d is not supported: the gateway captures port %d for its own TLS and DNS handling", rule.Protocol, destination, port, port)
+			return fmt.Errorf("raw %s to %s on port %d is not allowed — the gateway takes %d for TLS and DNS; use another port", rule.Protocol, destination, port, port)
 		}
 	}
 	return nil

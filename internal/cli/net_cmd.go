@@ -37,7 +37,6 @@ const (
 	// evidence is anomalous, not that the run was too busy.
 	netEventMaxBytes = 4 << 20
 	netWatchPoll     = time.Second
-	netLabelWidth    = 14
 	// netRecentRuns is how many of a project's runs `coop net` shows. It is a
 	// posture view with a tail, not the listing: `coop net ls` is that.
 	netRecentRuns = 5
@@ -109,22 +108,24 @@ func (a *app) cmdNetRecover(args []string) (int, error) {
 		return 1, err
 	}
 	if len(results) == 0 {
-		ui.Info("no interrupted network run is waiting for cleanup")
+		ui.Note("no interrupted run is waiting for cleanup")
 		return 0, nil
 	}
 	code := 0
 	for _, result := range results {
 		switch {
 		case result.Skipped != "":
-			ui.Warn("run %s was left alone: %s", result.RunID, result.Skipped)
+			ui.Warn("run %s left alone — %s", result.RunID, result.Skipped)
 		case len(result.Failures) != 0 || len(result.Pending) != 0:
 			code = 1
-			ui.Warn("run %s is still pending: %s", result.RunID, strings.Join(result.Pending, ", "))
+			ui.Warn("run %s is not settled yet — still to clean up: %s", result.RunID, strings.Join(result.Pending, ", "))
 			for _, failure := range result.Failures {
 				ui.Detail("%v", failure)
 			}
+		case len(result.Removed) == 0:
+			ui.OK("run %s was already cleaned up — nothing left to remove", result.RunID)
 		default:
-			ui.Info("run %s recovered: removed %s", result.RunID, ui.Count(len(result.Removed), "resource"))
+			ui.OK("run %s settled — removed %s it left behind", result.RunID, ui.Count(len(result.Removed), "container or volume", "containers and volumes"))
 		}
 		if result.Sealed {
 			ui.Detail("coop net receipt %s", result.RunID)
@@ -140,7 +141,7 @@ func (a *app) cmdNetSetup() (int, error) {
 	if err := a.rt.EnsureDaemon(); err != nil {
 		return -1, err
 	}
-	ui.Info("setting up restricted networking for this host's container runtime")
+	ui.Info("setting up restricted networking for this host")
 	if _, err := box.SetupNetwork(context.Background(), a.cfg, a.rt, os.Stderr, os.Stderr); err != nil {
 		return 1, err
 	}
@@ -165,62 +166,78 @@ func (a *app) cmdNetPosture() (int, error) {
 		return 1, err
 	}
 	if listErr != nil {
-		ui.Warn("recorded runs are unavailable: %v", listErr)
+		ui.Warn("this project's recorded runs could not be read: %v", listErr)
 	}
 	return 0, nil
 }
 
 func writeNetPosture(w io.Writer, p ui.Palette, posture box.NetworkPosture, runs []netRun) {
-	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan("network posture")))
-	field := func(label, value string) { netField(w, p, netLabelWidth, label, value) }
-	field("Project", posture.Project)
-	field("Egress", string(posture.Mode)+" (from the "+posture.Source+")")
+	b := newNetBlock(w, p, "Network for "+posture.Project)
+	b.field("Egress", string(posture.Mode)+" ("+netModeSource(posture.Source)+")")
 	switch {
 	case posture.Approval == nil:
-		field("Approved", "nothing remembered for this project yet")
+		b.field("Approved", "nothing remembered for this project yet")
 	case len(posture.Approval.Envelope) == 0:
-		field("Approved", string(posture.Approval.Posture)+", no project rules")
+		b.field("Approved", string(posture.Approval.Posture)+", no destinations of its own")
 	default:
-		field("Approved", string(posture.Approval.Posture)+", "+ui.Count(len(posture.Approval.Envelope), "rule"))
+		b.field("Approved", string(posture.Approval.Posture)+", "+ui.Count(len(posture.Approval.Envelope), "rule"))
 		for _, rule := range posture.Approval.Envelope {
-			netRow(w, box.NetworkRuleText(rule))
+			b.row(box.NetworkRuleText(rule))
 		}
 	}
 	switch {
 	case len(posture.Add) == 0 && len(posture.Remove) == 0 && len(posture.Requested) == 0:
-		field("Requested", "no box.egress_rules in .agent/project.yaml")
+		b.field("Requested", "nothing — .agent/project.yaml has no box.egress_rules")
 	case len(posture.Add) == 0 && len(posture.Remove) == 0:
-		field("Requested", "matches the approval — nothing pending")
+		b.field("Requested", "same as approved — nothing to review")
 	default:
-		pending := "pending review — run 'coop net approve'"
+		pending := "not approved yet — run 'coop net approve'"
 		if posture.Pending != nil {
 			// The same condition Admit fails on, said once: a request outside
-			// the remembered envelope is not a warning, it stops a launch.
-			pending = "pending review — a filtered launch refuses until you run 'coop net approve'"
+			// what was remembered is not a warning, it stops a launch.
+			pending = "not approved yet — a filtered run refuses until you run 'coop net approve'"
 		}
-		field("Requested", pending)
+		b.field("Requested", pending)
 		for _, rule := range posture.Add {
-			netRow(w, "+ "+box.NetworkRuleText(rule))
+			b.row("+ " + box.NetworkRuleText(rule))
 		}
 		for _, rule := range posture.Remove {
-			netRow(w, "- "+box.NetworkRuleText(rule))
+			b.row("- " + box.NetworkRuleText(rule))
 		}
 	}
 	switch {
 	case posture.Setup == nil:
-		field("This host", "not set up — run 'coop net setup' before a filtered launch")
+		b.field("This host", "not set up — run 'coop net setup' before a filtered run")
 	case !posture.SetupCurrent():
-		field("This host", "set up for another contract ("+posture.Setup.Contract+") — re-run 'coop net setup'")
+		b.field("This host", "set up by an older coop — run 'coop net setup' again")
 	default:
-		field("This host", "set up "+posture.Setup.CompletedAt.UTC().Format(time.RFC3339))
+		b.field("This host", "set up "+posture.Setup.CompletedAt.UTC().Format(time.RFC3339))
 	}
 	if len(runs) == 0 {
-		field("Recent runs", "none recorded for this project")
+		b.field("Recent runs", "none yet")
+		b.flush(w)
 		return
 	}
-	field("Recent runs", ui.Count(len(runs), "run")+" (newest first)")
+	b.field("Recent runs", strconv.Itoa(len(runs))+", newest first")
 	for _, run := range runs {
-		netRow(w, netRunLine(p, run))
+		b.row(netRunLine(p, run))
+	}
+	b.flush(w)
+}
+
+// netModeSource says, in the user's own words, what decided this mode. The
+// constants are the posture resolver's own labels; this is the one place they
+// become a sentence.
+func netModeSource(source string) string {
+	switch source {
+	case box.PostureFromApproval:
+		return "remembered for this project"
+	case box.PostureFromHost:
+		return "from COOP_EGRESS"
+	case box.PostureFromProject:
+		return "this project asks for it"
+	default:
+		return "coop's default"
 	}
 }
 
@@ -231,16 +248,24 @@ type netRun struct {
 	Outcome string
 }
 
-// netRunLine is the one-line summary of a recorded run, shared by the posture
-// view and `ls`. "no final receipt" is a fact about the evidence, NOT a claim
+// netRunLine is the one-line summary of a recorded run, shared by the project
+// view and `ls`. A finished run says only what it did; the EXCEPTIONS — no
+// receipt, cleanup still owed — are what earn a word, and neither is a claim
 // that the run is still alive.
 func netRunLine(p ui.Palette, run netRun) string {
-	line := p.Bold(p.Cyan(run.ID)) + "  " + run.StartedAt.UTC().Format(time.RFC3339) + "  " + netFinality(run.Final)
+	line := p.Bold(p.Cyan(run.ID)) + "  " + run.StartedAt.UTC().Format(time.RFC3339)
+	var flags []string
+	if !run.Final {
+		flags = append(flags, "no receipt yet")
+	}
 	if run.CleanupPending {
-		line += ", cleanup pending"
+		flags = append(flags, "cleanup pending")
 	}
 	if run.SessionID != "" {
-		line += ", session " + run.SessionID
+		flags = append(flags, "session "+run.SessionID)
+	}
+	if len(flags) != 0 {
+		line += "  " + p.Yellow(strings.Join(flags, ", "))
 	}
 	if run.Outcome != "" {
 		line += "  " + run.Outcome
@@ -254,7 +279,7 @@ func netRunLine(p ui.Palette, run netRun) string {
 func netRunOutcome(inspection networkstate.Inspection) string {
 	observed := inspection.Observed
 	if observed.Sequence == 0 {
-		return "not observed"
+		return "nothing observed"
 	}
 	allowed := "UNKNOWN"
 	if observed.Counters != nil {
@@ -265,13 +290,6 @@ func netRunOutcome(inspection networkstate.Inspection) string {
 		refused += "+" // the ring dropped detail; this is a lower bound
 	}
 	return allowed + " allowed, " + refused + " refused"
-}
-
-func netFinality(final bool) string {
-	if final {
-		return "sealed receipt"
-	}
-	return "no final receipt"
 }
 
 // --------------------------------------------------------------- listings ---
@@ -336,15 +354,15 @@ func (a *app) cmdNetLs(args []string) (int, error) {
 		scope = "every project"
 	}
 	if len(runs) == 0 {
-		ui.Note("no filtered runs recorded for %s — 'coop net' shows this project's posture", scope)
+		ui.Note("no filtered runs recorded for %s — 'coop net' shows what this project may reach", scope)
 	} else {
 		ui.OK("%s recorded for %s", ui.Count(len(runs), "filtered run"), scope)
 	}
 	if page.Incomplete {
-		ui.Warn("this listing is incomplete — some retained records could not be enumerated")
+		ui.Warn("some records could not be listed, so this list is not complete")
 	}
 	if page.Unreadable > 0 {
-		ui.Warn("%s could not be read and are not shown", ui.Count(page.Unreadable, "retained record"))
+		ui.Warn("%s could not be read and are not shown", ui.Count(page.Unreadable, "record"))
 	}
 	return 0, nil
 }
@@ -493,13 +511,13 @@ func parseNetRunArgs(verb string, args []string) (netRunOptions, error) {
 		case strings.HasPrefix(arg, "-"):
 			return opts, unknownErr("net "+verb+" flag", arg, valid)
 		case opts.id != "":
-			return opts, fmt.Errorf("net %s reads one run (got %q and %q) — see 'coop net --help'", verb, opts.id, arg)
+			return opts, fmt.Errorf("coop net %s reads one run, but got %q and %q", verb, opts.id, arg)
 		default:
 			opts.id = arg
 		}
 	}
 	if opts.id == "" {
-		return opts, fmt.Errorf("net %s needs a run id — list them with 'coop net ls'", verb)
+		return opts, fmt.Errorf("coop net %s needs a run id — list them with 'coop net ls'", verb)
 	}
 	return opts, nil
 }
@@ -526,7 +544,7 @@ func (a *app) cmdNetRun(verb string, args []string) (int, error) {
 	}
 	if verb == "receipt" {
 		if inspection.Receipt == nil {
-			return 1, fmt.Errorf("network run %q has no sealed receipt yet — inspect the provisional evidence with 'coop net inspect %s'", opts.id, opts.id)
+			return 1, fmt.Errorf("run %q has no receipt yet — see what is recorded so far with 'coop net inspect %s'", opts.id, opts.id)
 		}
 		if opts.json {
 			return 0, netWriteJSON(os.Stdout, inspection.Receipt)
@@ -543,131 +561,146 @@ func (a *app) cmdNetRun(verb string, args []string) (int, error) {
 
 func netRunErr(id string, err error) error {
 	if errors.Is(err, networkstate.ErrEvidenceUnavailable) || errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("network run %q: no retained evidence — list what was recorded with 'coop net ls --all'", id)
+		return fmt.Errorf("no run %q was recorded here — list the runs with 'coop net ls --all'", id)
 	}
 	return fmt.Errorf("network run %q: %w", id, err)
 }
 
-// writeNetInspection is the human view of one run: short labeled fields, with
-// requested policy, effective capture and observed traffic kept apart. The full
-// coverage, loss and health tables live behind --json — they are an
-// investigation, not a status line.
+// writeNetInspection is the human view of one run: what it was allowed to
+// reach, what it actually did, and what was refused. The full coverage, loss
+// and health tables live behind --json — they are an investigation, not a
+// status line.
 func writeNetInspection(w io.Writer, p ui.Palette, id string, inspection networkstate.Inspection) {
 	observed := inspection.Observed
-	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan("network run "+id)))
-	field := func(label, value string) { netField(w, p, netLabelWidth, label, value) }
-	field("Requested", "egress "+string(observed.Mode)+", policy "+netUnknownIfEmpty(observed.PolicyFingerprint))
-	field("Effective", "gateway epoch "+netUnknownIfEmpty(observed.Epoch)+", scope "+netUnknownIfEmpty(observed.Scope))
-	field("Read at", inspection.ReadAt.UTC().Format(time.RFC3339))
+	b := newNetBlock(w, p, "Network run "+id)
+	b.field("Egress", netUnknownIfEmpty(string(observed.Mode))+", rules "+netUnknownIfEmpty(observed.PolicyFingerprint))
+	b.field("Gateway", "epoch "+netUnknownIfEmpty(observed.Epoch)+", watching "+netUnknownIfEmpty(observed.Scope))
 	if observed.Sequence == 0 || observed.AsOf.IsZero() {
-		field("Observed", "never observed (freshness "+inspection.Freshness+")")
+		never := "never — nothing was recorded for this run"
+		if inspection.Freshness != "" && inspection.Freshness != networkstate.FreshnessNotObserved {
+			never += " (" + inspection.Freshness + ")"
+		}
+		b.field("Observed", never)
 	} else {
-		field("Observed", observed.AsOf.UTC().Format(time.RFC3339)+" (freshness "+inspection.Freshness+
-			", availability "+netUnknownIfEmpty(observed.Availability)+")")
+		b.field("Observed", observed.AsOf.UTC().Format(time.RFC3339)+" ("+inspection.Freshness+
+			", "+netUnknownIfEmpty(observed.Availability)+")")
 	}
-	field("Now", netCurrentSummary(inspection))
+	b.field("Read at", inspection.ReadAt.UTC().Format(time.RFC3339))
+	b.field("Now", netCurrentSummary(inspection))
 	if current := inspection.Current; current != nil {
-		field("Connections", "live "+netCount(current.LiveConnections)+", unknown "+netCount(current.UnknownConnections)+
+		b.field("Open now", "live "+netCount(current.LiveConnections)+", unknown "+netCount(current.UnknownConnections)+
 			", pending "+netCount(current.PendingConnections))
 	}
-	if counters := observed.Counters; counters == nil {
-		field("Totals", "UNKNOWN (no counters retained)")
-	} else {
-		field("Totals", fmt.Sprintf("sent %s bytes, received %s bytes over %s connection(s)",
-			netCount(counters.SentBytes), netCount(counters.ReceivedBytes), netCount(counters.Connections)))
-		field("Denied", fmt.Sprintf("packets %s, dns %s, tls %s", netCount(counters.DeniedPackets),
-			netCount(counters.DeniedDNSQueries), netCount(counters.DeniedTLS)))
-		netRow(w, p.Dim(netRawRefusalNote))
-	}
-	writeNetAddressGrants(w, p, observed)
-	writeNetDenials(w, p, observed)
+	b.field("Allowed", netAllowedTotals(observed.Counters, "nothing was recorded for this run"))
+	writeNetAddressGrants(b, observed)
+	writeNetDenials(b, p, observed)
 	if len(observed.Alerts) == 0 {
-		field("Alerts", "none retained")
+		b.field("Alerts", "none")
 	} else {
-		field("Alerts", ui.Count(len(observed.Alerts), "retained alert"))
+		b.field("Alerts", ui.Count(len(observed.Alerts), "alert"))
 		for _, alert := range observed.Alerts {
-			netRow(w, fmt.Sprintf("%s %s/%s %s (first %s, last %s)", alert.ID, alert.Category, alert.Severity,
+			b.row(fmt.Sprintf("%s %s/%s %s (first %s, last %s)", alert.ID, alert.Category, alert.Severity,
 				alert.State, alert.FirstSeen.UTC().Format(time.RFC3339), alert.LastSeen.UTC().Format(time.RFC3339)))
 		}
 	}
 	if observed.Loss.Unknown || observed.Loss.Records != 0 || observed.Loss.DetailTruncated {
-		field("Evidence", netLossSummary(observed.Loss))
+		b.field("Missing", netLossSummary(observed.Loss))
 	}
-	field("Health", netHealthSummary(observed.Health))
-	field("Cleanup", inspection.Cleanup)
+	b.field("Health", netHealthSummary(observed.Health))
+	b.field("Cleanup", inspection.Cleanup)
 	if inspection.Receipt == nil {
-		field("Receipt", "none sealed yet (not a claim that the run is alive)")
+		b.field("Receipt", "not sealed yet")
 	} else {
-		field("Receipt", "sealed "+inspection.Receipt.Finality+", "+inspection.Receipt.Completeness)
+		b.field("Receipt", inspection.Receipt.Finality+", "+inspection.Receipt.Completeness)
 	}
-	fmt.Fprintln(w, p.Dim("Full coverage, loss and per-source health: coop net inspect "+id+" --json"))
+	b.flush(w)
+	fmt.Fprintln(w, p.Dim("everything recorded: coop net inspect "+id+" --json"))
+}
+
+// netAllowedTotals is what got through, in the units a person reads. A nil
+// counter is UNKNOWN — a metric nobody measured is not a measured zero.
+func netAllowedTotals(counters *networkview.Counters, missing string) string {
+	if counters == nil {
+		return "UNKNOWN — " + missing
+	}
+	return netConnectionCount(counters.Connections) + ", " + netByteCount(counters.SentBytes) +
+		" sent, " + netByteCount(counters.ReceivedBytes) + " received"
+}
+
+// netRefusedCounts is the kernel's own tally, kept apart from the decisions it
+// retained detail for: a refused raw packet has no destination to name.
+func netRefusedCounts(counters *networkview.Counters) string {
+	if counters == nil {
+		return ""
+	}
+	return netCount(counters.DeniedDNSQueries) + " dns, " + netCount(counters.DeniedTLS) +
+		" tls, " + netCount(counters.DeniedPackets) + " raw packets"
 }
 
 // The packet filter drops a refused raw datagram without recording where it
 // was going, so those packets are a count and nothing more. Saying so is the
 // honest alternative to inventing a destination for them.
-const netRawRefusalNote = "raw tcp/udp/icmp refusals are counted, not attributed to a destination — there is no event to explain"
+const netRawRefusalNote = "raw packets are counted only — the filter records no destination for them, so there is nothing to explain"
 
-// writeNetAddressGrants shows what each raw grant actually carried. Bytes here
+// writeNetAddressGrants shows what each raw rule actually carried. Bytes here
 // are kernel packet bytes, not application payload.
-func writeNetAddressGrants(w io.Writer, p ui.Palette, observed networkview.Snapshot) {
+func writeNetAddressGrants(b *netBlock, observed networkview.Snapshot) {
 	if len(observed.AddressGrants) == 0 {
 		return
 	}
-	netField(w, p, netLabelWidth, "Raw grants", ui.Count(len(observed.AddressGrants), "address grant")+" carried traffic")
+	b.field("Raw rules", ui.Count(len(observed.AddressGrants), "rule")+" carried traffic")
 	for _, grant := range observed.AddressGrants {
-		netRow(w, fmt.Sprintf("%s  %s packet(s), %s byte(s)", grant.RuleID,
-			strconv.FormatUint(uint64(grant.Packets), 10), strconv.FormatUint(uint64(grant.Bytes), 10)))
+		b.row(fmt.Sprintf("%s  %s, %s", grant.RuleID,
+			netPlural(uint64(grant.Packets), "packet"), ui.Bytes(uint64(grant.Bytes))))
 	}
 }
 
-func writeNetDenials(w io.Writer, p ui.Palette, observed networkview.Snapshot) {
-	field := func(label, value string) { netField(w, p, netLabelWidth, label, value) }
-	if len(observed.Denials) == 0 {
-		field("Refused", "none retained")
-		return
+func writeNetDenials(b *netBlock, p ui.Palette, observed networkview.Snapshot) {
+	counts := netRefusedCounts(observed.Counters)
+	switch {
+	case len(observed.Denials) == 0 && counts == "":
+		b.field("Refused", "nothing recorded")
+	case len(observed.Denials) == 0:
+		b.field("Refused", counts)
+	default:
+		if counts != "" {
+			counts = " (" + counts + ")"
+		}
+		b.field("Refused", ui.Count(len(observed.Denials), "refusal")+counts)
 	}
-	field("Refused", ui.Count(len(observed.Denials), "retained decision"))
 	for _, denial := range observed.Denials {
-		netRow(w, fmt.Sprintf("%s %s %s — %s at %s", denial.ID, netDestination(denial.Name, denial.Peer, denial.DestinationID),
+		b.row(fmt.Sprintf("%s %s %s — %s at %s", denial.ID, netDestination(denial.Name, denial.Peer, denial.DestinationID),
 			denial.Kind, denial.Reason, denial.At.UTC().Format(time.RFC3339)))
+	}
+	if observed.Counters != nil && observed.Counters.DeniedPackets != nil && *observed.Counters.DeniedPackets > 0 {
+		b.row(p.Dim(netRawRefusalNote))
 	}
 }
 
 // writeNetReceipt renders the sealed outcome. Finality and completeness are
 // INDEPENDENT: final + partial is valid after a crash, and must never read as
-// clean evidence.
+// a complete record.
 func writeNetReceipt(w io.Writer, p ui.Palette, id string, receipt networkview.Receipt) {
-	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan("sealed receipt "+receipt.ID)))
-	field := func(label, value string) { netField(w, p, netLabelWidth, label, value) }
-	field("Run", id)
-	field("Finality", receipt.Finality+" (completeness "+receipt.Completeness+")")
-	field("Workload", receipt.Workload)
-	field("Cleanup", receipt.Cleanup)
-	field("Started", receipt.StartedAt.UTC().Format(time.RFC3339))
+	b := newNetBlock(w, p, "Receipt for run "+id)
+	b.field("Sealed", receipt.Finality+", "+receipt.Completeness)
+	b.field("Workload", receipt.Workload)
+	b.field("Cleanup", receipt.Cleanup)
+	b.field("Started", receipt.StartedAt.UTC().Format(time.RFC3339))
 	if receipt.EndedAt != nil {
-		field("Ended", receipt.EndedAt.UTC().Format(time.RFC3339))
+		b.field("Ended", receipt.EndedAt.UTC().Format(time.RFC3339))
 	}
-	field("Runtime", receipt.Runtime+", gateway "+receipt.GatewayImage)
-	field("Collector", receipt.CollectorVersion)
-	field("Projection", netUnknownIfEmpty(receipt.Snapshot.Projection))
-	field("Digest", receipt.Digest+" ("+receipt.DigestScope+")")
-	if counters := receipt.Snapshot.Counters; counters != nil {
-		field("Totals", fmt.Sprintf("sent %s bytes, received %s bytes over %s connection(s)",
-			netCount(counters.SentBytes), netCount(counters.ReceivedBytes), netCount(counters.Connections)))
-		field("Denied", fmt.Sprintf("packets %s, dns %s, tls %s", netCount(counters.DeniedPackets),
-			netCount(counters.DeniedDNSQueries), netCount(counters.DeniedTLS)))
-		netRow(w, p.Dim(netRawRefusalNote))
-	} else {
-		field("Totals", "UNKNOWN (no counters were sealed with this receipt)")
-	}
-	writeNetAddressGrants(w, p, receipt.Snapshot)
-	writeNetDenials(w, p, receipt.Snapshot)
+	b.field("Runtime", receipt.Runtime+", gateway "+receipt.GatewayImage)
+	b.field("Collector", receipt.CollectorVersion)
+	b.field("Shows", netUnknownIfEmpty(receipt.Snapshot.Projection))
+	b.field("Digest", receipt.Digest)
+	b.field("Allowed", netAllowedTotals(receipt.Snapshot.Counters, "no counters were sealed with this receipt"))
+	writeNetAddressGrants(b, receipt.Snapshot)
+	writeNetDenials(b, p, receipt.Snapshot)
+	b.flush(w)
 	if receipt.Snapshot.Projection != "destinations-included" {
-		fmt.Fprintln(w, p.Dim("Destinations are withheld in this projection — even a refused name can encode a secret."))
-		fmt.Fprintln(w, p.Dim("Add --destinations for the local operator view; the digest above covers this projection only."))
+		fmt.Fprintln(w, p.Dim("destination names are held back here — even a refused name can carry a secret; add --destinations to see them"))
 	}
-	fmt.Fprintln(w, p.Dim("Full receipt fields: coop net receipt "+id+" --json"))
+	fmt.Fprintln(w, p.Dim("everything recorded: coop net receipt "+id+" --json"))
 }
 
 // ----------------------------------------------------------------- watch ----
@@ -796,7 +829,7 @@ func netWatchDelta(previous, current networkstate.Inspection) []string {
 	var lines []string
 	for _, key := range order {
 		if len(lines) >= netWatchDeltaLines {
-			lines = append(lines, "…more refusals this poll; 'coop net inspect' has the full list")
+			lines = append(lines, "…more refusals just now — 'coop net inspect' has the whole list")
 			break
 		}
 		if repeats[key] > 1 {
@@ -818,9 +851,9 @@ func netWatchDelta(previous, current networkstate.Inspection) []string {
 // netWatchStatus is the one-line heartbeat. UNKNOWN stays UNKNOWN: a poll that
 // measured nothing must not read as a measured zero.
 func netWatchStatus(current networkstate.Inspection) string {
-	status := "freshness " + current.Freshness + ", " + netCurrentSummary(current)
+	status := current.Freshness + ", " + netCurrentSummary(current)
 	if counters := current.Observed.Counters; counters != nil {
-		status += ", total sent " + netCount(counters.SentBytes) + " received " + netCount(counters.ReceivedBytes)
+		status += ", " + netByteCount(counters.SentBytes) + " sent and " + netByteCount(counters.ReceivedBytes) + " received so far"
 	}
 	return status
 }
@@ -868,7 +901,7 @@ func openNetEvidence() (*networkstate.Evidence, error) {
 func openNetRunEvidence() (*networkstate.Evidence, error) {
 	evidence, err := openNetEvidence()
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, errors.New("no filtered run has been recorded on this host — 'coop net ls --all' lists what was")
+		return nil, errors.New("no filtered run has been recorded on this host yet — start one with 'coop run --egress filtered'")
 	}
 	return evidence, err
 }
@@ -926,18 +959,54 @@ func netWriteAll(w io.Writer, data []byte) error {
 
 func netEventBound(size int) error {
 	if size > netEventMaxBytes {
-		return fmt.Errorf("this network view is %d bytes, over the %d-byte evidence envelope", size, netEventMaxBytes)
+		return fmt.Errorf("this view is %d bytes, over the %d-byte limit — read it with --json instead", size, netEventMaxBytes)
 	}
 	return nil
 }
 
-func netField(w io.Writer, p ui.Palette, width int, label, value string) {
-	// Pad the PLAIN label, then dim the padded cell — styling inside a width
-	// field counts the escape bytes and drifts the column.
-	fmt.Fprintf(w, "  %s %s\n", p.Dim(padRight(label+":", width)), value)
+// netBlock is one net view: a title and its labeled facts. The label column is
+// sized to the longest label in THIS view, so a two-field block reads as tight
+// as `coop credentials` instead of leaving a gap for a label it never prints.
+type netBlock struct {
+	p     ui.Palette
+	lines []netLine
 }
 
-func netRow(w io.Writer, text string) { fmt.Fprintf(w, "    %s\n", text) }
+// netLine is either a labeled fact or a plain row indented under the last one —
+// a rule, a refusal, where a grant came from.
+type netLine struct{ label, value string }
+
+func newNetBlock(w io.Writer, p ui.Palette, title string) *netBlock {
+	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan(title)))
+	return &netBlock{p: p}
+}
+
+func (b *netBlock) field(label, value string) {
+	b.lines = append(b.lines, netLine{label: label, value: value})
+}
+
+func (b *netBlock) row(text string) { b.lines = append(b.lines, netLine{value: text}) }
+
+// flush writes the collected fields once the widest label is known. Callers that
+// print prose after the block flush first, so the two never interleave.
+func (b *netBlock) flush(w io.Writer) {
+	width := 0
+	for _, line := range b.lines {
+		if len(line.label) > width {
+			width = len(line.label)
+		}
+	}
+	for _, line := range b.lines {
+		if line.label == "" {
+			fmt.Fprintf(w, "    %s\n", line.value)
+			continue
+		}
+		// Pad the PLAIN label, then dim the padded cell — styling inside a width
+		// field counts the escape bytes and drifts the column.
+		fmt.Fprintf(w, "  %s %s\n", b.p.Dim(padRight(line.label, width+2)), line.value)
+	}
+	b.lines = nil
+}
 
 func netUnknownIfEmpty(value string) string {
 	if value == "" {
@@ -956,16 +1025,39 @@ func netCount(value *networkview.Count) string {
 	return strconv.FormatUint(uint64(*value), 10)
 }
 
+// netPlural counts a stored counter without narrowing it to an int, so a total
+// past the platform's int range still reads correctly.
+func netPlural(value uint64, noun string) string {
+	if value == 1 {
+		return "1 " + noun
+	}
+	return strconv.FormatUint(value, 10) + " " + noun + "s"
+}
+
+func netConnectionCount(value *networkview.Count) string {
+	if value == nil {
+		return "UNKNOWN connections"
+	}
+	return netPlural(uint64(*value), "connection")
+}
+
+func netByteCount(value *networkview.Count) string {
+	if value == nil {
+		return "UNKNOWN"
+	}
+	return ui.Bytes(uint64(*value))
+}
+
 func netCurrentSummary(inspection networkstate.Inspection) string {
 	if inspection.Current == nil {
-		return "UNKNOWN (no fresh observation)"
+		return "UNKNOWN — nothing read recently"
 	}
 	rate := inspection.Current.Rate
 	if rate == nil {
-		return "UNKNOWN (not measured)"
+		return "UNKNOWN — not measured"
 	}
-	return fmt.Sprintf("sent %.0f B/s, received %.0f B/s (window %dms)",
-		rate.SentPerSecond, rate.ReceivedPerSecond, uint64(rate.WindowMillis))
+	return fmt.Sprintf("%s/s out, %s/s in (over %dms)",
+		ui.Bytes(uint64(rate.SentPerSecond)), ui.Bytes(uint64(rate.ReceivedPerSecond)), uint64(rate.WindowMillis))
 }
 
 func netDestination(name, peer, id string) string {
@@ -975,19 +1067,19 @@ func netDestination(name, peer, id string) string {
 	case peer != "":
 		return peer
 	case id != "":
-		return "destination withheld (" + id + ")"
+		return "name withheld (" + id + ")"
 	default:
-		return "destination unknown"
+		return "unknown destination"
 	}
 }
 
 func netLossSummary(loss networkview.Loss) string {
-	parts := []string{"records lost " + strconv.FormatUint(uint64(loss.Records), 10)}
+	parts := []string{netPlural(uint64(loss.Records), "record") + " lost"}
 	if loss.Unknown {
-		parts = append(parts, "unknown loss")
+		parts = append(parts, "some loss is unknown")
 	}
 	if loss.DetailTruncated {
-		parts = append(parts, "detail truncated")
+		parts = append(parts, "detail was truncated")
 	}
 	if len(loss.Reasons) > 0 {
 		parts = append(parts, strings.Join(loss.Reasons, ", "))

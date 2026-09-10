@@ -140,7 +140,7 @@ func TestReviewRefusesAnUnqualifiedProviderFeatureRequest(t *testing.T) {
 	if err == nil {
 		t.Fatal("a provider feature request was reviewed")
 	}
-	if !strings.Contains(err.Error(), "captured automatically at launch") {
+	if !strings.Contains(err.Error(), "core endpoints are allowed automatically") {
 		t.Errorf("error = %v, want it to say where core access comes from", err)
 	}
 }
@@ -168,11 +168,11 @@ func TestReviewHonorsAnExplicitMode(t *testing.T) {
 func TestReviewRefusesARuleNoLaunchCouldEnforce(t *testing.T) {
 	for _, test := range []struct{ yaml, want string }{
 		{"box:\n  egress_rules:\n    - to:\n        domain: api.example.com\n      protocol: tls\n      ports: [53]\n",
-			"tls on port 53 is not supported"},
+			"TLS on port 53 is not allowed here"},
 		{"box:\n  egress_rules:\n    - to:\n        cidr: 169.254.0.0/16\n      protocol: tcp\n      ports: [80]\n",
-			"is a protected address range"},
+			"is a protected range"},
 		{"box:\n  egress_rules:\n    - to:\n        ip: 2606:4700:4700::1111\n      protocol: tcp\n      ports: [5432]\n",
-			"IPv6 destinations are refused"},
+			"IPv6 destinations are not supported yet"},
 	} {
 		cfg, repo, root := postureFixture(t, test.yaml)
 		_, err := ReviewProjectNetwork(cfg, repo, nil)

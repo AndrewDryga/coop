@@ -7,7 +7,7 @@ enforces today, what it refuses and why, what it measures, and how to ask for mo
 Nothing here is a proxy setting. Every tool in the box — the provider CLI, `curl`, an SDK, a
 subprocess — hits the same boundary, with no `HTTPS_PROXY` to set or forget.
 
-Start with `coop net setup` once per machine, then `coop net` for this project's posture and
+Start with `coop net setup` once per machine, then `coop net` for what this project may reach and
 `coop net --help` for the verbs.
 
 ## Supported today
@@ -31,7 +31,7 @@ anything — every other container on it stays behind the same default deny as t
 The approval captures the *definition* a human reviewed, not just the name: `coop net approve`
 records a digest of that service's Compose stanza, and a launch recomputes it from the file it is
 about to run. Rewriting `db:` into something else — a proxy image with ordinary egress, say — is
-refused with `compose service "db" changed since it was approved; review it with coop net approve`,
+refused with `the Compose service "db" changed since it was approved — review it with 'coop net approve'`,
 and `coop net` shows it as a pending change. Editing an unrelated service changes nothing.
 
 **TLS is not only 443.** A `tls` rule names the ports it wants — `[443]`, `[853]`, `[443, 8443]` —
@@ -49,19 +49,19 @@ the box meets the gateway.
 
 | Requested | Message |
 | --- | --- |
-| IPv6 address, CIDR, or `icmpv6` | `IPv6 destinations are refused: this runtime is qualified for IPv4 only` |
-| `tls` on port 53 | `tls on port 53 is not supported: the gateway captures port 53 for its own DNS handling` |
-| raw `tcp`/`udp` on port 443 or 53 | `raw tcp to <dest> port 443 is not supported: the gateway captures port 443 for its own TLS and DNS handling` |
-| raw `tcp` on a port a `tls` rule also names | `raw tcp to <dest> port 8443 is not supported alongside a tls grant on port 8443: the gateway captures that port for TLS` |
-| a `serve` port on a captured TLS/DNS port | `serve port 8443 collides with the gateway's captured TLS/DNS ports; serve it on another port in filtered mode` |
-| ICMP beyond echo-request | `ICMP type N to <dest> is not supported yet; only echo-request is qualified` |
-| `cidr: 0.0.0.0/0` | `a /0 grant is not filtered access; use explicit open egress for that intent` |
-| a host, loopback, link-local or metadata range | `<range> is a protected address range (host, loopback, link-local or metadata); no rule can grant it` |
-| a project `Dockerfile`, or `COOP_IMAGE` | `restricted networking runs the qualified client image; …` |
-| a runtime other than Docker | admission fails: no `coop net setup` record matches this runtime |
-| `box.network: true` with no `service:` grant | `restricted networking does not join a shared services network; request the exact sidecar with a to: {service: <name>} rule …` |
-| `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `restricted networking refuses the mount source …: it is or contains …, the container runtime's control surface` |
-| an approved project directory replaced by another at the same path | `the project directory at <path> was replaced since its approval; review it with coop net approve` |
+| IPv6 address, CIDR, or `icmpv6` | `IPv6 destinations are not supported yet — a filtered box runs on IPv4 only` |
+| `tls` on port 53 | `TLS on port 53 is not allowed here — the gateway takes 53 for DNS; use 443 or another port` |
+| raw `tcp`/`udp` on port 443 or 53 | `raw tcp to <dest> on port 443 is not allowed — the gateway takes 443 for TLS and DNS; use another port` |
+| raw `tcp` on a port a `tls` rule also names | `raw tcp to <dest> on port 8443 clashes with a TLS rule on the same port — the gateway takes that port for TLS; use another port` |
+| a `serve` port on a captured TLS/DNS port | `port 8443 is one the gateway uses for TLS and DNS — serve on another port in filtered mode` |
+| ICMP beyond echo-request | `ICMP N to <dest> is not supported yet — only echo-request is` |
+| `cidr: 0.0.0.0/0` | `a /0 rule allows everything, which is not filtering — use --egress open if that is what you want` |
+| a host, loopback, link-local or metadata range | `<range> is a protected range (your host, loopback, link-local or cloud metadata) — no rule can allow it` |
+| a project `Dockerfile`, or `COOP_IMAGE` | `a filtered box runs coop's own image, so this project's .agent/Dockerfile cannot be used yet …` |
+| a runtime other than Docker | `this host is not set up for filtered runs with this Docker and these agents — run 'coop net setup'` |
+| `box.network: true` with no `service:` grant | `a filtered box does not join the shared services network — ask for the one sidecar you need with a to: {service: <name>} rule …` |
+| `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
+| an approved project directory replaced by another at the same path | `the project directory at <path> was replaced since it was approved — review it with 'coop net approve'` |
 
 A refused rule fails the launch itself, before any approval is written or any container is created.
 Coop never accepts a rule it cannot enforce and then quietly drops the constraint.
@@ -89,14 +89,14 @@ socket would start a container the gateway never sees.
   live connections, names, byte counts and the rule that admitted them, and a refused name becomes
   a retained event `coop net explain <event>` can open.
 - **Raw transports are counted.** Every address grant has its own kernel counter, reported per
-  grant (`Raw grants` in `coop net inspect`, `address_grants` in `--json`) as packets and bytes.
-- **Raw refusals are counted, not attributed.** The packet filter drops a refused datagram without
-  recording where it was going, so refused packets are a number — `refused packets: N` in the
-  end-of-run summary — and there is no event for `explain` to open. Coop will not invent a
-  destination for them.
+  grant (`Raw rules` in `coop net inspect`, `address_grants` in `--json`) as packets and bytes.
+- **Raw refusals are counted, not attributed.** The packet filter drops a refused datagram
+  without recording where it was going, so refused packets are a number — `N raw packets refused
+  too, with no destination recorded` in the end-of-run summary — and there is nothing for
+  `explain` to open. Coop will not invent a destination for them.
 - **Unknown means unknown.** A metric nobody measured is reported as UNKNOWN, never as zero.
 
-`coop net why <destination> --run <id>` evaluates the run's captured policy without sending a
+`coop net why <destination> --run <id>` checks the rules that run started with, without sending a
 packet. A domain is TLS on 443 unless `--port <n>` names another; an address has no implied
 transport, so pass `--protocol tcp|udp --port <n>`, or `--icmp` for echo-request.
 

@@ -44,7 +44,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 			names = append(names, grant.Rule.To.Service)
 		}
 		slices.Sort(names)
-		return "", nil, fmt.Errorf("this policy grants the Compose service(s) %v, but this project has no %s",
+		return "", nil, fmt.Errorf("the approved rules name the Compose service(s) %v, but this project has no %s",
 			names, project.DefaultCompose)
 	}
 	// The approval named a DEFINITION, not just a name: this is the file that is
@@ -55,7 +55,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	}
 	var composeErr bytes.Buffer
 	if _, err := startServicesFile(rt, spec.Repo, composeFile, io.Discard, &composeErr, spec.RepoReadOnly, exposedRoots...); err != nil {
-		return "", nil, fmt.Errorf("restricted networking needs this project's approved sidecars running: %w", err)
+		return "", nil, fmt.Errorf("a filtered box needs this project's approved sidecars running, and starting them failed: %w", err)
 	}
 	network := ComposeProject(spec.Repo) + "_default"
 	members, err := docker.NetworkMembers(ctx, network)
@@ -71,7 +71,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		}
 		address, ok := members[id]
 		if !ok || !address.Is4() || egress.Protected(address, nil) {
-			return "", nil, fmt.Errorf("approved service %q has no usable IPv4 address on %s", name, network)
+			return "", nil, fmt.Errorf("the approved service %q has no usable IPv4 address on %s", name, network)
 		}
 		bindings = append(bindings, networkgateway.ServiceBinding{Name: name, RuleID: grant.ID, Address: address})
 	}
@@ -106,7 +106,7 @@ func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (opt
 func checkFilteredServePorts(ports, captured []int) error {
 	for _, port := range ports {
 		if port == 443 || port == 53 || slices.Contains(captured, port) {
-			return errors.New("serve port " + strconv.Itoa(port) + " collides with the gateway's captured TLS/DNS ports; serve it on another port in filtered mode")
+			return errors.New("port " + strconv.Itoa(port) + " is one the gateway uses for TLS and DNS — serve on another port in filtered mode")
 		}
 	}
 	return nil

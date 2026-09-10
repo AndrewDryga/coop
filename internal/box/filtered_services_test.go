@@ -22,19 +22,19 @@ func TestUnsupportedRequestsAreRefusedBeforeAdmission(t *testing.T) {
 		want string
 	}{
 		"tls on the DNS port": {egress.Rule{To: egress.Destination{Domain: "api.example.com"}, Protocol: "tls", Ports: []int{53}},
-			"tls on port 53 is not supported"},
+			"TLS on port 53 is not allowed here"},
 		"ipv6 destination": {egress.Rule{To: egress.Destination{IP: "2606:4700:4700::1111"}, Protocol: "tcp", Ports: []int{5432}},
-			"IPv6 destinations are refused"},
+			"IPv6 destinations are not supported yet"},
 		"icmpv6": {egress.Rule{To: egress.Destination{CIDR: "2001:db8::/32"}, Protocol: "icmpv6", Types: []string{"echo-request"}},
-			"IPv6 destinations are refused"},
+			"IPv6 destinations are not supported yet"},
 		"captured tcp port": {egress.Rule{To: egress.Destination{IP: "10.0.0.1"}, Protocol: "tcp", Ports: []int{443}},
-			"the gateway captures port 443"},
+			"the gateway takes 443 for TLS and DNS"},
 		"captured udp port": {egress.Rule{To: egress.Destination{IP: "10.0.0.1"}, Protocol: "udp", Ports: []int{53}},
-			"the gateway captures port 53"},
+			"the gateway takes 53 for TLS and DNS"},
 		"protected range": {egress.Rule{To: egress.Destination{CIDR: "169.254.0.0/16"}, Protocol: "tcp", Ports: []int{80}},
-			"is a protected address range"},
+			"is a protected range"},
 		"icmp beyond echo": {egress.Rule{To: egress.Destination{IP: "10.0.0.1"}, Protocol: "icmp", Types: []string{"3"}},
-			"only echo-request is qualified"},
+			"only echo-request is"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -80,7 +80,7 @@ func TestFilteredServePortsCannotCollideWithTheCapture(t *testing.T) {
 	}
 	for _, port := range []int{443, 53, 8443} {
 		err := checkFilteredServePorts([]int{3000, port}, []int{443, 8443})
-		if err == nil || !strings.Contains(err.Error(), "captured TLS/DNS ports") {
+		if err == nil || !strings.Contains(err.Error(), "the gateway uses for TLS and DNS") {
 			t.Errorf("serve port %d was accepted: %v", port, err)
 		}
 	}
@@ -170,7 +170,7 @@ func TestApprovedServiceDefinitionChangeRefusesTheLaunch(t *testing.T) {
 	}
 	write("socat-proxy:latest")
 	err = checkApprovedServices(approval, compose, repo, false)
-	if err == nil || !strings.Contains(err.Error(), `compose service "db" changed since it was approved`) {
+	if err == nil || !strings.Contains(err.Error(), `Compose service "db" changed since it was approved`) {
 		t.Fatalf("a rewritten service kept its grant: %v", err)
 	}
 	// The same refusal is what a launch gets, before anything is started.

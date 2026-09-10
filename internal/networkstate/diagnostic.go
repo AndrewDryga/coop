@@ -15,7 +15,7 @@ const retainedIntegrity = "retained-evidence-only"
 
 // Absence from a bounded detail ring does not prove that this particular event
 // existed or expired. Keep that distinction in both human and machine output.
-var ErrEventNotRetained = errors.New("event_not_retained: no matching event remains in this run's bounded evidence")
+var ErrEventNotRetained = errors.New("that refusal is no longer recorded for this run — 'coop net inspect <run>' lists the ones that are (event_not_retained)")
 
 // PolicyExplanation is hypothetical admission, not an observed connection or
 // launch capability. The owner-private policy itself never crosses this API.
@@ -59,7 +59,7 @@ type PolicyQuery struct {
 // Validate is the one place a hypothetical is checked, so the CLI refuses a
 // nonsense transport before opening any evidence.
 func (q PolicyQuery) Validate() error {
-	invalid := errors.New("why needs one exact ASCII domain (TLS, port 443 unless --port says otherwise), or one IPv4 address with --protocol tcp|udp --port <n>, or --icmp")
+	invalid := errors.New("coop net why takes one exact domain (checked as TLS on 443, unless --port says otherwise), or one IPv4 address with --protocol tcp|udp --port <n>, or --icmp")
 	switch {
 	case q.Domain != "" && q.Address.IsValid():
 		return invalid
@@ -132,7 +132,7 @@ func (e *Evidence) Why(runID string, query PolicyQuery, exportDestinations bool)
 	if query.Domain != "" {
 		var err error
 		if name, err = egress.NormalizeDomain(query.Domain, false); err != nil {
-			return PolicyExplanation{}, errors.New("why requires one exact ASCII domain; the hypothetical transport is TLS on the asked-about port")
+			return PolicyExplanation{}, errors.New("coop net why takes one exact domain, checked as TLS on the port you asked about")
 		}
 	}
 	record, err := e.Execution(runID)
@@ -158,7 +158,7 @@ func (e *Evidence) Why(runID string, query PolicyQuery, exportDestinations bool)
 		Protocol: query.Protocol, Port: query.Port, Allowed: decision.Allowed, Reason: decision.Reason,
 		Message: diagnosticReason(decision.Reason), Resolution: "not_evaluated", CurrentPolicy: "not_evaluated", Withheld: !exportDestinations}
 	if name == "" && decision.Reason == "rule_allowed" {
-		out.Message = "The captured policy permits this address, transport and port; nothing was dialed and reachability was not tested."
+		out.Message = "a rule in this run allows this address, transport and port; nothing was sent, so this says nothing about whether it was up"
 	}
 	if name == "" {
 		out.ProtectedScope = "run-host-inventory"
@@ -309,28 +309,28 @@ func validateDiagnosticDenial(d networkview.Denial, fingerprint string) error {
 func diagnosticReason(reason string) string {
 	switch reason {
 	case "open":
-		return "The captured mode is open; this policy check does not establish reachability or isolation."
+		return "this run was not filtered, so everything was reachable"
 	case "rule_allowed":
-		return "The captured policy permits this TLS name and port; DNS safety and reachability were not tested."
+		return "a rule in this run allows this name and port; whether the host answered is another question"
 	case "unapproved_name":
-		return "The name is outside the captured TLS grants. A reviewed change can apply only to a new run."
+		return "no rule in this run allows this name — a rule you approve now applies to the next run"
 	case "protected_destination", "unsafe_dns_answer":
-		return "The destination is protected or its DNS answer is unsafe. Adding a name grant cannot bypass this boundary."
+		return "this destination is protected, or the DNS answer pointed somewhere unsafe — no rule can allow it"
 	case "protocol_not_allowed", "port_not_allowed", "fixed_egress_policy":
-		return "The traffic does not fit the captured transport policy. A sampled socket is not a correlated packet verdict."
+		return "no rule in this run allows that protocol and port"
 	case "tls_name_missing", "tls_name_invalid":
-		return "The TLS handshake did not provide a usable server name. A domain rule cannot authorize unnamed traffic."
+		return "the TLS handshake carried no usable server name, so no domain rule could match it"
 	case "tls_ech_unsupported":
-		return "Encrypted ClientHello prevents supported name inspection; this traffic is not supported by the captured enforcer."
+		return "Encrypted ClientHello hides the server name, so a filtered box cannot allow this connection"
 	case "tls_malformed", "tls_hello_too_large", "tls_inspection_timeout", "tls_inspection_unavailable":
-		return "The guard could not safely inspect a bounded TLS handshake. This is not a missing domain grant."
+		return "the TLS handshake could not be read safely — this is not a missing domain rule"
 	case "dns_name_invalid", "dns_query_invalid", "dns_answer_invalid", "dns_cname_limit", "dns_answer_limit", "dns_upstream_invalid":
-		return "DNS validation failed. The evidence does not establish a destination transport or port to allow."
+		return "the DNS answer failed validation, and it names no port or protocol to allow"
 	case "dns_unavailable", "dns_no_address", "dns_ttl_expired", "dns_capacity_exceeded":
-		return "The resolver could not supply a currently usable address. Repair resolver health rather than adding a grant."
+		return "the resolver could not give a usable address — fix the resolver, a rule will not help"
 	case "gateway_connection_capacity", "gateway_lease_capacity", "gateway_lease_refused", "gateway_unavailable", "enforcement_unavailable", "clock_unavailable", "observation_unavailable", "upstream_unreachable", "unsupported_capability":
-		return "Admission or observation was unavailable. This is not evidence that a broader rule is needed."
+		return "the gateway could not check or record this — it is not a missing rule"
 	default:
-		return "This version cannot explain the retained reason code."
+		return "this coop cannot explain that reason code"
 	}
 }

@@ -45,7 +45,7 @@ func TestFilteredExtraArgsRefuseEverythingElseByName(t *testing.T) {
 		"--privileged":                    `"--privileged"`,
 		"--network host":                  `"--network"`,
 		"--user 0:0":                      `"--user"`,
-		"-e HOME":                         "complete KEY=VALUE assignment",
+		"-e HOME":                         "write -e HOME=<value>",
 		"-e =1":                           "plain KEY=VALUE assignment",
 		"--mount type=tmpfs,target=/t":    "--mount type=tmpfs",
 		"--mount type=bind,source=/src":   "source= and target=",

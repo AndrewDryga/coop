@@ -78,7 +78,7 @@ func TestRunReportNeverFabricatesZeroTraffic(t *testing.T) {
 	}
 	sent := networkview.Count(12)
 	partial := networkRunReport("run1", networkview.Snapshot{Counters: &networkview.Counters{SentBytes: &sent}})
-	if !strings.Contains(partial.Allowed, "sent 12 bytes") || !strings.Contains(partial.Allowed, "received UNKNOWN bytes") {
+	if !strings.Contains(partial.Allowed, "12 B sent") || !strings.Contains(partial.Allowed, "UNKNOWN received") {
 		t.Errorf("allowed line = %q, want the measured value and UNKNOWN for the rest", partial.Allowed)
 	}
 }
@@ -159,7 +159,7 @@ func TestRunReportCountsRawRefusalsAsHittingTheBoundary(t *testing.T) {
 	if report.RawPackets != 4 {
 		t.Errorf("RawPackets = %d, want 4", report.RawPackets)
 	}
-	for _, want := range []string{"refused packets: 4", "(1 to protected addresses)", "counted, not attributed"} {
+	for _, want := range []string{"4 raw packets refused", "1 of them to protected addresses", "no destination recorded"} {
 		if !strings.Contains(report.Raw, want) {
 			t.Errorf("raw line %q is missing %q", report.Raw, want)
 		}

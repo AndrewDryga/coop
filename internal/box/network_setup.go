@@ -62,7 +62,7 @@ if getent hosts example.org >/dev/null 2>&1; then exit 36; fi
 // `coop net approve`, never by admitting a capture.
 func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, out, errOut io.Writer) (networkstate.Qualification, error) {
 	if ctx == nil || cfg == nil {
-		return networkstate.Qualification{}, errors.New("network setup requires host configuration and a cancelable context")
+		return networkstate.Qualification{}, errors.New("coop net setup needs host configuration and a cancelable context")
 	}
 	if out == nil {
 		out = io.Discard
@@ -90,7 +90,7 @@ func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, o
 		return networkstate.Qualification{}, err
 	}
 	defer store.Close()
-	setupStep(out, "authority", "%s", store.Path())
+	setupStep(out, "records", "%s", store.Path())
 
 	candidate, clients, err := setupImages(ctx, rt, out, errOut)
 	if err != nil {
@@ -214,7 +214,7 @@ func runSetupSmoke(ctx context.Context, cfg *config.Config, rt runtime.Runtime, 
 		Memory: cfg.Memory, CPUs: cfg.CPUs, Pids: cfg.Pids, NoNewPrivileges: cfg.NoNewPrivileges}
 	run, cancel := context.WithTimeout(ctx, smokeTimeout)
 	defer cancel()
-	setupStep(out, "smoke", "%s allowed; denied name, raw IP, metadata and DNS refused", SmokeDomain)
+	setupStep(out, "checking", "%s is allowed, and a denied name, a raw IP, the metadata address and denied DNS are refused", SmokeDomain)
 	// The permit's callback runs on THIS goroutine, inside launch preparation, so
 	// runID needs no synchronization; the watcher gets its own copy.
 	var runID string
@@ -232,20 +232,20 @@ func runSetupSmoke(ctx context.Context, cfg *config.Config, rt runtime.Runtime, 
 	})
 	elapsed := time.Since(started)
 	if err != nil {
-		return setupProof{}, errors.Join(errors.New("the network smoke run did not complete"), err)
+		return setupProof{}, errors.Join(errors.New("the setup check did not finish"), err)
 	}
 	if reason, named := smokeExpectations[code]; named {
-		return setupProof{}, errors.New("network setup refused: " + reason)
+		return setupProof{}, errors.New("this host is not set up: " + reason)
 	}
 	if code != 0 {
-		return setupProof{}, fmt.Errorf("the network smoke workload exited %d without reaching a verdict", code)
+		return setupProof{}, fmt.Errorf("the setup check exited %d without reaching a verdict", code)
 	}
 	record, err := store.Execution(runID)
 	if err != nil {
 		return setupProof{}, err
 	}
 	if record.Receipt == nil {
-		return setupProof{}, errors.New("the network smoke run sealed no receipt")
+		return setupProof{}, errors.New("the setup check sealed no receipt")
 	}
 	proof := setupProof{record: record, elapsed: elapsed}
 	select {
@@ -292,7 +292,7 @@ func setupStep(out io.Writer, label, format string, a ...any) {
 }
 
 func printSetupSummary(out io.Writer, record networkstate.Qualification, proof setupProof) {
-	fmt.Fprintf(out, "\n%s\n", ui.Bold("network setup complete"))
+	fmt.Fprintf(out, "\n%s\n", ui.Bold("this host is set up for filtered runs"))
 	fmt.Fprintf(out, "  %-9s docker %s · %s/%s · daemon %s\n", "runtime", record.Candidate.Runtime.ServerVersion,
 		record.Candidate.Runtime.OS, record.Candidate.Runtime.Architecture, record.Candidate.Runtime.DaemonID)
 	fmt.Fprintf(out, "  %-9s %s\n", "gateway", record.Candidate.GatewayImage)
@@ -300,7 +300,7 @@ func printSetupSummary(out io.Writer, record networkstate.Qualification, proof s
 	for _, client := range record.Clients {
 		fmt.Fprintf(out, "  %-9s %s %s %s\n", "", client.Provider, client.Client, client.Version)
 	}
-	fmt.Fprintf(out, "  %-9s %s allowed, denials enforced · gateway ready in %s · run %s\n", "smoke",
+	fmt.Fprintf(out, "  %-9s %s allowed and every refusal held · gateway ready in %s · run %s\n", "checked",
 		SmokeDomain, proof.ready.Round(time.Millisecond), proof.elapsed.Round(time.Millisecond))
 	fmt.Fprintf(out, "  %-9s %s\n", "record", record.ID)
 }

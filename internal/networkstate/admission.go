@@ -164,11 +164,11 @@ func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {
 	mode := egress.Open
 	if a.PolicyMode != nil {
 		if a.InvocationMode != nil {
-			return "", errors.New("network_policy_conflict: named API policies forbid invocation overrides")
+			return "", errors.New("a named API policy decides this session's egress, so --egress cannot override it (network_policy_conflict)")
 		}
 		mode = *a.PolicyMode
 		if remembered != nil && *remembered != egress.Open && *remembered != mode {
-			return "", errors.New("network_policy_conflict: reconcile the named policy and remembered project restriction on the host")
+			return "", errors.New("the named policy and what this project remembered disagree — settle them on the host (network_policy_conflict)")
 		}
 	} else {
 		selected := false
@@ -183,7 +183,7 @@ func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {
 		}
 	}
 	if mode != egress.Filtered && a.hasRules() {
-		return "", errors.New("network_policy_conflict: egress rules require filtered mode")
+		return "", errors.New("egress rules only apply in filtered mode — run with --egress filtered, or drop the rules (network_policy_conflict)")
 	}
 	return mode, nil
 }

@@ -99,7 +99,7 @@ func pendingNetworkRuns(evidence *networkstate.Evidence, runID string) ([]networ
 			return nil, err
 		}
 		if page.Incomplete {
-			return nil, errors.New("the retained network run inventory could not be read whole; recover a run by id")
+			return nil, errors.New("the list of recorded runs could not be read whole — recover one run by id instead")
 		}
 		for _, summary := range page.Executions {
 			if !summary.CleanupPending {
@@ -213,7 +213,7 @@ func recoverResource(ctx context.Context, evidence *networkstate.Evidence, docke
 	record networkstate.Execution, resource networkstate.Resource) (networkstate.Execution, bool, error) {
 	ref := networkResourceRef(record, resource.Role)
 	if ref.Name == "" {
-		return record, false, errors.New("the run recorded no exact identity for this resource")
+		return record, false, errors.New("this run recorded no exact id for that container or volume, so coop will not remove anything by guess")
 	}
 	present, id := false, ""
 	var err error

@@ -120,7 +120,7 @@ func CheckPathExposure(path string, exposed []string) error {
 			return fmt.Errorf("network state mount isolation: %w", err)
 		}
 		if contains(source, canonical) || contains(canonical, source) {
-			return errors.New("network authority must be outside every agent mount")
+			return errors.New("coop's network records must live outside every directory an agent can reach")
 		}
 		// Check both directions: the mount may be an alias of an authority
 		// ancestor OR a file/future descendant below an aliased authority root.
@@ -130,7 +130,7 @@ func CheckPathExposure(path string, exposed []string) error {
 				return fmt.Errorf("network state mount isolation: %w", err)
 			}
 			if overlaps {
-				return errors.New("network authority must be outside every agent mount")
+				return errors.New("coop's network records must live outside every directory an agent can reach")
 			}
 		}
 	}
@@ -141,11 +141,11 @@ func CheckPathExposure(path string, exposed []string) error {
 // Raw '..' is refused: cleaning it before resolving parent links changes meaning.
 func canonicalPath(path string) (string, error) {
 	if !filepath.IsAbs(path) {
-		return "", errors.New("network authority paths must be absolute")
+		return "", errors.New("the path for coop's network records must be absolute")
 	}
 	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
 		if part == ".." {
-			return "", errors.New("network authority paths cannot contain parent traversal")
+			return "", errors.New("the path for coop's network records cannot contain a .. segment")
 		}
 	}
 	probe := filepath.Clean(path)
@@ -207,7 +207,7 @@ func aliasesAncestor(source, path string) (bool, error) {
 func privateInfo(info os.FileInfo, dir bool) error {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || stat.Uid != uint32(os.Getuid()) || info.Mode().Perm()&0o077 != 0 || info.Mode()&os.ModeSymlink != 0 || (dir && !info.IsDir()) || (!dir && !info.Mode().IsRegular()) {
-		return errors.New("network state must be owner-private regular files and directories")
+		return errors.New("coop's network records must be plain files and directories only you can read")
 	}
 	return nil
 }
@@ -230,7 +230,7 @@ func (s *Store) CheckExposure(exposed []string) error {
 func (s *Store) authorityAvailable() error {
 	current, err := s.read("owner.key", 32)
 	if err != nil || len(s.key) != 32 || !hmac.Equal(current, s.key) {
-		return errors.New("network owner key missing or changed; new authority is unavailable")
+		return errors.New("the key protecting coop's network records is missing or changed, so nothing new can be remembered")
 	}
 	return nil
 }
@@ -462,13 +462,13 @@ func (a *Approval) checkDirectory(canonical string, info os.FileInfo) error {
 	}
 	device, inode, ok := directoryIdentity(info)
 	if !ok {
-		return errors.New("network approval cannot read the project directory identity at " + canonical)
+		return errors.New("the project directory at " + canonical + " could not be read")
 	}
 	if a.Inode == 0 {
-		return errors.New("the approval for " + canonical + " predates project directory identity; review it with `coop net approve`")
+		return errors.New("the approval for " + canonical + " was remembered by an older coop — review it with 'coop net approve'")
 	}
 	if a.Device != device || a.Inode != inode {
-		return errors.New("the project directory at " + canonical + " was replaced since its approval; review it with `coop net approve`")
+		return errors.New("the project directory at " + canonical + " was replaced since it was approved — review it with 'coop net approve'")
 	}
 	return nil
 }
@@ -556,7 +556,7 @@ func (s *Store) checkRequests(approval *Approval, requests []egress.Rule, bundle
 			}
 		}
 		if !found {
-			return nil, errors.New("network_approval_required: optional feature expansion changed")
+			return nil, errors.New("the optional provider features changed since they were approved — run 'coop net approve' (network_approval_required)")
 		}
 	}
 	return approval, nil
@@ -573,7 +573,7 @@ func checkRequestEnvelope(approval *Approval, requests []egress.Rule) ([]egress.
 		return rules, nil
 	} // sticky posture survives YAML deletion.
 	if approval == nil || approval.Posture != egress.Filtered {
-		return nil, errors.New("network_approval_required: review project requests with coop net approve")
+		return nil, errors.New("this project's egress rules were never approved — run 'coop net approve' (network_approval_required)")
 	}
 	for _, request := range rules {
 		found := false
@@ -584,7 +584,7 @@ func checkRequestEnvelope(approval *Approval, requests []egress.Rule) ([]egress.
 			}
 		}
 		if !found {
-			return nil, errors.New("network_approval_required: project request exceeds the approved envelope")
+			return nil, errors.New("this project asks for more than what was approved — run 'coop net approve' (network_approval_required)")
 		}
 	}
 	return rules, nil

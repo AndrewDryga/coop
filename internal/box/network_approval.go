@@ -147,7 +147,7 @@ func ReviewProjectNetwork(cfg *config.Config, repo string, explicit *egress.Mode
 	}
 	for _, rule := range p.Box.EgressRules {
 		if rule.To.Provider != "" {
-			return nil, errors.New("optional provider features have no reviewed expansion in this release; a selected agent's core endpoints are captured automatically at launch")
+			return nil, errors.New("this release has no optional provider features to approve — an agent's core endpoints are allowed automatically, so drop the provider rule")
 		}
 	}
 	// The same capability gate a launch applies, applied BEFORE the rule is
@@ -196,7 +196,7 @@ func (a *ProjectNetworkApproval) After() *networkstate.Approval  { return a.revi
 // remembering something nobody saw.
 func (a *ProjectNetworkApproval) Commit(ctx context.Context) error {
 	if a == nil || a.store == nil || a.used {
-		return errors.New("this network approval review was already used")
+		return errors.New("this approval was already answered")
 	}
 	a.used = true
 	return a.store.Approve(ctx, a.project, a.mode, a.requests, nil, a.services, a.review.Digest)
@@ -288,7 +288,7 @@ func checkApprovedServices(approval *networkstate.Approval, composeFile, repoRoo
 	}
 	for _, name := range names {
 		if digests[name] != approval.Services[name] {
-			return fmt.Errorf("compose service %q changed since it was approved; review it with `coop net approve`", name)
+			return fmt.Errorf("the Compose service %q changed since it was approved — review it with 'coop net approve'", name)
 		}
 	}
 	return nil

@@ -116,7 +116,7 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-			} else if err == nil || !strings.Contains(err.Error(), "run `coop net setup`") {
+			} else if err == nil || !strings.Contains(err.Error(), "run 'coop net setup'") {
 				// Filtered resolution is proved by the refusal that follows it:
 				// there is no completed setup on this host.
 				t.Fatal("filtered resolution did not reach qualification matching", err)
@@ -178,7 +178,7 @@ func TestAdmitNetworkRefusesAProjectDockerfileInFilteredMode(t *testing.T) {
 			writeCopyFixture(t, filepath.Join(repo, ".agent", "Dockerfile"), "FROM scratch\n")
 			filtered := egress.Filtered
 			capture, err := admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: &filtered})
-			if capture != nil || err == nil || !strings.Contains(err.Error(), "not supported in filtered mode yet") {
+			if capture != nil || err == nil || !strings.Contains(err.Error(), "this project's .agent/Dockerfile cannot be used yet") {
 				t.Fatal("project image reached a filtered launch", err)
 			}
 			if _, err := os.Stat(root); !os.IsNotExist(err) {
@@ -205,7 +205,7 @@ func TestAdmitNetworkClassifiesOperatorInputBeforeCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := admitFixture(t, cfg, repo, NetworkAdmission{RulesFile: outside}); err == nil ||
-		!strings.Contains(err.Error(), "run `coop net setup`") {
+		!strings.Contains(err.Error(), "run 'coop net setup'") {
 		t.Fatal("an operator rules file did not grant its own authority", err)
 	}
 }

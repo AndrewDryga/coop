@@ -65,7 +65,9 @@ func TestNetworkLogPrintsBetweenIterationsNotDuringOne(t *testing.T) {
 	}
 	out := captureStderr(t, log.finishIteration)
 	for _, want := range []string{
-		"network: refused 2 destinations in iteration 1: a.example (dns) ×4, b.example (tls)",
+		"iteration 1 — 2 destinations were refused",
+		"a.example (dns) ×4",
+		"b.example (tls)",
 		"network alert: denial_burst (warning)",
 		"coop net explain ev-9 --run run-1",
 	} {
@@ -88,7 +90,7 @@ func TestNetworkLogPrintsBetweenIterationsNotDuringOne(t *testing.T) {
 // must cost zero lines — per iteration and at the close.
 func TestNetworkLogIsSilentWhenNothingWasRefused(t *testing.T) {
 	log := newNetworkLog()
-	log.record(box.NetworkReport{RunID: "run-1", Allowed: "allowed traffic: 3 connection(s)"})
+	log.record(box.NetworkReport{RunID: "run-1", Allowed: "allowed: 3 connections, 0 B sent, 0 B received"})
 	if out := captureStderr(t, log.finishIteration); out != "" {
 		t.Errorf("a clean iteration printed %q", out)
 	}
@@ -112,7 +114,7 @@ func TestNetworkLogSummaryRanksAndPointsAtTheReceipts(t *testing.T) {
 	log.finishIteration()
 
 	out := captureStderr(t, log.summary)
-	if !strings.Contains(out, "network: 2 filtered runs refused 4 destinations, 1 alert") {
+	if !strings.Contains(out, "4 destinations were refused across 2 filtered runs, with 1 alert") {
 		t.Errorf("summary headline missing from %q", out)
 	}
 	// Ranked by count across the whole run, bounded to three, ties by first seen.
@@ -137,11 +139,16 @@ func TestNetworkIterationLineStaysBounded(t *testing.T) {
 		report.Denials = append(report.Denials, box.NetworkDenial{Destination: name, Basis: "dns", Count: 1})
 	}
 	out := captureStderr(t, func() { printNetworkIteration(report, 7) })
-	if !strings.Contains(out, "refused 8 destinations in iteration 7") {
-		t.Errorf("line %q does not count the omitted destinations", out)
+	if !strings.Contains(out, "iteration 7 — 8 destinations were refused") {
+		t.Errorf("block %q does not count the omitted destinations", out)
 	}
-	if !strings.Contains(out, "a (dns), b (dns), c (dns), … 5 more") {
-		t.Errorf("line %q is not bounded to three named destinations", out)
+	for _, want := range []string{"a (dns)", "b (dns)", "c (dns)", "… and 5 more"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("block %q is missing %q", out, want)
+		}
+	}
+	if strings.Contains(out, "d (dns)") {
+		t.Errorf("block %q named more than three destinations", out)
 	}
 }
 

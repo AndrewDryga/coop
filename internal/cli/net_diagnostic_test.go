@@ -50,8 +50,8 @@ func TestWhyIsHypotheticalAndNamesItsProvenance(t *testing.T) {
 	var b bytes.Buffer
 	writeNetWhy(&b, ui.Palette{}, result)
 	text := b.String()
-	for _, want := range []string{"policy check (hypothetical)", "example.com tls/443", "yes —",
-		"granted by you (allow-domain)", "No DNS query, probe or connection was made"} {
+	for _, want := range []string{"Could run run1 reach example.com tls/443?", "yes (rule_allowed)",
+		"allowed by you (allow-domain)", "nothing was sent"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("why view is missing %q:\n%s", want, text)
 		}
@@ -79,9 +79,9 @@ func TestExplainRendersTheDraftRuleAsADraft(t *testing.T) {
 	var b bytes.Buffer
 	writeNetExplanation(&b, ui.Palette{}, result)
 	text := b.String()
-	for _, want := range []string{"refused (observed)", "example.org", "tls_denied", "draft, not a grant",
-		"egress_rules:", `domain: "example.org"`, "coop net approve", "applies to NEW runs",
-		"not that the access is needed", "today's policy was not substituted"} {
+	for _, want := range []string{"Refused in run run1", "example.org", "tls_denied", "To allow it, add this under box.egress_rules",
+		"egress_rules:", `domain: "example.org"`, "coop net approve", "applies to new runs",
+		"not proof the access is needed"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("explain view is missing %q:\n%s", want, text)
 		}
@@ -97,27 +97,27 @@ func TestExplainDistinguishesAnImmutableBoundaryFromThinEvidence(t *testing.T) {
 			Event: networkview.Denial{ID: netTestEventID, Kind: "dns_denied", Reason: reason, At: time.Unix(1, 0).UTC()}})
 		return b.String()
 	}
-	if !strings.Contains(render("protected_destination"), "No rule can grant this") {
+	if !strings.Contains(render("protected_destination"), "no rule can allow this one") {
 		t.Errorf("a protected destination was not called one:\n%s", render("protected_destination"))
 	}
 	thin := render("unapproved_name")
-	if !strings.Contains(thin, "does not establish a transport or port") {
+	if !strings.Contains(thin, "does not say whether the destination is TLS, or on which port") {
 		t.Errorf("a DNS refusal must not claim TLS/443 was observed:\n%s", thin)
 	}
-	if strings.Contains(thin, "No rule can grant this") {
+	if strings.Contains(thin, "no rule can allow this one") {
 		t.Errorf("a policy gap was described as an immutable boundary:\n%s", thin)
 	}
-	if !strings.Contains(render("upstream_unreachable"), "availability failure") {
+	if !strings.Contains(render("upstream_unreachable"), "failed to work, it was not refused by a rule") {
 		t.Errorf("an availability failure was described as a denial")
 	}
 }
 
 func TestOriginTextNamesWhereAGrantCameFrom(t *testing.T) {
 	cases := map[string]networkstate.PolicyOrigin{
-		"granted by you (allow-domain)":              {Kind: "operator", Name: "allow-domain"},
-		"requested by the project and approved":      {Kind: "project"},
-		"core endpoint for claude":                   {Kind: "provider", Provider: "claude", BundleVersion: "1"},
-		"MCP server emisar coop configured for this": {Kind: "mcp", Name: "emisar"},
+		"allowed by you (allow-domain)":          {Kind: "operator", Name: "allow-domain"},
+		"asked for by the project, and approved": {Kind: "project"},
+		"a core endpoint for claude":             {Kind: "provider", Provider: "claude", BundleVersion: "1"},
+		"the MCP server emisar coop set up":      {Kind: "mcp", Name: "emisar"},
 	}
 	for want, origin := range cases {
 		if got := netOriginText(origin); !strings.Contains(got, want) {

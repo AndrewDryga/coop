@@ -168,6 +168,22 @@ func Count(n int, singular string, plural ...string) string {
 	return fmt.Sprintf("%d %s", n, noun)
 }
 
+// Bytes renders a byte count the way a human reads a transfer: exact below a kilobyte, then one
+// decimal place — 773 B, 5.3 KB, 1.2 MB. Decimal units (1 KB = 1000 B), matching how network
+// traffic is normally quoted. Use it for a result a person skims; an exact audit number belongs
+// in the --json view, not in a line someone reads once.
+func Bytes(n uint64) string {
+	const unit = 1000
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	value, exp := float64(n)/unit, 0
+	for value >= unit && exp < 3 {
+		value, exp = value/unit, exp+1
+	}
+	return fmt.Sprintf("%.1f %s", value, [...]string{"KB", "MB", "GB", "TB"}[exp])
+}
+
 // Error prints a failure to stderr, led by a red ✗. It does not exit. The dispatcher routes every
 // returned error here, so a good message says what failed and how to fix it — not just what.
 func Error(format string, a ...any) {

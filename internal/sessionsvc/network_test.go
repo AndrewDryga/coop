@@ -173,13 +173,13 @@ func TestCreateRefusesWhenNetworkAdmissionFails(t *testing.T) {
 		Policy: "responder", Task: "refuse the posture",
 	})
 	if err == nil || session.CodeOf(err) != session.CodeNetworkUnavailable ||
-		!strings.Contains(err.Error(), "no completed network setup") {
+		!strings.Contains(err.Error(), "this host is not set up for filtered runs") {
 		t.Fatalf("create error = %v (code %q)", err, session.CodeOf(err))
 	}
 }
 
 var errNetworkFixture = &session.Error{
-	Code: session.CodeInvalidRequest, Detail: "no completed network setup matches this runtime",
+	Code: session.CodeInvalidRequest, Detail: "this host is not set up for filtered runs with this Docker and these agents",
 }
 
 // The child receives the capture from its host parent and nothing else. An open session must be
@@ -453,7 +453,7 @@ func admitTestNetworkSnapshot(t *testing.T, repo string, export bool) string {
 // boxNetworkReportFixture is one refused destination as the run summary groups it.
 func boxNetworkReportFixture() box.NetworkReport {
 	return box.NetworkReport{
-		RunID: "run-1", Allowed: "allowed traffic: 1 connection(s), sent 10 bytes, received 20 bytes",
+		RunID: "run-1", Allowed: "allowed: 1 connection, 10 B sent, 20 B received",
 		Denials: []box.NetworkDenial{{Destination: "blocked.example", Basis: "dns", Count: 3}},
 		Event:   "n1",
 	}

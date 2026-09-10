@@ -61,7 +61,7 @@ SAFETY — prove the box holds, catch committed secrets
   coop doctor                       attack the box, prove isolation holds
   coop check-secrets                scan the working tree for committed secrets
   coop net setup                    prepare restricted egress for this host
-  coop net                          egress posture + pending requests
+  coop net                          what this project may reach
   coop net ls                       the filtered runs recorded here
 
 SETUP & MAINTENANCE
@@ -663,22 +663,22 @@ coop doctor — prove the box's isolation: attack it, inside and from the host.
 
 coop net — restricted egress: only the destinations you allowed.
 
-  Usage: coop net                              this project's posture + requests
+  Usage: coop net                              what this project may reach
          coop net setup                        prepare this host, once
          coop net approve [--mode <m>]         review + remember the request
          coop net ls [--all] [--json]          the filtered runs recorded here
-         coop net inspect <run> [--json]       requested, effective, observed
+         coop net inspect <run> [--json]       what one run was allowed and did
          coop net watch <run> [--json]         follow a run until it seals
          coop net receipt <run> [--json]       the sealed receipt
-         coop net why <dest> --run <run>       would its policy have allowed it?
+         coop net why <dest> --run <run>       would that run have allowed it?
          coop net explain <event> --run <run>  why a refusal happened
          coop net recover <run>|--all          settle a run a crash interrupted
 
   'setup' prepares this host: it builds the pinned gateway and the locked
-  client image for your Docker daemon, then proves them with one smoke run
+  client image for your Docker daemon, then checks them with one real run
   (an allowed name works without proxy variables; a denied name, a raw IP,
   the metadata address and denied DNS are all refused) and records what it
-  proved. Run it once per machine, and again after a coop or Docker upgrade.
+  checked. Run it once per machine, and again after a coop or Docker upgrade.
 
   Then any launch can ask for it:
 
@@ -699,7 +699,7 @@ coop net — restricted egress: only the destinations you allowed.
       egress_rules:
         - to: {domain: "docs.example.com"}    # TLS, exact or *.wildcard
           protocol: tls
-          ports: [443, 8443]                  # any port but the captured 53
+          ports: [443, 8443]                  # any port but 53, the DNS one
         - to: {cidr: "10.42.9.0/24"}          # raw TCP/UDP to IPv4, not 443/53
           protocol: udp
           ports: [123]
@@ -716,21 +716,22 @@ coop net — restricted egress: only the destinations you allowed.
   unattended run can never approve itself. Approvals apply to NEW runs; boxes
   already running keep the policy they launched with.
 
-  'why' evaluates a destination against a run's captured policy without sending
-  a packet — a name is TLS on 443 unless '--port <n>' says otherwise, and an IP
-  address needs the transport too
+  'why' checks a destination against the rules ONE run started with, without
+  sending a packet — a name is TLS on 443 unless '--port <n>' says otherwise,
+  and an IP address needs the transport too
   ('--protocol tcp|udp --port <n>', or '--icmp' for echo-request);
-  'explain' opens a refusal that actually happened, with the draft rule
-  a human could add. A receipt withholds destination names by default (even a
-  refused name can encode a secret) — 'receipt --destinations' is you asking for
-  them on your own machine. Unknown means unknown: a metric nobody measured is
-  never shown as zero. Raw tcp/udp/icmp refusals are COUNTED by the kernel, not
-  attributed to a destination — there is no event for 'explain' to open.
+  'explain' opens a refusal that actually happened, with the rule you could
+  add. A receipt holds back destination names by default (even a refused name
+  can carry a secret) — 'receipt --destinations' is you asking for them on your
+  own machine. Unknown means unknown: a metric nobody measured is never shown
+  as zero. Raw tcp/udp/icmp refusals are COUNTED by the kernel and never tied
+  to a destination — there is nothing for 'explain' to open.
 
   Supported today: TLS to exact and *.wildcard names on any port the rule names
   (443 by default, 853 or 8443 just as well); raw tcp/udp to IPv4 addresses and
-  CIDRs on any port except the captured 443 and 53; ICMP echo-request to IPv4;
-  published serve.ports; one Compose sidecar per approved 'service:' grant.
+  CIDRs on any port except 443 and 53, which the gateway takes; ICMP
+  echo-request to IPv4; published serve.ports; one Compose sidecar per approved
+  'service:' rule.
   Refused with a message: IPv6 destinations, TLS on 53, a project Dockerfile,
   COOP_IMAGE and non-Docker runtimes. See docs/networking.md for the full
   matrix.

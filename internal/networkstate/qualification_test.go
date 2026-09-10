@@ -369,3 +369,20 @@ func TestQualifiedClientsRejectInvalidOrRepeatedBuilds(t *testing.T) {
 		}
 	}
 }
+
+func TestQualificationsSkipARecordFromARetiredContract(t *testing.T) {
+	store := openStore(t)
+	stale := []byte(`{"version":2,"id":"` + strings.Repeat("a", 64) + `","contract":"visible-sni-tls443-v2","candidate":{},"clients":[],"smoke":{},"completed_at":"2026-09-09T00:00:00Z"}`)
+	if err := store.publish("qualification-"+strings.Repeat("a", 64)+".json", stale, false); err != nil {
+		t.Fatal(err)
+	}
+	records, err := store.Qualifications(context.Background())
+	if err != nil {
+		t.Fatalf("a retired-contract record aborted the listing: %v", err)
+	}
+	for _, q := range records {
+		if q.Contract != QualificationContract {
+			t.Fatalf("listing returned a retired-contract record %q", q.Contract)
+		}
+	}
+}

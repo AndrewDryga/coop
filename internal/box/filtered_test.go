@@ -757,7 +757,7 @@ func TestFilteredMountsRefuseTheRuntimeControlSurface(t *testing.T) {
 			if err == nil {
 				t.Fatal("the runtime control surface was mounted into a filtered box")
 			}
-			if !strings.Contains(err.Error(), "control surface") {
+			if !strings.Contains(err.Error(), "reaches Docker or the kernel") {
 				t.Fatalf("the refusal does not name the reason: %v", err)
 			}
 		})
@@ -772,7 +772,7 @@ func TestFilteredMountsRefuseTheRuntimeControlSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.validateMounts([]string{"-v", real + ":/x:ro"}, nil, nil); err == nil || !strings.Contains(err.Error(), "control surface") {
+	if err := f.validateMounts([]string{"-v", real + ":/x:ro"}, nil, nil); err == nil || !strings.Contains(err.Error(), "reaches Docker or the kernel") {
 		t.Fatalf("the bound daemon socket's directory was mountable: %v", err)
 	}
 }

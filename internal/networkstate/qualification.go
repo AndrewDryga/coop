@@ -287,7 +287,7 @@ func canonicalQualification(q Qualification) (Qualification, error) {
 	if q.Version != 1 || q.Contract != QualificationContract || q.CompletedAt.IsZero() ||
 		!lowerHex(q.Smoke.RunID, 32) || !lowerHex(q.Smoke.Epoch, 32) ||
 		!lowerHex(q.Smoke.ReceiptDigest, 64) || !lowerHex(q.Smoke.EvidenceDigest, 64) {
-		return Qualification{}, errors.New("invalid network qualification identity or bounds")
+		return Qualification{}, errors.New("a setup record on this host is unreadable — run 'coop net setup'")
 	}
 	var err error
 	if q.Candidate, err = canonicalCandidate(q.Candidate); err != nil {
@@ -310,7 +310,7 @@ func (s *Store) qualificationID(q Qualification) string {
 
 func (s *Store) Qualification(id string) (Qualification, error) {
 	if !lowerHex(id, 64) {
-		return Qualification{}, errors.New("invalid network qualification reference")
+		return Qualification{}, errors.New("that is not a setup record id")
 	}
 	if err := s.intactAuthority(); err != nil {
 		return Qualification{}, err
@@ -325,7 +325,7 @@ func (s *Store) Qualification(id string) (Qualification, error) {
 	}
 	canonical, err := canonicalQualification(q)
 	if err != nil || q.ID != id || !equalJSON(canonical, q) || !hmac.Equal([]byte(s.qualificationID(q)), []byte(id)) {
-		return Qualification{}, errors.New("invalid owner-bound network qualification")
+		return Qualification{}, errors.New("a setup record on this host is unreadable, or was not written by this coop — run 'coop net setup'")
 	}
 	if err := s.confirmPublication(); err != nil {
 		return Qualification{}, err
@@ -367,6 +367,14 @@ func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
 		if !ok || !lowerHex(id, 64) {
 			continue
 		}
+		// A record from an earlier enforcement contract is not this host's setup: its
+		// canonical frame and owner-bound id no longer verify under the current rules.
+		// Skip it instead of failing the whole listing, so one retired record cannot
+		// take every net verb down; the current-contract check in RequireLaunch still
+		// refuses to launch on it and points at `coop net setup`.
+		if !s.qualificationIsCurrent(name) {
+			continue
+		}
 		q, err := s.Qualification(id)
 		if err != nil {
 			return nil, err
@@ -385,7 +393,7 @@ func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
 // the image it will launch contains that provider's selected client at all.
 func (q Qualification) RequireLaunch(policy egress.Snapshot) error {
 	if q.Contract != QualificationContract {
-		return errors.New("network setup predates this release's enforcement contract; run `coop net setup`")
+		return errors.New("this host was set up by an older coop — run 'coop net setup'")
 	}
 	if err := policy.RequireSupported(); err != nil {
 		return err
@@ -394,7 +402,7 @@ func (q Qualification) RequireLaunch(policy egress.Snapshot) error {
 		if !slices.ContainsFunc(q.Clients, func(client QualifiedClient) bool {
 			return client.Provider == dependency.Provider && client.Client == dependency.Client
 		}) {
-			return errors.New("the qualified client image contains no " + dependency.Provider + " " + string(dependency.Client) + " build")
+			return errors.New("the box image this host was set up with has no " + dependency.Provider + " " + string(dependency.Client) + " in it — run 'coop net setup'")
 		}
 	}
 	return nil
@@ -402,4 +410,17 @@ func (q Qualification) RequireLaunch(policy egress.Snapshot) error {
 
 func dependencyReference(d egress.Dependency) string {
 	return d.Provider + "@" + d.Version + "/" + string(d.Client) + "/" + d.Backend + "/" + d.AuthMode
+}
+
+// qualificationIsCurrent reports whether the record file names the current contract.
+// It reads only the contract field; verification happens in Qualification.
+func (s *Store) qualificationIsCurrent(name string) bool {
+	data, err := s.read(name, maxQualificationBytes)
+	if err != nil {
+		return false
+	}
+	var head struct {
+		Contract string `json:"contract"`
+	}
+	return json.Unmarshal(data, &head) == nil && head.Contract == QualificationContract
 }

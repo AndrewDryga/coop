@@ -22,18 +22,18 @@ func parseNetApproveArgs(args []string) (*egress.Mode, error) {
 			return nil, unknownErr("net approve flag", args[i], []string{"--mode"})
 		}
 		if mode != nil {
-			return nil, errors.New("net approve accepts --mode once")
+			return nil, errors.New("coop net approve takes --mode once")
 		}
 		if !inline {
 			i++
 			if i == len(args) {
-				return nil, errors.New("net approve --mode needs open, filtered or none")
+				return nil, errors.New("coop net approve --mode needs open, filtered or none")
 			}
 			value = args[i]
 		}
 		parsed, err := egress.ParseMode(value)
 		if err != nil {
-			return nil, fmt.Errorf("net approve --mode: %w", err)
+			return nil, fmt.Errorf("coop net approve --mode: %w", err)
 		}
 		mode = &parsed
 	}
@@ -49,7 +49,7 @@ func (a *app) cmdNetApprove(args []string) (int, error) {
 		return 2, err
 	}
 	if !ui.IsTerminal(os.Stdin) || !ui.IsTerminal(os.Stderr) {
-		return 1, errors.New("net approve needs an interactive terminal — an unattended run cannot approve its own network access")
+		return 1, errors.New("coop net approve needs a terminal to ask you — an unattended run cannot approve its own network access")
 	}
 	repo, err := netProject(a.cfg.RepoOverride)
 	if err != nil {
@@ -60,14 +60,21 @@ func (a *app) cmdNetApprove(args []string) (int, error) {
 		return 1, err
 	}
 	err = confirmNetApproval(context.Background(), review, os.Stderr, func() bool {
-		return ui.Confirm("Remember this exact network approval for new runs?", false)
+		return ui.Confirm(netApprovePrompt, false)
 	})
 	if err = errors.Join(err, review.Close()); err != nil {
 		return 1, err
 	}
-	ui.OK("network approval saved for new runs — boxes already running are unchanged")
+	ui.OK("%s", netApproveRemembered)
 	return 0, nil
 }
+
+// The question and the answer carry the one limit that matters — an approval
+// applies to NEW runs — so the review above it can be the diff and nothing else.
+const (
+	netApprovePrompt     = "Remember this for new runs?"
+	netApproveRemembered = "remembered — applies to new runs; boxes already running keep their current rules"
+)
 
 // netApprovalReview is what the confirmation needs from a review: the exact
 // before and after, and one commit that consumes it.
@@ -82,47 +89,47 @@ type netApprovalReview interface {
 func confirmNetApproval(ctx context.Context, review netApprovalReview, out io.Writer, confirm func() bool) error {
 	after := review.After()
 	if after == nil {
-		return errors.New("this network approval review produced nothing to approve")
+		return errors.New("there is nothing to approve for this project")
 	}
 	var b strings.Builder
 	p := ui.For(os.Stderr)
-	fmt.Fprintf(&b, "%s\n", p.Bold(p.Cyan("network approval")))
-	field := func(label, value string) { netField(&b, p, netLabelWidth, label, value) }
-	field("Project", review.Project())
-	before, current := review.Before(), "nothing remembered yet"
-	if before != nil {
-		current = string(before.Posture)
+	block := newNetBlock(&b, p, "Network approval for "+review.Project())
+	before := review.Before()
+	switch {
+	case before == nil:
+		block.field("Egress", string(after.Posture)+" (nothing was remembered before)")
+	case before.Posture == after.Posture:
+		block.field("Egress", string(after.Posture)+" (unchanged)")
+	default:
+		block.field("Egress", string(before.Posture)+"  →  "+string(after.Posture))
 	}
-	field("Egress", current+"  →  "+string(after.Posture))
 	add, remove := approvalRuleDiff(before, after)
 	switch {
 	case len(add) == 0 && len(remove) == 0 && len(after.Envelope) == 0:
-		field("Rules", "none — this project asks for no destinations of its own")
+		block.field("Rules", "none — this project asks for no destinations of its own")
 	case len(add) == 0 && len(remove) == 0:
-		field("Rules", ui.Count(len(after.Envelope), "rule")+", unchanged")
+		block.field("Rules", ui.Count(len(after.Envelope), "rule")+", unchanged")
 	default:
-		field("Rules", ui.Count(len(after.Envelope), "rule")+" after this change")
+		block.field("Rules", ui.Count(len(after.Envelope), "rule")+" after this change")
 	}
 	for _, rule := range add {
-		netRow(&b, p.Green("+ "+box.NetworkRuleText(rule)))
+		block.row(p.Green("+ " + box.NetworkRuleText(rule)))
 	}
 	for _, rule := range remove {
-		netRow(&b, p.Red("- "+box.NetworkRuleText(rule)))
+		block.row(p.Red("- " + box.NetworkRuleText(rule)))
 	}
 	if before != nil && len(before.Features) != 0 && len(after.Features) == 0 {
-		field("Features", "the previously approved optional provider features are removed")
+		block.field("Dropped", "the optional provider features approved before")
 	}
-	fmt.Fprintln(&b, "\nThis remembers the request shown above, OUTSIDE the repository, for NEW runs only.")
-	fmt.Fprintln(&b, "Running boxes are unchanged. Nothing is tested or connected to.")
+	// One line, only where the word itself would mislead: "open" and "none" are
+	// not degrees of filtering, and a reader about to type y should know that.
 	switch after.Posture {
 	case egress.Open:
-		fmt.Fprintln(&b, "Open means unrestricted networking: the rule list is not a filter.")
+		block.field("Note", "open is no filtering at all — every destination is reachable")
 	case egress.None:
-		fmt.Fprintln(&b, "None means offline, including provider and MCP connections.")
-	default:
-		fmt.Fprintln(&b, "A selected agent's core endpoints are captured automatically at each launch;")
-		fmt.Fprintln(&b, "a filtered launch still needs 'coop net setup' on this host.")
+		block.field("Note", "none is offline — no provider or MCP connections either")
 	}
+	block.flush(&b)
 	if _, err := io.WriteString(out, b.String()); err != nil {
 		return err
 	}
@@ -130,7 +137,7 @@ func confirmNetApproval(ctx context.Context, review netApprovalReview, out io.Wr
 		return err
 	}
 	if !confirm() {
-		return errors.New("network approval cancelled — nothing changed")
+		return errors.New("cancelled — nothing was remembered")
 	}
 	return review.Commit(ctx)
 }

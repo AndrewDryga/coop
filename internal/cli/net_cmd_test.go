@@ -109,14 +109,14 @@ func TestWatchCoalescesUntilTheReceiptSeals(t *testing.T) {
 		t.Fatalf("runNetWatch = (%d, %v)", code, err)
 	}
 	text := out.String()
-	if blocks := strings.Count(text, "network run run1"); blocks != 2 {
+	if blocks := strings.Count(text, "Network run run1"); blocks != 2 {
 		t.Errorf("printed %d full blocks, want the opening one and the sealed one:\n%s", blocks, text)
 	}
 	if !strings.Contains(text, "refused example.org (unapproved_name)") {
 		t.Errorf("the refusal was not appended:\n%s", text)
 	}
-	if !strings.Contains(text, "sealed final, partial") {
-		t.Errorf("final + partial must not read as clean evidence:\n%s", text)
+	if !strings.Contains(text, "final, partial") {
+		t.Errorf("final + partial must not read as a complete record:\n%s", text)
 	}
 }
 
@@ -131,7 +131,7 @@ func TestWatchExitsImmediatelyOnAnAlreadySealedRun(t *testing.T) {
 	if code != 0 || err != nil {
 		t.Fatalf("runNetWatch = (%d, %v)", code, err)
 	}
-	if strings.Count(out.String(), "network run run1") != 1 {
+	if strings.Count(out.String(), "Network run run1") != 1 {
 		t.Errorf("a sealed run printed more than its one block:\n%s", out.String())
 	}
 }
@@ -190,7 +190,7 @@ func TestWatchDeltaCoalescesRepeatsAndBoundsItself(t *testing.T) {
 // The two counts are different units and are never added together. A run
 // nothing observed says so rather than showing a pair of zeros.
 func TestRunOutcomeCountsAllowedAndRefusedSeparately(t *testing.T) {
-	if got := netRunOutcome(networkstate.Inspection{}); got != "not observed" {
+	if got := netRunOutcome(networkstate.Inspection{}); got != "nothing observed" {
 		t.Errorf("unobserved run = %q", got)
 	}
 	connections := networkview.Count(3)
@@ -212,13 +212,13 @@ func TestInspectionNeverPrintsAnUnmeasuredZero(t *testing.T) {
 	var b bytes.Buffer
 	writeNetInspection(&b, ui.Palette{}, "run1", networkstate.Inspection{Freshness: networkstate.FreshnessNotObserved})
 	text := b.String()
-	for _, want := range []string{"UNKNOWN (no counters retained)", "never observed", "none sealed yet",
+	for _, want := range []string{"UNKNOWN — nothing was recorded for this run", "never — nothing was recorded for this run", "not sealed yet",
 		"enforcer UNKNOWN", "coop net inspect run1 --json"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("inspection is missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "sent 0 bytes") {
+	if strings.Contains(text, "0 B sent") {
 		t.Errorf("inspection fabricated a zero total:\n%s", text)
 	}
 }
@@ -231,8 +231,8 @@ func TestReceiptViewSeparatesFinalityFromCompletenessAndSaysWhatIsWithheld(t *te
 	var b bytes.Buffer
 	writeNetReceipt(&b, ui.Palette{}, "run1", receipt)
 	text := b.String()
-	for _, want := range []string{"final (completeness partial)", "destination withheld (opaque)", "--destinations",
-		"UNKNOWN (no counters were sealed with this receipt)"} {
+	for _, want := range []string{"final, partial", "name withheld (opaque)", "--destinations",
+		"UNKNOWN — no counters were sealed with this receipt"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("receipt view is missing %q:\n%s", want, text)
 		}
@@ -283,9 +283,9 @@ func TestPostureViewNamesTheDecisionAndWhatIsPending(t *testing.T) {
 	writeNetPosture(&b, ui.Palette{}, posture, []netRun{{ExecutionSummary: networkstate.ExecutionSummary{ID: "r1",
 		StartedAt: time.Unix(0, 0).UTC()}, Outcome: "1 allowed, 5 refused"}})
 	text := b.String()
-	for _, want := range []string{"filtered (from the remembered approval)", "+ docs.example.com tls/443",
-		"- example.com tls/443", "a filtered launch refuses until you run 'coop net approve'",
-		"set up 1970-01-01T00:00:00Z", "r1", "no final receipt", "1 allowed, 5 refused"} {
+	for _, want := range []string{"filtered (remembered for this project)", "+ docs.example.com tls/443",
+		"- example.com tls/443", "a filtered run refuses until you run 'coop net approve'",
+		"set up 1970-01-01T00:00:00Z", "r1", "no receipt yet", "1 allowed, 5 refused"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("posture view is missing %q:\n%s", want, text)
 		}
@@ -298,7 +298,7 @@ func TestPostureViewGuidesAnEmptyHostAndAStaleRecord(t *testing.T) {
 	var fresh bytes.Buffer
 	writeNetPosture(&fresh, ui.Palette{}, box.NetworkPosture{Project: "/p", Mode: egress.Open, Source: box.PostureFromDefault}, nil)
 	for _, want := range []string{"nothing remembered for this project yet", "no box.egress_rules",
-		"run 'coop net setup'", "none recorded for this project"} {
+		"run 'coop net setup'", "Recent runs   none yet"} {
 		if !strings.Contains(fresh.String(), want) {
 			t.Errorf("empty-host view is missing %q:\n%s", want, fresh.String())
 		}
@@ -306,7 +306,7 @@ func TestPostureViewGuidesAnEmptyHostAndAStaleRecord(t *testing.T) {
 	var stale bytes.Buffer
 	writeNetPosture(&stale, ui.Palette{}, box.NetworkPosture{Project: "/p", Mode: egress.Filtered, Source: box.PostureFromProject,
 		Setup: &networkstate.Qualification{Contract: "some-older-contract"}}, nil)
-	if !strings.Contains(stale.String(), "another contract (some-older-contract)") {
+	if !strings.Contains(stale.String(), "set up by an older coop — run 'coop net setup' again") {
 		t.Errorf("stale-record view:\n%s", stale.String())
 	}
 }

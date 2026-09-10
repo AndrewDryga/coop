@@ -157,7 +157,7 @@ func TestNetworkAuthorityRootInsideAnAgentMountRefusesBeforeState(t *testing.T) 
 		_ = capture.Close()
 		t.Fatal("authority inside an agent mount was accepted")
 	}
-	if !strings.Contains(err.Error(), "outside every agent mount") {
+	if !strings.Contains(err.Error(), "outside every directory an agent can reach") {
 		t.Fatal("wrong refusal", err)
 	}
 	root, err := NetworkStatePath()

@@ -14,7 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 )
 
-var ErrApprovalChanged = errors.New("network approval changed after review; review the current request again")
+var ErrApprovalChanged = errors.New("the request changed while you were reviewing it — run 'coop net approve' again")
 
 // ApprovalReview is the plain before/after diff a host operator reviews. Digest
 // binds that exact view — the project identity, the stored approval it started
@@ -45,7 +45,7 @@ func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egre
 	}
 	identity, err := os.Stat(resolved)
 	if err != nil || !identity.IsDir() {
-		return ApprovalReview{}, nil, errors.New("network approval requires an existing project directory")
+		return ApprovalReview{}, nil, errors.New("this project directory does not exist")
 	}
 	id, err := s.projectID(resolved)
 	if err != nil {
@@ -59,7 +59,7 @@ func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egre
 		return ApprovalReview{}, nil, err
 	}
 	if mode != egress.Filtered && len(rules) != 0 {
-		return ApprovalReview{}, nil, errors.New("remove project rules before approving open/none posture")
+		return ApprovalReview{}, nil, errors.New("remove box.egress_rules from .agent/project.yaml before approving open or none — rules only apply in filtered mode")
 	}
 	selected, err := egress.SelectedBundles(bundles)
 	if err != nil {
@@ -71,7 +71,7 @@ func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egre
 	}
 	device, inode, ok := directoryIdentity(identity)
 	if !ok {
-		return ApprovalReview{}, nil, errors.New("network approval cannot read the project directory identity")
+		return ApprovalReview{}, nil, errors.New("this project directory could not be read")
 	}
 	after := &Approval{Version: 1, ProjectID: id, Posture: mode, Envelope: rules, Device: device, Inode: inode, Features: features}
 	if after.Services, err = approvedServices(rules, services); err != nil {

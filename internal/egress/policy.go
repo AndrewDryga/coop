@@ -318,7 +318,7 @@ func canonicalRule(rule Rule) (Rule, error) {
 			}
 		}
 		if err != nil {
-			return Rule{}, errors.New("ip/cidr must be canonical, unmapped and narrower than /0")
+			return Rule{}, errors.New("ip/cidr must be an exact IPv4 address or network, narrower than /0")
 		}
 		rule.To.IP, rule.To.CIDR = "", prefix.String()
 	}

@@ -94,17 +94,17 @@ func TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore(t *testi
 	}{
 		// Admitted for this project: the snapshot loads, and the launch is refused one step
 		// later, on the host setup record it names — which is what proves it got that far.
-		"authentic reference": {capture: base, reject: "qualification"},
+		"authentic reference": {capture: base, reject: "no longer set up the way this session was started"},
 		"another project": {capture: func() SessionNetworkCapture {
 			c := base
 			c.Project = other
 			return c
-		}(), reject: "snapshot"},
+		}(), reject: "network rules are not on this host"},
 		"unadmitted policy": {capture: func() SessionNetworkCapture {
 			c := base
 			c.Fingerprint = strings.Repeat("d", 64)
 			return c
-		}(), reject: "snapshot"},
+		}(), reject: "network rules are not on this host"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			encoded, err := test.capture.Encode()
@@ -118,7 +118,7 @@ func TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore(t *testi
 				t.Fatalf("%s produced a capture", name)
 			}
 			if err == nil || !strings.Contains(err.Error(), test.reject) {
-				t.Fatalf("%s error = %v, want one naming the %s", name, err, test.reject)
+				t.Fatalf("%s error = %v, want one saying %q", name, err, test.reject)
 			}
 		})
 	}

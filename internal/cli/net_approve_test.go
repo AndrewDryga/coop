@@ -55,10 +55,21 @@ func TestApprovalPreviewShowsTheDiffAndItsLimits(t *testing.T) {
 		t.Fatalf("confirmNetApproval: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"/private/tmp/project", "filtered  →  filtered", "+ new.example tls/443",
-		"- old.example tls/443", "OUTSIDE the repository", "NEW runs only", "coop net setup"} {
+	for _, want := range []string{"/private/tmp/project", "filtered (unchanged)", "+ new.example tls/443",
+		"- old.example tls/443"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("approval preview is missing %q:\n%s", want, text)
+		}
+	}
+	// The review is the diff; the one limit that used to be four lines of
+	// disclaimer under it now rides on the question and the answer.
+	if !strings.Contains(netApprovePrompt, "new runs") || !strings.Contains(netApproveRemembered, "boxes already running") {
+		t.Errorf("the approval question and answer no longer say what an approval applies to: %q / %q",
+			netApprovePrompt, netApproveRemembered)
+	}
+	for _, unwanted := range []string{"OUTSIDE the repository", "Nothing is tested", "captured automatically"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("approval preview still carries the disclaimer %q:\n%s", unwanted, text)
 		}
 	}
 	if review.committed != 1 {
@@ -87,8 +98,8 @@ func TestApprovalCancelledLeavesNothingBehind(t *testing.T) {
 
 func TestApprovalNamesWhatEachPostureMeans(t *testing.T) {
 	for posture, want := range map[egress.Mode]string{
-		egress.Open: "the rule list is not a filter",
-		egress.None: "offline, including provider and MCP connections",
+		egress.Open: "open is no filtering at all — every destination is reachable",
+		egress.None: "none is offline — no provider or MCP connections either",
 	} {
 		review := &fakeApprovalReview{mode: posture, after: &networkstate.Approval{Posture: posture}}
 		var out bytes.Buffer

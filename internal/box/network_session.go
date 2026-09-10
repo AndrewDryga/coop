@@ -40,11 +40,11 @@ type SessionNetworkCapture struct {
 // Encode renders the environment value for one child launch.
 func (c SessionNetworkCapture) Encode() (string, error) {
 	if c.Project == "" || c.Fingerprint == "" || c.Qualification == "" || c.SessionID == "" || c.AttemptID == "" {
-		return "", errors.New("session network capture is incomplete")
+		return "", errors.New("this session's network details are incomplete")
 	}
 	data, err := json.Marshal(c)
 	if err != nil || len(data) > sessionNetworkCaptureLimit {
-		return "", errors.New("session network capture is unrepresentable")
+		return "", errors.New("this session's network details cannot be encoded")
 	}
 	return string(data), nil
 }
@@ -79,7 +79,7 @@ type SessionNetworkAdmission struct {
 // the daemon's configuration is shared by every session it serves.
 func AdmitSessionNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options SessionNetworkAdmission) (egress.Mode, *CapturedEgress, error) {
 	if cfg == nil {
-		return "", nil, errors.New("network admission requires host configuration")
+		return "", nil, errors.New("restricted networking needs host configuration")
 	}
 	// An absent policy mode is not "open": it means the operator wrote no posture at all, so
 	// the project's remembered one still decides. Only a written mode is explicit authority.
@@ -171,13 +171,13 @@ func sessionAutomaticDependencies(cfg *config.Config, spec RunSpec, options Sess
 // different contract, not a newer one, and a value this large is not this contract at all.
 func decodeSessionNetworkCapture(raw string) (SessionNetworkCapture, error) {
 	if len(raw) > sessionNetworkCaptureLimit {
-		return SessionNetworkCapture{}, errors.New("session network capture is too large")
+		return SessionNetworkCapture{}, errors.New("this session's network details are too large")
 	}
 	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
 	decoder.DisallowUnknownFields()
 	var reference SessionNetworkCapture
 	if err := decoder.Decode(&reference); err != nil {
-		return SessionNetworkCapture{}, errors.New("session network capture is malformed")
+		return SessionNetworkCapture{}, errors.New("this session's network details are malformed")
 	}
 	if _, err := reference.Encode(); err != nil {
 		return SessionNetworkCapture{}, err
@@ -218,15 +218,15 @@ func CapturedEgressFromEnvironment(cfg *config.Config, spec RunSpec) (*CapturedE
 	policy, err := store.LoadSnapshot(reference.Project, reference.Fingerprint)
 	if err != nil {
 		_ = store.Close()
-		return nil, errors.Join(errors.New("this session's network snapshot is not in the owner's store"), err)
+		return nil, errors.Join(errors.New("this session's network rules are not on this host"), err)
 	}
 	if policy.Mode != egress.Filtered {
 		_ = store.Close()
-		return nil, errors.New("this session's network snapshot is not a filtered policy")
+		return nil, errors.New("this session's network rules are not filtered ones")
 	}
 	if _, err := store.Qualification(reference.Qualification); err != nil {
 		_ = store.Close()
-		return nil, errors.Join(errors.New("this session's network qualification is unavailable; run `coop net setup`"), err)
+		return nil, errors.Join(errors.New("this host is no longer set up the way this session was started — run 'coop net setup'"), err)
 	}
 	return &CapturedEgress{
 		Store: store, Project: reference.Project, Fingerprint: reference.Fingerprint,

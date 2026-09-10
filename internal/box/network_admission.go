@@ -26,7 +26,7 @@ func NetworkStatePath() (string, error) {
 		base = filepath.Join(hostHome, ".local", "state")
 	}
 	if !filepath.IsAbs(base) {
-		return "", errors.New("network state requires an absolute XDG_STATE_HOME")
+		return "", errors.New("restricted networking needs XDG_STATE_HOME to be an absolute path")
 	}
 	return filepath.Join(base, "coop", "network"), nil
 }
@@ -54,7 +54,7 @@ type NetworkAdmission struct {
 // an ordinary `coop claude` never creates an approval store as a side effect.
 func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options NetworkAdmission) (*CapturedEgress, error) {
 	if cfg == nil {
-		return nil, errors.New("network admission requires host configuration")
+		return nil, errors.New("restricted networking needs host configuration")
 	}
 	policyRepo := projectPolicyRepo(spec)
 	canonical, err := canonicalProjectDir(policyRepo)
@@ -117,7 +117,7 @@ func canonicalProjectDir(repo string) (string, error) {
 		canonical, err = filepath.EvalSymlinks(canonical)
 	}
 	if err != nil {
-		return "", errors.New("restricted networking requires an existing canonical project directory")
+		return "", errors.New("restricted networking needs a project directory that exists on this host")
 	}
 	return canonical, nil
 }
@@ -170,10 +170,10 @@ func networkAdmissionInput(cfg *config.Config, p *project.Project, options Netwo
 func checkFilteredSupport(cfg *config.Config, spec RunSpec, p *project.Project) error {
 	repo := projectPolicyRepo(spec)
 	if p.Box.Dockerfile != "" || repo != "" && fileExists(filepath.Join(repo, project.DockerfilePath(repo))) {
-		return errors.New("restricted networking runs the qualified client image; this project's Dockerfile is not supported in filtered mode yet")
+		return errors.New("a filtered box runs coop's own image, so this project's .agent/Dockerfile cannot be used yet — run without --egress filtered")
 	}
 	if cfg.ImageOverride != "" {
-		return errors.New("restricted networking runs the qualified client image; unset COOP_IMAGE to launch it")
+		return errors.New("a filtered box runs coop's own image — unset COOP_IMAGE to start one")
 	}
 	return nil
 }
@@ -229,7 +229,7 @@ func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, 
 		return nil, err
 	}
 	if policy.Mode != egress.Filtered {
-		return nil, errors.New("network posture changed during launch preparation; retry admission")
+		return nil, errors.New("this project's egress changed while the box was starting — run it again")
 	}
 	ctx := spec.Ctx
 	if ctx == nil {
@@ -248,7 +248,7 @@ func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, 
 			covered = append(covered, qualification)
 		}
 	}
-	unqualified := errors.New("no completed network setup matches this runtime and provider selection; run `coop net setup`")
+	unqualified := errors.New("this host is not set up for filtered runs with this Docker and these agents — run 'coop net setup'")
 	if len(covered) == 0 {
 		return nil, unqualified
 	}

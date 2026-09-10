@@ -36,12 +36,12 @@ func filteredExtraArgs(configured, spec []string) ([]string, error) {
 		case "-e", "--env":
 			want = "a KEY=VALUE assignment"
 		default:
-			return nil, fmt.Errorf("restricted networking accepts bind mounts and KEY=VALUE environment in extra runtime arguments; %q is not one — drop it, or run this box without filtered egress", name)
+			return nil, fmt.Errorf("a filtered box takes only bind mounts and KEY=VALUE environment in COOP_RUN_ARGS; %q is neither — drop it, or run without --egress filtered", name)
 		}
 		value := inline
 		if !hasInline {
 			if i+1 >= len(all) {
-				return nil, fmt.Errorf("restricted networking: %s needs %s", name, want)
+				return nil, fmt.Errorf("%s needs %s after it", name, want)
 			}
 			i++
 			value = all[i]
@@ -71,10 +71,10 @@ func filteredExtraArgs(configured, spec []string) ([]string, error) {
 func checkEnvAssignment(value string) error {
 	key, _, ok := strings.Cut(value, "=")
 	if !ok {
-		return fmt.Errorf("restricted networking: -e %s must be a complete KEY=VALUE assignment, not a pass-through of the host's environment", value)
+		return fmt.Errorf("-e %s needs a value: write -e %s=<value>, since a filtered box does not pass your shell's environment through", value, value)
 	}
 	if key == "" || strings.ContainsAny(value, "\x00\r\n") {
-		return errors.New("restricted networking: -e needs a plain KEY=VALUE assignment")
+		return errors.New("-e needs a plain KEY=VALUE assignment, on one line")
 	}
 	return nil
 }
@@ -86,7 +86,7 @@ func checkEnvAssignment(value string) error {
 func bindMountShorthand(value string) (string, error) {
 	fields, err := csv.NewReader(strings.NewReader(value)).Read()
 	if err != nil {
-		return "", errors.New("restricted networking: --mount descriptor is not readable")
+		return "", errors.New("--mount could not be read; it takes source=…,target=… fields separated by commas")
 	}
 	var source, target string
 	readonly := false
@@ -95,7 +95,7 @@ func bindMountShorthand(value string) (string, error) {
 		switch key {
 		case "type":
 			if field != "bind" {
-				return "", fmt.Errorf("restricted networking accepts bind mounts only; --mount type=%s is not one", field)
+				return "", fmt.Errorf("a filtered box takes bind mounts only, so --mount type=%s is refused", field)
 			}
 		case "source", "src":
 			source = field
@@ -104,11 +104,11 @@ func bindMountShorthand(value string) (string, error) {
 		case "readonly", "ro":
 			readonly = field == "" || field == "true"
 		default:
-			return "", fmt.Errorf("restricted networking: --mount field %q is not qualified", key)
+			return "", fmt.Errorf("--mount does not take the field %q here; use source=, target= and readonly=", key)
 		}
 	}
 	if source == "" || target == "" {
-		return "", errors.New("restricted networking: --mount needs source= and target=")
+		return "", errors.New("--mount needs both source= and target=")
 	}
 	if readonly {
 		return source + ":" + target + ":ro", nil
@@ -259,7 +259,7 @@ func safeBindParent(source, root string) error {
 		return nil
 	}
 	if err != nil {
-		return errors.New("network mount parent authority is unavailable")
+		return errors.New("the parent directory of a mount could not be checked")
 	}
 	if !rootInfo.IsDir() {
 		return nil
@@ -270,7 +270,7 @@ func safeBindParent(source, root string) error {
 			return errors.New("network mount parent identity is unavailable")
 		}
 		if os.SameFile(rootInfo, info) {
-			return errors.New("restricted networking cannot bind a nested source with an agent-writable parent; use an independent repository or credential root")
+			return errors.New("a filtered box cannot mount a directory whose parent the agent can write; mount an independent repository or credential root instead")
 		}
 		if parent == filepath.Dir(parent) {
 			return nil
@@ -434,10 +434,10 @@ func checkRuntimeControlReach(canonical, endpoint string) error {
 	for _, path := range protected {
 		real, err := resolveExisting(path)
 		if err != nil {
-			return errors.New("network workload mount cannot be checked against the runtime's control surfaces")
+			return errors.New("this mount could not be checked against Docker's own paths, so a filtered box will not take it")
 		}
 		if canonical == real || strings.HasPrefix(real, canonical+string(filepath.Separator)) {
-			return fmt.Errorf("restricted networking refuses the mount source %s: it is or contains %s, the container runtime's control surface — the gateway cannot filter what a daemon socket starts", canonical, path)
+			return fmt.Errorf("a filtered box cannot mount %s: it is or holds %s, which reaches Docker or the kernel — a container started that way would never meet the gateway", canonical, path)
 		}
 	}
 	return nil

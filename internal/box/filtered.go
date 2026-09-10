@@ -114,10 +114,10 @@ type filteredDocker interface {
 func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtime.Runtime, spec RunSpec, capture *CapturedEgress, composeFile string, smoke *networkSmokeLaunch) (*filteredExecution, error) {
 	var servePorts []int
 	if capture == nil || capture.Store == nil || ctx == nil {
-		return nil, errors.New("filtered launch requires a trusted captured network policy")
+		return nil, errors.New("a filtered launch needs the rules admission froze for it")
 	}
 	if cfg.Egress != "open" && cfg.Egress != "filtered" {
-		return nil, errors.New("filtered capture conflicts with the offline network ceiling")
+		return nil, errors.New("this box was started with networking off, so filtered egress cannot apply — turn networking on, or drop --egress filtered")
 	}
 	runRepo, err := filepath.Abs(projectPolicyRepo(spec))
 	if err == nil {
@@ -129,14 +129,14 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	// paths differ there and the fork identity is what ties them together.
 	project := capture.Project
 	if err != nil || runRepo != project && !capturedSessionWorkspace(capture, spec, runRepo) {
-		return nil, errors.New("filtered capture belongs to a different canonical project")
+		return nil, errors.New("these rules were approved for a different project directory")
 	}
 	policy, err := capture.Store.LoadSnapshot(project, capture.Fingerprint)
 	if err != nil {
 		return nil, err
 	}
 	if policy.Mode != egress.Filtered {
-		return nil, errors.New("filtered launch requires a filtered capture")
+		return nil, errors.New("a filtered launch needs filtered rules; these are not")
 	}
 	if err := policy.RequireSupported(); err != nil {
 		return nil, err
@@ -153,7 +153,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	// is reached through an approved `to: {service: <name>}` grant, one exact
 	// container at a time, never by joining a shared network.
 	if len(approvedServices) == 0 && spec.Network && (composeFile != "" || cfg.ServicesNet != "") {
-		return nil, errors.New("restricted networking does not join a shared services network; request the exact sidecar with a `to: {service: <name>}` rule in .agent/project.yaml and approve it")
+		return nil, errors.New("a filtered box does not join the shared services network — ask for the one sidecar you need with a `to: {service: <name>}` rule in .agent/project.yaml, then run 'coop net approve'")
 	}
 	exposed := []string{spec.Repo, project}
 	exposed = append(exposed, ConfigExposureRoots(cfg)...)
@@ -191,7 +191,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	for _, expected := range []string{candidate.ClientImage, candidate.GatewayImage} {
 		observed, _, err := docker.Image(ctx, expected)
 		if err != nil || observed != expected {
-			return f, errors.New("qualified network image is unavailable; explicit setup is required")
+			return f, errors.New("the images this host was set up with are gone — run 'coop net setup' again")
 		}
 	}
 	f.image = candidate.ClientImage
@@ -225,7 +225,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	}
 	f.protected = protected
 	if len(servePorts) != 0 && !ingress.IsValid() {
-		return f, errors.New("this runtime has no bridge gateway address, so a published serve port could not be limited to host traffic")
+		return f, errors.New("this Docker has no bridge gateway address, so a published serve port could not be limited to your host — drop serve.ports, or run without --egress filtered")
 	}
 	executionSpec := networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
 		QualificationID: capture.QualificationID, ClientImage: f.image,
@@ -310,7 +310,7 @@ func filteredProtectedAddresses(networks []runtime.DockerNetwork, hostAddresses 
 func filteredHostAddresses() ([]netip.Prefix, error) {
 	addresses, err := net.InterfaceAddrs()
 	if err != nil {
-		return nil, errors.New("cannot inventory protected host interface addresses")
+		return nil, errors.New("this host's own addresses could not be read, and a filtered box must protect them")
 	}
 	var protected []netip.Prefix
 	for _, value := range addresses {

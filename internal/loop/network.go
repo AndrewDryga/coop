@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -124,36 +123,40 @@ func printNetworkIteration(r box.NetworkReport, run int) {
 		return
 	}
 	if total := len(r.Denials) + r.Omitted; total > 0 {
-		ui.Warn("network: refused %s in iteration %d: %s", ui.Count(total, "destination"), run, networkDenialList(r))
+		ui.Warn("iteration %d — %s refused", run, ui.Count(total, "destination was", "destinations were"))
+		for _, line := range networkDenialList(r) {
+			ui.Detail("%s", line)
+		}
 	}
 	if r.RawPackets > 0 {
 		// No destination was recorded for these, so the line says so instead of
 		// inventing one — but the iteration did meet the boundary.
-		ui.Warn("network: iteration %d — %s", run, r.Raw)
+		ui.Warn("iteration %d — %s", run, r.Raw)
 	}
 	for _, alert := range r.Alerts {
 		ui.Warn("network alert: %s", alert)
 	}
 	if r.Event != "" {
-		ui.Detail("coop net explain %s --run %s", r.Event, r.RunID)
+		ui.Detail("coop net explain %s --run %s   # why", r.Event, r.RunID)
 	}
 }
 
-// networkDenialList renders one iteration's refusals as a single bounded line.
-func networkDenialList(r box.NetworkReport) string {
+// networkDenialList renders one iteration's refusals as a few bounded lines —
+// one destination each, the way the end-of-run summary reads.
+func networkDenialList(r box.NetworkReport) []string {
 	shown, omitted := r.Denials, r.Omitted
 	if len(shown) > maxLoopDenials {
 		omitted += len(shown) - maxLoopDenials
 		shown = shown[:maxLoopDenials]
 	}
-	parts := make([]string, 0, len(shown)+1)
+	lines := make([]string, 0, len(shown)+1)
 	for _, denial := range shown {
-		parts = append(parts, denial.String())
+		lines = append(lines, denial.String())
 	}
 	if omitted > 0 {
-		parts = append(parts, fmt.Sprintf("… %d more", omitted))
+		lines = append(lines, fmt.Sprintf("… and %d more", omitted))
 	}
-	return strings.Join(parts, ", ")
+	return lines
 }
 
 // summary closes the run with what its boxes could not reach: totals plus the
@@ -170,12 +173,16 @@ func (l *networkLog) summary() {
 		return
 	}
 	l.closed = true
-	ui.Warn("network: %s refused %s, %s",
-		ui.Count(l.runs, "filtered run"), ui.Count(len(l.refused), "destination"), ui.Count(l.alerts, "alert"))
+	headline := fmt.Sprintf("%s refused across %s", ui.Count(len(l.refused), "destination was", "destinations were"),
+		ui.Count(l.runs, "filtered run"))
+	if l.alerts > 0 {
+		headline += ", with " + ui.Count(l.alerts, "alert")
+	}
+	ui.Warn("%s", headline)
 	for _, line := range topRefused(l.refused, l.order, maxLoopDenials) {
 		ui.Detail("%s", line)
 	}
-	ui.Detail("coop net ls")
+	ui.Detail("coop net ls   # every run and its receipt")
 }
 
 // topRefused ranks destinations by how often they were refused, breaking ties by

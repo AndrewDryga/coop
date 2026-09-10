@@ -37,13 +37,13 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 		case name == "--run":
 			if !inline {
 				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
-					return opts, errors.New("--run needs the run id shown by 'coop net ls'")
+					return opts, errors.New("--run needs the run id 'coop net ls' shows")
 				}
 				i++
 				value = args[i]
 			}
 			if opts.run != "" {
-				return opts, fmt.Errorf("net %s accepts --run once", verb)
+				return opts, fmt.Errorf("coop net %s takes --run once", verb)
 			}
 			opts.run = value
 		case name == "--json":
@@ -61,7 +61,7 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 			}
 			if name == "--protocol" {
 				if opts.policy.Protocol != "" {
-					return opts, errors.New("net why accepts --protocol once")
+					return opts, errors.New("coop net why takes --protocol once")
 				}
 				opts.policy.Protocol = value
 				continue
@@ -82,18 +82,18 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 		case strings.HasPrefix(args[i], "-"):
 			return opts, unknownErr("net "+verb+" flag", args[i], netDiagnosticFlags)
 		case opts.query != "":
-			return opts, fmt.Errorf("net %s accepts one query — see 'coop net --help'", verb)
+			return opts, fmt.Errorf("coop net %s takes one destination at a time", verb)
 		default:
 			opts.query = args[i]
 		}
 	}
 	if opts.query == "" || opts.run == "" {
-		return opts, fmt.Errorf("net %s needs one query and --run <id> (the run id from 'coop net ls')", verb)
+		return opts, fmt.Errorf("coop net %s needs a destination and --run <id> — list the runs with 'coop net ls'", verb)
 	}
 	if verb == "why" {
 		return netPolicyQuery(opts)
 	} else if !netEvidenceID(opts.query) {
-		return opts, errors.New("net explain needs an evidence id from that run's refused decisions ('coop net inspect <run>' lists them)")
+		return opts, errors.New("coop net explain needs an event id from that run's refusals — 'coop net inspect <run>' lists them")
 	}
 	return opts, nil
 }
@@ -104,17 +104,17 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 func netPolicyQuery(opts netDiagnosticOptions) (netDiagnosticOptions, error) {
 	if address, err := netip.ParseAddr(opts.query); err == nil {
 		if opts.policy.Protocol == "" {
-			return opts, errors.New("net why on an address needs the transport too: --protocol tcp|udp --port <n>, or --icmp")
+			return opts, errors.New("an address needs the transport too: --protocol tcp|udp --port <n>, or --icmp")
 		}
 		opts.policy.Address = address
 		return opts, opts.policy.Validate()
 	}
 	if opts.policy.Protocol != "" && opts.policy.Protocol != "tls" {
-		return opts, errors.New("net why on a domain is TLS; --protocol tcp|udp and --icmp apply to an IP address")
+		return opts, errors.New("a domain is checked as TLS; --protocol tcp|udp and --icmp apply to an IP address")
 	}
 	name, err := egress.NormalizeDomain(opts.query, false)
 	if err != nil {
-		return opts, errors.New("net why needs one exact ASCII domain or one IP address — not a URL, a wildcard or a port")
+		return opts, errors.New("coop net why needs one exact domain or IP address — not a URL, a wildcard or a port")
 	}
 	port := opts.policy.Port
 	if port == 0 {
@@ -154,7 +154,7 @@ func netDiagnostic(verb string, args []string) (int, error) {
 	result, err := evidence.Explain(opts.run, opts.query, true)
 	if err != nil {
 		if errors.Is(err, networkstate.ErrEventNotRetained) {
-			return 1, fmt.Errorf("network run %q: %w", opts.run, err)
+			return 1, err // the message already names the run and the way to list what is kept
 		}
 		return 1, netRunErr(opts.run, err)
 	}
@@ -165,9 +165,6 @@ func netDiagnostic(verb string, args []string) (int, error) {
 }
 
 func writeNetWhy(w io.Writer, p ui.Palette, result networkstate.PolicyExplanation) {
-	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan("policy check (hypothetical)")))
-	field := func(label, value string) { netField(w, p, netLabelWidth, label, value) }
-	field("Run", result.RunID)
 	destination := "withheld"
 	if !result.Withheld {
 		destination = result.Domain
@@ -181,14 +178,14 @@ func writeNetWhy(w io.Writer, p ui.Palette, result networkstate.PolicyExplanatio
 	} else if result.Protocol == "icmp" {
 		transport += " echo-request"
 	}
-	field("Destination", destination+" "+transport)
-	verdict := p.Red("no — outside the captured policy")
+	b := newNetBlock(w, p, "Could run "+result.RunID+" reach "+destination+" "+transport+"?")
+	verdict := p.Red("no (" + result.Reason + ")")
 	if result.Allowed {
-		verdict = p.Green("yes — the captured policy permits it")
+		verdict = p.Green("yes (" + result.Reason + ")")
 	}
-	field("Allowed", verdict+" ("+result.Reason+")")
-	field("Meaning", result.Message)
-	field("Policy", result.PolicyFingerprint+" (mode "+string(result.Mode)+")")
+	b.field("Answer", verdict)
+	b.field("Because", result.Message)
+	b.field("Rules", result.PolicyFingerprint+", egress "+string(result.Mode))
 	if rule := result.Rule; rule != nil {
 		matched := rule.To.Domain + rule.To.CIDR
 		if rule.To.Service != "" {
@@ -201,63 +198,60 @@ func writeNetWhy(w io.Writer, p ui.Palette, result networkstate.PolicyExplanatio
 		if len(rule.Types) != 0 {
 			matched += " types " + strings.Join(rule.Types, ",")
 		}
-		field("Matched", matched)
+		b.field("Matched", matched)
 	}
 	for _, origin := range result.Origins {
-		netRow(w, netOriginText(origin))
+		b.row(netOriginText(origin))
 	}
-	fmt.Fprintln(w, p.Dim("No DNS query, probe or connection was made, and current policy was not evaluated."))
 	if result.ProtectedScope == "not-retained" {
-		fmt.Fprintln(w, p.Dim("This run did not retain its host address inventory, so only the fixed protected ranges were applied here."))
+		b.field("Careful", "this run kept no list of its host addresses, so only the fixed protected ranges were checked")
 	} else if result.ProtectedScope != "" {
-		fmt.Fprintln(w, p.Dim("Host, metadata and runtime addresses this run protected were applied: a grant never covers them."))
+		b.field("Also", "host, metadata and runtime addresses are never reachable, whatever the rules say")
 	}
+	b.flush(w)
+	fmt.Fprintln(w, p.Dim("nothing was sent — this is the rule set that run started with, not today's"))
 }
 
 func writeNetExplanation(w io.Writer, p ui.Palette, result networkstate.EventExplanation) {
-	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan("refused (observed)")))
-	field := func(label, value string) { netField(w, p, netLabelWidth, label, value) }
 	event := result.Event
-	field("Run", result.RunID+" (gateway epoch "+result.Epoch+")")
-	field("Event", event.ID)
-	field("When", event.At.UTC().Format("2006-01-02T15:04:05.999999999Z"))
-	field("Destination", netDestination(event.Name, event.Peer, event.DestinationID))
+	b := newNetBlock(w, p, "Refused in run "+result.RunID)
+	destination := netDestination(event.Name, event.Peer, event.DestinationID)
 	if event.Port != nil {
-		field("Port", strconv.Itoa(*event.Port))
+		destination += " port " + strconv.Itoa(*event.Port)
 	}
-	field("Seen by", event.Source+" ("+event.Kind+", basis "+event.Basis+")")
-	field("Reason", event.Reason)
-	field("Meaning", result.Message)
-	field("Policy", result.PolicyFingerprint)
+	b.field("Destination", destination)
+	b.field("Because", result.Message)
+	b.field("When", event.At.UTC().Format("2006-01-02T15:04:05.999999999Z"))
+	b.field("Reason", event.Reason)
+	b.field("Seen by", event.Source+" ("+event.Kind+", basis "+event.Basis+")")
+	b.field("Rules", result.PolicyFingerprint+", gateway epoch "+result.Epoch)
+	b.field("Event", event.ID)
 	if result.DetailTruncated {
-		fmt.Fprintln(w, p.Dim("This run's retained detail was truncated; other decisions may not have been kept."))
+		b.field("Careful", "this run kept only part of its detail — other refusals may be missing")
 	}
+	b.flush(w)
 	if candidate := event.Candidate; candidate != nil {
-		fmt.Fprintf(w, "\n%s\n", p.Bold("A human could add this rule — it is a draft, not a grant:"))
+		fmt.Fprintf(w, "\n%s\n", "To allow it, add this under box.egress_rules in .agent/project.yaml, then run 'coop net approve':")
 		fmt.Fprintf(w, "\n  box:\n    egress_rules:\n%s\n", box.NetworkRuleYAML(candidate.Rule))
-		fmt.Fprintln(w, "Put it in .agent/project.yaml, then run 'coop net approve'. It applies to NEW runs;")
-		fmt.Fprintln(w, "this run and any other running box keep the policy they were launched with.")
-		fmt.Fprintln(w, p.Dim("Traffic is evidence that something was attempted, not that the access is needed."))
-	} else {
-		fmt.Fprintln(w, p.Dim(netNoDraftReason(event.Reason)))
+		fmt.Fprintln(w, p.Dim("it applies to new runs; this box keeps the rules it started with — and traffic alone is not proof the access is needed"))
+		return
 	}
-	fmt.Fprintln(w, p.Dim("This is what was recorded then; today's policy was not substituted for it."))
+	fmt.Fprintln(w, p.Dim(netNoDraftReason(event.Reason)))
 }
 
-// netNoDraftReason says why this refusal produced no draft rule. The two cases
-// are different and must not be blurred: an immutable boundary no rule can
-// cross, versus evidence too thin to name a transport. Neither is a hint that
-// the destination should be allowed.
+// netNoDraftReason says why this refusal comes with no rule to copy. The two
+// cases are different and must not be blurred: a boundary no rule can cross,
+// versus a record too thin to name a transport. Neither is a hint that the
+// destination should be allowed.
 func netNoDraftReason(reason string) string {
 	switch reason {
 	case "protected_destination", "unsafe_dns_answer", "tls_ech_unsupported", "unsupported_capability",
 		"tls_name_missing", "tls_name_invalid":
-		return "No rule can grant this — it is a protected or unsupported destination, not a gap in your policy."
+		return "no rule can allow this one — it is a protected or unsupported destination, not a gap in your rules"
 	case "upstream_unreachable", "observation_unavailable":
-		return "This is an availability failure, not a policy denial. Another allow rule would not fix it."
+		return "this one failed to work, it was not refused by a rule — another rule would not fix it"
 	default:
-		return "No rule is drafted: this evidence does not establish a transport or port. A DNS refusal alone\n" +
-			"cannot prove the destination is TLS, or on which port — decide that yourself before adding a rule."
+		return "no rule to copy: a refused DNS lookup does not say whether the destination is TLS, or on which port — decide that yourself"
 	}
 }
 
@@ -274,13 +268,13 @@ func netPortList(ports []int) string {
 func netOriginText(origin networkstate.PolicyOrigin) string {
 	switch origin.Kind {
 	case "operator":
-		return "granted by you (" + origin.Name + ")"
+		return "allowed by you (" + origin.Name + ")"
 	case "project":
-		return "requested by the project and approved"
+		return "asked for by the project, and approved"
 	case "provider":
-		return "core endpoint for " + origin.Provider + " " + string(origin.Client) + " (bundle " + origin.BundleVersion + ")"
+		return "a core endpoint for " + origin.Provider + " " + string(origin.Client) + " (bundle " + origin.BundleVersion + ")"
 	case "mcp":
-		return "MCP server " + origin.Name + " coop configured for this box"
+		return "the MCP server " + origin.Name + " coop set up for this box"
 	default:
 		return origin.Kind
 	}

@@ -85,7 +85,7 @@ func networkRunReport(runID string, snapshot networkview.Snapshot) NetworkReport
 			where = denial.Peer
 		}
 		if where == "" {
-			where = "destination withheld"
+			where = "name withheld"
 		}
 		if first == "" {
 			first = denial.ID
@@ -148,20 +148,24 @@ func denialBasis(kind string) string {
 
 func allowedTraffic(counters *networkview.Counters) string {
 	if counters == nil {
-		return "allowed traffic: UNKNOWN (no counters were retained)"
+		return "allowed: UNKNOWN — nothing was recorded for this run"
 	}
-	return fmt.Sprintf("allowed traffic: %s connection(s), sent %s bytes, received %s bytes",
-		countText(counters.Connections), countText(counters.SentBytes), countText(counters.ReceivedBytes))
+	return fmt.Sprintf("allowed: %s, %s sent, %s received",
+		connectionText(counters.Connections), byteText(counters.SentBytes), byteText(counters.ReceivedBytes))
 }
 
 // rawRefusals reports the packets the kernel refused. It deliberately names no
 // destination: nothing recorded one, and a plausible guess would be a fiction.
+// A measured zero says nothing worth a line; UNKNOWN still does.
 func rawRefusals(counters *networkview.Counters) string {
 	if counters == nil || counters.DeniedPackets == nil {
-		return "refused packets: UNKNOWN (no kernel counters were retained)"
+		return "refused raw packets: UNKNOWN — the kernel counters were not recorded"
 	}
-	return fmt.Sprintf("refused packets: %s (%s to protected addresses) — counted, not attributed to a destination",
-		countText(counters.DeniedPackets), countText(counters.ProtectedPackets))
+	if *counters.DeniedPackets == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s refused too, with no destination recorded (%s of them to protected addresses)",
+		pluralText(uint64(*counters.DeniedPackets), "raw packet"), countText(counters.ProtectedPackets))
 }
 
 // countText renders a retained counter as a decimal string, matching how it is
@@ -171,6 +175,29 @@ func countText(value *networkview.Count) string {
 		return "UNKNOWN"
 	}
 	return strconv.FormatUint(uint64(*value), 10)
+}
+
+// pluralText counts without narrowing a stored counter to an int, so a total
+// past the platform's int range still reads correctly.
+func pluralText(value uint64, noun string) string {
+	if value == 1 {
+		return "1 " + noun
+	}
+	return strconv.FormatUint(value, 10) + " " + noun + "s"
+}
+
+func connectionText(value *networkview.Count) string {
+	if value == nil {
+		return "UNKNOWN connections"
+	}
+	return pluralText(uint64(*value), "connection")
+}
+
+func byteText(value *networkview.Count) string {
+	if value == nil {
+		return "UNKNOWN"
+	}
+	return ui.Bytes(uint64(*value))
 }
 
 // alertLine states the observed facts, the window and the threshold that fired,
@@ -207,16 +234,16 @@ func (r NetworkReport) print() {
 		return
 	}
 	if r.Quiet() {
-		ui.Detail("network run %s — nothing was refused (coop net inspect %s)", r.RunID, r.RunID)
+		ui.Detail("nothing was refused in this box (coop net inspect %s)", r.RunID)
 		return
 	}
 	if len(r.Denials) > 0 {
-		ui.Warn("restricted networking refused %s in this box:", ui.Count(len(r.Denials), "destination"))
+		ui.Warn("%s refused in this box", ui.Count(len(r.Denials)+r.Omitted, "destination was", "destinations were"))
 		for _, denial := range r.Denials {
 			ui.Detail("%s", denial)
 		}
 		if r.Omitted > 0 {
-			ui.Detail("… and %s (coop net inspect %s)", ui.Count(r.Omitted, "more destination"), r.RunID)
+			ui.Detail("… and %s (coop net inspect %s)", ui.Count(r.Omitted, "more"), r.RunID)
 		}
 	}
 	for _, line := range r.Alerts {
@@ -227,15 +254,12 @@ func (r NetworkReport) print() {
 		ui.Detail("%s", r.Raw)
 	}
 	if r.Truncate {
-		ui.Detail("retained detail was truncated — the list above is not the complete history")
+		ui.Detail("only part of the detail was kept — the list above is not the whole history")
 	}
-	steps := []string{}
 	if r.Event != "" {
-		steps = append(steps, fmt.Sprintf("coop net explain %s --run %s   # why this was refused", r.Event, r.RunID))
+		ui.Detail("coop net explain %s --run %s   # why", r.Event, r.RunID)
 	}
-	steps = append(steps, "to ask for a destination: add it to .agent/project.yaml under box.egress_rules,",
-		"then a human runs 'coop net approve' on the host — nothing in the box can grant it")
-	ui.Steps(steps...)
+	ui.Detail("to allow one: add it under box.egress_rules in .agent/project.yaml, then run 'coop net approve' on the host")
 }
 
 // networkInstructionNote is the Network section every agent in a filtered box
@@ -247,9 +271,9 @@ func networkInstructionNote(policy egress.Snapshot) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\n# Network (coop restricted egress) — ground truth, don't reprobe it\n")
-	b.WriteString("You may reach ONLY these destinations; everything else is refused at the box boundary.\n")
-	b.WriteString("A refusal is policy — not a broken tool, a dead host or a DNS fault. Don't route around it.\n")
+	b.WriteString("\n# Network (coop restricted egress) — this list is the whole truth\n")
+	b.WriteString("This box can reach ONLY these destinations. Everything else is refused at its boundary,\n")
+	b.WriteString("and a refusal is that rule — not a broken tool, a dead host or a DNS fault. Don't work around it.\n")
 	destinations, omitted := noteDestinations(policy)
 	for _, line := range destinations {
 		b.WriteString("- " + line + "\n")
@@ -257,8 +281,8 @@ func networkInstructionNote(policy egress.Snapshot) string {
 	if omitted > 0 {
 		fmt.Fprintf(&b, "- … and %d more allowed destination(s)\n", omitted)
 	}
-	b.WriteString("To ask for another destination, add it to .agent/project.yaml under box.egress_rules and\n")
-	b.WriteString("ask the human to run \"coop net approve\" on the host — nothing in here can grant it.\n")
+	b.WriteString("To ask for another one, add it under box.egress_rules in .agent/project.yaml and ask the\n")
+	b.WriteString("human to run \"coop net approve\" on the host — nothing in here can allow it.\n")
 	return b.String()
 }
 
@@ -302,7 +326,7 @@ func NetworkGrantText(grant egress.Grant) string {
 			}
 			return "provider core endpoints"
 		case "mcp":
-			return "the MCP servers coop configured for this box"
+			return "the MCP servers coop set up for this box"
 		}
 	}
 	return NetworkRuleText(grant.Rule)

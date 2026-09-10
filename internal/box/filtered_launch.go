@@ -335,7 +335,7 @@ func (f *filteredExecution) checkTopology() error {
 		if !slices.Contains(f.protected, prefix) {
 			// Name the address: "topology changed" alone leaves an operator with
 			// nothing to look at, and a VPN or a new interface is a fact they can.
-			return fmt.Errorf("host address %s appeared after this run's protection envelope was installed; start a new network execution", prefix)
+			return fmt.Errorf("host address %s appeared after this run's protected addresses were set; start the run again", prefix)
 		}
 	}
 	return nil
