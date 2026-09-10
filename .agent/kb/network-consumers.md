@@ -30,7 +30,9 @@ an iteration and print between iterations, never over the live bar, plus one ran
 (`loop/network.go:91`, `:158`).
 
 A **session policy** is the one consumer that publishes its reach BEFORE anyone asks for a launch.
-The daemon resolves each policy's effective fingerprint when it loads them — the same inputs
+The daemon resolves each policy's effective fingerprint when it loads them AND again whenever it is
+asked (`/v1/capabilities`, `coop sessions policies`, every fenced create), so an approval edited on
+the host is reflected without a restart — the same inputs
 `Admit` compiles, through the same assembly (`box/network_session.go:159` builds the plan;
 `networkstate/admission.go:152` builds the authority), but through `Store.Resolve` instead of
 `Store.Admit`, so nothing is published: no approval, no snapshot, not even an owner key
@@ -91,6 +93,7 @@ at all, and the daemon owns the destination projection every one of them applies
 out of a run's bounded ring reports `event_not_retained` — which is not proof the id ever existed.
 
 ## Changelog
+- 2026-09-10 — resolving moved from load-time-only to every request as well: what a daemon advertises is what a create would accept now (`service.go` PolicyNetworks).
 - 2026-09-10 — a session policy's RESOLVED network fingerprint is published at load
   (`/v1/capabilities`, `coop sessions policies`) and pinned by a create through
   `expected_network_fingerprint`; `networkstate.Store.Resolve` compiles what `Admit` would without

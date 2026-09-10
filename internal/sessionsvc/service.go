@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2042,13 +2041,32 @@ func boundedSessionServiceError(err error) string {
 }
 
 // PolicyNetworks is what this daemon advertises for the policies it serves: each policy's mode and,
-// for a filtered one, the fingerprint a create may pin. It is a copy of the resolution taken at
-// load — a create resolves again and refuses a value this host no longer produces.
+// for a filtered one, the fingerprint a create may pin. Each answer is resolved NOW, not when the
+// daemon started, so approving a change on this host changes what callers are told without a
+// restart — otherwise a caller would keep pinning a value every create then refuses. Resolving
+// reads host state and publishes nothing.
+//
+// A policy that cannot be resolved at this moment is reported by mode alone: the fingerprint is
+// what a create would pin, and right now there is none. The create itself still reports why.
 func (s *Service) PolicyNetworks() map[string]PolicyNetwork {
 	if len(s.policyNetworks) == 0 {
 		return nil
 	}
-	return maps.Clone(s.policyNetworks)
+	networks := make(map[string]PolicyNetwork, len(s.policyNetworks))
+	for name, loaded := range s.policyNetworks {
+		policy, err := s.policy(name)
+		if err != nil {
+			networks[name] = loaded
+			continue
+		}
+		current, err := s.resolvePolicyNetwork(policy)
+		if err != nil {
+			networks[name] = PolicyNetwork{Mode: loaded.Mode}
+			continue
+		}
+		networks[name] = current
+	}
+	return networks
 }
 
 func (s *Service) policy(name string) (Policy, error) {

@@ -240,9 +240,9 @@ A create may pin that value as `expected_network_fingerprint`. The daemon resolv
 and refuses with `network_fingerprint_mismatch` (409) before any intent is journaled or a workspace
 exists. The refusal names the fingerprint the policy resolves to now and `coop net approve` as the
 thing that changed on the host. An open or offline policy publishes its mode and no fingerprint,
-so pinning one for such a policy is itself a mismatch. The published value is the daemon's
-load-time resolution; the current one is always in `coop sessions policies` and in the refusal
-itself.
+so pinning one for such a policy is itself a mismatch. The published value is resolved when you
+ask for it, so approving a change on the host changes what callers are told without restarting the
+daemon; a policy the host cannot resolve at that moment publishes its mode and no fingerprint.
 
 On session creation Coop resolves all configured repositories concurrently. A repository with
 `remote` and `branch` is pinned to that remote branch's exact commit; otherwise Coop preserves the

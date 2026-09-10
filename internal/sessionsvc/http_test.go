@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -133,6 +134,45 @@ func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersionsAndPolicyNet
 	responder, ok := policies["responder"].(map[string]any)
 	if !ok || len(responder) != 1 || responder["mode"] != string(egress.Open) {
 		t.Fatalf("open policy network = %#v; want its mode and no fingerprint", policies["responder"])
+	}
+}
+
+// What a daemon advertises has to be what a create would accept RIGHT NOW. Approving a change on
+// the host is not a restart, and a caller told the old value would pin something every create then
+// refuses — a fleet that bounces until somebody notices the daemon is stale.
+func TestSessionHTTPCapabilitiesFollowTheHostWithoutARestart(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	handler := NewHTTPHandler(service)
+	reach := func() map[string]any {
+		t.Helper()
+		response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/capabilities", "", "", "")
+		var document map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
+			t.Fatal(err)
+		}
+		policies, _ := document["policies"].(map[string]any)
+		reported, _ := policies["responder"].(map[string]any)
+		return reported
+	}
+	approved := strings.Repeat("a", 64)
+	service.testResolveNetwork = func(Policy) (PolicyNetwork, error) {
+		return PolicyNetwork{Mode: egress.Filtered, Fingerprint: approved}, nil
+	}
+	if got := reach(); got["fingerprint"] != approved || got["mode"] != string(egress.Filtered) {
+		t.Fatalf("advertised reach = %#v; want the one this host resolves now", got)
+	}
+	approved = strings.Repeat("b", 64) // the operator approves a change on the host
+	if got := reach(); got["fingerprint"] != approved {
+		t.Fatalf("advertised reach = %#v; want the value after the approval, without a restart", got)
+	}
+	// A host that cannot answer right now advertises the posture and no fingerprint: there is
+	// nothing a create could pin, and the create itself reports why.
+	service.testResolveNetwork = func(Policy) (PolicyNetwork, error) {
+		return PolicyNetwork{}, errors.New("no approval for this project")
+	}
+	if got := reach(); got["fingerprint"] != nil || got["mode"] == nil {
+		t.Fatalf("unresolvable policy = %#v; want its mode and no fingerprint", got)
 	}
 }
 
