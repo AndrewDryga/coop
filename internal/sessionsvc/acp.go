@@ -25,9 +25,11 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/mcp"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
 )
@@ -39,7 +41,12 @@ const (
 	sessionACPArtifactLimit   = 1 << 20
 	sessionACPTermGrace       = 250 * time.Millisecond
 	sessionACPKillGrace       = 750 * time.Millisecond
-	sessionACPCleanupTimeout  = 2 * time.Second
+	// A filtered child owns a gateway, its volumes and its own receipt; the exact owner is the
+	// only process allowed to seal and remove them. Killing it in a quarter second would leave
+	// two running containers and a receipt nothing can ever finalize, so it gets a bounded
+	// window to stop itself. Each teardown step is separately bounded inside the child.
+	sessionACPFilteredStopGrace = 30 * time.Second
+	sessionACPCleanupTimeout    = 2 * time.Second
 	// A completed model result is irreversible work, not best-effort cleanup. Under a recovery
 	// burst Coop's single SQLite connection can legitimately queue this receipt for a few seconds.
 	sessionACPCompletionTimeout = 10 * time.Second
@@ -117,6 +124,10 @@ type sessionTurnRunner struct {
 	// activityClock is the narration recorder's clock; nil is time.Now. Only tests set it, so
 	// the alive heartbeat's minute-long window can be asserted without a minute-long test.
 	activityClock func() time.Time
+	// testNetworkExecutions replaces the owner-private evidence read. Registering a real
+	// execution needs a qualified host, a bound Docker daemon and a live gateway; a test that
+	// only cares what a turn does with the answer injects one. nil in production.
+	testNetworkExecutions func(session.Session) ([]networkstate.Execution, error)
 }
 
 // sessionLadder is a session's rotation plus the ladder it was built from, so a policy edit
@@ -412,6 +423,12 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		var cleanup []error
 		cleanupFailed := false
 		baseErr := runErr
+		// The attempt this turn actually launched, read before parking can hand the child to
+		// the warm pool and clear it. It is what the box registered its network run under.
+		networkAttempt := runtimeRunID
+		if execution != nil && execution.child != nil {
+			networkAttempt = execution.child.runID
+		}
 		if protocolComplete && baseErr == nil && warmIdleTimeout > 0 && execution != nil {
 			parked = r.parkWarmExecution(execution, warmIdleTimeout)
 			if parked {
@@ -458,6 +475,12 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 				}
 				baseErr = errors.Join(baseErr, cleanupCause)
 			}
+		}
+		// The child has stopped (or been handed to the warm pool) and its network run is
+		// registered, so this is where the turn learns whether that run enforced the policy
+		// this session was created with — and where a refusal reaches the event stream.
+		if networkErr := r.sessionNetworkOutcome(bound, leased.ID, networkAttempt, !parked); networkErr != nil {
+			baseErr = errors.Join(baseErr, networkErr)
 		}
 		if protocolComplete && baseErr == nil {
 			completed, err := r.completeTurn(bound, leased, assistant, outputArtifacts, usage)
@@ -1184,6 +1207,12 @@ func (r *sessionTurnRunner) cleanupWarmExecution(execution *sessionWarmExecution
 		errs = append(errs, execution.child.stop())
 		errs = append(errs, r.removeTurnBox(execution.bound.Repository, execution.child.runID))
 		errs = append(errs, r.stopSessionServices(context.Background(), execution.bound))
+		// A warm child reaped between turns still hit the boundary while it idled. Its run is
+		// sealed now, so publish what it could not reach; a mismatch is reported here rather
+		// than failing a turn that is not running.
+		if err := r.sessionNetworkOutcome(execution.bound, "", execution.child.runID, true); err != nil {
+			r.warnNetwork(execution.bound, err)
+		}
 	}
 	if execution.projection != nil {
 		errs = append(errs, execution.projection.remove())
@@ -1901,10 +1930,16 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 			)
 		}
 	}
-	env := sessionACPChildEnvironment(
+	// The capture is appended last, so a session's frozen posture wins over any COOP_EGRESS the
+	// daemon's own configuration would otherwise have passed through.
+	network, err := networkChildEnvironment(bound, runID)
+	if err != nil {
+		return nil, errors.Join(acpFailure(sessionACPProcessError, "session network capture is invalid"), err)
+	}
+	env := append(sessionACPChildEnvironment(
 		bound.Repository, bound.Companions, bound.RepositoryReadOnly, privateRoot, runID,
 		r.sourceCfg, r.rt.Name,
-	)
+	), network...)
 	activityRole := forkspace.ExecutionRoleActiveTurn
 	if runID == sessionWarmRunID(bound.ID) {
 		activityRole = forkspace.ExecutionRoleWarm
@@ -1927,6 +1962,9 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if process != nil {
 		process.runID = runID
 		process.mcpServers = mcpServers
+		if bound.NetworkMode == string(egress.Filtered) {
+			process.stopGrace = sessionACPFilteredStopGrace
+		}
 	}
 	return process, err
 }
@@ -2097,6 +2135,11 @@ type sessionACPProcess struct {
 	embeddedContextCapable bool
 	stderr                 *sessionACPStderr
 	exited                 atomic.Bool
+	// stopGrace is how long this child may take to stop itself. Zero is the
+	// ordinary child, which owns nothing outside its box and is expected to be
+	// gone in milliseconds. A filtered child owns a gateway only it can seal and
+	// remove, so it gets a bounded chance to do that before it is killed.
+	stopGrace time.Duration
 }
 
 type sessionACPStderr struct {
@@ -2244,12 +2287,16 @@ func (p *sessionACPProcess) stop() error {
 func (p *sessionACPProcess) stopProcess() error {
 	close(p.readStop)
 	_ = p.stdin.Close()
+	// Closing its input is how this protocol says "we are done". A child that owns
+	// host resources gets that chance first and keeps its output until it takes it,
+	// because only the child itself can seal and remove what it created.
+	stopped := p.stopGrace > 0 && waitSessionACP(p.wait, p.stopGrace)
 	_ = p.stdout.Close()
 
-	if p.cmd.Process != nil {
+	if p.cmd.Process != nil && !stopped {
 		if _, done := pollWait(p.wait); !done {
 			signalSessionACPGroup(p.cmd.Process.Pid, syscall.SIGTERM)
-			if !waitSessionACP(p.wait, sessionACPTermGrace) {
+			if !waitSessionACP(p.wait, max(sessionACPTermGrace, p.stopGrace)) {
 				signalSessionACPGroup(p.cmd.Process.Pid, syscall.SIGKILL)
 				if !waitSessionACP(p.wait, sessionACPKillGrace) {
 					return acpFailure(sessionACPCleanupError, "ACP child did not stop")

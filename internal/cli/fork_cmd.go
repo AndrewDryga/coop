@@ -2,15 +2,18 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -899,7 +902,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		}
 		reservationOwner = reservation.OwnerID
 	}
-	return box.Run(a.cfg, a.rt, box.RunSpec{
+	spec := box.RunSpec{
 		Image: img, Repo: ws, Workdir: ws, RepoReadOnly: repositoryReadOnly,
 		Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
@@ -916,7 +919,26 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		}(),
 		RunID: sessionsvc.RunIDFromEnv(), CompanionRepositories: companionRepositories,
 		ExtraArgs: sessionOutputArgs,
-	})
+	}
+	// A remote session's network authority arrives from the daemon that started
+	// this child, and only from there. Nothing in the box can set it, and the
+	// reference still has to be proved against the owner-private store below.
+	capture, err := box.CapturedEgressFromEnvironment(a.cfg, spec)
+	if err != nil {
+		return 1, err
+	}
+	defer capture.Close()
+	if capture != nil {
+		spec.CapturedEgress = capture
+		// This child is the exact owner of the gateway it starts: nothing else may
+		// seal its receipt or remove its containers. The daemon ends a turn's child
+		// with a signal, so that signal has to arrive as a cancellation this run can
+		// clean up after — a plain kill would strand a gateway and an open receipt.
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer stop()
+		spec.Ctx = ctx
+	}
+	return box.Run(a.cfg, a.rt, spec)
 }
 
 func readOnlySessionOutputMountArgs(workspace string) ([]string, error) {

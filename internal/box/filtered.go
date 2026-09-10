@@ -15,6 +15,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
@@ -36,6 +37,19 @@ func (c *CapturedEgress) Close() error {
 		return nil
 	}
 	return c.Store.Close()
+}
+
+// capturedSessionWorkspace reports whether this run's checkout is exactly the
+// fork workspace the captured project would give this run's fork name. Only a
+// remote session's capture carries a session identity, and only the fork the
+// daemon named resolves to that path, so a capture from another project — or a
+// launch that simply claims a fork name — cannot satisfy it.
+func capturedSessionWorkspace(capture *CapturedEgress, spec RunSpec, runRepo string) bool {
+	if capture.SessionID == "" || spec.ForkName == "" {
+		return false
+	}
+	workspace, err := filepath.EvalSymlinks(forkspace.Workspace(capture.Project, spec.ForkName))
+	return err == nil && workspace == runRepo
 }
 
 type filteredExecution struct {
@@ -99,11 +113,16 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if spec.Network && (composeFile != "" || cfg.ServicesNet != "") || spec.Serve && len(spec.servePorts) != 0 {
 		return nil, errors.New("restricted networking does not yet qualify sibling services or published ports")
 	}
-	project, err := filepath.Abs(projectPolicyRepo(spec))
+	runRepo, err := filepath.Abs(projectPolicyRepo(spec))
 	if err == nil {
-		project, err = filepath.EvalSymlinks(project)
+		runRepo, err = filepath.EvalSymlinks(runRepo)
 	}
-	if err != nil || project != capture.Project {
+	// The capture stays bound to the project whose approval and remembered
+	// posture it was admitted against. A direct or loop launch runs IN that
+	// project; a remote session's box mounts a fork workspace of it, so the two
+	// paths differ there and the fork identity is what ties them together.
+	project := capture.Project
+	if err != nil || runRepo != project && !capturedSessionWorkspace(capture, spec, runRepo) {
 		return nil, errors.New("filtered capture belongs to a different canonical project")
 	}
 	policy, err := capture.Store.LoadSnapshot(project, capture.Fingerprint)

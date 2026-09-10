@@ -395,6 +395,29 @@ func prepareRequest(ctx context.Context, command workerproto.Command, artifacts 
 		}
 		return Request{Method: "GET", Path: "/v1/sessions/" + url.PathEscape(payload.CoopSessionID)}, nil
 
+	// The two networking reads take the same shape as get_session on purpose: the daemon owns
+	// the privacy projection, and the connector forwards exactly what it answered. Nothing here
+	// selects a destination, a rule, or a disclosure scope.
+	case "get_network":
+		var payload getSessionPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return Request{}, err
+		}
+		if !reference(payload.CoopSessionID, 1024) {
+			return Request{}, errors.New("get_network payload identity is invalid")
+		}
+		return Request{Method: "GET", Path: "/v1/sessions/" + url.PathEscape(payload.CoopSessionID) + "/network"}, nil
+
+	case "get_network_receipt":
+		var payload getSessionPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return Request{}, err
+		}
+		if !reference(payload.CoopSessionID, 1024) {
+			return Request{}, errors.New("get_network_receipt payload identity is invalid")
+		}
+		return Request{Method: "GET", Path: "/v1/sessions/" + url.PathEscape(payload.CoopSessionID) + "/network/receipt"}, nil
+
 	case "get_turn":
 		var payload getTurnPayload
 		if err := decodePayload(command.Payload, &payload); err != nil {

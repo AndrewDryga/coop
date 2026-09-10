@@ -76,6 +76,11 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if err != nil {
 		return nil, err
 	}
+	// A direct launch mounts the trusted shared MCP configuration whenever it
+	// mounts homes at all, so its automatic dependencies are exactly that file's.
+	if input.Automatic, err = NetworkMCPDependencies(cfg, spec); err != nil {
+		return nil, err
+	}
 	// The preview publishes nothing and creates no owner key, so it is safe on
 	// every launch. It still proves the authority root is outside every mount.
 	mode, err := networkstate.PreviewAdmissionMode(root, canonical, exposed, input)
@@ -174,18 +179,15 @@ func checkFilteredSupport(cfg *config.Config, spec RunSpec, p *project.Project) 
 
 // admitFilteredNetwork completes the capture: operator and project rules and
 // the provider core bundles the selected targets need, authorized in ONE
-// store.Admit so posture and envelope come from one decision.
+// store.Admit so posture and envelope come from one decision. The caller has
+// already put this launch's automatic dependencies on input, because only it
+// knows which configuration the box will actually mount.
 func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, store *networkstate.Store, canonicalProject string, input networkstate.Admission) (*CapturedEgress, error) {
 	bundles, err := NetworkProviderBundles(cfg, spec)
 	if err != nil {
 		return nil, err
 	}
 	input.Bundles = bundles
-	automatic, err := NetworkMCPDependencies(cfg, spec)
-	if err != nil {
-		return nil, err
-	}
-	input.Automatic = automatic
 	policy, err := store.Admit(canonicalProject, input)
 	if err != nil {
 		return nil, err

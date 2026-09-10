@@ -78,6 +78,9 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 	if version >= 19 {
 		ddl += schemaV19
 	}
+	if version >= 20 {
+		ddl += schemaV20
+	}
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("build v%d schema: %v", version, err)
 	}
@@ -164,6 +167,13 @@ func TestMigrationFromEachHistoricalVersionReachesCurrentSchema(t *testing.T) {
 			}
 			if len(sess.RepositoryFreshness) != 0 {
 				t.Fatalf("v%d legacy repository freshness = %+v, want explicit unavailable", version, sess.RepositoryFreshness)
+			}
+			// A session created before restricted networking existed ran open, and
+			// nothing froze a policy for it: the migration must say exactly that
+			// rather than leaving a mode nobody can compare a run against.
+			if sess.NetworkMode != "open" || sess.NetworkFingerprint != "" || sess.NetworkQualification != "" {
+				t.Fatalf("v%d legacy session network = %q/%q/%q, want open with no capture",
+					version, sess.NetworkMode, sess.NetworkFingerprint, sess.NetworkQualification)
 			}
 
 			turn, err := store.GetTurn(ctx, "legacy-session", "turn-legacy")

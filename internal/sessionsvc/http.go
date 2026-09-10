@@ -54,6 +54,7 @@ type SessionDTO struct {
 	RepositoryFreshness       []session.RepositoryFreshnessReceipt `json:"repository_freshness"`
 	PullRequest               *session.PullRequestBinding          `json:"pull_request,omitempty"`
 	Companions                []SessionCompanionDTO                `json:"companions,omitempty"`
+	Network                   SessionNetworkSummaryDTO             `json:"network"`
 	ForkName                  string                               `json:"fork_name"`
 	Revision                  int64                                `json:"revision"`
 	State                     session.SessionState                 `json:"state"`
@@ -82,6 +83,14 @@ type SessionCompanionDTO struct {
 	Name       string `json:"name"`
 	Path       string `json:"path"`
 	BaseCommit string `json:"base_commit"`
+}
+
+// SessionNetworkSummaryDTO is the two facts every session view carries: the posture its boxes run
+// under, and — for a filtered one — the fingerprint of the exact policy they enforce. The live
+// view and the receipt live behind their own routes; this stays small enough to appear in a list.
+type SessionNetworkSummaryDTO struct {
+	Mode        string `json:"mode"`
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 type TurnDTO struct {
@@ -471,6 +480,14 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 		if sessionHTTPMethod(w, r, http.MethodGet) {
 			h.getChanges(w, r, sessionID)
 		}
+	case len(parts) == 2 && parts[1] == "network":
+		if sessionHTTPMethod(w, r, http.MethodGet) {
+			h.getNetwork(w, r, sessionID)
+		}
+	case len(parts) == 3 && parts[1] == "network" && parts[2] == "receipt":
+		if sessionHTTPMethod(w, r, http.MethodGet) {
+			h.getNetworkReceipt(w, r, sessionID)
+		}
 	case len(parts) == 2 && parts[1] == "budget":
 		if sessionHTTPMethod(w, r, http.MethodPost) {
 			h.extendBudget(w, r, sessionID)
@@ -808,6 +825,33 @@ func (h *sessionHTTPHandler) getSession(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	writeSessionJSON(w, http.StatusOK, publicSession(sess))
+}
+
+// getNetwork and getNetworkReceipt are READS. They project retained evidence and never probe a
+// gateway, so a denial storm cannot make them slow, and they cannot grant, approve, or widen
+// anything — the session API has no path to network authority at all, by design.
+func (h *sessionHTTPHandler) getNetwork(w http.ResponseWriter, r *http.Request, id string) {
+	if !sessionQueryOnly(w, r) {
+		return
+	}
+	view, err := h.service.SessionNetwork(r.Context(), id)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, view)
+}
+
+func (h *sessionHTTPHandler) getNetworkReceipt(w http.ResponseWriter, r *http.Request, id string) {
+	if !sessionQueryOnly(w, r) {
+		return
+	}
+	receipt, err := h.service.SessionNetworkReceipt(r.Context(), id)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, receipt)
 }
 
 func (h *sessionHTTPHandler) submitTurn(w http.ResponseWriter, r *http.Request, sessionID string) {
@@ -1413,7 +1457,11 @@ func publicSession(value session.Session) SessionDTO {
 		RepositoryFreshnessStatus: repositoryFreshnessStatus(value.RepositoryFreshness),
 		RepositoryFreshness:       append([]session.RepositoryFreshnessReceipt(nil), value.RepositoryFreshness...),
 		PullRequest:               cloneSessionPullRequestBinding(value.PullRequest),
-		Companions:                companions, ForkName: value.ForkName,
+		Companions:                companions,
+		Network: SessionNetworkSummaryDTO{
+			Mode: normalizedSessionNetworkMode(value.NetworkMode), Fingerprint: value.NetworkFingerprint,
+		},
+		ForkName: value.ForkName,
 		Revision: value.Revision, State: value.State, Activity: value.Activity, MaxTurns: value.MaxTurns,
 		MaxQueuedTurns: value.MaxQueuedTurns, MaxQueuedBytes: value.MaxQueuedBytes, TurnsUsed: value.TurnsUsed,
 		QueuedTurnCount: value.QueuedTurnCount, QueuedPromptBytes: value.QueuedPromptBytes,
@@ -1603,7 +1651,7 @@ func sessionHTTPError(err error) (string, int, string) {
 		status = http.StatusConflict
 	case session.CodeInternal:
 		status = http.StatusInternalServerError
-	case session.CodeRepositoryUnavailable, sessionACPCleanupError:
+	case session.CodeRepositoryUnavailable, session.CodeNetworkUnavailable, sessionACPCleanupError:
 		status = http.StatusServiceUnavailable
 	}
 	var typed *session.Error

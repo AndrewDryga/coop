@@ -58,6 +58,13 @@ policies:
     project_env: false
     project_mcp: false
     repository_read_only: true
+    egress:
+      mode: filtered
+      rules:
+        - to: {domain: docs.example.com}
+          protocol: tls
+          ports: [443]
+      export_destinations: false
     max_turns: 100
     max_queued_turns: 20
     max_queued_bytes: 1048576
@@ -85,6 +92,22 @@ The parser rejects unknown fields and requires:
   investigation policies whose repository access is evidence-only; writable engineering policies
   must leave it false. The value is bound into the policy digest and persisted with the session, so
   changing the policy rotates rather than widening an existing session;
+- `egress`: optional restricted-networking authority for this policy's sessions. `mode` is
+  required when the block is present and is one of `open`, `filtered`, or `none`; `rules` uses the
+  same grammar as a repository's `box.egress_rules` and requires `mode: filtered`;
+  `export_destinations` defaults to `false`. The block is explicit operator authority: it is bound
+  into both digests, resolved once when the session is created, and frozen on the session row, so a
+  later edit applies to new sessions only. A policy with no `egress` block is not a request to
+  widen access — the project's remembered posture still decides, exactly as it does for a direct
+  launch in that repository. When the policy and the remembered posture disagree, creation is
+  refused with `network_unavailable`; the API cannot reconcile that, an operator must
+  (`coop net approve`). Filtered creation also requires a completed `coop net setup` on the host
+  and the repository's `box.egress_rules` to be inside its approved envelope. Beyond the rules you
+  write, admission adds only what the session's own box will have: the selected targets' provider
+  endpoints, and the HTTP hosts of the shared MCP configuration unless `project_mcp: false`
+  withheld that file. Nothing a request carries becomes a grant, so a policy whose sessions call
+  back to a Responder endpoint must allow that host itself — otherwise the callback is refused at
+  the gateway like any other unlisted destination;
 - `max_turns`: `1..10000`;
 - `max_queued_turns`: `1..1000`;
 - `max_queued_bytes`: `1..67108864`;
@@ -487,7 +510,8 @@ operation-plus-session response.
 | `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; policy must enable warm execution |
 
 The public session includes IDs, target, policy digest, the exact `project_env`, `project_mcp`, and
-`repository_read_only` authority flags, primary base commit, optional immutable pull-request
+`repository_read_only` authority flags, its frozen `network` posture (`{"mode":"filtered",
+"fingerprint":"<64 hex>"}`, or just `{"mode":"open"}`), primary base commit, optional immutable pull-request
 number/ref/head binding, companion aliases, and one version-2 repository freshness receipt per
 configured alias. Each receipt contains the requested revision, immutable fetched revision,
 sanitized remote identity, UTC fetch time, and stale-base status. The primary receipt also carries
@@ -597,7 +621,15 @@ session.target_rotated
 session.parked
 session.closed
 workspace.discarded
+network                 # one sealed filtered run's outcome: run_id, grouped denials, alerts
 ```
+
+`network` is appended after a filtered run seals, and only when that run hit the boundary — a quiet
+run costs no event, so this stream carries refusals rather than a per-turn heartbeat. Its payload is
+bounded by construction: destinations are grouped and capped with an `omitted_destinations` count,
+alerts are capped, and `evidence_id` names the retained event `coop net explain` can open. It
+follows the same disclosure scope as the network routes, so a destination appears only when the
+session policy set `egress.export_destinations: true`.
 
 Activity events narrate the interior of a turn — what the model did, as against what Coop decided —
 and are always sequenced before the turn's own terminal event, so a caller that stops polling at
@@ -688,6 +720,34 @@ JSON encodes `patch` and every `*_bytes` field as base64. A normal UTF-8 path al
 hide Git failures: failures return an error.
 
 Changes may inspect dirty work. Review may not.
+
+### Network
+
+```bash
+curl --unix-socket "$SOCKET" http://localhost/v1/sessions/remote_.../network
+curl --unix-socket "$SOCKET" http://localhost/v1/sessions/remote_.../network/receipt
+```
+
+Both are reads. Neither probes a gateway, and neither can grant, approve, or widen anything: the
+session API has no path to network authority at all. `GET /v1/sessions/{session_id}/network`
+returns the session's frozen `mode` and `fingerprint`, the `requested` and `effective` rule texts,
+`current` — the newest run's retained observation summary, or `{"status":"no run yet"}` — and a
+bounded `alerts` list. `GET /v1/sessions/{session_id}/network/receipt` aggregates every run the
+session owned into one versioned receipt with independent `finality` and `completeness`: it is only
+`final` once the session is closed and every run receipt is, and a `final` receipt may still be
+honestly `partial`. Because the receipts are retained in the owner's own registry, both survive
+container garbage collection. A session that never ran filtered answers
+`{"available":false,"reason":"..."}` rather than an empty receipt.
+
+`projection` states the disclosure scope. It is `destinations-withheld` unless the session policy
+set `egress.export_destinations: true`, in which case it is `destinations-included` and the rule
+texts and observed names are present. The daemon owns that projection; the outbound worker forwards
+exactly what the daemon answered.
+
+| Method | Path | Body/query |
+| --- | --- | --- |
+| `GET` | `/v1/sessions/{session_id}/network` | none |
+| `GET` | `/v1/sessions/{session_id}/network/receipt` | none |
 
 ### Review
 
@@ -815,7 +875,11 @@ Common status mapping:
 | `409` | idempotency, operation fence, revision, state, queue, budget, resume, uncertainty, or discard conflict |
 | `413` | ordinary request body exceeds 128 KiB, or turn submission exceeds 12 MiB |
 | `500` | internal failure; host paths and raw internal errors are suppressed |
-| `503` | readiness is not ready, or repository/runtime cleanup is temporarily unavailable |
+| `503` | readiness is not ready, or repository/runtime/network authority is temporarily unavailable |
+
+`network_unavailable` is a `503` an operator has to clear, not a retryable one: the host has no
+approval for the project, no completed `coop net setup`, or the named policy disagrees with the
+project's remembered posture. Creation refuses rather than falling back to an open session.
 
 Treat `operation_uncertain` and `turn.interrupted` as reconciliation states. Never retry a mutation
 under a new key merely because its result is unknown.

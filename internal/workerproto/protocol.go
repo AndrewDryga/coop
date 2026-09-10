@@ -26,7 +26,7 @@ const (
 var (
 	referencePattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 	digestPattern    = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	commandKinds     = []string{"ensure_workspace", "create_session", "get_session", "submit_turn", "get_turn", "get_output_artifact", "get_changes", "get_changes_page", "run_review", "plan_discard", "discard_session", "get_review_patch", "validate_candidate", "cancel_turn", "fence_operation", "checkpoint_workspace", "close_session", "reconcile_operation"}
+	commandKinds     = []string{"ensure_workspace", "create_session", "get_session", "get_network", "get_network_receipt", "submit_turn", "get_turn", "get_output_artifact", "get_changes", "get_changes_page", "run_review", "plan_discard", "discard_session", "get_review_patch", "validate_candidate", "cancel_turn", "fence_operation", "checkpoint_workspace", "close_session", "reconcile_operation"}
 	workerStates     = []string{"eligible", "busy", "draining", "needs_auth"}
 	capacityStates   = []string{"eligible", "busy", "cooldown", "needs_auth"}
 	resultStates     = []string{"succeeded", "failed", "uncertain"}

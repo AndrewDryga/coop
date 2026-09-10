@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -217,9 +218,32 @@ func runSessionCompact(state, backup string) (int, error) {
 }
 
 type sessionPoliciesResult struct {
-	PolicyFile             string            `json:"policy_file"`
-	PolicyDigests          map[string]string `json:"policy_digests"`
-	PolicyAuthorityDigests map[string]string `json:"policy_authority_digests"`
+	PolicyFile             string                          `json:"policy_file"`
+	PolicyDigests          map[string]string               `json:"policy_digests"`
+	PolicyAuthorityDigests map[string]string               `json:"policy_authority_digests"`
+	PolicyNetworks         map[string]sessionPolicyNetwork `json:"policy_networks"`
+}
+
+// sessionPolicyNetwork is what a policy's sessions may reach. It is printed beside the digests
+// because it IS authority: an operator authorizing a fleet worker has to see the posture and the
+// rules the same way they see the repository and the target.
+type sessionPolicyNetwork struct {
+	Mode               string   `json:"mode"`
+	Rules              []string `json:"rules,omitempty"`
+	ExportDestinations bool     `json:"export_destinations,omitempty"`
+}
+
+func sessionPolicyNetworkOf(policy sessionsvc.Policy) sessionPolicyNetwork {
+	out := sessionPolicyNetwork{
+		Mode: string(policy.Egress.Mode), ExportDestinations: policy.Egress.ExportDestinations,
+	}
+	if out.Mode == "" {
+		out.Mode = "open (default)"
+	}
+	for _, rule := range policy.Egress.Rules {
+		out.Rules = append(out.Rules, box.NetworkRuleText(rule))
+	}
+	return out
 }
 
 func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) (int, error) {
@@ -235,12 +259,14 @@ func runSessionPolicies(cfg *config.Config, policyPath string, jsonOutput bool) 
 		PolicyFile:             policyPath,
 		PolicyDigests:          make(map[string]string, len(policies)),
 		PolicyAuthorityDigests: make(map[string]string, len(policies)),
+		PolicyNetworks:         make(map[string]sessionPolicyNetwork, len(policies)),
 	}
 	names := make([]string, 0, len(policies))
 	for name, policy := range policies {
 		names = append(names, name)
 		result.PolicyDigests[name] = sessionsvc.ResolvedPolicyDigest(policy)
 		result.PolicyAuthorityDigests[name] = sessionsvc.ResolvedPolicyAuthorityDigest(policy)
+		result.PolicyNetworks[name] = sessionPolicyNetworkOf(policy)
 	}
 	if jsonOutput {
 		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
@@ -263,6 +289,14 @@ func renderSessionPolicies(w io.Writer, p ui.Palette, result sessionPoliciesResu
 		fmt.Fprintln(w, p.Bold(p.Cyan(name)))
 		fmt.Fprintf(w, "  %s     %s\n", p.Dim("Policy digest:"), result.PolicyDigests[name])
 		fmt.Fprintf(w, "  %s  %s\n", p.Dim("Authority digest:"), result.PolicyAuthorityDigests[name])
+		network := result.PolicyNetworks[name]
+		fmt.Fprintf(w, "  %s           %s\n", p.Dim("Network:"), network.Mode)
+		for _, rule := range network.Rules {
+			fmt.Fprintf(w, "  %s             %s\n", p.Dim("allow:"), rule)
+		}
+		if network.ExportDestinations {
+			fmt.Fprintf(w, "  %s            %s\n", p.Dim("export:"), "destinations are exported to the authorized worker")
+		}
 	}
 }
 

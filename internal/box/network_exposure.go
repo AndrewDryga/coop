@@ -21,8 +21,14 @@ func networkExposureRoots(cfg *config.Config, spec RunSpec) ([]string, error) {
 	for _, companion := range spec.CompanionRepositories {
 		roots = append(roots, companion.HostPath)
 	}
-	for _, name := range credentialScope(cfg, spec) {
-		roots = append(roots, cfg.AgentDir(name))
+	// A configuration with no config dir contributes no host config roots — that
+	// is exactly what ConfigExposureRoots reports for it — so it has no
+	// credential homes either. Deriving them anyway yields relative paths, which
+	// are not mount sources and cannot be checked for isolation at all.
+	if cfg != nil && cfg.ConfigDir != "" {
+		for _, name := range credentialScope(cfg, spec) {
+			roots = append(roots, cfg.AgentDir(name))
+		}
 	}
 	if repo := projectPolicyRepo(spec); repo != "" {
 		live, err := LiveBoxes(repo, "")

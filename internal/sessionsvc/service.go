@@ -22,6 +22,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
@@ -75,12 +76,43 @@ type Policy struct {
 	OmitEnv            bool
 	OmitMCP            bool
 	RepositoryReadOnly bool
+	Egress             EgressPolicy
 	MaxTurns           int
 	MaxQueuedTurns     int
 	MaxQueuedBytes     int
 	TurnTimeout        time.Duration
 	WarmIdleTimeout    time.Duration
 	MaxPatchBytes      int
+}
+
+// EgressPolicy is a session policy's network authority: the posture its boxes run under and the
+// destinations the operator granted them. It is explicit operator authority — a create or turn
+// request can never contribute a rule — and it is frozen into the session at creation, so a later
+// edit applies to NEW sessions only. The zero value is the built-in open posture, which is exactly
+// what a policy file with no `egress:` block means.
+type EgressPolicy struct {
+	Mode  egress.Mode   `json:"mode,omitempty"`
+	Rules []egress.Rule `json:"rules,omitempty"`
+	// ExportDestinations opts this session's outbound projections into concrete domain and peer
+	// names. Owner-private records always carry them; the worker's projection does not, because
+	// even a denied name can encode a secret.
+	ExportDestinations bool `json:"export_destinations,omitempty"`
+}
+
+// resolvedMode is the posture this policy asks for. An absent block is the built-in open default,
+// which is not an explicit request to widen anything.
+func (e EgressPolicy) resolvedMode() egress.Mode {
+	if e.Mode == "" {
+		return egress.Open
+	}
+	return e.Mode
+}
+
+// configured reports whether the operator wrote an `egress:` block at all. A policy that did not
+// must digest exactly as it did before this field existed, so sessions created by an earlier
+// binary keep matching their policy.
+func (e EgressPolicy) configured() bool {
+	return e.Mode != "" || len(e.Rules) != 0 || e.ExportDestinations
 }
 
 // UnmarshalJSON retains the write-ahead intent format written before target ladders. Policy
@@ -126,12 +158,21 @@ type rawSessionPolicy struct {
 	ProjectEnv         *bool                       `yaml:"project_env"`
 	ProjectMCP         *bool                       `yaml:"project_mcp"`
 	RepositoryReadOnly bool                        `yaml:"repository_read_only"`
+	Egress             *rawSessionEgressPolicy     `yaml:"egress"`
 	MaxTurns           int                         `yaml:"max_turns"`
 	MaxQueuedTurns     int                         `yaml:"max_queued_turns"`
 	MaxQueuedBytes     int                         `yaml:"max_queued_bytes"`
 	TurnTimeout        string                      `yaml:"turn_timeout"`
 	WarmIdleTimeout    string                      `yaml:"warm_idle_timeout"`
 	MaxPatchBytes      int                         `yaml:"max_patch_bytes"`
+}
+
+// rawSessionEgressPolicy is the file shape. `rules` uses the same grammar a repository's
+// `box.egress_rules` does, so an operator writes one rule form, not two.
+type rawSessionEgressPolicy struct {
+	Mode               string        `yaml:"mode"`
+	Rules              []egress.Rule `yaml:"rules"`
+	ExportDestinations bool          `yaml:"export_destinations"`
 }
 
 type rawSessionCompanionPolicy struct {
@@ -371,6 +412,10 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 	if err != nil || timeout <= 0 || timeout > sessionPolicyMaxTurnTimeout {
 		return Policy{}, fmt.Errorf("turn_timeout must be positive and no longer than %s", sessionPolicyMaxTurnTimeout)
 	}
+	networkPolicy, err := validateSessionEgress(raw.Egress)
+	if err != nil {
+		return Policy{}, err
+	}
 	var warmIdleTimeout time.Duration
 	if raw.WarmIdleTimeout != "" {
 		warmIdleTimeout, err = time.ParseDuration(raw.WarmIdleTimeout)
@@ -385,11 +430,41 @@ func validateSessionPolicy(name string, raw rawSessionPolicy, cfg *config.Config
 		OmitEnv:            raw.ProjectEnv != nil && !*raw.ProjectEnv,
 		OmitMCP:            raw.ProjectMCP != nil && !*raw.ProjectMCP,
 		RepositoryReadOnly: raw.RepositoryReadOnly,
+		Egress:             networkPolicy,
 		MaxTurns:           raw.MaxTurns,
 		MaxQueuedTurns:     raw.MaxQueuedTurns, MaxQueuedBytes: raw.MaxQueuedBytes,
 		TurnTimeout: timeout, WarmIdleTimeout: warmIdleTimeout,
 		MaxPatchBytes: raw.MaxPatchBytes,
 	}, nil
+}
+
+// validateSessionEgress reads the policy's `egress:` block. A missing block is the built-in open
+// posture and must stay byte-identical to a file written before this field existed. Rules are
+// normalized here, once, so the digest, the admission input and the API all describe the same
+// canonical grant — and a posture that cannot enforce a rule refuses the file rather than
+// silently accepting rules nothing will apply.
+func validateSessionEgress(raw *rawSessionEgressPolicy) (EgressPolicy, error) {
+	if raw == nil {
+		return EgressPolicy{}, nil
+	}
+	if raw.Mode == "" {
+		return EgressPolicy{}, errors.New("egress.mode is required — open, filtered, or none")
+	}
+	mode, err := egress.ParseMode(raw.Mode)
+	if err != nil {
+		return EgressPolicy{}, fmt.Errorf("egress.mode: %w", err)
+	}
+	if len(raw.Rules) == 0 {
+		return EgressPolicy{Mode: mode, ExportDestinations: raw.ExportDestinations}, nil
+	}
+	if mode != egress.Filtered {
+		return EgressPolicy{}, errors.New("egress.rules require egress.mode: filtered")
+	}
+	rules, err := egress.NormalizeRules(raw.Rules)
+	if err != nil {
+		return EgressPolicy{}, fmt.Errorf("egress.rules: %w", err)
+	}
+	return EgressPolicy{Mode: mode, Rules: rules, ExportDestinations: raw.ExportDestinations}, nil
 }
 
 // sessionTargetLadder parses a policy's `target:` — one target, or an ordered fallback ladder
@@ -769,12 +844,16 @@ type Service struct {
 	quarantined    map[string]struct{}
 	wg             sync.WaitGroup
 
-	operationMu            sync.Mutex
-	operationLocks         map[string]*sessionOperationLock
-	createActive           map[string]bool
-	createSlots            chan struct{}
-	testBeforeCreatePin    func() error
-	testAfterTurnLease     func(session.Turn)
+	operationMu         sync.Mutex
+	operationLocks      map[string]*sessionOperationLock
+	createActive        map[string]bool
+	createSlots         chan struct{}
+	testBeforeCreatePin func() error
+	testAfterTurnLease  func(session.Turn)
+	// testAdmitNetwork replaces create-time network admission. Real admission needs an owner
+	// key, an approval and a Docker qualification; a test that only cares what the create path
+	// does with the answer injects one. nil in production.
+	testAdmitNetwork       func(policy Policy, workspace, forkName string) (sessionNetworkBinding, error)
 	runtimeMu              sync.Mutex
 	runtimeLocks           map[string]*sessionOperationLock
 	restoring              map[string]bool // sessions whose workspace a restore is rewriting right now
@@ -904,6 +983,7 @@ func resolvedSessionPolicyDigest(policy Policy) string {
 		OmitEnv            bool              `json:"omit_env,omitempty"`
 		OmitMCP            bool              `json:"omit_mcp,omitempty"`
 		RepositoryReadOnly bool              `json:"repository_read_only,omitempty"`
+		Egress             *EgressPolicy     `json:"egress,omitempty"`
 		MaxTurns           int               `json:"max_turns"`
 		MaxQueuedTurns     int               `json:"max_queued_turns"`
 		MaxQueuedBytes     int               `json:"max_queued_bytes"`
@@ -916,6 +996,7 @@ func resolvedSessionPolicyDigest(policy Policy) string {
 		Target:  sessionTargetList(policy.Targets),
 		OmitEnv: policy.OmitEnv, OmitMCP: policy.OmitMCP,
 		RepositoryReadOnly: policy.RepositoryReadOnly,
+		Egress:             digestedSessionEgress(policy.Egress),
 		MaxTurns:           policy.MaxTurns, MaxQueuedTurns: policy.MaxQueuedTurns,
 		MaxQueuedBytes: policy.MaxQueuedBytes, TurnTimeout: int64(policy.TurnTimeout),
 		WarmIdleTimeout: int64(policy.WarmIdleTimeout),
@@ -924,6 +1005,19 @@ func resolvedSessionPolicyDigest(policy Policy) string {
 	data, _ := json.Marshal(canonical)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// digestedSessionEgress contributes the network block to a policy digest only when the operator
+// wrote one. A file with no `egress:` resolves to the same built-in open posture it always did,
+// and must produce the same digest, or every session created before this field existed would stop
+// matching its own policy on the next daemon start.
+func digestedSessionEgress(policy EgressPolicy) *EgressPolicy {
+	if !policy.configured() {
+		return nil
+	}
+	clone := policy
+	clone.Rules = append([]egress.Rule(nil), policy.Rules...)
+	return &clone
 }
 
 // ResolvedPolicyDigest returns the immutable digest bound into a remote session. Operators use
@@ -957,11 +1051,15 @@ func ResolvedPolicyAuthorityDigest(policy Policy) string {
 		OmitEnv            bool              `json:"omit_env,omitempty"`
 		OmitMCP            bool              `json:"omit_mcp,omitempty"`
 		RepositoryReadOnly bool              `json:"repository_read_only,omitempty"`
+		Egress             *EgressPolicy     `json:"egress,omitempty"`
 	}{
 		Repository: policy.Repository, Remote: policy.Remote, Branch: policy.Branch,
 		Companions: append([]CompanionPolicy(nil), policy.Companions...), Targets: targets,
 		OmitEnv: policy.OmitEnv, OmitMCP: policy.OmitMCP,
 		RepositoryReadOnly: policy.RepositoryReadOnly,
+		// Network reach is authority, not a resource budget: two lanes that differ only in
+		// model must not differ in what they can connect to, so this belongs in both digests.
+		Egress: digestedSessionEgress(policy.Egress),
 	}
 	data, _ := json.Marshal(canonical)
 	sum := sha256.Sum256(data)
@@ -2201,6 +2299,15 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		}
 		companions = append(companions, resolved)
 	}
+	// Network admission runs on the HOST, once, now that the workspace this session will mount
+	// exists: it resolves the posture from the operator policy against the project's remembered
+	// approval and freezes the exact policy every run of this session will enforce. A refusal —
+	// no approval, no host setup, a policy that disagrees with the remembered posture — fails
+	// the create with its own reason instead of quietly creating an open session.
+	network, err := s.admitSessionNetwork(intent.Policy, workspace.Path, intent.ForkName, companions)
+	if err != nil {
+		return failCreate(&session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()})
+	}
 	createReq := session.CreateSessionRequest{
 		// A session starts on the ladder's first rung; a rate limit rotates it to the next.
 		ID: intent.SessionID, ExternalRef: intent.Task, Target: intent.Policy.Targets[0].String(), Policy: intent.Policy.Name,
@@ -2214,8 +2321,10 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		ForkGeneration: string(workspace.Fork.Generation),
 		BaseCommit:     intent.BaseCommit, PullRequest: intent.PullRequest, Companions: companions,
 		RepositoryFreshness: append([]session.RepositoryFreshnessReceipt(nil), intent.RepositoryFreshness...),
-		MaxTurns:            intent.Policy.MaxTurns,
-		MaxQueuedTurns:      intent.Policy.MaxQueuedTurns, MaxQueuedBytes: intent.Policy.MaxQueuedBytes,
+		NetworkMode:         string(network.Mode), NetworkFingerprint: network.Fingerprint,
+		NetworkQualification: network.Qualification,
+		MaxTurns:             intent.Policy.MaxTurns,
+		MaxQueuedTurns:       intent.Policy.MaxQueuedTurns, MaxQueuedBytes: intent.Policy.MaxQueuedBytes,
 		TurnTimeout: intent.Policy.TurnTimeout, MaxPatchBytes: intent.Policy.MaxPatchBytes,
 	}
 	latest, err := s.store.GetOperationByID(ctx, op.ID)

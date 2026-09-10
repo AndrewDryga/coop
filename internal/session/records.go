@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion = 20
+	SchemaVersion = 21
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -167,6 +167,12 @@ const (
 	// the same thing, so a crawling turn stays distinguishable from a dead one
 	// without narrating twice.
 	EventProviderAlive EventType = "provider.alive"
+	// EventNetwork carries one sealed filtered run's networking outcome: the
+	// destinations the box could not reach, grouped, plus any alert the
+	// detectors raised. It is appended only for a run that hit the boundary —
+	// a quiet run costs no event — so a Responder watching this stream learns
+	// about a refusal without polling, and never sees a per-turn heartbeat.
+	EventNetwork EventType = "network"
 )
 
 type ErrorCode string
@@ -191,9 +197,13 @@ const (
 	CodeEventPayloadTooLarge    ErrorCode = "event_payload_too_large"
 	CodeDiscardPlanStale        ErrorCode = "discard_plan_stale"
 	CodeRepositoryUnavailable   ErrorCode = "repository_unavailable"
-	CodeOutputContractFailed    ErrorCode = "output_contract_failed"
-	CodeSessionCleanupError     ErrorCode = "session_cleanup_error"
-	CodeInternal                ErrorCode = "internal_error"
+	// CodeNetworkUnavailable means the host's own network authority could not answer: no
+	// approval for this project yet, no completed `coop net setup`, or a policy that disagrees
+	// with the remembered posture. The caller cannot fix any of those — an operator must.
+	CodeNetworkUnavailable   ErrorCode = "network_unavailable"
+	CodeOutputContractFailed ErrorCode = "output_contract_failed"
+	CodeSessionCleanupError  ErrorCode = "session_cleanup_error"
+	CodeInternal             ErrorCode = "internal_error"
 )
 
 // PublicErrorDetail removes implementation details that must not cross the
@@ -291,21 +301,27 @@ type Session struct {
 	PullRequest            *PullRequestBinding          `json:"pull_request,omitempty"`
 	Companions             []CompanionRepository        `json:"companions,omitempty"`
 	NativeSessionID        string                       `json:"native_session_id"`
-	TurnTimeout            time.Duration                `json:"turn_timeout"`
-	MaxPatchBytes          int                          `json:"max_patch_bytes"`
-	Revision               int64                        `json:"revision"`
-	State                  SessionState                 `json:"state"`
-	Activity               ActivityState                `json:"activity"`
-	MaxTurns               int                          `json:"max_turns"`
-	MaxQueuedTurns         int                          `json:"max_queued_turns"`
-	MaxQueuedBytes         int                          `json:"max_queued_bytes"`
-	TurnsUsed              int                          `json:"turns_used"`
-	QueuedTurnCount        int                          `json:"queued_turn_count"`
-	QueuedPromptBytes      int                          `json:"queued_prompt_bytes"`
-	ActiveTurnID           string                       `json:"active_turn_id"`
-	LastEventSequence      int64                        `json:"last_event_sequence"`
-	CreatedAt              time.Time                    `json:"created_at"`
-	UpdatedAt              time.Time                    `json:"updated_at"`
+	// Network is this session's frozen egress posture. NetworkFingerprint and
+	// NetworkQualification are the owner-keyed snapshot and host setup record a
+	// filtered session's every run must match; both stay empty for open/none.
+	NetworkMode          string        `json:"network_mode"`
+	NetworkFingerprint   string        `json:"network_fingerprint,omitempty"`
+	NetworkQualification string        `json:"network_qualification,omitempty"`
+	TurnTimeout          time.Duration `json:"turn_timeout"`
+	MaxPatchBytes        int           `json:"max_patch_bytes"`
+	Revision             int64         `json:"revision"`
+	State                SessionState  `json:"state"`
+	Activity             ActivityState `json:"activity"`
+	MaxTurns             int           `json:"max_turns"`
+	MaxQueuedTurns       int           `json:"max_queued_turns"`
+	MaxQueuedBytes       int           `json:"max_queued_bytes"`
+	TurnsUsed            int           `json:"turns_used"`
+	QueuedTurnCount      int           `json:"queued_turn_count"`
+	QueuedPromptBytes    int           `json:"queued_prompt_bytes"`
+	ActiveTurnID         string        `json:"active_turn_id"`
+	LastEventSequence    int64         `json:"last_event_sequence"`
+	CreatedAt            time.Time     `json:"created_at"`
+	UpdatedAt            time.Time     `json:"updated_at"`
 }
 
 // RepositoryFreshnessReceipt is the non-secret proof captured by the Coop
@@ -494,29 +510,32 @@ type Event struct {
 }
 
 type CreateSessionRequest struct {
-	ID                  string                       `json:"id"`
-	ExternalRef         string                       `json:"external_ref"`
-	Target              string                       `json:"target"`
-	Policy              string                       `json:"policy"`
-	PolicyDigest        string                       `json:"policy_digest"`
-	AuthorityDigest     string                       `json:"authority_digest,omitempty"`
-	OmitEnv             bool                         `json:"omit_env,omitempty"`
-	OmitMCP             bool                         `json:"omit_mcp,omitempty"`
-	ResponderBinding    *ResponderBinding            `json:"responder_binding,omitempty"`
-	RepositoryReadOnly  bool                         `json:"repository_read_only,omitempty"`
-	Repository          string                       `json:"repository"`
-	Workspace           string                       `json:"workspace"`
-	ForkName            string                       `json:"fork_name"`
-	ForkGeneration      string                       `json:"fork_generation,omitempty"`
-	BaseCommit          string                       `json:"base_commit"`
-	RepositoryFreshness []RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
-	PullRequest         *PullRequestBinding          `json:"pull_request,omitempty"`
-	Companions          []CompanionRepository        `json:"companions,omitempty"`
-	TurnTimeout         time.Duration                `json:"turn_timeout"`
-	MaxPatchBytes       int                          `json:"max_patch_bytes"`
-	MaxTurns            int                          `json:"max_turns"`
-	MaxQueuedTurns      int                          `json:"max_queued_turns"`
-	MaxQueuedBytes      int                          `json:"max_queued_bytes"`
+	ID                   string                       `json:"id"`
+	ExternalRef          string                       `json:"external_ref"`
+	Target               string                       `json:"target"`
+	Policy               string                       `json:"policy"`
+	PolicyDigest         string                       `json:"policy_digest"`
+	AuthorityDigest      string                       `json:"authority_digest,omitempty"`
+	OmitEnv              bool                         `json:"omit_env,omitempty"`
+	OmitMCP              bool                         `json:"omit_mcp,omitempty"`
+	ResponderBinding     *ResponderBinding            `json:"responder_binding,omitempty"`
+	RepositoryReadOnly   bool                         `json:"repository_read_only,omitempty"`
+	Repository           string                       `json:"repository"`
+	Workspace            string                       `json:"workspace"`
+	ForkName             string                       `json:"fork_name"`
+	ForkGeneration       string                       `json:"fork_generation,omitempty"`
+	BaseCommit           string                       `json:"base_commit"`
+	RepositoryFreshness  []RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
+	PullRequest          *PullRequestBinding          `json:"pull_request,omitempty"`
+	Companions           []CompanionRepository        `json:"companions,omitempty"`
+	NetworkMode          string                       `json:"network_mode,omitempty"`
+	NetworkFingerprint   string                       `json:"network_fingerprint,omitempty"`
+	NetworkQualification string                       `json:"network_qualification,omitempty"`
+	TurnTimeout          time.Duration                `json:"turn_timeout"`
+	MaxPatchBytes        int                          `json:"max_patch_bytes"`
+	MaxTurns             int                          `json:"max_turns"`
+	MaxQueuedTurns       int                          `json:"max_queued_turns"`
+	MaxQueuedBytes       int                          `json:"max_queued_bytes"`
 }
 
 // SubmitTurnRequest admits one turn. MinTargetIndex is the escalation floor: the

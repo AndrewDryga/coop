@@ -862,6 +862,9 @@ func (s *Store) initialSession(req CreateSessionRequest) Session {
 		RepositoryFreshness:    append([]RepositoryFreshnessReceipt(nil), req.RepositoryFreshness...),
 		PullRequest:            clonePullRequestBinding(req.PullRequest),
 		Companions:             append([]CompanionRepository(nil), req.Companions...),
+		NetworkMode:            normalizedNetworkMode(req.NetworkMode),
+		NetworkFingerprint:     req.NetworkFingerprint,
+		NetworkQualification:   req.NetworkQualification,
 		TurnTimeout:            req.TurnTimeout,
 		MaxPatchBytes:          req.MaxPatchBytes,
 		Revision:               1,
@@ -892,10 +895,12 @@ func (s *Store) insertInitialSessionTx(ctx context.Context, tx *sql.Tx, sess *Se
 		INSERT INTO sessions
 		(id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions, repository_freshness,
 		 pull_request_number, pull_request_ref, pull_request_head_commit,
+		 network_mode, network_fingerprint, network_qualification,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
 		sess.Policy, sess.PolicyDigest, sess.AuthorityDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ResponderBinding), responderToken(sess.ResponderBinding), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
 		string(companions), string(repositoryFreshness), pullRequestNumber(sess.PullRequest), pullRequestRef(sess.PullRequest), pullRequestHead(sess.PullRequest),
+		normalizedNetworkMode(sess.NetworkMode), sess.NetworkFingerprint, sess.NetworkQualification,
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
 		sess.MaxQueuedTurns, sess.MaxQueuedBytes, sess.CreatedAt.UnixNano(), sess.UpdatedAt.UnixNano()); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: sessions.id") {
@@ -931,6 +936,8 @@ func initialSessionMatchesRequest(sess Session, req CreateSessionRequest) bool {
 		sess.ForkGeneration == req.ForkGeneration && sess.BaseCommit == req.BaseCommit &&
 		equalRepositoryFreshness(sess.RepositoryFreshness, req.RepositoryFreshness) &&
 		equalPullRequestBinding(sess.PullRequest, req.PullRequest) && equalCompanions(sess.Companions, req.Companions) &&
+		sess.NetworkMode == normalizedNetworkMode(req.NetworkMode) &&
+		sess.NetworkFingerprint == req.NetworkFingerprint && sess.NetworkQualification == req.NetworkQualification &&
 		sess.NativeSessionID == "" && sess.WorkspaceTask == nil && sess.TurnTimeout == req.TurnTimeout &&
 		sess.MaxPatchBytes == req.MaxPatchBytes && sess.Revision == 1 && sess.State == SessionOpen &&
 		sess.Activity == ActivityParked && sess.MaxTurns == normalized(req.MaxTurns, DefaultMaxTurns) &&
@@ -1147,6 +1154,16 @@ func normalized(value, fallback int) int {
 	return value
 }
 
+// normalizedNetworkMode keeps a pre-network create request and a row migrated
+// from schema 20 reading the same way: the built-in posture is open, so an
+// unset mode is open rather than an empty string nobody can compare against.
+func normalizedNetworkMode(mode string) string {
+	if mode == "" {
+		return "open"
+	}
+	return mode
+}
+
 func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	sess, err := scanSession(s.db.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1306,6 +1323,7 @@ func (s *Store) ListSessionRuntimeCleanupTurns(ctx context.Context, sessionID st
 
 const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, repository_read_only, repository, workspace, fork_name, fork_generation,
 	   base_commit, companions, repository_freshness, pull_request_number, pull_request_ref, pull_request_head_commit,
+	   network_mode, network_fingerprint, network_qualification,
 	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
 	   max_turns, max_queued_turns, max_queued_bytes, turns_used, queued_turn_count,
 	   queued_prompt_bytes, active_turn_id, last_event_sequence, created_at, updated_at
@@ -1323,7 +1341,8 @@ func scanSession(row rowScanner) (Session, error) {
 	var createdAt, updatedAt int64
 	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest, &sess.AuthorityDigest,
 		&sess.ProjectEnv, &sess.ProjectMCP, &responderEndpointValue, &responderTokenValue, &workspaceTaskValue, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions, &repositoryFreshness,
-		&pullRequestNumber, &pullRequestRef, &pullRequestHead, &sess.NativeSessionID,
+		&pullRequestNumber, &pullRequestRef, &pullRequestHead,
+		&sess.NetworkMode, &sess.NetworkFingerprint, &sess.NetworkQualification, &sess.NativeSessionID,
 		&turnTimeout, &sess.MaxPatchBytes, &sess.Revision, &state, &activity, &sess.MaxTurns,
 		&sess.MaxQueuedTurns, &sess.MaxQueuedBytes, &sess.TurnsUsed, &sess.QueuedTurnCount,
 		&sess.QueuedPromptBytes, &active,

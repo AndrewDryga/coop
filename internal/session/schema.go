@@ -238,6 +238,16 @@ const schemaV20 = `
 ALTER TABLE sessions ADD COLUMN repository_freshness TEXT NOT NULL DEFAULT '';
 `
 
+// A session's network posture is frozen when it is created, not re-resolved per
+// turn: the mode plus, for a filtered session, the owner-keyed snapshot
+// fingerprint and the host qualification its runs must match. An open or
+// offline session stores its mode and two empty strings.
+const schemaV21 = `
+ALTER TABLE sessions ADD COLUMN network_mode TEXT NOT NULL DEFAULT 'open';
+ALTER TABLE sessions ADD COLUMN network_fingerprint TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN network_qualification TEXT NOT NULL DEFAULT '';
+`
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -374,6 +384,12 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v20: %w", err)
 		}
 		version = 20
+	}
+	if version < 21 {
+		if _, err := tx.Exec(schemaV21); err != nil {
+			return fmt.Errorf("migrate schema v21: %w", err)
+		}
+		version = 21
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
