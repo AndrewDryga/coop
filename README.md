@@ -1285,7 +1285,7 @@ except the knowledge tree (`kb/`, including `kb/rules/`), workflow assets (`skil
 | `kb/` | the committed descriptive knowledge base — subsystem maps, cross-cutting traps, and gotchas the code does not carry |
 | `kb/rules/` | the normative part of the knowledge tree — corrections graduate into “do X, not Y” rules here |
 | `claude/` | fallback user-level Claude settings and hooks for repos without matching project `.claude/` artifacts (committed) |
-| `project.yaml` | the committed per-project config: a monorepo's [`subprojects:`](#monorepos), the [`serve:` ports](#see-the-dev-server-in-your-browser), the box **policy** (`box:` — egress, resource caps, `auto_up`/`network`), and the merge `gate:`. `box:` and `gate:` fall *below* an explicit `COOP_*` env/conf setting, and — being committed and host-read — can only ever *tighten* your posture (egress pins to `none`, never widens; `no_new_privileges` isn't settable here) |
+| `project.yaml` | the committed per-project config: a monorepo's [`subprojects:`](#monorepos), the [`serve:` ports](#see-the-dev-server-in-your-browser), the box **policy** (`box:` — egress and [`egress_rules:`](docs/networking.md), resource caps, `auto_up`/`network`), and the merge `gate:`. `box:` and `gate:` fall *below* an explicit `COOP_*` env/conf setting, and — being committed and host-read — can only ever *tighten* your posture (egress pins to `none`, never widens; `no_new_privileges` isn't settable here) |
 
 Upgrading a repo that still has a single `.agent/TASKS.md`? Convert it to the folder format
 by pasting the prompt in [MIGRATING.md](MIGRATING.md) to any coding agent in the repo.
@@ -1590,10 +1590,12 @@ http://localhost:24187`); on a terminal run it's printed on stderr.
 Two things to know: the dev server must bind `0.0.0.0` inside the box (`vite --host`,
 `next dev -H 0.0.0.0`, …) — a container-localhost server isn't reachable through the
 mapping — and ports bind to *your* localhost only (never the LAN). Publishing needs
-network egress (`COOP_EGRESS=open`, the default); a host port already in use is skipped
-with a note, while `COOP_SERVE_URL_<port>` still carries the workspace's assigned URL for
-configuration and discovery. A box restart (credential switch, rebuild) restarts the dev
-server's world — the URL stays the same, just re-run the server.
+network egress (`COOP_EGRESS=open`, the default, or `filtered` — where the port is
+published on the run's gateway, see [restricted networking](docs/networking.md)); a host
+port already in use is skipped with a note, while `COOP_SERVE_URL_<port>` still carries
+the workspace's assigned URL for configuration and discovery. A box restart (credential
+switch, rebuild) restarts the dev server's world — the URL stays the same, just re-run
+the server.
 
 ### Keeping the box current
 

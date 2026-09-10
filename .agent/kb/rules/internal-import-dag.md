@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-09-06
+updated: 2026-09-10
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,25 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-09-10 — S5 (d2401e1): `sessionsvc -> egress, networkstate, networkview` — a remote session
+  freezes its posture at create and reads run evidence back; `session` storage stays transport
+  neutral and the API gains no approval path. `sessionsvc -> box` already existed. The WIP's
+  `sessionsvc -> acpctl, processidentity` and `cli -> processidentity` edges were REVERTED with the
+  captured-launch design and never landed; their entries are gone with them.
+- 2026-09-10 — S3 (4739bb1): `cli -> networkstate, networkview` for the read-only `coop net` verbs.
+  They open the keyless `Evidence` handle; the CLI still cannot approve, capture or launch.
+- 2026-09-10 — S2 (d9a3fc0): `cli -> egress` to parse `--egress`/`--allow-domain`/`--egress-rules`
+  into typed input for `box.AdmitNetwork`. Parsing is not authority: the box decides whether a rules
+  file grants or requests.
+- 2026-09-10 — S1 (488182f): `box -> egress, gatewayimage, networkgateway, networkstate, networkview`
+  (the one launch owner consumes frozen policy, the pinned helper image and private run custody) and
+  `agent -> egress` (adapters declare their bundle and locked clients). No second sandbox path, and
+  no reverse edge into `box`.
+- 2026-09-10 — S0 (54be097): the restricted-networking leaves — `egress` (no edges),
+  `gatewayimage -> runtime`, `networkgateway -> egress, networkview`,
+  `networkstate -> egress, networkview, processidentity`, `networkview -> egress`, and
+  `project -> egress` for the repository's request grammar. The policy compiler is not a grant
+  source and enables no launch on its own. See [[restricted-networking]].
 - 2026-09-06 — new leaf `hostsurface` (files that change what runs on the host), imported by `forkctl` (fork policy scan), `tasks` (completion flags) and `cli` (check-secrets report); see KB card host-execution-surfaces.
 - 2026-09-06 — new leaf `testutil/wait` (no edges): the shared fixture-guard wait tests import; see KB card test-fixture-guards-vs-timing-bounds.
 - 2026-09-06 — `DriverNeutralizer` retired: the trusted git view (`internal/forkspace/gitview.go`, KB card trusted-git-view) replaced name enumeration; no edge changed — every package still reaches git through `forkspace`, now via `GitCommand`/`GitRefCommand` instead of building argv atop `GitHardening`.

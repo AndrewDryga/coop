@@ -15,11 +15,11 @@ Start with `coop net setup` once per machine, then `coop net` for this project's
 | Rule | Meaning | Enforced by |
 | --- | --- | --- |
 | `to: {domain: "api.example.com"}` · `protocol: tls` · `ports: [443]` | that exact name over TLS 443 | visible-SNI routing to a validated IPv4 address |
-| `to: {domain: "*.example.com"}` · `protocol: tls` · `ports: [443]` | one label under that name — `www.example.com`, **not** the apex and not `a.b.example.com` | the same matcher in DNS admission and SNI routing |
+| `to: {domain: "*.example.com"}` · `protocol: tls` · `ports: [443]` | one label under that name — `www.example.com`, but never the apex and never `a.b.example.com` | the same matcher in DNS admission and SNI routing |
 | `to: {ip: "10.42.8.12"}` / `to: {cidr: "10.42.9.0/24"}` · `protocol: tcp\|udp` · `ports: [...]` | raw TCP or UDP to those IPv4 addresses on those ports | an nftables accept rule with its own kernel counter |
 | `to: {ip: ...}` / `to: {cidr: ...}` · `protocol: icmp` · `types: [echo-request]` | IPv4 ping to those addresses | an nftables accept rule; echo replies return on conntrack |
 | `to: {provider: claude}` | that provider's maintained core endpoints | expanded from the trusted release bundle into concrete TLS rules |
-| `to: {service: "db"}` · `protocol: tcp` · `ports: [5432]` | one Compose sidecar of **this** project | the container's exact address, read from the runtime at launch |
+| `to: {service: "db"}` · `protocol: tcp` · `ports: [5432]` | one Compose sidecar belonging to this project | the container's exact address, read from the runtime at launch |
 | `serve: {ports: [3000]}` in `.agent/project.yaml` | the host browser reaches the box's dev server | the port is published on the gateway container, which owns the box's network namespace |
 
 A `service:` grant is a request like any other: it is approved by a human, it names one service, and
@@ -39,9 +39,9 @@ anything — every other container on it stays behind the same default deny as t
 | a host, loopback, link-local or metadata range | `<range> is a protected address range (host, loopback, link-local or metadata); no rule can grant it` |
 | a project `Dockerfile`, or `COOP_IMAGE` | `restricted networking runs the qualified client image; …` |
 | a runtime other than Docker | admission fails: no `coop net setup` record matches this runtime |
-| `box.network: true` with no `service:` grant | `restricted networking does not join a shared services network; request the exact sidecar with a `to: {service: <name>}` rule …` |
+| `box.network: true` with no `service:` grant | `restricted networking does not join a shared services network; request the exact sidecar with a to: {service: <name>} rule …` |
 
-A refused rule fails the **launch**, before any approval is written or any container is created.
+A refused rule fails the launch itself, before any approval is written or any container is created.
 Coop never accepts a rule it cannot enforce and then quietly drops the constraint.
 
 Two boundaries can never be granted, inside a `cidr:` grant or anywhere else: the host's own
