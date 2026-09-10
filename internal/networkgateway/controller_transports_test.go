@@ -34,11 +34,19 @@ func counterFor(t *testing.T, policy egress.Snapshot, protocol, destination stri
 	return ""
 }
 
+// serveIngress is the bridge gateway a published port's host traffic arrives
+// from. Fixtures use one fixed address; a run reads it from the daemon.
+var serveIngress = netip.MustParseAddr("172.17.0.1")
+
 func transportController(t *testing.T, policy egress.Snapshot, services []ServiceBinding, serve []int) *Controller {
 	t.Helper()
 	clock := testBootClock()
+	ingress := netip.Addr{}
+	if len(serve) != 0 {
+		ingress = serveIngress
+	}
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32),
-		PolicyFingerprint: policy.Fingerprint}, policy, nil, services, serve, clock, func(context.Context, string) error { return nil })
+		PolicyFingerprint: policy.Fingerprint}, policy, nil, services, serve, ingress, clock, func(context.Context, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,8 +81,8 @@ func TestRenderedRulesEnforceEveryAcceptedTransport(t *testing.T) {
 		"  ip saddr 10.0.0.0/8 icmp type echo-reply ct state established,related accept",
 		"  meta skuid 1000 ip daddr 172.31.4.7 tcp dport { 80 } counter name " + counterFor(t, policy, "tcp", "web") + " accept",
 		"  ip saddr 172.31.4.7 tcp sport { 80 } ct state established accept",
-		"  tcp dport { 8000 } ct state new,established accept",
-		"  meta skuid 1000 tcp sport { 8000 } ct state established accept",
+		"  ip saddr 172.17.0.1 tcp dport { 8000 } ct state new,established accept",
+		"  ip daddr 172.17.0.1 tcp sport { 8000 } ct state established accept",
 		" counter " + counterFor(t, policy, "icmp", "10.0.0.0/8") + " { }",
 	}
 	for _, line := range expected {
@@ -86,20 +94,49 @@ func TestRenderedRulesEnforceEveryAcceptedTransport(t *testing.T) {
 	if strings.Contains(rules, "api.example.com") {
 		t.Error("a TLS domain grant leaked into the packet filter")
 	}
+	// An ADDRESS grant renders inside the protected-drop/deny window, so the
+	// permanent denials still win inside it. An approved SERVICE renders before
+	// that drop: its container address is inside one of the runtime's own
+	// subnets, which this run protects, and that one address is what a human
+	// approved.
 	protected := strings.Index(rules, "meta skuid 1000 ip daddr @protected4 counter name protected_agent")
 	deny := strings.Index(rules, "meta skuid 1000 counter name denied_agent reject")
-	for _, line := range expected[:8] {
+	for _, line := range expected[:6] {
 		at := strings.Index(rules, line)
 		if !strings.HasPrefix(strings.TrimSpace(line), "ip saddr") && (at < protected || at > deny) {
-			t.Errorf("grant rule is outside the protected-drop/deny window: %s", line)
+			t.Errorf("address grant is outside the protected-drop/deny window: %s", line)
 		}
+	}
+	if at := strings.Index(rules, expected[6]); at < 0 || at > protected {
+		t.Errorf("the approved service grant does not precede the protected drop: %s", expected[6])
+	}
+	// The served port's reply goes TO the protected bridge gateway, so it has to
+	// precede that drop too — and it carries no skuid, because a listening
+	// socket's SYN-ACK is the kernel's. Conntrack is what scopes it.
+	if at := strings.Index(rules, expected[9]); at < 0 || at > protected {
+		t.Errorf("the served port's reply does not precede the protected drop: %s", expected[9])
+	}
+	if strings.Contains(rules, "meta skuid 1000 tcp sport") {
+		t.Error("the served port's reply still requires the agent's uid, which a SYN-ACK does not carry")
 	}
 	ingressProtected := strings.Index(rules, "ip saddr @protected4 counter name denied_ingress drop")
 	ingressDeny := strings.LastIndex(rules, "counter name denied_ingress drop")
-	for _, line := range expected[:9] {
+	for _, line := range expected[:6] {
 		at := strings.Index(rules, line)
 		if strings.HasPrefix(strings.TrimSpace(line), "ip saddr ") && (at < ingressProtected || at > ingressDeny) {
 			t.Errorf("return rule is outside the protected-drop/deny window: %s", line)
+		}
+	}
+	for _, line := range []string{expected[7], expected[8]} {
+		if at := strings.Index(rules, line); at < 0 || at > ingressProtected {
+			t.Errorf("approved sidecar/served-port ingress does not precede the protected drop: %s", line)
+		}
+	}
+	// The agent's own namespace loopback is permitted before the protected drop:
+	// a local test server is not an attempt on a protected host surface.
+	for _, line := range []string{`  meta skuid 1000 oifname "lo" accept`, "  meta skuid 1000 ip daddr 127.0.0.0/8 accept"} {
+		if at := strings.Index(rules, line); at < 0 || at > protected {
+			t.Errorf("the run's own loopback is not permitted before the protected drop: %s", line)
 		}
 	}
 }
@@ -132,7 +169,7 @@ func TestGrantedCIDRCannotBeatAProtectedAddress(t *testing.T) {
 	host := netip.MustParsePrefix("10.7.7.7/32")
 	clock := testBootClock()
 	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32),
-		PolicyFingerprint: policy.Fingerprint}, policy, []netip.Prefix{host}, nil, nil, clock, func(context.Context, string) error { return nil })
+		PolicyFingerprint: policy.Fingerprint}, policy, []netip.Prefix{host}, nil, nil, netip.Addr{}, clock, func(context.Context, string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

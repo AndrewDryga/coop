@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/qualification.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_setup.go, internal/box/filtered_mounts.go, internal/box/run.go, docs/networking.md]
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/qualification.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_setup.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/run.go, docs/networking.md]
 updated: 2026-09-10
 ---
 
@@ -23,7 +23,12 @@ between that flag and `docker run`:
 
 Authority never comes from the repository or the box. A repo's `box.egress_rules`, and a rules file
 that lives inside an agent mount, are *requests*; a human turns one into a grant with
-`coop net approve`, the only caller of `Store.Approve` (`box/network_approval.go:185`). Observed
+`coop net approve`, the only caller of `Store.Approve` (`box/network_approval.go:202`). An approval
+binds three things beyond the rules: the project directory's dev+inode (a replacement at the same
+path is refused, `networkstate/authority.go:459`), the reviewed Compose stanza of every `service:`
+grant as a digest recomputed at launch (`box/composecheck.go:415`, `box/network_approval.go:276`),
+and the same capability gate a launch applies — an unenforceable rule is refused at review, not
+remembered (`box/network_approval.go:157`). Observed
 traffic is evidence, never a grant. Admission marks the resolved posture explicit through
 `cfg.SetEgress` (`box/network_admission.go:91`), so the project overlay cannot decide the mode a
 second time. A run that neither asks for filtered nor has a remembered posture writes NO host
@@ -31,10 +36,9 @@ state — the preview creates no owner key (`networkstate/admission.go:45`).
 
 The precedence ladder, one line: invocation `--egress` → remembered approval posture → explicit
 `COOP_EGRESS` → project `box.egress` → any rule present ⇒ filtered → open
-(`networkstate/admission.go:165`), and a hard ceiling then clamps that result, refusing rather than
-narrowing an explicit mode that exceeds it. A named session policy replaces the whole branch and
-refuses rather than reconcile with a disagreeing remembered posture
-(`networkstate/admission.go:155`).
+(`networkstate/admission.go:181`). There is no hard ceiling: nothing ever produced one, so the
+field and its clamp were deleted. A named session policy replaces the whole branch and refuses
+rather than reconcile with a disagreeing remembered posture (`networkstate/admission.go:170`).
 
 Qualification has two halves. The release half is the `networkruntimee2e`-tagged suite —
 enforcement, denial, guard/collector faults, transports, credentialed providers — and it is what the
@@ -52,7 +56,9 @@ Traps:
   refused by name at admission (`box/network_admission.go:173`), never downgraded to a warning.
 - Extra runtime arguments (`COOP_RUN_ARGS`, `coop … -- …`) are reduced to bind mounts and
   `-e KEY=VALUE`; anything else is refused by name (`box/filtered_mounts.go:25`). The gateway, not
-  the environment, is the boundary.
+  the environment, is the boundary — and a bind that IS or CONTAINS the runtime's control surface
+  (`/var/run`, `/run`, `/proc`, `/sys`, `/dev`, `/`, the bound endpoint's socket) is refused too
+  (`box/filtered_mounts.go:429`): one curl over a daemon socket starts a container no gateway sees.
 - 443 and 53 are the gateway's own capture: a raw `tcp`/`udp` grant on either
   (`egress/snapshot.go:502`) or a published `serve` port on either
   (`networkgateway/controller.go:133`) is refused.
@@ -63,5 +69,8 @@ Traps:
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
 
 ## Changelog
+- 2026-09-10 — S7c: an approval now binds the project directory's inode and each `service:` grant's
+  reviewed Compose digest, `approve` applies the launch capability gate, filtered mounts refuse the
+  runtime's control surfaces, and the never-produced hard ceiling is gone. Re-verified.
 - 2026-09-10 — created for the shipped feature (S0–S6, 54be097…f3e1d96), replacing eleven cards
   written for the abandoned custody design. Verified against the sources above.

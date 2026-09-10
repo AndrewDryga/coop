@@ -725,10 +725,12 @@ Changes may inspect dirty work. Review may not.
 
 ```bash
 curl --unix-socket "$SOCKET" http://localhost/v1/sessions/remote_.../network
+curl --unix-socket "$SOCKET" http://localhost/v1/sessions/remote_.../network/connections
+curl --unix-socket "$SOCKET" http://localhost/v1/sessions/remote_.../network/explanations/<event_id>
 curl --unix-socket "$SOCKET" http://localhost/v1/sessions/remote_.../network/receipt
 ```
 
-Both are reads. Neither probes a gateway, and neither can grant, approve, or widen anything: the
+All four are reads. Neither probes a gateway, and neither can grant, approve, or widen anything: the
 session API has no path to network authority at all. `GET /v1/sessions/{session_id}/network`
 returns the session's frozen `mode` and `fingerprint`, the `requested` and `effective` rule texts,
 `current` — the newest run's retained observation summary, or `{"status":"no run yet"}` — and a
@@ -739,14 +741,28 @@ honestly `partial`. Because the receipts are retained in the owner's own registr
 container garbage collection. A session that never ran filtered answers
 `{"available":false,"reason":"..."}` rather than an empty receipt.
 
+`GET /v1/sessions/{session_id}/network/connections` is the live drilldown: the newest run's bounded
+connection rows as the collector recorded them, with `status` (the same freshness word the summary
+uses), `as_of` and `detail_truncated`. It is pull-based — a per-second sample belongs in nobody's
+durable journal — and a session with no run yet answers `{"status":"no run yet","connections":[]}`.
+
+`GET /v1/sessions/{session_id}/network/explanations/{event_id}` opens ONE retained refusal of this
+session's own runs: the event, the reason, its provenance and whether a candidate rule was drafted.
+An event that aged out of its run's bounded ring answers `{"available":false,"reason":
+"event_not_retained"}`, which is not proof the id never existed.
+
 `projection` states the disclosure scope. It is `destinations-withheld` unless the session policy
 set `egress.export_destinations: true`, in which case it is `destinations-included` and the rule
 texts and observed names are present. The daemon owns that projection; the outbound worker forwards
-exactly what the daemon answered.
+exactly what the daemon answered, through the four read commands `get_network`,
+`get_network_connections`, `get_network_explanation` and `get_network_receipt` — each one a plain
+GET of the route above, with no destination, rule or disclosure scope of its own to choose.
 
 | Method | Path | Body/query |
 | --- | --- | --- |
 | `GET` | `/v1/sessions/{session_id}/network` | none |
+| `GET` | `/v1/sessions/{session_id}/network/connections` | none |
+| `GET` | `/v1/sessions/{session_id}/network/explanations/{event_id}` | none |
 | `GET` | `/v1/sessions/{session_id}/network/receipt` | none |
 
 ### Review

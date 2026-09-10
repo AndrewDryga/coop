@@ -46,7 +46,7 @@ const (
 	netWatchDeltaLines = 5
 )
 
-var netCommands = []string{"ls", "inspect", "watch", "receipt", "why", "explain", "approve", "setup"}
+var netCommands = []string{"ls", "inspect", "watch", "receipt", "why", "explain", "approve", "setup", "recover"}
 
 // cmdNet routes the restricted-networking family. Bare `coop net` is this
 // project's posture, not a listing: what a box may reach is the question a
@@ -70,9 +70,67 @@ func (a *app) cmdNet(args []string) (int, error) {
 		return netDiagnostic(verb, rest)
 	case "approve":
 		return a.cmdNetApprove(rest)
+	case "recover":
+		return a.cmdNetRecover(rest)
 	default:
 		return 2, unknownErr("net command", verb, netCommands)
 	}
+}
+
+// cmdNetRecover settles the runs a dead supervisor left behind. It is the only
+// verb besides setup/approve that changes anything, and what it changes is
+// exactly one interrupted run's own resources: containers and volumes by
+// recorded id and ownership labels, then a final `supervisor_lost` receipt.
+func (a *app) cmdNetRecover(args []string) (int, error) {
+	runID, all := "", false
+	for _, arg := range args {
+		switch {
+		case arg == "--all":
+			all = true
+		case strings.HasPrefix(arg, "-"):
+			return 2, unknownErr("net recover flag", arg, []string{"--all"})
+		case runID != "":
+			return 2, errors.New("coop net recover takes one run id, or --all")
+		default:
+			runID = arg
+		}
+	}
+	if runID == "" && !all {
+		return 2, errors.New("coop net recover needs a run id, or --all for every pending run")
+	}
+	if runID != "" && all {
+		return 2, errors.New("coop net recover takes a run id or --all, not both")
+	}
+	if err := a.ensureRuntime(); err != nil {
+		return -1, err
+	}
+	results, err := box.RecoverNetworkRuns(context.Background(), a.rt, runID)
+	if err != nil {
+		return 1, err
+	}
+	if len(results) == 0 {
+		ui.Info("no interrupted network run is waiting for cleanup")
+		return 0, nil
+	}
+	code := 0
+	for _, result := range results {
+		switch {
+		case result.Skipped != "":
+			ui.Warn("run %s was left alone: %s", result.RunID, result.Skipped)
+		case len(result.Failures) != 0 || len(result.Pending) != 0:
+			code = 1
+			ui.Warn("run %s is still pending: %s", result.RunID, strings.Join(result.Pending, ", "))
+			for _, failure := range result.Failures {
+				ui.Detail("%v", failure)
+			}
+		default:
+			ui.Info("run %s recovered: removed %s", result.RunID, ui.Count(len(result.Removed), "resource"))
+		}
+		if result.Sealed {
+			ui.Detail("coop net receipt %s", result.RunID)
+		}
+	}
+	return code, nil
 }
 
 func (a *app) cmdNetSetup() (int, error) {

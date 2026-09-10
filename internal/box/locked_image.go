@@ -19,19 +19,15 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
-// LockedImageCandidate records construction, never provider qualification.
-// Authentication, MCP and constrained-network behavior must be proven separately
-// against this exact ID and closure before a public filtered launch can use it.
-type LockedImageCandidate struct {
-	ImageID, DaemonID, DefinitionDigest, ClosureDigest string
-	NodeImage, GoImage                                 string
-	Platform                                           agents.ClientPlatform
-}
-
 // BuildNetworkCandidate is explicit host setup, never a fallback during launch.
 // It returns the actual image pair construction produced; only the qualification
 // that proves it is ever persisted, so a failed build grants no launch authority
-// and never prunes shared Docker state to hide the failed operation.
+// and never prunes shared Docker state to hide the failed operation. Building
+// the client image records construction, never provider qualification:
+// authentication, MCP and constrained-network behavior are proven separately
+// against this exact ID and closure before a public filtered launch uses it.
+// It deliberately accepts no Config, repository path, fresh/floating flag,
+// package override or custom Dockerfile: the inputs are embedded.
 func BuildNetworkCandidate(ctx context.Context, docker *runtime.Docker, stdout, stderr *os.File) (networkstate.CandidateSpec, error) {
 	if ctx == nil || docker == nil {
 		return networkstate.CandidateSpec{}, errors.New("network construction requires a bound Docker runtime")
@@ -39,7 +35,13 @@ func BuildNetworkCandidate(ctx context.Context, docker *runtime.Docker, stdout, 
 	if err := ctx.Err(); err != nil {
 		return networkstate.CandidateSpec{}, err
 	}
-	client, err := BuildLockedImage(ctx, docker, stdout, stderr)
+	binding := networkRuntimeBinding(docker.Info(), docker.Endpoint())
+	platform := agents.ClientPlatform{OS: binding.OS, Architecture: binding.Architecture, Libc: "glibc"}
+	spec, contextTar, closure, err := lockedImageDefinition(platform)
+	if err != nil {
+		return networkstate.CandidateSpec{}, err
+	}
+	client, err := docker.BuildImage(ctx, spec, contextTar, stdout, stderr)
 	if err != nil {
 		return networkstate.CandidateSpec{}, err
 	}
@@ -50,16 +52,12 @@ func BuildNetworkCandidate(ctx context.Context, docker *runtime.Docker, stdout, 
 	if err := docker.VerifyLaunch(ctx); err != nil {
 		return networkstate.CandidateSpec{}, err
 	}
-	binding := networkRuntimeBinding(docker.Info(), docker.Endpoint())
-	if client.DaemonID != binding.DaemonID || client.Platform.OS != binding.OS || client.Platform.Architecture != binding.Architecture {
-		return networkstate.CandidateSpec{}, errors.New("constructed client image belongs to another runtime")
-	}
 	if err := ctx.Err(); err != nil {
 		return networkstate.CandidateSpec{}, err
 	}
-	return networkstate.CandidateSpec{Runtime: binding, ClientImage: client.ImageID, GatewayImage: helper,
-		ClientDefinition: client.DefinitionDigest, ClientClosure: client.ClosureDigest, GatewaySource: gatewayimage.Fingerprint(),
-		Libc: client.Platform.Libc, NodeBase: client.NodeImage, GoBase: client.GoImage}, nil
+	return networkstate.CandidateSpec{Runtime: binding, ClientImage: client.ID, GatewayImage: helper,
+		ClientDefinition: spec.Labels["coop.clients.definition"], ClientClosure: closure.Digest, GatewaySource: gatewayimage.Fingerprint(),
+		Libc: platform.Libc, NodeBase: pinnedNodeImage, GoBase: pinnedGoImage}, nil
 }
 
 func networkRuntimeBinding(info runtime.DockerInfo, endpoint string) networkstate.RuntimeBinding {
@@ -73,29 +71,6 @@ func networkRuntimeBinding(info runtime.DockerInfo, endpoint string) networkstat
 	return networkstate.RuntimeBinding{HostFamily: hostruntime.GOOS, Endpoint: endpoint, DaemonID: info.ID,
 		OS: info.OSType, Architecture: arch, ServerVersion: info.ServerVersion, KernelVersion: info.KernelVersion,
 		SecurityOptions: append([]string{}, info.SecurityOptions...)}
-}
-
-// BuildLockedImage uses embedded inputs only. It deliberately accepts no Config,
-// repository path, fresh/floating flag, package override or custom Dockerfile.
-func BuildLockedImage(ctx context.Context, docker *runtime.Docker, stdout, stderr *os.File) (LockedImageCandidate, error) {
-	info := docker.Info()
-	arch := info.Architecture
-	if arch == "aarch64" {
-		arch = "arm64"
-	}
-	if arch == "x86_64" {
-		arch = "amd64"
-	}
-	platform := agents.ClientPlatform{OS: info.OSType, Architecture: arch, Libc: "glibc"}
-	spec, contextTar, closure, err := lockedImageDefinition(platform)
-	if err != nil {
-		return LockedImageCandidate{}, err
-	}
-	image, err := docker.BuildImage(ctx, spec, contextTar, stdout, stderr)
-	if err != nil {
-		return LockedImageCandidate{}, err
-	}
-	return LockedImageCandidate{ImageID: image.ID, DaemonID: info.ID, DefinitionDigest: spec.Labels["coop.clients.definition"], ClosureDigest: closure.Digest, NodeImage: pinnedNodeImage, GoImage: pinnedGoImage, Platform: platform}, nil
 }
 
 func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild, []byte, agents.ClientClosure, error) {

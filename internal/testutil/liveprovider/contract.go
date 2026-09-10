@@ -33,6 +33,9 @@ const (
 	ResumeSummaryPrefix = "COOP_PROVIDER_RESUME_LIVE_SUMMARY "
 	// ConsultSummaryPrefix identifies the separate four-provider live consult result contract.
 	ConsultSummaryPrefix = "COOP_CONSULT_LIVE_SUMMARY "
+	// NetworkSummaryPrefix identifies the credentialed probe that runs through the restricted
+	// gateway: same providers, but every packet crosses the filtered boundary.
+	NetworkSummaryPrefix = "COOP_PROVIDER_NETWORK_LIVE_SUMMARY "
 	// SupervisorLabelKey is the test-only label used to reap an ACP process even after its outer
 	// supervisor is force-killed before normal cleanup.
 	SupervisorLabelKey = "coop.live-test"
@@ -307,6 +310,10 @@ func (s Summary) LoopLine() (string, error) {
 
 func (s Summary) ResumeLine() (string, error) {
 	return s.line(ResumeSummaryPrefix)
+}
+
+func (s Summary) NetworkLine() (string, error) {
+	return s.line(NetworkSummaryPrefix)
 }
 
 func (s Summary) line(prefix string) (string, error) {
@@ -634,6 +641,11 @@ type ChildSpec struct {
 	ControlFD       int
 	RevokePath      string
 	Runtime         RuntimeSettings
+	// NetworkStateHome is the HOST's state home, and only the network workflow
+	// may name it: a filtered launch needs this host's own `coop net setup`
+	// qualification, which is owner-private and keyed — a disposable state tree
+	// cannot hold one. Credentials, repository and home stay isolated either way.
+	NetworkStateHome string
 }
 
 // ConsultChildSpec is the complete authority granted to the one clean four-provider live helper.
@@ -667,7 +679,7 @@ func ChildEnvironment(layout procharness.Layout, spec ChildSpec) ([]string, erro
 	if workflow == "" {
 		workflow = "prompt"
 	}
-	if workflow != "prompt" && workflow != "loop" && workflow != "resume" {
+	if workflow != "prompt" && workflow != "loop" && workflow != "resume" && workflow != "network" {
 		return nil, errors.New("invalid live child workflow")
 	}
 	if workflow == "resume" {
@@ -679,6 +691,15 @@ func ChildEnvironment(layout procharness.Layout, spec ChildSpec) ([]string, erro
 		}
 	} else if spec.Stage != "" || spec.SessionID != "" || spec.SessionFile != "" {
 		return nil, errors.New("live resume authority granted to another workflow")
+	}
+	if spec.NetworkStateHome != "" {
+		if workflow != "network" || !filepath.IsAbs(spec.NetworkStateHome) {
+			return nil, errors.New("live host network state granted to another workflow")
+		}
+		values["XDG_STATE_HOME"] = spec.NetworkStateHome
+		values["COOP_EGRESS"] = "filtered"
+	} else if workflow == "network" {
+		return nil, errors.New("the live network workflow needs this host's network qualification")
 	}
 	for key, value := range map[string]string{
 		"COOP_TEST_LIVE_CHILD": "1", "COOP_TEST_LIVE_TARGET": spec.Target,

@@ -177,6 +177,13 @@ type boundary struct {
 // evidence gap and, mid-handshake, as a denial that never happened.
 func (b boundary) captured(uid uint32, local, peer netip.AddrPort) bool {
 	if uid == 1000 && peer.Addr().Is4() {
+		// The run's own namespace loopback is permitted, not a protected host
+		// surface: an agent's `npm test` server is its own business, and
+		// reporting it as an attempt on a protected destination would be a false
+		// alert about traffic that never left the box.
+		if peer.Addr().IsLoopback() {
+			return true
+		}
 		if peer.Port() == 53 || peer.Port() == 443 && !protectedSocketPeer(peer.Addr(), b.protected) {
 			return true
 		}

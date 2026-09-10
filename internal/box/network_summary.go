@@ -32,12 +32,15 @@ type NetworkReport struct {
 	Denials []NetworkDenial
 	Omitted int
 	Allowed string
-	// Raw is the kernel's tally of refused raw packets. They are counted, never
-	// attributed: the filter drops them without recording a destination.
-	Raw      string
-	Alerts   []string
-	Event    string // the evidence id `coop net explain` can open, when one was retained
-	Truncate bool
+	// Raw is the kernel's tally of refused raw packets, rendered; RawPackets is
+	// how many it counted (0 when nothing was refused OR nothing was measured).
+	// They are counted, never attributed: the filter drops them without
+	// recording a destination.
+	Raw        string
+	RawPackets uint64
+	Alerts     []string
+	Event      string // the evidence id `coop net explain` can open, when one was retained
+	Truncate   bool
 }
 
 // NetworkDenial is one refused destination as the retained evidence recorded
@@ -60,8 +63,12 @@ func (d NetworkDenial) String() string {
 
 // Quiet reports a run that never reached the boundary. Nothing refused and no
 // alert costs one dim line at most — never a block, and never a line per
-// iteration in an overnight drain.
-func (r NetworkReport) Quiet() bool { return len(r.Denials) == 0 && len(r.Alerts) == 0 }
+// iteration in an overnight drain. A refused raw packet has no destination to
+// list, but it IS the boundary being hit: reporting "nothing was refused" over
+// a nonzero kernel counter would be the one thing this summary must never say.
+func (r NetworkReport) Quiet() bool {
+	return len(r.Denials) == 0 && len(r.Alerts) == 0 && r.RawPackets == 0
+}
 
 // networkRunReport folds a run's retained evidence into the lines a human reads
 // when their box could not reach something. Denials are grouped by destination
@@ -109,6 +116,9 @@ func networkRunReport(runID string, snapshot networkview.Snapshot) NetworkReport
 	}
 	out.Allowed = allowedTraffic(snapshot.Counters)
 	out.Raw = rawRefusals(snapshot.Counters)
+	if snapshot.Counters != nil && snapshot.Counters.DeniedPackets != nil {
+		out.RawPackets = uint64(*snapshot.Counters.DeniedPackets)
+	}
 	for i, alert := range snapshot.Alerts {
 		if i >= maxSummaryAlerts {
 			break
@@ -259,14 +269,15 @@ func networkInstructionNote(policy egress.Snapshot) string {
 func noteDestinations(policy egress.Snapshot) ([]string, int) {
 	var named, summarized []string
 	for _, grant := range policy.Grants {
-		if summary := grantSummary(grant); summary != "" {
-			if !slices.Contains(summarized, summary) {
-				summarized = append(summarized, summary)
+		text := NetworkGrantText(grant)
+		switch {
+		case text == "":
+		case text == NetworkRuleText(grant.Rule):
+			if !slices.Contains(named, text) {
+				named = append(named, text)
 			}
-			continue
-		}
-		if text := NetworkRuleText(grant.Rule); text != "" && !slices.Contains(named, text) {
-			named = append(named, text)
+		case !slices.Contains(summarized, text):
+			summarized = append(summarized, text)
 		}
 	}
 	slices.Sort(named)
@@ -278,9 +289,11 @@ func noteDestinations(policy egress.Snapshot) ([]string, int) {
 	return all, 0
 }
 
-// grantSummary returns the one-line name for an automatically derived grant, or
-// "" for a grant an operator or the repository asked for by name.
-func grantSummary(grant egress.Grant) string {
+// NetworkGrantText is the ONE renderer for a grant a human reads: an
+// automatically derived grant by the name of what derived it, everything else
+// as the rule it came from. Callers that hold a bare rule — a diff, a drafted
+// suggestion — use NetworkRuleText directly.
+func NetworkGrantText(grant egress.Grant) string {
 	for _, origin := range grant.Origins {
 		switch origin.Kind {
 		case "provider":
@@ -292,5 +305,92 @@ func grantSummary(grant egress.Grant) string {
 			return "the MCP servers coop configured for this box"
 		}
 	}
-	return ""
+	return NetworkRuleText(grant.Rule)
+}
+
+// NetworkRuleText renders one rule the way its YAML reads, so what a human
+// approves, what a box is told and what a suggestion drafts all say the same
+// thing. Values are already normalized ASCII by the rule grammar.
+func NetworkRuleText(rule egress.Rule) string {
+	var b strings.Builder
+	switch {
+	case rule.To.Domain != "":
+		b.WriteString(rule.To.Domain)
+	case rule.To.IP != "":
+		b.WriteString(rule.To.IP)
+	case rule.To.CIDR != "":
+		b.WriteString(rule.To.CIDR)
+	case rule.To.Service != "":
+		b.WriteString("service " + rule.To.Service)
+	case rule.To.Provider != "":
+		b.WriteString(rule.To.Provider)
+		if len(rule.To.Features) != 0 {
+			b.WriteString(" features " + strings.Join(rule.To.Features, ","))
+		}
+		return b.String()
+	default:
+		return "(no destination)"
+	}
+	if rule.Protocol != "" {
+		b.WriteString(" " + rule.Protocol)
+	}
+	if len(rule.Ports) != 0 {
+		ports := make([]string, 0, len(rule.Ports))
+		for _, port := range rule.Ports {
+			ports = append(ports, strconv.Itoa(port))
+		}
+		b.WriteString("/" + strings.Join(ports, ","))
+	}
+	if len(rule.Types) != 0 {
+		b.WriteString(" types " + strings.Join(rule.Types, ","))
+	}
+	if len(rule.Codes) != 0 {
+		codes := make([]string, 0, len(rule.Codes))
+		for _, code := range rule.Codes {
+			codes = append(codes, strconv.Itoa(code))
+		}
+		b.WriteString(" codes " + strings.Join(codes, ","))
+	}
+	return b.String()
+}
+
+// NetworkRuleYAML is the copyable `egress_rules` entry for one rule — the shape
+// a human pastes into .agent/project.yaml. It is a draft to review, never a
+// grant: only `coop net approve` turns it into authority.
+func NetworkRuleYAML(rule egress.Rule) string {
+	var b strings.Builder
+	b.WriteString("    - to:\n")
+	switch {
+	case rule.To.Domain != "":
+		fmt.Fprintf(&b, "        domain: %q\n", rule.To.Domain)
+	case rule.To.IP != "":
+		fmt.Fprintf(&b, "        ip: %q\n", rule.To.IP)
+	case rule.To.CIDR != "":
+		fmt.Fprintf(&b, "        cidr: %q\n", rule.To.CIDR)
+	case rule.To.Service != "":
+		fmt.Fprintf(&b, "        service: %q\n", rule.To.Service)
+	case rule.To.Provider != "":
+		fmt.Fprintf(&b, "        provider: %q\n", rule.To.Provider)
+	}
+	if rule.Protocol != "" {
+		fmt.Fprintf(&b, "      protocol: %s\n", rule.Protocol)
+	}
+	if len(rule.Ports) != 0 {
+		ports := make([]string, 0, len(rule.Ports))
+		for _, port := range rule.Ports {
+			ports = append(ports, strconv.Itoa(port))
+		}
+		fmt.Fprintf(&b, "      ports: [%s]\n", strings.Join(ports, ", "))
+	}
+	if len(rule.Types) != 0 {
+		fmt.Fprintf(&b, "      types: [%s]\n", strings.Join(rule.Types, ", "))
+	}
+	if len(rule.Codes) != 0 {
+		codes := make([]string, 0, len(rule.Codes))
+		for _, code := range rule.Codes {
+			codes = append(codes, strconv.Itoa(code))
+		}
+		fmt.Fprintf(&b, "      codes: [%s]\n", strings.Join(codes, ", "))
+	}
+	return b.String()
 }

@@ -185,6 +185,13 @@ type getSessionPayload struct {
 	CoopSessionID string `json:"coop_session_id"`
 }
 
+// getNetworkExplanationPayload names ONE retained refusal of one session. The event id is an
+// opaque evidence reference the daemon minted; it selects nothing else.
+type getNetworkExplanationPayload struct {
+	CoopSessionID string `json:"coop_session_id"`
+	EventID       string `json:"event_id"`
+}
+
 type getTurnPayload struct {
 	CoopSessionID string `json:"coop_session_id"`
 	CoopTurnID    string `json:"coop_turn_id"`
@@ -395,8 +402,8 @@ func prepareRequest(ctx context.Context, command workerproto.Command, artifacts 
 		}
 		return Request{Method: "GET", Path: "/v1/sessions/" + url.PathEscape(payload.CoopSessionID)}, nil
 
-	// The two networking reads take the same shape as get_session on purpose: the daemon owns
-	// the privacy projection, and the connector forwards exactly what it answered. Nothing here
+	// The networking reads take the same shape as get_session on purpose: the daemon owns the
+	// privacy projection, and the connector forwards exactly what it answered. Nothing here
 	// selects a destination, a rule, or a disclosure scope.
 	case "get_network":
 		var payload getSessionPayload
@@ -417,6 +424,27 @@ func prepareRequest(ctx context.Context, command workerproto.Command, artifacts 
 			return Request{}, errors.New("get_network_receipt payload identity is invalid")
 		}
 		return Request{Method: "GET", Path: "/v1/sessions/" + url.PathEscape(payload.CoopSessionID) + "/network/receipt"}, nil
+
+	case "get_network_connections":
+		var payload getSessionPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return Request{}, err
+		}
+		if !reference(payload.CoopSessionID, 1024) {
+			return Request{}, errors.New("get_network_connections payload identity is invalid")
+		}
+		return Request{Method: "GET", Path: "/v1/sessions/" + url.PathEscape(payload.CoopSessionID) + "/network/connections"}, nil
+
+	case "get_network_explanation":
+		var payload getNetworkExplanationPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return Request{}, err
+		}
+		if !reference(payload.CoopSessionID, 1024) || !reference(payload.EventID, 1024) {
+			return Request{}, errors.New("get_network_explanation payload identity is invalid")
+		}
+		return Request{Method: "GET", Path: "/v1/sessions/" + url.PathEscape(payload.CoopSessionID) +
+			"/network/explanations/" + url.PathEscape(payload.EventID)}, nil
 
 	case "get_turn":
 		var payload getTurnPayload

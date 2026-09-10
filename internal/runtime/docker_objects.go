@@ -318,3 +318,72 @@ func (d *Docker) ComposeServiceID(ctx context.Context, project, service string) 
 	}
 	return ids[0], nil
 }
+
+// maxDockerNetworks bounds one inventory. A daemon with more networks than this
+// is not a topology a filtered run can promise to protect.
+const maxDockerNetworks = 256
+
+// DockerNetwork is one daemon network's IPv4 topology: the subnets it allocates
+// to containers and the gateway addresses the daemon itself holds in them.
+type DockerNetwork struct {
+	Name     string
+	Subnets  []netip.Prefix
+	Gateways []netip.Addr
+}
+
+// Networks inventories every network this daemon has. A filtered run protects
+// them: a granted CIDR that happens to cover a bridge subnet would otherwise
+// reach sibling containers, other sessions' boxes and the daemon's own gateway,
+// none of which any rule may grant.
+//
+// A network that disappears between the listing and the inspection cannot be
+// reached either, so partial output with an error is accepted as long as some
+// network was read; a daemon that answers nothing is a failure.
+func (d *Docker) Networks(ctx context.Context) ([]DockerNetwork, error) {
+	if err := d.Verify(ctx); err != nil {
+		return nil, err
+	}
+	listing, err := d.output(ctx, 64<<10, "network", "ls", "--no-trunc", "-q")
+	if err != nil {
+		return nil, errors.Join(errors.New("the container runtime's networks are unavailable"), err)
+	}
+	ids := strings.Fields(string(listing))
+	if len(ids) == 0 {
+		return nil, errors.New("the container runtime reported no networks at all")
+	}
+	if len(ids) > maxDockerNetworks {
+		return nil, errors.New("the container runtime has more networks than a filtered run can protect")
+	}
+	args := append([]string{"network", "inspect", "--format", `{"name":{{json .Name}},"ipam":{{json .IPAM.Config}}}`}, ids...)
+	data, inspectErr := d.output(ctx, 1<<20, args...)
+	var out []DockerNetwork
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var value struct {
+			Name string `json:"name"`
+			IPAM []struct {
+				Subnet  string `json:"Subnet"`
+				Gateway string `json:"Gateway"`
+			} `json:"ipam"`
+		}
+		if json.Unmarshal([]byte(line), &value) != nil {
+			return nil, errors.New("invalid Docker network inventory")
+		}
+		network := DockerNetwork{Name: value.Name}
+		for _, config := range value.IPAM {
+			if prefix, err := netip.ParsePrefix(config.Subnet); err == nil && prefix.Addr().Is4() {
+				network.Subnets = append(network.Subnets, prefix.Masked())
+			}
+			if address, err := netip.ParseAddr(config.Gateway); err == nil && address.Is4() {
+				network.Gateways = append(network.Gateways, address)
+			}
+		}
+		out = append(out, network)
+	}
+	if len(out) == 0 {
+		return nil, errors.Join(errors.New("the container runtime's networks are unavailable"), inspectErr)
+	}
+	return out, nil
+}

@@ -27,6 +27,16 @@ it opens that container's address and ports only. Joining the services network d
 anything — every other container on it stays behind the same default deny as the public internet.
 `box.network: true` alone is refused in filtered mode: name the sidecar you need.
 
+The approval captures the *definition* a human reviewed, not just the name: `coop net approve`
+records a digest of that service's Compose stanza, and a launch recomputes it from the file it is
+about to run. Rewriting `db:` into something else — a proxy image with ordinary egress, say — is
+refused with `compose service "db" changed since it was approved; review it with coop net approve`,
+and `coop net` shows it as a pending change. Editing an unrelated service changes nothing.
+
+**Inside the box, localhost is yours.** A test server on `127.0.0.1:3000` and a `curl` to it never
+touch the boundary: the box's loopback is its own namespace, not a host surface. Only what leaves
+the box meets the gateway.
+
 ## Refused, with the reason you will see
 
 | Requested | Message |
@@ -40,13 +50,28 @@ anything — every other container on it stays behind the same default deny as t
 | a project `Dockerfile`, or `COOP_IMAGE` | `restricted networking runs the qualified client image; …` |
 | a runtime other than Docker | admission fails: no `coop net setup` record matches this runtime |
 | `box.network: true` with no `service:` grant | `restricted networking does not join a shared services network; request the exact sidecar with a to: {service: <name>} rule …` |
+| `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `restricted networking refuses the mount source …: it is or contains …, the container runtime's control surface` |
+| an approved project directory replaced by another at the same path | `the project directory at <path> was replaced since its approval; review it with coop net approve` |
 
 A refused rule fails the launch itself, before any approval is written or any container is created.
 Coop never accepts a rule it cannot enforce and then quietly drops the constraint.
 
-Two boundaries can never be granted, inside a `cidr:` grant or anywhere else: the host's own
-interface addresses and the runtime's control surfaces, and the link-local/metadata ranges. A
-permitted CIDR does not beat them — those packets are dropped and counted as protected.
+Some destinations can never be granted, inside a `cidr:` grant or anywhere else: the host's own
+interface addresses, every subnet the container runtime allocates and every gateway it holds in one
+(so sibling containers, other sessions' boxes and the daemon's own address are out of reach), and
+the loopback/link-local/metadata ranges. The inventory is taken from the daemon at launch. A
+permitted CIDR does not beat it — those packets are dropped and counted as protected. The single
+exception is an approved `service:` grant: that ONE container address is what a human approved, so
+it is permitted before the protected drop and nothing else in its subnet is.
+
+A published `serve` port is host ingress, and only host ingress: the rule matches the bridge
+gateway address the host's traffic is NAT'd from, so a sibling container on the same bridge cannot
+connect to it.
+
+The gateway is the boundary for PACKETS, so a filtered box also refuses the mounts that would go
+around it: a bind of the runtime's control surface (`/var/run`, `/run`, `/proc`, `/sys`, `/dev`,
+`/`, or the Docker endpoint's own socket directory) is refused by name — one `curl` over a daemon
+socket would start a container the gateway never sees.
 
 ## Observed versus counted
 
@@ -75,4 +100,22 @@ launched with.
 
 For a single invocation, the operator can pass `--allow-domain <name>` (exact TLS 443) or
 `--egress-rules <file>` with a full rule document. A file inside an agent mount is a request, not a
-grant — where the file lives decides its authority.
+grant — where the file lives decides its authority. `coop net approve` applies the same capability
+gate a launch does, so a rule this runtime could never enforce (`tls` on 8443, say) is refused at
+review instead of being remembered and refused at every launch.
+
+An approval is bound to the project DIRECTORY, not to its path: moving the approved checkout aside
+and putting another there refuses the next launch until a human reviews it again.
+
+## When a run is interrupted
+
+A filtered run's gateway containers, volumes and receipt are owned by the coop process that started
+it. If that process is killed (`SIGKILL`, a crash, a reboot) the run stays `cleanup pending`:
+
+    coop net recover <run>     # settle one run
+    coop net recover --all     # settle every pending run
+
+Recovery removes exactly the resources that run recorded — by id and ownership labels, never by
+name prefix, never a prune — and seals a final receipt marked `partial` with workload
+`supervisor_lost`. A run whose supervisor is still alive is refused with its pid. The same
+recovery runs automatically on the next `coop` start, alongside the ordinary orphan-box sweep.

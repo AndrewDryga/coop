@@ -11,12 +11,17 @@ A filtered run adds two helper containers from one pinned image, both running `c
 
 **Controller** — UID `0:65532`, `CAP_ADD NET_ADMIN` and nothing else, on the bridge
 (`box/filtered_launch.go:86`, `:128`). It owns nftables table `coop_net`
-(`networkgateway/controller.go:328`): a nat/output `capture` chain redirects the agent's
+(`networkgateway/controller.go:305`): a nat/output `capture` chain redirects the agent's
 (skuid 1000) TCP 443 to the guard's `:15443` and 53 tcp+udp to its `:15353`; a filter/output chain
-drops by default, with a `protected4` interval set (host addresses, loopback, link-local, metadata)
-evaluated BEFORE any grant, per-grant `counter` accepts for raw tcp/udp/icmp, and a `leases4`
-timeout set the guard's admitted DNS peers land in. Being the namespace owner it also publishes
-`serve.ports` (`controller.go:126`). Leases are relative kernel timeouts: the controller reserves
+drops by default. Its order is the contract (`controller.go:368`): the agent's OWN loopback is
+accepted first (`oifname "lo"` plus `ip daddr 127.0.0.0/8`, so a test server on 127.0.0.1:3000 is
+not an attempt on a protected address), then an approved `service:` grant's one container address,
+THEN the `protected4` interval set, then every other grant, then the deny. `protected4` is host
+addresses, loopback, link-local, metadata AND every subnet/gateway the Docker daemon reports at
+launch (`box/filtered.go:273`) — without that half, a granted `cidr: 172.17.0.0/16` would reach
+sibling containers and other sessions' boxes. Being the namespace owner it also publishes
+`serve.ports` (`controller.go:126`), and their ingress rule matches ONLY the bridge gateway address
+host-published traffic is NAT'd from, so a sibling container cannot reach a served port. Leases are relative kernel timeouts: the controller reserves
 the whole 250 ms commit budget plus a 20 ms tick allowance out of every TTL and returns the
 conservative lower bound to the guard (`controller.go:268`), so a slow kernel commit can never
 extend DNS authority.
@@ -43,6 +48,11 @@ Facts the code cannot say twice, all still true:
   boot-clock check independently rejects a suspended or late kernel.
 - nft 1.0.2 rejects a table argument after `list counters inet`, and its JSON formatter prints
   UINT64_MAX as `-1` (`kernel_events.go:122`, `:224`); only that private parser reinterprets it.
+- On OrbStack every Docker network also gets a HOST address (`192.168.<n>.0` on the Mac), so
+  another project's `compose up` while a filtered box runs adds an address outside that run's
+  envelope and the watch stops it: "host address … appeared after this run's protection envelope
+  was installed" (`box/filtered_launch.go:319`). It is the correct fail-closed answer, and the
+  message names the address so an operator can see which one.
 
 **Observation** joins three unrelated sources in the collector: Envoy's per-flow access log (the
 only place bytes are metered), sampled `/proc/net/tcp` rows, and nftables counters. TLS flows are
@@ -51,17 +61,24 @@ destination, and Coop reports UNKNOWN rather than zero for anything unmeasured. 
 before the guard so a proxy event's admission registration is already eligible in the same sample
 (`collector.go:182`). A flow the proxy ended keeps its upstream socket in the kernel for a few
 samples; since 2026-09-10 the collector retains up to 128 such closed tuples and lets one explain
-exactly one lingering inode before it would be reported as a boundary gap (`collector.go:443`).
+exactly one lingering inode before it would be reported as a boundary gap (`collector.go:448`).
 That was worth fixing: the gap marked a fully metered smoke receipt partial and made `coop net
-setup` refuse a clean run about one time in three. The sibling case is still open — a DoH
-maintenance socket the resolver already released is neither in `owned` nor retained as a close, so
-its remnant can still expire as `socket_join_terminal`.
+setup` refuse a clean run about one time in three. A retained close expires after
+`ObservationStaleAfter` (3 s, three sampling intervals) and is evicted then, so a reused ephemeral
+port minutes later cannot hide a real gap; an unreadable clock folds nothing and evicts nothing.
+The sibling case is still open — a DoH maintenance socket the resolver already released is neither
+in `owned` nor retained as a close, so its remnant can still expire as `socket_join_terminal`.
 
 **Cleanup** is exact-owned and ordered (`box/filtered_cleanup.go:30`): remove the agent, prove the
 guard still answers AFTER the agent is gone, stop it, copy the single `final.json` out of the
 helper-only observations volume, then the controller, then the volumes and the artifact directory,
-then seal the receipt. Missing terminal evidence makes the receipt partial; it never blocks
-containment. `coop net setup` drives its ONE smoke through this same engine behind a host-only
+then seal the receipt. Every exit runs the deferred containment, which removes the containers AND
+attempts both named volumes once nothing can still mount them (`filtered_cleanup.go:160`) — an
+early return on lost host storage used to leak a volume pair per interrupted run. Missing terminal
+evidence makes the receipt partial; it never blocks containment. When the supervising PROCESS dies
+instead, nothing local can finish it: `box.RecoverNetworkRuns` (`box/network_recover.go:50`) is the
+only path that settles such a run, and it runs from `coop net recover` and from the ordinary orphan
+sweep at the next start. `coop net setup` drives its ONE smoke through this same engine behind a host-only
 `networkSmokeLaunch` permit (`box/network_setup.go:225`) — the seam exists so the preflight proves
 the exact path a workload gets, and it can never appear on a `RunSpec` a caller builds.
 
@@ -73,6 +90,10 @@ checkout, so a stale tar is a red gate, and a filtered launch only ever runs the
 [[restricted-networking]] qualification names.
 
 ## Changelog
+- 2026-09-10 — S7c: chain order documented (agent loopback and approved services BEFORE the
+  protected drop, address grants after), protected set now includes the daemon's subnets and
+  gateways, served ports accept only the bridge gateway, the closed-flow fold expires, cleanup
+  contains volumes on every exit, and interrupted runs are settled by `coop net recover`.
 - 2026-09-10 — created from the shipped gateway, carrying forward the still-true facts (Envoy
   16 KiB ceiling and hot restart, the boot-clock domain, PROXY v2, AAAA NODATA, the nft parser)
   from the eleven deleted WIP cards; re-verified each against the sources above.

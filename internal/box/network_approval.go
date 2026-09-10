@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"slices"
-	"strconv"
-	"strings"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -87,6 +85,11 @@ func ProjectNetworkPosture(ctx context.Context, cfg *config.Config, repo string)
 	}
 	out.Source = postureSource(input, out.Approval)
 	out.Add, out.Remove = NetworkRuleDiff(approvedEnvelope(out.Approval), out.Requested)
+	// A drifted service is a pending change like any other: the rule still reads
+	// the same, but what it reaches does not.
+	if out.Pending == nil {
+		out.Pending = checkApprovedServices(out.Approval, ComposeFileAt(repo, p.ComposeRel()), repo, false)
+	}
 	records, err := store.Qualifications(ctx)
 	if err != nil {
 		return NetworkPosture{}, err
@@ -121,6 +124,7 @@ type ProjectNetworkApproval struct {
 	project  string
 	mode     egress.Mode
 	requests []egress.Rule
+	services map[string]string
 	review   networkstate.ApprovalReview
 	used     bool
 }
@@ -146,6 +150,13 @@ func ReviewProjectNetwork(cfg *config.Config, repo string, explicit *egress.Mode
 			return nil, errors.New("optional provider features have no reviewed expansion in this release; a selected agent's core endpoints are captured automatically at launch")
 		}
 	}
+	// The same capability gate a launch applies, applied BEFORE the rule is
+	// remembered: an approval every launch would refuse by name is not a
+	// decision worth storing, and the operator finds out now instead of at the
+	// next unattended run.
+	if err := checkSupportedRequests(input); err != nil {
+		return nil, err
+	}
 	// Approve is the explicit host operation that may create the authority
 	// root: a launch never does, so this is where an owner key is born.
 	store, err := networkstate.Open(root, exposed)
@@ -162,11 +173,17 @@ func ReviewProjectNetwork(cfg *config.Config, repo string, explicit *egress.Mode
 		return nil, err
 	}
 	mode := approvalMode(input, before, explicit)
-	review, err := store.ReviewApproval(canonical, mode, p.Box.EgressRules, nil)
+	// The reviewed Compose definition is part of the decision: a `service:` rule
+	// approved by name alone would follow whatever that name later points at.
+	services, err := composeServiceDigests(ComposeFileAt(repo, p.ComposeRel()), repo, false, requestedServices(p.Box.EgressRules))
 	if err != nil {
 		return nil, err
 	}
-	return &ProjectNetworkApproval{store: store, project: canonical, mode: mode, requests: p.Box.EgressRules, review: review}, nil
+	review, err := store.ReviewApproval(canonical, mode, p.Box.EgressRules, nil, services)
+	if err != nil {
+		return nil, err
+	}
+	return &ProjectNetworkApproval{store: store, project: canonical, mode: mode, requests: p.Box.EgressRules, services: services, review: review}, nil
 }
 
 func (a *ProjectNetworkApproval) Project() string                { return a.project }
@@ -182,7 +199,7 @@ func (a *ProjectNetworkApproval) Commit(ctx context.Context) error {
 		return errors.New("this network approval review was already used")
 	}
 	a.used = true
-	return a.store.Approve(ctx, a.project, a.mode, a.requests, nil, a.review.Digest)
+	return a.store.Approve(ctx, a.project, a.mode, a.requests, nil, a.services, a.review.Digest)
 }
 
 func (a *ProjectNetworkApproval) Close() error {
@@ -242,6 +259,41 @@ func networkProjectInputs(cfg *config.Config, repo string) (string, *project.Pro
 	return canonical, p, root, exposed, input, nil
 }
 
+// requestedServices is every Compose service this request names, sorted, once.
+func requestedServices(rules []egress.Rule) []string {
+	var out []string
+	for _, rule := range rules {
+		if name := rule.To.Service; name != "" && !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// checkApprovedServices recomputes the digest of every approved service from the
+// Compose file a launch (or this project's current tree) would actually use.
+func checkApprovedServices(approval *networkstate.Approval, composeFile, repoRoot string, repoReadOnly bool) error {
+	if approval == nil || len(approval.Services) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(approval.Services))
+	for name := range approval.Services {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	digests, err := composeServiceDigests(composeFile, repoRoot, repoReadOnly, names)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if digests[name] != approval.Services[name] {
+			return fmt.Errorf("compose service %q changed since it was approved; review it with `coop net approve`", name)
+		}
+	}
+	return nil
+}
+
 func approvedEnvelope(approval *networkstate.Approval) []egress.Rule {
 	if approval == nil {
 		return nil
@@ -273,91 +325,4 @@ func NetworkRuleDiff(approved, requested []egress.Rule) (add, remove []egress.Ru
 		}
 	}
 	return add, remove
-}
-
-// NetworkRuleText renders one rule the way its YAML reads, so what a human
-// approves, what a box is told and what a suggestion drafts all say the same
-// thing. Values are already normalized ASCII by the rule grammar.
-func NetworkRuleText(rule egress.Rule) string {
-	var b strings.Builder
-	switch {
-	case rule.To.Domain != "":
-		b.WriteString(rule.To.Domain)
-	case rule.To.IP != "":
-		b.WriteString(rule.To.IP)
-	case rule.To.CIDR != "":
-		b.WriteString(rule.To.CIDR)
-	case rule.To.Service != "":
-		b.WriteString("service " + rule.To.Service)
-	case rule.To.Provider != "":
-		b.WriteString(rule.To.Provider)
-		if len(rule.To.Features) != 0 {
-			b.WriteString(" features " + strings.Join(rule.To.Features, ","))
-		}
-		return b.String()
-	default:
-		return "(no destination)"
-	}
-	if rule.Protocol != "" {
-		b.WriteString(" " + rule.Protocol)
-	}
-	if len(rule.Ports) != 0 {
-		ports := make([]string, 0, len(rule.Ports))
-		for _, port := range rule.Ports {
-			ports = append(ports, strconv.Itoa(port))
-		}
-		b.WriteString("/" + strings.Join(ports, ","))
-	}
-	if len(rule.Types) != 0 {
-		b.WriteString(" types " + strings.Join(rule.Types, ","))
-	}
-	if len(rule.Codes) != 0 {
-		codes := make([]string, 0, len(rule.Codes))
-		for _, code := range rule.Codes {
-			codes = append(codes, strconv.Itoa(code))
-		}
-		b.WriteString(" codes " + strings.Join(codes, ","))
-	}
-	return b.String()
-}
-
-// NetworkRuleYAML is the copyable `egress_rules` entry for one rule — the shape
-// a human pastes into .agent/project.yaml. It is a draft to review, never a
-// grant: only `coop net approve` turns it into authority.
-func NetworkRuleYAML(rule egress.Rule) string {
-	var b strings.Builder
-	b.WriteString("    - to:\n")
-	switch {
-	case rule.To.Domain != "":
-		fmt.Fprintf(&b, "        domain: %q\n", rule.To.Domain)
-	case rule.To.IP != "":
-		fmt.Fprintf(&b, "        ip: %q\n", rule.To.IP)
-	case rule.To.CIDR != "":
-		fmt.Fprintf(&b, "        cidr: %q\n", rule.To.CIDR)
-	case rule.To.Service != "":
-		fmt.Fprintf(&b, "        service: %q\n", rule.To.Service)
-	case rule.To.Provider != "":
-		fmt.Fprintf(&b, "        provider: %q\n", rule.To.Provider)
-	}
-	if rule.Protocol != "" {
-		fmt.Fprintf(&b, "      protocol: %s\n", rule.Protocol)
-	}
-	if len(rule.Ports) != 0 {
-		ports := make([]string, 0, len(rule.Ports))
-		for _, port := range rule.Ports {
-			ports = append(ports, strconv.Itoa(port))
-		}
-		fmt.Fprintf(&b, "      ports: [%s]\n", strings.Join(ports, ", "))
-	}
-	if len(rule.Types) != 0 {
-		fmt.Fprintf(&b, "      types: [%s]\n", strings.Join(rule.Types, ", "))
-	}
-	if len(rule.Codes) != 0 {
-		codes := make([]string, 0, len(rule.Codes))
-		for _, code := range rule.Codes {
-			codes = append(codes, strconv.Itoa(code))
-		}
-		fmt.Fprintf(&b, "      codes: [%s]\n", strings.Join(codes, ", "))
-	}
-	return b.String()
 }

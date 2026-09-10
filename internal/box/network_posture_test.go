@@ -161,3 +161,35 @@ func TestReviewHonorsAnExplicitMode(t *testing.T) {
 		t.Error("an invalid --mode was reviewed")
 	}
 }
+
+// An approval every launch would refuse by name is not a decision worth
+// remembering: `coop net approve` applies the same capability gate, so the
+// operator learns now instead of at the next unattended run.
+func TestReviewRefusesARuleNoLaunchCouldEnforce(t *testing.T) {
+	for _, test := range []struct{ yaml, want string }{
+		{"box:\n  egress_rules:\n    - to:\n        domain: api.example.com\n      protocol: tls\n      ports: [8443]\n",
+			"TLS on port 8443 is not supported yet"},
+		{"box:\n  egress_rules:\n    - to:\n        cidr: 169.254.0.0/16\n      protocol: tcp\n      ports: [80]\n",
+			"is a protected address range"},
+		{"box:\n  egress_rules:\n    - to:\n        ip: 2606:4700:4700::1111\n      protocol: tcp\n      ports: [5432]\n",
+			"IPv6 destinations are refused"},
+	} {
+		cfg, repo, root := postureFixture(t, test.yaml)
+		_, err := ReviewProjectNetwork(cfg, repo, nil)
+		if err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("review = %v, want a refusal naming %q", err, test.want)
+		}
+		// The refusal comes before any authority exists: nothing was created to
+		// hold a decision nobody could act on.
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Errorf("an unenforceable request created the authority root: %v", err)
+		}
+	}
+	// The same shape, on a port this runtime does enforce, is reviewable.
+	cfg, repo, _ := postureFixture(t, "box:\n  egress_rules:\n    - to:\n        domain: api.example.com\n      protocol: tls\n      ports: [443]\n")
+	review, err := ReviewProjectNetwork(cfg, repo, nil)
+	if err != nil {
+		t.Fatalf("an enforceable request was refused: %v", err)
+	}
+	defer review.Close()
+}

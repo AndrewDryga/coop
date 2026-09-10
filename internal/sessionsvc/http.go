@@ -488,6 +488,14 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 		if sessionHTTPMethod(w, r, http.MethodGet) {
 			h.getNetworkReceipt(w, r, sessionID)
 		}
+	case len(parts) == 3 && parts[1] == "network" && parts[2] == "connections":
+		if sessionHTTPMethod(w, r, http.MethodGet) {
+			h.getNetworkConnections(w, r, sessionID)
+		}
+	case len(parts) == 4 && parts[1] == "network" && parts[2] == "explanations" && parts[3] != "":
+		if sessionHTTPMethod(w, r, http.MethodGet) {
+			h.getNetworkExplanation(w, r, sessionID, parts[3])
+		}
 	case len(parts) == 2 && parts[1] == "budget":
 		if sessionHTTPMethod(w, r, http.MethodPost) {
 			h.extendBudget(w, r, sessionID)
@@ -835,6 +843,34 @@ func (h *sessionHTTPHandler) getNetwork(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	view, err := h.service.SessionNetwork(r.Context(), id)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, view)
+}
+
+func (h *sessionHTTPHandler) getNetworkConnections(w http.ResponseWriter, r *http.Request, id string) {
+	if !sessionQueryOnly(w, r) {
+		return
+	}
+	view, err := h.service.SessionNetworkConnections(r.Context(), id)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, view)
+}
+
+func (h *sessionHTTPHandler) getNetworkExplanation(w http.ResponseWriter, r *http.Request, id, eventID string) {
+	if !sessionQueryOnly(w, r) {
+		return
+	}
+	if !validSessionHTTPPathID(eventID) {
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "invalid event id")
+		return
+	}
+	view, err := h.service.SessionNetworkExplanation(r.Context(), id, eventID)
 	if err != nil {
 		writeSessionServiceError(w, err)
 		return

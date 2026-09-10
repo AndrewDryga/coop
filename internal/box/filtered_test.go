@@ -47,6 +47,7 @@ type filteredDaemonFixture struct {
 	attached                               chan struct{}
 	volumeExposure                         runtime.VolumeExposure
 	smoke                                  *networkstate.QualificationSmoke
+	networksErr                            error
 	networkMembers                         map[string]netip.Addr
 	composeServices                        map[string]string
 	connected                              []string
@@ -60,6 +61,20 @@ func (d *filteredDaemonFixture) ConnectNetwork(_ context.Context, network string
 	}
 	d.connected = append(d.connected, network+"/"+ref.ID)
 	return nil
+}
+
+// Networks is the daemon's own topology: one bridge, and the compose network
+// the fixture's approved sidecars sit on.
+func (d *filteredDaemonFixture) Networks(context.Context) ([]runtime.DockerNetwork, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.networksErr != nil {
+		return nil, d.networksErr
+	}
+	return []runtime.DockerNetwork{
+		{Name: "bridge", Subnets: []netip.Prefix{netip.MustParsePrefix("172.17.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.17.0.1")}},
+		{Name: "coop-fixture_default", Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}},
+	}, nil
 }
 
 func (d *filteredDaemonFixture) NetworkMembers(context.Context, string) (map[string]netip.Addr, error) {
@@ -705,5 +720,148 @@ func TestFilteredStartupPersistenceFailureIsRuntimeFailure(t *testing.T) {
 	}
 	if gone, err := f.cleanup("runtime_failed"); err != nil || !gone {
 		t.Fatal("startup failure cleanup", gone, err)
+	}
+}
+
+// The gateway filters PACKETS. A bind of the runtime's own control surface
+// hands the agent a way to start a sibling container that never meets the
+// gateway at all, so those sources are refused by name before anything runs.
+func TestFilteredMountsRefuseTheRuntimeControlSurface(t *testing.T) {
+	f, _ := filteredFixture(t)
+	f.record.Endpoint = "unix:///fixture/run/docker.sock"
+	ordinary := t.TempDir()
+	for _, test := range []struct {
+		name, source string
+		valid        bool
+	}{
+		{"docker socket directory", "/var/run", false},
+		{"run", "/run", false},
+		{"proc", "/proc", false},
+		{"sys", "/sys", false},
+		{"dev", "/dev", false},
+		{"root", "/", false},
+		{"var", "/var", false},
+		{"ordinary data directory", ordinary, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := os.Stat(test.source); err != nil {
+				t.Skip("host has no", test.source)
+			}
+			err := f.validateMounts([]string{"-v", test.source + ":/x:ro"}, nil, nil)
+			if test.valid {
+				if err != nil {
+					t.Fatalf("an ordinary directory was refused: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("the runtime control surface was mounted into a filtered box")
+			}
+			if !strings.Contains(err.Error(), "control surface") {
+				t.Fatalf("the refusal does not name the reason: %v", err)
+			}
+		})
+	}
+	// The bound endpoint's own socket path is protected wherever it lives.
+	socket := filepath.Join(t.TempDir(), "orbstack", "docker.sock")
+	if err := os.MkdirAll(filepath.Dir(socket), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.record.Endpoint = "unix://" + socket
+	real, err := filepath.EvalSymlinks(filepath.Dir(socket))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.validateMounts([]string{"-v", real + ":/x:ro"}, nil, nil); err == nil || !strings.Contains(err.Error(), "control surface") {
+		t.Fatalf("the bound daemon socket's directory was mountable: %v", err)
+	}
+}
+
+// Every exit from cleanup attempts the two named volumes. The old shape returned
+// before them when host storage failed, and the containment fallback removed
+// containers only — so an interrupted run leaked a volume pair per launch.
+func TestFilteredCleanupContainsVolumesOnEveryExit(t *testing.T) {
+	t.Run("unreadable registry", func(t *testing.T) {
+		f, d := filteredFixture(t)
+		if _, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		record := filepath.Join(f.store.Path(), "execution-"+f.record.ID+".json")
+		if err := os.WriteFile(record, []byte("not a record"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		gone, err := f.cleanup("exited")
+		if gone || err == nil {
+			t.Fatal("a lost registry reported clean custody", gone, err)
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if len(d.volumes) != 0 {
+			t.Fatalf("cleanup leaked volumes after an early return: %v", slices.Collect(maps.Keys(d.volumes)))
+		}
+		if len(d.containers) != 0 {
+			t.Fatalf("cleanup leaked containers: %v", slices.Collect(maps.Keys(d.containers)))
+		}
+	})
+	t.Run("container removal fails", func(t *testing.T) {
+		f, d := filteredFixture(t)
+		d.refuseRemoval = "agent"
+		if _, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		if gone, err := f.cleanup("runtime_failed"); gone || err == nil {
+			t.Fatal("a surviving container reported clean custody", gone, err)
+		}
+		d.mu.Lock()
+		volumes := len(d.volumes)
+		d.mu.Unlock()
+		if volumes != 2 {
+			t.Fatalf("volumes were removed under a container whose absence is unproven: %d left", volumes)
+		}
+		r, err := f.store.Execution(f.record.ID)
+		if err != nil || r.Receipt == nil || r.Receipt.Cleanup != "pending" {
+			t.Fatal("the receipt did not record pending cleanup", err)
+		}
+	})
+}
+
+// The protected inventory is not just this host process's interfaces. Every
+// subnet the runtime allocates and every gateway it holds is protected too, or
+// a granted CIDR covering a bridge subnet would reach sibling containers, other
+// sessions' boxes and the daemon's own gateway.
+func TestFilteredProtectedAddressesCoverTheRuntimeTopology(t *testing.T) {
+	networks := []runtime.DockerNetwork{
+		{Name: "bridge", Subnets: []netip.Prefix{netip.MustParsePrefix("172.17.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.17.0.1")}},
+		{Name: "other-session_default", Subnets: []netip.Prefix{netip.MustParsePrefix("192.168.97.0/24")}, Gateways: []netip.Addr{netip.MustParseAddr("192.168.97.1")}},
+		{Name: "host", Subnets: nil, Gateways: nil},
+	}
+	host := func() ([]netip.Prefix, error) { return []netip.Prefix{netip.MustParsePrefix("10.1.2.3/32")}, nil }
+	protected, ingress, err := filteredProtectedAddresses(networks, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"10.1.2.3/32", "172.17.0.0/16", "172.17.0.1/32", "192.168.97.0/24", "192.168.97.1/32"} {
+		if !slices.Contains(protected, netip.MustParsePrefix(want)) {
+			t.Errorf("protected set is missing %s: %v", want, protected)
+		}
+	}
+	if ingress != netip.MustParseAddr("172.17.0.1") {
+		t.Fatalf("bridge gateway = %v, want the address host-published traffic is NAT'd from", ingress)
+	}
+	if !slices.IsSortedFunc(protected, func(a, b netip.Prefix) int { return strings.Compare(a.String(), b.String()) }) {
+		t.Error("the protected set is not stably ordered")
+	}
+	// A runtime with no bridge gateway cannot secure a published serve port, and
+	// a topology beyond the qualified envelope is a refusal, not a truncation.
+	if _, ingress, err := filteredProtectedAddresses(networks[1:], host); err != nil || ingress.IsValid() {
+		t.Fatal("a runtime without a bridge reported an ingress source", ingress, err)
+	}
+	var many []runtime.DockerNetwork
+	for i := range networkgateway.MaxProtectedRanges {
+		many = append(many, runtime.DockerNetwork{Name: fmt.Sprintf("n%d", i),
+			Subnets: []netip.Prefix{netip.MustParsePrefix(fmt.Sprintf("10.%d.0.0/16", i))}})
+	}
+	if _, _, err := filteredProtectedAddresses(many, host); err == nil {
+		t.Fatal("a topology beyond the qualified envelope was silently truncated")
 	}
 }

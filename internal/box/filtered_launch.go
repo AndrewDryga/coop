@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -323,11 +322,21 @@ func (f *filteredExecution) checkTopology() error {
 		inventory = filteredHostAddresses
 	}
 	protected, err := inventory()
+	if err != nil {
+		return err
+	}
 	// Interface GC can remove an address without weakening the original deny
 	// set. Keep that set installed; only newly unprotected addresses require a
 	// replacement execution. Never advance the baseline to a smaller inventory.
-	if err == nil && (len(protected) == 0 || slices.ContainsFunc(protected, func(prefix netip.Prefix) bool { return !slices.Contains(f.protected, prefix) })) {
-		err = errors.New("protected host topology changed; start a new network execution")
+	if len(protected) == 0 {
+		return errors.New("protected host topology is empty; start a new network execution")
 	}
-	return err
+	for _, prefix := range protected {
+		if !slices.Contains(f.protected, prefix) {
+			// Name the address: "topology changed" alone leaves an operator with
+			// nothing to look at, and a VPN or a new interface is a fact they can.
+			return fmt.Errorf("host address %s appeared after this run's protection envelope was installed; start a new network execution", prefix)
+		}
+	}
+	return nil
 }

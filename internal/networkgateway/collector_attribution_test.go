@@ -255,3 +255,34 @@ func TestCollectorLingeringSocketWithoutItsOwnClosedFlowStaysUnattributed(t *tes
 		})
 	}
 }
+
+// A retained close explains the remnant of ITS stream, which the kernel holds
+// for a few samples — not a socket at the same tuple minutes later. Without a
+// time bound one close with an unbound inode would explain the first socket at
+// that ephemeral port forever, and a real gap would go unreported.
+func TestCollectorClosedFlowExplanationExpires(t *testing.T) {
+	fixture := func(t *testing.T, wait time.Duration) *Collector {
+		t.Helper()
+		c, now := collectorFixture(t)
+		flow := strings.Repeat("a", 32)
+		connected := proxyEvent(1, *now, flow, "TcpUpstreamConnected", 1, 2, 10)
+		end := proxyEvent(2, *now, flow, "TcpConnectionEnd", 3, 4, 20)
+		c.ingest([]GuardEvent{registration(1, *now, flow)}, GuardTotals{Sequence: 1}, []EnvoyEvent{connected, end}, EnvoyTotals{Sequence: 2})
+		publishFixture(c, *now, nil) // the close is retained with no socket bound to it
+		*now = now.Add(wait)
+		row := SocketRow{Tuple: SocketTuple{Local: connected.Local, Peer: connected.Peer}, UID: 65532, Inode: 77, State: "open"}
+		publishFixture(c, *now, []SocketRow{row})
+		return c
+	}
+	fresh := fixture(t, time.Second)
+	if fresh.snapshot.PendingConnections != 0 || *fresh.snapshot.UnknownConnections != 0 || fresh.boundaryGap != "" {
+		t.Fatalf("a remnant inside the bound stopped being explained: pending=%d gap=%q", fresh.snapshot.PendingConnections, fresh.boundaryGap)
+	}
+	stale := fixture(t, ObservationStaleAfter+time.Second)
+	if stale.snapshot.PendingConnections != 1 || *stale.snapshot.UnknownConnections != 1 {
+		t.Fatalf("a stale close still explained a reused tuple: pending=%d unknown=%v", stale.snapshot.PendingConnections, stale.snapshot.UnknownConnections)
+	}
+	if len(stale.closedSockets) != 0 {
+		t.Fatalf("the expired close was retained: %v", stale.closedSockets)
+	}
+}

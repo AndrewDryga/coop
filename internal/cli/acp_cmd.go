@@ -74,6 +74,14 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// supervises; the INNER (COOP_ACP_INNER=1) runs the box.
 	inner := args // the args the supervisor re-execs as `coop acp <inner>`; the inner re-parses them
 	innerProcess := os.Getenv("COOP_ACP_INNER") != ""
+	// coop's own network flags come off first, in BOTH processes: the outer admits
+	// with them, and the inner strips them again so the leftover check below still
+	// sees only the who slot. The inner never admits — its authority arrives from
+	// the supervisor as a proved reference.
+	args, err := a.takeNetworkFlags(args)
+	if err != nil {
+		return 2, err
+	}
 	peerVals, args, err := extractPeer(args)
 	if err != nil {
 		return 2, err
@@ -180,6 +188,27 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if ctrlEffort == "" {
 			ctrlEffort = a.cfg.EffortFor(tool)
 		}
+		// Admission happens ONCE, here, before any child: a toolbar provider switch
+		// or a preset rung reuses this exact capture, so every provider this session
+		// could spawn has to be in the scope its bundles derive from — the same
+		// union the loop freezes for its ladders. The rule is Control's own
+		// (SpawnableProviders): a provider with a usable account can be switched to.
+		scope := append([]agents.Target{}, peers...)
+		for _, provider := range agents.Names() {
+			if provider != tool && len(accountsFor(a.cfg, provider)) > 0 {
+				scope = append(scope, agents.Target{Provider: provider})
+			}
+		}
+		// The capture belongs to the SUPERVISOR: it lives as long as the editor
+		// session, and each child receives a reference to it, never authority.
+		a.acpCapture, err = box.AdmitNetwork(a.cfg, a.rt, box.RunSpec{
+			Repo: repo, Workdir: repo, Agent: tool, Peers: scope, Preset: a.preset,
+			Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
+		}, a.network.admission())
+		if err != nil {
+			return 1, err
+		}
+		defer a.acpCapture.Close()
 		// Ports the inner box will publish (.agent/project.yaml serve), reported to the editor once per
 		// session. Deterministic host ports (project.HostPort), so these match what box.Run binds. Only
 		// when egress is open — otherwise nothing publishes, so nothing to announce.
@@ -218,7 +247,10 @@ func (a *app) cmdACP(args []string) (int, error) {
 	extra := []string{"-e", "COOP_QUIET=1"}
 	// Under a supervisor, give the box a deterministic identity: --cidfile lets the supervisor
 	// tear it down by id even before its labels are queryable (see cmdACPSupervise's stop()).
-	if cid := os.Getenv("COOP_ACP_CIDFILE"); cid != "" {
+	// A FILTERED child has no `docker run` to write one: its agent container is created by the
+	// gateway engine, which records the exact id itself and refuses every unqualified runtime
+	// argument. Its teardown is the cancellation below, and `coop net recover` after a kill.
+	if cid := os.Getenv("COOP_ACP_CIDFILE"); cid != "" && os.Getenv(box.SessionNetworkCaptureEnv) == "" {
 		extra = append(extra, "--cidfile", cid)
 	}
 	activityRepo, forkIdentity, err := forkspace.ResolveProjectBinding(repo)
@@ -242,6 +274,23 @@ func (a *app) cmdACP(args []string) (int, error) {
 		spec.ForkName = forkIdentity.Name
 		spec.ForkGeneration = string(forkIdentity.Generation)
 		spec.ForkOwner = forkctl.ForkContainerOwner(activityRepo, forkIdentity.Name, forkIdentity.Generation)
+	}
+	// This child's network authority arrives from the supervisor that started it,
+	// as a reference it must prove against the owner-private store. A child
+	// admits nothing: an approval that lands mid-session cannot widen it.
+	capture, err := box.CapturedEgressFromEnvironment(a.cfg, spec)
+	if err != nil {
+		return 1, err
+	}
+	defer capture.Close()
+	if capture != nil {
+		spec.CapturedEgress = capture
+		// A filtered child owns a gateway, two volumes and a receipt. The
+		// supervisor stops it with a signal, so that signal has to arrive as a
+		// cancellation this run can clean up after.
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer stop()
+		spec.Ctx = ctx
 	}
 	return box.Run(a.cfg, a.rt, spec)
 }
@@ -437,6 +486,25 @@ func (a *app) reapACPBoxes(superID string) error {
 	return forkspace.RemoveDeadExecutionsBySource(authorityRepo, superID)
 }
 
+// acpChildCapture renders this supervisor's frozen network authority as the
+// reference ONE child launch proves. Each child gets its own attempt identity,
+// so `coop net ls` relates a run to the child that produced it; the session
+// identity is the supervisor's, which is what the editor session is.
+func (a *app) acpChildCapture(superID string) (string, error) {
+	if a.acpCapture == nil {
+		return "", nil
+	}
+	attempt, err := newSupervisorID()
+	if err != nil {
+		return "", err
+	}
+	return box.SessionNetworkCapture{
+		Project: a.acpCapture.Project, Fingerprint: a.acpCapture.Fingerprint,
+		Qualification: a.acpCapture.QualificationID,
+		SessionID:     "acp-" + superID, AttemptID: "acp-" + attempt,
+	}.Encode()
+}
+
 func newSupervisorID() (string, error) {
 	idbuf := make([]byte, 8)
 	if _, err := rand.Read(idbuf); err != nil {
@@ -452,7 +520,10 @@ func cleanACPChildEnv(env []string) []string {
 	for _, item := range env {
 		key, _, _ := strings.Cut(item, "=")
 		switch key {
+		// The network capture is minted per child by this supervisor. An inherited
+		// one names a snapshot this session never admitted, so it never rides in.
 		case "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE",
+			box.SessionNetworkCaptureEnv,
 			liveprocess.ControlFDEnv, liveprocess.ProcessDirEnv, liveprocess.CleanupIDEnv, liveprocess.RevokePathEnv:
 			continue
 		}
@@ -490,6 +561,17 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	}
 	env := append(cleanACPChildEnv(os.Environ()), "COOP_ACP_INNER=1", "COOP_ACP_SUPERVISOR="+superID,
 		"COOP_ACP_ACTIVITY_ROLE="+string(activityRole))
+	capture, err := a.acpChildCapture(superID)
+	if err != nil {
+		inR.Close()
+		inW.Close()
+		outR.Close()
+		outW.Close()
+		return nil, err
+	}
+	if capture != "" {
+		env = append(env, box.SessionNetworkCaptureEnv+"="+capture)
+	}
 	if hasTarget {
 		if ctrl != nil { // model probes use a bare provider target and need no reset/preset wait
 			if psName != "" {

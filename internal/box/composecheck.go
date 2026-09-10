@@ -2,6 +2,9 @@ package box
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +15,8 @@ import (
 	"syscall"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 // ValidateComposeFile reports whether the sibling-services compose file at path declares ONLY
@@ -399,4 +404,41 @@ func resolveExisting(p string) (string, error) {
 		rest = filepath.Join(filepath.Base(abs), rest)
 		abs = parent
 	}
+}
+
+// composeServiceDigests is the identity of what a `service:` grant actually
+// runs. An approval names a service; the repository decides what that name
+// means, and an agent may write .agent/compose.yml — so the digest of the
+// reviewed stanza travels with the approval and a launch recomputes it from the
+// file it is about to run. Only the named service's own definition is hashed:
+// editing an unrelated service is not a change to this grant.
+func composeServiceDigests(composeFile, repoRoot string, repoReadOnly bool, names []string) (map[string]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	if composeFile == "" {
+		return nil, fmt.Errorf("this project grants the Compose service(s) %v, but it has no %s", names, project.DefaultCompose)
+	}
+	data, err := readValidatedCompose(composeFile, repoRoot, repoReadOnly)
+	if err != nil {
+		return nil, err
+	}
+	var doc composeDoc
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(names))
+	for _, name := range names {
+		service, ok := doc.Services[name]
+		if !ok {
+			return nil, fmt.Errorf("%s declares no service %q", project.DefaultCompose, name)
+		}
+		definition, err := json.Marshal(service)
+		if err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256(append([]byte("coop-compose-service-v1\x00"+name+"\x00"), definition...))
+		out[name] = hex.EncodeToString(sum[:])
+	}
+	return out, nil
 }

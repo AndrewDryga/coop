@@ -28,11 +28,12 @@ import (
 )
 
 const (
-	liveWorkflowPrompt = "prompt"
-	liveWorkflowLoop   = "loop"
-	liveWorkflowResume = "resume"
-	liveResumeFresh    = "fresh"
-	liveResumeContinue = "resume"
+	liveWorkflowPrompt  = "prompt"
+	liveWorkflowLoop    = "loop"
+	liveWorkflowResume  = "resume"
+	liveWorkflowNetwork = "network"
+	liveResumeFresh     = "fresh"
+	liveResumeContinue  = "resume"
 
 	liveChildDeadline   = 6 * time.Minute
 	livePromptDeadline  = 3 * time.Minute
@@ -133,6 +134,8 @@ func emitLiveSummary(t *testing.T, workflow string, strict bool, targets []agent
 		line, err = summary.LoopLine()
 	} else if workflow == liveWorkflowResume {
 		line, err = summary.ResumeLine()
+	} else if workflow == liveWorkflowNetwork {
+		line, err = summary.NetworkLine()
 	} else {
 		line, err = summary.Line()
 	}
@@ -237,12 +240,16 @@ func runProviderLiveCompatibility(
 	if err != nil {
 		return fail(false, liveprovider.ReasonHarnessFailed, "credential_revocation")
 	}
-	env, err := liveprovider.ChildEnvironment(layout, liveprovider.ChildSpec{
+	childSpec := liveprovider.ChildSpec{
 		Path: os.Getenv("PATH"), Target: target.String(), Workflow: workflow, Marker: marker,
 		ResultFile: resultFile, AttemptFile: attemptFile, Supervisor: supervisor,
 		PreflightReason: preflightReason, CIDDir: cidDir,
 		ControlFD: 3, RevokePath: revokePath, Runtime: runtimeSettings,
-	})
+	}
+	if workflow == liveWorkflowNetwork {
+		childSpec.NetworkStateHome = hostStateHome()
+	}
+	env, err := liveprovider.ChildEnvironment(layout, childSpec)
 	if err != nil {
 		return fail(false, liveprovider.ReasonHarnessFailed, "child_environment")
 	}
@@ -331,7 +338,7 @@ func TestProviderLiveChild(t *testing.T) {
 	sessionID := os.Getenv("COOP_TEST_LIVE_SESSION_ID")
 	sessionFile := os.Getenv("COOP_TEST_LIVE_SESSION_FILE")
 	if marker == "" || resultFile == "" || attemptFile == "" || supervisor == "" || cidDir == "" ||
-		(workflow != liveWorkflowPrompt && workflow != liveWorkflowLoop && workflow != liveWorkflowResume) ||
+		(workflow != liveWorkflowPrompt && workflow != liveWorkflowLoop && workflow != liveWorkflowResume && workflow != liveWorkflowNetwork) ||
 		(workflow == liveWorkflowResume && (sessionFile == "" || (stage != liveResumeFresh && stage != liveResumeContinue))) {
 		t.Fatal("incomplete live child control contract")
 	}
@@ -342,6 +349,9 @@ func TestProviderLiveChild(t *testing.T) {
 }
 
 func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, sessionFile, marker, attemptFile, supervisor, preflightReason, cidDir string) liveprovider.ProviderResult {
+	if workflow == liveWorkflowNetwork {
+		return executeProviderNetworkLiveChild(target, marker, attemptFile, preflightReason)
+	}
 	result := liveprovider.ProviderResult{Provider: target.Provider}
 	fail := func(attempted bool, reason, phase string, code int, timedOut, truncated bool, class string) liveprovider.ProviderResult {
 		result.Attempted, result.Passed = attempted, false
@@ -505,6 +515,20 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 	}
 	result.Passed, result.Status, result.ReasonCode = true, liveprovider.StatusPassed, ""
 	return result
+}
+
+// hostStateHome is where this host keeps `coop net setup`'s owner-private
+// record. Only the network workflow reads it, and only to launch behind the
+// qualification a human already made on this machine.
+func hostStateHome() string {
+	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
+		return value
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".local", "state")
 }
 
 func liveCIDArgs(rt runtime.Runtime, cidDir, phase string) []string {

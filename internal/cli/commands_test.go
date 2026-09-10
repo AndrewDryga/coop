@@ -18,6 +18,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/liveprocess"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -1337,5 +1338,74 @@ func TestCmdUpWarnsAboutHiddenServiceSecretsWithoutATerminal(t *testing.T) {
 	out = captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
 	if code != 0 || runErr != nil || strings.Contains(out, "empty file") {
 		t.Fatalf("approved cmdUp = (%d, %v); stderr:\n%s", code, runErr, out)
+	}
+}
+
+// `coop acp <agent> --egress filtered` is in the contract, and used to die on
+// "unexpected argument": the flags were never parsed and the ACP path never
+// admitted. The supervisor admits ONCE, and each child it spawns receives a
+// reference to that one capture — never authority, and never its own admission.
+func TestACPParsesTheNetworkFlagsAndAdmitsInTheSupervisor(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := t.TempDir()
+	cfg := &config.Config{
+		ConfigDir: t.TempDir(), RepoOverride: repo, HomeInBox: "/home/node", BoxHome: t.TempDir(),
+		BaseImage: "test-base", Homes: true, Egress: "open",
+	}
+	supervised := false
+	a := &app{cfg: cfg, rt: recordingRuntime(t, filepath.Join(t.TempDir(), "runtime-args")), rtSet: true,
+		acpSupervise: func([]string, *acpctl.Control) (int, error) { supervised = true; return 0, nil }}
+	code, err := a.cmdACP([]string{"claude", "--egress", "filtered"})
+	// This host has no `coop net setup` record, so admission refuses — which is
+	// the point: the flag reached admission instead of being rejected as an
+	// argument, and no child was spawned.
+	if err == nil || !strings.Contains(err.Error(), "coop net setup") {
+		t.Fatalf("acp --egress filtered = (%d, %v), want a network admission refusal", code, err)
+	}
+	if supervised {
+		t.Fatal("the supervisor started before the network was admitted")
+	}
+	if a.network.Mode == nil || *a.network.Mode != egress.Filtered {
+		t.Fatalf("the network flags were not parsed: %+v", a.network)
+	}
+	// An open ACP session admits nothing and holds no capture.
+	a = &app{cfg: cfg, rt: a.rt, rtSet: true,
+		acpSupervise: func([]string, *acpctl.Control) (int, error) { supervised = true; return 0, nil }}
+	if code, err := a.cmdACP([]string{"claude", "--egress", "open"}); err != nil || code != 0 || !supervised {
+		t.Fatalf("acp --egress open = (%d, %v), want the ordinary supervised session", code, err)
+	}
+	if a.acpCapture != nil {
+		t.Fatal("an open ACP session captured a policy")
+	}
+	if value, err := a.acpChildCapture("abc"); err != nil || value != "" {
+		t.Fatalf("an open session handed a child %q (%v)", value, err)
+	}
+}
+
+// The child's reference names the supervisor's snapshot and its own attempt, and
+// an inherited one never rides in: this supervisor mints what its children get.
+func TestACPChildCaptureIsAPerChildReference(t *testing.T) {
+	a := &app{cfg: &config.Config{}, acpCapture: &box.CapturedEgress{
+		Project: t.TempDir(), Fingerprint: strings.Repeat("a", 64), QualificationID: strings.Repeat("b", 64),
+	}}
+	first, err := a.acpChildCapture("sup1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := a.acpChildCapture("sup1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("two children shared one attempt identity")
+	}
+	for _, want := range []string{a.acpCapture.Project, a.acpCapture.Fingerprint, a.acpCapture.QualificationID, `"session_id":"acp-sup1"`} {
+		if !strings.Contains(first, want) {
+			t.Errorf("child capture %s is missing %q", first, want)
+		}
+	}
+	cleaned := cleanACPChildEnv([]string{box.SessionNetworkCaptureEnv + "=inherited", "PATH=/usr/bin"})
+	if slices.ContainsFunc(cleaned, func(value string) bool { return strings.HasPrefix(value, box.SessionNetworkCaptureEnv+"=") }) {
+		t.Fatalf("an inherited network capture reached the child: %v", cleaned)
 	}
 }

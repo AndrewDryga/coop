@@ -126,6 +126,11 @@ func printNetworkIteration(r box.NetworkReport, run int) {
 	if total := len(r.Denials) + r.Omitted; total > 0 {
 		ui.Warn("network: refused %s in iteration %d: %s", ui.Count(total, "destination"), run, networkDenialList(r))
 	}
+	if r.RawPackets > 0 {
+		// No destination was recorded for these, so the line says so instead of
+		// inventing one — but the iteration did meet the boundary.
+		ui.Warn("network: iteration %d — %s", run, r.Raw)
+	}
 	for _, alert := range r.Alerts {
 		ui.Warn("network alert: %s", alert)
 	}

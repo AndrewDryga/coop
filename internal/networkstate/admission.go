@@ -13,7 +13,6 @@ import (
 // comes from a selected host-owned API policy, never from a create/turn request.
 // Existing sessions load their captured snapshot instead of calling Admit again.
 type Admission struct {
-	HardCeiling    *egress.Mode
 	InvocationMode *egress.Mode
 	HostPreference *egress.Mode
 	ProjectMode    *egress.Mode
@@ -83,7 +82,7 @@ func (s *Store) admissionPreview(project string, input Admission) (AdmissionPrev
 	if err := s.authorityAvailable(); err != nil {
 		return AdmissionPreview{}, err
 	}
-	id, err := s.projectID(project)
+	id, canonical, info, err := s.projectIdentity(project)
 	if err != nil {
 		return AdmissionPreview{}, err
 	}
@@ -91,7 +90,16 @@ func (s *Store) admissionPreview(project string, input Admission) (AdmissionPrev
 	if err != nil {
 		return AdmissionPreview{}, err
 	}
-	return input.preview(approval)
+	preview, err := input.preview(approval)
+	if err != nil {
+		return AdmissionPreview{}, err
+	}
+	// A replaced project directory is exactly the pending review this view
+	// exists to report: describing it beats failing the read nobody can act on.
+	if drift := approval.checkDirectory(canonical, info); drift != nil {
+		preview.Pending = drift
+	}
+	return preview, nil
 }
 
 func (a Admission) preview(approval *Approval) (AdmissionPreview, error) {
@@ -110,12 +118,15 @@ func (s *Store) Admit(project string, input Admission) (egress.Snapshot, error) 
 	if err := s.authorityAvailable(); err != nil {
 		return egress.Snapshot{}, err
 	}
-	id, err := s.projectID(project)
+	id, canonical, info, err := s.projectIdentity(project)
 	if err != nil {
 		return egress.Snapshot{}, err
 	}
 	approval, err := s.approval(id)
 	if err != nil {
+		return egress.Snapshot{}, err
+	}
+	if err := approval.checkDirectory(canonical, info); err != nil {
 		return egress.Snapshot{}, err
 	}
 	mode, err := input.resolveMode(approval)
@@ -136,7 +147,7 @@ func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {
 	for _, field := range []struct {
 		name  string
 		value *egress.Mode
-	}{{"hard ceiling", a.HardCeiling}, {"invocation", a.InvocationMode}, {"host preference", a.HostPreference}, {"project request", a.ProjectMode}, {"named policy", a.PolicyMode}} {
+	}{{"invocation", a.InvocationMode}, {"host preference", a.HostPreference}, {"project request", a.ProjectMode}, {"named policy", a.PolicyMode}} {
 		if field.value != nil {
 			if _, err := egress.ParseMode(string(*field.value)); err != nil {
 				return "", fmt.Errorf("network %s: %w", field.name, err)
@@ -151,7 +162,6 @@ func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {
 		remembered = &approval.Posture
 	}
 	mode := egress.Open
-	explicit := a.InvocationMode != nil || a.PolicyMode != nil
 	if a.PolicyMode != nil {
 		if a.InvocationMode != nil {
 			return "", errors.New("network_policy_conflict: named API policies forbid invocation overrides")
@@ -172,12 +182,6 @@ func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {
 			mode = egress.Filtered
 		}
 	}
-	if a.HardCeiling != nil && modeBreadth(mode) > modeBreadth(*a.HardCeiling) {
-		if explicit {
-			return "", errors.New("network_ceiling_exceeded: explicit mode exceeds the host network ceiling")
-		}
-		mode = *a.HardCeiling
-	}
 	if mode != egress.Filtered && a.hasRules() {
 		return "", errors.New("network_policy_conflict: egress rules require filtered mode")
 	}
@@ -194,17 +198,4 @@ func (a Admission) hasRules() bool {
 		}
 	}
 	return false
-}
-
-// Modes form a ceiling order, not a union of independent privileges. Concrete
-// destination authority is compiled separately and never inferred from this rank.
-func modeBreadth(mode egress.Mode) int {
-	switch mode {
-	case egress.Open:
-		return 2
-	case egress.Filtered:
-		return 1
-	default:
-		return 0 // callers have already validated the mode
-	}
 }

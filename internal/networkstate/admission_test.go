@@ -73,35 +73,26 @@ func TestAdmissionPreviewDoesNotCreateOrRepairAuthority(t *testing.T) {
 	}
 }
 
-func TestAdmissionDirectPresenceAndCeilingMatrix(t *testing.T) {
+func TestAdmissionDirectPresenceMatrix(t *testing.T) {
 	choices := []*egress.Mode{nil, admissionMode(egress.Open), admissionMode(egress.Filtered), admissionMode(egress.None)}
-	// Independent rank oracle: narrower modes occur later in this list.
-	rank := map[egress.Mode]int{egress.Open: 0, egress.Filtered: 1, egress.None: 2}
 	for _, invocation := range choices {
 		for _, remembered := range choices {
 			for _, preference := range choices {
 				for _, project := range choices {
-					for _, ceiling := range choices {
-						var approval *Approval
-						if remembered != nil {
-							approval = &Approval{Posture: *remembered}
+					var approval *Approval
+					if remembered != nil {
+						approval = &Approval{Posture: *remembered}
+					}
+					want := egress.Open
+					for _, value := range []*egress.Mode{project, preference, remembered, invocation} {
+						if value != nil {
+							want = *value
 						}
-						want := egress.Open
-						for _, value := range []*egress.Mode{project, preference, remembered, invocation} {
-							if value != nil {
-								want = *value
-							}
-						}
-						wantError := false
-						if ceiling != nil && rank[want] < rank[*ceiling] {
-							wantError = invocation != nil
-							want = *ceiling
-						}
-						input := Admission{InvocationMode: invocation, HostPreference: preference, ProjectMode: project, HardCeiling: ceiling}
-						got, err := input.resolveMode(approval)
-						if (err != nil) != wantError || (!wantError && got != want) || (wantError && got != "") {
-							t.Fatalf("presence/ceiling: %#v approval=%#v: got %q %v, want %q error=%v", input, approval, got, err, want, wantError)
-						}
+					}
+					input := Admission{InvocationMode: invocation, HostPreference: preference, ProjectMode: project}
+					got, err := input.resolveMode(approval)
+					if err != nil || got != want {
+						t.Fatalf("presence: %#v approval=%#v: got %q %v, want %q", input, approval, got, err, want)
 					}
 				}
 			}
@@ -113,20 +104,15 @@ func TestAdmissionNamedPolicyMatrix(t *testing.T) {
 	choices := []*egress.Mode{nil, admissionMode(egress.Open), admissionMode(egress.Filtered), admissionMode(egress.None)}
 	for _, policy := range choices[1:] {
 		for _, remembered := range choices {
-			for _, ceiling := range choices {
-				var approval *Approval
-				if remembered != nil {
-					approval = &Approval{Posture: *remembered}
-				}
-				conflict := remembered != nil && *remembered != egress.Open && *remembered != *policy
-				if ceiling != nil {
-					conflict = conflict || (*ceiling == egress.None && *policy != egress.None) || (*ceiling == egress.Filtered && *policy == egress.Open)
-				}
-				input := Admission{PolicyMode: policy, HardCeiling: ceiling, HostPreference: admissionMode(egress.None), ProjectMode: admissionMode(egress.Open)}
-				got, err := input.resolveMode(approval)
-				if (err != nil) != conflict || (!conflict && got != *policy) || (conflict && got != "") {
-					t.Fatal("named policy was clamped or ignored restriction", input, approval, got, err)
-				}
+			var approval *Approval
+			if remembered != nil {
+				approval = &Approval{Posture: *remembered}
+			}
+			conflict := remembered != nil && *remembered != egress.Open && *remembered != *policy
+			input := Admission{PolicyMode: policy, HostPreference: admissionMode(egress.None), ProjectMode: admissionMode(egress.Open)}
+			got, err := input.resolveMode(approval)
+			if (err != nil) != conflict || (!conflict && got != *policy) || (conflict && got != "") {
+				t.Fatal("named policy ignored a remembered restriction", input, approval, got, err)
 			}
 		}
 	}
@@ -137,18 +123,16 @@ func TestAdmissionNamedPolicyMatrix(t *testing.T) {
 
 func TestAdmissionRejectsInvalidShadowedModesAndRuleConflicts(t *testing.T) {
 	for _, value := range []egress.Mode{"", "OPEN", "Filtered", "unknown"} {
-		for field := 0; field < 5; field++ {
+		for field := 0; field < 4; field++ {
 			input := Admission{InvocationMode: admissionMode(egress.None)}
 			switch field {
 			case 0:
-				input.HardCeiling = &value
-			case 1:
 				input.InvocationMode = &value
-			case 2:
+			case 1:
 				input.HostPreference = &value
-			case 3:
+			case 2:
 				input.ProjectMode = &value
-			case 4:
+			case 3:
 				input.InvocationMode, input.PolicyMode = nil, &value
 			}
 			if got, err := input.resolveMode(nil); err == nil || got != "" {
@@ -185,10 +169,6 @@ func TestAdmissionRejectsInvalidShadowedModesAndRuleConflicts(t *testing.T) {
 				}
 			}
 		}
-		input.HardCeiling = admissionMode(egress.None)
-		if _, err := input.resolveMode(nil); err == nil {
-			t.Fatal("ceiling silently omitted rules")
-		}
 	}
 }
 
@@ -210,14 +190,13 @@ func TestAdmitKeepsPostureWithoutRewritingOrRecapturing(t *testing.T) {
 	for _, input := range []Admission{
 		{InvocationMode: admissionMode(egress.Open)},
 		{InvocationMode: admissionMode(egress.None)},
-		{HardCeiling: admissionMode(egress.None)},
 	} {
 		if _, err := s.Admit(project, input); err != nil {
 			t.Fatal(err)
 		}
 		approval, err := s.Approval(project)
 		if err != nil || approval.Posture != egress.Filtered || len(approval.Envelope) != 1 {
-			t.Fatal("invocation or clamp rewrote approval", approval, err)
+			t.Fatal("invocation override rewrote approval", approval, err)
 		}
 	}
 	snapshot, err := s.Admit(project, Admission{Requests: []egress.Rule{rule("example.com")}})
@@ -261,7 +240,7 @@ func TestAdmitUsesOneApprovalForModeAndEnvelope(t *testing.T) {
 }
 
 func TestAdmitFailsClosedWithoutUsableAuthority(t *testing.T) {
-	for _, failure := range []string{"corrupt-approval", "missing-key", "unapproved", "ceiling", "policy"} {
+	for _, failure := range []string{"corrupt-approval", "missing-key", "unapproved", "policy"} {
 		t.Run(failure, func(t *testing.T) {
 			s, project := openStore(t), t.TempDir()
 			if err := approve(s, project, egress.Filtered, nil, nil); err != nil {
@@ -283,8 +262,6 @@ func TestAdmitFailsClosedWithoutUsableAuthority(t *testing.T) {
 				}
 			case "unapproved":
 				input.Requests = []egress.Rule{rule("example.com")}
-			case "ceiling":
-				input.InvocationMode, input.HardCeiling = admissionMode(egress.Open), admissionMode(egress.Filtered)
 			case "policy":
 				input.PolicyMode = admissionMode(egress.None)
 			}

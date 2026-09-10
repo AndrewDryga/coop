@@ -38,3 +38,28 @@ func TestCloudPlatformAddressesRemainProtectedInsideExplicitGrants(t *testing.T)
 		}
 	}
 }
+
+// A `service:` rule names a sidecar, not an address. Its envelope check has to
+// compare that name: the rule carries no CIDR, so an address comparison would
+// refuse the very request the operator approved.
+func TestServiceEnvelopeContainmentComparesTheServiceName(t *testing.T) {
+	approved := Rule{To: Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432, 5433}}
+	for _, test := range []struct {
+		request Rule
+		want    bool
+	}{
+		{Rule{To: Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432, 5433}}, true},
+		{Rule{To: Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}}, true},
+		{Rule{To: Destination{Service: "db"}, Protocol: "tcp", Ports: []int{6000}}, false},
+		{Rule{To: Destination{Service: "cache"}, Protocol: "tcp", Ports: []int{5432}}, false},
+		{Rule{To: Destination{Service: "db"}, Protocol: "udp", Ports: []int{5432}}, false},
+		{Rule{To: Destination{CIDR: "10.0.0.0/8"}, Protocol: "tcp", Ports: []int{5432}}, false},
+	} {
+		if got := Covers(approved, test.request); got != test.want {
+			t.Errorf("Covers(service db, %+v) = %t, want %t", test.request.To, got, test.want)
+		}
+	}
+	if Covers(Rule{To: Destination{CIDR: "10.0.0.0/8"}, Protocol: "tcp", Ports: []int{5432}}, Rule{To: Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}}) {
+		t.Error("an address envelope covered a service request")
+	}
+}

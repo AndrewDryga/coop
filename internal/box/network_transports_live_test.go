@@ -57,11 +57,16 @@ func TestRestrictedNetworkTransports(t *testing.T) {
 	// deferred docker.Close(), which would leave the neighbour running.
 	defer removeFixture()
 
+	// A sibling container is not a destination a rule may name: the runtime's own
+	// subnets are protected, so the only reachable container is an APPROVED
+	// sidecar, whose one address is permitted before that drop. Raw UDP is
+	// therefore proved through the sidecar, and ICMP against a public address.
 	t.Run("raw-transports", func(t *testing.T) {
 		rules := []egress.Rule{
 			{To: egress.Destination{Domain: "*.example.com"}, Protocol: "tls", Ports: []int{443}},
+			{To: egress.Destination{Service: "echo"}, Protocol: "udp", Ports: []int{9099}},
 			{To: egress.Destination{IP: fixture.String()}, Protocol: "udp", Ports: []int{9099}},
-			{To: egress.Destination{IP: fixture.String()}, Protocol: "icmp", Types: []string{"echo-request"}},
+			{To: egress.Destination{IP: "1.1.1.1"}, Protocol: "icmp", Types: []string{"echo-request"}},
 			{To: egress.Destination{IP: "1.1.1.1"}, Protocol: "tcp", Ports: []int{853}},
 		}
 		script := transportProbe + fmt.Sprintf(`
@@ -71,13 +76,15 @@ expect REFUSED  "tls lookalike is not covered"      "$(tls notexample.com)"
 expect ALLOWED  "raw tcp 1.1.1.1:853"               "$(probe tcp 1.1.1.1 853)"
 expect REFUSED  "raw tcp 1.1.1.1:8853"              "$(probe tcp 1.1.1.1 8853)"
 expect REFUSED  "raw tcp 8.8.8.8:853"               "$(probe tcp 8.8.8.8 853)"
-expect ALLOWED  "raw udp %[1]s:9099"                "$(probe udp %[1]s 9099)"
-expect REFUSED  "raw udp %[1]s:9098"                "$(probe udp %[1]s 9098)"
-expect ALLOWED  "icmp echo %[1]s"                   "$(probe icmp %[1]s)"
-expect REFUSED  "icmp echo 1.1.1.1"                 "$(probe icmp 1.1.1.1)"
+expect ALLOWED  "raw udp to the approved sidecar"   "$(probe udp echo 9099)"
+expect REFUSED  "raw udp to the sidecar on 9098"    "$(probe udp echo 9098)"
+expect REFUSED  "raw udp to a granted sibling %[1]s" "$(probe udp %[1]s 9099)"
+expect ALLOWED  "icmp echo 1.1.1.1"                 "$(probe icmp 1.1.1.1)"
+expect REFUSED  "icmp echo 8.8.8.8"                 "$(probe icmp 8.8.8.8)"
 exit $failed
 `, fixture)
-		runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script})
+		runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script,
+			compose: transportEchoCompose(candidate.ClientImage)})
 	})
 
 	t.Run("protected-beats-granted-cidr", func(t *testing.T) {
@@ -85,18 +92,18 @@ exit $failed
 		if err != nil {
 			t.Fatal(err)
 		}
-		host, err := protectedHostAddress(wide)
+		host, err := protectedRuntimeAddress(t, docker, wide)
 		if err != nil {
-			t.Skip("no protected host address inside the bridge network on this runtime:", err)
+			t.Skip("no protected address inside the bridge network on this runtime:", err)
 		}
 		rules := []egress.Rule{
 			{To: egress.Destination{CIDR: wide.String()}, Protocol: "udp", Ports: []int{9099}},
 			{To: egress.Destination{CIDR: wide.String()}, Protocol: "tcp", Ports: []int{9099}},
 		}
 		script := transportProbe + fmt.Sprintf(`
-expect ALLOWED  "udp inside the granted %[2]s"        "$(probe udp %[1]s 9099)"
-expect REFUSED  "tcp to the protected host %[3]s"     "$(probe tcp %[3]s 9099)"
-expect REFUSED  "udp to the protected host %[3]s"     "$(probe udp %[3]s 9099)"
+expect REFUSED  "udp to the sibling %[1]s in granted %[2]s" "$(probe udp %[1]s 9099)"
+expect REFUSED  "tcp to the protected address %[3]s"  "$(probe tcp %[3]s 9099)"
+expect REFUSED  "udp to the protected address %[3]s"  "$(probe udp %[3]s 9099)"
 expect REFUSED  "tcp to metadata 169.254.169.254"     "$(probe tcp 169.254.169.254 80)"
 exit $failed
 `, fixture, wide, host)
@@ -117,12 +124,20 @@ exit $failed
 		// end of the case, not a failure of the box.
 		script := fmt.Sprintf(`set -eu
 mkdir -p /tmp/s && printf 'served-from-the-box' > /tmp/s/index.html
-timeout 25 python3 -m http.server %d --bind 0.0.0.0 --directory /tmp/s || test $? -eq 124
+timeout 45 python3 -m http.server %d --bind 0.0.0.0 --directory /tmp/s || test $? -eq 124
 `, port)
 		reached := make(chan string, 1)
+		sibling := make(chan siblingProbe, 1)
 		runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script, serve: port, whileRunning: func(repo string) {
+			// The host proof runs FIRST: the box's server is bounded, and the
+			// sibling probe below is allowed to spend that bound waiting.
+			defer func() {
+				// A published port is HOST ingress. A sibling container on the same
+				// bridge is not the host, and must not reach it.
+				sibling <- siblingReachesServePort(docker, port)
+			}()
 			host := project.HostPort(repo, port)
-			deadline := time.Now().Add(25 * time.Second)
+			deadline := time.Now().Add(30 * time.Second)
 			for time.Now().Before(deadline) {
 				conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", host), time.Second)
 				if err != nil {
@@ -133,13 +148,50 @@ timeout 25 python3 -m http.server %d --bind 0.0.0.0 --directory /tmp/s || test $
 				fmt.Fprintf(conn, "GET /index.html HTTP/1.0\r\nHost: localhost\r\n\r\n")
 				body, _ := io.ReadAll(conn)
 				_ = conn.Close()
-				reached <- string(body)
-				return
+				// The runtime's forwarder accepts on the host side before the
+				// box's own server is listening, so an empty answer is "not yet",
+				// not "refused". Only a body settles this.
+				if len(body) != 0 {
+					reached <- string(body)
+					return
+				}
+				time.Sleep(250 * time.Millisecond)
 			}
 			reached <- ""
 		}})
 		if body := <-reached; !strings.Contains(body, "served-from-the-box") {
 			t.Fatalf("the published serve port did not reach the box: %q", body)
+		}
+		probe := <-sibling
+		if probe.err != nil {
+			t.Fatalf("the sibling probe could not run, so it proved nothing: %v", probe.err)
+		}
+		if probe.reached {
+			t.Fatal("a sibling container on the bridge reached the box's published serve port")
+		}
+		t.Logf("sibling container at %s was refused by the box's ingress rule: %s", probe.from, probe.detail)
+	})
+
+	// The agent's OWN loopback is not a host surface: a test server on
+	// 127.0.0.1 is ordinary work, not an attempt on a protected address.
+	t.Run("agent-localhost", func(t *testing.T) {
+		rules := []egress.Rule{{To: egress.Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{443}}}
+		script := transportProbe + `
+mkdir -p /tmp/s && printf 'served-to-itself' > /tmp/s/index.html
+(cd /tmp/s && timeout 20 python3 -m http.server 3000 --bind 127.0.0.1 >/dev/null 2>&1 &)
+for i in 1 2 3 4 5 6 7 8 9 10; do curl -q -sS --max-time 1 -o /dev/null http://127.0.0.1:3000/index.html && break; sleep 1; done
+expect ALLOWED  "the box reaches its own 127.0.0.1:3000"  "$(http 127.0.0.1:3000/index.html)"
+expect ALLOWED  "the box still reaches an allowed name"   "$(tls example.com)"
+exit $failed
+`
+		record := runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script})
+		if counters := record.Receipt.Snapshot.Counters; counters == nil || counters.ProtectedPackets == nil || *counters.ProtectedPackets != 0 {
+			t.Fatalf("the box's own loopback was counted as an attempt on a protected address: %+v", record.Receipt.Snapshot.Counters)
+		}
+		for _, alert := range record.Receipt.Snapshot.Alerts {
+			if alert.Category == "protected_destination" {
+				t.Fatalf("a localhost server raised a protected-destination alert: %+v", alert)
+			}
 		}
 	})
 
@@ -290,6 +342,75 @@ func runTransportCase(t *testing.T, store *networkstate.Store, candidate network
 	return record
 }
 
+// transportEchoCompose is the approved-sidecar half of the raw transport
+// proof: the same UDP echo the neighbour runs, declared as a Compose service so
+// a `service:` grant can name it.
+func transportEchoCompose(image string) string {
+	return fmt.Sprintf(`services:
+  echo:
+    image: %s
+    entrypoint: ["socat", "-T60", "UDP-RECVFROM:9099,fork", "EXEC:/bin/cat"]
+    user: "0:0"
+`, image)
+}
+
+// siblingProbe is what another container on the bridge could do to the box's
+// published port. err means the probe itself could not run — which proves
+// nothing and must fail the case rather than read as a refusal.
+type siblingProbe struct {
+	reached bool
+	from    string
+	detail  string
+	err     error
+}
+
+// siblingReachesServePort tries the box's published container port from the
+// neighbour container this suite already owns. The host reaches that port
+// through the bridge gateway; a sibling is not the gateway, so its packets meet
+// the protected drop instead.
+func siblingReachesServePort(docker *runtime.Docker, port int) siblingProbe {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	controllers, err := runtime.Runtime{Name: "docker"}.ContainersByLabel(ctx, "coop.network.role", "controller")
+	if err != nil {
+		return siblingProbe{err: fmt.Errorf("controller listing: %w", err)}
+	}
+	if len(controllers) != 1 {
+		return siblingProbe{err: fmt.Errorf("expected one live controller, got %d", len(controllers))}
+	}
+	members, err := docker.NetworkMembers(ctx, "bridge")
+	if err != nil {
+		return siblingProbe{err: fmt.Errorf("bridge members: %w", err)}
+	}
+	// A listing gives short ids; the network's own inventory is keyed by full
+	// ones, so the two are related by prefix.
+	address := netip.Addr{}
+	for id, member := range members {
+		if strings.HasPrefix(id, controllers[0].ID) {
+			address = member
+		}
+	}
+	if !address.IsValid() {
+		return siblingProbe{err: errors.New("the controller has no bridge address")}
+	}
+	fixture := runtime.DockerRef{Name: "coop-net-e2e-echo", Labels: map[string]string{"coop.network.test": "transports"}}
+	value, present, err := docker.InspectContainer(ctx, fixture)
+	if err != nil || !present || !value.State.Running {
+		return siblingProbe{err: errors.Join(errors.New("the neighbour container is not available to probe from"), err)}
+	}
+	fixture.ID = value.ID
+	// A working curl in the same container proves the probe itself is sound: the
+	// sidecar's own loopback answers nothing, so 7 (connection refused) is the
+	// shape of "curl ran". Anything else here is a harness failure.
+	if _, err := docker.ExecRead(ctx, fixture, 4096, "curl", "-q", "--proxy", "", "-sS", "--max-time", "5",
+		"-o", "/dev/null", "http://127.0.0.1:1/"); err == nil {
+		return siblingProbe{err: errors.New("the neighbour's control probe unexpectedly connected")}
+	}
+	data, err := docker.ExecRead(ctx, fixture, 4096, "curl", "-q", "--proxy", "", "-sS", "--max-time", "5",
+		"-o", "/dev/null", "-w", "%{http_code}", fmt.Sprintf("http://%s:%d/index.html", address, port))
+	return siblingProbe{reached: err == nil, from: address.String(), detail: strings.TrimSpace(string(data)) + fmt.Sprintf(" (%v)", err)}
+}
+
 // startTransportFixture runs one exactly-owned UDP echo neighbour on the
 // default bridge and returns its address.
 func startTransportFixture(t *testing.T, docker *runtime.Docker, image string) (netip.Addr, func()) {
@@ -340,15 +461,26 @@ func hostPrefixAround(address netip.Addr) (netip.Prefix, error) {
 	return prefix, nil
 }
 
-func protectedHostAddress(within netip.Prefix) (netip.Addr, error) {
-	protected, err := filteredHostAddresses()
+// protectedRuntimeAddress finds one address inside within that a launch would
+// protect — a host interface, or the runtime's own gateway in that subnet. It
+// uses the SAME inventory the launch takes, so the case proves the envelope the
+// box actually enforces rather than a second guess at it.
+func protectedRuntimeAddress(t *testing.T, docker *runtime.Docker, within netip.Prefix) (netip.Addr, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	networks, err := docker.Networks(ctx)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	protected, _, err := filteredProtectedAddresses(networks, nil)
 	if err != nil {
 		return netip.Addr{}, err
 	}
 	for _, prefix := range protected {
-		if prefix.Addr().Is4() && within.Contains(prefix.Addr()) {
+		if prefix.Addr().Is4() && prefix.Bits() == prefix.Addr().BitLen() && within.Contains(prefix.Addr()) {
 			return prefix.Addr(), nil
 		}
 	}
-	return netip.Addr{}, errors.New("no host address inside " + within.String())
+	return netip.Addr{}, errors.New("no protected address inside " + within.String())
 }

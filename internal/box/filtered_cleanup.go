@@ -28,6 +28,10 @@ func (f *filteredExecution) resource(role string) networkstate.Resource {
 // stopped. Each operation has its own deadline so one wedged resource cannot
 // prevent containment attempts on the others.
 func (f *filteredExecution) cleanup(workload string) (agentGone bool, result error) {
+	var evidence *networkstate.Evidence
+	// contained is what THIS containment pass proved absent at the runtime, for
+	// the exits where host storage can no longer record it.
+	contained := map[string]bool{}
 	defer func() {
 		if !agentGone {
 			// Lost host storage must not prevent containment of a surviving
@@ -39,10 +43,21 @@ func (f *filteredExecution) cleanup(workload string) (agentGone bool, result err
 				if err == nil && present {
 					ref.ID = value.ID
 					err = f.docker.RemoveContainer(ctx, ref)
+					if err == nil {
+						f.confirmGone(evidence, role, ref)
+					}
 				}
+				contained[role] = err == nil
 				result = errors.Join(result, err)
 				cancel()
 			}
+		}
+		// The two named volumes are exact-owned custody too. An exit that returned
+		// before the ordered walk — lost evidence, an unreadable registry — must
+		// still attempt them, or every interrupted run leaks a pair.
+		result = errors.Join(result, f.containVolumes(evidence, contained))
+		if evidence != nil {
+			result = errors.Join(result, evidence.Close())
 		}
 		result = errors.Join(result, f.docker.Close())
 	}()
@@ -53,7 +68,6 @@ func (f *filteredExecution) cleanup(workload string) (agentGone bool, result err
 	if err != nil {
 		return false, err
 	}
-	defer evidence.Close()
 	// Refresh even after a failed initial publication. A failed read never
 	// authorizes abandoning resources whose runtime outcome might be unknown.
 	if current, err := f.store.Execution(f.record.ID); err != nil {
@@ -138,6 +152,55 @@ func (f *filteredExecution) cleanup(workload string) (agentGone bool, result err
 		cancel()
 	}
 	return agentGone, result
+}
+
+// containVolumes removes this run's named volumes once nothing can still be
+// using them. A container whose absence is unproven keeps them: a volume under a
+// live consumer is not cleanup, and the receipt says pending rather than lying.
+func (f *filteredExecution) containVolumes(evidence *networkstate.Evidence, contained map[string]bool) error {
+	if f.record.ID == "" {
+		return nil
+	}
+	for _, role := range []string{"agent", "guard", "controller"} {
+		if f.resource(role).State != "gone" && !contained[role] {
+			return nil
+		}
+	}
+	var result error
+	for _, role := range []string{"ipc", "observations"} {
+		if f.resource(role).State == "gone" {
+			continue
+		}
+		if evidence != nil {
+			result = errors.Join(result, f.removeResource(evidence, role))
+			continue
+		}
+		// Without an evidence handle the runtime object is still contained; the
+		// record cannot be updated, so the receipt stays honestly pending.
+		ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
+		ref := f.ref(role)
+		if _, present, err := f.docker.InspectVolume(ctx, ref); err != nil {
+			result = errors.Join(result, err)
+		} else if present {
+			result = errors.Join(result, f.docker.RemoveVolume(ctx, ref))
+		}
+		cancel()
+	}
+	return result
+}
+
+// confirmGone records a containment removal when host storage still answers. It
+// is best effort by design: the runtime object is already gone, and a failed
+// note must not turn successful containment into an error nobody can act on.
+func (f *filteredExecution) confirmGone(evidence *networkstate.Evidence, role string, ref runtime.DockerRef) {
+	if evidence == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
+	defer cancel()
+	_ = f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+		return evidence.ConfirmResourceGone(ctx, r.ID, r.Revision, r.DaemonID, role, ref.Name, ref.ID)
+	})
 }
 
 func finalObservationFile(data []byte) ([]byte, error) {

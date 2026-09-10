@@ -147,3 +147,27 @@ func TestInstructionNoteBoundsTheDestinationList(t *testing.T) {
 		t.Errorf("note does not bound its list:\n%s", note)
 	}
 }
+
+// A refused raw packet has no destination to name, so it produces no denial row
+// — but a run that hit the boundary must never print "nothing was refused".
+func TestRunReportCountsRawRefusalsAsHittingTheBoundary(t *testing.T) {
+	denied, protected := networkview.Count(4), networkview.Count(1)
+	report := networkRunReport("run1", networkview.Snapshot{Counters: &networkview.Counters{DeniedPackets: &denied, ProtectedPackets: &protected}})
+	if report.Quiet() {
+		t.Fatal("a run with refused packets reported as quiet")
+	}
+	if report.RawPackets != 4 {
+		t.Errorf("RawPackets = %d, want 4", report.RawPackets)
+	}
+	for _, want := range []string{"refused packets: 4", "(1 to protected addresses)", "counted, not attributed"} {
+		if !strings.Contains(report.Raw, want) {
+			t.Errorf("raw line %q is missing %q", report.Raw, want)
+		}
+	}
+	// Zero refused packets is a measurement, not a boundary hit.
+	zero := networkview.Count(0)
+	quiet := networkRunReport("run1", networkview.Snapshot{Counters: &networkview.Counters{DeniedPackets: &zero, ProtectedPackets: &zero}})
+	if !quiet.Quiet() || quiet.RawPackets != 0 {
+		t.Error("a measured zero was reported as a refusal")
+	}
+}

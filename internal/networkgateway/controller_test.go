@@ -14,7 +14,7 @@ func testController(t *testing.T, apply ApplyRules) *Controller {
 	t.Helper()
 	policy := testPolicy(t)
 	clock := testBootClock()
-	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint}, policy, nil, nil, nil, clock, apply)
+	c, err := NewController(Identity{Clock: clock.Domain(), RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: policy.Fingerprint}, policy, nil, nil, nil, netip.Addr{}, clock, apply)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +95,16 @@ func TestControllerInstallsDenyBeforeReadinessAndNeverReinitializes(t *testing.T
 			t.Errorf("missing enforcement invariant %q", required)
 		}
 	}
-	if strings.Contains(rules, "ct state established,related accept") || strings.Contains(rules, `oifname "lo" accept`) {
-		t.Fatal("broad established/loopback bypass")
+	if strings.Contains(rules, "ct state established,related accept") {
+		t.Fatal("broad established bypass")
+	}
+	// The run's own namespace loopback is permitted for the agent and for the
+	// guard's established replies. An UNSCOPED loopback accept would hand every
+	// uid in the namespace a bypass, so every such rule names its uid.
+	for _, line := range strings.Split(rules, "\n") {
+		if strings.Contains(line, `oifname "lo" accept`) && !strings.Contains(line, "meta skuid") {
+			t.Fatalf("unscoped loopback bypass: %s", line)
+		}
 	}
 	if err := c.CloseAdmission(context.Background()); err != nil || c.Ready() {
 		t.Fatal("terminal admission close failed")

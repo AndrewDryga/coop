@@ -208,6 +208,9 @@ func (f *filteredExecution) validateMounts(options, files, directories []string)
 		if err != nil || strings.ContainsAny(canonical, ":\x00\r\n") {
 			return errors.New("network workload source cannot be frozen unambiguously")
 		}
+		if err := checkRuntimeControlReach(canonical, f.record.Endpoint); err != nil {
+			return err
+		}
 		info, err := os.Lstat(canonical)
 		if err != nil || !info.IsDir() && !info.Mode().IsRegular() {
 			return errors.New("network workload mount source is not a regular file or directory")
@@ -411,4 +414,31 @@ func networkMountPlan(options []string) (map[string]runtime.DockerMount, error) 
 		result[mount.Destination] = mount
 	}
 	return result, nil
+}
+
+// runtimeControlPaths are the host directories a filtered box may never bind. A
+// gateway is the boundary for PACKETS; a bind of /var/run hands the agent the
+// Docker socket, and one curl over it starts a privileged, host-networked
+// sibling that never meets the gateway at all. The same reasoning covers the
+// kernel interfaces (/proc, /sys, /dev) and the root of the filesystem.
+var runtimeControlPaths = []string{"/var/run", "/run", "/proc", "/sys", "/dev", "/"}
+
+// checkRuntimeControlReach refuses a bind source that IS, or CONTAINS, the
+// runtime's own control surfaces. endpoint is the exact Docker endpoint this
+// run is bound to, so a daemon socket outside the usual places is covered too.
+func checkRuntimeControlReach(canonical, endpoint string) error {
+	protected := append([]string{}, runtimeControlPaths...)
+	if socket, ok := strings.CutPrefix(endpoint, "unix://"); ok && filepath.IsAbs(socket) {
+		protected = append(protected, socket)
+	}
+	for _, path := range protected {
+		real, err := resolveExisting(path)
+		if err != nil {
+			return errors.New("network workload mount cannot be checked against the runtime's control surfaces")
+		}
+		if canonical == real || strings.HasPrefix(real, canonical+string(filepath.Separator)) {
+			return fmt.Errorf("restricted networking refuses the mount source %s: it is or contains %s, the container runtime's control surface — the gateway cannot filter what a daemon socket starts", canonical, path)
+		}
+	}
+	return nil
 }

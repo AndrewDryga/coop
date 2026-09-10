@@ -504,8 +504,8 @@ func TestSessionNetworkMismatchFailsTheTurnAndReachesTheStream(t *testing.T) {
 	}
 	runner := &sessionTurnRunner{
 		store: service.Store(),
-		testNetworkExecutions: func(session.Session) ([]networkstate.Execution, error) {
-			return []networkstate.Execution{networkExecutionFixture("run-9", strings.Repeat("f", 64))}, nil
+		testNetworkExecutions: func(session.Session) ([]networkstate.Execution, bool, error) {
+			return []networkstate.Execution{networkExecutionFixture("run-9", strings.Repeat("f", 64))}, true, nil
 		},
 	}
 	err = runner.sessionNetworkOutcome(bound, "", "session-abc", true)
@@ -561,10 +561,10 @@ func TestSessionNetworkOutcomeIsSilentForAMatchingQuietRun(t *testing.T) {
 	}
 	runner := &sessionTurnRunner{
 		store: service.Store(),
-		testNetworkExecutions: func(session.Session) ([]networkstate.Execution, error) {
+		testNetworkExecutions: func(session.Session) ([]networkstate.Execution, bool, error) {
 			record := networkExecutionFixture("run-1", fingerprint)
 			record.AttemptID = "session-abc"
-			return []networkstate.Execution{record}, nil
+			return []networkstate.Execution{record}, true, nil
 		},
 	}
 	if err := runner.sessionNetworkOutcome(bound, "", "session-abc", true); err != nil {
@@ -574,5 +574,99 @@ func TestSessionNetworkOutcomeIsSilentForAMatchingQuietRun(t *testing.T) {
 	response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/events", "", "", "")
 	if strings.Contains(response.Body.String(), `"type":"network"`) {
 		t.Fatalf("an unsealed, quiet run produced an event: %s", response.Body.String())
+	}
+}
+
+// A partial inventory cannot prove that no run enforced foreign authority: the record it could
+// not read is exactly where such a run would hide. The turn fails closed and says so.
+func TestSessionNetworkOutcomeFailsOnIncompleteEvidence(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	fingerprint := strings.Repeat("a", 64)
+	service.testAdmitNetwork = func(Policy, string, string) (sessionNetworkBinding, error) {
+		return sessionNetworkBinding{Mode: egress.Filtered, Fingerprint: fingerprint, Qualification: strings.Repeat("b", 64)}, nil
+	}
+	ctx := context.Background()
+	sess, err := service.CreateRemoteSession(ctx, "network-incomplete", CreateRemoteSessionRequest{Policy: "responder", Task: "partial"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := service.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matching := networkExecutionFixture("run-1", fingerprint)
+	matching.AttemptID = "session-abc"
+	runner := &sessionTurnRunner{
+		store: service.Store(),
+		testNetworkExecutions: func(session.Session) ([]networkstate.Execution, bool, error) {
+			return []networkstate.Execution{matching}, false, nil
+		},
+	}
+	err = runner.sessionNetworkOutcome(bound, "", "session-abc", true)
+	if err == nil || !strings.Contains(err.Error(), "network evidence for this session is incomplete") {
+		t.Fatalf("incomplete evidence certified the turn: %v", err)
+	}
+	handler := NewHTTPHandler(service)
+	response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/events", "", "", "")
+	if !strings.Contains(response.Body.String(), "is incomplete") {
+		t.Fatalf("no network event reported the incomplete inventory: %s", response.Body.String())
+	}
+	// The same records, read whole, certify the turn.
+	runner.testNetworkExecutions = func(session.Session) ([]networkstate.Execution, bool, error) {
+		return []networkstate.Execution{matching}, true, nil
+	}
+	if err := runner.sessionNetworkOutcome(bound, "", "session-abc", true); err != nil {
+		t.Fatalf("a complete matching inventory failed the turn: %v", err)
+	}
+}
+
+// Live connections and one refusal's explanation are the two reads Responder needs but could not
+// reach: routing them is what makes the remote view the same view. Both are GET-only projections
+// of retained evidence, and both withhold destinations unless the session's policy opted in.
+func TestSessionNetworkConnectionAndExplanationRoutes(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	sess, err := service.CreateRemoteSession(context.Background(), "network-parity", CreateRemoteSessionRequest{
+		Policy: "responder", Task: "parity",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHTTPHandler(service)
+	response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/network/connections", "", "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("connections status=%d body=%s", response.Code, response.Body.String())
+	}
+	var connections SessionNetworkConnectionsDTO
+	if err := json.Unmarshal(response.Body.Bytes(), &connections); err != nil {
+		t.Fatal(err)
+	}
+	if connections.Status != "not filtered" || connections.Connections == nil || connections.Projection != "destinations-withheld" {
+		t.Fatalf("connections = %+v", connections)
+	}
+	event := strings.Repeat("a", 32)
+	response = sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/network/explanations/"+event, "", "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("explanation status=%d body=%s", response.Code, response.Body.String())
+	}
+	var explanation SessionNetworkExplanationDTO
+	if err := json.Unmarshal(response.Body.Bytes(), &explanation); err != nil {
+		t.Fatal(err)
+	}
+	if explanation.Available || explanation.Reason == "" || explanation.Projection != "destinations-withheld" {
+		t.Fatalf("explanation = %+v", explanation)
+	}
+	// Reads only, and an explanation without an event id is not a route at all.
+	for _, path := range []string{"/network/connections", "/network/explanations/" + event} {
+		response = sessionHTTPTestRequest(t, handler, http.MethodPost,
+			"/v1/sessions/"+sess.ID+path, "{}", "mutate", "application/json")
+		if response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("POST %s status=%d", path, response.Code)
+		}
+	}
+	response = sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions/"+sess.ID+"/network/explanations", "", "", "")
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("explanations index status=%d, want 404", response.Code)
 	}
 }

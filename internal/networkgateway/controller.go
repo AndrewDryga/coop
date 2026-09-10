@@ -44,6 +44,7 @@ type Controller struct {
 	mu          sync.Mutex
 	grants      []addressGrant
 	serve       []int
+	ingress     netip.Addr
 	leases      map[string]Lease
 	installed   map[netip.Addr]BootInstant
 	ready       atomic.Bool
@@ -52,7 +53,7 @@ type Controller struct {
 	kernel      kernelEvents
 }
 
-func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serve []int, clock *BootClock, apply ApplyRules) (*Controller, error) {
+func NewController(identity Identity, policy egress.Snapshot, protected []netip.Prefix, services []ServiceBinding, serve []int, ingress netip.Addr, clock *BootClock, apply ApplyRules) (*Controller, error) {
 	if err := policy.RequireSupported(); err != nil {
 		return nil, err
 	}
@@ -63,6 +64,9 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 	if err := validServePorts(serve); err != nil {
 		return nil, err
 	}
+	if len(serve) != 0 && !ingress.Is4() {
+		return nil, errors.New("published serve ports require the bridge gateway address host traffic arrives from")
+	}
 	if apply == nil || len(protected) > MaxProtectedRanges || !identity.Valid() || identity.PolicyFingerprint != policy.Fingerprint || clock.Domain() != identity.Clock || !clock.instant().Valid() {
 		return nil, errors.New("invalid gateway controller configuration")
 	}
@@ -72,7 +76,7 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 		}
 	}
 	return &Controller{identity: identity, policy: policy.Clone(), protected: slices.Clone(protected), grants: grants, serve: slices.Clone(serve),
-		apply: apply, now: clock.instant, clock: clock, leases: map[string]Lease{}}, nil
+		ingress: ingress, apply: apply, now: clock.instant, clock: clock, leases: map[string]Lease{}}, nil
 }
 
 // addressGrant is one packet-filter grant as the kernel sees it: an exact IPv4
@@ -82,6 +86,10 @@ func NewController(identity Identity, policy egress.Snapshot, protected []netip.
 type addressGrant struct {
 	counter, target, protocol, display string
 	ports                              []int
+	// service marks a grant whose destination is ONE approved sidecar. Those
+	// render before the protected drop, because the runtime's own network
+	// subnets are protected and the approved container lives inside one.
+	service bool
 }
 
 func addressGrants(policy egress.Snapshot, services []ServiceBinding) ([]addressGrant, error) {
@@ -106,7 +114,7 @@ func addressGrants(policy egress.Snapshot, services []ServiceBinding) ([]address
 				return nil, errors.New("an approved service grant has no launch address binding")
 			}
 			delete(bound, grant.ID)
-			item.target, item.display = binding.Address.String(), rule.To.Service
+			item.target, item.display, item.service = binding.Address.String(), rule.To.Service, true
 		} else {
 			prefix, err := netip.ParsePrefix(rule.To.CIDR)
 			if err != nil || prefix != prefix.Masked() || !prefix.Addr().Is4() {
@@ -303,27 +311,40 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
 	}
 	slices.Sort(protected)
 	protected = slices.Compact(protected)
-	var counters, egressRules, ingressRules strings.Builder
+	var counters, egressRules, ingressRules, serviceEgress, serviceIngress strings.Builder
 	for _, grant := range c.grants {
 		fmt.Fprintf(&counters, " counter %s { }\n", grant.counter)
-		// The protected drop above already ran, so a granted CIDR never reaches
-		// a host, metadata or runtime address inside it. Return traffic is
-		// scoped to the same destination and to conntrack, never a bare port.
+		// An address grant renders AFTER the protected drop, so a granted CIDR
+		// never reaches a host, metadata or runtime address inside it. An
+		// approved sidecar renders BEFORE it: its container address lives in one
+		// of the runtime's own protected subnets, and that ONE address is
+		// exactly what a human approved. Return traffic is scoped to the same
+		// destination and to conntrack, never a bare port.
+		out, back := &egressRules, &ingressRules
+		if grant.service {
+			out, back = &serviceEgress, &serviceIngress
+		}
 		switch grant.protocol {
 		case "tcp", "udp":
-			fmt.Fprintf(&egressRules, "  meta skuid 1000 ip daddr %s %s dport %s counter name %s accept\n", grant.target, grant.protocol, portSet(grant.ports), grant.counter)
-			fmt.Fprintf(&ingressRules, "  ip saddr %s %s sport %s ct state established accept\n", grant.target, grant.protocol, portSet(grant.ports))
+			fmt.Fprintf(out, "  meta skuid 1000 ip daddr %s %s dport %s counter name %s accept\n", grant.target, grant.protocol, portSet(grant.ports), grant.counter)
+			fmt.Fprintf(back, "  ip saddr %s %s sport %s ct state established accept\n", grant.target, grant.protocol, portSet(grant.ports))
 		case "icmp":
-			fmt.Fprintf(&egressRules, "  meta skuid 1000 ip daddr %s icmp type echo-request counter name %s accept\n", grant.target, grant.counter)
-			fmt.Fprintf(&ingressRules, "  ip saddr %s icmp type echo-reply ct state established,related accept\n", grant.target)
+			fmt.Fprintf(out, "  meta skuid 1000 ip daddr %s icmp type echo-request counter name %s accept\n", grant.target, grant.counter)
+			fmt.Fprintf(back, "  ip saddr %s icmp type echo-reply ct state established,related accept\n", grant.target)
 		}
 	}
 	if len(c.serve) != 0 {
-		// Published serve ports are ingress the operator asked for: the host
-		// reaches this exact container port, and the server's replies leave on
-		// that established flow only.
-		fmt.Fprintf(&ingressRules, "  tcp dport %s ct state new,established accept\n", portSet(c.serve))
-		fmt.Fprintf(&egressRules, "  meta skuid 1000 tcp sport %s ct state established accept\n", portSet(c.serve))
+		// Published serve ports are ingress the operator asked for: the HOST
+		// reaches this exact container port through the bridge gateway it is
+		// NAT'd from, and the server's replies leave on that established flow
+		// only. A sibling container on the same bridge is not that source.
+		//
+		// Both rules render BEFORE the protected drop, because the peer IS the
+		// protected gateway. The reply carries no skuid — a listening socket's
+		// SYN-ACK is the kernel's, not the agent's — so conntrack is what scopes
+		// it: only a flow the ingress rule above admitted can be established.
+		fmt.Fprintf(&serviceIngress, "  ip saddr %s tcp dport %s ct state new,established accept\n", c.ingress, portSet(c.serve))
+		fmt.Fprintf(&serviceEgress, "  ip daddr %s tcp sport %s ct state established accept\n", c.ingress, portSet(c.serve))
 	}
 	return fmt.Sprintf(`table inet coop_net {
  counter denied_agent { }
@@ -348,10 +369,10 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
   type filter hook output priority 0; policy drop;
   meta skuid 1000 meta nfproto ipv6 counter name denied_agent reject with icmpx type admin-prohibited
   meta skuid 1000 ct state invalid counter name denied_agent drop
-  meta skuid 1000 ip daddr 127.0.0.1 tcp dport { 15443, 15353 } accept
-  meta skuid 1000 ip daddr 127.0.0.1 udp dport 15353 accept
+  meta skuid 1000 oifname "lo" accept
+  meta skuid 1000 ip daddr 127.0.0.0/8 accept
   meta skuid 65532 oifname "lo" ct state established accept
-  meta skuid 1000 ip daddr @protected4 counter name protected_agent reject with icmpx type admin-prohibited
+%s  meta skuid 1000 ip daddr @protected4 counter name protected_agent reject with icmpx type admin-prohibited
 %s  meta skuid 1000 counter name denied_agent reject with icmpx type admin-prohibited
   meta nfproto ipv6 counter name denied_service drop
   ct state invalid counter name denied_service drop
@@ -367,7 +388,7 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
   ct state invalid counter name denied_ingress drop
   iifname "lo" accept
   ip protocol icmp icmp type destination-unreachable icmp code 4 ct state related accept
-  ip saddr @protected4 counter name denied_ingress drop
+%s  ip saddr @protected4 counter name denied_ingress drop
   tcp sport 443 ct state established accept
 %s  counter name denied_ingress drop
  }
@@ -376,5 +397,5 @@ func (c *Controller) initialRules(maintenance netip.Addr) string {
   counter name denied_ingress drop
  }
 }
-`, counters.String(), strings.Join(protected, ", "), egressRules.String(), maintenance, ingressRules.String())
+`, counters.String(), strings.Join(protected, ", "), serviceEgress.String(), egressRules.String(), maintenance, serviceIngress.String(), ingressRules.String())
 }

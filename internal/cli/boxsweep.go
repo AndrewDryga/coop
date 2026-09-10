@@ -48,4 +48,21 @@ func (a *app) sweepOrphanBoxes(repo string) {
 	if n, _ := box.ReapOrphanNetworks(ctx, a.rt); n > 0 {
 		ui.Detail("removed %s no container uses", ui.Count(n, "orphaned coop network", "orphaned coop networks"))
 	}
+	// A filtered run's gateway is exact-owned by the process that launched it,
+	// and the ordinary sweep above cannot see it: those containers carry
+	// coop.network.* labels, not coop=box. Settling them here means a crashed
+	// supervisor's gateway is reclaimed at the next coop start, not only when
+	// somebody runs `coop net recover`.
+	if results, err := box.RecoverNetworkRuns(ctx, a.rt, ""); err == nil {
+		recovered := 0
+		for _, result := range results {
+			if result.Skipped == "" && len(result.Pending) == 0 && len(result.Failures) == 0 {
+				recovered++
+			}
+		}
+		if recovered > 0 {
+			ui.Detail("recovered %s whose coop process is gone (coop net ls)",
+				ui.Count(recovered, "interrupted filtered run"))
+		}
+	}
 }

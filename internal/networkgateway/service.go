@@ -50,6 +50,11 @@ type LaunchConfig struct {
 	// Serve is this project's published container ports. They are ingress the
 	// operator asked for, not egress authority.
 	Serve []int `json:"serve,omitempty"`
+	// Ingress is the bridge gateway address host-published traffic is NAT'd
+	// from — the ONE source a served port accepts. Without it a sibling
+	// container on the same bridge could reach a port the host published on
+	// loopback only.
+	Ingress netip.Addr `json:"ingress,omitempty"`
 }
 
 type ServiceBinding struct {
@@ -106,6 +111,9 @@ func (c LaunchConfig) Validate() error {
 	if validServePorts(c.Serve) != nil {
 		return Failure("gateway_configuration_invalid")
 	}
+	if len(c.Serve) != 0 && (!c.Ingress.Is4() || !c.Ingress.IsValid()) {
+		return Failure("gateway_configuration_invalid")
+	}
 	// One construction, one meaning: the same grant/binding/port checks the
 	// controller applies decide whether this configuration is launchable.
 	if _, err := addressGrants(c.Policy, c.Services); err != nil {
@@ -131,7 +139,7 @@ func RunController(ctx context.Context, config LaunchConfig) error {
 	if err := os.Mkdir("/ipc/controller", 0710); err != nil {
 		return Failure("controller_socket_unavailable")
 	}
-	c, err := NewController(config.identity(clock), config.Policy, config.Protected, config.Services, config.Serve, clock, applyKernelRules)
+	c, err := NewController(config.identity(clock), config.Policy, config.Protected, config.Services, config.Serve, config.Ingress, clock, applyKernelRules)
 	if err != nil {
 		return err
 	}

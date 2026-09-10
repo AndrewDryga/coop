@@ -189,11 +189,18 @@ func Covers(approved, request Rule) bool {
 	if a.To.Provider != "" || r.To.Provider != "" {
 		return a.To.Provider != "" && a.To.Provider == r.To.Provider && subset(r.To.Features, a.To.Features)
 	}
-	if a.To.Domain != "" || r.To.Domain != "" {
+	switch {
+	case a.To.Service != "" || r.To.Service != "":
+		// A sidecar grant is bound to a NAME, not an address: the launch reads
+		// the one container that name resolves to. Coverage is that same name.
+		if a.To.Service == "" || a.To.Service != r.To.Service {
+			return false
+		}
+	case a.To.Domain != "" || r.To.Domain != "":
 		if a.To.Domain == "" || r.To.Domain == "" || !MatchesDomain(a.To.Domain, r.To.Domain) {
 			return false
 		}
-	} else {
+	default:
 		ap, ae := netip.ParsePrefix(a.To.CIDR)
 		rp, re := netip.ParsePrefix(r.To.CIDR)
 		if ae != nil || re != nil || ap.Addr().BitLen() != rp.Addr().BitLen() || ap.Bits() > rp.Bits() || !ap.Contains(rp.Addr()) {

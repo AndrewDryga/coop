@@ -28,12 +28,14 @@ type ApprovalReview struct {
 
 // ReviewApproval publishes nothing. Its arguments must be the same snapshot the
 // operator sees; never re-read repository YAML between review and Approve.
-func (s *Store) ReviewApproval(project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle) (ApprovalReview, error) {
-	review, _, err := s.reviewApproval(project, mode, requests, bundles)
+// services carries the digest of each `service:` grant's reviewed Compose
+// definition, so the approval names a container, not just a service name.
+func (s *Store) ReviewApproval(project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle, services map[string]string) (ApprovalReview, error) {
+	review, _, err := s.reviewApproval(project, mode, requests, bundles, services)
 	return review, err
 }
 
-func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle) (ApprovalReview, []egress.Bundle, error) {
+func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle, services map[string]string) (ApprovalReview, []egress.Bundle, error) {
 	if err := s.intactAuthority(); err != nil {
 		return ApprovalReview{}, nil, err
 	}
@@ -67,7 +69,14 @@ func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egre
 	if err != nil {
 		return ApprovalReview{}, nil, err
 	}
-	after := &Approval{Version: 1, ProjectID: id, Posture: mode, Envelope: rules, Features: features}
+	device, inode, ok := directoryIdentity(identity)
+	if !ok {
+		return ApprovalReview{}, nil, errors.New("network approval cannot read the project directory identity")
+	}
+	after := &Approval{Version: 1, ProjectID: id, Posture: mode, Envelope: rules, Device: device, Inode: inode, Features: features}
+	if after.Services, err = approvedServices(rules, services); err != nil {
+		return ApprovalReview{}, nil, err
+	}
 	if data, err := json.Marshal(after); err != nil || len(data) > maxPrivateRecordBytes {
 		return ApprovalReview{}, nil, errors.New("network approval exceeds byte limit")
 	}
@@ -119,11 +128,11 @@ func copyApproval(value *Approval) *Approval {
 // Approve is a host operation. It never rereads repository configuration: the
 // caller passes back the exact rules it displayed plus the review digest, and
 // a changed pending request or stored approval fails with ErrApprovalChanged.
-func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle, digest string) error {
+func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, requests []egress.Rule, bundles []egress.Bundle, services map[string]string, digest string) error {
 	if !lowerHex(digest, 64) {
 		return errors.New("network approval requires the digest of a current review")
 	}
-	review, selected, err := s.reviewApproval(project, mode, requests, bundles)
+	review, selected, err := s.reviewApproval(project, mode, requests, bundles, services)
 	if err != nil {
 		return err
 	}
@@ -131,7 +140,7 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 		return ErrApprovalChanged
 	}
 	return s.lockRecord(ctx, "approval", review.After.ProjectID, func() error {
-		current, _, err := s.reviewApproval(project, mode, requests, bundles)
+		current, _, err := s.reviewApproval(project, mode, requests, bundles, services)
 		if err != nil {
 			return err
 		}
@@ -150,4 +159,26 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 		}
 		return s.intactAuthority()
 	})
+}
+
+// approvedServices keeps exactly one digest per approved `service:` rule. A
+// grant bound only to a NAME is a grant to whatever the repository later
+// declares under that name, so the reviewed definition is part of the decision.
+func approvedServices(rules []egress.Rule, digests map[string]string) (map[string]string, error) {
+	var out map[string]string
+	for _, rule := range rules {
+		name := rule.To.Service
+		if name == "" {
+			continue
+		}
+		digest := digests[name]
+		if !lowerHex(digest, 64) {
+			return nil, errors.New("approving the Compose service " + name + " requires the digest of its reviewed definition")
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[name] = digest
+	}
+	return out, nil
 }

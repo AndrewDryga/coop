@@ -13,23 +13,14 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 )
 
-// CaptureNetworkRulesFile reads one bounded regular-file descriptor. Operator
+// captureNetworkRulesFile reads one bounded regular-file descriptor. Operator
 // authority requires an owner-controlled, single-link file outside all supplied
 // exposures, including aliases traversed on the way there. Otherwise the exact
-// rules are requests, never grants. Approval callers review these returned rules
-// and must not reopen the path after asking the operator to confirm.
-func CaptureNetworkRulesFile(path string, exposed []string) (rules []egress.Rule, operator bool, err error) {
-	capture, err := captureNetworkRulesFile(path, exposed)
-	if err != nil {
-		return nil, false, err
-	}
-	return capture.rules, capture.operator, nil
-}
-
+// rules are requests, never grants. The captured bytes are what admission uses;
+// the path is never reopened after this read.
 type networkRulesFile struct {
 	rules    []egress.Rule
 	operator bool
-	source   hostFileSource
 }
 
 func networkRulesRoots(exposed []string) []MCPSourceRoot {
@@ -68,7 +59,7 @@ func captureNetworkRulesFile(path string, exposed []string) (*networkRulesFile, 
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	operator := source.overlap == nil && ok && stat.Nlink == 1 && int(stat.Uid) == os.Getuid() && info.Mode().Perm()&0o022 == 0
-	return &networkRulesFile{rules: rules, operator: operator, source: source}, nil
+	return &networkRulesFile{rules: rules, operator: operator}, nil
 }
 
 func (f *networkRulesFile) apply(input networkstate.Admission) (networkstate.Admission, error) {

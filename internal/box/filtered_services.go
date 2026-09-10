@@ -13,6 +13,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -36,7 +37,7 @@ func serviceGrants(policy egress.Snapshot) []egress.Grant {
 // reach ONE container, and every other member stays behind the same default
 // deny as the public internet.
 func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runtime.Runtime, spec RunSpec, composeFile string,
-	grants []egress.Grant, exposedRoots []string) (string, []networkgateway.ServiceBinding, error) {
+	approval *networkstate.Approval, grants []egress.Grant, exposedRoots []string) (string, []networkgateway.ServiceBinding, error) {
 	if composeFile == "" {
 		names := make([]string, 0, len(grants))
 		for _, grant := range grants {
@@ -45,6 +46,12 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		slices.Sort(names)
 		return "", nil, fmt.Errorf("this policy grants the Compose service(s) %v, but this project has no %s",
 			names, project.DefaultCompose)
+	}
+	// The approval named a DEFINITION, not just a name: this is the file that is
+	// about to run, so it is the one the digest has to match. Check it before
+	// anything is started.
+	if err := checkApprovedServices(approval, composeFile, spec.Repo, spec.RepoReadOnly); err != nil {
+		return "", nil, err
 	}
 	var composeErr bytes.Buffer
 	if _, err := startServicesFile(rt, spec.Repo, composeFile, io.Discard, &composeErr, spec.RepoReadOnly, exposedRoots...); err != nil {

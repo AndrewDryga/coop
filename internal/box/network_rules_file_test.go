@@ -40,7 +40,7 @@ func TestNetworkRulesFileCannotLaunderRulesThroughOrdinaryMode(t *testing.T) {
 	}
 }
 
-func TestCaptureNetworkRulesFileClassifiesTheCapturedSource(t *testing.T) {
+func TestCaptureNetworkRulesFileClassifiesTheSource(t *testing.T) {
 	for _, kind := range []string{"private", "repository", "traversed-alias", "hard-link", "shared-writable"} {
 		t.Run(kind, func(t *testing.T) {
 			repo, private := t.TempDir(), t.TempDir()
@@ -67,7 +67,12 @@ func TestCaptureNetworkRulesFileClassifiesTheCapturedSource(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			rules, operator, err := CaptureNetworkRulesFile(path, []string{repo})
+			capture, err := captureNetworkRulesFile(path, []string{repo})
+			var rules []egress.Rule
+			operator := false
+			if capture != nil {
+				rules, operator = capture.rules, capture.operator
+			}
 			if err != nil || operator != (kind == "private") || len(rules) != 1 || rules[0].To.Domain != "example.com" {
 				t.Fatalf("capture = %#v operator %v error %v", rules, operator, err)
 			}
@@ -108,8 +113,8 @@ func TestCaptureNetworkRulesFileRefusesInvalidSources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, operator, err := CaptureNetworkRulesFile(path, nil); err == nil || operator {
-				t.Fatalf("invalid source granted authority: %v %v", operator, err)
+			if capture, err := captureNetworkRulesFile(path, nil); err == nil || capture != nil && capture.operator {
+				t.Fatalf("invalid source granted authority: %v %v", capture, err)
 			}
 		})
 	}

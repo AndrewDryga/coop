@@ -105,6 +105,7 @@ type filteredDocker interface {
 	ExistingNamedVolumeExposure(context.Context, []string) (runtime.VolumeExposure, error)
 	ConnectNetwork(context.Context, string, runtime.DockerRef) error
 	NetworkMembers(context.Context, string) (map[string]netip.Addr, error)
+	Networks(context.Context) ([]runtime.DockerNetwork, error)
 	ComposeServiceID(context.Context, string, string) (string, error)
 }
 
@@ -198,7 +199,13 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		for _, companion := range spec.CompanionRepositories {
 			privateRoots = append(privateRoots, companion.HostPath)
 		}
-		f.servicesNet, f.services, err = resolveServiceBindings(ctx, docker, rt, spec, composeFile, approvedServices, privateRoots)
+		// The remembered approval, not the snapshot, carries what each service
+		// was approved to BE. A capture cannot answer that: it froze the rules.
+		approval, err := capture.Store.Approval(project)
+		if err != nil {
+			return f, err
+		}
+		f.servicesNet, f.services, err = resolveServiceBindings(ctx, docker, rt, spec, composeFile, approval, approvedServices, privateRoots)
 		if err != nil {
 			return f, err
 		}
@@ -206,11 +213,18 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	// The protection envelope is inventoried AFTER the approved sidecars are up:
 	// starting them can add a runtime network, and this run must protect the
 	// host topology it will actually launch into, not the one before it.
-	protected, err := filteredHostAddresses()
+	networks, err := docker.Networks(ctx)
+	if err != nil {
+		return f, err
+	}
+	protected, ingress, err := filteredProtectedAddresses(networks, f.hostAddresses)
 	if err != nil {
 		return f, err
 	}
 	f.protected = protected
+	if len(servePorts) != 0 && !ingress.IsValid() {
+		return f, errors.New("this runtime has no bridge gateway address, so a published serve port could not be limited to host traffic")
+	}
 	executionSpec := networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
 		QualificationID: capture.QualificationID, ClientImage: f.image,
 		Runtime: "docker", DaemonID: docker.Info().ID, Endpoint: docker.Endpoint(), GatewayImage: candidate.GatewayImage,
@@ -227,7 +241,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		smoke.registered(f.record)
 	}
 	launch := networkgateway.LaunchConfig{Version: 1, RunID: f.record.ID, Epoch: f.record.Epoch, Policy: policy, Protected: protected,
-		Services: f.services, Serve: servePorts}
+		Services: f.services, Serve: servePorts, Ingress: ingress}
 	if err := launch.Validate(); err != nil {
 		return f, err
 	}
@@ -244,6 +258,51 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	}
 	f.runfiles, err = f.store.RunFilesPath(f.record.ID)
 	return f, err
+}
+
+// filteredProtectedAddresses is the envelope this run's kernel refuses before
+// any grant: this host's own interface addresses AND the runtime's networks —
+// every subnet it allocates plus the gateway the daemon holds in it. Without
+// the second half a granted CIDR that happens to cover a bridge subnet would
+// reach every sibling container, another session's box, and the daemon's own
+// gateway; none of those is a destination any rule may grant.
+//
+// It also returns the default bridge's gateway: that is the source address a
+// host-published serve port arrives from, and the only ingress a served port
+// accepts. An invalid address means this runtime cannot publish one.
+func filteredProtectedAddresses(networks []runtime.DockerNetwork, hostAddresses func() ([]netip.Prefix, error)) ([]netip.Prefix, netip.Addr, error) {
+	if hostAddresses == nil {
+		hostAddresses = filteredHostAddresses
+	}
+	protected, err := hostAddresses()
+	if err != nil {
+		return nil, netip.Addr{}, err
+	}
+	var ingress netip.Addr
+	for _, network := range networks {
+		for _, subnet := range network.Subnets {
+			if subnet.Addr().Is4() && !slices.Contains(protected, subnet) {
+				protected = append(protected, subnet)
+			}
+		}
+		for _, gateway := range network.Gateways {
+			if !gateway.Is4() {
+				continue
+			}
+			if network.Name == "bridge" && !ingress.IsValid() {
+				ingress = gateway
+			}
+			prefix := netip.PrefixFrom(gateway, gateway.BitLen())
+			if !slices.Contains(protected, prefix) {
+				protected = append(protected, prefix)
+			}
+		}
+	}
+	if len(protected) == 0 || len(protected) > networkgateway.MaxProtectedRanges {
+		return nil, netip.Addr{}, errors.New("host topology exceeds the qualified protection envelope")
+	}
+	slices.SortFunc(protected, func(a, b netip.Prefix) int { return strings.Compare(a.String(), b.String()) })
+	return protected, ingress, nil
 }
 
 func filteredHostAddresses() ([]netip.Prefix, error) {

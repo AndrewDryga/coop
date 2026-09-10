@@ -45,11 +45,11 @@ func rememberFilteredPosture(t *testing.T, root, repo string, rules []egress.Rul
 		t.Fatal(err)
 	}
 	defer store.Close()
-	review, err := store.ReviewApproval(repo, egress.Filtered, rules, nil)
+	review, err := store.ReviewApproval(repo, egress.Filtered, rules, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Approve(t.Context(), repo, egress.Filtered, rules, nil, review.Digest); err != nil {
+	if err := store.Approve(t.Context(), repo, egress.Filtered, rules, nil, nil, review.Digest); err != nil {
 		t.Fatal(err)
 	}
 }

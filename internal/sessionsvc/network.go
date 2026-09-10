@@ -297,7 +297,7 @@ func (r *sessionTurnRunner) sessionNetworkOutcome(bound session.Session, turnID,
 	if bound.NetworkMode != string(egress.Filtered) || bound.NetworkFingerprint == "" {
 		return nil
 	}
-	records, err := r.sessionNetworkRecords(bound)
+	records, complete, err := r.sessionNetworkRecords(bound)
 	if err != nil {
 		r.warnNetwork(bound, err)
 		return nil
@@ -307,6 +307,13 @@ func (r *sessionTurnRunner) sessionNetworkOutcome(bound session.Session, turnID,
 		// result still has to learn that a run enforced authority this session never had.
 		r.publishNetworkEvent(bound, turnID, box.NetworkReport{RunID: mismatch, Alerts: []string{err.Error()}})
 		return acpFailure(sessionACPProcessError, err.Error())
+	}
+	if !complete {
+		// A partial inventory cannot prove the absence of a mismatching run: the record this
+		// read skipped is exactly where one would hide. Fail the turn instead of certifying it.
+		incomplete := fmt.Errorf("network evidence for this session is incomplete; session %s cannot be certified against its captured policy", bound.ID)
+		r.publishNetworkEvent(bound, turnID, box.NetworkReport{Alerts: []string{incomplete.Error()}})
+		return acpFailure(sessionACPProcessError, incomplete.Error())
 	}
 	if !childExited || attemptID == "" {
 		return nil
@@ -343,18 +350,18 @@ func (r *sessionTurnRunner) publishNetworkEvent(bound session.Session, turnID st
 }
 
 // sessionNetworkRecords lists every network run this session owns, closing the read-only
-// evidence handle before the caller does anything with the answer.
-func (r *sessionTurnRunner) sessionNetworkRecords(bound session.Session) ([]networkstate.Execution, error) {
+// evidence handle before the caller does anything with the answer. complete is false when the
+// inventory could not be read whole — the one case where "no mismatching run" proves nothing.
+func (r *sessionTurnRunner) sessionNetworkRecords(bound session.Session) ([]networkstate.Execution, bool, error) {
 	if r.testNetworkExecutions != nil {
 		return r.testNetworkExecutions(bound)
 	}
 	evidence, err := sessionEvidence(bound)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer evidence.Close()
-	records, _, err := sessionExecutions(evidence, bound.ID)
-	return records, err
+	return sessionExecutions(evidence, bound.ID)
 }
 
 func (r *sessionTurnRunner) warnNetwork(bound session.Session, cause error) {
@@ -591,4 +598,122 @@ func normalizedSessionNetworkMode(mode string) string {
 		return string(egress.Open)
 	}
 	return mode
+}
+
+// SessionNetworkConnectionsDTO is the live drilldown Responder needs: the newest run's bounded
+// connection rows exactly as the collector recorded them. It is pull-based on purpose — a
+// per-second sample belongs in nobody's durable journal — and it carries its own freshness, so a
+// client can tell a stale sample from a closed connection.
+type SessionNetworkConnectionsDTO struct {
+	SessionID   string                   `json:"session_id"`
+	Mode        string                   `json:"mode"`
+	RunID       string                   `json:"run_id,omitempty"`
+	Status      string                   `json:"status"`
+	AsOf        *time.Time               `json:"as_of,omitempty"`
+	Connections []networkview.Connection `json:"connections"`
+	Truncated   bool                     `json:"detail_truncated,omitempty"`
+	Projection  string                   `json:"projection"`
+}
+
+// SessionNetworkConnections lists the newest run's observed connections. Like every other network
+// read on this API it projects retained evidence: no gateway probe, no runtime, no authority, and
+// destinations only when the operator policy opted in.
+func (s *Service) SessionNetworkConnections(ctx context.Context, id string) (SessionNetworkConnectionsDTO, error) {
+	bound, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return SessionNetworkConnectionsDTO{}, err
+	}
+	out := SessionNetworkConnectionsDTO{
+		SessionID: bound.ID, Mode: normalizedSessionNetworkMode(bound.NetworkMode),
+		Status: "no run yet", Connections: []networkview.Connection{}, Projection: "destinations-withheld",
+	}
+	if out.Mode != string(egress.Filtered) {
+		out.Status = "not filtered"
+		return out, nil
+	}
+	policy, err := loadSessionSnapshot(bound)
+	if err != nil {
+		return SessionNetworkConnectionsDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()}
+	}
+	if policy.ExportDestinations {
+		out.Projection = "destinations-included"
+	}
+	evidence, err := sessionEvidence(bound)
+	if err != nil {
+		return SessionNetworkConnectionsDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()}
+	}
+	defer evidence.Close()
+	records, _, err := sessionExecutions(evidence, bound.ID)
+	if err != nil || len(records) == 0 {
+		return out, nil
+	}
+	newest := records[len(records)-1]
+	out.RunID = newest.ID
+	inspection, err := evidence.Inspect(newest.ID, time.Now(), policy.ExportDestinations)
+	if err != nil {
+		out.Status = "observation unavailable"
+		return out, nil
+	}
+	asOf := inspection.Observed.AsOf
+	out.Status, out.AsOf, out.Truncated = inspection.Freshness, &asOf, inspection.Observed.Loss.DetailTruncated
+	if len(inspection.Observed.Connections) != 0 {
+		out.Connections = inspection.Observed.Connections
+	}
+	return out, nil
+}
+
+// SessionNetworkExplanationDTO carries one retained refusal and why it happened. A remote client
+// without the destination projection still learns the reason and the provenance; the copyable rule
+// suggestion stays a local operator view.
+type SessionNetworkExplanationDTO struct {
+	SessionID   string                         `json:"session_id"`
+	Mode        string                         `json:"mode"`
+	Available   bool                           `json:"available"`
+	Reason      string                         `json:"reason,omitempty"`
+	Explanation *networkstate.EventExplanation `json:"explanation,omitempty"`
+	Projection  string                         `json:"projection"`
+}
+
+// SessionNetworkExplanation opens one retained refusal of this session's own runs. An event that
+// aged out of a run's bounded ring reports that honestly — which is not proof it never existed.
+func (s *Service) SessionNetworkExplanation(ctx context.Context, id, eventID string) (SessionNetworkExplanationDTO, error) {
+	bound, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return SessionNetworkExplanationDTO{}, err
+	}
+	out := SessionNetworkExplanationDTO{
+		SessionID: bound.ID, Mode: normalizedSessionNetworkMode(bound.NetworkMode), Projection: "destinations-withheld",
+	}
+	if out.Mode != string(egress.Filtered) {
+		out.Reason = "this session did not run under restricted networking, so it retained no refusals"
+		return out, nil
+	}
+	policy, err := loadSessionSnapshot(bound)
+	if err != nil {
+		return SessionNetworkExplanationDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()}
+	}
+	if policy.ExportDestinations {
+		out.Projection = "destinations-included"
+	}
+	evidence, err := sessionEvidence(bound)
+	if err != nil {
+		return SessionNetworkExplanationDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()}
+	}
+	defer evidence.Close()
+	records, _, err := sessionExecutions(evidence, bound.ID)
+	if err != nil {
+		return SessionNetworkExplanationDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()}
+	}
+	// Newest run first: an id belongs to exactly one of THIS session's runs, and a client that
+	// read it from a network event is most likely looking at the run that just produced it.
+	for i := len(records) - 1; i >= 0; i-- {
+		explanation, err := evidence.Explain(records[i].ID, eventID, policy.ExportDestinations)
+		if err != nil {
+			continue
+		}
+		out.Available, out.Explanation = true, &explanation
+		return out, nil
+	}
+	out.Reason = "event_not_retained"
+	return out, nil
 }

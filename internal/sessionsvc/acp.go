@@ -127,7 +127,7 @@ type sessionTurnRunner struct {
 	// testNetworkExecutions replaces the owner-private evidence read. Registering a real
 	// execution needs a qualified host, a bound Docker daemon and a live gateway; a test that
 	// only cares what a turn does with the answer injects one. nil in production.
-	testNetworkExecutions func(session.Session) ([]networkstate.Execution, error)
+	testNetworkExecutions func(session.Session) ([]networkstate.Execution, bool, error)
 }
 
 // sessionLadder is a session's rotation plus the ladder it was built from, so a policy edit

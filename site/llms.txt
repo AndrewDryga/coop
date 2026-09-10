@@ -667,6 +667,7 @@ coop net — restricted egress: only the destinations you allowed.
          coop net receipt <run> [--json]       the sealed receipt
          coop net why <dest> --run <run>       would its policy have allowed it?
          coop net explain <event> --run <run>  why a refusal happened
+         coop net recover <run>|--all          settle a run a crash interrupted
 
   'setup' prepares this host: it builds the pinned gateway and the locked
   client image for your Docker daemon, then proves them with one smoke run

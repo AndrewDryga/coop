@@ -413,17 +413,27 @@ func (s *Store) syncDirectory(dir *os.File) error {
 }
 
 func (s *Store) projectID(project string) (string, error) {
+	id, _, _, err := s.projectIdentity(project)
+	return id, err
+}
+
+// projectIdentity resolves the one project identity an approval binds to: the
+// canonical path, its keyed id, and the directory the kernel has at that path
+// right now. The path alone is a NAME — a directory moved aside and replaced by
+// another at the same path would inherit its grants — so callers that authorize
+// a launch compare the recorded device/inode too.
+func (s *Store) projectIdentity(project string) (string, string, os.FileInfo, error) {
 	canonical, err := canonicalPath(project)
 	if err != nil {
-		return "", err
+		return "", "", nil, err
 	}
 	info, err := os.Stat(canonical)
 	if err != nil || !info.IsDir() {
-		return "", errors.New("network approval requires an existing project directory")
+		return "", "", nil, errors.New("network approval requires an existing project directory")
 	}
 	mac := hmac.New(sha256.New, s.key)
 	_, _ = mac.Write([]byte("project-v1\x00" + canonical))
-	return hex.EncodeToString(mac.Sum(nil)), nil
+	return hex.EncodeToString(mac.Sum(nil)), canonical, info, nil
 }
 
 type Approval struct {
@@ -431,8 +441,44 @@ type Approval struct {
 	ProjectID string        `json:"project_id"`
 	Posture   egress.Mode   `json:"posture"`
 	Envelope  []egress.Rule `json:"envelope"`
+	// Device and Inode are the approved directory's kernel identity. They are
+	// recorded so a replacement at the same path cannot inherit its grants.
+	Device uint64 `json:"device"`
+	Inode  uint64 `json:"inode"`
+	// Services is the digest of each approved `service:` grant's Compose
+	// definition, keyed by service name. A launch recomputes it from the file it
+	// is about to run and refuses a service that changed since it was reviewed.
+	Services map[string]string `json:"services,omitempty"`
 	// Feature captures exclude automatically maintained core dependencies.
 	Features []FeatureApproval `json:"features,omitempty"`
+}
+
+// checkDirectory refuses an approval whose project directory is no longer the
+// one that was reviewed. An approval that never recorded that identity cannot
+// prove it either, so it is reviewed again rather than trusted.
+func (a *Approval) checkDirectory(canonical string, info os.FileInfo) error {
+	if a == nil {
+		return nil
+	}
+	device, inode, ok := directoryIdentity(info)
+	if !ok {
+		return errors.New("network approval cannot read the project directory identity at " + canonical)
+	}
+	if a.Inode == 0 {
+		return errors.New("the approval for " + canonical + " predates project directory identity; review it with `coop net approve`")
+	}
+	if a.Device != device || a.Inode != inode {
+		return errors.New("the project directory at " + canonical + " was replaced since its approval; review it with `coop net approve`")
+	}
+	return nil
+}
+
+func directoryIdentity(info os.FileInfo) (uint64, uint64, bool) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Ino == 0 {
+		return 0, 0, false
+	}
+	return uint64(stat.Dev), stat.Ino, true
 }
 
 type FeatureApproval = egress.FeatureExpansion
@@ -469,6 +515,10 @@ func (s *Store) approval(id string) (*Approval, error) {
 	}
 	if approval.Posture != egress.Filtered && (len(approval.Envelope) != 0 || len(approval.Features) != 0) {
 		return nil, errors.New("network approval rules contradict posture")
+	}
+	services, err := approvedServices(approval.Envelope, approval.Services)
+	if err != nil || !equalJSON(services, approval.Services) {
+		return nil, errors.New("network approval service definitions do not match its rules")
 	}
 	return &approval, nil
 }

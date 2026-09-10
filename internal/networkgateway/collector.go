@@ -440,9 +440,24 @@ func (c *Collector) retainClosedSocket(tuple SocketTuple, inode uint64, at BootI
 // is not a boundary gap. The first socket a close explains pins its identity,
 // so one ended stream can never explain a second socket at the same tuple, and
 // a socket no closed flow claims stays unattributed.
-func (c *Collector) closeAccountsFor(key socketAttemptKey) bool {
+//
+// A close explains a REMNANT — the few samples a kernel socket outlives its
+// stream. Past the staleness bound it explains nothing and is evicted, so an
+// ephemeral port reused minutes later cannot hide a real gap. An unreadable
+// clock cannot bound anything, so it folds nothing and retains everything.
+func (c *Collector) closeAccountsFor(key socketAttemptKey, now BootInstant) bool {
 	closed, retained := c.closedSockets[key.Tuple]
-	if !retained || key.UID != 65532 || key.Inode == 0 || closed.inode != 0 && closed.inode != key.Inode {
+	if !retained {
+		return false
+	}
+	if !now.Valid() || !closed.closed.Valid() {
+		return false
+	}
+	if now.Before(closed.closed) || now.Sub(closed.closed) > ObservationStaleAfter {
+		delete(c.closedSockets, key.Tuple)
+		return false
+	}
+	if key.UID != 65532 || key.Inode == 0 || closed.inode != 0 && closed.inode != key.Inode {
 		return false
 	}
 	closed.inode = key.Inode
@@ -733,7 +748,7 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 		if pending, joined := c.pending[key]; row.Inode == 0 || matched[row.Tuple] != 0 || joined && pending.expired {
 			return false // an expired join stays visible; a later close cannot retract it
 		}
-		if !c.closeAccountsFor(key) {
+		if !c.closeAccountsFor(key, now) {
 			return false
 		}
 		delete(c.pending, key)
@@ -901,7 +916,7 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 		// The proxy ending a flow retires its upstream socket, so that socket can
 		// no longer join a live one. Its close IS the accounting: expiring it as
 		// unattributed would report a measured stream as evidence loss.
-		if !pending.expired && c.closeAccountsFor(key) {
+		if !pending.expired && c.closeAccountsFor(key, now) {
 			delete(c.pending, key)
 			continue
 		}

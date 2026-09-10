@@ -2,6 +2,8 @@ package box
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -115,7 +117,7 @@ func TestServiceGrantsWithoutAComposeFileRefuseTheLaunch(t *testing.T) {
 	if len(grants) != 2 {
 		t.Fatalf("expected both service grants, got %d", len(grants))
 	}
-	_, _, err := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: t.TempDir()}, "", grants, nil)
+	_, _, err := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: t.TempDir()}, "", nil, grants, nil)
 	if err == nil || !strings.Contains(err.Error(), "cache") || !strings.Contains(err.Error(), "web") {
 		t.Fatalf("missing Compose file did not name the unresolved services: %v", err)
 	}
@@ -133,4 +135,52 @@ func servicePolicy(t *testing.T, names ...string) egress.Snapshot {
 		t.Fatal(err)
 	}
 	return policy
+}
+
+// A `service:` grant is bound to a name, and the repository decides what that
+// name runs. The approval carries the digest of the definition a human saw, so
+// rewriting the service — into a proxy image with ordinary egress, say — is
+// refused at the next launch instead of quietly inheriting the tunnel.
+func TestApprovedServiceDefinitionChangeRefusesTheLaunch(t *testing.T) {
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	write := func(image string) {
+		body := "services:\n  db:\n    image: " + image + "\n    expose: [5432]\n  web:\n    image: nginx:1\n"
+		if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("postgres:16")
+	approved, err := composeServiceDigests(compose, repo, false, []string{"db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval := &networkstate.Approval{Services: approved}
+	if err := checkApprovedServices(approval, compose, repo, false); err != nil {
+		t.Fatal("the reviewed definition was refused:", err)
+	}
+	// An unrelated service may change freely: it is not what was granted.
+	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: postgres:16\n    expose: [5432]\n  web:\n    image: nginx:2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkApprovedServices(approval, compose, repo, false); err != nil {
+		t.Fatal("an unrelated service edit tripped the approved service:", err)
+	}
+	write("socat-proxy:latest")
+	err = checkApprovedServices(approval, compose, repo, false)
+	if err == nil || !strings.Contains(err.Error(), `compose service "db" changed since it was approved`) {
+		t.Fatalf("a rewritten service kept its grant: %v", err)
+	}
+	// The same refusal is what a launch gets, before anything is started.
+	_, _, launchErr := resolveServiceBindings(context.Background(), nil, runtime.Runtime{Name: "docker"}, RunSpec{Repo: repo}, compose, approval, serviceGrants(servicePolicy(t, "db")), nil)
+	if launchErr == nil || !strings.Contains(launchErr.Error(), "changed since it was approved") {
+		t.Fatalf("the launch ran a rewritten service: %v", launchErr)
+	}
+	// A service the file no longer declares at all is named, not skipped.
+	if err := os.WriteFile(compose, []byte("services:\n  web:\n    image: nginx:1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkApprovedServices(approval, compose, repo, false); err == nil || !strings.Contains(err.Error(), `no service "db"`) {
+		t.Fatalf("a removed service was not reported: %v", err)
+	}
 }
