@@ -2,7 +2,7 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/box/auth.go, internal/box/run.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
+sources: [internal/mcp/mcp.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go]
 updated: 2026-09-10
 ---
 
@@ -42,6 +42,22 @@ unchanged. Unlike responder-state it needs no bearer token: the socket is mounte
 box, so the mount is the authority. See [[in-box-task-channel]] for why the transport is a
 helper-container socket and not HTTP.
 
+The generated native configs are also where the MANAGED-CLIENT defaults live, so codex's
+`config.toml` and gemini's `settings.json` overlays exist for every box that mounts that home,
+shared MCP or not (`box.Run` asks each in-scope adapter's `MCP` even with `MCPFile` blanked). Codex's
+opens with `mcp.CodexManagedDefaults` — `check_for_update_on_startup = false`, `analytics.enabled =
+false`, the three `otel.*` exporters `"none"` — then the host profile's bytes verbatim minus the
+keys the box owns (and minus native `[mcp_servers.*]` only when shared MCP is active; without it the
+profile's own servers stay authoritative); the removal is proven by re-parse and a spelling the
+textual strip cannot remove (quoted or array table) is refused by name, like the MCP forms. Gemini's
+forces `general.enableAutoUpdate`, `general.enableAutoUpdateNotification` and
+`privacy.usageStatisticsEnabled` to false beside the file-filtering override. Grok shares the TOML
+shape through `mcp.GenerateGrok` and gets no managed block: its CLI does not know codex's keys.
+The mounts are read-only, so a client cannot persist a setting change from inside the box; the host
+profile is never written by a projection (`EnsureDefaults` alone writes it, for first-run prompts).
+Claude's controls are environment, not a file (`claudeAgent.BoxEnv`). Why the traffic is stopped at
+the client rather than granted or hidden: [[provider-bundles-carry-function-not-chatter]].
+
 Credential scope is not proof of command consumption. `credentialScope` answers whose login may be
 mounted, while `nestedAgentCommand` answers whether an explicit peer or consult/delegate/degraded
 native role can actually spawn that provider CLI. The raw snapshot mount exists only for an outer
@@ -56,6 +72,9 @@ adds ordinary `CommandArgs` must decide whether its nested commands need an equi
 mounting the raw snapshot for every scoped credential is not the fallback.
 
 ## Changelog
+- 2026-09-10 — the codex and gemini overlays are always-on carriers of the managed-client defaults
+  (no update check, no analytics/telemetry export); codex's keeps the profile's native MCP tables
+  when shared MCP is inactive; grok moved to `GenerateGrok` so codex's keys never reach its file.
 - 2026-09-10 — added the second coop-owned binding, `mcp.BindTaskTools`: the box's `coop-tasks` STDIO
   task server merges into the same snapshot before the artifact write, tokenless because the socket is
   run-private. See in-box-task-channel.

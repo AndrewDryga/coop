@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 func writeTmp(t *testing.T, name, body string) string {
@@ -33,8 +35,16 @@ func TestGenerateCodex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Deterministic, sorted-by-name output — lock the exact format.
-	want := `[mcp_servers.ctx7]
+	// Deterministic, sorted-by-name output — lock the exact format: the managed box defaults
+	// first (a bare top-level key must precede every table), then the shared servers.
+	want := `# Coop box defaults: a managed client neither self-updates nor exports analytics or telemetry.
+check_for_update_on_startup = false
+analytics.enabled = false
+otel.exporter = "none"
+otel.metrics_exporter = "none"
+otel.trace_exporter = "none"
+
+[mcp_servers.ctx7]
 command = "npx"
 args = ["-y", "@upstash/context7-mcp"]
 
@@ -46,6 +56,106 @@ url = "https://mcp.sentry.dev/mcp"
 `
 	if got != want {
 		t.Errorf("GenerateCodex mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+	// grok gets the same shape without codex's keys, which its CLI does not know.
+	if got, err := GenerateGrok(writeTmp(t, "mcp.json", sample), ""); err != nil || got != want[len(CodexManagedDefaults)+1:] {
+		t.Errorf("GenerateGrok = (%q, %v), want the bare [mcp_servers.*] tables", got, err)
+	}
+}
+
+// codexManagedValues are the upstream control names GenerateCodex must pin, spelled here
+// independently of the production constant: codex 0.153.4's config-reference names the update
+// check, analytics switch and the three OpenTelemetry exporters exactly so.
+func codexManagedValues(t *testing.T, got string) {
+	t.Helper()
+	var config map[string]any
+	if err := toml.Unmarshal([]byte(got), &config); err != nil {
+		t.Fatalf("generated codex config is not valid TOML: %v\n%s", err, got)
+	}
+	if config["check_for_update_on_startup"] != false {
+		t.Errorf("check_for_update_on_startup = %v, want false", config["check_for_update_on_startup"])
+	}
+	analytics, _ := config["analytics"].(map[string]any)
+	if analytics["enabled"] != false {
+		t.Errorf("analytics.enabled = %v, want false", analytics["enabled"])
+	}
+	otel, _ := config["otel"].(map[string]any)
+	for _, exporter := range []string{"exporter", "metrics_exporter", "trace_exporter"} {
+		if otel[exporter] != "none" {
+			t.Errorf("otel.%s = %v, want \"none\"", exporter, otel[exporter])
+		}
+	}
+}
+
+func TestGenerateCodexForcesManagedClientDefaults(t *testing.T) {
+	mcpFile := writeTmp(t, "mcp.json", sample)
+	t.Run("without shared MCP the native servers and every other key survive verbatim", func(t *testing.T) {
+		existingBody := "model = \"o3\"\n\n[mcp_servers.own]\ncommand = \"keep\"\n\n[projects.\"/repo\"]\ntrust_level = \"trusted\"\n"
+		existing := writeTmp(t, "config.toml", existingBody)
+		got, err := GenerateCodex("", existing)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != CodexManagedDefaults+"\n"+existingBody {
+			t.Fatalf("GenerateCodex without shared MCP:\n--- got ---\n%q\n--- want ---\n%q", got, CodexManagedDefaults+"\n"+existingBody)
+		}
+		codexManagedValues(t, got)
+		if after, err := os.ReadFile(existing); err != nil || string(after) != existingBody {
+			t.Fatalf("host config changed = (%q, %v)", after, err)
+		}
+	})
+	t.Run("the host's own values for the managed keys are replaced, table and top-level spellings alike", func(t *testing.T) {
+		existingBody := "check_for_update_on_startup = true # host choice\nmodel = \"o3\"\n\n" +
+			"[otel]\nenvironment = \"prod\"\nmetrics_exporter = \"statsig\"\n\n[otel.exporter.otlp-http]\nendpoint = \"https://collector.example\"\n\n" +
+			"[analytics]\nenabled = true\n\n[projects.\"/repo\"]\ntrust_level = \"trusted\"\n"
+		existing := writeTmp(t, "config.toml", existingBody)
+		got, err := GenerateCodex(mcpFile, existing)
+		if err != nil {
+			t.Fatal(err)
+		}
+		codexManagedValues(t, got)
+		for _, gone := range []string{"host choice", "otlp-http", "collector.example", "enabled = true", "environment", "statsig"} {
+			if strings.Contains(got, gone) {
+				t.Errorf("the host's %q survived beside the managed value:\n%s", gone, got)
+			}
+		}
+		for _, kept := range []string{"model = \"o3\"\n", "[projects.\"/repo\"]\ntrust_level = \"trusted\"\n", "[mcp_servers.ctx7]"} {
+			if !strings.Contains(got, kept) {
+				t.Errorf("unrelated setting %q lost:\n%s", kept, got)
+			}
+		}
+		if after, err := os.ReadFile(existing); err != nil || string(after) != existingBody {
+			t.Fatalf("host config changed = (%q, %v)", after, err)
+		}
+	})
+	t.Run("an inline table is one provable line", func(t *testing.T) {
+		got, err := GenerateCodex("", writeTmp(t, "config.toml", "model = \"o3\"\notel = { exporter = \"otlp-http\" }\n"))
+		if err != nil || got != CodexManagedDefaults+"\nmodel = \"o3\"\n" {
+			t.Fatalf("inline table = (%q, %v)", got, err)
+		}
+	})
+	t.Run("a lookalike key is not a managed key", func(t *testing.T) {
+		existingBody := "analytics_backup = 1\ncheck_for_update_on_startup_note = \"x\"\n\n[otel_archive]\nkeep = true\n"
+		got, err := GenerateCodex("", writeTmp(t, "config.toml", existingBody))
+		if err != nil || !strings.HasSuffix(got, existingBody) {
+			t.Fatalf("lookalike keys changed = (%q, %v)", got, err)
+		}
+	})
+	for _, tc := range []struct{ name, body string }{
+		{"quoted key", `"analytics".enabled = true` + "\n"},
+		{"quoted header", "[\"otel\"]\nexporter = \"otlp-http\"\n"},
+		{"array table", "[[analytics]]\nenabled = true\n"},
+	} {
+		t.Run("a form the strip cannot prove fails closed: "+tc.name, func(t *testing.T) {
+			existing := writeTmp(t, "config.toml", tc.body)
+			_, err := GenerateCodex("", existing)
+			if err == nil || !strings.Contains(err.Error(), "cannot safely replace") {
+				t.Fatalf("GenerateCodex error = %v, want a managed-key refusal", err)
+			}
+			if after, readErr := os.ReadFile(existing); readErr != nil || string(after) != tc.body {
+				t.Fatalf("refused host config changed = (%q, %v)", after, readErr)
+			}
+		})
 	}
 }
 
@@ -80,8 +190,8 @@ func TestGenerateCodexRetainsNativeBytesAndRemovesCanonicalMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(got, retained) {
-		t.Fatalf("retained native bytes changed:\n--- got ---\n%q\n--- prefix ---\n%q", got, retained)
+	if !strings.HasPrefix(got, CodexManagedDefaults+"\n"+retained) {
+		t.Fatalf("retained native bytes changed:\n--- got ---\n%q\n--- prefix ---\n%q", got, CodexManagedDefaults+"\n"+retained)
 	}
 	if strings.Contains(got, "stale.name") || !strings.Contains(got, "[mcp_servers.ctx7]") {
 		t.Fatalf("canonical native MCP was not replaced by shared MCP:\n%s", got)
@@ -126,8 +236,8 @@ func TestGenerateCodexPreservesMCPLookalikesVerbatim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(got, existingBody) {
-		t.Fatalf("lookalike native bytes changed:\n--- got ---\n%q\n--- prefix ---\n%q", got, existingBody)
+	if !strings.HasPrefix(got, CodexManagedDefaults+"\n"+existingBody) {
+		t.Fatalf("lookalike native bytes changed:\n--- got ---\n%q\n--- prefix ---\n%q", got, CodexManagedDefaults+"\n"+existingBody)
 	}
 }
 
@@ -304,9 +414,31 @@ func TestGenerateCodexQuotesNonBareNamesAndEscapes(t *testing.T) {
 	}
 }
 
+// geminiManagedValues are the upstream setting names GenerateGemini must pin, spelled here
+// independently of the generator: gemini-cli's settingsSchema.ts defaults all three to true.
+func geminiManagedValues(t *testing.T, got string) {
+	t.Helper()
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(got), &settings); err != nil {
+		t.Fatalf("generated gemini settings are not valid JSON: %v\n%s", err, got)
+	}
+	general, _ := settings["general"].(map[string]any)
+	for _, key := range []string{"enableAutoUpdate", "enableAutoUpdateNotification"} {
+		if general[key] != false {
+			t.Errorf("general.%s = %v, want false", key, general[key])
+		}
+	}
+	privacy, _ := settings["privacy"].(map[string]any)
+	if privacy["usageStatisticsEnabled"] != false {
+		t.Errorf("privacy.usageStatisticsEnabled = %v, want false", privacy["usageStatisticsEnabled"])
+	}
+}
+
 func TestGenerateGeminiMerge(t *testing.T) {
 	existingBody := `{
 		"theme":"dark",
+		"general":{"enableAutoUpdate":true,"vimMode":true},
+		"privacy":{"usageStatisticsEnabled":true},
 		"context":{
 			"includeDirectories":["src"],
 			"fileFiltering":{"respectGitIgnore":true,"respectGeminiIgnore":true}
@@ -320,6 +452,7 @@ func TestGenerateGeminiMerge(t *testing.T) {
 	}
 	var out struct {
 		Theme      string                    `json:"theme"`
+		General    map[string]any            `json:"general"`
 		MCPServers map[string]map[string]any `json:"mcpServers"`
 		Context    struct {
 			IncludeDirectories []string       `json:"includeDirectories"`
@@ -331,6 +464,11 @@ func TestGenerateGeminiMerge(t *testing.T) {
 	}
 	if out.Theme != "dark" {
 		t.Error("existing top-level setting (theme) must be preserved")
+	}
+	// The host's explicit opt-in is replaced in the box; its unrelated sibling survives.
+	geminiManagedValues(t, got)
+	if out.General["vimMode"] != true {
+		t.Errorf("existing general setting must be preserved, got %v", out.General)
 	}
 	if len(out.Context.IncludeDirectories) != 1 || out.Context.IncludeDirectories[0] != "src" {
 		t.Errorf("existing nested setting must be preserved: %+v", out.Context.IncludeDirectories)
@@ -380,6 +518,7 @@ func TestGenerateGeminiWithoutMCP(t *testing.T) {
 	if got, ok := out.Context.FileFiltering["respectGitIgnore"]; !ok || got != false {
 		t.Errorf("context.fileFiltering.respectGitIgnore = %v, %v; want false, true", got, ok)
 	}
+	geminiManagedValues(t, got)
 	if out.MCPServers != nil {
 		t.Errorf("settings-only generation must not add mcpServers: %s", out.MCPServers)
 	}
@@ -401,8 +540,11 @@ func TestGenerateMalformed(t *testing.T) {
 
 func TestGenerateEmpty(t *testing.T) {
 	got, err := GenerateCodex(writeTmp(t, "mcp.json", `{"mcpServers":{}}`), "")
-	if err != nil || got != "" {
-		t.Errorf("empty servers -> empty codex output; got %q err %v", got, err)
+	if err != nil || got != CodexManagedDefaults {
+		t.Errorf("empty servers -> only the managed box defaults; got %q err %v", got, err)
+	}
+	if got, err := GenerateGrok(writeTmp(t, "mcp.json", `{"mcpServers":{}}`), ""); err != nil || got != "" {
+		t.Errorf("empty servers -> empty grok output; got %q err %v", got, err)
 	}
 }
 

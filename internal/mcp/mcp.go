@@ -10,8 +10,10 @@
 //
 // The generated files are written on top of the user's existing config (never mutating it).
 // When shared MCP is active, native MCP declarations are removed or refused so mcp.json remains
-// the only server authority. Output is deterministic (servers sorted by name) so it is stable
-// across runs and easy to test.
+// the only server authority. The same generated files carry the managed-client defaults a box
+// forces — no self-update check, no analytics or telemetry export — so they exist for every
+// codex and gemini box, with or without shared MCP. Output is deterministic (servers sorted by
+// name) so it is stable across runs and easy to test.
 package mcp
 
 import (
@@ -63,8 +65,11 @@ type server struct {
 }
 
 // GenerateGemini builds the Gemini settings mounted inside a box, preserving the user's
-// settings while forcing box-safe file filtering. A non-empty mcpFile also merges the shared
-// servers; "" leaves the user's mcpServers untouched. existing may be "" or a missing file.
+// settings while forcing box-safe file filtering and the managed-client defaults: no automatic
+// update, no update prompt, no usage statistics (the setting names are the CLI's own —
+// packages/cli/src/config/settingsSchema.ts, all three default to true upstream). A non-empty
+// mcpFile also merges the shared servers; "" leaves the user's mcpServers untouched. existing
+// may be "" or a missing file.
 func GenerateGemini(mcpFile, existing string) (string, error) {
 	settings, err := readJSONObject(existing)
 	if err != nil {
@@ -86,17 +91,11 @@ func GenerateGemini(mcpFile, existing string) (string, error) {
 		settings["mcpServers"] = merged
 	}
 
-	contextSettings, _ := settings["context"].(map[string]any)
-	if contextSettings == nil {
-		contextSettings = map[string]any{}
-	}
-	fileFiltering, _ := contextSettings["fileFiltering"].(map[string]any)
-	if fileFiltering == nil {
-		fileFiltering = map[string]any{}
-	}
-	fileFiltering["respectGitIgnore"] = false
-	contextSettings["fileFiltering"] = fileFiltering
-	settings["context"] = contextSettings
+	nestedObject(nestedObject(settings, "context"), "fileFiltering")["respectGitIgnore"] = false
+	general := nestedObject(settings, "general")
+	general["enableAutoUpdate"] = false
+	general["enableAutoUpdateNotification"] = false
+	nestedObject(settings, "privacy")["usageStatisticsEnabled"] = false
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -108,20 +107,72 @@ func GenerateGemini(mcpFile, existing string) (string, error) {
 	return buf.String(), nil
 }
 
-// GenerateCodex emits the shared servers as [mcp_servers.*] tables for Codex's
-// config.toml, preserving everything in the user's existing config except its
-// own [mcp_servers.*] tables (mcp.json is authoritative for MCP).
-func GenerateCodex(mcpFile, existing string) (string, error) {
-	servers, err := loadServersTyped(mcpFile)
-	if err != nil {
-		return "", err
+// nestedObject returns m[key] as an object, replacing anything else with a new one.
+func nestedObject(m map[string]any, key string) map[string]any {
+	child, _ := m[key].(map[string]any)
+	if child == nil {
+		child = map[string]any{}
+		m[key] = child
 	}
-	native, err := keepNonMCP(existing)
+	return child
+}
+
+// CodexManagedDefaults opens every generated config.toml: the managed client never checks for
+// its own update and exports no analytics, metrics, logs or traces. The keys are codex 0.153.4's
+// (developers.openai.com/codex/config-reference: the update check "set to false only when updates
+// are centrally managed", the metrics exporter otherwise defaulting to statsig). Leading, because
+// a bare top-level key has to precede every table header; dotted, so one block covers all three.
+const CodexManagedDefaults = `# Coop box defaults: a managed client neither self-updates nor exports analytics or telemetry.
+check_for_update_on_startup = false
+analytics.enabled = false
+otel.exporter = "none"
+otel.metrics_exporter = "none"
+otel.trace_exporter = "none"
+`
+
+// managedTOML is one client's box-only defaults: the block that defines them and the top-level
+// keys it owns. The host's own value for any of those keys is removed from the box copy — TOML
+// allows one definition — and never rewritten.
+type managedTOML struct {
+	block string
+	keys  []string
+}
+
+var codexManaged = managedTOML{block: CodexManagedDefaults, keys: []string{"analytics", "check_for_update_on_startup", "otel"}}
+
+// GenerateCodex builds the config.toml mounted inside a codex box: the managed defaults, then the
+// user's existing config kept byte for byte minus what the box owns — the managed keys, and its
+// own [mcp_servers.*] tables when shared MCP is active (mcp.json is authoritative then) — then the
+// shared servers. An empty mcpFile means no shared MCP: the native servers stay.
+func GenerateCodex(mcpFile, existing string) (string, error) {
+	return generateTOML(mcpFile, existing, codexManaged)
+}
+
+// GenerateGrok emits the shared servers in the same [mcp_servers.*] shape for grok's config.toml.
+// No managed block: grok's update and telemetry controls are unverified, and a key its CLI does
+// not know could refuse the whole file.
+func GenerateGrok(mcpFile, existing string) (string, error) {
+	return generateTOML(mcpFile, existing, managedTOML{})
+}
+
+func generateTOML(mcpFile, existing string, managed managedTOML) (string, error) {
+	var servers map[string]server
+	if mcpFile != "" {
+		var err error
+		if servers, err = loadServersTyped(mcpFile); err != nil {
+			return "", err
+		}
+	}
+	native, err := keepNative(existing, mcpFile != "", managed.keys)
 	if err != nil {
 		return "", err
 	}
 	var b strings.Builder
-	b.WriteString(native)
+	b.WriteString(managed.block)
+	if native != "" {
+		separateTOMLBlock(&b)
+		b.WriteString(native)
+	}
 	for _, name := range sortedKeys(servers) {
 		server := servers[name]
 		if server.URL == "" && server.Command == "" {
@@ -275,10 +326,12 @@ func writeCodexServer(b *strings.Builder, name string, s server) {
 	}
 }
 
-// keepNonMCP returns the user's native TOML with its canonical bare [mcp_servers.*] tables
-// removed. Every retained byte stays verbatim; alternate semantic spellings fail closed instead of
-// surviving beside the generated authority. Only an initially absent path is an empty config.
-func keepNonMCP(path string) (string, error) {
+// keepNative returns the user's native TOML minus the managed keys and, when stripMCP, its
+// canonical bare [mcp_servers.*] tables. Every retained byte stays verbatim, and the removal is
+// proven by re-parsing: exactly those keys are gone and nothing else changed. A spelling the
+// textual strip cannot remove (a quoted or dotted table name, an array table) fails closed instead
+// of surviving beside the generated authority. Only an initially absent path is an empty config.
+func keepNative(path string, stripMCP bool, managedKeys []string) (string, error) {
 	if path == "" {
 		return "", nil
 	}
@@ -293,17 +346,48 @@ func keepNonMCP(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, hasMCP := original["mcp_servers"]; !hasMCP {
+	var managed []string
+	for _, key := range managedKeys {
+		if _, present := original[key]; present {
+			managed = append(managed, key)
+			delete(original, key)
+		}
+	}
+	_, hasMCP := original["mcp_servers"]
+	stripMCP = stripMCP && hasMCP
+	if stripMCP {
+		delete(original, "mcp_servers")
+	}
+	if len(managed) == 0 && !stripMCP {
 		return string(data), nil
 	}
-	delete(original, "mcp_servers")
-	kept := stripCanonicalMCP(data)
+	kept := data
+	if stripMCP {
+		kept = stripCanonicalMCP(kept)
+	}
+	if len(managed) > 0 {
+		kept = stripManagedKeys(kept, managed)
+	}
 	remaining, err := parseTOML(path, kept)
 	if err != nil {
+		if stripMCP {
+			return "", unsupportedNativeMCP(path)
+		}
+		return "", unsupportedManagedKey(path, strings.Join(managed, ", "))
+	}
+	if _, stillPresent := remaining["mcp_servers"]; stripMCP && stillPresent {
 		return "", unsupportedNativeMCP(path)
 	}
-	if _, stillPresent := remaining["mcp_servers"]; stillPresent || !tomlSemanticEqual(original, remaining) {
-		return "", unsupportedNativeMCP(path)
+	for _, key := range managed {
+		if _, stillPresent := remaining[key]; stillPresent {
+			return "", unsupportedManagedKey(path, key)
+		}
+	}
+	if !tomlSemanticEqual(original, remaining) {
+		if stripMCP {
+			return "", unsupportedNativeMCP(path)
+		}
+		return "", unsupportedManagedKey(path, strings.Join(managed, ", "))
 	}
 	return string(kept), nil
 }
@@ -399,8 +483,57 @@ func stripCanonicalMCP(data []byte) []byte {
 	return kept.Bytes()
 }
 
+// stripManagedKeys drops the bare spellings of the keys named: their table blocks (`[key]`,
+// `[key.…]`, up to the next header) and, before the first header, their top-level lines
+// (`key = …`, `key.x = …`). Textual, like stripCanonicalMCP; keepNative proves the result.
+func stripManagedKeys(data []byte, keys []string) []byte {
+	var kept bytes.Buffer
+	skip, inTable := false, false
+	for len(data) > 0 {
+		n := bytes.IndexByte(data, '\n')
+		if n < 0 {
+			n = len(data)
+		} else {
+			n++
+		}
+		line := data[:n]
+		data = data[n:]
+		s := strings.TrimSpace(string(line))
+		if strings.HasPrefix(s, "[") {
+			inTable, skip = true, false
+			for _, key := range keys {
+				if strings.HasPrefix(s, "["+key+"]") || strings.HasPrefix(s, "["+key+".") {
+					skip = true
+				}
+			}
+		} else if !inTable && topLevelLineOf(s, keys) {
+			continue
+		}
+		if !skip {
+			kept.Write(line)
+		}
+	}
+	return kept.Bytes()
+}
+
+// topLevelLineOf reports whether a top-level line assigns one of keys, bare (`key = …`) or dotted
+// (`key.x = …`); a longer key sharing the prefix (`key_backup = …`) is not it.
+func topLevelLineOf(s string, keys []string) bool {
+	for _, key := range keys {
+		rest, ok := strings.CutPrefix(s, key)
+		if ok && (strings.HasPrefix(rest, ".") || strings.HasPrefix(strings.TrimLeft(rest, " \t"), "=")) {
+			return true
+		}
+	}
+	return false
+}
+
 func unsupportedNativeMCP(path string) error {
 	return fmt.Errorf("native MCP config %s uses an mcp_servers form Coop cannot safely remove — move those servers to the active shared MCP file (COOP_MCP_FILE) and remove the native declaration", path)
+}
+
+func unsupportedManagedKey(path, key string) error {
+	return fmt.Errorf("native codex config %s sets %s in a form Coop cannot safely replace — a Coop box sets its own update, analytics and telemetry values; spell it as a bare key or [table] on the host, or remove it", path, key)
 }
 
 func tomlSemanticEqual(a, b any) bool {

@@ -575,11 +575,12 @@ func codexCredentialPortability(profileDir string, deadline time.Time) Credentia
 	return CredentialRefreshRequired
 }
 
-// MCP emits the shared servers as [mcp_servers.*] in codex's config.toml.
+// MCP builds the config.toml mounted over the profile's own in every codex box — the direct CLI
+// and codex-acp read the same CODEX_HOME — so the managed-client defaults (no update check, no
+// analytics or OTEL export; see mcp.CodexManagedDefaults) apply without a host write, and the
+// shared servers land as [mcp_servers.*] when MCP is active. Auth, sessions and the user's other
+// settings are the host profile's, kept verbatim.
 func (codexAgent) MCP(cfg *config.Config, workdir string) (MCPConfig, error) {
-	if cfg.MCPFile == "" {
-		return MCPConfig{}, nil
-	}
 	cx, err := mcp.GenerateCodex(cfg.MCPFile, filepath.Join(cfg.AgentDir("codex"), "config.toml"))
 	if err != nil {
 		return MCPConfig{}, err

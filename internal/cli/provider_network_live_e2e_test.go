@@ -15,6 +15,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -189,8 +190,62 @@ func executeProviderNetworkLiveChild(target agents.Target, marker, attemptFile, 
 		failed.DetailCode = detail
 		return failed
 	}
+	// And a session that only answered a prompt must not have reached for its client's own
+	// release feed, package registry or telemetry intake: the box switches that chatter off
+	// (BoxEnv, the generated overlays) instead of granting or hiding it, so a refusal here is
+	// the managed-client control failing on this exact locked version.
+	if detail, err := verifyProviderNetworkLiveSilence(capture); err != nil {
+		failed := fail(liveprovider.ReasonPromptExit, "chatter", "network", 0)
+		failed.DetailCode = detail
+		return failed
+	}
 	result.Passed, result.Status, result.ReasonCode = true, liveprovider.StatusPassed, ""
 	return result
+}
+
+// providerChatterHosts are the hosts a managed client reaches on its own — never for the
+// operator's work — and that no core bundle grants: release feeds, installers, telemetry.
+var providerChatterHosts = []string{
+	"raw.githubusercontent.com", "api.github.com", "registry.npmjs.org", "formulae.brew.sh",
+	"downloads.claude.ai", "datadoghq.com", "datadoghq.eu", "sentry.io", "ab.chatgpt.com", "statsig.com",
+}
+
+// verifyProviderNetworkLiveSilence requires that no retained refusal of this capture's runs names
+// a chatter host. The refusals are read whole and by name (the local operator projection), so a
+// DNS-only refusal counts as much as a TLS one: either means the client asked.
+func verifyProviderNetworkLiveSilence(capture *box.CapturedEgress) (string, error) {
+	root, err := box.NetworkStatePath()
+	if err != nil {
+		return "state", err
+	}
+	evidence, err := networkstate.OpenEvidence(root, nil)
+	if err != nil {
+		return "evidence", err
+	}
+	defer evidence.Close()
+	page, err := evidence.Executions("")
+	if err != nil {
+		return "executions", err
+	}
+	for _, summary := range page.Executions {
+		record, err := evidence.Execution(summary.ID)
+		if err != nil || record.Snapshot.PolicyFingerprint != capture.Fingerprint {
+			continue
+		}
+		inspection, err := evidence.Inspect(summary.ID, time.Now(), true)
+		if err != nil {
+			return "inspect", err
+		}
+		for _, denial := range inspection.Observed.Denials {
+			for _, host := range providerChatterHosts {
+				if denial.Name == host || strings.HasSuffix(denial.Name, "."+host) {
+					return "chatter_" + strings.ReplaceAll(host, ".", "_"),
+						errors.New("a hello-and-exit session asked for " + denial.Name + ": the client's chatter control is not holding")
+				}
+			}
+		}
+	}
+	return "", nil
 }
 
 // runProviderNetworkLiveBox launches ONE filtered box. It passes no extra runtime arguments: a

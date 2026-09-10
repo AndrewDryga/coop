@@ -32,8 +32,13 @@ func TestNetworkProviderBundlesFollowTheMountedCredentialScope(t *testing.T) {
 	for _, rule := range bundles[0].Core {
 		domains[rule.To.Domain] = true
 	}
-	if !domains["api.anthropic.com"] {
-		t.Fatal("core provider API endpoint missing", bundles[0].Core)
+	// The API, the OAuth token endpoint and the claude.ai connector proxy: what a signed-in
+	// session needs to function, and nothing the client only chats to (see
+	// agent.TestProviderBundlesCarryFunctionNotChatter).
+	for _, host := range []string{"api.anthropic.com", "platform.claude.com", "mcp-proxy.anthropic.com"} {
+		if !domains[host] {
+			t.Fatal("core provider endpoint missing:", host, bundles[0].Core)
+		}
 	}
 	// An explicitly named peer mounts its credentials, so it needs its own
 	// endpoints too — and an unsupported provider fails the whole admission

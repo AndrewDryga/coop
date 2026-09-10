@@ -807,7 +807,10 @@ func TestAssembleArgsMinimal(t *testing.T) {
 		"-e", "COOP_PRIMARY=claude",
 		"-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
 		"-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
+		"-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"-e", "DISABLE_UPDATES=1",
 		"-e", "CODEX_SQLITE_HOME=/home/node/.codex-state", // every agent's BoxEnv is exported (inert here)
+		"-e", "GEMINI_TELEMETRY_ENABLED=false",
 		"-e", "COOP_BOX=1",
 		"-w", "/workspace", "coop-box", "claude",
 	}
@@ -901,6 +904,8 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	}
 	mustContain("-e", "CLAUDE_CONFIG_DIR=/home/node/.claude")
 	mustContain("-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0")
+	mustContain("-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "-e", "DISABLE_UPDATES=1")
+	mustContain("-e", "GEMINI_TELEMETRY_ENABLED=false")
 	mustContain("--env-file", filepath.Join(dir, "env"))
 	mustContain("-v", filepath.Join(dir, "INSTRUCTIONS.md")+":/home/node/.claude/CLAUDE.md:ro")
 	mustContain("-v", cfg.MCPFile+":/home/node/.mcp.json:ro")
@@ -1187,23 +1192,26 @@ func TestRunRejectsUnsafeGeminiSettingsWithoutSharedMCP(t *testing.T) {
 	}
 }
 
+// Without shared MCP the codex overlay still exists — it carries the managed-client defaults —
+// but it leaves the profile's own servers alone in any spelling, and it is the one place a broken
+// native config is refused, before the launch.
 func TestRunKeepsInactiveMCPSeparateFromCodexDefaultsValidation(t *testing.T) {
 	nativeCases := []struct {
 		name    string
 		make    func(*testing.T, string)
-		wantErr bool
+		wantErr string
 	}{
 		{name: "alternate", make: func(t *testing.T, path string) {
 			if err := os.WriteFile(path, []byte(`mcp_servers.stale.command = "native"`), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{name: "malformed", wantErr: true, make: func(t *testing.T, path string) {
+		{name: "malformed", wantErr: "not valid TOML", make: func(t *testing.T, path string) {
 			if err := os.WriteFile(path, []byte(`broken = {`), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{name: "unreadable shape", wantErr: true, make: func(t *testing.T, path string) {
+		{name: "unreadable shape", wantErr: "not a regular file", make: func(t *testing.T, path string) {
 			if err := os.Mkdir(path, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -1233,9 +1241,9 @@ func TestRunKeepsInactiveMCPSeparateFromCodexDefaultsValidation(t *testing.T) {
 				recorder := filepath.Join(t.TempDir(), "runtime-args")
 				spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Agent: "codex", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
 				code, runErr := Run(cfg, recorderRuntime(t, recorder), spec)
-				if native.wantErr {
-					if code != -1 || runErr == nil || !strings.Contains(runErr.Error(), "prepare codex defaults") {
-						t.Fatalf("Run = (%d, %v), want Codex defaults refusal", code, runErr)
+				if native.wantErr != "" {
+					if code != -1 || runErr == nil || !strings.Contains(runErr.Error(), "assemble MCP config for codex") || !strings.Contains(runErr.Error(), native.wantErr) {
+						t.Fatalf("Run = (%d, %v), want native codex config refusal containing %q", code, runErr, native.wantErr)
 					}
 					if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
 						t.Fatalf("invalid Codex defaults launched provider: %v", statErr)
@@ -1249,8 +1257,8 @@ func TestRunKeepsInactiveMCPSeparateFromCodexDefaultsValidation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if strings.Contains(string(args), ":/home/node/.codex/config.toml:ro") {
-					t.Fatalf("inactive shared MCP generated a native overlay:\n%s", args)
+				if strings.Count(string(args), ":/home/node/.codex/config.toml:ro") != 1 {
+					t.Fatalf("inactive shared MCP must still mount the managed-defaults overlay once:\n%s", args)
 				}
 			})
 		}
@@ -1884,13 +1892,14 @@ func TestRunMountsGeminiSettingsForGeminiScope(t *testing.T) {
 		peers       []agents.Target
 		mcpBody     string
 		wantMounts  int
-		forbidMount string
+		wantMount   string
 	}{
 		{"gemini without MCP", "gemini", "", nil, "", 1, ""},
 		{"gemini peer without MCP", "claude", "claude", []agents.Target{{Provider: "gemini"}}, "", 1, ""},
 		{"gemini with MCP has one merged mount", "gemini", "", nil, `{"mcpServers":{"x":{"command":"true"}}}`, 1, ""},
 		{"claude without MCP", "claude", "", nil, "", 0, ""},
-		{"codex without MCP", "codex", "", nil, "", 0, ""},
+		// codex's overlay is always on too: it carries the managed-client defaults.
+		{"codex without MCP", "codex", "", nil, "", 0, ":/home/node/.codex/config.toml:ro"},
 		{"codex with empty MCP stub", "codex", "", nil, `{"mcpServers":{}}`, 0, ":/home/node/.codex/config.toml:ro"},
 	}
 	for _, c := range cases {
@@ -1932,8 +1941,8 @@ func TestRunMountsGeminiSettingsForGeminiScope(t *testing.T) {
 			if got := strings.Count(string(args), mountTarget); got != c.wantMounts {
 				t.Errorf("gemini settings mounts = %d, want %d in:\n%s", got, c.wantMounts, args)
 			}
-			if c.forbidMount != "" && strings.Contains(string(args), c.forbidMount) {
-				t.Errorf("inactive MCP must not generate mount %q in:\n%s", c.forbidMount, args)
+			if c.wantMount != "" && strings.Count(string(args), c.wantMount) != 1 {
+				t.Errorf("the always-on overlay %q must be mounted exactly once in:\n%s", c.wantMount, args)
 			}
 		})
 	}

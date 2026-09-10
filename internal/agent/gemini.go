@@ -277,8 +277,10 @@ func (geminiAgent) StoredCredentialStatus(string, time.Time) StoredCredentialSta
 	return StoredCredentialUnknown
 }
 
-// MCP builds the settings mounted inside a gemini box: the host settings plus the
-// box-only file-filtering override, and shared servers only when MCP is active.
+// MCP builds the settings mounted inside a gemini box: the host settings plus the box-only
+// file-filtering override and the managed-client defaults (no auto-update, no update prompt,
+// no usage statistics), and shared servers only when MCP is active. The host file is never
+// written here; EnsureDefaults owns the one host-side change (folder trust).
 func (geminiAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 	gm, err := mcp.GenerateGemini(cfg.MCPFile, filepath.Join(cfg.AgentDir("gemini"), "settings.json"))
 	if err != nil {
@@ -368,8 +370,12 @@ func (geminiAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
 	return []ACPSessionSetting{{Method: ACPSetModel, Value: target.Model}}
 }
 
-// BoxEnv: gemini stores everything under its mounted ~/.gemini — nothing extra needed.
-func (geminiAgent) BoxEnv(string) []string { return nil }
+// BoxEnv: gemini stores everything under its mounted ~/.gemini; the one variable is the
+// managed-client telemetry switch (docs/cli/telemetry.md: `GEMINI_TELEMETRY_ENABLED` overrides
+// `telemetry.enabled`, default false), pinned explicitly so a box is deterministic whatever the
+// host settings say. The update and usage-statistics switches ride the generated settings
+// (mcp.GenerateGemini). None of this qualifies gemini for filtered networking.
+func (geminiAgent) BoxEnv(string) []string { return []string{"GEMINI_TELEMETRY_ENABLED=false"} }
 
 func (geminiAgent) HomeFallbacks() []HomeFallback { return nil }
 

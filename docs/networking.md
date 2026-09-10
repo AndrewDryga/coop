@@ -57,6 +57,23 @@ nothing about the checks after it, and ends with `✗ this host is not ready for
 | `to: {service: "db"}` · `protocol: tcp` · `ports: [5432]` | one Compose sidecar belonging to this project | the container's exact address, read from the runtime at launch |
 | `serve: {ports: [3000]}` in `.agent/project.yaml` | the host browser reaches the box's dev server | the port is published on the gateway container, which owns the box's network namespace |
 
+**Provider access is what the client needs to work, and nothing it merely chats to.** A filtered
+`coop claude` reaches `api.anthropic.com`, `platform.claude.com` (the OAuth refresh) and
+`mcp-proxy.anthropic.com` (the claude.ai connectors a login has on by default); a filtered
+`coop codex` reaches `chatgpt.com` and `auth.openai.com`. Gemini and Grok have no qualified client
+yet and are refused in filtered mode. The client's own release feed, package registry, update check
+and telemetry — `raw.githubusercontent.com`, `registry.npmjs.org`, `api.github.com`, the Datadog
+intakes — are deliberately not in any bundle. Instead, every box switches that traffic off with
+the client's own controls, in the box only: Claude runs with
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and `DISABLE_UPDATES=1`, codex reads a generated
+`config.toml` that sets `check_for_update_on_startup = false`, `analytics.enabled = false` and the
+`otel` exporters to `none` on top of your own settings, and gemini gets `general.enableAutoUpdate`,
+`general.enableAutoUpdateNotification` and `privacy.usageStatisticsEnabled` off plus
+`GEMINI_TELEMETRY_ENABLED=false`. Your host profiles are not edited. So a session that only answers
+a prompt records no refusals — and if an agent or your project later does reach for one of those
+hosts on purpose, that refusal is recorded, shown and approvable like any other; nothing is
+filtered out of the report.
+
 A `service:` grant is a request like any other: it is approved by a human, it names one service, and
 it opens that container's address and ports only. Joining the services network does not grant
 anything — every other container on it stays behind the same default deny as the public internet.

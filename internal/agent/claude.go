@@ -44,10 +44,15 @@ func (claudeAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	}
 }
 
-// NetworkBundle covers the direct Anthropic API plus its OAuth token endpoint.
+// NetworkBundle covers what a signed-in Claude needs to FUNCTION: the direct Anthropic API, the
+// OAuth token endpoint, and the proxy every claude.ai connector is reached through (connectors
+// are on by default for a claude.ai login, so a session without the proxy meets a refusal it
+// cannot act on). The client's own release feed (raw.githubusercontent.com), package registry
+// (registry.npmjs.org) and telemetry intakes (Datadog) are deliberately NOT here: BoxEnv switches
+// that traffic off instead, so a later request to one of them is a real refusal to explain.
 func (a claudeAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
 	return directNetworkBundle(a.Name(), "oauth-file", input,
-		[]string{"api.anthropic.com", "platform.claude.com"},
+		[]string{"api.anthropic.com", "platform.claude.com", "mcp-proxy.anthropic.com"},
 		[]string{"https://code.claude.com/docs/en/network-config", "https://platform.claude.com/v1/oauth/token"})
 }
 
@@ -788,10 +793,20 @@ func (claudeAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
 // state persists across disposable boxes (the default ~/.claude.json in $HOME would be
 // lost every run, re-prompting login), and turn off the bubblewrap subprocess env scrub
 // — the box ships no bubblewrap and is itself the isolation boundary.
+//
+// The last two are the managed-client controls, box-only and never written to a settings file:
+// CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC stops auto-updates, telemetry, error reports, the
+// release-notes fetch, feedback and availability checks (and with them feature-flag fetching);
+// DISABLE_UPDATES also refuses a manual `claude update`, because Coop qualifies the exact
+// installed client and a self-update would run one nobody qualified. Read out of the locked
+// 2.1.260 binary and code.claude.com/docs/en/env-vars: inference, the OAuth refresh and the
+// claude.ai connectors — whose eligibility never consults the traffic mode — keep working.
 func (claudeAgent) BoxEnv(homeInBox string) []string {
 	return []string{
 		"CLAUDE_CONFIG_DIR=" + homeInBox + "/.claude",
 		"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"DISABLE_UPDATES=1",
 	}
 }
 

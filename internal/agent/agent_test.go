@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/mcp"
+	"github.com/pelletier/go-toml/v2"
 )
 
 // cleanCmdEnv unsets the per-agent command and model overrides so the defaults are exercised.
@@ -1668,10 +1670,12 @@ func TestMCP(t *testing.T) {
 	}
 }
 
-func TestMCPWithoutSharedSourceOnlyBuildsAlwaysOnGeminiSettings(t *testing.T) {
+// Without shared MCP, claude and grok need no generated file; codex and gemini still get their
+// always-on box overlay, because that is where the managed-client defaults live.
+func TestMCPWithoutSharedSourceBuildsOnlyTheAlwaysOnOverlays(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}
-	for _, name := range []string{"claude", "codex", "grok"} {
+	for _, name := range []string{"claude", "grok"} {
 		ag, _ := Get(name)
 		wiring, err := ag.MCP(cfg, "/workspace")
 		if err != nil || len(wiring.Mounts) != 0 || len(wiring.CommandArgs) != 0 || len(wiring.NestedCommandEnv) != 0 {
@@ -1682,6 +1686,90 @@ func TestMCPWithoutSharedSourceOnlyBuildsAlwaysOnGeminiSettings(t *testing.T) {
 	wiring, err := gemini.MCP(cfg, "/workspace")
 	if err != nil || len(wiring.Mounts) != 1 || wiring.Mounts[0].BoxPath != "/home/node/.gemini/settings.json" {
 		t.Fatalf("gemini MCP without shared source = (%+v, %v), want always-on settings mount", wiring, err)
+	}
+	codex, _ := Get("codex")
+	wiring, err = codex.MCP(cfg, "/workspace")
+	if err != nil || len(wiring.Mounts) != 1 || wiring.Mounts[0].BoxPath != "/home/node/.codex/config.toml" {
+		t.Fatalf("codex MCP without shared source = (%+v, %v), want always-on config.toml mount", wiring, err)
+	}
+	if content := wiring.Mounts[0].Content; !strings.HasPrefix(content, mcp.CodexManagedDefaults) || !strings.Contains(content, `[projects."/workspace"]`) {
+		t.Fatalf("codex overlay without shared MCP lacks the managed defaults or workdir trust:\n%s", content)
+	}
+}
+
+// TestManagedClientDefaultsAreBoxOnly pins the upstream control names each managed client is
+// launched with and proves the host profile is never written on the way: claude's ride the box
+// environment (code.claude.com/docs/en/env-vars), codex's and gemini's the generated overlay
+// (developers.openai.com/codex/config-reference; gemini-cli settingsSchema.ts + docs/cli/telemetry.md).
+func TestManagedClientDefaultsAreBoxOnly(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}
+	claude, _ := Get("claude")
+	env := claude.BoxEnv("/home/node")
+	for _, want := range []string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_UPDATES=1"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("claude BoxEnv %v lacks %s", env, want)
+		}
+	}
+	// Connectors stay: the switch that would drop them is never set.
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "ENABLE_CLAUDEAI_MCP_SERVERS=") || strings.HasPrefix(kv, "DISABLE_TELEMETRY=") {
+			t.Errorf("claude BoxEnv sets %s: the two documented controls are the whole box-only policy", kv)
+		}
+	}
+	gemini, _ := Get("gemini")
+	if env := gemini.BoxEnv("/home/node"); !slices.Equal(env, []string{"GEMINI_TELEMETRY_ENABLED=false"}) {
+		t.Errorf("gemini BoxEnv = %v, want the telemetry switch only", env)
+	}
+
+	codexConfig := filepath.Join(cfg.AgentDir("codex"), "config.toml")
+	codexHost := "model = \"o3\"\ncheck_for_update_on_startup = true\n\n[analytics]\nenabled = true\n\n[mcp_servers.own]\ncommand = \"keep\"\n"
+	mustWrite(t, codexConfig, codexHost)
+	geminiSettings := filepath.Join(cfg.AgentDir("gemini"), "settings.json")
+	geminiHost := `{"general":{"enableAutoUpdate":true,"vimMode":true},"privacy":{"usageStatisticsEnabled":true},"theme":"dark"}`
+	mustWrite(t, geminiSettings, geminiHost)
+
+	codex, _ := Get("codex")
+	wiring, err := codex.MCP(cfg, "/workspace")
+	if err != nil || len(wiring.Mounts) != 1 {
+		t.Fatalf("codex MCP = (%+v, %v)", wiring, err)
+	}
+	var codexBox map[string]any
+	if err := toml.Unmarshal([]byte(wiring.Mounts[0].Content), &codexBox); err != nil {
+		t.Fatalf("codex overlay is not valid TOML: %v\n%s", err, wiring.Mounts[0].Content)
+	}
+	analytics, _ := codexBox["analytics"].(map[string]any)
+	otel, _ := codexBox["otel"].(map[string]any)
+	if codexBox["check_for_update_on_startup"] != false || analytics["enabled"] != false ||
+		otel["exporter"] != "none" || otel["metrics_exporter"] != "none" || otel["trace_exporter"] != "none" {
+		t.Errorf("codex overlay does not force the managed defaults:\n%s", wiring.Mounts[0].Content)
+	}
+	own, _ := codexBox["mcp_servers"].(map[string]any)
+	if codexBox["model"] != "o3" || own["own"] == nil {
+		t.Errorf("codex overlay lost the host's model or native MCP server:\n%s", wiring.Mounts[0].Content)
+	}
+
+	wiring, err = gemini.MCP(cfg, "/workspace")
+	if err != nil || len(wiring.Mounts) != 1 {
+		t.Fatalf("gemini MCP = (%+v, %v)", wiring, err)
+	}
+	var geminiBox map[string]any
+	if err := json.Unmarshal([]byte(wiring.Mounts[0].Content), &geminiBox); err != nil {
+		t.Fatalf("gemini overlay is not valid JSON: %v", err)
+	}
+	general, _ := geminiBox["general"].(map[string]any)
+	privacy, _ := geminiBox["privacy"].(map[string]any)
+	if general["enableAutoUpdate"] != false || general["enableAutoUpdateNotification"] != false || privacy["usageStatisticsEnabled"] != false {
+		t.Errorf("gemini overlay does not force the managed defaults:\n%s", wiring.Mounts[0].Content)
+	}
+	if general["vimMode"] != true || geminiBox["theme"] != "dark" {
+		t.Errorf("gemini overlay lost an unrelated host setting:\n%s", wiring.Mounts[0].Content)
+	}
+
+	for path, want := range map[string]string{codexConfig: codexHost, geminiSettings: geminiHost} {
+		if after, err := os.ReadFile(path); err != nil || string(after) != want {
+			t.Errorf("host file %s changed = (%q, %v)", path, after, err)
+		}
 	}
 }
 
@@ -1811,8 +1899,9 @@ func TestACPSessionSettingsAndBoxEnv(t *testing.T) {
 	}) {
 		t.Errorf("claude ACPSessionSettings = %v", got)
 	}
-	wantEnv := []string{"CLAUDE_CONFIG_DIR=/home/node/.claude", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0"}
-	if got := claude.BoxEnv("/home/node"); len(got) != 2 || got[0] != wantEnv[0] || got[1] != wantEnv[1] {
+	wantEnv := []string{"CLAUDE_CONFIG_DIR=/home/node/.claude", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_UPDATES=1"}
+	if got := claude.BoxEnv("/home/node"); !slices.Equal(got, wantEnv) {
 		t.Errorf("claude BoxEnv = %v, want %v", got, wantEnv)
 	}
 	// codex redirects its single-writer sqlite state OFF the shared home to a container-local
@@ -1840,7 +1929,7 @@ func TestACPSessionSettingsAndBoxEnv(t *testing.T) {
 				t.Errorf("grok should force no session settings, got %v", settings)
 			}
 		}
-		if n != "claude" && n != "codex" {
+		if n == "grok" {
 			if env := a.BoxEnv("/home/node"); len(env) != 0 {
 				t.Errorf("%s should need no box env, got %v", n, env)
 			}

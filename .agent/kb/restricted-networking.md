@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/run.go, internal/networkstate/image_files.go, docs/networking.md]
+sources: [internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/approval_forget.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/filtered_mounts.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/agent/network_bundle.go, internal/agent/claude.go, docs/networking.md]
 updated: 2026-09-10
 ---
 
@@ -123,6 +123,19 @@ Traps:
   captured port are refused (`SupportedRule`, `egress/snapshot.go:485`).
 - IPv6 is refused everywhere on this runtime — address, CIDR or `icmpv6`
   (`egress/snapshot.go:469`) — because the reference Docker bridge has none.
+- A provider bundle is FUNCTION, not everything the client asks for. Claude's core is
+  `api.anthropic.com`, `platform.claude.com` (OAuth refresh) and `mcp-proxy.anthropic.com` (the
+  claude.ai connectors a login has on by default); codex's is `chatgpt.com` and `auth.openai.com`
+  (`agent/claude.go`, `agent/codex.go`). The client's own release feed, package registry, update
+  check and telemetry intake (`raw.githubusercontent.com`, `registry.npmjs.org`, `api.github.com`,
+  Datadog, `ab.chatgpt.com`) are switched off box-only instead — Claude through `BoxEnv`, codex
+  through the always-on `config.toml` overlay, gemini through its settings overlay plus
+  `GEMINI_TELEMETRY_ENABLED=false` — so a hello-and-exit session retains no refusal, and a later
+  deliberate request to one of those hosts is a real refusal nothing suppresses. Bundle content is
+  pinned per `NetworkBundleVersion` by the owner store on first admission
+  (`networkstate/bundles.go:18`): changing a bundle without bumping the version is refused as
+  integrity drift, so the version moves with the content (`2026-09-10.1` added the proxy). The
+  rule is [[provider-bundles-carry-function-not-chatter]].
 
 [[network-gateway]] is the runtime that enforces the capture; [[network-consumers]] is how the loop,
 direct runs and remote sessions consume one. [[box-egress-poc]] is the retired experiment, not this.
@@ -135,6 +148,10 @@ direct runs and remote sessions consume one. [[box-egress-poc]] is the retired e
   `coop net`, `approve` (no `--mode`, no-op writes nothing) and every `AdmitNetwork` launch; a
   repository `open` is a request. New projects scaffold `box.egress: filtered`; the file spells
   `offline`. Re-verified against the sources above.
+- 2026-09-10 — Claude's bundle gained `mcp-proxy.anthropic.com` under `2026-09-10.1`, and the
+  managed clients' own update/telemetry traffic is switched off box-only (Claude env, codex and
+  gemini overlays) instead of being granted or filtered out of the report. Re-verified live: a
+  filtered `coop claude -p` hello reaches api + mcp-proxy only, zero refusals; codex likewise.
 - 2026-09-10 — the pinned-client digests a Dockerfile launch compares are now recorded per image id
   in the owner store (and by `coop net setup` for the locked image), so the added cost of a
   Dockerfile project falls from ~6.4s to ~2.6s on the first launch after a build and to ~0.4s on a

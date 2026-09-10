@@ -127,6 +127,57 @@ func TestLockedClaudeNativeAndAdapterExecutablesStayDistinct(t *testing.T) {
 	}
 }
 
+// TestProviderBundlesCarryFunctionNotChatter is the check of the provider-bundle rule: a core
+// bundle holds what the client needs to FUNCTION on the selected login — the API, the token
+// endpoint, claude.ai's connector proxy — and never the client's own release feed, package
+// registry or telemetry intake. Those are switched off in the box (BoxEnv, the generated
+// overlays); a later request to one is a real refusal, recorded and explainable, never granted
+// in advance and never hidden. The exact set is pinned beside its version: a changed set ships
+// under a new NetworkBundleVersion or not at all.
+func TestProviderBundlesCarryFunctionNotChatter(t *testing.T) {
+	chatter := []string{
+		"raw.githubusercontent.com", "objects.githubusercontent.com", "api.github.com", // release feeds, announcements
+		"registry.npmjs.org", "downloads.claude.ai", "storage.googleapis.com", "formulae.brew.sh", // installs and updates
+		"datadoghq.com", "datadoghq.eu", "sentry.io", "ab.chatgpt.com", "statsig.com", // telemetry and error intakes
+	}
+	for _, name := range Names() {
+		ag, _ := Get(name)
+		for _, client := range []egress.Client{egress.ClientCLI, egress.ClientACP} {
+			bundle, err := ag.NetworkBundle(NetworkBundleInput{Client: client})
+			if err != nil {
+				continue
+			}
+			for _, rule := range bundle.Core {
+				for _, host := range chatter {
+					if rule.To.Domain == host || strings.HasSuffix(rule.To.Domain, "."+host) {
+						t.Errorf("%s core bundle grants %s: switch the client's chatter off in the box instead of widening egress", name, rule.To.Domain)
+					}
+				}
+			}
+			for feature, rules := range bundle.Features {
+				for _, rule := range rules {
+					for _, host := range chatter {
+						if rule.To.Domain == host || strings.HasSuffix(rule.To.Domain, "."+host) {
+							t.Errorf("%s feature %s grants %s", name, feature, rule.To.Domain)
+						}
+					}
+				}
+			}
+		}
+	}
+	claude, err := claudeAgent{}.NetworkBundle(NetworkBundleInput{Client: egress.ClientCLI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var domains []string
+	for _, rule := range claude.Core {
+		domains = append(domains, rule.To.Domain)
+	}
+	if want := []string{"api.anthropic.com", "platform.claude.com", "mcp-proxy.anthropic.com"}; !slices.Equal(domains, want) || claude.Version != "2026-09-10.1" {
+		t.Fatalf("claude core = %v under %s; want %v under 2026-09-10.1 (a different set needs its own NetworkBundleVersion)", domains, claude.Version, want)
+	}
+}
+
 func TestNetworkBundleAndLockedClientSupportAgree(t *testing.T) {
 	for _, name := range Names() {
 		ag, _ := Get(name)

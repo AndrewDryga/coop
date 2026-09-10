@@ -121,6 +121,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [destructive-confirm-gate](destructive-confirm-gate.md) — every unrecoverable delete routes through the one shared `ui.DestroyGate`
 - [renew-before-access-only-projection](renew-before-access-only-projection.md) — refreshable credentials renew in trusted host storage before an access-only box projection
 - [network-authority-is-proven-not-passed](network-authority-is-proven-not-passed.md) — a filtered launch proves its network authority against the owner-private store; a boundary crossing carries a name, never a grant
+- [provider-bundles-carry-function-not-chatter](provider-bundles-carry-function-not-chatter.md) — a provider bundle grants what the client needs to function; its update/telemetry chatter is switched off in the box, never granted and never hidden
 - [secret-scan-literals-not-refs](secret-scan-literals-not-refs.md) — the scanner flags literal credentials and never references to them; precision is the product
 
 **Architecture**
