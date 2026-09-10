@@ -1,6 +1,7 @@
 package ladder
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -242,5 +243,60 @@ func TestRotationLimitsSnapshotCopies(t *testing.T) {
 	r.SetLimits(nil)
 	if sleep, _ := r.OnLimit(until, 1, now); sleep != 0 || r.Active().String() != "claude@b" {
 		t.Errorf("after SetLimits(nil): sleep=%v active=%q, want 0 + a free rung to rotate onto", sleep, r.Active())
+	}
+}
+
+// The ladder's rungs are its OWN. A rung's wire form is the key for `limited` and `authFailed`, so
+// a caller that can still reach the backing array — through the slice it passed in, or through a
+// Target it got back — can rename a cooling or dead rung into one that looks live.
+func TestRotationCopiesTheCallersTargets(t *testing.T) {
+	accounts := []string{"work"}
+	targets := []agents.Target{{Provider: "claude", Accounts: accounts}, {Provider: "codex", Accounts: []string{"personal"}}}
+	r := NewRotation(targets)
+
+	targets[1] = agents.Target{Provider: "grok", Accounts: []string{"stolen"}}
+	accounts[0] = "hijacked"
+
+	if got := r.Members(); !slices.Equal(got, []string{"claude@work", "codex@personal"}) {
+		t.Errorf("mutating the caller's slice rewrote the ladder: %v", got)
+	}
+	if got := r.Active().String(); got != "claude@work" {
+		t.Errorf("active rung after the caller mutated its own slice = %q, want claude@work", got)
+	}
+}
+
+func TestRotationActiveIsACopy(t *testing.T) {
+	r := rts("work", "personal")
+	active := r.Active()
+	active.Accounts[0] = "hijacked"
+	if got := r.Active().String(); got != "claude@work" {
+		t.Errorf("mutating a returned Active() rewrote the ladder: active = %q, want claude@work", got)
+	}
+	// Targets() hands the whole ladder to a caller that must cover every rung up front (the
+	// network admission unions them into one frozen policy) — same rule, same copy.
+	all := r.Targets()
+	all[1].Accounts[0] = "hijacked"
+	if got := r.Members(); !slices.Equal(got, []string{"claude@work", "claude@personal"}) {
+		t.Errorf("mutating a returned Targets() rewrote the ladder: %v", got)
+	}
+}
+
+func TestRotationAuthFailedTargetsAreCopies(t *testing.T) {
+	r := rts("work", "personal")
+	if !r.OnAuthFailure() { // claude@work's credential is dead this run
+		t.Fatal("a two-rung ladder should rotate off a dead credential")
+	}
+	failed := r.AuthFailedTargets()
+	if len(failed) != 1 || failed[0].String() != "claude@work" {
+		t.Fatalf("auth-failed rungs = %v, want [claude@work]", failed)
+	}
+	failed[0].Accounts[0] = "hijacked"
+	// authFailed is keyed by wire form, so renaming the rung through the returned Target would
+	// leave the dead credential looking live and rotatable-onto again.
+	if got := r.AuthFailedTargets(); len(got) != 1 || got[0].String() != "claude@work" {
+		t.Errorf("mutating a returned AuthFailedTargets() revived the dead rung: %v", got)
+	}
+	if got := r.Members(); !slices.Equal(got, []string{"claude@work", "claude@personal"}) {
+		t.Errorf("mutating a returned AuthFailedTargets() rewrote the ladder: %v", got)
 	}
 }

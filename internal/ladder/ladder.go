@@ -32,7 +32,24 @@ type Rotation struct {
 }
 
 func NewRotation(targets []agents.Target) *Rotation {
-	return &Rotation{targets: targets, limited: map[string]time.Time{}, authFailed: map[string]bool{}}
+	return &Rotation{targets: cloneTargets(targets), limited: map[string]time.Time{}, authFailed: map[string]bool{}}
+}
+
+// cloneTarget copies a rung's Accounts, the one slice a Target carries, so nothing outside can
+// reach the ladder's backing array. A rung's wire form is the key for `limited` and `authFailed`,
+// so a mutation through a target that came in or went out would rename a cooling or dead rung into
+// one that looks live. Every rung the ladder takes in or hands out goes through here.
+func cloneTarget(t agents.Target) agents.Target {
+	t.Accounts = slices.Clone(t.Accounts)
+	return t
+}
+
+func cloneTargets(targets []agents.Target) []agents.Target {
+	out := slices.Clone(targets)
+	for i := range out {
+		out[i] = cloneTarget(out[i])
+	}
+	return out
 }
 
 // live reports whether rung i's credential still works this run. A dead one is never a rotation
@@ -71,19 +88,19 @@ func (r *Rotation) AuthFailedTargets() []agents.Target {
 	var out []agents.Target
 	for _, t := range r.targets {
 		if r.authFailed[t.String()] {
-			out = append(out, t)
+			out = append(out, cloneTarget(t))
 		}
 	}
 	return out
 }
 
-func (r *Rotation) Active() agents.Target { return r.targets[r.idx] }
+func (r *Rotation) Active() agents.Target { return cloneTarget(r.targets[r.idx]) }
 
 // Targets returns every rung in ladder order — cooling and dead ones included.
 // A caller that must cover the whole ladder UP FRONT needs them all: restricted
 // networking freezes one policy per run, so a rung it never saw would meet a
 // denial mid-run instead of a refusal at launch.
-func (r *Rotation) Targets() []agents.Target { return slices.Clone(r.targets) }
+func (r *Rotation) Targets() []agents.Target { return cloneTargets(r.targets) }
 
 // Members renders the rotation in wire form (provider:model@account), for messages and tests.
 func (r *Rotation) Members() []string {

@@ -9,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -247,5 +250,37 @@ func TestLoopBlamesTheDaemonNotTheImage(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "daemon isn't responding") {
 		t.Errorf("loop = %q, want it to name the unreachable daemon", err)
+	}
+}
+
+// The custom pre-flight box must run the rung the FIRST ITERATION will take, not the provider left
+// over from the launch line. applyTarget is what points cfg at the active rung's account, model and
+// effort AND returns the provider its argv is built from — so a pre-flight built before that call
+// mounts one provider's credential while carrying another's command.
+func TestLoopCustomPreflightRunsTheActiveRung(t *testing.T) {
+	repo := t.TempDir() // deliberately not a git repo: the run stops at the HEAD read, before iteration 1
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
+	writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), "preflight:\n  enabled: true\n  prompt: tidy the queue\n")
+	cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}
+	c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+	var launched []box.RunSpec
+	c.boxRun = func(s box.RunSpec) (int, error) { launched = append(launched, s); return 0, nil }
+	rot := ladder.NewRotation([]agents.Target{target("codex", "work"), target("claude", "personal")})
+
+	code, err := c.Run(RunSpec{
+		Repo: repo, Image: "img", Agent: "claude", Queues: []string{tasksRoot},
+		Sink: io.Discard, Preflight: true, Rotation: rot,
+	})
+	if err == nil || !strings.Contains(err.Error(), "read HEAD") {
+		t.Fatalf("run = (%d, %v), want the stop at the HEAD read so only the pre-flight box launched", code, err)
+	}
+	if len(launched) != 1 {
+		t.Fatalf("boxes launched = %d, want exactly the pre-flight one", len(launched))
+	}
+	if launched[0].Agent != "codex" {
+		t.Errorf("pre-flight box ran agent %q, want the active rung's provider codex", launched[0].Agent)
+	}
+	if got := cfg.ActiveProfile("codex"); got != "work" {
+		t.Errorf("pre-flight launched before applyTarget: active codex account = %q, want work", got)
 	}
 }

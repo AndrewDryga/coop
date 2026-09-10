@@ -381,6 +381,11 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		// An agent runs only for a CUSTOM cleanup (loop.yaml preflight.prompt) — extra instructions
 		// that need judgment. Best-effort like the signoff pass — a failure never blocks work.
 		if s := strings.TrimSpace(lc.Preflight.Prompt); s != "" {
+			// The pre-flight box runs the rung the first iteration will take, chosen BEFORE its argv
+			// is built: applyTarget points cfg at that rung's account/model/effort and returns its
+			// provider, so building the command first would mount one provider's credential while
+			// carrying another's command line.
+			agent = c.applyTarget(rot)
 			pfStart, pfHead := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming, agentCommand := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
 			pfCode, _, _, pfClassification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, agentCommand, hosts, completionWindowReview, nil, false, sink, peers, "preflight", "")
