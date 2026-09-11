@@ -73,7 +73,7 @@ var allowedEdges = map[string][]string{
 	"secretscan":            {},
 	"taskchannel":           nil,
 	"taskmcp":               {"mcp", "tasks"},
-	"tasks":                 {"box", "config", "forkspace", "hostsurface", "processidentity", "project", "taskstate", "ui"},
+	"tasks":                 {"box", "config", "forkspace", "processidentity", "project", "taskstate", "ui"},
 	"taskstate":             nil,
 	"testutil/gitrepo":      nil,
 	"testutil/liveprovider": {"agent", "config", "liveprocess", "processidentity", "testutil/procharness"},

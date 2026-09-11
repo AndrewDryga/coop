@@ -1,0 +1,8 @@
+coop tasks queues — print task queue paths
+
+Usage: coop tasks queues [--tasks <path>]...
+
+  Prints one absolute path per line. By default, includes the project's queues.
+
+EXAMPLE
+  coop tasks queues

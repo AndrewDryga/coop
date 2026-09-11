@@ -34,13 +34,13 @@ type taskArgSpec struct {
 
 // taskArgSpecs validates the structured `coop tasks` subcommands so an unsupported flag or a stray
 // argument fails loudly instead of being silently ignored or mistaken for an id. add takes a
-// free-form title that may start with "-"; claim, rm, unblock and decisions validate their own
-// grammar, so those commands are intentionally absent.
+// free-form title that may start with "-"; block, claim, rm, unblock and decisions validate their
+// own grammar (their flags take values), so those commands are intentionally absent.
 var taskArgSpecs = map[string]taskArgSpec{
 	"ls":      {lsFlags, 0, "coop tasks ls [<options>...]"},
 	"lint":    {nil, 0, "coop tasks lint"},
 	"release": {nil, 1, "coop tasks release <task-id>"}, "path": {nil, 1, "coop tasks path <task-id>"},
-	"block": {nil, 1, "coop tasks block <task-id>"}, "done": {nil, 1, "coop tasks done <task-id>"},
+	"done": {nil, 1, "coop tasks done <task-id>"},
 }
 
 // lsFlags are the flags `coop tasks ls` accepts: --all (uncap the done archive) plus a per-state
@@ -75,11 +75,12 @@ func taskStateFilter(args []string) []string {
 	return states
 }
 
-// filterLabel names the filtered states for the "no <…> tasks" note when a filter matches nothing.
+// filterLabel names the filtered states for the "No <…> tasks." note when a filter matches nothing.
+// It reads the states as a person says them — "in progress", not the directory's "in_progress".
 func filterLabel(only []string) string {
 	labels := make([]string, len(only))
 	for i, s := range only {
-		labels[i] = StateLabel(s)
+		labels[i] = strings.ReplaceAll(StateLabel(s), "_", " ")
 	}
 	return strings.Join(labels, "/")
 }
@@ -148,8 +149,6 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 		return tasksFolderRemove(root, args)
 	case "decisions":
 		return tasksFolderDecisions(root, args)
-	case "flags":
-		return tasksFolderFlags(root, args)
 	default:
 		return 2, unknownSubcommandErr("tasks", sub, TasksVerbs)
 	}
@@ -158,7 +157,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 // tasksVerbs are the canonical `coop tasks` subcommands (primary spellings, no aliases): the single
 // source for the unknown-subcommand suggester and isTasksSubcommand, so the two can't drift. `watch`
 // belongs here even though cmdTasks (not cmdTasksFolder) handles it — a mistype of it should suggest it.
-var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "lease", "block", "unblock", "done", "watch", "queues", "path", "rm", "decisions", "flags"}
+var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "lease", "block", "unblock", "done", "watch", "queues", "path", "rm", "decisions"}
 
 // isTasksSubcommand reports whether s names a `coop tasks` subcommand. cmdTasks uses it to catch
 // `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path. v3 keeps no
@@ -358,7 +357,9 @@ func tasksFolderAdd(root string, args []string, state, cmdLabel string) (int, er
 	return tasksFolderAddWithProject(root, args, state, cmdLabel, "")
 }
 
-func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, projectName string) (int, error) {
+// projectName selected the queue this task is created in; the created path below already shows
+// which one it landed in, so the name is not repeated in the result.
+func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, _ string) (int, error) {
 	// Optional structured flags carve the title from the body: with any of
 	// --context/--acceptance/--approach/--subtask the task is created FILLED and validated up front;
 	// with none, it's the placeholder scaffold you edit. The flag names ARE the shape (taskSections).
@@ -430,18 +431,25 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 		}
 		return -1, err
 	}
-	where := ""
-	if projectName != "" {
-		where = " in " + projectName
-	}
-	switch {
-	case state == StateBacklog:
+	if state == StateBacklog {
 		ui.OK("backlogged %s — promote it when it's ready: coop backlog promote %s", id, id)
-	case structured:
-		ui.OK("added %s%s (filled from flags); log.md + state.md seeded", id, where)
-	default:
-		ui.OK("added %s%s — fill in its task.md (Context · Acceptance · Approach · Subtasks); log.md + state.md seeded", id, where)
+		return 0, nil
 	}
+	ui.OK("Created task: %s", title)
+	ui.Note("\n  %s", displayPath(filepath.Join(root, state, id, "task.md")))
+	if structured {
+		return 0, nil // it arrived filled; there is nothing left to tell the author to do
+	}
+	// The scaffold's result is also the lesson: the exact command that would have filled it in.
+	ui.Note("\nDescribe the problem, completion criteria, approach, and subtasks in this file.")
+	ui.Note("Next time, you can fill them in when creating the task:\n")
+	ui.Note("  coop tasks add %q \\", title)
+	ui.Note("    --context \"An expired session retries forever.\" \\")
+	ui.Note("    --acceptance \"An expired session returns to sign-in.\" \\")
+	ui.Note("    --approach \"Stop retrying after an authentication failure.\" \\")
+	ui.Note("    --subtask \"Test an expired session.\"")
+	ui.Note("\nFor more details see:")
+	ui.Note("  coop help tasks add")
 	return 0, nil
 }
 
@@ -584,13 +592,22 @@ func claimTaskOwnerRecord(root, id string, opts claimOptions) (string, error) {
 	})
 }
 
-// claimSuffix names the actor a claim bound to, for the success line.
-func claimSuffix(actor ClaimActor) string {
+// claimedBy names the actor a claim bound to, for the result's "Claimed by:" row. A claim at a
+// terminal binds to nothing and has no label — the row is omitted rather than filled with a guess.
+func claimedBy(actor ClaimActor) string {
 	switch {
 	case actor.PID != 0:
-		return fmt.Sprintf(" as %s (pid %d)", actor.Label, actor.PID)
+		return fmt.Sprintf("%s (PID %d)", actor.Label, actor.PID)
 	case actor.Label != "":
-		return " as " + actor.Label
+		return actor.Label
+	}
+	return ""
+}
+
+// claimSuffix names the actor a lease bound to, for `coop tasks lease`'s progress lines.
+func claimSuffix(actor ClaimActor) string {
+	if who := claimedBy(actor); who != "" {
+		return " as " + who
 	}
 	return ""
 }
@@ -679,7 +696,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 			if err := CompleteTrustedTask(root, t); err != nil {
 				return -1, trustedCompletionError(err, t.ID)
 			}
-			ui.Note("%s is already %s", t.ID, StateLabel(newState))
+			ui.Note("%s is already done.", t.Title)
 		case StateInProgress:
 			// Re-claiming a task already in progress (yours, or one the loop currently holds) is a
 			// legitimate take-over, not a no-op: it (re)asserts durable ownership regardless of who
@@ -691,13 +708,13 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 			if err != nil {
 				return -1, fmt.Errorf("%s is already in progress, but recording your claim failed: %w", t.ID, err)
 			}
+			note := "Already in progress; the claim now belongs to you."
 			if replaced != "" {
-				ui.OK("claimed %s%s — took over from %s", t.ID, claimSuffix(opts.actor), replaced)
-			} else {
-				ui.OK("claimed %s%s — already in progress; the loop won't adopt it again until you release it", t.ID, claimSuffix(opts.actor))
+				note = "Previous owner: " + replaced
 			}
+			printClaimResult(t, opts.actor, note)
 		default:
-			ui.Note("%s is already %s", t.ID, StateLabel(newState))
+			ui.Note("%s is already %s.", t.Title, StateLabel(newState))
 		}
 		return 0, nil
 	}
@@ -735,17 +752,37 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 			return -1, err
 		}
 	}
-	suffix := ""
-	if newState == StateInProgress {
-		suffix = claimSuffix(opts.actor)
+	switch newState {
+	case StateInProgress:
+		printClaimResult(t, opts.actor, "")
+	case StateDone:
+		ui.OK("Completed task: %s", t.Title)
+		ui.Note("\n  %s", displayPath(filepath.Join(root, StateDone, t.ID)))
+	default:
+		ui.OK("%s %s", pastVerb, t.ID)
 	}
-	ui.OK("%s %s%s", pastVerb, t.ID, suffix)
 	return 0, nil
 }
 
-// tasksFolderRelease is the explicit hand-back for a human claim (the counterpart to claim): it
-// clears the durable owner record, but — unlike done/block/unblock — does NOT move the folder, so
-// the task stays exactly where it is in 10_in_progress/ and the loop can adopt it on its next scan.
+// printClaimResult is the claim's result: who now holds the task, anything exceptional about how
+// the claim was taken, and the id. A claim made at a terminal binds to no process, so it has no
+// actor row to print — nothing is invented to fill the space.
+func printClaimResult(t Item, actor ClaimActor, note string) {
+	ui.OK("Claimed task: %s", t.Title)
+	ui.Note("") // the headline's own blank line: what follows is conditional, so it can't carry it
+	if who := claimedBy(actor); who != "" {
+		ui.Note("  Claimed by: %s", who)
+	}
+	if note != "" {
+		ui.Note("  %s", note)
+	}
+	ui.Note("  %s", t.ID)
+}
+
+// tasksFolderRelease is the explicit hand-back for a claim (the counterpart to claim): it returns
+// the folder to 00_todo/ and drops the durable owner record, so the next agent — a loop iteration
+// or a human — takes it as ordinary ready work. The task's instructions, state.md, log.md, decision
+// history, evidence and tmp travel with the folder; only the claim is given up.
 func tasksFolderRelease(root string, args []string) (int, error) {
 	if len(args) < 1 {
 		return 2, ui.MissingArgument("task ID", "coop tasks release", "coop tasks release <task-id>")
@@ -754,22 +791,100 @@ func tasksFolderRelease(root string, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	if t.State != StateInProgress {
-		return 1, fmt.Errorf("%s is not in progress (it's %s) — nothing to release", t.ID, StateLabel(t.State))
+	switch t.State {
+	case StateTodo:
+		// Only an UNCLAIMED todo task is already returned: a claim on a todo task is still a claim
+		// to give up, and takes the same guarded path below.
+		if _, owned, err := ReadTaskOwnerRecord(root, t.ID); err != nil {
+			return -1, fmt.Errorf("read owner record for %s: %w", t.ID, err)
+		} else if !owned {
+			ui.Note("%s is already in todo.", t.Title)
+			return 0, nil
+		}
+	case StateInProgress:
+	default:
+		return 1, fmt.Errorf("%s is %s. %s", t.Title, StateLabel(t.State), releaseStateRemedy(t.State))
 	}
-	_, owned, err := ReadTaskOwnerRecord(root, t.ID)
-	if err != nil {
-		return -1, fmt.Errorf("read owner record for %s: %w", t.ID, err)
+	if err := ReleaseTrustedTask(root, t, captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{})); err != nil {
+		if errors.Is(err, ErrTaskLeased) || errors.Is(err, ErrTaskSandboxOwned) ||
+			errors.Is(err, errTaskClaimedByOther) || errors.Is(err, errTaskChangedBeforeRelease) {
+			return 1, err
+		}
+		return -1, err
 	}
-	if !owned {
-		ui.Note("%s has no claim to release — the loop can already adopt it", t.ID)
-		return 0, nil
-	}
-	if err := removeTaskOwnerRecord(root, t.ID); err != nil {
-		return -1, fmt.Errorf("release %s: %w", t.ID, err)
-	}
-	ui.OK("released %s — stays in progress; the loop can adopt it next", t.ID)
+	ui.OK("Returned task to todo: %s", t.Title)
+	ui.Note("\nIts progress and handoff notes are kept.")
 	return 0, nil
+}
+
+// releaseStateRemedy says what to do instead for a task release will not touch.
+func releaseStateRemedy(state string) string {
+	if state == StateBlocked {
+		return "Resolve its decision before returning it to todo."
+	}
+	return "Completed work stays in the archive."
+}
+
+var errTaskChangedBeforeRelease = errors.New("task changed before it could be returned to todo")
+
+// ReleaseTrustedTask returns a live task to 00_todo/ under host task authority — the release
+// counterpart of BlockTrustedTask, and deliberately the same shape. It stands down an own lease
+// helper, takes the authority flock, and holds it together with the owner lock through re-resolving
+// the exact task instance, the move, and clearing the claim, so a fork assignment cannot appear
+// after a stale precheck and be stranded in todo. The claim is held ACROSS the move and dropped
+// only afterwards: a crash in between leaves the task in todo still claimed, which an identical
+// retry finishes. A fork-owned task, a task another controller leases, and a claim held by another
+// live process are refused — release gives up YOUR claim; it never overrides someone else's, never
+// stops a box, and never clears a fork assignment.
+func ReleaseTrustedTask(root string, t Item, actor ClaimActor) error {
+	if _, err := stopOwnLeaseHolder(root, t, actor); err != nil {
+		return err
+	}
+	authority, err := lockLeaseAuthority(root, t.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return fmt.Errorf("task %s is %w", t.ID, ErrTaskLeased)
+		}
+		return err
+	}
+	ownerLock, err := lockTaskOwner(root, t.ID)
+	if err != nil {
+		return errors.Join(err, unlockLeaseFile(authority))
+	}
+	current, ok, err := CurrentTask(root, t.ID)
+	if err != nil {
+		return errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
+	}
+	if !ok || current.State != t.State || current.Dir != t.Dir {
+		return errors.Join(errTaskChangedBeforeRelease, ownerLock.Close(), unlockLeaseFile(authority))
+	}
+	record, owned, err := ownerLock.Read()
+	if err != nil {
+		return errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
+	}
+	if owned && record.Kind == TaskOwnerFork {
+		return errors.Join(
+			fmt.Errorf("%w: cannot release %s while it is %s", ErrTaskSandboxOwned, t.ID, TaskOwnerLabel(record)),
+			ownerLock.Close(), unlockLeaseFile(authority),
+		)
+	}
+	if owned && competingClaim(record, actor) {
+		return errors.Join(
+			fmt.Errorf("%w: %s is %s, which is still running", errTaskClaimedByOther, t.ID, TaskOwnerLabel(record)),
+			ownerLock.Close(), unlockLeaseFile(authority),
+		)
+	}
+	if current.State != StateTodo {
+		if err := MoveTaskDir(root, current, StateTodo); err != nil {
+			return errors.Join(err, ownerLock.Close(), unlockLeaseFile(authority))
+		}
+	}
+	if owned {
+		if err := removeTaskOwnerRecordFile(root, t.ID); err != nil {
+			return errors.Join(fmt.Errorf("task %s is now in todo, but clearing your claim failed: %w", t.ID, err), ownerLock.Close(), unlockLeaseFile(authority))
+		}
+	}
+	return errors.Join(ownerLock.Close(), unlockLeaseFile(authority))
 }
 
 func trustedCompletionError(err error, id string) error {
@@ -849,13 +964,15 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 					t.ID, err, t.ID,
 				)
 			}
-			ui.OK("finished interrupted unblock for %s — pending audit authority activated, task remains in todo", t.ID)
+			ui.OK("Finished unblocking task: %s", t.Title)
+			ui.Note("\n  Its pending audit authority is active. The task is in todo.")
 			return 0, nil
 		}
 		if recovered, recoverErr := finishInterruptedForkUnblock(root, t); recoverErr != nil {
 			return -1, fmt.Errorf("finish interrupted fork unblock for %s: %w", t.ID, recoverErr)
 		} else if recovered {
-			ui.OK("finished interrupted unblock for %s — fork assignment paused, task remains in todo", t.ID)
+			ui.OK("Finished unblocking task: %s", t.Title)
+			ui.Note("\n  Its fork assignment is paused. The task is in todo.")
 			return 0, nil
 		}
 	}
@@ -876,10 +993,11 @@ func tasksFolderUnblock(root string, args []string) (int, error) {
 	if err := resolveAndUnblock(root, t, answer); err != nil {
 		return -1, unblockRetryError(t.ID, answer != "", err)
 	}
+	ui.OK("Unblocked task: %s", t.Title)
 	if answer != "" {
-		ui.OK("unblocked %s — recorded your answer in decision.md, back in todo (claim it to start)", t.ID)
+		ui.Note("\nYour answer is saved in decision.md. The task is back in todo.")
 	} else {
-		ui.OK("unblocked %s — back in todo (claim it to start)", t.ID)
+		ui.Note("\n  The task is back in todo.")
 	}
 	return 0, nil
 }
@@ -938,6 +1056,22 @@ func decisionResolved(decPath string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// decisionResolution returns the human's answer from a decision.md body, or "" when it carries only
+// the placeholder. Shared with decisionResolved's predicate so "is it answered" and "what was the
+// answer" can never disagree.
+func decisionResolution(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if r, ok := strings.CutPrefix(line, "**Resolution:**"); ok {
+			r = strings.TrimSpace(r)
+			if r == "" || strings.HasPrefix(r, "<!--") {
+				return ""
+			}
+			return r
+		}
+	}
+	return ""
 }
 
 type unblockStageError struct {
@@ -1455,11 +1589,89 @@ func BlockTrustedTask(root string, t Item, actor ClaimActor) error {
 	return errors.Join(ownerLock.Close(), unlockLeaseFile(authority))
 }
 
-func tasksFolderBlock(root string, args []string) (int, error) {
-	if len(args) < 1 {
-		return 2, errors.New("usage: coop tasks block <id>")
+// blockRequest is what `coop tasks block` learned from its arguments: the task, and — when the
+// structured text flags are used — the complete decision request to save.
+type blockRequest struct {
+	id       string
+	decision Decision
+	filled   bool // a text flag was given, so Coop writes the decision instead of an editable stub
+}
+
+// blockTextFlags are the flags that carry a decision request. They are optional as a SET: with none
+// of them `block` seeds the editable template, and with any of them the request must be complete.
+var blockTextFlags = []string{"--question", "--option", "--recommendation"}
+
+// parseBlockArgs reads `coop tasks block <id> [--question <text>] [--option <text>]... [--recommendation <text>]`,
+// each also in its `--flag=value` spelling. Every check here runs BEFORE the task moves — including
+// in the multi-queue dispatcher, which parses the same way — so a malformed request can never leave
+// a task parked on a decision Coop could not write.
+func parseBlockArgs(args []string) (blockRequest, error) {
+	var req blockRequest
+	seen := map[string]bool{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			if req.id != "" {
+				return req, errors.New("coop tasks block: too many arguments (one task id at most)")
+			}
+			req.id = arg
+			continue
+		}
+		flag, value, hasValue := strings.Cut(arg, "=")
+		if !slices.Contains(blockTextFlags, flag) {
+			return req, fmt.Errorf("coop tasks block: unknown flag %q (known: %s)", arg, strings.Join(blockTextFlags, ", "))
+		}
+		if !hasValue {
+			if i+1 >= len(args) {
+				return req, fmt.Errorf("coop tasks block %s needs a value", flag)
+			}
+			i++
+			value = args[i]
+		}
+		if flag != "--option" && seen[flag] {
+			return req, fmt.Errorf("coop tasks block: %s can only be used once", flag)
+		}
+		seen[flag] = true
+		req.filled = true
+		value = strings.TrimSpace(value)
+		switch flag {
+		case "--question":
+			req.decision.Question = value
+		case "--recommendation":
+			req.decision.Recommendation = value
+		case "--option":
+			if value != "" {
+				req.decision.Options = append(req.decision.Options, value)
+			}
+		}
 	}
-	t, err := FindTask(root, args[0])
+	if req.id == "" {
+		return req, errors.New("usage: coop tasks block <id>")
+	}
+	if req.filled {
+		var missing []string
+		if req.decision.Question == "" {
+			missing = append(missing, "--question")
+		}
+		if len(req.decision.Options) == 0 {
+			missing = append(missing, "--option")
+		}
+		if req.decision.Recommendation == "" {
+			missing = append(missing, "--recommendation")
+		}
+		if len(missing) > 0 {
+			return req, fmt.Errorf("coop tasks block: a decision request needs a question, at least one option and a recommendation — missing %s (or omit all three to write decision.md yourself)", strings.Join(missing, ", "))
+		}
+	}
+	return req, nil
+}
+
+func tasksFolderBlock(root string, args []string) (int, error) {
+	req, err := parseBlockArgs(args)
+	if err != nil {
+		return 2, err
+	}
+	t, err := FindTask(root, req.id)
 	if err != nil {
 		return 1, err
 	}
@@ -1476,15 +1688,26 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 		}
 		return -1, err
 	}
-	dec := filepath.Join(root, StateBlocked, t.ID, "decision.md")
-	if !fileExists(dec) {
+	taskDir := filepath.Join(root, StateBlocked, t.ID)
+	dec := filepath.Join(taskDir, "decision.md")
+	if req.filled {
+		if err := saveRequestedDecision(taskDir, t.ID, t.Title, req.decision); err != nil {
+			// The move already happened and is durable; say so, and say the request is not saved.
+			// A conflict is the human's to resolve (1); anything else is a real failure (-1).
+			code := -1
+			if errors.Is(err, errDecisionAlreadyWritten) {
+				code = 1
+			}
+			return code, fmt.Errorf("%s is blocked, but its decision request was not saved: %w", t.ID, err)
+		}
+	} else if !fileExists(dec) {
 		stub := "<!-- A one-way-door choice that blocks this task. The agent fills The decision,\n" +
 			"     Options, and Recommendation; a HUMAN decides — either write Resolution below and\n" +
 			"     run 'coop tasks unblock " + t.ID + "', or do both in one step:\n" +
 			"       coop tasks unblock " + t.ID + " \"A — go with Postgres\" -->\n\n" +
 			"# Decision: " + t.Title + "?\n\n" +
 			"**Blocks:** this task (`" + t.ID + "`).\n\n" +
-			"**The decision:** <what must be chosen, and why it can't be undone cheaply>\n\n" +
+			"**The decision:** " + decisionScaffoldMarker + "\n\n" +
 			"**Options:**\n" +
 			"- **A — <name>:** <consequence>\n" +
 			"- **B — <name>:** <consequence>\n\n" +
@@ -1495,12 +1718,75 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			return -1, err
 		}
 	}
-	ui.OK("blocked %s — fill in its decision.md, then a human resolves it and runs 'coop tasks unblock %s'", t.ID, t.ID)
+	ui.OK("Blocked task: %s", t.Title)
+	ui.Note("\n  %s", displayPath(dec))
+	if !req.filled {
+		ui.Note("\nWrite the question, options, and recommendation in this file.")
+		ui.Note("To fill them in as you block a task, see:")
+		ui.Note("\n  coop help tasks block")
+	}
 	return 0, nil
 }
 
 // taskRemoveSpec is `coop tasks rm`'s grammar: one id OR --all-done, both optionally unattended.
 var taskRemoveSpec = taskArgSpec{[]string{"--all-done", "--yes", "-y"}, 1, "coop tasks rm <task-id> [--yes]"}
+
+// decisionScaffoldMarker is the placeholder the editable stub leaves where the question goes. Its
+// presence is how `block --question …` tells "nobody has written this decision yet" from "a human
+// or an earlier agent wrote one", which it must never overwrite.
+const decisionScaffoldMarker = "<what must be chosen, and why it can't be undone cheaply>"
+
+// errDecisionAlreadyWritten is the refusal that protects a decision somebody already wrote — a
+// human's answer, or an earlier agent's question. It is the caller's to resolve, not a failure.
+var errDecisionAlreadyWritten = errors.New("the task already carries a decision somebody wrote")
+
+// saveRequestedDecision writes a complete decision request into a blocked task's decision.md. It
+// never destroys content somebody already wrote: the identical request again is a no-op (so a retry
+// after a partial failure completes), and a DIFFERENT one is refused with the file to edit.
+func saveRequestedDecision(taskDir, id, title string, d Decision) error {
+	existing, err := os.ReadFile(filepath.Join(taskDir, "decision.md"))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return err
+	case !strings.Contains(string(existing), decisionScaffoldMarker):
+		if string(existing) == RenderDecision(id, title, d) {
+			return nil // the same request again — already saved, nothing to do
+		}
+		return fmt.Errorf("%w — edit %s instead", errDecisionAlreadyWritten, displayPath(filepath.Join(taskDir, "decision.md")))
+	}
+	return WriteDecision(taskDir, id, title, d)
+}
+
+// displayPath renders an absolute path the way a person reading the output sees it: relative to the
+// working directory when it sits beneath it (the ordinary case — coop runs at the project root),
+// else the absolute path. The second attempt is for a symlinked working directory (macOS's
+// /tmp -> /private/tmp): the task tree is resolved, the shell's cwd may not be, and printing an
+// absolute path because of that alone would be noise.
+func displayPath(abs string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return abs
+	}
+	if rel, ok := relativeTo(cwd, abs); ok {
+		return rel
+	}
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil && resolved != cwd {
+		if rel, ok := relativeTo(resolved, abs); ok {
+			return rel
+		}
+	}
+	return abs
+}
+
+// relativeTo reports path relative to base, and whether it actually sits beneath it.
+func relativeTo(base, path string) (string, bool) {
+	rel, err := filepath.Rel(base, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
 
 type taskRemoveArgs struct {
 	id      string
@@ -1549,38 +1835,60 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 			return -1, err
 		}
 		if n == 0 {
-			ui.Note("no done tasks to remove")
+			ui.Note("No completed tasks to delete.")
 			return 0, nil
 		}
-		if err := ui.DestroyGate("remove "+ui.Count(n, "done task")+" from the archive", request.yes); err != nil {
-			return 2, err
+		// The blast radius before the question: how many, from exactly which archive, and what is
+		// lost with them.
+		ui.Note("Delete %s\n", ui.Count(n, "completed task"))
+		ui.Note("  %s", displayPath(filepath.Join(root, StateDone)))
+		ui.Note("  Their instructions, progress and saved evidence will be permanently deleted.\n")
+		if err := ui.DestroyGate("Delete these tasks", request.yes); err != nil {
+			return 2, cancelledDeletion(err, "No tasks deleted.")
 		}
 		removed, err := removeAllDone(root)
 		if err != nil {
+			// Partial deletion is durable: say exactly how many are gone before anything else.
 			return -1, fmt.Errorf(
-				"%w; %s removed before stop; re-run 'coop tasks rm --all-done --yes'",
-				err, ui.Count(removed, "task"),
+				"deleted %s, then stopped: %w — re-run 'coop tasks rm --all-done --yes'",
+				ui.Count(removed, "completed task"), err,
 			)
 		}
-		ui.OK("removed %s", ui.Count(removed, "done task"))
+		ui.OK("Deleted %s", ui.Count(removed, "completed task"))
 		return 0, nil
 	}
 	t, err := FindTask(root, request.id) // resolve the (possibly substring) match first, so the gate names it
 	if err != nil {
 		return 1, err
 	}
-	if err := ui.DestroyGate(fmt.Sprintf("delete task %s (%s)", t.ID, StateLabel(t.State)), request.yes); err != nil {
-		return 2, err
+	ui.Note("Permanently delete %q, including its instructions,\nprogress, and saved evidence.\n", t.Title)
+	ui.Note("  %s\n", displayPath(t.Dir))
+	if err := ui.DestroyGate("Delete this task", request.yes); err != nil {
+		return 2, cancelledDeletion(err, "No tasks deleted.")
 	}
 	removed, err := removeTaskFolderAndRecords(root, t)
 	if err != nil && removed {
-		return -1, fmt.Errorf("delete task %s: task was removed, but final lock cleanup failed: %w", t.ID, err)
+		// The folder IS gone; only the lock cleanup is owed. Say which of the two happened.
+		ui.Warn("Task deleted; cleanup incomplete")
+		return -1, fmt.Errorf("%s was deleted, but its final lock cleanup failed: %w", t.ID, err)
 	}
 	if err != nil {
 		return -1, fmt.Errorf("delete task %s: %w — task not removed; re-run 'coop tasks rm %s'", t.ID, err, t.ID)
 	}
-	ui.OK("removed %s (was %s — note why in the commit)", t.ID, StateLabel(t.State))
+	ui.OK("Deleted task: %s", t.Title)
 	return 0, nil
+}
+
+// cancelledDeletion turns the shared gate's bare "cancelled" into the family's decline result: a
+// declined deletion is not a failure to report with a red ✗, it is an answer — so it prints what did
+// NOT happen and returns the already-reported sentinel. Any other gate refusal (a pipe with no
+// --yes) is its own actionable message and passes through as an error.
+func cancelledDeletion(err error, nothing string) error {
+	if err != nil && err.Error() == "cancelled" {
+		ui.Note("Cancelled. %s", nothing)
+		return ui.ErrReported
+	}
+	return err
 }
 
 // removeTaskFolderAndRecords is the single post-confirmation deletion boundary. Completion-window
@@ -1739,19 +2047,27 @@ func countDone(root string) (int, error) {
 // The full count stays in the section header + summary; `--all` shows everything.
 const doneListCap = 5
 
+// listStateOrder is the order the listing shows its sections: the way work moves through the queue
+// as a person reads it — what is being worked on, what is ready next, what is parked on a decision,
+// then the archive. (TaskStates is the LIFECYCLE order, which the counters and the loop use.)
+var listStateOrder = []string{StateInProgress, StateTodo, StateBlocked, StateDone}
+
 // tasksFolderList prints the queue grouped by state. only narrows it to the given states (a
-// --blocked/--todo/… filter); empty shows every state. Each task's id is an OSC 8 hyperlink to its
-// folder, so it opens on click in a supporting terminal and stays plain text in a pipe.
+// --blocked/--todo/… filter); empty shows every state. Each task is three lines at most — its
+// title, the facts that are exceptional about it, and its id as an OSC 8 hyperlink to its folder,
+// so it opens on click in a supporting terminal and stays plain text in a pipe. There is no count
+// footer: the section headings already carry the counts.
 func tasksFolderList(root string, all bool, only ...string) (int, error) {
 	items, err := ReadTaskTree(root)
 	if err != nil {
 		return -1, err
 	}
+	p := ui.For(os.Stdout)
 	if len(items) == 0 {
-		ui.Note("no tasks yet — add one with 'coop tasks add \"<title>\"'")
+		fmt.Printf("%s\n\n", p.Bold("No tasks yet."))
+		fmt.Printf("  Create one: coop tasks add %q\n", "Describe the work")
 		return 0, nil
 	}
-	p := ui.For(os.Stdout)
 	show := map[string]bool{}
 	for _, s := range only {
 		show[s] = true
@@ -1760,87 +2076,52 @@ func tasksFolderList(root string, all bool, only ...string) (int, error) {
 	for _, t := range items {
 		byState[t.State] = append(byState[t.State], t)
 	}
-	// Groups breathe: a blank line between state sections (see rule list-output-echoes-source).
-	first, printed := true, false
-	for _, state := range TaskStates {
+	printed := false
+	for _, state := range listStateOrder {
 		if len(show) > 0 && !show[state] { // a filter narrows which sections render
 			continue
 		}
 		ts := byState[state]
-		if len(ts) == 0 {
+		if len(ts) == 0 { // an empty lifecycle section is not an empty heading
 			continue
 		}
-		if !first {
-			fmt.Print("\n\n") // two blank lines between state sections
+		if !printed {
+			fmt.Printf("%s\n", p.Bold("Tasks"))
 		}
-		first, printed = false, true
+		printed = true
 		// The state label is colored by state (the shared key — cyan todo · yellow in progress ·
 		// red blocked · green done), so a section is findable by its color; the count rides dim.
-		fmt.Printf("%s %s\n", p.Bold(paintState(p, state, StateLabel(state))), p.Dim(fmt.Sprintf("(%d)", len(ts))))
-		if state == StateDone && !all && len(ts) > doneListCap {
-			// Show only the most recent (the tail — folders sort oldest-first); elide the rest.
-			fmt.Printf("  %s\n", p.Faint(fmt.Sprintf("… +%d earlier — coop tasks ls --all", len(ts)-doneListCap)))
-			ts = ts[len(ts)-doneListCap:]
+		heading := strings.ToUpper(strings.ReplaceAll(StateLabel(state), "_", " "))
+		fmt.Printf("\n%s%s\n", p.Bold(paintState(p, state, heading)), p.Dim(fmt.Sprintf(" · %d", len(ts))))
+		total := len(ts)
+		capped := state == StateDone && !all && total > doneListCap
+		if capped {
+			ts = ts[total-doneListCap:] // the most recent (folders sort oldest-first)
 		}
-		for i, t := range ts {
-			if i > 0 {
-				fmt.Println() // one blank line between tasks
-			}
+		for _, t := range ts {
 			// Title-first (what a human scans), wrapped across as many lines as it needs so the
-			// whole title is readable and uncluttered. The id — a long machine handle you only
-			// need to `claim`/`done` — drops to a faint line below, led by the at-a-glance markers
-			// (subtask count, blocked flag), and links to the task folder so it opens on click.
+			// whole title is readable. Then only what is exceptional about this task, then the id —
+			// a long machine handle you need only to claim/done — faint, linking to its folder.
 			for _, tl := range wrapWords(t.Title, titleWrapWidth()) {
 				fmt.Printf("  %s\n", tl)
 			}
-			id := p.Link(fileURI(t.Dir), p.Faint(t.ID))
 			if m := listMarkers(p, t); m != "" {
-				fmt.Printf("    %s  %s\n", m, id)
-			} else {
-				fmt.Printf("    %s\n", id)
+				fmt.Printf("    %s\n", m)
 			}
+			fmt.Printf("    %s\n", p.Link(fileURI(t.Dir), p.Faint(t.ID)))
+		}
+		if capped {
+			fmt.Printf("  %s\n", p.Dim(fmt.Sprintf("Showing %d of %d completed tasks. See all: coop tasks ls --done --all", doneListCap, total)))
 		}
 	}
 	if !printed {
-		// A filter that matched nothing — say so plainly rather than an empty block plus a summary.
-		fmt.Printf("  %s\n", p.Gray("(no "+filterLabel(only)+" tasks)"))
+		// A filter that matched nothing — say so plainly rather than an empty block.
+		fmt.Printf("No %s tasks.\n", filterLabel(only))
 		return 0, nil
 	}
-	// Footer summary — counts for the states shown (all four when unfiltered), so it echoes what's
-	// above instead of re-surfacing states the filter deliberately hid.
-	c, _ := TaskTreeCounts(items)
-	counts := []struct {
-		state, label string
-		n            int
-		color        func(string) string
-	}{
-		{StateTodo, "todo", c.Todo, p.Cyan},
-		{StateInProgress, "in progress", c.Doing, p.Yellow},
-		{StateBlocked, "blocked", c.Blocked, p.Red},
-		{StateDone, "done", c.Done, p.Green},
-	}
-	var parts []string
-	for _, sc := range counts {
-		if len(show) > 0 && !show[sc.state] {
-			continue
-		}
-		parts = append(parts, paintCount(sc.n, sc.color)+" "+sc.label)
-	}
-	fmt.Print("\n")
-	if p.Enabled() {
-		fmt.Printf("  %s\n", p.Dim(strings.Repeat("─", bannerWidth()-2))) // footer rule, right-aligned to the header's
-	}
-	fmt.Printf("  %s\n", strings.Join(parts, p.Dim(" · ")))
-	// Explain the per-task [n/m] marker for a first-time reader — but only when a DISPLAYED task
-	// has subtasks, so the common (subtask-free) listing stays uncluttered.
-	for _, t := range items {
-		if len(show) > 0 && !show[t.State] {
-			continue
-		}
-		if len(t.Subtasks) > 0 {
-			fmt.Printf("  %s\n", p.Dim("[checked/total] = subtasks"))
-			break
-		}
+	// The one action the listing can offer: a blocked task is waiting on a human.
+	if len(byState[StateBlocked]) > 0 && (len(show) == 0 || show[StateBlocked]) {
+		fmt.Printf("\nAnswer blocked tasks: coop tasks decisions\n")
 	}
 	return 0, nil
 }
@@ -1918,70 +2199,92 @@ func banner(p ui.Palette, path string) string {
 }
 
 // decisionDivider is the header BETWEEN decisions in the interactive browser (`coop tasks
-// decisions -i`). It's a stronger sibling of banner — a cyan ▸ + bold "decision N of M" + the
-// task location, then a cyan rule filling the width — so each decision is clearly bordered off
-// from the previous one as you scroll. Piped/no-color falls back to a plain, stable label the
-// tests match ("decision N of M"). where is the task id, optionally "queue · id" in a monorepo.
+// decisions -i`): a heavy rule, "Question N of M", the same rule again, then the task it belongs
+// to. The three head lines are bold cyan so one question is clearly bordered off from the previous
+// as you scroll — but the rule is drawn in plain text too, so the border survives NO_COLOR and a
+// redirect (color never carries the only meaning). where is the task id, optionally "queue · id".
 func decisionDivider(p ui.Palette, n, total int, where string) string {
-	label := fmt.Sprintf("decision %d of %d", n, total)
-	if !p.Enabled() {
-		return "── " + label + " · " + where + " ──"
-	}
-	head := "▸ " + label + " · " + where + " "
-	rule := ""
-	if pad := bannerWidth() - len([]rune(head)); pad > 0 {
-		// A HEAVY rule (━, vs the queue banner's light ─) so the interactive divider reads as a
-		// strong border between decisions as you scroll through them.
-		rule = p.Cyan(strings.Repeat("━", pad))
-	}
-	return p.Cyan("▸ ") + p.Bold(label) + p.Dim(" · ") + p.Cyan(where) + " " + rule
+	// A HEAVY rule (━, vs the queue banner's light ─) so the interactive divider reads as a strong
+	// border between questions.
+	rule := strings.Repeat("━", decisionDividerWidth())
+	head := p.Bold(p.Cyan(rule)) + "\n" +
+		p.Bold(p.Cyan(fmt.Sprintf("Question %d of %d", n, total))) + "\n" +
+		p.Bold(p.Cyan(rule))
+	return head + "\n  " + where
 }
 
-// listMarkers renders a task's at-a-glance markers — subtask progress (plain while work remains,
-// gray once every box is checked so a finished count recedes), a red ⚠ on a blocked task, and an
-// in-progress task's lease state or (tag-exceptions-not-every-row: only the exceptional row) who
-// claimed it — joined with two spaces, or "" when there are none (a task with no subtasks shows no
-// count). They lead the id line, so the wrapped title above stays clean.
+// decisionDividerWidth is the divider's span: the terminal's width, capped at 72 columns so the
+// border frames the question instead of stretching across an ultra-wide pane, and floored so a
+// narrow one still shows a border.
+func decisionDividerWidth() int {
+	w := ui.TermWidthRaw(os.Stdout)
+	switch {
+	case w <= 0, w > 72:
+		return 72 // width unknown (not a terminal), or wider than the cap
+	case w < 20:
+		return 20
+	}
+	return w
+}
+
+// listMarkers renders what is EXCEPTIONAL about a task, on its own line between the title and the
+// id: subtask progress, a blocked task's waiting answer, and an in-progress task's owner or
+// reservation — joined with " · ", or "" when there is nothing to say. An ordinary todo task, and
+// an in-progress task nobody has claimed or reserved, carry no marker at all: a row that always
+// says something says nothing (see rule tag-exceptions-not-every-row).
 func listMarkers(p ui.Palette, t Item) string {
 	var parts []string
 	if n := len(t.Subtasks); n > 0 {
-		done := t.doneSubtasks()
-		prog := fmt.Sprintf("[%d/%d]", done, n)
-		if done == n {
+		prog := fmt.Sprintf("%d/%d subtasks", t.doneSubtasks(), n)
+		if t.doneSubtasks() == n {
 			prog = p.Gray(prog) // fully done — recede the count
 		}
 		parts = append(parts, prog)
 	}
 	if t.State == StateBlocked {
-		parts = append(parts, p.Red("⚠"))
+		parts = append(parts, p.Red("Needs your answer"))
 	}
 	if t.State == StateInProgress {
-		parts = append(parts, p.Dim(inProgressMarker(t)))
+		if m := inProgressMarker(t); m != "" {
+			parts = append(parts, p.Dim(m))
+		}
 	}
-	if t.HasFlags {
-		// Only the exceptional row carries it: this task's commits changed files that run on the
-		// host, and nobody has acknowledged that yet (coop tasks flags <id> --ack).
-		parts = append(parts, p.Red("⚠")+" "+p.Dim("changes what runs on your machine"))
-	}
-	return strings.Join(parts, "  ")
+	return strings.Join(parts, p.Dim(" · "))
 }
 
 // inProgressMarker labels an in-progress task with the one fact that explains whether the loop will
-// touch it next: a durable human claim beats the lease-derived busy/stalled/unleased label, because
-// a claimed task with nobody actively holding its lease would otherwise read "unleased" — a word
-// that, for a claimed task, wrongly suggests the loop is free to take it (it never is: see
-// assignLoopTaskOnly). A read error falls back to the ordinary lease label: ls is a display, not the
-// adoption gate, so it degrades gracefully instead of failing the whole listing.
+// touch it next: a durable human claim beats the lease-derived reservation, because a claimed task
+// with nobody actively holding its lease would otherwise read as free work (it never is: see
+// assignLoopTaskOnly). A claim whose process has died is the exception worth flagging on its own —
+// nobody is on it, and the loop needs `coop loop --preflight` to take it back. An unclaimed,
+// unreserved task says nothing: that IS the ordinary in-progress row. A read error falls back to
+// the reservation: ls is a display, not the adoption gate, so it degrades instead of failing.
 func inProgressMarker(t Item) string {
 	root := filepath.Dir(filepath.Dir(t.Dir))
 	lease := observeTaskLease(t, time.Now())
 	if rec, owned, err := ReadTaskOwnerRecord(root, t.ID); err == nil && owned {
+		if rec.Kind == TaskOwnerHuman && rec.ActorPID != 0 && !ownerProcessLive(rec) {
+			return "⚠ Owner process has stopped"
+		}
 		if lease.State != leaseUnleased {
-			return TaskOwnerLabel(rec) + " · " + lease.label() // claimed AND actively held
+			return TaskOwnerLabel(rec) + " · " + leaseReservation(lease) // claimed AND actively held
 		}
 		return TaskOwnerLabel(rec)
 	}
-	return lease.label()
+	return leaseReservation(lease)
+}
+
+// leaseReservation says who is holding the task's work lock right now — a RESERVATION, not a claim
+// and not proof of a running agent. Nobody holding it is the ordinary case and says nothing.
+func leaseReservation(o TaskLeaseObservation) string {
+	switch o.State {
+	case leaseStalled:
+		return "Reserved by " + o.Provider + " (stalled)"
+	case leaseBusy:
+		return "Reserved by " + o.Provider
+	default:
+		return ""
+	}
 }
 
 func tasksFolderDecisions(root string, args []string) (int, error) {
@@ -2005,14 +2308,15 @@ func tasksFolderDecisions(root string, args []string) (int, error) {
 		}
 	}
 	if len(decisions) == 0 {
-		ui.OK("no open decisions — nothing is blocked")
+		ui.Note("No questions waiting for your answer.")
 		return 0, nil
 	}
 	if interactive {
 		return decisionsInteractive(root, decisions)
 	}
 	p := ui.For(os.Stdout)
-	for n, t := range decisions {
+	fmt.Printf("%s%s\n", p.Bold("Questions waiting for your answer"), p.Dim(fmt.Sprintf(" · %d", len(decisions))))
+	for _, t := range decisions {
 		question := t.Title
 		rec := ""
 		body, _, err := readOptionalTaskMetadataPath(filepath.Join(t.Dir, "decision.md"))
@@ -2027,19 +2331,16 @@ func tasksFolderDecisions(root string, args []string) (int, error) {
 				rec = strings.TrimSpace(r)
 			}
 		}
-		if n > 0 {
-			fmt.Println() // each decision is its own block
-		}
-		// Question first (what you weigh), the id gray below (the handle you `unblock` with),
-		// the recommendation dim under it — same shape as the task list.
-		fmt.Printf("%s %s\n", p.Red("⚠"), p.Bold(sanitizeCell(question)))
-		fmt.Printf("    %s\n", p.Faint(t.ID))
+		// Question first (what you weigh), the recommendation under it, then the id (the handle you
+		// `unblock` with) — the same title/markers/id shape as the task list.
+		fmt.Printf("\n  %s\n", sanitizeCell(question))
 		if rec != "" {
-			fmt.Printf("    %s %s\n", p.Dim("rec:"), sanitizeCell(rec))
+			fmt.Printf("    %s %s\n", p.Dim("Recommendation:"), sanitizeCell(rec))
 		}
+		fmt.Printf("    %s\n", p.Faint(t.ID))
 	}
-	fmt.Println() // a blank line sets the footer apart from the last decision
-	ui.Note(`%s — answer with 'coop tasks unblock <id> "<answer>"', or 'coop tasks decisions -i' to answer interactively`, ui.Count(len(decisions), "open decision"))
+	fmt.Print("\nAnswer one: coop tasks unblock <id> \"<answer>\"\n")
+	fmt.Print("Read and answer each: coop tasks decisions -i\n")
 	return 0, nil
 }
 
@@ -2095,13 +2396,20 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 		if err != nil {
 			return -1, err
 		}
+		prompt := "Your answer (Enter to skip):"
 		if resolved {
-			fmt.Fprintln(out, p.Green("✓ answered")+p.Dim(" — type a new answer to change it"))
+			// The existing answer is shown, and Enter keeps it — the safe key must never be the
+			// one that silently discards a decision somebody already made.
+			if answer := decisionResolution(string(body)); answer != "" {
+				fmt.Fprintf(out, "  %s %s\n", p.Dim("Answered:"), answer)
+			}
+			prompt = "Your answer (Enter to keep it):"
 		}
 		key := func(k string) string { return p.Cyan(k) }
-		fmt.Fprintf(out, "%s%s%s%s%s%s%s%s%s%s%s",
-			p.Dim("answer ("), key("Enter"), p.Dim("=skip · "), key(":d"), p.Dim(" delete · "),
-			key(":n"), p.Dim(" next · "), key(":p"), p.Dim(" prev · "), key(":q"), p.Dim(" quit): "))
+		fmt.Fprintf(out, "\n%s\n  %s%s%s%s%s%s%s\n%s ",
+			prompt,
+			key(":n"), p.Dim(" next · "), key(":p"), p.Dim(" previous · "),
+			key(":d"), p.Dim(" delete task · "), key(":q")+p.Dim(" quit"), p.Dim(">"))
 		if !sc.Scan() {
 			break // EOF / ^D ends the session
 		}
@@ -2158,9 +2466,9 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 			} else if err := recordResolution(decPath, line); err != nil {
 				return -1, err
 			}
-			// No per-answer confirmation line: auto-advancing to the next decision (its "── decision
-			// N ──" header, drawn below) is the acknowledgement, and a "✓ recorded" line would just
-			// scroll onto that header. Re-viewing with :p shows the "✓ answered" marker, and the
+			// No per-answer confirmation line: auto-advancing to the next question (its bordered
+			// "Question N of M" header, drawn below) is the acknowledgement, and a "✓ recorded" line
+			// would just scroll onto that header. Re-viewing with :p shows the saved answer, and the
 			// closing summary counts what was answered.
 			i++
 		}
@@ -2168,24 +2476,35 @@ func runDecisionBrowser(refs []decisionRef, in io.Reader, out io.Writer) (int, e
 			i = -1 // past the last decision → done
 		}
 	}
+	// Answers and deletions are counted separately: they are different outcomes, and a session that
+	// did both must not report either as the whole story.
 	switch {
 	case answered > 0 && deleted > 0:
-		ui.OK("answered %s (back in todo) · deleted %s", ui.Count(answered, "decision"), ui.Count(deleted, "task"))
+		ui.OK("Answered %s — %s returned to todo · deleted %s",
+			ui.Count(answered, "question"), pluralTasks(answered), ui.Count(deleted, "task"))
 	case answered > 0:
-		ui.OK("answered %s — back in todo (claim to start)", ui.Count(answered, "decision"))
+		ui.OK("Answered %s — %s returned to todo", ui.Count(answered, "question"), pluralTasks(answered))
 	case deleted > 0:
-		ui.OK("deleted %s", ui.Count(deleted, "task"))
+		ui.OK("Deleted %s", ui.Count(deleted, "task"))
 	default:
-		ui.Note("no decisions answered — all still blocked")
+		ui.Note("No answers saved. Tasks are still blocked.")
 	}
 	return 0, nil
+}
+
+// pluralTasks says "task"/"tasks" for the answered count without repeating the number.
+func pluralTasks(n int) string {
+	if n == 1 {
+		return "task"
+	}
+	return "tasks"
 }
 
 // fprintDecisionBody renders a decision.md for the browser: HTML comments stripped, the
 // `# Decision:` question bold, the Blocks / Resolution / `---` lines dropped (the id is in the
 // header and the answer is what we're collecting), and the rest indented.
 func fprintDecisionBody(out io.Writer, p ui.Palette, content string) {
-	prevBlank := false
+	prevBlank := true // the divider's task id ends the header — the question starts its own block
 	for _, raw := range strings.Split(stripHTMLComments(content), "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
@@ -2306,15 +2625,15 @@ func tasksFolderLint(root string) (int, error) {
 	}
 	if len(findings) == 0 {
 		if len(items) == 0 {
-			ui.Note("no tasks to check")
+			ui.Note("No tasks to check.")
 		} else {
-			ui.OK("no issues — %s checked", ui.Count(len(items), "task"))
+			ui.OK("Checked %s — no task-file issues", ui.Count(len(items), "task"))
 		}
 		return 0, nil
 	}
 	for _, f := range findings {
 		fmt.Println(f)
 	}
-	ui.Error("%s across %s — fix the above", ui.Count(len(findings), "issue"), ui.Count(len(items), "task"))
+	ui.Error("Found %s", ui.Count(len(findings), "task-file issue"))
 	return 1, nil
 }

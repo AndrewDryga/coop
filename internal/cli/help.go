@@ -651,65 +651,276 @@ How to define a preset
 
   A project preset overrides a global preset with the same name.`,
 
-	"tasks": `coop tasks — drive the task queue (a folder per task under .agent/tasks/).
+	"tasks": `coop tasks — manage work in .agent/tasks/
 
-  Usage: coop tasks [--tasks <path>]... <command>
+Usage: coop tasks [--tasks <path>]... [<command>]
 
-  ls [--all] [--todo|--in-progress|--blocked|--done]
-                   list tasks by state, with counts (recent done capped; --all shows all). Pass one
-                   or more state flags to show only those. Task ids link to the folder — click to open.
-  watch [--json]   live board: canonical tasks + every active sandbox (auto-exits when done);
-                   --json prints the same project snapshot once for automation; a queue
-                   that cannot be read exits 1 instead of counting as drained
-  add [--project <name>] "<title>"
-                   scaffold a task folder in todo (or fill it inline: --context/--acceptance/--approach/--subtask)
-  claim <id> [--as <label>] [--pid <n>] [--force]
-                   claim a task before you start it (todo -> in_progress); an agent's claim binds to
-                   its process (--as names it, --pid picks it, --force takes over a live claim)
-  release <id>     hand back a claim without finishing it (stays in_progress; the loop can adopt it)
-  lease <id> [--as <label>] [--pid <n>] [-- <command...>]
-                   hold the task's work lock — the one a loop iteration holds — for a command's
-                   lifetime, or until the bound process (your agent, else the task's claimant,
-                   or --pid) exits or the task moves; ls/watch show 'busy <label>' and a loop
-                   in this checkout skips the task meanwhile ('done' and 'block' run by the
-                   same agent stop its own holder first)
-  block <id>       park it on a decision (-> blocked) and write a decision.md stub
-  unblock <id>     move it back to todo; add "<answer>" to record in decision.md
-  done <id>        move it to done (the archive)
-  path <id>        print a task's resolved folder path
-  rm <id>          delete a task folder; --all-done clears the done archive
-  decisions [-i]   list open decisions; -i walks them one by one to answer (records + unblocks)
-  flags [<id>] [--ack]
-                   tasks whose commits changed files that run on YOUR machine — git hooks and
-                   attributes, editor/agent settings and hooks, compose files, the Makefile — with
-                   the reason each one matters; the board marks such a task until you read the
-                   diff and acknowledge it with --ack (the sandbox contains the box, not your tools)
-  lint             check the tree (blocked<->decision.md, no status field, ...; exits 1)
-  queues           print each configured queue's path, one per line (for scripts and the sweep guard)
+WORK
+  ls             list tasks (also the default)
+  add "<title>"  create a task
+  claim <id>     start working on a task
+  release <id>   return a task to todo with its handoff notes
+  block <id>     ask for a decision before continuing
+  unblock <id> ["<answer>"] record a decision and return the task to todo
+  done <id>                move completed work to the archive
 
-  A claim made without a terminal (an agent's tool call) is bound to the claiming process — coop's
-  parent, or the nearest non-shell ancestor — so 'claimed by codex (pid 812)' says who holds the
-  task, 'owner process gone' says that process died, a second claim by another live process is
-  refused, and 'coop loop --preflight' releases claims whose process is gone. A claim made at a
-  terminal is a person's: bound to nothing, and never released by the loop. 'coop tasks lease'
-  adds the live half for an agent working outside the loop: the same kernel lock a loop iteration
-  holds, dying with the holder, so 'busy codex' can never outlive the process it names.
+REVIEW
+  watch           watch task progress
+  decisions [-i]  show questions waiting for your answer
+  lint            check task files for missing or inconsistent information
 
-  A task's state is its directory — 00_todo/ 10_in_progress/ 50_blocked/ 99_done/, the
-  numeric prefix just sorts 'ls' in lifecycle order — so each transition is a folder move.
-  Removing tasks is a MANUAL step: the loop and skills only ever move a finished task to
-  done, never delete it, so 'coop tasks rm --all-done' is how you prune the archive.
-  Defaults to .agent/tasks/ — or, in a monorepo, every subproject's .agent/tasks listed under
-  'subprojects:' in .agent/project.yaml, so you never hand-maintain COOP_TASKS. Override with
-  --tasks or COOP_TASKS. Paths are repo-relative. With several queues (a monorepo), ls, lint, and decisions
-  (including -i) roll up across all of them, and the id commands (claim/block/unblock/done/
-  rm) find their task in whichever queue holds it — erroring only when an id matches in
-  more than one queue. In a monorepo, add requires
-  --project root|<subproject> so creation picks an explicit queue; a nested member takes its
-  full path (terraform/environments/va1) or just its last segment (va1) when no other member
-  ends in the same one. With raw --tasks overrides, add still needs a single --tasks because it
-  creates into one queue. Copied queue slicing is retired: parallel fork loops schedule distinct
-  tasks directly from the same canonical queue.`,
+MANAGE
+  lease <id>  reserve a task while an agent works outside a loop
+  path <id>   print a task's folder path
+  queues      print the configured queue paths
+  rm <id>     delete a task
+
+TASK STATES
+  todo         ready for an agent
+  in progress  being worked on
+  blocked      waiting for a decision
+  done         completed and archived
+
+GET STARTED
+  coop tasks add "Fix login retries"
+  coop loop claude
+
+  A task folder holds its instructions, progress and decisions.
+  Most commands accept a full task ID or a unique part of it.
+
+FOR AI AGENTS
+  Create a task with its instructions and checklist:
+
+  coop tasks add "Fix login retries" \
+    --context "An expired session retries forever." \
+    --acceptance "An expired session returns to sign-in." \
+    --approach "Stop retrying after an authentication failure." \
+    --subtask "Test an expired session."
+
+  Block a task with a complete decision request:
+
+  coop tasks block choose-storage \
+    --question "Where should uploads be stored?" \
+    --option "A — Local disk: simplest, tied to one machine." \
+    --option "B — Object storage: shared across machines." \
+    --recommendation "B — production runs on more than one machine."
+
+  Get its folder without parsing a listing: coop tasks path <id>
+  Before releasing a task, update its state.md with a complete handoff.
+
+PROJECTS
+  Coop includes queues listed in .agent/project.yaml.
+  Use --tasks <path> to select a queue; repeat it to include several.
+  When adding a task to a project with subprojects, choose --project <name>.
+
+  Command options: coop help tasks <command>`,
+
+	"tasks ls": `coop tasks ls — list tasks and their progress
+
+Usage: coop tasks ls [--tasks <path>]... [<options>]
+
+OPTIONS
+  --todo         show tasks ready to start
+  --in-progress  show tasks being worked on
+  --blocked      show tasks waiting for a decision
+  --done         show completed tasks
+  --all          show the full completed archive
+
+  Combine state options to show more than one state.
+  By default, completed tasks are limited to the five most recent.
+
+EXAMPLES
+  coop tasks ls --in-progress --blocked
+  coop tasks ls --done --all
+  coop tasks ls --tasks web/.agent/tasks`,
+
+	"tasks add": `coop tasks add — create a task for you or an agent
+
+Usage: coop tasks add "<title>" [<options>]
+
+OPTIONS
+  --project <name>     choose a subproject, or root
+  --tasks <path>       choose one task queue
+  --context <text>     explain the problem and why it matters
+  --acceptance <text>  describe what must be true when finished
+  --approach <text>    describe how to tackle the work
+  --subtask <text>     add a checklist item; repeat for more items
+
+  Without the text options, Coop creates a template for you to fill in.
+  If you use any text option, include --context, --acceptance and --approach.
+  Repeat a text option to add another paragraph.
+
+EXAMPLES
+  coop tasks add "Fix login retries"
+  coop tasks add --project web "Fix login retries"
+  coop tasks add "Fix login retries" \
+    --context "An expired session retries forever." \
+    --acceptance "An expired session returns to sign-in." \
+    --approach "Stop retrying after an authentication failure." \
+    --subtask "Test an expired session."`,
+
+	"tasks claim": `coop tasks claim — take responsibility for a task
+
+Usage: coop tasks claim <id> [--tasks <path>]... [<options>]
+
+OPTIONS
+  --as <label>  name the person or agent working on it
+  --pid <n>     bind the claim to an existing process
+  --force       take over a claim held by another live process
+
+  Moves a todo task to in progress. An agent's claim normally follows its
+  process; a claim made at a terminal stays until you release or finish it.
+
+EXAMPLES
+  coop tasks claim login-retries
+  coop tasks claim login-retries --as codex --pid 812
+
+  Hand it back: coop tasks release <id>`,
+
+	"tasks release": `coop tasks release — return a task to the queue for another agent
+
+Usage: coop tasks release <id> [--tasks <path>]...
+
+Before releasing, update state.md with the work completed, checks run, and
+the next steps. Include anything another agent needs to continue where you left off.
+
+Returns the task to todo and removes your claim. Progress and handoff notes are kept.
+A task being worked on by another process or assigned to a fork cannot be released.
+
+EXAMPLE
+  coop tasks release login-retries`,
+
+	"tasks lease": `coop tasks lease — reserve a task while work is running
+
+Usage: coop tasks lease <id> [--tasks <path>]... [<options>] [-- <command>...]
+
+OPTIONS
+  --as <label>  name the working agent
+  --pid <n>     hold the reservation while this process is alive
+  --            run a command and release the reservation when it exits
+
+  Claim the task first. Other loops skip it while this reservation is held.
+  Without a command, Coop follows your agent's process or the task's claimant.
+  Without a process to follow, it waits until the task moves or you press Ctrl-C.
+
+EXAMPLES
+  coop tasks lease login-retries -- make check
+  coop tasks lease login-retries --as codex --pid 812`,
+
+	"tasks block": `coop tasks block — pause a task that needs a decision
+
+Usage: coop tasks block <id> [--tasks <path>]... [options]
+
+OPTIONS
+  --question <text>        explain the decision that is needed
+  --option <text>          describe a choice and its tradeoff; repeat for more choices
+  --recommendation <text>  recommend a choice and explain why
+
+Without these options, creates decision.md for you to fill in.
+If you use any of them, include a question, at least one option, and a recommendation.
+Existing answers and decision notes are never overwritten.
+
+FOR AI AGENTS
+  coop tasks block choose-storage \
+    --question "Where should uploads be stored?" \
+    --option "A — Local disk: simplest, tied to one machine." \
+    --option "B — Object storage: shared across machines." \
+    --recommendation "B — production runs on more than one machine."
+
+ANSWER A QUESTION
+  coop tasks unblock choose-storage "Use object storage."`,
+
+	"tasks unblock": `coop tasks unblock — record a decision and return a task to todo
+
+Usage: coop tasks unblock <id> ["<answer>"] [--tasks <path>]...
+
+  Provide your answer here, or fill in Resolution in decision.md first.
+  Coop keeps the decision with the task so the next agent can continue.
+
+EXAMPLE
+  coop tasks unblock login-retries "Return to sign-in after the first failure."
+
+  Questions waiting for you: coop tasks decisions`,
+
+	"tasks done": `coop tasks done — move completed work to the archive
+
+Usage: coop tasks done <id> [--tasks <path>]...
+
+  Finish the checks and commit the task's work first.
+  Coop moves the task to done and removes its temporary files.
+  The task's instructions, progress and saved evidence stay in the archive.
+
+EXAMPLE
+  coop tasks done login-retries`,
+
+	"tasks path": `coop tasks path — print a task's folder path
+
+Usage: coop tasks path <id> [--tasks <path>]...
+
+EXAMPLE
+  coop tasks path login-retries`,
+
+	"tasks queues": `coop tasks queues — print task queue paths
+
+Usage: coop tasks queues [--tasks <path>]...
+
+  Prints one absolute path per line. By default, includes the project's queues.
+
+EXAMPLE
+  coop tasks queues`,
+
+	"tasks decisions": `coop tasks decisions — show questions waiting for your answer
+
+Usage: coop tasks decisions [--tasks <path>]... [-i]
+
+OPTIONS
+  -i, --interactive  read and answer each question interactively
+
+EXAMPLES
+  coop tasks decisions
+  coop tasks decisions -i
+  coop tasks unblock login-retries "Return to sign-in after the first failure."`,
+
+	"tasks lint": `coop tasks lint — check task files for missing or inconsistent information
+
+Usage: coop tasks lint [--tasks <path>]...
+
+  Checks the task folders, required sections and decision state.
+  Returns a nonzero exit status when it finds a problem.
+
+EXAMPLE
+  coop tasks lint`,
+
+	"tasks rm": `coop tasks rm — permanently delete task folders
+
+Usage: coop tasks rm <id> [--tasks <path>]... [--yes]
+       coop tasks rm --all-done [--tasks <path>]... [--yes]
+
+OPTIONS
+  --all-done  delete every completed task in the selected queues
+  -y, --yes   skip confirmation
+
+  Deletes task instructions, progress and saved evidence. Git commits remain.
+  To archive finished work, use coop tasks done instead.
+
+EXAMPLES
+  coop tasks rm abandoned-task
+  coop tasks rm --all-done`,
+
+	"tasks watch": `coop tasks watch — watch task progress
+
+Usage: coop tasks watch [--tasks <path>]... [--json]
+
+OPTIONS
+  --json  print one snapshot for scripts
+
+  Shows task progress and any problems that need attention.
+  The live view closes when the queue is done and its activity has stopped.
+  Press Ctrl-C to leave the view. In a pipe, Coop prints one static snapshot.
+
+EXAMPLES
+  coop tasks watch
+  coop tasks watch --tasks web/.agent/tasks`,
 
 	"backlog": `coop backlog — park the genuinely LARGE as task folders (.agent/tasks/xx_backlog/).
 
@@ -1108,13 +1319,25 @@ func printHelpPage(text string) {
 }
 
 // selfContainedHelp are the commandHelp pages that end with their own pointer, so they print
-// without the all-commands footer. Membership travels with the page's last line.
-var selfContainedHelp = map[string]bool{"presets": true, "models": true, "init": true}
+// without the all-commands footer. Membership travels with the page's last line. Every task page
+// ends with its own next step (the family page points at its per-command pages; each command page
+// ends with its examples or the command that follows it), so the family is listed as a prefix.
+var selfContainedHelp = map[string]bool{"presets": true, "models": true, "init": true, "tasks": true}
+
+// selfContained reports whether cmd's page ends itself. A `<family> <command>` page inherits its
+// family's answer, so a new task page needs no second registration.
+func selfContained(cmd string) bool {
+	if selfContainedHelp[cmd] {
+		return true
+	}
+	family, _, ok := strings.Cut(cmd, " ")
+	return ok && selfContainedHelp[family]
+}
 
 // printTopicHelp is the ONE way a static page reaches the terminal, so `coop presets --help`,
 // `coop help presets` and a bare group can never disagree about the footer.
 func printTopicHelp(cmd, text string) {
-	if selfContainedHelp[cmd] {
+	if selfContained(cmd) {
 		printHelpPage(text)
 		return
 	}

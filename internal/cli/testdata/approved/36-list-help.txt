@@ -1,0 +1,18 @@
+coop tasks ls — list tasks and their progress
+
+Usage: coop tasks ls [--tasks <path>]... [<options>]
+
+OPTIONS
+  --todo         show tasks ready to start
+  --in-progress  show tasks being worked on
+  --blocked      show tasks waiting for a decision
+  --done         show completed tasks
+  --all          show the full completed archive
+
+  Combine state options to show more than one state.
+  By default, completed tasks are limited to the five most recent.
+
+EXAMPLES
+  coop tasks ls --in-progress --blocked
+  coop tasks ls --done --all
+  coop tasks ls --tasks web/.agent/tasks

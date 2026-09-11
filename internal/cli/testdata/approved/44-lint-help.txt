@@ -1,0 +1,9 @@
+coop tasks lint — check task files for missing or inconsistent information
+
+Usage: coop tasks lint [--tasks <path>]...
+
+  Checks the task folders, required sections and decision state.
+  Returns a nonzero exit status when it finds a problem.
+
+EXAMPLE
+  coop tasks lint

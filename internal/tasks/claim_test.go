@@ -145,7 +145,7 @@ func TestClaimBindsToAProcessAndRefusesACompetingLiveClaim(t *testing.T) {
 	if !ok || rec.Actor != "codex" || rec.ActorPID != os.Getpid() || rec.ActorStart != me.StartToken {
 		t.Fatalf("owner record after a bound claim = %+v, %t", rec, ok)
 	}
-	if out := captureStdout(t, func() { _, _ = tasksFolderList(root, false) }); !strings.Contains(out, fmt.Sprintf("claimed by codex (pid %d)", os.Getpid())) || strings.Contains(out, "gone") {
+	if out := captureStdout(t, func() { _, _ = tasksFolderList(root, false) }); !strings.Contains(out, fmt.Sprintf("claimed by codex (PID %d)", os.Getpid())) || strings.Contains(out, "has stopped") {
 		t.Fatalf("listing of a live bound claim:\n%s", out)
 	}
 
@@ -167,7 +167,7 @@ func TestClaimBindsToAProcessAndRefusesACompetingLiveClaim(t *testing.T) {
 	}
 
 	stop()
-	if out := captureStdout(t, func() { _, _ = tasksFolderList(root, false) }); !strings.Contains(out, "owner process gone") {
+	if out := captureStdout(t, func() { _, _ = tasksFolderList(root, false) }); !strings.Contains(out, "⚠ Owner process has stopped") {
 		t.Fatalf("listing after the owner died must say so:\n%s", out)
 	}
 	if code, err := claim(me, false); code != 0 || err != nil {

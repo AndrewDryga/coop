@@ -410,9 +410,9 @@ func TaskOwnerLabel(record TaskOwnerRecord) string {
 	if record.ActorPID == 0 {
 		return "claimed by " + who
 	}
-	label := fmt.Sprintf("claimed by %s (pid %d)", who, record.ActorPID)
+	label := fmt.Sprintf("claimed by %s (PID %d)", who, record.ActorPID)
 	if !ownerProcessLive(record) {
-		label += " · owner process gone"
+		label += " · owner process has stopped"
 	}
 	return label
 }

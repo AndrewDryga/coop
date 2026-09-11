@@ -32,7 +32,7 @@ func TestAggregateReleasePreservesSandboxOwner(t *testing.T) {
 	authority := os.Getenv(TestLeaseAuthorityRootEnv)
 	authorityBefore := removalSnapshot(t, authority)
 	code, err := CmdTasks(Host{}, &config.Config{RepoOverride: repo, TasksFiles: rels}, []string{"release", "assigned"})
-	if code != -1 || !errors.Is(err, ErrTaskSandboxOwned) {
+	if code != 1 || !errors.Is(err, ErrTaskSandboxOwned) {
 		t.Errorf("aggregate release=%d, %v; want sandbox ownership refusal", code, err)
 	}
 	assertRemovalSnapshot(t, repo, before)

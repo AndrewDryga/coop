@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -104,17 +103,6 @@ func wrapWords(s string, w int) []string {
 		lines = append(lines, cur)
 	}
 	return lines
-}
-
-// paintCount renders a count, applying paint only when it's nonzero so a zero stays
-// plain — a "0 blocked" shouldn't read as an alarm. Shared by the `coop tasks` summary
-// and the loop banner (internal/cli/util.go keeps its own copy for the same reason gitOut
-// does — see git.go).
-func paintCount(v int, paint func(string) string) string {
-	if v > 0 {
-		return paint(strconv.Itoa(v))
-	}
-	return strconv.Itoa(v)
 }
 
 // hasYes reports whether args carry the -y/--yes confirmation-skip flag that destructive commands

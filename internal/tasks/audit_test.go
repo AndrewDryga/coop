@@ -2739,8 +2739,8 @@ func TestOwnerRecordGatesLoopAdoption(t *testing.T) {
 		if _, owned := taskOwned(t, root, "claimed-task"); owned {
 			t.Fatal("release must clear the owner record")
 		}
-		if !pathExists(filepath.Join(root, StateInProgress, "claimed-task")) {
-			t.Fatal("release must leave the task in 10_in_progress/, not move it")
+		if !pathExists(filepath.Join(root, StateTodo, "claimed-task")) {
+			t.Fatal("release must return the task to 00_todo/")
 		}
 
 		assignment, err := assignLoopTask([]string{root}, testLeaseOwner())

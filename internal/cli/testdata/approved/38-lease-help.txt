@@ -1,0 +1,16 @@
+coop tasks lease — reserve a task while work is running
+
+Usage: coop tasks lease <id> [--tasks <path>]... [<options>] [-- <command>...]
+
+OPTIONS
+  --as <label>  name the working agent
+  --pid <n>     hold the reservation while this process is alive
+  --            run a command and release the reservation when it exits
+
+  Claim the task first. Other loops skip it while this reservation is held.
+  Without a command, Coop follows your agent's process or the task's claimant.
+  Without a process to follow, it waits until the task moves or you press Ctrl-C.
+
+EXAMPLES
+  coop tasks lease login-retries -- make check
+  coop tasks lease login-retries --as codex --pid 812

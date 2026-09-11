@@ -331,7 +331,7 @@ func TestListShowsAHeldLeaseBesideTheClaim(t *testing.T) {
 	}
 	defer lease.Release()
 	out := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
-	if !strings.Contains(out, fmt.Sprintf("claimed by codex (pid %d) · busy codex", os.Getpid())) {
+	if !strings.Contains(out, fmt.Sprintf("claimed by codex (PID %d) · Reserved by codex", os.Getpid())) {
 		t.Fatalf("a claimed and leased task must show both:\n%s", out)
 	}
 }

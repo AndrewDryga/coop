@@ -1,0 +1,12 @@
+coop tasks release — return a task to the queue for another agent
+
+Usage: coop tasks release <id> [--tasks <path>]...
+
+Before releasing, update state.md with the work completed, checks run, and
+the next steps. Include anything another agent needs to continue where you left off.
+
+Returns the task to todo and removes your claim. Progress and handoff notes are kept.
+A task being worked on by another process or assigned to a fork cannot be released.
+
+EXAMPLE
+  coop tasks release login-retries

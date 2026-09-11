@@ -124,7 +124,9 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 	tick := func(spin int) ([]string, bool) {
 		snapshot, sources, merged, running, starting := read()
 		c := mergedCounts(merged)
-		frame := tasksWatchFrameWithSnapshot(sources, merged, snapshot, spin, width())
+		// The Ctrl-C footer belongs to the LIVE view only: a pipe or --json has no keyboard, and a
+		// captured snapshot must not carry an instruction nobody can follow.
+		frame := append(tasksWatchFrameWithSnapshot(sources, merged, snapshot, spin, width()), "", watchExitFooter)
 		screen.Frame(frame)
 		if queueErr = snapshot.QueueError(); queueErr != nil {
 			return frame, true // settle on the failure so the loop's debounce still bounds the exit
@@ -169,36 +171,16 @@ func forkHasVisibleActivity(fork ProjectForkSnapshot) bool {
 		fork.Candidate || fork.PendingLand
 }
 
+// watchExitFooter closes the live board. It is NOT part of the frame renderer: only the interactive
+// view can be left with Ctrl-C.
+const watchExitFooter = "Press Ctrl-C to leave this view."
+
+// tasksWatchFrameWithSnapshot is the task board plus the problems its snapshot found. The board is
+// about TASKS: a box or session that is running without a task of its own is execution data the
+// JSON snapshot still carries (and activity accounting and auto-exit still read), not a second
+// inventory on screen — a task-linked fork keeps its own ← name cue on the task's row.
 func tasksWatchFrameWithSnapshot(sources []watchSource, merged []mergedTask, snapshot ProjectSnapshot, spin, width int) []string {
 	frame := tasksWatchFrame(sources, merged, spin, width)
-	if len(snapshot.Executions) > 0 {
-		frame = append(frame, "", "sandboxes")
-	}
-	for _, execution := range snapshot.Executions {
-		state := "running"
-		if execution.Stale {
-			state = "cleanup-pending"
-		} else if !execution.Running {
-			state = "unverified"
-		} else if !execution.Active {
-			state = "parked"
-		}
-		where := filepath.Base(execution.Record.Workspace)
-		if execution.Record.Fork != nil {
-			where = "fork " + execution.Record.Fork.Name
-		}
-		details := []string{"role: " + string(execution.Record.Role), "workspace: " + where}
-		if execution.Record.Task != nil {
-			details = append(details, "task: "+execution.Record.Task.ID)
-		}
-		if execution.Record.SourceID != "" {
-			details = append(details, "source: "+execution.Record.SourceID)
-		}
-		frame = append(frame,
-			fmt.Sprintf("  %s · %s", execution.Record.Kind, state),
-			"    "+strings.Join(details, " · "),
-		)
-	}
 	var visibleForks []ProjectForkSnapshot
 	for _, fork := range snapshot.Forks {
 		if len(fork.Executions) == 0 && forkHasVisibleActivity(fork) {
@@ -352,9 +334,6 @@ func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
 		}
 		if m.queue != "" {
 			suffix += " · queue " + m.queue
-		}
-		if m.HasFlags {
-			suffix += "  " + TaskFlagsMarker
 		}
 		// A claimed task nobody is actively holding a lock on would otherwise read "unleased" — a
 		// word that, beside "claimed by", wrongly suggests the loop may take it (see inProgressMarker).

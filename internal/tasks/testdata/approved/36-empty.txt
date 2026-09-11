@@ -1,0 +1,3 @@
+No tasks yet.
+
+  Create one: coop tasks add "Describe the work"

@@ -349,6 +349,14 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 			return 2, ui.UnknownCommandPath(path[:2], guess, asHelp)
 		}
 	}
+	// A family whose commands carry their own pages registers them under the "<family> <command>"
+	// key, so `coop help tasks release` and `coop tasks release --help` reach the leaf page.
+	if len(path) > 1 {
+		if page := commandHelp[cmd+" "+path[1]]; page != "" {
+			printTopicHelp(cmd+" "+path[1], page)
+			return 0, nil
+		}
+	}
 	switch {
 	case cmd == "fork":
 		code, _ := forkHelp()

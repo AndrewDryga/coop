@@ -465,19 +465,26 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 	}
 	if sub == "rm" && removal.allDone {
 		total := 0
-		for _, rel := range rels {
+		counts := make([]int, len(rels))
+		for i, rel := range rels {
 			n, err := countDone(filepath.Join(repo, rel))
 			if err != nil {
 				return -1, err
 			}
-			total += n
+			counts[i], total = n, total+n
 		}
 		if total == 0 {
-			ui.Note("no done tasks to remove in any of the %s", ui.Count(len(rels), "configured queue"))
+			ui.Note("No completed tasks to delete.")
 			return 0, nil
 		}
-		if err := ui.DestroyGate(fmt.Sprintf("remove %s across %s", ui.Count(total, "done task"), ui.Count(len(rels), "queue")), removal.yes); err != nil {
-			return 2, err
+		// Each queue's exact archive path and count, then ONE confirmation for the lot.
+		ui.Note("Delete %s\n", ui.Count(total, "completed task"))
+		for i, rel := range rels {
+			ui.Note("  %s — %s", filepath.Join(rel, StateDone), ui.Count(counts[i], "completed task"))
+		}
+		ui.Note("  Their instructions, progress and saved evidence will be permanently deleted.\n")
+		if err := ui.DestroyGate("Delete these tasks", removal.yes); err != nil {
+			return 2, cancelledDeletion(err, "No tasks deleted.")
 		}
 		removed := 0
 		for _, rel := range rels {
@@ -485,12 +492,12 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 			removed += n
 			if err != nil {
 				return -1, fmt.Errorf(
-					"%w; %s removed before stop across configured queues; re-run 'coop tasks rm --all-done --yes'",
-					err, ui.Count(removed, "task"),
+					"deleted %s across the configured queues, then stopped: %w — re-run 'coop tasks rm --all-done --yes'",
+					ui.Count(removed, "completed task"), err,
 				)
 			}
 		}
-		ui.OK("removed %s across %s", ui.Count(removed, "done task"), ui.Count(len(rels), "queue"))
+		ui.OK("Deleted %s across %s", ui.Count(removed, "completed task"), ui.Count(len(rels), "queue"))
 		return 0, nil
 	}
 	// The id is the first positional token; with none, delegate as-is so the subcommand's own
@@ -507,6 +514,14 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 		id = parsed
 	case "lease":
 		parsed, err := parseLeaseArgs(args)
+		if err != nil {
+			return 2, err
+		}
+		id = parsed.id
+	case "block":
+		// block's decision flags take values too, and the whole request is validated HERE — before
+		// the queue is even chosen — so a malformed one never moves a task in any queue.
+		parsed, err := parseBlockArgs(args)
 		if err != nil {
 			return 2, err
 		}

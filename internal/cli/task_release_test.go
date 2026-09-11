@@ -48,14 +48,18 @@ func TestIntegrationUmbrellaRelease(t *testing.T) {
 			if owner, ok, err := tasks.ReadTaskOwnerRecord(root, id); err != nil || !ok || owner.Kind != tasks.TaskOwnerHuman {
 				t.Fatalf("claim owner=%+v exists=%v err=%v", owner, ok, err)
 			}
-			before := snapshotInitTree(t, repo)
 			run("release")
 			if _, ok, err := tasks.ReadTaskOwnerRecord(root, id); err != nil || ok {
 				t.Fatalf("release retained owner: exists=%v err=%v", ok, err)
 			}
-			assertTaskTreeUnchanged(t, repo, before)
-			run("release") // Already unclaimed is still a successful no-op.
-			assertTaskTreeUnchanged(t, repo, before)
+			// Release returns the folder to todo, instructions and handoff intact, in the queue
+			// that held it — never in the other member's.
+			if data, err := os.ReadFile(filepath.Join(root, stateTodo, id, "task.md")); err != nil || !strings.Contains(string(data), "Keep this task") {
+				t.Fatalf("released task in todo = %q, %v", data, err)
+			}
+			returned := snapshotInitTree(t, repo)
+			run("release") // Already in todo and unclaimed is a successful no-op.
+			assertTaskTreeUnchanged(t, repo, returned)
 		})
 	}
 }
@@ -86,20 +90,29 @@ func TestIntegrationUmbrellaReleaseRefusals(t *testing.T) {
 		{name: "missing argument", code: 2, want: `Missing task ID for "coop tasks release"`},
 		{name: "extra argument", args: []string{"shared", "extra"}, code: 2, want: `Unexpected argument "extra" for "coop tasks release"`},
 		{name: "unknown flag", args: []string{"shared", "--force"}, code: 2, want: `Unknown option "--force" for "coop tasks release"`},
-		{name: "wrong state", state: stateTodo, args: []string{"shared"}, code: 1, want: "not in progress"},
+		{name: "wrong state", state: stateBlocked, args: []string{"shared"}, code: 1, want: "Resolve its decision before returning it to todo."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, authority := t.TempDir(), t.TempDir()
 			t.Setenv(tasks.TestLeaseAuthorityRootEnv, authority)
 			writeUmbrellaProject(t, repo, "a", "b")
 			a := appForDerivedQueues(repo)
+			// tc.state is the state the fixture parks the task in; the default is a claimed,
+			// in-progress task — the one release actually acts on.
 			for i, id := range []string{"2026-09-05-shared", tc.secondID} {
 				if id == "" {
 					continue
 				}
 				rel := []string{"a/" + tasksRoot, "b/" + tasksRoot}[i]
-				writeTaskFile(t, filepath.Join(repo, rel, stateTodo, id, "task.md"), "# Preserve me\n")
-				if tc.state != stateTodo {
+				state := tc.state
+				if state == "" {
+					state = stateTodo
+				}
+				writeTaskFile(t, filepath.Join(repo, rel, state, id, "task.md"), "# Preserve me\n")
+				if tc.state == stateBlocked {
+					writeTaskFile(t, filepath.Join(repo, rel, state, id, "decision.md"), "# Decision: pick one?\n")
+				}
+				if tc.state == "" {
 					if code, err := a.cmdTasks([]string{"claim", id, "--tasks", rel}); code != 0 || err != nil {
 						t.Fatalf("claim fixture: %d, %v", code, err)
 					}

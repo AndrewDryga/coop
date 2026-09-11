@@ -1,0 +1,22 @@
+coop tasks block — pause a task that needs a decision
+
+Usage: coop tasks block <id> [--tasks <path>]... [options]
+
+OPTIONS
+  --question <text>        explain the decision that is needed
+  --option <text>          describe a choice and its tradeoff; repeat for more choices
+  --recommendation <text>  recommend a choice and explain why
+
+Without these options, creates decision.md for you to fill in.
+If you use any of them, include a question, at least one option, and a recommendation.
+Existing answers and decision notes are never overwritten.
+
+FOR AI AGENTS
+  coop tasks block choose-storage \
+    --question "Where should uploads be stored?" \
+    --option "A — Local disk: simplest, tied to one machine." \
+    --option "B — Object storage: shared across machines." \
+    --recommendation "B — production runs on more than one machine."
+
+ANSWER A QUESTION
+  coop tasks unblock choose-storage "Use object storage."

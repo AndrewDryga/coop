@@ -1,0 +1,24 @@
+coop tasks add — create a task for you or an agent
+
+Usage: coop tasks add "<title>" [<options>]
+
+OPTIONS
+  --project <name>     choose a subproject, or root
+  --tasks <path>       choose one task queue
+  --context <text>     explain the problem and why it matters
+  --acceptance <text>  describe what must be true when finished
+  --approach <text>    describe how to tackle the work
+  --subtask <text>     add a checklist item; repeat for more items
+
+  Without the text options, Coop creates a template for you to fill in.
+  If you use any text option, include --context, --acceptance and --approach.
+  Repeat a text option to add another paragraph.
+
+EXAMPLES
+  coop tasks add "Fix login retries"
+  coop tasks add --project web "Fix login retries"
+  coop tasks add "Fix login retries" \
+    --context "An expired session retries forever." \
+    --acceptance "An expired session returns to sign-in." \
+    --approach "Stop retrying after an authentication failure." \
+    --subtask "Test an expired session."

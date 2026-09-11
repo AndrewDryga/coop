@@ -1,0 +1,11 @@
+coop tasks unblock — record a decision and return a task to todo
+
+Usage: coop tasks unblock <id> ["<answer>"] [--tasks <path>]...
+
+  Provide your answer here, or fill in Resolution in decision.md first.
+  Coop keeps the decision with the task so the next agent can continue.
+
+EXAMPLE
+  coop tasks unblock login-retries "Return to sign-in after the first failure."
+
+  Questions waiting for you: coop tasks decisions

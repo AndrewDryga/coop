@@ -1,0 +1,14 @@
+coop tasks watch — watch task progress
+
+Usage: coop tasks watch [--tasks <path>]... [--json]
+
+OPTIONS
+  --json  print one snapshot for scripts
+
+  Shows task progress and any problems that need attention.
+  The live view closes when the queue is done and its activity has stopped.
+  Press Ctrl-C to leave the view. In a pipe, Coop prints one static snapshot.
+
+EXAMPLES
+  coop tasks watch
+  coop tasks watch --tasks web/.agent/tasks

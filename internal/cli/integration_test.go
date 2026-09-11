@@ -474,8 +474,8 @@ func TestIntegrationMultiQueueClearReportsPartialRemoval(t *testing.T) {
 	}
 	for _, want := range []string{
 		busy.ID,
-		"1 task removed before stop",
-		"across configured queues",
+		"deleted 1 completed task",
+		"across the configured queues",
 		"coop tasks rm --all-done --yes",
 		"still leased by a live controller",
 	} {
@@ -499,7 +499,7 @@ func TestIntegrationMultiQueueClearReportsPartialRemoval(t *testing.T) {
 }
 
 // TestIntegrationListShowsCleanLabels confirms the prefix never leaks into output: the list
-// groups by the clean state name (todo/in_progress/…), not the on-disk 00_todo/ dir name.
+// groups by the clean state name (TODO / IN PROGRESS / …), not the on-disk 00_todo/ dir name.
 func TestIntegrationListShowsCleanLabels(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, tasksRoot)
@@ -507,7 +507,7 @@ func TestIntegrationListShowsCleanLabels(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, stateInProgress, "2026-01-02-b", "task.md"), "# B\n")
 
 	out := captureStdout(t, func() { _, _ = appFor(repo).cmdTasks([]string{"ls"}) })
-	if !strings.Contains(out, "todo (1)") || !strings.Contains(out, "in_progress (1)") {
+	if !strings.Contains(out, "TODO · 1") || !strings.Contains(out, "IN PROGRESS · 1") {
 		t.Errorf("ls should head groups with clean labels:\n%s", out)
 	}
 	for _, leaked := range []string{"00_todo", "10_in_progress", "50_blocked", "99_done"} {

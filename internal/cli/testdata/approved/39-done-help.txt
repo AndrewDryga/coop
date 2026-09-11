@@ -1,0 +1,10 @@
+coop tasks done — move completed work to the archive
+
+Usage: coop tasks done <id> [--tasks <path>]...
+
+  Finish the checks and commit the task's work first.
+  Coop moves the task to done and removes its temporary files.
+  The task's instructions, progress and saved evidence stay in the archive.
+
+EXAMPLE
+  coop tasks done login-retries

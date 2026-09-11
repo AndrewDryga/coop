@@ -1,0 +1,3 @@
+✓ Returned task to todo: Fix login retries
+
+Its progress and handoff notes are kept.

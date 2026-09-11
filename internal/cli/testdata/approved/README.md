@@ -21,3 +21,10 @@ block is part of the block, and the six-space cause indentation and aligned `Usa
 **Changing a fixture is a design decision, not a test fix.** If the gate goes red here, the
 renderer drifted — fix the renderer. New approved copy comes from the human who approved it
 (record it in the owning task, then update the file and the renderer in the same commit).
+
+## Naming
+
+Fixtures from the family files are named after the review item that approved them: the numeric
+prefix is that document's item number (`35`–`46` are `reviewed-output/workflows-tasks.md`'s task
+pages; `01`–`03h` are the shared menu and input-error shapes from `approved-output/`), so a fixture
+always traces back to the paragraph that approved it.

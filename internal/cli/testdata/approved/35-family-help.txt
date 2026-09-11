@@ -1,0 +1,63 @@
+coop tasks — manage work in .agent/tasks/
+
+Usage: coop tasks [--tasks <path>]... [<command>]
+
+WORK
+  ls             list tasks (also the default)
+  add "<title>"  create a task
+  claim <id>     start working on a task
+  release <id>   return a task to todo with its handoff notes
+  block <id>     ask for a decision before continuing
+  unblock <id> ["<answer>"] record a decision and return the task to todo
+  done <id>                move completed work to the archive
+
+REVIEW
+  watch           watch task progress
+  decisions [-i]  show questions waiting for your answer
+  lint            check task files for missing or inconsistent information
+
+MANAGE
+  lease <id>  reserve a task while an agent works outside a loop
+  path <id>   print a task's folder path
+  queues      print the configured queue paths
+  rm <id>     delete a task
+
+TASK STATES
+  todo         ready for an agent
+  in progress  being worked on
+  blocked      waiting for a decision
+  done         completed and archived
+
+GET STARTED
+  coop tasks add "Fix login retries"
+  coop loop claude
+
+  A task folder holds its instructions, progress and decisions.
+  Most commands accept a full task ID or a unique part of it.
+
+FOR AI AGENTS
+  Create a task with its instructions and checklist:
+
+  coop tasks add "Fix login retries" \
+    --context "An expired session retries forever." \
+    --acceptance "An expired session returns to sign-in." \
+    --approach "Stop retrying after an authentication failure." \
+    --subtask "Test an expired session."
+
+  Block a task with a complete decision request:
+
+  coop tasks block choose-storage \
+    --question "Where should uploads be stored?" \
+    --option "A — Local disk: simplest, tied to one machine." \
+    --option "B — Object storage: shared across machines." \
+    --recommendation "B — production runs on more than one machine."
+
+  Get its folder without parsing a listing: coop tasks path <id>
+  Before releasing a task, update its state.md with a complete handoff.
+
+PROJECTS
+  Coop includes queues listed in .agent/project.yaml.
+  Use --tasks <path> to select a queue; repeat it to include several.
+  When adding a task to a project with subprojects, choose --project <name>.
+
+  Command options: coop help tasks <command>

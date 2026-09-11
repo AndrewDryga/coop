@@ -373,22 +373,36 @@ func TestTaskWatchNamesHumanOwnerAndCanonicalQueue(t *testing.T) {
 	}
 }
 
-func TestTaskWatchRendersSandboxAsLabeledBlock(t *testing.T) {
-	snapshot := ProjectSnapshot{Executions: []forkspace.ExecutionObservation{{
-		Record: forkspace.ExecutionRecord{
-			Kind: forkspace.ExecutionRemoteSession, Role: forkspace.ExecutionRoleActiveTurn,
-			Workspace: "/project-forks/api", SourceID: "session-run",
-			Task: &forkspace.ExecutionTaskRef{ID: "wire-auth"},
-		},
-		Running: true, Active: true,
-	}}}
+// The board shows TASKS. A box or session is execution data the snapshot still carries — activity
+// accounting, auto-exit and the JSON projection all read it — but it is no longer a second
+// inventory painted under the queue. The fork/problem cues that DO belong to a task stay.
+func TestTaskWatchDropsTheStandaloneBoxInventory(t *testing.T) {
+	snapshot := ProjectSnapshot{
+		Executions: []forkspace.ExecutionObservation{{
+			Record: forkspace.ExecutionRecord{
+				Kind: forkspace.ExecutionRemoteSession, Role: forkspace.ExecutionRoleActiveTurn,
+				Workspace: "/project-forks/api", SourceID: "session-run",
+				Task: &forkspace.ExecutionTaskRef{ID: "wire-auth"},
+			},
+			Running: true, Active: true,
+		}},
+		Forks:    []ProjectForkSnapshot{{Name: "api", DetachedRunning: true}},
+		Problems: []string{"queue web/.agent/tasks is unreadable"},
+	}
 	joined := strings.Join(tasksWatchFrameWithSnapshot(nil, nil, snapshot, 0, 120), "\n")
-	for _, want := range []string{
-		"remote-session · running", "role: active-turn", "workspace: api", "task: wire-auth", "source: session-run",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("sandbox block lost %q:\n%s", want, joined)
+	for _, gone := range []string{"sandboxes", "remote-session · running", "role: active-turn", "source: session-run"} {
+		if strings.Contains(joined, gone) {
+			t.Errorf("the board still paints the box inventory (%q):\n%s", gone, joined)
 		}
+	}
+	for _, want := range []string{"forks", "api · detached loop running", "problems", "queue web/.agent/tasks is unreadable"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the board lost %q:\n%s", want, joined)
+		}
+	}
+	// The execution data itself is untouched: the JSON snapshot and the activity accounting read it.
+	if !snapshotHasVisibleActivity(snapshot) {
+		t.Error("a running box must still count as activity for the auto-exit guard")
 	}
 }
 

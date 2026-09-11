@@ -50,10 +50,7 @@ type ProjectTaskSnapshot struct {
 	AssignmentID string                           `json:"assignment_id,omitempty"`
 	Phase        ForkAssignmentPhase              `json:"phase,omitempty"`
 	Executions   []forkspace.ExecutionObservation `json:"executions,omitempty"`
-	// HostSurfaces are the files this task's commits changed that alter what runs on the host,
-	// until a human acknowledges them (`coop tasks flags <id> --ack`).
-	HostSurfaces []TaskFlag `json:"host_surfaces,omitempty"`
-	Item         Item       `json:"-"`
+	Item         Item                             `json:"-"`
 }
 
 type ProjectForkSnapshot struct {
@@ -190,11 +187,6 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 			view := ProjectTaskSnapshot{
 				Queue: root, QueueLabel: label, QueueID: queueID,
 				ID: item.ID, Title: item.Title, State: item.State, Path: item.Dir, Item: item,
-			}
-			if item.HasFlags {
-				if flags, ok, err := ReadTaskFlags(item.Dir); err == nil && ok {
-					view.HostSurfaces = flags.HostSurfaces
-				}
 			}
 			key := snapshotTaskKey("", "", root, item.ID)
 			if instance, err := ReadTaskInstance(root, item); err == nil {

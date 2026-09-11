@@ -1,0 +1,6 @@
+coop tasks path — print a task's folder path
+
+Usage: coop tasks path <id> [--tasks <path>]...
+
+EXAMPLE
+  coop tasks path login-retries

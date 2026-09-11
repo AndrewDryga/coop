@@ -1,0 +1,21 @@
+Tasks
+
+IN PROGRESS · 1
+  Fix login retries
+    2/4 subtasks
+    2026-09-11-fix-login-retries
+
+TODO · 1
+  Add a password reset link
+    2026-09-11-add-password-reset
+
+BLOCKED · 1
+  Choose how long sessions last
+    Needs your answer
+    2026-09-11-choose-session-duration
+
+DONE · 1
+  Show sign-in errors
+    2026-09-10-show-sign-in-errors
+
+Answer blocked tasks: coop tasks decisions

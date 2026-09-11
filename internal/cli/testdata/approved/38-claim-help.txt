@@ -1,0 +1,17 @@
+coop tasks claim — take responsibility for a task
+
+Usage: coop tasks claim <id> [--tasks <path>]... [<options>]
+
+OPTIONS
+  --as <label>  name the person or agent working on it
+  --pid <n>     bind the claim to an existing process
+  --force       take over a claim held by another live process
+
+  Moves a todo task to in progress. An agent's claim normally follows its
+  process; a claim made at a terminal stays until you release or finish it.
+
+EXAMPLES
+  coop tasks claim login-retries
+  coop tasks claim login-retries --as codex --pid 812
+
+  Hand it back: coop tasks release <id>

@@ -171,7 +171,9 @@ func TestRenderManual(t *testing.T) {
 	if strings.Contains(m, "\x1b[") {
 		t.Error("RenderManual must be plain — no ANSI escapes")
 	}
-	if strings.Contains(m, "GET STARTED") {
+	// The MENU's first-run block is state-aware and stays out of the reference; a page may carry
+	// its own GET STARTED heading (the tasks family does), which is approved copy, not state.
+	if strings.Contains(m, "GET STARTED — sign in") {
 		t.Error("RenderManual must omit the state-aware GET STARTED block")
 	}
 	if strings.Contains(m, "/host-boxhome") || strings.Contains(m, "/host-configdir") {

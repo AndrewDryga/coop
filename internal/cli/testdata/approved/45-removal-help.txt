@@ -1,0 +1,15 @@
+coop tasks rm — permanently delete task folders
+
+Usage: coop tasks rm <id> [--tasks <path>]... [--yes]
+       coop tasks rm --all-done [--tasks <path>]... [--yes]
+
+OPTIONS
+  --all-done  delete every completed task in the selected queues
+  -y, --yes   skip confirmation
+
+  Deletes task instructions, progress and saved evidence. Git commits remain.
+  To archive finished work, use coop tasks done instead.
+
+EXAMPLES
+  coop tasks rm abandoned-task
+  coop tasks rm --all-done

@@ -1,0 +1,8 @@
+Questions waiting for your answer · 1
+
+  How long should a session last?
+    Recommendation: 30 days, with renewal while active.
+    2026-09-11-choose-session-duration
+
+Answer one: coop tasks unblock <id> "<answer>"
+Read and answer each: coop tasks decisions -i

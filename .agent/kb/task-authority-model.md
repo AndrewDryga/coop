@@ -3,7 +3,7 @@ name: task-authority-model
 description: four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 subsystem: tasks
 sources: [internal/tasks/lease_cmd.go, internal/tasks/claimactor.go, internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/loop/lock.go]
-updated: 2026-09-06
+updated: 2026-09-11
 ---
 Coop has FOUR separate authorities over a task and its checkout. Each answers a different question,
 each is held a different length of time, and each fails differently — conflating any two of them is
@@ -71,10 +71,14 @@ back if the move then loses the race — so the record is visible to any concurr
 instant a claim begins, not from whenever its folder move happens to land. The record is cleared by
 `done` (`CompleteTrustedTask`, `internal/tasks/audit.go:281`, so every caller — the interactive verb,
 fork-merge reconciliation — gets it for free), `block` (`tasksFolderBlock`), `unblock`
-(`moveBlockedAuditUnblock`), and the explicit `coop tasks release <id>` (`tasksFolderRelease`,
-`internal/tasks/cmd.go:544`) — nothing else. `coop tasks ls` tags an owned in-progress row "claimed by
-`<user>`" in place of its lease label (`inProgressMarker`, `internal/tasks/cmd.go:1647`) — the label
-the row would otherwise carry, "unleased," would be true but actively misleading for a claimed task.
+(`moveBlockedAuditUnblock`), and the explicit `coop tasks release <id>` (`ReleaseTrustedTask`) —
+nothing else. Release is not a bare record deletion: it takes the SAME authority flock + owner lock
+`BlockTrustedTask` takes, re-resolves the exact instance, refuses a fork-owned task / a foreign live
+lease / a claim another live process holds, returns the folder to `00_todo/` while the claim is
+still held, and only then clears it — so an interrupted release leaves the task claimed in todo,
+which an identical retry finishes. `coop tasks ls` tags an owned in-progress row "claimed by
+`<user>` (PID n)" (`inProgressMarker`); an unclaimed, unreserved row carries no marker, because
+"unleased" was a word for a non-event.
 
 ## Why checkout and ref are separate short-lived locks, not one big one
 
@@ -120,6 +124,10 @@ these authorities sit beside but never replace — the folder is still the only 
 lifecycle STATE; these four decide who may act on it.
 
 ## Changelog
+- 2026-09-11 — `coop tasks release` became a guarded todo transition (`ReleaseTrustedTask`), not a
+  record deletion: same locks as `block`, refuses fork-owned / foreign-lease / foreign-live-claim,
+  moves before it unclaims so a retry finishes an interrupted one. The list's "unleased" marker is
+  gone. Authority semantics are otherwise unchanged.
 - 2026-09-03 — re-verified the authority model after deleting the retired audit-history algorithm;
   refreshed shifted `internal/tasks/audit.go` line citations. Authority semantics are unchanged.
 - 2026-08-28 — generalized durable claim authority into typed human-or-fork ownership. A fork

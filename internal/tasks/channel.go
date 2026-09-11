@@ -219,6 +219,19 @@ type Decision struct {
 	Recommendation string
 }
 
+// RenderDecision is the decision.md body for a filled-in request — the shape `coop tasks block`
+// seeds, with the Resolution line left for the human. Separate from the write so a caller can ask
+// "is the file already exactly this request?" without writing anything (see saveRequestedDecision).
+func RenderDecision(id, title string, d Decision) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Decision: %s?\n\n**Blocks:** this task (`%s`).\n\n**The decision:** %s\n\n**Options:**\n", title, id, d.Question)
+	for _, option := range d.Options {
+		fmt.Fprintf(&b, "- %s\n", option)
+	}
+	fmt.Fprintf(&b, "\n**Recommendation:** %s\n\n---\n\n**Resolution:** <!-- HUMAN: your answer; or pass it inline to 'coop tasks unblock %s' -->\n", d.Recommendation, id)
+	return b.String()
+}
+
 // WriteDecision writes a task's decision.md in the shape `coop tasks block` seeds, filled in, with
 // the Resolution line left for the human. An existing decision.md is replaced: a blocked task
 // carries exactly one open question, and `coop tasks unblock` reads the first Resolution it finds.
@@ -228,13 +241,7 @@ func WriteDecision(taskDir, id, title string, d Decision) error {
 		return err
 	}
 	defer root.Close()
-	var b strings.Builder
-	fmt.Fprintf(&b, "# Decision: %s?\n\n**Blocks:** this task (`%s`).\n\n**The decision:** %s\n\n**Options:**\n", title, id, d.Question)
-	for _, option := range d.Options {
-		fmt.Fprintf(&b, "- %s\n", option)
-	}
-	fmt.Fprintf(&b, "\n**Recommendation:** %s\n\n---\n\n**Resolution:** <!-- HUMAN: your answer; or pass it inline to 'coop tasks unblock %s' -->\n", d.Recommendation, id)
-	return AtomicWriteTaskFile(root, "decision.md", []byte(b.String()))
+	return AtomicWriteTaskFile(root, "decision.md", []byte(RenderDecision(id, title, d)))
 }
 
 // TaskFileNames are the task-folder files the channel reads back for an agent, in order.

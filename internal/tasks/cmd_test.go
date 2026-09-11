@@ -280,9 +280,9 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 }
 
-// TestTasksFolderRelease covers `coop tasks release <id>` — the explicit hand-back for a human
-// claim — end to end: usage, the state guard, the "nothing to release" soft no-op on an unclaimed
-// in-progress task (e.g. one the loop itself adopted), and the substantive clear-without-moving case.
+// TestTasksFolderRelease covers `coop tasks release <id>` — returning a task to the queue for
+// another agent — end to end: usage, the states it refuses, the already-in-todo no-op, an unclaimed
+// in-progress task that still takes the guarded move, and the claimed case that moves and unclaims.
 func TestTasksFolderRelease(t *testing.T) {
 	t.Run("usage error with no id", func(t *testing.T) {
 		root := t.TempDir()
@@ -291,46 +291,167 @@ func TestTasksFolderRelease(t *testing.T) {
 		}
 	})
 
-	t.Run("refuses a task that is not in progress", func(t *testing.T) {
+	t.Run("an unclaimed todo task is already returned", func(t *testing.T) {
 		root := t.TempDir()
 		writeTaskFile(t, filepath.Join(root, StateTodo, "still-todo", "task.md"), "# Todo\n")
-		code, err := tasksFolderRelease(root, []string{"still-todo"})
-		if code != 1 || err == nil || !strings.Contains(err.Error(), "not in progress") {
-			t.Fatalf("release of a todo task = code %d err %v, want a state error", code, err)
+		out := captureStderr(t, func() {
+			if code, err := tasksFolderRelease(root, []string{"still-todo"}); code != 0 || err != nil {
+				t.Fatalf("release of an unclaimed todo task = code %d err %v, want a clean no-op", code, err)
+			}
+		})
+		if !strings.Contains(out, "is already in todo.") {
+			t.Fatalf("release of an unclaimed todo task said %q", out)
 		}
 	})
 
-	t.Run("nothing to release is a soft note, not an error", func(t *testing.T) {
+	t.Run("refuses a blocked or done task", func(t *testing.T) {
+		for state, want := range map[string]string{
+			StateBlocked: "Resolve its decision before returning it to todo.",
+			StateDone:    "Completed work stays in the archive.",
+		} {
+			root := t.TempDir()
+			writeTaskFile(t, filepath.Join(root, state, "parked", "task.md"), "# Parked\n")
+			writeTaskFile(t, filepath.Join(root, state, "parked", "decision.md"), "# Decision\n")
+			code, err := tasksFolderRelease(root, []string{"parked"})
+			if code != 1 || err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("release of a %s task = code %d err %v, want %q", state, code, err, want)
+			}
+			if !pathExists(filepath.Join(root, state, "parked")) {
+				t.Fatalf("a refused release moved the %s task", state)
+			}
+		}
+	})
+
+	t.Run("an unclaimed in-progress task still takes the guarded move", func(t *testing.T) {
 		root := t.TempDir()
 		// Simulate a loop adoption directly (moveTaskDir, never claim): in progress, no record —
 		// exactly what the loop's own todo->in_progress move produces.
 		writeTaskFile(t, filepath.Join(root, StateInProgress, "loop-owned", "task.md"), "# Loop\n")
+		writeTaskFile(t, filepath.Join(root, StateInProgress, "loop-owned", "state.md"), "# State\nhandoff\n")
 		code, err := tasksFolderRelease(root, []string{"loop-owned"})
 		if code != 0 || err != nil {
-			t.Fatalf("release of an unclaimed in-progress task = code %d err %v, want a clean no-op", code, err)
+			t.Fatalf("release of an unclaimed in-progress task = code %d err %v", code, err)
 		}
-		if !pathExists(filepath.Join(root, StateInProgress, "loop-owned")) {
-			t.Fatal("release must never move the folder, claimed or not")
+		if !pathExists(filepath.Join(root, StateTodo, "loop-owned", "state.md")) {
+			t.Fatal("release must return the folder — with its handoff — to 00_todo/")
 		}
 	})
 
-	t.Run("clears an existing claim and leaves the folder in place", func(t *testing.T) {
+	t.Run("moves the claimed task to todo and clears the claim", func(t *testing.T) {
 		root := t.TempDir()
 		writeTaskFile(t, filepath.Join(root, StateTodo, "claimed", "task.md"), "# Claimed\n")
+		writeTaskFile(t, filepath.Join(root, StateTodo, "claimed", "log.md"), "# Log\nprogress\n")
 		if code, err := tasksFolderMove(root, []string{"claimed"}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
 			t.Fatalf("claim: code=%d err=%v", code, err)
 		}
-		code, err := tasksFolderRelease(root, []string{"claimed"})
-		if code != 0 || err != nil {
-			t.Fatalf("release: code=%d err=%v", code, err)
+		if err := os.MkdirAll(filepath.Join(root, StateInProgress, "claimed", "tmp"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		out := captureStderr(t, func() {
+			if code, err := tasksFolderRelease(root, []string{"claimed"}); code != 0 || err != nil {
+				t.Fatalf("release: code=%d err=%v", code, err)
+			}
+		})
+		if !strings.Contains(out, "Returned task to todo") || !strings.Contains(out, "Its progress and handoff notes are kept.") {
+			t.Fatalf("release said %q", out)
 		}
 		if _, owned := taskOwned(t, root, "claimed"); owned {
 			t.Error("release must clear the owner record")
 		}
-		if !pathExists(filepath.Join(root, StateInProgress, "claimed")) {
-			t.Fatal("release must leave the task in 10_in_progress/")
+		for _, rel := range []string{"task.md", "log.md", "tmp"} {
+			if !pathExists(filepath.Join(root, StateTodo, "claimed", rel)) {
+				t.Errorf("release lost %s", rel)
+			}
+		}
+		if pathExists(filepath.Join(root, StateInProgress, "claimed")) {
+			t.Fatal("release must move the folder out of 10_in_progress/")
 		}
 	})
+
+	// A crash between the move and the unclaim leaves the task in todo, still claimed. The identical
+	// retry is not a refusal: it finishes the interrupted cleanup.
+	t.Run("an identical retry completes interrupted cleanup", func(t *testing.T) {
+		root := t.TempDir()
+		writeTaskFile(t, filepath.Join(root, StateTodo, "torn", "task.md"), "# Torn\n")
+		if code, err := tasksFolderMove(root, []string{"torn"}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+			t.Fatalf("claim: code=%d err=%v", code, err)
+		}
+		item, ok := mustCurrentTask(t, root, "torn")
+		if !ok {
+			t.Fatal("claimed task vanished")
+		}
+		if err := MoveTaskDir(root, item, StateTodo); err != nil { // the move, without the unclaim
+			t.Fatal(err)
+		}
+		if _, owned := taskOwned(t, root, "torn"); !owned {
+			t.Fatal("fixture must leave the claim behind")
+		}
+		if code, err := tasksFolderRelease(root, []string{"torn"}); code != 0 || err != nil {
+			t.Fatalf("retry: code=%d err=%v", code, err)
+		}
+		if _, owned := taskOwned(t, root, "torn"); owned {
+			t.Fatal("the retry must finish clearing the claim")
+		}
+		if !pathExists(filepath.Join(root, StateTodo, "torn")) {
+			t.Fatal("the retry must leave the task in todo")
+		}
+	})
+
+	// Release gives up YOUR claim; it never overrides one another live process holds.
+	t.Run("refuses a claim held by another live process", func(t *testing.T) {
+		root := t.TempDir()
+		writeTaskFile(t, filepath.Join(root, StateTodo, "theirs", "task.md"), "# Theirs\n")
+		other, stop := sleeperActor(t, "claude")
+		defer stop()
+		if code, err := tasksFolderMoveWith(root, []string{"theirs"}, StateInProgress, "claim", "claimed", claimOptions{actor: other}); code != 0 || err != nil {
+			t.Fatalf("claim: code=%d err=%v", code, err)
+		}
+		code, err := tasksFolderRelease(root, []string{"theirs"})
+		if code != 1 || !errors.Is(err, errTaskClaimedByOther) {
+			t.Fatalf("release of a live foreign claim = code %d err %v, want a refusal", code, err)
+		}
+		if !pathExists(filepath.Join(root, StateInProgress, "theirs")) {
+			t.Fatal("a refused release must not move the task")
+		}
+		if _, owned := taskOwned(t, root, "theirs"); !owned {
+			t.Fatal("a refused release must leave the other claim alone")
+		}
+	})
+
+	// Another controller's live lease is the loop working the task: release waits for it, never
+	// steals it.
+	t.Run("refuses a task another controller leases", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "tasks")
+		item := taskForLease(t, root, StateInProgress, "leased")
+		lease, _, err := TryTaskLease(root, item, testLeaseOwner())
+		if err != nil || lease == nil {
+			t.Fatalf("lease fixture: %v, %v", lease, err)
+		}
+		defer func() { _ = lease.Release() }()
+		code, err := tasksFolderRelease(root, []string{"leased"})
+		if code != 1 || !errors.Is(err, ErrTaskLeased) {
+			t.Fatalf("release of a leased task = code %d err %v, want a refusal", code, err)
+		}
+		if !pathExists(filepath.Join(root, StateInProgress, "leased")) {
+			t.Fatal("a refused release must not move the task")
+		}
+	})
+}
+
+// The loop's next-task selection is unchanged by release: it still resumes in-progress work before
+// taking anything from todo, so a released task waits behind live work rather than jumping ahead.
+func TestReleaseKeepsLoopResumingInProgressFirst(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "tasks")
+	taskForLease(t, root, StateTodo, "returned")
+	taskForLease(t, root, StateInProgress, "resumed")
+	assignment, err := AssignLoopTaskOnly([]string{root}, testLeaseOwner(), "")
+	if err != nil || assignment.Outcome != assignmentReady {
+		t.Fatalf("assignment = %+v, err %v", assignment, err)
+	}
+	defer func() { _ = assignment.Lease.Release() }()
+	if assignment.Task.Item.ID != "resumed" {
+		t.Fatalf("the loop took %q; in-progress work must be resumed before a todo task", assignment.Task.Item.ID)
+	}
 }
 
 // TestCmdTasksFolderReleaseDispatch proves "release" is wired end to end through the dispatcher —
@@ -572,24 +693,35 @@ func TestMoveTaskDirSourceVanished(t *testing.T) {
 	}
 }
 
-// Without --yes and no TTY (the test env), a destructive rm refuses and preserves the target — and
-// names WHAT it would remove (the resolved id, or the --all-done count) so it isn't a blind delete.
+// Without --yes and no TTY (the test env), a destructive rm refuses and preserves the target. The
+// blast radius is stated BEFORE the question — the exact folder for one task, the archive path and
+// count for --all-done — so even a refused run has already said what it would have deleted.
 func TestTasksRemoveGate(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-01-keep", "task.md"), "# keep\n")
-	// by-id (substring match): refuses, task survives, error names the resolved id.
-	code, err := tasksFolderRemove(root, []string{"keep"})
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "2026-01-01-keep") {
-		t.Fatalf("rm without --yes = (%d, %v), want (2, a refusal naming the resolved id)", code, err)
+	// by-id (substring match): refuses, task survives, the preamble names the resolved folder.
+	var code int
+	var err error
+	preamble := captureStderr(t, func() { code, err = tasksFolderRemove(root, []string{"keep"}) })
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("rm without --yes = (%d, %v), want (2, a refusal pointing at --yes)", code, err)
+	}
+	for _, want := range []string{"Permanently delete \"keep\"", "instructions", "2026-01-01-keep"} {
+		if !strings.Contains(preamble, want) {
+			t.Errorf("the deletion preamble lacks %q:\n%s", want, preamble)
+		}
 	}
 	if len(mustReadTaskTree(t, root)) != 1 {
 		t.Fatal("a refused rm must not delete the task")
 	}
-	// --all-done: refuses with the blast-radius count; the done task survives.
+	// --all-done: refuses; the preamble carries the blast-radius count, the done task survives.
 	writeTaskFile(t, filepath.Join(root, StateDone, "2026-01-02-done", "task.md"), "# done\n")
-	code, err = tasksFolderRemove(root, []string{"--all-done"})
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "1 done task") {
-		t.Fatalf("rm --all-done without --yes = (%d, %v), want (2, a refusal naming the count)", code, err)
+	preamble = captureStderr(t, func() { code, err = tasksFolderRemove(root, []string{"--all-done"}) })
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("rm --all-done without --yes = (%d, %v), want (2, a refusal pointing at --yes)", code, err)
+	}
+	if !strings.Contains(preamble, "Delete 1 completed task") || !strings.Contains(preamble, StateDone) {
+		t.Errorf("the archive preamble lacks the count or the exact archive path:\n%s", preamble)
 	}
 	if mustCountDone(t, root) != 1 {
 		t.Error("a refused --all-done must not delete anything")
@@ -859,7 +991,7 @@ func TestTasksFolderRemoveAllDoneStopsAtLiveLease(t *testing.T) {
 	}
 	for _, want := range []string{
 		busy.ID,
-		"1 task removed before stop",
+		"deleted 1 completed task, then stopped",
 		"coop tasks rm --all-done --yes",
 		"still leased by a live controller",
 	} {
@@ -1190,36 +1322,36 @@ func TestValidateArgs(t *testing.T) {
 	}
 }
 
-// `coop tasks ls` caps the (only-growing) done archive so live work isn't buried; --all shows all.
+// The subtask count is spelled out on the task's own marker line, so it needs no legend below the
+// listing; a task with no subtasks says nothing about them.
 func TestTasksFolderListSubtaskLegend(t *testing.T) {
-	// A task WITH subtasks → the [n/m] marker AND a one-line legend explaining it.
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-01-a", "task.md"), "# A\n\n## Subtasks\n- [ ] one\n- [x] two\n")
 	out := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
-	if !strings.Contains(out, "[1/2]") {
-		t.Errorf("expected the [1/2] subtask marker:\n%s", out)
+	if !strings.Contains(out, "1/2 subtasks") {
+		t.Errorf("expected the subtask count:\n%s", out)
 	}
-	if !strings.Contains(out, "= subtasks") {
-		t.Errorf("a task with subtasks should show the legend:\n%s", out)
+	if strings.Contains(out, "= subtasks") {
+		t.Errorf("a spelled-out count needs no legend:\n%s", out)
 	}
-	// A task WITHOUT subtasks → no legend, so the common listing stays uncluttered.
+	// A task WITHOUT subtasks → no count at all, so the common listing stays uncluttered.
 	bare := t.TempDir()
 	writeTaskFile(t, filepath.Join(bare, StateTodo, "2026-01-01-b", "task.md"), "# B\n\nno checkboxes here\n")
 	out2 := captureStdout(t, func() { _, _ = tasksFolderList(bare, false) })
-	if strings.Contains(out2, "= subtasks") {
-		t.Errorf("a subtask-free listing must not show the legend:\n%s", out2)
+	if strings.Contains(out2, "subtasks") {
+		t.Errorf("a subtask-free listing must not mention subtasks:\n%s", out2)
 	}
 }
 
 // `coop tasks ls` tags an in-progress row with who claimed it (tag-exceptions-not-every-row: only
-// the exceptional, claimed row) instead of its usual lease label — which would otherwise read the
-// misleading "unleased" for a task nobody need be actively holding a lock on to own.
+// the exceptional row). A task nobody has claimed and nobody is holding is the ORDINARY in-progress
+// row, so it carries no marker at all — "unleased" was a word for a non-event.
 func TestTasksFolderListShowsOwner(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateInProgress, "2026-01-01-unowned", "task.md"), "# Unowned\n")
 	unowned := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
-	if !strings.Contains(unowned, "unleased") {
-		t.Errorf("an in-progress task with no lease and no claim should show \"unleased\":\n%s", unowned)
+	if strings.Contains(unowned, "unleased") || strings.Contains(unowned, "Reserved by") {
+		t.Errorf("an in-progress task with no lease and no claim should say nothing about either:\n%s", unowned)
 	}
 	if strings.Contains(unowned, "claimed by") {
 		t.Errorf("an unclaimed task must not show a claimed-by tag:\n%s", unowned)
@@ -1249,8 +1381,8 @@ func TestTasksFolderListCapsDone(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-02-01-live", "task.md"), "# Live work\n")
 
 	capped := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
-	if !strings.Contains(capped, "+2 earlier") { // 7 done, cap 5 → 2 elided
-		t.Errorf("default ls should cap done with '+2 earlier':\n%s", capped)
+	if !strings.Contains(capped, "Showing 5 of 7 completed tasks. See all: coop tasks ls --done --all") {
+		t.Errorf("default ls should cap done and say so:\n%s", capped)
 	}
 	if strings.Contains(capped, "Done task 1") || strings.Contains(capped, "Done task 2") { // oldest hidden
 		t.Errorf("the 2 oldest done should be elided:\n%s", capped)
@@ -1259,7 +1391,7 @@ func TestTasksFolderListCapsDone(t *testing.T) {
 		t.Errorf("recent done + live work must still show:\n%s", capped)
 	}
 	all := captureStdout(t, func() { _, _ = tasksFolderList(root, true) })
-	if !strings.Contains(all, "Done task 1") || strings.Contains(all, "earlier") {
+	if !strings.Contains(all, "Done task 1") || strings.Contains(all, "Showing") {
 		t.Errorf("--all should show every done with no elision:\n%s", all)
 	}
 }
@@ -1283,8 +1415,8 @@ func TestTasksFolderListStateFilter(t *testing.T) {
 	if !strings.Contains(blocked, "Blocked B") || strings.Contains(blocked, "Todo A") || strings.Contains(blocked, "Done C") {
 		t.Errorf("--blocked should show only the blocked task:\n%s", blocked)
 	}
-	if strings.Contains(blocked, "in progress") { // a hidden state must not leak into the footer summary
-		t.Errorf("filtered summary must list only the shown state:\n%s", blocked)
+	if strings.Contains(blocked, "IN PROGRESS") { // a hidden state must not leak in as an empty section
+		t.Errorf("a filtered listing must show only the selected state:\n%s", blocked)
 	}
 
 	// A union of flags shows every named state, and nothing else.
@@ -1297,8 +1429,8 @@ func TestTasksFolderListStateFilter(t *testing.T) {
 	only := t.TempDir()
 	writeTaskFile(t, filepath.Join(only, StateTodo, "2026-01-01-x", "task.md"), "# X\n")
 	none := captureStdout(t, func() { _, _ = tasksFolderList(only, false, StateBlocked) })
-	if !strings.Contains(none, "no blocked tasks") {
-		t.Errorf("an empty filter should note 'no blocked tasks':\n%s", none)
+	if !strings.Contains(none, "No blocked tasks.") {
+		t.Errorf("an empty filter should note 'No blocked tasks.':\n%s", none)
 	}
 
 	// The flags pass validation via the real dispatch, and a typo is still rejected with a hint.
@@ -1512,7 +1644,7 @@ func TestRunDecisionBrowser(t *testing.T) {
 	if dec := readFileString(filepath.Join(b.Dir, "decision.md")); !strings.Contains(dec, "**Resolution:** SQLite it is") {
 		t.Errorf("answer not recorded into the answered decision:\n%s", dec)
 	}
-	if !strings.Contains(out.String(), "decision 1 of 2") {
+	if !strings.Contains(out.String(), "Question 1 of 2") {
 		t.Errorf("browser output missing the position header:\n%s", out.String())
 	}
 }
@@ -1737,13 +1869,22 @@ func TestTasksDecisionsRollup(t *testing.T) {
 	}
 }
 
-// decisionDivider is the interactive browser's between-decisions border. No-color must keep the
-// stable "decision N of M · where" label (the roll-up/browser tests match on it and a pipe stays
-// plain); the label and location always survive so a redirect is still readable.
+// decisionDivider is the interactive browser's between-questions border. Color is decoration: the
+// rule, the question number and the task location must all survive NO_COLOR and a redirect, so a
+// piped transcript still shows where one question ends and the next begins.
 func TestDecisionDividerPlain(t *testing.T) {
 	got := decisionDivider(ui.Palette{}, 2, 7, "runner · 2026-01-02-foo")
-	want := "── decision 2 of 7 · runner · 2026-01-02-foo ──"
+	rule := strings.Repeat("━", decisionDividerWidth())
+	want := rule + "\nQuestion 2 of 7\n" + rule + "\n  runner · 2026-01-02-foo"
 	if got != want {
 		t.Errorf("plain divider = %q, want %q", got, want)
+	}
+	if decisionDividerWidth() > 72 {
+		t.Errorf("divider width = %d, want it capped at 72 columns", decisionDividerWidth())
+	}
+	// The colored form must still carry the same visible text.
+	colored := decisionDivider(ui.Colored(), 2, 7, "runner · 2026-01-02-foo")
+	if !strings.Contains(colored, "Question 2 of 7") || !strings.Contains(colored, rule) {
+		t.Errorf("colored divider lost its plain text: %q", colored)
 	}
 }

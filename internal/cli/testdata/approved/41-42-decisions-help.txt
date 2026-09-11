@@ -1,0 +1,11 @@
+coop tasks decisions — show questions waiting for your answer
+
+Usage: coop tasks decisions [--tasks <path>]... [-i]
+
+OPTIONS
+  -i, --interactive  read and answer each question interactively
+
+EXAMPLES
+  coop tasks decisions
+  coop tasks decisions -i
+  coop tasks unblock login-retries "Return to sign-in after the first failure."

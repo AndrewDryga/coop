@@ -53,7 +53,6 @@ type Item struct {
 	Dir         string // absolute path to the task folder
 	Subtasks    []bool // one per body checkbox; true = checked/done
 	HasDecision bool   // a decision.md is present (must hold iff State == blocked)
-	HasFlags    bool   // a flags.json nobody acknowledged: its commits changed what runs on the host
 }
 
 // doneSubtasks returns how many of the task's subtask checkboxes are checked.
@@ -281,7 +280,6 @@ func parseTaskFolder(dir, state string) (Item, bool, error) {
 		Dir:         dir,
 		Subtasks:    scanSubtasks(body),
 		HasDecision: hasDecision,
-		HasFlags:    taskHasOpenFlags(dir),
 	}, true, nil
 }
 
