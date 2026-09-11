@@ -201,9 +201,79 @@ type createSessionPayload struct {
 	PolicyDigest string `json:"policy_digest"`
 	// AuthorityDigest and NetworkFingerprint are the two authority pins a placement may carry:
 	// the policy's model-independent authority, and the network reach the daemon published for it.
-	AuthorityDigest    string            `json:"authority_digest,omitempty"`
-	NetworkFingerprint string            `json:"network_fingerprint,omitempty"`
-	ResponderBinding   *responderBinding `json:"responder_binding,omitempty"`
+	AuthorityDigest    string `json:"authority_digest,omitempty"`
+	NetworkFingerprint string `json:"network_fingerprint,omitempty"`
+	// Source selects which source inside the policy's already-authorized repository the session
+	// starts from. The connector forwards it under the same bounds the daemon enforces and never
+	// reinterprets it; an absent selector is the daemon's own default.
+	Source           *sourceSelector   `json:"source,omitempty"`
+	ResponderBinding *responderBinding `json:"responder_binding,omitempty"`
+}
+
+// sourceSelector mirrors the daemon's request union. The connector keeps its own bounded copy for
+// the same reason responderBinding is local: a worker validates the SHAPE of what it forwards
+// without importing the daemon's durable types.
+type sourceSelector struct {
+	Kind               string `json:"kind"`
+	Name               string `json:"name,omitempty"`
+	Number             int    `json:"number,omitempty"`
+	SHA                string `json:"sha,omitempty"`
+	ExpectedHeadCommit string `json:"expected_head_commit,omitempty"`
+}
+
+// maxSourcePullRequestNumber matches the daemon's bound on a selected pull-request number.
+const maxSourcePullRequestNumber = 10_000_000
+
+func validateSourceSelector(selector sourceSelector) error {
+	invalid := errors.New("create_session source selector is invalid")
+	switch selector.Kind {
+	case "default":
+		if selector.Name != "" || selector.Number != 0 || selector.SHA != "" || selector.ExpectedHeadCommit != "" {
+			return invalid
+		}
+	case "branch":
+		if selector.Number != 0 || selector.SHA != "" || selector.ExpectedHeadCommit != "" {
+			return invalid
+		}
+		if selector.Name == "" || len(selector.Name) > 240 || selector.Name[0] == '-' ||
+			strings.ContainsAny(selector.Name, "\x00\r\n") || !utf8.ValidString(selector.Name) {
+			return invalid
+		}
+	case "pull_request":
+		if selector.Name != "" || selector.SHA != "" {
+			return invalid
+		}
+		if selector.Number < 1 || selector.Number > maxSourcePullRequestNumber {
+			return invalid
+		}
+		if selector.ExpectedHeadCommit != "" && !objectID(selector.ExpectedHeadCommit) {
+			return invalid
+		}
+	case "commit":
+		if selector.Name != "" || selector.Number != 0 || selector.ExpectedHeadCommit != "" {
+			return invalid
+		}
+		if !objectID(selector.SHA) {
+			return invalid
+		}
+	default:
+		return invalid
+	}
+	return nil
+}
+
+// objectID accepts only a complete lowercase SHA-1 or SHA-256 object id; an abbreviated or
+// uppercase one names something the remote cannot be asked for exactly.
+func objectID(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 type responderBinding struct {
@@ -373,6 +443,12 @@ func prepareRequest(ctx context.Context, command workerproto.Command, artifacts 
 		}
 		if payload.NetworkFingerprint != "" {
 			bodyDocument["expected_network_fingerprint"] = payload.NetworkFingerprint
+		}
+		if payload.Source != nil {
+			if err := validateSourceSelector(*payload.Source); err != nil {
+				return Request{}, err
+			}
+			bodyDocument["source"] = payload.Source
 		}
 		if payload.ResponderBinding != nil {
 			if err := validateResponderBinding(*payload.ResponderBinding); err != nil {

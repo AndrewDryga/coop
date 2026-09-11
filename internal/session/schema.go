@@ -2,6 +2,7 @@ package session
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 )
 
@@ -255,6 +256,106 @@ const schemaV22 = `
 ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT '';
 `
 
+// One session binds one immutable source inside its policy's repository. The three PR-only
+// columns below it are retained as the historical record of sessions created before selectors
+// existed; nothing writes them any more, and migration derives a generic binding from them only
+// where their exact values, beside the immutable freshness receipts, prove one.
+const schemaV23 = `
+ALTER TABLE sessions ADD COLUMN source_binding TEXT NOT NULL DEFAULT '';
+`
+
+// backfillSourceBindings derives the generic binding for pull-request sessions whose durable
+// values prove it, and leaves every other historical row exactly as it is. Nothing here guesses:
+// a row without receipts, or whose receipts disagree with its own columns, keeps no binding and
+// stays a readable already-bound session. There is no reverse direction and no re-resolution —
+// the remote is never contacted by a migration.
+func backfillSourceBindings(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id, base_commit, repository_freshness,
+		pull_request_number, pull_request_ref, pull_request_head_commit
+		FROM sessions WHERE pull_request_number > 0`)
+	if err != nil {
+		return fmt.Errorf("read historical pull request sessions: %w", err)
+	}
+	type derived struct{ id, binding string }
+	var updates []derived
+	for rows.Next() {
+		var id, baseCommit, freshness, pullRef, pullHead string
+		var number int
+		if err := rows.Scan(&id, &baseCommit, &freshness, &number, &pullRef, &pullHead); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan historical pull request session: %w", err)
+		}
+		binding, ok := derivePullRequestSourceBinding(baseCommit, freshness, number, pullRef, pullHead)
+		if !ok {
+			continue
+		}
+		encoded, err := json.Marshal(binding)
+		if err != nil {
+			rows.Close()
+			return fmt.Errorf("encode migrated source binding: %w", err)
+		}
+		updates = append(updates, derived{id: id, binding: string(encoded)})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("read historical pull request sessions: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close historical pull request sessions: %w", err)
+	}
+	for _, update := range updates {
+		if _, err := tx.Exec(`UPDATE sessions SET source_binding = ? WHERE id = ?`,
+			update.binding, update.id); err != nil {
+			return fmt.Errorf("write migrated source binding: %w", err)
+		}
+	}
+	return nil
+}
+
+// derivePullRequestSourceBinding reconstructs a version-1 binding purely from values the old
+// session already persisted. The primary receipt states the remote, the configured default ref
+// and its pinned head, and the merge base the workspace was created against; the pull-request
+// receipt states the derived ref and the exact head. If any of those disagree with the session's
+// own columns, nothing is proven and the row keeps no binding. The admitted tree is absent
+// because no pre-selector session ever recorded one.
+func derivePullRequestSourceBinding(
+	baseCommit, freshness string,
+	number int,
+	pullRef, pullHead string,
+) (SourceBinding, bool) {
+	if freshness == "" || number < 1 || pullRef != fmt.Sprintf("refs/pull/%d/head", number) {
+		return SourceBinding{}, false
+	}
+	var receipts []RepositoryFreshnessReceipt
+	if err := json.Unmarshal([]byte(freshness), &receipts); err != nil || len(receipts) < 2 {
+		return SourceBinding{}, false
+	}
+	primary, pull := receipts[0], receipts[len(receipts)-1]
+	if primary.Name != "primary" || pull.Name != "pull_request" ||
+		primary.WorkspaceBaseRevision != baseCommit ||
+		primary.RemoteIdentity == "" || primary.RemoteIdentity != pull.RemoteIdentity ||
+		pull.RequestedRevision != pullRef || pull.ResolvedRevision != pullHead ||
+		pull.FetchedAt.IsZero() {
+		return SourceBinding{}, false
+	}
+	selectedRef := pullRef
+	binding := SourceBinding{
+		Version: SourceBindingVersion, Kind: SourcePullRequest,
+		Requested: SourceSelector{
+			Kind: SourcePullRequest, Number: number, ExpectedHeadCommit: pullHead,
+		},
+		RemoteIdentity: primary.RemoteIdentity,
+		DefaultRef:     primary.RequestedRevision, DefaultCommit: primary.ResolvedRevision,
+		SelectedRef: &selectedRef, SelectedCommit: pullHead, BaseCommit: baseCommit,
+		ResolvedAt:        pull.FetchedAt.UTC(),
+		PullRequestNumber: number, PullRequestExpectedHead: pullHead,
+	}
+	if ValidateSourceBinding(binding) != nil {
+		return SourceBinding{}, false
+	}
+	return binding, true
+}
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -403,6 +504,15 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate schema v22: %w", err)
 		}
 		version = 22
+	}
+	if version < 23 {
+		if _, err := tx.Exec(schemaV23); err != nil {
+			return fmt.Errorf("migrate schema v23: %w", err)
+		}
+		if err := backfillSourceBindings(tx); err != nil {
+			return fmt.Errorf("migrate schema v23: %w", err)
+		}
+		version = 23
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)

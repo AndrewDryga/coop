@@ -861,7 +861,7 @@ func (s *Store) initialSession(req CreateSessionRequest) Session {
 		ForkGeneration:         req.ForkGeneration,
 		BaseCommit:             req.BaseCommit,
 		RepositoryFreshness:    append([]RepositoryFreshnessReceipt(nil), req.RepositoryFreshness...),
-		PullRequest:            clonePullRequestBinding(req.PullRequest),
+		Source:                 cloneSourceBinding(req.Source),
 		Companions:             append([]CompanionRepository(nil), req.Companions...),
 		NetworkMode:            normalizedNetworkMode(req.NetworkMode),
 		NetworkFingerprint:     req.NetworkFingerprint,
@@ -892,15 +892,19 @@ func (s *Store) insertInitialSessionTx(ctx context.Context, tx *sql.Tx, sess *Se
 	if err != nil {
 		return fmt.Errorf("encode repository freshness: %w", err)
 	}
+	sourceBinding, err := encodeSourceBinding(sess.Source)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
 		(id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, mode, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions, repository_freshness,
-		 pull_request_number, pull_request_ref, pull_request_head_commit,
+		 source_binding,
 		 network_mode, network_fingerprint, network_qualification,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
 		sess.Policy, sess.PolicyDigest, sess.AuthorityDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ResponderBinding), responderToken(sess.ResponderBinding), normalizedMode(sess.Mode), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
-		string(companions), string(repositoryFreshness), pullRequestNumber(sess.PullRequest), pullRequestRef(sess.PullRequest), pullRequestHead(sess.PullRequest),
+		string(companions), string(repositoryFreshness), string(sourceBinding),
 		normalizedNetworkMode(sess.NetworkMode), sess.NetworkFingerprint, sess.NetworkQualification,
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
 		sess.MaxQueuedTurns, sess.MaxQueuedBytes, sess.CreatedAt.UnixNano(), sess.UpdatedAt.UnixNano()); err != nil {
@@ -942,7 +946,7 @@ func initialSessionMatchesRequest(sess Session, req CreateSessionRequest) bool {
 		sess.Workspace == req.Workspace && sess.ForkName == req.ForkName &&
 		sess.ForkGeneration == req.ForkGeneration && sess.BaseCommit == req.BaseCommit &&
 		equalRepositoryFreshness(sess.RepositoryFreshness, req.RepositoryFreshness) &&
-		equalPullRequestBinding(sess.PullRequest, req.PullRequest) && equalCompanions(sess.Companions, req.Companions) &&
+		equalSourceBinding(sess.Source, req.Source) && equalCompanions(sess.Companions, req.Companions) &&
 		sess.NetworkMode == normalizedNetworkMode(req.NetworkMode) &&
 		sess.NetworkFingerprint == req.NetworkFingerprint && sess.NetworkQualification == req.NetworkQualification &&
 		sess.NativeSessionID == "" && sess.WorkspaceTask == nil && sess.TurnTimeout == req.TurnTimeout &&
@@ -964,9 +968,23 @@ func equalResponderBinding(left, right *ResponderBinding) bool {
 		(left != nil && right != nil && left.Endpoint == right.Endpoint && left.Token == right.Token)
 }
 
-func equalPullRequestBinding(left, right *PullRequestBinding) bool {
-	return (left == nil && right == nil) ||
-		(left != nil && right != nil && *left == *right)
+// equalSourceBinding compares the two bindings the way a replay must: every field, including the
+// pointer-valued selected ref whose NULL is the exact-commit case, and the resolution instant.
+func equalSourceBinding(left, right *SourceBinding) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	if (left.SelectedRef == nil) != (right.SelectedRef == nil) ||
+		left.SelectedRefValue() != right.SelectedRefValue() {
+		return false
+	}
+	return left.Version == right.Version && left.Kind == right.Kind && left.Requested == right.Requested &&
+		left.RemoteIdentity == right.RemoteIdentity && left.DefaultRef == right.DefaultRef &&
+		left.DefaultCommit == right.DefaultCommit && left.SelectedCommit == right.SelectedCommit &&
+		left.BaseCommit == right.BaseCommit && left.AdmittedTree == right.AdmittedTree &&
+		left.ResolvedAt.Equal(right.ResolvedAt) &&
+		left.PullRequestNumber == right.PullRequestNumber &&
+		left.PullRequestExpectedHead == right.PullRequestExpectedHead
 }
 
 func equalCompanions(left, right []CompanionRepository) bool {
@@ -1009,8 +1027,7 @@ func normalizeCreateRequest(req CreateSessionRequest) CreateSessionRequest {
 		companions, _ := json.Marshal(req.Companions)
 		bindings := []string{
 			req.Policy, req.Target, req.Repository, req.Workspace, req.ForkName, req.BaseCommit,
-			string(companions), fmt.Sprintf("%d", pullRequestNumber(req.PullRequest)),
-			pullRequestRef(req.PullRequest), pullRequestHead(req.PullRequest),
+			string(companions), sourceBindingDigestBinding(req.Source),
 			fmt.Sprintf("%d", req.TurnTimeout), fmt.Sprintf("%d", req.MaxPatchBytes),
 		}
 		if req.ForkGeneration != "" {
@@ -1071,7 +1088,7 @@ func validateCreateRequest(req CreateSessionRequest) error {
 	if normalizedMode(req.Mode) == "bare" {
 		// A bare session is a policy with no repository behind it: the policy binds, the four
 		// repository bindings stay empty, and nothing repository-shaped may ride along.
-		if req.Policy == "" || boundCount != 1 || req.ForkGeneration != "" || req.PullRequest != nil ||
+		if req.Policy == "" || boundCount != 1 || req.ForkGeneration != "" || req.Source != nil ||
 			len(req.Companions) != 0 || len(req.RepositoryFreshness) != 0 {
 			return &Error{Code: CodeInvalidRequest, Detail: "a bare session binds a policy and no repository"}
 		}
@@ -1089,13 +1106,12 @@ func validateCreateRequest(req CreateSessionRequest) error {
 			return &Error{Code: CodeInvalidRequest, Detail: "fork generation requires complete session bindings"}
 		}
 	}
-	if req.PullRequest != nil {
-		if req.PullRequest.Number < 1 || req.PullRequest.Ref == "" || req.PullRequest.HeadCommit == "" ||
-			!validBoundedText(req.PullRequest.Ref, MaxBindingBytes) ||
-			!validBoundedText(req.PullRequest.HeadCommit, MaxBindingBytes) ||
-			req.PullRequest.Ref != fmt.Sprintf("refs/pull/%d/head", req.PullRequest.Number) ||
-			!validGitObjectID(req.PullRequest.HeadCommit) || boundCount != len(bindings) {
-			return &Error{Code: CodeInvalidRequest, Detail: "pull request binding is invalid"}
+	if req.Source != nil {
+		if boundCount != len(bindings) {
+			return &Error{Code: CodeInvalidRequest, Detail: "a source binding requires complete session bindings"}
+		}
+		if err := ValidateSourceBinding(*req.Source); err != nil {
+			return err
 		}
 	}
 	seenCompanions := make(map[string]bool, len(req.Companions))
@@ -1347,7 +1363,7 @@ func (s *Store) ListSessionRuntimeCleanupTurns(ctx context.Context, sessionID st
 }
 
 const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, authority_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, mode, repository_read_only, repository, workspace, fork_name, fork_generation,
-	   base_commit, companions, repository_freshness, pull_request_number, pull_request_ref, pull_request_head_commit,
+	   base_commit, companions, repository_freshness, source_binding,
 	   network_mode, network_fingerprint, network_qualification,
 	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
 	   max_turns, max_queued_turns, max_queued_bytes, turns_used, queued_turn_count,
@@ -1359,14 +1375,13 @@ type rowScanner interface{ Scan(...any) error }
 func scanSession(row rowScanner) (Session, error) {
 	var sess Session
 	var state, activity, active string
-	var companions, repositoryFreshness string
-	var pullRequestNumber int
-	var pullRequestRef, pullRequestHead, responderEndpointValue, responderTokenValue, workspaceTaskValue string
+	var companions, repositoryFreshness, sourceBinding string
+	var responderEndpointValue, responderTokenValue, workspaceTaskValue string
 	var turnTimeout int64
 	var createdAt, updatedAt int64
 	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest, &sess.AuthorityDigest,
 		&sess.ProjectEnv, &sess.ProjectMCP, &responderEndpointValue, &responderTokenValue, &workspaceTaskValue, &sess.Mode, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions, &repositoryFreshness,
-		&pullRequestNumber, &pullRequestRef, &pullRequestHead,
+		&sourceBinding,
 		&sess.NetworkMode, &sess.NetworkFingerprint, &sess.NetworkQualification, &sess.NativeSessionID,
 		&turnTimeout, &sess.MaxPatchBytes, &sess.Revision, &state, &activity, &sess.MaxTurns,
 		&sess.MaxQueuedTurns, &sess.MaxQueuedBytes, &sess.TurnsUsed, &sess.QueuedTurnCount,
@@ -1382,8 +1397,12 @@ func scanSession(row rowScanner) (Session, error) {
 			return Session{}, fmt.Errorf("decode repository freshness: %w", err)
 		}
 	}
-	if pullRequestNumber > 0 {
-		sess.PullRequest = &PullRequestBinding{Number: pullRequestNumber, Ref: pullRequestRef, HeadCommit: pullRequestHead}
+	if sourceBinding != "" {
+		var binding SourceBinding
+		if err := json.Unmarshal([]byte(sourceBinding), &binding); err != nil {
+			return Session{}, fmt.Errorf("decode source binding: %w", err)
+		}
+		sess.Source = &binding
 	}
 	if responderEndpointValue != "" {
 		sess.ResponderBinding = &ResponderBinding{Endpoint: responderEndpointValue, Token: responderTokenValue}
@@ -1406,12 +1425,45 @@ func scanSession(row rowScanner) (Session, error) {
 	return sess, nil
 }
 
-func clonePullRequestBinding(value *PullRequestBinding) *PullRequestBinding {
+// CloneSourceBinding copies the immutable binding so a caller can never mutate a stored session's
+// source through a shared pointer.
+func CloneSourceBinding(value *SourceBinding) *SourceBinding { return cloneSourceBinding(value) }
+
+func cloneSourceBinding(value *SourceBinding) *SourceBinding {
 	if value == nil {
 		return nil
 	}
 	clone := *value
+	if value.SelectedRef != nil {
+		selected := *value.SelectedRef
+		clone.SelectedRef = &selected
+	}
 	return &clone
+}
+
+func encodeSourceBinding(value *SourceBinding) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("encode source binding: %w", err)
+	}
+	if len(encoded) > MaxBindingBytes {
+		return "", &Error{Code: CodeInvalidRequest, Detail: "source binding is outside bounds"}
+	}
+	return string(encoded), nil
+}
+
+// sourceBindingDigestBinding contributes the selected source to a synthesized policy digest. Only
+// the immutable identities belong in it; the resolution instant would make two identical sessions
+// digest differently.
+func sourceBindingDigestBinding(value *SourceBinding) string {
+	if value == nil {
+		return ""
+	}
+	return fmt.Sprintf("source=%d/%s/%s/%s/%s",
+		value.Version, value.Kind, value.SelectedRefValue(), value.SelectedCommit, value.BaseCommit)
 }
 
 func cloneResponderBinding(value *ResponderBinding) *ResponderBinding {
@@ -1465,27 +1517,6 @@ func validResponderToken(value string) bool {
 		}
 	}
 	return true
-}
-
-func pullRequestNumber(value *PullRequestBinding) int {
-	if value == nil {
-		return 0
-	}
-	return value.Number
-}
-
-func pullRequestRef(value *PullRequestBinding) string {
-	if value == nil {
-		return ""
-	}
-	return value.Ref
-}
-
-func pullRequestHead(value *PullRequestBinding) string {
-	if value == nil {
-		return ""
-	}
-	return value.HeadCommit
 }
 
 func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnRequest) (Turn, error) {

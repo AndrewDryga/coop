@@ -3,7 +3,7 @@ name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, moves workspaces only as digest-verified bounded bundles, and never falls back to local execution
 subsystem: worker
 sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/worker.md, docs/examples/worker.json]
-updated: 2026-09-10
+updated: 2026-09-11
 ---
 
 `coop worker connect --config <absolute-path>` runs one private Coop daemon as a fleet worker. Its
@@ -81,6 +81,11 @@ The traps the code does not make obvious:
   start event. The reconnect/ACK regression proves this metadata survives durable delivery.
 
 ## Changelog
+- 2026-09-11 — `create_session` carries a `source` selector; the connector keeps its OWN bounded
+  copy of that union (`sourceSelector`, `internal/workerconnector/executor.go`) because this
+  package may import only `secretscan` and `workerproto`, refuses a malformed one with
+  `invalid_command` before any daemon call, and advertises `repository-source-selector:1` only on
+  live daemon proof, independently of `repository-freshness:2`. See [[session-source-selection]].
 - 2026-09-10 — live Responder QA exposed a completed 54-second review stranded behind a
   30-second worker timeout. Added read-only result reconciliation and explicit empty evidence
   arrays; HTTP and worker regressions prove no repeated gate and preserved session identity.

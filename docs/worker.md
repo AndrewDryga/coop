@@ -53,12 +53,24 @@ expansion. Use literal absolute paths, not `~` or `$HOME` in JSON. In particular
 - `journal_dir` is persistent, owner-private storage, not a cache or disposable directory.
 - `repositories`, `capabilities` and `capacity` are deployment advertisements. Populate them to
   match the controller's contract and actual worker resources. Coop only advertises its
-  `repository-freshness` capability after the running local daemon proves support; putting it
-  in JSON cannot override that check.
+  implementation capabilities — `repository-freshness` version `2` and
+  `repository-source-selector` version `1` — after the running local daemon proves each one in
+  `GET /v1/capabilities`; putting either in JSON cannot override that check, and a configured
+  claim is removed. The two are versioned independently, so a partially upgraded fleet advertises
+  only what each daemon actually supports and a controller can withhold source-selecting work
+  from workers that do not have it.
 
 Keep the configuration and enrollment file private (`0600`) and their containing directories
 owned by the daemon/connector user. That user must be able to create the identity and journal,
 and remove the enrollment token after use. Do not copy another worker's identity or journal.
+
+A `create_session` command may carry a `source` selector beside its policy and digests
+(`{"kind":"default"}`, `{"kind":"branch","name":…}`, `{"kind":"pull_request","number":…}` with an
+optional `expected_head_commit`, or `{"kind":"commit","sha":…}`). The connector validates its
+shape and bounds, forwards it unchanged to the daemon — which owns the authority decision — and
+refuses a malformed one with `invalid_command` before any daemon call. A create fence carries the
+same request, selector included, so it occupies the create's exact ledger identity. See
+[session-api.md](session-api.md) for what each selector resolves to.
 
 Run the connector under your process supervisor:
 

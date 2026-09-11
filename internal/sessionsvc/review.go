@@ -57,29 +57,29 @@ type RunReviewRequest struct {
 }
 
 type ReviewDossier struct {
-	OperationID           string                      `json:"operation_id"`
-	SessionID             string                      `json:"session_id"`
-	SessionRevision       int64                       `json:"session_revision"`
-	PolicyDigest          string                      `json:"policy_digest"`
-	PullRequest           *session.PullRequestBinding `json:"pull_request,omitempty"`
-	CreationBase          string                      `json:"creation_base"`
-	SourceHead            string                      `json:"source_head"`
-	SourceTree            string                      `json:"source_tree"`
-	ParentHead            string                      `json:"parent_head"`
-	ParentTree            string                      `json:"parent_tree"`
-	CandidateHead         string                      `json:"candidate_head"`
-	CandidateTree         string                      `json:"candidate_tree"`
-	Rebase                ReviewRebaseStatus          `json:"rebase"`
-	Gate                  ReviewGateStatus            `json:"gate"`
-	GateError             string                      `json:"gate_error,omitempty"`
-	PolicyFindings        []string                    `json:"policy_findings,omitempty"`
-	Patch                 []byte                      `json:"patch,omitempty"`
-	PatchTruncated        bool                        `json:"patch_truncated"`
-	PatchArtifactID       string                      `json:"patch_artifact_id,omitempty"`
-	PatchDigest           string                      `json:"patch_digest,omitempty"`
-	PatchBytes            int64                       `json:"patch_bytes"`
-	Publishable           bool                        `json:"publishable"`
-	NotPublishableReasons []string                    `json:"not_publishable_reasons,omitempty"`
+	OperationID           string                 `json:"operation_id"`
+	SessionID             string                 `json:"session_id"`
+	SessionRevision       int64                  `json:"session_revision"`
+	PolicyDigest          string                 `json:"policy_digest"`
+	Source                *session.SourceBinding `json:"source,omitempty"`
+	CreationBase          string                 `json:"creation_base"`
+	SourceHead            string                 `json:"source_head"`
+	SourceTree            string                 `json:"source_tree"`
+	ParentHead            string                 `json:"parent_head"`
+	ParentTree            string                 `json:"parent_tree"`
+	CandidateHead         string                 `json:"candidate_head"`
+	CandidateTree         string                 `json:"candidate_tree"`
+	Rebase                ReviewRebaseStatus     `json:"rebase"`
+	Gate                  ReviewGateStatus       `json:"gate"`
+	GateError             string                 `json:"gate_error,omitempty"`
+	PolicyFindings        []string               `json:"policy_findings,omitempty"`
+	Patch                 []byte                 `json:"patch,omitempty"`
+	PatchTruncated        bool                   `json:"patch_truncated"`
+	PatchArtifactID       string                 `json:"patch_artifact_id,omitempty"`
+	PatchDigest           string                 `json:"patch_digest,omitempty"`
+	PatchBytes            int64                  `json:"patch_bytes"`
+	Publishable           bool                   `json:"publishable"`
+	NotPublishableReasons []string               `json:"not_publishable_reasons,omitempty"`
 }
 
 // ReviewGateResult is the complete outcome of the trusted parent gate.
@@ -108,22 +108,22 @@ func (f ReviewGateFunc) Run(ctx context.Context, gateRepo, treeDir string) (Revi
 const MaxReviewErrorBytes = session.MaxErrorDetailBytes
 
 type sessionReviewIntent struct {
-	OperationID        string                      `json:"operation_id"`
-	SessionID          string                      `json:"session_id"`
-	SessionRevision    int64                       `json:"session_revision"`
-	Repository         string                      `json:"repository"`
-	Workspace          string                      `json:"workspace"`
-	ForkGeneration     string                      `json:"fork_generation"`
-	CreationBase       string                      `json:"creation_base"`
-	SourceHead         string                      `json:"source_head"`
-	SourceTree         string                      `json:"source_tree"`
-	SourceBranch       string                      `json:"source_branch"`
-	SourceStatusDigest string                      `json:"source_status_digest"`
-	ParentHead         string                      `json:"parent_head"`
-	ParentTree         string                      `json:"parent_tree"`
-	PolicyDigest       string                      `json:"policy_digest"`
-	PullRequest        *session.PullRequestBinding `json:"pull_request,omitempty"`
-	MaxPatchBytes      int                         `json:"max_patch_bytes"`
+	OperationID        string                 `json:"operation_id"`
+	SessionID          string                 `json:"session_id"`
+	SessionRevision    int64                  `json:"session_revision"`
+	Repository         string                 `json:"repository"`
+	Workspace          string                 `json:"workspace"`
+	ForkGeneration     string                 `json:"fork_generation"`
+	CreationBase       string                 `json:"creation_base"`
+	SourceHead         string                 `json:"source_head"`
+	SourceTree         string                 `json:"source_tree"`
+	SourceBranch       string                 `json:"source_branch"`
+	SourceStatusDigest string                 `json:"source_status_digest"`
+	ParentHead         string                 `json:"parent_head"`
+	ParentTree         string                 `json:"parent_tree"`
+	PolicyDigest       string                 `json:"policy_digest"`
+	Source             *session.SourceBinding `json:"source,omitempty"`
+	MaxPatchBytes      int                    `json:"max_patch_bytes"`
 }
 
 type sessionReviewSourceIdentity struct {
@@ -385,19 +385,23 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 	if !ancestor {
 		return sessionReviewIntent{}, errors.New("creation base is not an ancestor of source HEAD")
 	}
-	if sess.PullRequest != nil {
-		pullHead, err := sessionWorkspaceCommit(sess.Repository, sess.PullRequest.HeadCommit)
+	if sess.Source != nil && sess.Source.SelectedCommit != base {
+		// Whatever source the session was admitted on — branch, pull request or exact commit —
+		// the work under review must still contain it. Losing it means the branch was rewritten
+		// out from under the admitted source. A default selection needs no second check: its
+		// selected commit IS the creation base the ancestry check above just proved.
+		admitted, err := sessionWorkspaceCommit(sess.Repository, sess.Source.SelectedCommit)
 		if err != nil {
-			return sessionReviewIntent{}, fmt.Errorf("resolve admitted pull request head: %w", err)
+			return sessionReviewIntent{}, fmt.Errorf("resolve admitted source head: %w", err)
 		}
-		containsPullRequest, err := sessionReviewIsAncestor(sess.Workspace, pullHead, source.Head)
+		containsSource, err := sessionReviewIsAncestor(sess.Workspace, admitted, source.Head)
 		if err != nil {
-			return sessionReviewIntent{}, fmt.Errorf("check admitted pull request ancestry: %w", err)
+			return sessionReviewIntent{}, fmt.Errorf("check admitted source ancestry: %w", err)
 		}
-		if !containsPullRequest {
+		if !containsSource {
 			return sessionReviewIntent{}, &session.Error{
 				Code:   session.CodeInvalidSessionState,
-				Detail: "review source no longer contains the admitted pull request head; restore the task branch before retrying",
+				Detail: "review source no longer contains the admitted source commit; restore the task branch before retrying",
 			}
 		}
 	}
@@ -423,7 +427,7 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 		CreationBase:   base, SourceHead: source.Head, SourceTree: source.Tree,
 		SourceBranch: source.Branch, SourceStatusDigest: source.StatusDigest,
 		ParentHead: parent.Head, ParentTree: parent.Tree,
-		PolicyDigest: sess.PolicyDigest, PullRequest: cloneSessionPullRequestBinding(sess.PullRequest),
+		PolicyDigest: sess.PolicyDigest, Source: session.CloneSourceBinding(sess.Source),
 		MaxPatchBytes: sess.MaxPatchBytes,
 	}, nil
 }
@@ -524,10 +528,8 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 		!validSessionReviewObject(intent.ParentTree) || intent.MaxPatchBytes <= 0 || intent.MaxPatchBytes > session.MaxPatchBytesLimit {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review operation intent is invalid")
 	}
-	if intent.PullRequest != nil && (intent.PullRequest.Number < 1 ||
-		intent.PullRequest.Ref != fmt.Sprintf("refs/pull/%d/head", intent.PullRequest.Number) ||
-		!validSessionReviewObject(intent.PullRequest.HeadCommit)) {
-		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review pull request binding is invalid")
+	if intent.Source != nil && session.ValidateSourceBinding(*intent.Source) != nil {
+		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review source binding is invalid")
 	}
 	bound, err := s.store.GetSession(ctx, intent.SessionID)
 	if err != nil || bound.Revision != intent.SessionRevision || bound.Repository != intent.Repository ||
@@ -545,7 +547,7 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	defer candidate.cleanup()
 	dossier := ReviewDossier{
 		OperationID: op.ID, SessionID: intent.SessionID, SessionRevision: intent.SessionRevision,
-		PolicyDigest: intent.PolicyDigest, PullRequest: cloneSessionPullRequestBinding(intent.PullRequest),
+		PolicyDigest: intent.PolicyDigest, Source: session.CloneSourceBinding(intent.Source),
 		CreationBase: intent.CreationBase,
 		SourceHead:   intent.SourceHead, SourceTree: intent.SourceTree,
 		ParentHead: intent.ParentHead, ParentTree: intent.ParentTree,

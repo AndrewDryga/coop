@@ -671,9 +671,14 @@ func realGitRepository(path string) (string, error) {
 }
 
 type CreateRemoteSessionRequest struct {
-	Policy           string                    `json:"policy"`
-	Task             string                    `json:"task"`
-	PullRequest      *RemotePullRequestBinding `json:"pull_request,omitempty"`
+	Policy string `json:"policy"`
+	Task   string `json:"task"`
+	// Source selects which source INSIDE the policy's already-authorized repository the session
+	// starts from. Omitting it is the policy's own default, which is the value host creation
+	// supplies when nobody chose another source; a workspace-free session carries none at all.
+	// It participates in the request hash, so create, idempotent replay and a fence all bind the
+	// same selector.
+	Source           *session.SourceSelector   `json:"source,omitempty"`
 	ResponderBinding *session.ResponderBinding `json:"responder_binding,omitempty"`
 	// ExpectedPolicyDigest / ExpectedAuthorityDigest pin the create to the policy the caller was
 	// authorized against (a fleet worker advertises them from its configuration). Admission compares
@@ -773,24 +778,6 @@ func (s *Service) executeEnsureWorkspaceTask(
 		return session.Session{}, err
 	}
 	return bound, nil
-}
-
-// RemotePullRequestBinding selects one GitHub pull-request head through the
-// operator-owned remote configured by the session policy. The caller cannot
-// name a repository, remote, or arbitrary ref, and the expected head makes a
-// PR update racing session creation fail closed instead of silently changing
-// the task's approved source.
-type RemotePullRequestBinding struct {
-	Number     int    `json:"number"`
-	HeadCommit string `json:"head_commit"`
-}
-
-func cloneSessionPullRequestBinding(value *session.PullRequestBinding) *session.PullRequestBinding {
-	if value == nil {
-		return nil
-	}
-	clone := *value
-	return &clone
 }
 
 func cloneResponderBinding(value *session.ResponderBinding) *session.ResponderBinding {
@@ -2263,10 +2250,9 @@ func (s *Service) beginCreateOperation(
 	if req.Policy == "" || len(req.Policy) > session.MaxIDBytes || !utf8SessionText(req.Policy) || req.Task == "" || len(req.Task) > session.MaxExternalRefBytes || !utf8SessionText(req.Task) {
 		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "policy and bounded task are required"}
 	}
-	if req.PullRequest != nil && (req.PullRequest.Number < 1 ||
-		!validSessionWorkspaceCommit(req.PullRequest.HeadCommit)) {
-		return session.Operation{}, &session.Error{
-			Code: session.CodeInvalidRequest, Detail: "pull request number and exact head commit are required",
+	if req.Source != nil {
+		if err := session.ValidateSourceSelectorShape(*req.Source); err != nil {
+			return session.Operation{}, err
 		}
 	}
 	if err := session.ValidateResponderBinding(req.ResponderBinding); err != nil {
@@ -2339,14 +2325,23 @@ func (s *Service) replayCreateOperation(ctx context.Context, op session.Operatio
 }
 
 type sessionCreateIntent struct {
-	OperationID         string                               `json:"operation_id"`
-	Policy              Policy                               `json:"policy"`
-	Task                string                               `json:"task"`
-	SessionID           string                               `json:"session_id"`
-	ForkName            string                               `json:"fork_name"`
-	BaseCommit          string                               `json:"base_commit"`
-	WorkspaceCommit     string                               `json:"workspace_commit"`
-	PullRequest         *session.PullRequestBinding          `json:"pull_request,omitempty"`
+	OperationID     string `json:"operation_id"`
+	Policy          Policy `json:"policy"`
+	Task            string `json:"task"`
+	SessionID       string `json:"session_id"`
+	ForkName        string `json:"fork_name"`
+	BaseCommit      string `json:"base_commit"`
+	WorkspaceCommit string `json:"workspace_commit"`
+	// Source is the normalized request captured at admission, before any remote is contacted;
+	// SourceBinding is the immutable identity the pin phase resolved from it and replaced this
+	// intent with, so a replay reuses exact objects instead of landing on a branch that moved.
+	Source        *session.SourceSelector `json:"source,omitempty"`
+	SourceBinding *session.SourceBinding  `json:"source_binding,omitempty"`
+	// RetiredPullRequest detects a create intent journaled by a binary that only knew the
+	// pull-request dialect. It is never written and never read as a source: replaying such an
+	// intent as "default" would quietly move an approved pull-request session onto the default
+	// branch, so its presence fails the replay closed instead.
+	RetiredPullRequest  json.RawMessage                      `json:"pull_request,omitempty"`
 	ResponderBinding    *session.ResponderBinding            `json:"responder_binding,omitempty"`
 	Companions          []session.CompanionRepository        `json:"companions,omitempty"`
 	RepositoryFreshness []session.RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
@@ -2364,9 +2359,9 @@ func (s *Service) captureCreateIntent(op session.Operation, req CreateRemoteSess
 		return sessionCreateIntent{}, err
 	}
 	if policy.Mode == agents.ModeBare {
-		if req.PullRequest != nil {
+		if req.Source != nil {
 			return sessionCreateIntent{}, &session.Error{Code: session.CodeInvalidRequest,
-				Detail: "a bare session has no repository to bind a pull request to"}
+				Detail: "a bare session has no repository to select a source in"}
 		}
 		if req.ResponderBinding != nil {
 			return sessionCreateIntent{}, &session.Error{Code: session.CodeInvalidRequest,
@@ -2392,12 +2387,17 @@ func (s *Service) captureCreateIntent(op session.Operation, req CreateRemoteSess
 		SessionID: sessionID, ForkName: deterministicForkName(op.ID), Companions: companions,
 		ResponderBinding: cloneResponderBinding(req.ResponderBinding),
 	}
-	if req.PullRequest != nil {
-		intent.PullRequest = &session.PullRequestBinding{
-			Number:     req.PullRequest.Number,
-			Ref:        fmt.Sprintf("refs/pull/%d/head", req.PullRequest.Number),
-			HeadCommit: req.PullRequest.HeadCommit,
+	if policy.Mode != agents.ModeBare {
+		// Every repository-backed session records the exact selector it was admitted with,
+		// including the default one the host supplies when nobody chose another source.
+		normalized := session.DefaultSourceSelector()
+		if req.Source != nil {
+			normalized = *req.Source
 		}
+		if err := validateSessionSourceSelector(policy, normalized); err != nil {
+			return sessionCreateIntent{}, err
+		}
+		intent.Source = &normalized
 	}
 	return intent, nil
 }
@@ -2431,6 +2431,19 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 	if intent.OperationID != op.ID || intent.SessionID != deterministicSessionID(op.ID) ||
 		intent.ForkName != deterministicForkName(op.ID) {
 		return s.rejectCreateIntent(ctx, op.ID, "create operation intent is invalid")
+	}
+	if len(intent.RetiredPullRequest) != 0 {
+		return s.rejectCreateIntent(ctx, op.ID,
+			"create operation intent selects a source through the retired pull-request dialect; request the session again with a source selector")
+	}
+	if intent.Policy.Mode != agents.ModeBare && intent.Source == nil {
+		// A repository-backed intent journaled before source selection existed asked for exactly
+		// the policy's own configured branch, which is what the default selector resolves to — so
+		// normalizing it replays the SAME request rather than choosing a new one. An intent that
+		// selected a pull request never reaches here; it is refused above, because replaying it
+		// as the default would quietly move an approved session onto the default branch.
+		normalized := session.DefaultSourceSelector()
+		intent.Source = &normalized
 	}
 	sessionExisted := false
 	if existing, err := s.store.GetSession(ctx, intent.SessionID); err == nil {
@@ -2483,7 +2496,7 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		// exists, and its network posture is the policy's own (open unless it wrote none) —
 		// there is no project whose remembered approval could widen or narrow it.
 		if intent.BaseCommit != "" || intent.WorkspaceCommit != "" || len(intent.RepositoryFreshness) != 0 ||
-			len(intent.Companions) != 0 || intent.PullRequest != nil || intent.Policy.Repository != "" {
+			len(intent.Companions) != 0 || intent.Source != nil || intent.Policy.Repository != "" {
 			return s.rejectCreateIntent(ctx, op.ID, "create operation intent names a repository for a bare policy")
 		}
 		createReq.NetworkMode = string(intent.Policy.Egress.resolvedMode())
@@ -2509,6 +2522,12 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 				Code:   session.CodeRepositoryUnavailable,
 				Detail: "repository freshness must be reacquired by a new session request",
 			})
+		}
+		if intent.Policy.Remote != "" && intent.SourceBinding == nil {
+			// A remote-backed policy always resolves a binding; an intent pinned without one
+			// predates source selection and must be requested again rather than materialized
+			// into a session no controller could validate.
+			return s.rejectCreateIntent(ctx, op.ID, "create operation intent has no resolved source binding")
 		}
 		workspaceCommit := intent.WorkspaceCommit
 		if workspaceCommit == "" {
@@ -2557,7 +2576,7 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		}
 		createReq.Repository, createReq.Workspace, createReq.ForkName = intent.Policy.Repository, workspace.Path, intent.ForkName
 		createReq.ForkGeneration = string(workspace.Fork.Generation)
-		createReq.BaseCommit, createReq.PullRequest, createReq.Companions = intent.BaseCommit, intent.PullRequest, companions
+		createReq.BaseCommit, createReq.Source, createReq.Companions = intent.BaseCommit, session.CloneSourceBinding(intent.SourceBinding), companions
 		createReq.RepositoryFreshness = append([]session.RepositoryFreshnessReceipt(nil), intent.RepositoryFreshness...)
 		createReq.NetworkMode, createReq.NetworkFingerprint = string(network.Mode), network.Fingerprint
 		createReq.NetworkQualification = network.Qualification
@@ -2622,21 +2641,16 @@ func (s *Service) pinCreateIntent(
 			return sessionCreateIntent{}, errors.New("create operation companion intent does not match policy")
 		}
 	}
-	var source *RemotePullRequestBinding
-	if intent.PullRequest != nil {
-		if intent.PullRequest.Ref != fmt.Sprintf("refs/pull/%d/head", intent.PullRequest.Number) {
-			return sessionCreateIntent{}, errors.New("create operation pull request ref is invalid")
-		}
-		source = &RemotePullRequestBinding{
-			Number: intent.PullRequest.Number, HeadCommit: intent.PullRequest.HeadCommit,
-		}
+	if intent.Source == nil {
+		return sessionCreateIntent{}, errors.New("create operation intent names no source")
 	}
-	pins, err := pinSessionPolicyRepositories(ctx, intent.Policy, source)
+	pins, err := pinSessionPolicySources(ctx, intent.Policy, *intent.Source)
 	if err != nil {
 		return sessionCreateIntent{}, err
 	}
 	intent.BaseCommit = pins.creationBase
 	intent.WorkspaceCommit = pins.workspaceHead
+	intent.SourceBinding = pins.binding
 	intent.RepositoryFreshness = append([]session.RepositoryFreshnessReceipt(nil), pins.receipts...)
 	for index := range intent.Companions {
 		intent.Companions[index].BaseCommit = pins.companions[index]
@@ -3196,9 +3210,9 @@ func (s *Service) GetChanges(ctx context.Context, sessionID string) (WorkspaceCh
 	if err != nil {
 		return WorkspaceChanges{}, err
 	}
-	if sess.PullRequest != nil {
-		changes.PullRequestTree, err = sessionWorkspaceTree(
-			sess.Workspace, sess.PullRequest.HeadCommit,
+	if sess.Source != nil {
+		changes.AdmittedSourceTree, err = sessionWorkspaceTree(
+			sess.Workspace, sess.Source.SelectedCommit,
 		)
 	}
 	return changes, err
@@ -3244,9 +3258,9 @@ func (s *Service) GetChangesPage(
 	if err != nil {
 		return WorkspaceChanges{}, err
 	}
-	if sess.PullRequest != nil {
-		changes.PullRequestTree, err = sessionWorkspaceTree(
-			sess.Workspace, sess.PullRequest.HeadCommit,
+	if sess.Source != nil {
+		changes.AdmittedSourceTree, err = sessionWorkspaceTree(
+			sess.Workspace, sess.Source.SelectedCommit,
 		)
 	}
 	return changes, err

@@ -181,8 +181,9 @@ func TestCompleteCreateSessionOperationAcceptsABareSessionWithoutARepository(t *
 		"companion": func(r *CreateSessionRequest) {
 			r.Companions = []CompanionRepository{{Name: "docs", Repository: "/d", Workspace: "/w", BaseCommit: "c"}}
 		},
-		"pull request": func(r *CreateSessionRequest) {
-			r.PullRequest = &PullRequestBinding{Number: 1, Ref: "refs/pull/1/head", HeadCommit: strings.Repeat("a", 40)}
+		"source": func(r *CreateSessionRequest) {
+			binding := testSourceBinding(SourceDefault)
+			r.Source = &binding
 		},
 		"freshness": func(r *CreateSessionRequest) {
 			r.RepositoryFreshness = remoteCreateSessionRequest("x").RepositoryFreshness

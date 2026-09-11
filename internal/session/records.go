@@ -7,11 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
 const (
-	SchemaVersion = 22
+	SchemaVersion = 23
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -305,7 +306,7 @@ type Session struct {
 	ForkGeneration      string                       `json:"fork_generation,omitempty"`
 	BaseCommit          string                       `json:"base_commit"`
 	RepositoryFreshness []RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
-	PullRequest         *PullRequestBinding          `json:"pull_request,omitempty"`
+	Source              *SourceBinding               `json:"source,omitempty"`
 	Companions          []CompanionRepository        `json:"companions,omitempty"`
 	NativeSessionID     string                       `json:"native_session_id"`
 	// Network is this session's frozen egress posture. NetworkFingerprint and
@@ -377,14 +378,226 @@ func ResponderBindingDigest(value *ResponderBinding) string {
 	return hex.EncodeToString(combined[:])
 }
 
-// PullRequestBinding is the immutable source identity for a session created
-// from an existing pull request. Repository authority remains in the session's
-// operator policy; this binding records only the policy-derived ref and its
-// exact head at admission.
-type PullRequestBinding struct {
-	Number     int    `json:"number"`
-	Ref        string `json:"ref"`
-	HeadCommit string `json:"head_commit"`
+// SourceKind is the closed set of sources a caller may select INSIDE the repository its
+// session policy already authorizes. It names no repository, path, remote, URL or raw ref:
+// every ref is derived by Coop from the operator policy plus one bounded selector value.
+type SourceKind string
+
+const (
+	// SourceDefault is the policy-configured remote and default branch.
+	SourceDefault SourceKind = "default"
+	// SourceBranch derives refs/heads/<name> and nothing else.
+	SourceBranch SourceKind = "branch"
+	// SourcePullRequest derives refs/pull/<number>/head and nothing else.
+	SourcePullRequest SourceKind = "pull_request"
+	// SourceCommit names one complete object id, proven by a remote fetch every time.
+	SourceCommit SourceKind = "commit"
+)
+
+// MaxSourceBranchBytes bounds a selected branch name, matching the bound an operator-configured
+// policy branch already carries.
+const MaxSourceBranchBytes = 240
+
+// MaxSourcePullRequestNumber bounds a selected pull-request number. It is far above any real
+// repository's numbering and keeps the derived ref short and obviously finite.
+const MaxSourcePullRequestNumber = 10_000_000
+
+// SourceSelector is the complete request union for choosing a session's source. Exactly one
+// kind-specific field may be set, and ExpectedHeadCommit is HOST-owned evidence rather than a
+// model field: trusted ingress may pin the pull-request head it observed so a push racing
+// session creation fails closed instead of silently changing the approved source.
+type SourceSelector struct {
+	Kind               SourceKind `json:"kind"`
+	Name               string     `json:"name,omitempty"`
+	Number             int        `json:"number,omitempty"`
+	SHA                string     `json:"sha,omitempty"`
+	ExpectedHeadCommit string     `json:"expected_head_commit,omitempty"`
+}
+
+// DefaultSourceSelector is the selector a repository-backed create carries when its caller chose
+// no other source: the policy's own configured remote and default branch.
+func DefaultSourceSelector() SourceSelector { return SourceSelector{Kind: SourceDefault} }
+
+// ValidateSourceSelectorShape is the transport-neutral half of selector validation: the union
+// discriminator, per-kind field exclusivity, and bounds. It deliberately runs no subprocess, so
+// the durable store can repeat it as its final boundary; the service layer adds Git's own ref
+// rules and the operator-policy authority check on top.
+func ValidateSourceSelectorShape(selector SourceSelector) error {
+	invalid := func(detail string) error {
+		return &Error{Code: CodeInvalidRequest, Detail: detail}
+	}
+	switch selector.Kind {
+	case SourceDefault:
+		if selector.Name != "" || selector.Number != 0 || selector.SHA != "" || selector.ExpectedHeadCommit != "" {
+			return invalid("the default source takes no selector value")
+		}
+	case SourceBranch:
+		if selector.Number != 0 || selector.SHA != "" || selector.ExpectedHeadCommit != "" {
+			return invalid("a branch source takes only a branch name")
+		}
+		if !validSourceBranchName(selector.Name) {
+			return invalid("branch source requires a bounded Git branch name")
+		}
+	case SourcePullRequest:
+		if selector.Name != "" || selector.SHA != "" {
+			return invalid("a pull request source takes only a number and optional expected head")
+		}
+		if selector.Number < 1 || selector.Number > MaxSourcePullRequestNumber {
+			return invalid(fmt.Sprintf("pull request source requires a number between 1 and %d", MaxSourcePullRequestNumber))
+		}
+		if selector.ExpectedHeadCommit != "" && !validGitObjectID(selector.ExpectedHeadCommit) {
+			return invalid("pull request expected head must be a complete lowercase object id")
+		}
+	case SourceCommit:
+		if selector.Name != "" || selector.Number != 0 || selector.ExpectedHeadCommit != "" {
+			return invalid("a commit source takes only a complete object id")
+		}
+		if !validGitObjectID(selector.SHA) {
+			return invalid("commit source requires a complete lowercase 40- or 64-character object id")
+		}
+	default:
+		return invalid("source kind must be default, branch, pull_request or commit")
+	}
+	return nil
+}
+
+func validSourceBranchName(name string) bool {
+	if name == "" || len(name) > MaxSourceBranchBytes || name[0] == '-' {
+		return false
+	}
+	if !validBoundedText(name, MaxSourceBranchBytes) || strings.ContainsAny(name, "\r\n") {
+		return false
+	}
+	return true
+}
+
+// SourceBindingVersion is the version every binding Coop resolves carries. It is independent of
+// the freshness receipt version beside it: a receipt proves the remote was contacted, a binding
+// states which exact objects the session was admitted on.
+const SourceBindingVersion = 1
+
+// SourceBinding is the immutable version-1 source identity of one session, resolved by Coop
+// against the operator-configured remote BEFORE the workspace exists. Repository authority
+// remains in the session's policy; this records only policy-derived refs, the exact objects, and
+// when they were proven. It never carries a remote URL or credential.
+//
+// SelectedRef is null for an exact commit, which has no advertised ref to name. For the default
+// source the selected and default identities are equal. BaseCommit is the merge base of the
+// pinned default head and the selected head, so a review baseline always represents divergence
+// from the configured default branch rather than an invented ancestor.
+type SourceBinding struct {
+	Version        int            `json:"version"`
+	Kind           SourceKind     `json:"kind"`
+	Requested      SourceSelector `json:"requested"`
+	RemoteIdentity string         `json:"remote_identity"`
+	DefaultRef     string         `json:"default_ref"`
+	DefaultCommit  string         `json:"default_commit"`
+	SelectedRef    *string        `json:"selected_ref"`
+	SelectedCommit string         `json:"selected_commit"`
+	BaseCommit     string         `json:"base_commit"`
+	// AdmittedTree is the tree the workspace was admitted with. It is omitted only on a binding
+	// migrated from a pre-selector pull-request session, whose durable columns prove every other
+	// field but never recorded a tree.
+	AdmittedTree string    `json:"admitted_tree,omitempty"`
+	ResolvedAt   time.Time `json:"resolved_at"`
+	// PullRequestNumber and PullRequestExpectedHead preserve the kind-specific evidence of a
+	// pull-request selection inside the one generic binding.
+	PullRequestNumber       int    `json:"pull_request_number,omitempty"`
+	PullRequestExpectedHead string `json:"pull_request_expected_head,omitempty"`
+}
+
+// SelectedRefValue reads the derived ref, or "" for an exact commit that has none.
+func (b *SourceBinding) SelectedRefValue() string {
+	if b == nil || b.SelectedRef == nil {
+		return ""
+	}
+	return *b.SelectedRef
+}
+
+// ValidateSourceBinding is the durable boundary for a resolved binding. It proves the binding is
+// self-consistent — the derived ref really is the one its kind and request imply, the object ids
+// are complete, and the kind-specific evidence agrees with the request — so a controller that
+// later re-validates the same fields can never be answered with a binding this daemon invented.
+func ValidateSourceBinding(binding SourceBinding) error {
+	invalid := func(detail string) error {
+		return &Error{Code: CodeInvalidRequest, Detail: "source binding is invalid: " + detail}
+	}
+	if binding.Version != SourceBindingVersion {
+		return invalid("unsupported version")
+	}
+	if err := ValidateSourceSelectorShape(binding.Requested); err != nil {
+		return invalid("requested selector is malformed")
+	}
+	if binding.Kind != binding.Requested.Kind {
+		return invalid("kind disagrees with the requested selector")
+	}
+	if !validSourceRemoteIdentity(binding.RemoteIdentity) {
+		return invalid("remote identity must be a configured remote name")
+	}
+	if !validBoundedText(binding.DefaultRef, MaxBindingBytes) || !strings.HasPrefix(binding.DefaultRef, "refs/heads/") {
+		return invalid("default ref must be a configured branch ref")
+	}
+	for _, object := range []string{binding.DefaultCommit, binding.SelectedCommit, binding.BaseCommit} {
+		if !validGitObjectID(object) {
+			return invalid("commit identities must be complete lowercase object ids")
+		}
+	}
+	if binding.AdmittedTree != "" && !validGitObjectID(binding.AdmittedTree) {
+		return invalid("admitted tree must be a complete lowercase object id")
+	}
+	if binding.ResolvedAt.IsZero() {
+		return invalid("resolution time is required")
+	}
+	selected := binding.SelectedRefValue()
+	if selected != "" && !validBoundedText(selected, MaxBindingBytes) {
+		return invalid("selected ref is outside bounds")
+	}
+	switch binding.Kind {
+	case SourceDefault:
+		if binding.SelectedRef == nil || selected != binding.DefaultRef ||
+			binding.SelectedCommit != binding.DefaultCommit || binding.BaseCommit != binding.DefaultCommit {
+			return invalid("the default source must equal the configured default identity")
+		}
+	case SourceBranch:
+		if binding.SelectedRef == nil || selected != "refs/heads/"+binding.Requested.Name {
+			return invalid("branch ref must be derived from the requested branch name")
+		}
+	case SourcePullRequest:
+		if binding.SelectedRef == nil || selected != fmt.Sprintf("refs/pull/%d/head", binding.Requested.Number) {
+			return invalid("pull request ref must be derived from the requested number")
+		}
+		if binding.PullRequestNumber != binding.Requested.Number {
+			return invalid("pull request number disagrees with the requested selector")
+		}
+		if binding.PullRequestExpectedHead != binding.Requested.ExpectedHeadCommit {
+			return invalid("pull request expected head disagrees with the requested selector")
+		}
+	case SourceCommit:
+		if binding.SelectedRef != nil {
+			return invalid("an exact commit names no ref")
+		}
+		if binding.SelectedCommit != binding.Requested.SHA {
+			return invalid("selected commit disagrees with the requested object id")
+		}
+	}
+	if binding.Kind != SourcePullRequest && (binding.PullRequestNumber != 0 || binding.PullRequestExpectedHead != "") {
+		return invalid("pull request evidence belongs only to a pull request source")
+	}
+	return nil
+}
+
+func validSourceRemoteIdentity(remote string) bool {
+	if remote == "" || len(remote) > 128 || remote[0] == '-' {
+		return false
+	}
+	for _, r := range remote {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // CompanionRepository is an operator-policy-selected repository snapshot available read-only
@@ -535,7 +748,7 @@ type CreateSessionRequest struct {
 	ForkGeneration       string                       `json:"fork_generation,omitempty"`
 	BaseCommit           string                       `json:"base_commit"`
 	RepositoryFreshness  []RepositoryFreshnessReceipt `json:"repository_freshness,omitempty"`
-	PullRequest          *PullRequestBinding          `json:"pull_request,omitempty"`
+	Source               *SourceBinding               `json:"source,omitempty"`
 	Companions           []CompanionRepository        `json:"companions,omitempty"`
 	NetworkMode          string                       `json:"network_mode,omitempty"`
 	NetworkFingerprint   string                       `json:"network_fingerprint,omitempty"`

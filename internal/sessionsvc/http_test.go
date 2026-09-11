@@ -108,8 +108,10 @@ func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 }
 
 // The capabilities document is the caller's negotiation surface AND the published half of the
-// network fence: the freshness versions a client must match, plus each served policy's resolved
-// reach. An open policy reports its mode and no fingerprint — there is nothing captured to pin.
+// network fence: the freshness and source-selector versions a client must match, plus each served
+// policy's resolved reach. The two implementation versions are independent, so a controller can
+// withhold selector-bound work from a daemon that proves only freshness. An open policy reports
+// its mode and no fingerprint — there is nothing captured to pin.
 func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersionsAndPolicyNetworks(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
@@ -124,8 +126,12 @@ func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersionsAndPolicyNet
 		t.Fatal(err)
 	}
 	versions, ok := document["repository_freshness_receipt_versions"].([]any)
-	if !ok || len(document) != 2 || len(versions) != 1 || versions[0] != float64(2) {
+	if !ok || len(document) != 3 || len(versions) != 1 || versions[0] != float64(2) {
 		t.Fatalf("capabilities = %#v", document)
+	}
+	selectors, ok := document["repository_source_selector_versions"].([]any)
+	if !ok || len(selectors) != 1 || selectors[0] != float64(1) {
+		t.Fatalf("capabilities source selector versions = %#v", document["repository_source_selector_versions"])
 	}
 	policies, ok := document["policies"].(map[string]any)
 	if !ok || len(policies) != 1 {
@@ -216,12 +222,21 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	}
 	response = sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions",
-		`{"policy":"responder","task":"pull request","pull_request":{"number":514,"head_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`,
+		`{"policy":"responder","task":"pull request","source":{"kind":"pull_request","number":514}}`,
 		"create-pull-request", "application/json",
 	)
 	if response.Code != http.StatusBadRequest ||
 		!strings.Contains(response.Body.String(), "operator-configured remote") {
 		t.Fatalf("pull request body status = %d body=%s", response.Code, response.Body.String())
+	}
+	response = sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions",
+		`{"policy":"responder","task":"bad source","source":{"kind":"tag","name":"v1"}}`,
+		"create-bad-source", "application/json",
+	)
+	if response.Code != http.StatusBadRequest ||
+		!strings.Contains(response.Body.String(), "source kind must be") {
+		t.Fatalf("unknown source kind status = %d body=%s", response.Code, response.Body.String())
 	}
 
 	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", `{"policy":"responder","task":"task"}`, "create", "application/json")
@@ -741,7 +756,10 @@ func TestSessionHTTPAsyncCreateReturnsOperationAndCoalescesReplay(t *testing.T) 
 	}
 }
 
-func TestSessionHTTPExistingPullRequestBindingSurvivesCreateAndReview(t *testing.T) {
+// A field on the durable session record stays invisible to API clients until the hand-written
+// DTO carries it too, so this reads the binding back off the RESPONSE BYTES rather than through
+// the DTO type it would otherwise compile against.
+func TestSessionHTTPPublishesTheGenericSourceBindingThroughCreateAndReview(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	seed, git := gitrepo.New(t)
@@ -779,29 +797,73 @@ func TestSessionHTTPExistingPullRequestBindingSurvivesCreateAndReview(t *testing
 	handler := NewHTTPHandler(service)
 	create := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions",
-		fmt.Sprintf(`{"policy":"responder","task":"pull request","pull_request":{"number":514,"head_commit":%q}}`, pullHead),
+		fmt.Sprintf(`{"policy":"responder","task":"pull request","source":{"kind":"pull_request","number":514,"expected_head_commit":%q}}`, pullHead),
 		"create-pull-http", "application/json",
 	)
 	if create.Code != http.StatusOK {
 		t.Fatalf("create status=%d body=%s", create.Code, create.Body.String())
 	}
+	wireSource := func(body []byte, path ...string) map[string]any {
+		t.Helper()
+		var document map[string]any
+		if err := json.Unmarshal(body, &document); err != nil {
+			t.Fatal(err)
+		}
+		cursor := document
+		for _, key := range path {
+			next, ok := cursor[key].(map[string]any)
+			if !ok {
+				t.Fatalf("response has no %v: %s", path, body)
+			}
+			cursor = next
+		}
+		return cursor
+	}
+	binding := wireSource(create.Body.Bytes(), "session", "source")
+	if binding["version"] != float64(1) || binding["kind"] != "pull_request" ||
+		binding["remote_identity"] != "origin" || binding["default_ref"] != "refs/heads/main" ||
+		binding["default_commit"] != baseHead || binding["selected_ref"] != "refs/pull/514/head" ||
+		binding["selected_commit"] != pullHead || binding["base_commit"] != mergeBase ||
+		binding["pull_request_number"] != float64(514) ||
+		binding["pull_request_expected_head"] != pullHead ||
+		binding["admitted_tree"] == nil || binding["resolved_at"] == nil {
+		t.Fatalf("created source binding on the wire = %v", binding)
+	}
+	requested, _ := binding["requested"].(map[string]any)
+	if requested["kind"] != "pull_request" || requested["number"] != float64(514) {
+		t.Fatalf("normalized request on the wire = %v", requested)
+	}
+
 	var created sessionMutationSessionResponse
 	if err := json.Unmarshal(create.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
-	}
-	if created.Session.PullRequest == nil || created.Session.PullRequest.Number != 514 ||
-		created.Session.PullRequest.Ref != "refs/pull/514/head" ||
-		created.Session.PullRequest.HeadCommit != pullHead {
-		t.Fatalf("created pull request binding = %+v", created.Session.PullRequest)
 	}
 	if created.Session.BaseCommit != mergeBase || len(created.Session.RepositoryFreshness) != 2 ||
 		created.Session.RepositoryFreshness[0].Name != "primary" ||
 		created.Session.RepositoryFreshness[0].ResolvedRevision != baseHead ||
 		created.Session.RepositoryFreshness[0].WorkspaceBaseRevision != mergeBase ||
-		created.Session.RepositoryFreshness[1].Name != "pull_request" ||
+		created.Session.RepositoryFreshness[1].Name != "source" ||
 		created.Session.RepositoryFreshness[1].ResolvedRevision != pullHead {
-		t.Fatalf("created pull request freshness = %+v", created.Session)
+		t.Fatalf("created source freshness = %+v", created.Session)
 	}
+
+	changes := sessionHTTPTestRequest(t, handler, http.MethodGet,
+		"/v1/sessions/"+created.Session.ID+"/changes", "", "", "")
+	if changes.Code != http.StatusOK {
+		t.Fatalf("changes status=%d body=%s", changes.Code, changes.Body.String())
+	}
+	var changesDocument map[string]any
+	if err := json.Unmarshal(changes.Body.Bytes(), &changesDocument); err != nil {
+		t.Fatal(err)
+	}
+	if changesDocument["admitted_source_tree"] != binding["admitted_tree"] {
+		t.Fatalf("admitted_source_tree on the wire = %v, want %v",
+			changesDocument["admitted_source_tree"], binding["admitted_tree"])
+	}
+	if _, retired := changesDocument["pull_request_tree"]; retired {
+		t.Fatalf("changes still publish the retired pull_request_tree: %s", changes.Body.String())
+	}
+
 	review := sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/review",
 		fmt.Sprintf(`{"expected_revision":%d}`, created.Session.Revision),
@@ -810,14 +872,10 @@ func TestSessionHTTPExistingPullRequestBindingSurvivesCreateAndReview(t *testing
 	if review.Code != http.StatusOK {
 		t.Fatalf("review status=%d body=%s", review.Code, review.Body.String())
 	}
-	var reviewed sessionMutationReviewResponse
-	if err := json.Unmarshal(review.Body.Bytes(), &reviewed); err != nil {
-		t.Fatal(err)
-	}
-	if reviewed.Review.PullRequest == nil || reviewed.Review.PullRequest.Number != 514 ||
-		reviewed.Review.PullRequest.Ref != "refs/pull/514/head" ||
-		reviewed.Review.PullRequest.HeadCommit != pullHead {
-		t.Fatalf("reviewed pull request binding = %+v", reviewed.Review.PullRequest)
+	reviewed := wireSource(review.Body.Bytes(), "review", "source")
+	if reviewed["kind"] != "pull_request" || reviewed["selected_commit"] != pullHead ||
+		reviewed["pull_request_number"] != float64(514) {
+		t.Fatalf("reviewed source binding on the wire = %v", reviewed)
 	}
 }
 

@@ -57,24 +57,24 @@ type sessionWorkspaceParentDivergence struct {
 }
 
 type WorkspaceChanges struct {
-	BaseCommit       string                           `json:"base_commit"`
-	ForkHead         string                           `json:"fork_head"`
-	ForkTree         string                           `json:"fork_tree"`
-	PullRequestTree  string                           `json:"pull_request_tree,omitempty"`
-	ParentHead       string                           `json:"parent_head"`
-	Committed        []sessionWorkspaceChange         `json:"committed,omitempty"`
-	Staged           []sessionWorkspaceChange         `json:"staged,omitempty"`
-	Unstaged         []sessionWorkspaceChange         `json:"unstaged,omitempty"`
-	Untracked        []sessionWorkspaceChange         `json:"untracked,omitempty"`
-	Conflicts        []sessionWorkspaceChange         `json:"conflicts,omitempty"`
-	ParentDivergence sessionWorkspaceParentDivergence `json:"parent_divergence"`
-	Patch            string                           `json:"patch,omitempty"`
-	Truncated        bool                             `json:"truncated"`
-	PatchDigest      string                           `json:"patch_digest,omitempty"`
-	PatchBytes       int64                            `json:"patch_bytes"`
-	PatchOffset      int64                            `json:"patch_offset"`
-	PatchNextOffset  int64                            `json:"patch_next_offset"`
-	PatchHasMore     bool                             `json:"patch_has_more"`
+	BaseCommit         string                           `json:"base_commit"`
+	ForkHead           string                           `json:"fork_head"`
+	ForkTree           string                           `json:"fork_tree"`
+	AdmittedSourceTree string                           `json:"admitted_source_tree,omitempty"`
+	ParentHead         string                           `json:"parent_head"`
+	Committed          []sessionWorkspaceChange         `json:"committed,omitempty"`
+	Staged             []sessionWorkspaceChange         `json:"staged,omitempty"`
+	Unstaged           []sessionWorkspaceChange         `json:"unstaged,omitempty"`
+	Untracked          []sessionWorkspaceChange         `json:"untracked,omitempty"`
+	Conflicts          []sessionWorkspaceChange         `json:"conflicts,omitempty"`
+	ParentDivergence   sessionWorkspaceParentDivergence `json:"parent_divergence"`
+	Patch              string                           `json:"patch,omitempty"`
+	Truncated          bool                             `json:"truncated"`
+	PatchDigest        string                           `json:"patch_digest,omitempty"`
+	PatchBytes         int64                            `json:"patch_bytes"`
+	PatchOffset        int64                            `json:"patch_offset"`
+	PatchNextOffset    int64                            `json:"patch_next_offset"`
+	PatchHasMore       bool                             `json:"patch_has_more"`
 }
 
 type sessionWorkspaceIdentity struct {

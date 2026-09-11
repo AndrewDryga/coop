@@ -53,7 +53,7 @@ type SessionDTO struct {
 	BaseCommit                string                               `json:"base_commit"`
 	RepositoryFreshnessStatus string                               `json:"repository_freshness_status"`
 	RepositoryFreshness       []session.RepositoryFreshnessReceipt `json:"repository_freshness"`
-	PullRequest               *session.PullRequestBinding          `json:"pull_request,omitempty"`
+	Source                    *session.SourceBinding               `json:"source,omitempty"`
 	Companions                []SessionCompanionDTO                `json:"companions,omitempty"`
 	Network                   SessionNetworkSummaryDTO             `json:"network"`
 	ForkName                  string                               `json:"fork_name"`
@@ -185,50 +185,50 @@ type SessionParentDivergenceDTO struct {
 }
 
 type SessionChangesDTO struct {
-	BaseCommit       string                     `json:"base_commit"`
-	ForkHead         string                     `json:"fork_head"`
-	ForkTree         string                     `json:"fork_tree"`
-	PullRequestTree  string                     `json:"pull_request_tree,omitempty"`
-	ParentHead       string                     `json:"parent_head"`
-	Committed        []SessionChangeDTO         `json:"committed"`
-	Staged           []SessionChangeDTO         `json:"staged"`
-	Unstaged         []SessionChangeDTO         `json:"unstaged"`
-	Untracked        []SessionChangeDTO         `json:"untracked"`
-	Conflicts        []SessionChangeDTO         `json:"conflicts"`
-	ParentDivergence SessionParentDivergenceDTO `json:"parent_divergence"`
-	Patch            []byte                     `json:"patch,omitempty"`
-	Truncated        bool                       `json:"truncated"`
-	PatchDigest      string                     `json:"patch_digest,omitempty"`
-	PatchBytes       int64                      `json:"patch_bytes"`
-	PatchOffset      int64                      `json:"patch_offset"`
-	PatchNextOffset  int64                      `json:"patch_next_offset"`
-	PatchHasMore     bool                       `json:"patch_has_more"`
+	BaseCommit         string                     `json:"base_commit"`
+	ForkHead           string                     `json:"fork_head"`
+	ForkTree           string                     `json:"fork_tree"`
+	AdmittedSourceTree string                     `json:"admitted_source_tree,omitempty"`
+	ParentHead         string                     `json:"parent_head"`
+	Committed          []SessionChangeDTO         `json:"committed"`
+	Staged             []SessionChangeDTO         `json:"staged"`
+	Unstaged           []SessionChangeDTO         `json:"unstaged"`
+	Untracked          []SessionChangeDTO         `json:"untracked"`
+	Conflicts          []SessionChangeDTO         `json:"conflicts"`
+	ParentDivergence   SessionParentDivergenceDTO `json:"parent_divergence"`
+	Patch              []byte                     `json:"patch,omitempty"`
+	Truncated          bool                       `json:"truncated"`
+	PatchDigest        string                     `json:"patch_digest,omitempty"`
+	PatchBytes         int64                      `json:"patch_bytes"`
+	PatchOffset        int64                      `json:"patch_offset"`
+	PatchNextOffset    int64                      `json:"patch_next_offset"`
+	PatchHasMore       bool                       `json:"patch_has_more"`
 }
 
 type SessionReviewDTO struct {
-	OperationID           string                      `json:"operation_id"`
-	SessionID             string                      `json:"session_id"`
-	SessionRevision       int64                       `json:"session_revision"`
-	PolicyDigest          string                      `json:"policy_digest"`
-	PullRequest           *session.PullRequestBinding `json:"pull_request,omitempty"`
-	CreationBase          string                      `json:"creation_base"`
-	SourceHead            string                      `json:"source_head"`
-	SourceTree            string                      `json:"source_tree"`
-	ParentHead            string                      `json:"parent_head"`
-	ParentTree            string                      `json:"parent_tree"`
-	CandidateHead         string                      `json:"candidate_head"`
-	CandidateTree         string                      `json:"candidate_tree"`
-	Rebase                ReviewRebaseStatus          `json:"rebase"`
-	Gate                  ReviewGateStatus            `json:"gate"`
-	GateError             string                      `json:"gate_error,omitempty"`
-	PolicyFindings        []string                    `json:"policy_findings"`
-	Patch                 []byte                      `json:"patch,omitempty"`
-	PatchTruncated        bool                        `json:"patch_truncated"`
-	PatchArtifactID       string                      `json:"patch_artifact_id,omitempty"`
-	PatchDigest           string                      `json:"patch_digest,omitempty"`
-	PatchBytes            int64                       `json:"patch_bytes"`
-	Publishable           bool                        `json:"publishable"`
-	NotPublishableReasons []string                    `json:"not_publishable_reasons"`
+	OperationID           string                 `json:"operation_id"`
+	SessionID             string                 `json:"session_id"`
+	SessionRevision       int64                  `json:"session_revision"`
+	PolicyDigest          string                 `json:"policy_digest"`
+	Source                *session.SourceBinding `json:"source,omitempty"`
+	CreationBase          string                 `json:"creation_base"`
+	SourceHead            string                 `json:"source_head"`
+	SourceTree            string                 `json:"source_tree"`
+	ParentHead            string                 `json:"parent_head"`
+	ParentTree            string                 `json:"parent_tree"`
+	CandidateHead         string                 `json:"candidate_head"`
+	CandidateTree         string                 `json:"candidate_tree"`
+	Rebase                ReviewRebaseStatus     `json:"rebase"`
+	Gate                  ReviewGateStatus       `json:"gate"`
+	GateError             string                 `json:"gate_error,omitempty"`
+	PolicyFindings        []string               `json:"policy_findings"`
+	Patch                 []byte                 `json:"patch,omitempty"`
+	PatchTruncated        bool                   `json:"patch_truncated"`
+	PatchArtifactID       string                 `json:"patch_artifact_id,omitempty"`
+	PatchDigest           string                 `json:"patch_digest,omitempty"`
+	PatchBytes            int64                  `json:"patch_bytes"`
+	Publishable           bool                   `json:"publishable"`
+	NotPublishableReasons []string               `json:"not_publishable_reasons"`
 }
 
 type SessionDiscardWorkspaceDTO struct {
@@ -292,6 +292,10 @@ type sessionReadyDTO struct {
 
 type sessionCapabilitiesDTO struct {
 	RepositoryFreshnessReceiptVersions []int `json:"repository_freshness_receipt_versions"`
+	// RepositorySourceSelectorVersions is the independently versioned proof that this daemon
+	// resolves and persists the generic source selector. A controller must not place
+	// selector-bound work on a worker whose daemon does not publish it.
+	RepositorySourceSelectorVersions []int `json:"repository_source_selector_versions"`
 	// Policies is each served policy's network reach as this daemon resolved it: the mode, and for
 	// a filtered policy the fingerprint a create may pin. It is the published half of the network
 	// fence — a caller cannot compute it, because host approval feeds it.
@@ -354,6 +358,7 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeSessionJSON(w, http.StatusOK, sessionCapabilitiesDTO{
 			RepositoryFreshnessReceiptVersions: []int{2},
+			RepositorySourceSelectorVersions:   []int{session.SourceBindingVersion},
 			Policies:                           h.service.PolicyNetworks(),
 		})
 		return
@@ -764,7 +769,7 @@ func (h *sessionHTTPHandler) createSession(w http.ResponseWriter, r *http.Reques
 	var body struct {
 		Policy                     string                    `json:"policy"`
 		Task                       string                    `json:"task"`
-		PullRequest                *RemotePullRequestBinding `json:"pull_request,omitempty"`
+		Source                     *session.SourceSelector   `json:"source,omitempty"`
 		ResponderBinding           *session.ResponderBinding `json:"responder_binding,omitempty"`
 		ExpectedPolicyDigest       string                    `json:"expected_policy_digest,omitempty"`
 		ExpectedAuthorityDigest    string                    `json:"expected_authority_digest,omitempty"`
@@ -774,7 +779,7 @@ func (h *sessionHTTPHandler) createSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	request := CreateRemoteSessionRequest{
-		Policy: body.Policy, Task: body.Task, PullRequest: body.PullRequest,
+		Policy: body.Policy, Task: body.Task, Source: body.Source,
 		ResponderBinding:     body.ResponderBinding,
 		ExpectedPolicyDigest: body.ExpectedPolicyDigest, ExpectedAuthorityDigest: body.ExpectedAuthorityDigest,
 		ExpectedNetworkFingerprint: body.ExpectedNetworkFingerprint,
@@ -1514,7 +1519,7 @@ func publicSession(value session.Session) SessionDTO {
 		BaseCommit:                value.BaseCommit,
 		RepositoryFreshnessStatus: repositoryFreshnessStatus(value.RepositoryFreshness),
 		RepositoryFreshness:       append([]session.RepositoryFreshnessReceipt(nil), value.RepositoryFreshness...),
-		PullRequest:               cloneSessionPullRequestBinding(value.PullRequest),
+		Source:                    session.CloneSourceBinding(value.Source),
 		Companions:                companions,
 		Network: SessionNetworkSummaryDTO{
 			Mode: normalizedSessionNetworkMode(value.NetworkMode), Fingerprint: value.NetworkFingerprint,
@@ -1611,7 +1616,7 @@ func publicChanges(value WorkspaceChanges) SessionChangesDTO {
 	}
 	return SessionChangesDTO{
 		BaseCommit: value.BaseCommit, ForkHead: value.ForkHead, ForkTree: value.ForkTree,
-		PullRequestTree: value.PullRequestTree, ParentHead: value.ParentHead,
+		AdmittedSourceTree: value.AdmittedSourceTree, ParentHead: value.ParentHead,
 		Committed: convert(value.Committed), Staged: convert(value.Staged), Unstaged: convert(value.Unstaged),
 		Untracked: convert(value.Untracked), Conflicts: convert(value.Conflicts),
 		ParentDivergence: SessionParentDivergenceDTO{Ahead: value.ParentDivergence.Ahead, Behind: value.ParentDivergence.Behind, BaseToFork: value.ParentDivergence.BaseToFork, BaseToParent: value.ParentDivergence.BaseToParent, Diverged: value.ParentDivergence.Diverged},
@@ -1625,7 +1630,7 @@ func publicChanges(value WorkspaceChanges) SessionChangesDTO {
 func publicReview(value ReviewDossier) SessionReviewDTO {
 	result := SessionReviewDTO{
 		OperationID: value.OperationID, SessionID: value.SessionID, SessionRevision: value.SessionRevision,
-		PolicyDigest: value.PolicyDigest, PullRequest: cloneSessionPullRequestBinding(value.PullRequest),
+		PolicyDigest: value.PolicyDigest, Source: session.CloneSourceBinding(value.Source),
 		CreationBase: value.CreationBase, SourceHead: value.SourceHead,
 		SourceTree: value.SourceTree, ParentHead: value.ParentHead, ParentTree: value.ParentTree,
 		CandidateHead: value.CandidateHead, CandidateTree: value.CandidateTree, Rebase: value.Rebase,

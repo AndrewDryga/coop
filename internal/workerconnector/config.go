@@ -17,6 +17,12 @@ const (
 	maxWorkerConfigBytes                 = 256 << 10
 	repositoryFreshnessCapabilityName    = "repository-freshness"
 	repositoryFreshnessCapabilityVersion = "2"
+	// The source selector is versioned independently of the freshness receipt beside it: a
+	// receipt proves the remote was contacted, a selector proves the daemon can resolve and
+	// persist which source inside the authorized repository a session starts from. A controller
+	// must not place selector-bound work on a worker that does not advertise this.
+	repositorySourceSelectorCapabilityName    = "repository-source-selector"
+	repositorySourceSelectorCapabilityVersion = "1"
 )
 
 type fileConfig struct {
@@ -123,12 +129,16 @@ func LoadConfig(path, buildVersion string, now time.Time) (Config, error) {
 	}, nil
 }
 
+// configuredCapabilities drops the implementation capabilities a config file may claim: they are
+// only ever advertised after the live session daemon proves them.
 func configuredCapabilities(configured []workerproto.Capability) []workerproto.Capability {
 	result := make([]workerproto.Capability, 0, len(configured))
 	for _, capability := range configured {
-		if capability.Name != repositoryFreshnessCapabilityName {
-			result = append(result, capability)
+		if capability.Name == repositoryFreshnessCapabilityName ||
+			capability.Name == repositorySourceSelectorCapabilityName {
+			continue
 		}
+		result = append(result, capability)
 	}
 	return result
 }

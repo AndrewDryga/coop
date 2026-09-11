@@ -338,9 +338,9 @@ func TestABareSessionRefusesRepositoryOperationsAndStillClosesAndDiscards(t *tes
 		t.Fatalf("restore: %v", err)
 	}
 	// The bindings a bare session cannot carry are refused at admission, by name.
-	if response := post("/v1/sessions", `{"policy":"routing","task":"pr","pull_request":{"number":1,"head_commit":"`+strings.Repeat("a", 40)+`"}}`, "bare-pr"); response.Code != http.StatusBadRequest ||
-		!strings.Contains(response.Body.String(), "no repository to bind a pull request") {
-		t.Fatalf("bare pull request: status = %d body=%s", response.Code, response.Body.String())
+	if response := post("/v1/sessions", `{"policy":"routing","task":"pr","source":{"kind":"pull_request","number":1}}`, "bare-pr"); response.Code != http.StatusBadRequest ||
+		!strings.Contains(response.Body.String(), "no repository to select a source in") {
+		t.Fatalf("bare source selector: status = %d body=%s", response.Code, response.Body.String())
 	}
 	binding := `{"endpoint":"https://responder.example/v1/state-tools/mcp","token":"` + strings.Repeat("b", 48) + `"}`
 	if response := post("/v1/sessions", `{"policy":"routing","task":"bound","responder_binding":`+binding+`}`, "bare-binding"); response.Code != http.StatusBadRequest ||

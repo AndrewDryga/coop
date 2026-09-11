@@ -3,7 +3,7 @@ name: session-api-dto-is-a-second-projection
 description: A field on session.Turn/Session is invisible to API clients until the hand-written DTO and its public* copier carry it too.
 subsystem: sessions
 sources: [internal/sessionsvc/http.go, internal/session/records.go, internal/sessionsvc/http_test.go, internal/sessionsvc/activity.go]
-updated: 2026-09-10
+updated: 2026-09-11
 ---
 
 The durable record and the public wire type are two separate hand-maintained structs. `session.Turn`
@@ -47,6 +47,11 @@ See also [[acp-generated-output-boundary]] (what public turn JSON may contain, a
 the artifact endpoint).
 
 ## Changelog
+- 2026-09-11 — the generic source binding and `admitted_source_tree` shipped the four-place way
+  (record + schema v23, `SessionDTO.Source`/`SessionReviewDTO.Source`/`SessionChangesDTO.AdmittedSourceTree`
+  through their copiers, and an off-the-wire assertion in `http_test.go`). The retired
+  `pull_request`/`pull_request_tree` keys were removed from every projection in the same change,
+  and the test asserts their absence from the bytes, not just the type.
 - 2026-09-10 — `Session.Mode` shipped the four-place way (record, schema v22 + scanner, `SessionDTO.Mode`
   through `publicSession`, and an off-the-wire assertion in `service_restricted_test.go`); a blank
   mode is normalized to `normal` in the copier because an operation receipt written before modes

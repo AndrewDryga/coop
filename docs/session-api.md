@@ -97,7 +97,7 @@ The parser rejects unknown fields and requires:
   fresh native session, so a turn's prompt must carry whatever earlier context it needs, and
   `require_semantic_validation` is refused because there is no native session to re-prompt (a
   schema-invalid structured result is regenerated from the admitted prompt, up to the same three
-  attempts). A bare session takes no `pull_request` and no `responder_binding`, at create or on a
+  attempts). A bare session takes no `source` and no `responder_binding`, at create or on a
   turn. A legacy `repository_read_only: true` policy is not a readonly policy: it keeps its normal
   mode and its writable output root;
 - `repository`: the absolute, canonical root of an existing Git worktree (omitted for `mode: bare`);
@@ -520,9 +520,13 @@ host; an open or offline policy reports its mode with no fingerprint. It is publ
 caller cannot compute it — host approval feeds it — and a create pins it as
 `expected_network_fingerprint`.
 
-The outbound worker connector reports `repository-freshness` capability version `2` only after the
-session daemon on its configured Unix socket returns the freshness versions in this document. It removes any configured
-claim and drops the advertised capability again if live proof is unavailable. Responder therefore
+The outbound worker connector reports `repository-freshness` capability version `2` and
+`repository-source-selector` version `1` only after the session daemon on its configured Unix
+socket returns the matching versions in `GET /v1/capabilities`
+(`repository_freshness_receipt_versions`, `repository_source_selector_versions`). The two are
+versioned independently, so a daemon that resolves freshness but not source selectors advertises
+only the first and receives no selector-bound work. The connector removes any configured claim to
+either and drops the advertised capability again if live proof is unavailable. Responder therefore
 negotiates the exact worker and daemon currently serving a placed session during rolling upgrades.
 
 ### Sessions
@@ -541,12 +545,70 @@ curl --unix-socket "$SOCKET" \
 The `task` is a bounded opaque external reference, not a shell command or authority-bearing
 configuration.
 
-To edit an existing GitHub pull request, the trusted caller may also send
-`"pull_request":{"number":514,"head_commit":"<exact full commit>"}`. Coop derives
-`refs/pull/514/head` through the policy's configured remote, requires it to equal the supplied
-commit, starts the generated bound branch at that commit, and records the pull-request binding.
-The caller cannot choose a repository, remote, or arbitrary ref. The session creation base is the
-merge base with the policy branch so review covers the complete existing pull-request change.
+#### Selecting a source
+
+A create may name which source INSIDE the policy's already-authorized repository the session
+starts from, with one bounded `source` selector:
+
+```json
+{"kind":"default"}
+{"kind":"branch","name":"feature/payments"}
+{"kind":"pull_request","number":514}
+{"kind":"commit","sha":"0123456789abcdef0123456789abcdef01234567"}
+```
+
+Omitting `source` means `{"kind":"default"}`. The caller cannot name a repository, filesystem
+path, remote, URL or raw ref: Coop derives every ref from the operator policy plus that one value.
+A branch name is validated with Git's own ref rules and derives only `refs/heads/<name>`; a pull
+request number derives only `refs/pull/<number>/head`; a commit must be a complete lowercase
+40- or 64-character object id. Trusted ingress may add `expected_head_commit` to a pull-request
+selector as host-owned evidence of the head it observed — a push racing session creation then
+fails closed instead of silently changing the approved source. A policy with no configured
+`remote` is intentionally local: it keeps local semantics for its own default and refuses
+`branch`, `pull_request` and `commit`.
+
+For a non-default selection Coop pins the configured default branch head AND the selected head,
+uses their merge base as the session's creation base, and starts the generated bound branch at the
+selected commit — so review covers the complete inherited change and the baseline always
+represents divergence from the configured default branch. A source with no common history is
+refused with `invalid_request` before any workspace exists, rather than reviewed against an
+invented ancestor.
+
+A branch, pull request or default selection is proven with `git ls-remote --exit-code --refs` on
+its exact derived ref, followed by an object fetch only when the cache lacks it. An exact commit
+has no advertised ref, so the remote is contacted on every create; note that `git fetch <remote>
+<oid>` answers success WITHOUT contacting the server when the object is already in the local
+object database, so a commit that is already cached is additionally anchored to the remote's
+current advertisement of `refs/heads/*` and `refs/pull/*/head`. A commit that exists only in the
+local cache is therefore refused. Hosted Git must serve object ids that are not ref tips
+(`uploadpack.allowReachableSHA1InWant`, which GitHub sets) for commit selection to resolve
+anything below a tip; a server that refuses fails the create closed.
+
+The create response and the public session carry the immutable version-1 binding:
+
+```json
+{
+  "version": 1,
+  "kind": "branch",
+  "requested": {"kind": "branch", "name": "feature/payments"},
+  "remote_identity": "origin",
+  "default_ref": "refs/heads/main",
+  "default_commit": "<full object id>",
+  "selected_ref": "refs/heads/feature/payments",
+  "selected_commit": "<full object id>",
+  "base_commit": "<merge base>",
+  "admitted_tree": "<tree object id>",
+  "resolved_at": "<UTC timestamp>"
+}
+```
+
+`selected_ref` is `null` for an exact commit, which advertises none; for the default source the
+selected and default identities are equal. A pull-request binding adds `pull_request_number` and,
+when the caller supplied one, `pull_request_expected_head`. The binding never carries a remote URL
+or credential. It is resolved and journaled into the durable create intent BEFORE the workspace is
+created, so a lost response, a daemon restart, or the same idempotency key replays the exact
+commits instead of landing on a branch that moved in between; the same key with a DIFFERENT
+selector is a different request and conflicts.
 
 With `Prefer: respond-async`, this endpoint returns only the public operation and status 202. The
 operation's successful `resource_type` is `session`; `resource_id` is then safe to fetch through
@@ -555,7 +617,7 @@ operation-plus-session response.
 
 | Method | Path | Body/query |
 | --- | --- | --- |
-| `POST` | `/v1/sessions` | `policy`, `task`, optional `pull_request.number` + `pull_request.head_commit`, optional `expected_policy_digest` / `expected_authority_digest` / `expected_network_fingerprint` |
+| `POST` | `/v1/sessions` | `policy`, `task`, optional `source`, optional `expected_policy_digest` / `expected_authority_digest` / `expected_network_fingerprint` |
 | `GET` | `/v1/sessions?limit=100` | `limit` is `1..1000` |
 | `GET` | `/v1/sessions/{session_id}` | none |
 | `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`; policy must enable warm execution |
@@ -564,12 +626,13 @@ The public session includes IDs, target, policy digest, its execution `mode` (`n
 `readonly` or `bare`; a session created before modes existed reads `normal`), the exact
 `project_env`, `project_mcp`, and
 `repository_read_only` authority flags, its frozen `network` posture (`{"mode":"filtered",
-"fingerprint":"<64 hex>"}`, or just `{"mode":"open"}`), primary base commit, optional immutable pull-request
-number/ref/head binding, companion aliases, and one version-2 repository freshness receipt per
+"fingerprint":"<64 hex>"}`, or just `{"mode":"open"}`), primary base commit, its immutable `source`
+binding, companion aliases, and one version-2 repository freshness receipt per
 configured alias. Each receipt contains the requested revision, immutable fetched revision,
 sanitized remote identity, UTC fetch time, and stale-base status. The primary receipt also carries
-`workspace_base_revision`: normally the fetched base head, or the exact merge base for a bound pull
-request. Legacy sessions expose explicit unavailable freshness instead; a caller requiring current
+`workspace_base_revision`: normally the fetched base head, or the exact merge base for a
+non-default selected source. A non-default selection adds one receipt named `source`; a default
+selection needs none, because the `primary` receipt already proves the same ref and object. Legacy sessions expose explicit unavailable freshness instead; a caller requiring current
 source evidence must fail closed or replace that session rather than infer freshness. The remaining
 session fields include
 in-box paths and pinned commits, generated fork name, revision, state, activity, queue/budget
@@ -762,8 +825,9 @@ curl --unix-socket "$SOCKET" \
 `GET /v1/sessions/{session_id}/changes` returns:
 
 - immutable `base_commit`, current `fork_head` and `fork_tree`, and current `parent_head`;
-- for an existing-PR session, immutable `pull_request_tree`, allowing callers to distinguish new
-  content from empty commits or commit-and-revert history above the admitted PR head;
+- for a repository-backed session with a source binding, the immutable `admitted_source_tree`,
+  allowing callers to distinguish new content from empty commits or commit-and-revert history
+  above the admitted source — whichever kind it was;
 - committed, staged, unstaged, untracked, and conflicted typed path records;
 - ahead/behind and base-to-head divergence counts;
 - a bounded binary patch page;
