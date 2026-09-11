@@ -71,6 +71,9 @@ func runWorkerConnect(configurationPath string) (int, error) {
 		current.ClockAt = clock.UTC()
 		current.Capabilities =
 			workerconnector.LiveCapabilities(ctx, privateAPI, current.Capabilities)
+		// The daemon owns the storage measurement and the allocation decision behind it; the
+		// connector carries whichever one it can read right now, and nothing when it cannot.
+		current.Storage = workerconnector.LiveStorage(ctx, privateAPI)
 		return current
 	}
 	connector, err := workerconnector.NewConnector(workerconnector.ConnectorConfig{

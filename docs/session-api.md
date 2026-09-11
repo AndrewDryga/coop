@@ -143,6 +143,29 @@ The parser rejects unknown fields and requires:
 Every rung's credential must already be authenticated. A rung that omits `@credential` resolves to
 that provider's current default when Coop loads the policy. Presets are not supported.
 
+An optional top-level `storage:` block replaces the workspace-storage limits the daemon otherwise
+derives from the measured volume:
+
+```yaml
+storage:
+  reserve_bytes: 26843545600
+  high_watermark_bytes: 510027366400
+  low_watermark_bytes: 483183820800
+  disposable_budget_bytes: 10737418240
+  protected_budget_bytes: 483183820800
+  grace_window: 15m
+  measure_interval: 5m
+  max_reclaim_per_pass: 4
+```
+
+Every field is required when the block is present. The reserve and the two watermarks are one
+ordered policy — see [`GET /v1/storage`](#health) for what each one means — and a high watermark
+written without a low one would defer an incoherent configuration to the first time the volume
+filled up. `coop sessions serve` refuses to start on a block that cannot hold, and on numbers that
+do not fit the volume it measures the daemon publishes no storage advertisement and reports the
+mismatch in `/v1/storage`. Omit the block and the daemon keeps one reserve of 5% free, closing
+allocation under it and reopening once two reserves are free.
+
 ## Target ladders
 
 A `target` list is an ordered fallback ladder, and it may be cross-provider:
@@ -514,11 +537,36 @@ host command, or return a host workspace path.
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after controller startup |
 | `GET` | `/v1/capabilities` | `{"repository_freshness_receipt_versions":[2],"policies":{"<name>":{"mode":"filtered","fingerprint":"<64 hex>"}}}` for caller-side protocol negotiation and network placement |
+| `GET` | `/v1/storage` | this daemon's own workspace-storage accounting: `storage` (the object a fleet controller reads), `budget`, `totals`, `roots`, `forks` and `problems` |
 
 The `policies` map is each served policy's network reach as this daemon resolved it against this
 host; an open or offline policy reports its mode with no fingerprint. It is published because a
 caller cannot compute it — host approval feeds it — and a create pins it as
 `expected_network_fingerprint`.
+
+`/v1/storage` measures allocated blocks, never apparent size, and it never opens a file — so it can
+account credential-bearing private session state without reading any of it. A fork's git objects are
+hardlinked from the checkout it was cloned from, so every total is the storage that would actually
+be returned by removing that content, with the multiply-linked baseline reported once in
+`totals.baseline_shared_bytes` instead of charged to each fork. A measurement that could not see
+everything reports `totals.unknown` and publishes `storage.unattributed_bytes` as `null`: unknown is
+not zero. A full tree walk is too expensive for every caller, so the answer is re-measured at most
+once per `budget.measure_seconds` and `storage.measured_at` carries its age.
+
+`forks[]` names each directory under a fork root, its category, and the evidence for it. Only
+`disposable`, `owned_orphan` and `staged_discard` are storage anything may reclaim; `active`,
+`grace`, `protected` (a running worker, registered sandbox activity, an interrupted land, canonical
+task authority, a quarantined session, or uncommitted work), `control` and `unattributed` are all
+refusals with a reason. A directory with no coop generation record is `unattributed`: it is
+reported, and it is never deleted on a guess.
+
+Under storage pressure the daemon refuses a NEW workspace with `storage_unavailable` and names its
+cause. It does not refuse anything else: recovery of a workspace that already exists, cleanup,
+discard and every read keep working, and nothing protected is deleted to make room. The refusal
+closes at `storage.high_watermark_bytes` of USED space and reopens only under
+`storage.low_watermark_bytes`, so reclaiming one workspace cannot flap it open and shut.
+`storage.reserve_bytes` is the free-space floor underneath both, and new work never spends it.
+None of this bounds what an already-running task writes inside its own workspace.
 
 The outbound worker connector reports `repository-freshness` capability version `2` and
 `repository-source-selector` version `1` only after the session daemon on its configured Unix
@@ -1024,7 +1072,13 @@ Common status mapping:
 | `409` | idempotency, operation fence, revision, state, queue, budget, resume, uncertainty, discard, policy digest, or network fingerprint conflict |
 | `413` | ordinary request body exceeds 128 KiB, or turn submission exceeds 12 MiB |
 | `500` | internal failure; host paths and raw internal errors are suppressed |
-| `503` | readiness is not ready, or repository/runtime/network authority is temporarily unavailable |
+| `503` | readiness is not ready, or repository/runtime/network/storage authority is temporarily unavailable |
+
+`storage_unavailable` is a retryable `503`: this worker's volume is under its configured pressure
+limits, so it will not create another workspace until space is returned or, when the cause is
+`protected storage exceeds budget`, until the protected data itself goes. Read `/v1/storage` to see
+which bytes are held and why. Place the session on another worker or clear the storage; do not
+retry in a tight loop and do not delete protected workspaces to satisfy the quota.
 
 `network_unavailable` is a `503` an operator has to clear, not a retryable one: the host has no
 approval for the project, no completed `coop net setup`, or the named policy disagrees with the

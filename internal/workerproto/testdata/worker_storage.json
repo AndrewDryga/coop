@@ -1,0 +1,1 @@
+{"version":1,"measured_at":"2026-09-11T04:05:06Z","capacity_bytes":536870912000,"free_bytes":107374182400,"reserve_bytes":26843545600,"high_watermark_bytes":456340275200,"low_watermark_bytes":402653184000,"disposable_bytes":8589934592,"protected_bytes":21474836480,"unattributed_bytes":1048576,"allocation":"open","refusal_reason":null}

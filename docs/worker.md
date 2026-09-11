@@ -86,6 +86,46 @@ enrollment and worker eligibility in your controller, not just by checking that 
 second with a 30-second request timeout. `renew_before_seconds` is 60–86400; omitted or zero
 defaults to one hour. Choose a renewal window shorter than your controller's certificate lifetime.
 
+## Workspace storage
+
+Every hello carries an optional `storage` object: the worker's own account of the volume its fork
+workspaces land on, taken from the daemon's [`GET /v1/storage`](session-api.md#health) and forwarded
+verbatim.
+
+```json
+{
+  "version": 1,
+  "measured_at": "2026-09-11T04:05:06Z",
+  "capacity_bytes": 536870912000, "free_bytes": 107374182400, "reserve_bytes": 26843545600,
+  "high_watermark_bytes": 510027366400, "low_watermark_bytes": 483183820800,
+  "disposable_bytes": 8589934592,
+  "protected_bytes": 21474836480,
+  "unattributed_bytes": null,
+  "allocation": "open",
+  "refusal_reason": null
+}
+```
+
+`disposable_bytes` is what a discard could still return; `protected_bytes` is what this worker is
+holding on purpose, including the hardlinked repository baseline the forks share. A `null`
+`unattributed_bytes` means the worker found storage it could not attribute, or could not finish
+measuring — treat it as unknown, never as zero. `allocation` is `refused` with a `refusal_reason` of
+`reserve_exhausted` or `protected_storage_exceeds_budget` while this worker will not accept a new
+workspace; placement and cleanup of work it already has continue either way.
+
+The watermarks are USED-byte levels and the reserve is a free-byte floor. By default they are
+derived from the measured capacity: a reserve of 5%, allocation closing when free space falls under
+one reserve, and reopening only once two reserves are free — the hysteresis is what stops a worker
+from flapping after every reclaimed workspace. A worker that cannot measure its volume, or whose
+daemon predates this endpoint, simply omits the object and keeps polling.
+
+The worker also reclaims fork storage it can prove is garbage: its own generation record, no session
+naming it, no reservation, no live worker or sandbox activity, older than the reclaim age, and a
+clean tree fully contained by its parent. Everything else — a dirty workspace, an unmerged branch, a
+directory with no coop generation record — is reported in `/v1/storage` and left alone. An
+interrupted removal is resumable: the workspace is renamed into an owner-private staging directory
+before any deletion, and no discard reports success until those bytes are physically gone.
+
 ## Restart and recovery
 
 Stop the connector with `SIGINT` or `SIGTERM`. Preserve the identity file and the entire journal

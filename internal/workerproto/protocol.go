@@ -60,6 +60,10 @@ type WorkerHello struct {
 	Capabilities           []Capability      `json:"capabilities"`
 	Capacity               Capacity          `json:"capacity"`
 	State                  string            `json:"state"`
+	// Storage is OPTIONAL. A worker that cannot measure its own disk keeps polling without it, and
+	// a control plane that does not understand it ignores it; neither may treat its absence as an
+	// empty disk.
+	Storage *Storage `json:"storage,omitempty"`
 }
 
 type Repository struct {
@@ -274,6 +278,11 @@ func (w WorkerHello) validate() error {
 	}
 	if !uniqueRepositoryRefs(w.Repositories) || !uniqueCapabilityNames(w.Capabilities) {
 		return errors.New("duplicate worker authority advertisement")
+	}
+	if w.Storage != nil {
+		if err := w.Storage.validate(); err != nil {
+			return err
+		}
 	}
 	return w.Capacity.validate()
 }

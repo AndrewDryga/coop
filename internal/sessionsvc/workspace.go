@@ -348,14 +348,21 @@ func createSessionWorkspace(repo, generatedName string) (sessionWorkspace, error
 	return ensureSessionWorkspace(repo, generatedName, base)
 }
 
+// forkAllocationGuard is the atomic pre-allocation pressure check. It only ever sees a workspace
+// that does not exist yet: adopting an existing one is recovery of work this worker already
+// accepted, and refusing that would strand the session instead of protecting the disk.
+type forkAllocationGuard interface {
+	admitNewFork(repo, name string) (func(), error)
+}
+
 // ensureSessionWorkspace creates or adopts only the deterministic workspace bound to an
 // already-persisted base. An existing path is read-only inspected: a crash-recovery retry must
 // never reset, clean, or replace an ambiguous workspace it did not create.
 func ensureSessionWorkspace(repo, generatedName, base string) (sessionWorkspace, error) {
-	return ensureSessionWorkspaceContext(context.Background(), repo, generatedName, base)
+	return ensureSessionWorkspaceContext(context.Background(), nil, repo, generatedName, base)
 }
 
-func ensureSessionWorkspaceContext(ctx context.Context, repo, generatedName, base string, reservationIDs ...string) (sessionWorkspace, error) {
+func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuard, repo, generatedName, base string, reservationIDs ...string) (sessionWorkspace, error) {
 	if repo == "" || !filepath.IsAbs(repo) || !forkspace.ValidName(generatedName) || !validSessionWorkspaceCommit(base) {
 		return sessionWorkspace{}, errors.New("invalid session workspace binding")
 	}
@@ -373,6 +380,15 @@ func ensureSessionWorkspaceContext(ctx context.Context, repo, generatedName, bas
 	created := errors.Is(statErr, os.ErrNotExist)
 	if statErr != nil && !created {
 		return sessionWorkspace{}, fmt.Errorf("inspect session workspace %q: %w", generatedName, statErr)
+	}
+	if created && guard != nil {
+		// Under the fork lifecycle lock and before the first byte is written, so a refusal leaves
+		// nothing behind and a concurrent discard's returned space is visible to this decision.
+		release, err := guard.admitNewFork(repo, generatedName)
+		if err != nil {
+			return sessionWorkspace{}, err
+		}
+		defer release()
 	}
 	if created {
 		createdPath, createErr := forkspace.SetupContext(ctx, repo, generatedName)
@@ -1099,9 +1115,11 @@ func applySessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan, validated *va
 					return err
 				}
 			}
-			return forkspace.RemoveGenerationIfMatchesLocked(plan.Repo, validated.currentFork)
+			if err := forkspace.RemoveGenerationIfMatchesLocked(plan.Repo, validated.currentFork); err != nil {
+				return err
+			}
 		}
-		return nil
+		return confirmSessionWorkspaceRemoved(plan)
 	}
 	if plan.Running || forkspace.NeedsStop(plan.Repo, plan.Name) {
 		return errors.New("refusing to discard a workspace that started running")
@@ -1109,9 +1127,15 @@ func applySessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan, validated *va
 	if !forkspace.SamePinned(plan.Workspace, validated.info) {
 		return errors.New("discard plan is stale: workspace was replaced before removal")
 	}
-	// The on-disk removal only: the session service already brought this workspace's sibling
-	// services down (with their volumes) before applying the discard, so nothing here may do it a
-	// second time.
+	// Stage the proven inode out of the fork root FIRST. The rename is atomic, so a crash between
+	// here and the end of the removal leaves unambiguous garbage a later pass can finish instead
+	// of a half-deleted directory no plan could ever inspect again.
+	if _, err := forkspace.StageWorkspaceDiscardLocked(plan.Repo, plan.Name, validated.info); err != nil {
+		return fmt.Errorf("discard session workspace: %w", err)
+	}
+	// The sibling services are already down — the session service brought them and their volumes
+	// down before applying the discard — so this only drops the fork's review ref and prunes an
+	// empty fork root.
 	if err := forkspace.Destroy(plan.Repo, plan.Name); err != nil {
 		return fmt.Errorf("discard session workspace: %w", err)
 	}
@@ -1124,6 +1148,28 @@ func applySessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan, validated *va
 		if err := forkspace.RemoveGenerationIfMatchesLocked(plan.Repo, validated.currentFork); err != nil {
 			return fmt.Errorf("remove discarded session workspace generation: %w", err)
 		}
+	}
+	return confirmSessionWorkspaceRemoved(plan)
+}
+
+// confirmSessionWorkspaceRemoved is the receipt rule: a discard has not succeeded until this
+// fork's bytes are physically gone. A removal interrupted partway leaves a staged tree behind, and
+// reporting success over it is how storage accumulates with every operation claiming it cleaned up.
+func confirmSessionWorkspaceRemoved(plan WorkspaceDiscardPlan) error {
+	if _, err := forkspace.PurgeStagedDiscards(plan.Repo, plan.Name); err != nil {
+		return fmt.Errorf("finish discarding session workspace %s: %w", plan.Name, err)
+	}
+	staged, err := forkspace.StagedDiscards(plan.Repo, plan.Name)
+	if err != nil {
+		return fmt.Errorf("confirm session workspace %s was removed: %w", plan.Name, err)
+	}
+	if len(staged) > 0 {
+		return fmt.Errorf("session workspace %s still holds storage at %s", plan.Name, staged[0])
+	}
+	if _, err := os.Lstat(plan.Workspace); err == nil {
+		return fmt.Errorf("session workspace %s remains after removal", plan.Name)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("confirm session workspace %s was removed: %w", plan.Name, err)
 	}
 	return nil
 }

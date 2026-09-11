@@ -362,6 +362,24 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Policies:                           h.service.PolicyNetworks(),
 		})
 		return
+	case "/v1/storage":
+		// The worker's own storage accounting, on the owner-private socket the connector and
+		// `coop sessions doctor` already speak. The connector forwards the nested `storage` object
+		// to the control plane verbatim; the per-fork inventory beside it stays here, because it
+		// names local paths.
+		if !sessionHTTPMethod(w, r, http.MethodGet) {
+			return
+		}
+		if !sessionQueryOnly(w, r) {
+			return
+		}
+		report, err := h.service.StorageReport(r.Context())
+		if err != nil {
+			writeSessionServiceError(w, err)
+			return
+		}
+		writeSessionJSON(w, http.StatusOK, report)
+		return
 	}
 	if r.URL.Path == "/v1/sessions" || strings.HasPrefix(r.URL.Path, "/v1/sessions/") {
 		h.serveSessionPath(w, r)
@@ -1714,7 +1732,8 @@ func sessionHTTPError(err error) (string, int, string) {
 		status = http.StatusConflict
 	case session.CodeInternal:
 		status = http.StatusInternalServerError
-	case session.CodeRepositoryUnavailable, session.CodeNetworkUnavailable, sessionACPCleanupError:
+	case session.CodeRepositoryUnavailable, session.CodeNetworkUnavailable, session.CodeStorageUnavailable,
+		sessionACPCleanupError:
 		status = http.StatusServiceUnavailable
 	}
 	var typed *session.Error

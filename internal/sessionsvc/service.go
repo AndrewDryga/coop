@@ -153,6 +153,25 @@ type CompanionPolicy struct {
 type rawSessionPolicyFile struct {
 	Version  int                         `yaml:"version"`
 	Policies map[string]rawSessionPolicy `yaml:"policies"`
+	// Storage is the optional worker storage policy. It is declared here because the decode is
+	// strict: a file carrying the block would otherwise be refused outright. LoadStorageLimits
+	// reads it; LoadPolicies ignores it, so the two readers share one document without either
+	// owning the other's shape.
+	Storage *rawSessionStorage `yaml:"storage"`
+}
+
+// rawSessionStorage is all-or-nothing on purpose. The reserve and the two watermarks are one
+// ordered policy, and accepting a high watermark with no low one would defer an incoherent
+// configuration to the first time the volume filled up instead of refusing it at the file.
+type rawSessionStorage struct {
+	ReserveBytes          int64  `yaml:"reserve_bytes"`
+	HighWatermarkBytes    int64  `yaml:"high_watermark_bytes"`
+	LowWatermarkBytes     int64  `yaml:"low_watermark_bytes"`
+	DisposableBudgetBytes int64  `yaml:"disposable_budget_bytes"`
+	ProtectedBudgetBytes  int64  `yaml:"protected_budget_bytes"`
+	GraceWindow           string `yaml:"grace_window"`
+	MeasureInterval       string `yaml:"measure_interval"`
+	MaxReclaimPerPass     int    `yaml:"max_reclaim_per_pass"`
 }
 
 type rawSessionPolicy struct {
@@ -193,6 +212,16 @@ type rawSessionCompanionPolicy struct {
 // caller wants credential availability checked; passing nil performs syntax/target/repository
 // validation only and is useful for isolated parser tests.
 func LoadPolicies(path string, cfg *config.Config) (map[string]Policy, error) {
+	data, err := readSessionPolicyFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseSessionPolicies(data, cfg)
+}
+
+// readSessionPolicyFile is the trusted-file half of LoadPolicies: the ancestry, ownership,
+// permission and size checks every reader of that document must pass before parsing it.
+func readSessionPolicyFile(path string) ([]byte, error) {
 	if path == "" {
 		return nil, errors.New("session policy path is required")
 	}
@@ -228,7 +257,7 @@ func LoadPolicies(path string, cfg *config.Config) (map[string]Policy, error) {
 	if len(data) > PolicyFileLimit {
 		return nil, fmt.Errorf("session policy file exceeds %d bytes", PolicyFileLimit)
 	}
-	return parseSessionPolicies(data, cfg)
+	return data, nil
 }
 
 func sessionFileOwner(info os.FileInfo) (uint64, bool) {
@@ -847,7 +876,9 @@ type Config struct {
 	StopTimeout         time.Duration
 	CleanupInterval     time.Duration
 	OperationStaleAfter time.Duration
-	Logger              *slog.Logger
+	// StorageLimits overrides the storage policy derived from the volume's measured capacity.
+	StorageLimits *StorageLimits
+	Logger        *slog.Logger
 }
 
 type sessionWorker struct {
@@ -943,6 +974,9 @@ type Service struct {
 	testBeforeCleanupStamp func()
 	historicalMu           sync.Mutex
 	historicalPending      map[string]struct{}
+	// storage is this worker's own account of the disk it executes on: the configured limits, the
+	// sticky allocation decision, and the last measurement. See storage.go.
+	storage storageAccountant
 }
 
 func NewService(cfg Config) (*Service, error) {
@@ -1008,6 +1042,11 @@ func NewService(cfg Config) (*Service, error) {
 	}
 	if service.log == nil {
 		service.log = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
+	if cfg.StorageLimits != nil {
+		if err := service.setStorageLimits(*cfg.StorageLimits); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.RunnerFactory != nil {
 		service.runner = cfg.RunnerFactory(store)
@@ -1678,6 +1717,7 @@ func (s *Service) runSessionMaintenance(ctx context.Context) {
 			if err := s.reconcileInterruptedOperations(ctx, false); err != nil && ctx.Err() == nil {
 				s.log.Error("session operation reconciliation failed", "error", err)
 			}
+			s.reclaimStorageOnce(ctx)
 		}
 	}
 }
@@ -2539,7 +2579,7 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 			return s.rejectCreateIntent(ctx, op.ID, "create operation intent has invalid repository pins")
 		}
 		var err error
-		workspace, err = ensureSessionWorkspaceContext(ctx, intent.Policy.Repository, intent.ForkName, workspaceCommit, intent.SessionID)
+		workspace, err = ensureSessionWorkspaceContext(ctx, s, intent.Policy.Repository, intent.ForkName, workspaceCommit, intent.SessionID)
 		if err != nil {
 			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 				return session.Session{}, err

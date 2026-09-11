@@ -149,6 +149,20 @@ func ReadGeneration(repo, name string) (Identity, bool, error) {
 	return Identity{Name: record.Name, Generation: record.Generation}, true, nil
 }
 
+// GenerationCreatedAt is when coop bound this exact incarnation, read from the same immutable
+// record that proves ownership. Reclamation ages a candidate off this durable stamp and never off
+// a directory's modification time, which any process inside the workspace can move.
+func GenerationCreatedAt(repo string, identity Identity) (time.Time, error) {
+	record, err := readGenerationRecord(repo, identity.Name)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if record.Generation != identity.Generation {
+		return time.Time{}, errors.New("fork generation changed")
+	}
+	return record.CreatedAt, nil
+}
+
 // GenerationIdentities enumerates every host-owned incarnation, including a generation whose
 // workspace disappeared out of band. Per-record failures remain visible without hiding healthy
 // siblings; callers must not turn a malformed record into permission to mutate anything.

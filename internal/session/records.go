@@ -208,7 +208,11 @@ const (
 	CodeNetworkFingerprintMismatch ErrorCode = "network_fingerprint_mismatch"
 	CodeOutputContractFailed       ErrorCode = "output_contract_failed"
 	CodeSessionCleanupError        ErrorCode = "session_cleanup_error"
-	CodeInternal                   ErrorCode = "internal_error"
+	// CodeStorageUnavailable refuses a NEW workspace because the worker's volume is under the
+	// configured pressure limits. It is retryable and names its cause: control, cleanup and
+	// recovery of work that already exists keep running while it holds.
+	CodeStorageUnavailable ErrorCode = "storage_unavailable"
+	CodeInternal           ErrorCode = "internal_error"
 )
 
 // PublicErrorDetail removes implementation details that must not cross the

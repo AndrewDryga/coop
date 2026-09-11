@@ -2,7 +2,7 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, moves workspaces only as digest-verified bounded bundles, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/worker.md, docs/examples/worker.json]
+sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/worker.md, docs/examples/worker.json, internal/workerconnector/storage.go]
 updated: 2026-09-11
 ---
 
@@ -81,6 +81,7 @@ The traps the code does not make obvious:
   start event. The reconnect/ACK regression proves this metadata survives durable delivery.
 
 ## Changelog
+- 2026-09-11 — hello carries an OPTIONAL `storage` object (`internal/workerproto/storage.go`), read from the daemon's owner-private `GET /v1/storage` by `LiveStorage` and forwarded verbatim. Any failure — old daemon, failed measurement, object that fails its own contract — publishes nothing rather than a wrong number, so an unmeasurable disk never stops a poll. See [[worker-storage-accounting]].
 - 2026-09-11 — `create_session` carries a `source` selector; the connector keeps its OWN bounded
   copy of that union (`sourceSelector`, `internal/workerconnector/executor.go`) because this
   package may import only `secretscan` and `workerproto`, refuses a malformed one with

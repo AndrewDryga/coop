@@ -330,10 +330,21 @@ func runSessionServe(cfg *config.Config, state, policy, socket string) (int, err
 	if err := sessionsvc.EnsureAncestors(filepath.Dir(state)); err != nil {
 		return 1, err
 	}
-	service, err := sessionsvc.NewService(sessionsvc.Config{
+	// The optional `storage:` block in the same policy file. Absent, the daemon derives its limits
+	// from the measured volume; present and incoherent, it refuses to start rather than discovering
+	// the problem the first time the disk fills.
+	storageLimits, configuredStorage, err := sessionsvc.LoadStorageLimits(policy)
+	if err != nil {
+		return 1, err
+	}
+	serviceConfig := sessionsvc.Config{
 		StateRoot: state, PolicyPath: policy, SourceConfig: cfg, Executable: os.Args[0],
 		Host: sessionHost(), Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
-	})
+	}
+	if configuredStorage {
+		serviceConfig.StorageLimits = &storageLimits
+	}
+	service, err := sessionsvc.NewService(serviceConfig)
 	if err != nil {
 		return 1, err
 	}
