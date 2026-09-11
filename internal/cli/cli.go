@@ -105,8 +105,8 @@ func Main(argv []string) int {
 		// `coop help <cmd> [<sub>]` shows that command's help — the same page as
 		// `coop <cmd> [<sub>] --help`. Bare `coop help` (or -h/--help) is the top-level menu.
 		if argv[0] == "help" && len(argv) > 1 {
-			if argv[1] == "--all" { // the whole manual, same bytes as docs/cli.md (see RenderManual)
-				fmt.Print(RenderManual(cfg))
+			if argv[1] == "--all" { // the whole manual: docs/cli.md's bytes (see RenderManual), then this project's presets
+				fmt.Print(RenderManual(cfg) + presetManualPages(cfg))
 				return 0
 			}
 			return reportExit(helpForPath(helpPath(argv[1:]), cfg, true))

@@ -224,13 +224,15 @@ func TestManualOpensWithTheApprovedMenu(t *testing.T) {
 // wantManualOrder is the page order of the approved full reference, restricted to the pages that
 // exist today: the box, the agents, accounts and models, the work queues, loops and forks, this
 // project's services, the checks, setup, and the integrations last. `coop worker` is retired: its
-// workflow is `coop sessions connect`, whose page sits with the rest of the sessions leaves.
-// Other families' leaf pages arrive with the slices that write them.
+// workflow is `coop sessions connect`, whose page sits with the rest of the sessions leaves. Every
+// family lists its leaves: a command a person can run is a command the manual explains.
 var wantManualOrder = []string{
 	"run", "shell", "claude", "codex", "gemini", "grok",
 	"login", "credentials", "credentials default", "credentials rm", "credentials account",
 	"models", "presets init", "presets",
-	"tasks",
+	"tasks", "tasks ls", "tasks add", "tasks claim", "tasks release", "tasks lease",
+	"tasks block", "tasks unblock", "tasks done", "tasks path", "tasks queues",
+	"tasks decisions", "tasks lint", "tasks rm", "tasks watch",
 	"backlog", "backlog ls", "backlog add", "backlog promote", "backlog rm",
 	"context", "loop",
 	"fork", "fork acp", "fork ls", "fork review", "fork merge", "fork rm",

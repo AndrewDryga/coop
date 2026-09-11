@@ -289,6 +289,33 @@ func helpForPreset(name string, cfg *config.Config) (code int, ok bool) {
 	return 0, true
 }
 
+// presetManualPages are this project's preset pages, appended to the complete reference in a
+// terminal. A preset IS a runnable command here (`coop frontier`), so leaving it out of the manual
+// would make a real command undiscoverable; it stays OUT of RenderManual because a project's
+// presets are its own state, and docs/cli.md documents the tool, not this repo. A preset that no
+// longer loads is skipped rather than reported: the manual answers "what can I run", and
+// `coop presets <name>` is where a broken one explains itself.
+func presetManualPages(cfg *config.Config) string {
+	repo, err := box.ResolveRepo(cfg.RepoOverride)
+	if err != nil {
+		return ""
+	}
+	globalDir := cfg.GlobalPresetsDir()
+	var b strings.Builder
+	for _, name := range preset.List(repo, globalDir) {
+		p, err := preset.Load(repo, globalDir, name)
+		if err != nil {
+			continue
+		}
+		page := strings.TrimRight(presetDetail(p, repo, ui.Palette{}), "\n")
+		if page == "" {
+			continue
+		}
+		b.WriteString("\n" + manualSeparator + "\n\n" + page + "\n")
+	}
+	return b.String()
+}
+
 // presetDetail renders a loaded preset for a human: what it is, how to run it, the lead's
 // models, one labeled block per role, and the file to edit. It is the ONE projection behind
 // both `coop presets <name>` and `coop help <name>`, so the two can never drift.

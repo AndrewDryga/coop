@@ -398,3 +398,22 @@ func TestCmdPresetsInitPreservesIncompleteDestinations(t *testing.T) {
 		})
 	}
 }
+
+// The complete reference ends with the pages for THIS project's presets: `coop frontier` is a
+// command a person can run here, and the manual is where every runnable command is explained. The
+// generated docs stay free of them — a project's presets are its state, not the tool's manual.
+func TestManualEndsWithThisProjectsPresets(t *testing.T) {
+	repo := presetsRepo(t)
+	cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
+
+	pages := presetManualPages(cfg)
+	if !strings.HasPrefix(pages, "\n"+manualSeparator+"\n\n") {
+		t.Fatalf("a preset page must arrive behind the manual's separator, got:\n%s", pages)
+	}
+	if !strings.Contains(pages, "frontier — a preset for multiple models") {
+		t.Errorf("the project's preset is missing from the manual:\n%s", pages)
+	}
+	if strings.Contains(RenderManual(cfg), "frontier —") {
+		t.Error("RenderManual is the tool's documentation — a project's preset must not be in it")
+	}
+}
