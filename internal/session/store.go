@@ -2575,6 +2575,9 @@ func (s *Store) CancelTurn(ctx context.Context, key string, req CancelTurnReques
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ? WHERE id = ?`, string(turn.State), now.UnixNano(), string(turn.StopReason), turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("cancel turn: %w", err)
 	}
+	if err := s.settleTurnUsage(ctx, tx, req.SessionID, &turn, req.Usage, req.CumulativeCostUSD, req.CostRecorded); err != nil {
+		return Turn{}, err
+	}
 	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
 		return Turn{}, err
 	}
@@ -3015,6 +3018,48 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	return turn, nil
 }
 
+// settleTurnUsage records, on a turn that did not complete, the usage its finished prompt rounds
+// reported: per-column the greater of what an earlier candidate already persisted and what the
+// runner accumulated (a turn's usage only ever grows), and the cost by the same cumulative rule
+// CompleteTurn applies — the provider reports a session-cumulative figure, so this turn's share is
+// the difference from what the session had recorded. Nothing is written when nothing was reported.
+func (s *Store) settleTurnUsage(ctx context.Context, tx *sql.Tx, sessionID string, turn *Turn, usage Usage, cumulativeCost float64, costRecorded bool) error {
+	if !usage.Recorded() && !costRecorded {
+		return nil
+	}
+	turn.Usage.InputTokens = max(turn.Usage.InputTokens, usage.InputTokens)
+	turn.Usage.CachedInputTokens = max(turn.Usage.CachedInputTokens, usage.CachedInputTokens)
+	turn.Usage.OutputTokens = max(turn.Usage.OutputTokens, usage.OutputTokens)
+	turn.Usage.ReasoningTokens = max(turn.Usage.ReasoningTokens, usage.ReasoningTokens)
+	if costRecorded {
+		var previous float64
+		var recorded bool
+		if err := tx.QueryRowContext(ctx, `SELECT usage_cumulative_cost_usd, usage_cost_recorded FROM sessions WHERE id = ?`, sessionID).
+			Scan(&previous, &recorded); err != nil {
+			return fmt.Errorf("read cumulative session cost: %w", err)
+		}
+		cost := cumulativeCost
+		if recorded && cumulativeCost >= previous {
+			cost -= previous
+		}
+		if cost > turn.Usage.CostUSD {
+			turn.Usage.CostUSD = cost
+		}
+		turn.Usage.CostRecorded = true
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET usage_cumulative_cost_usd = CASE WHEN ? >= usage_cumulative_cost_usd THEN ? ELSE usage_cumulative_cost_usd END,
+		    usage_cost_recorded = 1 WHERE id = ?`, cumulativeCost, cumulativeCost, sessionID); err != nil {
+			return fmt.Errorf("record cumulative session cost: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE turns SET usage_input_tokens = ?, usage_cached_input_tokens = ?,
+	    usage_output_tokens = ?, usage_reasoning_tokens = ?, usage_cost_usd = ?, usage_cost_recorded = ? WHERE id = ?`,
+		turn.Usage.InputTokens, turn.Usage.CachedInputTokens, turn.Usage.OutputTokens, turn.Usage.ReasoningTokens,
+		turn.Usage.CostUSD, turn.Usage.CostRecorded, turn.ID); err != nil {
+		return fmt.Errorf("record usage of an unfinished turn: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) FailTurn(ctx context.Context, req FailTurnRequest) (Turn, error) {
 	if req.SessionID == "" || req.TurnID == "" || !validBoundedText(req.SessionID, MaxIDBytes) || !validBoundedText(req.TurnID, MaxIDBytes) {
 		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "session and turn are required"}
@@ -3052,6 +3097,9 @@ func (s *Store) FailTurn(ctx context.Context, req FailTurnRequest) (Turn, error)
 	turn.ErrorDetail = req.ErrorDetail
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, finished_at = ?, stop_reason = ?, error_code = ?, error_detail = ? WHERE id = ?`, string(turn.State), now.UnixNano(), string(turn.StopReason), string(turn.ErrorCode), turn.ErrorDetail, turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("fail turn: %w", err)
+	}
+	if err := s.settleTurnUsage(ctx, tx, req.SessionID, &turn, req.Usage, req.CumulativeCostUSD, req.CostRecorded); err != nil {
+		return Turn{}, err
 	}
 	if err := deleteTurnArtifacts(ctx, tx, turn.ID); err != nil {
 		return Turn{}, err

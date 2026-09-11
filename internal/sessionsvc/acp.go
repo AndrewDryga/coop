@@ -502,6 +502,8 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			if lookup, ok := ctx.Value(sessionCancelRequestContextKey{}).(func() (string, session.CancelTurnRequest, bool)); ok {
 				if key, request, requested := lookup(); requested && key != "" {
 					cancelCtx, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
+					// The runner settles the cancellation with what its finished rounds reported.
+					request.Usage, request.CumulativeCostUSD, request.CostRecorded = settledUsage(usage)
 					cancelled, err := r.store.CancelTurn(cancelCtx, key, request)
 					cancel()
 					if err == nil {
@@ -513,7 +515,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			}
 		}
 		if baseErr != nil {
-			result = r.failTurn(bound, leased, baseErr, result)
+			result = r.failTurn(bound, leased, baseErr, result, usage)
 		}
 		settled := result.ID == leased.ID && result.SessionID == bound.ID &&
 			result.State != session.TurnStarting && result.State != session.TurnRunning
@@ -980,7 +982,16 @@ func (r *sessionTurnRunner) stageTurnCandidate(
 	})
 }
 
-func (r *sessionTurnRunner) failTurn(bound session.Session, leased session.Turn, cause error, current session.Turn) session.Turn {
+// settledUsage splits the runner's accumulated usage the way completion does: the token columns
+// are the turn's own, the cost is the provider's session-cumulative figure the store turns into
+// this turn's share. A turn that never finished a round carries nothing.
+func settledUsage(usage session.Usage) (session.Usage, float64, bool) {
+	cumulativeCost, costRecorded := usage.CostUSD, usage.CostRecorded
+	usage.CostUSD, usage.CostRecorded = 0, false
+	return usage, cumulativeCost, costRecorded
+}
+
+func (r *sessionTurnRunner) failTurn(bound session.Session, leased session.Turn, cause error, current session.Turn, usage session.Usage) session.Turn {
 	if r.store == nil || bound.ID == "" || leased.ID == "" || leased.SessionID != bound.ID {
 		return current
 	}
@@ -996,7 +1007,9 @@ func (r *sessionTurnRunner) failTurn(bound session.Session, leased session.Turn,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCleanupTimeout)
 	defer cancel()
-	failed, err := r.store.FailTurn(ctx, session.FailTurnRequest{SessionID: bound.ID, TurnID: leased.ID, ErrorCode: code, ErrorDetail: detail})
+	tokens, cumulativeCost, costRecorded := settledUsage(usage)
+	failed, err := r.store.FailTurn(ctx, session.FailTurnRequest{SessionID: bound.ID, TurnID: leased.ID, ErrorCode: code, ErrorDetail: detail,
+		Usage: tokens, CumulativeCostUSD: cumulativeCost, CostRecorded: costRecorded})
 	if err != nil {
 		return current
 	}

@@ -2894,6 +2894,28 @@ func TestSessionACPChildHelper(t *testing.T) {
 		case "session/prompt":
 			promptCount++
 			switch scenario {
+			case "invalid-contract-once-then-failure":
+				// Round one is a real, billed request that produced invalid JSON; round two — the
+				// schema repair — is where the provider fails. What round one reported must survive.
+				marker := os.Getenv("COOP_TEST_SESSION_CONTRACT_MARKER")
+				if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
+					_ = os.WriteFile(marker, []byte("rejected"), 0o600)
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": `{"reply":"invalid"}}`}}}})
+					send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
+						"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 10, "outputTokens": 2},
+					}})
+					break
+				}
+				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
+					"stopReason": "end_turn",
+					"_meta": map[string]any{"jetbrains": map[string]any{"air": map[string]any{
+						"version": 1,
+						"sessionFailure": map[string]any{
+							"id": "turn:error", "revision": 1, "category": "service",
+							"severity": "error", "title": "upstream temporarily unavailable", "actions": []string{"retry"},
+						},
+					}}},
+				}})
 			case "typed-provider-failure", "typed-provider-rate-limit", "typed-provider-subscription-limit-once":
 				if scenario == "typed-provider-subscription-limit-once" {
 					marker := os.Getenv("COOP_TEST_SESSION_LIMIT_MARKER")
@@ -3085,5 +3107,35 @@ func TestSessionACPChildHelper(t *testing.T) {
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
 			}
 		}
+	}
+}
+
+// A turn that fails AFTER a completed prompt round keeps the usage that round reported: the
+// schema-repair request was real and billed, and Responder's ledger must not show the turn as
+// "no token report". The failing round itself reports nothing, and a turn that fails before any
+// round completes still carries none — absence is never replaced by an invented figure.
+func TestFailedTurnKeepsTheUsageItsCompletedRoundsReported(t *testing.T) {
+	fixture := newSessionACPFixture(t, "invalid-contract-once-then-failure")
+	leased := fixture.submitContract(t, "return the result")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased)
+	if err == nil || result.State != session.TurnFailed {
+		t.Fatalf("turn after a repair round then a provider failure = %+v, err=%v", result, err)
+	}
+	if !result.Usage.Recorded() || result.Usage.InputTokens != 10 || result.Usage.OutputTokens != 2 {
+		t.Fatalf("failed turn lost its completed round's usage: %+v", result.Usage)
+	}
+	stored, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, leased.ID)
+	if err != nil || !stored.Usage.Recorded() || stored.Usage.InputTokens != 10 {
+		t.Fatalf("stored failed turn usage = %+v, err=%v", stored.Usage, err)
+	}
+
+	none := newSessionACPFixture(t, "typed-provider-failure")
+	leased = none.submitContract(t, "return the result")
+	result, err = none.runner.Run(contextWithTurnDeadline(t), none.session, leased)
+	if err == nil || result.State != session.TurnFailed {
+		t.Fatalf("turn that failed before any round = %+v, err=%v", result, err)
+	}
+	if result.Usage.Recorded() {
+		t.Fatalf("a turn with no completed round invented usage: %+v", result.Usage)
 	}
 }

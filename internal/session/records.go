@@ -813,6 +813,12 @@ type CancelTurnRequest struct {
 	SessionID        string
 	TurnID           string
 	ExpectedRevision int64
+	// Usage is what the prompt rounds that COMPLETED before the cancellation reported, when the
+	// runner settles the turn itself; the API's own cancel carries none. The round that was cut
+	// short reports nothing — usage arrives only in a prompt result — so it is never invented.
+	Usage             Usage
+	CumulativeCostUSD float64
+	CostRecorded      bool
 }
 
 type ExhaustBudgetRequest struct {
@@ -836,6 +842,12 @@ type FailTurnRequest struct {
 	TurnID      string
 	ErrorCode   ErrorCode
 	ErrorDetail string
+	// Usage is what the prompt rounds that COMPLETED before the failure reported (a schema-repair
+	// round is a real request the provider billed). The failing round reports nothing and is
+	// never invented; a turn that fails before any round completes keeps no usage at all.
+	Usage             Usage
+	CumulativeCostUSD float64
+	CostRecorded      bool
 }
 
 type CloseSessionRequest struct {

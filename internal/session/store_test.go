@@ -2298,3 +2298,102 @@ func TestSessionReceiptsCarryTheBindingDigestNotTheBearer(t *testing.T) {
 		t.Fatalf("the canonical row must still hold the bearer: %+v, %v", reopened.ResponderBinding, err)
 	}
 }
+
+// An unfinished turn keeps what its finished rounds reported. Per column the greater of what an
+// earlier candidate persisted and what the runner accumulated (usage only grows), the cost by the
+// same session-cumulative rule completion applies, and nothing at all when nothing was reported.
+func TestFailAndCancelKeepReportedUsage(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name          string
+		staged        *Usage // a candidate persisted before the failure, if any
+		report        Usage
+		cumulative    float64
+		recorded      bool
+		wantTokens    Usage
+		wantCost      float64
+		wantCostKnown bool
+		cancel        bool
+	}{
+		{name: "failed after a repair round keeps tokens", report: Usage{InputTokens: 10, OutputTokens: 2},
+			wantTokens: Usage{InputTokens: 10, OutputTokens: 2}},
+		{name: "failed before any round reports none"},
+		{name: "never lowers what a candidate persisted", staged: &Usage{InputTokens: 40, OutputTokens: 9},
+			report: Usage{InputTokens: 10, OutputTokens: 12}, wantTokens: Usage{InputTokens: 40, OutputTokens: 12}},
+		{name: "cost is this turn's share of the cumulative figure", report: Usage{InputTokens: 5},
+			cumulative: 1.25, recorded: true, wantTokens: Usage{InputTokens: 5}, wantCost: 1.25, wantCostKnown: true},
+		{name: "cancelled after a round keeps tokens", cancel: true, report: Usage{InputTokens: 7, OutputTokens: 1},
+			wantTokens: Usage{InputTokens: 7, OutputTokens: 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+			defer store.Close()
+			sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{Target: "target", MaxTurns: 3, MaxQueuedTurns: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			submit := SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "go"}
+			if tc.staged != nil {
+				// A candidate can only be staged on a turn that awaits semantic validation.
+				schema := []byte(`{"type":"object"}`)
+				digest := sha256.Sum256(schema)
+				submit.OutputContract = &OutputContract{JSONSchema: schema, SHA256: hex.EncodeToString(digest[:]), RequireSemanticValidation: true}
+			}
+			turn, err := store.SubmitTurn(ctx, "turn", submit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok, err := store.LeaseNextTurn(ctx, sess.ID); err != nil || !ok {
+				t.Fatalf("lease = %v, ok=%v", err, ok)
+			}
+			if tc.staged != nil {
+				if _, err := store.MarkTurnSendIntent(ctx, sess.ID, turn.ID); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.MarkTurnSent(ctx, sess.ID, turn.ID); err != nil {
+					t.Fatal(err)
+				}
+				candidate := fmt.Sprintf("%x", sha256.Sum256([]byte("{}")))
+				if _, err := store.StageTurnCandidate(ctx, StageTurnCandidateRequest{SessionID: sess.ID, TurnID: turn.ID,
+					Message: "{}", SHA256: candidate, Attempt: 1, Usage: *tc.staged}); err != nil {
+					t.Fatal(err)
+				}
+				// The caller rejects the candidate: the turn goes back to the queue and is leased
+				// again for its next attempt, and the usage the candidate persisted stays on the row.
+				if _, err := store.RejectTurnCandidate(ctx, RejectTurnCandidateRequest{SessionID: sess.ID, TurnID: turn.ID,
+					CandidateSHA256: candidate, Violations: []string{"not it"}}); err != nil {
+					t.Fatal(err)
+				}
+				if _, ok, err := store.LeaseNextTurn(ctx, sess.ID); err != nil || !ok {
+					t.Fatalf("re-lease after rejection = %v, ok=%v", err, ok)
+				}
+			}
+			var settled Turn
+			if tc.cancel {
+				current := mustGetSession(t, store, ctx, sess.ID)
+				settled, err = store.CancelTurn(ctx, "cancel", CancelTurnRequest{SessionID: sess.ID, TurnID: turn.ID, ExpectedRevision: current.Revision,
+					Usage: tc.report, CumulativeCostUSD: tc.cumulative, CostRecorded: tc.recorded})
+			} else {
+				settled, err = store.FailTurn(ctx, FailTurnRequest{SessionID: sess.ID, TurnID: turn.ID, ErrorCode: CodeInternal, ErrorDetail: "provider stopped",
+					Usage: tc.report, CumulativeCostUSD: tc.cumulative, CostRecorded: tc.recorded})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := store.GetTurn(ctx, sess.ID, turn.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, view := range []Turn{settled, got} {
+				tokens := view.Usage
+				tokens.CostUSD, tokens.CostRecorded = 0, false
+				if tokens != tc.wantTokens {
+					t.Fatalf("tokens = %+v, want %+v", tokens, tc.wantTokens)
+				}
+				if view.Usage.CostRecorded != tc.wantCostKnown || view.Usage.CostUSD != tc.wantCost {
+					t.Fatalf("cost = %v recorded=%v, want %v recorded=%v", view.Usage.CostUSD, view.Usage.CostRecorded, tc.wantCost, tc.wantCostKnown)
+				}
+			}
+		})
+	}
+}
