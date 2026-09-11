@@ -1,0 +1,18 @@
+✗ Could not update the Coop binary
+
+      /opt/homebrew/bin/coop could not be replaced: permission denied.
+
+  Update Coop with the tool that installed it.
+  Continuing with the box update.
+
+Updating the Coop box
+  Fetching newer base-image components, agent CLIs, and editor adapters.
+
+[Build output]
+
+✓ Box image updated
+
+Installed agent tools
+[Installed-version output]
+
+⚠ The box was updated, but the Coop binary was not

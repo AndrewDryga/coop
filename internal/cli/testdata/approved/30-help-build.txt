@@ -1,0 +1,16 @@
+coop build — build the Coop box image
+
+Usage:
+  coop build
+
+Builds the shared image, or this project's image when it has a box
+Dockerfile. The default path is .agent/Dockerfile; use box.dockerfile in
+.agent/project.yaml to select another path.
+
+Run after changing the box Dockerfile or .tool-versions.
+Builds use the configured versions and available cache.
+Use coop update --box-only to fetch newer components and rebuild fresh.
+
+New runs use the rebuilt image. Supervised editor sessions restart and
+reconnect. Other running boxes use the old image until their next start.
+Requires a running container runtime.

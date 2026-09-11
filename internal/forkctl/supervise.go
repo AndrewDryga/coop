@@ -149,7 +149,7 @@ func claimForkPidUnlocked(repo, name string, generation ...forkspace.Generation)
 		if err := forkspace.WriteWorkerState(repo, name, forkspace.ClaimStateFor(currentGeneration, false)); err != nil {
 			return fmt.Errorf("fork %s: reclaim the start reservation abandoned by coop pid %d: %w — check permissions on %s, then retry the original coop fork command", name, state.Pid, err, forkspace.StateDir(repo))
 		}
-		ui.Note("Removed a stale start record for fork %s.", name)
+		ui.Warn("fork %s: reclaimed a start reservation from coop pid %d, which is no longer running and never launched a worker", name, state.Pid)
 		return nil
 	}
 	return fmt.Errorf("fork %s is stopped or stopping but still needs box cleanup — finish it with: coop fork stop %s", name, name)
@@ -288,13 +288,8 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 	if err := recordStartedFork(repo, name, cmd, generation); err != nil {
 		return -1, fmt.Errorf("record fork %s worker state: %w — the worker was stopped; fix %s, then retry the original coop fork command", name, err, forkspace.StateDir(repo))
 	}
-	// The worker launched. That is all this confirms — the task work itself has not started yet,
-	// so the lines below are the two commands that watch and end it, not a result.
-	ui.OK("Started fork %s in the background", name)
-	ui.Note("")
-	ui.Note("  Agent: %s", agent)
-	ui.Note("  Logs:  coop fork logs %s --follow", name)
-	ui.Note("  Stop:  coop fork stop %s", name)
+	ui.Note("started fork %s (%s) in the background", name, agent)
+	ui.Note("  coop fork logs %s -f   ·   coop fork stop %s", name, name)
 	return 0, nil
 }
 
@@ -363,7 +358,7 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 			return 1, forkLogReadError(repo, name, err)
 		}
 		if !opened {
-			ui.Note("Fork %s has no log output yet.", name)
+			ui.Note("fork %s has no log output yet", name)
 		}
 		return 0, nil
 	}
@@ -372,7 +367,7 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 		return -1, err
 	}
 	if len(names) == 0 {
-		ui.Note("No forks yet.")
+		ui.Note("no forks yet")
 		return 0, nil
 	}
 	if !follow {
@@ -382,7 +377,7 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 			if err != nil {
 				failures = append(failures, forkLogReadError(repo, n, err))
 			} else if !opened {
-				ui.Note("Fork %s has no log output yet.", n)
+				ui.Note("fork %s has no log output yet", n)
 			}
 		}
 		if len(failures) > 0 {
@@ -406,7 +401,7 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 				mu.Unlock()
 			} else if !opened {
 				mu.Lock()
-				ui.Note("Fork %s has no log output yet.", name)
+				ui.Note("fork %s has no log output yet", name)
 				mu.Unlock()
 			}
 			results <- err
@@ -577,7 +572,7 @@ func (c *Control) ForkStop(args []string) (int, error) {
 				return 1, fmt.Errorf("fork %s stopped, but pausing its task assignment failed: %w", name, err)
 			}
 		}
-		ui.Note("Fork %s is not running.", name)
+		ui.Note("fork %s is not running", name)
 		return 0, nil
 	}
 	if err != nil {
@@ -587,9 +582,6 @@ func (c *Control) ForkStop(args []string) (int, error) {
 	if err != nil {
 		return 1, workerStateFormatError(repo, name, err)
 	}
-	// From here a worker really is being signalled, so the narration starts — a "stopping" line
-	// above the not-running branch would describe work that never happened.
-	ui.Note("Stopping fork %s", name)
 	if state.Generation != "" {
 		if !hasGeneration || forkIdentity.Generation != state.Generation {
 			return 1, fmt.Errorf("fork %s worker state generation does not match host generation authority", name)
@@ -694,12 +686,7 @@ func (c *Control) ForkStop(args []string) (int, error) {
 			return 1, fmt.Errorf("fork %s worker and box stopped, but pausing its task assignment failed: %w", name, err)
 		}
 	}
-	ui.Note("")
-	ui.OK("Fork %s stopped", name)
-	if remembered := ReadForkAgent(forkspace.Workspace(repo, name)); remembered != "" && remembered != "?" {
-		ui.Note("")
-		ui.Note("  Continue: coop fork %s %s --loop", name, remembered)
-	}
+	ui.OK("stopped fork %s", name)
 	return 0, nil
 }
 

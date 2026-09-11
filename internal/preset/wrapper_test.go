@@ -301,7 +301,7 @@ func TestDelegateWrapperFallsBackOnRateLimit(t *testing.T) {
 	if string(got) != "codex:1\ngemini:1\n" {
 		t.Fatalf("calls = %q, want rung 0 then rung 1", got)
 	}
-	for _, want := range []string{"codex:gpt-5.6-sol/xhigh rate limited", "finished on gemini:gemini-3.5-flash"} {
+	for _, want := range []string{"codex:gpt-5.6-sol/xhigh rate limited", "done on gemini:gemini-3.5-flash"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
@@ -404,7 +404,7 @@ func TestDelegateWrapperDetectsSuccessfulCommitAndReset(t *testing.T) {
 	h := newDelegateHarness(t)
 	h.stub("gemini", "git commit --allow-empty -qm transient; git reset --hard HEAD^ >/dev/null")
 	out, code := h.run("fast", "task")
-	if code != 3 || !strings.Contains(out, "Git history") || strings.Contains(out, "finished on") {
+	if code != 3 || !strings.Contains(out, "Git history") || strings.Contains(out, "done on") {
 		t.Fatalf("successful commit-reset = (exit %d), want loud commit:never refusal:\n%s", code, out)
 	}
 }
@@ -721,19 +721,8 @@ func TestDelegateWrapperRunsRole(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0:\n%s", code, out)
 	}
-	// The completion line names the role and the agent that ACTUALLY ran, and claims nothing
-	// else: no file counts, no test outcomes, no "now review and commit" (that duty lives in the
-	// generated contract, not after every invocation).
-	if !strings.Contains(out, "[coop-delegate fast: finished on gemini:gemini-3.5-flash]") {
-		t.Errorf("missing the completion line naming the role and its agent:\n%s", out)
-	}
-	for _, fabricated := range []string{"git diff", "run the gate", "commit yourself", "file(s) changed", "tests passed"} {
-		if strings.Contains(out, fabricated) {
-			t.Errorf("the completion line must not claim or instruct %q:\n%s", fabricated, out)
-		}
-	}
-	if !strings.Contains(out, "did-the-work") {
-		t.Errorf("the delegate's own bounded reply must be forwarded:\n%s", out)
+	if !strings.Contains(out, "[coop-delegate fast: done") || !strings.Contains(out, "git diff") {
+		t.Errorf("missing the completion summary for the lead:\n%s", out)
 	}
 	if !strings.Contains(out, "depth=1") {
 		t.Errorf("delegate child did not receive %s=1:\n%s", DelegateDepthEnv, out)

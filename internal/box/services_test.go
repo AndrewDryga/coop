@@ -341,7 +341,7 @@ func TestEnsureServicesStopsWhenServiceDiscoveryFails(t *testing.T) {
 	rt := composeRuntimeWithServices(t, rec, nil, 23)
 
 	services, err := EnsureServices(rt, repo, repo, io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "compose config --services exited with code 23") {
+	if err == nil || !strings.Contains(err.Error(), "compose config --services exited with status 23") {
 		t.Fatalf("discovery error = %v, want named compose failure", err)
 	}
 	if len(services) != 0 {

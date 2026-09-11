@@ -1,0 +1,7 @@
+No presets yet.
+
+Create one
+  coop presets init
+
+Learn how presets work
+  coop help presets

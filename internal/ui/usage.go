@@ -15,7 +15,8 @@ import (
 // Callers return it like any error; Main renders it (see Render) and exits 2.
 type UsageError struct {
 	Headline string      // "Unknown command \"coop doctro\"" — what was refused, with the full command
-	Cause    string      // optional one-line reason, indented six spaces ("Choose claude, codex, …")
+	Cause    string      // optional reason, indented six spaces ("Choose claude, codex, …"); one sentence per line
+	Choices  []string    // optional values that would settle it (the run IDs a prefix matched)
 	Rows     [][2]string // label → command ("Did you mean:" → "coop doctor"), aligned on the label
 }
 
@@ -26,6 +27,7 @@ func (e *UsageError) Error() string {
 	if e.Cause != "" {
 		parts = append(parts, e.Cause)
 	}
+	parts = append(parts, e.Choices...)
 	for _, r := range e.Rows {
 		parts = append(parts, r[0]+" "+r[1])
 	}
@@ -35,12 +37,25 @@ func (e *UsageError) Error() string {
 // Render is the exact approved block: a leading blank line, the red ✗ headline, a blank line, the
 // six-space cause between blank lines when there is one, then the two-space rows whose commands
 // all start past the widest label. Padding is computed on PLAIN text and color applied after, so
-// a NO_COLOR or redirected run has the same columns with no escape sequences.
+// a NO_COLOR or redirected run has the same columns with no escape sequences. A cause carrying
+// newlines keeps every line at the same six spaces — the constraint and the fix it implies are one
+// block, not a second paragraph.
 func (e *UsageError) Render(p Palette) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n%s\n", p.Red("✗ "+e.Headline))
 	if e.Cause != "" {
-		fmt.Fprintf(&b, "\n      %s\n", e.Cause)
+		b.WriteString("\n")
+		for _, line := range strings.Split(e.Cause, "\n") {
+			fmt.Fprintf(&b, "      %s\n", line)
+		}
+	}
+	// The values that would settle the refusal are the answer itself, not a
+	// labeled action: they sit in their own two-space block above the rows.
+	if len(e.Choices) > 0 {
+		b.WriteString("\n")
+		for _, choice := range e.Choices {
+			fmt.Fprintf(&b, "  %s\n", choice)
+		}
 	}
 	if len(e.Rows) > 0 {
 		w := 0
@@ -114,6 +129,32 @@ func UnknownOption(option, command, suggestion string) *UsageError {
 	}
 	e.Rows = [][2]string{{"See available options:", HelpCommand(command)}}
 	return e
+}
+
+// UnknownValue refuses a positional VALUE its command does not accept — an agent name, a preset,
+// a credential attribute. noun names the slot ("agent"), so the headline reads like the option
+// form. suggestion, when the value is a near miss, is the whole corrected command; otherwise cause
+// names the values the slot does accept and the block points at the command's own page.
+func UnknownValue(noun, value, command, cause, suggestion string) *UsageError {
+	e := &UsageError{Headline: fmt.Sprintf("Unknown %s %q for %q", noun, value, command)}
+	if suggestion != "" {
+		e.Rows = [][2]string{{"Did you mean:", suggestion}}
+		return e
+	}
+	e.Cause = cause
+	e.Rows = [][2]string{{"Help:", HelpCommand(command)}}
+	return e
+}
+
+// ConfirmationRequired refuses an unrecoverable deletion nothing could confirm: no terminal to ask
+// at, and no --yes standing in for the answer (see DestroyGate). command is the deleting command,
+// whose page documents --yes.
+func ConfirmationRequired(command string) *UsageError {
+	return &UsageError{
+		Headline: "Confirmation required",
+		Cause:    "Run this command in a terminal, or pass --yes to confirm deletion.",
+		Rows:     [][2]string{{"Help:", HelpCommand(command)}},
+	}
 }
 
 // MissingOptionValue refuses a recognized option whose REQUIRED value is absent. It says Example,

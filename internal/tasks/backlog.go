@@ -66,14 +66,7 @@ func CmdBacklog(cfg *config.Config, args []string) (int, error) {
 		case "rm", "promote":
 			return backlogAcrossQueues(repo, rels, rest)
 		case "add":
-			return 2, &ui.UsageError{
-				Headline: "Choose a queue for this idea",
-				Cause:    "This repository has more than one task queue.",
-				Rows: [][2]string{
-					{"Example:", `coop backlog add "Redesign account permissions" --tasks ` + exampleQueue(rels)},
-					{"Help:", "coop help backlog add"},
-				},
-			}
+			return 2, fmt.Errorf("coop backlog add works one queue at a time — pass a single --tasks <path> (ls, rm, and promote span all %d configured queues)", len(rels))
 		default:
 			return 2, unknownSubcommandErr("backlog", sub, BacklogVerbs)
 		}
@@ -129,22 +122,22 @@ func backlogFolderList(root string) (int, error) {
 		return -1, err
 	}
 	if len(items) == 0 {
-		ui.Note("No saved ideas yet.")
-		ui.Note("")
-		ui.Note(`  Save one: coop backlog add "Describe the idea"`)
+		ui.Note("backlog is empty — capture an idea with 'coop backlog add \"<title>\"'")
 		return 0, nil
 	}
 	p := ui.For(os.Stdout)
-	fmt.Printf("%s · %s\n", p.Bold("Backlog"), ui.Count(len(items), "idea"))
-	for _, t := range items {
-		fmt.Println() // one blank line between items
+	fmt.Printf("%s %s\n", p.Bold("backlog"), p.Dim(fmt.Sprintf("(%d)", len(items))))
+	for i, t := range items {
+		if i > 0 {
+			fmt.Println() // one blank line between items
+		}
 		for _, tl := range wrapWords(t.Title, titleWrapWidth()) {
 			fmt.Printf("  %s\n", tl)
 		}
 		fmt.Printf("    %s\n", p.Faint(t.ID))
 	}
 	fmt.Print("\n")
-	fmt.Println("Ready to start: coop backlog promote <id>")
+	ui.Note("%s — promote one with 'coop backlog promote <id>' when it's ready to work", ui.Count(len(items), "backlog item"))
 	return 0, nil
 }
 
@@ -165,19 +158,13 @@ func backlogFolderRemove(root string, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	// The blast radius before the question: which idea, its exact folder, and what goes with it.
-	ui.Note("Delete idea: %s", t.Title)
-	ui.Note("")
-	ui.Note("  %s", displayPath(t.Dir))
-	ui.Note("  Its notes and saved files will be permanently deleted.")
-	ui.Note("")
-	if err := ui.DestroyGate("Delete this idea", yes); err != nil {
-		return 2, backlogCancelled(err)
+	if err := ui.DestroyGate(fmt.Sprintf("delete backlog item %s", t.ID), yes); err != nil {
+		return 2, err
 	}
 	if err := os.RemoveAll(t.Dir); err != nil {
 		return -1, err
 	}
-	ui.OK("Deleted idea: %s", t.Title)
+	ui.OK("removed backlog item %s (note why in the commit if it mattered)", t.ID)
 	return 0, nil
 }
 
@@ -195,9 +182,7 @@ func backlogFolderPromote(root string, args []string) (int, error) {
 	if err := MoveTaskDir(root, t, StateTodo); err != nil {
 		return -1, err
 	}
-	ui.OK("Moved to todo: %s", t.Title)
-	ui.Note("")
-	ui.Note("  %s", displayPath(filepath.Join(root, StateTodo, t.ID, "task.md")))
+	ui.OK("promoted %s → todo — flesh out its task.md, then 'coop tasks claim %s' to start", t.ID, t.ID)
 	return 0, nil
 }
 
@@ -216,7 +201,7 @@ func backlogListAll(repo string, rels []string) (int, error) {
 			return -1, err
 		}
 		if len(items) == 0 {
-			fmt.Println(p.Gray("  No saved ideas yet."))
+			fmt.Println(p.Gray("  (backlog empty)"))
 			continue
 		}
 		if _, err := backlogFolderList(root); err != nil {
@@ -252,27 +237,4 @@ func backlogAcrossQueues(repo string, rels []string, rest []string) (int, error)
 // queueOfTask, sharing its exact/substring precedence and duplicate-across-queues handling.
 func queueOfBacklogTask(repo string, rels []string, id string) (string, error) {
 	return queueOfTaskWith(repo, rels, id, ReadBacklog)
-}
-
-// exampleQueue is the queue an ambiguous `coop backlog add` suggests: a real configured one, and
-// preferably a subproject's — the root queue is the one the user already tried by default.
-func exampleQueue(rels []string) string {
-	for _, rel := range rels {
-		if !strings.HasPrefix(rel, TasksRoot) {
-			return rel
-		}
-	}
-	return rels[0]
-}
-
-// backlogCancelled turns a declined confirmation into the sentence a person expects, and keeps any
-// other gate refusal (a pipe with no --yes) as the error it is. It runs BEFORE any deletion, so it
-// can truthfully say the idea was kept.
-func backlogCancelled(err error) error {
-	if err != nil && err.Error() == "cancelled" {
-		ui.Note("")
-		ui.Note("Cancelled. The idea was kept.")
-		return ui.Reported(err)
-	}
-	return err
 }

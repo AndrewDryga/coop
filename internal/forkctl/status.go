@@ -2,7 +2,6 @@ package forkctl
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -25,11 +24,8 @@ type forkStatus struct {
 	Dirty                        bool
 	Legacy                       bool
 	Counts                       tasks.TaskCounts
-	// Phases are the fork's assignments as their OWN phase records them. Counts folds reviewing
-	// and ready into Done, so it cannot prove a review passed; these can.
-	Doing, Reviewing, ReadyTasks, Blocked int
-	Problems                              []string
-	Cost                                  float64 // total loop spend across the fork's runs, 0 if it never ran
+	Problems                     []string
+	Cost                         float64 // total loop spend across the fork's runs, 0 if it never ran
 }
 
 // gatherForkStatus reads one fork's state. Git runs through the hardened fork helpers
@@ -42,7 +38,6 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 	}
 	ins, del := parseShortstat(gitOut(ws, "diff", "--shortstat", "origin/HEAD"))
 	var counts tasks.TaskCounts
-	var doing, reviewing, readyTasks, blockedTasks int
 	var problems []string
 	identity, hasIdentity, generationErr := forkspace.ReadGeneration(repo, name)
 	if generationErr != nil {
@@ -53,16 +48,10 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 				switch assignment.Record.Fork.Phase {
 				case tasks.ForkAssignmentBlocked:
 					counts.Blocked++
-					blockedTasks++
-				case tasks.ForkAssignmentReviewing:
+				case tasks.ForkAssignmentReviewing, tasks.ForkAssignmentReady:
 					counts.Done++
-					reviewing++
-				case tasks.ForkAssignmentReady:
-					counts.Done++
-					readyTasks++
 				default:
 					counts.Doing++
-					doing++
 				}
 			}
 		} else {
@@ -112,10 +101,6 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 		Dirty:               gitDirty(ws),
 		Legacy:              generationErr == nil && !hasIdentity && pathExists(ws),
 		Counts:              counts,
-		Doing:               doing,
-		Reviewing:           reviewing,
-		ReadyTasks:          readyTasks,
-		Blocked:             blockedTasks,
 		Problems:            problems,
 		Cost:                cost,
 	}
@@ -175,68 +160,31 @@ func (s forkStatus) stateCell() string {
 	return "idle"
 }
 
-// stateWords translates one machine state into what it MEANS. The machine value is the JSON
-// projection's contract and never changes; this is the sentence a person reads instead of
-// decoding a one-word enum.
-func stateWords(state string) string {
-	switch state {
-	case "running":
-		return "background loop running"
-	case "active":
-		return "agent running"
-	case "session":
-		return "reserved for a session"
-	case "parked":
-		return "waiting"
-	case "landing":
-		return "merging"
-	case "ready":
-		return "ready to merge"
-	case "legacy":
-		return "older fork format"
-	case "cleanup":
-		return "cleanup needed"
-	case "unknown":
-		return "status unavailable"
+// tasksCell renders task progress compactly: done/total, plus a blocked flag.
+func (s forkStatus) tasksCell() string {
+	if s.Counts.Total() == 0 {
+		return "—"
 	}
-	return state
-}
-
-// tasksLine is the fork's assignments in their OWN phases. Counts folds reviewing and ready into
-// Done, so rendering that number would claim a review passed; each phase speaks for itself here.
-// Empty when the fork tracks no task — a dash is a ledger, not information.
-func (s forkStatus) tasksLine() string {
-	var parts []string
-	if s.Doing > 0 {
-		parts = append(parts, fmt.Sprintf("%d in progress", s.Doing))
-	}
-	if s.Reviewing > 0 {
-		parts = append(parts, fmt.Sprintf("%d being reviewed", s.Reviewing))
-	}
-	if s.ReadyTasks > 0 {
-		parts = append(parts, fmt.Sprintf("%d ready to merge", s.ReadyTasks))
-	}
-	if s.Blocked > 0 {
-		parts = append(parts, fmt.Sprintf("%d blocked", s.Blocked))
-	}
-	return strings.Join(parts, " · ")
-}
-
-// changesLine is the diff against the parent branch, saying an uncommitted tree in words rather
-// than as an unexplained glyph.
-func (s forkStatus) changesLine() string {
-	cell := fmt.Sprintf("+%d −%d", s.Ins, s.Del)
-	if s.Dirty {
-		cell += " · uncommitted changes"
+	cell := fmt.Sprintf("%d/%d", s.Counts.Done, s.Counts.Total())
+	if s.Counts.Blocked > 0 {
+		cell += fmt.Sprintf(" ⚠%d", s.Counts.Blocked)
 	}
 	return cell
 }
 
-// costLine is the fork's reported loop spend, or "" when nothing was reported — never $0.00,
-// which would read as a free fork.
-func (s forkStatus) costLine() string {
+// changesCell renders the diff against origin/HEAD, flagging an uncommitted tree.
+func (s forkStatus) changesCell() string {
+	cell := fmt.Sprintf("+%d -%d", s.Ins, s.Del)
+	if s.Dirty {
+		cell += " ⚑"
+	}
+	return cell
+}
+
+// costCell renders the fork's total loop spend, or — when it hasn't run (no cost telemetry yet).
+func (s forkStatus) costCell() string {
 	if s.Cost == 0 {
-		return ""
+		return "—"
 	}
 	return fmt.Sprintf("$%.2f", s.Cost)
 }

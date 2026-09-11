@@ -26,7 +26,7 @@ func approveFixture(t *testing.T, cfg *config.Config, repo string) {
 }
 
 // The whole revocation loop without a container: approve what the repository
-// asks for, forget it, and watch the posture fall back to nothing remembered.
+// asks for, forget it, and watch the access fall back to nothing remembered.
 func TestForgetRemovesWhatAProjectRemembered(t *testing.T) {
 	cfg, repo, _ := postureFixture(t, "box:\n  egress: filtered\n  egress_rules:\n    - to:\n        domain: \"docs.example.com\"\n      protocol: tls\n      ports: [443]\n")
 	approveFixture(t, cfg, repo)
@@ -55,17 +55,17 @@ func TestForgetRemovesWhatAProjectRemembered(t *testing.T) {
 	if err := review.Close(); err != nil {
 		t.Fatalf("Close is not idempotent: %v", err)
 	}
-	posture, err := ProjectNetworkPosture(context.Background(), cfg, repo)
+	access, err := ProjectNetworkAccess(context.Background(), cfg, repo)
 	if err != nil {
-		t.Fatalf("ProjectNetworkPosture: %v", err)
+		t.Fatalf("ProjectNetworkAccess: %v", err)
 	}
-	if posture.Approval != nil || posture.Source != PostureFromProject {
-		t.Errorf("posture after a forget = %+v from %q, want the project's own request back", posture.Approval, posture.Source)
+	if access.Approval != nil || access.Source != AccessFromProject {
+		t.Errorf("access after a forget = %+v from %q, want the project's own request back", access.Approval, access.Source)
 	}
 	// The request is unapproved again, which is what makes a wrong forget cheap:
 	// the next filtered run asks instead of reaching.
-	if posture.Pending == nil || len(posture.Add) != 1 {
-		t.Errorf("a forgotten project does not ask again: pending=%v add=%+v", posture.Pending, posture.Add)
+	if access.Pending == nil || len(access.Add) != 1 {
+		t.Errorf("a forgotten project does not ask again: pending=%v add=%+v", access.Pending, access.Add)
 	}
 	if again, err := ReviewProjectNetworkForget(repo); err != nil || again.Approval() != nil {
 		t.Errorf("a forgotten approval came back: %+v %v", again, err)
@@ -88,8 +88,8 @@ func TestForgetAProjectDirectoryThatIsGone(t *testing.T) {
 	if err := os.RemoveAll(repo); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ProjectNetworkPosture(context.Background(), cfg, repo); err == nil {
-		t.Fatal("a deleted checkout still had a posture to describe")
+	if _, err := ProjectNetworkAccess(context.Background(), cfg, repo); err == nil {
+		t.Fatal("a deleted checkout still had a access to describe")
 	}
 	review, err := ReviewProjectNetworkForget(repo)
 	if err != nil {

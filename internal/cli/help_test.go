@@ -99,7 +99,7 @@ func TestAllHelpAvoidsMiddleDots(t *testing.T) {
 	pages := map[string]string{
 		"top-level": helpText(&config.Config{}),
 		"run":       runHelp,
-		"fork":      forkHelpText(""),
+		"fork":      forkHelpText(ui.Palette{}),
 	}
 	for _, name := range agents.Names() { // one generated page per agent, not one shared essay
 		pages["agent "+name] = agentHelp(name)
@@ -139,7 +139,7 @@ func TestHelpRowsAlign(t *testing.T) {
 		text string
 	}{
 		{"top level", helpText(&config.Config{RepoOverride: t.TempDir(), ConfigDir: "/c", BoxHome: "/b"})},
-		{"fork", forkHelpText("")},
+		{"fork", forkHelpText(ui.Palette{})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -189,7 +189,7 @@ func TestRenderManual(t *testing.T) {
 	}
 	for _, want := range []string{
 		"THE BOX", "coop fork", "coop tasks", "coop run",
-		"coop models [<" + strings.Join(agents.Names(), "|") + ">] [--refresh]",
+		"coop models [" + strings.Join(agents.Names(), "|") + "] [--refresh]",
 	} {
 		if !strings.Contains(m, want) {
 			t.Errorf("RenderManual missing %q", want)
@@ -225,14 +225,12 @@ func TestManualOpensWithTheApprovedMenu(t *testing.T) {
 // slices that write them.
 var wantManualOrder = []string{
 	"run", "shell", "claude", "codex", "gemini", "grok",
-	"login", "credentials", "models", "presets",
-	"tasks",
-	"backlog", "backlog ls", "backlog add", "backlog promote", "backlog rm",
-	"context", "loop",
-	"fork", "fork acp", "fork ls", "fork review", "fork merge", "fork rm",
-	"fork stop", "fork logs", "fork path", "fork open",
+	"login", "credentials", "credentials default", "credentials rm", "credentials account",
+	"models", "presets init", "presets",
+	"tasks", "backlog", "context", "loop", "fork",
 	"up", "down",
-	"doctor", "net", "check-secrets", "sign",
+	"doctor", "net", "net runs", "net inspect", "net check", "net blocked", "net approve",
+	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "version",
 	"acp", "sessions", "worker", "prompt", "completion",
 }

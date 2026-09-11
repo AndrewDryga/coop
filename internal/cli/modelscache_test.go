@@ -335,7 +335,7 @@ func TestRefreshModelsUsesACPFetcher(t *testing.T) {
 		}
 		a.acpModels = func(string) ([]acpctl.Model, error) { return nil, errors.New("box down") }
 		out := captureStdout(t, func() { _, _ = a.cmdModels([]string{"claude", "--refresh"}) })
-		if !strings.Contains(out, "still-good") || !strings.Contains(out, "could not refresh") {
+		if !strings.Contains(out, "still-good") || !strings.Contains(out, "Could not refresh") {
 			t.Fatalf("failed refresh did not preserve/describe the cache:\n%s", out)
 		}
 	})
@@ -393,7 +393,7 @@ func TestModelsBacksOffWithTheRecordedCause(t *testing.T) {
 		"Docker is not running", "cached-id")
 	a.acpModels = func(string) ([]acpctl.Model, error) { t.Fatal("backed-off agent was refetched"); return nil, nil }
 	out := captureStdout(t, func() { _, _ = a.cmdModels([]string{"claude"}) })
-	want := "  ⚠ could not refresh — showing the list saved 2 days ago\n    Docker is not running\n"
+	want := "  ⚠ Could not refresh — showing the list saved 2 days ago\n\n      Docker is not running\n"
 	if !strings.Contains(out, want) || !strings.Contains(out, "cached-id") {
 		t.Errorf("menu missing %q with its last-known ids:\n%s", want, out)
 	}
@@ -442,7 +442,7 @@ func TestRefreshFallsBackToExamples(t *testing.T) {
 	if mc, _ := loadModelsCache(a.cfg, "codex"); len(mc.Models) != 0 {
 		t.Error("a failed refresh must not write a catalog")
 	}
-	want := "  ⚠ could not refresh — showing bundled examples\n    the codex CLI is not installed\n"
+	want := "  ⚠ Could not refresh — showing example models\n\n      Codex is unavailable on this host.\n"
 	if !strings.Contains(out, "gpt-5.6-sol") || !strings.Contains(out, "gpt-5.3-codex-spark") ||
 		!strings.Contains(out, want) {
 		t.Errorf("after a failed refresh the codex block should show examples and %q:\n%s", want, out)

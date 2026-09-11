@@ -7,6 +7,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // TestCLIConformance graduates the committed .agent/kb/rules into the gate: it walks the CLI surface as
@@ -56,7 +57,7 @@ func TestCLIConformance(t *testing.T) {
 	// help-output-style: every canonical verb appears in its family's help — a verb added to the
 	// dispatch without a help row is drift this catches.
 	t.Run("verbs_documented_in_help", func(t *testing.T) {
-		forkHelpTxt := captureStdout(t, func() { _, _ = forkHelp("") })
+		forkHelpTxt := captureStdout(t, func() { _, _ = forkHelp() })
 		for _, v := range forkspace.VerbList() {
 			if !strings.Contains(forkHelpTxt, v) {
 				t.Errorf("fork verb %q has no row in forkHelp", v)
@@ -94,7 +95,7 @@ func TestCLIConformance(t *testing.T) {
 			"ACP help":              commandHelp["acp"],
 			"ACP usage error":       errText("extra ACP argument", acpUsageErr),
 			"loop help":             commandHelp["loop"],
-			"fork help":             forkHelpText(""),
+			"fork help":             forkHelpText(ui.Palette{}),
 			"fork usage error":      errText("empty fork", forkUsageErr),
 			"fork peer error":       errText("valueless fork peer", forkPeerErr),
 			"fork ACP usage error":  errText("invalid fork ACP target", forkACPUsageErr),
@@ -164,7 +165,7 @@ func TestCLIConformance(t *testing.T) {
 		}
 		for name, surface := range surfaces {
 			for _, bare := range []string{
-				" [args]", " [agent", " [credential", " [name]", "[paths...]", "[@account]",
+				" [args]", " [agent]", " [credential", " [name]", "[paths...]", "[@account]",
 				"[coop flags]", "<agent args>",
 			} {
 				if strings.Contains(surface, bare) {
@@ -175,15 +176,17 @@ func TestCLIConformance(t *testing.T) {
 		for name, want := range map[string]string{
 			"top-level help":   "Usage: coop <command> [<args>...]",
 			"agent help":       "[options] [-- <claude-args>...]",
-			"credentials help": "coop credentials [<agent> [<credential>]]",
+			"credentials help": "coop credentials <agent> <account> rm       remove it",
 			"login help":       "coop login <agent>[@<account>]",
-			"models help":      "coop models [<" + strings.Join(agents.Names(), "|") + ">]",
+			// The agents are a CLOSED set of literal tokens, so the models page lists them as
+			// themselves; angle brackets are for a value the user supplies.
+			"models help": "coop models [" + strings.Join(agents.Names(), "|") + "]",
 			// The presets page names its one slot <name>: inside a page where every value is a
 			// preset, the resource-name placeholder is the plain one (usage-placeholder-style).
 			"presets help":      "coop presets init [<name>]",
 			"context help":      "[<path>...]",
 			"preset error":      "coop presets [init] [<preset>]",
-			"preset init error": "coop presets init [<preset>]",
+			"preset init error": "coop presets init [<name>]",
 			// The approved missing-argument transcript says <agent>: the error is about the slot,
 			// not the closed provider list, which the login page still spells out.
 			"login error": "coop login <agent>[@<account>]",

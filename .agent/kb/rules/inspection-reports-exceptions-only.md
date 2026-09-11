@@ -2,9 +2,9 @@
 name: inspection-reports-exceptions-only
 description: "an inspection leads with what happened and prints exceptions only; a qualification prints the checks it proved"
 scope: cli-output
-sources: [internal/networkreport/report.go, internal/cli/net_cmd.go, internal/box/network_summary.go, internal/box/network_setup.go, internal/cli/doctor.go]
+sources: [internal/networkreport/report.go, internal/cli/net_cmd.go, internal/box/network_summary.go, internal/box/network_setup.go, internal/cli/doctor.go, internal/cli/net_approved_test.go]
 check: "go test ./internal/cli -run 'TestInspectCleanRunIsDestinationFirstAndSilentAboutHealth|TestInspectLifecycleExceptionsAppearOnlyWhenPresent|TestInspectCleanupIsReportedOnlyWhenStillOwed'"
-updated: 2026-09-10
+updated: 2026-09-11
 ---
 
 # An inspection reports what happened and what went wrong — never that things were fine
@@ -49,6 +49,11 @@ See also [[command-output-tiers]] (result glyphs belong to standalone results, n
 fact) and [[tag-exceptions-not-every-row]] (the listing form of the same instinct).
 
 ## Changelog
+- 2026-09-11 — the CLI design's network packet: the inline box summary is `Networking stats:` with
+  per-destination totals (one renderer, `networkreport.View.Inline` — no second formatter), the
+  refusal exception is `⚠ Traffic to N remote addresses was blocked` with `coop net blocked` as its
+  footer action, and `coop net runs`/`net recover`/bare `coop net` keep their exception-only shape.
+  Every state is pinned byte-exact in `internal/cli/testdata/approved/2*.txt`.
 - 2026-09-10 — `coop net setup` now prints the checks it proved (`internal/box/network_setup.go`,
   `writeSetupChecks`): one `✓`/`✗` line per property the smoke reached, one bold verdict, no
   runtime/image/timing ledger; a failure claims nothing past the failed check. The pending note

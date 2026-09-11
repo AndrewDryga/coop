@@ -50,7 +50,7 @@ func armKeepAwake(cfg *config.Config) func() {
 	if err := cmd.Start(); err != nil {
 		return func() {} // best-effort — the loop doesn't depend on it
 	}
-	ui.Note("  Keeping this Mac awake while the loop runs")
+	ui.Note("keeping the machine awake while the loop runs (%s) — COOP_CAFFEINATE=0 to disable", argv[0])
 	return func() {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait() // reap; -w already releases the assertion if this never runs

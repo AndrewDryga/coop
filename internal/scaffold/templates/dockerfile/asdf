@@ -1,20 +1,16 @@
-# Toolchain driven by .tool-versions — asdf installs the exact versions your project
-# pins. Edit .tool-versions and `coop build`, and the box follows. Node + the agent CLIs
-# + ACP adapters are added on top for coop / coop acp.
+# Tools are installed at the versions in .tool-versions.
+# After changing that file, run coop build to rebuild this project's box.
+# Coop also installs agent CLIs and editor adapters.
 FROM debian:bookworm-slim
 
 ARG ASDF_VERSION=0.19.0
-# Agent CLIs + ACP adapters as one ARG so the list lives in one place. The default mirrors
-# coop's own agent set (agents.Packages()); a scaffold test asserts they stay in sync, so
-# adding/removing an agent in coop can't silently leave this box behind. Override per build
-# with: docker build --build-arg AGENT_PACKAGES="…".
+# Agent CLI and editor-adapter packages installed in this image.
+# The default package list follows Coop's supported agents.
+# To pin a package, replace its @latest suffix with the version you need.
 ARG AGENT_PACKAGES="@anthropic-ai/claude-code@latest @agentclientprotocol/claude-agent-acp@latest @openai/codex@latest @agentclientprotocol/codex-acp@latest @google/gemini-cli@latest"
 
-# The first list is the universal base: what asdf itself, git, and any binary-download
-# plugin need. The second is what THIS repo's pinned tools need — coop filled it in from
-# .tool-versions at init. Add to it when you pin a tool that builds from source (asdf
-# compiles erlang, python and ruby) or whose plugin shells out to another toolchain (a
-# pip-installed one like checkov or ansible needs python3 + python3-pip).
+# Packages needed by asdf, Git, and this project's selected tools.
+# Add build dependencies here when you add tools to .tool-versions.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       curl git ca-certificates locales procps unzip@SYSTEM_PACKAGES@ \
@@ -35,9 +31,8 @@ ENV ASDF_DATA_DIR=/home/node/.asdf \
 
 USER node
 
-# Install whatever .tool-versions pins: an asdf plugin per listed tool, then `asdf install`.
-# Docker-cached until .tool-versions changes. A plugin that fails to install must fail the
-# BUILD — swallowing it here just moves the error to the first agent that runs the tool.
+# Install the tool versions declared by the project.
+# Installation failures stop the build.
 COPY --chown=node:node .tool-versions /home/node/.tool-versions
 RUN cd /home/node \
  && awk 'NF && $1 !~ /^#/ {print $1}' .tool-versions | while read -r tool; do asdf plugin add "$tool" || exit 1; done \

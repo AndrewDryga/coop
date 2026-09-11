@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -46,7 +45,6 @@ func networkAdmissionSpec(cfg *config.Config, repo, img, agent string, p *preset
 // once at the end, through its own output.
 type networkLog struct {
 	mu        sync.Mutex
-	stage     string           // what the box in flight is doing, as its report will name it
 	pending   []loopNetworkRun // the iteration in flight, not yet printed
 	lastRunID string           // the network run this stage's telemetry points at
 	runs      int
@@ -60,18 +58,7 @@ type networkLog struct {
 // the printed line can say which iteration hit the boundary.
 type loopNetworkRun struct {
 	report box.NetworkReport
-	stage  string
-}
-
-// setStage names the attempt whose box is about to launch, so a refusal is reported against the
-// work a person recognizes ("Task attempt 2") rather than an internal filtered-run counter.
-func (l *networkLog) setStage(stage string) {
-	if l == nil {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.stage = stage
+	run    int
 }
 
 func newNetworkLog() *networkLog { return &networkLog{refused: map[string]int{}} }
@@ -85,14 +72,10 @@ func (l *networkLog) record(r box.NetworkReport) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.runs++
-	stage := l.stage
-	if stage == "" {
-		stage = "This attempt"
-	}
-	l.pending = append(l.pending, loopNetworkRun{report: r, stage: stage})
+	l.pending = append(l.pending, loopNetworkRun{report: r, run: l.runs})
 	l.alerts += len(r.Alerts)
 	for _, denial := range r.Denials {
-		key := denial.Destination
+		key := denial.Destination + " (" + denial.Basis + ")"
 		if _, seen := l.refused[key]; !seen {
 			l.order = append(l.order, key)
 		}
@@ -117,7 +100,7 @@ func (l *networkLog) finishIteration() {
 	}
 	l.mu.Unlock()
 	for _, run := range pending {
-		printNetworkIteration(run.report, run.stage)
+		printNetworkIteration(run.report, run.run)
 	}
 }
 
@@ -135,54 +118,27 @@ func (l *networkLog) runID() string {
 // printNetworkIteration is the between-iterations block: what was refused, any
 // alert that fired, and the one command that explains a refusal. A clean
 // iteration prints nothing at all.
-func printNetworkIteration(r box.NetworkReport, stage string) {
+func printNetworkIteration(r box.NetworkReport, run int) {
 	if r.Quiet() {
 		return
 	}
 	if total := len(r.Denials) + r.Omitted; total > 0 {
-		rows := []string{}
-		rows = append(rows, networkDenialList(r)...)
-		ui.Alert(fmt.Sprintf("%s could not reach %s", stage, ui.Count(total, "remote address", "remote addresses")),
-			strings.Join(rows, "\n"), explainRow(r)...)
+		ui.Warn("iteration %d — %s refused", run, ui.Count(total, "destination was", "destinations were"))
+		for _, line := range networkDenialList(r) {
+			ui.Detail("%s", line)
+		}
 	}
 	if r.RawPackets > 0 {
-		// No destination was recorded for these, so the block says so instead of inventing one —
-		// but the attempt did meet the boundary, and that absence is itself evidence.
-		ui.Alert(fmt.Sprintf("Blocked %s in %s", ui.Count(int(r.RawPackets), "raw network packet"), strings.ToLower(stage)),
-			"No remote address details were recorded for these packets.")
+		// No destination was recorded for these, so the line says so instead of
+		// inventing one — but the iteration did meet the boundary.
+		ui.Warn("iteration %d — %s", run, r.Raw)
 	}
 	for _, alert := range r.Alerts {
-		ui.Alert("The network filter raised an alert", alert)
+		ui.Warn("network alert: %s", alert)
 	}
-}
-
-// explainRow is the one command that explains a refusal — the destination lookup, pointed at the
-// exact run that recorded it. It is omitted when no destination was retained: a lookup with
-// nothing to look up is worse than no pointer at all.
-func explainRow(r box.NetworkReport) [][2]string {
-	if len(r.Denials) == 0 || r.RunID == "" {
-		return nil
+	if r.Event != "" {
+		ui.Detail("To see why: coop net blocked %s --run %s", r.Event, r.RunID)
 	}
-	return [][2]string{{"Explain:", "coop net blocked " + r.Denials[0].Destination + " --run " + r.RunID}}
-}
-
-// denialRow is one refused destination as a person reads it: where the box tried to go, where the
-// refusal was observed, and how many attempts that grouped. The protocol word comes from the
-// retained evidence — a refused DNS query is never called a connection.
-func denialRow(d box.NetworkDenial) string {
-	return d.Destination + " · " + protocolWord(d.Basis) + " · blocked " + ui.Count(d.Count, "time")
-}
-
-// protocolWord upper-cases the acronyms a person expects to see that way and leaves every other
-// basis in its own words.
-func protocolWord(basis string) string {
-	switch basis {
-	case "dns":
-		return "DNS"
-	case "tls":
-		return "TLS"
-	}
-	return basis
 }
 
 // networkDenialList renders one iteration's refusals as a few bounded lines —
@@ -195,10 +151,10 @@ func networkDenialList(r box.NetworkReport) []string {
 	}
 	lines := make([]string, 0, len(shown)+1)
 	for _, denial := range shown {
-		lines = append(lines, denialRow(denial))
+		lines = append(lines, denial.String())
 	}
 	if omitted > 0 {
-		lines = append(lines, fmt.Sprintf("… %d more remote addresses", omitted))
+		lines = append(lines, fmt.Sprintf("… and %d more", omitted))
 	}
 	return lines
 }
@@ -217,13 +173,16 @@ func (l *networkLog) summary() {
 		return
 	}
 	l.closed = true
-	headline := fmt.Sprintf("Traffic to %s was blocked across %s",
-		ui.Count(len(l.refused), "remote address", "remote addresses"), ui.Count(l.runs, "network run"))
+	headline := fmt.Sprintf("%s refused across %s", ui.Count(len(l.refused), "destination was", "destinations were"),
+		ui.Count(l.runs, "filtered run"))
 	if l.alerts > 0 {
 		headline += ", with " + ui.Count(l.alerts, "alert")
 	}
-	ui.Alert(headline, strings.Join(topRefused(l.refused, l.order, maxLoopDenials), "\n"),
-		[2]string{"Run details:", "coop net runs"})
+	ui.Warn("%s", headline)
+	for _, line := range topRefused(l.refused, l.order, maxLoopDenials) {
+		ui.Detail("%s", line)
+	}
+	ui.Detail("coop net runs   # every run of this project")
 }
 
 // topRefused ranks destinations by how often they were refused, breaking ties by
@@ -236,7 +195,7 @@ func topRefused(counts map[string]int, order []string, max int) []string {
 	}
 	out := make([]string, 0, len(ranked))
 	for _, key := range ranked {
-		out = append(out, fmt.Sprintf("%s · blocked %s", key, ui.Count(counts[key], "time")))
+		out = append(out, fmt.Sprintf("%s ×%d", key, counts[key]))
 	}
 	return out
 }

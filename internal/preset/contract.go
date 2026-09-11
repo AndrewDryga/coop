@@ -82,7 +82,6 @@ func roleContract(r *Role, lead string) string {
 		b.WriteString("only when the change is smaller than the prompt it would take to specify.\n")
 		b.WriteString("It MAY edit files in this worktree but must NEVER commit; delegate runs are\nserialized (one at a time) and bounded to one level. A delegate must not invoke\n`coop-delegate` again; it may still use a configured read-only `coop-consult`. Hand it a task with:\n\n")
 		fmt.Fprintf(&b, "  coop-delegate %s <<'EOF'\n  <a self-contained prompt: the files to touch, the exact change, how to\n   verify — it sees none of your conversation>\n  EOF\n\n", r.Name)
-		b.WriteString("Finish by summarizing what you changed, what you checked, and what is still\nunfinished — the lead reads that summary, not your transcript.\n")
 		b.WriteString("When it returns, YOU review its `git diff`, run the gate, fix or revert what\nfalls short, and make the commit yourself — the delegate's work ships under\nyour review or not at all.\n")
 	}
 	// A role whose prompt reaches its runner elsewhere doesn't dump it into the lead contract:

@@ -1,0 +1,1 @@
+Codex already uses work by default.

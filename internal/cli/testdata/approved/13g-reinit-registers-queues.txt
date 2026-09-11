@@ -1,0 +1,3 @@
+✓ Coop project updated
+  /work/atlas — existing files kept, anything missing added
+  Task queues registered: api, web

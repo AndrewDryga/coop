@@ -226,14 +226,12 @@ func anyAgentSignedIn(cfg *config.Config) bool {
 // is drift TestManualCoversEveryCommand catches. Presets are resolved BY NAME (`coop help
 // frontier`), never added here: the manual's bytes must not depend on the host.
 var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
-	"login", "credentials", "models", "presets",
-	"tasks",
-	"backlog", "backlog ls", "backlog add", "backlog promote", "backlog rm",
-	"context", "loop",
-	"fork", "fork acp", "fork ls", "fork review", "fork merge", "fork rm",
-	"fork stop", "fork logs", "fork path", "fork open",
+	"login", "credentials", "credentials default", "credentials rm", "credentials account",
+	"models", "presets init", "presets",
+	"tasks", "backlog", "context", "loop", "fork",
 	"up", "down",
-	"doctor", "net", "check-secrets", "sign",
+	"doctor", "net", "net runs", "net inspect", "net check", "net blocked", "net approve",
+	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "version",
 	"acp", "sessions", "worker", "prompt", "completion")
 
@@ -245,7 +243,7 @@ func manualPage(name string) string {
 	case name == "run":
 		return runHelp
 	case name == "fork":
-		return forkHelpText("")
+		return forkHelpText(ui.Palette{})
 	case agents.Valid(name):
 		return agentHelp(name)
 	}
@@ -315,7 +313,7 @@ func agentHelp(name string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "coop %s — run %s in a sandboxed box\n\n", name, title)
 	fmt.Fprintf(&b, "Usage:\n  coop %s[@<account>] [options] [-- <%s-args>...]\n\n", target, name)
-	fmt.Fprintf(&b, "Examples\n  coop %s\n  coop %s\n  coop %s\n  coop %s -- --help\n\n", name, example, account, name)
+	fmt.Fprintf(&b, "EXAMPLES\n  coop %s\n  coop %s\n  coop %s\n  coop %s -- --help\n\n", name, example, account, name)
 
 	options := [][2]string{{"--peer <target>", "start with a read-only peer agent; repeat to add more"}}
 	if restricted {
@@ -324,26 +322,26 @@ func agentHelp(name string) string {
 			[2]string{"--bare", "run without the repository, project context, or tools"})
 	}
 	options = append(options, [2]string{"--", "pass all remaining arguments directly to " + title})
-	b.WriteString("Options\n")
+	b.WriteString("OPTIONS\n")
 	b.WriteString(helpRows(options, 2))
 	if restricted {
 		b.WriteString("\n  --readonly and --bare cannot be combined or used with peers.\n")
 	}
 
-	b.WriteString("\nModels and accounts\n")
+	b.WriteString("\nMODELS AND ACCOUNTS\n")
 	b.WriteString(helpRows([][2]string{
 		{"coop models " + name, "list " + title + " models"},
 		{"coop credentials " + name, "list " + title + " accounts"},
 		{"coop login " + name, "sign in to " + title},
-	}, 3))
+	}, 2))
 	b.WriteString("\nFor a guide to using multiple models and providers together:\n  coop help presets")
 	return b.String()
 }
 
 // helpRows renders a two-column block: every description starts past the widest command cell,
 // measured on plain text (see .agent/kb/rules/no-color-in-width-fields.md). gap is that block's
-// own column gap — the approved page sets the flags tight (2) and the commands airier (3),
-// because a flag column is read down and a command column is read across.
+// own column gap, two spaces wherever the approved pages align a column of commands or flags
+// against their descriptions.
 func helpRows(rows [][2]string, gap int) string {
 	w := 0
 	for _, r := range rows {
@@ -354,23 +352,6 @@ func helpRows(rows [][2]string, gap int) string {
 	var b strings.Builder
 	for _, r := range rows {
 		fmt.Fprintf(&b, "  %s%s%s\n", padRight(r[0], w), strings.Repeat(" ", gap), r[1])
-	}
-	return b.String()
-}
-
-// helpRowsAt is helpRows with a MINIMUM description column, for a page whose rows are generated
-// from a value (a fork's name) but whose approved bytes were set with a fixed column: a short name
-// keeps the approved alignment, a long one pushes the column out rather than colliding with it.
-func helpRowsAt(rows [][2]string, column int) string {
-	w := column - 4 // the 2-space indent plus helpRows' own 2-space gap
-	for _, r := range rows {
-		if n := utf8.RuneCountInString(r[0]); n > w {
-			w = n
-		}
-	}
-	var b strings.Builder
-	for _, r := range rows {
-		fmt.Fprintf(&b, "  %s  %s\n", padRight(r[0], w), r[1])
 	}
 	return b.String()
 }
@@ -462,55 +443,86 @@ var commandHelp = map[string]string{
   network as an agent run. Exit to return. --readonly and --bare open it under
   the restricted profile of the same-named agent runs ('coop help claude').`,
 
-	"login": `coop login <agent> — sign in to an agent (token persists in the config dir).
+	"login": `coop login — sign in to an agent
 
-  Usage: coop login <agent>[@<account>]
+Usage: coop login <agent>[@<account>]
 
-  Runs the agent's sign-in (paste a code, no browser). Re-run any time to
-  refresh or switch accounts — e.g. after a usage limit.
+AGENTS
+  claude  codex  gemini  grok
 
-  @account signs in a second (or third) account under a name, so one agent can
-  hold several subscriptions: coop login claude@work. An unattended loop rotates
-  across all of them when one is rate limited (a bare model in a preset's lead agent:
-  ladder fans out over every account). Without @account the sign-in targets the default.`,
+EXAMPLES
+  coop login claude
+  coop login codex@work
 
-	"credentials": `coop credentials — list stored credentials; a path grammar edits one.
+ACCOUNTS
+  Without @account, signs in to the agent's default account.
+  Use a name such as @work to keep a separate login.
 
-  Usage: coop credentials [<agent> [<credential>]]
-         coop credentials <agent> <credential> default
-         coop credentials <agent> <credential> rm
+  Show accounts: coop credentials
+  Start an agent: coop claude`,
 
-  A CREDENTIAL is one stored account/login — a rate-limit slot. Orchestration
-  recipes are PRESETS; see coop help presets.
-  Each token narrows: no args lists every agent, an agent lists its credentials
-  (which one runs by default, when each was last refreshed), a credential shows
-  its detail, and a trailing attribute reads or writes one property of it. A credential is one subscription; add more
-  with 'coop login <agent>@<name>', then an unattended loop rotates across them on
-  a rate limit (a bare model in a preset's lead agent: ladder). The model is a separate
-  axis — set it inline (claude:opus) or in a preset, never on a credential.
+	"credentials": `coop credentials — show and manage your agent accounts
 
-  default                mark this credential as what a plain 'coop <agent>' runs,
-                         and the account a loop's rotation starts on. A mark you
-                         set — the listing shows it first, tagged (default).
-  rm                     delete the credential (its login token and session
-                         history). Set a different default first if you're
-                         removing the marked one.
+Usage:
+  coop credentials                            show all accounts
+  coop credentials <agent>                    show one agent's accounts
+  coop credentials <agent> <account>          show an account
+  coop credentials <agent> <account> default  use it by default
+  coop credentials <agent> <account> rm       remove it
 
-  Run on a specific account without changing the default — put it in the target on
-  any agent launch: 'coop claude@work', 'coop claude@work --peer codex', and
-  'coop acp claude@work' (so an editor entry can pin an account).`,
+USE AN ACCOUNT
+  coop claude@work
+  coop login claude@work
+
+  The default account is marked with *.
+  Account removal options: coop help credentials rm
+  Models and automatic rotation: coop help models`,
+
+	"credentials default": `coop credentials <agent> <account> default — choose the default account
+
+Usage: coop credentials <agent> <account> default
+
+  New runs try this account first. Add @account to use only one account.
+
+EXAMPLE
+  coop credentials codex work default
+
+  Accounts: coop credentials codex`,
+
+	"credentials rm": `coop credentials <agent> <account> rm — remove a saved account
+
+Usage: coop credentials <agent> <account> rm [--yes]
+
+OPTIONS
+  -y, --yes  skip confirmation
+
+  Removes the saved login and its local session history.
+  Choose another default before removing the current default account.
+
+EXAMPLE
+  coop credentials codex old-work rm`,
+
+	"credentials account": `coop credentials <agent> <account> — show an account
+
+Usage: coop credentials <agent> <account>
+
+EXAMPLE
+  coop credentials codex personal
+
+  Use by default: coop help credentials default
+  Remove account: coop help credentials rm`,
 
 	"models": `coop models — list models available to each agent
 
 Usage:
-  coop models [<claude|codex|gemini|grok>] [--refresh]
+  coop models [claude|codex|gemini|grok] [--refresh]
 
-List models
-  coop models                    all agents
-  coop models claude             Claude only
-  coop models claude --refresh   refresh Claude models list now
+LIST MODELS
+  coop models                   all agents
+  coop models claude            Claude only
+  coop models claude --refresh  refresh Claude models list now
 
-Use a model
+USE A MODEL
   Put :model after the agent name. This works anywhere Coop accepts an agent.
 
   coop claude:opus
@@ -519,7 +531,7 @@ Use a model
 
   You can use any model accepted by the agent, even if it is not listed.
 
-Set reasoning effort
+SET REASONING EFFORT
   Add /effort after the model, or directly after the agent to use its default model.
 
   coop codex:gpt-6-astra/high
@@ -527,20 +539,20 @@ Set reasoning effort
 
   Claude, Codex, and Grok support reasoning effort. Gemini does not.
 
-Choose an account
+CHOOSE AN ACCOUNT
   Add @account after the model.
 
   coop claude:opus@work
   coop credentials
 
-Full syntax
+FULL SYNTAX
   coop <provider>:<model>/<effort>@<account>
   coop codex:gpt-6-astra/high@personal
 
-Set a default model
+SET A DEFAULT MODEL
   export COOP_CLAUDE_MODEL=opus
 
-Automatic rotation
+AUTOMATIC ROTATION
   Loops and presets can try models in order when one is rate-limited.
   Leave off @account to let Coop also try another signed-in account.
   Add @account when you want to use only that account.
@@ -619,25 +631,38 @@ Automatic rotation
   The log is size-capped and auto-rotated so it can't grow unbounded; it holds prompts
   and file contents, so treat it as sensitive.`,
 
-	"presets": `coop presets — configure multiple models and providers to work together
+	"presets init": `coop presets init — create a preset you can edit
 
-Usage:
-  coop presets                 list presets
-  coop presets <name>          show a preset
-  coop presets init [<name>]   create a preset (default: frontier)
-  coop help <name>             explain a preset
+Usage: coop presets init [<name>]
 
-Create a preset
+  Creates the frontier template in .agent/presets/.
+  The default name is frontier. Existing presets are left unchanged.
+
+EXAMPLES
   coop presets init
   coop presets init review
 
-Run a preset
-  coop frontier
-  coop loop frontier
-  coop acp frontier
+  Learn how presets work: coop help presets`,
+
+	"presets": `coop presets — configure multiple models and providers to work together
+
+Usage:
+  coop presets                list presets
+  coop presets <name>         show a preset
+  coop presets init [<name>]  create a preset (default: frontier)
+  coop help <name>            explain a preset
+
+CREATE A PRESET
+  coop presets init
+  coop presets init review
+
+RUN A PRESET
+  coop frontier               start an interactive session with the lead agent
+  coop loop frontier          work through tasks with this preset
+  coop acp frontier           use this preset in your editor
   coop fork risky frontier --loop
 
-How to define a preset
+HOW TO DEFINE A PRESET
 
   A preset is a YAML file that defines:
   - One lead agent.
@@ -650,25 +675,25 @@ How to define a preset
 
   Syntax:
 
-    agent:   presets use Coop's standard model, effort, account, and
+    agent:   presets use Coop’s standard model, effort, account, and
              automatic-rotation syntax. For details, see:
                coop help models
 
     mode:    controls how a role works
-               native    runs inside the lead agent's session
+               native    runs inside the lead agent’s session
                consult   provides read-only advice from another agent
                delegate  edits files for the lead; never commits; runs one at a time
 
     when:    tells the lead when to use a role
 
-    prompt:  adds custom instructions to Coop's generated instructions for the
+    prompt:  adds custom instructions to Coop’s generated instructions for the
              lead or role
 
     If the lead does not support native roles, they run as consult roles.
 
   Where presets live:
-    Project   .agent/presets/<name>/preset.yaml
-    Global    ~/.config/coop/presets/<name>/preset.yaml
+    Project  .agent/presets/<name>/preset.yaml
+    Global   ~/.config/coop/presets/<name>/preset.yaml
 
   A project preset overrides a global preset with the same name.`,
 
@@ -943,345 +968,261 @@ EXAMPLES
   coop tasks watch
   coop tasks watch --tasks web/.agent/tasks`,
 
-	"backlog": `coop backlog — save ideas that need more planning
+	"backlog": `coop backlog — park the genuinely LARGE as task folders (.agent/tasks/xx_backlog/).
 
-Usage: coop backlog [--tasks <path>]... [<command>]
+  Usage: coop backlog [--tasks <path>]... [ls | add "<title>" | rm <id> | promote <id>]
 
-COMMANDS
-  ls             list ideas (also the default)
-  add "<title>"  save an idea
-  promote <id>   move an idea to the task queue
-  rm <id>        delete an idea
+  (bare)           list the backlog drawer
+  add "<title>"    capture an idea (--context/--acceptance/--approach/--subtask fill it inline)
+  promote <id>     move it into 00_todo/ when it's ready to work (then coop tasks claim)
+  rm <id>          drop an idea (--yes skips the confirm)
 
-  Backlog items live in .agent/tasks/xx_backlog/.
-  Agents leave them alone until you promote them.
-  Put work that is ready to start directly in coop tasks.
+  The backlog is the SAME task-folder format as the queue, in an xx_backlog/ drawer that lives
+  OUTSIDE the lifecycle — the loop, the Stop hook, and 'coop tasks' all ignore it, so an idea
+  sits here with no nagging until you promote it (a folder move, not a rewrite). This drawer is
+  for work one iteration couldn't finish, or that needs a spec or a decision before anyone can
+  start; everything else goes straight to the queue ('coop tasks add'), and a close call belongs
+  in the queue too. Defaults to .agent/tasks/ — or, in a monorepo, every subproject's queue (see
+  coop tasks): ls rolls up across them and rm/promote find the item in whichever queue holds it,
+  while add needs a single --tasks.`,
 
-EXAMPLES
-  coop backlog add "Redesign account permissions"
-  coop backlog promote account-permissions
+	"context": `coop context — compile the committed docs relevant to a scope (instructions + rules + KB).
 
-  Command options: coop help backlog <command>`,
+  Usage: coop context [--changed] [--task <id> [--tasks <path>...]] [--json | --rendered] [<path>...]
 
-	"backlog ls": `coop backlog ls — list saved ideas
+  Selects which committed docs an agent needs for the paths in play — canonical
+  AGENTS.md/CLAUDE.md (always, whole) plus the .agent/project.yaml 'context.routes'
+  whose globs match — so a session carries less than the whole repo's instructions.
 
-Usage: coop backlog ls [--tasks <path>]...
+  Scope is DETERMINISTIC (never inferred from a prompt), from any of:
+    paths...         explicit repo-relative paths
+    --changed        paths git reports changed (staged, unstaged, untracked)
+    --task <id>      the paths a queued task declares (a 'paths:' frontmatter list)
+    (current subproject, when run inside one)
 
-  By default, includes every configured project queue.
-  Repeat --tasks to select several queues.
+  Task IDs use the same exact-then-unique-fragment matching as coop tasks. Ambiguous
+  matches are errors; --tasks <path> selects a queue for --task (repeatable). Explicit
+  queues override COOP_TASKS, which otherwise overrides project-derived queues.
 
-EXAMPLE
-  coop backlog ls --tasks web/.agent/tasks`,
+  Output: a report of each file + the route that selected it; --json for the same
+  as data; --rendered to print the compiled content itself (canonical first, whole).
+  A route include that is missing or escapes the repo is an error; canonical files
+  are discovered, never truncated. Config comes from the committed project.yaml (so a
+  fork inherits the parent's routes); scope comes from the fork's own tree.
 
-	"backlog add": `coop backlog add — save an idea for later
+  Define routes in .agent/project.yaml:
+    context:
+      routes:
+        - paths: ["portal/**", "**/*.ex"]
+          include: [.agent/kb/portal.md]`,
 
-Usage: coop backlog add "<title>" [<options>]
+	"check-secrets": `coop check-secrets — check project files for exposed secrets
 
-OPTIONS
-  --tasks <path>       choose one task queue
-  --context <text>     explain the problem and why it matters
-  --acceptance <text>  describe the intended result
-  --approach <text>    describe a possible approach
-  --subtask <text>     add a checklist item; repeat for more items
+Usage: coop check-secrets [--include-ignored]
 
-  Without the text options, Coop creates a template for you to fill in.
-  If you use any text option, include --context, --acceptance and --approach.
-  Repeat a text option to add another paragraph.
-
-EXAMPLES
-  coop backlog add "Redesign account permissions"
-  coop backlog add "Redesign account permissions" --tasks web/.agent/tasks
-
-Ready to start: coop backlog promote <id>`,
-
-	"backlog promote": `coop backlog promote — move an idea to the task queue
-
-Usage: coop backlog promote <id> [--tasks <path>]...
-
-  Fill in its problem, completion criteria and approach before promoting it.
-  The task becomes todo, where an agent or loop can pick it up.
-
-EXAMPLE
-  coop backlog promote account-permissions`,
-
-	"backlog rm": `coop backlog rm — permanently delete a saved idea
-
-Usage: coop backlog rm <id> [--tasks <path>]... [--yes]
+Checks tracked and untracked files, plus Coop's task files and notes.
+Possible secrets are reported by file and line; their values stay hidden.
 
 OPTIONS
-  -y, --yes  skip confirmation
+  --include-ignored  also check other Git-ignored files the box can read
 
-  Deletes the idea's folder, including its notes and saved files.
+FALSE POSITIVES
+  Add the entries printed by a scan to .coopsecretsignore in your project root.
+  Each entry needs a reason. You can edit many entries together in that file.
 
-EXAMPLE
-  coop backlog rm account-permissions`,
+  IDs stay the same when line numbers change. A changed value or file path is checked again.
+  Remove an entry to check that finding again.
 
-	"fork acp": `coop fork <name> acp — use an existing fork from an ACP editor
+  .coopsecretsignore skips exact findings in this check.
+  .coopignore hides files from the box. They do different jobs.
 
-Usage: coop fork <name> acp <target> [<options>]
+Returns a nonzero status if possible secrets remain or the scan cannot finish.`,
 
-OPTIONS
-  --readonly       mount the fork read-only
-  --peer <target>  start with read-only peer agents; repeatable
+	"loop": `coop loop [<target|preset>] — work the task queue until done, then sign off.
 
-  Read-only mode has no peer agents, project hooks or MCP servers.
-  The editor controls whether to start or resume a conversation.
+  Usage: coop loop [<target|preset>] [--tasks <path>]... [--peer <target>...] [--max-tasks <n>] [--preflight] [--no-mcp] [--debug-on-fail] [--egress <mode>] [--allow-domain <domain>]...
 
-EXAMPLE
-  coop fork login acp claude:opus
+  A fresh agent per iteration works the todo tasks; when the queue empties, a DEMANDING
+  signoff pass (a senior reviewer's bar) re-checks each shipped task — goal met (every
+  acceptance criterion + subtask), standards followed (AGENTS.md + .agent/kb/rules, no scope
+  creep), the FAILURE path tested, the change polished (docs/CHANGELOG updated), plus
+  bookkeeping — then runs the repo's gate ONCE across the whole repo, reopening anything
+  short of "merge with no changes". If the signoff reopened work, the loop drains and
+  signs off AGAIN, repeating until a signoff reopens nothing (verified done) or the round
+  cap is hit — then the task it keeps reopening is blocked for a human (exit 3), not
+  reported as done. A later review or verify pass that leaves work actionable exits 1 so
+  automation cannot mistake it for verified done. The cap SCALES with the batch: half the tasks worked this run, clamped
+  to [3, loop.yaml signoff.rounds] (default 5) — a small batch still gets a few tries, a big
+  overnight batch can't ping-pong one stuck task forever. On a rate limit it rotates to the
+  next target in its agent: ladder, or waits out the reset when all are limited.
 
-  Create the fork first: coop fork login claude
-  Editor setup: coop help acp`,
+  Every review closes with one AUDIT EVIDENCE line per subject and a structured PASS/FAIL receipt
+  naming the exact sorted task IDs it proposes reopening. By default the whole repository,
+  including task queues, is read-only. Coop validates the complete proposal, acquires host task
+  authority, and applies exact-subject reopens. A successful process with malformed structured
+  output gets one immediate full-review retry over the same subjects with a fixed format
+  correction; both attempts are recorded. A malformed second verdict, lifecycle churn,
+  interruption, failed process, or out-of-scope proposal mutates no task. writes: repo permits
+  source fixes, but task lifecycle is still host-applied.
 
-	"fork ls": `coop fork ls — show forks and their progress
+  Completion requires exactly one Coop-Task binding in the current iteration range and exactly
+  one binding for that task reachable from HEAD. Reopened work must amend or rewrite the original
+  task commit; a second bound commit is rejected and the task is restored to in-progress.
 
-Usage: coop fork ls [--json]
+  One committed .agent/loop.yaml configures every step (preflight/work/between/signoff/verify),
+  each with its own agent: model ladder and prompt — between is the per-task reviewer, signoff the
+  final review, verify an optional post-signoff pass that e2e-tests the affected features. Prompts
+  never REPLACE a coop built-in: signoff.prompt APPENDS to its senior review; between.prompt,
+  verify.prompt, and preflight.prompt SET their pass. Ordinary between review is opt-in and has no
+  built-in prompt, but a completed task that edits a gate-defining file always gets an immediate
+  protected audit; it uses between.agent/prompt when configured, otherwise the signoff target and
+  a focused built-in prompt. Preflight's built-in tidy is coop itself, run host-side, so its prompt
+  is the optional agent cleanup on top. The review
+  passes are handed the run's CHANGE CONTEXT — every task completed this loop, by its Coop-Task
+  trailer, with the files it touched — so "e2e the affected features" resolves against a concrete
+  list; place it inline with {loop.changes} / {loop.tasks} / {loop.affected}. signoff.rounds is the
+  round cap, preflight.enabled the pre-loop cleanup, work.command a raw per-iteration override, and
+  mcp: false runs every stage's box without the shared MCP config — the servers' tool schemas ride
+  at the front of every model request, so a drain that never uses those tools shouldn't pay for
+  them each iteration (leave it on if a verify: pass depends on MCP tooling). A missing file or
+  field = the built-in default. (coop init scaffolds a commented loop.yaml.) The launch announces
+  the exact loop.yaml snapshot the run derives from — a short sha256 digest, or an explicit
+  absent/built-in-defaults state — and pins it for the whole run; ladders, prompts, caps, and
+  writes are one coherent read. A mid-run edit never hot-reloads: before each later box launch
+  coop compares the on-disk bytes with that snapshot and warns once per new digest that the run
+  keeps its startup config — restart the loop to apply the change.
 
-OPTIONS
-  --json  print workspace details for scripts
+  Each step's agent: is a ladder of TARGET (provider[:model][/effort][@account]) or PRESET-NAME
+  rungs: signoff.agent runs the final review on its own, typically STRONGER model (the cheap
+  work loop does the work, a capable model signs it off), between.agent the per-task audit, and
+  work.agent the work rotation when the launch names no target and no preset.
 
-  Shows each fork's agent, activity, tasks, changes and reported cost.
+  A preset in the who-runs slot runs the loop under that orchestration preset: its lead is
+  the agent, its lead agent: ladder is the rotation, and each iteration gets the preset's role
+  routing + wrappers ('coop help presets'). With no preset, the loop rotates the agent's
+  default model across all signed-in accounts.
 
-EXAMPLE
-  coop fork ls`,
+  The target is a one-off ladder for this run (no preset needed): a bare provider
+  (claude) fans the agent's default model across all signed-in accounts, claude:opus
+  pins the model, claude@work,personal is an explicit account ladder — the loop rotates
+  the rungs on a rate limit. A rung without a model uses COOP_<AGENT>_MODEL, then a model
+  baked into COOP_<AGENT>_CMD, then the agent CLI's own default — so overnight runs can
+  grind on a cheaper model.
 
-	"fork review": `coop fork review — inspect a fork before merging
+  --peer <target>... lets each iteration ask NAMED peers for a read-only second opinion
+  (repeatable; coop-consult on PATH, only those peers' credentials mounted) — the
+  orchestrator pattern running unattended. Off by default: it widens each box's
+  credential scope to exactly the named peers. Also on fork loops:
+  coop fork <name> <target> --loop --peer codex --peer gemini.
 
-Usage: coop fork review <name> [<options>]
+  On macOS, coop holds a caffeinate assertion for the run so the machine doesn't
+  idle-sleep mid-drain and stall an overnight loop (COOP_CAFFEINATE=0 to disable).
+  Set COOP_SPINNER=0 to freeze live spinners and suppress the fast repaint ticker while
+  debugging or recording the terminal.
 
-OPTIONS
-  --stat  show a change summary instead of the full diff
-  --tool  open the diff with your global Git diff tool
-  --open  open the fork in your editor
-  --gate  test the fork after rebasing a temporary copy onto your current branch
+  Every attempt is supervised for SILENCE, not slowness: 10m to its first model action,
+  30m between recognized actions, 2h on any one foreground tool. Only the provider's own
+  structured stream feeds those clocks — never CPU or process names — and an open tool
+  suspends the idle one, so long reasoning and a slow gate finish untouched (a provider
+  whose stream reports no tool calls gets a single conservative 2h post-progress budget
+  instead). Silence past a deadline kills that attempt alone: any completion it wrote is
+  restored, the task stays actionable, and a fresh attempt starts — on the next rung when
+  the ladder has one — while three in a row on one stage stops the run instead of
+  churning. The warning names the deadline that fired and the silence it observed. There
+  is no off switch: it is what stops one wedged provider CLI from holding an overnight
+  drain, its task lease, and its credential until you notice.
 
-  Shows commits, the agent's task notes and changes that need your attention.
-  --gate leaves the fork and your working tree unchanged. It cannot be used
-  with --open.
+  Ctrl-C is a soft interrupt: the current iteration finishes its completion binding,
+  host signing, and mandatory between/protected audit, then exits 130 before final
+  signoff or another claim. Press Ctrl-C again to stop now (tearing the running box
+  down). (A detached fork has no terminal — stop it with 'coop fork stop'.)
 
-EXAMPLES
-  coop fork review login
-  coop fork review login --stat --gate
+  Defaults to .agent/tasks/ — or, in a monorepo, every queue named by the top-level
+  .agent/project.yaml ('subprojects:' + the root's own), so one loop drains all the
+  components' work with no setup. Repeat --tasks (or set COOP_TASKS) to override the
+  set; the loop keeps going while any queue has unfinished work. The whole repo is
+  mounted either way.
 
-  Merge after review: coop fork merge login`,
+  A fork loop does not copy or mount those queues. The host assigns one canonical task at a
+  time and exposes only that task through an execution projection. Stop/crash keeps the exact
+  assignment resumable; projected done becomes a reviewed fork candidate, and the canonical
+  task reaches done only when that exact candidate lands. Multiple forks may therefore share
+  the same queue without duplicate work. --tasks on a fork selects one canonical queue; it does
+  not create a fork-local queue.
 
-	"fork merge": `coop fork merge — bring a fork's commits into your current branch
+  --max-tasks <n>   work at most N selected tasks, counting each only after it reaches done
+                    or blocked following retries and its immediate audit; then pause
+                    successfully before another task or final signoff; N must be positive,
+                    and an empty actionable queue starts no box
+  --preflight       run the pre-loop tidy: coop itself returns blocked/ tasks whose decision
+                    now has an answer to todo — host-side, no box; an agent runs only for a
+                    loop.yaml preflight.prompt cleanup (default it on with preflight.enabled;
+                    --no-preflight overrides). Makes no code changes or commits.
+  --no-mcp          run this loop's boxes without the shared MCP config (the committed form
+                    is loop.yaml mcp: false)
+  --debug-on-fail   on a failure at a terminal, open a box shell, then retry
+                    on exit (a no-op in unattended runs)
+  --egress <mode>   open | filtered | none for this run ('coop help net'). Restricted egress
+                    is admitted ONCE at the start: the operator's grants, the project's
+                    approved requests, and the core endpoints of every rung the run may
+                    rotate onto are frozen into one policy every iteration, review and
+                    pre-flight box launches under. Refusals print between iterations and
+                    once more at the end; 'coop net runs' has every run
+  --allow-domain    an exact name this run may reach over TLS 443 (repeatable)
+  --egress-rules    a file of universal rules for this run only
 
-Usage: coop fork merge <name> [<options>]
-       coop fork merge --all [<options>]
+  Exit codes: 0 = queue verified done or an intentional --max-tasks pause; 1 = failure;
+  2 = usage; 3 = stopped with a task blocked on a human decision (including one the
+  review kept reopening past the round cap) — resolve with 'coop tasks decisions', then
+  re-run; 130 = interrupted before queue verification. So cron/CI can branch without
+  parsing output.
 
-OPTIONS
-  --all        merge eligible forks one at a time
-  -f, --force  allow changes otherwise blocked by the merge policy
-  -y, --yes    confirm merging and removal without prompting
+  loop.yaml work.command overrides the per-iteration command.`,
 
-  Review the diff first. Your working tree must be clean and the fork stopped.
-  Coop rebases the commits, runs configured project checks and merges the result.
-  --force does not bypass those checks.
+	"up": `coop up — start this project's services
 
-  After merging, Coop asks before deleting a clean fork. With --all, one prompt
-  covers the batch and removal. Forks with uncommitted work are kept.
-  Removing a fork also removes its service containers and Docker volumes.
+Usage:
+  coop up
 
-EXAMPLES
-  coop fork review login
-  coop fork merge login
-  coop fork merge --all`,
+Starts services from .agent/compose.yml and waits for them to be ready.
+Uses the Compose path configured in .agent/project.yaml when different.
+Agents reach each service by its Compose name. Starting again is safe.
 
-	"fork rm": `coop fork rm — delete a fork and its local work
+An agent box must not be running in this project when services start.
+Requires Docker or Podman with Compose support.
 
-Usage: coop fork rm <name> [<options>]
+If a service asks to read a secret file, Coop asks at a terminal before
+allowing it. Otherwise the service receives an empty file. Approval applies
+to the reviewed Compose file and must be repeated if that file changes.
 
-OPTIONS
-  -f, --force  stop active work and discard uncommitted or unmerged changes
-  -y, --yes    skip confirmation
+Add services:  coop init --services
+Stop services: coop down`,
 
-  Deleting a fork removes its files and local session data, plus its service
-  containers and Docker volumes.
-  Assigned tasks return to the project queue. Proposed tasks that have not been
-  imported are discarded; tasks already imported into the project are kept.
+	"down": `coop down — stop this project's services
 
-EXAMPLES
-  coop fork rm login
-  coop fork rm login --force`,
+Usage: coop down [--delete-volumes] [--yes]
 
-	"fork stop": `coop fork stop — stop a fork's background loop
-
-Usage: coop fork stop <name>
-
-  Stops the worker and its running boxes. The fork's work and assigned task stay
-  available so you can continue it later.
-
-EXAMPLES
-  coop fork stop login
-  coop fork login claude --loop`,
-
-	"fork logs": `coop fork logs — show a fork's loop output
-
-Usage: coop fork logs [<name>] [--follow]
-
-OPTIONS
-  -f, --follow  keep showing new output
-
-  Without a name, includes all forks and labels each line with its fork name.
-  Press Ctrl-C to leave the log view; the loop keeps running.
-
-EXAMPLES
-  coop fork logs login
-  coop fork logs login --follow
-  coop fork logs --follow`,
-
-	"fork path": `coop fork path — print a fork's folder path
-
-Usage: coop fork path <name>
-
-EXAMPLE
-  coop fork path login`,
-
-	"fork open": `coop fork open — open a fork in your editor
-
-Usage: coop fork open <name>
-
-  Uses COOP_EDITOR, your global Git editor or an available editor.
-
-EXAMPLE
-  coop fork open login`,
-
-	"context": `coop context — show the instructions relevant to your work
-
-Usage: coop context [<path>...] [<options>]
-
-OPTIONS
-  --changed       use files changed in Git
-  --task <id>     use paths listed in a task's frontmatter
-  --tasks <path>  choose a queue for --task; repeat for more queues
-  --rendered      print the selected files' contents
-  --json          print the selection for scripts
-
-  Coop includes shared agent instructions and any matching context routes.
-  Use paths relative to the repository. Inside a subproject, its path is included.
-  You can combine explicit paths, --changed and --task.
-  Choose either --rendered or --json for the output format.
-
-EXAMPLES
-  coop context internal/cli/help.go
-  coop context --changed
-  coop context --task login-retries --rendered
-
-CONFIGURE ROUTES — .agent/project.yaml
-  context:
-    routes:
-      - paths: ["web/**"]
-        include: [.agent/kb/web.md]
-
-  This includes .agent/kb/web.md when the selected work is under web/.`,
-
-	"check-secrets": `coop check-secrets — scan the working tree for committed secrets, by content.
-
-  Usage: coop check-secrets [--include-ignored]
-
-  Scans for token shapes and high-entropy values, reporting file:line. Exits
-  non-zero on a hit, for use as a pre-flight or CI check. Hide a flagged file
-  with .coopignore.
-
-  By default it scans the commit-candidate files (tracked + untracked; gitignored
-  excluded) — including a file coop shadows from the box by name (an id_ed25519,
-  a *.pem): the box never sees it, but a push would commit it. A 'coop
-  run'/'shell'/'loop' mounts the WHOLE tree, though, so a gitignored-but-not-
-  shadowed file is still visible to the agent — pass --include-ignored to scan
-  the full visible tree too (deps/build dirs and shadowed files git would not
-  commit are still skipped). A .coopignore entry silences a file in both modes.`,
-
-	"loop": `coop loop — let agents work through your task queue
-
-Usage: coop loop [<target|preset>] [<options>]
-
-HOW IT WORKS
-  A fresh agent works on each task, then a final review checks the completed work.
-  The review can reopen tasks. Coop continues until the work passes review or
-  needs your decision.
-
-EXAMPLES
-  coop loop claude
-  coop loop frontier
-  coop loop codex --max-tasks 1
+Stops and removes this project's Compose containers and networks.
+Stored data is kept unless you use --delete-volumes.
+Uses .agent/compose.yml, or the configured Compose path.
 
 OPTIONS
-  --tasks <path>         choose a task queue; repeat for more queues
-  --peer <target>        start with read-only peer agents; repeat for more peers
-  --max-tasks <n>        pause after N tasks finish or become blocked
-  --preflight            resolve answered decisions and release stale claims first
-  --no-preflight         skip that preparation
-  --no-mcp               run without configured MCP servers
-  --debug-on-fail        open a box shell after a failure, then retry when you exit
-  --egress <mode>        internet access: filtered, open or none
-  --allow-domain <name>  allow this exact domain over TLS on port 443; repeatable
-  --egress-rules <file>  add this file's network rules for the run
+  --delete-volumes  also permanently delete service volumes and their data
+  -y, --yes         skip the volume-deletion confirmation
 
-  --max-tasks pauses before the final review. The limit must be positive.
-  --debug-on-fail opens a shell only when running in a terminal.
+Coop names the volumes before asking; press Enter to cancel.
+Without a terminal, deletion requires --yes.
+External volumes and files mounted from the project are kept.
 
-STOP AND CONTINUE
-  Press Ctrl-C to finish the current task attempt and its required review, then stop.
-  Press it again to stop immediately. Run the same command to continue.
-  For a background fork loop: coop fork stop <name>
-
-CONFIGURE STEPS — .agent/loop.yaml
-  preflight  optional preparation before starting
-  work       the agent that works on each task
-  between    optional review after each task
-  signoff    final review of completed work
-  verify     optional checks after the final review
-
-  Set work.agent to choose the default when no target or preset is given.
-  Review steps can each use their own agent and prompt. Signoff prompts add to
-  Coop's built-in review. Between and verify prompts define those checks.
-  Changes to this file apply when you restart the loop.
-
-  Step options:
-    preflight  enabled, prompt
-    work       agent, command
-    between    enabled, agent, prompt, writes
-    signoff    agent, prompt, rounds, writes
-    verify     enabled, agent, prompt, writes
-
-  agent: accepts a list of targets or presets. See coop help models.
-  writes: tasks keeps reviews read-only; repo lets the reviewer edit source files.
-  Between and verify require a prompt when enabled.
-  mcp: false disables MCP servers for every step.
-
-NETWORK ACCESS
-  The run's approved access covers its work and review agents for the entire loop.
-  See coop help net for rules and approvals.
-
-EXIT STATUS
-  0    review passed, or the requested task limit was reached
-  1    the run failed or left work to do
-  2    invalid command or configuration
-  3    stopped for a decision
-  130  interrupted before final review completed`,
-
-	"up": `coop up — start the repo's sibling services so the box can reach them by name.
-
-  Usage: coop up
-
-  Brings up the services in .agent/compose.yml on coop's network. The final
-  status names the exact resolved Compose services, in Compose order; an agent
-  in the box reaches each one by that hostname. Stop them with: coop down`,
-
-	"down": `coop down [-v] — stop the repo's sibling services.
-
-  Usage: coop down [-v | --volumes]
-
-  -v, --volumes   also remove the services' volumes (their data)`,
+Start again: coop up`,
 
 	"init": `coop init — set up Coop in this project
 
 Usage:
   coop init
-  coop init [--stack asdf] [--services <service,...>] [--agents <agent,...>|all]
+  coop init [--stack asdf] [--services [<service,...>]] [--agents <agent,...>|all]
 
-Coop sets up
+COOP SETS UP
 
 - Shared instructions and skills for all your AI agents.
 
@@ -1299,118 +1240,266 @@ Coop sets up
 Without options, Coop detects what it can and asks before initializing Git,
 adding formatting checks, or adding Postgres or Redis.
 
-Options
-  --agents <list>    set up Claude, Codex, Gemini, or all
-                     default: agents you are signed in to
+OPTIONS
+  --agents <list>       set up Claude, Codex, Gemini, or all
+                       default: agents you are signed in to
 
-  --services <list>  add Postgres, Redis, or both
+  --services [<list>]   add Postgres, Redis, or both
 
-  --stack asdf       install tools from .tool-versions in the Coop box
+  --stack asdf          install tools from .tool-versions in the Coop box
 
 You can run coop init again at any time.
 Coop keeps your existing project files and adds anything missing.`,
 
-	"net": `coop net — control network access and see what happened.
+	// The net family page and its ten leaf pages are APPROVED transcripts: the exact bytes are
+	// pinned in internal/cli/testdata/approved/20*.txt. The family page groups the verbs by the
+	// job a person came with — what new runs may reach, what recorded runs did, the repair coop
+	// normally does itself — and ends with the one workflow nobody guesses (edit the YAML, then
+	// approve). Every leaf page is reached as `coop net <verb> --help` and `coop help net <verb>`.
+	"net": `coop net — control network access and see what happened
 
-  Usage: coop net [<command>]
+ACCESS — control what new runs can reach
+  coop net                  show this project's current access
+  coop net approve          review and approve requested changes
+  coop net check <url>      check access
+  coop net forget           withdraw this project's network approval
 
-  ACCESS — control what new runs can reach
-    coop net                  show this project's current access
-    coop net approve          review and approve this project's network access
-    coop net check <url>      can a new run reach it? (--run <run>: that run)
-    coop net forget           drop this project's approval (--project <path>)
+RUNS — inspect recorded network activity
+  coop net runs             show recent runs
+  coop net inspect [<run>]  show connections and blocked access
+  coop net blocked <host>   find blocked connections and how to allow them
+  coop net watch [<run>]    follow network activity
+  coop net export <run>     export a shareable record
 
-  RUNS — inspect recorded network activity
-    coop net runs             show recent runs (--all, --all-projects)
-    coop net inspect [<run>]  show connections and blocked access (--json)
-    coop net explain <host>   explain why access was blocked (--run <run>)
-    coop net watch [<run>]    follow an active run until its record is sealed
-    coop net export <run>     export a shareable record (destinations withheld)
+REPAIR — normally automatic
+  coop net setup            prepare or recheck this host now
+  coop net recover [<run>]  retry interrupted cleanup now
 
-  REPAIR — normally automatic
-    coop net setup            prepare or recheck this host now
-    coop net recover [<run>]  retry interrupted cleanup now
+HOW TO ADD A NETWORK RULE
 
-  A filtered box reaches its agent's provider and the websites and services this
-  project asked for — nothing else. Every other destination is blocked at the
-  gateway, not inside the box; the box is told its policy up front, and the run
-  ends with what it reached and what was blocked. A loop admits ONCE and every
-  iteration, review and pre-flight box runs under that one frozen policy.
+1. Edit .agent/project.yaml and add the destination under box.egress_rules:
 
-  Ask for it on a launch, or make it the project's default:
+   box:
+     egress: filtered
+     egress_rules:
+       - to: {domain: "docs.example.com"}
+         protocol: tls
+         ports: [443]
 
-    coop claude --egress filtered
-    coop run --egress filtered --allow-domain example.com -- curl https://example.com
+2. Review and approve the changes:
 
-  A project asks for websites and services in .agent/project.yaml:
+   coop net approve
 
-    box:
-      egress: filtered
-      egress_rules:
-        - to: {domain: "docs.example.com"}    # TLS, exact or *.wildcard
-          protocol: tls
-          ports: [443]
+Command options: coop help net <command>`,
 
-  That is a REQUEST. 'coop net approve' shows it against what is already
-  approved and, once you confirm at a terminal, stores your decision outside
-  the repository — so editing or deleting the file cannot widen access, and an
-  unattended run can never approve itself. Approvals apply to NEW runs; boxes
-  already running keep the policy they launched with. 'forget' takes one back.
+	"net runs": `coop net runs — show recorded network runs
 
-  Runs are named by any unique prefix of their id — the eight characters
-  'coop net runs' shows are enough. 'inspect' with no run reads the newest one
-  recorded for this project; 'explain' with no run finds the newest time that
-  host was blocked here and, when the evidence proves the name, port and
-  protocol, prints the exact rule to paste. Unknown means unknown: a metric
-  nobody measured is never shown as zero. Setup and recovery run on their own;
-  the REPAIR verbs are for doing it now. Protocols, ports and what is refused
-  by design are in docs/networking.md.`,
+Usage: coop net runs [--all | --all-projects] [--json]
 
-	"doctor": `coop doctor — prove the box's isolation: attack it, inside and from the host.
+OPTIONS
+  --all           show every run for this project
+  --all-projects  show every project's runs on this host
+  --json          print the records for scripts
 
-  Usage: coop doctor
+  By default, shows this project's 25 newest runs.
+  Use a run's ID or a unique prefix with other network commands.
 
-  Runs the escape/leak checks — secret shadowing, network limits, host reach,
-  the fork handoff — and prints a pass/fail report. Probes the image this
-  repo's boxes run: its per-project image when built, else the shared base
-  image, else a stock alpine stand-in (which skips the USER/toolchain checks
-  and says so). Honors COOP_RUNTIME.`,
+EXAMPLE
+  coop net inspect e644f07a`,
 
-	"build": `coop build — build the box image (stable, pinned).
+	"net inspect": `coop net inspect — show a run's connections and blocked traffic
 
-  Usage: coop build
+Usage: coop net inspect [<run>] [--json]
 
-  Builds the shared base, or a per-project image if the repo has a
-  .agent/Dockerfile — pinning versions for reproducibility. Re-run after
-  changing .agent/Dockerfile or .tool-versions. For the latest, use coop update.
+OPTIONS
+  --json  print the full technical record
 
-  New runs use the fresh image automatically. Editor sessions (coop acp) are
-  restarted onto it transparently — they reconnect, so you don't lose the session.
-  Other running boxes (a loop or an interactive agent session) keep the old image
-  until they next start.`,
+  Without a run ID, shows this project's newest recorded run.
 
-	"update": `coop update — self-update coop, then rebuild the box image fresh.
+EXAMPLES
+  coop net inspect
+  coop net inspect e644f07a`,
 
-  Usage: coop update [--self-only | --box-only | --check]
+	"net check": `coop net check — check whether network rules allow a connection
 
-  First replaces the coop binary when GitHub has a newer release — its versioned
-  archive is verified against the release checksum locally, then swapped in
-  atomically so replacing the running binary is safe. Then rebuilds the image like
-  coop build but --pull --no-cache and unpinned, so the node base and agent CLIs
-  jump to latest. Use coop build for a reproducible image. Supervised editor
-  sessions are restarted onto the new image transparently, same as build.
+Usage: coop net check <url-or-host> [<options>]
+       coop net check <ip> --run <run> --protocol <tcp|udp> --port <n>
+       coop net check <ip> --run <run> --icmp
 
-    --self-only   update just the coop binary, skip the image rebuild
-    --box-only    rebuild just the image, skip the self-update (the old behavior)
-    --check       dry-run: report the binary vs the latest release and the box
-                  image's build age/staleness, changing nothing (no runtime needed)
+OPTIONS
+  --run <run>               use that run's rules
+  --port <n>                choose a port; defaults to the URL's port or 443
+  --protocol <tls|tcp|udp>  choose the connection type
+  --icmp                    check an ICMP echo request to an IP address
+  --json                    print the answer for scripts
 
-  A dev/source build, an already-current or newer binary, or a coop installed
-  somewhere unwritable (a package-manager prefix) skips the self-update with a note.
+  Without --run, checks this project's approved access for a new run.
+  Hostnames use TLS. IP addresses require a recorded run and connection type.
 
-  Once a day, any TTY command also checks for a newer release in the background
-  and mentions it after the command's output; COOP_NO_UPDATE_CHECK=1 turns that
-  notice off.`,
+EXAMPLES
+  coop net check https://example.com
+  coop net check example.com --run e644f07a`,
+
+	"net blocked": `coop net blocked — find blocked connections and how to allow them
+
+Usage: coop net blocked <host> [--run <run>] [--json]
+
+OPTIONS
+  --run <run>  look only in this run
+  --json       print the evidence for scripts
+
+  Without --run, finds the newest matching block in this project's runs.
+  Shows a rule you can copy when the record proves the destination and port.
+  An exact event ID can replace the host when --run is supplied.
+
+EXAMPLES
+  coop net blocked registry.npmjs.org
+  coop net blocked registry.npmjs.org --run e644f07a`,
+
+	"net approve": `coop net approve — review and approve this project's network request
+
+Usage: coop net approve
+
+  Shows what .agent/project.yaml asks for, compared with your last approval.
+  Confirm the changes to allow new runs to use them.
+  If nothing changed, there is nothing to approve.
+
+  Existing boxes keep the rules they started with.
+  Run this command in your terminal.
+
+See current access: coop net`,
+
+	"net watch": `coop net watch — follow a run's network activity
+
+Usage: coop net watch [<run>] [--json]
+
+OPTIONS
+  --json  stream one JSON record per update
+
+  Without an ID, selects this project's only unfinished run.
+  Shows new connections, blocks and problems, then the final report.
+
+  Press Ctrl-C to stop watching. The run continues.
+
+EXAMPLE
+  coop net watch e644f07a`,
+
+	"net export": `coop net export — export a run's network record
+
+Usage: coop net export <run> [--include-addresses]
+
+OPTIONS
+  --include-addresses  include remote hostnames and IP addresses
+
+  Writes JSON to stdout. Remote hostnames and IP addresses are hidden by default.
+  The run must have a final record.
+
+EXAMPLE
+  coop net export e644f07a > network-record.json`,
+
+	"net forget": `coop net forget — withdraw this project's network approval
+
+Usage: coop net forget [--project <path>]
+
+Use this when you no longer trust an approval saved on this machine.
+To change network rules, edit .agent/project.yaml and run coop net approve.
+
+OPTIONS
+  --project <path>  choose another project, including a folder that was deleted
+
+New runs wait for approval again. The project file is not changed.
+Existing boxes, recorded runs, and this host's network setup are kept.
+Run this command in your terminal.
+
+Restore approval:
+  coop net approve`,
+
+	"net setup": `coop net setup — prepare this host for filtered networking
+
+Usage: coop net setup
+
+  Prepares the network images and checks that allowed access works and
+  blocked access stays blocked.
+
+  Coop does this automatically when a filtered run needs it.
+  Run it yourself to check or prepare the host ahead of time.
+
+Requires Docker to be running.`,
+
+	"net recover": `coop net recover — clean up interrupted network runs
+
+Usage: coop net recover [<run>]
+
+  Removes containers and temporary volumes left by an interrupted run.
+  Without an ID, checks every run waiting for cleanup on this host.
+  Running boxes and resources Coop cannot safely identify are left alone.
+
+  Coop normally retries this cleanup automatically.
+
+EXAMPLE
+  coop net recover e644f07a`,
+
+	"doctor": `coop doctor — check that the box's isolation works
+
+Usage:
+  coop doctor
+
+Runs checks in a temporary project and reports what passed, failed, or
+could not be checked. Your files and credentials are not the test data.
+
+Checks secret hiding, host access, privileges, offline networking,
+task access, credential isolation, settings permissions, and fork handoff.
+
+Uses this project's built image, or the shared image if available.
+If neither exists, uses Alpine and names the checks it cannot perform.
+Run coop build, then coop doctor to test the Coop image.
+
+Requires Git and a running container runtime. Honors COOP_RUNTIME.
+Lists abandoned boxes but does not remove them.`,
+
+	"build": `coop build — build the Coop box image
+
+Usage:
+  coop build
+
+Builds the shared image, or this project's image when it has a box
+Dockerfile. The default path is .agent/Dockerfile; use box.dockerfile in
+.agent/project.yaml to select another path.
+
+Run after changing the box Dockerfile or .tool-versions.
+Builds use the configured versions and available cache.
+Use coop update --box-only to fetch newer components and rebuild fresh.
+
+New runs use the rebuilt image. Supervised editor sessions restart and
+reconnect. Other running boxes use the old image until their next start.
+Requires a running container runtime.`,
+
+	"update": `coop update — update Coop and rebuild the box image
+
+Usage:
+  coop update [--self-only | --box-only | --check]
+
+Updates the Coop binary when a newer release is available, then rebuilds
+the box with newer base-image components, agent CLIs, and editor adapters.
+Downloaded releases are checked before replacing the binary.
+
+OPTIONS
+  --self-only  update only the Coop binary; no container runtime needed
+  --box-only   rebuild only the box image, fetching newer components
+  --check      report available updates and local build records; change nothing
+
+Choose at most one option. --check does not need a container runtime.
+Building the box requires a running container runtime.
+
+Development builds and binaries newer than the latest release are kept.
+A binary that cannot be replaced is an error; update it with the tool
+that installed it. The box rebuild can still finish independently.
+
+New runs use the rebuilt image. Supervised editor sessions restart and
+reconnect. Other running boxes use the old image until their next start.
+
+Coop checks for new releases once a day during terminal use.
+Set COOP_NO_UPDATE_CHECK=1 to turn off those notices.`,
 
 	"version": `coop version — print coop's version and exit.
 
@@ -1453,16 +1542,16 @@ func printHelpPage(text string) {
 }
 
 // selfContainedHelp are the commandHelp pages that end with their own pointer, so they print
-// without the all-commands footer. Membership travels with the page's last line. A whole family is
-// listed when every one of its pages ends itself — the family page points at its per-command pages,
-// and each command page ends with its examples or the command that follows it.
+// without the all-commands footer. Membership travels with the page's last line. Every task page
+// ends with its own next step (the family page points at its per-command pages; each command page
+// ends with its examples or the command that follows it), so the family is listed as a prefix.
 var selfContainedHelp = map[string]bool{
-	"presets": true, "models": true, "init": true,
-	"tasks": true, "backlog": true, "context": true, "loop": true, "fork": true,
+	"presets": true, "models": true, "init": true, "tasks": true, "net": true,
+	"login": true, "credentials": true,
 }
 
 // selfContained reports whether cmd's page ends itself. A `<family> <command>` page inherits its
-// family's answer, so a new leaf page in a listed family needs no second registration.
+// family's answer, so a new task page needs no second registration.
 func selfContained(cmd string) bool {
 	if selfContainedHelp[cmd] {
 		return true

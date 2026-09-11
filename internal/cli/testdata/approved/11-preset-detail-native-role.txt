@@ -1,0 +1,21 @@
+review — a preset for multiple Claude models
+
+RUN IT
+  coop review       start an interactive session with the lead agent
+  coop loop review  work through tasks with this preset
+  coop acp review   use this preset in your editor
+
+LEAD MODEL
+  Agent:  claude:opus/high
+  Prompt: ~/.config/coop/presets/review/roles/lead.md
+
+ROLES AVAILABLE TO THE LEAD
+  critic   Mode: native — runs inside the lead agent’s session
+           Agent: claude:sonnet/high
+           Subagent: reviewer
+
+EDIT THIS PRESET
+  ~/.config/coop/presets/review/preset.yaml (global)
+
+For a guide to creating and using presets:
+  coop help presets

@@ -1,0 +1,6 @@
+
+✗ Invalid agent target "claude:opus:extra"
+
+      A model name cannot contain ":", "@", "/", or spaces.
+
+  Help: coop help models

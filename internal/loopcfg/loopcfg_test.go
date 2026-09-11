@@ -170,8 +170,8 @@ func TestSnapshotDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	warning, drifted := snap.Drift()
-	if !drifted || !strings.Contains(warning, "still using "+File+" from startup") ||
-		!strings.Contains(warning, "Restart the loop to use the new settings.") {
+	if !drifted || !strings.Contains(warning, Digest([]byte(original))) ||
+		!strings.Contains(warning, Digest([]byte(edited))) || !strings.Contains(warning, "restart to apply") {
 		t.Errorf("edit drift = %q, %v", warning, drifted)
 	}
 	if warning, drifted := snap.Drift(); drifted {
@@ -199,7 +199,7 @@ func TestSnapshotDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	warning, drifted = snap.Drift()
-	if !drifted || !strings.Contains(warning, "The file was removed") || !strings.Contains(warning, "Restart the loop to use the new settings.") {
+	if !drifted || !strings.Contains(warning, "deleted mid-run") || !strings.Contains(warning, "restart to apply") {
 		t.Errorf("delete drift = %q, %v", warning, drifted)
 	}
 	if warning, drifted := snap.Drift(); drifted {
@@ -224,7 +224,7 @@ func TestSnapshotDriftFromAbsent(t *testing.T) {
 		t.Fatal(err)
 	}
 	warning, drifted := snap.Drift()
-	if !drifted || !strings.Contains(warning, "still uses its built-in settings") || !strings.Contains(warning, "Restart the loop to use the new settings.") {
+	if !drifted || !strings.Contains(warning, "appeared mid-run") || !strings.Contains(warning, "built-in defaults") {
 		t.Errorf("appear drift = %q, %v", warning, drifted)
 	}
 	if warning, drifted := snap.Drift(); drifted {

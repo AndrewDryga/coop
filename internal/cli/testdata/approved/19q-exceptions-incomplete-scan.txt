@@ -1,0 +1,7 @@
+✗ Could not finish checking for secrets
+
+      config/credentials.txt could not be read: permission denied.
+
+  Fix the file permissions, then run coop check-secrets again.
+
+1 finding ignored by .coopsecretsignore.

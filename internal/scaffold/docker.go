@@ -220,6 +220,36 @@ func composeServices(path string) []string {
 // picking "postgres" writes a service named "db", so the real name comes from the file.
 func ComposeServiceNames(path string) []string { return composeServices(path) }
 
+// DockerSetup is the project's own Docker configuration, when it has one and coop's box is not
+// set up yet: the files a person can point box.dockerfile / box.compose at instead of writing
+// new ones. It is a POINTER, never an action — coop does not adopt a Dockerfile or start a
+// Compose file somebody wrote for their application without being told to.
+type DockerSetup struct {
+	Dockerfile string // repo-relative path, or ""
+	Compose    string // repo-relative path, or ""
+}
+
+// DetectDockerSetup reports the project's existing Docker configuration for `coop init` to point
+// at. It returns nil when coop's own box Dockerfile already exists (there is nothing to suggest)
+// or when the project has no Docker of its own.
+func DetectDockerSetup(repo string) *DockerSetup {
+	if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(project.DockerfilePath(repo)))); err == nil {
+		return nil
+	}
+	f := detectDocker(repo)
+	if !f.any() {
+		return nil
+	}
+	setup := &DockerSetup{}
+	if len(f.dockerfiles) > 0 {
+		setup.Dockerfile = f.dockerfiles[0]
+	}
+	if len(f.composes) > 0 {
+		setup.Compose = f.composes[0]
+	}
+	return setup
+}
+
 // dockerfileSuggestion is the "base the box on your image" template; %s is the agent npm
 // package list (from agents.Packages(), so it never drifts from the asdf image).
 const dockerfileSuggestion = `

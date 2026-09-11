@@ -1,0 +1,3 @@
+Services are already configured in .agent/compose.yml.
+  postgres → db
+  redis → redis

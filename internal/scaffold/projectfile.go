@@ -105,17 +105,19 @@ func RegisterSubprojects(repo string, detected []string) ([]string, error) {
 	return registerSubprojects(repo, detected, writeAndSync, nil)
 }
 
-var errProjectChanged = errors.New("project.yaml changed during subproject registration")
+// ErrProjectChanged is a project.yaml that moved under the registration — another editor, another
+// coop. It is the one registration failure whose remedy is to wait rather than to fix something.
+var ErrProjectChanged = errors.New("project.yaml changed during subproject registration")
 
 func registerSubprojects(repo string, detected []string, write scaffoldFileWrite, beforeReplace func() error) ([]string, error) {
 	const maxAttempts = 3
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		added, err := registerSubprojectsOnce(repo, detected, write, beforeReplace)
-		if !errors.Is(err, errProjectChanged) {
+		if !errors.Is(err, ErrProjectChanged) {
 			return added, err
 		}
 	}
-	return nil, fmt.Errorf("%w after %d attempts; retry coop init", errProjectChanged, maxAttempts)
+	return nil, fmt.Errorf("%w after %d attempts; retry coop init", ErrProjectChanged, maxAttempts)
 }
 
 func registerSubprojectsOnce(repo string, detected []string, write scaffoldFileWrite, beforeReplace func() error) ([]string, error) {
@@ -209,7 +211,7 @@ func readProjectFile(root *os.Root, rel, display string) (projectFileSnapshot, b
 	}
 	named, err := root.Lstat(rel)
 	if err != nil || !os.SameFile(before, after) || !os.SameFile(before, named) || int64(len(data)) != after.Size() {
-		return projectFileSnapshot{}, false, errProjectChanged
+		return projectFileSnapshot{}, false, ErrProjectChanged
 	}
 	return projectFileSnapshot{info: before, data: data}, true, nil
 }
@@ -230,7 +232,7 @@ func replaceProjectFile(root *os.Root, rel, display string, before projectFileSn
 		return err
 	}
 	if !present || !os.SameFile(before.info, current.info) || !bytes.Equal(before.data, current.data) {
-		return errProjectChanged
+		return ErrProjectChanged
 	}
 	if err := root.Rename(tmp, rel); err != nil {
 		return fmt.Errorf("replace %s: %w", display, err)
@@ -283,61 +285,79 @@ func indexOfLine(lines []string, want string) int {
 	return -1
 }
 
+// projectYAML is the new-file template: every setting a project can hold, commented out at its
+// default, so the file itself is the reference. The prose stays short because `coop help init`
+// and the command pages carry the explanation — a config comment that repeats a help page goes
+// stale on its own schedule. A re-init never rewrites an existing file.
 func projectYAML(subprojects []string) string {
 	var b strings.Builder
-	b.WriteString("# coop project config — committed with the repo (unlike the rest of .agent/).\n\n")
+	b.WriteString("# Coop project settings. Commit this file with your project.\n")
+	b.WriteString("# Help: coop help init\n\n")
 	if len(subprojects) > 0 {
-		b.WriteString("# Monorepo members: coop aggregates each one's .agent/tasks queue automatically,\n")
-		b.WriteString("# so you never hand-maintain COOP_TASKS.\n")
+		b.WriteString("# Include each subproject's task queue.\n")
 		b.WriteString("subprojects:\n")
 		for _, s := range subprojects {
 			b.WriteString("  - " + s + "\n")
 		}
 	} else {
-		b.WriteString("# A monorepo? List member dirs (each its own coop project with a .agent/):\n")
+		b.WriteString("# Include task queues from subprojects that have their own .agent/ folder.\n")
 		b.WriteString("# subprojects: [api, web]\n")
 	}
-	b.WriteString("\n# Ports a dev server in the box listens on — coop publishes each to a stable host\n")
-	b.WriteString("# port so you can open it in your browser (bind the server to 0.0.0.0 in the box):\n")
-	b.WriteString("# serve:\n")
-	b.WriteString("#   ports: [5173]\n")
 	b.WriteString(`
-# box: the posture every run in this repo inherits. An explicit COOP_* env/conf setting still
+# box: the network access and box settings every run in this repo inherits. An explicit COOP_* env/conf setting still
 # wins for a one-off. Being committed, this file can ask but never grant: "open" takes effect
 # only after a human approves it on the host with 'coop net approve', and so does every rule.
+# Open a server running in the box from your host browser.
+# The server must listen on 0.0.0.0. Coop prints the host URL when the box starts.
+# serve:
+#   ports: [5173]
+
 box:
-  # egress: what a run can reach. "filtered" = each agent's own provider plus the websites and
-  # services approved for this project (see egress_rules); "offline" = no network at all;
-  # "open" = everything, unfiltered — needs a host approval before it takes effect.
+  # filtered: allow the agent's provider and the network rules you approve.
+  # offline: block all network access.
+  # open: allow unrestricted network access.
+  # Review changes with coop net approve before starting a new run.
   egress: filtered
-  # egress_rules: the websites and services this project asks for; a human approves them once
-  # with 'coop net approve', and the approval lives outside the repo.
+
+  # Network rules this project asks you to approve.
   # egress_rules:
   #   - to: {domain: "docs.example.com"}
   #     protocol: tls
   #     ports: [443]
-  # dockerfile: <path>  # box image (default .agent/Dockerfile; or reuse a repo Dockerfile)
-  # compose: <path>     # sidecars (default .agent/compose.yml; or point at your own)
-  # env:                # committed, non-secret box defaults; agents/env wins; COOP_* is reserved
+
+  # Use a project Dockerfile or Compose file instead of the default paths.
+  # dockerfile: .agent/Dockerfile
+  # compose: .agent/compose.yml
+
+  # Non-secret environment values for the box. COOP_ names are reserved.
+  # Values in your host agents/env file take priority.
+  # env:
   #   PGHOST: db
   #   PGPORT: "5432"
-  # auto_up: false      # auto-start the sidecar services (default true)
-  # network: false      # join the sibling-services network (default true)
-  # memory: 4g          # docker/podman resource caps (ignored on Apple container); default unset
-  # cpus: "4"
-  # pids: 2048          # the fork-bomb cap (default 4096; 0/unlimited turns it off)
 
-# context: which committed docs 'coop context' compiles for a given scope. Canonical
-# AGENTS.md/CLAUDE.md are always included; each route adds its docs when a touched path matches
-# one of its globs (* within a segment, ** across segments).
+  # Start project services automatically (default: true).
+  # auto_up: false
+
+  # Join the project services' network (default: true).
+  # network: false
+
+  # Resource limits for Docker/Podman; not applied by Apple container.
+  # memory: 4g
+  # cpus: "4"
+
+  # Maximum processes (default: 4096). 0 or unlimited removes the limit.
+  # pids: 2048
+
+# Add instructions when work touches matching paths.
+# Shared AGENTS.md/CLAUDE.md instructions are included automatically.
 # context:
 #   routes:
 #     - paths: [billing/**, "**/*.sql"]
 #       include: [.agent/kb/billing.md]
 
-# gate: the revalidation 'coop fork merge' runs IN THE BOX before landing a fork (rolled back on
-# failure). Same shape as COOP_GATE; an explicit COOP_GATE wins. Use the gate AGENTS.md names.
-# gate: <this repo's gate command>
+# Checks to run in the box before coop fork merge accepts the changes.
+# An explicit COOP_GATE setting takes priority.
+# gate: <this project's check command>
 `)
 	return b.String()
 }

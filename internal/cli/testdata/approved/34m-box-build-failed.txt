@@ -1,0 +1,16 @@
+Updating Coop v9.0.0 → v9.0.1
+  Downloading and checking the release.
+
+✓ Coop updated to v9.0.1
+
+Updating the Coop box
+  Fetching newer base-image components, agent CLIs, and editor adapters.
+
+[Build output]
+
+✗ Could not update the box image
+
+      Docker build exited with status 1.
+
+  Fix the build error, then run coop update --box-only.
+  Coop v9.0.1 is already installed.

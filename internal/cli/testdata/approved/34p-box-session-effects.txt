@@ -1,0 +1,11 @@
+Updating the Coop box
+  Fetching newer base-image components, agent CLIs, and editor adapters.
+
+[Build output]
+
+✓ Box image updated
+  2 supervised editor sessions will reconnect with the new image.
+  1 other running box will use the new image on its next start.
+
+Installed agent tools
+[Installed-version output]

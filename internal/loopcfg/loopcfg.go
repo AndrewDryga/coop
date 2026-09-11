@@ -188,10 +188,6 @@ type Snapshot struct {
 	warned map[string]struct{} // drifted digests already reported during this run
 }
 
-// Configured reports whether this run read an actual loop.yaml, so its launch can name the
-// configuration it derives from instead of claiming a file that is not there.
-func (s *Snapshot) Configured() bool { return s.digest != "" }
-
 // State describes the startup snapshot for the launch announcement, with an explicit
 // absent/default form so "no file" is stated rather than silent.
 func (s *Snapshot) State() string {
@@ -224,14 +220,13 @@ func (s *Snapshot) Drift() (string, bool) {
 		s.warned = make(map[string]struct{})
 	}
 	s.warned[current] = struct{}{}
-	const restart = "\nRestart the loop to use the new settings."
 	switch {
 	case current == "":
-		return "The file was removed; this run still uses its startup settings." + restart, true
+		return fmt.Sprintf("%s was deleted mid-run — this run keeps its startup config (sha256 %s); restart to apply", File, s.digest), true
 	case s.digest == "":
-		return "This run still uses its built-in settings." + restart, true
+		return fmt.Sprintf("%s appeared mid-run (sha256 %s) — this run keeps its built-in defaults; restart to apply", File, current), true
 	default:
-		return "This run is still using " + File + " from startup." + restart, true
+		return fmt.Sprintf("%s changed mid-run (sha256 %s → %s) — this run keeps its startup config; restart to apply", File, s.digest, current), true
 	}
 }
 

@@ -1,0 +1,5 @@
+✓ Cleaned up network run e644f07a
+  Removed 3 temporary containers and 2 temporary volumes.
+
+View the record
+  coop net inspect e644f07a

@@ -50,65 +50,6 @@ func Fail(headline, reason, remedy string) {
 	emit(b.String())
 }
 
-// block is coop's TOP-LEVEL problem shape, the same geometry a rejected input gets (see
-// UsageError.Render): a leading blank line, the marked headline, the concrete cause six spaces in
-// between blank lines, then the aligned action rows two spaces in. Fail is the nested form, for a
-// failure INSIDE a launch section; this one stands on its own, after arbitrary agent output.
-func block(paint func(string) string, mark, headline, cause string, rows [][2]string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "\n%s\n", paint(mark+" "+headline))
-	if cause != "" {
-		b.WriteString("\n")
-		for _, line := range strings.Split(strings.TrimRight(cause, "\n"), "\n") {
-			b.WriteString("      " + line + "\n")
-		}
-	}
-	if len(rows) > 0 {
-		w := 0
-		for _, r := range rows {
-			if n := len([]rune(r[0])); n > w {
-				w = n
-			}
-		}
-		b.WriteString("\n")
-		for _, r := range rows {
-			fmt.Fprintf(&b, "  %s%s %s\n", r[0], strings.Repeat(" ", w-len([]rune(r[0]))), r[1])
-		}
-	}
-	return b.String()
-}
-
-// Alert is a top-level amber block on coop's own stream: something a person must read and act on,
-// but the command did not fail. rows are label → command pairs ({"Continue:", "coop loop claude"}),
-// aligned on the label.
-func Alert(headline, cause string, rows ...[2]string) {
-	emitLines(block(Yellow, "⚠", headline, cause, rows))
-}
-
-// AlertBlock and FailureBlock return those blocks as TEXT, for a view that owns its own stream (a
-// review dossier on stdout) and must color against that stream rather than stderr.
-func AlertBlock(p Palette, headline, cause string, rows ...[2]string) string {
-	return block(p.Yellow, "⚠", headline, cause, rows)
-}
-
-func FailureBlock(p Palette, headline, cause string, rows ...[2]string) string {
-	return block(p.Red, "✗", headline, cause, rows)
-}
-
-// Failure is the red form of Alert: the operation did not do what was asked. The cause is the
-// concrete reason, never a restatement of the headline.
-func Failure(headline, cause string, rows ...[2]string) {
-	emitLines(block(Red, "✗", headline, cause, rows))
-}
-
-// emitLines writes a multi-line block ONE line at a time, so a live region (the loop's progress
-// bar) positions each line itself instead of receiving a block it cannot place.
-func emitLines(s string) {
-	for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
-		emit(line + "\n")
-	}
-}
-
 // ErrReported marks an error that has already been rendered in full — a failed section, say —
 // so the dispatcher's fallback "✗ …" line does not repeat it. Wrap with Reported; the original
 // error stays reachable through errors.Is/As, so a cancellation is still a cancellation.

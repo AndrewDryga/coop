@@ -1,0 +1,13 @@
+Updating the Coop box
+  Fetching newer base-image components, agent CLIs, and editor adapters.
+
+[Build output]
+
+✓ Box image updated
+
+✗ Could not restart all supervised editor sessions
+
+      Docker could not remove an old supervised box.
+
+  Check Docker, then run coop update --box-only again.
+  New runs can use the updated image.

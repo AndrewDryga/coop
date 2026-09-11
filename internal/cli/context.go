@@ -86,11 +86,7 @@ func (a *app) cmdContext(args []string) (int, error) {
 	}
 	sel, err := contextc.Compile(repo, p.Context.Routes, scope)
 	if err != nil {
-		// A route that names a file nobody wrote is a project-configuration problem, not an empty
-		// selection: say which file, and where the route that names it lives.
-		ui.Failure("Could not load project instructions", contextFailureCause(err),
-			[2]string{"Check:", project.File})
-		return 1, ui.Reported(err)
+		return 1, err
 	}
 	switch {
 	case asJSON:
@@ -227,74 +223,23 @@ func (a *app) taskScopePaths(repo, id string, queueFlags []string) ([]string, er
 	return tasks.FrontmatterList(string(data), "paths"), nil
 }
 
-// contextReport answers "which instructions apply to this work" — the selected work at the top,
-// then each file with the reason it was selected, in the order an agent would read them. With no
-// selected work it is a plain answer about the shared instructions, plus the one thing to type next.
 func contextReport(scope []string, sel []contextc.Selected) {
 	p := ui.For(os.Stdout)
-	if len(sel) == 0 {
-		if len(scope) == 0 {
-			fmt.Println("No shared agent instructions found.")
-			fmt.Println()
-			fmt.Println("  Select work: coop context <path>")
-			return
-		}
-		fmt.Println("No instruction files found for this selection.")
-		return
+	if len(scope) == 0 {
+		fmt.Println(p.Dim("scope: (none) — canonical instructions only"))
+	} else {
+		fmt.Println(p.Dim("scope: " + strings.Join(scope, ", ")))
 	}
-	switch {
-	case len(scope) == 0:
-		// Nothing was selected, so there are no routes to explain: the shared files ARE the answer.
-		fmt.Println("Shared agent instructions")
-		fmt.Println()
-		for _, s := range sel {
-			fmt.Printf("  %s\n", s.File)
-		}
-		fmt.Println()
-		fmt.Println("  Select work: coop context <path>")
-		return
-	case len(scope) == 1:
-		fmt.Printf("Instructions for %s\n", scope[0])
-	default:
-		fmt.Println("Instructions for selected work")
-		for _, path := range scope {
-			fmt.Printf("  %s\n", path)
+	w := 0
+	for _, s := range sel {
+		if len(s.File) > w {
+			w = len(s.File)
 		}
 	}
 	for _, s := range sel {
-		fmt.Println()
-		fmt.Printf("  %s\n", s.File)
-		fmt.Printf("    %s\n", p.Faint(selectionReason(s.Reason, len(scope) > 1)))
+		fmt.Printf("  %s  %s\n", padRight(s.File, w), p.Faint(s.Reason))
 	}
-	fmt.Println()
-	fmt.Printf("  %s selected\n", ui.Count(len(sel), "file"))
-}
-
-// selectionReason turns the machine reason into the sentence a person reads. The machine spelling
-// ("canonical", "route <glob> → <path>") is the --json contract and stays exactly as it is, so the
-// human wording is derived here rather than by changing what the schema carries.
-func selectionReason(reason string, manyPaths bool) string {
-	if reason == "canonical" {
-		return "Shared agent instructions"
-	}
-	rest, ok := strings.CutPrefix(reason, "route ")
-	if !ok {
-		return reason
-	}
-	glob, path, ok := strings.Cut(rest, " → ")
-	if !ok {
-		return reason
-	}
-	if manyPaths {
-		return path + " matches " + glob
-	}
-	return "Matches " + glob
-}
-
-// contextFailureCause states the concrete reason under the shared headline, as a sentence.
-func contextFailureCause(err error) string {
-	cause := strings.TrimPrefix(err.Error(), "context: ")
-	return strings.ToUpper(cause[:1]) + cause[1:] + "."
+	fmt.Printf("\n  %s\n", p.Dim(fmt.Sprintf("%d file(s)", len(sel))))
 }
 
 func contextJSON(scope []string, sel []contextc.Selected) (int, error) {
@@ -320,8 +265,7 @@ func contextRendered(repo string, sel []contextc.Selected) (int, error) {
 		if err != nil {
 			return 1, fmt.Errorf("coop context: reading %s: %w", s.File, err)
 		}
-		// The separator is Coop's; everything between separators is the file, preserved whole.
-		fmt.Printf("──── %s ────\n%s\n\n", s.File, strings.TrimRight(string(data), "\n"))
+		fmt.Printf("===== %s =====\n%s\n\n", s.File, strings.TrimRight(string(data), "\n"))
 	}
 	return 0, nil
 }

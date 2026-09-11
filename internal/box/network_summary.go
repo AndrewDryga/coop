@@ -43,7 +43,7 @@ type NetworkReport struct {
 	Raw        string
 	RawPackets uint64
 	Alerts     []string
-	Event      string // the evidence id `coop net explain` can open, when one was retained
+	Event      string // the evidence id `coop net blocked --run` can open, when one was retained
 	Truncate   bool
 }
 
@@ -219,8 +219,9 @@ func (f *filteredExecution) started() bool {
 // printRun writes the sealed run on stderr, where coop's own voice lives — never
 // on stdout, which may be carrying provider output. It is the SAME projection
 // `coop net inspect` prints, fed from the record this supervisor already holds,
-// under the `coop:` anchor because it follows arbitrary agent output. A record
-// that cannot be projected is reported as that, not as a run with no traffic.
+// in its inline form: `Networking stats:` rather than a run id the reader never
+// chose. A record that cannot be projected is reported as that, not as a run
+// with no traffic.
 func (f *filteredExecution) printRun() {
 	if f == nil || f.record.ID == "" {
 		return
@@ -230,9 +231,9 @@ func (f *filteredExecution) printRun() {
 		ui.Warn("network run %s: %v — 'coop net inspect %s' reads the record", networkreport.ShortID(f.record.ID), err, networkreport.ShortID(f.record.ID))
 		return
 	}
-	p := ui.For(os.Stderr)
-	view := networkreport.View{ID: f.record.ID}
-	networkreport.WriteRun(os.Stderr, p, view, inspection)
+	// One blank line separates the stop sentence from the stats block.
+	fmt.Fprintln(os.Stderr)
+	networkreport.WriteRun(os.Stderr, ui.For(os.Stderr), networkreport.View{ID: f.record.ID, Inline: true}, inspection)
 }
 
 // networkInstructionNote is the Network section every agent in a filtered box

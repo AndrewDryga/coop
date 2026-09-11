@@ -35,8 +35,23 @@ func EnsureServices(rt runtime.Runtime, workspace, policyRepo string, stdout, st
 // EnsureServicesFile is the explicit-file form used by trusted review policy. The file must live
 // inside workspace; ValidateComposeFile enforces that its bind mounts cannot escape that boundary.
 func EnsureServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, exposedRoots ...string) ([]string, error) {
-	started, err := startServicesFile(rt, workspace, file, stdout, stderr, false, exposedRoots...)
+	started, err := startServicesFile(rt, workspace, file, stdout, stderr, false, true, exposedRoots...)
 	return started.names, err
+}
+
+// ServiceStart is what one start produced: the resolved service names in Compose order and the
+// host ports Compose published for them.
+type ServiceStart struct {
+	Names []string
+	Ports []ServicePort
+}
+
+// UpServices is EnsureServicesFile for `coop up`: it carries the published ports out with the
+// names, and leaves the hidden-file notice to the caller — `coop up` puts those files in front of
+// a human before starting, so the lower-level warning would be the second copy of one sentence.
+func UpServices(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, exposedRoots ...string) (ServiceStart, error) {
+	started, err := startServicesFile(rt, workspace, file, stdout, stderr, false, false, exposedRoots...)
+	return ServiceStart{Names: started.names, Ports: started.ports}, err
 }
 
 type startedServices struct {
@@ -44,7 +59,7 @@ type startedServices struct {
 	ports []ServicePort
 }
 
-func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, repoReadOnly bool, exposedRoots ...string) (startedServices, error) {
+func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stderr io.Writer, repoReadOnly, noticeHidden bool, exposedRoots ...string) (startedServices, error) {
 	if file == "" {
 		return startedServices{}, nil
 	}
@@ -54,10 +69,10 @@ func startServicesFile(rt runtime.Runtime, workspace, file string, stdout, stder
 	// auto-up warning, so a refused file names exactly why.
 	args, cleanup, hidden, err := snapshotComposeArgs(workspace, file, repoReadOnly, exposedRoots...)
 	if err != nil {
-		return startedServices{}, fmt.Errorf("refusing to run %s: %w", filepath.Base(file), err)
+		return startedServices{}, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
 	}
 	defer cleanup()
-	if len(hidden) > 0 {
+	if len(hidden) > 0 && noticeHidden {
 		// coop's own channel, NOT the compose writer the caller passed: a box start hands that one a
 		// buffer it reads only when compose FAILS, so this notice would be discarded on the very path
 		// that needs it. Say it on every start, not just the first — the service that needed the file
@@ -140,6 +155,42 @@ func snapshotComposeArgs(workspace, file string, repoReadOnly bool, exposedRoots
 	return args, cleanup, hidden, nil
 }
 
+// ComposeRefused is a Compose file coop would not hand the host daemon: the validation found a
+// bind, a path, or a shape it refuses to run. It carries the violation itself so a caller can
+// render the cause without the wrapper sentence around it.
+type ComposeRefused struct {
+	Verb string // what coop was asked to do with the file: "run" or "stop"
+	File string // the Compose file's base name
+	Err  error  // the specific violation
+}
+
+func (e *ComposeRefused) Error() string {
+	return "refusing to " + e.Verb + " " + e.File + ": " + e.Err.Error()
+}
+
+func (e *ComposeRefused) Unwrap() error { return e.Err }
+
+// ErrNoComposeServices is a Compose file that parses but declares nothing to start. It is a
+// distinct outcome from a broken file: the fix is adding a service, not repairing one.
+var ErrNoComposeServices = errors.New("compose config --services returned no services")
+
+// ErrExposedTempDir is the one snapshot refusal a person fixes in their environment rather than
+// in the Compose file: TMPDIR resolves inside a directory an agent can see, so the validated copy
+// coop is about to run would be writable by the very agent it is protecting the host from.
+var ErrExposedTempDir = errors.New("temporary directory must resolve outside agent-exposed directories — choose an external TMPDIR")
+
+// CheckServiceTempDir reports whether the private snapshot area the service commands need can be
+// created outside every directory an agent can see. It is the same resolution the snapshot makes,
+// run BEFORE a caller announces that it is starting anything: a refusal that arrives under
+// "Starting services…" reads as if the start had begun, and it had not.
+func CheckServiceTempDir(workspace string, exposedRoots ...string) error {
+	dir, err := privateWorkspaceTempDir(workspace, "coop-compose-", exposedRoots...)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(dir)
+}
+
 func privateWorkspaceTempDir(workspace, pattern string, exposedRoots ...string) (string, error) {
 	absParent, err := filepath.Abs(os.TempDir())
 	if err != nil {
@@ -162,7 +213,7 @@ func privateWorkspaceTempDir(workspace, pattern string, exposedRoots ...string) 
 			return "", err
 		}
 		if inside {
-			return "", errors.New("temporary directory must resolve outside agent-exposed directories — choose an external TMPDIR")
+			return "", ErrExposedTempDir
 		}
 	}
 	// Resolve before allocating: a TMPDIR alias inside the repo must not remain in any
@@ -183,7 +234,7 @@ func resolvedComposeServices(rt runtime.Runtime, args []string, stderr io.Writer
 		}
 	}
 	if len(services) == 0 {
-		return nil, errors.New("compose config --services returned no services")
+		return nil, ErrNoComposeServices
 	}
 	return services, nil
 }
@@ -209,7 +260,7 @@ func DownServicesFile(rt runtime.Runtime, workspace, file string, volumes bool, 
 	}
 	args, cleanup, _, err := snapshotComposeArgs(workspace, file, false, exposedRoots...)
 	if err != nil {
-		return fmt.Errorf("refusing to stop %s: %w", filepath.Base(file), err)
+		return &ComposeRefused{Verb: "stop", File: filepath.Base(file), Err: err}
 	}
 	defer cleanup()
 	args = append(args, "down", "--remove-orphans")
@@ -223,6 +274,55 @@ const (
 	composeProjectLabel    = "com.docker.compose.project"
 	composeWorkingDirLabel = "com.docker.compose.project.working_dir"
 )
+
+// ServiceVolume is one volume `coop down --delete-volumes` would destroy: the runtime's own name
+// for it (what the user sees in `docker volume ls`) and what it holds, when coop knows — a volume
+// its own scaffold declared. Holds is empty for anything else; naming the target is the promise,
+// guessing at its contents is not.
+type ServiceVolume struct {
+	Name  string
+	Holds string
+}
+
+// scaffoldVolumeHolds describes the volumes coop's generated Compose file declares. The deletion
+// preview is the one place a person decides whether data they care about is about to go, so the
+// two volumes coop itself created say what is in them. See internal/scaffold/compose.go.
+var scaffoldVolumeHolds = map[string]string{
+	"pgdata":    "database data",
+	"redisdata": "Redis data",
+}
+
+// ErrVolumesUnknown is a runtime that would not say which volumes this project owns. It is a
+// refusal, not an empty list: the answer is about to be printed in front of a permanent deletion.
+var ErrVolumesUnknown = errors.New("the runtime did not return the project's volume information")
+
+// ServiceVolumes lists the volumes Compose created for this workspace's project — its declared
+// named volumes plus the anonymous volumes Compose attached to its services, both of which carry
+// the project label. A volume declared `external: true` is NOT created by Compose and carries no
+// such label, so it is absent here: `--delete-volumes` deletes this project's data, never a
+// volume somebody else owns. Bind mounts are files, not volumes, and never appear.
+//
+// It reports what the runtime actually answered. An unreadable answer is an error, not an empty
+// list: "nothing to delete" has to be evidence, since it is printed right before a deletion.
+func ServiceVolumes(rt runtime.Runtime, workspace string, stderr io.Writer) ([]ServiceVolume, error) {
+	project := ComposeProject(workspace)
+	var out bytes.Buffer
+	// The runtime's own complaint goes straight to the terminal, where every other runtime
+	// diagnostic appears; the error below is what coop can say about it.
+	code, err := rt.Run(nil, &out, stderr, "volume", "ls", "--filter", "label="+composeProjectLabel+"="+project, "--format", "{{.Name}}")
+	if err != nil || code != 0 {
+		return nil, ErrVolumesUnknown
+	}
+	var volumes []ServiceVolume
+	for _, line := range strings.Split(out.String(), "\n") {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		volumes = append(volumes, ServiceVolume{Name: name, Holds: scaffoldVolumeHolds[strings.TrimPrefix(name, project+"_")]})
+	}
+	return volumes, nil
+}
 
 // StopSessionServices removes only the current workspace's Compose containers while preserving
 // its volumes. It uses immutable runtime ownership labels instead of the workspace's mutable
@@ -285,7 +385,7 @@ func runCompose(rt runtime.Runtime, stdout, stderr io.Writer, action string, arg
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("compose %s exited with code %d", action, code)
+		return fmt.Errorf("compose %s exited with status %d", action, code)
 	}
 	return nil
 }

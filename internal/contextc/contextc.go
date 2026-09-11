@@ -68,7 +68,7 @@ func Compile(repo string, routes []project.Route, scope []string) ([]Selected, e
 				return nil, err
 			}
 			if !present {
-				return nil, fmt.Errorf("context: %s is listed in a context route but does not exist", inc)
+				return nil, fmt.Errorf("context: route include %q does not exist", inc)
 			}
 		}
 	}
@@ -136,7 +136,7 @@ func resolveInRepo(repo, rel string) (real string, exists bool, err error) {
 		root = repo
 	}
 	if real != root && !strings.HasPrefix(real, root+string(filepath.Separator)) {
-		return "", false, fmt.Errorf("context: %s resolves outside the repository", rel)
+		return "", false, fmt.Errorf("context: %q resolves outside the repo (escaping symlink)", rel)
 	}
 	return real, true, nil
 }

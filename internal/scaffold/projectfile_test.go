@@ -152,7 +152,7 @@ func TestRegisterSubprojectsEditsInPlace(t *testing.T) {
 			t.Errorf("placeholder left behind next to the real block:\n%s", out)
 		}
 		// The rest of the commented template must survive a surgical edit.
-		for _, keep := range []string{"# coop project config", "#   ports: [5173]", "# gate:"} {
+		for _, keep := range []string{"# Coop project settings.", "#   ports: [5173]", "# gate:"} {
 			if !strings.Contains(out, keep) {
 				t.Errorf("edit destroyed %q — project.yaml documents every key:\n%s", keep, out)
 			}

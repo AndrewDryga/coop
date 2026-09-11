@@ -1,0 +1,6 @@
+Networking stats:
+
+  Allowed   1 connection · 773 B sent · 5.3 KB received
+    example.com:443 · TLS · 773 B sent · 5.3 KB received
+
+Full details: coop net inspect e644f07ab14f67cd3f5af72c89295488 --json

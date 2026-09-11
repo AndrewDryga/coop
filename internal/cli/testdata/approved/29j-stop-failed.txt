@@ -1,0 +1,10 @@
+Stopping services from .agent/compose.yml
+
+[Compose output]
+
+✗ Could not stop all services
+
+      Compose down exited with status 1.
+
+  Check Docker, then run coop down again.
+  Some services may already be stopped.

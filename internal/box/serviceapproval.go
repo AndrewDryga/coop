@@ -181,19 +181,10 @@ func ReviewServiceSecrets(workspace, file string) (*ServiceSecretReview, error) 
 	for _, p := range hidden {
 		files = append(files, ReviewFile{Path: p, Requested: requested[p], New: hadPrevious && !seen[p]})
 	}
-	// What deserves a second look goes first: a file nobody asked for, then one that appeared since
-	// the last yes. In a long list the one surprise must not sit at the bottom, which is exactly
-	// where an agent appending a line would want it.
-	sort.SliceStable(files, func(i, j int) bool {
-		a, b := files[i], files[j]
-		if a.Requested != b.Requested {
-			return !a.Requested
-		}
-		if a.New != b.New {
-			return a.New
-		}
-		return a.Path < b.Path
-	})
+	// The order is the file's own, so a reader can follow the prompt against their Compose file.
+	// What deserves a second look is carried by the LABELS under each path — "Not requested in
+	// .agent/project.yaml", "Added since your last approval" — which a reordering could not make
+	// louder and a reader cannot miss in a list this short.
 	return &ServiceSecretReview{File: filepath.ToSlash(rel), Files: files, workspace: workspace, data: data}, nil
 }
 

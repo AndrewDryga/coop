@@ -1,0 +1,6 @@
+
+✗ Could not select a network run
+
+      Some records could not be read. Use a full run ID.
+
+  Help: coop help net inspect

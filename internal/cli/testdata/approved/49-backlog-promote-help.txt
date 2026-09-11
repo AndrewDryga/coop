@@ -1,9 +1,0 @@
-coop backlog promote — move an idea to the task queue
-
-Usage: coop backlog promote <id> [--tasks <path>]...
-
-  Fill in its problem, completion criteria and approach before promoting it.
-  The task becomes todo, where an agent or loop can pick it up.
-
-EXAMPLE
-  coop backlog promote account-permissions

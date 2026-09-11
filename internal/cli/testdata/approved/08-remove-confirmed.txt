@@ -1,0 +1,6 @@
+Permanently delete Codex account "old-work" along with its saved login
+and local session history?
+
+Continue? [y/N] y
+
+✓ Deleted Codex account "old-work"

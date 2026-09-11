@@ -1,0 +1,6 @@
+
+✗ Invalid agent target "codex/"
+
+      Add a reasoning effort after "/" or remove the slash.
+
+  Help: coop help models

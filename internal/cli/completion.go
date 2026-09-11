@@ -179,10 +179,10 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		case "inspect", "watch":
 			return []string{"--json"}
 		case "export":
-			return []string{"--include-destinations"}
+			return []string{"--include-addresses"}
 		case "check":
 			return []string{"--run", "--json", "--protocol", "--port", "--icmp"}
-		case "explain":
+		case "blocked":
 			return []string{"--run", "--json"}
 		}
 	case "login", "credentials", "models":

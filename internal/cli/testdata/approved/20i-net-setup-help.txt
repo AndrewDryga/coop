@@ -1,0 +1,11 @@
+coop net setup — prepare this host for filtered networking
+
+Usage: coop net setup
+
+  Prepares the network images and checks that allowed access works and
+  blocked access stays blocked.
+
+  Coop does this automatically when a filtered run needs it.
+  Run it yourself to check or prepare the host ahead of time.
+
+Requires Docker to be running.

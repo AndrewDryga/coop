@@ -800,7 +800,7 @@ network                 # one sealed filtered run's outcome: run_id, grouped den
 `network` is appended after a filtered run seals, and only when that run hit the boundary — a quiet
 run costs no event, so this stream carries refusals rather than a per-turn heartbeat. Its payload is
 bounded by construction: destinations are grouped and capped with an `omitted_destinations` count,
-alerts are capped, and `evidence_id` names the retained event `coop net explain` can open. It
+alerts are capped, and `evidence_id` names the retained event `coop net blocked` can open. It
 follows the same disclosure scope as the network routes, so a destination appears only when the
 session policy set `egress.export_destinations: true`.
 

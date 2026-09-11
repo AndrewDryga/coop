@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,8 +48,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 					}
 					suite.reset(t, loopRecoveryScenario(taskID, attempts))
 					result := runLoopRecovery(t, suite, "rotation")
-					if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, sourceTarget+" reached its usage limit.") ||
-						!strings.Contains(result.Stderr, "Continuing with "+destinationTarget) {
+					if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, fmt.Sprintf("target %q rate limited — switching to %q", sourceTarget, destinationTarget)) {
 						t.Fatalf("directed rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 					}
 					trace := readProcessTrace(t, suite.layout.Trace)
@@ -91,11 +91,9 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		output := result.Stdout + result.Stderr
 		notice := "You have reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model."
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, targets[0]+" reached its usage limit.") ||
-			!strings.Contains(output, "Continuing with "+targets[1]) ||
-			!strings.Contains(output, targets[1]+" reached its usage limit.") ||
-			!strings.Contains(output, "Continuing with "+targets[2]) ||
-			strings.Contains(output, "Stopped after") || !strings.Contains(output, notice) {
+			!strings.Contains(output, fmt.Sprintf("target %q rate limited — switching to %q", targets[0], targets[1])) ||
+			!strings.Contains(output, fmt.Sprintf("target %q rate limited — switching to %q", targets[1], targets[2])) ||
+			strings.Contains(output, "iteration failed (") || !strings.Contains(output, notice) {
 			t.Fatalf("Claude credit-limit rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
@@ -122,7 +120,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				attempts := []loopProcessAttempt{{Target: target, Stage: "work", Result: "authentication"}}
 				suite.reset(t, loopRecoveryScenario(taskID, attempts))
 				result := runLoopRecovery(t, suite, target)
-				if result.ExitCode == 0 || !strings.Contains(result.Stderr, "coop login "+provider+"@work") || strings.Contains(result.Stderr, "Continuing with") || strings.Contains(result.Stderr, "Retrying in") {
+				if result.ExitCode == 0 || !strings.Contains(result.Stderr, "coop login "+provider+"@work") || strings.Contains(result.Stderr, "switching to") || strings.Contains(result.Stderr, "retrying in") {
 					t.Fatalf("authentication failure = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 				}
 				trace := readProcessTrace(t, suite.layout.Trace)
@@ -154,10 +152,9 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, "auth-rotation")
 		if result.Err != nil || result.ExitCode != 0 ||
-			// The rung carries a model and an effort, so the headline names the whole target.
-			!strings.Contains(result.Stderr, dead+" could not sign in") ||
+			!strings.Contains(result.Stderr, fmt.Sprintf("target %q authentication failed — switching to %q", dead, healthy)) ||
 			!strings.Contains(result.Stderr, "coop login claude@personal") ||
-			strings.Contains(result.Stderr, "Retrying in") {
+			strings.Contains(result.Stderr, "retrying in") {
 			t.Fatalf("authentication rotation = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
@@ -184,7 +181,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, target)
-		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, "The model reached its response limit.") || strings.Contains(result.Stderr, "Continuing with") {
+		if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, "model output limit — resuming immediately") || strings.Contains(result.Stderr, "switching to") {
 			t.Fatalf("output resume = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
@@ -210,7 +207,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				suite.reset(t, loopRecoveryScenario(taskID, attempts))
 				process := startLoopRecovery(t, suite, "ordinary")
 				defer process.Cleanup()
-				awaitLoopProcessOutput(t, process, "Retrying in 10 seconds · attempt 2 of 5.", 5*time.Second)
+				awaitLoopProcessOutput(t, process, "iteration failed (1/5) — retrying in 10s", 5*time.Second)
 				if err := process.SignalGroup(syscall.SIGINT); err != nil {
 					t.Fatal(err)
 				}
@@ -243,7 +240,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				suite.reset(t, loopRecoveryScenario(taskID, attempts))
 				process := startLoopRecoveryPTY(t, suite, target)
 				defer process.Cleanup()
-				awaitLoopProcessOutput(t, process, "Retrying in 10 seconds · attempt 2 of 5.", 10*time.Second)
+				awaitLoopProcessOutput(t, process, "iteration failed (1/5) — retrying in 10s", 10*time.Second)
 				// Signal coop directly, not the group: under the script(1) PTY a group signal makes
 				// util-linux script own the exit code (it exits 0, "Session terminated, killing
 				// shell"), but signaling the child lets script report coop's real code via -e — the
@@ -255,7 +252,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				result := process.Wait(ctx)
 				cancel()
-				if result.ExitCode == 0 || strings.Contains(result.Stderr, "Continuing with") {
+				if result.ExitCode == 0 || strings.Contains(result.Stderr, "switching to") {
 					t.Fatalf("stream failure = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 				}
 				trace := readProcessTrace(t, suite.layout.Trace)
@@ -312,7 +309,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecovery(t, suite, "all-limited")
 		defer process.Cleanup()
-		awaitLoopProcessOutput(t, process, "All configured agents have reached their usage limits.", 10*time.Second)
+		awaitLoopProcessOutput(t, process, "all 4 targets are rate limited — waiting for the soonest reset", 10*time.Second)
 		if err := process.SignalGroup(syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
@@ -353,9 +350,9 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		result := runLoopRecovery(t, suite, "all-limited-resume")
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, "All configured agents have reached their usage limits.") ||
+			!strings.Contains(output, "all 3 targets are rate limited — waiting for the soonest reset") ||
 			!strings.Contains(output, "fixture-loop-complete-claude") ||
-			strings.Contains(output, "Stopped after") {
+			strings.Contains(output, "iteration failed (") {
 			t.Fatalf("all-limited wait/resume = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)

@@ -1,0 +1,11 @@
+Building the project box
+  Dockerfile: .agent/Dockerfile
+  Image:      coop-atlas
+
+[Build output]
+
+✗ Could not build the box image
+
+      Docker build exited with status 1.
+
+  Fix the build error, then run coop build again.

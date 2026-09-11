@@ -1,0 +1,52 @@
+coop presets — configure multiple models and providers to work together
+
+Usage:
+  coop presets                list presets
+  coop presets <name>         show a preset
+  coop presets init [<name>]  create a preset (default: frontier)
+  coop help <name>            explain a preset
+
+CREATE A PRESET
+  coop presets init
+  coop presets init review
+
+RUN A PRESET
+  coop frontier               start an interactive session with the lead agent
+  coop loop frontier          work through tasks with this preset
+  coop acp frontier           use this preset in your editor
+  coop fork risky frontier --loop
+
+HOW TO DEFINE A PRESET
+
+  A preset is a YAML file that defines:
+  - One lead agent.
+  - Optional roles for focused work.
+  - Optional prompt extensions.
+
+  When you run a preset, Coop starts the lead and tells it which roles are
+  available and when to use them. Each role runs with its configured agent,
+  model, mode, and prompt. The lead combines their work into the final result.
+
+  Syntax:
+
+    agent:   presets use Coop’s standard model, effort, account, and
+             automatic-rotation syntax. For details, see:
+               coop help models
+
+    mode:    controls how a role works
+               native    runs inside the lead agent’s session
+               consult   provides read-only advice from another agent
+               delegate  edits files for the lead; never commits; runs one at a time
+
+    when:    tells the lead when to use a role
+
+    prompt:  adds custom instructions to Coop’s generated instructions for the
+             lead or role
+
+    If the lead does not support native roles, they run as consult roles.
+
+  Where presets live:
+    Project  .agent/presets/<name>/preset.yaml
+    Global   ~/.config/coop/presets/<name>/preset.yaml
+
+  A project preset overrides a global preset with the same name.

@@ -156,11 +156,6 @@ type RunSpec struct {
 	Peers    []agents.Target  // consult peers each iteration may call
 	Sink     io.Writer        // extra copy of the agent's output (a fork's log), nil for none
 
-	// Continue is the exact command that resumes THIS run, quoted by every report that tells the
-	// reader how to carry on ("coop loop claude", "coop fork login claude --loop"). The launch owns
-	// it: only the caller knows which spelling the user actually typed.
-	Continue string
-
 	DebugOnFail bool // open a shell in the box after a failed iteration
 	Preflight   bool // run the pre-flight probe before the first work iteration
 	MaxTasks    int  // stop after this many settled tasks, 0 for the whole queue

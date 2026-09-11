@@ -85,13 +85,13 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		result := runLoopRecovery(t, suite, target)
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
-			!strings.Contains(output, "Starting a fresh attempt") {
+			!strings.Contains(output, "timed out (provider_start_timeout)") ||
+			!strings.Contains(output, "starting a fresh attempt") {
 			t.Fatalf("default-armed silence = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		// The kill names its clock AND the silence it observed, so the warning is actionable
 		// without reading coop's source for what the outcome means.
-		if !strings.Contains(output, "No first model action for 2s (start deadline 2s).") {
+		if !strings.Contains(output, "after no first model action for 2s (start deadline 2s)") {
 			t.Fatalf("timeout warning does not report the observed silence\nstdout:\n%s\nstderr:\n%s", result.Stdout, result.Stderr)
 		}
 		// The phases the override never named ran at the SHIPPED values — this is the default-on
@@ -127,8 +127,8 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		result := runLoopRecovery(t, suite, target)
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
-			!strings.Contains(output, "Starting a fresh attempt") {
+			!strings.Contains(output, "timed out (provider_idle_timeout)") ||
+			!strings.Contains(output, "starting a fresh attempt") {
 			t.Fatalf("restored completion = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		log, err := os.ReadFile(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID, "log.md"))
@@ -167,10 +167,10 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		result := runLoopRecovery(t, suite, "watchdog-start")
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
-			!strings.Contains(output, "Starting a fresh attempt with ") ||
-			strings.Contains(output, "Task attempt failed") ||
-			strings.Contains(output, "reached its usage limit") {
+			!strings.Contains(output, "timed out (provider_start_timeout)") ||
+			!strings.Contains(output, "switching to") ||
+			strings.Contains(output, "iteration failed (") ||
+			strings.Contains(output, "rate limited") {
 			t.Fatalf("silent start = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		parsed, _ := agents.ParseTarget(targets[1])
@@ -216,8 +216,8 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		cancel()
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
-			!strings.Contains(output, "Starting a fresh attempt with ") {
+			!strings.Contains(output, "timed out (provider_start_timeout)") ||
+			!strings.Contains(output, "switching to") {
 			t.Fatalf("held setup = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
@@ -251,8 +251,8 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		result := runLoopRecovery(t, suite, target)
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
-			!strings.Contains(output, "Starting a fresh attempt") ||
+			!strings.Contains(output, "timed out (provider_idle_timeout)") ||
+			!strings.Contains(output, "starting a fresh attempt") ||
 			strings.Contains(output, "switching to") {
 			t.Fatalf("idle silence = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
@@ -410,8 +410,8 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		cancel()
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, "Stopped an unresponsive task attempt") ||
-			!strings.Contains(output, "Starting a fresh attempt") {
+			!strings.Contains(output, "timed out (provider_idle_timeout)") ||
+			!strings.Contains(output, "starting a fresh attempt") {
 			t.Fatalf("no-lifecycle silence = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		// The kill is the FALLBACK's, not the 2s idle deadline's: the whole run — kill, rotation,
@@ -443,7 +443,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		// The tool-cap outcome doubles as the suspension proof: with idle at 2s, an
 		// unsuspended idle deadline would have fired first and named the wrong timeout.
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, "Stopped an unresponsive task attempt") {
+			!strings.Contains(output, "timed out (provider_tool_timeout)") {
 			t.Fatalf("tool cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		records := readLoopStageRecords(t, suite)
@@ -473,7 +473,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		// not do is let them move the absolute cap off the first tool or grow its own state. The
 		// attempt therefore still dies on the tool deadline, and never on start or idle.
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, "Stopped an unresponsive task attempt") {
+			!strings.Contains(output, "timed out (provider_tool_timeout)") {
 			t.Fatalf("forged flood = exit %d err %v\nstderr:\n%s", result.ExitCode, result.Err, result.Stderr)
 		}
 		// Without this the subtest could pass on a flood that never left the box.
@@ -505,7 +505,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		result := runLoopRecovery(t, suite, target)
-		if result.ExitCode == 0 || !strings.Contains(result.Stderr, "Stopped after 3 unresponsive attempts") {
+		if result.ExitCode == 0 || !strings.Contains(result.Stderr, "timed out 3 times in a row") {
 			t.Fatalf("timeout cap = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		records := readLoopStageRecords(t, suite)
@@ -612,7 +612,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		result := runLoopReview(t, suite, work, 20*time.Second)
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
-			!strings.Contains(output, "Stopped an unresponsive review attempt") {
+			!strings.Contains(output, "review provider attempt timed out (provider_start_timeout)") {
 			t.Fatalf("signoff timeout = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		records := readLoopStageRecords(t, suite)

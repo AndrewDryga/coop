@@ -55,21 +55,22 @@ func TestCostPipelineE2E(t *testing.T) {
 
 	// 4. Read the run back, aggregate, and render the digest the user sees.
 	rc := costFromRecords(readStageRecords(repo, run), ReadPeerRecords(repo, run))
-	completed := []taskLine{{id: "my-task", title: "Do the thing", scope: "internal/box"}}
-	d := captureStderr(t, func() { printRunSummary(completed, rc, newLoopHealth()) })
-	t.Logf("rendered closing report:\n%s", d)
+	cs := loopChangeSet{
+		tasks:      []taskChanges{{id: "my-task", commits: []commitInfo{{"a1", "do the thing"}}, files: []string{"internal/box/x.go"}}},
+		subsystems: []string{"internal/box"},
+	}
+	d := cs.humanDigest(newLoopHealth(), nil, rc)
+	t.Logf("rendered closing digest:\n%s", d)
 
-	// The completed task, and the three-model split — the grok peer reports tokens but no cost,
-	// which the report states in words rather than as a free run.
+	// Per-task cost (claude work), run total (stage cost; tokens across both stages + the peer), and
+	// the three-model split — the grok peer shows tokens with "—" cost (grok reports none here).
 	for _, want := range []string{
-		"Completed this run", "  Do the thing", "    my-task · internal/box",
-		"Usage",
-		"claude:claude-fable-5", "$12.31 · 1,240,000 in · 48,000 out",
-		"codex:gpt-5.6-terra", "$4.20 · 90,000 in · 3,000 out",
-		"grok:grok-4.5", "not reported · 50,000 in · 800 out",
+		"do the thing", "$12.31", // the shipped task carries its cost
+		"Cost:", "$16.51", "1.4M in / 51.8k out", // total: cost from stages, tokens incl. the peer
+		"by model:", "claude:claude-fable-5 $12.31", "codex:gpt-5.6-terra $4.20", "grok:grok-4.5 — (50.0k/800)",
 	} {
 		if !strings.Contains(d, want) {
-			t.Errorf("closing report missing %q:\n%s", want, d)
+			t.Errorf("closing digest missing %q:\n%s", want, d)
 		}
 	}
 }

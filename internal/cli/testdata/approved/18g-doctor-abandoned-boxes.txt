@@ -1,0 +1,57 @@
+Checking the Coop box on the Docker runtime
+
+Protecting secrets
+  ✓ .env is hidden
+  ✓ .envrc is hidden
+  ✓ Terraform variable files are hidden
+  ✓ Private keys are hidden
+  ✓ Custom .coopignore paths are hidden
+  ✓ Secret directories are empty
+  ✓ Links cannot reveal hidden secrets
+  ✓ Hidden secret files cannot be written
+  ✓ Environment templates stay readable
+  ✓ Source files stay readable
+  ✓ The test secret cannot be read
+
+Host access and privileges
+  ✓ The host Coop CLI is absent
+  ✓ The host Docker socket is absent
+  ✓ The box runs as a non-root user
+  ✓ Linux capabilities are removed
+  ✓ The process limit is enforced (4096)
+
+Offline access
+  ✓ Offline mode leaves only the loopback interface
+
+Task access
+  ✓ The task channel exposes only its 8 task tools
+  ✓ Calls outside the task tools are refused
+  ✓ Changes to a task held by another process are refused
+  ✓ The assigned task can be updated
+
+Credentials and settings
+  ✓ Claude's credential home is available
+  ✓ Codex's credential home is hidden from Claude
+  ✓ Gemini's credential home is hidden from Claude
+  ✓ Claude's saved login takes priority over its environment key
+  ✓ Codex's environment key is hidden from Claude
+  ✓ Gemini's environment key is hidden from Claude
+  ✓ The box can write its settings directory
+
+Fork handoff
+  ✓ .env is absent from the clone
+  ✓ .envrc is absent from the clone
+  ✓ Secret directories are absent from the clone
+  ✓ Private keys are absent from the clone
+  ✓ Tracked source files are present in the clone
+  ✓ The test secret is absent from the clone
+  ✓ The clone's origin is a local path
+
+Abandoned boxes
+  ⚠ 2 boxes have no running supervisor
+    42c96f112acd
+    978b8129d20a
+
+  They will be cleaned up when Coop next starts work or builds an image.
+
+✓ All 35 checks passed

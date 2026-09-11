@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,47 +32,125 @@ func (a *app) cmdPresets(args []string) (int, error) {
 	}
 	if len(args) == 1 {
 		if args[0] == "ls" { // rule: `ls` must lead somewhere useful, not read as a preset name
-			return 2, fmt.Errorf("coop presets already lists every preset — just run `coop presets` (no %q)", args[0])
+			return 2, &ui.UsageError{
+				Headline: `"coop presets" already lists every preset`,
+				Cause:    `Run it without "ls".`,
+				Rows:     [][2]string{{"Presets:", "coop presets"}},
+			}
 		}
 		return a.showPreset(repo, args[0])
 	}
+	return a.listPresets(repo)
+}
 
+// listPresets compares the presets a run can name: one row each, so the reader can pick between
+// them, with the lead/roles relationship said once in front (a table of targets means nothing to
+// someone who has not been told what a preset is). A preset that will not load keeps its own block
+// with the problem in it — it would fail every run under it, so hiding it helps nobody.
+func (a *app) listPresets(repo string) (int, error) {
 	globalDir := a.cfg.GlobalPresetsDir()
 	names := preset.List(repo, globalDir)
 	pal := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean
 	if len(names) == 0 {
-		fmt.Println("no presets — scaffold the documented frontier recipe: coop presets init")
+		fmt.Println("No presets yet.")
+		fmt.Printf("\n%s\n  %s\n", pal.Bold("Create one"), pal.Cyan("coop presets init"))
+		fmt.Printf("\n%s\n  %s\n", pal.Bold("Learn how presets work"), pal.Cyan("coop help presets"))
 		return 0, nil
 	}
-	w := colWidth(names, 0, 24)
+	type row struct{ name, lead, roles, source string }
+	var rows []row
+	var broken []*preset.LoadError
 	for _, name := range names {
-		// Pad the bare name to the column, THEN append the origin marker — so the dim
-		// "(global)" tag (and its ANSI codes) don't throw off the column alignment.
-		label := pal.Bold(padRight(name, w))
+		source := "project"
 		if preset.Origin(repo, globalDir, name) {
-			label += " " + pal.Dim("(global)")
+			source = "global"
 		}
 		p, err := preset.Load(repo, globalDir, name)
 		if err != nil {
-			// A broken preset must be visible in the listing — it would fail every run under it.
-			fmt.Printf("  %s  %s\n", label, pal.Red("broken: "+err.Error()))
-			continue
+			var le *preset.LoadError
+			if errors.As(err, &le) {
+				broken = append(broken, le)
+				continue
+			}
+			return -1, err
 		}
-		lead := p.Lead().String() // the wire form, so the summary is a target you can paste
-		var roles []string
-		for _, r := range p.Roles {
-			roles = append(roles, fmt.Sprintf("%s (%s %s)", r.Name, r.Mode, r.Primary().Provider))
-		}
-		summary := pal.Dim("no roles")
-		if len(roles) > 0 {
-			summary = strings.Join(roles, pal.Dim(" · "))
-		}
-		fmt.Printf("  %s  lead %s  %s\n", label, lead, summary)
+		rows = append(rows, row{name, p.Lead().String(), presetRoleCounts(p), source})
 	}
-	fmt.Println()
-	// Same pointer the preset headers carry: say what the reader will learn, not "format".
-	fmt.Println(ui.Dim("  run one by naming it: coop <name> · coop loop <name> · coop acp <name>   ·   learn how presets work: coop help presets"))
+	if len(rows) > 0 {
+		fmt.Println("Presets let several AI agents work together.")
+		fmt.Println("One agent leads the session and can delegate tasks to others.")
+		fmt.Println()
+		nameW, leadW, rolesW := len("PRESET"), len("FIRST LEAD MODEL"), len("ROLES")
+		for _, r := range rows {
+			nameW = max(nameW, utf8.RuneCountInString(r.name))
+			leadW = max(leadW, utf8.RuneCountInString(r.lead))
+			rolesW = max(rolesW, utf8.RuneCountInString(r.roles))
+		}
+		// Pad the plain header, then bold the finished line — ANSI never counts toward a width.
+		fmt.Println(pal.Bold(fmt.Sprintf("%s  %s  %s  %s",
+			padRight("PRESET", nameW), padRight("FIRST LEAD MODEL", leadW), padRight("ROLES", rolesW), "SOURCE")))
+		for _, r := range rows {
+			fmt.Printf("%s  %s  %s  %s\n", padRight(r.name, nameW), padRight(r.lead, leadW), padRight(r.roles, rolesW), r.source)
+		}
+	} else {
+		fmt.Println(pal.Bold("Presets"))
+	}
+	for _, le := range broken {
+		fmt.Printf("\n%s\n", pal.Bold(le.Name))
+		fmt.Printf("  %s\n\n", pal.Red("✗ Could not load this preset"))
+		fmt.Printf("      %s\n", presetDisplayPath(repo, le.Path))
+		for _, line := range le.Detail {
+			fmt.Printf("      %s\n", line)
+		}
+	}
+	if len(broken) > 0 {
+		fmt.Printf("\n%s\n  %s\n", pal.Bold("Show the problem"), pal.Cyan("coop presets "+broken[0].Name))
+	}
+	if len(rows) > 0 {
+		// The runnable example is a preset that actually loads: offering a broken one would
+		// hand the reader a command that fails.
+		example := rows[0].name
+		fmt.Printf("\n%s\n", pal.Bold("Use a preset:"))
+		w := utf8.RuneCountInString("coop presets " + example)
+		fmt.Printf("  %s  %s\n", pal.Cyan(padRight("coop "+example, w)), "start the lead agent with its team")
+		fmt.Printf("  %s  %s\n", pal.Cyan("coop presets "+example), "show its agents, roles, and prompts")
+	}
+	fmt.Printf("\n%s\n  %s\n", pal.Bold("Create a preset:"), pal.Cyan("coop presets init"))
+	if len(rows) > 0 {
+		fmt.Printf("\n%s\n  %s\n", pal.Bold("For more details see:"), pal.Cyan("coop help presets"))
+	}
 	return 0, nil
+}
+
+// presetRoleCounts says what a preset's roles DO, counted by the mode that decides it: a consult
+// role advises, a delegate role edits, and a native role runs inside the lead's own session. "none"
+// is a real answer here — a single-agent preset is a normal thing to have.
+func presetRoleCounts(p *preset.Preset) string {
+	var consult, delegate, native int
+	for _, r := range p.Roles {
+		switch r.Mode {
+		case preset.ModeConsult:
+			consult++
+		case preset.ModeDelegate:
+			delegate++
+		case preset.ModeNative:
+			native++
+		}
+	}
+	var parts []string
+	if consult > 0 {
+		parts = append(parts, ui.Count(consult, "adviser"))
+	}
+	if delegate > 0 {
+		parts = append(parts, ui.Count(delegate, "editor"))
+	}
+	if native > 0 {
+		parts = append(parts, ui.Count(native, "in-session role"))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // presetsInit scaffolds a ready-to-edit preset from the documented frontier template
@@ -81,26 +160,102 @@ func (a *app) presetsInit(repo string, args []string) (int, error) {
 	name := "frontier"
 	switch {
 	case len(args) > 1:
-		return 2, ui.UnexpectedArgument(args[1], "coop presets init", "coop presets init [<preset>]")
+		return 2, ui.UnexpectedArgument(args[1], "coop presets init", "coop presets init [<name>]")
 	case len(args) == 1:
 		name = args[0]
 	}
 	path, err := preset.Scaffold(repo, name)
 	if err != nil {
-		return 2, err
+		return 2, presetCreateErr(name, err)
 	}
-	ui.OK("wrote %s (with starter prompts in roles/) — edit it, then run: coop %s", path, name)
+	pal := ui.For(os.Stderr)
+	ui.OK("Created preset %q", name)
+	ui.Note("\nPlease edit the preset template: %s", presetDisplayPath(repo, path))
+	ui.Note("\nTo run it, use:\n  %s", pal.Cyan("coop "+name))
 	return 0, nil
+}
+
+// presetCreateErr refuses a create that could not publish. An existing COMPLETE preset is a
+// different answer from an incomplete folder: the first one can be shown, while the second is
+// somebody's half-finished work coop must never merge into or repair.
+func presetCreateErr(name string, err error) error {
+	var exists *preset.ExistsError
+	if errors.As(err, &exists) {
+		if exists.Complete {
+			return &ui.UsageError{
+				Headline: fmt.Sprintf("Preset %q already exists", name),
+				Cause:    exists.Path,
+				Rows: [][2]string{
+					{"Show it:", "coop presets " + name},
+					{"Help:", "coop help presets"},
+				},
+			}
+		}
+		return &ui.UsageError{
+			Headline: fmt.Sprintf("Could not create preset %q", name),
+			Cause:    exists.Path + " already exists but is incomplete.\nInspect that folder before creating the preset again.",
+			Rows:     [][2]string{{"Help:", "coop help presets init"}},
+		}
+	}
+	return &ui.UsageError{
+		Headline: fmt.Sprintf("Could not create preset %q", name),
+		Cause:    upperFirst(err.Error()) + ".",
+		Rows:     [][2]string{{"Help:", "coop help presets init"}},
+	}
+}
+
+// upperFirst starts a borrowed message (a filesystem error, a loader detail) as the sentence the
+// block renders it as, without rewriting what it says.
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	return strings.ToUpper(string(r[0])) + string(r[1:])
 }
 
 // showPreset prints one preset's full recipe — the path grammar's read at preset depth.
 func (a *app) showPreset(repo, name string) (int, error) {
 	p, err := preset.Load(repo, a.cfg.GlobalPresetsDir(), name)
 	if err != nil {
-		return 2, err
+		return 2, presetLoadErr(repo, name, err)
 	}
 	fmt.Print(presetDetail(p, repo, ui.For(os.Stdout)))
 	return 0, nil
+}
+
+// presetLoadErr refuses a named preset: one that does not exist points at the list, while one that
+// exists but will not load shows the file and the loader's own sentences — calling that a typo
+// would send its author hunting for the wrong mistake.
+func presetLoadErr(repo, name string, err error) error {
+	var le *preset.LoadError
+	if !errors.As(err, &le) {
+		return err
+	}
+	if le.NotFound {
+		return &ui.UsageError{
+			Headline: fmt.Sprintf("No preset named %q", name),
+			Rows: [][2]string{
+				{"Presets:", "coop presets"},
+				{"Help:", "coop help presets"},
+			},
+		}
+	}
+	cause := append([]string{presetDisplayPath(repo, le.Path)}, le.Detail...)
+	return &ui.UsageError{
+		Headline: fmt.Sprintf("Could not load preset %q", name),
+		Cause:    strings.Join(cause, "\n"),
+		Rows:     [][2]string{{"Help:", "coop help presets"}},
+	}
+}
+
+// presetDisplayPath writes a preset file the way the reader can use it: relative to the project
+// inside the repo, ~-shortened for a global one.
+func presetDisplayPath(repo, path string) string {
+	if rel, err := filepath.Rel(repo, path); err == nil && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel)
+	}
+	return tildeify(path)
 }
 
 // helpForPreset answers `coop help <name>` for a preset, through the same roots and
@@ -122,7 +277,12 @@ func helpForPreset(name string, cfg *config.Config) (code int, ok bool) {
 	}
 	p, err := preset.Load(repo, globalDir, name)
 	if err != nil {
-		ui.Error("%v", err)
+		var usage *ui.UsageError
+		if errors.As(presetLoadErr(repo, name, err), &usage) {
+			ui.PrintUsageError(usage)
+		} else {
+			ui.Error("%v", err)
+		}
 		return 2, true
 	}
 	fmt.Print(presetDetail(p, repo, ui.For(os.Stdout)))
@@ -141,25 +301,45 @@ func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n", pal.Bold(p.Name+" — "+presetSummary(p)))
 
-	fmt.Fprintf(&b, "%s\n", pal.Bold("Run it"))
-	for _, form := range []string{"coop ", "coop loop ", "coop acp "} {
-		fmt.Fprintf(&b, "  %s%s\n", form, p.Name)
+	fmt.Fprintf(&b, "%s\n", pal.Bold("RUN IT"))
+	runs := [][2]string{
+		{"coop " + p.Name, "start an interactive session with the lead agent"},
+		{"coop loop " + p.Name, "work through tasks with this preset"},
+		{"coop acp " + p.Name, "use this preset in your editor"},
+	}
+	w := 0
+	for _, r := range runs {
+		w = max(w, utf8.RuneCountInString(r[0]))
+	}
+	for _, r := range runs {
+		fmt.Fprintf(&b, "  %s  %s\n", pal.Cyan(padRight(r[0], w)), r[1])
 	}
 
-	lead := "Lead model"
+	lead := "LEAD MODEL"
 	if len(p.LeadTargets) > 1 { // only a ladder can fall back, so only a ladder says so
-		lead = "Lead models — next selected when the previous is unavailable:"
+		lead = "LEAD MODELS — next selected when the previous is unavailable:"
 	}
 	fmt.Fprintf(&b, "\n%s\n", pal.Bold(lead))
-	for _, t := range p.LeadTargets {
-		fmt.Fprintf(&b, "  %s\n", t.String())
+	targets := make([]string, len(p.LeadTargets))
+	for i, t := range p.LeadTargets {
+		targets[i] = t.String()
+	}
+	// A long ladder wraps under its own value: the continuation lines are still the Agent field,
+	// not unlabeled model rows someone has to guess the meaning of. Agent and Prompt share one
+	// gutter, so their values start at the same column.
+	for i, row := range wrapValues(targets, ui.TermWidth(os.Stdout)-leadFieldIndent, 1) {
+		label := pal.Dim(padRight("Agent:", leadFieldIndent-3))
+		if i > 0 {
+			label = strings.Repeat(" ", leadFieldIndent-3)
+		}
+		fmt.Fprintf(&b, "  %s %s\n", label, strings.Join(row, " "))
 	}
 	if p.LeadPromptPath != "" {
 		fmt.Fprintf(&b, "  %s %s\n", pal.Dim("Prompt:"), path(p.LeadPromptPath))
 	}
 
 	if len(p.Roles) > 0 {
-		fmt.Fprintf(&b, "\n%s\n", pal.Bold("Roles available to the lead"))
+		fmt.Fprintf(&b, "\n%s\n", pal.Bold("ROLES AVAILABLE TO THE LEAD"))
 		// One gutter for the whole preset: Mode/Agent/When/Prompt start at the same column in
 		// every block, so the labels read as a column instead of a ragged edge.
 		gutter := 0
@@ -178,11 +358,11 @@ func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
 				mode += pal.Dim(" — " + meaning)
 			}
 			fmt.Fprintf(&b, "  %s   %s\n", pal.Bold(padRight(r.Name, gutter)), mode)
-			targets := make([]string, len(r.Targets))
+			roleTargets := make([]string, len(r.Targets))
 			for j, t := range r.Targets {
-				targets[j] = t.String()
+				roleTargets[j] = t.String()
 			}
-			fmt.Fprintf(&b, "%s%s %s\n", indent, pal.Dim("Agent:"), strings.Join(targets, ", "))
+			fmt.Fprintf(&b, "%s%s %s\n", indent, pal.Dim("Agent:"), strings.Join(roleTargets, ", "))
 			if r.Subagent != "" {
 				fmt.Fprintf(&b, "%s%s %s\n", indent, pal.Dim("Subagent:"), r.Subagent)
 			}
@@ -195,7 +375,7 @@ func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
 		}
 	}
 
-	fmt.Fprintf(&b, "\n%s\n  %s", pal.Bold("Edit this preset"), path("preset.yaml"))
+	fmt.Fprintf(&b, "\n%s\n  %s", pal.Bold("EDIT THIS PRESET"), path("preset.yaml"))
 	if global {
 		b.WriteString(" " + pal.Dim("(global)"))
 	}
@@ -203,8 +383,12 @@ func presetDetail(p *preset.Preset, repo string, pal ui.Palette) string {
 	return b.String()
 }
 
+// leadFieldIndent is the column the lead's Agent/Prompt VALUES start at — two spaces, the widest
+// label ("Prompt:"), one space — so a wrapped ladder measures its width against the room it has.
+const leadFieldIndent = 2 + len("Prompt:") + 1
+
 // presetSummary says what this preset is FOR, derived from the targets it actually names —
-// never from its name, which its author chose.
+// never from its name, which its author chose, and never a purpose nobody declared.
 func presetSummary(p *preset.Preset) string {
 	providers, models := map[string]bool{}, map[string]bool{}
 	targets := append([]agents.Target{}, p.LeadTargets...)
@@ -223,11 +407,11 @@ func presetSummary(p *preset.Preset) string {
 	case len(providers) > 1:
 		return "a preset for multiple providers to work together"
 	case len(models) > 1:
-		return "a preset for multiple models to work together"
+		return "a preset for multiple " + titleName(p.Lead().Provider) + " models"
 	case len(p.Roles) > 0:
 		return "a preset for " + titleName(p.Lead().Provider) + " to work with focused roles"
 	default:
-		return "a preset that runs " + titleName(p.Lead().Provider)
+		return "a preset for " + titleName(p.Lead().Provider)
 	}
 }
 
@@ -238,7 +422,7 @@ func presetSummary(p *preset.Preset) string {
 func presetModeMeaning(mode string) string {
 	switch mode {
 	case preset.ModeNative:
-		return "runs inside the lead agent's session"
+		return "runs inside the lead agent’s session"
 	case preset.ModeConsult:
 		return "read-only advice"
 	case preset.ModeDelegate:

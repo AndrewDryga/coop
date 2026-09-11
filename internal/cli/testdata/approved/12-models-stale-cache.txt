@@ -1,0 +1,12 @@
+Codex
+  gpt-6-astra · gpt-5.6-sol · gpt-5.6-terra · gpt-5.6-luna
+  gpt-5.5 · gpt-5.3-codex-spark
+  ⚠ Could not refresh — showing the list saved yesterday
+
+      Codex is unavailable on this host.
+
+Start Codex with a model
+  → coop codex:gpt-6-astra
+
+Set models for presets and loops
+  → coop help models

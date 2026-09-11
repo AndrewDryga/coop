@@ -421,41 +421,84 @@ func Build(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, vers
 // editor's initialize. It passes an empty reader and os.Stderr instead (ui.* is already stderr-only,
 // so progress lands in the editor's agent log either way).
 func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, version string, stdin io.Reader, stdout io.Writer) error {
-	// Load once so a malformed project.yaml fails the build loudly, and to resolve box.dockerfile.
-	proj, err := project.Load(repo)
+	plan, err := PlanBuild(rt, cfg, repo, fresh)
 	if err != nil {
 		return err
 	}
+	if !plan.Project {
+		ui.Note("building %s (shared base)", cfg.BaseImage)
+	} else {
+		if plan.Untracked {
+			ui.Note("note: %s is untracked in git — it defines this box, and an agent can author one; review it before building", plan.Dockerfile)
+		}
+		ui.Note("building %s from %s (this project's toolchain)", plan.Image, plan.Dockerfile)
+		if plan.BaseFirst {
+			ui.Note("building %s (shared base) first — %s inherits it via COOP_BASE_IMAGE", cfg.BaseImage, plan.Dockerfile)
+		}
+	}
+	return BuildPlanned(rt, cfg, repo, plan, fresh, version, stdin, stdout)
+}
+
+// BuildPlan is what a build is about to do, resolved before it starts so a caller can say so in
+// its own words — which image, from which Dockerfile, and whether the shared base has to be built
+// first. Every field is an observation, never a default: Image is the tag that will exist
+// afterwards, and BaseFirst is true only when the base really is missing or being refreshed.
+type BuildPlan struct {
+	Project    bool   // building this project's own image rather than the shared base
+	Dockerfile string // repo-relative box Dockerfile; empty for a shared-base build
+	Image      string // the tag the build produces
+	Untracked  bool   // the box Dockerfile is not tracked in git — an agent could have authored it
+	BaseFirst  bool   // the shared base must be built before this project's image
+	usesBase   bool   // the Dockerfile inherits the shared base via COOP_BASE_IMAGE
+}
+
+// PlanBuild resolves what a build would do, without building anything. It loads project.yaml (so
+// a malformed one fails loudly here rather than halfway through) and requires the runtime, since
+// whether the shared base already exists is part of the answer.
+func PlanBuild(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) (BuildPlan, error) {
+	proj, err := project.Load(repo)
+	if err != nil {
+		return BuildPlan{}, err
+	}
 	if err := rt.EnsureDaemon(); err != nil {
-		return err
+		return BuildPlan{}, err
 	}
 	dfRel := proj.DockerfileRel() // box.dockerfile, else .agent/Dockerfile
 	if !fileExists(filepath.Join(repo, dfRel)) {
-		ui.Note("building %s (shared base)", cfg.BaseImage)
-		err := buildErr(rt.Run(strings.NewReader(BaseDockerfile()), stdout, os.Stderr, baseBuildArgs(cfg, fresh)...))
+		return BuildPlan{Image: cfg.BaseImage}, nil
+	}
+	// A project Dockerfile may inherit coop's trusted base (agent CLIs + ACP adapters, browser
+	// libraries, writable-home + security setup) with `ARG COOP_BASE_IMAGE` / `FROM ${COOP_BASE_IMAGE}`,
+	// adding only its own toolchain. When it does, the base has to be present (built if missing,
+	// rebuilt on --fresh) and passed in as a build-arg.
+	content, _ := os.ReadFile(filepath.Join(repo, dfRel))
+	usesBase := strings.Contains(string(content), "COOP_BASE_IMAGE")
+	return BuildPlan{
+		Project:    true,
+		Dockerfile: dfRel,
+		Image:      ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride),
+		// The box Dockerfile defines the box's next sandbox (its USER/RUN/ENTRYPOINT), and an agent
+		// with write access to the repo can author one. The build is always an explicit human
+		// action, but an untracked box definition is exactly the agent-authored case — surface it
+		// so a moved/planted file isn't built silently. Cheap visibility, not a gate.
+		Untracked: fileUntracked(repo, dfRel),
+		BaseFirst: usesBase && (fresh || !ImageExists(rt, cfg.BaseImage)),
+		usesBase:  usesBase,
+	}, nil
+}
+
+// BuildPlanned performs a plan PlanBuild resolved. It prints nothing of its own — the runtime's
+// build output goes to stdout/stderr, and the caller owns every sentence coop speaks around it.
+func BuildPlanned(rt runtime.Runtime, cfg *config.Config, repo string, plan BuildPlan, fresh bool, version string, stdin io.Reader, stdout io.Writer) error {
+	if !plan.Project {
+		err := runBuild(rt, strings.NewReader(BaseDockerfile()), stdout, baseBuildArgs(cfg, fresh)...)
 		if err == nil {
 			StampImageMeta(cfg, cfg.BaseImage, version) // record builder + definition so a later run can flag skew/age
 		}
 		return err
 	}
-	img := ImageForRepo(repo, cfg.BaseImage, cfg.ImageOverride)
-	// The box Dockerfile defines the box's next sandbox (its USER/RUN/ENTRYPOINT), and an agent with
-	// write access to the repo can author one. The build is always an explicit human action, but an
-	// untracked box definition is exactly the agent-authored case — surface it so a moved/planted
-	// file isn't built silently. Cheap visibility, not a gate.
-	if fileUntracked(repo, dfRel) {
-		ui.Note("note: %s is untracked in git — it defines this box, and an agent can author one; review it before building", dfRel)
-	}
-	ui.Note("building %s from %s (this project's toolchain)", img, dfRel)
-	// A project Dockerfile may inherit coop's trusted base (agent CLIs + ACP adapters, browser
-	// libraries, writable-home + security setup) with `ARG COOP_BASE_IMAGE` / `FROM ${COOP_BASE_IMAGE}`,
-	// adding only its own toolchain. When it does, make sure the base is present (build it if missing,
-	// rebuild it on --fresh) and pass it in as a build-arg.
-	content, _ := os.ReadFile(filepath.Join(repo, dfRel))
-	usesBase := strings.Contains(string(content), "COOP_BASE_IMAGE")
-	if usesBase && (fresh || !ImageExists(rt, cfg.BaseImage)) {
-		ui.Note("building %s (shared base) first — %s inherits it via COOP_BASE_IMAGE", cfg.BaseImage, dfRel)
-		if err := buildErr(rt.Run(strings.NewReader(BaseDockerfile()), stdout, os.Stderr, baseBuildArgs(cfg, fresh)...)); err != nil {
+	if plan.BaseFirst {
+		if err := runBuild(rt, strings.NewReader(BaseDockerfile()), stdout, baseBuildArgs(cfg, fresh)...); err != nil {
 			return err
 		}
 		StampImageMeta(cfg, cfg.BaseImage, version)
@@ -467,15 +510,24 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 	// build loudly instead of leaking silently.
 	ctx, cleanup, err := stageBuildContext(repo)
 	if err != nil {
-		return fmt.Errorf("staging the build context: %w", err)
+		return &StageError{Err: err}
 	}
 	defer cleanup()
-	err = buildErr(rt.Run(stdin, stdout, os.Stderr, projectBuildArgs(ctx, dfRel, img, cfg.BaseImage, usesBase, fresh)...))
+	err = runBuild(rt, stdin, stdout, projectBuildArgs(ctx, plan.Dockerfile, plan.Image, cfg.BaseImage, plan.usesBase, fresh)...)
 	if err == nil {
-		StampImageInputs(cfg, repo, img) // record inputs so a later run can flag drift
+		StampImageInputs(cfg, repo, plan.Image) // record inputs so a later run can flag drift
 	}
 	return err
 }
+
+// StageError is a build that never started: coop could not assemble the secret-filtered copy of
+// the repository it builds from. Distinct from a build that ran and failed — nothing was built,
+// and the fix is a path or a permission rather than the Dockerfile.
+type StageError struct{ Err error }
+
+func (e *StageError) Error() string { return "staging the build context: " + e.Err.Error() }
+
+func (e *StageError) Unwrap() error { return e.Err }
 
 // buildProjectOnBase builds a repository's own box Dockerfile ON TOP of base, tagged tag, through
 // the same staged context, build arguments and error mapping `coop build` uses — a filtered launch
@@ -487,7 +539,14 @@ func buildProjectOnBase(rt runtime.Runtime, repo, dfRel, tag, base string, stder
 		return fmt.Errorf("staging the build context: %w", err)
 	}
 	defer cleanup()
-	return buildErr(rt.Run(nil, nil, stderr, projectBuildArgs(ctx, dfRel, tag, base, true, false)...))
+	code, runErr := rt.Run(nil, nil, stderr, projectBuildArgs(ctx, dfRel, tag, base, true, false)...)
+	if runErr != nil {
+		return runErr
+	}
+	if code != 0 {
+		return fmt.Errorf("%s build exited with status %d", filepath.Base(rt.Name), code)
+	}
+	return nil
 }
 
 // projectBuildArgs assembles the `<runtime> build` args for a project Dockerfile at dfRel inside the
@@ -650,12 +709,15 @@ func copyForBuild(src, dst string) error {
 	return out.Close()
 }
 
-func buildErr(code int, err error) error {
+// runBuild runs one image build and names its failure the way a person reads it: the runtime
+// they invoked, and the status it exited with.
+func runBuild(rt runtime.Runtime, stdin io.Reader, stdout io.Writer, args ...string) error {
+	code, err := rt.Run(stdin, stdout, os.Stderr, args...)
 	if err != nil {
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("image build failed (exit %d)", code)
+		return fmt.Errorf("%s build exited with status %d", filepath.Base(rt.Name), code)
 	}
 	return nil
 }

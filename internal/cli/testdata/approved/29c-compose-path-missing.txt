@@ -1,0 +1,5 @@
+✗ Could not stop services
+
+      .agent/compose.yml does not exist.
+
+  Restore the Compose file, then run coop down again.

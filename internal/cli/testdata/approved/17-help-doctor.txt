@@ -1,0 +1,17 @@
+coop doctor — check that the box's isolation works
+
+Usage:
+  coop doctor
+
+Runs checks in a temporary project and reports what passed, failed, or
+could not be checked. Your files and credentials are not the test data.
+
+Checks secret hiding, host access, privileges, offline networking,
+task access, credential isolation, settings permissions, and fork handoff.
+
+Uses this project's built image, or the shared image if available.
+If neither exists, uses Alpine and names the checks it cannot perform.
+Run coop build, then coop doctor to test the Coop image.
+
+Requires Git and a running container runtime. Honors COOP_RUNTIME.
+Lists abandoned boxes but does not remove them.

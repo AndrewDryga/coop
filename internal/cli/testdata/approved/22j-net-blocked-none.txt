@@ -1,0 +1,4 @@
+No recorded block for example.com in this project's runs.
+
+Check current access
+  coop net check example.com

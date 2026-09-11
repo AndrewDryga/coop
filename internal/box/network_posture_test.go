@@ -31,20 +31,20 @@ func postureFixture(t *testing.T, projectYAML string) (*config.Config, string, s
 	return &config.Config{ConfigDir: t.TempDir()}, repo, filepath.Join(state, "coop", "network")
 }
 
-// Reading the posture must not be how a host acquires network authority: a
+// Reading the access must not be how a host acquires network authority: a
 // query that created an owner key would make "never used" indistinguishable
 // from "used once".
 func TestPostureOnAFreshHostCreatesNoAuthority(t *testing.T) {
 	cfg, repo, root := postureFixture(t, "")
-	posture, err := ProjectNetworkPosture(context.Background(), cfg, repo)
+	access, err := ProjectNetworkAccess(context.Background(), cfg, repo)
 	if err != nil {
-		t.Fatalf("ProjectNetworkPosture: %v", err)
+		t.Fatalf("ProjectNetworkAccess: %v", err)
 	}
-	if posture.Mode != egress.Open || posture.Source != PostureFromDefault {
-		t.Errorf("posture = %q from %q, want the built-in open default", posture.Mode, posture.Source)
+	if access.Mode != egress.Open || access.Source != AccessFromDefault {
+		t.Errorf("access = %q from %q, want the built-in open default", access.Mode, access.Source)
 	}
-	if posture.Approval != nil || posture.Pending != nil {
-		t.Errorf("a fresh host reported approval=%v pending=%v", posture.Approval, posture.Pending)
+	if access.Approval != nil || access.Pending != nil {
+		t.Errorf("a fresh host reported approval=%v pending=%v", access.Approval, access.Pending)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Errorf("the authority root was created by a read: %v", err)
@@ -53,46 +53,46 @@ func TestPostureOnAFreshHostCreatesNoAuthority(t *testing.T) {
 
 func TestPostureShowsAnUnapprovedProjectRequestInsteadOfRefusing(t *testing.T) {
 	cfg, repo, _ := postureFixture(t, "box:\n  egress: filtered\n  egress_rules:\n    - to:\n        domain: \"docs.example.com\"\n      protocol: tls\n      ports: [443]\n")
-	posture, err := ProjectNetworkPosture(context.Background(), cfg, repo)
+	access, err := ProjectNetworkAccess(context.Background(), cfg, repo)
 	if err != nil {
-		t.Fatalf("ProjectNetworkPosture: %v", err)
+		t.Fatalf("ProjectNetworkAccess: %v", err)
 	}
-	if posture.Mode != egress.Filtered || posture.Source != PostureFromProject {
-		t.Errorf("posture = %q from %q, want filtered from the project request", posture.Mode, posture.Source)
+	if access.Mode != egress.Filtered || access.Source != AccessFromProject {
+		t.Errorf("access = %q from %q, want filtered from the project request", access.Mode, access.Source)
 	}
 	// The launch would refuse; the view must SAY that, not inherit the refusal.
-	if posture.Pending == nil {
+	if access.Pending == nil {
 		t.Error("an unapproved request was not reported as pending")
 	}
-	if len(posture.Add) != 1 || posture.Add[0].To.Domain != "docs.example.com" {
-		t.Errorf("pending additions = %+v", posture.Add)
+	if len(access.Add) != 1 || access.Add[0].To.Domain != "docs.example.com" {
+		t.Errorf("pending additions = %+v", access.Add)
 	}
-	if len(posture.Remove) != 0 {
-		t.Errorf("pending removals = %+v", posture.Remove)
+	if len(access.Remove) != 0 {
+		t.Errorf("pending removals = %+v", access.Remove)
 	}
 }
 
 func TestPostureFollowsAnExplicitHostPreference(t *testing.T) {
 	cfg, repo, _ := postureFixture(t, "")
 	cfg.SetEgress(string(egress.None))
-	posture, err := ProjectNetworkPosture(context.Background(), cfg, repo)
+	access, err := ProjectNetworkAccess(context.Background(), cfg, repo)
 	if err != nil {
-		t.Fatalf("ProjectNetworkPosture: %v", err)
+		t.Fatalf("ProjectNetworkAccess: %v", err)
 	}
-	if posture.Mode != egress.None || posture.Source != PostureFromHost {
-		t.Errorf("posture = %q from %q, want none from COOP_EGRESS", posture.Mode, posture.Source)
+	if access.Mode != egress.None || access.Source != AccessFromHost {
+		t.Errorf("access = %q from %q, want none from COOP_EGRESS", access.Mode, access.Source)
 	}
 }
 
 func TestPostureRefusesToDescribeADirectoryThatIsNotThere(t *testing.T) {
 	cfg, repo, _ := postureFixture(t, "")
-	if _, err := ProjectNetworkPosture(context.Background(), cfg, filepath.Join(repo, "missing")); err == nil {
+	if _, err := ProjectNetworkAccess(context.Background(), cfg, filepath.Join(repo, "missing")); err == nil {
 		t.Fatal("a missing project directory was described")
 	}
 }
 
 // The whole approval loop without a container: review what the repository asks
-// for, commit it, and see the posture become remembered host authority.
+// for, commit it, and see the access become remembered host authority.
 func TestReviewAndApproveRemembersTheProjectRequest(t *testing.T) {
 	cfg, repo, root := postureFixture(t, "box:\n  egress: filtered\n  egress_rules:\n    - to:\n        domain: \"docs.example.com\"\n      protocol: tls\n      ports: [443]\n")
 	review, err := ReviewProjectNetwork(cfg, repo)
@@ -123,21 +123,21 @@ func TestReviewAndApproveRemembersTheProjectRequest(t *testing.T) {
 	if _, err := os.Stat(root); err != nil {
 		t.Fatalf("approving did not create the authority root: %v", err)
 	}
-	posture, err := ProjectNetworkPosture(context.Background(), cfg, repo)
+	access, err := ProjectNetworkAccess(context.Background(), cfg, repo)
 	if err != nil {
-		t.Fatalf("ProjectNetworkPosture: %v", err)
+		t.Fatalf("ProjectNetworkAccess: %v", err)
 	}
-	if posture.Source != PostureFromApproval || posture.Mode != egress.Filtered {
-		t.Errorf("posture = %q from %q, want filtered from the remembered approval", posture.Mode, posture.Source)
+	if access.Source != AccessFromApproval || access.Mode != egress.Filtered {
+		t.Errorf("access = %q from %q, want filtered from the remembered approval", access.Mode, access.Source)
 	}
-	if posture.Pending != nil || len(posture.Add) != 0 || len(posture.Remove) != 0 {
-		t.Errorf("an approved request still reads as pending: %v %+v %+v", posture.Pending, posture.Add, posture.Remove)
+	if access.Pending != nil || len(access.Add) != 0 || len(access.Remove) != 0 {
+		t.Errorf("an approved request still reads as pending: %v %+v %+v", access.Pending, access.Add, access.Remove)
 	}
 }
 
 // A directory moved aside and replaced at the same path inherits nothing, so
 // the next launch refuses. Nothing in the rule diff can show that, which is why
-// the posture view reports it as pending in its own right.
+// the access view reports it as pending in its own right.
 func TestPostureReportsAnApprovedDirectoryThatWasReplaced(t *testing.T) {
 	cfg, repo, _ := postureFixture(t, "box:\n  egress_rules:\n    - to:\n        domain: \"docs.example.com\"\n      protocol: tls\n      ports: [443]\n")
 	approveFixture(t, cfg, repo)
@@ -152,21 +152,21 @@ func TestPostureReportsAnApprovedDirectoryThatWasReplaced(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(requestFixtureYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	posture, err := ProjectNetworkPosture(context.Background(), cfg, repo)
+	access, err := ProjectNetworkAccess(context.Background(), cfg, repo)
 	if err != nil {
-		t.Fatalf("ProjectNetworkPosture: %v", err)
+		t.Fatalf("ProjectNetworkAccess: %v", err)
 	}
-	if posture.Pending == nil || !strings.Contains(posture.Pending.Reason, "was replaced since it was approved") {
-		t.Fatalf("pending = %v, want the replaced directory reported", posture.Pending)
+	if access.Pending == nil || !strings.Contains(access.Pending.Reason, "was replaced since it was approved") {
+		t.Fatalf("pending = %v, want the replaced directory reported", access.Pending)
 	}
 	// The reason is a plain sentence; every view adds the one review command itself.
-	if strings.Contains(posture.Pending.Reason, "coop net") {
-		t.Errorf("pending = %v, want a reason without the remedy baked in", posture.Pending)
+	if strings.Contains(access.Pending.Reason, "coop net") {
+		t.Errorf("pending = %v, want a reason without the remedy baked in", access.Pending)
 	}
 	// The rule diff is empty: without the pending line this view would look
 	// exactly like a project that is good to go.
-	if len(posture.Add) != 0 || len(posture.Remove) != 0 {
-		t.Errorf("add=%+v remove=%+v, want the notice to be the only sign", posture.Add, posture.Remove)
+	if len(access.Add) != 0 || len(access.Remove) != 0 {
+		t.Errorf("add=%+v remove=%+v, want the notice to be the only sign", access.Add, access.Remove)
 	}
 }
 
@@ -186,12 +186,12 @@ func TestReviewRefusesAnUnqualifiedProviderFeatureRequest(t *testing.T) {
 // human approves exactly that, and the review says open because the file does.
 func TestReviewTakesTheModeFromTheProjectFileOnly(t *testing.T) {
 	cfg, repo, _ := postureFixture(t, "box:\n  egress: open\n")
-	posture, err := ProjectNetworkPosture(context.Background(), cfg, repo)
+	access, err := ProjectNetworkAccess(context.Background(), cfg, repo)
 	if err != nil {
-		t.Fatalf("ProjectNetworkPosture: %v", err)
+		t.Fatalf("ProjectNetworkAccess: %v", err)
 	}
-	if posture.Pending == nil || !strings.Contains(posture.Pending.Reason, "unrestricted") || posture.RequestedMode != egress.Open {
-		t.Fatalf("an unapproved open request is not pending: pending=%v requested=%q", posture.Pending, posture.RequestedMode)
+	if access.Pending == nil || !strings.Contains(access.Pending.Reason, "unrestricted") || access.RequestedMode != egress.Open {
+		t.Fatalf("an unapproved open request is not pending: pending=%v requested=%q", access.Pending, access.RequestedMode)
 	}
 	review, err := ReviewProjectNetwork(cfg, repo)
 	if err != nil {
@@ -204,9 +204,9 @@ func TestReviewTakesTheModeFromTheProjectFileOnly(t *testing.T) {
 	if err := review.Commit(context.Background()); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	posture, err = ProjectNetworkPosture(context.Background(), cfg, repo)
-	if err != nil || posture.Pending != nil || posture.Mode != egress.Open || posture.Source != PostureFromApproval {
-		t.Errorf("after approval: pending=%v mode=%q source=%q err=%v", posture.Pending, posture.Mode, posture.Source, err)
+	access, err = ProjectNetworkAccess(context.Background(), cfg, repo)
+	if err != nil || access.Pending != nil || access.Mode != egress.Open || access.Source != AccessFromApproval {
+		t.Errorf("after approval: pending=%v mode=%q source=%q err=%v", access.Pending, access.Mode, access.Source, err)
 	}
 }
 
@@ -222,7 +222,7 @@ func TestReviewOfAnUnchangedRequestWritesNothing(t *testing.T) {
 				t.Fatalf("ReviewProjectNetwork: %v", err)
 			}
 			if !review.Unchanged() {
-				t.Fatal("a project asking for nothing beyond the safe posture was put up for approval")
+				t.Fatal("a project asking for nothing beyond the safe access was put up for approval")
 			}
 			if err := review.Close(); err != nil {
 				t.Fatal(err)

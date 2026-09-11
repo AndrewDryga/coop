@@ -533,7 +533,8 @@ func TestProviderScriptedConsultScopeFailures(t *testing.T) {
 	t.Run("unauthenticated ad hoc peer fails before runtime", func(t *testing.T) {
 		disableProcessCredential(t, suite, "gemini")
 		result, trace := suite.run(t, []string{"claude", "--peer", "gemini"}, processScenario("claude", nil, 0, ""))
-		if result.Err != nil || result.ExitCode != 2 || len(trace) != 0 || !strings.Contains(result.Stderr, `--peer "gemini" isn't signed in`) {
+		if result.Err != nil || result.ExitCode != 2 || len(trace) != 0 ||
+			!strings.Contains(result.Stderr, "Gemini needs a usable account") {
 			t.Fatalf("unauthenticated peer rejection = exit %d err %v trace %d\nstderr:\n%s", result.ExitCode, result.Err, len(trace), result.Stderr)
 		}
 	})
@@ -549,7 +550,8 @@ func TestProviderScriptedConsultScopeFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 		result, trace := suite.run(t, []string{name}, processScenario("claude", nil, 0, ""))
-		if result.Err != nil || result.ExitCode != 2 || len(trace) != 0 || !strings.Contains(result.Stderr, "unknown provider") {
+		if result.Err != nil || result.ExitCode != 2 || len(trace) != 0 ||
+			!strings.Contains(result.Stderr, `is not a valid target`) {
 			t.Fatalf("invalid role ladder rejection = exit %d err %v trace %d\nstderr:\n%s", result.ExitCode, result.Err, len(trace), result.Stderr)
 		}
 	})

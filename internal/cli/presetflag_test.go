@@ -222,7 +222,7 @@ func TestLoadRunPreset(t *testing.T) {
 	if p, err := a.loadRunPreset(""); p != nil || err != nil {
 		t.Errorf("empty name = (%v, %v), want (nil, nil)", p, err)
 	}
-	if _, err := a.loadRunPreset("ghost"); err == nil || !strings.Contains(err.Error(), "no preset") {
+	if _, err := a.loadRunPreset("ghost"); err == nil || !strings.Contains(err.Error(), `No preset "ghost" exists.`) {
 		t.Errorf("missing preset should fail loud: %v", err)
 	}
 }

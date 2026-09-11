@@ -1,0 +1,12 @@
+coop net export — export a run's network record
+
+Usage: coop net export <run> [--include-addresses]
+
+OPTIONS
+  --include-addresses  include remote hostnames and IP addresses
+
+  Writes JSON to stdout. Remote hostnames and IP addresses are hidden by default.
+  The run must have a final record.
+
+EXAMPLE
+  coop net export e644f07a > network-record.json

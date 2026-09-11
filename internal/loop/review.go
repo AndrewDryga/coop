@@ -150,7 +150,6 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 		agent := c.applyTarget(rev)
 		target := rev.Active()
 		cmd, streaming, agentCommand := iterCmd(agent, prompt) // build after rotation so argv matches this provider
-		c.net.setStage(fmt.Sprintf("Review attempt %d", totalRetries+1))
 		start, headBefore := time.Now(), gitOut(repo, "rev-parse", "HEAD")
 		code, out, usage, classification, windows, runErr := c.runIteration(ctx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowReview, subjects, reviewRepoReadOnly(writes), sink, peers, activity, "", nil)
 		last = reviewRunResult{output: out, usage: usage, outcome: classification.outcome, exit: code, retries: totalRetries, target: target, concurrent: concurrent}
@@ -159,7 +158,7 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 		}
 		observed, completionErr := windows.FinishReview()
 		if len(observed) > 0 {
-			ui.Note("Another session completed %s during this review. Reviewing it before finishing.", ui.Count(len(observed), "task"))
+			ui.Note("concurrent host completion during review: %s — a parallel host session's change, not this review's", strings.Join(observed, ", "))
 			concurrent = slices.Compact(slices.Sorted(slices.Values(append(concurrent, observed...))))
 			last.concurrent = concurrent
 		}
@@ -181,8 +180,7 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 				return last, fmt.Errorf("review provider ended with live background work %d times — stopped; rerun the review after its gate, consult, and delegate work finish in the foreground", handoffs)
 			}
 			totalRetries++
-			ui.Alert("The reviewer exited while its background work was still running",
-				fmt.Sprintf("Its result was discarded.\nStarting a fresh attempt · %d of 3.", handoffs+1))
+			ui.Warn("review provider ended with live background work; discarding its receipt and starting a fresh observed attempt (%d/3)", handoffs)
 			continue
 		}
 		// A timed-out review attempt was killed for proven silence, so any receipt it printed
@@ -200,8 +198,7 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 			}
 			totalRetries++
 			rev.AdvanceOnTimeout(time.Now())
-			ui.Alert("Stopped an unresponsive review attempt",
-				fmt.Sprintf("%s.\nIts partial result was discarded. Starting a fresh attempt · %d of %d.", capitalize(silenceDetail(classification)), timeouts+1, maxProviderTimeouts))
+			ui.Warn("review provider attempt timed out (%s)%s — discarding its partial output and retrying (%d/%d)", classification.outcome, classification.timeoutDetail(), timeouts, maxProviderTimeouts)
 			continue
 		}
 		handoffs, timeouts = 0, 0
@@ -224,19 +221,11 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 			}
 		case actRetryNow:
 			totalRetries++
-			ui.Note("The model reached its response limit.")
-			if wait > 0 {
-				ui.Note("  Continuing in %s.", humanWait(wait))
-			} else {
-				ui.Note("  Continuing now.")
-			}
 			if !ladder.SleepOrWake(wait, wake) {
 				return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 			}
 		case actRetry:
 			totalRetries++
-			ui.Alert("Review attempt failed",
-				fmt.Sprintf("Retrying in 10 seconds · attempt %d of %d.", fails+1, maxLoopFailures))
 			if !ladder.SleepOrWake(10*time.Second, wake) {
 				return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 			}
@@ -247,9 +236,8 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 			// run on the very credential the work stage just routed around.
 			if rev.Rotates() && rev.OnAuthFailure() {
 				totalRetries++
-				ui.Alert(authHeadline(target),
-					fmt.Sprintf("Continuing the review with %s.", rev.Active()),
-					[2]string{"Sign in again:", loginCommand(target)})
+				ui.Warn("review target %q authentication failed — switching to %q (restore it with `%s`)",
+					target, rev.Active(), loginCommand(target))
 				break
 			}
 			return last, rotationAuthenticationError(rev, target)
@@ -357,8 +345,7 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 		// the error is discarded here and the run reports nothing — so a fault that costs a whole
 		// extra review stays invisible for as long as it keeps being rescued. That is exactly how
 		// this one hid: seen repeatedly, diagnosable never. The error carries a bounded output tail.
-		ui.Alert("The review result could not be read",
-			fmt.Sprintf("%v\nRepeating the full review once with the required response format.", err))
+		ui.Warn("%s process succeeded but its structured verdict was malformed (%v) — re-running the full review once with a receipt-format correction", activity, err)
 	}
 	return last, nil
 }

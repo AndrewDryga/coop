@@ -1,0 +1,12 @@
+coop net approve — review and approve this project's network request
+
+Usage: coop net approve
+
+  Shows what .agent/project.yaml asks for, compared with your last approval.
+  Confirm the changes to allow new runs to use them.
+  If nothing changed, there is nothing to approve.
+
+  Existing boxes keep the rules they started with.
+  Run this command in your terminal.
+
+See current access: coop net

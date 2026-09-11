@@ -124,14 +124,16 @@ func TestProviderScriptedDirectMatrix(t *testing.T) {
 
 	t.Run("gemini effort fails before runtime", func(t *testing.T) {
 		result, trace := suite.run(t, []string{"gemini/high@work"}, processScenario("gemini", nil, 0, ""))
-		if result.ExitCode != 2 || result.Err != nil || len(trace) != 0 || !strings.Contains(result.Stderr, "no reasoning-effort control") {
+		if result.ExitCode != 2 || result.Err != nil || len(trace) != 0 ||
+			!strings.Contains(result.Stderr, "Gemini does not support a reasoning-effort setting") {
 			t.Fatalf("gemini effort rejection = exit %d err %v trace %d\nstderr:\n%s", result.ExitCode, result.Err, len(trace), result.Stderr)
 		}
 	})
 
 	t.Run("malformed target fails before runtime", func(t *testing.T) {
 		result, trace := suite.run(t, []string{"claude:"}, processScenario("claude", nil, 0, ""))
-		if result.ExitCode != 2 || result.Err != nil || len(trace) != 0 || !strings.Contains(result.Stderr, "empty model") {
+		if result.ExitCode != 2 || result.Err != nil || len(trace) != 0 ||
+			!strings.Contains(result.Stderr, `Add a model after ":" or remove the colon.`) {
 			t.Fatalf("malformed target rejection = exit %d err %v trace %d\nstderr:\n%s", result.ExitCode, result.Err, len(trace), result.Stderr)
 		}
 	})

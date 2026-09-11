@@ -318,46 +318,22 @@ func TestCommitFilesPreservesUnicodeProtectedPath(t *testing.T) {
 	}
 }
 
-func TestRunSummary(t *testing.T) {
-	completed := []taskLine{{id: "2026-09-11-task-json", title: "Add a --json flag", scope: "internal/cli"}}
+func TestHumanDigest(t *testing.T) {
+	cs := loopChangeSet{
+		tasks:      []taskChanges{{id: "task-json", commits: []commitInfo{{"a1", "add --json flag"}}, files: []string{"internal/cli/output.go"}}},
+		subsystems: []string{"internal/cli"},
+	}
 	h := newLoopHealth()
-	h.noteReopen([]string{"2026-09-11-task-json"})
+	h.noteReopen([]string{"task-json"})
 	cost := runCost{
-		byTask:  map[string]stageCost{"2026-09-11-task-json": {usd: 3.50, inTok: 120000, outTok: 4200}},
-		byModel: []modelSpend{{"claude:fable-5", stageCost{usd: 2.50, inTok: 100000, outTok: 4000}}, {"codex:gpt-5.6-terra", stageCost{usd: 1.00, inTok: 20000, outTok: 200}}},
+		byTask:  map[string]stageCost{"task-json": {usd: 3.50, inTok: 120000, outTok: 4200}},
+		byModel: []modelSpend{{"claude:fable-5", stageCost{usd: 2.50}}, {"codex:gpt-5.6-terra", stageCost{usd: 1.00}}},
 		total:   stageCost{usd: 3.50, inTok: 120000, outTok: 4200},
 	}
-	got := captureStderr(t, func() { printRunSummary(completed, cost, h) })
-	for _, want := range []string{
-		"Completed this run", "  Add a --json flag", "    2026-09-11-task-json · internal/cli",
-		"Usage", "claude:fable-5", "$2.50 · 100,000 in · 4,000 out", "codex:gpt-5.6-terra",
-		"Worth a look", "Add a --json flag was reopened 1 times by the review.",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("run summary missing %q:\n%s", want, got)
+	d := cs.humanDigest(h, []string{"sign-key-policy"}, cost)
+	for _, want := range []string{"Shipped this run", "add --json flag", "$3.50", "Cost:", "120.0k in / 4.2k out", "by model:", "claude:fable-5 $2.50", "Blocked (needs you)", "sign-key-policy", "Look at:", "reopened 1×"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("humanDigest missing %q:\n%s", want, d)
 		}
-	}
-	if strings.Contains(got, "Shipped") {
-		t.Errorf("a local commit is not a shipped change:\n%s", got)
-	}
-
-	// One model: the report states the reported cost and the tokens, not a per-model table.
-	single := runCost{total: stageCost{usd: 1.24, inTok: 42100, outTok: 3200}, byModel: []modelSpend{{"claude:opus", stageCost{usd: 1.24, inTok: 42100, outTok: 3200}}}}
-	got = captureStderr(t, func() { printRunSummary(nil, single, newLoopHealth()) })
-	if !strings.Contains(got, "  Reported cost: $1.24") || !strings.Contains(got, "  Tokens: 42,100 in · 3,200 out") {
-		t.Errorf("single-model usage = %q", got)
-	}
-
-	// No usage data at all: no section. A healthy zero ledger would be an invented total.
-	got = captureStderr(t, func() { printRunSummary(nil, runCost{}, newLoopHealth()) })
-	if strings.Contains(got, "Usage") {
-		t.Errorf("a run with no usage data prints no usage section:\n%s", got)
-	}
-
-	// Tokens without a reported cost say so in words, never $0.00.
-	free := runCost{total: stageCost{inTok: 50000, outTok: 800}, byModel: []modelSpend{{"grok:grok-4.5", stageCost{inTok: 50000, outTok: 800}}}}
-	got = captureStderr(t, func() { printRunSummary(nil, free, newLoopHealth()) })
-	if !strings.Contains(got, "Reported cost: not reported") || strings.Contains(got, "$0.00") {
-		t.Errorf("unreported cost = %q", got)
 	}
 }

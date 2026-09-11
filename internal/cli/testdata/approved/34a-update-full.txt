@@ -1,0 +1,14 @@
+Updating Coop v9.0.0 → v9.0.1
+  Downloading and checking the release.
+
+✓ Coop updated to v9.0.1
+
+Updating the Coop box
+  Fetching newer base-image components, agent CLIs, and editor adapters.
+
+[Build output]
+
+✓ Box image updated
+
+Installed agent tools
+[Installed-version output]

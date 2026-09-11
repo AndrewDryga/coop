@@ -22,6 +22,12 @@ Two tiers, decided by `Finding.Automatic`:
   review brief's "runs on your machine" section, never a blocker, because every repo edits its
   Makefile constantly.
 
+Each finding's `Reason` is ONE sentence naming when the file runs — "Runs during Git operations.",
+"Runs when you use make." — because it is printed under the path in `coop check-secrets` and in the
+fork review brief, where a clause like "runs on your machine on `git commit`" read as a fragment of
+somebody else's sentence. Change the wording here and every consumer follows; the TIER
+(`Automatic`), not the wording, is what decides whether a merge blocks.
+
 `package.json` is deliberately NOT a path surface: `PolicyScan` keeps the content check that flags
 only a NEW lifecycle script (`postinstall` etc.), so a version bump does not block a merge.
 A deletion (`D` status) never counts — removing a hook cannot run anything.
@@ -29,7 +35,8 @@ A deletion (`D` status) never counts — removing a hook cannot run anything.
 The two consumers:
 - `coop fork review` prints all findings; `coop fork merge` blocks on the automatic ones.
 - `coop check-secrets` reports the working tree's changed surfaces (staged, unstaged, untracked)
-  on stderr before its verdict; it never changes the exit code, which stays the secret scan's.
+  under `Review files that run commands`, AFTER its verdict; it never changes the exit code, which
+  stays the secret scan's.
 
 There is no third, task-side consumer: the task-flags feature (`flags.json`, `Item.HasFlags`,
 `coop tasks flags --ack`) was removed outright on 2026-09-11, so completion writes no record and
@@ -39,4 +46,7 @@ writes or deletes them. Review agent work at the fork boundary instead.
 ## Changelog
 - 2026-09-11: task-flags consumer removed with the feature; card is the classifier + its two
   remaining consumers.
+- 2026-09-11: reasons became one-sentence statements ("Runs during Git operations."); check-secrets
+  prints them under `Review files that run commands` after its verdict. Verified against
+  hostsurface.go's Classify table and internal/cli/checksecrets.go.
 - 2026-09-06: created with the classifier, the two tiers, and the three consumers.

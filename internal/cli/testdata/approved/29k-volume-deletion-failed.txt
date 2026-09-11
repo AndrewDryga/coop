@@ -1,0 +1,17 @@
+Stop this project's services and permanently delete these volumes and their data?
+
+  - coop-atlas_pgdata — database data
+  - coop-atlas_redisdata — Redis data
+
+Continue? [y/N] y
+
+Stopping services from .agent/compose.yml
+
+[Compose output]
+
+✗ Could not finish stopping services and deleting their data
+
+      Compose down exited with status 1.
+
+  Check Docker before retrying coop down --delete-volumes.
+  Some services or volumes may already have been removed.

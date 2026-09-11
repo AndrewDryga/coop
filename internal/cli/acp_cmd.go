@@ -104,7 +104,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Resolve the --peer peers HERE, before the outer/inner split — so an editor's
 	// agent_servers entry with a bad peer (unknown/unauthed, or an @account) fails fast in the
 	// OUTER process, not silently later inside the box.
-	peers, err := a.resolvePeers("--peer", peerVals)
+	peers, err := a.resolvePeers("coop acp", peerVals)
 	if err != nil {
 		return 2, err
 	}
@@ -130,7 +130,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		tool = t.Provider
 		toolSet = true
-		if terr := foldTarget(t, &model, &profile); terr != nil {
+		if terr := foldTarget(t, "coop acp", &model, &profile); terr != nil {
 			return terr
 		}
 		effort = t.Effort

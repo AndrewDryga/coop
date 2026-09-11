@@ -977,7 +977,7 @@ func TestForkLogsNamedMissingIsExplicit(t *testing.T) {
 	if code, err := c.ForkLogs([]string{"quiet"}); code != 0 || err != nil {
 		t.Fatalf("ForkLogs(quiet) = (%d, %v), want empty success", code, err)
 	}
-	if got := strings.Join(notes, "\n"); !strings.Contains(got, "Fork quiet has no log output yet.") {
+	if got := strings.Join(notes, "\n"); !strings.Contains(got, "fork quiet has no log output yet") {
 		t.Fatalf("missing-log note = %q", got)
 	}
 }

@@ -1,0 +1,11 @@
+Starting services from infra/dev-compose.yml
+  Waiting for services to be ready.
+
+[Compose output]
+
+✗ Could not start services
+
+      Port 43517 is already in use.
+
+  Stop the process using that port, then run coop up again.
+  Some services may already be running.
