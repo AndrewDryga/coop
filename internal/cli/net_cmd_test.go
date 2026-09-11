@@ -3,7 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkreport"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
+	containerruntime "github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -57,6 +61,127 @@ func netTestClean() networkstate.Inspection {
 		Workload: "exited", Cleanup: "complete", Digest: "abc", DigestScope: "destinations-included"}
 	return networkstate.Inspection{Version: 1, Observed: snapshot, Receipt: &receipt, Freshness: networkstate.FreshnessTerminal,
 		ReadAt: time.Date(2026, 9, 10, 18, 0, 0, 0, time.UTC), Cleanup: "complete"}
+}
+
+// netTestCandidate is the one image/runtime pair every fixture run qualifies
+// against: what it contains never matters here, only that each run is bound to
+// an exact candidate the way a real launch is.
+var netTestCandidate = networkstate.CandidateSpec{
+	Runtime: networkstate.RuntimeBinding{HostFamily: "darwin", Endpoint: "unix:///fixture.sock", DaemonID: "fixture-daemon",
+		OS: "linux", Architecture: "arm64", ServerVersion: "29.4.0", KernelVersion: "fixture"},
+	ClientImage: "sha256:" + strings.Repeat("b", 64), GatewayImage: "sha256:" + strings.Repeat("a", 64),
+	ClientDefinition: strings.Repeat("c", 64), ClientClosure: strings.Repeat("d", 64), GatewaySource: strings.Repeat("e", 64),
+	Libc: "glibc", NodeBase: "node@sha256:" + strings.Repeat("f", 64), GoBase: "golang@sha256:" + strings.Repeat("0", 64),
+}
+
+// netHostFixture points every net command at retained state this test owns, and
+// hands back the store a launch would write through.
+func netHostFixture(t *testing.T) *networkstate.Store {
+	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root, err := box.NetworkStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := networkstate.Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
+
+// netFixtureProject is a canonical project directory: the net commands compare
+// resolved paths, so a symlinked temp dir must be resolved once here.
+func netFixtureProject(t *testing.T) string {
+	t.Helper()
+	project, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return project
+}
+
+// netDepartSupervisor rewrites one retained run's supervisor identity so the
+// kernel reports the launching process as departed — what a host crash, a
+// SIGKILL or a reboot leaves behind.
+func netDepartSupervisor(t *testing.T, store *networkstate.Store, id string) {
+	t.Helper()
+	path := filepath.Join(store.Path(), "execution-"+id+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	supervisor, _ := record["supervisor"].(map[string]any)
+	token, _ := supervisor["start_token"].(string)
+	if token == "" {
+		t.Fatal("the run recorded no supervisor identity")
+	}
+	// Same pid, a different start time in the same token format: the kernel
+	// proves the process that launched this run is not the one holding that pid.
+	supervisor["start_token"] = token + "9"
+	updated, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, updated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// netRecordRun retains one filtered run of project the way a launch does:
+// admitted policy, its own preflight, one execution record. Nothing is
+// observed and nothing is sealed, so the run is exactly the interrupted shape
+// an inspection has to settle.
+func netRecordRun(t *testing.T, store *networkstate.Store, project string) networkstate.Execution {
+	t.Helper()
+	mode := egress.Filtered
+	policy, err := store.Admit(project, networkstate.Admission{InvocationMode: &mode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	smoke, err := store.BeginQualification(netTestCandidate,
+		[]networkstate.QualifiedClient{{Provider: "claude", Client: egress.ClientCLI, Version: "2.1.260"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := smoke.CreateExecution(context.Background(), networkstate.ExecutionSpec{
+		Project: project, PolicyFingerprint: policy.Fingerprint, Runtime: "docker",
+		DaemonID: netTestCandidate.Runtime.DaemonID, Endpoint: netTestCandidate.Runtime.Endpoint,
+		GatewayImage: netTestCandidate.GatewayImage, ClientImage: netTestCandidate.ClientImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
+// netSealRun gives a retained run one proven destination, whatever refusals the
+// test needs, and a sealed receipt: the shape every shareable record is made
+// from and every explanation is read out of.
+func netSealRun(t *testing.T, store *networkstate.Store, record networkstate.Execution, denials ...networkview.Denial) networkstate.Execution {
+	t.Helper()
+	ctx := context.Background()
+	snapshot := record.Snapshot
+	snapshot.Sequence, snapshot.Availability, snapshot.Terminal = 1, "available", true
+	snapshot.Connections = []networkview.Connection{
+		netTestConnection("1fc1b237d962565a1e016bed3716de47", "example.com", "104.20.23.154:443", 773, 5323)}
+	snapshot.Denials = denials
+	record, err := store.AcceptSnapshot(ctx, record.ID, record.Revision, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.SealExecution(ctx, record.ID, record.Revision, "exited")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Receipt == nil {
+		t.Fatal("the run was not sealed")
+	}
+	return record
 }
 
 func renderNetRun(view networkreport.View, inspection networkstate.Inspection) string {
@@ -548,6 +673,165 @@ func TestNetSelectRunDefaultsToThisProjectsNewestOrSoleActive(t *testing.T) {
 	}
 }
 
+// Acceptance: `coop net runs` is this project's five newest runs and a pointer
+// at the rest; --all widens how many are listed, never whose they are.
+func TestNetRunsDefaultsToFiveOfThisProjectAndAllStaysInIt(t *testing.T) {
+	store := netHostFixture(t)
+	project, elsewhere := netFixtureProject(t), netFixtureProject(t)
+	mine := map[string]bool{}
+	for range 6 {
+		mine[networkreport.ShortID(netRecordRun(t, store, project).ID)] = true
+	}
+	foreign := networkreport.ShortID(netRecordRun(t, store, elsewhere).ID)
+	a := &app{cfg: &config.Config{RepoOverride: project}}
+	listed := func(t *testing.T, args []string) (string, int) {
+		t.Helper()
+		out := captureStdout(t, func() {
+			if code, err := a.cmdNetRuns(args); code != 0 || err != nil {
+				t.Fatalf("coop net runs %v = (%d, %v)", args, code, err)
+			}
+		})
+		if strings.Contains(out, foreign) {
+			t.Fatalf("another project's run was listed:\n%s", out)
+		}
+		rows := 0
+		for _, line := range strings.Split(out, "\n") {
+			if id, _, found := strings.Cut(strings.TrimPrefix(line, "  "), "  "); found && mine[id] {
+				rows++
+			}
+		}
+		return out, rows
+	}
+	out, rows := listed(t, nil)
+	if rows != netRecentRuns {
+		t.Fatalf("default listing showed %d runs, want %d:\n%s", rows, netRecentRuns, out)
+	}
+	if !strings.Contains(out, "\nShowing 5 of 6 · coop net runs --all\n") {
+		t.Errorf("the bounded listing does not point at the rest:\n%s", out)
+	}
+	if out, rows := listed(t, []string{"--all"}); rows != 6 {
+		t.Errorf("--all showed %d of this project's 6 runs:\n%s", rows, out)
+	}
+}
+
+// Acceptance: inspecting an interrupted run makes coop's own bounded recovery
+// attempt first. A runtime it cannot reach leaves the run exactly as pending as
+// it found it, names the real blocker, and still renders the retained evidence.
+func TestInspectSettlesADeadRunItselfAndKeepsItPendingWhenItCannot(t *testing.T) {
+	store := netHostFixture(t)
+	project := netFixtureProject(t)
+	record := netRecordRun(t, store, project)
+	netDepartSupervisor(t, store, record.ID)
+	a := &app{cfg: &config.Config{RepoOverride: project}, rt: containerruntime.Runtime{Name: "fixture-runtime"}, rtSet: true}
+	out := captureStdout(t, func() {
+		if code, err := a.cmdNetRun("inspect", []string{record.ID}); code != 0 || err != nil {
+			t.Fatalf("coop net inspect = (%d, %v)", code, err)
+		}
+	})
+	want := "\n⚠ Cleanup incomplete — the runtime it ran on is unavailable: restricted networking requires a local Docker runtime\n" +
+		"  Coop will retry automatically once that Docker daemon is back\n"
+	if !strings.Contains(out, want) {
+		t.Fatalf("inspect made no recovery attempt of its own:\n%s\nwant to contain:\n%s", out, want)
+	}
+	for _, forbidden := range []string{"coop net recover", "\x1b"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("inspect printed %q:\n%s", forbidden, out)
+		}
+	}
+	// The evidence coop did retain is still the report: the run, its allowed
+	// block and the same footer every inspection ends with.
+	for _, line := range []string{"Network run " + record.ID + "\n", "  Allowed   UNKNOWN — nothing was recorded for this run\n",
+		"Full details: coop net inspect " + record.ID + " --json\n"} {
+		if !strings.Contains(out, line) {
+			t.Errorf("inspect dropped %q from the projection:\n%s", line, out)
+		}
+	}
+	// Nothing was claimed settled: the next start still owes this cleanup.
+	again, err := store.Execution(record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Receipt != nil {
+		t.Errorf("a run coop could not touch was sealed: %+v", again.Receipt)
+	}
+	page, err := netExecutions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Executions) != 1 || !page.Executions[0].CleanupPending {
+		t.Errorf("the run stopped being pending after a failed attempt: %+v", page.Executions)
+	}
+}
+
+// Acceptance: an export is the sealed receipt and nothing else, redacted unless
+// the operator asks for the names on their own machine — and a run that has not
+// sealed one is refused rather than exported as null.
+func TestNetExportWithholdsDestinationsUnlessAsked(t *testing.T) {
+	store := netHostFixture(t)
+	project := netFixtureProject(t)
+	record := netSealRun(t, store, netRecordRun(t, store, project))
+	a := &app{cfg: &config.Config{RepoOverride: project}}
+	export := func(t *testing.T, args ...string) string {
+		t.Helper()
+		return captureStdout(t, func() {
+			if code, err := a.cmdNetExport(args); code != 0 || err != nil {
+				t.Fatalf("coop net export %v = (%d, %v)", args, code, err)
+			}
+		})
+	}
+	redacted := export(t, record.ID)
+	for _, secret := range []string{"example.com", "104.20.23.154"} {
+		if strings.Contains(redacted, secret) {
+			t.Errorf("the default export carried %q — a blocked or allowed name can encode a secret:\n%s", secret, redacted)
+		}
+	}
+	if !strings.Contains(redacted, `"digest_scope":"destinations-withheld"`) {
+		t.Errorf("the default export does not say what it withheld:\n%s", redacted)
+	}
+	included := export(t, record.ID, "--include-destinations")
+	for _, want := range []string{`"example.com"`, `"104.20.23.154:443"`, `"digest_scope":"destinations-included"`} {
+		if !strings.Contains(included, want) {
+			t.Errorf("the asked-for export is missing %s:\n%s", want, included)
+		}
+	}
+
+	// What it writes is the receipt contract, not this host's local inspection.
+	var receipt networkview.Receipt
+	if err := json.Unmarshal([]byte(included), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ID != record.ID || receipt.Finality != "final" || receipt.Workload != "exited" {
+		t.Errorf("exported receipt = %+v, want the sealed record of this run", receipt)
+	}
+	for _, local := range []string{`"read_at"`, `"freshness"`, `"observed"`, `"revision"`} {
+		if strings.Contains(included, local) {
+			t.Errorf("the export carried the local inspection field %s:\n%s", local, included)
+		}
+	}
+	// The checksum is a fingerprint of what is in the file, and never claims to
+	// be more than that.
+	for _, overclaim := range []string{"signed", "signature", "attest", "proof", "tamper"} {
+		if strings.Contains(strings.ToLower(included), overclaim) {
+			t.Errorf("the export describes its checksum as %q:\n%s", overclaim, included)
+		}
+	}
+
+	// A run with nothing sealed has no record to share.
+	pending := netRecordRun(t, store, project)
+	if code, err := a.cmdNetExport([]string{pending.ID}); code != 1 || err == nil || !strings.Contains(err.Error(), "no sealed record yet") {
+		t.Errorf("exporting an unsealed run = (%d, %v)", code, err)
+	}
+	for name, args := range map[string][]string{
+		"no run":       nil,
+		"two runs":     {record.ID, "cb375d22"},
+		"unknown flag": {record.ID, "--destinations"},
+	} {
+		if code, err := a.cmdNetExport(args); code != 2 || err == nil {
+			t.Errorf("coop net export with %s = (%d, %v), want a usage refusal", name, code, err)
+		}
+	}
+}
+
 func TestNetListingDTOPublishesOnlyItsAllowlist(t *testing.T) {
 	runs := []networkstate.ExecutionSummary{{ID: "a", Epoch: "e", Project: "/private/host/secret-project",
 		StartedAt: time.Unix(1, 0).UTC(), Final: true}}
@@ -629,6 +913,88 @@ func TestWatchAppendsNewEventsAndRendersTheFinalProjectionOnce(t *testing.T) {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("the stream printed a status ledger %q:\n%s", forbidden, text)
 		}
+	}
+}
+
+// Acceptance: --json is the same stream as NDJSON — one whole inspection per
+// change, each on its own line carrying its own freshness and loss, none of the
+// human view's prose, and every event bounded on its own.
+func TestWatchJSONIsOneBoundedInspectionPerChange(t *testing.T) {
+	reads := []networkstate.Inspection{
+		{Freshness: networkstate.FreshnessNotObserved, Revision: 1},
+		{Freshness: networkstate.FreshnessFresh, Revision: 2, Observed: networkview.Snapshot{Sequence: 1,
+			Connections: []networkview.Connection{netTestConnection("c1", "example.com", "104.20.23.154:443", 1, 2)}}},
+		{Freshness: networkstate.FreshnessFresh, Revision: 2, Observed: networkview.Snapshot{Sequence: 1,
+			Connections: []networkview.Connection{netTestConnection("c1", "example.com", "104.20.23.154:443", 1, 2)}}},
+		{Freshness: networkstate.FreshnessTerminal, Revision: 3, Observed: networkview.Snapshot{Sequence: 2, Terminal: true},
+			Receipt: &networkview.Receipt{ID: "run1", Finality: "final", Completeness: "partial"}},
+	}
+	var out bytes.Buffer
+	tick := make(chan time.Time, len(reads))
+	for range reads {
+		tick <- time.Unix(0, 0)
+	}
+	i := 0
+	code, err := runNetWatch(netWatchDeps{
+		ctx: context.Background(), tick: tick, now: func() time.Time { return time.Unix(int64(i), 0) },
+		out: &out, json: true, id: "run1", palette: ui.Palette{},
+		read: func(time.Time) (networkstate.Inspection, error) {
+			value := reads[i]
+			if i < len(reads)-1 {
+				i++
+			}
+			return value, nil
+		},
+	})
+	if code != 0 || err != nil {
+		t.Fatalf("runNetWatch = (%d, %v)", code, err)
+	}
+	if !strings.HasSuffix(out.String(), "\n") {
+		t.Fatalf("the NDJSON stream does not end its last event:\n%q", out.String())
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	var events []networkstate.Inspection
+	for n, line := range lines {
+		var event networkstate.Inspection
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("line %d is not one whole inspection: %v\n%s", n, err, line)
+		}
+		if event.Freshness == "" {
+			t.Errorf("line %d carries no freshness of its own: %s", n, line)
+		}
+		if n > 0 && line == lines[n-1] {
+			t.Errorf("line %d repeats its predecessor — the stream heartbeats: %s", n, line)
+		}
+		events = append(events, event)
+	}
+	if len(events) < 2 || events[0].Freshness != networkstate.FreshnessNotObserved {
+		t.Fatalf("the stream does not open with what the run had already done: %+v", events)
+	}
+	sealed := events[len(events)-1]
+	if sealed.Receipt == nil || sealed.Receipt.Completeness != "partial" {
+		t.Errorf("the stream does not close on the sealed record: %+v", sealed)
+	}
+	for _, event := range events[:len(events)-1] {
+		if event.Receipt != nil {
+			t.Errorf("a receipt was emitted before the run sealed one: %+v", event)
+		}
+	}
+	for _, prose := range []string{"Network run", "● Live", "allowed example.com", "Full details:", "⚠"} {
+		if strings.Contains(out.String(), prose) {
+			t.Errorf("the NDJSON stream carries the human view's %q:\n%s", prose, out.String())
+		}
+	}
+
+	// One anomalous read ends the stream instead of writing an unbounded event.
+	oversized := networkstate.Inspection{Freshness: networkstate.FreshnessFresh,
+		Observed: networkview.Snapshot{Denials: []networkview.Denial{{ID: "d1", Name: strings.Repeat("a", netEventMaxBytes)}}}}
+	code, err = runNetWatch(netWatchDeps{
+		ctx: context.Background(), tick: make(chan time.Time), now: time.Now, out: &bytes.Buffer{}, json: true,
+		id: "run1", palette: ui.Palette{},
+		read: func(time.Time) (networkstate.Inspection, error) { return oversized, nil },
+	})
+	if code != 1 || err == nil {
+		t.Errorf("an oversized event = (%d, %v), want the watch to stop", code, err)
 	}
 }
 

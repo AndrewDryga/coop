@@ -89,6 +89,53 @@ func TestHistoricalApprovalSurvivesSuffixChangesButNewAuthoringDoesNot(t *testin
 	}
 }
 
+// A trusted per-agent provider bundle is coop's own dependency for the agent
+// this run mounts credentials for, not something a human approves for a
+// project. The approval remembers exactly the project's own request; a run
+// still reaches the provider, through the bundle. An envelope that swallowed
+// core endpoints would silently widen what the NEXT request is measured
+// against — and would put "Anthropic" in a diff nobody asked about.
+func TestApprovalEnvelopeExcludesTrustedProviderBundles(t *testing.T) {
+	s, project := openStore(t), t.TempDir()
+	bundles := []egress.Bundle{featureBundle(egress.ClientCLI, "oauth")}
+	requests := []egress.Rule{rule("docs.example.com")}
+	if err := approve(s, project, egress.Filtered, requests, bundles); err != nil {
+		t.Fatal(err)
+	}
+	approval, err := s.Approval(project)
+	if err != nil || approval == nil {
+		t.Fatal("the approval was not remembered", err)
+	}
+	if len(approval.Envelope) != 1 || approval.Envelope[0].To.Domain != "docs.example.com" {
+		t.Fatalf("approval envelope = %+v, want only the project's own request", approval.Envelope)
+	}
+	for _, endpoint := range []string{"api.example.com", "mcp.example.com"} {
+		if slices.ContainsFunc(approval.Envelope, func(r egress.Rule) bool { return r.To.Domain == endpoint }) {
+			t.Errorf("the approval envelope carries the bundle's own %s: %+v", endpoint, approval.Envelope)
+		}
+	}
+	// The provider is reachable all the same: the grant comes from the bundle
+	// this launch carries, not from anything a human had to read.
+	snapshot, err := s.Admit(project, Admission{Requests: requests, Bundles: bundles})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, allowed := range []string{"docs.example.com", "api.example.com"} {
+		if !snapshot.Domain(allowed, 443).Allowed {
+			t.Errorf("%s was not reachable under the approved capture", allowed)
+		}
+	}
+	// And an approval never becomes the reason a bundle is trusted: dropping the
+	// bundle from the launch drops its endpoint with it.
+	without, err := s.Admit(project, Admission{Requests: requests})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if without.Domain("api.example.com", 443).Allowed {
+		t.Error("a run with no provider bundle still reached the provider through the approval")
+	}
+}
+
 func TestFeatureApprovalBindsVariantButAllowsUnchangedReleaseExpansion(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
 	bundles := []egress.Bundle{featureBundle(egress.ClientCLI, "key"), featureBundle(egress.ClientACP, "oauth")}

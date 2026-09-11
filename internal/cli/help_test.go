@@ -206,6 +206,12 @@ func TestCurrentDocsDoNotAdvertiseRetiredContracts(t *testing.T) {
 	}
 
 	manual := surfaces["CLI manual"]
+	// The mode a project runs under comes from .agent/project.yaml and nowhere
+	// else: `coop net approve` reviews that file, so no help surface may offer a
+	// flag that would let the caller name a different one.
+	if strings.Contains(manual, "--mode") {
+		t.Errorf("the CLI manual offers a --mode flag; access comes from .agent/project.yaml:\n%s", manual)
+	}
 	if !strings.Contains(manual, "scaffold queue, hooks, skills, agent dirs") ||
 		strings.Contains(manual, "scaffold the queue, hooks, skills, subagents") {
 		t.Errorf("top-level init summary does not match the current scaffold:\n%s", manual)

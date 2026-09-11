@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -59,13 +61,14 @@ func TestSetupChecksStopAtTheFailedProperty(t *testing.T) {
 			t.Errorf("exit %d claimed a check the script never ran:\n%s", code, b.String())
 		}
 	}
-	// A smoke that reached no verdict at all claims no check, and says why.
+	// A smoke that reached no verdict at all claims no check, and says why. A
+	// reason joined from several errors keeps every line at the same depth.
 	for name, tc := range map[string]struct {
 		code int
 		err  error
 		want string
 	}{
-		"did not finish": {err: errors.New("the setup check did not finish\ndocker: gateway image is missing"), want: "\n✗ this host is not ready for filtered runs\n  the setup check did not finish\ndocker: gateway image is missing\n  No setup was saved\n"},
+		"did not finish": {err: errors.New("the setup check did not finish\ndocker: gateway image is missing"), want: "\n✗ this host is not ready for filtered runs\n  the setup check did not finish\n  docker: gateway image is missing\n  No setup was saved\n"},
 		"stray exit":     {code: 1, want: "\n✗ this host is not ready for filtered runs\n  the setup check exited 1 without reaching a verdict\n  No setup was saved\n"},
 	} {
 		var b bytes.Buffer
@@ -74,6 +77,12 @@ func TestSetupChecksStopAtTheFailedProperty(t *testing.T) {
 		}
 		if b.String() != tc.want {
 			t.Errorf("%s transcript:\n%q\nwant:\n%q", name, b.String(), tc.want)
+		}
+		// Nothing that belongs in retained evidence reaches a failure either.
+		for _, forbidden := range []string{"sha256", "records", " daemon ", "record ", "next steps", "qualification"} {
+			if strings.Contains(b.String(), forbidden) {
+				t.Errorf("%s transcript carries the ledger word %q:\n%s", name, forbidden, b.String())
+			}
 		}
 	}
 }
@@ -105,6 +114,61 @@ func TestSetupChecksColorOnlyOnATerminal(t *testing.T) {
 	}
 	if setupPalette(&plain).Enabled() {
 		t.Error("a buffer got a colored palette")
+	}
+}
+
+// A redirected transcript — `coop net setup > setup.log`, or any run under
+// NO_COLOR — is the terminal one with the styling taken out: not one ANSI byte,
+// the same icons, the same two-space gutters, the same meaning. A reason that
+// arrived as several joined errors keeps every line at that gutter, with color
+// and without.
+func TestSetupChecksRedirectedAndNoColorKeepIconsAndGutters(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	file, err := os.Create(filepath.Join(t.TempDir(), "setup.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if p := setupPalette(file); p.Enabled() {
+		t.Fatal("a redirected stream got a colored palette")
+	}
+	_ = writeSetupChecks(file, setupPalette(file), 34, nil)
+	redirected, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plain bytes.Buffer
+	_ = writeSetupChecks(&plain, ui.Palette{}, 34, nil)
+	if string(redirected) != plain.String() {
+		t.Errorf("redirected transcript:\n%q\nis not the plain one:\n%q", redirected, plain.String())
+	}
+	if strings.ContainsRune(string(redirected), 0x1b) {
+		t.Errorf("a redirected stream received ANSI:\n%q", redirected)
+	}
+	for _, want := range []string{"  ✓ approved TLS access to example.com works\n", "  ✗ a raw IP dial bypassed the allowed-name policy\n",
+		"\n✗ this host is not ready for filtered runs\n", "  No setup was saved\n"} {
+		if !strings.Contains(string(redirected), want) {
+			t.Errorf("redirected transcript lost %q:\n%s", want, redirected)
+		}
+	}
+
+	joined := errors.New("the setup check did not finish\ndocker: gateway image is missing")
+	for name, p := range map[string]ui.Palette{"plain": {}, "colored": ui.Colored()} {
+		var b bytes.Buffer
+		_ = writeSetupChecks(&b, p, 0, joined)
+		for _, want := range []string{"\n  the setup check did not finish\n", "\n  docker: gateway image is missing\n", "\n  No setup was saved\n"} {
+			if !strings.Contains(b.String(), want) {
+				t.Errorf("%s continuation lines:\n%q\nwant to contain %q", name, b.String(), want)
+			}
+		}
+		for _, line := range strings.Split(b.String(), "\n") {
+			if body := strings.TrimLeft(line, " "); body != line && len(line)-len(body) != 2 {
+				t.Errorf("%s indented a line by %d spaces, want exactly 2: %q", name, len(line)-len(body), line)
+			}
+			if strings.HasPrefix(line, "\t") {
+				t.Errorf("%s indented with a tab: %q", name, line)
+			}
+		}
 	}
 }
 

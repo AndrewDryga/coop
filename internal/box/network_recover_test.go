@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 )
 
@@ -190,6 +191,85 @@ func TestRecoverNetworkRunsRefusesAnotherDaemon(t *testing.T) {
 	defer d.mu.Unlock()
 	if len(d.containers) == 0 {
 		t.Fatal("a foreign daemon's containers were removed")
+	}
+}
+
+// A run named by id is the only one that pass may settle: an inspection that
+// recovers the run it is about to render must not seal a second interrupted run
+// as a side effect. The later unscoped pass then settles what it left.
+func TestRecoverNetworkRunsSettlesOnlyTheRunItWasGiven(t *testing.T) {
+	f, d, evidence, connect := recoveryFixture(t)
+	// A second setup and a second run on the same host: one smoke launches one
+	// run, so the run this pass must not touch needs its own.
+	smoke, err := f.store.BeginQualification(d.smoke.Candidate(),
+		[]networkstate.QualifiedClient{{Provider: "claude", Client: egress.ClientCLI, Version: "2.1.260"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := smoke.CreateExecution(context.Background(), networkstate.ExecutionSpec{
+		Project: f.record.Project, PolicyFingerprint: f.policy.Fingerprint, Runtime: "docker",
+		DaemonID: f.record.DaemonID, Endpoint: f.record.Endpoint,
+		GatewayImage: f.record.GatewayImage, ClientImage: f.record.ClientImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	departSupervisor(t, f.store, f.record.ID)
+	departSupervisor(t, f.store, other.ID)
+
+	results, err := recoverNetworkRuns(context.Background(), evidence, f.record.ID, connect)
+	if err != nil || len(results) != 1 || results[0].RunID != f.record.ID || !results[0].Sealed {
+		t.Fatalf("an id-scoped recovery = %+v %v, want only the run it was given", results, err)
+	}
+	spared, err := evidence.Execution(other.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spared.Receipt != nil {
+		t.Fatalf("the run nobody asked about was sealed: %+v", spared.Receipt)
+	}
+
+	// It was pending all along: the unscoped pass proves the id was the reason
+	// it was spared, not a store that had already forgotten it.
+	rest, err := recoverNetworkRuns(context.Background(), evidence, "", connect)
+	if err != nil || len(rest) != 1 || rest[0].RunID != other.ID || !rest[0].Sealed {
+		t.Fatalf("the unscoped pass = %+v %v, want the run the first pass left", rest, err)
+	}
+}
+
+// Cleanup nobody could finish stays owed, so the next ordinary coop start
+// retries it — one bounded pass per start, never a loop of its own. Once it
+// settles, later passes have nothing left to do.
+func TestRecoverNetworkRunsRetriesAPendingOrphanOnALaterPass(t *testing.T) {
+	f, d, evidence, connect := recoveryFixture(t)
+	departSupervisor(t, f.store, f.record.ID)
+	d.refuseRemoval = "controller"
+	first, err := recoverNetworkRuns(context.Background(), evidence, "", connect)
+	if err != nil || len(first) != 1 || !slices.Contains(first[0].Pending, "controller") {
+		t.Fatalf("first pass = %+v %v, want the controller left pending", first, err)
+	}
+
+	// The next start finds the same run still owed and settles what the last one
+	// could not, without a retry loop of its own.
+	d.refuseRemoval = ""
+	second, err := recoverNetworkRuns(context.Background(), evidence, "", connect)
+	if err != nil || len(second) != 1 || second[0].RunID != f.record.ID {
+		t.Fatalf("second pass = %+v %v, want the same pending run retried", second, err)
+	}
+	if !slices.Contains(second[0].Removed, "controller") || len(second[0].Pending) != 0 || len(second[0].Failures) != 0 {
+		t.Fatalf("second pass = %+v, want the retry to finish the cleanup", second[0])
+	}
+	d.mu.Lock()
+	containers, volumes := len(d.containers), len(d.volumes)
+	d.mu.Unlock()
+	if containers != 0 || volumes != 0 {
+		t.Fatalf("the retry left %d container(s) and %d volume(s)", containers, volumes)
+	}
+
+	// Bounded: a settled run is no longer pending, so the start after that does
+	// no runtime work at all.
+	third, err := recoverNetworkRuns(context.Background(), evidence, "", connect)
+	if err != nil || len(third) != 0 {
+		t.Fatalf("third pass = %+v %v, want nothing left to retry", third, err)
 	}
 }
 

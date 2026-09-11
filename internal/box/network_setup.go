@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -357,7 +358,12 @@ func writeSetupChecks(out io.Writer, p ui.Palette, code int, runErr error) error
 	}
 	fmt.Fprintf(out, "\n%s\n", p.Bold(p.Red("✗ "+ErrNetworkSetupFailed.Error())))
 	if failed < 0 {
-		fmt.Fprintf(out, "  %s\n", reason)
+		// A reason joined from several errors is still one reason: every line of
+		// it sits at the verdict's depth, so the runtime's own message reads as
+		// part of the answer instead of falling out of the block.
+		for _, line := range strings.Split(strings.TrimRight(reason, "\n"), "\n") {
+			fmt.Fprintf(out, "  %s\n", line)
+		}
 	}
 	fmt.Fprintln(out, "  No setup was saved")
 	return fmt.Errorf("%w: %s", ErrNetworkSetupFailed, reason)
