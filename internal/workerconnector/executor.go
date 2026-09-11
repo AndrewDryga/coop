@@ -153,6 +153,13 @@ func (e *Executor) Execute(ctx context.Context, command workerproto.Command) (wo
 	if callErr == nil && command.Kind == "reconcile_operation" {
 		resource, callErr = e.completedReviewResource(ctx, resource)
 	}
+	if callErr == nil && command.Kind == "get_session_evidence" {
+		// A daemon answer that fails the evidence contract is a definite failure the controller
+		// records as "not captured", never an object it has to guess its way through.
+		if _, err := workerproto.DecodeSessionEvidence(resource); err != nil {
+			return e.complete(entry, failureResult(command, "invalid_session_evidence", err.Error()))
+		}
+	}
 	result := resultFromCall(command, resource, callErr)
 	return e.complete(entry, result)
 }
@@ -546,6 +553,19 @@ func prepareRequest(ctx context.Context, command workerproto.Command, artifacts 
 			return Request{}, errors.New("get_network_connections payload identity is invalid")
 		}
 		return Request{Method: "GET", Path: "/v1/sessions/" + url.PathEscape(payload.CoopSessionID) + "/network/connections"}, nil
+
+	case "get_session_evidence":
+		// The inspection export is the same shape as the networking reads: one GET of a route the
+		// daemon owns, forwarded after the connector confirms the object satisfies its own
+		// contract (see Execute). The connector selects nothing and derives nothing.
+		var payload getSessionPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return Request{}, err
+		}
+		if !reference(payload.CoopSessionID, 1024) {
+			return Request{}, errors.New("get_session_evidence payload identity is invalid")
+		}
+		return Request{Method: "GET", Path: "/v1/sessions/" + url.PathEscape(payload.CoopSessionID) + "/evidence"}, nil
 
 	case "get_network_explanation":
 		var payload getNetworkExplanationPayload

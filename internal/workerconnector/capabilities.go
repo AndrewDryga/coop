@@ -15,6 +15,9 @@ type sessionCapabilities struct {
 	// generic source selector. A daemon that publishes freshness but not this one advertises
 	// only freshness, so a partially upgraded fleet never receives selector-bound work.
 	RepositorySourceSelectorVersions []int `json:"repository_source_selector_versions"`
+	// SessionEvidenceVersions proves the daemon serves the session evidence read this connector
+	// maps get_session_evidence onto. Omitted by an older daemon, which then advertises nothing.
+	SessionEvidenceVersions []int `json:"session_evidence_versions,omitempty"`
 	// Policies is the daemon's published per-policy network reach. The connector does not consume
 	// it — a controller reads it from the API — but this decode is strict, so the field has to be
 	// named here or a daemon that publishes one would look like a different document entirely.
@@ -48,6 +51,11 @@ func LiveCapabilities(ctx context.Context, api API, configured []workerproto.Cap
 	if proves(document.RepositorySourceSelectorVersions, 1) {
 		result = append(result, workerproto.Capability{
 			Name: repositorySourceSelectorCapabilityName, Version: repositorySourceSelectorCapabilityVersion,
+		})
+	}
+	if proves(document.SessionEvidenceVersions, workerproto.SessionEvidenceVersion) {
+		result = append(result, workerproto.Capability{
+			Name: sessionEvidenceCapabilityName, Version: sessionEvidenceCapabilityVersion,
 		})
 	}
 	return result

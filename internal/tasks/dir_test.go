@@ -80,6 +80,24 @@ func TestScanSubtasksSkipsFences(t *testing.T) {
 	}
 }
 
+// The exported checklist is the same scan with its labels: one entry per counted checkbox, in
+// order, control characters stripped, so a control plane can show "Run the gate" beside the
+// boolean a checkpoint carried for it instead of "subtask 3".
+func TestScanChecklistKeepsLabelsAlignedWithSubtasks(t *testing.T) {
+	body := "## Subtasks\n- [ ] one\n- [x] two\x1b[0m bright\n  - [X] nested done\n```\n- [ ] fenced\n```\n- [w] in progress\n"
+	items := ScanChecklist(body)
+	subs := scanSubtasks(body)
+	if len(items) != len(subs) {
+		t.Fatalf("checklist has %d items, subtasks %d", len(items), len(subs))
+	}
+	want := []ChecklistItem{{"one", false}, {"two[0m bright", true}, {"nested done", true}, {"in progress", false}}
+	for i, item := range items {
+		if item != want[i] || item.Checked != subs[i] {
+			t.Errorf("item %d = %+v, want %+v (subtask %v)", i, item, want[i], subs[i])
+		}
+	}
+}
+
 func TestParseTaskFolderTitleResolution(t *testing.T) {
 	dir := t.TempDir()
 	// frontmatter title wins

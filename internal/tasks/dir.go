@@ -218,7 +218,25 @@ func firstH1(body string) string {
 // scanSubtasks returns the body's subtask checkboxes (outside code fences) as a slice of
 // done-flags. A marker of x/X counts as done; anything else (space, w, /, …) is not done.
 func scanSubtasks(body string) []bool {
-	var subs []bool
+	items := ScanChecklist(body)
+	subs := make([]bool, 0, len(items))
+	for _, item := range items {
+		subs = append(subs, item.Checked)
+	}
+	return subs
+}
+
+// ChecklistItem is one subtask checkbox with the label that follows its marker.
+type ChecklistItem struct {
+	Label   string
+	Checked bool
+}
+
+// ScanChecklist is scanSubtasks with the labels kept: the same lines, the same fence rule and
+// the same done marker, so the labels line up one-to-one with Item.Subtasks and a checkpoint's
+// subtask booleans. Labels are sanitized like titles, because task.md is agent-authored.
+func ScanChecklist(body string) []ChecklistItem {
+	var items []ChecklistItem
 	inFence := false
 	for _, line := range strings.Split(body, "\n") {
 		if fenceMarker(line) {
@@ -229,10 +247,13 @@ func scanSubtasks(body string) []bool {
 			continue
 		}
 		if m := subtaskRe.FindStringSubmatch(line); m != nil {
-			subs = append(subs, strings.EqualFold(m[1], "x"))
+			items = append(items, ChecklistItem{
+				Label:   sanitizeCell(strings.TrimSpace(line[len(m[0]):])),
+				Checked: strings.EqualFold(m[1], "x"),
+			})
 		}
 	}
-	return subs
+	return items
 }
 
 // parseTaskFolder reads dir/task.md into an Item, with State set by the caller. It returns

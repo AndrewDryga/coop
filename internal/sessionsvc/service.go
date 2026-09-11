@@ -962,18 +962,21 @@ type Service struct {
 	testAdmitNetwork func(policy Policy, workspace, forkName string) (sessionNetworkBinding, error)
 	// testResolveNetwork replaces the create fence's fresh resolution, for the same reason and
 	// with the same rule: nil in production.
-	testResolveNetwork     func(policy Policy) (PolicyNetwork, error)
-	runtimeMu              sync.Mutex
-	runtimeLocks           map[string]*sessionOperationLock
-	restoring              map[string]bool // sessions whose workspace a restore is rewriting right now
-	testDuringRestoreFiles func()          // test seam: runs while the restore holds the runtime and rewrites files
-	runtimeCleanupMu       sync.Mutex
-	runtimeCleanupCursor   int
-	runtimeCleanupStampMu  sync.Mutex
-	runtimeCleanupDone     map[string]runtimeCleanupStamp
-	testBeforeCleanupStamp func()
-	historicalMu           sync.Mutex
-	historicalPending      map[string]struct{}
+	testResolveNetwork func(policy Policy) (PolicyNetwork, error)
+	// testSessionNetworkReads replaces the evidence read's registry reads: a retained run with
+	// denials needs a qualified gateway execution nobody can create in a unit test. nil in production.
+	testSessionNetworkReads func(bound session.Session, now time.Time) sessionNetworkReads
+	runtimeMu               sync.Mutex
+	runtimeLocks            map[string]*sessionOperationLock
+	restoring               map[string]bool // sessions whose workspace a restore is rewriting right now
+	testDuringRestoreFiles  func()          // test seam: runs while the restore holds the runtime and rewrites files
+	runtimeCleanupMu        sync.Mutex
+	runtimeCleanupCursor    int
+	runtimeCleanupStampMu   sync.Mutex
+	runtimeCleanupDone      map[string]runtimeCleanupStamp
+	testBeforeCleanupStamp  func()
+	historicalMu            sync.Mutex
+	historicalPending       map[string]struct{}
 	// storage is this worker's own account of the disk it executes on: the configured limits, the
 	// sticky allocation decision, and the last measurement. See storage.go.
 	storage storageAccountant

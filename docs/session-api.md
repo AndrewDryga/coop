@@ -534,6 +534,35 @@ re-enrolling, even if an enrollment token is present. Check file ownership, conf
 clock and controller renewal status, then follow the controller operator's identity-recovery
 procedure. Do not delete the identity or journal as a routine reconnect fix.
 
+### Session inspection evidence
+
+A controller may ask a worker for one bounded, versioned account of a session it hosts, through
+the `get_session_evidence` command. The connector maps it onto a plain owner-private
+`GET /v1/sessions/{id}/evidence` (see the `session evidence` endpoint below) and forwards the
+daemon's answer verbatim; it selects nothing, derives nothing and adds no disclosure of its own.
+
+The object carries the session's frozen network posture and what its runs were observed doing,
+plus the host-approved task bound into its workspace as the task folder stands at capture. It
+never carries a credential, a host path, a packet body, or — unless the session policy set
+`egress.export_destinations: true` — a destination name. The agent-written `state.md` is bounded
+and withheld whole when it scans as carrying a secret.
+
+Every section states its own availability, so a control plane can tell an unreadable registry from
+a session that observed nothing: an unavailable section names its cause, a filtered session that
+has not run reports `no_run`, and a session that never ran filtered reports `not_filtered`. A
+daemon answer that does not satisfy the contract fails the command with `invalid_session_evidence`
+rather than being forwarded.
+
+The worker advertises `session-evidence` version `1` only after the running local daemon publishes
+`session_evidence_versions` in `GET /v1/capabilities`, independently of the other two capabilities.
+A configured claim cannot override that check, and a worker whose daemon predates the endpoint
+simply does not advertise it — which is what lets a controller say "this build does not export
+evidence" instead of showing an empty network.
+
+One sealed filtered run's refusals also reach the controller as the existing `network` session
+event, grouped and capped by the daemon exactly as `coop net` prints them, with the same
+destination projection.
+
 ## Request rules
 
 Examples below use curl's Unix-socket support:
@@ -704,7 +733,7 @@ host command, or return a host workspace path.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after controller startup |
-| `GET` | `/v1/capabilities` | `{"repository_freshness_receipt_versions":[2],"policies":{"<name>":{"mode":"filtered","fingerprint":"<64 hex>"}}}` for caller-side protocol negotiation and network placement |
+| `GET` | `/v1/capabilities` | `{"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"policies":{"<name>":{"mode":"filtered","fingerprint":"<64 hex>"}}}` for caller-side protocol negotiation and network placement |
 | `GET` | `/v1/storage` | this daemon's own workspace-storage accounting: `storage` (the object a fleet controller reads), `budget`, `totals`, `roots`, `forks` and `problems` |
 
 The `policies` map is each served policy's network reach as this daemon resolved it against this
@@ -736,12 +765,14 @@ closes at `storage.high_watermark_bytes` of USED space and reopens only under
 `storage.reserve_bytes` is the free-space floor underneath both, and new work never spends it.
 None of this bounds what an already-running task writes inside its own workspace.
 
-The outbound worker connector reports `repository-freshness` capability version `2` and
-`repository-source-selector` version `1` only after the session daemon on its configured Unix
-socket returns the matching versions in `GET /v1/capabilities`
-(`repository_freshness_receipt_versions`, `repository_source_selector_versions`). The two are
+The outbound worker connector reports `repository-freshness` capability version `2`,
+`repository-source-selector` version `1` and `session-evidence` version `1` only after the session
+daemon on its configured Unix socket returns the matching versions in `GET /v1/capabilities`
+(`repository_freshness_receipt_versions`, `repository_source_selector_versions`,
+`session_evidence_versions`). The three are
 versioned independently, so a daemon that resolves freshness but not source selectors advertises
-only the first and receives no selector-bound work. The connector removes any configured claim to
+only the first and receives no selector-bound work, and a control plane can tell a worker that
+does not export inspection evidence from a session that genuinely observed nothing. The connector removes any configured claim to
 either and drops the advertised capability again if live proof is unavailable. Responder therefore
 negotiates the exact worker and daemon currently serving a placed session during rolling upgrades.
 
@@ -1106,6 +1137,57 @@ GET of the route above, with no destination, rule or disclosure scope of its own
 | `GET` | `/v1/sessions/{session_id}/network/connections` | none |
 | `GET` | `/v1/sessions/{session_id}/network/explanations/{event_id}` | none |
 | `GET` | `/v1/sessions/{session_id}/network/receipt` | none |
+
+### Session evidence
+
+```bash
+curl --unix-socket "$SOCKET" http://localhost/v1/sessions/remote_.../evidence
+```
+
+One bounded, versioned account of a session for a control plane's inspection page: the network
+posture it was admitted under, what its newest run was observed doing, the session-wide receipt,
+and the host-approved task bound into its workspace as the task folder currently stands. It is a
+read — no gateway probe, no runtime, no authority — and takes no query, so nothing about the
+disclosure can be selected by the caller. The outbound worker fetches it through the
+`get_session_evidence` command and forwards it verbatim after confirming it satisfies its own
+contract; a daemon answer that does not is a definite `invalid_session_evidence` failure rather
+than an object a controller has to guess its way through.
+
+Every section states its own availability, because a section that could not be read and a section
+with nothing in it lead an operator to opposite conclusions:
+
+| Section | Status words |
+| --- | --- |
+| `network.access` | `captured`, `not_filtered`, `unavailable` |
+| `network.observation` | `observed`, `no_run`, `not_filtered`, `unavailable` |
+| `network.receipt` | `available`, `not_filtered`, `unavailable` |
+| `task` | `bound`, `unbound`, `unavailable` |
+| `task.snapshot.state_note` | `captured`, `absent`, `withheld` |
+
+`unavailable` always carries a `reason`. The posture (`mode`, `fingerprint`) comes from the
+immutable session row, so a registry this host cannot read leaves the posture known and every
+section beside it explicitly unreadable. A filtered session that has not run yet reports
+`no_run` and a `provisional` receipt with `run_count` `0` — never an empty counter.
+
+Counters are unsigned decimal STRINGS so a value above 2^53 survives a JavaScript client, and a
+`null` counter is a metric nobody measured, never `0`. Lists are bounded on the way out with the
+drop counted (`omitted_denials`, `omitted_connections`, `omitted_alerts`,
+`omitted_run_references`), so a run that denied a thousand names costs one bounded object that
+still says how much it left behind. The same `projection` rule as the network routes applies: a
+destination appears only under `destinations-included`, and a refusal whose name was withheld says
+so with `destination_withheld` rather than reporting no name at all.
+
+`task` carries the immutable binding from the session row plus the task folder at capture — its
+state, the same `state_sha256` a workspace checkpoint records for its task projection, the
+checklist labels the checkpoint's booleans stand for, the file inventory with digests, and the
+agent-written `state.md`. The note is bounded and withheld whole when it scans as carrying a
+secret. The worker keeps no transition ledger, so this is a snapshot: a control plane records
+successive ones rather than asking the worker for a history it does not have. A bound task whose
+folder has gone missing reports `unavailable` with its identity intact, never an empty task.
+
+| Method | Path | Body/query |
+| --- | --- | --- |
+| `GET` | `/v1/sessions/{session_id}/evidence` | none |
 
 ### Review
 

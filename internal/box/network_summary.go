@@ -132,6 +132,10 @@ func networkRunReport(runID string, snapshot networkview.Snapshot) NetworkReport
 	return out
 }
 
+// NetworkDenialBasis is denialBasis for the session evidence export, so a fleet
+// controller groups refusals by the same words `coop net` prints.
+func NetworkDenialBasis(kind string) string { return denialBasis(kind) }
+
 // denialBasis translates one retained event kind into the word a human uses for
 // where the refusal was seen. It never invents a transport the evidence did not
 // carry: a refused DNS query observed no port and no connection.

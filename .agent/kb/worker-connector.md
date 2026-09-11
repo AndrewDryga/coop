@@ -2,7 +2,7 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, moves workspaces only as digest-verified bounded bundles, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, docs/examples/worker.json, internal/workerconnector/storage.go]
+sources: [internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, docs/examples/worker.json, internal/workerconnector/storage.go, internal/cli/worker_cmd.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go]
 updated: 2026-09-11
 ---
 
@@ -91,6 +91,11 @@ The traps the code does not make obvious:
   `session_state_dir` and `session_policy_path`, name which local service a configuration is about;
   `coop_socket` must resolve inside the state directory, and the state root is never inferred from
   the socket's parent. No policy file is ever generated. Docs folded into `docs/session-api.md`.
+- 2026-09-11 — a controller can read one session's bounded inspection evidence through
+  `get_session_evidence` (a plain owner-private GET the connector forwards verbatim) and the
+  `network` session event now crosses `publicActivityPayload` as bounded grouped refusals. The
+  `session-evidence:1` capability is advertised only on live daemon proof, so an older worker's
+  silence never reads as an empty network. See [[session-evidence-export]].
 - 2026-09-11 — hello carries an OPTIONAL `storage` object (`internal/workerproto/storage.go`), read from the daemon's owner-private `GET /v1/storage` by `LiveStorage` and forwarded verbatim. Any failure — old daemon, failed measurement, object that fails its own contract — publishes nothing rather than a wrong number, so an unmeasurable disk never stops a poll. See [[worker-storage-accounting]].
 - 2026-09-11 — `create_session` carries a `source` selector; the connector keeps its OWN bounded
   copy of that union (`sourceSelector`, `internal/workerconnector/executor.go`) because this

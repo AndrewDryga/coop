@@ -344,7 +344,7 @@ func (e *Executor) collectActivity(ctx context.Context, maximumBytes int) ([]wor
 
 func operatorActivityEvent(kind string) bool {
 	switch kind {
-	case "tool.started", "tool.completed", "model.plan", "model.thought", "permission.decided", "activity.elided", "provider.backoff", "provider.alive":
+	case "tool.started", "tool.completed", "model.plan", "model.thought", "permission.decided", "activity.elided", "provider.backoff", "provider.alive", "network":
 		return true
 	default:
 		return false
@@ -417,11 +417,82 @@ func publicActivityPayload(kind string, raw json.RawMessage) (json.RawMessage, b
 	case "provider.alive":
 		copyPublicInteger(public, "frames", value["frames"])
 		copyPublicInteger(public, "bytes", value["bytes"])
+	case "network":
+		// One sealed filtered run's refusals, exactly as the daemon grouped them. The daemon
+		// already applied the policy's destination projection before it appended the event —
+		// a withheld destination arrives here as the literal "name withheld" — so this copy
+		// bounds and types the fields and adds no disclosure of its own.
+		if version, ok := value["version"].(float64); !ok || version != 1 {
+			return nil, false
+		}
+		public["version"] = int64(1)
+		copyPublicText(public, "run_id", value["run_id"], 256)
+		copyPublicText(public, "allowed_traffic", value["allowed_traffic"], 512)
+		copyPublicText(public, "evidence_id", value["evidence_id"], 256)
+		copyPublicInteger(public, "omitted_destinations", value["omitted_destinations"])
+		if truncated, ok := value["detail_truncated"].(bool); ok && truncated {
+			public["detail_truncated"] = true
+		}
+		public["denials"] = copyNetworkDenials(value["denials"])
+		public["alerts"] = copyPublicTexts(value["alerts"], maximumNetworkAlerts, 512)
 	default:
 		return nil, false
 	}
 	encoded, err := json.Marshal(public)
 	return encoded, err == nil
+}
+
+const (
+	maximumNetworkDenials = 32
+	maximumNetworkAlerts  = 16
+)
+
+// copyNetworkDenials keeps the grouped refusals a `network` event carries: destination as the
+// daemon disclosed it, the basis word, and the grouped count. Anything that is not exactly that
+// shape is dropped rather than guessed at.
+func copyNetworkDenials(raw any) []map[string]any {
+	denials := []map[string]any{}
+	entries, ok := raw.([]any)
+	if !ok {
+		return denials
+	}
+	for _, entry := range entries {
+		if len(denials) == maximumNetworkDenials {
+			break
+		}
+		value, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		denial := map[string]any{}
+		copyPublicText(denial, "destination", value["destination"], 512)
+		copyEnum(denial, "basis", value["basis"], "dns", "tls", "socket", "admission", "unknown")
+		copyPublicInteger(denial, "count", value["count"])
+		if len(denial) != 3 {
+			continue
+		}
+		denials = append(denials, denial)
+	}
+	return denials
+}
+
+func copyPublicTexts(raw any, maximumItems, maximumBytes int) []string {
+	texts := []string{}
+	entries, ok := raw.([]any)
+	if !ok {
+		return texts
+	}
+	for _, entry := range entries {
+		if len(texts) == maximumItems {
+			break
+		}
+		holder := map[string]any{}
+		copyPublicText(holder, "text", entry, maximumBytes)
+		if text, ok := holder["text"].(string); ok {
+			texts = append(texts, text)
+		}
+	}
+	return texts
 }
 
 func copyPublicText(target map[string]any, key string, raw any, maximum int) {

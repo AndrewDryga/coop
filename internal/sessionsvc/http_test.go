@@ -22,6 +22,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
@@ -126,12 +127,16 @@ func TestSessionHTTPCapabilitiesAdvertiseRepositoryFreshnessVersionsAndPolicyNet
 		t.Fatal(err)
 	}
 	versions, ok := document["repository_freshness_receipt_versions"].([]any)
-	if !ok || len(document) != 3 || len(versions) != 1 || versions[0] != float64(2) {
+	if !ok || len(document) != 4 || len(versions) != 1 || versions[0] != float64(2) {
 		t.Fatalf("capabilities = %#v", document)
 	}
 	selectors, ok := document["repository_source_selector_versions"].([]any)
 	if !ok || len(selectors) != 1 || selectors[0] != float64(1) {
 		t.Fatalf("capabilities source selector versions = %#v", document["repository_source_selector_versions"])
+	}
+	evidence, ok := document["session_evidence_versions"].([]any)
+	if !ok || len(evidence) != 1 || evidence[0] != float64(workerproto.SessionEvidenceVersion) {
+		t.Fatalf("capabilities session evidence versions = %#v", document["session_evidence_versions"])
 	}
 	policies, ok := document["policies"].(map[string]any)
 	if !ok || len(policies) != 1 {

@@ -23,6 +23,11 @@ const (
 	// must not place selector-bound work on a worker that does not advertise this.
 	repositorySourceSelectorCapabilityName    = "repository-source-selector"
 	repositorySourceSelectorCapabilityVersion = "1"
+	// Session evidence is the daemon's inspection export behind the get_session_evidence command.
+	// It is advertised only on live proof so a controller can tell "this worker's build does not
+	// export evidence" from "this session has no network run" — the two render differently.
+	sessionEvidenceCapabilityName    = "session-evidence"
+	sessionEvidenceCapabilityVersion = "1"
 )
 
 type fileConfig struct {
@@ -152,7 +157,8 @@ func configuredCapabilities(configured []workerproto.Capability) []workerproto.C
 	result := make([]workerproto.Capability, 0, len(configured))
 	for _, capability := range configured {
 		if capability.Name == repositoryFreshnessCapabilityName ||
-			capability.Name == repositorySourceSelectorCapabilityName {
+			capability.Name == repositorySourceSelectorCapabilityName ||
+			capability.Name == sessionEvidenceCapabilityName {
 			continue
 		}
 		result = append(result, capability)

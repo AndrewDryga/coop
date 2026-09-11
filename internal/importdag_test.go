@@ -69,7 +69,7 @@ var allowedEdges = map[string][]string{
 	"runtime":               {"liveprocess"},
 	"scaffold":              {"agent", "project", "taskstate", "ui"},
 	"session":               nil,
-	"sessionsvc":            {"agent", "box", "config", "egress", "forkspace", "ladder", "mcp", "networkstate", "networkview", "runtime", "session", "tasks", "workerproto"},
+	"sessionsvc":            {"agent", "box", "config", "egress", "forkspace", "ladder", "mcp", "networkstate", "networkview", "runtime", "secretscan", "session", "tasks", "workerproto"},
 	"secretscan":            {},
 	"taskchannel":           nil,
 	"taskmcp":               {"mcp", "tasks"},

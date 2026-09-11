@@ -292,6 +292,11 @@ type sessionReadyDTO struct {
 
 type sessionCapabilitiesDTO struct {
 	RepositoryFreshnessReceiptVersions []int `json:"repository_freshness_receipt_versions"`
+	// SessionEvidenceVersions is the proof that this daemon serves GET /v1/sessions/{id}/evidence
+	// in the named contract version. A controller reads it off the worker's advertised
+	// capability, so an older worker's missing evidence reads as "not exported by this build"
+	// rather than as an empty network or an unbound task.
+	SessionEvidenceVersions []int `json:"session_evidence_versions"`
 	// RepositorySourceSelectorVersions is the independently versioned proof that this daemon
 	// resolves and persists the generic source selector. A controller must not place
 	// selector-bound work on a worker whose daemon does not publish it.
@@ -358,6 +363,7 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeSessionJSON(w, http.StatusOK, sessionCapabilitiesDTO{
 			RepositoryFreshnessReceiptVersions: []int{2},
+			SessionEvidenceVersions:            []int{workerproto.SessionEvidenceVersion},
 			RepositorySourceSelectorVersions:   []int{session.SourceBindingVersion},
 			Policies:                           h.service.PolicyNetworks(),
 		})
@@ -512,6 +518,10 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 	case len(parts) == 2 && parts[1] == "network":
 		if sessionHTTPMethod(w, r, http.MethodGet) {
 			h.getNetwork(w, r, sessionID)
+		}
+	case len(parts) == 2 && parts[1] == "evidence":
+		if sessionHTTPMethod(w, r, http.MethodGet) && sessionQueryOnly(w, r) {
+			h.getSessionEvidence(w, r, sessionID)
 		}
 	case len(parts) == 3 && parts[1] == "network" && parts[2] == "receipt":
 		if sessionHTTPMethod(w, r, http.MethodGet) {
@@ -873,6 +883,18 @@ func (h *sessionHTTPHandler) getSession(w http.ResponseWriter, r *http.Request, 
 // getNetwork and getNetworkReceipt are READS. They project retained evidence and never probe a
 // gateway, so a denial storm cannot make them slow, and they cannot grant, approve, or widen
 // anything — the session API has no path to network authority at all, by design.
+// getSessionEvidence is the one read behind the worker's get_session_evidence command. It is a
+// GET with no query and no body: nothing about the session can be selected, widened or probed
+// from here, and the daemon alone decides what the object discloses.
+func (h *sessionHTTPHandler) getSessionEvidence(w http.ResponseWriter, r *http.Request, sessionID string) {
+	evidence, err := h.service.SessionEvidence(r.Context(), sessionID)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, evidence)
+}
+
 func (h *sessionHTTPHandler) getNetwork(w http.ResponseWriter, r *http.Request, id string) {
 	if !sessionQueryOnly(w, r) {
 		return

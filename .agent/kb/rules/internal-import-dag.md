@@ -54,6 +54,14 @@ this one has it.
   each finding, which needs the detector's stable fingerprints directly; `box.secretscan.go` keeps
   the box-side use (fork merge, uploads, redaction) that must never see exceptions. A leaf, pure
   package, so the edge adds no cycle risk.
+- 2026-09-11 — **+1 edge: `internal/sessionsvc` → `internal/secretscan`.** The session evidence
+  export publishes the agent-written `state.md` to a fleet controller, and a resume note is worth
+  showing but not worth a leaked token, so the note is scanned and withheld whole when it scans as
+  carrying one (`internal/sessionsvc/evidence.go`, `taskStateNote`). The scan belongs at the
+  daemon, where the bytes are read: scanning at the connector instead would mean the note had
+  already crossed the daemon's own disclosure boundary into a forwarded object.
+  `internal/workerconnector` already holds the same edge for checkpoint bundles, and `secretscan`
+  is a stdlib-only leaf with no internal imports of its own, so this adds no cycle risk.
 - 2026-09-10 — **+1 package, +3 edges, +2 consumer edges, +1 `uiPresentationOwners` grant:
   `internal/networkreport`** (`{"networkstate", "networkview", "ui"}`), imported by `box` and `cli`.
   The human projection of a network run (`WriteRun`, formerly `cli/net_result.go`) is rendered by
