@@ -369,10 +369,12 @@ func TestScaffold(t *testing.T) {
 			t.Errorf("Scaffold should write %s: %v", rel, err)
 		}
 	}
-	// The header names the chosen preset so the run hints are copy-pasteable.
+	// The header names the chosen preset so its run and inspect hints are copy-pasteable.
 	data, _ := os.ReadFile(path)
-	if !strings.Contains(string(data), "coop loop frontier") {
-		t.Errorf("template header should name the preset:\n%s", data)
+	for _, hint := range []string{"# Run: coop frontier", "# Inspect: coop presets frontier"} {
+		if !strings.Contains(string(data), hint) {
+			t.Errorf("template header should name the preset (%q):\n%s", hint, data)
+		}
 	}
 	// Never clobbers; validates the name.
 	if _, err := Scaffold(repo, "frontier"); err == nil || !strings.Contains(err.Error(), "already exists") {

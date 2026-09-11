@@ -388,7 +388,7 @@ func TestBlockTheAssignedTaskWritesItsDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("task did not land in blocked with a decision: %v", err)
 	}
-	for _, want := range []string{"# Decision: Title of t1?", "**The decision:** Postgres or SQLite?", "- A — Postgres: ops cost", "- B — SQLite: single node", "**Recommendation:** A — scale matters", "**Resolution:** <!-- HUMAN"} {
+	for _, want := range []string{"# Decision: Title of t1?", "**The decision:** Postgres or SQLite?", "- A — Postgres: ops cost", "- B — SQLite: single node", "**Recommendation:** A — scale matters", "**Resolution:** <!-- Human: write your answer here"} {
 		if !strings.Contains(string(decision), want) {
 			t.Fatalf("decision.md lacks %q:\n%s", want, decision)
 		}

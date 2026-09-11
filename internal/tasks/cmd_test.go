@@ -1166,11 +1166,11 @@ func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {
 // taskBody with no values reproduces the scaffold body byte-for-byte (the single shape source stays
 // stable), and taskShapeIssues flags a body missing a section but not the all-sections scaffold.
 func TestTaskBodyScaffoldStable(t *testing.T) {
-	want := "**Context:** <the problem, why it matters, and where in the code it lives>\n\n" +
-		"**Acceptance criteria:** <the gate green + the behaviour/test that proves it's done>\n\n" +
-		"**Approach:** <the boring plan; when it outgrows ~a screen, move it into spec.md>\n\n" +
-		"## Subtasks\n" +
-		"- [ ] <first small, end-to-end, testable step — check off once the gate is green>\n"
+	want := "**Context:** <the problem, why it matters, and where it happens>\n\n" +
+		"**Acceptance criteria:** <the result and checks that prove the work is finished>\n\n" +
+		"**Approach:** <the steps to take; use spec.md for a longer plan>\n\n" +
+		"## Subtasks\n\n" +
+		"- [ ] <a small step with a way to check it worked>\n"
 	if got := taskBody(nil, nil); got != want {
 		t.Errorf("scaffold body drifted from the single source:\ngot:  %q\nwant: %q", got, want)
 	}
@@ -1260,7 +1260,7 @@ func TestTasksFolderAddHeaderOnlyOnTheScaffold(t *testing.T) {
 	}
 
 	_, scaffold := add(t, "wire auth")
-	if !strings.Contains(scaffold, "FIRST, BEFORE ANY CODE") || !strings.Contains(scaffold, "coop tasks block ") {
+	if !strings.Contains(scaffold, "Describe the work before changing code.") || !strings.Contains(scaffold, "coop tasks block ") {
 		t.Errorf("the title-only scaffold still needs the full fill-me header, got:\n%s", scaffold)
 	}
 }
@@ -1297,7 +1297,7 @@ func TestTasksFolderAddRepeatedSectionFlag(t *testing.T) {
 }
 
 // `coop tasks block` writes a decision.md that's self-documenting and easy for a human to
-// answer: the structured sections, a HUMAN reply marker, and the exact unblock command.
+// answer: the structured sections, the human's reply line, and the exact unblock command.
 func TestValidateArgs(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -1511,7 +1511,7 @@ func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
 	dec := readFileString(filepath.Join(root, StateBlocked, id, "decision.md"))
 	for _, want := range []string{
 		"# Decision:", "**The decision:**", "**Options:**", "**Recommendation:**",
-		"**Resolution:**", "HUMAN:", "coop tasks unblock " + id,
+		"**Resolution:**", "Human: write your answer here", "coop tasks unblock " + id,
 	} {
 		if !strings.Contains(dec, want) {
 			t.Errorf("decision.md missing %q:\n%s", want, dec)
@@ -1520,7 +1520,7 @@ func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
 }
 
 // `coop tasks unblock <id> <answer>` records the answer into decision.md's Resolution (replacing
-// the HUMAN placeholder) and moves the task to todo — deciding it in one command. The rest
+// the human's placeholder) and moves the task to todo — deciding it in one command. The rest
 // of the decision.md survives the edit and the updated file rides along to the new state.
 func TestTasksFolderUnblockRecordsInlineAnswer(t *testing.T) {
 	root := t.TempDir()

@@ -304,17 +304,14 @@ func projectYAML(subprojects []string) string {
 		b.WriteString("# subprojects: [api, web]\n")
 	}
 	b.WriteString(`
-# box: the network access and box settings every run in this repo inherits. An explicit COOP_* env/conf setting still
-# wins for a one-off. Being committed, this file can ask but never grant: "open" takes effect
-# only after a human approves it on the host with 'coop net approve', and so does every rule.
 # Open a server running in the box from your host browser.
 # The server must listen on 0.0.0.0. Coop prints the host URL when the box starts.
 # serve:
 #   ports: [5173]
 
 box:
-  # filtered: allow the agent's provider and the network rules you approve.
-  # offline: block all network access.
+  # filtered: allow the agent's provider and destinations you approve.
+  # offline: block network access.
   # open: allow unrestricted network access.
   # Review changes with coop net approve before starting a new run.
   egress: filtered

@@ -257,12 +257,12 @@ func slugify(s string) string {
 type taskSection struct{ heading, flag, placeholder string }
 
 var taskSections = []taskSection{
-	{"Context", "context", "<the problem, why it matters, and where in the code it lives>"},
-	{"Acceptance criteria", "acceptance", "<the gate green + the behaviour/test that proves it's done>"},
-	{"Approach", "approach", "<the boring plan; when it outgrows ~a screen, move it into spec.md>"},
+	{"Context", "context", "<the problem, why it matters, and where it happens>"},
+	{"Acceptance criteria", "acceptance", "<the result and checks that prove the work is finished>"},
+	{"Approach", "approach", "<the steps to take; use spec.md for a longer plan>"},
 }
 
-const defaultSubtask = "<first small, end-to-end, testable step — check off once the gate is green>"
+const defaultSubtask = "<a small step with a way to check it worked>"
 
 // addOptions are the options `coop tasks add` / `coop backlog add` accept, derived from the section
 // flags that ARE the task shape — so a correction can never suggest a flag the parser would refuse.
@@ -289,7 +289,7 @@ func taskBody(values map[string]string, subtasks []string) string {
 		}
 		fmt.Fprintf(&b, "**%s:** %s\n\n", s.heading, v)
 	}
-	b.WriteString("## Subtasks\n")
+	b.WriteString("## Subtasks\n\n")
 	if len(subtasks) == 0 {
 		subtasks = []string{defaultSubtask}
 	}
@@ -324,29 +324,24 @@ func newTaskFiles(id, title, now string, values map[string]string, subtasks []st
 	taskMD := "---\nid: " + id + "\ntitle: " + title + "\nlabels: []\nupdated: " + now + "\n---\n\n" +
 		"# " + title + "\n\n" + taskBody(values, subtasks)
 	if !sectionsFilled(values) {
-		taskMD = "<!-- TASK SPEC — a fresh agent must work this from this file ALONE.\n" +
-			"     FIRST, BEFORE ANY CODE: replace every <…> placeholder below — the real problem and\n" +
-			"     where it lives (Context), what proves it's done incl. a green gate (Acceptance), and\n" +
-			"     the boring plan (Approach). This thinking IS step one, not a formality. Can't fill it\n" +
-			"     honestly? It isn't ready — run: coop tasks block " + id + "\n" +
-			"     Full format + examples: .agent/tasks/README.md -->\n" + taskMD
+		taskMD = "<!-- Describe the work before changing code.\n" +
+			"     Fill in the problem, completion criteria, approach and subtasks.\n" +
+			"     If a decision prevents this, use this run's task tools to record the question\n" +
+			"     and block the task. On the host: coop tasks block " + id + "\n" +
+			"     Format and examples: .agent/tasks/README.md -->\n" + taskMD
 	}
 	return map[string]string{
 		"task.md": taskMD,
-		"log.md": "<!-- Append-only working journal: what you did and WHY (decisions, dead ends,\n" +
-			"     surprises). Add to the BOTTOM; never rewrite history. The short \"where am I\n" +
-			"     now\" snapshot lives in state.md, not here. Example entry:\n" +
-			"       ## " + now[:10] + " — chose os.Rename over copy+delete\n" +
-			"       - atomic, so a torn move can't half-create the task folder. -->\n\n" +
+		"log.md": "<!-- Append progress, decisions and problems here.\n" +
+			"     Keep earlier entries. Put the latest resume summary in state.md. -->\n\n" +
 			"# Log — " + title + "\n",
-		"state.md": "<!-- Resume snapshot — OVERWRITE this whole file at each checkpoint (before a\n" +
-			"     commit or pause) so a fresh agent can resume cold. Keep it short; this is NOT\n" +
-			"     a journal (that's log.md). -->\n\n" +
+		"state.md": "<!-- Replace this short summary at each checkpoint so another session can continue.\n" +
+			"     Keep the detailed history in log.md. -->\n\n" +
 			"# State — " + title + "\n\n" +
 			"**Status:** not started\n" +
 			"**Done so far:** —\n" +
-			"**Next action:** <the very next concrete step>\n" +
-			"**Traps:** <gotchas the next agent must know, or —>\n",
+			"**Next action:** <the next concrete step>\n" +
+			"**Traps:** <anything the next session needs to watch for, or —>\n",
 	}
 }
 
@@ -1707,19 +1702,18 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			return code, fmt.Errorf("%s is blocked, but its decision request was not saved: %w", t.ID, err)
 		}
 	} else if !fileExists(dec) {
-		stub := "<!-- A one-way-door choice that blocks this task. The agent fills The decision,\n" +
-			"     Options, and Recommendation; a HUMAN decides — either write Resolution below and\n" +
-			"     run 'coop tasks unblock " + t.ID + "', or do both in one step:\n" +
-			"       coop tasks unblock " + t.ID + " \"A — go with Postgres\" -->\n\n" +
+		stub := "<!-- Explain the choice and your recommendation. A human supplies the answer.\n" +
+			"     To save the answer and return this task to todo:\n" +
+			"     coop tasks unblock " + t.ID + " \"<answer>\" -->\n\n" +
 			"# Decision: " + t.Title + "?\n\n" +
-			"**Blocks:** this task (`" + t.ID + "`).\n\n" +
+			"**Blocks:** this task (" + t.ID + ").\n\n" +
 			"**The decision:** " + decisionScaffoldMarker + "\n\n" +
-			"**Options:**\n" +
+			"**Options:**\n\n" +
 			"- **A — <name>:** <consequence>\n" +
 			"- **B — <name>:** <consequence>\n\n" +
-			"**Recommendation:** <the agent's pick + one line why>\n\n" +
+			"**Recommendation:** <your choice and why>\n\n" +
 			"---\n\n" +
-			"**Resolution:** <!-- HUMAN: your answer (e.g. \"A — go with Postgres\"); or pass it inline to 'coop tasks unblock " + t.ID + "' -->\n"
+			decisionResolutionLine
 		if err := os.WriteFile(dec, []byte(stub), 0o644); err != nil {
 			return -1, err
 		}
@@ -1740,7 +1734,11 @@ var taskRemoveSpec = taskArgSpec{[]string{"--all-done", "--yes", "-y"}, 1, "coop
 // decisionScaffoldMarker is the placeholder the editable stub leaves where the question goes. Its
 // presence is how `block --question …` tells "nobody has written this decision yet" from "a human
 // or an earlier agent wrote one", which it must never overwrite.
-const decisionScaffoldMarker = "<what must be chosen, and why it can't be undone cheaply>"
+const decisionScaffoldMarker = "<what needs to be chosen and why you cannot safely proceed>"
+
+// decisionResolutionLine is the last line of every decision.md, stub or filled: the one place a
+// human writes the answer, and the command that saves it for them.
+const decisionResolutionLine = "**Resolution:** <!-- Human: write your answer here, or use coop tasks unblock. -->\n"
 
 // errDecisionAlreadyWritten is the refusal that protects a decision somebody already wrote — a
 // human's answer, or an earlier agent's question. It is the caller's to resolve, not a failure.

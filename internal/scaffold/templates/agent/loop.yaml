@@ -1,116 +1,87 @@
-# .agent/loop.yaml — configuration for `coop loop` (committed; edit to taste).
+# Configure coop loop. Omit a setting to keep its default.
+# Start a loop with an agent or preset: coop loop claude
+# Help: coop help loop
 #
-# Every key is optional — omit it (or a whole section) to use coop's built-in
-# default, noted below. Models use coop's target grammar,
-# provider[:model][/effort][@account].
-#
-# Sections run in loop order:
-#   preflight (before) → work → between (after each task) → signoff (at the end) → verify (after signoff accepts)
+# Stages: preflight → work → between → signoff → verify
 
-# Run every stage's box WITHOUT the shared MCP config (~/.coop/mcp.json): the servers' tool schemas
-# ride at the front of every model request, so an unattended drain that never uses those tools pays
-# for them each iteration. One caveat: a verify: pass whose e2e depends on MCP tooling needs mcp
-# left on (repo-local e2e via bash is unaffected). One-off form: coop loop --no-mcp.
-# Default: true (MCP mounts whenever mcp.json has servers).
+# Include shared MCP servers from ~/.config/coop/agents/mcp.json (default: true).
+# Set false when this workflow does not need those tools.
+# One run only: coop loop claude --no-mcp
 #mcp: false
 
 preflight:
-  # Run the one-shot pre-loop queue tidy: coop itself returns blocked tasks whose decision.md now
-  # has a Resolution to todo — host-side, no box, no model. Works no task, changes no code.
+  # Return blocked tasks with answered decisions to todo before work starts.
   # Default: false.
   #enabled: true
 
-  # These instructions SET the cleanup job for an agent box; it spins up just
-  # for them. The built-in resolved-blocker unblock already ran host-side.
-  # The box may move task folders, but must not work tasks, change code, or
-  # commit.
-  # Default: none (the tidy stays host-side).
+  # Optional extra preparation instructions. This agent must not work tasks,
+  # change source code, or commit.
   #prompt: |
-  #  Also drop stale screenshots under .agent/tasks/*/screenshots/.
+  #  Review todo tasks for missing completion criteria.
+  #  Report the task IDs that need more detail.
 
 work:
-  # Model ladder for work iterations. Each rung is a TARGET (claude:opus, codex:gpt-5.6-luna) or a
-  # PRESET NAME (frontier — the iteration runs under that preset: its lead ladder + roles). coop
-  # rotates to the next rung on a rate limit (a preset rung's own ladder first). A bare provider
-  # word (claude/codex/gemini/grok) is a target; any other bare word must name a preset.
-  # Default: the who on the command line (`coop loop claude` or `coop loop frontier`) and its lead.
+  # Agent or preset choices, tried in order when a usage limit is reached.
+  # Default: the agent or preset supplied on the command line.
   #agent: [frontier, claude:opus, codex:gpt-5.6-luna]
 
-  # Advanced: a raw command run each iteration instead of coop's agent form (disables the
-  # signoff, preflight, and between passes). Default: coop's built-in agent form.
+  # Advanced: run a custom command instead of the built-in agent workflow.
+  # This disables agent preflight, between-task review, signoff and verify.
   #command: []
 
 between:
-  # Opt-in audit after EACH completed task (may reopen it before the loop moves on). Default: off.
-  # Exception: a completed task that edits a gate-defining file always gets an immediate protected
-  # audit, using this target/prompt when configured or the signoff target + built-in prompt otherwise.
+  # Review after each completed task (default: false).
+  # Changes to check-defining files always receive a protected review.
   #enabled: true
 
-  # `tasks` is report-only: the entire repository, including every task queue,
-  # is read-only. The reviewer returns evidence + exact task ids; Coop applies
-  # validated reopens host-side. Use `repo` only when the reviewer is
-  # intentionally allowed to fix source; task lifecycle remains report-only.
-  # Values: tasks | repo. Default: tasks.
+  # tasks: read-only review; Coop applies validated task reopens.
+  # repo: the reviewer may also fix source code.
+  # Default: tasks.
   #writes: repo
 
-  # Audit model ladder. Default: the signoff model.
+  # Default: the signoff agent.
   #agent: [claude:sonnet]
 
-  # The ordinary per-task audit prompt — SET it here (required when enabled).
-  # coop prepends the just-finished task's id + folder, so "the task named above" is exact.
+  # Required when enabled. Coop identifies the completed task.
   #prompt: |
-  #  Audit the task named above: confirm every acceptance criterion is demonstrably met
-  #  and its failure path is tested; report the concrete finding and task id
-  #  if not.
+  #  Check the task's completion criteria and failure-path tests.
+  #  Report any unmet criterion with its task ID.
 
 signoff:
-  # Like every review stage, signoff is report-only by default and Coop applies
-  # validated task reopens host-side. Opt into source fixes only when a
-  # workflow expects final review to edit and commit; task lifecycle stays
-  # report-only.
-  # Values: tasks | repo. Default: tasks.
+  # tasks: read-only review; Coop applies validated task reopens.
+  # repo: the reviewer may also fix source code.
+  # Default: tasks.
   #writes: repo
 
-  # Work→signoff rounds before a task the signoff keeps reopening is blocked for a human.
-  # Batch-scaled: the real cap is clamp(tasks_done / 2, 3, rounds). Default: 5.
+  # Maximum review rounds before repeatedly reopened work needs a human.
+  # Smaller batches may use a lower limit. Default: 5.
   #rounds: 5
 
-  # Model ladder for the final signoff pass. A stronger model here reviews the cheaper work loop.
-  # Default: the work model.
+  # Default: the work agent.
   #agent: [codex:gpt-5.6-sol/xhigh, claude:fable]
 
-  # Extra signoff instructions/checks, APPENDED to coop's built-in senior review (which always
-  # runs — it checks goal, standards, failure-path tests, polish, and the gate). The reviewer
-  # applies these on top and reopens a task that fails one. Default: nothing appended.
+  # Extra checks added to the built-in final review.
   #prompt: |
-  #  - The changelog has an entry for any user-visible change.
-  #  - The formatter/linter passes (reopen the task if it doesn't).
+  #  Check that user-visible changes are described in the changelog.
 
 verify:
-  # Opt-in FINAL pass, after signoff accepts the batch: it gets the run's change context (every task
-  # this loop completed, by its Coop-Task trailer, with the files it touched) and does whatever the
-  # prompt says — typically e2e/integration tests for the AFFECTED features. Default: off.
+  # Run a final verification pass after signoff (default: false).
   #enabled: true
 
-  # Like every review stage, verify is report-only by default and Coop applies
-  # validated task reopens host-side. Opt into full repository writes only
-  # when the e2e reviewer is expected to fix source; task lifecycle stays
-  # report-only.
-  # Values: tasks | repo. Default: tasks.
+  # tasks: read-only review; Coop applies validated task reopens.
+  # repo: the reviewer may also fix source code.
+  # Default: tasks.
   #writes: repo
 
-  # Verify model ladder. Default: the signoff model.
+  # Default: the signoff agent.
   #agent: [codex:gpt-5.6-sol/xhigh]
 
-  # The verify prompt — SET it here (verify has no built-in; required when enabled). "Affected
-  # features" resolves against the injected per-task change list, so you can just say:
+  # Required when enabled. Coop supplies the affected tasks and files.
   #prompt: |
-  #  e2e-test every feature this loop affected. Report the task whose e2e
-  #  fails and the failure.
+  #  Test the affected features end to end.
+  #  Report failures with the task IDs they affect.
 
-# In any review prompt above (between / signoff / verify) you can PLACE the run's context inline with
-# template variables — coop substitutes them before the pass runs:
-#   {loop.changes}   the full per-task change block (commits + files, grouped by task)
-#   {loop.tasks}     the completed task ids, comma-separated
-#   {loop.affected}  the affected areas (the top-level dirs the run touched)
-# e.g.  prompt: |  e2e {loop.affected}; the features are the tasks: {loop.tasks}
+# Variables available in review prompts:
+# {loop.changes}   completed tasks, commits and changed files
+# {loop.tasks}     completed task IDs
+# {loop.affected}  top-level folders changed by this run

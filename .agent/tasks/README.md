@@ -64,12 +64,13 @@ A fresh agent must be able to work the task from this file alone: the problem, t
 
     # <one-line outcome>
 
-    **Context:** <the problem, why it matters, and where in the code it lives>
-    **Acceptance criteria:** <the gate green + the behaviour/test that proves it's done>
-    **Approach:** <the boring plan; when it outgrows ~a screen, move it into spec.md>
+    **Context:** <the problem, why it matters, and where it happens>
+    **Acceptance criteria:** <the result and checks that prove the work is finished>
+    **Approach:** <the steps to take; use spec.md for a longer plan>
 
     ## Subtasks
-    - [ ] <first small, end-to-end, testable step — check off once the gate is green>
+
+    - [ ] <a small step with a way to check it worked>
 
 **Example:**
 
@@ -162,25 +163,25 @@ recommendation; **the human writes the Resolution and runs `coop tasks unblock <
 
     # Decision: <question>?
 
-    **Blocks:** this task (`<id>`).
+    **Blocks:** this task (<id>).
 
-    **The decision:** <what must be chosen, and why it can't be undone cheaply>
+    **The decision:** <what needs to be chosen and why you cannot safely proceed>
 
     **Options:**
     - **A — <name>:** <consequence>
     - **B — <name>:** <consequence>
 
-    **Recommendation:** <the agent's pick + one line why>
+    **Recommendation:** <your choice and why>
 
     ---
 
-    **Resolution:** <!-- HUMAN: your answer here, then: coop tasks unblock <id> -->
+    **Resolution:** <!-- Human: write your answer here, or use coop tasks unblock. -->
 
 **Example** (agent filled, awaiting the human):
 
     # Decision: store egress mode where?
 
-    **Blocks:** this task (`2026-06-26-egress-fail-closed`).
+    **Blocks:** this task (2026-06-26-egress-fail-closed).
 
     **The decision:** Whether the mode is an env var only or also persisted in .agent/config —
     persisting changes the on-disk format (a one-way door for older coop).

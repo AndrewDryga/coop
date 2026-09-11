@@ -224,11 +224,14 @@ type Decision struct {
 // "is the file already exactly this request?" without writing anything (see saveRequestedDecision).
 func RenderDecision(id, title string, d Decision) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Decision: %s?\n\n**Blocks:** this task (`%s`).\n\n**The decision:** %s\n\n**Options:**\n", title, id, d.Question)
+	fmt.Fprintf(&b, "<!-- Explain the choice and your recommendation. A human supplies the answer.\n"+
+		"     To save the answer and return this task to todo:\n"+
+		"     coop tasks unblock %s \"<answer>\" -->\n\n", id)
+	fmt.Fprintf(&b, "# Decision: %s?\n\n**Blocks:** this task (%s).\n\n**The decision:** %s\n\n**Options:**\n\n", title, id, d.Question)
 	for _, option := range d.Options {
 		fmt.Fprintf(&b, "- %s\n", option)
 	}
-	fmt.Fprintf(&b, "\n**Recommendation:** %s\n\n---\n\n**Resolution:** <!-- HUMAN: your answer; or pass it inline to 'coop tasks unblock %s' -->\n", d.Recommendation, id)
+	fmt.Fprintf(&b, "\n**Recommendation:** %s\n\n---\n\n%s", d.Recommendation, decisionResolutionLine)
 	return b.String()
 }
 

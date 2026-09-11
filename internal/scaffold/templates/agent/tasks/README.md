@@ -68,12 +68,13 @@ header comment says exactly this, so the reminder travels with the task.
 
     # <one-line outcome>
 
-    **Context:** <the problem, why it matters, and where in the code it lives>
-    **Acceptance criteria:** <the gate green + the behaviour/test that proves it's done>
-    **Approach:** <the boring plan; when it outgrows ~a screen, move it into spec.md>
+    **Context:** <the problem, why it matters, and where it happens>
+    **Acceptance criteria:** <the result and checks that prove the work is finished>
+    **Approach:** <the steps to take; use spec.md for a longer plan>
 
     ## Subtasks
-    - [ ] <first small, end-to-end, testable step — check off once the gate is green>
+
+    - [ ] <a small step with a way to check it worked>
 
 **Example:**
 
@@ -168,25 +169,25 @@ or do both at once with `coop tasks unblock <id> "<answer>"`.**
 
     # Decision: <question>?
 
-    **Blocks:** this task (`<id>`).
+    **Blocks:** this task (<id>).
 
-    **The decision:** <what must be chosen, and why it can't be undone cheaply>
+    **The decision:** <what needs to be chosen and why you cannot safely proceed>
 
     **Options:**
     - **A — <name>:** <consequence>
     - **B — <name>:** <consequence>
 
-    **Recommendation:** <the agent's pick + one line why>
+    **Recommendation:** <your choice and why>
 
     ---
 
-    **Resolution:** <!-- HUMAN: your answer here, then: coop tasks unblock <id> — or pass it inline -->
+    **Resolution:** <!-- Human: write your answer here, or use coop tasks unblock. -->
 
 **Example** (agent filled, awaiting the human):
 
     # Decision: where does the timeout setting live?
 
-    **Blocks:** this task (`2026-06-26-timeout-fail-closed`).
+    **Blocks:** this task (2026-06-26-timeout-fail-closed).
 
     **The decision:** Whether the timeout stays an env var only, or is also persisted in the
     config file — persisting changes the on-disk format, which older releases can't read.

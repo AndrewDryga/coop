@@ -2,109 +2,62 @@ package preset
 
 // Template is the scaffolded preset — the documented frontier recipe, ready to edit:
 // a big-model lead, a native deep-thinking subagent, a read-only cross-vendor critic,
-// and a cheap write-capable delegate. Its prompt: lines are active because Scaffold
-// also writes the files they reference (templateFiles); the result must load cleanly
-// (TestScaffold loads it), so any referenced file MUST be in templateFiles.
-const Template = `# coop preset — an orchestration recipe: which agent LEADS a session, and which
-# ROLES it can route work to. Edit this file, then run or inspect it:
-#   Run:      coop %[1]s
-#             coop loop %[1]s
-#   Inspect:  coop presets %[1]s
-#   Learn how presets work: coop help presets
-# An explicit target on the command line (claude:opus@work) overrides the lead +
-# ladder. Model ids: coop models. Accounts (logins): coop credentials. A preset
-# names models and accounts, never the secrets themselves.
+// and a cheap write-capable delegate. Its comments say what a person has to decide,
+// not everything the loader accepts — `coop help presets` is the reference. The
+// prompt: lines are active because Scaffold also writes the files they reference
+// (templateFiles); the result must load cleanly (TestScaffold loads it), so any
+// referenced file MUST be in templateFiles.
+const Template = `# Models and providers that work together.
+# Run: coop %[1]s
+# Inspect: coop presets %[1]s
+# Learn how presets work: coop help presets
 
-# lead — REQUIRED: the agent that leads the session,
-# as a TARGET or a fallback ladder.
 lead:
-  # agent — REQUIRED. A target: provider[:model][/effort][@account], or a LIST
-  # of them (a fallback ladder):
-  #   claude
-  #     the agent's default model, on EVERY signed-in account
-  #   claude:claude-opus-4-8/xhigh
-  #     that model at xhigh effort, on every signed-in account
-  #   claude:claude-opus-4-8@work
-  #     that model pinned to the "work" account only
-  #   [claude:claude-fable-5/xhigh, claude:claude-opus-4-8@work]
-  #     a fallback LADDER
-  #   [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
-  #     a CROSS-PROVIDER ladder
-  # A loop rotates the ladder top-to-bottom (all accounts of entry 1, then entry
-  # 2, …), running each rung's own agent, keying rate limits per (agent, model,
-  # account); a single run uses the first entry, and it's the default agent.
-  # Model ids: coop models. Accounts: coop credentials.
+  # The lead owns the session and combines the roles' work.
+  # A list tries agents in order where automatic rotation is supported.
+  # Model, effort and account syntax: coop help models
   agent: [claude:claude-fable-5/xhigh, codex:gpt-5.6-sol/xhigh]
 
-  # prompt — OPTIONAL Markdown appended to (never replacing) the generated lead
-  # contract. init scaffolds roles/lead.md; edit it, or delete it and this line.
+  # Extra instructions for the lead. Omit this field when not needed.
   prompt: roles/lead.md
 
-# roles — OPTIONAL map of role-name → role the lead can hand work to (a name is
-# lowercase letters, digits, and dashes). Each role runs on its agent's DEFAULT
-# account; only the lead rotates accounts. Every field is documented below.
 roles:
-
   thinker:
-    # mode: native — coop generates a Claude subagent (coop-thinker) that runs
-    # in the lead's session, no separate box. It's Claude's own subagent file,
-    # so it needs a Claude LEAD; under a codex, gemini, or grok lead this role
-    # degrades to a read-only consult. With no subagent: below, coop generates
-    # it from this role's model, when, and prompt.
+    # Native roles run inside a compatible lead session.
+    # With another provider leading, this becomes read-only advice.
     mode: native
-    # agent — a target: provider[:model][/effort]. The model (after the ':') is
-    # what the generated subagent runs on (coop models); a bare provider uses
-    # the agent's default. A role runs its agent's DEFAULT account — no @account
-    # (only the lead rotates accounts).
     agent: claude:claude-opus-4-8/xhigh
-    # when — OPTIONAL routing hints; become the subagent's description and the
-    # lead's cue.
     when: [architecture, debugging, code-review, before-commit]
-    # prompt — the generated subagent's system prompt. To reference an existing
-    # .claude/agents/ subagent instead of generating one, set: subagent: <name>.
     prompt: roles/thinker.md
+    # To use an existing Claude subagent instead:
+    # subagent: <name>
 
   critic:
-    # mode: consult — a READ-ONLY peer for a second opinion (often another
-    # vendor), asked as coop-consult critic; it cannot edit files.
+    # Consult roles give read-only advice.
     mode: consult
-    # agent — a target or fallback LIST: provider[:model][/effort]. A failed
-    # consult advances only on a proven rate limit; each provider uses its
-    # default account. Unsigned-in rungs skip.
-    # Example: [codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high]
+    # Roles use the provider's default account; do not add @account.
+    # Consult and delegate agents may also be a fallback list.
     agent: codex:gpt-5.6-sol/xhigh
-    # when — OPTIONAL routing hints.
     when: [plan-review, security, tradeoffs]
-    # prompt — the persona the peer adopts for this role's consults; delete this
-    # line (and the file) and the peer answers as itself.
     prompt: roles/critic.md
 
   fast:
-    # mode: delegate — a WRITE-CAPABLE worker via coop-delegate: it may edit the
-    # worktree but never commits; the lead reviews the diff, gates, and commits.
+    # Delegates edit files. The lead reviews, checks and commits their work.
     mode: delegate
-    # agent — a target or fallback LIST: provider[:model][/effort]. Delegate
-    # fallback is allowed only while every file and Git history remain unchanged
-    # after the limited rung.
-    # Example: [gemini:gemini-3.5-flash, codex:gpt-5.4-mini]
     agent: gemini:gemini-3.5-flash
-    # when — OPTIONAL routing hints.
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
-    # commit — delegate-only; only "never" (the delegate never commits).
+    # These delegate settings only accept never.
     commit: never
-    # concurrent — delegate-only; only "never" (delegate runs are serialized).
     concurrent: never
-    # prompt — OPTIONAL Markdown appended to this role's contract (see lead).
     prompt: roles/fast.md
 `
 
-// leadPrompt and fastPrompt are the starter Markdown files the template references,
-// written by Scaffold. They APPEND to coop's generated contract (never replacing its
-// routing/safety text) and hold sensible defaults that stand on their own for any
-// project — a leading HTML note says to tune them, or how to drop them.
-const leadPrompt = `<!-- roles/lead.md — guidance for the LEAD, appended to (never replacing) coop's
-     generated contract. Sensible defaults for any project; tune for yours, or
-     delete this file and the "prompt: roles/lead.md" line to drop it. -->
+// leadPrompt and fastPrompt are the starter Markdown files the template references, written by
+// Scaffold. They hold sensible defaults that stand on their own for any project, and each opens
+// with the same one line: what the file is, and how to drop it. How a prompt reaches its agent
+// differs by role — appended to a generated contract, or the whole native subagent file — so no
+// starter claims one of the two.
+const leadPrompt = `<!-- Extra instructions for this agent. Remove the prompt setting to omit this file. -->
 
 ## How to work here
 
@@ -128,9 +81,7 @@ your context for leading, not typing. If you catch yourself grinding out
 repetitive edits by hand, stop and hand them off.
 `
 
-const fastPrompt = `<!-- roles/fast.md — guidance for the "fast" delegate, appended to its generated
-     contract. Sensible defaults for any project; tune for yours, or delete this
-     file and the "prompt: roles/fast.md" line to drop it. -->
+const fastPrompt = `<!-- Extra instructions for this agent. Remove the prompt setting to omit this file. -->
 
 ## Working as the fast delegate
 
@@ -144,11 +95,8 @@ const fastPrompt = `<!-- roles/fast.md — guidance for the "fast" delegate, app
 `
 
 // criticPrompt is the persona the "critic" consult adopts — the second opinion from another
-// vendor. Like the others it APPENDS to coop's generated contract, so it carries only the
-// stance, never the role's wiring.
-const criticPrompt = `<!-- roles/critic.md — the persona the "critic" consult adopts, appended to its
-     generated contract. Sensible defaults for any project; tune for yours, or delete
-     this file and the "prompt: roles/critic.md" line to drop it. -->
+// vendor. It carries only the stance, never the role's wiring.
+const criticPrompt = `<!-- Extra instructions for this agent. Remove the prompt setting to omit this file. -->
 
 ## Working as the critic
 
@@ -162,12 +110,10 @@ You are the second opinion, asked precisely because you did not write the plan.
 - You read; you never edit. Answer in a few dense sentences, no preamble and no praise.
 `
 
-// thinkerPrompt is the generated coop-thinker subagent's system prompt (the native
-// "thinker" role has no subagent:, so coop generates one from this). Unlike lead/fast it
-// isn't appended to a contract — it IS the subagent's instructions, so it reads as one.
-const thinkerPrompt = `<!-- roles/thinker.md — the generated coop-thinker subagent's system prompt (the
-     thinker role in preset.yaml). Tune it, or reference an existing subagent with
-     "subagent: <name>" and delete this file. -->
+// thinkerPrompt is the generated coop-thinker subagent's system prompt (the native "thinker" role
+// has no subagent:, so coop generates one from this). It IS the subagent's instructions rather than
+// an addition to a contract, so it reads as one.
+const thinkerPrompt = `<!-- Extra instructions for this agent. Remove the prompt setting to omit this file. -->
 
 You are the deep-reasoning specialist the lead delegates hard thinking to.
 
