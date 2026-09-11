@@ -399,14 +399,10 @@ func assertDirectSuccess(t *testing.T, result procharness.Result, provider, mark
 // assertDirectRunContract pins one box run end to end. sweep says whether the command reaps orphaned
 // boxes on its way in (a loop start does; a direct provider run does not) — the only legitimate
 // difference in the runtime calls these commands make, so any OTHER extra call still fails here.
-func assertDirectRunContract(t *testing.T, suite *directProcessSuite, trace []*processTrace, provider, account string, argv []string, model, effort string, sweep bool) {
+func assertDirectRunContract(t *testing.T, suite *directProcessSuite, trace []*processTrace, provider, account string, argv []string, model, effort string, shape traceShape) {
 	t.Helper()
-	events := directTraceEvents
-	if sweep {
-		events = sweptTraceEvents
-	}
-	assertSequentialTrace(t, trace, events)
-	assertDirectRuntimeInvocations(t, trace, sweep)
+	assertSequentialTrace(t, trace, shape.events())
+	assertDirectRuntimeInvocations(t, trace, shape)
 	run := oneProcessEvent(t, trace, "runtime", "run")
 	wantArgv := processTraceArgv(argv)
 	if run.Run == nil || run.Run.Provider != provider || !run.Run.Init || !reflect.DeepEqual(run.Run.ProviderArgv, wantArgv) {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -77,7 +78,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 					t.Fatalf("provider %s has no streaming loop command", provider)
 				}
 				// A loop start reaps boxes an earlier, killed coop left behind before adding its own.
-				assertDirectRunContract(t, suite, trace, provider, "work", argv, model, effort, sweepsOrphanBoxes)
+				assertDirectRunContract(t, suite, trace, provider, "work", loopWorkArgv(provider, argv), model, effort, loopWorkBox)
 				assertLoopProcessResult(t, suite, provider, taskID, model, effort, "work", suite.repoHead, 1, false)
 				for _, event := range trace {
 					awaitProcessGone(t, event.PID)
@@ -465,6 +466,28 @@ func seedLoopProcessTaskIn(t *testing.T, repo, state, id string) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// loopWorkArgv is the argv a loop WORK box actually runs: the iteration command plus what the
+// box appends because coop binds its task tools into the MCP snapshot for a work iteration
+// (mcp.BindTaskTools) — claude's adapter names that file on its command line, the others read it
+// from a mounted config file and add nothing. Review, between and preflight boxes get no task
+// tools, so their argv is the bare iteration command.
+func loopWorkArgv(provider string, argv []string) []string {
+	ag, ok := agents.Get(provider)
+	if !ok {
+		return argv
+	}
+	if provider != "claude" {
+		return argv // MCP rides a mounted config file, never argv
+	}
+	cfg := &config.Config{MCPFile: "shared.json", HomeInBox: "/home/node"}
+	cfg.MCPInBox = cfg.HomeInBox + "/.mcp.json"
+	wiring, err := ag.MCP(cfg, "")
+	if err != nil {
+		return argv
+	}
+	return append(append([]string(nil), argv...), wiring.CommandArgs...)
 }
 
 func loopProcessArgv(provider, model, effort, prompt string) []string {

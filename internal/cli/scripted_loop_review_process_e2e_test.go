@@ -1428,6 +1428,9 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 		if !ok {
 			t.Fatalf("review attempt %d provider %q has no streaming command", i, target.Provider)
 		}
+		if attempt.Stage == "work" {
+			argv = loopWorkArgv(target.Provider, argv)
+		}
 		wantArgv := processTraceArgv(argv)
 		promptIndex, ok := loopPromptIndex(target.Provider, argv)
 		if !ok || promptIndex >= len(starts[i].Argv) {

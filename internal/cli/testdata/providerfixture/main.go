@@ -21,6 +21,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/taskchannel"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
@@ -237,8 +238,10 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		// The daemon probe opens every box run, so it is the harness's handle on HOST-side box
 		// setup — the work a test holds to prove no provider clock is running during it.
 		return holdHostSetup(root, trace)
-	case "inspect", "network-ls":
+	case "inspect", "network-ls", "volume":
 		return nil
+	case "task-channel":
+		return serveTaskChannelHelper()
 	case "labels":
 		labels, err := runtimeContainerLabels(root, parsed.IDs[0])
 		if err != nil {
@@ -357,6 +360,19 @@ func parseRuntime(root, image string, args []string, providerHomes ...string) (r
 func parseRuntimeForProvider(root, image string, args []string, provider string, providerHomes ...string) (runtimeCommand, error) {
 	if len(args) == 1 && args[0] == "--version" {
 		return runtimeCommand{Kind: "version"}, nil
+	}
+	// A loop work iteration gives its box coop's task tools, which coop serves through a helper
+	// container on a run-private volume (box/taskchannel.go). Both are coop's own resources, not
+	// the agent's, so the fixture models them exactly as far as the launch depends on them: the
+	// volume calls succeed, and the helper reports its socket ready and then waits.
+	if len(args) > 1 && args[0] == "volume" {
+		if (args[1] != "create" && args[1] != "rm") || len(args) < 3 {
+			return runtimeCommand{}, fmt.Errorf("unsupported volume command %q", strings.Join(args, " "))
+		}
+		return runtimeCommand{Kind: "volume"}, nil
+	}
+	if isTaskChannelHelper(args) {
+		return runtimeCommand{Kind: "task-channel"}, nil
 	}
 	if len(args) == 1 && args[0] == "info" {
 		return runtimeCommand{Kind: "info"}, nil
@@ -538,7 +554,11 @@ func parseMount(root, value string) (mount, error) {
 		return mount{}, fmt.Errorf("mount target %q is not a clean absolute path", m.Target)
 	}
 	if !filepath.IsAbs(m.Source) {
-		if m.Source != "coop-cache" && m.Source != "coop-asdf" {
+		// The persistent caches, and the run-private task-channel volume coop created for this
+		// launch (box/taskchannel.go) — whose name carries a fresh nonce, so it is recognized by
+		// its prefix and the mountpoint it is bound at, read-only.
+		channel := strings.HasPrefix(m.Source, "coop-tasks-") && m.Target == taskchannel.BoxSocketDir && m.ReadOnly
+		if m.Source != "coop-cache" && m.Source != "coop-asdf" && !channel {
 			return mount{}, fmt.Errorf("unknown named volume %q", m.Source)
 		}
 		m.Named = true
@@ -579,6 +599,14 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 	repoMounts := 0
 	for _, m := range run.Mounts {
 		if m.Named {
+			// coop's own task channel is the one named volume that is READ-ONLY by design: the
+			// box connects to the socket the helper made and can neither replace nor unlink it.
+			if strings.HasPrefix(m.Source, "coop-tasks-") {
+				if m.Target != taskchannel.BoxSocketDir || !m.ReadOnly {
+					return fmt.Errorf("task channel volume %q:%q must be %s, read-only", m.Source, m.Target, taskchannel.BoxSocketDir)
+				}
+				continue
+			}
 			if (m.Source != "coop-cache" || m.Target != "/home/node/.cache") &&
 				(m.Source != "coop-asdf" || m.Target != "/home/node/.asdf") {
 				return fmt.Errorf("named volume %q has unexpected target %q", m.Source, m.Target)
@@ -658,7 +686,10 @@ func validateGeneratedReadOnlyMount(root string, run runCommand, m mount, provid
 			return fmt.Errorf("decoy mount target %q is outside the repo", m.Target)
 		}
 	case strings.HasPrefix(name, "coop-mcp-"):
-		if !scenarioProviderHomeTarget(m.Target, providerHomes) && !scenarioProviderHomeTarget(m.Target, agents.Names()) && !peerContractTarget(m.Target) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.coop-gitignore" {
+		// `/home/node/.mcp.json` is claude's shared-MCP mount. A loop WORK box always carries one
+		// now, even with no operator MCP file: coop binds its own task tools into the snapshot
+		// (mcp.BindTaskTools), which is how the box reaches its queue at all.
+		if !scenarioProviderHomeTarget(m.Target, providerHomes) && !scenarioProviderHomeTarget(m.Target, agents.Names()) && !peerContractTarget(m.Target) && m.Target != "/home/node/.gitconfig" && m.Target != "/home/node/.coop-gitignore" && m.Target != "/home/node/.mcp.json" {
 			return fmt.Errorf("generated config mount target %q is outside the provider and git homes", m.Target)
 		}
 	case strings.HasPrefix(name, "coop-githooks-"):
@@ -1103,12 +1134,36 @@ func traceableEnvValue(key string) bool {
 		strings.HasSuffix(key, "_MODEL") || strings.HasSuffix(key, "_EFFORT") || strings.HasSuffix(key, "_EFFORT_LEVEL")
 }
 
+// isTaskChannelHelper reports whether this run is coop's task-channel multiplexer: the box's own
+// image started on the mux script with node as its entrypoint. Recognized by the script it runs,
+// which no agent launch ever names.
+func isTaskChannelHelper(args []string) bool {
+	return len(args) > 0 && args[0] == "run" && slices.Contains(args, taskchannel.BoxSocketPath) &&
+		slices.Contains(args, "--entrypoint")
+}
+
+// serveTaskChannelHelper stands in for the multiplexer inside the box's kernel: it reports its
+// socket ready — which is what the launch waits for — and then holds until coop closes its input,
+// exactly as mux.js does. Nothing in a scripted box connects, so no client frame ever arrives.
+func serveTaskChannelHelper() error {
+	if _, err := fmt.Println(`{"e":"ready"}`); err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	return nil
+}
+
 func traceRuntimeArgv(root, image string, args []string) []string {
 	if len(args) == 0 {
 		return []string{"<rejected>"}
 	}
+	if isTaskChannelHelper(args) {
+		return []string{"run", "<task-channel>"}
+	}
 	if args[0] != "run" {
 		switch args[0] {
+		case "volume":
+			return []string{"volume", "<validated>"}
 		case "--version", "info":
 			if len(args) == 1 {
 				return append([]string(nil), args...)

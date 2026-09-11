@@ -23,6 +23,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/taskchannel"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -381,13 +382,33 @@ func readProcessTrace(t *testing.T, path string) []*processTrace {
 
 // One box run's whole trace: three runtime invocations (image probe, daemon probe, run), the parsed
 // run contract, provider start and exit, and the runtime's exit. A command that reaps orphaned boxes
-// on its way in (loop, fork, build) adds exactly one runtime `ps` — and nothing else.
+// on its way in (loop, fork, build) adds exactly one runtime `ps` and one `network` listing. A loop
+// WORK box adds its task channel on top (box/taskchannel.go): the run-private volume is created,
+// coop's helper container is started on it, and the volume is removed after the box — three more
+// runtime invocations, and nothing else.
+type traceShape int
+
 const (
-	directTraceEvents = 7
-	sweptTraceEvents  = directTraceEvents + 2
-	sweepsOrphanBoxes = true  // this command reaps orphaned boxes and networks before it starts
-	noOrphanBoxSweep  = false // a direct provider run makes no runtime call of its own before `run`
+	noOrphanBoxSweep  traceShape = iota // a direct provider run makes no runtime call of its own before `run`
+	sweepsOrphanBoxes                   // this command reaps orphaned boxes and networks before it starts
+	loopWorkBox                         // sweeps, then carries the task channel around the box run
 )
+
+const (
+	directTraceEvents   = 7
+	sweptTraceEvents    = directTraceEvents + 2
+	loopWorkTraceEvents = sweptTraceEvents + 3
+)
+
+func (s traceShape) events() int {
+	switch s {
+	case sweepsOrphanBoxes:
+		return sweptTraceEvents
+	case loopWorkBox:
+		return loopWorkTraceEvents
+	}
+	return directTraceEvents
+}
 
 func assertSequentialTrace(t *testing.T, trace []*processTrace, want int) {
 	t.Helper()
@@ -404,7 +425,7 @@ func assertSequentialTrace(t *testing.T, trace []*processTrace, want int) {
 	}
 }
 
-func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, sweep bool) {
+func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape traceShape) {
 	t.Helper()
 	var got [][]string
 	for _, event := range trace {
@@ -413,15 +434,23 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, sweep b
 		}
 	}
 	wantPrefix := [][]string{{"image", "inspect", "fixture-image"}}
-	if sweep {
+	if shape != noOrphanBoxSweep {
 		// The orphan sweep, before the box work begins: one label-filtered container listing, then
 		// one for the compose networks a dead session leaves holding a subnet.
 		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"}, []string{"network", "<validated>"})
 	}
 	wantPrefix = append(wantPrefix, []string{"info"})
-	last := len(wantPrefix)
-	if len(got) != last+1 || !reflect.DeepEqual(got[:last], wantPrefix) || len(got[last]) == 0 || got[last][0] != "run" {
-		t.Fatalf("runtime invocations = %q, want %q then run", got, wantPrefix)
+	wantSuffix := [][]string{}
+	if shape == loopWorkBox {
+		// The task channel brackets the box: its volume and helper come up first (the box must
+		// find the socket listening), and the volume goes once the box is gone.
+		wantPrefix = append(wantPrefix, []string{"volume", "<validated>"}, []string{"run", "<task-channel>"})
+		wantSuffix = [][]string{{"volume", "<validated>"}}
+	}
+	run := len(wantPrefix)
+	if len(got) != run+1+len(wantSuffix) || !reflect.DeepEqual(got[:run], wantPrefix) || len(got[run]) == 0 || got[run][0] != "run" ||
+		!reflect.DeepEqual(got[run+1:], wantSuffix) {
+		t.Fatalf("runtime invocations = %q, want %q then run then %q", got, wantPrefix, wantSuffix)
 	}
 }
 
@@ -484,6 +513,14 @@ func assertProcessMountsAtTarget(t *testing.T, layout procharness.Layout, repo, 
 	foundProfile, foundRepo := false, false
 	for _, mount := range mounts {
 		if mount.Named {
+			// The run-private task channel (box/taskchannel.go) is the one named volume a box
+			// mounts READ-ONLY: coop's helper made the socket, the box only connects to it.
+			if strings.HasPrefix(mount.Source, "coop-tasks-") {
+				if mount.Target != "<container>"+taskchannel.BoxSocketDir || !mount.ReadOnly {
+					t.Errorf("task channel volume must be %s, read-only: %#v", taskchannel.BoxSocketDir, mount)
+				}
+				continue
+			}
 			if mount.Source != "coop-cache" && mount.Source != "coop-asdf" {
 				t.Errorf("unknown named mount %#v", mount)
 			}
