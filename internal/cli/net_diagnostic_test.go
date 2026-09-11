@@ -76,7 +76,7 @@ func TestCurrentCheckAnswersForANewRun(t *testing.T) {
 		Approval: &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{rule("*.example.com", 443, 8443)}}}
 	render := func(answer netCheckAnswer) string {
 		var b bytes.Buffer
-		writeNetCheck(&b, ui.Palette{}, answer.Allowed, answer.Verdict, answer.Cause)
+		writeNetCheck(&b, ui.Palette{}, answer)
 		return b.String()
 	}
 	cases := []struct {
@@ -87,7 +87,11 @@ func TestCurrentCheckAnswersForANewRun(t *testing.T) {
 		want   string
 	}{
 		{"approved rule", filtered, "docs.example.com", 8443, "✓ docs.example.com:8443 is allowed by an approved project rule.\n"},
-		{"wrong port", filtered, "docs.example.com", 853, "✗ docs.example.com:853 is blocked — no approved rule allows it.\n  Add a rule under box.egress_rules in .agent/project.yaml, then run coop net approve.\n"},
+		// A refusal carries the rule that would allow THIS destination and port, ready to paste —
+		// the same draft `coop net blocked` prints, because a check knows exactly as much.
+		{"wrong port", filtered, "docs.example.com", 853, "✗ docs.example.com:853 is blocked — no approved rule allows it.\n\n" +
+			"Add this rule under box.egress_rules in .agent/project.yaml:\n\n" +
+			"  - to: {domain: \"docs.example.com\"}\n    protocol: tls\n    ports: [853]\n\nThen run:\n  coop net approve\n"},
 		{"one agent", filtered, "api.anthropic.com", 443, "✓ api.anthropic.com:443 is allowed by Claude's provider access.\n"},
 		{"two agents", filtered, "platform.claude.com", 443, "✓ platform.claude.com:443 is allowed for Claude and Codex.\n  Their provider access is included automatically.\n"},
 		{"open", box.NetworkAccess{Mode: egress.Open}, "anything.example", 443, "✓ anything.example:443 is allowed — internet access is unrestricted.\n"},

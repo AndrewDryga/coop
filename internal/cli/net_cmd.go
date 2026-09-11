@@ -368,14 +368,17 @@ func netModeExplanation(mode egress.Mode, source string) string {
 	case egress.None:
 		access = "are offline"
 	}
-	cause := "because that is Coop's default"
+	// Where the setting came from, said as the place a person would go to change it. "because that
+	// is what you approved" was true but read as a justification for a decision under discussion;
+	// the reader is looking for which of the four sources is in force.
+	cause := "by default"
 	switch source {
 	case box.AccessFromApproval:
-		cause = "because that is what you approved for this project"
+		cause = "according to approved settings for this project"
 	case box.AccessFromHost:
-		cause = "because COOP_EGRESS says so"
+		cause = "according to COOP_EGRESS"
 	case box.AccessFromProject:
-		cause = "because .agent/project.yaml says so"
+		cause = "according to .agent/project.yaml"
 	}
 	line := "New runs " + access + " " + cause + "."
 	switch mode {

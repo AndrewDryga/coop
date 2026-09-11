@@ -258,7 +258,7 @@ func TestApprovedNetCheckCurrent(t *testing.T) {
 	for fixture, answer := range answers {
 		t.Run(fixture, func(t *testing.T) {
 			var b bytes.Buffer
-			writeNetCheck(&b, ui.Palette{}, answer.Allowed, answer.Verdict, answer.Cause)
+			writeNetCheck(&b, ui.Palette{}, answer)
 			assertApprovedOutput(t, fixture, b.String())
 		})
 	}

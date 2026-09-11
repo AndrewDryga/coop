@@ -332,13 +332,16 @@ func (a *app) netCheckCurrent(opts netDiagnosticOptions) (int, error) {
 			Verdict: answer.Verdict, Cause: answer.Cause})
 	}
 	p := ui.For(os.Stdout)
-	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetCheck(b, p, answer.Allowed, answer.Verdict, answer.Cause) })
+	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetCheck(b, p, answer) })
 }
 
 type netCheckAnswer struct {
 	Allowed, Pending bool
 	Verdict, Cause   string
 	Agents           []string
+	// Rule is the draft that would allow this destination, set only when nothing allows it today.
+	// It is a rule to review, never a grant: `coop net approve` is what turns one into authority.
+	Rule egress.Rule
 }
 
 func netCurrentCheck(access box.NetworkAccess, host string, port int, bundles map[string]egress.Bundle) netCheckAnswer {
@@ -366,8 +369,11 @@ func netCurrentCheck(access box.NetworkAccess, host string, port int, bundles ma
 	slices.Sort(names)
 	switch len(names) {
 	case 0:
+		// Telling someone to "add a rule" without the rule leaves them to derive the YAML from the
+		// page. `coop net blocked` prints the smallest rule that would have allowed the destination;
+		// a check for the same destination knows exactly as much, so it prints the same draft.
 		return netCheckAnswer{Verdict: target + " is blocked — no approved rule allows it.",
-			Cause: "Add a rule under box.egress_rules in .agent/project.yaml, then run coop net approve."}
+			Rule: egress.Rule{To: egress.Destination{Domain: host}, Protocol: "tls", Ports: []int{port}}}
 	case 1:
 		return netCheckAnswer{Allowed: true, Agents: names, Verdict: target + " is allowed by " + names[0] + "'s provider access."}
 	}
@@ -392,14 +398,17 @@ func netRulesAllow(rules []egress.Rule, host string, port int) bool {
 // shared note that several providers bring their own access. Nothing else is
 // appended: no disclaimer, no fingerprint, no reason code; the command is
 // documented as read-only and --json carries the technical detail.
-func writeNetCheck(w io.Writer, p ui.Palette, allowed bool, verdict, cause string) {
+func writeNetCheck(w io.Writer, p ui.Palette, answer netCheckAnswer) {
 	glyph := p.Red("✗")
-	if allowed {
+	if answer.Allowed {
 		glyph = p.Green("✓")
 	}
-	fmt.Fprintf(w, "%s %s\n", glyph, verdict)
-	if cause != "" {
-		fmt.Fprintf(w, "  %s\n", cause)
+	fmt.Fprintf(w, "%s %s\n", glyph, answer.Verdict)
+	if answer.Cause != "" {
+		fmt.Fprintf(w, "  %s\n", answer.Cause)
+	}
+	if rule := netRuleYAML(answer.Rule); rule != "" {
+		fmt.Fprintf(w, "\nAdd this rule under box.egress_rules in .agent/project.yaml:\n\n%s\nThen run:\n  %s\n", rule, p.Cyan("coop net approve"))
 	}
 }
 
@@ -427,16 +436,16 @@ func writeNetHistoricalCheck(w io.Writer, p ui.Palette, result networkstate.Poli
 	run := " in run " + networkreport.ShortID(result.RunID) + "."
 	subject := destination + transport
 	if result.Allowed {
-		writeNetCheck(w, p, true, subject+" was allowed by "+netCheckOrigin(result)+run, "")
+		writeNetCheck(w, p, netCheckAnswer{Allowed: true, Verdict: subject + " was allowed by " + netCheckOrigin(result) + run})
 		return
 	}
 	// A refusal with a compact name for its boundary says it in the verdict; any
 	// other reason keeps its own retained sentence on the line beneath.
 	if clause := netBlockedClause(result.Reason); clause != "" {
-		writeNetCheck(w, p, false, subject+" was blocked as "+clause+run, "")
+		writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " was blocked as " + clause + run})
 		return
 	}
-	writeNetCheck(w, p, false, subject+" was blocked"+run, netSentence(result.Message))
+	writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " was blocked" + run, Cause: netSentence(result.Message)})
 }
 
 // netBlockedClause names the boundary that refused a recorded attempt as a noun

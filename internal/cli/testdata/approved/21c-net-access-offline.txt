@@ -1,4 +1,4 @@
-New runs are offline because .agent/project.yaml says so.
+New runs are offline according to .agent/project.yaml.
 An agent cannot reach its provider.
 
 For more details see:

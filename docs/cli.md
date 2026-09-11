@@ -16,6 +16,8 @@ RUN AGENTS — work with a coding agent or a team of agents
   coop <preset>                     run agents together using a preset
   coop <target> --peer <target>...  start with read-only peer agents
 
+  A target names an agent, a preset, or a model: codex:gpt-5.6-luna/xhigh
+
 ACCOUNTS, MODELS & PRESETS — choose the accounts and models your agents use
   coop login <agent>                sign in to an agent
   coop credentials [<agent>]        show your signed in accounts

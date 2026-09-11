@@ -77,6 +77,9 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 		return cmd + strings.Repeat(" ", gap)
 	}
 	row := func(cmd, desc string) { fmt.Fprintf(&b, "  %s%s\n", pad(cmd), desc) }
+	// note is a sentence that belongs to the group above it rather than to one command, set off by a
+	// blank line and starting at the command column so it reads as part of the group, not a row.
+	note := func(text string) { fmt.Fprintf(&b, "\n  %s\n", text) }
 	// dimRow is row for a command with nothing to act on in this project yet (`coop up` with no
 	// services): the WHOLE line recedes, so the available next action beside it stands out. The gap
 	// is computed on plain text and dimmed after, so the column still aligns — and Dim is a no-op
@@ -112,6 +115,9 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	row("coop <agent>", "start "+ui.List(providers, "or"))
 	row("coop <preset>", "run agents together using a preset")
 	row("coop <target> --peer <target>...", "start with read-only peer agents")
+	// A newcomer meets the word "target" here, in three rows that all use it. Saying what it can be
+	// once, with one example of the longest form, is shorter than three rows that each explain it.
+	note("A target names an agent, a preset, or a model: codex:gpt-5.6-luna/xhigh")
 
 	group("ACCOUNTS, MODELS & PRESETS", "choose the accounts and models your agents use")
 	row("coop login <agent>", "sign in to an agent")
