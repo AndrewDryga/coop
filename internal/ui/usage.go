@@ -33,6 +33,12 @@ func (e *UsageError) Error() string {
 	}
 	parts = append(parts, e.Choices...)
 	for _, r := range e.Rows {
+		// A continuation's label is a layout marker, not words: the log line keeps its value only,
+		// the way the block shows it under the row above.
+		if r[0] == Continuation || r[0] == "" {
+			parts = append(parts, r[1])
+			continue
+		}
 		parts = append(parts, r[0]+" "+r[1])
 	}
 	return strings.Join(parts, " — ")

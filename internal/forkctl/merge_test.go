@@ -16,13 +16,16 @@ import (
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // A missing <name> (without --all) is a usage error (exit 2), reported before the dirty-tree /
 // non-interactive environment gates — so the user sees the real problem, not "uncommitted changes".
 func TestForkMergeRequiresName(t *testing.T) {
 	c := &Control{cfg: &config.Config{}}
-	if code, err := c.ForkMerge(nil); code != 2 || err == nil || !strings.Contains(err.Error(), "usage") {
+	var usage *ui.UsageError // a missing name is refused in the one shared block, not in prose
+	if code, err := c.ForkMerge(nil); code != 2 || !errors.As(err, &usage) ||
+		!strings.Contains(usage.Headline, "Missing fork name") {
 		t.Errorf("ForkMerge(nil) = (%d, %v), want (2, usage error)", code, err)
 	}
 	if code, err := c.ForkMerge([]string{"--nope"}); code != 2 || err == nil {
