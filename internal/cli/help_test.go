@@ -226,6 +226,17 @@ func TestManualOpensWithTheApprovedMenu(t *testing.T) {
 // project's services, the checks, setup, and the integrations last. `coop worker` is retired: its
 // workflow is `coop sessions connect`, whose page sits with the rest of the sessions leaves. Every
 // family lists its leaves: a command a person can run is a command the manual explains.
+// The pages a person lands on from the menu's last two groups END THEMSELVES: each closes with the
+// command that follows it ("Start again: coop up"), so the generic all-commands footer would be a
+// second, weaker answer to a question the page already answered.
+func TestMaintenancePagesEndThemselves(t *testing.T) {
+	for _, cmd := range []string{"up", "down", "doctor", "check-secrets", "build", "update"} {
+		if !selfContained(cmd) {
+			t.Errorf("coop help %s should end itself, not with the all-commands footer", cmd)
+		}
+	}
+}
+
 var wantManualOrder = []string{
 	"run", "shell", "claude", "codex", "gemini", "grok",
 	"login", "credentials", "credentials default", "credentials rm", "credentials account",

@@ -202,8 +202,13 @@ func asUsage(err error) *ui.UsageError {
 // family that takes a third word: its commands sit AFTER the fork name (`coop fork login acp`).
 func helpPath(argv []string) []string {
 	depth := 2
-	if len(argv) > 0 && argv[0] == "fork" {
+	switch {
+	case len(argv) > 0 && argv[0] == "fork":
 		depth = 3
+	case len(argv) > 0 && argv[0] == "credentials":
+		// credentials names an agent AND an account before its verb: `coop help credentials codex
+		// personal rm` is four words, and the last one is what picks the page.
+		depth = 4
 	}
 	var path []string
 	for _, arg := range argv {
@@ -401,6 +406,20 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 			printTopicHelp(cmd+" "+path[1], page)
 			return 0, nil
 		}
+	}
+	// `coop help credentials codex personal rm` names an agent and an account BETWEEN the family and
+	// its command — the spelling a person actually types. The pages are about the SHAPE of that
+	// command, so all three resolve to the same page whichever account is named.
+	if cmd == "credentials" && len(path) > 2 {
+		leaf := "credentials account"
+		switch path[len(path)-1] {
+		case "default":
+			leaf = "credentials default"
+		case "rm":
+			leaf = "credentials rm"
+		}
+		printTopicHelp(leaf, commandHelp[leaf])
+		return 0, nil
 	}
 	// `coop help fork <name> acp` names a fork BETWEEN the family and its command, so fork's leaf
 	// pages also resolve on the last word — `coop help fork login acp` is that page, not a fork

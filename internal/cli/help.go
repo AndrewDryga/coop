@@ -1843,6 +1843,7 @@ var selfContainedHelp = map[string]bool{
 	"tasks": true, "backlog": true, "context": true, "loop": true, "fork": true,
 	"shell": true, "acp": true, "sign": true, "prompt": true, "version": true,
 	"completion": true, "sessions": true,
+	"up": true, "down": true, "doctor": true, "check-secrets": true, "build": true, "update": true,
 }
 
 // selfContained reports whether cmd's page ends itself. A `<family> <command>` page inherits its
