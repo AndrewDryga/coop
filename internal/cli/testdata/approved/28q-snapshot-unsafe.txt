@@ -1,0 +1,5 @@
+✗ Could not start services from .agent/compose.yml
+
+      The temporary directory is inside a folder exposed to an agent.
+
+  Set TMPDIR to a directory outside those folders, then run coop up again.

@@ -20,38 +20,38 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// doctorProbe runs inside the box against the fixture and reports, line by line: whether each
-// secret is shadowed and each non-secret stays visible, then the box's privilege posture
-// (uid/caps/pids) as RESULT UID/CAPS/PIDS lines for the host to interpret.
+// doctorProbe runs inside the box against the fixture and reports, check id by check id, whether
+// each secret is shadowed and each non-secret stays visible, then the box's privilege posture
+// (uid/caps/pids) as RESULT UID/CAPS/PIDS lines for the host to interpret. It speaks ids, not
+// sentences: the wording belongs to the report (doctor_checks.go), the evidence belongs here.
 const doctorProbe = `#!/bin/sh
-cd /workspace 2>/dev/null || { echo "RESULT FAIL workspace was not mounted"; exit 1; }
+cd /workspace 2>/dev/null || { echo "RESULT FAIL sandbox.workspace"; exit 1; }
 empty() { [ -f "$1" ] && [ ! -s "$1" ]; }
-empty .env                   && echo "RESULT PASS .env is shadowed (empty in the VM)"     || echo "RESULT FAIL .env is READABLE in the VM"
-empty .envrc                 && echo "RESULT PASS .envrc (direnv) is shadowed"            || echo "RESULT FAIL .envrc is READABLE in the VM"
-empty config/prod.tfvars     && echo "RESULT PASS *.tfvars in a subdir is shadowed"       || echo "RESULT FAIL config/prod.tfvars is READABLE"
-empty deploy/id_ed25519      && echo "RESULT PASS a private key in a subdir is shadowed"  || echo "RESULT FAIL deploy/id_ed25519 is READABLE"
-empty config/credentials.yaml && echo "RESULT PASS .coopignore shadows a custom path"     || echo "RESULT FAIL config/credentials.yaml is READABLE"
-if [ -d secrets ] && [ -z "$(ls -A secrets 2>/dev/null)" ]; then echo "RESULT PASS secrets/ is shadowed (empty)"; else echo "RESULT FAIL secrets/ exposes files"; fi
+check() { if "$@"; then echo "RESULT PASS $ID"; else echo "RESULT FAIL $ID"; fi; }
+ID=sandbox.env               check empty .env
+ID=sandbox.envrc             check empty .envrc
+ID=sandbox.tfvars            check empty config/prod.tfvars
+ID=sandbox.private_key       check empty deploy/id_ed25519
+ID=sandbox.coopignore        check empty config/credentials.yaml
+if [ -d secrets ] && [ -z "$(ls -A secrets 2>/dev/null)" ]; then echo "RESULT PASS sandbox.secret_directory"; else echo "RESULT FAIL sandbox.secret_directory"; fi
 # A symlink must not read around the shadow: notes-link -> .env resolves to the emptied .env.
-if [ -L notes-link ] && [ ! -s notes-link ]; then echo "RESULT PASS a symlink to a secret reads empty"; else echo "RESULT FAIL notes-link reaches the .env contents"; fi
-if echo x >> .env 2>/dev/null; then echo "RESULT FAIL the .env decoy is writable"; else echo "RESULT PASS writing the .env decoy is blocked"; fi
-[ -s .env.example ] && echo "RESULT PASS .env.example template stays readable" || echo "RESULT FAIL .env.example was hidden"
-[ -s src/app.js ]   && echo "RESULT PASS source files stay readable"           || echo "RESULT FAIL source files were hidden"
-if grep -rqs hunter2 . 2>/dev/null; then echo "RESULT FAIL secret value reachable in the tree"; else echo "RESULT PASS secret value appears nowhere the agent can read"; fi
+if [ -L notes-link ] && [ ! -s notes-link ]; then echo "RESULT PASS sandbox.secret_symlink"; else echo "RESULT FAIL sandbox.secret_symlink"; fi
+if echo x >> .env 2>/dev/null; then echo "RESULT FAIL sandbox.readonly_decoy"; else echo "RESULT PASS sandbox.readonly_decoy"; fi
+ID=sandbox.template          check test -s .env.example
+ID=sandbox.source            check test -s src/app.js
+if grep -rqs hunter2 . 2>/dev/null; then echo "RESULT FAIL sandbox.secret_value"; else echo "RESULT PASS sandbox.secret_value"; fi
 # No host control plane: the agent must not be able to drive the host. The box ships only coop-entry
 # (the entrypoint), never the orchestration CLI, and coop never mounts the docker socket. The ONE
 # host control surface a loop box gets is the task socket (/coop/tasks/mcp.sock), asserted in its
 # own section below: the eight task tools, nothing shell-, exec-, or file-shaped, and a lease it
 # cannot override.
-command -v coop >/dev/null 2>&1 && echo "RESULT FAIL the coop CLI is in the box (a path to the host control plane)" || echo "RESULT PASS no coop CLI in the box (ships coop-entry only)"
-[ -S /var/run/docker.sock ] && echo "RESULT FAIL a docker socket is mounted in the box (host escape)" || echo "RESULT PASS no docker socket in the box (can't drive the host daemon)"
+if command -v coop >/dev/null 2>&1; then echo "RESULT FAIL host.coop_cli"; else echo "RESULT PASS host.coop_cli"; fi
+if [ -S /var/run/docker.sock ]; then echo "RESULT FAIL host.docker_socket"; else echo "RESULT PASS host.docker_socket"; fi
 # Privilege posture (interpreted on the host — it depends on the image and runtime).
 echo "RESULT UID $(id -u)"
 echo "RESULT CAPS $(awk '/^CapEff/{print $2}' /proc/self/status 2>/dev/null)"
 echo "RESULT PIDS $(cat /sys/fs/cgroup/pids.max 2>/dev/null || cat /sys/fs/cgroup/pids/pids.max 2>/dev/null)"
 `
-
-type report struct{ pass, fail int }
 
 // doctorImage picks the image the probe runs in: the repo's own image when it is built (that is
 // the box its agents actually get), then the shared base image, then a stock alpine stand-in.
@@ -66,9 +66,6 @@ func doctorImage(repo string, cfg *config.Config, exists func(string) bool) (img
 	return "alpine", false
 }
 
-func (r *report) ok(msg string) { r.pass++; fmt.Printf("  %s %s\n", ui.Check(), msg) }
-func (r *report) no(msg string) { r.fail++; fmt.Printf("  %s %s\n", ui.Cross(), msg) }
-
 // cmdDoctor proves isolation by attacking it: it builds a fixture repo full of secrets and runs
 // the box against it, checking that secrets are shadowed inside the sandbox, the box has no path to
 // the host control plane (no coop CLI, no docker socket), the box is locked down (non-root,
@@ -79,11 +76,18 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 		return 2, err
 	}
 	if err := a.rt.EnsureDaemon(); err != nil {
+		return 1, reported("Could not check the Coop box",
+			fmt.Sprintf("%s is unavailable.", runtimeTitle(a.rt.Name)),
+			fmt.Sprintf("Start %s, then run coop doctor again.", runtimeTitle(a.rt.Name)))
+	}
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	if err != nil {
 		return -1, err
 	}
 	fixture, err := buildFixture()
 	if err != nil {
-		return -1, err
+		return 1, reported("Could not prepare the isolation checks", sentence(err.Error()),
+			"Fix the temporary-directory permissions, then run coop doctor again.")
 	}
 	defer os.RemoveAll(fixture)
 
@@ -92,209 +96,219 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	// uid that may not own it under --cap-drop ALL (see writeProbeFile).
 	probe, cleanup, err := writeProbeFile(doctorProbe)
 	if err != nil {
-		return -1, err
+		return 1, reported("Could not prepare the isolation checks", sentence(err.Error()),
+			"Fix the temporary-directory permissions, then run coop doctor again.")
 	}
 	defer cleanup()
 
-	rep := &report{}
 	// Probe the image THIS repo's boxes run — the per-project one when its .agent/Dockerfile is
 	// built (that is where a USER root or extra tooling would weaken the checks), else the shared
 	// base image, else a stock alpine stand-in so doctor still works before a first `coop build`.
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
-		return -1, err
-	}
 	img, usingReal := doctorImage(repo, a.cfg, func(image string) bool { return box.ImageExists(a.rt, image) })
-	fmt.Printf("%s  %s\n", ui.Bold("== coop doctor =="), ui.Dim(fmt.Sprintf("(runtime: %s, image: %s)", a.rt.Name, img)))
-	if !usingReal {
-		// doctor never builds — with no image it probes a stock alpine stand-in, which lacks coop's
-		// non-root USER and toolchain (the USER check is skipped). Say so loudly, not in a dim aside,
-		// so a newcomer doesn't read a green bill of health and then hit a failing `coop claude`.
-		fmt.Printf("  %s %s\n", ui.Yellow("⚠"), ui.Yellow("real box image not built — probing a stock alpine stand-in, so the USER/toolchain checks are skipped. Run 'coop build', then re-run 'coop doctor'."))
-	}
+	doctorHeader(a.rt.Name, img, a.cfg.BaseImage, usingReal)
 
 	// The OCI privilege limits (cap-drop ALL, pids, no-new-privileges) are docker/podman-only
 	// (box.boxLimits). On any other runtime they're simply not applied, so the uid/caps checks
-	// below can't vouch for them — say so loudly instead of printing a falsely-clean bill.
+	// below can't vouch for them — each says so on its own line rather than passing vacuously.
 	hardened := a.rt.Name == "docker" || a.rt.Name == "podman"
-	if !hardened {
-		fmt.Printf("  %s %s\n", ui.Yellow("!"), ui.Yellow(fmt.Sprintf("runtime %q applies no capability/pids limits — it relies on its own VM isolation, not coop's cap-drop", a.rt.Name)))
-	}
 
-	// --- inside the sandbox ---
-	fmt.Printf("\n%s\n", ui.Bold("inside the sandbox"))
+	report := &doctorReport{}
+	secrets, host, offline, taskSection, credentials, cloneSection := report.doctorSections()
+
 	var out, errOut bytes.Buffer
 	_, runErr := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: fixture, Workdir: "/workspace", Cmd: []string{"sh", "/probe.sh"},
 		Batch: true, Quiet: true, Stdout: &out, Stderr: &errOut,
 		ExtraArgs: []string{"-v", probe + ":/probe.sh:ro"},
 	})
-	if runErr != nil || out.Len() == 0 {
-		// Surface WHY: an opaque "failed to run" sent us hunting through CI logs for the cause once.
-		rep.no("the sandbox produced no output (the container failed to run)" + probeWhy(errOut.String(), runErr))
-	}
-	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
-		if recordResult(rep, line) {
-			continue
+	results := parseProbeResults(out.String())
+	switch {
+	case runErr != nil || out.Len() == 0:
+		secrets.probeFailed("Could not run the sandbox checks", probeReason(errOut.String(), runErr, "The sandbox probe produced no output."), len(doctorSecretChecks))
+		host.unrun("Host access and privileges could not be checked", len(doctorHostChecks)+3)
+	case results["sandbox.workspace"] == "FAIL":
+		secrets.probeFailed("The test workspace is not mounted", "/workspace", len(doctorSecretChecks))
+		host.unrun("Host access and privileges could not be checked", len(doctorHostChecks)+3)
+	default:
+		for _, def := range doctorSecretChecks {
+			secrets.record(def, results[def.id] == "PASS")
 		}
-		switch {
-		case strings.HasPrefix(line, "RESULT UID "):
-			doctorCheckUID(rep, strings.TrimPrefix(line, "RESULT UID "), usingReal)
-		case strings.HasPrefix(line, "RESULT CAPS "):
-			doctorCheckCaps(rep, strings.TrimPrefix(line, "RESULT CAPS "), hardened)
-		case strings.HasPrefix(line, "RESULT PIDS "):
-			doctorCheckPids(rep, strings.TrimPrefix(line, "RESULT PIDS "), hardened, a.cfg.Pids)
+		for _, def := range doctorHostChecks {
+			host.record(def, results[def.id] == "PASS")
 		}
+		doctorCheckUID(host, results["UID"], usingReal)
+		doctorCheckCaps(host, results["CAPS"], hardened)
+		doctorCheckPids(host, results["PIDS"], hardened, a.cfg.Pids)
 	}
 
-	// --- egress fails closed ---
-	// A run is asked for a network (Network:true) but with COOP_EGRESS=none; the box must still
-	// come up with only loopback, proving the egress toggle cuts outbound regardless of the request.
-	fmt.Printf("\n%s\n", ui.Bold("egress (fail-closed)"))
-	doctorCheckEgress(rep, a, fixture, img)
+	// Egress fails closed: a run is asked for a network (Network:true) but with COOP_EGRESS=none;
+	// the box must still come up with only loopback, proving the toggle cuts outbound regardless.
+	doctorCheckEgress(offline, a, fixture, img)
 
-	// --- the task channel ---
 	// The one host control surface a loop box gets: spoken to through the real transport from
 	// inside a box, it must answer only the task tools and refuse a task another live process holds.
-	fmt.Printf("\n%s\n", ui.Bold("the task channel (the box's only host control surface)"))
 	if usingReal {
-		doctorCheckTaskChannel(rep, a, fixture, img)
+		doctorCheckTaskChannel(taskSection, a, fixture, img)
 	} else {
-		fmt.Printf("  %s %s\n", ui.Dim("·"), ui.Dim("skipped: the stand-in image has no socat/node to run the channel with"))
+		taskSection.skip("Task channel not checked", "", 4)
 	}
 
-	// --- credential and home scope ---
 	// A scoped agent box must preserve both the credential boundary and a writable application
 	// config home under the normal generated-mount composition.
-	fmt.Printf("\n%s\n", ui.Bold("credential and home scope"))
-	doctorCheckCredAndHomeScope(rep, a, fixture, img, usingReal)
+	doctorCheckCredAndHomeScope(credentials, a, fixture, img, usingReal)
 
-	// --- on the host: the clone handoff ---
-	fmt.Printf("\n%s\n", ui.Bold("on the host (the clone handoff)"))
 	clone := fixture + "-clone"
 	defer os.RemoveAll(clone)
-	if err := exec.Command("git", "clone", "-q", fixture, clone).Run(); err != nil {
-		rep.no(fmt.Sprintf("could not clone the fixture: %v", err))
-	} else {
-		checkAbsent(rep, filepath.Join(clone, ".env"), "gitignored .env never enters a clone", ".env leaked into the clone")
-		checkAbsent(rep, filepath.Join(clone, ".envrc"), "gitignored .envrc never enters a clone", ".envrc leaked into the clone")
-		checkAbsent(rep, filepath.Join(clone, "secrets"), "gitignored secrets/ never enters a clone", "secrets/ leaked into the clone")
-		checkAbsent(rep, filepath.Join(clone, "deploy"), "gitignored deploy/ (private key) never enters a clone", "the deploy/ private key leaked into the clone")
-		if fileExists(filepath.Join(clone, "src", "app.js")) {
-			rep.ok("tracked source is present in the clone")
-		} else {
-			rep.no("tracked source missing")
+	doctorCheckClone(cloneSection, fixture, clone)
+
+	code := a.doctorReportOrphanBoxes(report)
+	if verdict := report.print(); verdict != 0 {
+		code = verdict
+	}
+	return code, nil
+}
+
+// doctorHeader says what is being checked, and on what. The ordinary shared image is what
+// everyone gets, so naming it every run is noise; a project image, an explicit override, or the
+// stand-in changes WHICH checks the report covers, so those are named. A stand-in also earns the
+// notice above the report, because a partial bill of health must not read as a full one.
+func doctorHeader(runtimeName, image, baseImage string, usingReal bool) {
+	ui.Note("Checking the Coop box on the %s runtime", runtimeTitle(runtimeName))
+	if image != baseImage {
+		ui.Note("  Image:   %s", image)
+	}
+	if !usingReal {
+		ui.Note("")
+		warnBlock("No built Coop image was found",
+			"Alpine is being used for the checks below.\nThe non-root user, task channel, and settings permissions cannot be checked.",
+			"Run coop build, then coop doctor.")
+	}
+}
+
+// parseProbeResults reads the probe's RESULT lines into id → verdict. UID/CAPS/PIDS come back
+// under those same keys with their measured value, since the host interprets them.
+func parseProbeResults(stdout string) map[string]string {
+	results := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		rest, ok := strings.CutPrefix(line, "RESULT ")
+		if !ok {
+			continue
 		}
-		if treeContains(clone, "hunter2") {
-			rep.no("secret value leaked into the clone")
-		} else {
-			rep.ok("no secret value anywhere in the clone")
-		}
-		if origin, _ := exec.Command("git", "-C", clone, "remote", "get-url", "origin").Output(); strings.HasPrefix(strings.TrimSpace(string(origin)), "/") {
-			rep.ok("clone origin is a local path — there is nowhere to push")
-		} else {
-			rep.no("clone origin is not a local path")
+		kind, value, _ := strings.Cut(rest, " ")
+		switch kind {
+		case "PASS", "FAIL":
+			results[strings.TrimSpace(value)] = kind
+		case "UID", "CAPS", "PIDS":
+			results[kind] = strings.TrimSpace(value)
 		}
 	}
+	return results
+}
 
-	// --- on the host: boxes nobody supervises ---
-	fmt.Printf("\n%s\n", ui.Bold("on the host (orphaned boxes)"))
-	a.doctorReportOrphanBoxes()
-
-	fmt.Println()
-	if rep.fail == 0 {
-		fmt.Printf("%s — the box contains the agent.\n", ui.Bold(ui.Green(fmt.Sprintf("✓ all %d checks passed", rep.pass))))
-		return 0, nil
+// probeReason is the bounded cause of a probe that produced nothing: the runtime's last stderr
+// line, or the run error, or — when neither said anything — a statement of exactly that.
+func probeReason(errOut string, runErr error, fallback string) string {
+	why := strings.TrimSpace(errOut)
+	if why == "" && runErr != nil {
+		why = runErr.Error()
 	}
-	fmt.Printf("%s\n", ui.Bold(ui.Red(fmt.Sprintf("✗ %d passed, %d failed", rep.pass, rep.fail))))
-	return 1, nil
+	if why == "" {
+		return fallback
+	}
+	return sentence(strings.TrimSpace(why[strings.LastIndex(why, "\n")+1:]))
 }
 
 // doctorReportOrphanBoxes reports this repo's boxes whose supervising coop process is provably gone
 // — the count, the ids, and the label each finding rests on. It only ever LOOKS: doctor diagnoses,
 // and removing a container is the sweep's job at the entry points that start work. It stays OUT of
 // the pass/fail tally too — an orphan is host hygiene, not a hole in the isolation doctor attacks.
-func (a *app) doctorReportOrphanBoxes() {
+// A healthy survey prints nothing: there is no finding to report.
+func (a *app) doctorReportOrphanBoxes(report *doctorReport) int {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
-		fmt.Printf("  %s %s\n", ui.Dim("·"), ui.Dim(fmt.Sprintf("skipped: %v", err)))
-		return
+		return 0
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
 	defer cancel()
 	survey, err := box.SurveyOrphanBoxes(ctx, a.rt, repo)
 	if err != nil {
 		// Fail closed and say so: an unanswerable runtime is not evidence that nothing is orphaned.
-		fmt.Printf("  %s %s\n", ui.Yellow("!"), ui.Yellow(fmt.Sprintf("could not inspect the running boxes: %v", err)))
-		return
+		report.section("Running boxes").add(doctorRow{outcome: doctorNote,
+			label: "Could not check for abandoned boxes", reason: sentence(firstLine(err))})
+		return 0
 	}
-	if len(survey.Orphans) == 0 {
-		fmt.Printf("  %s no orphaned boxes for this repo (%s checked)\n", ui.Dim("·"), ui.Count(survey.Checked, "coop box", "coop boxes"))
-	} else {
-		fmt.Printf("  %s %s\n", ui.Yellow("!"), ui.Yellow(fmt.Sprintf("%s — the coop that launched them is gone; they are reaped at the next loop, fork start, or build", ui.Count(len(survey.Orphans), "orphaned box", "orphaned boxes"))))
+	if len(survey.Orphans) > 0 {
+		ids := make([]string, 0, len(survey.Orphans))
 		for _, orphan := range survey.Orphans {
-			fmt.Printf("      %s\n", ui.Dim(fmt.Sprintf("%s  supervisor pid %d (%s=%s)", orphan.ID, orphan.PID, box.LabelHost, orphan.Evidence)))
+			ids = append(ids, orphan.ID)
 		}
+		report.section("Abandoned boxes").add(doctorRow{outcome: doctorNote,
+			label:   fmt.Sprintf("%s no running supervisor", ui.Count(len(survey.Orphans), "box has", "boxes have")),
+			details: ids,
+			footer:  "They will be cleaned up when Coop next starts work or builds an image."})
 	}
 	if n := len(survey.Unattributed); n > 0 {
-		fmt.Printf("  %s %s\n", ui.Dim("·"), ui.Dim(fmt.Sprintf("%s with no readable supervisor label (started before coop recorded one) — never swept; remove by hand once you know it is stale: %s", ui.Count(n, "box", "boxes"), strings.Join(survey.Unattributed, " "))))
+		report.section("Running boxes").add(doctorRow{outcome: doctorNote,
+			label:   fmt.Sprintf("Could not identify the supervisor for %s", ui.Count(n, "box", "boxes")),
+			details: survey.Unattributed,
+			footer:  "Check that the box is no longer needed before removing it manually."})
 	}
+	return 0
 }
 
 // doctorCheckUID interprets the box's uid. Only the real box image carries coop's non-root USER
-// (node); the alpine fallback is root by default, so there a root uid is expected, not a finding.
-func doctorCheckUID(rep *report, uid string, usingReal bool) {
-	uid = strings.TrimSpace(uid)
-	switch {
+// (node); the alpine fallback is root by default, so there a root uid proves nothing about the
+// image a person will actually run.
+func doctorCheckUID(s *doctorSection, uid string, usingReal bool) {
+	switch uid = strings.TrimSpace(uid); {
 	case !usingReal:
-		fmt.Printf("  %s the box uid is %s (alpine fallback runs as root; build the box image to check its USER)\n", ui.Dim("·"), uid)
+		s.skip("Non-root user not checked", "", 1)
 	case uid == "0":
-		rep.no("the box runs as ROOT (uid 0) — give .agent/Dockerfile a non-root USER")
+		s.fail("The box runs as root", "The image uses user ID 0.",
+			"Set a non-root USER in .agent/Dockerfile, then run coop build and coop doctor.")
 	default:
-		rep.ok(fmt.Sprintf("the box runs as non-root (uid %s)", uid))
+		s.pass("The box runs as a non-root user")
 	}
 }
 
 // doctorCheckCaps interprets the box's effective capabilities. --cap-drop ALL is applied only on
-// docker/podman (hardened); on any other runtime the warning up top already flagged it, so a
-// non-zero set there is a note, not a double-counted failure.
-func doctorCheckCaps(rep *report, caps string, hardened bool) {
-	caps = strings.TrimSpace(caps)
-	switch {
+// docker/podman; on any other runtime the limit is simply not applied, which is a different
+// statement from a limit that failed to take effect.
+func doctorCheckCaps(s *doctorSection, caps string, hardened bool) {
+	switch caps = strings.TrimSpace(caps); {
 	case !hardened:
-		fmt.Printf("  %s the box CapEff is %s (no cap-drop on this runtime)\n", ui.Dim("·"), caps)
+		s.add(doctorRow{outcome: doctorNotApplied, label: "Linux capability limits are not applied by this runtime"})
 	case caps == "":
-		rep.no("could not read the box's CapEff from /proc")
+		s.skip("Linux capabilities could not be checked", "/proc did not provide CapEff.", 1)
 	case strings.Trim(caps, "0") == "":
-		rep.ok("all Linux capabilities dropped (CapEff=0)")
+		s.pass("Linux capabilities are removed")
 	default:
-		rep.no(fmt.Sprintf("capabilities NOT dropped (CapEff=%s) — --cap-drop ALL didn't take effect", caps))
+		s.fail("Linux capabilities were not removed", "The box reports CapEff="+caps+".", "")
 	}
 }
 
-// doctorCheckPids interprets the box's pids cgroup limit. Like caps it's docker/podman-only; an
-// unreadable value (an unusual cgroup layout) is a note rather than a failure, but a live "max"
-// when config asked for a cap is a real finding (the --pids-limit didn't take).
-func doctorCheckPids(rep *report, pids string, hardened bool, configured string) {
-	pids = strings.TrimSpace(pids)
-	switch {
+// doctorCheckPids interprets the box's pids cgroup limit. Like capabilities it is docker/podman
+// only, and it can be turned off deliberately — a disabled limit and an unreadable one are
+// different answers, and neither is a pass.
+func doctorCheckPids(s *doctorSection, pids string, hardened bool, configured string) {
+	switch pids = strings.TrimSpace(pids); {
 	case !hardened:
-		fmt.Printf("  %s pids-limit is not applied on this runtime\n", ui.Dim("·"))
+		s.add(doctorRow{outcome: doctorNotApplied, label: "Process limits are not applied by this runtime"})
 	case configured == "" || configured == "0" || configured == "-1" || configured == "unlimited":
-		fmt.Printf("  %s pids-limit disabled by config (COOP_PIDS=%q)\n", ui.Dim("·"), configured)
+		s.add(doctorRow{outcome: doctorDisabled, label: fmt.Sprintf("Process limit disabled by COOP_PIDS=%q", configured)})
 	case pids == "":
-		fmt.Printf("  %s could not read the box's pids-limit (unusual cgroup layout)\n", ui.Dim("·"))
+		s.skip("Process limit could not be checked", "The runtime did not expose a readable process limit.", 1)
 	case pids == "max":
-		rep.no("pids-limit not enforced (cgroup pids.max=max) — the --pids-limit didn't take effect")
+		s.fail("The process limit is not enforced", "The box reports no process limit.", "")
 	default:
-		rep.ok(fmt.Sprintf("pids-limit enforced (%s)", pids))
+		s.pass(fmt.Sprintf("The process limit is enforced (%s)", pids))
 	}
 }
 
 // doctorCheckEgress proves COOP_EGRESS=none cuts the box off the network even when a run asks for
 // one. It runs a box with Egress forced to none and Network requested, and checks only loopback
 // came up — reliable offline, since --network none leaves just `lo` with no host connectivity.
-func doctorCheckEgress(rep *report, a *app, fixture, img string) {
+func doctorCheckEgress(s *doctorSection, a *app, fixture, img string) {
 	offlineCfg := *a.cfg
 	offlineCfg.Egress = "none"
 	var out, errOut bytes.Buffer
@@ -312,11 +326,11 @@ func doctorCheckEgress(rep *report, a *app, fixture, img string) {
 	}
 	switch {
 	case len(external) > 0:
-		rep.no(fmt.Sprintf("COOP_EGRESS=none still left a network interface (%s) — egress is not fully closed", strings.Join(external, " ")))
+		s.fail("Offline mode still has network access", "Interfaces present: "+strings.Join(external, " ")+".", "")
 	case len(ifaces) == 1 && ifaces[0] == "lo":
-		rep.ok("COOP_EGRESS=none cuts the box off the network (loopback only)")
+		s.pass("Offline mode leaves only the loopback interface")
 	default:
-		rep.no("could not verify the offline box's network" + probeWhy(errOut.String(), err))
+		s.skip("Offline mode could not be checked", probeReason(errOut.String(), err, "The offline box produced no interface list."), 1)
 	}
 }
 
@@ -324,7 +338,7 @@ func doctorCheckEgress(rep *report, a *app, fixture, img string) {
 // exact command the agents' MCP clients use. One connection carries every request; the replies
 // come back in order and the host matches them by id (doctorCheckTaskChannel).
 const doctorTaskProbe = `#!/bin/sh
-[ -S /coop/tasks/mcp.sock ] || { echo "RESULT FAIL the task socket is not mounted in the box"; exit 0; }
+[ -S /coop/tasks/mcp.sock ] || { echo "RESULT FAIL task.socket"; exit 0; }
 {
   echo '{"jsonrpc":"2.0","id":"list","method":"tools/list"}'
   echo '{"jsonrpc":"2.0","id":"exec","method":"tools/call","params":{"name":"exec","arguments":{"command":"id"}}}'
@@ -334,48 +348,56 @@ const doctorTaskProbe = `#!/bin/sh
 } | socat -t 3 STDIO UNIX-CONNECT:/coop/tasks/mcp.sock | sed 's/^/REPLY /'
 `
 
+// doctorTaskChecks is how many ordinary checks the task-channel probe carries, so a probe that
+// never answers reports the right number of uncompleted checks rather than silently shrinking
+// the total.
+const doctorTaskChecks = 4
+
 // doctorCheckTaskChannel proves the task socket by attacking it from inside a box: it must list
 // exactly the eight task tools and nothing shell-, exec-, or file-shaped; refuse a call outside
 // that set; and refuse a mutation on a task another live process holds — here a task the doctor's
 // own process leases through the same host authority a concurrent loop would — while the box's own
 // assigned task stays reachable, so the refusals cannot pass vacuously on a dead channel.
-func doctorCheckTaskChannel(rep *report, a *app, fixture, img string) {
+func doctorCheckTaskChannel(s *doctorSection, a *app, fixture, img string) {
+	fail := func(label, reason string) {
+		s.probeFailed(label, sentence(reason), doctorTaskChecks)
+	}
 	queue := filepath.Join(fixture, ".agent", "tasks")
 	for _, id := range []string{"mine", "theirs"} {
 		dir := filepath.Join(queue, tasks.StateInProgress, id)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			rep.no(fmt.Sprintf("could not build the task fixture: %v", err))
+			fail("Could not prepare the task-channel checks", err.Error())
 			return
 		}
 		body := "---\nid: " + id + "\ntitle: " + id + "\n---\n\n# " + id + "\n\n**Context:** doctor\n\n**Acceptance criteria:** doctor\n\n**Approach:** doctor\n\n## Subtasks\n- [ ] probe\n"
 		if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte(body), 0o644); err != nil {
-			rep.no(fmt.Sprintf("could not build the task fixture: %v", err))
+			fail("Could not prepare the task-channel checks", err.Error())
 			return
 		}
 	}
 	if err := tasks.ScaffoldStateDirs(queue); err != nil {
-		rep.no(fmt.Sprintf("could not build the task fixture: %v", err))
+		fail("Could not prepare the task-channel checks", err.Error())
 		return
 	}
 	theirs, ok, err := tasks.CurrentTask(queue, "theirs")
 	if err != nil || !ok {
-		rep.no(fmt.Sprintf("could not read the task fixture: %v", err))
+		fail("Could not prepare the task-channel checks", fmt.Sprintf("The fixture task could not be read: %v.", err))
 		return
 	}
 	lease, observed, err := tasks.TryTaskLease(queue, theirs, tasks.TaskLeaseOwner{RunID: "doctor", PID: os.Getpid(), Provider: "doctor", Target: "doctor"})
 	if err != nil || lease == nil {
-		rep.no(fmt.Sprintf("could not lease the fixture task the box must be refused on: %v %v", err, observed))
+		fail("Could not reserve the test task", fmt.Sprintf("%v %v", err, observed))
 		return
 	}
 	defer func() { _ = lease.Release() }()
 	server, err := taskmcp.New(taskmcp.Authority{QueueRoots: []string{queue}, Assigned: "mine"})
 	if err != nil {
-		rep.no(fmt.Sprintf("could not build the task server: %v", err))
+		fail("Could not start the test task server", err.Error())
 		return
 	}
 	probe, cleanup, err := writeProbeFile(doctorTaskProbe)
 	if err != nil {
-		rep.no(fmt.Sprintf("could not write the task probe: %v", err))
+		fail("Could not prepare the task-channel probe", err.Error())
 		return
 	}
 	defer cleanup()
@@ -388,7 +410,8 @@ func doctorCheckTaskChannel(rep *report, a *app, fixture, img string) {
 	})
 	replies := map[string]map[string]any{}
 	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
-		if recordResult(rep, line) {
+		if strings.HasPrefix(line, "RESULT FAIL task.socket") {
+			s.probeFailed("The task channel is not mounted", "/coop/tasks/mcp.sock", doctorTaskChecks)
 			return
 		}
 		raw, ok := strings.CutPrefix(line, "REPLY ")
@@ -404,7 +427,8 @@ func doctorCheckTaskChannel(rep *report, a *app, fixture, img string) {
 		}
 	}
 	if len(replies) == 0 {
-		rep.no("the task socket answered nothing from inside the box" + probeWhy(errOut.String(), runErr))
+		s.probeFailed("Could not run the task-channel checks",
+			probeReason(errOut.String(), runErr, "The task channel did not respond."), doctorTaskChecks)
 		return
 	}
 	// 1. Exactly the task tools — by the fixed set AND by shape, so a renamed tool cannot slip a
@@ -429,32 +453,78 @@ func doctorCheckTaskChannel(rep *report, a *app, fixture, img string) {
 	}
 	switch {
 	case shaped != "":
-		rep.no(fmt.Sprintf("the task socket exposes a shell/exec/file-shaped tool: %s", shaped))
+		s.fail("The task channel exposes unexpected tools", "It offers a shell-shaped tool: "+shaped+".", "")
 	case !slices.Equal(names, taskmcp.ToolNames()):
-		rep.no(fmt.Sprintf("the task socket lists %v, not exactly the task tools %v", names, taskmcp.ToolNames()))
+		s.fail("The task channel exposes unexpected tools",
+			fmt.Sprintf("It offers %v, not %v.", names, taskmcp.ToolNames()), "")
 	default:
-		rep.ok(fmt.Sprintf("the task socket lists only the %d task tools (no shell, exec, or file tool)", len(names)))
+		s.pass(fmt.Sprintf("The task channel exposes only its %d task tools", len(names)))
 	}
 	// 2. A call outside the tool set — an unknown tool and an unknown method — is refused.
-	if replies["exec"]["error"] != nil && replies["shell"]["error"] != nil && replies["exec"]["result"] == nil && replies["shell"]["result"] == nil {
-		rep.ok("the task socket refuses a call outside its tool set (tools/call exec, method shell)")
-	} else {
-		rep.no(fmt.Sprintf("the task socket answered a call outside its tool set: exec=%v shell=%v", replies["exec"], replies["shell"]))
+	refusedExec := replies["exec"]["error"] != nil && replies["exec"]["result"] == nil
+	refusedShell := replies["shell"]["error"] != nil && replies["shell"]["result"] == nil
+	switch {
+	case refusedExec && refusedShell:
+		s.pass("Calls outside the task tools are refused")
+	default:
+		s.fail("The task channel did not refuse an unsupported call",
+			strings.Join(answered(refusedExec, refusedShell), " and ")+" answered.", "")
 	}
 	// 3. The lease: a task another live process holds is refused at the call; the box's own task
 	//    is reachable (the positive control).
 	if text, isError := toolReply(replies["held"]); isError && strings.Contains(text, "held by another live process") {
-		rep.ok("the task socket refuses a mutation on a task another live process holds")
+		s.pass("Changes to a task held by another process are refused")
 	} else {
-		rep.no(fmt.Sprintf("the task socket let the box mutate a task another live process holds: %s", text))
+		s.fail("The task channel did not refuse a change to another process's task", sentence(text), "")
 	}
 	if log, _ := os.ReadFile(filepath.Join(queue, tasks.StateInProgress, "theirs", "log.md")); strings.Contains(string(log), "doctor must not land here") {
-		rep.no("the refused mutation still wrote to the held task's log.md")
+		s.fail("A refused change still reached the held task's log", "log.md", "")
 	}
 	if text, isError := toolReply(replies["mine"]); !isError && strings.Contains(text, "appended") {
-		rep.ok("the box's own assigned task is reachable through the socket")
+		s.pass("The assigned task can be updated")
 	} else {
-		rep.no(fmt.Sprintf("the box could not reach its own assigned task through the socket: %s", text))
+		s.fail("The assigned task could not be updated", sentence(text), "")
+	}
+}
+
+// answered names which unsupported calls came back with a result instead of a refusal, without
+// echoing any part of the reply payload.
+func answered(refusedExec, refusedShell bool) []string {
+	var out []string
+	if !refusedExec {
+		out = append(out, "exec")
+	}
+	if !refusedShell {
+		out = append(out, "shell")
+	}
+	return out
+}
+
+// doctorCheckClone proves the fork handoff: a clone of the fixture carries the tracked source and
+// none of the shadowed secrets, and has nowhere to push to.
+func doctorCheckClone(s *doctorSection, fixture, clone string) {
+	if err := exec.Command("git", "clone", "-q", fixture, clone).Run(); err != nil {
+		s.probeFailed("Could not check the fork handoff", sentence(err.Error()), len(doctorCloneChecks))
+		return
+	}
+	present := map[string]bool{
+		"clone.env":     pathExists(filepath.Join(clone, ".env")),
+		"clone.envrc":   pathExists(filepath.Join(clone, ".envrc")),
+		"clone.secrets": pathExists(filepath.Join(clone, "secrets")),
+		"clone.keys":    pathExists(filepath.Join(clone, "deploy")),
+	}
+	for _, def := range doctorCloneChecks {
+		switch def.id {
+		case "clone.source":
+			s.record(def, fileExists(filepath.Join(clone, "src", "app.js")))
+		case "clone.secret_value":
+			s.record(def, !treeContains(clone, "hunter2"))
+		case "clone.origin":
+			origin, _ := exec.Command("git", "-C", clone, "remote", "get-url", "origin").Output()
+			s.record(def, strings.HasPrefix(strings.TrimSpace(string(origin)), "/"))
+		default:
+			s.record(def, !present[def.id])
+		}
 	}
 }
 
@@ -502,43 +572,17 @@ func writeProbeFile(content string) (string, func(), error) {
 	return path, cleanup, nil
 }
 
-// recordResult applies a "RESULT PASS|FAIL <msg>" probe line to the report, returning whether it
-// matched one (so the caller can handle other RESULT kinds, e.g. UID/CAPS/PIDS).
-func recordResult(rep *report, line string) bool {
-	switch {
-	case strings.HasPrefix(line, "RESULT PASS "):
-		rep.ok(strings.TrimPrefix(line, "RESULT PASS "))
-	case strings.HasPrefix(line, "RESULT FAIL "):
-		rep.no(strings.TrimPrefix(line, "RESULT FAIL "))
-	default:
-		return false
-	}
-	return true
-}
-
-// probeWhy turns a no-output probe run into a short " : <reason>" suffix — the runtime's last
-// stderr line, or the run error — so an opaque failure says why instead of just "no output".
-func probeWhy(errOut string, runErr error) string {
-	why := strings.TrimSpace(errOut)
-	if why == "" && runErr != nil {
-		why = runErr.Error()
-	}
-	if why == "" {
-		return ""
-	}
-	return ": " + strings.TrimSpace(why[strings.LastIndex(why, "\n")+1:])
-}
-
 // doctorCredAndHomeProbe checks, inside a box scoped to claude, that only claude's credentials are
 // visible and the normal mount composition leaves its application config home writable.
 func doctorCredAndHomeProbe(home string) string {
 	return fmt.Sprintf(`#!/bin/sh
-[ -f "%[1]s/.claude/.credentials.json" ]         && echo "RESULT PASS the scoped agent's own credential home is mounted"  || echo "RESULT FAIL the scoped agent's credential home is missing"
-[ ! -e "%[1]s/.codex/auth.json" ]                && echo "RESULT PASS a peer agent's credential home is NOT mounted"      || echo "RESULT FAIL codex credentials leaked into a claude-scoped box"
-[ ! -e "%[1]s/.gemini/gemini-credentials.json" ] && echo "RESULT PASS a second peer's credential home is NOT mounted"     || echo "RESULT FAIL gemini credentials leaked into a claude-scoped box"
-[ -z "$ANTHROPIC_API_KEY" ] && echo "RESULT PASS the scoped agent's env token yields to its mounted login" || echo "RESULT FAIL the scoped agent's env token shadowed its mounted login"
-[ -z "$OPENAI_API_KEY" ]    && echo "RESULT PASS a peer's API key is stripped from the env"   || echo "RESULT FAIL OPENAI_API_KEY (a peer's) leaked into a claude-scoped box"
-[ -z "$GOOGLE_API_KEY" ]    && echo "RESULT PASS a peer's alias key (bare) is stripped"       || echo "RESULT FAIL GOOGLE_API_KEY (a peer alias) leaked into a claude-scoped box"
+check() { if "$@"; then echo "RESULT PASS $ID"; else echo "RESULT FAIL $ID"; fi; }
+ID=credential.own_home    check test -f "%[1]s/.claude/.credentials.json"
+ID=credential.codex_home  check test ! -e "%[1]s/.codex/auth.json"
+ID=credential.gemini_home check test ! -e "%[1]s/.gemini/gemini-credentials.json"
+ID=credential.own_env     check test -z "$ANTHROPIC_API_KEY"
+ID=credential.peer_env    check test -z "$OPENAI_API_KEY"
+ID=credential.peer_alias  check test -z "$GOOGLE_API_KEY"
 if mkdir -p "%[1]s/.config/coop-browser-probe" && : > "%[1]s/.config/coop-browser-probe/write"; then
 	rm -rf "%[1]s/.config/coop-browser-probe"
 	echo "RESULT HOME writable"
@@ -552,15 +596,16 @@ fi
 // one normally composed box. It seeds a throwaway credential for every agent and an env file
 // holding every agent's key, then runs a claude-scoped probe that also creates state under
 // ~/.config — exercising credentialScope, generated home mounts, and writeFilteredEnvFile.
-func doctorCheckCredAndHomeScope(rep *report, a *app, fixture, img string, usingReal bool) {
+func doctorCheckCredAndHomeScope(s *doctorSection, a *app, fixture, img string, usingReal bool) {
+	covers := len(doctorCredentialChecks) + 1
 	cfgDir, err := os.MkdirTemp("", "coop-doctor-cred-")
 	if err != nil {
-		rep.no("could not stage the credential fixture" + probeWhy("", err))
+		s.probeFailed("Could not prepare the credential checks", sentence(err.Error()), covers)
 		return
 	}
 	defer os.RemoveAll(cfgDir)
 	if err := os.Chmod(cfgDir, 0o755); err != nil { // box reads it as a non-owner uid
-		rep.no("credential fixture" + probeWhy("", err))
+		s.probeFailed("Could not prepare the credential checks", sentence(err.Error()), covers)
 		return
 	}
 	credCfg := *a.cfg
@@ -575,7 +620,7 @@ func doctorCheckCredAndHomeScope(rep *report, a *app, fixture, img string, using
 		credFile, _ := ag.AuthMarker()
 		dir := credCfg.AgentDir(name)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			rep.no("credential fixture" + probeWhy("", err))
+			s.probeFailed("Could not prepare the credential checks", sentence(err.Error()), covers)
 			return
 		}
 		_ = os.WriteFile(filepath.Join(dir, credFile), []byte(`{"token":"hunter2"}`), 0o644)
@@ -588,7 +633,7 @@ func doctorCheckCredAndHomeScope(rep *report, a *app, fixture, img string, using
 
 	probe, cleanup, err := writeProbeFile(doctorCredAndHomeProbe(credCfg.HomeInBox))
 	if err != nil {
-		rep.no("credential fixture" + probeWhy("", err))
+		s.probeFailed("Could not prepare the credential checks", sentence(err.Error()), covers)
 		return
 	}
 	defer cleanup()
@@ -600,29 +645,26 @@ func doctorCheckCredAndHomeScope(rep *report, a *app, fixture, img string, using
 		ExtraArgs: []string{"-v", probe + ":/credprobe.sh:ro"},
 	})
 	if runErr != nil || out.Len() == 0 {
-		rep.no("the credential-scope box produced no output" + probeWhy(errOut.String(), runErr))
+		s.probeFailed("Could not run the credential checks", probeReason(errOut.String(), runErr, "The credential-scope box produced no output."), covers)
 		return
 	}
-	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
-		if strings.HasPrefix(line, "RESULT HOME ") {
-			doctorCheckHome(rep, strings.TrimPrefix(line, "RESULT HOME "), usingReal)
-		} else {
-			recordResult(rep, line)
-		}
+	results := parseProbeResults(out.String())
+	for _, def := range doctorCredentialChecks {
+		s.record(def, results[def.id] == "PASS")
 	}
+	doctorCheckHome(s, results["HOME"], usingReal)
 }
 
 // doctorCheckHome interprets the config-home write probe. The Alpine fallback runs as root, so it
 // cannot expose the ownership bug this check guards and must not report a false pass.
-func doctorCheckHome(rep *report, result string, usingReal bool) {
-	if !usingReal {
-		fmt.Printf("  %s box home .config ownership not checked (requires the real non-root image)\n", ui.Dim("·"))
-		return
-	}
-	if strings.TrimSpace(result) == "writable" {
-		rep.ok("the box home .config directory is writable")
-	} else {
-		rep.no("the box home .config directory is not writable")
+func doctorCheckHome(s *doctorSection, result string, usingReal bool) {
+	switch {
+	case !usingReal:
+		s.skip("Settings permissions not checked", "", 1)
+	case strings.TrimSpace(result) == "writable":
+		s.pass("The box can write its settings directory")
+	default:
+		s.fail("The box cannot write its settings directory", "", "")
 	}
 }
 
@@ -630,13 +672,13 @@ func doctorCheckHome(rep *report, result string, usingReal bool) {
 func buildFixture() (string, error) {
 	dir, err := os.MkdirTemp("", "coop-doctor-")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 	}
 	// MkdirTemp makes the root 0700; the box mounts it at /workspace and the probe must cd into and
 	// stat it as a uid that may not own it (and, under --cap-drop ALL, can't bypass the check). Make
 	// the root world-traversable — the seeded files are already 0644 / subdirs 0755.
 	if err := os.Chmod(dir, 0o755); err != nil {
-		return "", err
+		return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 	}
 	files := map[string]string{
 		".env":         "SECRET=hunter2\n",
@@ -657,15 +699,15 @@ func buildFixture() (string, error) {
 	for rel, body := range files {
 		p := filepath.Join(dir, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return "", err
+			return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 		}
 		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-			return "", err
+			return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 		}
 	}
 	// A symlink to a secret: shadowing must cover what it points at, so following it reads empty.
 	if err := os.Symlink(".env", filepath.Join(dir, "notes-link")); err != nil {
-		return "", err
+		return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 	}
 	cmds := [][]string{
 		{"init", "-q"},
@@ -675,18 +717,10 @@ func buildFixture() (string, error) {
 	for _, c := range cmds {
 		cmd := exec.Command("git", append([]string{"-C", dir}, c...)...)
 		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("git %v: %w", c, err)
+			return "", fmt.Errorf("could not prepare the temporary project with git %v: %v", c, err)
 		}
 	}
 	return dir, nil
-}
-
-func checkAbsent(r *report, path, okMsg, noMsg string) {
-	if !pathExists(path) {
-		r.ok(okMsg)
-	} else {
-		r.no(noMsg)
-	}
 }
 
 func treeContains(root, needle string) bool {

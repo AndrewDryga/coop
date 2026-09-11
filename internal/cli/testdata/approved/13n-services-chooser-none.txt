@@ -1,0 +1,11 @@
+Add services
+
+Choose services to run alongside your agents.
+Existing services and their data will be kept.
+
+  postgres
+  redis
+
+Services (space-separated, or press Enter for none):
+
+No services added.

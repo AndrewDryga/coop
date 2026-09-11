@@ -279,35 +279,31 @@ func TestRecycleBoxesDistinguishesNoMatchFromFailure(t *testing.T) {
 	t.Run("no match", func(t *testing.T) {
 		rt, _ := recycleRuntime(t, "no-match")
 		a := &app{rt: rt, rtSet: true}
-		var recycleErr error
-		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
-		if recycleErr != nil || out != "" {
-			t.Fatalf("empty recycle = (%q, %v), want quiet success", out, recycleErr)
+		supervised, others, recycleErr := a.recycleBoxes("")
+		if recycleErr != nil || supervised != 0 || others != 0 {
+			t.Fatalf("empty recycle = (%d, %d, %v), want a quiet zero", supervised, others, recycleErr)
 		}
 	})
 
-	t.Run("success preserves both notices", func(t *testing.T) {
+	t.Run("success counts both effects", func(t *testing.T) {
 		rt, _ := recycleRuntime(t, "success")
 		a := &app{rt: rt, rtSet: true}
-		var recycleErr error
-		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
+		supervised, others, recycleErr := a.recycleBoxes("")
 		if recycleErr != nil {
 			t.Fatal(recycleErr)
 		}
-		for _, want := range []string{"restarted 2 supervised sessions", "1 other running container still on the old image"} {
-			if !strings.Contains(out, want) {
-				t.Errorf("recycle output missing %q:\n%s", want, out)
-			}
+		if supervised != 2 || others != 1 {
+			t.Errorf("recycle = (%d supervised, %d other), want (2, 1)", supervised, others)
 		}
 	})
 
 	t.Run("query failure happens before removal", func(t *testing.T) {
 		rt, trace := recycleRuntime(t, "query-failure")
 		a := &app{rt: rt, rtSet: true}
-		var recycleErr error
-		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
-		if recycleErr == nil || !strings.Contains(recycleErr.Error(), "daemon query broke") || out != "" {
-			t.Fatalf("query failure = output %q, error %v; want silent diagnostic error", out, recycleErr)
+		_, _, recycleErr := a.recycleBoxes("")
+		if recycleErr == nil || !strings.Contains(recycleErr.Error(), "daemon query broke") ||
+			!strings.Contains(recycleErr.Error(), "did not respond while listing") {
+			t.Fatalf("query failure error = %v; want the step and the runtime diagnostic", recycleErr)
 		}
 		calls, err := os.ReadFile(trace)
 		if err != nil {
@@ -321,14 +317,13 @@ func TestRecycleBoxesDistinguishesNoMatchFromFailure(t *testing.T) {
 	t.Run("partial removal reports progress", func(t *testing.T) {
 		rt, _ := recycleRuntime(t, "partial")
 		a := &app{rt: rt, rtSet: true}
-		var recycleErr error
-		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
+		supervised, _, recycleErr := a.recycleBoxes("")
 		if recycleErr == nil || !strings.Contains(recycleErr.Error(), "1 removed before failure") ||
 			!strings.Contains(recycleErr.Error(), "container remove broke") {
 			t.Fatalf("partial removal error = %v, want count and runtime diagnostic", recycleErr)
 		}
-		if strings.Contains(out, "restarted") {
-			t.Fatalf("partial removal printed a success summary:\n%s", out)
+		if supervised != 0 {
+			t.Fatalf("partial removal reported %d restarted sessions; a failed removal counts none", supervised)
 		}
 	})
 }
@@ -365,7 +360,7 @@ func TestCmdUpReportsResolvedServiceNames(t *testing.T) {
 			if code != 0 || runErr != nil {
 				t.Fatalf("cmdUp = (%d, %v), want success; stderr:\n%s", code, runErr, out)
 			}
-			want := "the box reaches " + strings.Join(tc.services, ", ") + " by name"
+			want := "✓ Services ready: " + strings.Join(tc.services, ", ")
 			if !strings.Contains(out, want) {
 				t.Errorf("cmdUp output missing %q:\n%s", want, out)
 			}
@@ -394,11 +389,11 @@ func TestCmdUpStopsWhenServiceDiscoveryFails(t *testing.T) {
 	var runErr error
 	out := captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
 	if code == 0 || runErr == nil ||
-		!strings.Contains(runErr.Error(), "compose config --services exited with code 19") ||
-		!strings.Contains(runErr.Error(), "then retry: coop up") {
-		t.Fatalf("cmdUp discovery failure = (%d, %v), want named failure", code, runErr)
+		!strings.Contains(out, "Compose config --services exited with status 19.") ||
+		!strings.Contains(out, "then run coop up again.") {
+		t.Fatalf("cmdUp discovery failure = (%d, %v), want named failure:\n%s", code, runErr, out)
 	}
-	if strings.Contains(out, "up on network") {
+	if strings.Contains(out, "Services ready") {
 		t.Errorf("cmdUp printed success after discovery failed:\n%s", out)
 	}
 }
@@ -850,15 +845,20 @@ func TestInitActions(t *testing.T) {
 		}
 		return out
 	}
-	got := initActions(cfg, repo, nil, true)
+	got := initActions(cfg, repo, nil, []string{"codex"}, true)
 	if len(got) != 3 || !strings.HasPrefix(titles(got)[0], "Sign in") {
 		t.Fatalf("ready repo actions = %v", titles(got))
 	}
-	if !strings.Contains(got[1].actions[0], "coop doctor") || !strings.Contains(got[2].actions[1], "coop loop") {
-		t.Errorf("fresh repo should verify then start working: %+v", got)
+	// A bare `coop loop` has no target in a fresh project, so the hint names the agent this
+	// project actually set up — otherwise the suggested command fails on the first try.
+	if !strings.Contains(got[1].actions[0], "coop doctor") || got[2].actions[1] != "coop loop codex" {
+		t.Errorf("fresh repo should verify then start working with a runnable loop: %+v", got)
+	}
+	if got[0].actions[0] != "coop login codex" {
+		t.Errorf("sign-in should name the same agent the loop hint does: %+v", got[0])
 	}
 	// A re-init keeps only the actions real state still needs — no first-run advice.
-	if got := initActions(cfg, repo, nil, false); len(got) != 1 || !strings.HasPrefix(got[0].title, "Sign in") {
+	if got := initActions(cfg, repo, nil, []string{"codex"}, false); len(got) != 1 || !strings.HasPrefix(got[0].title, "Sign in") {
 		t.Errorf("re-init actions = %v, want only the sign-in job", titles(got))
 	}
 	// A scaffolded .agent/Dockerfile + services → build, then start them (named), before the
@@ -869,16 +869,16 @@ func TestInitActions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got = initActions(cfg, repo, []string{"postgres", "redis"}, true)
+	got = initActions(cfg, repo, []string{"postgres", "redis"}, []string{"codex"}, true)
 	if want := []string{"Sign in to an agent", "Build the box", "Start postgres and redis", "Verify the sandbox", "Start working"}; !slices.Equal(titles(got), want) {
 		t.Errorf("actions = %v, want %v", titles(got), want)
 	}
-	if !strings.Contains(got[1].actions[0], "coop build") || got[2].actions[0] != "coop up" {
+	if got[1].actions[0] != "coop build" || got[1].note != "Review .agent/Dockerfile, then run:" || got[2].actions[0] != "coop up" {
 		t.Errorf("build/up actions wrong: %+v", got)
 	}
 	// Outside a git repo the first job is the one that finishes setup — the exact two commands,
 	// in order, because only the re-init can set core.hooksPath.
-	got = initActions(cfg, t.TempDir(), nil, true)
+	got = initActions(cfg, t.TempDir(), nil, []string{"codex"}, true)
 	if len(got) == 0 || !strings.HasPrefix(got[0].title, "Finish setup") || !slices.Equal(got[0].actions, []string{"git init", "coop init"}) {
 		t.Errorf("non-git repo should lead with git init then coop init, got %+v", got)
 	}
@@ -1211,7 +1211,7 @@ func TestResolveImageBlamesTheDaemonNotTheImage(t *testing.T) {
 		infoExit string
 		want     string
 	}{
-		{"daemon unreachable", "1", "daemon isn't responding"},
+		{"daemon unreachable", "1", "Docker is unavailable"},
 		{"daemon up, image absent", "0", "not built"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1365,8 +1365,8 @@ func TestCmdUpRefusesWhileABoxRuns(t *testing.T) {
 	var code int
 	var runErr error
 	out := captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
-	if code != 1 || runErr == nil || !strings.Contains(runErr.Error(), "an agent box is running in this project") ||
-		!strings.Contains(runErr.Error(), "local-loop") {
+	if code != 1 || runErr == nil || !strings.Contains(out, "An agent box is running in this project") ||
+		!strings.Contains(out, "local-loop") {
 		t.Fatalf("cmdUp beside a running box = (%d, %v); want a refusal naming the box\n%s", code, runErr, out)
 	}
 	if err := forkspace.EndExecution(repo, running); err != nil {
@@ -1402,7 +1402,7 @@ func TestCmdUpWarnsAboutHiddenServiceSecretsWithoutATerminal(t *testing.T) {
 	if code != 0 || runErr != nil {
 		t.Fatalf("cmdUp = (%d, %v), want the services to start with decoys; stderr:\n%s", code, runErr, out)
 	}
-	for _, want := range []string{"empty file in place of certs/tls.key", "run `coop up` in a terminal"} {
+	for _, want := range []string{"⚠ Services will receive empty files", "  certs/tls.key", "To approve access, run coop up at a terminal."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("cmdUp did not explain the hidden file (%q):\n%s", want, out)
 		}
@@ -1415,7 +1415,7 @@ func TestCmdUpWarnsAboutHiddenServiceSecretsWithoutATerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
-	if code != 0 || runErr != nil || strings.Contains(out, "empty file") {
+	if code != 0 || runErr != nil || strings.Contains(out, "empty files") {
 		t.Fatalf("approved cmdUp = (%d, %v); stderr:\n%s", code, runErr, out)
 	}
 }

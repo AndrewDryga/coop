@@ -105,7 +105,7 @@ func TestMainCommandHelpArg(t *testing.T) {
 	if code != 0 {
 		t.Errorf("`coop build help` exit = %d, want 0", code)
 	}
-	if s := string(out); !strings.Contains(s, "coop build") || !strings.Contains(s, "Usage: coop build") {
+	if s := string(out); !strings.Contains(s, "coop build — build the Coop box image") || !strings.Contains(s, "Usage:\n  coop build") {
 		t.Errorf("`coop build help` should print build's help; got:\n%s", s)
 	}
 }
@@ -152,7 +152,7 @@ func TestMainHelpSubcommand(t *testing.T) {
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
 
-	if codeBuild != 0 || !strings.Contains(string(out), "Usage: coop build") {
+	if codeBuild != 0 || !strings.Contains(string(out), "Usage:\n  coop build") {
 		t.Errorf("`coop help build` = %d; want 0 + build's help, got:\n%s", codeBuild, out)
 	}
 	if codeFork != 0 {

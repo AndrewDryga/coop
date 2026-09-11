@@ -1,0 +1,4 @@
+Coop v9.0.0 is up to date.
+
+No local build record was found for coop-box.
+Build the box with coop build.

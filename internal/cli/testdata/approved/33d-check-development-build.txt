@@ -1,0 +1,3 @@
+This is a development build: v9.0.0-187-g1176bf4.
+The latest release is v9.0.0. Self-update does not replace development builds.
+Box image coop-box was last built today.

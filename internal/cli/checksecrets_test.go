@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,20 @@ func pinGitConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+}
+
+// joinScan renders a scan the way the old string-returning scanner did, so these tests keep
+// asserting on "which file, flagged how" rather than on the report's layout.
+func joinScan(scan treeScan) string {
+	var b strings.Builder
+	for _, f := range scan.findings {
+		fmt.Fprintf(&b, "%s:%d (%s)", f.Path, f.Line, f.Kind)
+		if f.shadowed {
+			b.WriteString(" - git would commit it")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func TestScanVisibleTreeSkipsGitignored(t *testing.T) {
@@ -44,11 +59,11 @@ func TestScanVisibleTreeSkipsGitignored(t *testing.T) {
 	mk("config.tf", token)           // tracked-able source → must be scanned
 
 	// Default mode: the gitignored file is out of the commit-candidate set.
-	findings, err := scanVisibleTree(repo, false)
+	scan, err := scanVisibleTree(repo, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(findings, "\n")
+	joined := joinScan(scan)
 	if strings.Contains(joined, "serviceAccount.json") {
 		t.Errorf("default scan should skip the gitignored file:\n%s", joined)
 	}
@@ -61,7 +76,7 @@ func TestScanVisibleTreeSkipsGitignored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if j := strings.Join(ignored, "\n"); !strings.Contains(j, "serviceAccount.json") {
+	if j := joinScan(ignored); !strings.Contains(j, "serviceAccount.json") {
 		t.Errorf("--include-ignored should scan the gitignored file:\n%s", j)
 	}
 }
@@ -85,11 +100,11 @@ func TestScanVisibleTreeIncludeIgnoredSkipsShadowedAndDeps(t *testing.T) {
 	mk("node_modules/pkg/index.js", "x="+token) // dependency dir → pruned
 	mk("secrets.txt", "token: "+token+"\n")     // plain visible file → flagged
 
-	findings, err := scanVisibleTree(repo, true)
+	scan, err := scanVisibleTree(repo, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(findings, "\n")
+	joined := joinScan(scan)
 	if strings.Contains(joined, ".env") {
 		t.Errorf("shadowed .env must stay skipped in --include-ignored mode:\n%s", joined)
 	}
@@ -121,11 +136,11 @@ func TestScanVisibleTree(t *testing.T) {
 	// A clean file → no finding.
 	mk("README.md", "nothing secret here\n")
 
-	findings, err := scanVisibleTree(repo, false)
+	scan, err := scanVisibleTree(repo, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(findings, "\n")
+	joined := joinScan(scan)
 	if !strings.Contains(joined, "config/prod.yml") {
 		t.Errorf("missed the token in the visible config/prod.yml:\n%s", joined)
 	}
@@ -192,11 +207,11 @@ func TestScanVisibleTreeScansAgentByDefault(t *testing.T) {
 	run("add", ".gitignore")
 	run("commit", "-qm", "init")
 
-	findings, err := scanVisibleTree(repo, false) // DEFAULT scan, no --include-ignored
+	scan, err := scanVisibleTree(repo, false) // DEFAULT scan, no --include-ignored
 	if err != nil {
 		t.Fatal(err)
 	}
-	if j := strings.Join(findings, "\n"); !strings.Contains(j, ".agent/tasks/2026-01-01-x/log.md") {
+	if j := joinScan(scan); !strings.Contains(j, ".agent/tasks/2026-01-01-x/log.md") {
 		t.Errorf("default scan must catch a secret in .agent/ (the box reads it):\n%s", j)
 	}
 }
@@ -205,13 +220,13 @@ func TestReadScannable(t *testing.T) {
 	dir := t.TempDir()
 	text := filepath.Join(dir, "a.txt")
 	os.WriteFile(text, []byte("plain text\n"), 0o644)
-	if s, ok := readScannable(text); !ok || s == "" {
-		t.Errorf("text file should be scannable, got ok=%v", ok)
+	if s, status := readScannable(text); status.kind != scanRead || s == "" {
+		t.Errorf("text file should be scannable, got kind=%v", status.kind)
 	}
 	bin := filepath.Join(dir, "b.bin")
 	os.WriteFile(bin, []byte("PNG\x00\x01\x02binary"), 0o644)
-	if _, ok := readScannable(bin); ok {
-		t.Error("binary file (NUL byte) should be skipped")
+	if _, status := readScannable(bin); status.kind != scanSkipped {
+		t.Errorf("binary file (NUL byte) should be skipped, got kind=%v", status.kind)
 	}
 }
 
@@ -233,7 +248,7 @@ func TestCheckSecretsLsFilesIsHardened(t *testing.T) {
 		t.Fatal(err)
 	}
 	run("config", "core.fsmonitor", evil)
-	if _, err := candidateFiles(repo, false); err != nil { // hardened — must not run fsmonitor
+	if _, _, err := candidateFiles(repo, false); err != nil { // hardened — must not run fsmonitor
 		t.Fatalf("candidateFiles: %v", err)
 	}
 	if pathExists(marker) {
@@ -274,11 +289,11 @@ func TestCheckSecretsReportsNameShadowedCommitCandidates(t *testing.T) {
 	mk("key.txt", key)      // plain commit candidate → the control
 	mk(".agent/tasks/notes/secret.key", key)
 
-	findings, err := scanVisibleTree(repo, false)
+	scan, err := scanVisibleTree(repo, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(findings, "\n")
+	joined := joinScan(scan)
 	if !strings.Contains(joined, "id_ed25519") || !strings.Contains(joined, "git would commit it") {
 		t.Errorf("default scan missed the name-shadowed commit candidate:\n%s", joined)
 	}
@@ -294,7 +309,7 @@ func TestCheckSecretsReportsNameShadowedCommitCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	joined = strings.Join(all, "\n")
+	joined = joinScan(all)
 	if strings.Contains(joined, "ignored.pem") || strings.Contains(joined, "silenced.pem") {
 		t.Errorf("--include-ignored reported a file the box never sees and git never commits:\n%s", joined)
 	}
@@ -332,7 +347,7 @@ func TestCheckSecretsReportsHostSurfaceChanges(t *testing.T) {
 	for _, finding := range surfaces {
 		paths[finding.Path] = finding.Reason
 	}
-	if len(paths) != 2 || !strings.Contains(paths["Makefile"], "make") || !strings.Contains(paths[".githooks/pre-commit"], "git commit") {
+	if len(paths) != 2 || !strings.Contains(paths["Makefile"], "make") || !strings.Contains(paths[".githooks/pre-commit"], "Git operations") {
 		t.Fatalf("host surfaces = %+v; want the modified Makefile and the new hook, not main.go", surfaces)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
@@ -342,7 +357,7 @@ func TestCheckSecretsReportsHostSurfaceChanges(t *testing.T) {
 	if code != 0 || runErr != nil {
 		t.Fatalf("check-secrets = (%d, %v); the host-surface report must not change the exit code\n%s", code, runErr, out)
 	}
-	if !strings.Contains(out, "alter what runs on your machine") || !strings.Contains(out, ".githooks/pre-commit") {
+	if !strings.Contains(out, "Review files that run commands") || !strings.Contains(out, ".githooks/pre-commit") {
 		t.Fatalf("check-secrets did not report the host surfaces:\n%s", out)
 	}
 }

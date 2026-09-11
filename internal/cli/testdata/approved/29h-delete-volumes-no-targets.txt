@@ -1,0 +1,7 @@
+No service volumes to delete.
+
+Stopping services from .agent/compose.yml
+
+[Compose output]
+
+✓ Services stopped

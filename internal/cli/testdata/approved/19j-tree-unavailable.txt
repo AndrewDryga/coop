@@ -1,0 +1,5 @@
+✗ Could not check project files
+
+      Could not read local-data/: permission denied.
+
+  Fix the path or permissions, then run coop check-secrets again.

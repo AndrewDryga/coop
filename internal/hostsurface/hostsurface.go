@@ -18,7 +18,7 @@ import (
 )
 
 // Finding is one changed file that alters what runs on the host, with the reason a reviewer
-// should read it: "runs on your machine when …". Automatic marks the surfaces that run WITHOUT
+// should read it — one sentence saying when the file runs. Automatic marks the surfaces that run WITHOUT
 // a deliberate command — a hook on your next commit, a settings file your editor session loads,
 // a compose file a box start runs — as opposed to a Makefile you choose to run: the former
 // refuse a fork merge unless forced, the latter are listed and flagged but never block.
@@ -40,47 +40,47 @@ func Classify(status, relPath string) (reason string, automatic bool) {
 	dir := path.Dir(p)
 	switch {
 	case base == ".envrc":
-		return "runs on your machine on `cd` into the directory (direnv)", true
+		return "Runs when you enter the folder with direnv.", true
 	case base == ".gitattributes":
-		return "assigns git filters and diff drivers that your own git runs on checkout, diff and status (coop's git ignores them; yours does not)", true
+		return "Selects Git filters and diff drivers used by your Git commands.", true
 	case base == ".gitmodules":
-		return "changes submodule sources your git fetches from on `git submodule update`", true
+		return "Changes sources fetched by git submodule update.", true
 	case base == ".pre-commit-config.yaml":
-		return "runs on your machine on every `git commit` (pre-commit)", true
+		return "Runs on Git commits through pre-commit.", true
 	case under(p, ".githooks") || under(p, ".husky") || under(p, ".git-hooks") || hasSegment(p, "githooks"):
-		return "a git hook: runs on your machine on `git commit`, `git push` or checkout", true
+		return "Runs during Git operations.", true
 	case base == "Makefile" || base == "GNUmakefile" || base == "makefile":
-		return "runs on your machine on `make` (the gate runs it)", false
+		return "Runs when you use make.", false
 	case base == "justfile" || base == "Justfile" || base == "Taskfile.yml" || base == "Taskfile.yaml":
-		return "runs on your machine on `just` / `task`", false
+		return "Runs when you use just or task.", false
 	case base == ".mcp.json" || strings.HasSuffix(base, ".mcp.json") || base == "mcp.json":
-		return "an MCP server command your agent starts on your machine", true
+		return "Starts MCP server commands in your host agent session.", true
 	case under(p, ".claude"):
 		if base == "settings.json" || base == "settings.local.json" || hasSegment(p, "hooks") {
-			return "Claude Code hooks: run on your machine when a Claude session runs in this repo", true
+			return "Runs Claude Code hooks in your host session.", true
 		}
-		return "Claude Code project configuration (commands, skills) used by your host sessions", true
+		return "Provides commands or skills to your host Claude session.", true
 	case under(p, ".codex") || under(p, ".gemini"):
-		return "agent configuration (MCP servers, commands) used by your host sessions", true
+		return "Provides agent configuration to your host sessions.", true
 	case under(p, ".agent"):
 		switch {
 		case hasSegment(p, "skills"):
-			return "a skill script or hook: runs on your machine when an agent invokes the skill", true
+			return "Runs when your host agent uses the skill.", true
 		case base == "compose.yml" || base == "compose.yaml" || base == "docker-compose.yml":
-			return "runs containers of its choosing on your Docker when a box starts or on `coop up`", true
+			return "Starts containers on your runtime when services start.", true
 		case base == "Dockerfile" || strings.HasPrefix(base, "Dockerfile."):
-			return "build steps run on your Docker on `coop build`", true
+			return "Runs build steps on your runtime when you build the box.", true
 		case base == "project.yaml" || base == "loop.yaml":
-			return "coop configuration read on your machine (compose path, gate, ports)", true
+			return "Changes Coop settings used on your machine.", true
 		}
 	case under(p, ".vscode") && (base == "tasks.json" || base == "launch.json" || base == "settings.json"):
-		return "VS Code tasks or settings that can run a command when the folder opens", true
+		return "Can run commands in your VS Code session.", true
 	case under(p, ".zed") && (base == "tasks.json" || base == "settings.json"):
-		return "Zed tasks or settings that can run a command when the project opens", true
+		return "Can run commands in your Zed session.", true
 	case under(p, ".idea") && strings.HasSuffix(base, ".xml"):
-		return "IDE run configuration that runs a command from the IDE", true
+		return "Defines commands run by your IDE.", true
 	case dir == ".github/workflows" || strings.HasPrefix(p, ".github/workflows/"):
-		return "CI workflow: runs on the project's CI runners on push", true
+		return "Runs on the project's CI runners.", true
 	}
 	return "", false
 }

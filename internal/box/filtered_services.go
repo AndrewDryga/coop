@@ -54,7 +54,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		return "", nil, err
 	}
 	var composeErr bytes.Buffer
-	if _, err := startServicesFile(rt, spec.Repo, composeFile, io.Discard, &composeErr, spec.RepoReadOnly, exposedRoots...); err != nil {
+	if _, err := startServicesFile(rt, spec.Repo, composeFile, io.Discard, &composeErr, spec.RepoReadOnly, true, exposedRoots...); err != nil {
 		return "", nil, fmt.Errorf("a filtered box needs this project's approved sidecars running, and starting them failed: %w", err)
 	}
 	network := ComposeProject(spec.Repo) + "_default"

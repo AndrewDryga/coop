@@ -14,13 +14,17 @@ var ComposeServices = []string{"postgres", "redis"}
 
 // composeUnit is one service's compose block plus the named volume it declares.
 type composeUnit struct {
-	block  string // the indented "  <name>:" service definition (with a trailing newline)
-	volume string // the named volume to declare under volumes:, or ""
-	note   string // an optional header note (e.g. the connection-string hint)
+	service string // the Compose service name this catalog entry writes
+	image   string // the image it writes, so an existing service of the same name can be recognised
+	block   string // the indented "  <name>:" service definition (with a trailing newline)
+	volume  string // the named volume to declare under volumes:, or ""
+	note    string // an optional header note (e.g. the connection-string hint)
 }
 
 var composeCatalog = map[string]composeUnit{
 	"postgres": {
+		service: "db",
+		image:   "postgres:",
 		block: `  db:
     image: postgres:18
     environment:
@@ -35,9 +39,11 @@ var composeCatalog = map[string]composeUnit{
       retries: 15
 `,
 		volume: "pgdata",
-		note:   "# Connection string for the box, e.g.: DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev",
+		note:   "# Postgres in the box:\n# DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev",
 	},
 	"redis": {
+		service: "redis",
+		image:   "redis:",
 		block: `  redis:
     image: redis:8
     volumes: ["redisdata:/data"]
@@ -72,10 +78,14 @@ func composeFor(services []string) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("# Sibling services for the agent. `coop up` starts them; the box reaches them\n")
-	b.WriteString("# by name. Dev data is throwaway — it lives in named volumes.\n")
+	// Named volumes outlive a stop, so the header says so and names the one command that does
+	// delete them: calling this data throwaway invited someone to find out otherwise.
+	b.WriteString("# Services for this project. Start with coop up; stop with coop down.\n")
+	b.WriteString("# Agents reach each service by its name below.\n")
+	b.WriteString("# Data stays in named volumes when services stop.\n")
+	b.WriteString("# coop down --delete-volumes deletes those volumes and their data.\n")
 	for _, n := range notes {
-		b.WriteString(n + "\n")
+		b.WriteString("#\n" + n + "\n")
 	}
 	b.WriteString("services:\n")
 	for _, bl := range blocks {

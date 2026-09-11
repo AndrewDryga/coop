@@ -1,0 +1,5 @@
+✗ Could not use --stack asdf
+
+      /work/atlas/.tool-versions does not exist.
+
+  Add the tool versions this project needs, then run coop init --stack asdf.

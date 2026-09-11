@@ -917,7 +917,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// session continues WITHOUT services rather than running anything host-dangerous.
 			var composeStderr bytes.Buffer
 			servicesInspected = true
-			started, err := startServicesFile(rt, spec.Repo, cf, io.Discard, &composeStderr, spec.RepoReadOnly, privateRoots...)
+			started, err := startServicesFile(rt, spec.Repo, cf, io.Discard, &composeStderr, spec.RepoReadOnly, true, privateRoots...)
 			if err != nil {
 				if spec.Review {
 					detail := strings.TrimSpace(composeStderr.String())

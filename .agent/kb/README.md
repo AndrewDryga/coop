@@ -71,6 +71,8 @@ resolving). What it can't tell you is whether a card is still TRUE; only reading
 - [services-teardown-needs-the-workspace](services-teardown-needs-the-workspace.md) — sibling services persist across boxes on purpose, but teardown reads the workspace's compose file, so stopping them after deleting the workspace does nothing
 - [compose-host-authority](compose-host-authority.md) — sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 - [host-execution-surfaces](host-execution-surfaces.md) — which changed files count as "runs on your machine", the two tiers, and where coop surfaces them (fork review/merge, check-secrets)
+- [secret-finding-identity](secret-finding-identity.md) — how a secret finding is named across runs (fp-v1 fingerprints), what .coopsecretsignore may excuse, and why exceptions stop at check-secrets
+- [doctor-report-accounting](doctor-report-accounting.md) — how `coop doctor` counts: the 35 checks, the outcomes a row can have, and why a failed probe adds one failure plus the checks it was carrying
 - [trusted-git-view](trusted-git-view.md) — host git runs under a coop-owned GIT_DIR view with an allowlisted config, so repository-defined filter/textconv/merge drivers never execute; ref-store writes stay on the real git dir
 - [test-fixture-guards-vs-timing-bounds](test-fixture-guards-vs-timing-bounds.md) — a wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight bound is only for timing that IS the behavior, and attributes its phases
 - [repository-source-copies](repository-source-copies.md) — skills and fallback copies retain rooted content authority and validate links only after relocation

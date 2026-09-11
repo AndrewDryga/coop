@@ -1,0 +1,10 @@
+Stop this project's services and permanently delete these volumes and their data?
+
+  - coop-atlas_pgdata — database data
+  - coop-atlas_redisdata — Redis data
+
+Stopping services from .agent/compose.yml
+
+[Compose output]
+
+✓ Services stopped; 2 volumes deleted

@@ -1,0 +1,17 @@
+✗ 1 possible secret found
+
+  config/client.go:12
+    OpenAI API key
+
+Remove real secrets from files you intend to commit.
+If this is a false positive, add this entry to .coopsecretsignore
+and replace <reason> with an explanation:
+
+  # config/client.go — OpenAI API key
+  fp-v1:b2758b3a796f81888b6f896f9c420ee855608fdcb828dfc2b83f736768171a6c # <reason>
+
+✗ Could not finish checking for secrets
+
+      config/credentials.txt could not be read: permission denied.
+
+  Fix the file permissions, then run coop check-secrets again.

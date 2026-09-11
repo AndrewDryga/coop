@@ -1,0 +1,6 @@
+✓ Service added to infra/dev-compose.yml
+  redis → redis
+  postgres is already configured as db.
+
+Start services:
+  → coop up

@@ -1,0 +1,6 @@
+✗ Could not finish Coop setup
+
+      Could not create .agent/skills/work/SKILL.md: an existing entry is not a regular file.
+
+  Fix the path, then run coop init again.
+  Files already created have been kept.

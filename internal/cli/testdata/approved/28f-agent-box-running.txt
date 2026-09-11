@@ -1,0 +1,5 @@
+✗ Could not start services
+
+      An agent box is running in this project: 42c96f112acd.
+
+  Stop it or wait for it to finish, then run coop up again.

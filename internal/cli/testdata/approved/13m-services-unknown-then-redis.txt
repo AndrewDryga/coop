@@ -1,0 +1,21 @@
+Add services
+
+Choose services to run alongside your agents.
+Existing services and their data will be kept.
+
+  postgres
+  redis
+
+Services (space-separated, or press Enter for none): mysql
+
+✗ Unknown service "mysql"
+
+      Choose from: postgres, redis
+
+Services: redis
+
+✓ Service added to .agent/compose.yml
+  redis → redis
+
+Start services:
+  → coop up

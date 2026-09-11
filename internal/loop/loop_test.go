@@ -248,7 +248,7 @@ func TestLoopBlamesTheDaemonNotTheImage(t *testing.T) {
 	if err == nil {
 		t.Fatal("loop succeeded with an unreachable daemon; want an error")
 	}
-	if !strings.Contains(err.Error(), "daemon isn't responding") {
+	if !strings.Contains(err.Error(), "Docker is unavailable") {
 		t.Errorf("loop = %q, want it to name the unreachable daemon", err)
 	}
 }

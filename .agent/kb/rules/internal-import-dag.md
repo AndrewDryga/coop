@@ -49,6 +49,11 @@ this one has it.
 - 2026-09-11 — **−1 edge: `tasks -> hostsurface`.** The task-flags feature was removed outright
   (see [[host-execution-surfaces]]), and it was that edge's only consumer in `tasks`. `hostsurface`
   keeps its other two importers, `forkctl` (fork policy scan) and `cli` (check-secrets report).
+- 2026-09-11 — **+1 edge: `cli` → `secretscan`.** `coop check-secrets` applies the project's
+  `.coopsecretsignore` exceptions AFTER pure detection and prints the copyable exception block for
+  each finding, which needs the detector's stable fingerprints directly; `box.secretscan.go` keeps
+  the box-side use (fork merge, uploads, redaction) that must never see exceptions. A leaf, pure
+  package, so the edge adds no cycle risk.
 - 2026-09-10 — **+1 package, +3 edges, +2 consumer edges, +1 `uiPresentationOwners` grant:
   `internal/networkreport`** (`{"networkstate", "networkview", "ui"}`), imported by `box` and `cli`.
   The human projection of a network run (`WriteRun`, formerly `cli/net_result.go`) is rendered by

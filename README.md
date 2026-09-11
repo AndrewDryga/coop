@@ -236,20 +236,20 @@ spelled out here (there's room to render them).
 
 | Command | What it does |
 |---|---|
-| `coop up` · `down [-v]` | start/stop [sibling services](#services) (Postgres, Redis) for this repo |
+| `coop up` · `down [--delete-volumes]` | start/stop [sibling services](#services) (Postgres, Redis) for this repo — `--delete-volumes` also deletes their data, after naming every volume and asking |
 
 **Safety** — prove the box holds, catch committed secrets
 
 | Command | What it does |
 |---|---|
 | `coop doctor` | [prove isolation](#prove-it-coop-doctor) — attack the box and check it holds |
-| `coop check-secrets [--include-ignored]` | scan committed files for secrets by content — `--include-ignored` widens to the [whole visible tree](#secrets-never-enter-the-box) (exit 1 on a hit) |
+| `coop check-secrets [--include-ignored]` | scan committed files for secrets by content — `--include-ignored` widens to the [whole visible tree](#secrets-never-enter-the-box) (exit 1 on a hit, or on a file it could not read); review a false positive into [`.coopsecretsignore`](#secrets-never-enter-the-box) |
 
 **Set up & maintain**
 
 | Command | What it does |
 |---|---|
-| `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills, and selected [agent directories](#instructions-one-source-of-truth) (and optionally a toolchain) |
+| `coop init [--stack asdf]` | [scaffold](#project-toolchain--services) the queue, hooks, skills, and selected [agent directories](#instructions-one-source-of-truth) (and optionally a toolchain); `--services` later ADDS to the [services](#services) a project already has |
 | `coop build` · `update` | build the box image · [self-update coop + rebuild it fresh](#keeping-the-box-current) (latest agents/adapters) |
 | `coop completion <shell>` | shell tab-completion (bash, zsh) |
 | `coop help` · `version` | print help · print the version |
@@ -287,7 +287,12 @@ binds your *whole* working tree, so a gitignored-but-present file (e.g. a
 For a token hiding *inside* a file, `coop check-secrets` scans by content (`file:line`,
 exit 1 on a hit) — a file coop shadows by name (an `id_ed25519`, a `*.pem`) is still
 reported when git would commit it, since shadowing protects the box, not the push;
-`--include-ignored` widens the scan to the whole visible tree. Prove your setup holds
+`--include-ignored` widens the scan to the whole visible tree. A file it could not READ fails the
+scan by name, so a permission error never reads as a clean result. A finding you have reviewed and
+disagree with goes in **`.coopsecretsignore`** at the project root: paste the entry the scan prints
+and write why. The entry names that exact finding — a new line above it keeps it, a changed value
+or a moved file invalidates it — carries no credential material, and applies to this check only:
+fork merge, checkpoint upload and session redaction keep seeing every finding. Prove your setup holds
 with [`coop doctor`](#prove-it-coop-doctor). It also lists the changed files that alter what runs on your machine — a commit hook, editor or agent settings, compose, the Makefile — so you read those before running anything; that report never changes the exit code.
 
 > Full walkthrough — subdirectory scoping, template re-hiding, the fork exception:
@@ -1518,9 +1523,11 @@ Sibling services are opt-in: `coop init` asks which to add (or pass
 `--services postgres,redis`), scaffolding a `.agent/compose.yml` — none by default.
 
 ```bash
-coop up        # starts the configured Compose services, waits until healthy
-coop claude    # the box reaches each service by its Compose name
-coop down -v   # stop services and wipe their throwaway data
+coop up                      # starts the configured Compose services, waits until ready
+coop claude                  # the box reaches each service by its Compose name
+coop down                    # stop services; stored data is kept
+coop down --delete-volumes   # stop them and permanently delete their volumes (asks first)
+coop init --services         # add another service to a project that already has some
 ```
 
 Services run as their own containers on a private network the box joins — connect with
@@ -1528,9 +1535,13 @@ e.g. `DATABASE_URL=postgres://postgres:postgres@db:5432/app_dev` (put it in `age
 When an editor session ends, coop removes its workspace's service containers and the network
 they used; a leftover network of any coop project that nothing is attached to is swept on the
 next loop, fork, or build start, since Docker hands out only about thirty of them.
-Before startup, `coop up` asks Compose for the resolved service list; its final status echoes
-those exact non-empty names in Compose order. If discovery fails, Coop does not start the
-project or print the success hint.
+Before startup, `coop up` asks Compose for the resolved service list; it ends with
+`✓ Services ready: db, redis` — those exact names, in Compose order — and the URL of any port it
+really published. If discovery fails, Coop does not start the project or claim a ready result.
+`coop down --delete-volumes` resolves this project's volumes from the runtime first, prints each
+one with what it holds, and asks before removing any (default No; `-y/--yes` skips the question,
+and without a terminal it refuses rather than guessing). An `external: true` volume and a
+bind-mounted project file are never in scope.
 Changing the configured Compose file is reconciled on the next `coop up` or box launch: services
 removed from the file are stopped. `coop down` does the same. Every workspace uses its hashed
 Compose project name, so repositories with the same basename remain isolated.

@@ -1,0 +1,8 @@
+Stop this project's services and permanently delete these volumes and their data?
+
+  - coop-atlas_pgdata — database data
+  - coop-atlas_redisdata — Redis data
+
+✗ Volume deletion needs confirmation
+
+  Run coop down --delete-volumes at a terminal, or add --yes to confirm deletion.

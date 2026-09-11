@@ -1,0 +1,5 @@
+✗ Could not update the Coop binary
+
+      /opt/homebrew/bin/coop could not be replaced: permission denied.
+
+  Update Coop with the tool that installed it.

@@ -1,0 +1,11 @@
+Starting services from .agent/compose.yml
+  Waiting for services to be ready.
+
+[Compose output]
+
+✗ Could not start services
+
+      Compose up exited with status 1.
+
+  Check the service output, fix the cause, then run coop up again.
+  Some services may already be running.

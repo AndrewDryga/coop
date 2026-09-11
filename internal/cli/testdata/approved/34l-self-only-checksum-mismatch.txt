@@ -1,0 +1,9 @@
+Updating Coop v9.0.0 → v9.0.1
+  Downloading and checking the release.
+
+✗ Could not update the Coop binary
+
+      The downloaded release did not match its published checksum.
+
+  Run coop update --self-only again to download a fresh copy.
+  The installed binary was not changed.

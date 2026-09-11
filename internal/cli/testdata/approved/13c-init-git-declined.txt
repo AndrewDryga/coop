@@ -1,0 +1,42 @@
+Setting up Coop
+
+This folder is not a Git repository.
+Coop uses Git for tasks, forks, and commit checks.
+
+Initialize Git here? [Y/n]: n
+
+Coop couldn't detect which languages this project will use.
+Choose one or more. Coop will check their formatting before every commit.
+
+  go
+  terraform
+  elixir
+  rust
+
+Languages (space-separated, or press Enter for none):
+
+Coop can run services alongside your agents.
+Choose any this project needs, or press Enter for none.
+
+  postgres
+  redis
+
+Services (space-separated, or press Enter for none):
+
+✓ Coop project created
+  Codex has instructions, skills, and one task queue.
+
+Network access is filtered.
+Codex can reach OpenAI.
+Other network traffic is blocked until you approve rules allowing it.
+
+Finish setup — Coop needs a Git repository
+  → git init
+  → coop init
+
+Verify the sandbox
+  → coop doctor
+
+Start working
+  → coop tasks add "Describe your first task"
+  → coop loop codex

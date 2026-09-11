@@ -1,0 +1,11 @@
+Coop v9.0.0 is already up to date.
+
+Updating the Coop box
+  Fetching newer base-image components, agent CLIs, and editor adapters.
+
+[Build output]
+
+✓ Box image updated
+
+Installed agent tools
+[Installed-version output]

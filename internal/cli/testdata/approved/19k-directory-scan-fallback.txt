@@ -1,0 +1,2 @@
+✓ No possible secrets found
+  Checked project files using a directory scan.

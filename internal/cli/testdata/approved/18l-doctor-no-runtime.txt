@@ -1,0 +1,5 @@
+✗ Could not check the Coop box
+
+      Docker is unavailable.
+
+  Start Docker, then run coop doctor again.

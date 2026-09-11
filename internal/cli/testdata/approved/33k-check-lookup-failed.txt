@@ -1,0 +1,5 @@
+✗ Could not check for a Coop update
+
+      GitHub returned 403 Forbidden.
+
+  Try coop update --check again later.

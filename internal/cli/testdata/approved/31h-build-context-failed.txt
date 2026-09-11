@@ -1,0 +1,9 @@
+Building the project box
+  Dockerfile: .agent/Dockerfile
+  Image:      coop-atlas
+
+✗ Could not prepare the build files
+
+      Could not read src/app.go: permission denied.
+
+  Fix the path or permissions, then run coop build again.

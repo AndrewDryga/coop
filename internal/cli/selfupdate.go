@@ -10,6 +10,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -80,39 +81,70 @@ func latestReleaseTag() (string, error) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("could not reach GitHub: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("couldn't check for a newer coop — GitHub returned %s (rate limit or network hiccup?); retry shortly, or reinstall from https://coop.dryga.com", resp.Status)
+		return "", fmt.Errorf("GitHub returned %s", resp.Status)
 	}
 	var rel struct {
 		TagName string `json:"tag_name"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		return "", err
+		return "", errors.New("GitHub did not return a valid release version")
 	}
 	if rel.TagName == "" {
-		return "", fmt.Errorf("couldn't read the latest coop version from GitHub's response — retry shortly, or reinstall from https://coop.dryga.com")
+		return "", errors.New("GitHub did not return a valid release version")
 	}
 	return rel.TagName, nil
 }
 
-// selfUpdate replaces the running coop binary with the latest release, if newer, and
-// reports whether it changed anything. A dev build or an already-current binary is a
-// no-op (false, nil). An inability to *check* for a release is a checkError (soft); a
-// write-permission or install failure is a hard error. The box rebuild that follows in
-// cmdUpdate runs in this (pre-update) process; the new binary takes effect next run.
-func selfUpdate(out io.Writer) (bool, error) {
+// selfUpdateOutcome is what the binary half of an update DID — which is what its caller has to
+// report, and the one thing it must not guess at.
+type selfUpdateOutcome int
+
+const (
+	selfUpdateDev       selfUpdateOutcome = iota // a dev/source build; self-update does not replace it
+	selfUpdateCurrent                            // already the latest release
+	selfUpdateAhead                              // newer than the latest release; kept
+	selfUpdateInstalled                          // replaced with a newer release
+)
+
+// selfUpdateResult carries the versions involved so the caller can name both without asking
+// GitHub a second time.
+type selfUpdateResult struct {
+	Outcome selfUpdateOutcome
+	Current string // this binary's version, normalized (no leading v)
+	Latest  string // the latest release, normalized; "" when it was never resolved
+}
+
+// installFailure is a hard binary-install failure, carrying the sentence a person reads and
+// whether the binary on disk is provably untouched. Unchanged is only true for a failure that
+// happens BEFORE the atomic rename — nothing after it can undo an installation that happened.
+type installFailure struct {
+	reason    string
+	unchanged bool
+	err       error
+}
+
+func (e *installFailure) Error() string { return e.reason }
+func (e *installFailure) Unwrap() error { return e.err }
+
+// selfUpdate replaces the running coop binary with the latest release, if newer, and reports
+// what it did. A dev build, an already-current binary and a binary ahead of the release are all
+// no-ops. An inability to *check* for a release is a checkError (soft — the box rebuild still
+// runs); a write-permission or install failure is an installFailure (hard). The box rebuild that
+// follows in cmdUpdate runs in this (pre-update) process; the new binary takes effect next run.
+func selfUpdate() (selfUpdateResult, error) {
 	cur := resolveVersion()
 	if !releaseVersion(cur) {
-		fmt.Fprintln(out, "Self-update skipped — this is a dev/source build (install a release first)")
-		return false, nil
+		return selfUpdateResult{Outcome: selfUpdateDev, Current: cur}, nil
 	}
+	result := selfUpdateResult{Current: normalizeVersion(cur)}
 
 	exe, err := executablePath()
 	if err != nil {
-		return false, fmt.Errorf("locate the running coop binary: %w", err)
+		return result, &installFailure{reason: "Could not locate the running Coop binary: " + err.Error() + ".", unchanged: true, err: err}
 	}
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
@@ -120,31 +152,30 @@ func selfUpdate(out io.Writer) (bool, error) {
 
 	latest, err := latestReleaseTag()
 	if err != nil {
-		return false, checkError{err}
+		return result, checkError{err}
 	}
+	result.Latest = normalizeVersion(latest)
 	switch compareReleaseVersions(cur, latest) {
 	case releaseInvalid:
-		return false, checkError{fmt.Errorf("GitHub returned an invalid latest release tag %q", latest)}
+		return result, checkError{errors.New("GitHub did not return a valid release version")}
 	case releaseEqual:
-		fmt.Fprintf(out, "Already up to date (%s)\n", normalizeVersion(cur))
-		return false, nil
+		result.Outcome = selfUpdateCurrent
+		return result, nil
 	case releaseAhead:
-		fmt.Fprintf(out, "%s is newer than GitHub's latest release %s; leaving it unchanged\n", normalizeVersion(cur), normalizeVersion(latest))
-		return false, nil
+		result.Outcome = selfUpdateAhead
+		return result, nil
 	case releaseBehind:
 		// Continue to the verified install below.
 	}
 
-	binDir := filepath.Dir(exe)
-	if err := dirWritable(binDir); err != nil {
-		return false, fmt.Errorf("coop at %s is not writable (%v) — update it with the tool that installed it (your package manager, or reinstall from https://coop.dryga.com)", exe, err)
+	if err := dirWritable(filepath.Dir(exe)); err != nil {
+		return result, &installFailure{reason: exe + " could not be replaced: " + osCause(err) + ".", unchanged: true, err: err}
 	}
-
-	fmt.Fprintf(out, "Updating %s → %s\n", normalizeVersion(cur), normalizeVersion(latest))
 	if err := installRelease(exe, latest); err != nil {
-		return false, fmt.Errorf("install %s: %w", latest, err)
+		return result, err
 	}
-	return true, nil
+	result.Outcome = selfUpdateInstalled
+	return result, nil
 }
 
 // dirWritable reports whether dir accepts new files (so the atomic install can stage a
@@ -160,24 +191,28 @@ func dirWritable(dir string) error {
 }
 
 // installRelease downloads the exact GoReleaser archive and checksums for tag,
-// verifies the archive locally, then atomically replaces exe.
+// verifies the archive locally, then atomically replaces exe. Every failure before the rename
+// leaves the installed binary untouched and says so; only the rename itself can change it.
 func installRelease(exe, tag string) error {
 	version := normalizeVersion(tag)
 	asset := fmt.Sprintf("coop_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
+	fail := func(reason string, err error) error {
+		return &installFailure{reason: reason, unchanged: true, err: err}
+	}
 	checksums, err := fetchReleaseFile(tag, "checksums.txt", maxReleaseChecksumsBytes)
 	if err != nil {
-		return fmt.Errorf("fetch checksums.txt: %w", err)
+		return fail("Could not download the release checksums: "+err.Error()+".", err)
 	}
 	archive, err := fetchReleaseFile(tag, asset, maxReleaseArchiveBytes)
 	if err != nil {
-		return fmt.Errorf("fetch %s: %w", asset, err)
+		return fail("Could not download "+asset+": "+err.Error()+".", err)
 	}
 	if err := verifyReleaseChecksum(asset, archive, checksums); err != nil {
-		return err
+		return fail(sentence(err.Error()), err)
 	}
 	binary, err := releaseBinary(archive)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", asset, err)
+		return fail(sentence(err.Error()), err)
 	}
 	return replaceExecutable(exe, binary)
 }
@@ -209,16 +244,16 @@ func verifyReleaseChecksum(asset string, archive, checksums []byte) error {
 			continue
 		}
 		if want != "" {
-			return fmt.Errorf("checksums.txt has more than one entry for %s", asset)
+			return fmt.Errorf("the release checksums contain more than one entry for %s", asset)
 		}
 		want = fields[0]
 	}
 	if len(want) != sha256.Size*2 {
-		return fmt.Errorf("checksums.txt has no valid SHA-256 entry for %s", asset)
+		return fmt.Errorf("the release checksums contain no valid entry for %s", asset)
 	}
 	got := fmt.Sprintf("%x", sha256.Sum256(archive))
 	if !strings.EqualFold(want, got) {
-		return fmt.Errorf("checksum mismatch for %s", asset)
+		return errors.New("the downloaded release did not match its published checksum")
 	}
 	return nil
 }
@@ -226,7 +261,7 @@ func verifyReleaseChecksum(asset string, archive, checksums []byte) error {
 func releaseBinary(archive []byte) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("the downloaded release archive could not be read: %w", err)
 	}
 	defer gz.Close()
 
@@ -238,59 +273,67 @@ func releaseBinary(archive []byte) ([]byte, error) {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("the downloaded release archive could not be read: %w", err)
 		}
 		if hdr.Name != "coop" {
 			continue
 		}
 		if hdr.Typeflag != tar.TypeReg {
-			return nil, fmt.Errorf("archive member coop is not a regular file")
+			return nil, errors.New("the release archive's coop entry is not a regular file")
 		}
 		if binary != nil {
-			return nil, fmt.Errorf("archive contains coop more than once")
+			return nil, errors.New("the release archive contains more than one Coop binary")
 		}
 		binary, err = io.ReadAll(io.LimitReader(tr, maxReleaseBinaryBytes+1))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("the downloaded release archive could not be read: %w", err)
 		}
 		if int64(len(binary)) > maxReleaseBinaryBytes {
-			return nil, fmt.Errorf("archive member coop exceeds %d bytes", maxReleaseBinaryBytes)
+			return nil, errors.New("the release archive's Coop binary exceeds the supported size")
 		}
 	}
 	if binary == nil {
-		return nil, fmt.Errorf("archive has no coop binary")
+		return nil, errors.New("the release archive contains no Coop binary")
 	}
 	return binary, nil
 }
 
 func replaceExecutable(exe string, binary []byte) (retErr error) {
+	// Everything up to the rename is staging: it can fail freely, and the binary on disk is the
+	// one that was there before. Cleanup AFTER a successful rename cannot take that back, so its
+	// failure is reported without the "unchanged" claim.
+	prepare := func(err error) error {
+		return &installFailure{reason: "Could not prepare the new Coop binary: " + osCause(err) + ".", unchanged: true, err: err}
+	}
 	f, err := os.CreateTemp(filepath.Dir(exe), ".coop-new-*")
 	if err != nil {
-		return err
+		return prepare(err)
 	}
 	name := f.Name()
+	installed := false
 	defer func() {
 		if err := os.Remove(name); err != nil && !os.IsNotExist(err) && retErr == nil {
-			retErr = err
+			retErr = &installFailure{reason: "Could not clean up the staged Coop binary: " + osCause(err) + ".", unchanged: !installed, err: err}
 		}
 	}()
 	if _, err := f.Write(binary); err != nil {
 		_ = f.Close()
-		return err
+		return prepare(err)
 	}
 	if err := f.Chmod(0o755); err != nil {
 		_ = f.Close()
-		return err
+		return prepare(err)
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
-		return err
+		return prepare(err)
 	}
 	if err := f.Close(); err != nil {
-		return err
+		return prepare(err)
 	}
 	if err := os.Rename(name, exe); err != nil {
-		return err
+		return &installFailure{reason: "Could not replace " + exe + ": " + osCause(err) + ".", unchanged: true, err: err}
 	}
+	installed = true
 	return nil
 }

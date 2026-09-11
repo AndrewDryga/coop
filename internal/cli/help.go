@@ -970,21 +970,27 @@ EXAMPLES
         - paths: ["portal/**", "**/*.ex"]
           include: [.agent/kb/portal.md]`,
 
-	"check-secrets": `coop check-secrets — scan the working tree for committed secrets, by content.
+	"check-secrets": `coop check-secrets — check project files for exposed secrets
 
-  Usage: coop check-secrets [--include-ignored]
+Usage: coop check-secrets [--include-ignored]
 
-  Scans for token shapes and high-entropy values, reporting file:line. Exits
-  non-zero on a hit, for use as a pre-flight or CI check. Hide a flagged file
-  with .coopignore.
+Checks tracked and untracked files, plus Coop's task files and notes.
+Possible secrets are reported by file and line; their values stay hidden.
 
-  By default it scans the commit-candidate files (tracked + untracked; gitignored
-  excluded) — including a file coop shadows from the box by name (an id_ed25519,
-  a *.pem): the box never sees it, but a push would commit it. A 'coop
-  run'/'shell'/'loop' mounts the WHOLE tree, though, so a gitignored-but-not-
-  shadowed file is still visible to the agent — pass --include-ignored to scan
-  the full visible tree too (deps/build dirs and shadowed files git would not
-  commit are still skipped). A .coopignore entry silences a file in both modes.`,
+OPTIONS
+  --include-ignored  also check other Git-ignored files the box can read
+
+FALSE POSITIVES
+  Add the entries printed by a scan to .coopsecretsignore in your project root.
+  Each entry needs a reason. You can edit many entries together in that file.
+
+  IDs stay the same when line numbers change. A changed value or file path is checked again.
+  Remove an entry to check that finding again.
+
+  .coopsecretsignore skips exact findings in this check.
+  .coopignore hides files from the box. They do different jobs.
+
+Returns a nonzero status if possible secrets remain or the scan cannot finish.`,
 
 	"loop": `coop loop [<target|preset>] — work the task queue until done, then sign off.
 
@@ -1127,27 +1133,50 @@ EXAMPLES
 
   loop.yaml work.command overrides the per-iteration command.`,
 
-	"up": `coop up — start the repo's sibling services so the box can reach them by name.
+	"up": `coop up — start this project's services
 
-  Usage: coop up
+Usage:
+  coop up
 
-  Brings up the services in .agent/compose.yml on coop's network. The final
-  status names the exact resolved Compose services, in Compose order; an agent
-  in the box reaches each one by that hostname. Stop them with: coop down`,
+Starts services from .agent/compose.yml and waits for them to be ready.
+Uses the Compose path configured in .agent/project.yaml when different.
+Agents reach each service by its Compose name. Starting again is safe.
 
-	"down": `coop down [-v] — stop the repo's sibling services.
+An agent box must not be running in this project when services start.
+Requires Docker or Podman with Compose support.
 
-  Usage: coop down [-v | --volumes]
+If a service asks to read a secret file, Coop asks at a terminal before
+allowing it. Otherwise the service receives an empty file. Approval applies
+to the reviewed Compose file and must be repeated if that file changes.
 
-  -v, --volumes   also remove the services' volumes (their data)`,
+Add services:  coop init --services
+Stop services: coop down`,
+
+	"down": `coop down — stop this project's services
+
+Usage: coop down [--delete-volumes] [--yes]
+
+Stops and removes this project's Compose containers and networks.
+Stored data is kept unless you use --delete-volumes.
+Uses .agent/compose.yml, or the configured Compose path.
+
+OPTIONS
+  --delete-volumes  also permanently delete service volumes and their data
+  -y, --yes         skip the volume-deletion confirmation
+
+Coop names the volumes before asking; press Enter to cancel.
+Without a terminal, deletion requires --yes.
+External volumes and files mounted from the project are kept.
+
+Start again: coop up`,
 
 	"init": `coop init — set up Coop in this project
 
 Usage:
   coop init
-  coop init [--stack asdf] [--services <service,...>] [--agents <agent,...>|all]
+  coop init [--stack asdf] [--services [<service,...>]] [--agents <agent,...>|all]
 
-Coop sets up
+COOP SETS UP
 
 - Shared instructions and skills for all your AI agents.
 
@@ -1165,13 +1194,13 @@ Coop sets up
 Without options, Coop detects what it can and asks before initializing Git,
 adding formatting checks, or adding Postgres or Redis.
 
-Options
-  --agents <list>    set up Claude, Codex, Gemini, or all
-                     default: agents you are signed in to
+OPTIONS
+  --agents <list>       set up Claude, Codex, Gemini, or all
+                       default: agents you are signed in to
 
-  --services <list>  add Postgres, Redis, or both
+  --services [<list>]   add Postgres, Redis, or both
 
-  --stack asdf       install tools from .tool-versions in the Coop box
+  --stack asdf          install tools from .tool-versions in the Coop box
 
 You can run coop init again at any time.
 Coop keeps your existing project files and adds anything missing.`,
@@ -1232,51 +1261,67 @@ Coop keeps your existing project files and adds anything missing.`,
   the REPAIR verbs are for doing it now. Protocols, ports and what is refused
   by design are in docs/networking.md.`,
 
-	"doctor": `coop doctor — prove the box's isolation: attack it, inside and from the host.
+	"doctor": `coop doctor — check that the box's isolation works
 
-  Usage: coop doctor
+Usage:
+  coop doctor
 
-  Runs the escape/leak checks — secret shadowing, network limits, host reach,
-  the fork handoff — and prints a pass/fail report. Probes the image this
-  repo's boxes run: its per-project image when built, else the shared base
-  image, else a stock alpine stand-in (which skips the USER/toolchain checks
-  and says so). Honors COOP_RUNTIME.`,
+Runs checks in a temporary project and reports what passed, failed, or
+could not be checked. Your files and credentials are not the test data.
 
-	"build": `coop build — build the box image (stable, pinned).
+Checks secret hiding, host access, privileges, offline networking,
+task access, credential isolation, settings permissions, and fork handoff.
 
-  Usage: coop build
+Uses this project's built image, or the shared image if available.
+If neither exists, uses Alpine and names the checks it cannot perform.
+Run coop build, then coop doctor to test the Coop image.
 
-  Builds the shared base, or a per-project image if the repo has a
-  .agent/Dockerfile — pinning versions for reproducibility. Re-run after
-  changing .agent/Dockerfile or .tool-versions. For the latest, use coop update.
+Requires Git and a running container runtime. Honors COOP_RUNTIME.
+Lists abandoned boxes but does not remove them.`,
 
-  New runs use the fresh image automatically. Editor sessions (coop acp) are
-  restarted onto it transparently — they reconnect, so you don't lose the session.
-  Other running boxes (a loop or an interactive agent session) keep the old image
-  until they next start.`,
+	"build": `coop build — build the Coop box image
 
-	"update": `coop update — self-update coop, then rebuild the box image fresh.
+Usage:
+  coop build
 
-  Usage: coop update [--self-only | --box-only | --check]
+Builds the shared image, or this project's image when it has a box
+Dockerfile. The default path is .agent/Dockerfile; use box.dockerfile in
+.agent/project.yaml to select another path.
 
-  First replaces the coop binary when GitHub has a newer release — its versioned
-  archive is verified against the release checksum locally, then swapped in
-  atomically so replacing the running binary is safe. Then rebuilds the image like
-  coop build but --pull --no-cache and unpinned, so the node base and agent CLIs
-  jump to latest. Use coop build for a reproducible image. Supervised editor
-  sessions are restarted onto the new image transparently, same as build.
+Run after changing the box Dockerfile or .tool-versions.
+Builds use the configured versions and available cache.
+Use coop update --box-only to fetch newer components and rebuild fresh.
 
-    --self-only   update just the coop binary, skip the image rebuild
-    --box-only    rebuild just the image, skip the self-update (the old behavior)
-    --check       dry-run: report the binary vs the latest release and the box
-                  image's build age/staleness, changing nothing (no runtime needed)
+New runs use the rebuilt image. Supervised editor sessions restart and
+reconnect. Other running boxes use the old image until their next start.
+Requires a running container runtime.`,
 
-  A dev/source build, an already-current or newer binary, or a coop installed
-  somewhere unwritable (a package-manager prefix) skips the self-update with a note.
+	"update": `coop update — update Coop and rebuild the box image
 
-  Once a day, any TTY command also checks for a newer release in the background
-  and mentions it after the command's output; COOP_NO_UPDATE_CHECK=1 turns that
-  notice off.`,
+Usage:
+  coop update [--self-only | --box-only | --check]
+
+Updates the Coop binary when a newer release is available, then rebuilds
+the box with newer base-image components, agent CLIs, and editor adapters.
+Downloaded releases are checked before replacing the binary.
+
+OPTIONS
+  --self-only  update only the Coop binary; no container runtime needed
+  --box-only   rebuild only the box image, fetching newer components
+  --check      report available updates and local build records; change nothing
+
+Choose at most one option. --check does not need a container runtime.
+Building the box requires a running container runtime.
+
+Development builds and binaries newer than the latest release are kept.
+A binary that cannot be replaced is an error; update it with the tool
+that installed it. The box rebuild can still finish independently.
+
+New runs use the rebuilt image. Supervised editor sessions restart and
+reconnect. Other running boxes use the old image until their next start.
+
+Coop checks for new releases once a day during terminal use.
+Set COOP_NO_UPDATE_CHECK=1 to turn off those notices.`,
 
 	"version": `coop version — print coop's version and exit.
 
