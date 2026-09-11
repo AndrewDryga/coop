@@ -190,6 +190,16 @@ func MissingOptionValue(option, command, example string) *UsageError {
 	}
 }
 
+// MissingRepeatableOptionValue refuses a REPEATABLE option given with no value. It carries the
+// usage row the plain form does not need: that the option may be given more than once is part of
+// how to fix this, and one example cannot show it.
+func MissingRepeatableOptionValue(option, command, usage, example string) *UsageError {
+	return &UsageError{
+		Headline: fmt.Sprintf("Missing value for %q in %q", option, command),
+		Rows:     [][2]string{{"Usage:", usage}, {"Example:", example}, {"Help:", HelpCommand(command)}},
+	}
+}
+
 // InvalidOptionValue refuses a supplied value the parser cannot accept. cause states the ACTUAL
 // constraint ("Choose claude, codex, gemini, or all.", "Use a whole number greater than 0.") —
 // the accepted tokens or the failing bound, never a bare "invalid".

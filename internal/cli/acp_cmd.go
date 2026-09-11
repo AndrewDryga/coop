@@ -94,7 +94,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if a.mode == agents.ModeReadOnly {
 		return 2, errors.New("coop acp does not take --readonly — front a fork read-only with 'coop fork <name> acp <target> --readonly', or investigate with 'coop <target> --readonly'")
 	}
-	peerVals, args, err := extractPeer(args)
+	peerVals, args, err := extractPeer("coop acp", args)
 	if err != nil {
 		return 2, err
 	}

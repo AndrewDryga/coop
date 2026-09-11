@@ -159,7 +159,7 @@ func backlogFolderRemove(root string, args []string) (int, error) {
 		}
 	}
 	if len(pos) != 1 {
-		return 2, errors.New("usage: coop backlog rm <id> [--yes]")
+		return 2, ui.MissingArgument("task ID", "coop backlog rm", "coop backlog rm <task-id> [--yes]")
 	}
 	t, err := findBacklogTask(root, pos[0]) // resolve the (possibly substring) match first, so the gate names it
 	if err != nil {
@@ -186,7 +186,7 @@ func backlogFolderRemove(root string, args []string) (int, error) {
 // hand-rewrite. Reuses moveTaskDir, so a torn move / id collision in todo is caught the same way.
 func backlogFolderPromote(root string, args []string) (int, error) {
 	if len(args) < 1 {
-		return 2, errors.New("usage: coop backlog promote <id>")
+		return 2, ui.MissingArgument("task ID", "coop backlog promote", "coop backlog promote <task-id>")
 	}
 	t, err := findBacklogTask(root, args[0])
 	if err != nil {

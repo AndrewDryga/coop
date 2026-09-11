@@ -590,7 +590,7 @@ func TestExtractPeer(t *testing.T) {
 		{[]string{"--consult", "codex"}, nil, []string{"--consult", "codex"}, false},
 	}
 	for _, c := range cases {
-		got, rest, err := extractPeer(c.args)
+		got, rest, err := extractPeer("coop run", c.args)
 		if (err != nil) != c.wantErr {
 			t.Errorf("extractPeer(%v) err=%v, wantErr=%v", c.args, err, c.wantErr)
 			continue

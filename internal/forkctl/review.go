@@ -126,7 +126,7 @@ func (c *Control) ForkReview(args []string) (int, error) {
 		}
 	}
 	if name == "" {
-		return 2, errors.New("usage: coop fork review <name> [--stat | --tool | --open] [--gate]")
+		return 2, ui.MissingArgument("fork name", "coop fork review", "coop fork review <name> [--stat | --tool | --open] [--gate]")
 	}
 	if !forkspace.ValidExistingName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)

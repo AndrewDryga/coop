@@ -105,7 +105,7 @@ func parseLeaseArgs(args []string) (leaseRequest, error) {
 		}
 	}
 	if req.id == "" {
-		return req, errors.New("usage: coop tasks lease <id> [--as <label>] [--pid <n>] [-- <command...>]")
+		return req, ui.MissingArgument("task ID", "coop tasks lease", "coop tasks lease <task-id> [--as <label>] [--pid <n>] [-- <command>...]")
 	}
 	return req, nil
 }

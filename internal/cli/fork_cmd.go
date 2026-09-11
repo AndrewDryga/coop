@@ -226,13 +226,13 @@ type forkArgs struct {
 func parseForkCreate(args []string) (forkArgs, error) {
 	fa := forkArgs{} // no implicit default — provider required (positional target or the preset lead)
 	if len(args) == 0 || args[0] == "" {
-		return fa, errors.New("usage: coop fork <name> [<target|preset>] [--loop --tasks <path> [-d]]")
+		return fa, ui.MissingArgument("fork name", "coop fork", "coop fork <name> [<target|preset>] [--loop --tasks <path> [-d]]")
 	}
 	fa.name = args[0]
 	rest := args[1:]
 	// The egress flags share ONE parser with every other launch, so the fork
 	// grammar below sees only its own arguments and cannot spell them differently.
-	network, rest, err := extractNetworkFlags(rest)
+	network, rest, err := extractNetworkFlags("coop fork", rest)
 	if err != nil {
 		return fa, err
 	}
@@ -888,7 +888,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if a.mode == agents.ModeBare {
 		return 2, errors.New("a bare run names no fork — it mounts no repository; serve one with 'coop acp <target> --bare'")
 	}
-	peerVals, rest, err := extractPeer(rest)
+	peerVals, rest, err := extractPeer("coop fork", rest)
 	if err != nil {
 		return 2, err
 	}

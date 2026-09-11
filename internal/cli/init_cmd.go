@@ -129,7 +129,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 		}
 		if v, n, ok, e := flagValue(args, i, "--stack"); ok {
 			if e != nil {
-				return 2, e
+				return 2, ui.MissingOptionValue("--stack", "coop init", "coop init --stack node")
 			}
 			stack = v
 			i += n - 1
@@ -137,7 +137,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 		}
 		if v, n, ok, e := flagValue(args, i, "--services"); ok {
 			if e != nil {
-				return 2, e
+				return 2, ui.MissingOptionValue("--services", "coop init", "coop init --services postgres")
 			}
 			services, e = initServices.parse(v)
 			if e != nil {

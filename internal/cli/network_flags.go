@@ -1,12 +1,13 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type networkFlags struct {
@@ -16,8 +17,10 @@ type networkFlags struct {
 }
 
 // Coop flags end at its first separator. Mode presence is retained: the shared
-// admission boundary, not the parser, resolves remembered posture and conflicts.
-func extractNetworkFlags(args []string) (networkFlags, []string, error) {
+// admission boundary, not the parser, resolves remembered posture and conflicts. command is the
+// launch the person typed ("coop run", "coop fork"), so a refused value names the command it came
+// from and points at that command's page — these flags belong to every launch, not to one of them.
+func extractNetworkFlags(command string, args []string) (networkFlags, []string, error) {
 	var flags networkFlags
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); {
@@ -32,30 +35,34 @@ func extractNetworkFlags(args []string) (networkFlags, []string, error) {
 				continue
 			}
 			if err != nil {
-				return networkFlags{}, nil, err
+				return networkFlags{}, nil, ui.MissingOptionValue(name, command, networkFlagExample(command, name))
 			}
 			switch name {
 			case "--egress":
 				if flags.Mode != nil {
-					return networkFlags{}, nil, errors.New("--egress may be supplied only once")
+					return networkFlags{}, nil, ui.RepeatedOption("--egress", command)
 				}
 				mode, err := egress.ParseMode(value)
 				if err != nil {
-					return networkFlags{}, nil, err
+					return networkFlags{}, nil, ui.InvalidOptionValue(value, "--egress", command,
+						"Choose filtered, open or none.", command+" --egress filtered")
 				}
 				flags.Mode = &mode
 			case "--allow-domain":
 				if len(flags.Domains) >= egress.MaxRules {
-					return networkFlags{}, nil, fmt.Errorf("--allow-domain accepts at most %d entries", egress.MaxRules)
+					return networkFlags{}, nil, ui.InvalidOptionValue(value, "--allow-domain", command,
+						fmt.Sprintf("A run may allow at most %d hosts.", egress.MaxRules),
+						"Put the rest in a file and pass "+command+" --egress-rules <file>")
 				}
 				domain, err := egress.NormalizeDomain(value, false)
 				if err != nil {
-					return networkFlags{}, nil, fmt.Errorf("--allow-domain: %w", err)
+					return networkFlags{}, nil, ui.InvalidOptionValue(value, "--allow-domain", command,
+						upperFirstSentence(err.Error()), command+" --allow-domain docs.example.com")
 				}
 				flags.Domains = append(flags.Domains, domain)
 			case "--egress-rules":
 				if flags.RulesFile != "" {
-					return networkFlags{}, nil, errors.New("--egress-rules may be supplied only once")
+					return networkFlags{}, nil, ui.RepeatedOption("--egress-rules", command)
 				}
 				flags.RulesFile = value
 			}
@@ -97,4 +104,30 @@ func (f networkFlags) args() ([]string, error) {
 		out = append(out, "--egress-rules", path)
 	}
 	return out, nil
+}
+
+// upperFirstSentence turns a validator's fragment into the sentence the block shows: capitalized,
+// ended. The validators keep their Go-style message for logs and callers that join it into one.
+func upperFirstSentence(s string) string {
+	if s == "" {
+		return s
+	}
+	s = strings.ToUpper(s[:1]) + s[1:]
+	if !strings.HasSuffix(s, ".") {
+		s += "."
+	}
+	return s
+}
+
+// networkFlagExample is the spelling that works for a launch flag given with no value — the same
+// flag, filled in the way its page shows it.
+func networkFlagExample(command, flag string) string {
+	switch flag {
+	case "--allow-domain":
+		return command + " --allow-domain docs.example.com"
+	case "--egress-rules":
+		return command + " --egress-rules .agent/egress.yaml"
+	default:
+		return command + " --egress filtered"
+	}
 }

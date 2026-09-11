@@ -86,7 +86,7 @@ func TestCLIConformance(t *testing.T) {
 		_, forkACPTargetErr := newApp().forkACP("work", nil)
 		_, acpUsageErr := newApp().cmdACP([]string{"codex", "extra"})
 		_, _, _, _, _, _, _, loopUsageErr := parseLoopArgs([]string{"claude", "extra"}, false)
-		_, _, peerUsageErr := extractPeer([]string{"--peer"})
+		_, _, peerUsageErr := extractPeer("coop run", []string{"--peer"})
 
 		surfaces := map[string]string{
 			"top-level help":        renderHelp(newApp().cfg, true),
@@ -126,7 +126,7 @@ func TestCLIConformance(t *testing.T) {
 			"ACP usage error":       "coop acp <target|preset> [--peer <target>...]",
 			"loop help":             "coop loop [<target|preset>]",
 			"fork help":             "coop fork <name> [<target|preset>]",
-			"fork usage error":      "usage: coop fork <name> [<target|preset>]",
+			"fork usage error":      "coop fork <name> [<target|preset>]",
 			"fork peer error":       "--peer <target>",
 			"fork ACP usage error":  "coop fork work acp <target> [--readonly] [--peer <target>...]",
 			"fork ACP target error": "coop fork work acp <target>",

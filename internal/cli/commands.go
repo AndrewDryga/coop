@@ -75,7 +75,7 @@ func (a *app) runInBox(cmd []string, agent string, peers []agents.Target) (int, 
 // a launch's arguments and remembers them for the admission this run performs.
 // Parsing stops at `--`: everything after it belongs to the agent or command.
 func (a *app) takeNetworkFlags(args []string) ([]string, error) {
-	flags, rest, err := extractNetworkFlags(args)
+	flags, rest, err := extractNetworkFlags(a.launchCommand(), args)
 	if err != nil {
 		return nil, err
 	}
@@ -314,6 +314,10 @@ func sessionCompanionRepositoriesFromEnvironment() ([]box.CompanionRepository, e
 	return repositories, nil
 }
 
+// runOptions are the options `coop run` itself takes; everything else belongs to the command after
+// `--`. They are what a mistyped leading option is measured against.
+var runOptions = []string{"--readonly", "--bare", "--egress", "--allow-domain", "--egress-rules"}
+
 func (a *app) cmdRun(args []string) (int, error) {
 	args, err := a.takeNetworkFlags(args)
 	if err != nil {
@@ -333,7 +337,12 @@ func (a *app) cmdRun(args []string) (int, error) {
 	}
 	if len(args) == 0 {
 		// `coop run` runs a raw command; it does not default to an agent (use `coop claude`).
-		return 2, errors.New("usage: coop run -- <cmd...>")
+		return 2, ui.MissingArgument("command", "coop run", "coop run [<options>] -- <command> [<args>...]")
+	}
+	// A leading option Coop did not take is a typo, not a program: refuse it HERE, before the box
+	// is checked or built. Past `--` the same token is the command's own and is forwarded verbatim.
+	if strings.HasPrefix(args[0], "-") {
+		return 2, unknownOptionErr(args[0], "coop run", runOptions)
 	}
 	return a.runInBox(args, "", nil) // raw command runner — not an agent session
 }
@@ -358,7 +367,7 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 	if args, err = a.takeExposureFlags("coop "+target, args); err != nil {
 		return 2, err
 	}
-	peerVals, args, err := extractPeer(args)
+	peerVals, args, err := extractPeer(a.launchCommand(), args)
 	if err != nil {
 		return 2, err
 	}
@@ -408,7 +417,7 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 		// or wrappers to. The lead alone can run restricted, as a plain target.
 		return 2, fmt.Errorf("a preset runs its roles from the box, which a %s run has none of — run its lead directly: coop %s --%s", a.mode, tool, a.mode)
 	}
-	peerVals, args, err := extractPeer(args)
+	peerVals, args, err := extractPeer(a.launchCommand(), args)
 	if err != nil {
 		return 2, err
 	}
@@ -499,18 +508,19 @@ func (a *app) applyOneOff(tool, model, credential, effort string) error {
 }
 
 // extractPeer pulls every --peer <target> (repeatable) out of a run's args — each value is one
-// peer the lead may consult read-only on hard calls (see box.RunSpec.Peers). A valueless occurrence errors with
-// the repeatable form. `--`-aware. The one --peer parser for every command (the retired --consult
-// spelling is now just an unknown flag).
-func extractPeer(args []string) (peers, rest []string, err error) {
-	return extractRepeatable(args, "--peer", "name each peer: --peer <target> [--peer <target> ...]")
+// peer the lead may consult read-only on hard calls (see box.RunSpec.Peers). A valueless occurrence
+// is refused in the shared block, naming the command it came from. `--`-aware. The one --peer parser
+// for every command (the retired --consult spelling is now just an unknown flag).
+func extractPeer(command string, args []string) (peers, rest []string, err error) {
+	return extractRepeatable(command, args, "--peer",
+		command+" --peer <target> [--peer <target>...]", command+" --peer codex")
 }
 
 // extractRepeatable collects every `--flag <value>` occurrence (repeatable) out of args, in
 // order, returning the values and the remaining args. A valueless occurrence (a typo, or a bare
-// flag) errors, pointing at the repeatable form. Stops at `--` — everything after is the agent's
+// flag) is refused in the shared block, with example as the spelling that works. Stops at `--` — everything after is the agent's
 // own, forwarded verbatim (so an agent's OWN --peer still reaches it).
-func extractRepeatable(args []string, flag, hint string) (vals, rest []string, err error) {
+func extractRepeatable(command string, args []string, flag, usage, example string) (vals, rest []string, err error) {
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--" {
 			return vals, append(rest, args[i:]...), nil
@@ -518,7 +528,7 @@ func extractRepeatable(args []string, flag, hint string) (vals, rest []string, e
 		if args[i] == flag || strings.HasPrefix(args[i], flag+"=") {
 			v, n, _, e := flagValue(args, i, flag)
 			if e != nil {
-				return nil, nil, fmt.Errorf("%s takes a value — %s", flag, hint)
+				return nil, nil, ui.MissingRepeatableOptionValue(flag, command, usage, example)
 			}
 			vals = append(vals, v)
 			i += n - 1

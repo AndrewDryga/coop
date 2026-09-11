@@ -1647,7 +1647,7 @@ func parseBlockArgs(args []string) (blockRequest, error) {
 		}
 	}
 	if req.id == "" {
-		return req, errors.New("usage: coop tasks block <id>")
+		return req, ui.MissingArgument("task ID", "coop tasks block", "coop tasks block <task-id>")
 	}
 	if req.filled {
 		var missing []string

@@ -113,8 +113,8 @@ func TestBlockRejectsAnIncompleteRequestBeforeMoving(t *testing.T) {
 		"missing flag value":   {[]string{"t", "--question"}, "--question needs a value"},
 		"unknown flag":         {[]string{"t", "--answer", "A"}, `unknown flag "--answer"`},
 		"two task ids":         {[]string{"t", "other"}, "too many arguments"},
-		"no task id":           {[]string{"--question", "Q?"}, "usage: coop tasks block <id>"},
-		"no arguments at all":  {nil, "usage: coop tasks block <id>"},
+		"no task id":           {[]string{"--question", "Q?"}, "coop tasks block <task-id>"},
+		"no arguments at all":  {nil, "coop tasks block <task-id>"},
 		"unknown short option": {[]string{"t", "-q", "Q?"}, `unknown flag "-q"`},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -29,7 +29,7 @@ func (a *app) cmdContext(args []string) (int, error) {
 	for i := 0; i < len(args); i++ {
 		if v, n, ok, err := flagValue(args, i, "--task"); ok {
 			if err != nil || v == "" || strings.HasPrefix(v, "-") {
-				return 2, errors.New("coop context: --task needs a task id")
+				return 2, ui.MissingOptionValue("--task", "coop context", "coop context --task 2026-09-11-fix-login-retries")
 			}
 			i += n - 1
 		}

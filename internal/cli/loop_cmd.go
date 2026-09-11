@@ -85,7 +85,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	peerVals, rest, err := extractPeer(rest)
+	peerVals, rest, err := extractPeer(loopCommand, rest)
 	if err != nil {
 		return 2, err
 	}

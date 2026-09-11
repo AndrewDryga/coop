@@ -771,7 +771,16 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	// Validate the static args before the environment: a missing <name> (without --all) is a usage
 	// error (exit 2), not the dirty-tree / non-interactive error (exit 1) the env gates below report.
 	if !all && name == "" {
-		return 2, errors.New("usage: coop fork merge <name> [--force] [--yes] | coop fork merge --all [--force] [--yes]")
+		return 2, &ui.UsageError{
+			// One command, two spellings: the second row continues the first instead of
+			// pretending to be another instruction.
+			Headline: `Missing fork name for "coop fork merge"`,
+			Rows: [][2]string{
+				{"Usage:", "coop fork merge <name> [--force] [--yes]"},
+				{ui.Continuation, "coop fork merge --all [--force] [--yes]"},
+				{"Help:", ui.HelpCommand("coop fork merge")},
+			},
+		}
 	}
 	if all && name != "" {
 		return 2, errors.New("coop fork merge: <name> and --all are mutually exclusive")

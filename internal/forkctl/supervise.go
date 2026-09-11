@@ -467,7 +467,7 @@ func streamLog(path, prefix string, follow bool, w io.Writer, mu *sync.Mutex) (b
 
 func (c *Control) ForkStop(args []string) (int, error) {
 	if len(args) == 0 || args[0] == "" {
-		return 2, errors.New("usage: coop fork stop <name>")
+		return 2, ui.MissingArgument("fork name", "coop fork stop", "coop fork stop <name>")
 	}
 	name, err := oneForkName("stop", args)
 	if err != nil {

@@ -1,17 +1,19 @@
 package cli
 
 import (
+	"errors"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func TestExtractNetworkFlagsPreservesPresenceAndSeparator(t *testing.T) {
 	args := []string{"--egress=filtered", "--allow-domain", "EXAMPLE.com.", "--peer", "codex", "--egress-rules", "rules.yaml", "--allow-domain=api.example.com", "--", "--egress", "open"}
 	before := slices.Clone(args)
-	flags, rest, err := extractNetworkFlags(args)
+	flags, rest, err := extractNetworkFlags("coop run", args)
 	if err != nil || flags.Mode == nil || *flags.Mode != egress.Filtered || flags.RulesFile != "rules.yaml" || !slices.Equal(flags.Domains, []string{"example.com", "api.example.com"}) {
 		t.Fatalf("flags %#v: %v", flags, err)
 	}
@@ -22,7 +24,7 @@ func TestExtractNetworkFlagsPreservesPresenceAndSeparator(t *testing.T) {
 		args []string
 		mode *egress.Mode
 	}{{nil, nil}, {[]string{"--allow-domain", "example.com"}, nil}} {
-		got, _, err := extractNetworkFlags(test.args)
+		got, _, err := extractNetworkFlags("coop run", test.args)
 		if err != nil || got.Mode != test.mode {
 			t.Fatal("parser inferred posture", got, err)
 		}
@@ -41,15 +43,20 @@ func TestExtractNetworkFlagsRejectsAmbiguousInput(t *testing.T) {
 		{"--allow-domain", "https://example.com"}, {"--allow-domain", "*.example.com"}, {"--allow-domain", "1.1.1.1"},
 		{"--allow-domain="}, {"--egress-rules"}, {"--egress-rules="},
 	} {
-		if _, _, err := extractNetworkFlags(args); err == nil {
+		_, _, err := extractNetworkFlags("coop run", args)
+		if err == nil {
 			t.Fatalf("accepted %q", args)
+		}
+		var usage *ui.UsageError // every launch flag is refused in the one shared block
+		if !errors.As(err, &usage) {
+			t.Errorf("%q refused outside the shared block: %v", args, err)
 		}
 	}
 	args := make([]string, egress.MaxRules+1)
 	for i := range args {
 		args[i] = "--allow-domain=example.com"
 	}
-	if _, _, err := extractNetworkFlags(args); err == nil {
+	if _, _, err := extractNetworkFlags("coop run", args); err == nil {
 		t.Fatal("unbounded domain flags")
 	}
 }
@@ -58,7 +65,7 @@ func TestExtractNetworkFlagsRejectsAmbiguousInput(t *testing.T) {
 // grammar never sees them: an unrecognized argument there is a usage error.
 func TestLoopTakesTheSameEgressFlags(t *testing.T) {
 	args := []string{"claude", "--egress", "filtered", "--allow-domain", "example.com", "--max-tasks", "2"}
-	flags, rest, err := extractNetworkFlags(args)
+	flags, rest, err := extractNetworkFlags("coop run", args)
 	if err != nil || flags.Mode == nil || *flags.Mode != egress.Filtered || !slices.Equal(flags.Domains, []string{"example.com"}) {
 		t.Fatalf("loop egress flags = %#v: %v", flags, err)
 	}

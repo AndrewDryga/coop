@@ -220,7 +220,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		return 2, err
 	}
 	if name == "" {
-		return 2, errors.New("usage: coop fork rm <name> [--force] [--yes]")
+		return 2, ui.MissingArgument("fork name", "coop fork rm", "coop fork rm <name> [--force] [--yes]")
 	}
 	if !forkspace.ValidExistingName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
@@ -382,7 +382,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 // like). It's the plumbing companion to `coop fork open`, which opens it in your editor.
 func (c *Control) ForkPath(args []string) (int, error) {
 	if len(args) == 0 || args[0] == "" {
-		return 2, errors.New("usage: coop fork path <name>")
+		return 2, ui.MissingArgument("fork name", "coop fork path", "coop fork path <name>")
 	}
 	name := args[0]
 	if !forkspace.ValidExistingName(name) {
@@ -405,7 +405,7 @@ func (c *Control) ForkPath(args []string) (int, error) {
 // doesn't need the box image built.
 func (c *Control) ForkOpenEditor(args []string) (int, error) {
 	if len(args) == 0 || args[0] == "" {
-		return 2, errors.New("usage: coop fork open <name>")
+		return 2, ui.MissingArgument("fork name", "coop fork open", "coop fork open <name>")
 	}
 	name := args[0]
 	if !forkspace.ValidExistingName(name) {
