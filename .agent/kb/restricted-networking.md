@@ -53,6 +53,10 @@ traffic is evidence, never a grant. Admission marks the resolved posture explici
 second time. A run that neither asks for filtered nor has a remembered posture writes NO host
 state — the preview creates no owner key (`networkstate/admission.go:45`).
 
+A withdrawal marker (`networkstate/approval_withdrawal.go`, written before the grant is cleared)
+outranks the ladder below for an ordinary launch: with no approval it makes the project pending
+rather than letting the built-in default reopen it, and only `coop net approve` removes it.
+
 The precedence ladder, one line: invocation `--egress` → remembered approval posture → explicit
 `COOP_EGRESS` → project `box.egress` → any rule present ⇒ filtered → open
 (`networkstate/admission.go`, `resolveMode`). There is no hard ceiling: nothing ever produced one,

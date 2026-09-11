@@ -31,14 +31,14 @@ rechecking a host after a Docker or coop upgrade, or diagnosing one:
     Setting up restricted networking using Docker 29.4.0 on linux/arm64.
     The gateway and client images are already available and will be reused.
 
-    checking filtered access
+    Checking filtered access:
       ✓ approved TLS access to example.com works
       ✓ unapproved domains are blocked
       ✓ direct IP connections cannot bypass domain rules
       ✓ the cloud metadata address is blocked
       ✓ DNS does not resolve unapproved domains
 
-    ✓ all 5 checks passed — this host is ready for filtered runs
+    ✓ All 5 checks passed — this host is ready for filtered runs
 
 A failed check keeps the passes before it, names what actually happened in its place, claims
 nothing about the checks after it, and ends with `✗ this host is not ready for filtered runs` and
@@ -179,24 +179,25 @@ only what went wrong: blocked attempts, alerts, gaps in the evidence, a layer th
 normally, a cleanup still owed. A clean run prints nothing else; `--json` keeps every field.
 
 An interactive filtered box prints that same view itself, on stderr, once its teardown has
-sealed the receipt — under `Network run <id>`, with no tool prefix even though it follows the
-agent's own output. Before it, one line says why the box is being torn down: `stopping the box —
-main process exited with status 0`, or `— interrupted by Ctrl-C` when a signal reached coop
-(never guessed from an exit status). The sections before the agent started — `Protecting secrets`, `Internet
-access` listing each provider's endpoints, the approved sites/services and the configured MCP
-servers before `✓ Everything else blocked`, then `Starting <agent>` — carry no prefix at all.
+sealed the receipt — under `Networking stats:`, with each destination's own totals on its row
+and no tool prefix even though it follows the agent's own output. Before it, one line says why
+the box stopped: `The Coop box has stopped — main process exited with status 0`, or
+`— interrupted by Ctrl-C` when a signal reached coop (never guessed from an exit status). The
+sections before the agent started — `Protecting secrets`, `Configuring network access` listing
+each provider's endpoints, `Applied N approved network rules` and the configured MCP servers
+before `✓ Everything else blocked`, then `Starting <agent>` — carry no prefix at all.
 
 - **TLS flows are observed.** The gateway sees each connection, so a destination row is the name
   the workload asked for, the address it resolved to, and the bytes that crossed. A blocked name
-  becomes a retained event, and `coop net explain <host>` opens the newest one for that host in
-  this project (`--run <run>` pins one run; the exact event id is kept in `--json`).
+  becomes a retained event, and `coop net blocked <host>` opens the newest one for that host in
+  this project (`--run <run>` pins one run; an exact event ID replaces the host with `--run`).
 - **Raw transports are counted.** Every address grant has its own kernel counter, reported per
   grant (`Raw traffic` in `coop net inspect`, `address_grants` in `--json`) as packets and bytes.
   No host inside a CIDR is recorded, so none is shown.
 - **Raw refusals are counted, not attributed.** The packet filter drops a refused datagram
   without recording where it was going, so refused packets are a number — `N raw packets were
-  blocked with no destination recorded` — and there is nothing for `explain` to open. Coop will
-  not invent a destination for them.
+  blocked with no remote address recorded` — and there is nothing for `coop net blocked` to
+  open. Coop will not invent a destination for them.
 - **Unknown means unknown.** A metric nobody measured is reported as UNKNOWN, never as zero; a
   group with one unmeasured member is UNKNOWN rather than a total that quietly counted it as zero.
 - **Only proven workload traffic is `Allowed`.** Coop's own resolver connection and an ownerless
@@ -205,8 +206,8 @@ servers before `✓ Everything else blocked`, then `Starting <agent>` — carry 
 
 Runs are named by any unique prefix of their id — the eight characters `coop net runs` shows are
 enough for every run command; an ambiguous prefix is refused with the prefixes that would settle
-it. `coop net runs` shows this project's five newest runs (`--all` for every one of them,
-`--all-projects` for every project's, labeled by name and path).
+it. `coop net runs` shows this project's 25 newest runs, with a count and `--all` only when
+there are more (`--all-projects` shows every project's, labeled by name and path).
 
 `coop net check <url-or-host>` says whether a normal new run in this project can reach a
 destination — from the approved project rules and the provider access each agent brings — with one
@@ -215,7 +216,7 @@ Nothing is sent either way. An address has no implied transport, so it takes `--
 --port <n>` (or `--icmp`) and a run, because a run's protected ranges are part of the answer.
 
 `coop net export <run>` writes the sealed record as JSON with destination names and addresses
-withheld — even a blocked name can carry a secret — and `--include-destinations` puts them back on
+withheld — even a blocked name can carry a secret — and `--include-addresses` puts them back on
 your own machine. Its `digest` is a content checksum of that projection, not a signature or a
 claim that partial evidence is complete.
 

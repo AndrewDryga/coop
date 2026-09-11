@@ -1,0 +1,1 @@
+✓ example.com:443 was allowed by an approved project rule in run e644f07a.

@@ -72,7 +72,7 @@ func TestCurrentCheckAnswersForANewRun(t *testing.T) {
 		"claude": {Provider: "claude", Core: []egress.Rule{rule("api.anthropic.com", 443), rule("platform.claude.com", 443)}},
 		"codex":  {Provider: "codex", Core: []egress.Rule{rule("api.openai.com", 443), rule("platform.claude.com", 443)}},
 	}
-	filtered := box.NetworkPosture{Mode: egress.Filtered, Source: box.PostureFromProject,
+	filtered := box.NetworkAccess{Mode: egress.Filtered, Source: box.AccessFromProject,
 		Approval: &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{rule("*.example.com", 443, 8443)}}}
 	render := func(answer netCheckAnswer) string {
 		var b bytes.Buffer
@@ -80,23 +80,23 @@ func TestCurrentCheckAnswersForANewRun(t *testing.T) {
 		return b.String()
 	}
 	cases := []struct {
-		name    string
-		posture box.NetworkPosture
-		host    string
-		port    int
-		want    string
+		name   string
+		access box.NetworkAccess
+		host   string
+		port   int
+		want   string
 	}{
-		{"approved rule", filtered, "docs.example.com", 8443, "✓ New filtered runs can reach docs.example.com:8443\n  Allowed by an approved project rule.\n"},
-		{"wrong port", filtered, "docs.example.com", 853, "✗ No new run can reach docs.example.com:853\n  No approved project rule allows it — add one under box.egress_rules in .agent/project.yaml, then run 'coop net approve'.\n"},
-		{"one agent", filtered, "api.anthropic.com", 443, "✓ Claude can reach api.anthropic.com:443\n  Provider access for Claude is included automatically.\n"},
-		{"two agents", filtered, "platform.claude.com", 443, "✓ Claude and Codex can reach platform.claude.com:443\n  Their provider access is included automatically.\n"},
-		{"open", box.NetworkPosture{Mode: egress.Open}, "anything.example", 443, "✓ New runs can reach anything.example:443\n  This project's network access is unrestricted.\n"},
-		{"offline", box.NetworkPosture{Mode: egress.None}, "api.anthropic.com", 443, "✗ New runs cannot reach api.anthropic.com:443\n  This project's runs are offline.\n"},
-		{"pending", box.NetworkPosture{Mode: egress.Filtered, Add: []egress.Rule{rule("new.example", 443)}, Pending: &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}}, "api.anthropic.com", 443,
-			"✗ No new run can start until this project's network request is approved\n  Review it: coop net approve\n"},
+		{"approved rule", filtered, "docs.example.com", 8443, "✓ docs.example.com:8443 is allowed by an approved project rule.\n"},
+		{"wrong port", filtered, "docs.example.com", 853, "✗ docs.example.com:853 is blocked — no approved rule allows it.\n  Add a rule under box.egress_rules in .agent/project.yaml, then run coop net approve.\n"},
+		{"one agent", filtered, "api.anthropic.com", 443, "✓ api.anthropic.com:443 is allowed by Claude's provider access.\n"},
+		{"two agents", filtered, "platform.claude.com", 443, "✓ platform.claude.com:443 is allowed for Claude and Codex.\n  Their provider access is included automatically.\n"},
+		{"open", box.NetworkAccess{Mode: egress.Open}, "anything.example", 443, "✓ anything.example:443 is allowed — internet access is unrestricted.\n"},
+		{"offline", box.NetworkAccess{Mode: egress.None}, "api.anthropic.com", 443, "✗ api.anthropic.com:443 is blocked — internet access is disabled.\n"},
+		{"pending", box.NetworkAccess{Mode: egress.Filtered, Add: []egress.Rule{rule("new.example", 443)}, Pending: &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}}, "api.anthropic.com", 443,
+			"✗ New runs need your approval\n  Review the requested changes: coop net approve\n"},
 	}
 	for _, tc := range cases {
-		got := render(netCurrentCheck(tc.posture, tc.host, tc.port, bundles))
+		got := render(netCurrentCheck(tc.access, tc.host, tc.port, bundles))
 		if got != tc.want {
 			t.Errorf("%s:\n%s\nwant:\n%s", tc.name, got, tc.want)
 		}
@@ -115,19 +115,19 @@ func TestHistoricalCheckNamesTheRunAndStops(t *testing.T) {
 		Origins: []networkstate.PolicyOrigin{{Kind: "operator", Name: "allow-domain"}}}
 	var b bytes.Buffer
 	writeNetHistoricalCheck(&b, ui.Palette{}, allowed)
-	if want := "✓ Run e644f07a could reach example.com:443\n  Allowed by your allow-domain flag.\n"; b.String() != want {
+	if want := "✓ example.com:443 was allowed by your allow-domain flag in run e644f07a.\n"; b.String() != want {
 		t.Errorf("allowed:\n%s\nwant:\n%s", b.String(), want)
 	}
 	denied := networkstate.PolicyExplanation{RunID: netTestRun, Domain: "registry.npmjs.org", Protocol: "tls", Port: 443, Reason: "unapproved_name",
 		Message: "no rule in this run allows this name — a rule you approve now applies to the next run"}
 	b.Reset()
 	writeNetHistoricalCheck(&b, ui.Palette{}, denied)
-	if want := "✗ Run e644f07a could not reach registry.npmjs.org:443\n  No rule in this run allows this name — a rule you approve now applies to the next run.\n"; b.String() != want {
+	if want := "✗ registry.npmjs.org:443 was blocked as an unapproved destination in run e644f07a.\n"; b.String() != want {
 		t.Errorf("denied:\n%s\nwant:\n%s", b.String(), want)
 	}
 	b.Reset()
 	writeNetHistoricalCheck(&b, ui.Palette{}, networkstate.PolicyExplanation{RunID: netTestRun, Protocol: "tls", Port: 443, Withheld: true, Reason: "unapproved_name", Message: "x"})
-	if !strings.Contains(b.String(), "could not reach the withheld destination:443") {
+	if !strings.Contains(b.String(), "the withheld destination:443 was blocked") {
 		t.Errorf("withheld destination view:\n%s", b.String())
 	}
 }
@@ -148,9 +148,9 @@ func TestExplainRendersTheExactRuleToPaste(t *testing.T) {
 	var b bytes.Buffer
 	writeNetExplanation(&b, ui.Palette{}, now, explanation)
 	want := "registry.example.com:443 was blocked\n" +
-		"  Run cb375d22 · today 16:03\n" +
+		"  Run cb375d22 · today at 16:03\n" +
 		"\n" +
-		"No rule in this run allows this name — a rule you approve now applies to the next run. (×2)\n" +
+		"No approved rule allowed this TLS connection. It happened 2 times.\n" +
 		"\n" +
 		"Add this rule under box.egress_rules in .agent/project.yaml:\n" +
 		"\n" +
@@ -165,32 +165,37 @@ func TestExplainRendersTheExactRuleToPaste(t *testing.T) {
 	}
 }
 
-// The no-draft cases mean different things and must not be blurred: a boundary
+// The refusal classes mean different things and must not be blurred: a boundary
 // no rule can cross, a failure that was no refusal, and evidence too thin to
-// name a transport. None fabricates YAML.
+// name a transport. None of them fabricates YAML, and only the last one says
+// there is nothing to copy — saying it over a protected address would imply the
+// destination should be allowed.
 func TestExplainNeverFabricatesARuleFromThinEvidence(t *testing.T) {
 	render := func(kind, reason string, truncated bool) string {
 		var b bytes.Buffer
 		writeNetExplanation(&b, ui.Palette{}, time.Now(), netExplanation{RunID: netTestRun, Host: "example.org", Causes: []netExplainCause{{Count: 1,
-			Explanation: networkstate.EventExplanation{RunID: netTestRun, CandidateState: "none", Message: "m", DetailTruncated: truncated,
-				Event: networkview.Denial{ID: netTestEventID, Kind: kind, Reason: reason, Name: "example.org", At: time.Unix(1, 0).UTC()}}}}})
+			Explanation: networkstate.EventExplanation{RunID: netTestRun, CandidateState: "none", DetailTruncated: truncated,
+				Message: networkstate.DiagnosticReason(reason),
+				Event:   networkview.Denial{ID: netTestEventID, Kind: kind, Reason: reason, Name: "example.org", At: time.Unix(1, 0).UTC()}}}}})
 		return b.String()
 	}
 	const (
-		boundary   = "No rule can allow this: it is a protected or unsupported destination, not a gap in the project's rules."
-		notRefused = "This was not blocked by a rule — the connection failed on its own, and another rule would not change that."
-		tooThin    = "a blocked DNS lookup does not say whether the destination is TLS, or on which port"
+		protected  = "This address is protected. Project rules cannot allow it."
+		notRefused = "The upstream connection failed."
+		tooThin    = "The record has no connection type or port to use in a rule."
 	)
-	for _, tc := range []struct{ kind, reason, want string }{
-		{"dns_denied", "protected_destination", boundary},
-		{"dns_denied", "unsafe_dns_answer", boundary},
-		{"tls_denied", "tls_ech_unsupported", boundary},
-		{"tls_denied", "unsupported_capability", boundary},
-		{"tls_denied", "tls_name_missing", boundary},
-		{"tls_denied", "tls_name_invalid", boundary},
-		{"tls_denied", "upstream_unreachable", notRefused},
-		{"tls_denied", "observation_unavailable", notRefused},
-		{"dns_denied", "unapproved_name", tooThin},
+	for _, tc := range []struct {
+		kind, reason, want string
+		thin               bool
+	}{
+		{kind: "dns_denied", reason: "protected_destination", want: protected},
+		{kind: "dns_denied", reason: "unsafe_dns_answer", want: protected},
+		{kind: "tls_denied", reason: "tls_ech_unsupported", want: "This connection uses encrypted TLS names, which filtered networking does not support."},
+		{kind: "tls_denied", reason: "unsupported_capability", want: networkstate.DiagnosticReason("unsupported_capability")},
+		{kind: "tls_denied", reason: "tls_name_missing", want: networkstate.DiagnosticReason("tls_name_missing")},
+		{kind: "tls_denied", reason: "upstream_unreachable", want: notRefused},
+		{kind: "tls_denied", reason: "observation_unavailable", want: "Coop could not record enough information to explain this attempt."},
+		{kind: "dns_denied", reason: "unapproved_name", want: "No approved rule allowed this DNS lookup.", thin: true},
 	} {
 		got := render(tc.kind, tc.reason, false)
 		if !strings.Contains(got, tc.want) {
@@ -199,13 +204,16 @@ func TestExplainNeverFabricatesARuleFromThinEvidence(t *testing.T) {
 		if strings.Contains(got, "- to:") || strings.Contains(got, "coop net approve") {
 			t.Errorf("%s fabricated a rule to paste:\n%s", tc.reason, got)
 		}
+		if thin := strings.Contains(got, tooThin); thin != tc.thin {
+			t.Errorf("%s said %q: %v, want %v\n%s", tc.reason, tooThin, thin, tc.thin, got)
+		}
 	}
 	// A run that kept only part of its detail says so, so a cause that is not
 	// here does not read as proof that nothing else was blocked.
-	if got := render("dns_denied", "unapproved_name", true); !strings.Contains(got, "\nThis run kept only part of its detail, so other blocked attempts may be missing.\n") {
+	if got := render("dns_denied", "unapproved_name", true); !strings.Contains(got, "⚠ "+netIncompleteRecording+"\n") {
 		t.Errorf("a truncated run does not say what it lost:\n%s", got)
 	}
-	if got := render("dns_denied", "unapproved_name", false); strings.Contains(got, "only part of its detail") {
+	if got := render("dns_denied", "unapproved_name", false); strings.Contains(got, netIncompleteRecording) {
 		t.Errorf("a complete run claimed missing detail:\n%s", got)
 	}
 }
@@ -217,7 +225,7 @@ func netDenial(id string, seq networkview.Count, kind, reason, host string, at t
 		Sequence: seq, Kind: kind, Reason: reason, Name: host, At: at}
 }
 
-// Acceptance: `coop net explain <host>` with no run answers from THIS project's
+// Acceptance: `coop net blocked <host>` with no run answers from THIS project's
 // most recent run that blocked it, groups that run's repeats into one counted
 // cause, keeps a materially different cause separate, and never reaches into
 // another project's box. `--run` pins the run instead.
@@ -245,8 +253,8 @@ func TestExplainChoosesThisProjectsNewestBlockingRunAndGroupsRepeats(t *testing.
 	explain := func(t *testing.T, args ...string) string {
 		t.Helper()
 		return captureStdout(t, func() {
-			if code, err := a.netDiagnostic("explain", args); code != 0 || err != nil {
-				t.Fatalf("coop net explain %v = (%d, %v)", args, code, err)
+			if code, err := a.netDiagnostic("blocked", args); code != 0 || err != nil {
+				t.Fatalf("coop net blocked %v = (%d, %v)", args, code, err)
 			}
 		})
 	}
@@ -259,9 +267,10 @@ func TestExplainChoosesThisProjectsNewestBlockingRunAndGroupsRepeats(t *testing.
 			t.Errorf("explain reached run %s:\n%s", wrong, got)
 		}
 	}
-	for _, want := range []string{"example.org · DNS ×3 — ", "example.org · DNS — a protected address — "} {
+	for _, want := range []string{"  DNS · 3 attempts\n", "  DNS · 1 attempt\n",
+		"    No approved rule allowed the lookup.\n", "    This address is protected. Project rules cannot allow it.\n"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("explain lost the grouping %q:\n%s", want, got)
+			t.Errorf("blocked lost the grouping %q:\n%s", want, got)
 		}
 	}
 	if strings.Contains(got, "other.example") {
@@ -273,20 +282,20 @@ func TestExplainChoosesThisProjectsNewestBlockingRunAndGroupsRepeats(t *testing.
 		t.Errorf("--run did not pin the run:\n%s", got)
 	}
 	// A host this project never had blocked is a note, not an invented cause.
-	note := captureStderr(t, func() {
-		if code, err := a.netDiagnostic("explain", []string{"never.example"}); code != 0 || err != nil {
-			t.Fatalf("explain of an unblocked host = (%d, %v)", code, err)
+	note := captureStdout(t, func() {
+		if code, err := a.netDiagnostic("blocked", []string{"never.example"}); code != 0 || err != nil {
+			t.Fatalf("blocked with an unblocked host = (%d, %v)", code, err)
 		}
 	})
-	if !strings.Contains(note, "nothing blocked never.example in this project's recorded runs") {
+	if !strings.Contains(note, "No recorded block for never.example in this project's runs.") {
 		t.Errorf("an unblocked host:\n%s", note)
 	}
 	// Outside a project there is no scope to guess: the cwd is not a project.
 	t.Chdir(t.TempDir())
 	outside := &app{cfg: &config.Config{}}
-	if code, err := outside.netDiagnostic("explain", []string{"example.org"}); code != 1 || err == nil ||
-		!strings.Contains(err.Error(), "searches this project's runs") {
-		t.Errorf("explain outside a project = (%d, %v)", code, err)
+	if code, err := outside.netDiagnostic("blocked", []string{"example.org"}); code != 1 || err == nil ||
+		!strings.Contains(err.Error(), "Could not select a network run") {
+		t.Errorf("blocked outside a project = (%d, %v)", code, err)
 	}
 }
 
@@ -317,16 +326,16 @@ func TestNetRuleYAMLIsTheSmallestPastableItem(t *testing.T) {
 func TestExplainShowsDistinctCauses(t *testing.T) {
 	port := 443
 	explanation := netExplanation{RunID: netTestRun, Host: "example.org", Causes: []netExplainCause{
-		{Count: 3, Explanation: networkstate.EventExplanation{Message: "no rule in this run allows this name",
+		{Count: 3, Explanation: networkstate.EventExplanation{Message: networkstate.DiagnosticReason("unapproved_name"),
 			Event: networkview.Denial{ID: "a", Kind: "dns_denied", Reason: "unapproved_name", Name: "example.org", At: time.Unix(1, 0).UTC()}}},
-		{Count: 1, Explanation: networkstate.EventExplanation{Message: "the TLS handshake carried no usable server name, so no domain rule could match it",
+		{Count: 1, Explanation: networkstate.EventExplanation{Message: networkstate.DiagnosticReason("tls_name_missing"),
 			Event: networkview.Denial{ID: "b", Kind: "tls_denied", Reason: "tls_name_missing", Name: "example.org", Port: &port, At: time.Unix(2, 0).UTC()}}},
 	}}
 	var b bytes.Buffer
 	writeNetExplanation(&b, ui.Palette{}, time.Now(), explanation)
 	for _, want := range []string{
-		"\nexample.org · DNS ×3 — No rule in this run allows this name.\n",
-		"\nexample.org:443 · TLS — the connection carried no usable name — The TLS handshake carried no usable server name, so no domain rule could match it.\n",
+		"  DNS · 3 attempts\n    No approved rule allowed the lookup.\n",
+		"  TLS on port 443 · 1 attempt\n    " + networkstate.DiagnosticReason("tls_name_missing") + "\n",
 	} {
 		if !strings.Contains(b.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, b.String())
@@ -338,7 +347,7 @@ func TestOriginTextNamesWhereAGrantCameFrom(t *testing.T) {
 	cases := map[string]networkstate.PolicyOrigin{
 		"your allow-domain flag":                   {Kind: "operator", Name: "allow-domain"},
 		"an approved project rule":                 {Kind: "project"},
-		"Claude's provider access (bundle 1)":      {Kind: "provider", Provider: "claude", BundleVersion: "1"},
+		"Claude's provider access":                 {Kind: "provider", Provider: "claude", BundleVersion: "1"},
 		"the MCP server emisar coop set up for th": {Kind: "mcp", Name: "emisar"},
 	}
 	for want, origin := range cases {

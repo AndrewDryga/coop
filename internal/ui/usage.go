@@ -16,6 +16,7 @@ import (
 type UsageError struct {
 	Headline string      // "Unknown command \"coop doctro\"" — what was refused, with the full command
 	Cause    string      // optional one-line reason, indented six spaces ("Choose claude, codex, …")
+	Choices  []string    // optional values that would settle it (the run IDs a prefix matched)
 	Rows     [][2]string // label → command ("Did you mean:" → "coop doctor"), aligned on the label
 }
 
@@ -26,6 +27,7 @@ func (e *UsageError) Error() string {
 	if e.Cause != "" {
 		parts = append(parts, e.Cause)
 	}
+	parts = append(parts, e.Choices...)
 	for _, r := range e.Rows {
 		parts = append(parts, r[0]+" "+r[1])
 	}
@@ -41,6 +43,14 @@ func (e *UsageError) Render(p Palette) string {
 	fmt.Fprintf(&b, "\n%s\n", p.Red("✗ "+e.Headline))
 	if e.Cause != "" {
 		fmt.Fprintf(&b, "\n      %s\n", e.Cause)
+	}
+	// The values that would settle the refusal are the answer itself, not a
+	// labeled action: they sit in their own two-space block above the rows.
+	if len(e.Choices) > 0 {
+		b.WriteString("\n")
+		for _, choice := range e.Choices {
+			fmt.Fprintf(&b, "  %s\n", choice)
+		}
 	}
 	if len(e.Rows) > 0 {
 		w := 0

@@ -47,8 +47,16 @@ func TestForgetRemovesOneApprovalAndKeepsEveryOtherRecord(t *testing.T) {
 		t.Fatalf("the approval record %q was never on disk", approvalRecord(record.ID))
 	}
 	delete(want, approvalRecord(record.ID))
-	if got := inventory(t, s); !reflect.DeepEqual(want, got) {
-		t.Errorf("forget changed more than the one approval:\nwant %v\ngot  %v", want, got)
+	got := inventory(t, s)
+	// Removing the grant is only half of it: the withdrawal marker is what keeps
+	// a project whose YAML is gone from falling back to the open default.
+	barrier, ok := got[withdrawalRecord(record.ID)]
+	if !ok {
+		t.Fatalf("forget left no withdrawal marker:\n%v", got)
+	}
+	want[withdrawalRecord(record.ID)] = barrier
+	if !reflect.DeepEqual(want, got) {
+		t.Errorf("forget changed more than the one approval and its marker:\nwant %v\ngot  %v", want, got)
 	}
 	if approval, err := s.Approval(forgotten); err != nil || approval != nil {
 		t.Errorf("the forgotten project still has an approval: %+v %v", approval, err)

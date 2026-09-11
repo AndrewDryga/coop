@@ -1,0 +1,14 @@
+coop net watch — follow a run's network activity
+
+Usage: coop net watch [<run>] [--json]
+
+OPTIONS
+  --json  stream one JSON record per update
+
+  Without an ID, selects this project's only unfinished run.
+  Shows new connections, blocks and problems, then the final report.
+
+  Press Ctrl-C to stop watching. The run continues.
+
+EXAMPLE
+  coop net watch e644f07a

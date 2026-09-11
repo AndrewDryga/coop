@@ -1,0 +1,15 @@
+coop net blocked — find blocked connections and how to allow them
+
+Usage: coop net blocked <host> [--run <run>] [--json]
+
+OPTIONS
+  --run <run>  look only in this run
+  --json       print the evidence for scripts
+
+  Without --run, finds the newest matching block in this project's runs.
+  Shows a rule you can copy when the record proves the destination and port.
+  An exact event ID can replace the host when --run is supplied.
+
+EXAMPLES
+  coop net blocked registry.npmjs.org
+  coop net blocked registry.npmjs.org --run e644f07a

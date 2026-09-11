@@ -137,7 +137,7 @@ func printNetworkIteration(r box.NetworkReport, run int) {
 		ui.Warn("network alert: %s", alert)
 	}
 	if r.Event != "" {
-		ui.Detail("coop net explain %s --run %s   # why", r.Event, r.RunID)
+		ui.Detail("To see why: coop net blocked %s --run %s", r.Event, r.RunID)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/AndrewDryga/coop/internal/egress"
 )
@@ -45,12 +46,35 @@ type AdmissionPreview struct {
 }
 
 // PendingApproval is the ONE condition every launch refuses on and every view
-// reports: what .agent/project.yaml asks for is not what a human approved. Reason
-// is a plain sentence that reads on its own or after "cannot start because"; it
-// never carries the remedy, which is always the same — `coop net approve`.
-type PendingApproval struct{ Reason string }
+// reports: what .agent/project.yaml asks for is not what a human approved.
+// Reason is a clause that reads after "cannot start because"; Cause is the same
+// fact as a standalone sentence, for a view that states it on its own line.
+// Neither carries the remedy, which is always the same — `coop net approve`.
+type PendingApproval struct {
+	Reason string
+	Cause  string
+}
 
 func (p *PendingApproval) Error() string { return p.Reason }
+
+// Sentence is the cause a view prints. A pending condition that never wrote one
+// falls back to its own clause capitalized, so a new cause is readable before it
+// is given its own sentence rather than silently blank.
+func (p *PendingApproval) Sentence() string {
+	switch {
+	case p == nil:
+		return ""
+	case p.Cause != "":
+		return p.Cause
+	case p.Reason == "":
+		return ""
+	}
+	sentence := strings.ToUpper(p.Reason[:1]) + p.Reason[1:]
+	if !strings.HasSuffix(sentence, ".") {
+		sentence += "."
+	}
+	return sentence
+}
 
 // pendingApproval compares the exact request — the mode the project names, its
 // normalized rules and the reviewed identity of each service — with the stored
@@ -69,13 +93,15 @@ func (a Admission) pendingApproval(approval *Approval) (*PendingApproval, error)
 		return nil, err
 	}
 	const asks = "this project asks for network access that has not been approved"
+	const requests = ".agent/project.yaml requests changes to network access."
 	overridden := a.InvocationMode != nil || a.HostPreference != nil || a.PolicyMode != nil
 	if approval == nil {
 		if a.ProjectMode != nil && *a.ProjectMode == egress.Open && !overridden {
-			return &PendingApproval{Reason: "this project asks for unrestricted internet access, which has not been approved"}, nil
+			return &PendingApproval{Reason: "this project asks for unrestricted internet access, which has not been approved",
+				Cause: ".agent/project.yaml requests unrestricted internet access."}, nil
 		}
 		if len(rules) != 0 {
-			return &PendingApproval{Reason: asks}, nil
+			return &PendingApproval{Reason: asks, Cause: requests}, nil
 		}
 		return nil, nil
 	}
@@ -90,15 +116,16 @@ func (a Admission) pendingApproval(approval *Approval) (*PendingApproval, error)
 		mode = egress.Filtered
 	}
 	if mode != approval.Posture || !sameRules(rules, approval.Envelope) {
-		return &PendingApproval{Reason: asks}, nil
+		return &PendingApproval{Reason: asks, Cause: requests}, nil
 	}
 	if !maps.Equal(a.Services, approval.Services) {
 		for name, digest := range approval.Services {
 			if current, ok := a.Services[name]; ok && current != digest {
-				return &PendingApproval{Reason: fmt.Sprintf("the Compose service %q changed since it was approved", name)}, nil
+				return &PendingApproval{Reason: fmt.Sprintf("the Compose service %q changed since it was approved", name),
+					Cause: fmt.Sprintf("The Compose service %q changed after its network access was approved.", name)}, nil
 			}
 		}
-		return &PendingApproval{Reason: asks}, nil
+		return &PendingApproval{Reason: asks, Cause: requests}, nil
 	}
 	return nil, nil
 }
@@ -126,7 +153,7 @@ func PreviewAdmission(path, project string, exposed []string, input Admission) (
 	}
 	store, err := openFiles(path, exposed, false)
 	if errors.Is(err, os.ErrNotExist) {
-		return input.preview(nil)
+		return input.preview(nil, false)
 	}
 	if err != nil {
 		return AdmissionPreview{}, err
@@ -136,7 +163,7 @@ func PreviewAdmission(path, project string, exposed []string, input Admission) (
 		return AdmissionPreview{}, err
 	}
 	if store.key == nil {
-		return input.preview(nil)
+		return input.preview(nil, false)
 	}
 	return store.admissionPreview(project, input)
 }
@@ -170,7 +197,11 @@ func (s *Store) admissionPreview(project string, input Admission) (AdmissionPrev
 	if err != nil {
 		return AdmissionPreview{}, err
 	}
-	preview, err := input.preview(approval)
+	withdrawn, err := s.withdrawn(id)
+	if err != nil {
+		return AdmissionPreview{}, err
+	}
+	preview, err := input.preview(approval, withdrawn)
 	if err != nil {
 		return AdmissionPreview{}, err
 	}
@@ -182,7 +213,7 @@ func (s *Store) admissionPreview(project string, input Admission) (AdmissionPrev
 	return preview, nil
 }
 
-func (a Admission) preview(approval *Approval) (AdmissionPreview, error) {
+func (a Admission) preview(approval *Approval, withdrawn bool) (AdmissionPreview, error) {
 	mode, err := a.resolveMode(approval)
 	if err != nil {
 		return AdmissionPreview{}, err
@@ -190,6 +221,9 @@ func (a Admission) preview(approval *Approval) (AdmissionPreview, error) {
 	pending, err := a.pendingApproval(approval)
 	if err != nil {
 		return AdmissionPreview{}, err
+	}
+	if pending == nil {
+		pending = a.withdrawalBarrier(approval, withdrawn, mode)
 	}
 	return AdmissionPreview{Mode: mode, Pending: pending}, nil
 }
@@ -250,6 +284,16 @@ func (s *Store) authorized(project string, input Admission, pinBundles bool) (st
 	mode, err := input.resolveMode(approval)
 	if err != nil {
 		return "", "", nil, err
+	}
+	// The withdrawal barrier is enforced HERE too, not only in the preview: a
+	// caller that admits without previewing must not be the one path that walks
+	// through a withdrawal back into the open default.
+	withdrawn, err := s.withdrawn(id)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if barrier := input.withdrawalBarrier(approval, withdrawn, mode); barrier != nil {
+		return "", "", nil, barrier
 	}
 	if pinBundles {
 		err = s.checkBundles(input.Bundles)

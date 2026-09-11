@@ -341,9 +341,8 @@ func TestInitReportsAPendingNetworkRequestOnlyWhenThereIsOne(t *testing.T) {
 		})
 	}
 	out := initOutput()
-	// The fresh result states the access a new project selects; what it must NOT do is claim
-	// there is a request waiting for someone to approve.
-	for _, absent := range []string{"coop net", "Review it", "pending"} {
+	// A fresh project has nothing pending, so init says nothing about approval.
+	for _, absent := range []string{"coop net approve", netPendingHeadline} {
 		if strings.Contains(out, absent) {
 			t.Errorf("a fresh init claimed a pending network request (%q):\n%s", absent, out)
 		}
@@ -359,8 +358,9 @@ func TestInitReportsAPendingNetworkRequestOnlyWhenThereIsOne(t *testing.T) {
 	if err := os.WriteFile(project, []byte("box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: docs.example.com}\n      protocol: tls\n      ports: [443]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out := initOutput(); !strings.HasSuffix(out, "⚠ This project asks for network access that has not been approved\n  Review it: coop net approve\n") {
-		t.Errorf("a pending request did not end init with the two-line notice:\n%s", out)
+	want := "⚠ " + netPendingHeadline + "\n  .agent/project.yaml requests changes to network access.\n  " + netPendingReview + "\n"
+	if out := initOutput(); !strings.HasSuffix(out, want) {
+		t.Errorf("a pending request did not end init with the approval notice:\n%s\nwant to end with:\n%s", out, want)
 	}
 	// The file a human edited is not rewritten by the re-init.
 	if after, _ := os.ReadFile(project); !strings.Contains(string(after), "docs.example.com") {

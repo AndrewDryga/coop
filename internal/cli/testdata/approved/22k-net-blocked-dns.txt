@@ -1,0 +1,6 @@
+registry.npmjs.org was blocked
+  Run cb375d22 · today at 16:03
+
+No approved rule allowed this DNS lookup. It happened 4 times.
+
+The record has no connection type or port to use in a rule.

@@ -1,0 +1,3 @@
+Network run e644f07a was left alone.
+
+  Its supervising process is still running, or Coop could not verify that it stopped.

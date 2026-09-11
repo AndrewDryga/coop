@@ -138,7 +138,7 @@ func qualifyNetworkHost(ctx context.Context, cfg *config.Config, rt runtime.Runt
 	if err != nil {
 		return networkstate.Qualification{}, err
 	}
-	fmt.Fprintf(out, "\n%s\n", p.Bold("checking filtered access"))
+	fmt.Fprintf(out, "\n%s\n", p.Bold("Checking filtered access:"))
 	proof, code, runErr := runSetupSmoke(ctx, cfg, rt, store, smoke, project, out)
 	if err := writeSetupChecks(out, p, code, runErr); err != nil {
 		return networkstate.Qualification{}, err
@@ -343,7 +343,7 @@ func writeSetupChecks(out io.Writer, p ui.Palette, code int, runErr error) error
 		fmt.Fprintf(out, "  %s %s\n", p.Green("✓"), check.property)
 	}
 	if runErr == nil && code == 0 {
-		fmt.Fprintf(out, "\n%s\n", p.Bold(p.Green(fmt.Sprintf("✓ all %d checks passed — this host is ready for filtered runs", len(setupChecks)))))
+		fmt.Fprintf(out, "\n%s\n", p.Bold(p.Green(fmt.Sprintf("✓ All %d checks passed — this host is ready for filtered runs", len(setupChecks)))))
 		return nil
 	}
 	reason := ""

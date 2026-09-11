@@ -1,0 +1,4 @@
+
+✗ "coop net forget" needs your confirmation in a terminal
+
+  Help: coop help net forget

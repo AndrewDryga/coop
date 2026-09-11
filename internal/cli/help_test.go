@@ -228,7 +228,8 @@ var wantManualOrder = []string{
 	"login", "credentials", "models", "presets",
 	"tasks", "backlog", "context", "loop", "fork",
 	"up", "down",
-	"doctor", "net", "check-secrets", "sign",
+	"doctor", "net", "net runs", "net inspect", "net check", "net blocked", "net approve",
+	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "version",
 	"acp", "sessions", "worker", "prompt", "completion",
 }

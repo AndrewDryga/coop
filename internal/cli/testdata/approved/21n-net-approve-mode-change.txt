@@ -1,0 +1,9 @@
+Review the requested network access changes.
+
+NETWORK ACCESS
+  - Offline — internet access is blocked.
+  + Filtered — only approved network traffic is allowed.
+
+NETWORK RULES
+  + docs.example.com:443 · TLS  new request
+

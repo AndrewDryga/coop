@@ -26,7 +26,7 @@ func TestSetupChecksRenderEveryProvedPropertyAndOneVerdict(t *testing.T) {
 		"  ✓ direct IP connections cannot bypass domain rules\n" +
 		"  ✓ the cloud metadata address is blocked\n" +
 		"  ✓ DNS does not resolve unapproved domains\n" +
-		"\n✓ all 5 checks passed — this host is ready for filtered runs\n"
+		"\n✓ All 5 checks passed — this host is ready for filtered runs\n"
 	if b.String() != want {
 		t.Errorf("transcript:\n%s\nwant:\n%s", b.String(), want)
 	}
@@ -102,7 +102,7 @@ func TestSetupChecksColorOnlyOnATerminal(t *testing.T) {
 	}
 	var passed bytes.Buffer
 	_ = writeSetupChecks(&passed, ui.Colored(), 0, nil)
-	if !strings.HasSuffix(passed.String(), "\x1b[1m\x1b[32m✓ all 5 checks passed — this host is ready for filtered runs\x1b[0m\x1b[0m\n") {
+	if !strings.HasSuffix(passed.String(), "\x1b[1m\x1b[32m✓ All 5 checks passed — this host is ready for filtered runs\x1b[0m\x1b[0m\n") {
 		t.Errorf("the success verdict is not bold green:\n%q", passed.String())
 	}
 	if strings.Contains(plain.String(), "\x1b") {

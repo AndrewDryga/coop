@@ -1,0 +1,4 @@
+example.com:443 could not be reached
+  Run cb375d22 · today at 16:03
+
+This connection uses encrypted TLS names, which filtered networking does not support.

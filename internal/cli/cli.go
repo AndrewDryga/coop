@@ -342,11 +342,17 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 	}
 	cmd := path[0]
 	// A subcommand is checked against its family's OWN verb list first: a typo'd leaf is an error,
-	// never a silent fallback to the family page it isn't part of.
+	// never a silent fallback to the family page it isn't part of. A verb with its own page — the
+	// `net` family's ten — is keyed by the full path, so `coop help net blocked` and
+	// `coop net blocked --help` reach the same one page.
 	if len(path) > 1 {
 		if verbs, closed := familyVerbs(cmd); closed && !slices.Contains(verbs, path[1]) {
 			guess, _ := nearestCommand(path[1], verbs)
 			return 2, ui.UnknownCommandPath(path[:2], guess, asHelp)
+		}
+		if leaf := cmd + " " + path[1]; commandHelp[leaf] != "" {
+			printTopicHelp(leaf, commandHelp[leaf])
+			return 0, nil
 		}
 	}
 	// A family whose commands carry their own pages registers them under the "<family> <command>"

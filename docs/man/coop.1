@@ -717,61 +717,208 @@ Lists abandoned boxes but does not remove them.
 
 ==============================================================================
 
-coop net — control network access and see what happened.
+coop net — control network access and see what happened
 
-  Usage: coop net [<command>]
+ACCESS — control what new runs can reach
+  coop net                  show this project's current access
+  coop net approve          review and approve requested changes
+  coop net check <url>      check access
+  coop net forget           withdraw this project's network approval
 
-  ACCESS — control what new runs can reach
-    coop net                  show this project's current access
-    coop net approve          review and approve this project's network access
-    coop net check <url>      can a new run reach it? (--run <run>: that run)
-    coop net forget           drop this project's approval (--project <path>)
+RUNS — inspect recorded network activity
+  coop net runs             show recent runs
+  coop net inspect [<run>]  show connections and blocked access
+  coop net blocked <host>   find blocked connections and how to allow them
+  coop net watch [<run>]    follow network activity
+  coop net export <run>     export a shareable record
 
-  RUNS — inspect recorded network activity
-    coop net runs             show recent runs (--all, --all-projects)
-    coop net inspect [<run>]  show connections and blocked access (--json)
-    coop net explain <host>   explain why access was blocked (--run <run>)
-    coop net watch [<run>]    follow an active run until its record is sealed
-    coop net export <run>     export a shareable record (destinations withheld)
+REPAIR — normally automatic
+  coop net setup            prepare or recheck this host now
+  coop net recover [<run>]  retry interrupted cleanup now
 
-  REPAIR — normally automatic
-    coop net setup            prepare or recheck this host now
-    coop net recover [<run>]  retry interrupted cleanup now
+HOW TO ADD A NETWORK RULE
 
-  A filtered box reaches its agent's provider and the websites and services this
-  project asked for — nothing else. Every other destination is blocked at the
-  gateway, not inside the box; the box is told its policy up front, and the run
-  ends with what it reached and what was blocked. A loop admits ONCE and every
-  iteration, review and pre-flight box runs under that one frozen policy.
+1. Edit .agent/project.yaml and add the destination under box.egress_rules:
 
-  Ask for it on a launch, or make it the project's default:
+   box:
+     egress: filtered
+     egress_rules:
+       - to: {domain: "docs.example.com"}
+         protocol: tls
+         ports: [443]
 
-    coop claude --egress filtered
-    coop run --egress filtered --allow-domain example.com -- curl https://example.com
+2. Review and approve the changes:
 
-  A project asks for websites and services in .agent/project.yaml:
+   coop net approve
 
-    box:
-      egress: filtered
-      egress_rules:
-        - to: {domain: "docs.example.com"}    # TLS, exact or *.wildcard
-          protocol: tls
-          ports: [443]
+Command options: coop help net <command>
 
-  That is a REQUEST. 'coop net approve' shows it against what is already
-  approved and, once you confirm at a terminal, stores your decision outside
-  the repository — so editing or deleting the file cannot widen access, and an
-  unattended run can never approve itself. Approvals apply to NEW runs; boxes
-  already running keep the policy they launched with. 'forget' takes one back.
+==============================================================================
 
-  Runs are named by any unique prefix of their id — the eight characters
-  'coop net runs' shows are enough. 'inspect' with no run reads the newest one
-  recorded for this project; 'explain' with no run finds the newest time that
-  host was blocked here and, when the evidence proves the name, port and
-  protocol, prints the exact rule to paste. Unknown means unknown: a metric
-  nobody measured is never shown as zero. Setup and recovery run on their own;
-  the REPAIR verbs are for doing it now. Protocols, ports and what is refused
-  by design are in docs/networking.md.
+coop net runs — show recorded network runs
+
+Usage: coop net runs [--all | --all-projects] [--json]
+
+OPTIONS
+  --all           show every run for this project
+  --all-projects  show every project's runs on this host
+  --json          print the records for scripts
+
+  By default, shows this project's 25 newest runs.
+  Use a run's ID or a unique prefix with other network commands.
+
+EXAMPLE
+  coop net inspect e644f07a
+
+==============================================================================
+
+coop net inspect — show a run's connections and blocked traffic
+
+Usage: coop net inspect [<run>] [--json]
+
+OPTIONS
+  --json  print the full technical record
+
+  Without a run ID, shows this project's newest recorded run.
+
+EXAMPLES
+  coop net inspect
+  coop net inspect e644f07a
+
+==============================================================================
+
+coop net check — check whether network rules allow a connection
+
+Usage: coop net check <url-or-host> [<options>]
+       coop net check <ip> --run <run> --protocol <tcp|udp> --port <n>
+       coop net check <ip> --run <run> --icmp
+
+OPTIONS
+  --run <run>               use that run's rules
+  --port <n>                choose a port; defaults to the URL's port or 443
+  --protocol <tls|tcp|udp>  choose the connection type
+  --icmp                    check an ICMP echo request to an IP address
+  --json                    print the answer for scripts
+
+  Without --run, checks this project's approved access for a new run.
+  Hostnames use TLS. IP addresses require a recorded run and connection type.
+
+EXAMPLES
+  coop net check https://example.com
+  coop net check example.com --run e644f07a
+
+==============================================================================
+
+coop net blocked — find blocked connections and how to allow them
+
+Usage: coop net blocked <host> [--run <run>] [--json]
+
+OPTIONS
+  --run <run>  look only in this run
+  --json       print the evidence for scripts
+
+  Without --run, finds the newest matching block in this project's runs.
+  Shows a rule you can copy when the record proves the destination and port.
+  An exact event ID can replace the host when --run is supplied.
+
+EXAMPLES
+  coop net blocked registry.npmjs.org
+  coop net blocked registry.npmjs.org --run e644f07a
+
+==============================================================================
+
+coop net approve — review and approve this project's network request
+
+Usage: coop net approve
+
+  Shows what .agent/project.yaml asks for, compared with your last approval.
+  Confirm the changes to allow new runs to use them.
+  If nothing changed, there is nothing to approve.
+
+  Existing boxes keep the rules they started with.
+  Run this command in your terminal.
+
+See current access: coop net
+
+==============================================================================
+
+coop net watch — follow a run's network activity
+
+Usage: coop net watch [<run>] [--json]
+
+OPTIONS
+  --json  stream one JSON record per update
+
+  Without an ID, selects this project's only unfinished run.
+  Shows new connections, blocks and problems, then the final report.
+
+  Press Ctrl-C to stop watching. The run continues.
+
+EXAMPLE
+  coop net watch e644f07a
+
+==============================================================================
+
+coop net export — export a run's network record
+
+Usage: coop net export <run> [--include-addresses]
+
+OPTIONS
+  --include-addresses  include remote hostnames and IP addresses
+
+  Writes JSON to stdout. Remote hostnames and IP addresses are hidden by default.
+  The run must have a final record.
+
+EXAMPLE
+  coop net export e644f07a > network-record.json
+
+==============================================================================
+
+coop net forget — withdraw this project's network approval
+
+Usage: coop net forget [--project <path>]
+
+Use this when you no longer trust an approval saved on this machine.
+To change network rules, edit .agent/project.yaml and run coop net approve.
+
+OPTIONS
+  --project <path>  choose another project, including a folder that was deleted
+
+New runs wait for approval again. The project file is not changed.
+Existing boxes, recorded runs, and this host's network setup are kept.
+Run this command in your terminal.
+
+Restore approval:
+  coop net approve
+
+==============================================================================
+
+coop net setup — prepare this host for filtered networking
+
+Usage: coop net setup
+
+  Prepares the network images and checks that allowed access works and
+  blocked access stays blocked.
+
+  Coop does this automatically when a filtered run needs it.
+  Run it yourself to check or prepare the host ahead of time.
+
+Requires Docker to be running.
+
+==============================================================================
+
+coop net recover — clean up interrupted network runs
+
+Usage: coop net recover [<run>]
+
+  Removes containers and temporary volumes left by an interrupted run.
+  Without an ID, checks every run waiting for cleanup on this host.
+  Running boxes and resources Coop cannot safely identify are left alone.
+
+  Coop normally retries this cleanup automatically.
+
+EXAMPLE
+  coop net recover e644f07a
 
 ==============================================================================
 

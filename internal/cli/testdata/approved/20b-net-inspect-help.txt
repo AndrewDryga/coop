@@ -1,0 +1,12 @@
+coop net inspect — show a run's connections and blocked traffic
+
+Usage: coop net inspect [<run>] [--json]
+
+OPTIONS
+  --json  print the full technical record
+
+  Without a run ID, shows this project's newest recorded run.
+
+EXAMPLES
+  coop net inspect
+  coop net inspect e644f07a

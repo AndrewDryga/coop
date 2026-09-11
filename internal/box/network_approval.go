@@ -17,17 +17,17 @@ import (
 // Posture sources, in the order admission resolves them. They are display
 // labels for one decision, never a second precedence ladder.
 const (
-	PostureFromApproval = "remembered approval"
-	PostureFromHost     = "COOP_EGRESS"
-	PostureFromProject  = "project request"
-	PostureFromDefault  = "built-in default"
+	AccessFromApproval = "remembered approval"
+	AccessFromHost     = "COOP_EGRESS"
+	AccessFromProject  = "project request"
+	AccessFromDefault  = "built-in default"
 )
 
-// NetworkPosture is what a project may reach and what it is currently asking
+// NetworkAccess is what a project may reach and what it is currently asking
 // for. Reading it creates NOTHING — no authority root, no owner key, no
 // approval — so a host that never ran a filtered box reports that fact instead
 // of growing the state it would then describe.
-type NetworkPosture struct {
+type NetworkAccess struct {
 	Project string
 	Mode    egress.Mode
 	Source  string
@@ -47,22 +47,22 @@ type NetworkPosture struct {
 	Pending *networkstate.PendingApproval
 }
 
-// ProjectNetworkPosture answers `coop net` for one project. It reads the same
+// ProjectNetworkAccess answers `coop net` for one project. It reads the same
 // inputs admission does and resolves the mode through the same code, so the
-// posture shown is the posture a launch would get. Host setup is not part of
+// access shown is the access a launch would get. Host setup is not part of
 // it: a launch performs that itself, so its state is machinery, not a decision.
-func ProjectNetworkPosture(ctx context.Context, cfg *config.Config, repo string) (NetworkPosture, error) {
+func ProjectNetworkAccess(ctx context.Context, cfg *config.Config, repo string) (NetworkAccess, error) {
 	if ctx == nil || cfg == nil {
-		return NetworkPosture{}, errors.New("network posture requires host configuration and a cancelable context")
+		return NetworkAccess{}, errors.New("network access requires host configuration and a cancelable context")
 	}
 	canonical, p, root, exposed, input, err := networkProjectInputs(cfg, repo)
 	if err != nil {
-		return NetworkPosture{}, err
+		return NetworkAccess{}, err
 	}
-	out := NetworkPosture{Project: canonical, Requested: p.Box.EgressRules, Source: PostureFromDefault}
+	out := NetworkAccess{Project: canonical, Requested: p.Box.EgressRules, Source: AccessFromDefault}
 	preview, err := networkstate.PreviewAdmission(root, canonical, exposed, input)
 	if err != nil {
-		return NetworkPosture{}, err
+		return NetworkAccess{}, err
 	}
 	out.Mode, out.Pending = preview.Mode, preview.Pending
 	store, err := networkstate.OpenExisting(root, nil)
@@ -71,11 +71,11 @@ func ProjectNetworkPosture(ctx context.Context, cfg *config.Config, repo string)
 		return out, nil
 	}
 	if err != nil {
-		return NetworkPosture{}, err
+		return NetworkAccess{}, err
 	}
 	defer store.Close()
 	if out.Approval, err = store.Approval(canonical); err != nil {
-		return NetworkPosture{}, err
+		return NetworkAccess{}, err
 	}
 	out.Source, out.RequestedMode = postureSource(input, out.Approval), approvalMode(input, out.Approval)
 	out.Add, out.Remove = NetworkRuleDiff(approvedEnvelope(out.Approval), out.Requested)
@@ -88,13 +88,13 @@ func ProjectNetworkPosture(ctx context.Context, cfg *config.Config, repo string)
 func postureSource(input networkstate.Admission, approval *networkstate.Approval) string {
 	switch {
 	case approval != nil:
-		return PostureFromApproval
+		return AccessFromApproval
 	case input.HostPreference != nil:
-		return PostureFromHost
+		return AccessFromHost
 	case input.ProjectMode != nil, len(input.Requests) != 0:
-		return PostureFromProject
+		return AccessFromProject
 	default:
-		return PostureFromDefault
+		return AccessFromDefault
 	}
 }
 
@@ -200,9 +200,9 @@ func (a *ProjectNetworkApproval) Close() error {
 	return store.Close()
 }
 
-// approvalMode is the posture the repo's request asks about: the mode it names,
+// approvalMode is the access the repo's request asks about: the mode it names,
 // else filtered when it names rules, and a project with no opinion keeps the
-// posture already remembered. It mirrors the pending check's own derivation.
+// access already remembered. It mirrors the pending check's own derivation.
 func approvalMode(input networkstate.Admission, before *networkstate.Approval) egress.Mode {
 	switch {
 	case input.ProjectMode != nil:
@@ -217,7 +217,7 @@ func approvalMode(input networkstate.Admission, before *networkstate.Approval) e
 }
 
 // networkProjectInputs resolves the one canonical project identity, its
-// configuration and the admission inputs both the posture view and the approval
+// configuration and the admission inputs both the access view and the approval
 // review are built from, so neither can read a different project than a launch.
 func networkProjectInputs(cfg *config.Config, repo string) (string, *project.Project, string, []string, networkstate.Admission, error) {
 	fail := func(err error) (string, *project.Project, string, []string, networkstate.Admission, error) {

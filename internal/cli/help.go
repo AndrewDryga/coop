@@ -229,7 +229,8 @@ var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
 	"login", "credentials", "models", "presets",
 	"tasks", "backlog", "context", "loop", "fork",
 	"up", "down",
-	"doctor", "net", "check-secrets", "sign",
+	"doctor", "net", "net runs", "net inspect", "net check", "net blocked", "net approve",
+	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "version",
 	"acp", "sessions", "worker", "prompt", "completion")
 
@@ -1205,61 +1206,193 @@ OPTIONS
 You can run coop init again at any time.
 Coop keeps your existing project files and adds anything missing.`,
 
-	"net": `coop net — control network access and see what happened.
+	// The net family page and its ten leaf pages are APPROVED transcripts: the exact bytes are
+	// pinned in internal/cli/testdata/approved/20*.txt. The family page groups the verbs by the
+	// job a person came with — what new runs may reach, what recorded runs did, the repair coop
+	// normally does itself — and ends with the one workflow nobody guesses (edit the YAML, then
+	// approve). Every leaf page is reached as `coop net <verb> --help` and `coop help net <verb>`.
+	"net": `coop net — control network access and see what happened
 
-  Usage: coop net [<command>]
+ACCESS — control what new runs can reach
+  coop net                  show this project's current access
+  coop net approve          review and approve requested changes
+  coop net check <url>      check access
+  coop net forget           withdraw this project's network approval
 
-  ACCESS — control what new runs can reach
-    coop net                  show this project's current access
-    coop net approve          review and approve this project's network access
-    coop net check <url>      can a new run reach it? (--run <run>: that run)
-    coop net forget           drop this project's approval (--project <path>)
+RUNS — inspect recorded network activity
+  coop net runs             show recent runs
+  coop net inspect [<run>]  show connections and blocked access
+  coop net blocked <host>   find blocked connections and how to allow them
+  coop net watch [<run>]    follow network activity
+  coop net export <run>     export a shareable record
 
-  RUNS — inspect recorded network activity
-    coop net runs             show recent runs (--all, --all-projects)
-    coop net inspect [<run>]  show connections and blocked access (--json)
-    coop net explain <host>   explain why access was blocked (--run <run>)
-    coop net watch [<run>]    follow an active run until its record is sealed
-    coop net export <run>     export a shareable record (destinations withheld)
+REPAIR — normally automatic
+  coop net setup            prepare or recheck this host now
+  coop net recover [<run>]  retry interrupted cleanup now
 
-  REPAIR — normally automatic
-    coop net setup            prepare or recheck this host now
-    coop net recover [<run>]  retry interrupted cleanup now
+HOW TO ADD A NETWORK RULE
 
-  A filtered box reaches its agent's provider and the websites and services this
-  project asked for — nothing else. Every other destination is blocked at the
-  gateway, not inside the box; the box is told its policy up front, and the run
-  ends with what it reached and what was blocked. A loop admits ONCE and every
-  iteration, review and pre-flight box runs under that one frozen policy.
+1. Edit .agent/project.yaml and add the destination under box.egress_rules:
 
-  Ask for it on a launch, or make it the project's default:
+   box:
+     egress: filtered
+     egress_rules:
+       - to: {domain: "docs.example.com"}
+         protocol: tls
+         ports: [443]
 
-    coop claude --egress filtered
-    coop run --egress filtered --allow-domain example.com -- curl https://example.com
+2. Review and approve the changes:
 
-  A project asks for websites and services in .agent/project.yaml:
+   coop net approve
 
-    box:
-      egress: filtered
-      egress_rules:
-        - to: {domain: "docs.example.com"}    # TLS, exact or *.wildcard
-          protocol: tls
-          ports: [443]
+Command options: coop help net <command>`,
 
-  That is a REQUEST. 'coop net approve' shows it against what is already
-  approved and, once you confirm at a terminal, stores your decision outside
-  the repository — so editing or deleting the file cannot widen access, and an
-  unattended run can never approve itself. Approvals apply to NEW runs; boxes
-  already running keep the policy they launched with. 'forget' takes one back.
+	"net runs": `coop net runs — show recorded network runs
 
-  Runs are named by any unique prefix of their id — the eight characters
-  'coop net runs' shows are enough. 'inspect' with no run reads the newest one
-  recorded for this project; 'explain' with no run finds the newest time that
-  host was blocked here and, when the evidence proves the name, port and
-  protocol, prints the exact rule to paste. Unknown means unknown: a metric
-  nobody measured is never shown as zero. Setup and recovery run on their own;
-  the REPAIR verbs are for doing it now. Protocols, ports and what is refused
-  by design are in docs/networking.md.`,
+Usage: coop net runs [--all | --all-projects] [--json]
+
+OPTIONS
+  --all           show every run for this project
+  --all-projects  show every project's runs on this host
+  --json          print the records for scripts
+
+  By default, shows this project's 25 newest runs.
+  Use a run's ID or a unique prefix with other network commands.
+
+EXAMPLE
+  coop net inspect e644f07a`,
+
+	"net inspect": `coop net inspect — show a run's connections and blocked traffic
+
+Usage: coop net inspect [<run>] [--json]
+
+OPTIONS
+  --json  print the full technical record
+
+  Without a run ID, shows this project's newest recorded run.
+
+EXAMPLES
+  coop net inspect
+  coop net inspect e644f07a`,
+
+	"net check": `coop net check — check whether network rules allow a connection
+
+Usage: coop net check <url-or-host> [<options>]
+       coop net check <ip> --run <run> --protocol <tcp|udp> --port <n>
+       coop net check <ip> --run <run> --icmp
+
+OPTIONS
+  --run <run>               use that run's rules
+  --port <n>                choose a port; defaults to the URL's port or 443
+  --protocol <tls|tcp|udp>  choose the connection type
+  --icmp                    check an ICMP echo request to an IP address
+  --json                    print the answer for scripts
+
+  Without --run, checks this project's approved access for a new run.
+  Hostnames use TLS. IP addresses require a recorded run and connection type.
+
+EXAMPLES
+  coop net check https://example.com
+  coop net check example.com --run e644f07a`,
+
+	"net blocked": `coop net blocked — find blocked connections and how to allow them
+
+Usage: coop net blocked <host> [--run <run>] [--json]
+
+OPTIONS
+  --run <run>  look only in this run
+  --json       print the evidence for scripts
+
+  Without --run, finds the newest matching block in this project's runs.
+  Shows a rule you can copy when the record proves the destination and port.
+  An exact event ID can replace the host when --run is supplied.
+
+EXAMPLES
+  coop net blocked registry.npmjs.org
+  coop net blocked registry.npmjs.org --run e644f07a`,
+
+	"net approve": `coop net approve — review and approve this project's network request
+
+Usage: coop net approve
+
+  Shows what .agent/project.yaml asks for, compared with your last approval.
+  Confirm the changes to allow new runs to use them.
+  If nothing changed, there is nothing to approve.
+
+  Existing boxes keep the rules they started with.
+  Run this command in your terminal.
+
+See current access: coop net`,
+
+	"net watch": `coop net watch — follow a run's network activity
+
+Usage: coop net watch [<run>] [--json]
+
+OPTIONS
+  --json  stream one JSON record per update
+
+  Without an ID, selects this project's only unfinished run.
+  Shows new connections, blocks and problems, then the final report.
+
+  Press Ctrl-C to stop watching. The run continues.
+
+EXAMPLE
+  coop net watch e644f07a`,
+
+	"net export": `coop net export — export a run's network record
+
+Usage: coop net export <run> [--include-addresses]
+
+OPTIONS
+  --include-addresses  include remote hostnames and IP addresses
+
+  Writes JSON to stdout. Remote hostnames and IP addresses are hidden by default.
+  The run must have a final record.
+
+EXAMPLE
+  coop net export e644f07a > network-record.json`,
+
+	"net forget": `coop net forget — withdraw this project's network approval
+
+Usage: coop net forget [--project <path>]
+
+Use this when you no longer trust an approval saved on this machine.
+To change network rules, edit .agent/project.yaml and run coop net approve.
+
+OPTIONS
+  --project <path>  choose another project, including a folder that was deleted
+
+New runs wait for approval again. The project file is not changed.
+Existing boxes, recorded runs, and this host's network setup are kept.
+Run this command in your terminal.
+
+Restore approval:
+  coop net approve`,
+
+	"net setup": `coop net setup — prepare this host for filtered networking
+
+Usage: coop net setup
+
+  Prepares the network images and checks that allowed access works and
+  blocked access stays blocked.
+
+  Coop does this automatically when a filtered run needs it.
+  Run it yourself to check or prepare the host ahead of time.
+
+Requires Docker to be running.`,
+
+	"net recover": `coop net recover — clean up interrupted network runs
+
+Usage: coop net recover [<run>]
+
+  Removes containers and temporary volumes left by an interrupted run.
+  Without an ID, checks every run waiting for cleanup on this host.
+  Running boxes and resources Coop cannot safely identify are left alone.
+
+  Coop normally retries this cleanup automatically.
+
+EXAMPLE
+  coop net recover e644f07a`,
 
 	"doctor": `coop doctor — check that the box's isolation works
 
@@ -1367,7 +1500,7 @@ func printHelpPage(text string) {
 // without the all-commands footer. Membership travels with the page's last line. Every task page
 // ends with its own next step (the family page points at its per-command pages; each command page
 // ends with its examples or the command that follows it), so the family is listed as a prefix.
-var selfContainedHelp = map[string]bool{"presets": true, "models": true, "init": true, "tasks": true}
+var selfContainedHelp = map[string]bool{"presets": true, "models": true, "init": true, "tasks": true, "net": true}
 
 // selfContained reports whether cmd's page ends itself. A `<family> <command>` page inherits its
 // family's answer, so a new task page needs no second registration.

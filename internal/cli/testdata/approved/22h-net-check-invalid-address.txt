@@ -1,0 +1,6 @@
+
+✗ Invalid network address for "coop net check"
+
+      Use an HTTPS URL or an exact hostname, such as example.com.
+
+  Help: coop help net check

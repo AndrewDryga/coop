@@ -69,7 +69,7 @@ func TestNetworkLogPrintsBetweenIterationsNotDuringOne(t *testing.T) {
 		"a.example (dns) ×4",
 		"b.example (tls)",
 		"network alert: denial_burst (warning)",
-		"coop net explain ev-9 --run run-1",
+		"To see why: coop net blocked ev-9 --run run-1",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("iteration block %q is missing %q", out, want)

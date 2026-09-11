@@ -1,7 +1,7 @@
 // Package networkreport renders the ONE human view of a recorded network run.
 // Standalone `coop net inspect` writes it to stdout with no prefix; an
 // interactive box writes the same body to stderr after cleanup sealed its
-// receipt, under coop's `coop:` voice anchor. It lives below both `internal/cli`
+// receipt, under `Networking stats:` (View.Inline). It lives below both `internal/cli`
 // and `internal/box` so neither has to reach into the other — and so there is
 // exactly one projection, not a second formatter for the inline case.
 //
@@ -36,9 +36,23 @@ import (
 // output carries no tool prefix, after agent output as anywhere else.
 type View struct {
 	ID string
+	// Inline is the summary a box prints after its own run, under `Networking
+	// stats:` — the same body, with the destination totals on the destination
+	// row, because the reader is looking at the run they just watched and not
+	// at a record they chose. It never repeats an opaque run id in its heading.
+	Inline bool
 	// Cleanup is what coop's one bounded recovery attempt learned about a run
 	// whose cleanup was still owed. Zero when nothing was owed or attempted.
 	Cleanup Cleanup
+}
+
+// Heading is what this view leads with: the run it identifies when a person
+// selected it, and the stats heading when it follows the run itself.
+func (v View) Heading() string {
+	if v.Inline {
+		return "Networking stats:"
+	}
+	return "Network run " + v.ID
 }
 
 // Cleanup is the outcome of that attempt in the operator's terms: the
@@ -54,7 +68,7 @@ type Cleanup struct {
 // was made for; the bytes are the same with color off.
 func WriteRun(w io.Writer, p ui.Palette, view View, inspection networkstate.Inspection) {
 	observed := inspection.Observed
-	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan("Network run "+view.ID)))
+	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan(view.Heading())))
 	// Totals under a live run are still moving, so they would otherwise read as
 	// final. A terminal run needs no lifecycle line at all.
 	switch {
@@ -70,6 +84,17 @@ func WriteRun(w io.Writer, p ui.Palette, view View, inspection networkstate.Insp
 	// The plain label is padded before it is dimmed, so the column holds.
 	fmt.Fprintf(w, "  %s %s\n", p.Dim("Allowed  "), allowedAggregate(observed))
 	for _, group := range WorkloadDestinations(observed) {
+		// The inline summary carries each destination's own totals on its row:
+		// the reader just watched this run, so the remote addresses beneath are
+		// detail they can open with the full record.
+		if view.Inline {
+			row := group.Label()
+			if totals := group.totals(); totals != "" {
+				row += " · " + totals
+			}
+			fmt.Fprintf(w, "    %s\n", row)
+			continue
+		}
 		fmt.Fprintf(w, "    %s\n", group.Label())
 		for _, peer := range group.Peers {
 			fmt.Fprintf(w, "      %s\n", peer.row())
@@ -142,6 +167,31 @@ func (g DestinationGroup) Label() string {
 	return label + " · " + TransportLabel(g.Transport)
 }
 
+// totals sums this destination's peers into one row: what it carried, in the
+// same units and with the same UNKNOWN rules as the aggregate above it.
+func (g DestinationGroup) totals() string {
+	connections, failed, connecting := 0, 0, 0
+	var sent, received total
+	for _, peer := range g.Peers {
+		connections += peer.Connections
+		failed += peer.Failed
+		connecting += peer.Connecting
+		sent.addTotal(peer.sent)
+		received.addTotal(peer.received)
+	}
+	var parts []string
+	if connections != 0 {
+		parts = append(parts, sent.String()+" sent · "+received.String()+" received")
+	}
+	if failed != 0 {
+		parts = append(parts, ui.Count(failed, "attempt")+" failed")
+	}
+	if connecting != 0 {
+		parts = append(parts, strconv.Itoa(connecting)+" connecting")
+	}
+	return strings.Join(parts, " · ")
+}
+
 // PeerTotals is what one peer saw: the connections that were established
 // and what they carried, plus the attempts the policy allowed but the peer
 // never answered, and the ones still being made.
@@ -189,6 +239,18 @@ func (t *total) add(value *networkview.Count) {
 	count := networkview.Count(t.value)
 	if !networkview.Add(&count, uint64(*value)) || uint64(*value) == ^uint64(0) {
 		t.bound = true // saturated here, or already saturated upstream
+	}
+	t.value = uint64(count)
+}
+
+// addTotal folds one already-summed total into another, keeping UNKNOWN and
+// the saturation bound sticky — a group with one unmeasured peer is unmeasured.
+func (t *total) addTotal(other total) {
+	t.unknown = t.unknown || other.unknown
+	t.bound = t.bound || other.bound
+	count := networkview.Count(t.value)
+	if !networkview.Add(&count, other.value) {
+		t.bound = true
 	}
 	t.value = uint64(count)
 }
@@ -419,6 +481,10 @@ func endpointReason(reason string) string {
 type warning struct {
 	headline string
 	rows     []string
+	// footer is the action this exception leaves the reader with. It belongs to
+	// no section, so its first line starts at column zero and anything after it
+	// is that line's continuation.
+	footer []string
 }
 
 // runExceptions appends only facts that occurred, in the order an operator
@@ -535,16 +601,17 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 	if len(groups) == 0 && packets == 0 {
 		return nil
 	}
-	// One destination refused at two boundaries is still one destination; the
+	// One remote address refused at two boundaries is still one address; the
 	// rows beneath say how. Raw packets are a kernel tally, never attributed:
 	// the filter drops a refused datagram without recording where it was going.
 	var destinations []string
 	for _, denial := range observed.Denials {
 		destinations = appendUnique(destinations, Destination(denial.Name, denial.Peer, denial.DestinationID))
 	}
-	out := &warning{headline: ui.Count(len(destinations), "destination") + " " + was(len(destinations)) + " blocked"}
+	// "Traffic" is the subject, so the verb never changes with the count.
+	out := &warning{headline: "Traffic to " + ui.Count(len(destinations), "remote address", "remote addresses") + " was blocked"}
 	if len(groups) == 0 {
-		out.headline = Plural(packets, "raw packet") + " " + was(int(min(packets, 2))) + " blocked with no destination recorded"
+		out.headline = Plural(packets, "raw packet") + " " + was(int(min(packets, 2))) + " blocked with no remote address recorded"
 	}
 	for _, group := range groups {
 		row := group.Label
@@ -554,10 +621,10 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 		out.rows = append(out.rows, row)
 	}
 	if len(groups) != 0 && packets != 0 {
-		out.rows = append(out.rows, Plural(packets, "raw packet")+" "+was(int(min(packets, 2)))+" blocked with no destination recorded")
+		out.rows = append(out.rows, Plural(packets, "raw packet")+" "+was(int(min(packets, 2)))+" blocked with no remote address recorded")
 	}
-	// The explain action names the thing a human recognizes. Approval guidance
-	// is offered only when the evidence itself proves a rule that would have
+	// The action names the thing a human recognizes. Approval guidance is
+	// offered only when the evidence itself proves a rule that would have
 	// allowed the attempt — a DNS refusal or a protected address proves none.
 	named, candidate := "", false
 	for _, group := range groups {
@@ -569,10 +636,10 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 		}
 	}
 	if named != "" {
-		out.rows = append(out.rows, p.Dim("coop net explain "+named+" --run "+ShortID(view.ID)+"   # why"))
+		out.footer = append(out.footer, p.Dim("To see why: coop net blocked "+named+" --run "+ShortID(view.ID)))
 	}
 	if candidate {
-		out.rows = append(out.rows, p.Dim("To allow it: add the rule shown by 'coop net explain', then run 'coop net approve'"))
+		out.footer = append(out.footer, p.Dim("To allow it: add the rule shown by `coop net blocked`, then run `coop net approve` on the host"))
 	}
 	return out
 }
@@ -854,6 +921,13 @@ func writeWarnings(w io.Writer, p ui.Palette, warnings []warning) {
 			// warning text with the glyph and its space above it.
 			fmt.Fprintf(w, "  %s\n", row)
 		}
+		for i, line := range item.footer {
+			if i == 0 {
+				fmt.Fprintf(w, "%s\n", line)
+				continue
+			}
+			fmt.Fprintf(w, "  %s\n", line)
+		}
 	}
 }
 
@@ -898,16 +972,22 @@ func duration(millis uint64) string {
 // When says when a run started the way a person reads a clock: today's and
 // yesterday's runs by time of day, older ones by date, all in the reader's
 // zone.
-func When(now, at time.Time) string {
+func When(now, at time.Time) string { return when(now, at, " ") }
+
+// WhenAt is the same clock in a sentence — "today at 16:03" — where the time
+// follows a run id rather than sitting in a column of its own.
+func WhenAt(now, at time.Time) string { return when(now, at, " at ") }
+
+func when(now, at time.Time, join string) string {
 	at, now = at.In(now.Location()), now.In(now.Location())
 	day := func(t time.Time) string { return t.Format("2006-01-02") }
 	switch day(at) {
 	case day(now):
-		return "today " + at.Format("15:04")
+		return "today" + join + at.Format("15:04")
 	case day(now.AddDate(0, 0, -1)):
-		return "yesterday " + at.Format("15:04")
+		return "yesterday" + join + at.Format("15:04")
 	}
-	return at.Format("2006-01-02 15:04")
+	return at.Format("2006-01-02") + join + at.Format("15:04")
 }
 
 func unknownIfEmpty(value string) string {

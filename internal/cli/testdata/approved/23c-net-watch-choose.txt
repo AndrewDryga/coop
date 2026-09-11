@@ -1,0 +1,8 @@
+
+✗ Choose a network run to watch
+
+  cb375d22
+  e644f07a
+
+  Usage: coop net watch <run>
+  Help:  coop help net watch

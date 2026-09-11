@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -25,7 +24,7 @@ func (a *app) cmdNetApprove(args []string) (int, error) {
 		return 2, err
 	}
 	if !ui.IsTerminal(os.Stdin) || !ui.IsTerminal(os.Stderr) {
-		return 1, errors.New("coop net approve needs a terminal to ask you — an unattended run cannot approve its own network access")
+		return 1, netTerminalOnly("coop net approve")
 	}
 	repo, err := netProject(a.cfg.RepoOverride)
 	if err != nil {
@@ -54,10 +53,20 @@ func (a *app) cmdNetApprove(args []string) (int, error) {
 // The question and the answer carry the one limit that matters — an approval
 // applies to NEW runs — so the review above them can be the change and nothing else.
 const (
+	netApproveIntro     = "Review the requested network access changes."
 	netApprovePrompt    = "Approve these changes for new runs?"
 	netApproveApproved  = "Approved for new runs"
 	netApproveUnchanged = "No approval needed — this project's network access has not changed."
 )
+
+// netTerminalOnly refuses a decision a pipe cannot make. An approval and a
+// withdrawal are both a human's: an unattended run answering "y" is not one.
+func netTerminalOnly(command string) error {
+	return &ui.UsageError{
+		Headline: fmt.Sprintf("%q needs your confirmation in a terminal", command),
+		Rows:     [][2]string{{"Help:", ui.HelpCommand(command)}},
+	}
+}
 
 // netApprovalReview is what the confirmation needs from a review: the exact
 // before and after, and one commit that consumes it.
@@ -75,7 +84,7 @@ func confirmNetApproval(ctx context.Context, review netApprovalReview, out io.Wr
 	}
 	var b strings.Builder
 	p := ui.For(os.Stderr)
-	fmt.Fprintf(&b, "%s\n  %s\n\n", p.Bold(p.Cyan("Network access changes for "+filepath.Base(review.Project()))), p.Dim(review.Project()))
+	fmt.Fprintf(&b, "%s\n", netApproveIntro)
 	writeNetAccessChange(&b, p, review.Before(), after.Posture, after.Envelope)
 	b.WriteString("\n")
 	if _, err := io.WriteString(out, b.String()); err != nil {
@@ -90,29 +99,22 @@ func confirmNetApproval(ctx context.Context, review netApprovalReview, out io.Wr
 	return review.Commit(ctx)
 }
 
-// writeNetAccessChange is the one review a person reads before approving, and
-// the same one bare `coop net` shows while it is pending: the access mode in
-// plain words — with the warning an unrestricted request earns — then the rule
-// diff against what is already approved.
+// writeNetAccessChange is the review a person reads before approving: the
+// access mode under NETWORK ACCESS — as a before/after pair when it changes,
+// one line when it does not — and then the rules, each row saying whether it is
+// retained, added or removed. A section with nothing to say is not printed.
 func writeNetAccessChange(w io.Writer, p ui.Palette, before *networkstate.Approval, mode egress.Mode, requested []egress.Rule) {
 	var approved []egress.Rule
 	var approvedMode egress.Mode
 	if before != nil {
 		approved, approvedMode = before.Envelope, before.Posture
 	}
-	fmt.Fprintln(w, netModeChange(approvedMode, mode))
-	switch mode {
-	case egress.Filtered:
-		fmt.Fprintln(w, "Only approved websites and services can be reached.")
-	case egress.Open:
-		fmt.Fprintln(w, p.Red(netOpenWarning))
-	case egress.None:
-		fmt.Fprintln(w, "An agent cannot reach its provider.")
-	}
+	fmt.Fprintf(w, "\n%s\n", p.Bold(p.Cyan("NETWORK ACCESS")))
+	writeNetModeChange(w, p, approvedMode, mode)
 	add, remove := box.NetworkRuleDiff(approved, requested)
-	if len(approved) != 0 || len(add) != 0 || len(remove) != 0 {
-		fmt.Fprintln(w)
-		writeNetRuleDiff(w, p, approved, add, remove)
+	if rows := netRuleDiffRows(approved, add, remove, netApprovalLabels); len(rows) != 0 {
+		fmt.Fprintf(w, "\n%s\n", p.Bold(p.Cyan("NETWORK RULES")))
+		writeNetRuleRows(w, p, rows, 2)
 	}
 }
 
@@ -120,26 +122,29 @@ func writeNetAccessChange(w io.Writer, p ui.Palette, before *networkstate.Approv
 // escalation, and a reader about to type y should see it without color too.
 const netOpenWarning = "⚠ Nothing will be blocked — an agent can reach any destination"
 
-// netModeChange says what the access mode becomes, against what it was: the
-// raw enums never reach the screen, and "offline" is the human word for none.
-func netModeChange(before, after egress.Mode) string {
-	switch {
-	case before == "":
-		return "Internet access will be " + netModeWord(after) + "."
-	case before == after:
-		return "Internet access remains " + netModeWord(after) + "."
+// netModeDescription is the access mode in the words every network view uses,
+// so approve, the posture view and a withdrawal never describe the same mode
+// three ways. The raw enum never reaches the screen.
+func netModeDescription(mode egress.Mode) string {
+	switch mode {
+	case egress.Open:
+		return "Unrestricted — nothing is blocked."
+	case egress.None:
+		return "Offline — internet access is blocked."
 	default:
-		return "Internet access changes from " + netModeWord(before) + " to " + netModeWord(after) + "."
+		return "Filtered — only approved network traffic is allowed."
 	}
 }
 
+// netModeWord is the same mode as a noun phrase, for a sentence that names what
+// was approved rather than describing it.
 func netModeWord(mode egress.Mode) string {
 	switch mode {
 	case egress.Open:
-		return "unrestricted"
+		return "Unrestricted internet"
 	case egress.None:
-		return "offline — no external network access"
+		return "Offline"
 	default:
-		return "filtered"
+		return "Filtered"
 	}
 }

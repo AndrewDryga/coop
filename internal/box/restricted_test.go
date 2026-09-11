@@ -597,7 +597,7 @@ func TestRunRestrictedNarratesLikeAnInteractiveLaunch(t *testing.T) {
 		t.Fatalf("Run = %d, %v; want the box's own exit 4", code, err)
 	}
 	want := "\nProtecting secrets\n  ✓ No secret paths to hide\n" +
-		"\nInternet access\n  ⚠ Unrestricted — nothing is blocked\n" +
+		"\nConfiguring network access\n  ⚠ Unrestricted — nothing is blocked\n" +
 		"\nStarting sh\n" +
 		"stopping the box — main process exited with status 4\n"
 	if got != want {
@@ -606,7 +606,7 @@ func TestRunRestrictedNarratesLikeAnInteractiveLaunch(t *testing.T) {
 	cfg.Egress = "none"
 	readonly := RunSpec{Image: "coop-box", Repo: t.TempDir(), Workdir: "/workspace", Cmd: []string{"sh", "-c", "exit 4"}, Mode: agents.ModeReadOnly}
 	got = captureStderr(t, func() { _, _ = Run(cfg, runtime.Runtime{Name: shim}, readonly) })
-	if !strings.Contains(got, "\nProtecting secrets\n  ✓ ") || !strings.Contains(got, "\nInternet access\n  ⚠ Offline — nothing outside the box can be reached\n") ||
+	if !strings.Contains(got, "\nProtecting secrets\n  ✓ ") || !strings.Contains(got, "\nConfiguring network access\n  ⚠ Offline — nothing outside the box can be reached\n") ||
 		!strings.HasSuffix(got, "stopping the box — main process exited with status 4\n") {
 		t.Fatalf("interactive readonly run narrated:\n%q", got)
 	}

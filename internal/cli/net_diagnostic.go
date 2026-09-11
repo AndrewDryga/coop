@@ -23,10 +23,10 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// `check` and `explain` answer two deliberately different questions. `check` is
+// `check` and `blocked` answer two deliberately different questions. `check` is
 // a hypothetical: can a NEW run in this project reach this — or, with --run,
 // could that recorded run have — decided from policy alone, sending no packet
-// and resolving no name. `explain` reads a refusal that actually happened, with
+// and resolving no name. `blocked` reads a refusal that actually happened, with
 // the policy of the day, and never reinterprets it under today's rules.
 
 var netDiagnosticFlags = []string{"--run", "--json", "--protocol", "--port", "--icmp"}
@@ -39,71 +39,76 @@ type netDiagnosticOptions struct {
 
 func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, error) {
 	var opts netDiagnosticOptions
+	command := "coop net " + verb
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(args[i], "=")
 		switch {
 		case name == "--run":
 			if !inline {
 				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
-					return opts, errors.New("--run needs a run — 'coop net runs' shows them")
+					return opts, ui.MissingOptionValue("--run", command, command+" "+netDiagnosticExample(verb)+" --run e644f07a")
 				}
 				i++
 				value = args[i]
 			}
 			if opts.run != "" {
-				return opts, fmt.Errorf("coop net %s takes --run once", verb)
+				return opts, ui.RepeatedOption("--run", command)
 			}
 			opts.run = value
 		case name == "--json":
 			if inline {
-				return opts, errors.New("--json takes no value")
+				return opts, ui.InvalidOptionValue(value, "--json", command, "This option takes no value.", command+" "+netDiagnosticExample(verb)+" --json")
 			}
 			opts.json = true
 		case (name == "--protocol" || name == "--port") && verb == "check":
 			if !inline {
 				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
-					return opts, fmt.Errorf("%s needs a value", name)
+					return opts, ui.MissingOptionValue(name, command, "coop net check 10.0.0.1 --run e644f07a --protocol tcp --port 5432")
 				}
 				i++
 				value = args[i]
 			}
 			if name == "--protocol" {
 				if opts.policy.Protocol != "" {
-					return opts, errors.New("coop net check takes --protocol once")
+					return opts, ui.RepeatedOption("--protocol", command)
 				}
 				opts.policy.Protocol = value
 				continue
 			}
 			port, err := strconv.Atoi(value)
-			if err != nil || opts.policy.Port != 0 {
-				return opts, errors.New("--port needs one port number, once")
+			if err != nil || port < 1 || port > 65535 {
+				return opts, ui.InvalidOptionValue(value, "--port", command, "Use a port number from 1 to 65535.", "coop net check example.com --port 8443")
+			}
+			if opts.policy.Port != 0 {
+				return opts, ui.RepeatedOption("--port", command)
 			}
 			opts.policy.Port = port
 		case name == "--icmp" && verb == "check":
 			if inline {
-				return opts, errors.New("--icmp takes no value")
+				return opts, ui.InvalidOptionValue(value, "--icmp", command, "This option takes no value.", "coop net check 10.0.0.1 --run e644f07a --icmp")
 			}
 			if opts.policy.Protocol != "" {
-				return opts, errors.New("--icmp and --protocol are the same choice; pass one")
+				return opts, ui.ConflictingOptions("--icmp", "--protocol", command)
 			}
 			opts.policy.Protocol = "icmp"
 		case strings.HasPrefix(args[i], "-"):
 			valid := netDiagnosticFlags
-			if verb == "explain" {
+			if verb == "blocked" {
 				valid = valid[:2]
 			}
-			return opts, unknownOptionErr(args[i], "coop net "+verb, valid)
+			return opts, unknownOptionErr(args[i], command, valid)
 		case opts.query != "":
-			return opts, fmt.Errorf("coop net %s takes one destination at a time", verb)
+			return opts, ui.UnexpectedArgument(args[i], command, command+" "+netDiagnosticUsage(verb))
 		default:
 			opts.query = args[i]
 		}
 	}
 	if opts.query == "" {
+		name := "host"
 		if verb == "check" {
-			return opts, errors.New("coop net check needs an https:// URL or a host")
+			name = "address"
 		}
-		return opts, errors.New("coop net explain needs the host that was blocked — 'coop net inspect' shows them")
+		return opts, ui.MissingArgument(name, command, command+" "+netDiagnosticUsage(verb))
 	}
 	if verb == "check" {
 		return netCheckQuery(opts)
@@ -112,16 +117,46 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 	// one run's refusal, so it needs that run. The ordinary argument is a host.
 	if netEvidenceID(opts.query) {
 		if opts.run == "" {
-			return opts, errors.New("an event id names one run's refusal — add --run <run>")
+			return opts, &ui.UsageError{
+				Headline: "An event ID names one run's blocked attempt",
+				Cause:    "Add the run it was recorded in.",
+				Rows:     [][2]string{{"Usage:", "coop net blocked <event> --run <run>"}, {"Help:", ui.HelpCommand(command)}},
+			}
 		}
 		return opts, nil
 	}
 	host, _, err := netQueryHost(opts.query)
 	if err != nil {
-		return opts, errors.New("coop net explain needs one host — the name a run tried to reach")
+		return opts, netInvalidAddress(command)
 	}
 	opts.query = host
 	return opts, nil
+}
+
+// netDiagnosticUsage and netDiagnosticExample are each verb's own syntax, so a
+// refusal shows the command the reader typed rather than a family template.
+func netDiagnosticUsage(verb string) string {
+	if verb == "check" {
+		return "<url-or-host> [<options>]"
+	}
+	return "<host> [--run <run>] [--json]"
+}
+
+func netDiagnosticExample(verb string) string {
+	if verb == "check" {
+		return "example.com"
+	}
+	return "registry.npmjs.org"
+}
+
+// netInvalidAddress refuses something that is not a destination coop can reason
+// about: a wildcard, a path, a scheme a filtered run cannot use.
+func netInvalidAddress(command string) error {
+	return &ui.UsageError{
+		Headline: fmt.Sprintf("Invalid network address for %q", command),
+		Cause:    "Use an HTTPS URL or an exact hostname, such as example.com.",
+		Rows:     [][2]string{{"Help:", ui.HelpCommand(command)}},
+	}
 }
 
 // netCheckQuery decides which hypothetical the user asked for. A URL or name is
@@ -131,21 +166,32 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 // ranges are part of the answer.
 func netCheckQuery(opts netDiagnosticOptions) (netDiagnosticOptions, error) {
 	if address, err := netip.ParseAddr(opts.query); err == nil {
-		if opts.policy.Protocol == "" {
-			return opts, errors.New("an address needs the transport too: --protocol tcp|udp --port <n>, or --icmp")
-		}
-		if opts.run == "" {
-			return opts, errors.New("an address is checked against a recorded run's rules — add --run <run>")
+		if opts.policy.Protocol == "" || opts.run == "" {
+			return opts, &ui.UsageError{
+				Headline: "An IP address needs a run and connection type",
+				Rows: [][2]string{
+					{"Usage:", "coop net check <ip> --run <run> --protocol <tcp|udp> --port <n>"},
+					{"", "coop net check <ip> --run <run> --icmp"},
+					{"Help:", "coop help net check"},
+				},
+			}
 		}
 		opts.policy.Address = address
-		return opts, opts.policy.Validate()
+		if err := opts.policy.Validate(); err != nil {
+			return opts, netCheckValueErr()
+		}
+		return opts, nil
 	}
 	if opts.policy.Protocol != "" && opts.policy.Protocol != "tls" {
-		return opts, errors.New("a name is checked as TLS; --protocol tcp|udp and --icmp apply to an IP address")
+		return opts, &ui.UsageError{
+			Headline: fmt.Sprintf("Cannot check %q as %s", opts.query, strings.ToUpper(opts.policy.Protocol)),
+			Cause:    "A hostname is checked as TLS; --protocol tcp|udp and --icmp apply to an IP address.",
+			Rows:     [][2]string{{"Example:", "coop net check " + opts.query}, {"Help:", "coop help net check"}},
+		}
 	}
 	host, port, err := netQueryHost(opts.query)
 	if err != nil {
-		return opts, errors.New("coop net check needs an https:// URL or one exact host — not a wildcard")
+		return opts, netInvalidAddress("coop net check")
 	}
 	if opts.policy.Port != 0 {
 		port = opts.policy.Port
@@ -154,7 +200,22 @@ func netCheckQuery(opts netDiagnosticOptions) (netDiagnosticOptions, error) {
 		port = 443
 	}
 	opts.query, opts.policy = host, networkstate.PolicyQuery{Domain: host, Protocol: "tls", Port: port}
-	return opts, opts.policy.Validate()
+	if err := opts.policy.Validate(); err != nil {
+		return opts, netCheckValueErr()
+	}
+	return opts, nil
+}
+
+// netCheckValueErr refuses a query the policy validator will not evaluate — an
+// address family it cannot check, a transport that does not go with it. The
+// cause states the whole accepted shape, because which half was wrong is
+// exactly what the reader is missing.
+func netCheckValueErr() error {
+	return &ui.UsageError{
+		Headline: "Invalid network address for \"coop net check\"",
+		Cause:    "Check a hostname as TLS, or an IPv4 address with --protocol tcp|udp --port <n>, or --icmp.",
+		Rows:     [][2]string{{"Help:", "coop help net check"}},
+	}
 }
 
 // netQueryHost reduces what a person pastes — an https:// URL, a host:port, a
@@ -205,7 +266,7 @@ func (a *app) netDiagnostic(verb string, args []string) (int, error) {
 	}
 	p := ui.For(os.Stdout)
 	if verb == "check" {
-		runID, err := netResolveRun(page, opts.run)
+		runID, err := netResolveRun(page, opts.run, "coop net check")
 		if err != nil {
 			return 1, err
 		}
@@ -248,7 +309,7 @@ func (a *app) netCheckCurrent(opts netDiagnosticOptions) (int, error) {
 	if err != nil {
 		return 1, errors.New("coop net check answers for a project — run it inside one, or pass --run <run> for a recorded run")
 	}
-	posture, err := box.ProjectNetworkPosture(context.Background(), a.cfg, repo)
+	access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
 	if err != nil {
 		return 1, err
 	}
@@ -264,7 +325,7 @@ func (a *app) netCheckCurrent(opts netDiagnosticOptions) (int, error) {
 			bundles[name] = bundle
 		}
 	}
-	answer := netCurrentCheck(posture, opts.policy.Domain, opts.policy.Port, bundles)
+	answer := netCurrentCheck(access, opts.policy.Domain, opts.policy.Port, bundles)
 	if opts.json {
 		return 0, netWriteJSON(os.Stdout, netCheckJSON{Version: networkview.Version, Kind: "current", Host: opts.policy.Domain,
 			Port: opts.policy.Port, Protocol: "tls", Allowed: answer.Allowed, Pending: answer.Pending, Agents: answer.Agents,
@@ -280,21 +341,21 @@ type netCheckAnswer struct {
 	Agents           []string
 }
 
-func netCurrentCheck(posture box.NetworkPosture, host string, port int, bundles map[string]egress.Bundle) netCheckAnswer {
+func netCurrentCheck(access box.NetworkAccess, host string, port int, bundles map[string]egress.Bundle) netCheckAnswer {
 	target := host + ":" + strconv.Itoa(port)
-	if posture.Pending != nil {
+	if access.Pending != nil {
 		// Answering against a policy that cannot launch would be a fiction.
-		return netCheckAnswer{Pending: true, Verdict: "No new run can start until this project's network request is approved",
-			Cause: "Review it: coop net approve"}
+		return netCheckAnswer{Pending: true, Verdict: netPendingHeadline,
+			Cause: "Review the requested changes: coop net approve"}
 	}
-	switch posture.Mode {
+	switch access.Mode {
 	case egress.Open:
-		return netCheckAnswer{Allowed: true, Verdict: "New runs can reach " + target, Cause: "This project's network access is unrestricted."}
+		return netCheckAnswer{Allowed: true, Verdict: target + " is allowed — internet access is unrestricted."}
 	case egress.None:
-		return netCheckAnswer{Verdict: "New runs cannot reach " + target, Cause: "This project's runs are offline."}
+		return netCheckAnswer{Verdict: target + " is blocked — internet access is disabled."}
 	}
-	if posture.Approval != nil && netRulesAllow(posture.Approval.Envelope, host, port) {
-		return netCheckAnswer{Allowed: true, Verdict: "New filtered runs can reach " + target, Cause: "Allowed by an approved project rule."}
+	if access.Approval != nil && netRulesAllow(access.Approval.Envelope, host, port) {
+		return netCheckAnswer{Allowed: true, Verdict: target + " is allowed by an approved project rule."}
 	}
 	var names []string
 	for name, bundle := range bundles {
@@ -305,14 +366,13 @@ func netCurrentCheck(posture box.NetworkPosture, host string, port int, bundles 
 	slices.Sort(names)
 	switch len(names) {
 	case 0:
-		return netCheckAnswer{Verdict: "No new run can reach " + target,
-			Cause: "No approved project rule allows it — add one under box.egress_rules in .agent/project.yaml, then run 'coop net approve'."}
+		return netCheckAnswer{Verdict: target + " is blocked — no approved rule allows it.",
+			Cause: "Add a rule under box.egress_rules in .agent/project.yaml, then run coop net approve."}
 	case 1:
-		return netCheckAnswer{Allowed: true, Agents: names, Verdict: names[0] + " can reach " + target,
-			Cause: "Provider access for " + names[0] + " is included automatically."}
+		return netCheckAnswer{Allowed: true, Agents: names, Verdict: target + " is allowed by " + names[0] + "'s provider access."}
 	}
 	return netCheckAnswer{Allowed: true, Agents: names,
-		Verdict: strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1] + " can reach " + target,
+		Verdict: target + " is allowed for " + ui.List(names, "and") + ".",
 		Cause:   "Their provider access is included automatically."}
 }
 
@@ -327,19 +387,25 @@ func netRulesAllow(rules []egress.Rule, host string, port int) bool {
 	return false
 }
 
-// writeNetCheck is the whole answer: a verdict and its one cause. Nothing is
-// appended after them — no disclaimer, no fingerprint, no reason code; the
-// command is documented as read-only and --json carries the technical detail.
+// writeNetCheck is the whole answer: one sentence, and a second line only where
+// the design gives one — the action for a destination no rule allows, or the
+// shared note that several providers bring their own access. Nothing else is
+// appended: no disclaimer, no fingerprint, no reason code; the command is
+// documented as read-only and --json carries the technical detail.
 func writeNetCheck(w io.Writer, p ui.Palette, allowed bool, verdict, cause string) {
 	glyph := p.Red("✗")
 	if allowed {
 		glyph = p.Green("✓")
 	}
-	fmt.Fprintf(w, "%s %s\n  %s\n", glyph, verdict, cause)
+	fmt.Fprintf(w, "%s %s\n", glyph, verdict)
+	if cause != "" {
+		fmt.Fprintf(w, "  %s\n", cause)
+	}
 }
 
 // writeNetHistoricalCheck names the run whose frozen rules answered, because
-// that is what makes the answer different from a current one.
+// that is what makes the answer different from a current one. It is the same
+// one sentence: what the destination was, what decided it, and which run.
 func writeNetHistoricalCheck(w io.Writer, p ui.Palette, result networkstate.PolicyExplanation) {
 	destination := "the withheld destination"
 	switch {
@@ -356,14 +422,39 @@ func writeNetHistoricalCheck(w io.Writer, p ui.Palette, result networkstate.Poli
 			transport = " over " + strings.ToUpper(result.Protocol)
 		}
 	case result.Protocol == "icmp":
-		transport = " with an ICMP echo-request"
+		transport = " with an ICMP echo request"
 	}
-	run := "Run " + networkreport.ShortID(result.RunID)
-	verdict, cause := run+" could not reach "+destination+transport, netSentence(result.Message)
+	run := " in run " + networkreport.ShortID(result.RunID) + "."
+	subject := destination + transport
 	if result.Allowed {
-		verdict, cause = run+" could reach "+destination+transport, "Allowed by "+netCheckOrigin(result)+"."
+		writeNetCheck(w, p, true, subject+" was allowed by "+netCheckOrigin(result)+run, "")
+		return
 	}
-	writeNetCheck(w, p, result.Allowed, verdict, cause)
+	// A refusal with a compact name for its boundary says it in the verdict; any
+	// other reason keeps its own retained sentence on the line beneath.
+	if clause := netBlockedClause(result.Reason); clause != "" {
+		writeNetCheck(w, p, false, subject+" was blocked as "+clause+run, "")
+		return
+	}
+	writeNetCheck(w, p, false, subject+" was blocked"+run, netSentence(result.Message))
+}
+
+// netBlockedClause names the boundary that refused a recorded attempt as a noun
+// phrase, for the one-sentence verdict. Only reasons with an exact short name
+// are here; everything else keeps its full retained sentence, which is the
+// point — a guessed clause would be a worse answer than the reason itself.
+func netBlockedClause(reason string) string {
+	switch reason {
+	case "protected_destination", "unsafe_dns_answer":
+		return "a protected address"
+	case "unapproved_name":
+		return "an unapproved destination"
+	case "protocol_not_allowed":
+		return "an unapproved connection type"
+	case "port_not_allowed":
+		return "an unapproved port"
+	}
+	return ""
 }
 
 // netCheckOrigin says where the grant came from in the operator's own words —
@@ -379,7 +470,8 @@ func netCheckOrigin(result networkstate.PolicyExplanation) string {
 }
 
 // netOriginText says where a grant came from in the operator's own vocabulary —
-// their flag, the repo's request, or a maintained provider bundle.
+// their flag, the repo's request, or a maintained provider bundle. A bundle
+// version is technical detail: it belongs in --json, not in the sentence.
 func netOriginText(origin networkstate.PolicyOrigin) string {
 	switch origin.Kind {
 	case "operator":
@@ -387,7 +479,7 @@ func netOriginText(origin networkstate.PolicyOrigin) string {
 	case "project":
 		return "an approved project rule"
 	case "provider":
-		return titleName(origin.Provider) + "'s provider access (bundle " + origin.BundleVersion + ")"
+		return titleName(origin.Provider) + "'s provider access"
 	case "mcp":
 		return "the MCP server " + origin.Name + " coop set up for that box"
 	default:
@@ -406,7 +498,7 @@ func netSentence(text string) string {
 	return text
 }
 
-// --------------------------------------------------------------- explain ----
+// --------------------------------------------------------------- blocked ----
 
 // netExplanation is one blocked host as a person asks about it: the run it was
 // found in, and each materially different reason it was blocked there, with
@@ -426,7 +518,7 @@ type netExplainCause struct {
 func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.ExecutionPage, opts netDiagnosticOptions) (int, error) {
 	p := ui.For(os.Stdout)
 	if netEvidenceID(opts.query) {
-		runID, err := netResolveRun(page, opts.run)
+		runID, err := netResolveRun(page, opts.run, "coop net blocked")
 		if err != nil {
 			return 1, err
 		}
@@ -449,7 +541,7 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 	// refusal from some other project's box.
 	var runs []string
 	if opts.run != "" {
-		runID, err := netResolveRun(page, opts.run)
+		runID, err := netResolveRun(page, opts.run, "coop net blocked")
 		if err != nil {
 			return 1, err
 		}
@@ -457,7 +549,11 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 	} else {
 		repo, err := netProject(a.cfg.RepoOverride)
 		if err != nil {
-			return 1, errors.New("coop net explain searches this project's runs — run it inside one, or pass --run <run>")
+			return 1, &ui.UsageError{
+				Headline: "Could not select a network run",
+				Cause:    "Run this inside a project, or name the run it was blocked in.",
+				Rows:     [][2]string{{"Usage:", "coop net blocked <host> --run <run>"}, {"Help:", "coop help net blocked"}},
+			}
 		}
 		for _, run := range netFilterProject(page.Executions, netResolvedPath(repo)) {
 			runs = append(runs, run.ID)
@@ -479,13 +575,29 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 	if opts.json {
 		return 0, netWriteJSON(os.Stdout, netExplanation{Version: networkview.Version, Host: opts.query, Causes: []netExplainCause{}})
 	}
-	scope := "this project's recorded runs"
+	// Absence is stated only over a complete search: a partial read means the
+	// block may simply be in a record coop could not open.
+	scope := "in this project's runs"
 	if opts.run != "" {
-		scope = "run " + networkreport.ShortID(runs[0])
+		scope = "in run " + networkreport.ShortID(runs[0])
 	}
-	ui.Note("nothing blocked %s in %s — 'coop net check %s' says whether a new run can reach it", opts.query, scope, opts.query)
-	return 0, nil
+	complete := !page.Incomplete && page.Unreadable == 0
+	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetNoBlock(b, p, opts.query, scope, complete) })
 }
+
+// writeNetNoBlock answers "nothing blocked this here" — and only says it as an
+// absence when the search was complete.
+func writeNetNoBlock(w io.Writer, p ui.Palette, host, scope string, complete bool) {
+	if !complete {
+		fmt.Fprintf(w, "%s %s\n\n", p.Yellow("⚠"), p.Yellow(netIncompleteRecording))
+	}
+	fmt.Fprintf(w, "No recorded block for %s %s.\n", host, scope)
+	fmt.Fprintf(w, "\nCheck current access\n  %s\n", p.Cyan("coop net check "+host))
+}
+
+// netIncompleteRecording is the one warning that goes before any next action:
+// what follows is a lower bound, not the whole story.
+const netIncompleteRecording = "Recording incomplete — some blocked attempts may be missing"
 
 // netExplainHost reads one run for every refusal of one host and groups the
 // repeats by what actually differed — the boundary, the reason, the port — so
@@ -527,45 +639,127 @@ func netExplainHost(evidence *networkstate.Evidence, runID, host string) (netExp
 	return out, nil
 }
 
-// writeNetExplanation states the blocked host, which run and when, and each
-// cause in plain words. When the retained evidence itself proves the hostname,
-// transport and port, the smallest rule that would allow it is shown ready to
-// paste; DNS-only, protected or thin evidence gets one sentence saying why
-// there is nothing to copy — never an invented rule.
+// writeNetExplanation states the blocked destination, which run and when, and
+// each cause in plain words. When the retained evidence itself proves the
+// hostname, transport and port, the smallest rule that would allow it is shown
+// ready to paste; DNS-only, protected or thin evidence gets no rule at all —
+// never an invented one — and incomplete recording is said before any action.
 func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation netExplanation) {
 	first := explanation.Causes[0].Explanation.Event
 	title := explanation.Host
 	if first.Port != nil && first.Name != "" {
 		title += ":" + strconv.Itoa(*first.Port)
 	}
-	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan(title+" was blocked")))
-	fmt.Fprintf(w, "  %s\n", p.Dim("Run "+networkreport.ShortID(explanation.RunID)+" · "+networkreport.When(now, first.At)))
+	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan(title+" "+netBlockedVerb(first.Reason))))
+	fmt.Fprintf(w, "  %s\n", p.Dim("Run "+networkreport.ShortID(explanation.RunID)+" · "+networkreport.WhenAt(now, first.At)))
 	var candidate *networkview.Candidate
-	for _, cause := range explanation.Causes {
-		event := cause.Explanation.Event
-		line := netSentence(cause.Explanation.Message)
-		if len(explanation.Causes) > 1 {
-			line = networkreport.RefusalLabel(event)
-			if cause.Count > 1 {
-				line += " ×" + strconv.Itoa(cause.Count)
-			}
-			line += " — " + netSentence(cause.Explanation.Message)
-		} else if cause.Count > 1 {
-			line += " " + p.Dim("(×"+strconv.Itoa(cause.Count)+")")
+	if len(explanation.Causes) == 1 {
+		cause := explanation.Causes[0]
+		line := netBlockedCause(cause.Explanation, false)
+		if cause.Count > 1 {
+			line += " It happened " + strconv.Itoa(cause.Count) + " times."
 		}
 		fmt.Fprintf(w, "\n%s\n", line)
-		if candidate == nil && event.Candidate != nil {
-			candidate = event.Candidate
+		candidate = cause.Explanation.Event.Candidate
+	} else {
+		// Two different refusals of one name are two facts: each says what was
+		// tried, how often, and why, under its own row.
+		fmt.Fprintln(w)
+		for _, cause := range explanation.Causes {
+			event := cause.Explanation.Event
+			fmt.Fprintf(w, "  %s\n    %s\n", netCauseLabel(event, cause.Count), netBlockedCause(cause.Explanation, true))
+			if candidate == nil && event.Candidate != nil {
+				candidate = event.Candidate
+			}
 		}
 	}
+	// Incomplete evidence is a warning about everything above AND a reason not
+	// to print a rule: a record that lost detail cannot prove the smallest one.
 	if explanation.Causes[0].Explanation.DetailTruncated {
-		fmt.Fprintf(w, "\n%s\n", p.Dim("This run kept only part of its detail, so other blocked attempts may be missing."))
+		fmt.Fprintf(w, "\n%s %s\n", p.Yellow("⚠"), p.Yellow(netIncompleteRecording))
+		return
 	}
 	if candidate != nil {
 		fmt.Fprintf(w, "\nAdd this rule under box.egress_rules in .agent/project.yaml:\n\n%s\nThen run:\n  %s\n", netRuleYAML(candidate.Rule), p.Cyan("coop net approve"))
 		return
 	}
-	fmt.Fprintf(w, "\n%s\n", netNoDraftReason(first.Reason))
+	if reason := netNoDraftReason(first); reason != "" {
+		fmt.Fprintf(w, "\n%s\n", reason)
+	}
+}
+
+// netBlockedCause is the sentence one refusal reads as. The retained reason
+// mapping in internal/networkstate answers for every code; the cases here are
+// the ones this view says more precisely, because it knows what was tried —
+// a DNS lookup and a TLS connection refused for the same reason are not the
+// same sentence, and under a cause row the kind is already in the row above.
+// grouped selects that shorter form.
+func netBlockedCause(explanation networkstate.EventExplanation, grouped bool) string {
+	event := explanation.Event
+	switch event.Reason {
+	case "unapproved_name":
+		what := "connection"
+		if netCauseKind(event.Kind) == "dns" {
+			what = "lookup"
+		}
+		if grouped {
+			return "No approved rule allowed the " + what + "."
+		}
+		if what == "lookup" {
+			return "No approved rule allowed this DNS lookup."
+		}
+		return "No approved rule allowed this TLS connection."
+	case "protected_destination", "unsafe_dns_answer":
+		return "This address is protected. Project rules cannot allow it."
+	case "tls_ech_unsupported":
+		return "This connection uses encrypted TLS names, which filtered networking does not support."
+	case "upstream_unreachable":
+		return "The upstream connection failed."
+	case "observation_unavailable":
+		return "Coop could not record enough information to explain this attempt."
+	}
+	return netSentence(explanation.Message)
+}
+
+// netBlockedVerb keeps three different things apart in the title: a policy
+// refusal, an attempt that never reached its destination, and an attempt coop
+// could not record enough about to explain.
+func netBlockedVerb(reason string) string {
+	switch reason {
+	case "observation_unavailable", "unknown_reason":
+		return "could not be checked"
+	case "tls_ech_unsupported", "tls_malformed", "tls_hello_too_large", "tls_inspection_timeout",
+		"tls_inspection_unavailable", "upstream_unreachable", "unsupported_capability",
+		"gateway_connection_capacity", "gateway_lease_capacity", "gateway_lease_refused", "gateway_unavailable",
+		"enforcement_unavailable", "clock_unavailable", "dns_unavailable", "dns_no_address",
+		"dns_ttl_expired", "dns_capacity_exceeded", "dns_upstream_invalid":
+		return "could not be reached"
+	}
+	return "was blocked"
+}
+
+// netCauseLabel is one cause's own row: what was tried, on which port when the
+// evidence recorded one, and how many attempts it groups.
+func netCauseLabel(event networkview.Denial, count int) string {
+	label := networkreport.TransportLabel(netCauseKind(event.Kind))
+	if event.Port != nil {
+		label += " on port " + strconv.Itoa(*event.Port)
+	}
+	return label + " · " + ui.Count(count, "attempt")
+}
+
+func netCauseKind(kind string) string {
+	switch kind {
+	case "dns_denied":
+		return "dns"
+	case "tls_denied":
+		return "tls"
+	case "direct_tcp_attempt":
+		return "direct connection"
+	case "admission_failed":
+		return "admission"
+	}
+	return kind
 }
 
 // netRuleYAML is the smallest valid `egress_rules` list item for one rule, in
@@ -595,18 +789,19 @@ func netRuleYAML(rule egress.Rule) string {
 	return b.String()
 }
 
-// netNoDraftReason says why this refusal comes with no rule to copy. The cases
-// are different and must not be blurred: a boundary no rule can cross, a
-// failure that was not a refusal, and a record too thin to name a transport.
-// None is a hint that the destination should be allowed.
-func netNoDraftReason(reason string) string {
-	switch reason {
-	case "protected_destination", "unsafe_dns_answer", "tls_ech_unsupported", "unsupported_capability",
-		"tls_name_missing", "tls_name_invalid":
-		return "No rule can allow this: it is a protected or unsupported destination, not a gap in the project's rules."
-	case "upstream_unreachable", "observation_unavailable":
-		return "This was not blocked by a rule — the connection failed on its own, and another rule would not change that."
-	default:
-		return "There is no rule to copy: a blocked DNS lookup does not say whether the destination is TLS, or on which port. Decide that, then add the rule yourself."
+// netNoDraftReason says why this refusal comes with no rule to copy, and says
+// it ONLY where a rule is the kind of thing that could have helped. A protected
+// address, an unsupported capability or a connection that failed on its own
+// already said so in its cause; repeating it as rule advice would imply the
+// destination should be allowed. What is left is the honest case: the record
+// names no transport or port, so there is nothing exact to write down.
+func netNoDraftReason(event networkview.Denial) string {
+	if netBlockedVerb(event.Reason) != "was blocked" || event.Port != nil {
+		return ""
 	}
+	switch event.Reason {
+	case "protected_destination", "unsafe_dns_answer", "tls_name_missing", "tls_name_invalid":
+		return ""
+	}
+	return "The record has no connection type or port to use in a rule."
 }
