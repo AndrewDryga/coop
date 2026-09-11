@@ -2,7 +2,7 @@
 name: session-evidence-export
 description: one bounded versioned read exports a session's network posture, observation, receipt and bound task to a fleet controller, with every section stating its own availability and unknown never collapsing into zero
 subsystem: worker
-sources: [internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/http.go, internal/workerconnector/executor.go, internal/workerconnector/capabilities.go, internal/workerconnector/event_streams.go, internal/tasks/dir.go, docs/session-api.md, docs/worker.md]
+sources: [internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/http.go, internal/workerconnector/executor.go, internal/workerconnector/capabilities.go, internal/workerconnector/event_streams.go, internal/tasks/dir.go, docs/session-api.md]
 updated: 2026-09-11
 ---
 
@@ -46,6 +46,14 @@ supplies the labels the checkpoint's `Subtasks` booleans stand for, by the same 
 order. A bound task whose folder has gone missing reports `unavailable` with its identity intact.
 The agent-written `state.md` is bounded, and secret-scanned on the WHOLE note before truncation so
 a token past the bound still withholds the head. See [[worker-connector]] and [[network-consumers]].
+
+**The `network` event is a consumer compatibility break, not just an addition.** Once
+`operatorActivityEvent` admits `network`, a worker forwards that event to whatever control plane it
+is enrolled with. A controller whose session-event validator knows only the activity kinds rejects
+the payload — and because the event travels inside a poll, it rejects the WHOLE POLL, so one
+filtered run that hits its boundary stops that worker polling entirely. Responder needed the kind
+added to its own allowlist in the same change (`lib/responder/coop_fleet/protocol.ex`). Any other
+control plane on this protocol needs the same before a worker carrying this build is pointed at it.
 
 ## Changelog
 - 2026-09-11 — created with the evidence read, its connector command, the `session-evidence`
