@@ -44,7 +44,9 @@ type Child struct {
 	Account   string     // successful authentication is scoped to this concrete credential too
 }
 
-// Factory starts a fresh child. ctx is cancelled when the proxy is shutting down.
+// Factory starts one child. ctx is cancelled on shutdown or when its spawn attempt
+// is superseded; return without launching after cancellation. A successful child's
+// context stays alive until that child is retired.
 type Factory func(ctx context.Context) (*Child, error)
 
 // Hooks lets the caller (coop) own the ACP session as it flows through the proxy — without the
@@ -90,6 +92,10 @@ type Hooks struct {
 	// reload admission and entered pending bookkeeping. synthetic distinguishes a replay resume from
 	// a real editor prompt. It is the safe point for request correlation and assistant-turn ownership.
 	PromptForwarded func(line []byte, synthetic bool)
+	// PromptCancelled clears the owner's retry intent without closing the session.
+	// Return the raw JSON request ID of a suppressed terminal response whose retry
+	// the owner still holds; the proxy must complete that editor request locally.
+	PromptCancelled func(sessionID string) json.RawMessage
 	// AutoReply lets coop answer an agent→editor REQUEST itself instead of bothering the editor — the
 	// yolo mechanism: coop approves every session/request_permission (the box is the sandbox) so no
 	// provider ever shows a permission prompt, uniformly, whatever each adapter's own settings are.
@@ -203,6 +209,8 @@ func Run(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory F
 // reloadError carrying the snapshot. Both are guarded by non-nil opts, so the zero value is
 // byte-identical to the pre-reload Run.
 func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory, hooks *Hooks, opts RunOpts) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	p := &proxy{
 		out:            clientOut,
 		hooks:          hooks,
@@ -230,7 +238,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		}
 	}
 
-	child, err := factory(ctx)
+	child, err := p.startChild(ctx, factory, p.currentRestartEpoch())
 	if err != nil {
 		return err
 	}
@@ -258,7 +266,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 			default:
 			}
 			p.clearSupersededIntent(epoch)
-			child, err = factory(ctx)
+			child, err = p.startChild(ctx, factory, p.currentRestartEpoch())
 			if err != nil {
 				return err
 			}
@@ -279,7 +287,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 			p.authPending = map[authenticationScope]string{}
 			p.sessions = map[string]*sess{}
 			p.mu.Unlock()
-			child, err = factory(ctx)
+			child, err = p.startChild(ctx, factory, p.currentRestartEpoch())
 			if err != nil {
 				return err
 			}
@@ -324,6 +332,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		start := time.Now()
 		p.pumpChild(child, reader) // returns when this child's Out closes
 		p.retireChild(child)
+		child.Stop() // retire pipes, process resources and factory context before a replacement wait
 		p.resetForceState()
 		// A reload was requested: hand the snapshot back to the caller (which re-execs the binary),
 		// NOT counting it as a failure and NOT failing pending — the editor's transport survives.
@@ -363,12 +372,23 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		var nr *bufio.Reader
 		for {
 			epoch := p.currentRestartEpoch()
-			next, err = factory(ctx)
+			next, err = p.startChild(ctx, factory, epoch)
 			if err != nil {
 				// A SIGHUP racing a failed respawn: re-exec (carry the sessions forward) rather than exit
 				// on the editor — the reload is the intent, the respawn failure is incidental.
 				if p.reloading.Load() {
 					return &reloadError{Snap: p.snapshot()}
+				}
+				select {
+				case <-clientGone:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+				if errors.Is(err, errReplaySuperseded) {
+					p.clearSupersededIntent(epoch)
+					continue
 				}
 				p.failAllPending()
 				return err
@@ -402,7 +422,6 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 			}
 			break
 		}
-		child.Stop() // release the dead child's pipes + cidfile dir before swapping in the new one
 		child, reader = next, nr
 	}
 }
@@ -429,6 +448,7 @@ type sessionRequest struct {
 	provider   string
 	params     json.RawMessage
 	generation uint64
+	admitted   bool // prompt reached this generation's forwarding path, not merely reserved for replay
 }
 
 // setupRequest stages provider-owned handshake state behind the child response. Initialize is
@@ -492,7 +512,8 @@ type proxy struct {
 	controlMu      sync.Mutex // serializes controller hooks with restart decisions and resume admission
 	mu             sync.Mutex
 	child          *Child
-	candidate      *Child // replacement being replayed before it becomes authoritative
+	candidate      *Child             // replacement being replayed before it becomes authoritative
+	factoryCancel  context.CancelFunc // interrupts an obsolete replacement's quota wait
 	generation     uint64
 	restartEpoch   uint64                                      // increments for every selection/restart request, even during replay
 	lifecycleSeq   uint64                                      // unique id source for native cleanup requests within/across replay epochs
@@ -661,7 +682,11 @@ func (p *proxy) shutdownChild() {
 	p.mu.Lock()
 	p.shuttingDown = true
 	c, candidate := p.child, p.candidate
+	cancel := p.factoryCancel
 	p.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if c != nil {
 		c.Stop()
 	}
@@ -691,12 +716,16 @@ func (p *proxy) beginReload() {
 	p.reactivating = map[string]string{}
 	p.restarting = false
 	c, candidate := p.child, p.candidate
+	cancel := p.factoryCancel
 	if c != nil {
 		p.child = nil
 		p.generation++
 	}
 	p.candidate = nil
 	p.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	for _, id := range ids {
 		_, _ = p.out.Write(errorResponse(id))
 	}
@@ -737,6 +766,10 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 	original := parse(line)
 	if p.reloading.Load() && original.isRequest() {
 		_, _ = p.out.Write(errorResponse(string(original.ID)))
+		return
+	}
+	if origin == originEditor && original.Method == "session/cancel" && len(original.ID) == 0 {
+		p.cancelPrompt(sessionID(original.Params), line)
 		return
 	}
 	if origin == originEditor && original.Method == "session/prompt" && original.isRequest() {
@@ -989,7 +1022,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 		case "session/prompt":
 			if sid != "" {
 				p.sessionReqs[string(h.ID)] = sessionRequest{
-					method: h.Method, editorID: sid, adapterID: adapterID, provider: provider, generation: p.generation,
+					method: h.Method, editorID: sid, adapterID: adapterID, provider: provider, generation: p.generation, admitted: true,
 				}
 			}
 		case "session/close", "session/delete":
@@ -1062,9 +1095,8 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 			return nil
 		}
 		h := parse(line)
-		// Force-setting responses may synchronously release an editor prompt through forwardClient.
-		// That path acquires controlMu itself, so keep these generation-checked synthetic responses out
-		// of the controller response critical section. Normal responses remain serialized end to end.
+		// Force-setting responses own their controlMu scope in handleInjectedResponseFrom, including
+		// any held prompt they release. Do not acquire it twice; normal responses hold it here.
 		injectedResponse := h.isResponse() && strings.HasPrefix(string(trimQuotes(h.ID)), InjectPrefix)
 		responseControl := h.isResponse() && !injectedResponse
 		if responseControl {
@@ -1253,12 +1285,15 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 // forceSession starts an acknowledgement-gated settings chain for one established session. The
 // chain is serialized because model changes can reset effort, and prompts wait until it completes.
 func (p *proxy) forceSession(sid string) {
+	p.controlMu.Lock()
+	defer p.controlMu.Unlock()
 	p.mu.Lock()
 	child, generation := p.child, p.generation
 	p.mu.Unlock()
 	p.forceSessionFor(child, generation, sid)
 }
 
+// controlMu is held through gate installation and release.
 func (p *proxy) forceSessionFor(child *Child, generation uint64, sid string) {
 	if p.hooks == nil || p.hooks.SessionReady == nil {
 		return
@@ -1273,7 +1308,7 @@ func (p *proxy) forceSessionFor(child *Child, generation uint64, sid string) {
 	msg, c, held := p.installForceLocked(sid, requests)
 	p.mu.Unlock()
 	for _, prompt := range held {
-		p.forwardClient(prompt.line, prompt.origin)
+		p.forwardClientControlled(prompt.line, prompt.origin, true)
 	}
 	p.writeForce(c, msg)
 }
@@ -1412,27 +1447,32 @@ func (p *proxy) nextForceLocked(chain *forceChain) ([]byte, *Child) {
 	return msg, p.child
 }
 
+// writeForce runs with controlMu held; synchronous failures stay in that scope.
 func (p *proxy) writeForce(c *Child, msg []byte) {
 	if len(msg) == 0 {
 		return
 	}
 	id := string(trimQuotes(parse(msg).ID))
 	if c == nil {
-		p.failForceRequest(id, "adapter is unavailable")
+		p.handleInjectedResponseControlled(forceFailureResponse(id, "adapter is unavailable"), nil, 0)
 		return
 	}
 	if _, err := c.In.Write(msg); err != nil {
-		p.failForceRequest(id, "write failed: "+err.Error())
+		p.handleInjectedResponseControlled(forceFailureResponse(id, "write failed: "+err.Error()), nil, 0)
 	}
 }
 
 func (p *proxy) failForceRequest(id, detail string) {
+	p.handleInjectedResponse(forceFailureResponse(id, detail))
+}
+
+func forceFailureResponse(id, detail string) []byte {
 	line, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
 		"error":   map[string]any{"code": -32001, "message": "ACP target setting " + detail},
 	})
-	p.handleInjectedResponse(append(line, '\n'))
+	return append(line, '\n')
 }
 
 // trackInjectedLocked remembers a translated synthetic request so a rejected response can identify
@@ -1454,6 +1494,14 @@ func (p *proxy) handleInjectedResponse(line []byte) {
 // handleInjectedResponseFrom binds a child-originated synthetic response to the generation that
 // emitted it. Local timeout failures pass child=nil and apply to the current force chain.
 func (p *proxy) handleInjectedResponseFrom(line []byte, child *Child, generation uint64) {
+	p.controlMu.Lock()
+	defer p.controlMu.Unlock()
+	p.handleInjectedResponseControlled(line, child, generation)
+}
+
+// Synchronous setting-write failures already hold controlMu. Keeping the held
+// prompt transfer inside this boundary makes cancellation atomic with admission.
+func (p *proxy) handleInjectedResponseControlled(line []byte, child *Child, generation uint64) {
 	h := parse(line)
 	id := string(trimQuotes(h.ID))
 	p.mu.Lock()
@@ -1507,13 +1555,15 @@ func (p *proxy) handleInjectedResponseFrom(line []byte, child *Child, generation
 		return
 	}
 	for _, prompt := range held {
-		p.forwardClient(prompt.line, prompt.origin)
+		p.forwardClientControlled(prompt.line, prompt.origin, true)
 	}
 }
 
 // resetForceState drops one child's synthetic request state. Prompts held behind a child that died
 // receive the normal retry error rather than hanging outside pending bookkeeping.
 func (p *proxy) resetForceState() {
+	p.controlMu.Lock()
+	defer p.controlMu.Unlock()
 	p.mu.Lock()
 	var held []clientLine
 	for _, chain := range p.forceBySess {
@@ -1544,12 +1594,16 @@ func (p *proxy) triggerRestart() {
 	p.restartEpoch++
 	p.restarting = true
 	c, candidate := p.child, p.candidate
+	cancel := p.factoryCancel
 	if c != nil {
 		p.child = nil
 		p.generation++
 	}
 	p.candidate = nil
 	p.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if c != nil {
 		c.Stop()
 	}
@@ -2050,6 +2104,7 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 	// response, so sparing it is a no-op there.)
 	keep := map[string]bool{}
 	keepSessions := map[string]string{}
+	p.controlMu.Lock()
 	if p.hooks != nil && p.hooks.ResumePrompt != nil {
 		for _, eid := range sortedKeys(ready) {
 			if line := p.hooks.ResumePrompt(eid); len(line) > 0 {
@@ -2061,9 +2116,11 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 		}
 	}
 	if adapterID, first, second, duplicate := duplicateReplayBinding(bindings); duplicate {
+		p.controlMu.Unlock()
 		return fmt.Errorf("replay returned duplicate native session id %q for editor sessions %q and %q", adapterID, first, second)
 	}
 	swapped, accepted, swapErr := p.swapChildAt(c, keep, keepSessions, nil, bindings, freshInitResult, freshAuthMethods, epoch, true)
+	p.controlMu.Unlock()
 	if swapErr != nil {
 		return swapErr
 	}
@@ -2239,6 +2296,8 @@ func (p *proxy) takeRestartHeldLocked() []clientLine {
 // on the new box. The resend re-registers them as pending via fromClient right after the swap —
 // before the new child's pump starts, so no response can race the gap.
 func (p *proxy) swapChild(c *Child, keep map[string]bool, forces map[string][][]byte, bindings map[string]replayBinding) {
+	p.controlMu.Lock()
+	defer p.controlMu.Unlock()
 	_, _, _ = p.swapChildAt(c, keep, nil, forces, bindings, nil, nil, p.currentRestartEpoch(), false)
 }
 
@@ -2316,6 +2375,7 @@ func (p *proxy) swapChildAt(
 				}
 			} else {
 				request.generation = nextGeneration
+				request.admitted = false
 			}
 			p.sessionReqs[id] = request
 			retained[id] = true
@@ -2387,7 +2447,7 @@ func (p *proxy) swapChildAt(
 			p.writeForce(c, msg)
 		}
 		for _, prompt := range released {
-			p.forwardClient(prompt.line, prompt.origin)
+			p.forwardClientControlled(prompt.line, prompt.origin, true)
 		}
 	}
 	return true, accepted, nil

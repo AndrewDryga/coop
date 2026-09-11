@@ -20,13 +20,14 @@ type matrixPlan struct {
 }
 
 type matrixStep struct {
-	Method        string `json:"method"`
-	Params        any    `json:"params,omitempty"`
-	Result        any    `json:"result,omitempty"`
-	Error         any    `json:"error,omitempty"`
-	Events        []any  `json:"events,omitempty"`
-	EchoPrompt    bool   `json:"echo_prompt,omitempty"`
-	DeferResponse bool   `json:"defer_response,omitempty"`
+	Method           string `json:"method"`
+	Params           any    `json:"params,omitempty"`
+	Result           any    `json:"result,omitempty"`
+	Error            any    `json:"error,omitempty"`
+	Events           []any  `json:"events,omitempty"`
+	EchoPrompt       bool   `json:"echo_prompt,omitempty"`
+	DeferResponse    bool   `json:"defer_response,omitempty"`
+	CompleteDeferred bool   `json:"complete_deferred,omitempty"`
 }
 
 type matrixProvider struct {

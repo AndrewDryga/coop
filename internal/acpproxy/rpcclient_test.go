@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -15,6 +16,7 @@ var (
 	errACPFrameLimit      = errors.New("ACP frame limit exceeded")
 	errACPTranscriptLimit = errors.New("ACP transcript limit exceeded")
 	errACPFrameCountLimit = errors.New("ACP frame count limit exceeded")
+	errACPRateLimitWait   = errors.New("ACP is waiting for a provider usage reset")
 )
 
 type lockedBuffer struct {
@@ -127,6 +129,55 @@ func (c *acpClient) mark() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.frames)
+}
+
+// Live conformance needs a completed provider turn, not a successful entrance into
+// Coop's potentially hours-long quota wait. Observe that status without printing
+// its account or retained conversation, and leave recovery tests to the fixtures.
+func (c *acpClient) promptWithoutLimitWait(ctx context.Context, params map[string]any) (map[string]any, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	mark := c.mark()
+	sessionID, _ := params["sessionId"].(string)
+	limited := make(chan struct{}, 1)
+	go func() {
+		_, _, err := c.await(ctx, mark, func(frame wireFrame) bool {
+			return acpLimitWaitStatus(frame, sessionID)
+		})
+		if err == nil {
+			limited <- struct{}{}
+		}
+	}()
+	type result struct {
+		response map[string]any
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		response, err := c.req(ctx, "session/prompt", params)
+		done <- result{response, err}
+	}()
+	select {
+	case got := <-done:
+		return got.response, got.err
+	case <-limited:
+		return nil, errACPRateLimitWait
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func acpLimitWaitStatus(frame wireFrame, sessionID string) bool {
+	if frame.Msg["method"] != "session/update" || frame.Msg["id"] != nil {
+		return false
+	}
+	params, _ := frame.Msg["params"].(map[string]any)
+	update, _ := params["update"].(map[string]any)
+	content, _ := update["content"].(map[string]any)
+	text, _ := content["text"].(string)
+	return params["sessionId"] == sessionID && update["sessionUpdate"] == "agent_message_chunk" &&
+		strings.HasPrefix(text, "Waiting for account ") &&
+		strings.HasSuffix(text, "Your message will send automatically.")
 }
 
 func (c *acpClient) await(ctx context.Context, after int, match func(wireFrame) bool) (wireFrame, int, error) {
@@ -288,6 +339,8 @@ func liveACPDiagnostic(phase string, err error, stderrTruncated bool, stats acpC
 	truncated := stderrTruncated
 	var rpcError *rpcErr
 	switch {
+	case errors.Is(err, errACPRateLimitWait):
+		class = "rate_limit_wait"
 	case errors.As(err, &rpcError):
 		class, rpcCode = "json_rpc", rpcError.code
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):

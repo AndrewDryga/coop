@@ -72,16 +72,17 @@ func normalizeACPSelection(sel Selection) Selection {
 // handles their changes by restarting the box on the selected identity. The conversation survives
 // because the transcript sits on a shared, credential-independent store.
 type Control struct {
-	cfg          *config.Config              // for expanding a selected preset's model ladder into rotation targets
-	host         Host                        // injected seams (rotation/models-cache/wait policy) — internal/cli owns the real implementations
-	repo         string                      // repo root, to load a preset selected from the toolbar
-	lead         string                      // the CURRENT lead agent — re-derived on a provider switch (see retarget)
-	model        string                      // coop's resolved model for the lead ("" → leave the adapter's default)
-	target       agents.Target               // complete active box/session intent, including preset model + effort
-	plainTargets map[string]targetPreference // provider -> last accepted plain model/effort choice
-	creds        []string                    // the lead's runnable credentials offered by the selector
-	presets      []string                    // the repo's presets, in order
-	accounts     []string                    // the lead's runnable accounts, for rate-limit auto-rotation (default first)
+	cfg              *config.Config              // for expanding a selected preset's model ladder into rotation targets
+	host             Host                        // injected seams (rotation/models-cache/wait policy) — internal/cli owns the real implementations
+	repo             string                      // repo root, to load a preset selected from the toolbar
+	lead             string                      // the CURRENT lead agent — re-derived on a provider switch (see retarget)
+	model            string                      // coop's resolved model for the lead ("" → leave the adapter's default)
+	target           agents.Target               // complete active box/session intent, including preset model + effort
+	plainTargets     map[string]targetPreference // provider -> last accepted plain model/effort choice
+	creds            []string                    // the lead's runnable credentials offered by the selector
+	presets          []string                    // the repo's presets, in order
+	accounts         []string                    // the lead's runnable accounts, for rate-limit auto-rotation (default first)
+	networkProviders map[string]bool             // immutable admitted scope; nil for open/offline sessions
 
 	mu          sync.Mutex
 	sel         Selection                    // tagged plain lead or preset-owned selection
@@ -222,6 +223,7 @@ func (c *Control) Hooks() *acpproxy.Hooks {
 		ChildReset:            c.childReset,
 		FromEditor:            c.fromEditor,
 		PromptForwarded:       c.promptForwarded,
+		PromptCancelled:       c.promptCancelled,
 		AutoReply:             c.autoReply,
 		ResumePrompt:          c.resumePrompt,
 		ShouldRecreateSession: c.shouldRecreateSession,
@@ -2006,6 +2008,9 @@ func (c *Control) coopOptions() []json.RawMessage {
 	popts := make([]Option, 0, len(c.presets)+1)
 	popts = append(popts, Option{Value: "none", Name: "None", Description: "No preset — the plain lead"})
 	for _, p := range c.presets {
+		if !c.networkPresetAllowed(p) {
+			continue
+		}
 		option := Option{Value: p, Name: p, Description: "Run under preset " + p + " (its lead ladder + roles)"}
 		headline := ""
 		if p == sel.Preset && presetTarget.Provider != "" {
@@ -2152,7 +2157,7 @@ func (c *Control) SelectorSelection(configID, value string) (next Selection, rec
 		if next.Preset != "" {
 			return next, true
 		}
-		if value == lead || !agents.Valid(value) || len(c.host.AccountsFor(c.cfg, value)) == 0 {
+		if value == lead || !agents.Valid(value) || !c.networkProviderAllowed(value) || len(c.host.AccountsFor(c.cfg, value)) == 0 {
 			return next, true
 		}
 		next.Provider = value
@@ -2182,7 +2187,7 @@ func (c *Control) SelectorSelection(configID, value string) (next Selection, rec
 			}
 			return next, true
 		}
-		if !slices.Contains(c.presets, value) {
+		if !slices.Contains(c.presets, value) || !c.networkPresetAllowed(value) {
 			return next, true
 		}
 		return Selection{Preset: value}, true
@@ -2373,7 +2378,7 @@ func (c *Control) Accounts() []string {
 func (c *Control) SpawnableProviders(lead string) []string {
 	var out []string
 	for _, p := range agents.Names() {
-		if p != lead && len(c.host.AccountsFor(c.cfg, p)) > 0 {
+		if p != lead && c.networkProviderAllowed(p) && len(c.host.AccountsFor(c.cfg, p)) > 0 {
 			out = append(out, p)
 		}
 	}

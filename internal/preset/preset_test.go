@@ -486,6 +486,24 @@ func TestNativeRoleRequiresMatchingCapableLead(t *testing.T) {
 	}
 }
 
+func TestRunnableProviders(t *testing.T) {
+	if got := (*Preset)(nil).RunnableProviders(); got != nil {
+		t.Fatalf("nil preset providers = %v", got)
+	}
+	p := &Preset{
+		LeadTargets: []agents.Target{{Provider: "claude"}, {Provider: "codex"}},
+		Roles: []Role{
+			{Mode: ModeNative, Targets: []agents.Target{{Provider: "claude"}}},
+			{Mode: ModeNative, Targets: []agents.Target{{Provider: "gemini"}}},
+			{Mode: ModeConsult, Targets: []agents.Target{{Provider: "codex"}, {Provider: "grok"}}},
+			{Mode: ModeDelegate, Targets: []agents.Target{{Provider: "gemini"}}},
+		},
+	}
+	if got := p.RunnableProviders(); !slices.Equal(got, []string{"claude", "codex", "gemini", "grok"}) {
+		t.Fatalf("provider closure = %v, want all lead, role and fallback providers", got)
+	}
+}
+
 // writePresetIn lays down <root>/<name>/preset.yaml (plus extra files) under an
 // arbitrary root — used to populate a global presets dir that is NOT <repo>/.agent/presets.
 func writePresetIn(t *testing.T, root, name, yaml string, files map[string]string) {

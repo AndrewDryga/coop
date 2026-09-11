@@ -737,25 +737,6 @@ func TestRunProfileWiringRejectsUnknown(t *testing.T) {
 	}
 }
 
-// A bare `coop acp` never guesses from credential order. The initial provider or preset is part of
-// the editor's durable command configuration; the live toolbar may switch only after that explicit
-// session has started.
-func TestACPRequiresAnExplicitInitialTarget(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.Config{ConfigDir: dir}
-	// Sign Codex in to prove a usable credential is not treated as launch intent.
-	os.MkdirAll(filepath.Join(dir, "codex", "profiles", "default"), 0o755)
-	os.WriteFile(filepath.Join(dir, "codex", "profiles", "default", "auth.json"), []byte("{}"), 0o644)
-	a := &app{cfg: cfg}
-	code, err := a.cmdACP([]string{})
-	if code != 2 || err == nil {
-		t.Fatalf("bare cmdACP with a signed-in provider = (%d, %v), want (2, error)", code, err)
-	}
-	if !strings.Contains(err.Error(), "name the target or preset") || !strings.Contains(err.Error(), "coop acp <target|preset>") {
-		t.Errorf("error should require an explicit ACP target, got: %v", err)
-	}
-}
-
 func TestParseExplicitList(t *testing.T) {
 	cases := []struct {
 		name    string

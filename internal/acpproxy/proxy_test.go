@@ -326,15 +326,28 @@ func TestProxyReplayPublishesChildWithTargetGate(t *testing.T) {
 		close(done)
 	}()
 	<-writer.entered // child is published and its first setting write is blocked
-	p.fromClient([]byte(`{"jsonrpc":"2.0","id":5,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}` + "\n"))
+	p.mu.Lock()
+	installed := p.forceBySess["N2"] != nil
+	p.mu.Unlock()
+	if !installed {
+		t.Fatal("child was published before its target-setting gate")
+	}
+	// Admission now shares controlMu with publication. Do not make release of
+	// the artificial blocked write depend on that admission completing first.
+	admitted := make(chan struct{})
+	go func() {
+		p.fromClient([]byte(`{"jsonrpc":"2.0","id":5,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}` + "\n"))
+		close(admitted)
+	}()
+	close(writer.release)
+	<-done
+	<-admitted
 	p.mu.Lock()
 	held := len(p.forceBySess["N2"].held)
 	p.mu.Unlock()
 	if held != 1 {
 		t.Fatalf("prompt raced replay publication instead of entering the preinstalled gate (held=%d)", held)
 	}
-	close(writer.release)
-	<-done
 	p.resetForceState()
 }
 

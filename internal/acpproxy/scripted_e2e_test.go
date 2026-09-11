@@ -726,7 +726,11 @@ func startScriptedACP(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, target
 	if err := os.WriteFile(conf, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(coopBin, "acp", target)
+	args := []string{"acp"}
+	if target != "" {
+		args = append(args, target)
+	}
+	cmd := exec.Command(coopBin, args...)
 	cmd.Env = testEnv(os.Environ(), map[string]string{
 		"HOME":                   filepath.Join(tmp, "home"),
 		"XDG_CONFIG_HOME":        filepath.Join(tmp, "xdg"),

@@ -2,8 +2,8 @@
 name: acp-scripted-e2e
 description: ACP state machines are exhaustive in the scripted runtime; real adapters get an isolated conformance layer
 subsystem: acp
-sources: [Makefile, internal/acpproxy/scripted_matrix_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, internal/acpproxy/testdata/acpfixture/main.go, internal/acpctl/process_live.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/cleanup.go]
-updated: 2026-08-10
+sources: [Makefile, internal/acpproxy/scripted_matrix_e2e_test.go, internal/acpproxy/scripted_startup_e2e_test.go, internal/acpproxy/scripted_cancel_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, internal/acpproxy/testdata/acpfixture/main.go, internal/acpctl/process_live.go, internal/liveprocess/contract.go, internal/processidentity/identity.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/cleanup.go]
+updated: 2026-09-12
 ---
 
 `COOP_RUNTIME` lets process tests drive the built outer supervisor, inner re-exec, controller,
@@ -12,6 +12,11 @@ scripted matrix covers every directed provider pair and deterministic model, lim
 failure orderings (`internal/acpproxy/scripted_matrix_e2e_test.go:41`,
 `internal/acpproxy/scripted_matrix_e2e_test.go:111`). Run it with `make acp-scripted-e2e`; it does
 not require provider credentials (`Makefile:66`).
+
+The startup script passes a literal `["acp"]` argv, never an empty positional argument. It proves
+automatic choice stays switchable and selected providers survive SIGHUP. Cancellation scripts
+hold a real prompt in flight, observe its first event, send a `session/cancel` notification, and
+require a cancelled prompt response followed by a successful turn for every provider.
 
 `make acp-e2e` is the smaller installed-adapter contract. It shares the safe live-provider copier:
 access-token-only auth artifacts, no Gemini host keychain, new `0600` inodes, an allowlist-only
@@ -22,7 +27,8 @@ leave the live gate stale. Frontier itself enters the disposable repo through a 
 copy that rejects links and special files. The disposable repo stays writable because ACP tool-call
 and replay behavior is under test; no source repository or source credential home is mounted through
 the shared no-follow isolation boundary. It proves live prompt/model/SIGHUP behavior and
-cross-provider carry. Never induce real quota exhaustion there; provider fault injection belongs in
+all twelve directed cross-provider carries. Per-provider conformance uses no-target startup with
+only that provider projected. Never induce real quota exhaustion there; provider fault injection belongs in
 the scripted layer.
 The live ACP layer refuses a scenario whose projected access token cannot outlive the suite or whose
 credential is host-bound. Its temp root is removed on every setup failure as well as normal exit.
@@ -41,7 +47,9 @@ The record binds to the harness's `coop.live-test` cleanup nonce, not Coop's sep
 inner Coop exits, closing the leader-first orphan case. Teardown
 atomically revokes projected credentials, awaits the outer supervisor so no new generation can be
 admitted, revalidates and terminates every recorded group, and begins CID/label cleanup only after
-all groups are gone. A SIGHUP self-reload revalidates and preserves the outer control descriptor for
+all groups are gone. A surviving bind can still write into the revoked private tombstone during
+that teardown; failed physical deletion is retried only after producers and mounts are removed.
+A SIGHUP self-reload revalidates and preserves the outer control descriptor for
 that exec only; child execs still lose it. Record admission is serialized and reserves the pending
 hardlink slot. An unreadable or over-limit registry can never satisfy producer quiescence, so label
 sweeps continue to the bounded cleanup deadline and fail. Default Coop builds retain normal
@@ -52,6 +60,7 @@ denial tests; the installed-adapter prompts remain opt-in.
 Related: [[acp-replay-publication]], [[acp-target-commit]], [[acp-carry-echo]].
 
 ## Changelog
+- 2026-09-12 - literal automatic startup, cancellation/continue coverage, twelve directed live switches, and post-teardown credential deletion retry; verified new scripted tests and repeated Codex live cleanup
 - 2026-08-10 - source path only: `internal/cli/acp_process_live.go` → `internal/acpctl/process_live.go`
   (the ACP control plane's move to `internal/acpctl`, mechanical rename, no behavior change)
 - 2026-07-15 - bound process records to the external cleanup nonce, kept control across authenticated SIGHUP reloads, and denied registry overflow or unverifiable quiescence

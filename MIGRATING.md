@@ -75,12 +75,14 @@ remove presets, named peers, roles, or consultation.
 | `coop fusion <preset>` | `coop <preset>` — the preset lead, native/consult/delegate roles, ladders, and personas are unchanged |
 | `coop acp fusion <target> --peer <target>...` | `coop acp <target> --peer <target>...` |
 | `coop acp fusion <preset>` | `coop acp <preset>` |
-| bare `coop acp` (v8.1 guessed the first signed-in provider) | `coop acp <target|preset>` |
 
-V9 again requires an explicit ACP initial target or preset; it removes v8.1's credential-order
-shortcut because credential order is not launch intent. After connection, its live Preset,
-Provider, and Account selectors keep working; preset ladders still rotate across providers and
-accounts. `coop-consult` still provides read-only fresh/continue sessions and target fallback for
+Plain `coop acp` again starts automatically with the first signed-in provider in Claude, Codex,
+Gemini, Grok order and its default account. An editor entry can use `["acp"]` and choose through
+the live Preset, Provider, and Account selectors. Explicit targets and presets still take
+precedence; `--bare` still requires a single explicit target. Preset ladders still rotate across
+providers and accounts. Filtered sessions offer only compatible providers and whole presets;
+an unrelated signed-in provider no longer prevents a supported lead from starting.
+`coop-consult` still provides read-only fresh/continue sessions and target fallback for
 named peers and preset consult roles.
 
 Before the first MCP-enabled v9 launch, make the configured `COOP_MCP_FILE` a private readable
@@ -146,9 +148,9 @@ task-authority registry files to bypass that refusal.
 
 ## v4: the target grammar — one way to name a run
 
-Every launch names WHO runs with a single **target**: `provider[:model][/effort][@account]`
+A target names who runs: `provider[:model][/effort][@account]`
 (`claude`, `claude:opus`, `claude/xhigh`, `claude:opus/xhigh`, `claude@work`, `claude:opus@work`). The provider is
-**required** — there is no implicit `claude` default — while the model, an optional reasoning
+required inside a target, while the model, an optional reasoning
 `/effort` (`low`/`medium`/`high`/`xhigh`/`max`, passed straight to the agent's CLI — Gemini has
 none and rejects it), and the account are all optional. `--model`, `--credential`, and the boolean
 `--consult` retire; peers are named explicitly.
@@ -160,13 +162,12 @@ none and rejects it), and the account are all optional. `--model`, `--credential
 | `coop login <agent> --credential <acct>` | `coop login <agent>@<acct>` |
 | `coop loop --model m@work` | `coop loop <agent>:m@work` (account ladder: `<agent>@work,personal`) |
 | bare `coop` / `coop loop` (defaulted to claude) | name the target — `coop claude`, `coop loop claude` (or positional `coop loop <preset>`, whose lead supplies it) |
-| bare `coop acp` (v8.1 guessed the first signed-in provider) | `coop acp <target|preset>` |
 | `coop <agent> --consult` (boolean) | `coop <target> --peer <target>...` — name each peer (repeatable): `--peer codex:gpt-5.5 --peer gemini` |
 | `coop fusion <target>` (consulted every signed-in agent) | `coop <target> --peer <target>...` — name only the peers this run may consult |
 
-These apply on every current launch surface — `coop <target>`, `loop`, `acp`,
-`fork <name> [acp]`, and `login`. A Zed `agent_servers` entry names the target as one token:
-`["acp","claude:opus@work"]`; v9 rejects v8.1's bare `["acp"]` shortcut.
+The target grammar applies on every current launch surface — `coop <target>`, `loop`, `acp`,
+`fork <name> [acp]`, and `login`. A Zed `agent_servers` entry can name a target as one token:
+`["acp","claude:opus@work"]`, or use `["acp"]` for automatic startup and live selection.
 
 Peers participate **only when named** — the old "every signed-in agent is a peer" policy is
 gone. A named peer's credentials are the only ones mounted for consultation (the box's

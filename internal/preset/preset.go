@@ -512,6 +512,27 @@ func (p *Preset) RunnableRoleAgents(lead string) []string {
 	return out
 }
 
+// RunnableProviders is the complete provider scope across every lead rung. A native
+// role may become a separate consult when a different provider takes over the lead.
+func (p *Preset) RunnableProviders() []string {
+	if p == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, target := range p.LeadTargets {
+		seen[target.Provider] = true
+		for _, provider := range p.RunnableRoleAgents(target.Provider) {
+			seen[provider] = true
+		}
+	}
+	providers := make([]string, 0, len(seen))
+	for provider := range seen {
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+	return providers
+}
+
 // Primary returns the role's first target. Loaded roles always have one; the zero value keeps
 // hand-built internal values safe to inspect without a compatibility representation.
 func (r Role) Primary() agents.Target {

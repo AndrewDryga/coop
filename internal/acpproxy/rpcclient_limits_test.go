@@ -2,10 +2,12 @@ package acpproxy_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLimitedACPClientRejectsOversizeFrameBeforeRetention(t *testing.T) {
@@ -66,6 +68,7 @@ func TestLiveACPDiagnosticRedactsRawErrors(t *testing.T) {
 	}{
 		{name: "RPC", err: &rpcErr{code: -32603, raw: "TOKEN_CANARY /private/path PROMPT_CANARY"}, want: "error_class=json_rpc rpc_code=-32603"},
 		{name: "deadline", err: context.DeadlineExceeded, want: "error_class=timeout rpc_code=0"},
+		{name: "provider wait", err: errACPRateLimitWait, want: "error_class=rate_limit_wait rpc_code=0"},
 		{name: "frame", err: errACPFrameLimit, want: "error_class=frame_limit rpc_code=0"},
 		{name: "transcript", err: errACPTranscriptLimit, want: "error_class=transcript_limit rpc_code=0"},
 		{name: "frame count", err: errACPFrameCountLimit, want: "error_class=frame_count_limit rpc_code=0"},
@@ -86,5 +89,38 @@ func TestLiveACPDiagnosticRedactsRawErrors(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLiveACPPromptReportsLimitWait(t *testing.T) {
+	requests, writer := io.Pipe()
+	defer requests.Close()
+	defer writer.Close()
+	client := newACPClient(writer)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	go func() {
+		var request map[string]any
+		if json.NewDecoder(requests).Decode(&request) != nil {
+			return
+		}
+		status, _ := json.Marshal(matrixAgentChunk("session", `Waiting for account "ACCOUNT_CANARY" to reset its usage limit at 10:00 (in 1h). Your message will send automatically.`))
+		client.recordFrame(status)
+	}()
+	if _, err := client.promptWithoutLimitWait(ctx, map[string]any{"sessionId": "session"}); !errors.Is(err, errACPRateLimitWait) {
+		t.Fatalf("prompt error = %v, want provider wait without waiting for the deadline", err)
+	}
+	for _, tc := range []struct{ session, text string }{
+		{"other", `Waiting for account "other" to reset. Your message will send automatically.`},
+		{"session", "ordinary answer"},
+	} {
+		raw, _ := json.Marshal(matrixAgentChunk(tc.session, tc.text))
+		var message map[string]any
+		if err := json.Unmarshal(raw, &message); err != nil {
+			t.Fatal(err)
+		}
+		if acpLimitWaitStatus(wireFrame{Msg: message}, "session") {
+			t.Fatalf("unrelated update classified as this prompt's rate-limit wait")
+		}
 	}
 }

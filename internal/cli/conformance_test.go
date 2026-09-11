@@ -122,8 +122,8 @@ func TestCLIConformance(t *testing.T) {
 		for name, want := range map[string]string{
 			"top-level help":        "coop <target> --peer <target>...",
 			"agent help":            "coop claude[:<model>][/<effort>][@<account>]",
-			"ACP help":              "coop acp <agent|preset> [options]",
-			"ACP usage error":       "coop acp <target|preset> [--peer <target>...]",
+			"ACP help":              "coop acp [<agent|preset>] [options]",
+			"ACP usage error":       "coop acp [<target|preset>] [--peer <target>...]",
 			"loop help":             "coop loop [<target|preset>]",
 			"fork help":             "coop fork <name> [<target|preset>]",
 			"fork usage error":      "coop fork <name> [<target|preset>]",

@@ -114,7 +114,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// env-override block so a preset-rotation rung (COOP_ACP_TARGET) still wins over the launch-time
 	// model/account.
 	model, profile, effort := "", "", ""
-	tool, toolSet := "", false // no implicit default; an empty tool falls to the required-provider error below
+	tool, toolSet := "", false
 	presetName := ""
 	consumed := 0
 	// takeWho classifies the positional who slot: a target folds its model/effort/account in and
@@ -145,7 +145,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, ui.UnexpectedArgument(leftover[0], "coop acp", "coop acp <target|preset> [--peer <target>...]")
+		return 2, ui.UnexpectedArgument(leftover[0], "coop acp", "coop acp [<target|preset>] [--peer <target>...]")
 	}
 	if a.mode == agents.ModeBare {
 		if !toolSet {
@@ -180,6 +180,17 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return 2, err
 	}
 	tool = presetLeadAgent(p, tool, toolSet)
+	if tool == "" {
+		// The editor cannot select a provider until ACP has started. Keep this choice
+		// automatic so the live toolbar and account recovery still own the selection.
+		authed := box.AuthedAgents(a.cfg)
+		if len(authed) == 0 {
+			return 1, ui.CommandFailed("Could not start the editor agent", "No providers are signed in.",
+				[2]string{"Sign in:", "coop login <agent>"},
+				[2]string{"", "Then reconnect your editor."})
+		}
+		tool = authed[0]
+	}
 	if !agents.Valid(tool) {
 		return 2, noProviderErr("acp")
 	}
@@ -214,19 +225,17 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		// Admission happens ONCE, here, before any child: a toolbar provider switch
 		// or a preset rung reuses this exact capture, so every provider this session
-		// could spawn has to be in the scope its bundles derive from — the same
-		// union the loop freezes for its ladders. The rule is Control's own
-		// (SpawnableProviders): a provider with a usable account can be switched to.
-		scope := append([]agents.Target{}, peers...)
-		for _, provider := range agents.Names() {
-			if provider != tool && len(accountsFor(a.cfg, provider)) > 0 {
-				scope = append(scope, agents.Target{Provider: provider})
-			}
+		// could spawn has to be in the scope its bundles derive from. Required
+		// targets stay intact; optional toolbar choices contribute only complete
+		// supported scopes. The control freezes that same scope after admission.
+		scope, err := a.acpNetworkScope(repo, peers, a.preset)
+		if err != nil {
+			return 1, err
 		}
 		// The capture belongs to the SUPERVISOR: it lives as long as the editor
 		// session, and each child receives a reference to it, never authority.
 		a.acpCapture, err = box.AdmitNetwork(a.cfg, a.rt, box.RunSpec{
-			Repo: repo, Workdir: repo, Agent: tool, Peers: scope, Preset: a.preset,
+			Repo: repo, Workdir: repo, Agent: tool, Peers: scope, Preset: a.preset, NetworkClient: egress.ClientACP,
 			Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 		}, a.network.admission())
 		if err != nil {
@@ -247,6 +256,13 @@ func (a *app) cmdACP(args []string) (int, error) {
 			sel.Provider = tool
 		}
 		ctrl := acpctl.New(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, a.acpPresetNames(repo), serveURLs, acpHost())
+		if a.acpCapture != nil {
+			providers := []string{tool}
+			for _, target := range scope {
+				providers = append(providers, target.Provider)
+			}
+			ctrl.LimitNetworkProviders(providers)
+		}
 		if a.acpSupervise != nil {
 			return a.acpSupervise(inner, ctrl)
 		}
@@ -284,7 +300,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	spec := box.RunSpec{
 		// A supervisor (which reconnects the box) passes COOP_ACP_SUPERVISOR; that tags
 		// the box so build/update can restart it and the supervisor can kill exactly it.
-		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool, Serve: true,
+		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool, Serve: true, NetworkClient: egress.ClientACP,
 		SupervisorID: os.Getenv("COOP_ACP_SUPERVISOR"), ShareACPSessions: true,
 		ConsultLead: lead, Peers: peers, Preset: a.preset, Quiet: true,
 		ExtraArgs:    extra,
@@ -404,18 +420,14 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// snapshot to Run so the editor's live threads are re-established on the first (fresh) box. A
 	// missing/corrupt file degrades to a fresh start (new threads still work).
 	var resume *acpproxy.Snapshot
-	if path := os.Getenv("COOP_ACP_RESUME_STATE"); path != "" {
-		if st, rerr := acpctl.ReadResumeState(path); rerr == nil {
-			ctrl.Restore(st.Ctrl)
-			resume = &st.Proxy
-			acpproxy.Trace("resumed from re-exec: %d session(s)", len(st.Proxy.Sessions))
-			if st.PriorSupervisor != "" { // the previous generation's sweep failed — one retry, still before any box spawns
-				if cerr := a.reapACPBoxes(st.PriorSupervisor); cerr != nil {
-					ui.Warn("acp reload: previous generation's box cleanup failed again (%v) — a box labelled %s may linger until this supervisor exits", cerr, st.PriorSupervisor)
-				}
+	if st := a.acpResume; st != nil {
+		ctrl.Restore(st.Ctrl)
+		resume = &st.Proxy
+		acpproxy.Trace("resumed from re-exec: %d session(s)", len(st.Proxy.Sessions))
+		if st.PriorSupervisor != "" { // the previous generation's sweep failed — one retry, still before any box spawns
+			if cerr := a.reapACPBoxes(st.PriorSupervisor); cerr != nil {
+				ui.Warn("acp reload: previous generation's box cleanup failed again (%v) — a box labelled %s may linger until this supervisor exits", cerr, st.PriorSupervisor)
 			}
-		} else {
-			fmt.Fprintf(os.Stderr, "⚠ Could not restore the editor session\n\n      The saved session state could not be read.\n      %v\n\n  Starting a new session.\n", rerr)
 		}
 	}
 	// SIGHUP → a graceful reload (re-exec the freshly-built binary in place). SIGTERM/SIGINT stay
@@ -450,6 +462,9 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	})
 	factory := func(ctx context.Context) (*acpproxy.Child, error) {
 		t, psName, ok := ctrl.SpawnTarget()
+		if err := ctrl.ValidateNetworkTarget(t, psName); err != nil {
+			return nil, err
+		}
 		if acpctl.BareProviderSwitch(t, psName, ok) {
 			if c := pool.Checkout(t.Provider); c != nil {
 				go pool.Refill(t.Provider) // keep it hot for a repeat switch
@@ -603,6 +618,11 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	if provider == "" && ctrl != nil {
 		provider = ctrl.LeadProvider()
 	}
+	if ctrl != nil {
+		if err := ctrl.ValidateNetworkTarget(agents.Target{Provider: provider}, psName); err != nil {
+			return nil, err
+		}
+	}
 	account := t.Account()
 	if account == "" && provider != "" {
 		account = a.cfg.DefaultProfileOf(provider)
@@ -642,6 +662,13 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			} else if acct := t.Account(); acct != "" {
 				ctrl.WaitForReset(ctx, t.Provider, acct)
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			inR.Close()
+			inW.Close()
+			outR.Close()
+			outW.Close()
+			return nil, err
 		}
 		if ctrl != nil {
 			// Presence is the selection signal; an empty value explicitly clears a positional

@@ -189,7 +189,11 @@ func startLiveACP(t *testing.T, provider string, requiredProviders ...string) *l
 		failLiveACPSetup(t, "environment")
 	}
 	t.Setenv("COOP_CONFIG_DIR", processLayout.Config)
-	cmd := exec.Command(coopE2EBinary, "acp", provider)
+	args := []string{"acp"}
+	if provider != "" {
+		args = append(args, provider)
+	}
+	cmd := exec.Command(coopE2EBinary, args...)
 	cmd.Dir = coopE2ERepo
 	cmd.Env = append([]string(nil), environment...)
 	cmd.ExtraFiles = []*os.File{control}
@@ -255,7 +259,7 @@ func liveACPSelections(targetOrPreset string, extraProviders ...string) ([]livep
 	targets := []agents.Target{}
 	if target, err := agents.ParseTarget(targetOrPreset); err == nil {
 		targets = append(targets, target)
-	} else {
+	} else if targetOrPreset != "" {
 		p, loadErr := preset.Load(coopE2ERepo, "", targetOrPreset)
 		if loadErr != nil {
 			return nil, loadErr
@@ -316,6 +320,13 @@ func (a *liveACP) stop(t *testing.T) {
 	cancel()
 	if cleanupErr != nil {
 		t.Errorf("live ACP cleanup failure: %s", a.diagnostic("cleanup", cleanupErr))
+	}
+	if revokeErr != nil {
+		// The published path was revoked before shutdown, but an existing box can
+		// still write through its bind mount while the private tombstone is removed.
+		// Retry physical deletion only after all producers and mounts are gone.
+		t.Logf("retrying live credential revocation after cleanup: %s", a.diagnostic("credential_revoke", revokeErr))
+		revokeErr = a.credentials.Revoke()
 	}
 	if revokeErr != nil {
 		t.Errorf("live ACP credential revocation failure: %s", a.diagnostic("credential_revoke", revokeErr))
@@ -520,7 +531,7 @@ func TestCodexTargetRolloutTruth(t *testing.T) {
 	if sessionID == "" {
 		live.fail(t, "session_new_result", nil)
 	}
-	if _, err := live.client.req(ctx, "session/prompt", map[string]any{
+	if _, err := live.client.promptWithoutLimitWait(ctx, map[string]any{
 		"sessionId": sessionID,
 		"prompt":    []any{map[string]any{"type": "text", "text": "Reply with only OK."}},
 	}); err != nil {
@@ -581,7 +592,7 @@ func TestFrontierStoredTargetTruth(t *testing.T) {
 	}
 	sessionID := responseSessionID(response)
 	marker := "FRONTIER_TARGET_" + strings.ReplaceAll(newForeignSessionID(t), "-", "")
-	if _, err := live.client.req(ctx, "session/prompt", map[string]any{
+	if _, err := live.client.promptWithoutLimitWait(ctx, map[string]any{
 		"sessionId": sessionID,
 		"prompt":    []any{map[string]any{"type": "text", "text": "Reply with only " + marker + "."}},
 	}); err != nil {
@@ -607,6 +618,7 @@ func TestFrontierStoredTargetTruth(t *testing.T) {
 	default:
 		live.fail(t, "provider_target", nil)
 	}
+	t.Logf("completed preset target: provider=%s model=%s effort=%s", provider, model, effort)
 }
 
 func waitForFrontierStoredTarget(ctx context.Context, configDir, editorSessionID, marker string) (string, string, string, error) {
@@ -814,7 +826,9 @@ func TestLiveProviderConformance(t *testing.T) {
 	cwd := coopE2ERepo
 	for _, provider := range agents.Names() {
 		t.Run(provider, func(t *testing.T) {
-			live := startLiveACP(t, provider)
+			// Exercise the editor's literal ["acp"] invocation with only this
+			// provider signed in. Explicit targets are covered by the switch matrix.
+			live := startLiveACP(t, "", provider)
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
 			initialize, err := live.client.req(ctx, "initialize", map[string]any{
@@ -842,7 +856,7 @@ func TestLiveProviderConformance(t *testing.T) {
 				}
 			}
 			firstMark := live.client.mark()
-			if _, err := live.client.req(ctx, "session/prompt", map[string]any{
+			if _, err := live.client.promptWithoutLimitWait(ctx, map[string]any{
 				"sessionId": sessionID,
 				"prompt":    []any{map[string]any{"type": "text", "text": "Reply with only LIVE_ONE_OK."}},
 			}); err != nil {
@@ -851,6 +865,7 @@ func TestLiveProviderConformance(t *testing.T) {
 			if got := liveAssistantText(live.client.transcript()[firstMark:]); !strings.Contains(got, "LIVE_ONE_OK") {
 				live.fail(t, "marker", nil)
 			}
+			cancelLivePrompt(t, ctx, live, sessionID)
 
 			modelOption, hasModel := options["model"]
 			if !hasModel || modelOption.CurrentValue == "" {
@@ -894,7 +909,7 @@ func TestLiveProviderConformance(t *testing.T) {
 				live.fail(t, "model_replay", nil)
 			}
 			secondMark := live.client.mark()
-			if _, err := live.client.req(ctx, "session/prompt", map[string]any{
+			if _, err := live.client.promptWithoutLimitWait(ctx, map[string]any{
 				"sessionId": sessionID,
 				"prompt":    []any{map[string]any{"type": "text", "text": "Reply with only LIVE_TWO_OK."}},
 			}); err != nil {
@@ -909,7 +924,7 @@ func TestLiveProviderConformance(t *testing.T) {
 					live.fail(t, "model_fallback", nil)
 				}
 				secondMark = live.client.mark()
-				if _, err := live.client.req(ctx, "session/prompt", map[string]any{
+				if _, err := live.client.promptWithoutLimitWait(ctx, map[string]any{
 					"sessionId": sessionID,
 					"prompt":    []any{map[string]any{"type": "text", "text": "Reply with only LIVE_TWO_OK."}},
 				}); err != nil {
@@ -930,60 +945,69 @@ func TestLiveProviderConformance(t *testing.T) {
 }
 
 func TestLiveCrossProviderCarry(t *testing.T) {
-	for _, destination := range []string{"codex", "grok"} {
-		t.Run(destination, func(t *testing.T) {
-			cwd := coopE2ERepo
-			live := startLiveACP(t, "claude", destination)
-			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-			defer cancel()
-			if _, err := live.client.req(ctx, "initialize", map[string]any{
-				"protocolVersion": 1,
-				"clientCapabilities": map[string]any{
-					"fs": map[string]any{"readTextFile": true, "writeTextFile": true},
-				},
-			}); err != nil {
-				live.fail(t, "initialize", err)
+	for _, source := range agents.Names() {
+		for _, destination := range agents.Names() {
+			if source == destination {
+				continue
 			}
-			response, err := live.client.req(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}})
-			if err != nil {
-				live.fail(t, "session_new", err)
-			}
-			sessionID := responseSessionID(response)
-			token := "COOP_CARRY_LIVE_" + strings.ToUpper(destination)
-			if _, err := live.client.req(ctx, "session/prompt", map[string]any{
-				"sessionId": sessionID,
-				"prompt":    []any{map[string]any{"type": "text", "text": "Remember the token " + token + " and reply only SOURCE_OK."}},
-			}); err != nil {
-				live.fail(t, "source_prompt", err)
-			}
-			options := liveConfigOptions(t, live, response)
-			provider := options["coop_provider"]
-			found := false
-			for _, option := range provider.Options {
-				found = found || option.Value == destination
-			}
-			if !found {
-				live.fail(t, "provider_option", nil)
-			}
-			mark := live.client.mark()
-			options = setLiveConfig(ctx, t, live, sessionID, "coop_provider", destination)
-			if options["coop_provider"].CurrentValue != destination {
-				live.fail(t, "provider_switch", nil)
-			}
-			destinationMark := live.client.mark()
-			if _, err := live.client.req(ctx, "session/prompt", map[string]any{
-				"sessionId": sessionID,
-				"prompt":    []any{map[string]any{"type": "text", "text": "Reply with only the token you were asked to remember in the carried conversation."}},
-			}); err != nil {
-				live.fail(t, "destination_prompt", err)
-			}
-			if got := liveAssistantText(live.client.transcript()[destinationMark:]); !strings.Contains(got, token) {
-				live.fail(t, "carry_marker", nil)
-			}
-			if liveMessageContains(live.client.transcript()[mark:], "[coop] This thread continues") {
-				live.fail(t, "carry_visibility", nil)
-			}
-		})
+			t.Run(source+"_to_"+destination, func(t *testing.T) {
+				cwd := coopE2ERepo
+				live := startLiveACP(t, source, destination)
+				ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+				defer cancel()
+				if _, err := live.client.req(ctx, "initialize", map[string]any{
+					"protocolVersion": 1,
+					"clientCapabilities": map[string]any{
+						"fs": map[string]any{"readTextFile": true, "writeTextFile": true},
+					},
+				}); err != nil {
+					live.fail(t, "initialize", err)
+				}
+				response, err := live.client.req(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}})
+				if err != nil {
+					live.fail(t, "session_new", err)
+				}
+				sessionID := responseSessionID(response)
+				token := "COOP_CARRY_LIVE_" + strings.ReplaceAll(newForeignSessionID(t), "-", "")
+				sourceMark := live.client.mark()
+				if _, err := live.client.promptWithoutLimitWait(ctx, map[string]any{
+					"sessionId": sessionID,
+					"prompt":    []any{map[string]any{"type": "text", "text": "Remember the token " + token + " and reply only SOURCE_OK."}},
+				}); err != nil {
+					live.fail(t, "source_prompt", err)
+				}
+				if !strings.Contains(liveAssistantText(live.client.transcript()[sourceMark:]), "SOURCE_OK") {
+					live.fail(t, "marker", nil)
+				}
+				options := liveConfigOptions(t, live, response)
+				provider := options["coop_provider"]
+				found := false
+				for _, option := range provider.Options {
+					found = found || option.Value == destination
+				}
+				if !found {
+					live.fail(t, "provider_option", nil)
+				}
+				mark := live.client.mark()
+				options = setLiveConfig(ctx, t, live, sessionID, "coop_provider", destination)
+				if options["coop_provider"].CurrentValue != destination {
+					live.fail(t, "provider_switch", nil)
+				}
+				destinationMark := live.client.mark()
+				if _, err := live.client.promptWithoutLimitWait(ctx, map[string]any{
+					"sessionId": sessionID,
+					"prompt":    []any{map[string]any{"type": "text", "text": "Reply with only the token you were asked to remember in the carried conversation."}},
+				}); err != nil {
+					live.fail(t, "destination_prompt", err)
+				}
+				if got := liveAssistantText(live.client.transcript()[destinationMark:]); !strings.Contains(got, token) {
+					live.fail(t, "carry_marker", nil)
+				}
+				if liveMessageContains(live.client.transcript()[mark:], "[coop] This thread continues") {
+					live.fail(t, "carry_visibility", nil)
+				}
+			})
+		}
 	}
 }
 

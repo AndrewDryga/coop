@@ -18,13 +18,14 @@ type plan struct {
 }
 
 type step struct {
-	Method        string            `json:"method"`
-	Params        json.RawMessage   `json:"params,omitempty"`
-	Result        json.RawMessage   `json:"result,omitempty"`
-	Error         json.RawMessage   `json:"error,omitempty"`
-	Events        []json.RawMessage `json:"events,omitempty"`
-	EchoPrompt    bool              `json:"echo_prompt,omitempty"`
-	DeferResponse bool              `json:"defer_response,omitempty"`
+	Method           string            `json:"method"`
+	Params           json.RawMessage   `json:"params,omitempty"`
+	Result           json.RawMessage   `json:"result,omitempty"`
+	Error            json.RawMessage   `json:"error,omitempty"`
+	Events           []json.RawMessage `json:"events,omitempty"`
+	EchoPrompt       bool              `json:"echo_prompt,omitempty"`
+	DeferResponse    bool              `json:"defer_response,omitempty"`
+	CompleteDeferred bool              `json:"complete_deferred,omitempty"`
 }
 
 type request struct {
@@ -168,6 +169,7 @@ func serveProvider(provider string) error {
 	scanner := bufio.NewScanner(os.Stdin)
 	buf := make([]byte, 64<<10)
 	scanner.Buffer(buf, 1<<20)
+	var deferredID json.RawMessage
 	for i, expected := range steps {
 		if !scanner.Scan() {
 			if err := scanner.Err(); err != nil {
@@ -202,9 +204,23 @@ func serveProvider(provider string) error {
 			}
 		}
 		if expected.DeferResponse {
-			continue // the supervisor will replace this generation; retain the request in flight
+			if len(deferredID) != 0 || len(req.ID) == 0 {
+				return fmt.Errorf("step %d cannot defer this request", i+1)
+			}
+			deferredID = req.ID
+			continue
 		}
-		response := map[string]any{"jsonrpc": "2.0", "id": req.ID}
+		id := req.ID
+		if expected.CompleteDeferred {
+			if len(deferredID) == 0 {
+				return fmt.Errorf("step %d has no deferred request", i+1)
+			}
+			id, deferredID = deferredID, nil
+		}
+		if len(id) == 0 {
+			continue // notifications do not have JSON-RPC responses
+		}
+		response := map[string]any{"jsonrpc": "2.0", "id": id}
 		if len(expected.Error) > 0 {
 			response["error"] = expected.Error
 		} else if len(expected.Result) > 0 {

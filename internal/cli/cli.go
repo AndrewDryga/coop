@@ -53,6 +53,7 @@ type app struct {
 	network              networkFlags                                 // this launch's --egress/--allow-domain/--egress-rules, resolved by box.AdmitNetwork
 	mode                 agents.ExecutionMode                         // this launch's --readonly/--bare; "" (normal) is every launch that takes neither
 	acpCapture           *box.CapturedEgress                          // an ACP supervisor's frozen policy; every child it spawns gets a reference to this one
+	acpResume            *acpctl.ResumeState                          // consumed once before admission; restored by the supervisor afterward
 	beforeSignRefUpdate  func(repo, ref, oldHead, newHead string)     // test seam for a concurrent signing ref move
 	afterDetachedPublish func()                                       // test seam for state replacement before repeated child validation
 	acpModels            func(agent string) ([]acpctl.Model, error)   // test seam for Claude/Gemini model refresh; nil → a real ACP box

@@ -1,16 +1,22 @@
 coop acp — connect your editor to an agent running in a Coop box
 
 Usage:
-  coop acp <agent|preset> [options]
+  coop acp [<agent|preset>] [options]
 
 EDITOR SETUP
   Set the editor's agent command to coop and its arguments to:
 
+  ["acp"]
   ["acp", "claude"]
   ["acp", "codex:gpt-6-astra/high@personal"]
   ["acp", "frontier"]
 
   Your editor must support ACP, the Agent Client Protocol.
+
+  Without an agent or preset, Coop starts the first signed-in provider in
+  Claude, Codex, Gemini, Grok order, using its default account. This does not
+  pin the choice: use the editor's selectors after connecting.
+  No providers signed in? Run coop login <agent>, then reconnect your editor.
 
 OPTIONS
   --peer <agent>          start a peer provider for read-only advice
@@ -32,6 +38,10 @@ SWITCHING AGENTS
 
   Switching providers carries the conversation into a new agent session.
   Account changes keep the conversation with the same provider.
+
+  With filtered networking, only compatible providers and presets are offered.
+  Claude and Codex support it; Gemini and Grok currently require open networking.
+  Switching never changes this session's network rules.
 
 READ-ONLY WORK
   coop fork investigation acp claude --readonly
