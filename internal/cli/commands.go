@@ -281,6 +281,11 @@ func (a *app) runRestrictedInBox(cmd []string, agent string) (int, error) {
 		}
 		defer capture.Close()
 		spec.CapturedEgress = capture
+		// The shared base image is this launch's image too, so a definition that drifted is
+		// repaired here as on an ordinary launch. Bare has no project to build from and skips it.
+		if err := a.checkCoopBox(repo, img); err != nil {
+			return 1, err
+		}
 	}
 	return box.Run(a.cfg, a.rt, spec)
 }

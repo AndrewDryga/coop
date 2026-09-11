@@ -79,6 +79,16 @@ func checkRestrictedSpec(cfg *config.Config, rt runtime.Runtime, spec RunSpec, m
 	if spec.CapturedEgress != nil || spec.networkSmoke != nil || cfg.Egress == "filtered" {
 		return fmt.Errorf("a %s run is not qualified under restricted networking — run it with --egress open or none", mode)
 	}
+	// The repository mounts at its own host path; the profile's scratch tmpfs are fixed paths.
+	// A repository that IS one of them (a run from /tmp outside any checkout) would ask the
+	// runtime for two mounts at one point, which it refuses after the box was already narrated.
+	if mode == agents.ModeReadOnly {
+		for _, scratch := range []string{"/tmp", cfg.HomeInBox, BareWorkdir} {
+			if scratch != "" && (spec.Repo == scratch || strings.HasPrefix(spec.Repo, scratch+"/")) {
+				return fmt.Errorf("a %s run cannot mount %s as the repository — that path is the box's own scratch; run it from a checkout", mode, spec.Repo)
+			}
+		}
+	}
 	if cfg.BaseImage == "" || spec.Image != cfg.BaseImage {
 		return fmt.Errorf("a %s run uses the shared base image only, never %q", mode, spec.Image)
 	}
@@ -392,7 +402,17 @@ func validateRestrictedOptions(options []string, plan restrictedPlan) error {
 // runRestricted is the launch of a readonly or bare run: the normal launch's spec checks, the
 // mount plan, the seed, then the shared option assembly on a spec with every optional exposure
 // off, and the proof of the result against the plan before the runtime starts.
-func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifacts compositionArtifactOps, mode agents.ExecutionMode) (int, error) {
+func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifacts compositionArtifactOps, mode agents.ExecutionMode) (exitCode int, result error) {
+	// The same narration an ordinary interactive launch gets (launch_sections.go): the secrets it
+	// hid, the one Internet access section, the agent's name, and why the box stopped. A bare run
+	// mounts no repository, so it has nothing to hide and says so.
+	sections := newLaunchSections(spec)
+	started := false
+	defer func() {
+		if !started {
+			result = sections.failed(result)
+		}
+	}()
 	if err := checkRestrictedSpec(cfg, rt, spec, mode); err != nil {
 		return -1, err
 	}
@@ -455,7 +475,9 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 			}
 			spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_COMPANION_REPOSITORIES_JSON="+string(data))
 		}
-		if n := ShadowCount(mounts); n > 0 && !spec.Quiet {
+		if n := ShadowCount(mounts); sections.on {
+			sections.secrets(n)
+		} else if n > 0 && !spec.Quiet {
 			ui.Info("shadowed %d secret path(s)", n)
 		}
 		// One empty read-only file shadows every secret file, one empty read-only dir every
@@ -567,8 +589,15 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 	if spec.OnRuntimeLaunch != nil {
 		spec.OnRuntimeLaunch()
 	}
+	if mode == agents.ModeBare {
+		sections.secrets(0) // nothing mounted, nothing to hide — said rather than skipped
+	}
+	sections.internet(cfg, spec, nil)
+	sections.starting()
 	if spec.Ctx != nil {
 		code, runErr := rt.RunInterruptible(spec.Ctx, stdin, stdout, stderr, args...)
+		started = true
+		sections.stopping(stopReason(code, runErr, nil))
 		if spec.Ctx.Err() == nil || spec.RunID == "" {
 			return code, runErr
 		}
@@ -577,5 +606,11 @@ func runRestricted(cfg *config.Config, rt runtime.Runtime, spec RunSpec, artifac
 		_, cleanupErr := rt.RemoveByLabel(cleanupCtx, LabelRun, spec.RunID)
 		return code, errors.Join(runErr, cleanupErr)
 	}
-	return rt.Run(stdin, stdout, stderr, args...)
+	code, runErr := rt.Run(stdin, stdout, stderr, args...)
+	// The plain client ran the box to its end, so its exit status is the main process's; a client
+	// that could not start is the one case with no box to stop, narrated as the failure above.
+	if started = runErr == nil; started {
+		sections.stopping(stopReason(code, nil, nil))
+	}
+	return code, runErr
 }

@@ -577,3 +577,55 @@ func TestRunReadOnlyMountsCompanionsReadOnly(t *testing.T) {
 		t.Fatalf("companion environment missing from %q", got)
 	}
 }
+
+// A restricted launch is narrated exactly like an ordinary interactive one — the secrets it hid
+// (a bare run mounts nothing and says so), the one Internet access section, the agent's name, and
+// why the box stopped — and stays silent in a batch embedding.
+func TestRunRestrictedNarratesLikeAnInteractiveLaunch(t *testing.T) {
+	cfg := restrictedConfig(t)
+	cfg.Egress = "open"
+	// The runtime must be named docker (the only one the profile is qualified on); the box exits 4.
+	shim := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\ncase \"$1\" in run) exit 4 ;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := RunSpec{Image: "coop-box", Cmd: []string{"sh", "-c", "exit 4"}, Mode: agents.ModeBare}
+	var code int
+	var err error
+	got := captureStderr(t, func() { code, err = Run(cfg, runtime.Runtime{Name: shim}, spec) })
+	if err != nil || code != 4 {
+		t.Fatalf("Run = %d, %v; want the box's own exit 4", code, err)
+	}
+	want := "\nProtecting secrets\n  ✓ No secret paths to hide\n" +
+		"\nInternet access\n  ⚠ Unrestricted — nothing is blocked\n" +
+		"\nStarting sh\n" +
+		"coop: stopping the box — main process exited with status 4\n"
+	if got != want {
+		t.Fatalf("interactive bare run narrated:\n%q\nwant:\n%q", got, want)
+	}
+	cfg.Egress = "none"
+	readonly := RunSpec{Image: "coop-box", Repo: t.TempDir(), Workdir: "/workspace", Cmd: []string{"sh", "-c", "exit 4"}, Mode: agents.ModeReadOnly}
+	got = captureStderr(t, func() { _, _ = Run(cfg, runtime.Runtime{Name: shim}, readonly) })
+	if !strings.Contains(got, "\nProtecting secrets\n  ✓ ") || !strings.Contains(got, "\nInternet access\n  ⚠ Offline — nothing outside the box can be reached\n") ||
+		!strings.HasSuffix(got, "coop: stopping the box — main process exited with status 4\n") {
+		t.Fatalf("interactive readonly run narrated:\n%q", got)
+	}
+	readonly.Batch = true
+	if got := captureStderr(t, func() { _, _ = Run(cfg, runtime.Runtime{Name: shim}, readonly) }); got != "" {
+		t.Fatalf("a batch restricted run printed %q", got)
+	}
+}
+
+// A repository that sits on one of the profile's scratch paths — a run from /tmp outside any
+// checkout — is refused by name before anything is narrated, instead of the runtime refusing two
+// mounts at one point after the launch already said what it was doing.
+func TestRunReadOnlyRefusesAScratchPathRepository(t *testing.T) {
+	cfg := restrictedConfig(t)
+	for _, repo := range []string{"/tmp", "/tmp/project", "/home/node/x", "/workspace"} {
+		spec := RunSpec{Image: "coop-box", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"}, Mode: agents.ModeReadOnly, Batch: true, Quiet: true}
+		_, err := Run(cfg, dockerRecorder(t, filepath.Join(t.TempDir(), "runtime-args")), spec)
+		if err == nil || !strings.Contains(err.Error(), "box's own scratch") {
+			t.Fatalf("repo %s: err = %v, want the scratch-path refusal", repo, err)
+		}
+	}
+}

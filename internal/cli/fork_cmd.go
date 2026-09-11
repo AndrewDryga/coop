@@ -715,6 +715,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("prepare fork session before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))
 	}
+	// An interactive fork launch narrates itself like a plain one, starting with the box
+	// repair when the shared image's definition drifted from this coop's.
+	if err := a.checkCoopBox(ws, img); err != nil {
+		return 1, err
+	}
 	code, err := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: ws, Cmd: cmd, Agent: fa.agent, ConsultLead: fa.agent, Preset: a.preset,
 		ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkInteractive,

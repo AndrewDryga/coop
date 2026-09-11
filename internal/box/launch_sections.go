@@ -33,10 +33,11 @@ func (spec RunSpec) interactive() bool { return !spec.Batch && !spec.Quiet && !s
 type launchSections struct {
 	on      bool
 	subject string
+	opened  bool // a section heading has been printed, so a failure nests under it
 }
 
-func newLaunchSections(spec RunSpec) launchSections {
-	return launchSections{on: spec.interactive(), subject: launchSubject(spec)}
+func newLaunchSections(spec RunSpec) *launchSections {
+	return &launchSections{on: spec.interactive(), subject: launchSubject(spec)}
 }
 
 func launchSubject(spec RunSpec) string {
@@ -53,10 +54,11 @@ func launchSubject(spec RunSpec) string {
 // about to use — a definition that drifted, an image a month old — as cautions, never as a
 // `coop:` line. The cli renders the same heading when it repairs a definition mismatch before
 // Run; a repaired image is current and fresh, so the two never both appear.
-func (s launchSections) box(nudges []string) {
+func (s *launchSections) box(nudges []string) {
 	if !s.on || len(nudges) == 0 {
 		return
 	}
+	s.opened = true
 	ui.Section("Checking the Coop box")
 	for _, nudge := range nudges {
 		ui.Caution("%s", nudge)
@@ -65,10 +67,11 @@ func (s launchSections) box(nudges []string) {
 
 // secrets is how many secret-looking paths the mount plan hid. The count is the exact plan's;
 // a checkout with nothing to hide says so instead of inventing one.
-func (s launchSections) secrets(hidden int) {
+func (s *launchSections) secrets(hidden int) {
 	if !s.on {
 		return
 	}
+	s.opened = true
 	ui.Section("Protecting secrets")
 	if hidden == 0 {
 		ui.Pass("No secret paths to hide")
@@ -80,10 +83,11 @@ func (s launchSections) secrets(hidden int) {
 // internet is the one stable section every mode shares. A filtered run lists what the frozen
 // policy allows and only then claims the rest is blocked; an open run and an offline run get a
 // warning under the same heading, never a green row.
-func (s launchSections) internet(cfg *config.Config, spec RunSpec, policy *egress.Snapshot) {
+func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egress.Snapshot) {
 	if !s.on {
 		return
 	}
+	s.opened = true
 	ui.Section("Internet access")
 	switch {
 	case policy != nil:
@@ -164,17 +168,18 @@ func offlineText(spec RunSpec) string {
 
 // starting is the last section. It has no result line of its own: what follows it is the
 // agent's output, or the nested failure when the main process never started.
-func (s launchSections) starting() {
+func (s *launchSections) starting() {
 	if !s.on {
 		return
 	}
+	s.opened = true
 	ui.Section("Starting " + s.subject)
 }
 
 // stopping is the one lifecycle line an interactive box prints when its teardown begins. It
 // carries the `coop:` anchor because it follows arbitrary agent output; it says "stopping", not
 // "stopped", because cleanup has not run yet.
-func (s launchSections) stopping(reason string) {
+func (s *launchSections) stopping(reason string) {
 	if !s.on {
 		return
 	}
@@ -184,8 +189,10 @@ func (s launchSections) stopping(reason string) {
 // failed renders a launch that stopped before its main process as the nested failure of the
 // section in progress and returns the error marked reported, so the dispatcher adds nothing on
 // top. A cancellation is not explained: the person who pressed Ctrl-C knows why it stopped.
-func (s launchSections) failed(err error) error {
-	if !s.on || err == nil || errors.Is(err, context.Canceled) || errors.Is(err, ui.ErrReported) {
+func (s *launchSections) failed(err error) error {
+	if !s.on || !s.opened || err == nil || errors.Is(err, context.Canceled) || errors.Is(err, ui.ErrReported) {
+		// Before any section has opened there is nothing to nest under: a refusal by name reads
+		// as the dispatcher's own plain ✗ line, exactly like a usage error.
 		return err
 	}
 	ui.Fail("Could not start "+s.subject, err.Error(), "")
@@ -196,7 +203,7 @@ func (s launchSections) failed(err error) error {
 // as reported, so the dispatcher does not add a bare "✗ interrupted" beneath the run it just
 // printed. The error itself is untouched: the exit status and errors.Is still see a cancellation.
 // Any other failure of a started box keeps its full message, which the stop line only led with.
-func (s launchSections) explained(err error, interrupt *hostInterrupt) error {
+func (s *launchSections) explained(err error, interrupt *hostInterrupt) error {
 	if !s.on || err == nil || interrupt.reason() == "" || !errors.Is(err, context.Canceled) {
 		return err
 	}
@@ -209,6 +216,12 @@ func (s launchSections) explained(err error, interrupt *hostInterrupt) error {
 func stopReason(code int, err error, interrupt *hostInterrupt) string {
 	if reason := interrupt.reason(); reason != "" {
 		return reason
+	}
+	if err == nil && code >= 125 && code <= 127 {
+		// The client's own statuses: 125 is a run the daemon refused, 126 and 127 a command it
+		// could not invoke or find. A main process can return them too, and nothing here can
+		// tell the two apart, so neither is claimed — the runtime already printed its reason.
+		return fmt.Sprintf("the runtime returned status %d (its own error, or the main process's)", code)
 	}
 	if err == nil && code >= 0 {
 		return fmt.Sprintf("main process exited with status %d", code)

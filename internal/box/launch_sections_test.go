@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -183,9 +184,22 @@ func TestLaunchSectionsAreSilentOutsideInteractiveRuns(t *testing.T) {
 // cancellation and an already-reported error pass through untouched.
 func TestLaunchFailureIsRenderedOnceAndMarkedReported(t *testing.T) {
 	s := newLaunchSections(RunSpec{Agent: "claude"})
+	// Before any section opened there is nothing to nest under: a refusal by name passes through
+	// for the dispatcher's plain ✗ line, exactly like a usage error.
+	early := errors.New("a readonly run cannot mount /tmp as the repository")
+	if got := captureStderr(t, func() {
+		if again := s.failed(early); again != early {
+			t.Error("a failure before any section must pass through untouched")
+		}
+	}); got != "" {
+		t.Fatalf("a failure before any section rendered %q", got)
+	}
 	var err error
-	got := captureStderr(t, func() { err = s.failed(errors.New("network gateway did not become ready; no agent started")) })
-	want := "  ✗ Could not start Claude Code\n\n        network gateway did not become ready; no agent started\n"
+	got := captureStderr(t, func() {
+		s.starting()
+		err = s.failed(errors.New("network gateway did not become ready; no agent started"))
+	})
+	want := "\nStarting Claude Code\n  ✗ Could not start Claude Code\n\n        network gateway did not become ready; no agent started\n"
 	if got != want {
 		t.Fatalf("failure rendered %q, want %q", got, want)
 	}
@@ -222,6 +236,13 @@ func TestStopReasonNeverInfersASignalFromAnExitStatus(t *testing.T) {
 	}
 	if got := stopReason(-1, errors.New("restricted network health lost: probe\nsecond line"), nil); got != "restricted network health lost: probe" {
 		t.Fatalf("failure read as %q", got)
+	}
+	// The client's own statuses are not claimed as the main process's: a daemon that refused the
+	// run returns 125 with no box ever started, and a workload can return 125 too.
+	for _, code := range []int{125, 126, 127} {
+		if got := stopReason(code, nil, nil); got != fmt.Sprintf("the runtime returned status %d (its own error, or the main process's)", code) {
+			t.Fatalf("exit %d read as %q", code, got)
+		}
 	}
 }
 
