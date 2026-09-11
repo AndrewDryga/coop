@@ -73,7 +73,7 @@ func (a *app) cmdNetForget(args []string) (int, error) {
 		if err := review.Close(); err != nil {
 			return 1, err
 		}
-		ui.Note("nothing is remembered for %s", review.Project())
+		ui.Note("nothing is approved for %s", review.Project())
 		if review.Gone() {
 			ui.Detail("a path that was a symlink was approved as the directory it pointed at — forget that path instead")
 		}
@@ -113,9 +113,11 @@ func confirmNetForget(ctx context.Context, review netForgetReview, out io.Writer
 	var b strings.Builder
 	p := ui.For(os.Stderr)
 	block := newNetBlock(&b, p, "Forget the network approval for "+review.Project())
-	block.field("Egress", string(approval.Posture)+", remembered until now")
+	// The same words the approval review and bare `coop net` use for a posture, so forgetting
+	// reads as the reverse of approving rather than as a different vocabulary.
+	block.field("Access", netModeWord(approval.Posture)+" — approved until now")
 	if len(approval.Envelope) == 0 {
-		block.field("Rules", "none — this approval had no destinations of its own")
+		block.field("Rules", "none — this approval granted no websites or services")
 	} else {
 		block.field("Rules", ui.Count(len(approval.Envelope), "rule")+", all of them")
 		for _, rule := range approval.Envelope {
@@ -123,11 +125,12 @@ func confirmNetForget(ctx context.Context, review netForgetReview, out io.Writer
 		}
 	}
 	if review.Gone() {
-		block.field("Project", "this directory is gone — its remembered approval is all that is left to remove")
+		block.field("Project", "this directory is gone — only its approval is left to remove")
 	}
 	// The blast radius, said before the question: one approval, and nothing that
 	// records what already happened.
 	block.field("Keeps", "the runs recorded for this project, their receipts, and this host's setup")
+	block.field("Then", "the next run of this project asks for approval again before it starts")
 	block.flush(&b)
 	if _, err := io.WriteString(out, b.String()); err != nil {
 		return err

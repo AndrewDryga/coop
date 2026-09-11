@@ -55,7 +55,7 @@ func TestForgetPreviewShowsWhatGoesAndWhatStays(t *testing.T) {
 		t.Fatalf("confirmNetForget: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"Forget the network approval for /private/tmp/project", "filtered, remembered until now",
+	for _, want := range []string{"Forget the network approval for /private/tmp/project", "filtered — approved until now",
 		"2 rules, all of them", "- old.example tls/443", "- other.example tls/443",
 		"the runs recorded for this project, their receipts, and this host's setup"} {
 		if !strings.Contains(text, want) {
@@ -81,7 +81,7 @@ func TestForgetPreviewSaysWhenTheProjectItselfIsGone(t *testing.T) {
 	if err := confirmNetForget(context.Background(), review, &out, func() bool { return true }); err != nil {
 		t.Fatalf("confirmNetForget: %v", err)
 	}
-	for _, want := range []string{"this directory is gone", "none — this approval had no destinations of its own"} {
+	for _, want := range []string{"this directory is gone", "none — this approval granted no websites or services"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("gone-project preview is missing %q:\n%s", want, out.String())
 		}
