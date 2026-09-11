@@ -1,5 +1,0 @@
-Coop v9.0.1 is available; you have v9.0.0.
-Box image coop-box was last built 3 days ago.
-
-Update Coop and the box
-  → coop update

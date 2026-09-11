@@ -91,11 +91,6 @@ func (r Runtime) isDockerOrPodman() bool {
 	return r.kind() == runtimeDocker || r.kind() == runtimePodman
 }
 
-// ErrDaemonUnavailable is a container runtime that is installed but not answering. Every command
-// that needs one says the same thing about it, so they share this marker rather than each
-// matching on message text.
-var ErrDaemonUnavailable = errors.New("Docker is unavailable")
-
 // EnsureDaemon verifies the daemon is reachable. Only Docker exposes a daemon we
 // probe up front; container and podman are checked lazily by their commands.
 func (r Runtime) EnsureDaemon() error {
@@ -103,7 +98,7 @@ func (r Runtime) EnsureDaemon() error {
 		return nil
 	}
 	if err := exec.Command(r.Name, "info").Run(); err != nil {
-		return fmt.Errorf("%w — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry", ErrDaemonUnavailable)
+		return errors.New("docker is installed but its daemon isn't responding — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry")
 	}
 	return nil
 }

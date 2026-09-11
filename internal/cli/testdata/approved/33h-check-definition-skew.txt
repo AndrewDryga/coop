@@ -1,8 +1,0 @@
-Coop v9.0.0 is up to date.
-Box image coop-box was last built 3 days ago.
-
-⚠ The box was built for a different Coop version
-
-      It was built by Coop v8.9.0 and uses a different box definition.
-
-  Rebuild with coop build.

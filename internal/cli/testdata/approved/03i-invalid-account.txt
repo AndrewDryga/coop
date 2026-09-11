@@ -1,7 +1,0 @@
-
-✗ Invalid account name "../work"
-
-      Use one name, without ":", "@", "/", or "\\".
-      The name cannot be ".", "..", or start with "-".
-
-  Help: coop help login

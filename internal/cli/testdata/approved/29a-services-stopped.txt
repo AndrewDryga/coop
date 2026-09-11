@@ -1,6 +1,0 @@
-Stopping services from .agent/compose.yml
-
-[Compose output]
-
-✓ Services stopped
-  Stored data was kept.

@@ -387,12 +387,12 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 	}
 	inspection.Observed.Counters.DeniedPackets = networkview.Value(3)
 	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
-	want := "\n⚠ Traffic to 2 remote addresses was blocked\n" +
+	want := "\n⚠ 2 destinations were blocked\n" +
 		"  raw.githubusercontent.com · DNS ×2\n" +
 		"  raw.githubusercontent.com · DNS — a protected address\n" +
 		"  203.0.113.5:8443 · direct connection — no rule allows that protocol and port\n" +
-		"  3 raw packets were blocked with no remote address recorded\n" +
-		"To see why: coop net blocked raw.githubusercontent.com --run e644f07a\n" +
+		"  3 raw packets were blocked with no destination recorded\n" +
+		"  coop net explain raw.githubusercontent.com --run e644f07a   # why\n" +
 		"\nFull details:"
 	if !strings.Contains(got, want) {
 		t.Fatalf("refusals:\n%s\nwant to contain:\n%s", got, want)
@@ -407,9 +407,9 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 		Candidate: &networkview.Candidate{ID: "c1", EvidenceID: "d5", AppliesTo: "next_run",
 			Rule: egress.Rule{To: egress.Destination{Domain: "registry.example.com"}, Protocol: "tls", Ports: []int{443}}}})
 	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
-	for _, want := range []string{"⚠ Traffic to 3 remote addresses was blocked\n", "  registry.example.com:443 · TLS\n",
-		"To see why: coop net blocked registry.example.com --run e644f07a\n",
-		"  To allow it: add the rule shown by `coop net blocked`, then run `coop net approve` on the host\n"} {
+	for _, want := range []string{"⚠ 3 destinations were blocked\n", "  registry.example.com:443 · TLS\n",
+		"  coop net explain registry.example.com --run e644f07a   # why\n",
+		"  To allow it: add the rule shown by 'coop net explain', then run 'coop net approve'\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
@@ -417,16 +417,17 @@ func TestInspectRefusalsCoalesceAndKeepTheExplainAction(t *testing.T) {
 	// Refused raw packets alone are still the boundary being hit.
 	inspection.Observed.Denials = nil
 	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
-	if !strings.Contains(got, "\n⚠ 3 raw packets were blocked with no remote address recorded\n") || strings.Contains(got, "coop net blocked") {
+	if !strings.Contains(got, "\n⚠ 3 raw packets were blocked with no destination recorded\n") || strings.Contains(got, "coop net explain") {
 		t.Errorf("raw-only refusals:\n%s", got)
 	}
 }
 
 // Acceptance: the interactive box's inline result and standalone inspect are
-// ONE projection — the same aggregate, the same destinations and the same
-// exception body from the same snapshot. Only the heading and the destination
-// rows differ: the box says `Networking stats:` and carries each destination's
-// own totals, because its reader just watched the run rather than choosing it.
+// ONE projection — the same traffic and exception body from the same
+// snapshot, byte for byte: human output carries no tool prefix after agent
+// output any more than anywhere else. Allowed traffic leads, the refusal rows
+// follow with the hostname-based explain action, and the footer is the same
+// exact line.
 func TestInlineRunViewIsTheStandaloneBody(t *testing.T) {
 	port := 443
 	inspection := netTestClean()
@@ -435,30 +436,23 @@ func TestInlineRunViewIsTheStandaloneBody(t *testing.T) {
 		{ID: "d2", Source: "guard", Kind: "tls_denied", Reason: "unapproved_name", Name: "unapproved.example.org", Port: &port},
 	}
 	standalone := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
-	inline := renderNetRun(networkreport.View{ID: netTestRun, Inline: true}, inspection)
-	_, standaloneBody, _ := strings.Cut(standalone, "\n")
-	_, inlineBody, _ := strings.Cut(inline, "\n")
-	if !strings.HasPrefix(inline, "Networking stats:\n") || !strings.HasPrefix(standalone, "Network run "+netTestRun+"\n") {
-		t.Fatalf("headings drifted:\n%s\n%s", inline, standalone)
+	inline := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
+	if inline != standalone {
+		t.Fatalf("inline view:\n%s\nis not the standalone body:\n%s", inline, standalone)
 	}
-	// Everything from the exception block down is the same body, byte for byte.
-	inlineExceptions := inlineBody[strings.Index(inlineBody, "\n⚠"):]
-	if standaloneExceptions := standaloneBody[strings.Index(standaloneBody, "\n⚠"):]; inlineExceptions != standaloneExceptions {
-		t.Fatalf("the inline exceptions are not the standalone body:\n%s\n%s", inlineExceptions, standaloneExceptions)
-	}
-	allowed, blocked := strings.Index(inline, "  Allowed   1 connection"), strings.Index(inline, "\n⚠ Traffic to 1 remote address was blocked\n")
+	allowed, blocked := strings.Index(inline, "  Allowed   1 connection"), strings.Index(inline, "\n⚠ 1 destination was blocked\n")
 	if allowed < 0 || blocked < allowed {
 		t.Fatalf("allowed traffic must lead and the refusal follow:\n%s", inline)
 	}
-	for _, want := range []string{"    example.com:443 · TLS · 773 B sent · 5.3 KB received\n",
-		"  unapproved.example.org:443 · TLS ×2\n", "To see why: coop net blocked unapproved.example.org --run e644f07a\n",
+	for _, want := range []string{"Network run " + netTestRun + "\n", "    example.com:443 · TLS\n",
+		"  unapproved.example.org:443 · TLS ×2\n", "  coop net explain unapproved.example.org --run e644f07a   # why\n",
 		"\nFull details: coop net inspect " + netTestRun + " --json\n"} {
 		if !strings.Contains(inline, want) {
 			t.Errorf("inline view is missing %q:\n%s", want, inline)
 		}
 	}
-	if strings.Contains(inline, netTestRun+"\n") || strings.Contains(inline, "nothing was refused") || strings.Contains(inline, "\x1b") {
-		t.Fatalf("inline view repeats the opaque id, the retired filler, or ANSI off a terminal:\n%s", inline)
+	if strings.Contains(inline, "coop net approve") || strings.Contains(inline, "nothing was refused") || strings.Contains(inline, "\x1b") {
+		t.Fatalf("inline view offers unproven approval guidance, the retired filler, or ANSI off a terminal:\n%s", inline)
 	}
 }
 
@@ -580,13 +574,11 @@ func TestInspectCleanupIsReportedOnlyWhenStillOwed(t *testing.T) {
 	}{
 		{box.NetworkRecovery{Live: true, Skipped: "its supervisor (pid 7) is still running or its identity is uncertain"}, networkreport.Cleanup{Expected: true}},
 		{box.NetworkRecovery{Skipped: "the runtime it ran on is unavailable: Cannot connect to the Docker daemon"},
-			networkreport.Cleanup{Blocker: "Docker is unavailable", Remedy: "Start Docker; Coop will retry automatically"}},
-		{box.NetworkRecovery{Skipped: "the runtime at unix:///x.sock is a different daemon than the one this run used"},
-			networkreport.Cleanup{Blocker: "Docker is connected to a different daemon than this run used", Remedy: "Reconnect to the original Docker daemon"}},
+			networkreport.Cleanup{Blocker: "the runtime it ran on is unavailable: Cannot connect to the Docker daemon", Remedy: "Coop will retry automatically once that Docker daemon is back"}},
 		{box.NetworkRecovery{Failures: []error{errors.New("guard: permission denied")}, Pending: []string{"guard"}},
 			networkreport.Cleanup{Blocker: "guard: permission denied", Remedy: "Coop will retry automatically"}},
-		{box.NetworkRecovery{Pending: []string{"ipc", "observations"}, PendingVolumes: 2},
-			networkreport.Cleanup{Blocker: "2 temporary volumes are still in use", Remedy: "Coop will retry automatically"}},
+		{box.NetworkRecovery{Pending: []string{"ipc", "observations"}},
+			networkreport.Cleanup{Blocker: "still to remove: ipc, observations", Remedy: "Coop will retry automatically"}},
 		{box.NetworkRecovery{Removed: []string{"agent"}, Sealed: true}, networkreport.Cleanup{}},
 	} {
 		if got := netCleanupOf(tc.result); got != tc.want {
@@ -631,24 +623,24 @@ func TestNetRunArgsTakeOneOptionalRun(t *testing.T) {
 func TestNetResolveRunAcceptsUniquePrefixesAndNeverGuesses(t *testing.T) {
 	page := networkstate.ExecutionPage{Executions: []networkstate.ExecutionSummary{
 		{ID: netTestRun}, {ID: netTestRunTwo}, {ID: "cb375d22ffffffffffffffffffffffff"}}}
-	if got, err := netResolveRun(page, "e644", "coop net inspect"); err != nil || got != netTestRun {
+	if got, err := netResolveRun(page, "e644"); err != nil || got != netTestRun {
 		t.Errorf("unique prefix = (%q, %v)", got, err)
 	}
-	if got, err := netResolveRun(page, netTestRun, "coop net inspect"); err != nil || got != netTestRun {
+	if got, err := netResolveRun(page, netTestRun); err != nil || got != netTestRun {
 		t.Errorf("full id = (%q, %v)", got, err)
 	}
-	_, err := netResolveRun(page, "cb375d22", "coop net inspect")
+	_, err := netResolveRun(page, "cb375d22")
 	if err == nil || !strings.Contains(err.Error(), "cb375d22a") || !strings.Contains(err.Error(), "cb375d22f") || strings.Contains(err.Error(), netTestRunTwo) {
 		t.Errorf("ambiguous prefix = %v, want the two longer prefixes", err)
 	}
-	if _, err := netResolveRun(page, "0000", "coop net inspect"); err == nil || !strings.Contains(err.Error(), "coop net runs") {
+	if _, err := netResolveRun(page, "0000"); err == nil || !strings.Contains(err.Error(), "coop net runs") {
 		t.Errorf("unknown prefix = %v", err)
 	}
-	if _, err := netResolveRun(page, "not-hex", "coop net inspect"); err == nil {
+	if _, err := netResolveRun(page, "not-hex"); err == nil {
 		t.Error("a non-hex reference was accepted")
 	}
 	page.Incomplete = true
-	if _, err := netResolveRun(page, "e644", "coop net inspect"); err == nil || !strings.Contains(err.Error(), "Use a full run ID") {
+	if _, err := netResolveRun(page, "e644"); err == nil || !strings.Contains(err.Error(), "full run id") {
 		t.Errorf("a prefix was trusted against an incomplete listing: %v", err)
 	}
 }
@@ -670,11 +662,11 @@ func TestNetSelectRunDefaultsToThisProjectsNewestOrSoleActive(t *testing.T) {
 		t.Errorf("watch default = (%q, %v), want the sole active run", got, err)
 	}
 	page.Executions[1].Final = false
-	if _, err := a.netSelectRun("watch", page, ""); err == nil || !strings.Contains(err.Error(), "Choose a network run to watch") {
-		t.Errorf("two unfinished runs were not refused: %v", err)
+	if _, err := a.netSelectRun("watch", page, ""); err == nil || !strings.Contains(err.Error(), "2 runs are active") {
+		t.Errorf("two active runs were not refused: %v", err)
 	}
 	page.Executions = page.Executions[2:]
-	if _, err := a.netSelectRun("inspect", page, ""); err == nil || !strings.Contains(err.Error(), "No network run recorded for this project") {
+	if _, err := a.netSelectRun("inspect", page, ""); err == nil || !strings.Contains(err.Error(), "this project") {
 		t.Errorf("another project's run was selected: %v", err)
 	}
 	if got, err := a.netSelectRun("inspect", page, "ffff"); err != nil || got != "ffffffffffffffffffffffffffffffff" {
@@ -682,13 +674,13 @@ func TestNetSelectRunDefaultsToThisProjectsNewestOrSoleActive(t *testing.T) {
 	}
 }
 
-// Acceptance: `coop net runs` is this project's 25 newest runs and a pointer at
-// the rest; --all widens how many are listed, never whose they are.
-func TestNetRunsDefaultsToTheNewestOfThisProjectAndAllStaysInIt(t *testing.T) {
+// Acceptance: `coop net runs` is this project's five newest runs and a pointer
+// at the rest; --all widens how many are listed, never whose they are.
+func TestNetRunsDefaultsToFiveOfThisProjectAndAllStaysInIt(t *testing.T) {
 	store := netHostFixture(t)
 	project, elsewhere := netFixtureProject(t), netFixtureProject(t)
 	mine := map[string]bool{}
-	for range netRecentRuns + 1 {
+	for range 6 {
 		mine[networkreport.ShortID(netRecordRun(t, store, project).ID)] = true
 	}
 	foreign := networkreport.ShortID(netRecordRun(t, store, elsewhere).ID)
@@ -715,11 +707,11 @@ func TestNetRunsDefaultsToTheNewestOfThisProjectAndAllStaysInIt(t *testing.T) {
 	if rows != netRecentRuns {
 		t.Fatalf("default listing showed %d runs, want %d:\n%s", rows, netRecentRuns, out)
 	}
-	if !strings.Contains(out, "\nShowing 25 of 26 · coop net runs --all\n") {
+	if !strings.Contains(out, "\nShowing 5 of 6 · coop net runs --all\n") {
 		t.Errorf("the bounded listing does not point at the rest:\n%s", out)
 	}
-	if out, rows := listed(t, []string{"--all"}); rows != netRecentRuns+1 {
-		t.Errorf("--all showed %d of this project's runs:\n%s", rows, out)
+	if out, rows := listed(t, []string{"--all"}); rows != 6 {
+		t.Errorf("--all showed %d of this project's 6 runs:\n%s", rows, out)
 	}
 }
 
@@ -737,8 +729,8 @@ func TestInspectSettlesADeadRunItselfAndKeepsItPendingWhenItCannot(t *testing.T)
 			t.Fatalf("coop net inspect = (%d, %v)", code, err)
 		}
 	})
-	want := "\n⚠ Cleanup incomplete — Docker is unavailable\n" +
-		"  Start Docker; Coop will retry automatically\n"
+	want := "\n⚠ Cleanup incomplete — the runtime it ran on is unavailable: restricted networking requires a local Docker runtime\n" +
+		"  Coop will retry automatically once that Docker daemon is back\n"
 	if !strings.Contains(out, want) {
 		t.Fatalf("inspect made no recovery attempt of its own:\n%s\nwant to contain:\n%s", out, want)
 	}
@@ -797,7 +789,7 @@ func TestNetExportWithholdsDestinationsUnlessAsked(t *testing.T) {
 	if !strings.Contains(redacted, `"digest_scope":"destinations-withheld"`) {
 		t.Errorf("the default export does not say what it withheld:\n%s", redacted)
 	}
-	included := export(t, record.ID, "--include-addresses")
+	included := export(t, record.ID, "--include-destinations")
 	for _, want := range []string{`"example.com"`, `"104.20.23.154:443"`, `"digest_scope":"destinations-included"`} {
 		if !strings.Contains(included, want) {
 			t.Errorf("the asked-for export is missing %s:\n%s", want, included)
@@ -827,7 +819,7 @@ func TestNetExportWithholdsDestinationsUnlessAsked(t *testing.T) {
 
 	// A run with nothing sealed has no record to share.
 	pending := netRecordRun(t, store, project)
-	if code, err := a.cmdNetExport([]string{pending.ID}); code != 1 || err == nil || !strings.Contains(err.Error(), "has no final record yet") {
+	if code, err := a.cmdNetExport([]string{pending.ID}); code != 1 || err == nil || !strings.Contains(err.Error(), "no sealed record yet") {
 		t.Errorf("exporting an unsealed run = (%d, %v)", code, err)
 	}
 	for name, args := range map[string][]string{
@@ -912,7 +904,7 @@ func TestWatchAppendsNewEventsAndRendersTheFinalProjectionOnce(t *testing.T) {
 	if headings := strings.Count(text, "Network run run1"); headings != 2 {
 		t.Errorf("printed %d headings, want the opening one and the final projection:\n%s", headings, text)
 	}
-	for _, want := range []string{"Allowed example.com:443 · TLS\n", "Blocked example.org · DNS\n", "Full details: coop net inspect run1 --json\n",
+	for _, want := range []string{"allowed example.com:443 · TLS\n", "blocked example.org · DNS\n", "Full details: coop net inspect run1 --json\n",
 		"⚠ Some network activity may be missing — the record was sealed with partial evidence\n"} {
 		if strings.Count(text, want) != 1 {
 			t.Errorf("want exactly one %q in:\n%s", want, text)
@@ -1056,20 +1048,20 @@ func TestWatchDeltaCoalescesRepeatsAndBoundsItself(t *testing.T) {
 		}
 		return networkstate.Inspection{Observed: networkview.Snapshot{Denials: denials}}
 	}
-	lines := netWatchDelta(networkstate.Inspection{}, repeat(4), "e644f07a")
-	if len(lines) != 1 || lines[0] != "Blocked example.org · DNS · 4 attempts" {
+	lines := netWatchDelta(networkstate.Inspection{}, repeat(4))
+	if len(lines) != 1 || lines[0] != "blocked example.org · DNS ×4" {
 		t.Errorf("four retries of one name = %q, want one counted line", lines)
 	}
 	var many []networkview.Denial
 	for i := range netWatchDeltaLines + 3 {
 		many = append(many, networkview.Denial{ID: string(rune('a' + i)), Kind: "dns_denied", Name: "h" + string(rune('a'+i)) + ".example", Reason: "unapproved_name"})
 	}
-	lines = netWatchDelta(networkstate.Inspection{}, networkstate.Inspection{Observed: networkview.Snapshot{Denials: many}}, "e644f07a")
+	lines = netWatchDelta(networkstate.Inspection{}, networkstate.Inspection{Observed: networkview.Snapshot{Denials: many}})
 	if len(lines) != netWatchDeltaLines+1 || !strings.Contains(lines[len(lines)-1], "coop net inspect") {
 		t.Errorf("a refusal storm was not bounded: %q", lines)
 	}
 	// Already-reported evidence never repeats: replay is idempotent.
-	if lines := netWatchDelta(repeat(4), repeat(4), "e644f07a"); lines != nil {
+	if lines := netWatchDelta(repeat(4), repeat(4)); lines != nil {
 		t.Errorf("unchanged evidence produced %q", lines)
 	}
 	// New connections are named by destination, coalesced, and only when the
@@ -1077,7 +1069,7 @@ func TestWatchDeltaCoalescesRepeatsAndBoundsItself(t *testing.T) {
 	opened := networkstate.Inspection{Observed: networkview.Snapshot{Connections: []networkview.Connection{
 		netTestConnection("c1", "example.com", "104.20.23.154:443", 1, 1), netTestConnection("c2", "example.com", "104.20.23.154:443", 1, 1),
 		{ID: "u1", NameSource: "unattributed", Transport: "tcp", Peer: "198.51.100.9:443"}}}}
-	if lines := netWatchDelta(networkstate.Inspection{}, opened, "e644f07a"); len(lines) != 1 || lines[0] != "Allowed example.com:443 · TLS · 2 connections" {
+	if lines := netWatchDelta(networkstate.Inspection{}, opened); len(lines) != 1 || lines[0] != "allowed example.com:443 · TLS ×2" {
 		t.Errorf("new connections = %q", lines)
 	}
 }
@@ -1086,7 +1078,7 @@ func TestWatchDeltaCoalescesRepeatsAndBoundsItself(t *testing.T) {
 // "no external connections", blocked attempts appear only when nonzero, and
 // nothing unmeasured reads as zero.
 func TestRunOutcomeSaysWhatHappenedInWords(t *testing.T) {
-	if got := netRunOutcome(networkstate.Inspection{}); got != netActivityUnknown {
+	if got := netRunOutcome(networkstate.Inspection{}); got != "nothing observed" {
 		t.Errorf("unobserved run = %q", got)
 	}
 	observed := func(connections uint64, blocked int) networkstate.Inspection {
@@ -1107,13 +1099,167 @@ func TestRunOutcomeSaysWhatHappenedInWords(t *testing.T) {
 	truncated := observed(3, 2)
 	truncated.Observed.Counters = nil
 	truncated.Observed.Loss.DetailTruncated = true
-	if got := netRunOutcome(truncated); got != "connection count unknown · at least 2 blocked attempts" {
-		t.Errorf("truncated outcome = %q, want an unmeasured count and a lower bound", got)
+	if got := netRunOutcome(truncated); got != "UNKNOWN connections · 2+ blocked" {
+		t.Errorf("truncated outcome = %q, want UNKNOWN and a lower bound", got)
 	}
 	raw := observed(0, 0)
 	raw.Observed.Counters.DeniedPackets = networkview.Value(5)
 	if got := netRunOutcome(raw); got != "no external connections · 5 raw packets blocked" {
 		t.Errorf("raw-only outcome = %q", got)
+	}
+}
+
+// Acceptance: `coop net runs` shows five recent runs with short ids and a
+// pointer to the rest, no success total; --all-projects labels every project
+// by name and canonical path.
+func TestNetRunsViewIsBoundedShortAndLabeled(t *testing.T) {
+	now := time.Date(2026, 9, 10, 18, 0, 0, 0, time.UTC)
+	runs := []netRun{
+		{ExecutionSummary: networkstate.ExecutionSummary{ID: netTestRunTwo, Project: "/Users/me/coop", StartedAt: now.Add(-2 * time.Hour), Final: true}, Outcome: "13 connections · 8 blocked"},
+		{ExecutionSummary: networkstate.ExecutionSummary{ID: netTestRun, Project: "/Users/me/coop", StartedAt: now.Add(-26 * time.Hour), Final: true}, Outcome: "1 connection"},
+		{ExecutionSummary: networkstate.ExecutionSummary{ID: "30d7a6cd5dabf6dacc3be65790c23c28", Project: "/Users/me/coop", StartedAt: now.Add(-72 * time.Hour), CleanupPending: true}, Outcome: "no external connections"},
+	}
+	var b bytes.Buffer
+	writeNetRuns(&b, ui.Palette{}, now, "/Users/me/coop", runs, 33, netRunsOptions{})
+	want := "Recent network runs for coop\n\n" +
+		"  cb375d22  today 16:00        13 connections · 8 blocked\n" +
+		"  e644f07a  yesterday 16:00    1 connection\n" +
+		"  30d7a6cd  2026-09-07 18:00   no external connections · no receipt yet · cleanup pending\n" +
+		"\nShowing 3 of 33 · coop net runs --all\n"
+	if b.String() != want {
+		t.Errorf("runs view:\n%s\nwant:\n%s", b.String(), want)
+	}
+	var all bytes.Buffer
+	runs[2].Project = "/Users/me/other"
+	writeNetRuns(&all, ui.Palette{}, now, "", runs, 3, netRunsOptions{allProjects: true})
+	for _, want := range []string{"Network runs on this host\n", "\ncoop\n  /Users/me/coop\n  cb375d22  ", "\nother\n  /Users/me/other\n  30d7a6cd  "} {
+		if !strings.Contains(all.String(), want) {
+			t.Errorf("all-projects view is missing %q:\n%s", want, all.String())
+		}
+	}
+	if strings.Contains(all.String(), "Showing") || strings.Contains(all.String(), "recorded for") {
+		t.Errorf("the all-projects view carries a footer:\n%s", all.String())
+	}
+	var empty bytes.Buffer
+	writeNetRuns(&empty, ui.Palette{}, now, "/Users/me/coop", nil, 0, netRunsOptions{})
+	if !strings.Contains(empty.String(), "no filtered run has been recorded for this project yet") {
+		t.Errorf("empty listing:\n%s", empty.String())
+	}
+}
+
+// Acceptance: bare `coop net` states the mode and its real cause, names
+// provider access in one example, lists approved project access only when
+// any exists, shows the request diff only when pending, and never prints a
+// healthy setup record or run history.
+func TestPostureViewAnswersWhatANewRunCanReach(t *testing.T) {
+	rule := func(domain string) egress.Rule {
+		return egress.Rule{To: egress.Destination{Domain: domain}, Protocol: "tls", Ports: []int{443}}
+	}
+	approved := box.NetworkPosture{Project: "/private/tmp/coop", Mode: egress.Filtered, Source: box.PostureFromProject,
+		Approval:  &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{rule("github.com"), rule("registry.npmjs.org")}},
+		Requested: []egress.Rule{rule("github.com"), rule("registry.npmjs.org")}, RequestedMode: egress.Filtered}
+	var b bytes.Buffer
+	writeNetPosture(&b, ui.Palette{}, approved)
+	want := "Network access for coop\n  /private/tmp/coop\n\n" +
+		"New runs use filtered internet access because .agent/project.yaml says so.\n" +
+		"When you start an agent, it can reach its provider — for example, Claude can reach Anthropic.\n" +
+		"Everything else is blocked.\n\n" +
+		"This project can also reach:\n  github.com:443 · TLS\n  registry.npmjs.org:443 · TLS\n"
+	if b.String() != want {
+		t.Errorf("approved posture:\n%s\nwant:\n%s", b.String(), want)
+	}
+
+	pending := approved
+	pending.Source = box.PostureFromApproval
+	pending.Requested = []egress.Rule{rule("github.com"), rule("api.example.com")}
+	pending.Add, pending.Remove = []egress.Rule{rule("api.example.com")}, []egress.Rule{rule("registry.npmjs.org")}
+	pending.Pending = &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}
+	b.Reset()
+	writeNetPosture(&b, ui.Palette{}, pending)
+	want = "New runs use filtered internet access because that is what was approved for this project.\n" +
+		"When you start an agent, it can reach its provider — for example, Claude can reach Anthropic.\n" +
+		"Everything else is blocked.\n\n" +
+		"⚠ New runs cannot start until this project's network request is approved\n" +
+		"  Access:\n" +
+		"    + api.example.com:443 · TLS      new request\n" +
+		"      github.com:443 · TLS           already approved\n" +
+		"    - registry.npmjs.org:443 · TLS   no longer requested\n" +
+		"  Review it: coop net approve\n"
+	if !strings.HasSuffix(b.String(), want) {
+		t.Errorf("pending posture:\n%s\nwant to end with:\n%s", b.String(), want)
+	}
+	if strings.Contains(b.String(), "can also reach") {
+		t.Errorf("a stale approved list was presented as ready beside a pending request:\n%s", b.String())
+	}
+
+	// A launch can refuse for something no rule diff shows; that reason is the
+	// pending line's detail.
+	replaced := approved
+	replaced.Pending = &networkstate.PendingApproval{Reason: "the project directory at /private/tmp/coop was replaced since it was approved"}
+	b.Reset()
+	writeNetPosture(&b, ui.Palette{}, replaced)
+	// The baseline is still shown: it is what the review re-binds to the directory that is there now.
+	if !strings.HasSuffix(b.String(), "⚠ New runs cannot start until this project's network request is approved\n"+
+		"  the project directory at /private/tmp/coop was replaced since it was approved\n"+
+		"  Access:\n      github.com:443 · TLS           already approved\n      registry.npmjs.org:443 · TLS   already approved\n"+
+		"  Review it: coop net approve\n") {
+		t.Errorf("replaced directory:\n%s", b.String())
+	}
+
+	// A mode change is the other thing no rule diff shows: an unapproved open
+	// request is named as the escalation it is, with the rules it drops.
+	widening := approved
+	widening.Source, widening.RequestedMode, widening.Requested = box.PostureFromApproval, egress.Open, nil
+	widening.Add, widening.Remove = nil, approved.Approval.Envelope
+	widening.Pending = &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}
+	b.Reset()
+	writeNetPosture(&b, ui.Palette{}, widening)
+	want = "⚠ New runs cannot start until this project's network request is approved\n" +
+		"  Internet access changes from filtered to unrestricted.\n" +
+		"  ⚠ Nothing will be blocked — an agent can reach any destination\n" +
+		"  Access:\n" +
+		"    - github.com:443 · TLS           no longer requested\n" +
+		"    - registry.npmjs.org:443 · TLS   no longer requested\n" +
+		"  Review it: coop net approve\n"
+	if !strings.HasSuffix(b.String(), want) {
+		t.Errorf("widening posture:\n%s\nwant to end with:\n%s", b.String(), want)
+	}
+
+	for _, forbidden := range []string{"This host", "set up", "Recent runs", "remembered", "Egress", "Rules none", "destinations of its own"} {
+		if strings.Contains(b.String(), forbidden) {
+			t.Errorf("posture printed %q:\n%s", forbidden, b.String())
+		}
+	}
+
+	// A never-approved file asking for open access: the mode is the whole change.
+	freshOpen := box.NetworkPosture{Project: "/p", Mode: egress.Open, Source: box.PostureFromProject, RequestedMode: egress.Open,
+		Pending: &networkstate.PendingApproval{Reason: "this project asks for unrestricted internet access, which has not been approved"}}
+	b.Reset()
+	writeNetPosture(&b, ui.Palette{}, freshOpen)
+	if !strings.HasSuffix(b.String(), "⚠ New runs cannot start until this project's network request is approved\n"+
+		"  Internet access will be unrestricted.\n  ⚠ Nothing will be blocked — an agent can reach any destination\n  Review it: coop net approve\n") {
+		t.Errorf("fresh open request:\n%s", b.String())
+	}
+
+	open := box.NetworkPosture{Project: "/p", Mode: egress.Open, Source: box.PostureFromDefault}
+	b.Reset()
+	writeNetPosture(&b, ui.Palette{}, open)
+	if !strings.Contains(b.String(), "New runs have unrestricted internet access because that is coop's default.\n") || strings.Contains(b.String(), "provider") {
+		t.Errorf("open posture:\n%s", b.String())
+	}
+	offline := box.NetworkPosture{Project: "/p", Mode: egress.None, Source: box.PostureFromHost}
+	b.Reset()
+	writeNetPosture(&b, ui.Palette{}, offline)
+	if !strings.Contains(b.String(), "New runs are offline because COOP_EGRESS says so.\nNo external destination is reachable, so an agent cannot reach its provider.\n") {
+		t.Errorf("offline posture:\n%s", b.String())
+	}
+	// A fresh project is the common case: filtered, nothing approved, nothing
+	// pending — and host setup is a launch's own business, so nothing else.
+	fresh := box.NetworkPosture{Project: "/p", Mode: egress.Filtered, Source: box.PostureFromProject, RequestedMode: egress.Filtered}
+	b.Reset()
+	writeNetPosture(&b, ui.Palette{}, fresh)
+	if !strings.HasSuffix(b.String(), "Everything else is blocked.\n") || strings.Contains(b.String(), "coop net") {
+		t.Errorf("fresh project:\n%s", b.String())
 	}
 }
 

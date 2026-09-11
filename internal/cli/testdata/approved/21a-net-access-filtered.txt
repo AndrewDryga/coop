@@ -1,9 +1,0 @@
-Network access is restricted according to the configuration in .agent/project.yaml.
-Only approved network traffic and agent provider connections are allowed.
-
-APPROVED NETWORK RULES
-  github.com:443 · TLS
-  registry.npmjs.org:443 · TLS
-
-For more details see:
-  coop help net

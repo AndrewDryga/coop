@@ -1,4 +1,0 @@
-example.com:443 could not be checked
-  Run cb375d22 · today at 16:03
-
-Coop could not record enough information to explain this attempt.

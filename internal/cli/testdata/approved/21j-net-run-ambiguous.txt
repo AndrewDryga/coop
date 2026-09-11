@@ -1,8 +1,0 @@
-
-✗ Run ID "e644" matches 2 runs
-
-  e644f07a
-  e644fa12
-
-  Usage: coop net inspect <run>
-  Help:  coop help net inspect

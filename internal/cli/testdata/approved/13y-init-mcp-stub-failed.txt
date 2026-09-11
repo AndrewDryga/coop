@@ -1,6 +1,0 @@
-✗ Could not finish Coop setup
-
-      Could not create /Users/alex/.config/coop/agents/mcp.json: permission denied.
-
-  Fix the path or permissions, then run coop init again.
-  Files already created have been kept.

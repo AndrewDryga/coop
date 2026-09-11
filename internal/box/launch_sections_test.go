@@ -69,9 +69,9 @@ func TestLaunchSectionsNarrateAFilteredInteractiveLaunch(t *testing.T) {
 	})
 	want := "\nProtecting secrets\n" +
 		"  ✓ 8 secret paths hidden from the box\n" +
-		"\nConfiguring network access\n" +
+		"\nInternet access\n" +
 		"  ✓ OpenAI endpoints allowed\n" +
-		"  ✓ Applied 3 approved network rules\n" +
+		"  ✓ 3 approved websites/services allowed\n" +
 		"  ✓ 2 configured MCP services allowed\n" +
 		"  ✓ Everything else blocked\n" +
 		"\nStarting Codex\n"
@@ -98,8 +98,8 @@ func TestInternetSectionIsOneHeadingInEveryMode(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := captureStderr(t, func() { newLaunchSections(c.spec).internet(c.cfg, c.spec, nil) })
-		if got != "\nConfiguring network access\n"+c.want {
-			t.Errorf("%s: rendered %q, want %q", c.name, got, "\nConfiguring network access\n"+c.want)
+		if got != "\nInternet access\n"+c.want {
+			t.Errorf("%s: rendered %q, want %q", c.name, got, "\nInternet access\n"+c.want)
 		}
 	}
 }
@@ -113,7 +113,7 @@ func TestNetworkAllowancesNeverOmitAGrant(t *testing.T) {
 		grant("g2", "b.example", egress.Origin{Kind: "provider", Provider: "claude"}, egress.Origin{Kind: "project"}),
 	}}
 	rows := networkAllowances(policy)
-	want := []string{"Anthropic endpoints allowed", "Applied 1 approved network rule", "1 other destination allowed"}
+	want := []string{"Anthropic endpoints allowed", "1 approved website/service allowed", "1 other destination allowed"}
 	if strings.Join(rows, "|") != strings.Join(want, "|") {
 		t.Fatalf("allowances = %q, want %q", rows, want)
 	}
@@ -282,10 +282,8 @@ func TestFilteredStartedFollowsDaemonEvidence(t *testing.T) {
 
 // Acceptance: after cleanup seals the receipt, the interactive box prints the SAME projection
 // `coop net inspect` prints — fed from the record it already holds — under the `coop:` anchor.
-// Off a terminal the bytes are plain. The box prints the shared projection in its
-// INLINE form: `Networking stats:` instead of a run id its reader never chose,
-// and each destination's own totals on its row — the same renderer, same
-// aggregate, same exceptions, same footer.
+// Off a terminal the bytes are plain, and they differ from the standalone view only by that
+// prefix.
 func TestInlineRunResultIsTheStandaloneProjection(t *testing.T) {
 	f, _ := filteredFixture(t)
 	if _, err := f.launch(context.Background(), RunSpec{Cmd: []string{"fixture"}}, nil, nil, io.Discard, io.Discard); err != nil {
@@ -299,27 +297,15 @@ func TestInlineRunResultIsTheStandaloneProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var inline bytes.Buffer
-	networkreport.WriteRun(&inline, ui.Palette{}, networkreport.View{ID: f.record.ID, Inline: true}, inspection)
-	// One blank line separates the box's stop sentence from the stats block.
-	if got != "\n"+inline.String() {
-		t.Fatalf("inline result:\n%s\nis not the shared projection's inline form:\n%s", got, inline.String())
-	}
 	var standalone bytes.Buffer
 	networkreport.WriteRun(&standalone, ui.Palette{}, networkreport.View{ID: f.record.ID}, inspection)
-	_, inlineBody, _ := strings.Cut(inline.String(), "\n")
-	_, standaloneBody, _ := strings.Cut(standalone.String(), "\n")
-	if !strings.HasSuffix(inlineBody, "\nFull details: coop net inspect "+f.record.ID+" --json\n") ||
-		!strings.HasSuffix(standaloneBody, "\nFull details: coop net inspect "+f.record.ID+" --json\n") {
-		t.Errorf("the two views do not share one footer:\n%s\n%s", inlineBody, standaloneBody)
+	if got != standalone.String() {
+		t.Fatalf("inline result:\n%s\nis not the standalone projection under coop's anchor:\n%s", got, standalone.String())
 	}
-	for _, want := range []string{"Networking stats:\n", "\n  Allowed  "} {
+	for _, want := range []string{"Network run " + f.record.ID + "\n", "\n  Allowed  ", "Full details: coop net inspect " + f.record.ID + " --json\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("inline result is missing %q:\n%s", want, got)
 		}
-	}
-	if strings.Contains(got, "Network run ") {
-		t.Errorf("the inline summary repeats an opaque run id in its heading:\n%s", got)
 	}
 	if strings.Contains(got, "\x1b") || strings.Contains(got, "nothing was refused") {
 		t.Fatalf("inline result carries ANSI off a terminal, or the retired refusal-only summary:\n%s", got)
@@ -346,7 +332,7 @@ func TestRunNarratesAnInteractiveOpenLaunchAndItsStop(t *testing.T) {
 		t.Fatalf("Run = %d, %v; want the box's own exit 3", code, err)
 	}
 	want := "\nProtecting secrets\n  ✓ No secret paths to hide\n" +
-		"\nConfiguring network access\n  ⚠ Unrestricted — nothing is blocked\n" +
+		"\nInternet access\n  ⚠ Unrestricted — nothing is blocked\n" +
 		"\nStarting sh\n" +
 		"stopping the box — main process exited with status 3\n"
 	if got != want {

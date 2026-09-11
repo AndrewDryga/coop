@@ -1,2 +1,0 @@
-✗ example.com:443 is blocked — no approved rule allows it.
-  Add a rule under box.egress_rules in .agent/project.yaml, then run coop net approve.

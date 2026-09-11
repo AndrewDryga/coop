@@ -82,9 +82,9 @@ func StaleImageInputs(cfg *config.Config, repo, img string) bool {
 // stamp file's mtime doubles as the build time, so image age needs no runtime-specific
 // `image inspect` flags either.
 
-// ImageAgeNudge is how old a box image gets before launches nudge a refresh: a round month
+// imageAgeNudge is how old a box image gets before launches nudge a refresh: a round month
 // is several agent-CLI releases behind (they churn weekly), without nagging fresh setups.
-const ImageAgeNudge = 30 * 24 * time.Hour
+const imageAgeNudge = 30 * 24 * time.Hour
 
 // baseDefHash hashes the box definition THIS binary would build the shared base from.
 func baseDefHash() string {
@@ -159,7 +159,7 @@ func StalenessNudges(cfg *config.Config, repo, img string) []string {
 		out = append(out, fmt.Sprintf("box image was built by coop %s and this coop expects a different box — run 'coop build' to realign them", builtBy))
 	}
 	if at, ok := ImageBuildAge(cfg, img); ok {
-		if age := time.Since(at); age >= ImageAgeNudge {
+		if age := time.Since(at); age >= imageAgeNudge {
 			out = append(out, fmt.Sprintf("box image is %d days old — 'coop update' refreshes the agent CLIs baked into it", int(age.Hours()/24)))
 		}
 	}

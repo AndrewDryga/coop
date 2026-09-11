@@ -1,5 +1,0 @@
-✗ Could not prepare the isolation checks
-
-      Could not create a temporary project: permission denied.
-
-  Fix the temporary-directory permissions, then run coop doctor again.

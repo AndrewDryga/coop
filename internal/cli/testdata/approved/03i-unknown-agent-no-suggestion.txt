@@ -1,6 +1,0 @@
-
-✗ Unknown agent "cursor" for "coop models"
-
-      Choose claude, codex, gemini, or grok.
-
-  Help: coop help models

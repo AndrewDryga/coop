@@ -1,5 +1,0 @@
-✓ Codex will use work by default
-
-⚠ work is not signed in
-
-  Sign in: coop login codex@work

@@ -1,5 +1,0 @@
-✗ Could not stop services from .agent/compose.yml
-
-      The Compose file contains an unsupported host bind.
-
-  Fix .agent/compose.yml, then run coop down again.

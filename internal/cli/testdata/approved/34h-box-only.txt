@@ -1,9 +1,0 @@
-Updating the Coop box
-  Fetching newer base-image components, agent CLIs, and editor adapters.
-
-[Build output]
-
-✓ Box image updated
-
-Installed agent tools
-[Installed-version output]

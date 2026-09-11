@@ -14,32 +14,13 @@ import (
 // come back from the same terminal. It lives here so the destructive verbs in every package — task
 // rm, profile rm, fork rm — ask the identical question with the identical default.
 
-// ErrCancelled is a gate the human answered No to — an answer, not a failure, so a caller reports
-// what did not happen instead of a red error. ErrNeedsConfirmation is a gate nothing could answer
-// (piped, no --yes); a caller renders it as ConfirmationRequired with its own help route.
-var (
-	ErrCancelled         = errors.New("cancelled")
-	ErrNeedsConfirmation = errors.New("confirmation required")
-)
-
-// needsConfirmation keeps the gate's own actionable sentence for a caller that only prints an
-// error, while still answering errors.Is(err, ErrNeedsConfirmation) for one that renders the
-// shared refusal block.
-type needsConfirmation struct{ what string }
-
-func (e needsConfirmation) Error() string {
-	return fmt.Sprintf("refusing to %s without confirmation — re-run with --yes (no terminal to prompt)", e.what)
-}
-
-func (e needsConfirmation) Is(target error) bool { return target == ErrNeedsConfirmation }
-
 // DestroyGate guards an UNRECOVERABLE deletion, returning nil only when it may proceed. With yes (the
 // caller saw -y/--yes) it proceeds silently. Otherwise, piped (no TTY) it REFUSES — there's nothing
 // to confirm against, so a script must opt in with --yes; at a TTY it asks "<what>? [y/N]" defaulting
-// to No, so a stray Enter cancels. `what` is the SHORT question ("Delete this task", "Continue"):
-// the caller has already previewed the blast radius in future tense above the prompt, and repeating
-// the whole consequence inside the question only buries it. One gate for every rm (tasks, profiles,
-// forks) so they can't drift. See rule destructive-confirm-gate.
+// to No, so a stray Enter cancels. `what` is the QUESTION ("Delete this task"); the caller prints the
+// blast radius above it, where a person can read it before answering — repeating "this can't be
+// undone" after a preview that already lists the losses only adds noise. One gate for every rm
+// (tasks, profiles, forks) so they can't drift. See rule destructive-confirm-gate.
 //
 // An interactive flow that already owns its input scanner may provide one ask callback. That keeps
 // the destructive decision in this gate without making the flow compete with fmt.Scanln for stdin.
@@ -52,15 +33,15 @@ func DestroyGate(what string, yes bool, asks ...func(string) bool) error {
 	}
 	if len(asks) == 1 {
 		if !asks[0](what + "?") {
-			return ErrCancelled
+			return errors.New("cancelled")
 		}
 		return nil
 	}
 	if !IsTerminal(os.Stdin) {
-		return needsConfirmation{what: what}
+		return fmt.Errorf("refusing to %s without confirmation — re-run with --yes (no terminal to prompt)", what)
 	}
 	if !Confirm(what+"?", false) {
-		return ErrCancelled
+		return errors.New("cancelled")
 	}
 	return nil
 }

@@ -2,7 +2,6 @@ package scaffold
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -286,8 +285,7 @@ func TestInitRestoresEmptySkillDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	logged, err := captureScaffoldStderr(t, func() error {
-		_, err := Init(repo, "", nil, []string{"claude"})
-		return err
+		return Init(repo, "", nil, []string{"claude"})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -301,7 +299,7 @@ func TestInitRestoresEmptySkillDir(t *testing.T) {
 	// A skill with its SKILL.md is still left alone, edits and all.
 	custom := filepath.Join(repo, ".agent/skills/work/SKILL.md")
 	os.WriteFile(custom, []byte("MY SKILL"), 0o644)
-	if _, err := Init(repo, "", nil, []string{"claude"}); err != nil {
+	if err := Init(repo, "", nil, []string{"claude"}); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(custom); string(b) != "MY SKILL" {
@@ -367,8 +365,7 @@ func TestDockerfileTemplatesTrustAnyWorktree(t *testing.T) {
 func TestInit(t *testing.T) {
 	repo := t.TempDir()
 	logged, err := captureScaffoldStderr(t, func() error {
-		_, err := Init(repo, "", nil, []string{"claude", "codex", "gemini"})
-		return err
+		return Init(repo, "", nil, []string{"claude", "codex", "gemini"})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -527,7 +524,7 @@ func TestInitSkillsSource(t *testing.T) {
 		if err := os.WriteFile(marker, []byte("project skill\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+		if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 			t.Fatal(err)
 		}
 		if got, err := os.ReadFile(marker); err != nil || string(got) != "project skill\n" {
@@ -549,7 +546,7 @@ func TestInitSkillsSource(t *testing.T) {
 		if err := os.WriteFile(marker, []byte("tuned skill\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+		if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := os.Lstat(filepath.Join(repo, ".agent", "skills")); !os.IsNotExist(err) {
@@ -588,7 +585,7 @@ func TestInitSkillsSource(t *testing.T) {
 		if err := os.Symlink("../missing-skills", filepath.Join(repo, ".gemini", "skills")); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+		if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 			t.Fatal(err)
 		}
 		if got, _ := os.Readlink(filepath.Join(repo, ".codex", "skills")); got != "../.project-skills" {
@@ -717,22 +714,17 @@ func TestInitGitHooks(t *testing.T) {
 			t.Fatalf("git init: %v\n%s", err, out)
 		}
 	}
-	// The hook exceptions travel back to the caller as notices rather than printing here, so the
-	// assertions below read them instead of stderr.
 	captureInit := func(dir string) (string, error) {
 		t.Helper()
-		notices, err := Init(dir, "", nil, []string{"claude", "codex", "gemini"})
-		var b strings.Builder
-		for _, n := range notices {
-			fmt.Fprintf(&b, "%s\n%s\n%s\n", n.Headline, n.Reason, n.Action)
-		}
-		return b.String(), err
+		return captureScaffoldStderr(t, func() error {
+			return Init(dir, "", nil, []string{"claude", "codex", "gemini"})
+		})
 	}
 
 	// A fresh repo gets core.hooksPath pointed at the tracked, executable hook.
 	repo := t.TempDir()
 	gitInit(repo)
-	if _, err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+	if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := gitConfigGet(repo, "core.hooksPath"); got != ".githooks" {
@@ -757,7 +749,7 @@ func TestInitGitHooks(t *testing.T) {
 	}
 	if logged, err := captureInit(repo); err != nil {
 		t.Fatal(err)
-	} else if strings.Contains(logged, "Chain $HOME/.coop-git-hooks/prepare-commit-msg from it") {
+	} else if strings.Contains(logged, "chain $HOME/.coop-git-hooks/prepare-commit-msg") {
 		t.Errorf("stock prepare-commit-msg hook received custom-hook guidance:\n%s", logged)
 	}
 
@@ -840,7 +832,7 @@ func TestInitGitHooks(t *testing.T) {
 	if info, err := os.Stat(sharedHook); err != nil || info.Mode().Perm() != 0o644 {
 		t.Fatalf("project-owned prepare hook target mode changed: %v, mode %v", err, info)
 	}
-	if want := "Chain $HOME/.coop-git-hooks/prepare-commit-msg from it"; !strings.Contains(logged, want) {
+	if want := "chain $HOME/.coop-git-hooks/prepare-commit-msg"; !strings.Contains(logged, want) {
 		t.Errorf("project-owned symlink guidance missing %q:\n%s", want, logged)
 	}
 
@@ -865,7 +857,7 @@ func TestInitGitHooks(t *testing.T) {
 	if got, err := os.ReadFile(customPrepare); err != nil || string(got) != customHook {
 		t.Errorf("custom prepare-commit-msg hook was clobbered: %v\n%s", err, got)
 	}
-	if want := "Chain $HOME/.coop-git-hooks/prepare-commit-msg from it"; !strings.Contains(logged, want) {
+	if want := "chain $HOME/.coop-git-hooks/prepare-commit-msg"; !strings.Contains(logged, want) {
 		t.Errorf("active custom hook guidance missing %q:\n%s", want, logged)
 	}
 
@@ -892,17 +884,17 @@ func TestInitGitHooks(t *testing.T) {
 	if got, err := os.ReadFile(customPrepare); err != nil || string(got) != customHook {
 		t.Errorf("inactive prepare-commit-msg hook was clobbered: %v\n%s", err, got)
 	}
-	if want := "Add or chain .githooks/pre-commit and .githooks/prepare-commit-msg there."; !strings.Contains(logged, want) {
+	if want := ".githooks/pre-commit and .githooks/prepare-commit-msg"; !strings.Contains(logged, want) {
 		t.Errorf("custom hooksPath guidance missing %q:\n%s", want, logged)
 	}
-	if strings.Contains(logged, "Chain $HOME/.coop-git-hooks/prepare-commit-msg from it") {
+	if strings.Contains(logged, "chain $HOME/.coop-git-hooks/prepare-commit-msg") {
 		t.Errorf("custom hooksPath received redundant inactive-hook guidance:\n%s", logged)
 	}
 }
 
 func TestInitIdempotent(t *testing.T) {
 	repo := t.TempDir()
-	if _, err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+	if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	// Edit a file, then re-init: it must be kept, not overwritten.
@@ -917,8 +909,7 @@ func TestInitIdempotent(t *testing.T) {
 	// as "linked", a present file as "wrote") and not a "kept N" tally either, which is still a
 	// line whose whole content is that nothing happened.
 	out, err := captureScaffoldStderr(t, func() error {
-		_, err := Init(repo, "", nil, []string{"claude", "codex", "gemini"})
-		return err
+		return Init(repo, "", nil, []string{"claude", "codex", "gemini"})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -948,7 +939,7 @@ func TestInitKeepsRealInstructionFile(t *testing.T) {
 	// A real CLAUDE.md (not a symlink) must survive init untouched.
 	real := filepath.Join(repo, "CLAUDE.md")
 	os.WriteFile(real, []byte("# my project rules"), 0o644)
-	if _, err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+	if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Readlink(real); err == nil {
@@ -964,7 +955,7 @@ func TestInitStack(t *testing.T) {
 	// services are opt-in via `coop init`'s prompt / --services, so Init never adds db/redis).
 	repo := t.TempDir()
 	os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("golang 1.26.4\n"), 0o644)
-	if _, err := Init(repo, "asdf", nil, []string{"claude", "codex", "gemini"}); err != nil {
+	if err := Init(repo, "asdf", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	df, err := os.ReadFile(filepath.Join(repo, ".agent/Dockerfile"))
@@ -976,12 +967,12 @@ func TestInitStack(t *testing.T) {
 	}
 
 	// A removed per-language stack is now an error pointing at .tool-versions.
-	if _, err := Init(t.TempDir(), "go", nil, nil); err == nil {
+	if err := Init(t.TempDir(), "go", nil, nil); err == nil {
 		t.Error("--stack go should error now that language stacks are gone")
 	}
 
 	// --stack asdf without a .tool-versions is an error (nothing to install from).
-	if _, err := Init(t.TempDir(), "asdf", nil, nil); err == nil {
+	if err := Init(t.TempDir(), "asdf", nil, nil); err == nil {
 		t.Error("--stack asdf without a .tool-versions should error")
 	}
 }
@@ -991,7 +982,7 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 	// installs straight from it.
 	repo := t.TempDir()
 	os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("erlang 29.0.1\nelixir 1.20.0-otp-29\ngolang 1.26.4\n"), 0o644)
-	if _, err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+	if err := Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	df, err := os.ReadFile(filepath.Join(repo, ".agent/Dockerfile"))
@@ -1006,7 +997,7 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 
 	// No --stack and no .tool-versions → no Dockerfile is scaffolded.
 	repo2 := t.TempDir()
-	if _, err := Init(repo2, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+	if err := Init(repo2, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(repo2, ".agent/Dockerfile")); !os.IsNotExist(err) {
@@ -1017,7 +1008,7 @@ func TestInitToolVersionsAsdf(t *testing.T) {
 	// the bad flag is surfaced rather than silently using .tool-versions.
 	repo3 := t.TempDir()
 	os.WriteFile(filepath.Join(repo3, ".tool-versions"), []byte("elixir 1.20.0-otp-29\n"), 0o644)
-	if _, err := Init(repo3, "python", nil, nil); err == nil {
+	if err := Init(repo3, "python", nil, nil); err == nil {
 		t.Error("--stack python should error regardless of .tool-versions")
 	}
 }
@@ -1093,7 +1084,7 @@ func TestInitAgentDirsGating(t *testing.T) {
 	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
 	// claude-only → .claude scaffolded, .codex/.gemini NOT; .agent + AGENTS.md always.
 	repo := t.TempDir()
-	if _, err := Init(repo, "", nil, []string{"claude"}); err != nil {
+	if err := Init(repo, "", nil, []string{"claude"}); err != nil {
 		t.Fatal(err)
 	}
 	if !exists(filepath.Join(repo, ".claude", "settings.json")) {
@@ -1109,7 +1100,7 @@ func TestInitAgentDirsGating(t *testing.T) {
 	}
 	// No agents → .agent/ only, no per-agent dirs at all.
 	repo2 := t.TempDir()
-	if _, err := Init(repo2, "", nil, nil); err != nil {
+	if err := Init(repo2, "", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range []string{".claude", ".codex", ".gemini", "CLAUDE.md", "GEMINI.md"} {

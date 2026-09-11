@@ -1,4 +1,0 @@
-New runs have unrestricted internet access because that is what you approved for this project.
-
-For more details see:
-  coop help net

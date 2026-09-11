@@ -1,8 +1,0 @@
-✓ No possible secrets found
-  Checked commit-candidate files and Coop's task files and notes.
-
-⚠ 3 Git-ignored files were not checked
-
-      The box can read them.
-
-  Check them with coop check-secrets --include-ignored.

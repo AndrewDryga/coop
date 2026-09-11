@@ -1,4 +1,0 @@
-✗ Choosing services requires a terminal
-
-  Example: coop init --services postgres,redis
-  Help:    coop help init

@@ -1,8 +1,0 @@
-✓ Coop project updated
-  /work/atlas — existing files kept, anything missing added
-
-⚠ Coop kept your prepare-commit-msg hook
-
-      .githooks/prepare-commit-msg already contains a custom hook.
-
-  Chain $HOME/.coop-git-hooks/prepare-commit-msg from it for box attribution.

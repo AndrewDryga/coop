@@ -1,2 +1,0 @@
-✗ New runs need your approval
-  Review the requested changes: coop net approve

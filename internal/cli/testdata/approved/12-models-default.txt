@@ -1,9 +1,0 @@
-Claude
-  opus[1m] · claude-fable-5 · sonnet · haiku
-  Default for Claude runs: fable
-
-Start Claude with a model
-  → coop claude:fable
-
-Set models for presets and loops
-  → coop help models

@@ -1,5 +1,0 @@
-⚠ Cleanup incomplete for network run e644f07a
-
-      Coop could not verify ownership of a remaining container.
-
-  Full details: coop net inspect e644f07a --json

@@ -46,8 +46,7 @@ func TestForgetProjectFlagParsing(t *testing.T) {
 }
 
 // The preview names the blast radius before the question: the approval that
-// goes, and the evidence that does not. Its exact bytes are pinned by
-// TestApprovedNetForget; this is the contract behind them.
+// goes, and the evidence that does not.
 func TestForgetPreviewShowsWhatGoesAndWhatStays(t *testing.T) {
 	review := &fakeForgetReview{approval: &networkstate.Approval{Posture: egress.Filtered,
 		Envelope: []egress.Rule{approvalRule("old.example"), approvalRule("other.example")}}}
@@ -56,16 +55,20 @@ func TestForgetPreviewShowsWhatGoesAndWhatStays(t *testing.T) {
 		t.Fatalf("confirmNetForget: %v", err)
 	}
 	text := out.String()
-	for _, want := range append([]string{netForgetTitle, "  Approved: Filtered",
-		"    old.example:443 · TLS", "    other.example:443 · TLS", netForgetRestore}, netForgetConsequences...) {
+	for _, want := range []string{"Forget the network approval for /private/tmp/project", "filtered — approved until now",
+		"2 rules, all of them", "- old.example tls/443", "- other.example tls/443",
+		"the runs recorded for this project, their receipts, and this host's setup"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("forget preview is missing %q:\n%s", want, text)
 		}
 	}
-	// Withdrawing can be undone by approving again, so the preview must not
+	// Forgetting can be undone by approving again, so the preview must not
 	// borrow the rm gate's "this can't be undone".
 	if strings.Contains(text, "can't be undone") {
 		t.Errorf("the forget preview claims an unrecoverable delete:\n%s", text)
+	}
+	if !strings.Contains(netForgetForgotten, "asks for approval again") {
+		t.Errorf("the answer no longer says what forgetting costs: %q", netForgetForgotten)
 	}
 	if review.committed != 1 {
 		t.Errorf("committed %d times, want 1", review.committed)
@@ -73,12 +76,12 @@ func TestForgetPreviewShowsWhatGoesAndWhatStays(t *testing.T) {
 }
 
 func TestForgetPreviewSaysWhenTheProjectItselfIsGone(t *testing.T) {
-	review := &fakeForgetReview{gone: true, approval: &networkstate.Approval{Posture: egress.None}}
+	review := &fakeForgetReview{gone: true, approval: &networkstate.Approval{Posture: egress.Filtered}}
 	var out bytes.Buffer
 	if err := confirmNetForget(context.Background(), review, &out, func() bool { return true }); err != nil {
 		t.Fatalf("confirmNetForget: %v", err)
 	}
-	for _, want := range []string{netForgetGone, "  Approved: Offline"} {
+	for _, want := range []string{"this directory is gone", "none — this approval granted no websites or services"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("gone-project preview is missing %q:\n%s", want, out.String())
 		}
@@ -96,9 +99,7 @@ func TestForgetCancelledRemovesNothing(t *testing.T) {
 		}
 		return false
 	})
-	// Declining is an ANSWER: the caller prints what was kept and exits 0, so
-	// the sentinel carries no message of its own.
-	if !errors.Is(err, errNetDeclined) {
+	if err == nil || !strings.Contains(err.Error(), "nothing was removed") {
 		t.Fatalf("cancelled forget = %v", err)
 	}
 	if review.committed != 0 {

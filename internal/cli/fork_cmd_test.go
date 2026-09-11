@@ -900,7 +900,7 @@ func TestHelpRequested(t *testing.T) {
 }
 
 func TestForkHelp(t *testing.T) {
-	if code, err := forkHelp(); code != 0 || err != nil {
+	if code, err := forkHelp(""); code != 0 || err != nil {
 		t.Errorf("forkHelp = (%d, %v), want (0, nil)", code, err)
 	}
 }
@@ -926,7 +926,7 @@ func TestForkLaunchCmd(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: cfgDir}}
 	launch := func(fa forkArgs, workspace string, existed bool) []string {
 		t.Helper()
-		cmd, err := a.forkLaunchCmd(fa, workspace, existed)
+		cmd, err := a.forkLaunchCmd(fa, workspace, existed, false)
 		if err != nil {
 			t.Fatalf("forkLaunchCmd: %v", err)
 		}
@@ -1105,7 +1105,7 @@ func TestForkLaunchRequiresWritableSessionMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	cmd, err := a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, false)
+	cmd, err := a.forkLaunchCmd(forkArgs{name: "demo", agent: "claude"}, ws, false, false)
 	if err == nil || len(cmd) != 0 || !strings.Contains(err.Error(), path) {
 		t.Fatalf("forkLaunchCmd = %v, %v; want path-specific pre-launch save error", cmd, err)
 	}

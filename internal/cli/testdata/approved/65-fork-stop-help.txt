@@ -1,0 +1,10 @@
+coop fork stop — stop a fork's background loop
+
+Usage: coop fork stop <name>
+
+  Stops the worker and its running boxes. The fork's work and assigned task stay
+  available so you can continue it later.
+
+EXAMPLES
+  coop fork stop login
+  coop fork login claude --loop

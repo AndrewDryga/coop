@@ -88,10 +88,7 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 		return
 	}
 	s.opened = true
-	// One heading in every mode: this section is coop APPLYING the selected
-	// network access, which it does for unrestricted and offline runs too — not
-	// a promise that a filter is running.
-	ui.Section("Configuring network access")
+	ui.Section("Internet access")
 	switch {
 	case policy != nil:
 		for _, row := range networkAllowances(*policy) {
@@ -106,10 +103,10 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 }
 
 // networkAllowances lists what a filtered box may reach, one row per kind of allowance, in the
-// order a person checks them: each selected provider's endpoints, the network rules a human
-// approved (the project's rules and this run's --allow-domain/--egress-rules), the MCP servers
-// coop configured. Every grant lands in one of these rows — or in the catch-all last one — so
-// the closing "Everything else blocked" is never claimed over an omitted allowance.
+// order a person checks them: each selected provider's endpoints, the websites and services a
+// human approved (the project's rules and this run's --allow-domain/--egress-rules), the MCP
+// servers coop configured. Every grant lands in one of these rows — or in the catch-all last
+// one — so the closing "Everything else blocked" is never claimed over an omitted allowance.
 func networkAllowances(policy egress.Snapshot) []string {
 	var vendors []string
 	provider := func(name string) {
@@ -151,9 +148,7 @@ func networkAllowances(policy egress.Snapshot) []string {
 		rows = append(rows, vendor+" endpoints allowed")
 	}
 	if n := len(approved); n > 0 {
-		// The count is of normalized approved network rules — not of expanded
-		// addresses, and not of distinct sites a rule might cover.
-		rows = append(rows, "Applied "+ui.Count(n, "approved network rule"))
+		rows = append(rows, ui.Count(n, "approved website/service", "approved websites/services")+" allowed")
 	}
 	if n := len(servers); n > 0 {
 		rows = append(rows, ui.Count(n, "configured MCP service")+" allowed")

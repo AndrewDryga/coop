@@ -1,5 +1,0 @@
-✗ Could not start services from .agent/compose.yml
-
-      Service web binds a path outside this project.
-
-  Fix .agent/compose.yml, then run coop up again.

@@ -1,0 +1,11 @@
+coop backlog rm — permanently delete a saved idea
+
+Usage: coop backlog rm <id> [--tasks <path>]... [--yes]
+
+OPTIONS
+  -y, --yes  skip confirmation
+
+  Deletes the idea's folder, including its notes and saved files.
+
+EXAMPLE
+  coop backlog rm account-permissions

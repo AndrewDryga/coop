@@ -163,11 +163,11 @@ func TestPostureSourceNamesTheDecidingInput(t *testing.T) {
 		approval *networkstate.Approval
 		want     string
 	}{
-		{"nothing", networkstate.Admission{}, nil, AccessFromDefault},
-		{"approval wins", networkstate.Admission{HostPreference: &open, ProjectMode: &filtered}, approval, AccessFromApproval},
-		{"host preference", networkstate.Admission{HostPreference: &open, ProjectMode: &filtered}, nil, AccessFromHost},
-		{"project mode", networkstate.Admission{ProjectMode: &filtered}, nil, AccessFromProject},
-		{"project rules", networkstate.Admission{Requests: []egress.Rule{rule}}, nil, AccessFromProject},
+		{"nothing", networkstate.Admission{}, nil, PostureFromDefault},
+		{"approval wins", networkstate.Admission{HostPreference: &open, ProjectMode: &filtered}, approval, PostureFromApproval},
+		{"host preference", networkstate.Admission{HostPreference: &open, ProjectMode: &filtered}, nil, PostureFromHost},
+		{"project mode", networkstate.Admission{ProjectMode: &filtered}, nil, PostureFromProject},
+		{"project rules", networkstate.Admission{Requests: []egress.Rule{rule}}, nil, PostureFromProject},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -193,7 +193,7 @@ func TestApprovalModeAsksAboutTheRepositorysOwnRequest(t *testing.T) {
 		t.Errorf("rules alone = %q, want filtered", got)
 	}
 	if got := approvalMode(networkstate.Admission{}, remembered); got != egress.None {
-		t.Errorf("silent project = %q, want the remembered access", got)
+		t.Errorf("silent project = %q, want the remembered posture", got)
 	}
 	if got := approvalMode(networkstate.Admission{}, nil); got != egress.Filtered {
 		t.Errorf("nothing at all = %q, want filtered", got)

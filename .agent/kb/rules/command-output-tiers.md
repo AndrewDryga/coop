@@ -64,10 +64,8 @@ See also [[help-output-style]] and [[no-color-in-width-fields]].
 - 2026-09-11 — second full correction batch: swept login, preset, loop, deletion, network and
   session fixtures. Made pre-delete tense explicit, simplified runtime next actions, normalized
   network rule/traffic/address terms, and moved hash-heavy settings behind useful permissions.
-  The network half of that sweep has now SHIPPED: `Configuring network access`, `Applied N approved
-  network rules`, network access/rule/traffic/remote address throughout the `net` family, and no
-  "website" left in launch_sections, net_approve, the net help pages, init or the generated
-  project.yaml comments. Its fixtures are gated in `internal/cli/testdata/approved`.
+  Current source still has website copy in launch_sections/net_approve/help/init; removal and
+  fixture tests are in the same design task. No implementation compliance is claimed.
 - 2026-09-11 — superseded the old single-`coop:` anchor and after-provider exception. Swept
   launch/teardown, task/watch, account/preset, network, services/build/doctor, session and helper
   examples in the CLI design task. Removed routine scope/image noise; tied completed-stop copy

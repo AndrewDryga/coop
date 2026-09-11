@@ -1,13 +1,11 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -16,9 +14,9 @@ import (
 
 // cmdCredentials drives the credentials family with a resource-path grammar — each token
 // narrows: `coop credentials` lists every agent, `coop credentials claude` one agent,
-// `coop credentials claude personal` one account, and a trailing attribute reads or writes
-// one property of it: `default` (mark it the agent's default) or `rm` (delete it). An account
-// is one stored login — the model rides a launch target or preset, never a
+// `coop credentials claude personal` one credential, and a trailing attribute reads or writes
+// one property of it: `default` (mark it the agent's default) or `rm` (delete it). A credential
+// is just an account — the model rides a launch target or preset, never a
 // property here. So marking the default reads as a path, not a verb sandwich:
 //
 //	coop credentials claude personal default
@@ -34,17 +32,13 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 		case "ls":
 			// Bare `coop credentials` already lists — steer `ls` there instead of "unknown agent" (rule:
 			// `ls` is the list verb, so it must lead somewhere useful, not read as an agent filter).
-			return 2, &ui.UsageError{
-				Headline: `"coop credentials" already lists every account`,
-				Cause:    `Run it without "ls".`,
-				Rows:     [][2]string{{"Accounts:", "coop credentials"}},
-			}
+			return 2, fmt.Errorf("coop credentials already lists every credential — just run `coop credentials` (no %q)", args[0])
 		}
 	}
 	names := agents.Names()
 	if len(args) > 0 {
 		if _, ok := agents.Get(args[0]); !ok {
-			return 2, unknownAgentErr(args[0], "coop credentials")
+			return 2, unknownErr("agent", args[0], agents.Names())
 		}
 		names = []string{args[0]}
 	}
@@ -54,13 +48,12 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 		blocks = append(blocks, a.accountBlock(agent))
 	}
 	// One width per column across EVERY block, so `default` starts at the same visible column
-	// down the whole listing. The warning marker is part of the fact it leads, so it is measured
-	// with it. Pad the plain strings, then style — never color inside a width.
+	// down the whole listing. Pad the plain strings, then style — never color inside a width.
 	var profileW, factW int
 	for _, block := range blocks {
 		for _, row := range block.rows {
-			profileW = max(profileW, utf8.RuneCountInString(row.profile))
-			factW = max(factW, utf8.RuneCountInString(row.fact))
+			profileW = max(profileW, len([]rune(row.profile)))
+			factW = max(factW, len([]rune(row.fact)))
 		}
 	}
 	fmt.Println(pal.Bold("Accounts available to Coop"))
@@ -68,7 +61,7 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 		fmt.Println()
 		fmt.Println(pal.Bold(block.title))
 		if len(block.rows) == 0 {
-			fmt.Printf("  No accounts. Sign in: %s\n", pal.Cyan("coop login "+block.agent))
+			fmt.Printf("  no accounts — run: coop login %s[@<account>]\n", block.agent)
 			continue
 		}
 		for _, row := range block.rows {
@@ -84,35 +77,20 @@ func (a *app) cmdCredentials(args []string) (int, error) {
 			if row.issue {
 				fact = pal.Yellow(fact)
 			}
-			line := fmt.Sprintf("  %s%s   %s  %s", mark, padRight(row.profile, profileW), fact, tag)
+			line := fmt.Sprintf("  %s%s   %s   %s", mark, padRight(row.profile, profileW), fact, tag)
 			fmt.Println(strings.TrimRight(line, " ")) // a row with no tag ends at its last word
 			if row.remedy != "" {
-				// Aligned under the warning's TEXT, not under its glyph, so the remedy reads as
-				// that row's own continuation.
-				fmt.Printf("%s%s\n", strings.Repeat(" ", 4+profileW+3+2), pal.Cyan(row.remedy))
+				fmt.Printf("      %s\n", pal.Dim(row.remedy))
 			}
 		}
 		// Surface a dangling default: the marked (or built-in) default points at an account that
 		// doesn't exist, so an interactive run would land on nothing. Don't leave it silent.
 		if block.missingDefault != "" {
-			fmt.Println()
-			fmt.Printf("  %s\n", pal.Yellow(fmt.Sprintf("⚠ Default account %q is missing", block.missingDefault)))
-			fmt.Println()
-			fmt.Printf("      Choose a default: %s\n", pal.Cyan(fmt.Sprintf("coop credentials %s %s default", block.agent, block.rows[0].profile)))
+			fmt.Printf("  %s\n", pal.Yellow(fmt.Sprintf("default account %s is gone", block.missingDefault)))
+			fmt.Printf("      %s\n", pal.Dim(fmt.Sprintf("coop credentials %s <account> default", block.agent)))
 		}
 	}
 	return 0, nil
-}
-
-// unknownAgentErr refuses a token in an agent slot — the shared rejected-value block, correcting a
-// near miss against the registered agents and otherwise naming the ones that exist.
-func unknownAgentErr(token, command string) error {
-	suggestion := ""
-	if guess, ok := nearestCommand(token, agents.Names()); ok {
-		suggestion = command + " " + guess
-	}
-	return ui.UnknownValue("agent", agents.DisplayTarget(token), command,
-		"Choose "+ui.List(agents.Names(), "or")+".", suggestion)
 }
 
 // accountBlock is one agent's accounts as the listing renders them. Building every block before
@@ -137,7 +115,7 @@ type accountRow struct {
 // so a healthy row carries no status word: it says when its token material last changed, which is
 // the one fact a person cannot see for themselves.
 func (a *app) accountBlock(agent string) accountBlock {
-	block := accountBlock{agent: agent, title: titleName(agent)}
+	block := accountBlock{agent: agent, title: displayAgentName(agent)}
 	profiles := box.EffectiveProfiles(a.cfg, agent)
 	def := a.cfg.DefaultProfileOf(agent)
 	// The marked default first, then the rest — the same order a loop's rotation fans out over
@@ -155,13 +133,11 @@ func (a *app) accountBlock(agent string) accountBlock {
 	}
 	for _, p := range profiles {
 		row := accountRow{profile: p, isDefault: p == def}
-		switch issue := a.profileIssue(agent, p); {
-		case issue != "":
-			row.fact, row.issue, row.remedy = "⚠ "+issue, true, agents.LoginCommand(agent+"@"+p)
-		case a.envBackedAccount(agent, p):
-			// An env key has no token file to date; saying when it was "refreshed" would be
-			// inventing an mtime, so name the authority instead.
-			row.fact = "environment file"
+		switch label, needsLogin := a.profileState(agent, p); {
+		case needsLogin:
+			row.fact, row.issue, row.remedy = "re-login required", true, "coop login "+agent+"@"+p
+		case label == "not signed in":
+			row.fact, row.issue, row.remedy = "not signed in", true, "coop login "+agent+"@"+p
 		default:
 			row.fact = "refreshed " + a.credentialAge(agent, p)
 		}
@@ -170,30 +146,32 @@ func (a *app) accountBlock(agent string) accountBlock {
 	return block
 }
 
-// profileIssue reports what is wrong with a stored account, as the short sentence the listing and
-// the detail view both print — "" when nothing is. Presence is enough for opaque stores and env
-// keys; adapters that can inspect their native OAuth marker reject malformed, stripped, or expired
-// credentials while accepting refreshable ones, so a renewable expiry is never called unusable.
-func (a *app) profileIssue(agent, p string) string {
-	switch {
-	case !box.ProfileAuthed(a.cfg, agent, p):
-		return "Not signed in"
-	case !box.ProfileCredentialReady(a.cfg, agent, p, time.Now()):
-		return "Sign in again"
+// displayAgentName title-cases an agent's own name for a block heading. Not DisplayName(), which
+// is the product ("Claude Code"): the heading names the accounts' agent as the command spells it.
+func displayAgentName(agent string) string {
+	if agent == "" {
+		return agent
 	}
-	return ""
+	return strings.ToUpper(agent[:1]) + agent[1:]
 }
 
-// envBackedAccount reports whether this account's authority is the env file rather than a stored
-// login: it is signed in, but has no marker file of its own.
-func (a *app) envBackedAccount(agent, profile string) bool {
-	return box.ProfileAuthed(a.cfg, agent, profile) && !box.ProfileMarkerPresent(a.cfg, agent, profile)
+// profileState reports a profile's short sign-in label and whether it needs a re-login. Presence is
+// enough for opaque stores and env keys; adapters that can inspect their native OAuth marker reject
+// malformed, stripped, or expired credentials while accepting refreshable ones.
+func (a *app) profileState(agent, p string) (label string, needsLogin bool) {
+	if !box.ProfileAuthed(a.cfg, agent, p) {
+		return "not signed in", false
+	}
+	if !box.ProfileCredentialReady(a.cfg, agent, p, time.Now()) {
+		return "re-login required", true
+	}
+	return "signed in", false
 }
 
 // credentialAge renders how long ago agent's profile token material last changed ("19 days ago"),
-// or "—" when that's unknowable — a missing or unreadable marker. mtime is the honest proxy: a
-// refresh or a fresh login rewrites the material and retires the old token, which is exactly what
-// this clock should read. See box.ProfileTokenMtime.
+// or "—" when that's unknowable — an env-key login with no marker file, or a missing/unreadable
+// one. mtime is the honest proxy: a refresh or a fresh login rewrites the material and retires the
+// old token, which is exactly what this clock should read. See box.ProfileTokenMtime.
 func (a *app) credentialAge(agent, profile string) string {
 	if t, ok := box.ProfileTokenMtime(a.cfg, agent, profile); ok {
 		return humanAge(t)
@@ -224,7 +202,7 @@ func humanAge(t time.Time) string {
 	}
 }
 
-// profilePath routes the path grammar's per-profile tail: bare shows the account, an
+// profilePath routes the path grammar's per-profile tail: bare shows the profile, an
 // attribute token reads or writes one property. Attribute handlers delegate to the same
 // functions the verb forms use, so the two grammars can't drift.
 func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
@@ -236,178 +214,123 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 		if len(rest) > 1 {
 			return 2, ui.UnexpectedArgument(rest[1], "coop credentials", fmt.Sprintf("coop credentials %s %s default", agent, profile))
 		}
-		return a.setProfileDefault(agent, profile)
+		return a.setProfileDefault([]string{agent, profile})
 	case "rm":
 		for _, x := range rest[1:] { // only --yes may follow rm here; anything else is a mistake
 			if x != "-y" && x != "--yes" {
 				return 2, ui.UnexpectedArgument(x, "coop credentials", fmt.Sprintf("coop credentials %s %s rm [--yes]", agent, profile))
 			}
 		}
-		return a.removeProfile(agent, profile, hasYes(rest))
+		return a.removeProfile(append([]string{agent, profile}, rest[1:]...))
 	default:
-		suggestion := ""
-		if guess, ok := nearestCommand(rest[0], []string{"default", "rm"}); ok {
-			suggestion = fmt.Sprintf("coop credentials %s %s %s", agent, profile, guess)
-		}
-		return 2, ui.UnknownValue("action", rest[0], "coop credentials",
-			"Choose default or rm.", suggestion)
+		return 2, unknownErr("credential attribute", rest[0], []string{"default", "rm"})
 	}
 }
 
-// requireProfile refuses an account this agent has no login for, with the two commands that
-// resolve it — the agent's own list, and signing this one in.
+// requireProfile errors (usage-style) when agent has no profile by that name.
 func (a *app) requireProfile(agent, profile string) error {
-	if slices.Contains(box.EffectiveProfiles(a.cfg, agent), profile) {
+	have := a.cfg.Profiles(agent)
+	if slices.Contains(have, profile) {
 		return nil
 	}
-	return noAccountErr(agent, profile)
+	if len(have) == 0 {
+		return fmt.Errorf("%s has no credentials yet — run: coop login %s@%s", agent, agent, profile)
+	}
+	return fmt.Errorf("%s has no credential %q — have: %s", agent, profile, strings.Join(have, ", "))
 }
 
-// showProfile answers the one question this depth is asked: which account a run will use, and the
-// commands that act on it. No storage path, token age or "default: yes" ledger — those say
-// nothing a person can act on (see .agent/kb/rules/entity-blocks-with-labeled-fields.md).
+// showProfile prints one profile's detail — the path grammar's read at profile depth.
 func (a *app) showProfile(agent, profile string) (int, error) {
-	if err := a.requireProfile(agent, profile); err != nil {
-		return 2, err
+	if !slices.Contains(box.EffectiveProfiles(a.cfg, agent), profile) {
+		if err := a.requireProfile(agent, profile); err != nil {
+			return 2, err
+		}
 	}
-	pal := ui.For(os.Stdout) // stdout view — gate color on stdout so a pipe stays clean
-	name := titleName(agent)
-	isDefault := profile == a.cfg.DefaultProfileOf(agent)
-	env := a.envBackedAccount(agent, profile)
-	issue := a.profileIssue(agent, profile)
-	login := agents.LoginCommand(agent + "@" + profile)
-
+	pal := ui.For(os.Stdout)
+	fmt.Println(pal.Bold(displayAgentName(agent) + " / " + profile))
+	// The same vocabulary the listing uses, so narrowing the command never contradicts it: a
+	// healthy account says when it was refreshed, a broken one says what is wrong and how to fix it.
+	label, needsLogin := a.profileState(agent, profile)
 	switch {
-	case issue != "":
-		// A broken account cannot answer "which account will be used", so it leads with the
-		// problem and the exact login that fixes it.
-		fmt.Println(pal.Yellow("⚠ " + issue))
-		fmt.Println()
-		fmt.Println(pal.Bold(signInLabel(issue)))
-		fmt.Printf("  %s\n\n", pal.Cyan(login))
-	case env:
-		fmt.Printf("%s uses this account's configured environment key.\n\n", name)
-	case isDefault:
-		fmt.Printf("%s uses %s by default.\n\n", name, profile)
+	case needsLogin:
+		fmt.Printf("  %s\n", pal.Yellow("re-login required"))
+	case label == "not signed in":
+		fmt.Printf("  %s\n", pal.Yellow("not signed in"))
+	default:
+		fmt.Printf("  refreshed  %s\n", a.credentialAge(agent, profile))
 	}
-
-	fmt.Println(pal.Bold("Use this account:"))
-	fmt.Printf("  %s\n", pal.Cyan("coop "+agent+"@"+profile))
-	if !isDefault {
-		fmt.Printf("\n%s\n", pal.Bold("Use it by default:"))
-		fmt.Printf("  %s\n", pal.Cyan(fmt.Sprintf("coop credentials %s %s default", agent, profile)))
+	def := "no"
+	if profile == a.cfg.DefaultProfileOf(agent) {
+		def = "yes"
 	}
-	// An env-backed account is refreshed by editing the env file, so offering `coop login` for it
-	// would name the wrong mechanism; a broken one already printed its login above.
-	if issue == "" && !env {
-		fmt.Printf("\n%s\n", pal.Bold("Sign in again:"))
-		fmt.Printf("  %s\n", pal.Cyan(login))
+	fmt.Printf("  default    %s\n", def)
+	if box.ProfileMarkerPresent(a.cfg, agent, profile) || !box.ProfileAuthed(a.cfg, agent, profile) {
+		fmt.Printf("  dir        %s\n", a.cfg.AgentProfileDir(agent, profile))
+	} else {
+		fmt.Println("  source     env file")
 	}
-	if isDefault {
-		fmt.Printf("\n%s\n", pal.Bold("Manage accounts:"))
-		fmt.Printf("  %s\n", pal.Cyan("coop credentials "+agent))
+	if label == "not signed in" || needsLogin {
+		fmt.Printf("  %s\n", pal.Dim("coop login "+agent+"@"+profile))
 	}
 	return 0, nil
 }
 
-// signInLabel keeps the detail view's action heading in the listing's vocabulary: an account that
-// never had a login says "Sign in", one whose stored login went bad says "Sign in again".
-func signInLabel(issue string) string {
-	if issue == "Not signed in" {
-		return "Sign in:"
+// setProfileDefault marks <name> as <agent>'s default profile, so an interactive run with
+// no profile given uses it. It rejects an unknown agent or a profile that doesn't exist.
+func (a *app) setProfileDefault(args []string) (int, error) {
+	if len(args) != 2 {
+		return 2, ui.MissingArgument("agent and credential", "coop credentials", "coop credentials <agent> <credential> default")
 	}
-	return "Sign in again:"
-}
-
-// setProfileDefault marks <account> as <agent>'s default, so a run with no @account uses it. It
-// rejects an unknown agent or an account that doesn't exist, and reports the choice alone — the
-// full overview after a one-account change is noise.
-func (a *app) setProfileDefault(agent, name string) (int, error) {
+	agent, name := args[0], args[1]
 	if _, ok := agents.Get(agent); !ok {
-		return 2, unknownAgentErr(agent, "coop credentials")
+		return 2, unknownErr("agent", agent, agents.Names())
 	}
 	if err := a.requireProfile(agent, name); err != nil {
 		return 2, err
-	}
-	if a.cfg.DefaultProfileOf(agent) == name {
-		ui.Note("%s already uses %s by default.", titleName(agent), name)
-		return 0, nil
 	}
 	if err := a.cfg.SetDefaultProfile(agent, name); err != nil {
 		return -1, err
 	}
-	ui.OK("%s will use %s by default", titleName(agent), name)
-	if issue := a.profileIssue(agent, name); issue != "" {
-		warnRows(fmt.Sprintf("%s is %s", name, strings.ToLower(issue)),
-			[2]string{signInLabel(issue), agents.LoginCommand(agent + "@" + name)})
+	if !box.ProfileAuthed(a.cfg, agent, name) {
+		ui.Warn("%s account %q isn't signed in yet — run: coop login %s@%s", agent, name, agent, name)
 	}
-	return 0, nil
+	ui.OK("%s default credential → %s", agent, name)
+	return a.cmdCredentials([]string{agent})
 }
 
-// warnRows prints a heads-up in the shared refusal's COLUMN shape — a leading blank line, the ⚠
-// headline, then two-space label rows whose commands start past the widest label. It is NOT
-// rejected input (that is ui.UsageError, which exits 2), and it is not warnBlock (headline,
-// reason, actions): this is for a warning whose body is label→command pairs a person scans.
-func warnRows(headline string, rows ...[2]string) {
-	ui.Note("")
-	ui.Warn("%s", headline)
-	if len(rows) == 0 {
-		return
-	}
-	w := 0
-	for _, r := range rows {
-		w = max(w, utf8.RuneCountInString(r[0]))
-	}
-	ui.Note("")
-	for _, r := range rows {
-		ui.Note("  %s %s", padRight(r[0], w), r[1])
-	}
-}
-
-// removeProfile deletes a stored account's login token and session history. It refuses to
-// delete the agent's marked default (set another first, so a run never lands on an account
+// removeProfile deletes a stored credential's login token and session history. It refuses to
+// delete the agent's marked default (set another first, so a run never lands on a credential
 // that's gone). A preset ladder that still names the account is harmless: expandLadder skips a
 // target that isn't signed in.
-func (a *app) removeProfile(agent, name string, yes bool) (int, error) {
+func (a *app) removeProfile(args []string) (int, error) {
+	yes := hasYes(args)
+	var pos []string
+	for _, x := range args {
+		if !strings.HasPrefix(x, "-") {
+			pos = append(pos, x)
+		}
+	}
+	if len(pos) != 2 {
+		return 2, ui.MissingArgument("agent and credential", "coop credentials", "coop credentials <agent> <credential> rm [--yes]")
+	}
+	agent, name := pos[0], pos[1]
 	if _, ok := agents.Get(agent); !ok {
-		return 2, unknownAgentErr(agent, "coop credentials")
+		return 2, unknownErr("agent", agent, agents.Names())
 	}
 	if err := a.requireProfile(agent, name); err != nil {
 		return 2, err
 	}
-	title := titleName(agent)
 	if name == a.cfg.DefaultProfileOf(agent) {
-		return 2, &ui.UsageError{
-			Headline: fmt.Sprintf("Cannot remove %s account %q", title, name),
-			Cause:    "It is the default account. Choose another default first.",
-			Rows: [][2]string{
-				{"Accounts:", "coop credentials " + agent},
-				{"Help:", "coop help credentials default"},
-			},
-		}
+		return 2, fmt.Errorf("%s credential %q is the default — set another first: coop credentials %s <other> default", agent, name, agent)
 	}
 	dir := a.cfg.AgentProfileDir(agent, name)
-	// Deleting an account drops its login token AND all session history, with no undo — preview
-	// exactly that in future tense, then let the shared gate ask.
-	ui.Note("Permanently delete %s account %q along with its saved login\nand local session history?\n", title, name)
-	if err := ui.DestroyGate("Continue", yes); err != nil {
-		if errors.Is(err, ui.ErrNeedsConfirmation) {
-			return 2, ui.ConfirmationRequired("coop credentials rm")
-		}
-		removalCancelled()
-		return 2, ui.ErrReported
-	}
-	if !yes {
-		ui.Note("") // the Enter that answered the prompt ended its line; keep the result a paragraph
+	// Deleting a profile drops its login token AND all session history, with no undo — gate it.
+	if err := ui.DestroyGate(fmt.Sprintf("delete %s credential %q (login token + session history)", agent, name), yes); err != nil {
+		return 2, err
 	}
 	if err := os.RemoveAll(dir); err != nil {
-		// A partial delete is durable: never claim nothing was removed unless that is proved.
-		return -1, fmt.Errorf("could not finish removing %s account %q: %w", title, name, err)
+		return -1, err
 	}
-	ui.OK("Deleted %s account %q", title, name)
-	return 0, nil
+	ui.OK("removed %s credential %q", agent, name)
+	return a.cmdCredentials([]string{agent})
 }
-
-// removalCancelled is coop's whole say after a declined deletion: an answer, not a failure, so it
-// reports what did NOT happen instead of a red ✗.
-func removalCancelled() { ui.Note("\nCancelled. Nothing was removed.") }

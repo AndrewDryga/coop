@@ -1,8 +1,0 @@
-✓ Coop project updated
-  /work/atlas — existing files kept, anything missing added
-
-⚠ Two task queues still need to be registered
-
-      .agent/project.yaml uses a subprojects list Coop could not update safely.
-
-  Add api and web to subprojects in .agent/project.yaml.

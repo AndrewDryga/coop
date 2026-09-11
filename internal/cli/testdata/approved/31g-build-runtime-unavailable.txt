@@ -1,5 +1,0 @@
-✗ Could not build the box image
-
-      Docker is unavailable.
-
-  Start Docker, then run coop build again.

@@ -1,6 +1,0 @@
-
-✗ Invalid agent target "codex/HIGH"
-
-      Write the reasoning effort in lowercase letters, such as "high".
-
-  Help: coop help models

@@ -1,5 +1,0 @@
-⚠ Cleanup incomplete for network run e644f07a
-
-      Docker is unavailable.
-
-  Start Docker; Coop will retry automatically.

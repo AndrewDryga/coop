@@ -2,7 +2,7 @@
 name: tag-exceptions-not-every-row
 description: "tag only the exceptional row; explain the scheme once in a dim caption"
 scope: cli-output
-sources: [internal/cli/models.go, internal/cli/profiles.go]
+sources: [internal/cli/models.go]
 check: "none"
 updated: 2026-09-11
 ---
@@ -38,18 +38,10 @@ the eye on the signal.
 See also [[no-color-in-width-fields]], [[command-output-tiers]], [[help-output-style]].
 
 ## Changelog
-- 2026-09-11 — the reviewed copy split that self-explaining tag in two: the row says WHICH list is
-  on screen (`⚠ Could not refresh — showing the list saved yesterday`, or `— showing example
-  models`) and the reason it could not be made current moves under it into the shared six-space
-  cause block, between blank lines, as one sentence (`Codex is unavailable on this host.`,
-  `Docker is unavailable.`, `Sign in to Gemini to refresh its models: coop login gemini`). An
-  unknown cause prints no paragraph at all rather than a guess. Still one tag, still only on the
-  exceptional block. Swept `coop credentials` with it: its exceptional rows now carry the marker
-  in the fact column (`⚠ Sign in again`, `⚠ Not signed in`) and the width is measured WITH the
-  marker, so the `default` tag stays in one column across every agent block.
 - 2026-09-11 — re-verified against the rebuilt `coop models`, which is now the cleanest example of
   the rule: a healthy agent block is its name and its ids, and ONLY an agent whose catalog could
-  not be refreshed gets a line — a tag that explains itself, so the old dim caption is gone. Generalized the
+  not be refreshed gets a line (`⚠ showing the list saved 2 days ago — could not refresh: Docker is
+  not running`) — a tag that explains itself, so the old dim caption is gone. Generalized the
   "one dim caption" clause to cover that, and dropped the `--refresh` log from the corollary (that
   log no longer exists; upkeep is automatic and silent). Swept internal/cli's listings: credentials
   tags only the default account, tasks/presets tag only the exceptional state. 0 violations.

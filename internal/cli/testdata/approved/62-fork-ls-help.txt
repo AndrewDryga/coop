@@ -1,0 +1,11 @@
+coop fork ls — show forks and their progress
+
+Usage: coop fork ls [--json]
+
+OPTIONS
+  --json  print workspace details for scripts
+
+  Shows each fork's agent, activity, tasks, changes and reported cost.
+
+EXAMPLE
+  coop fork ls

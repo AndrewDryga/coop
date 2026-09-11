@@ -1,5 +1,0 @@
-✗ Could not determine which service volumes would be deleted
-
-      Docker did not return the project's volume information.
-
-  Check Docker, then run coop down --delete-volumes again.

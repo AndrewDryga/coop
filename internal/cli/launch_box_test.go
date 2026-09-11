@@ -150,7 +150,7 @@ func TestCheckCoopBoxFailureIsNestedAndReportedOnce(t *testing.T) {
 	}
 	want = "  ✗ Could not update the box\n" +
 		"\n" +
-		"        rt build exited with status 1\n" +
+		"        image build failed (exit 1)\n" +
 		"\n" +
 		"    Fix what the build reported above, then run 'coop codex' again — the update is retried automatically.\n"
 	if !strings.HasSuffix(got, want) {

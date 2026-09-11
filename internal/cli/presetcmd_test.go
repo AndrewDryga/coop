@@ -58,17 +58,13 @@ func TestCmdPresets(t *testing.T) {
 			t.Errorf("cmdPresets() = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{
-		"PRESET", "FIRST LEAD MODEL", "ROLES", "SOURCE",
-		"frontier  claude:claude-fable-5@work", "1 adviser, 1 editor", "project",
-		"broken", "✗ Could not load this preset", "The lead needs an agent.",
-	} {
+	for _, want := range []string{"frontier", "lead claude:claude-fable-5", "critic (consult codex)", "fast (delegate gemini)", "broken", "lead.agent: is required"} {
 		if !strings.Contains(list, want) {
 			t.Errorf("listing missing %q:\n%s", want, list)
 		}
 	}
 
-	if code, err := a.cmdPresets([]string{"ghost"}); code != 2 || err == nil || !strings.Contains(err.Error(), `No preset named "ghost"`) {
+	if code, err := a.cmdPresets([]string{"ghost"}); code != 2 || err == nil || !strings.Contains(err.Error(), "no preset") {
 		t.Errorf("unknown preset = (%d, %v), want a loud miss", code, err)
 	}
 	if code, err := a.cmdPresets([]string{"ls"}); code != 2 || err == nil || !strings.Contains(err.Error(), "already lists") {
@@ -85,7 +81,7 @@ func TestCmdPresets(t *testing.T) {
 			t.Errorf("cmdPresets(empty) = (%d, %v)", code, err)
 		}
 	})
-	if !strings.Contains(empty, "No presets yet.") || !strings.Contains(empty, "coop presets init") {
+	if !strings.Contains(empty, "no presets") || !strings.Contains(empty, "coop presets init") {
 		t.Errorf("empty listing should point at the scaffolder:\n%s", empty)
 	}
 }
@@ -113,16 +109,17 @@ func TestPresetDetailIsOneRendererBehindBothDoors(t *testing.T) {
 	}
 	want := `frontier — a preset for multiple models and providers to work together
 
-RUN IT
-  coop frontier       start an interactive session with the lead agent
-  coop loop frontier  work through tasks with this preset
-  coop acp frontier   use this preset in your editor
+Run it
+  coop frontier
+  coop loop frontier
+  coop acp frontier
 
-LEAD MODELS — next selected when the previous is unavailable:
-  Agent:  claude:claude-fable-5@work codex:gpt-5.6-sol/xhigh
+Lead models — next selected when the previous is unavailable:
+  claude:claude-fable-5@work
+  codex:gpt-5.6-sol/xhigh
   Prompt: .agent/presets/frontier/roles/lead.md
 
-ROLES AVAILABLE TO THE LEAD
+Roles available to the lead
   critic   Mode: consult — read-only advice
            Agent: codex:gpt-5.6-sol/xhigh, grok:grok-4.5/high
 
@@ -131,7 +128,7 @@ ROLES AVAILABLE TO THE LEAD
            When: boilerplate and bulk edits
            Prompt: .agent/presets/frontier/roles/fast.md
 
-EDIT THIS PRESET
+Edit this preset
   .agent/presets/frontier/preset.yaml
 
 For a guide to creating and using presets:
@@ -163,12 +160,8 @@ func TestPresetDetailBlocksAlignOnTheLongestRoleName(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := presetDetail(p, repo, ui.Palette{})
-	_, roles, ok := strings.Cut(out, "ROLES AVAILABLE TO THE LEAD\n")
-	if !ok {
-		t.Fatalf("the preset has roles, so the detail must have their section:\n%s", out)
-	}
 	column := -1
-	for _, line := range strings.Split(roles, "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		for _, label := range []string{"Mode:", "Agent:", "When:"} {
 			at := strings.Index(line, label)
 			if at < 0 {
@@ -185,7 +178,7 @@ func TestPresetDetailBlocksAlignOnTheLongestRoleName(t *testing.T) {
 	if column != 2+len("documentation-reviewer")+3 {
 		t.Errorf("gutter = %d, want the longest role name plus its separator", column)
 	}
-	if strings.Contains(roles, "Prompt:") {
+	if strings.Contains(out, "Prompt:") {
 		t.Errorf("no role configures a prompt, so no Prompt row belongs here:\n%s", out)
 	}
 	if n := strings.Count(out, "When:"); n != 1 {
@@ -278,7 +271,7 @@ func TestPresetDetailLabelsAGlobalOrigin(t *testing.T) {
 	if !strings.Contains(out, filepath.ToSlash(dir)+"/preset.yaml (global)") {
 		t.Errorf("a global preset shows its own path, labeled:\n%s", out)
 	}
-	if !strings.Contains(out, "review — a preset for Claude") {
+	if !strings.Contains(out, "review — a preset that runs Claude") {
 		t.Errorf("the summary comes from the preset's shape, not its name:\n%s", out)
 	}
 }
@@ -295,7 +288,7 @@ func TestCmdPresetsInit(t *testing.T) {
 			t.Errorf("cmdPresets() after init = (%d, %v)", code, err)
 		}
 	})
-	for _, want := range []string{"frontier", "claude:claude-fable-5", "1 adviser, 1 editor, 1 in-session role", "project"} {
+	for _, want := range []string{"frontier", "lead claude:claude-fable-5", "thinker (native claude)", "critic (consult codex)", "fast (delegate gemini)"} {
 		if !strings.Contains(list, want) {
 			t.Errorf("scaffolded preset should list cleanly, missing %q:\n%s", want, list)
 		}
@@ -375,8 +368,7 @@ func TestCmdPresetsInitPreservesIncompleteDestinations(t *testing.T) {
 			a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
 			out := captureStdout(t, func() {
 				code, err := a.cmdPresets([]string{"init", "custom"})
-				if code != 2 || err == nil || !strings.Contains(err.Error(), "already exists but is incomplete") ||
-					!strings.Contains(err.Error(), "Inspect that folder") {
+				if code != 2 || err == nil || !strings.Contains(err.Error(), "existing files were preserved") || !strings.Contains(err.Error(), "choose another name") {
 					t.Fatalf("incomplete preset refusal = %d, %v", code, err)
 				}
 			})

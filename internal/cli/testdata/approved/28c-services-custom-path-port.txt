@@ -1,7 +1,0 @@
-Starting services from infra/dev-compose.yml
-  Waiting for services to be ready.
-
-[Compose output]
-
-✓ Services ready: db, web
-    http://localhost:43517

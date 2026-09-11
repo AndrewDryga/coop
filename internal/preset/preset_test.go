@@ -1,7 +1,6 @@
 package preset
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -81,9 +80,8 @@ func TestLoadFrontier(t *testing.T) {
 	if p.LeadPromptText != "LEAD EXTRA" {
 		t.Errorf("lead prompt = %q", p.LeadPromptText)
 	}
-	// Roles come back in the FILE's order — the author decides what the lead reads first, and the
-	// approved `coop presets <name>` projection shows that order.
-	if len(p.Roles) != 3 || p.Roles[0].Name != "thinker" || p.Roles[1].Name != "critic" || p.Roles[2].Name != "fast" {
+	// Roles come back sorted by name: critic, fast, thinker.
+	if len(p.Roles) != 3 || p.Roles[0].Name != "critic" || p.Roles[1].Name != "fast" || p.Roles[2].Name != "thinker" {
 		t.Fatalf("roles = %+v", p.Roles)
 	}
 	if len(p.ConsultRoles("claude")) == 0 || len(p.Delegates()) == 0 {
@@ -92,7 +90,7 @@ func TestLoadFrontier(t *testing.T) {
 	if got := p.RunnableRoleAgents("claude"); len(got) != 2 || got[0] != "codex" || got[1] != "gemini" {
 		t.Errorf("RunnableRoleAgents = %v (native thinker must not add claude)", got)
 	}
-	th := p.Roles[0]
+	th := p.Roles[2]
 	if th.Subagent != "deep-reasoner" || th.PromptText != "THINKER EXTRA" {
 		t.Errorf("thinker = %+v", th)
 	}
@@ -109,37 +107,37 @@ func TestLoadValidation(t *testing.T) {
 		files   map[string]string
 		wantErr string
 	}{
-		{"malformed yaml", "lead: [not\n  a: map", nil, "could not read this file as YAML"},
-		{"missing lead agent", "roles: {}", nil, "The lead needs an agent."},
-		{"unknown lead agent", "lead: {agent: gpt4}", nil, `The lead's agent "gpt4" is not a valid target.`},
-		{"unknown role agent", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: wat}}", nil, `Role "r" agent "wat" is not a valid target.`},
-		{"missing mode", "lead: {agent: claude}\nroles: {r: {agent: codex}}", nil, `Role "r" needs a mode.`},
-		{"bad mode", "lead: {agent: claude}\nroles: {r: {mode: boss, agent: codex}}", nil, `has an unknown mode "boss"`},
-		{"missing prompt file", "lead: {agent: claude, prompt: lead.md}", nil, `Prompt file "lead.md" was not found.`},
-		{"missing role prompt file", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, prompt: roles/r.md}}", nil, `Prompt file "roles/r.md" was not found.`},
-		{"lead model unknown", "lead: {agent: claude, model: opus}", nil, "could not read this file as YAML"},
-		{"lead models unknown", "lead: {agent: claude, models: [x]}", nil, "could not read this file as YAML"},
-		{"lead credentials unknown", "lead: {agent: claude, credentials: [work]}", nil, "could not read this file as YAML"},
-		{"empty lead agent list", "lead: {agent: []}", nil, "agent list is empty"},
-		{"empty model in lead target", "lead: {agent: \"claude:\"}", nil, `Add a model after ":"`},
-		{"bad account in lead target", "lead: {agent: \"claude:opus@../x\"}", nil, "Use one name, without"},
-		{"empty account after at", "lead: {agent: \"claude:opus@\"}", nil, `Add an account after "@"`},
-		{"role model unknown", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, model: opus}}", nil, "could not read this file as YAML"},
-		{"empty role ladder", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: []}}", nil, "has an empty agent list"},
-		{"native role ladder rejected", "lead: {agent: claude}\nroles: {r: {mode: native, agent: [claude:sonnet, claude:opus]}}", nil, "Native subagents have no fallback"},
+		{"malformed yaml", "lead: [not\n  a: map", nil, "malformed YAML"},
+		{"missing lead agent", "roles: {}", nil, "lead.agent: is required"},
+		{"unknown lead agent", "lead: {agent: gpt4}", nil, "unknown provider"},
+		{"unknown role agent", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: wat}}", nil, "unknown provider"},
+		{"missing mode", "lead: {agent: claude}\nroles: {r: {agent: codex}}", nil, "mode is required"},
+		{"bad mode", "lead: {agent: claude}\nroles: {r: {mode: boss, agent: codex}}", nil, "not one of native, consult, delegate"},
+		{"missing prompt file", "lead: {agent: claude, prompt: lead.md}", nil, "does not exist"},
+		{"missing role prompt file", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, prompt: roles/r.md}}", nil, "does not exist"},
+		{"lead model unknown", "lead: {agent: claude, model: opus}", nil, "malformed YAML"},
+		{"lead models unknown", "lead: {agent: claude, models: [x]}", nil, "malformed YAML"},
+		{"lead credentials unknown", "lead: {agent: claude, credentials: [work]}", nil, "malformed YAML"},
+		{"empty lead agent list", "lead: {agent: []}", nil, "empty list"},
+		{"empty model in lead target", "lead: {agent: \"claude:\"}", nil, "empty model"},
+		{"bad account in lead target", "lead: {agent: \"claude:opus@../x\"}", nil, "invalid account"},
+		{"empty account after at", "lead: {agent: \"claude:opus@\"}", nil, "empty account"},
+		{"role model unknown", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, model: opus}}", nil, "malformed YAML"},
+		{"empty role ladder", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: []}}", nil, "empty list"},
+		{"native role ladder rejected", "lead: {agent: claude}\nroles: {r: {mode: native, agent: [claude:sonnet, claude:opus]}}", nil, "native subagents have no fallback hook"},
 		{"role ladder map entry rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: [codex, {p: gemini}]}}", nil, "agent[1] must be a target"},
 		{"role agent map rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: {p: codex}}}", nil, "not a map"},
 		{"role account rejected", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex@work}}", nil, "default account"},
-		{"role credentials unknown", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "could not read this file as YAML"},
-		{"native needs a capable agent", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex}}", nil, "has no in-session subagents"},
+		{"role credentials unknown", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, credentials: [work]}}", nil, "malformed YAML"},
+		{"native needs a capable agent", "lead: {agent: claude}\nroles: {r: {mode: native, agent: codex}}", nil, "supports in-session subagents"},
 		{"subagent on consult", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, subagent: x}}", nil, "only applies to mode: native"},
-		{"commit allow rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, commit: allow}}", nil, `Only "never" is supported`},
-		{"concurrent group rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, concurrent: \"group:a\"}}", nil, `Only "never" is supported`},
+		{"commit allow rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, commit: allow}}", nil, "only 'never' is supported"},
+		{"concurrent group rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, concurrent: \"group:a\"}}", nil, "only 'never' is supported"},
 		{"commit on consult", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, commit: never}}", nil, "only apply to mode: delegate"},
-		{"permissions rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, permissions: rw}}", nil, "Coop cannot enforce path-level permissions"},
-		{"write_paths rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, write_paths: [a]}}", nil, "Coop cannot enforce path-level permissions"},
-		{"bad role name", "lead: {agent: claude}\nroles: {Fast Role: {mode: consult, agent: codex}}", nil, "Role name"},
-		{"unknown field", "lead: {agent: claude, sidekick: yes}", nil, "could not read this file as YAML"},
+		{"permissions rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, permissions: rw}}", nil, "not supported"},
+		{"write_paths rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, write_paths: [a]}}", nil, "not supported"},
+		{"bad role name", "lead: {agent: claude}\nroles: {Fast Role: {mode: consult, agent: codex}}", nil, "role name"},
+		{"unknown field", "lead: {agent: claude, sidekick: yes}", nil, "malformed YAML"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -226,12 +224,10 @@ func TestLoadCrossProviderLead(t *testing.T) {
 }
 
 func TestLoadMissingPreset(t *testing.T) {
-	if _, err := Load(t.TempDir(), "", "ghost"); err == nil || !errors.Is(err, ErrNotFound) ||
-		!strings.Contains(err.Error(), `No preset "ghost" exists.`) {
+	if _, err := Load(t.TempDir(), "", "ghost"); err == nil || !strings.Contains(err.Error(), `no preset "ghost"`) {
 		t.Errorf("missing preset: err = %v", err)
 	}
-	if _, err := Load(t.TempDir(), "", "../evil"); err == nil || !errors.Is(err, ErrNotFound) ||
-		!strings.Contains(err.Error(), "is not a usable preset name") {
+	if _, err := Load(t.TempDir(), "", "../evil"); err == nil || !strings.Contains(err.Error(), "invalid preset name") {
 		t.Errorf("traversal name: err = %v", err)
 	}
 }

@@ -1,5 +1,0 @@
-✗ No services are configured
-
-      .agent/compose.yml does not exist.
-
-  Add services with coop init --services.

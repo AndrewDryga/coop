@@ -1,1 +1,0 @@
-✗ example.com:443 is blocked — internet access is disabled.

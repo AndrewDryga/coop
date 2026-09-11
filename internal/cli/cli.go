@@ -165,11 +165,16 @@ func reportExit(code int, err error) int {
 
 // helpPath is the command path a help request is ABOUT: the leading plain words of argv, stopping
 // at the first option, at `--` (everything after it belongs to the agent), and at two words deep —
-// past a family and its subcommand, the rest is arguments, not a deeper page.
+// past a family and its subcommand, the rest is arguments, not a deeper page. fork is the one
+// family that takes a third word: its commands sit AFTER the fork name (`coop fork login acp`).
 func helpPath(argv []string) []string {
+	depth := 2
+	if len(argv) > 0 && argv[0] == "fork" {
+		depth = 3
+	}
 	var path []string
 	for _, arg := range argv {
-		if len(path) == 2 || arg == "--" || arg == "help" || strings.HasPrefix(arg, "-") {
+		if len(path) == depth || arg == "--" || arg == "help" || strings.HasPrefix(arg, "-") {
 			break
 		}
 		path = append(path, arg)
@@ -342,17 +347,11 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 	}
 	cmd := path[0]
 	// A subcommand is checked against its family's OWN verb list first: a typo'd leaf is an error,
-	// never a silent fallback to the family page it isn't part of. A verb with its own page — the
-	// `net` family's ten — is keyed by the full path, so `coop help net blocked` and
-	// `coop net blocked --help` reach the same one page.
+	// never a silent fallback to the family page it isn't part of.
 	if len(path) > 1 {
 		if verbs, closed := familyVerbs(cmd); closed && !slices.Contains(verbs, path[1]) {
 			guess, _ := nearestCommand(path[1], verbs)
 			return 2, ui.UnknownCommandPath(path[:2], guess, asHelp)
-		}
-		if leaf := cmd + " " + path[1]; commandHelp[leaf] != "" {
-			printTopicHelp(leaf, commandHelp[leaf])
-			return 0, nil
 		}
 	}
 	// A family whose commands carry their own pages registers them under the "<family> <command>"
@@ -363,9 +362,23 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 			return 0, nil
 		}
 	}
+	// `coop help fork <name> acp` names a fork BETWEEN the family and its command, so fork's leaf
+	// pages also resolve on the last word — `coop help fork login acp` is that page, not a fork
+	// called "acp".
+	if cmd == "fork" && len(path) > 1 {
+		if leaf := cmd + " " + path[len(path)-1]; commandHelp[leaf] != "" {
+			printTopicHelp(leaf, commandHelp[leaf])
+			return 0, nil
+		}
+	}
 	switch {
 	case cmd == "fork":
-		code, _ := forkHelp()
+		// `coop fork login --help` is the launch contract for THAT fork; `coop help fork` the family.
+		name := ""
+		if len(path) > 1 {
+			name = path[1]
+		}
+		code, _ := forkHelp(name)
 		return code, nil
 	case cmd == "run":
 		printCommandHelp(runHelp)

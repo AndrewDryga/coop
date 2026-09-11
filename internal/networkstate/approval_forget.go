@@ -65,13 +65,6 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 	}
 	removed := false
 	err := s.lockRecord(ctx, "approval", record.ID, func() error {
-		// The barrier goes down FIRST and durably. Removing the grant is what
-		// makes this project's mode fall back to coop's open default, so the
-		// order is the guarantee: after this line no ordinary launch of this
-		// project starts until a human approves again.
-		if err := s.recordWithdrawal(record.ID); err != nil {
-			return err
-		}
 		name := approvalRecord(record.ID)
 		err := s.root.Remove(name)
 		if errors.Is(err, os.ErrNotExist) {

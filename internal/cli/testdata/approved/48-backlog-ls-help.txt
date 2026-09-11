@@ -1,0 +1,9 @@
+coop backlog ls — list saved ideas
+
+Usage: coop backlog ls [--tasks <path>]...
+
+  By default, includes every configured project queue.
+  Repeat --tasks to select several queues.
+
+EXAMPLE
+  coop backlog ls --tasks web/.agent/tasks

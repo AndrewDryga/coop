@@ -1,0 +1,6 @@
+coop fork path — print a fork's folder path
+
+Usage: coop fork path <name>
+
+EXAMPLE
+  coop fork path login

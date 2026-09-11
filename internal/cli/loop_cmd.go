@@ -89,7 +89,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	peers, err := a.resolvePeers("coop loop", peerVals)
+	peers, err := a.resolvePeers("--peer", peerVals)
 	if err != nil {
 		return 2, err
 	}
@@ -173,8 +173,23 @@ func (a *app) cmdLoop(args []string) (int, error) {
 		Repo: repo, Image: img, Agent: agent,
 		Rotation: rot, Queues: queues, Preset: a.preset, Peers: peers,
 		DebugOnFail: debugOnFail, Preflight: preflight, MaxTasks: maxTasks,
-		Network: a.network.admission(),
+		Continue: loopContinueCommand(t, hasTarget, presetName),
+		Network:  a.network.admission(),
 	})
+}
+
+// loopContinueCommand is the command that resumes this run, for the reports that tell the reader
+// how to carry on. It repeats only the who-runs positional the user typed: options like
+// --max-tasks describe THIS invocation, and repeating them would suggest continuing means pausing
+// again.
+func loopContinueCommand(t agents.Target, hasTarget bool, presetName string) string {
+	switch {
+	case hasTarget:
+		return "coop loop " + t.String()
+	case presetName != "":
+		return "coop loop " + presetName
+	}
+	return "coop loop"
 }
 
 // loopctl builds the loop engine for one run: the config and runtime it works with, the version

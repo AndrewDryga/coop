@@ -1,8 +1,0 @@
-Coop v9.0.0 is up to date.
-Box image coop-atlas was last built 3 days ago.
-
-⚠ The box's build inputs have changed
-
-      The box Dockerfile or .tool-versions differs from the last build.
-
-  Rebuild with coop build.

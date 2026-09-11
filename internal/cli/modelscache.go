@@ -187,9 +187,7 @@ func fetchGrokModels() ([]acpctl.Model, error) {
 		return nil, err
 	}
 	if grokUnauthenticated(out) {
-		// The HOST's own grok login, not a coop account — `coop login grok` would sign into the
-		// box's profile and leave this probe exactly as blind as it is now.
-		return nil, modelFetchError{cause: "The host grok CLI is not signed in."}
+		return nil, modelFetchError{cause: "the host grok CLI is not signed in"}
 	}
 	return parseGrokModels(out), nil
 }
@@ -225,18 +223,7 @@ func (a *app) fetchModelCatalog(agent string) ([]acpctl.Model, error) {
 	if a.acpModels != nil {
 		return a.acpModels(agent)
 	}
-	// An ACP catalog comes from a session the provider has to authorize, so a signed-out account
-	// can only fail — say so instead of paying for a container that will.
-	if !box.ProfileAuthed(a.cfg, agent, a.cfg.ActiveProfile(agent)) {
-		return nil, modelFetchError{cause: signInToRefresh(agent)}
-	}
 	return a.fetchACPModelCatalog(agent)
-}
-
-// signInToRefresh is the one sentence a signed-out catalog gets: what is missing, and the exact
-// command that fixes it.
-func signInToRefresh(agent string) string {
-	return fmt.Sprintf("Sign in to %s to refresh its models: coop login %s", titleName(agent), agent)
 }
 
 // fetchACPModelCatalog launches one inner ACP box, asks for a fresh session's advertised models,

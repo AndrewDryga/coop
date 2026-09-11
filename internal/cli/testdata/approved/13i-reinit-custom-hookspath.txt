@@ -1,8 +1,0 @@
-✓ Coop project updated
-  /work/atlas — existing files kept, anything missing added
-
-⚠ Coop kept your Git hooks
-
-      core.hooksPath points to hooks.
-
-  Add or chain .githooks/pre-commit and .githooks/prepare-commit-msg there.

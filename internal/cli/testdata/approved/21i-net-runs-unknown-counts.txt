@@ -1,8 +1,0 @@
-Recent network runs
-
-  RUN       WHEN         ACTIVITY
-  cb375d22  today 16:03  connection count unknown · at least 8 blocked attempts
-  e644f07a  today 14:49  1 connection · cleanup pending
-  30d7a6cd  today 14:45  activity unknown · final record missing
-
-⚠ Some records could not be listed

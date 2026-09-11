@@ -1,5 +1,0 @@
-✗ Could not start services
-
-      Docker is unavailable.
-
-  Start Docker, then run coop up again.

@@ -1,7 +1,0 @@
-
-✗ Could not create preset "frontier"
-
-      .agent/presets/frontier already exists but is incomplete.
-      Inspect that folder before creating the preset again.
-
-  Help: coop help presets init

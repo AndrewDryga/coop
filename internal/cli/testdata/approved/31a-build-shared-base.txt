@@ -1,5 +1,0 @@
-Building the Coop box
-
-[Build output]
-
-✓ Box image built

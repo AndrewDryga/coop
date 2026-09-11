@@ -1,9 +1,0 @@
-✓ Coop project updated
-  /work/atlas — existing files kept, anything missing added
-
-Use your project's Docker setup
-  Dockerfile: Dockerfile
-  Services:   compose.yml
-
-  Set box.dockerfile or box.compose in .agent/project.yaml to use these files.
-  Review the files before running coop build or coop up.

@@ -1,7 +1,0 @@
-
-✗ Cannot remove Codex account "personal"
-
-      It is the default account. Choose another default first.
-
-  Accounts: coop credentials codex
-  Help:     coop help credentials default

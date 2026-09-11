@@ -183,7 +183,8 @@ func TestForkReviewGateOutcomes(t *testing.T) {
 		if err != nil || code != 0 {
 			t.Fatalf("ForkReview = (%d, %v), want (0, nil)\n%s", code, err, out)
 		}
-		if !strings.Contains(out, "gate: none configured — rebase clean") {
+		if !strings.Contains(out, "⚠ No project checks are configured") ||
+			!strings.Contains(out, "rebased cleanly onto") {
 			t.Errorf("missing no-gate outcome:\n%s", out)
 		}
 		assertReviewSourcesUnchanged(t, repo, ws, parentBefore, forkBefore)
@@ -211,7 +212,7 @@ func TestForkReviewGateOutcomes(t *testing.T) {
 		if called {
 			t.Error("gate ran despite the rebase conflict")
 		}
-		if !strings.Contains(out, "conflict while rebasing onto current parent — gate not run") {
+		if !strings.Contains(out, "✗ Fork perf conflicts with") || !strings.Contains(out, "Project checks did not run.") {
 			t.Errorf("missing conflict outcome:\n%s", out)
 		}
 		assertReviewSourcesUnchanged(t, repo, ws, parentBefore, forkBefore)
@@ -245,8 +246,8 @@ func TestForkReviewGateOutcomes(t *testing.T) {
 		wantCode int
 		wantLine string
 	}{
-		{name: "green", green: true, wantCode: 0, wantLine: "green on isolated rebased scratch"},
-		{name: "red", green: false, wantCode: 1, wantLine: "red on isolated rebased scratch"},
+		{name: "green", green: true, wantCode: 0, wantLine: "✓ Project checks passed"},
+		{name: "red", green: false, wantCode: 1, wantLine: "✗ Project checks failed for fork perf"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, ws := setupReviewGateFork(t, false)
@@ -319,7 +320,7 @@ func TestForkReviewWithoutGateKeepsExistingPath(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("ForkReview = (%d, %v), want (0, nil)\n%s", code, err, out)
 	}
-	if !strings.Contains(out, "runs at merge — rolled back on failure") {
+	if !strings.Contains(out, "Project checks will run when you merge.") {
 		t.Errorf("flag-off dossier changed:\n%s", out)
 	}
 	if got := gitOut(repo, "rev-parse", "HEAD"); got != parentHead {

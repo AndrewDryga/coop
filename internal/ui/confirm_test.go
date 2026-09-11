@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"errors"
 	"io"
 	"os"
 	"strings"
@@ -16,8 +15,6 @@ func TestDestroyGate(t *testing.T) {
 	}
 	if err := DestroyGate("delete task Y (todo)", false); err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Errorf("DestroyGate(no, piped) = %v, want a refusal naming --yes", err)
-	} else if !errors.Is(err, ErrNeedsConfirmation) {
-		t.Errorf("DestroyGate(no, piped) = %v, want it to answer ErrNeedsConfirmation", err)
 	}
 	var prompt string
 	ask := func(got string) bool {
@@ -32,7 +29,7 @@ func TestDestroyGate(t *testing.T) {
 	}
 	if err := DestroyGate("delete task Z", false, func(string) bool {
 		return ConfirmationResponse("", false)
-	}); !errors.Is(err, ErrCancelled) {
+	}); err == nil || err.Error() != "cancelled" {
 		t.Errorf("DestroyGate(injected default No) = %v, want cancelled", err)
 	}
 	// More than one callback is a programming error, not a silent pick-the-first.

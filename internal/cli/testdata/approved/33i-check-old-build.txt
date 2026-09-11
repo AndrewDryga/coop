@@ -1,5 +1,0 @@
-Coop v9.0.0 is up to date.
-Box image coop-box was last built 35 days ago.
-
-Refresh the box's agent tools
-  → coop update --box-only

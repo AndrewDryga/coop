@@ -11,72 +11,24 @@ import (
 	"testing"
 )
 
-// probeReason turns a failed probe's stderr/error into the one sentence a reason slot holds, and
-// says so explicitly when neither the runtime nor the error said anything — a blank reason under
-// a failure headline is the one thing a reader cannot act on.
-func TestProbeReason(t *testing.T) {
-	const fallback = "Nothing was reported."
+// probeWhy turns a failed probe's stderr/error into a short " : <last line>" suffix.
+func TestProbeWhy(t *testing.T) {
 	cases := []struct {
 		errOut string
 		err    error
 		want   string
 	}{
-		{"", nil, fallback},
-		{"boom", nil, "Boom."},
-		{"line1\nlast line", nil, "Last line."}, // only the last stderr line
-		{"  \n  trailing  ", nil, "Trailing."},
-		{"", errors.New("run failed"), "Run failed."}, // fall back to the run error
-		{"stderr wins", errors.New("ignored"), "Stderr wins."},
+		{"", nil, ""},
+		{"boom", nil, ": boom"},
+		{"line1\nlast line", nil, ": last line"}, // only the last stderr line
+		{"  \n  trailing  ", nil, ": trailing"},
+		{"", errors.New("run failed"), ": run failed"}, // fall back to the run error
+		{"stderr wins", errors.New("ignored"), ": stderr wins"},
 	}
 	for _, c := range cases {
-		if got := probeReason(c.errOut, c.err, fallback); got != c.want {
-			t.Errorf("probeReason(%q, %v) = %q, want %q", c.errOut, c.err, got, c.want)
+		if got := probeWhy(c.errOut, c.err); got != c.want {
+			t.Errorf("probeWhy(%q, %v) = %q, want %q", c.errOut, c.err, got, c.want)
 		}
-	}
-}
-
-// The probe speaks stable check ids; the report owns the words. A verdict the host cannot map to
-// a known id must not become a silent pass, so parsing keeps ids and measured values apart.
-func TestParseProbeResults(t *testing.T) {
-	got := parseProbeResults("RESULT PASS sandbox.env\nRESULT FAIL host.coop_cli\nRESULT UID 1000\nnoise\nRESULT PIDS max\n")
-	for id, want := range map[string]string{
-		"sandbox.env":   "PASS",
-		"host.coop_cli": "FAIL",
-		"UID":           "1000",
-		"PIDS":          "max",
-	} {
-		if got[id] != want {
-			t.Errorf("parseProbeResults()[%q] = %q, want %q", id, got[id], want)
-		}
-	}
-	if _, ok := got["noise"]; ok {
-		t.Error("a non-RESULT line became a verdict")
-	}
-}
-
-// The verdict counts what actually happened: a probe that died is one failure plus the checks it
-// was carrying, never a smaller total that happens to read as clean.
-func TestDoctorVerdictCountsUnrunChecks(t *testing.T) {
-	report := &doctorReport{}
-	s := report.section(sectionSecrets)
-	s.pass("one")
-	s.pass("two")
-	tasks := report.section(sectionTasks)
-	tasks.probeFailed("Could not run the task-channel checks", "It did not respond.", 4)
-	skipped := report.section(sectionCredentials)
-	skipped.skip("Settings permissions not checked", "", 1)
-	got := report.tally()
-	want := doctorTally{passed: 2, probeFailed: 1, uncompleted: 4, notChecked: 1}
-	if got != want {
-		t.Errorf("tally = %+v, want %+v", got, want)
-	}
-	out := captureStderr(t, func() {
-		if code := report.print(); code != 1 {
-			t.Errorf("a failed probe must exit 1, got %d", code)
-		}
-	})
-	if !strings.Contains(out, "✗ 2 checks passed; 1 probe failed; 4 checks could not be completed; 1 could not be checked") {
-		t.Errorf("verdict did not account for every check:\n%s", out)
 	}
 }
 
@@ -147,16 +99,15 @@ func TestDoctorCredAndHomeProbeReportsConfigWritability(t *testing.T) {
 		t.Fatalf("blocked home result missing:\n%s", got)
 	}
 
-	report := &doctorReport{}
-	s := report.section(sectionCredentials)
-	doctorCheckHome(s, "blocked", false)
-	if got := report.tally(); got.passed != 0 || got.failed != 0 || got.notChecked != 1 {
-		t.Fatalf("Alpine fallback must skip home ownership rather than judge it, got %+v", got)
+	var rep report
+	doctorCheckHome(&rep, "blocked", false)
+	if rep.pass != 0 || rep.fail != 0 {
+		t.Fatalf("Alpine fallback must skip home ownership, got %+v", rep)
 	}
-	doctorCheckHome(s, "writable", true)
-	doctorCheckHome(s, "blocked", true)
-	if got := report.tally(); got.passed != 1 || got.failed != 1 {
-		t.Fatalf("real-image home results = %+v, want one pass and one fail", got)
+	doctorCheckHome(&rep, "writable", true)
+	doctorCheckHome(&rep, "blocked", true)
+	if rep.pass != 1 || rep.fail != 1 {
+		t.Fatalf("real-image home results = %+v, want one pass and one fail", rep)
 	}
 }
 

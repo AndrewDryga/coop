@@ -26,16 +26,6 @@ type NetworkRecovery struct {
 	// its identity could not be proved: nothing was touched because cleanup is
 	// that process's job, not because anything external is in the way.
 	Live bool
-	// The counts a report may state as fact, by the kind the record itself
-	// names. Removed counts only what this pass actually removed — a resource
-	// observed already absent was settled, not cleaned up — so a report can
-	// never claim a container it never touched.
-	RemovedContainers, RemovedVolumes int
-	PendingContainers, PendingVolumes int
-	// Unverified is set when something was left in place because a consumer
-	// could not be proved gone: ownership coop will not guess at, which is a
-	// different thing from a removal that failed.
-	Unverified bool
 }
 
 // recoverDocker is the bounded exact-owner surface recovery needs. It removes
@@ -163,25 +153,18 @@ func recoverNetworkRun(ctx context.Context, evidence *networkstate.Evidence, rec
 		}
 		if !consumersGoneFor(record, role) {
 			out.Pending = append(out.Pending, role+" (a container that could still use it is not proved gone)")
-			out.Unverified = true
-			out.countPending(resource.Kind)
 			continue
 		}
-		next, outcome, err := recoverResource(ctx, evidence, docker, record, resource)
+		next, removed, err := recoverResource(ctx, evidence, docker, record, resource)
 		record = next
 		switch {
 		case err != nil:
 			out.Failures = appendError(out.Failures, fmt.Errorf("%s: %w", role, err))
 			out.Pending = append(out.Pending, role)
-			out.countPending(resource.Kind)
-		case outcome == resourceRemoved:
+		case removed:
 			out.Removed = append(out.Removed, role)
-			out.countRemoved(resource.Kind)
-		case outcome == resourceAbsent:
-			// Settled without a removal: it was already gone before this pass.
 		default:
 			out.Pending = append(out.Pending, role)
-			out.countPending(resource.Kind)
 		}
 	}
 	if record.Artifact.State != "gone" && !slices.ContainsFunc(record.Resources, func(r networkstate.Resource) bool {
@@ -228,41 +211,14 @@ func consumersGoneFor(record networkstate.Execution, role string) bool {
 	return true
 }
 
-// The three outcomes one recorded resource can reach in a pass: coop removed
-// it, it was already gone, or it is still there.
-const (
-	resourceRemoved = "removed"
-	resourceAbsent  = "absent"
-	resourcePending = "pending"
-)
-
-// countRemoved and countPending tally by the kind the record names, so a report
-// can say "2 temporary containers" only where the evidence says container.
-func (r *NetworkRecovery) countRemoved(kind string) {
-	if kind == "container" {
-		r.RemovedContainers++
-		return
-	}
-	r.RemovedVolumes++
-}
-
-func (r *NetworkRecovery) countPending(kind string) {
-	if kind == "container" {
-		r.PendingContainers++
-		return
-	}
-	r.PendingVolumes++
-}
-
 // recoverResource removes ONE recorded resource and records the outcome. A
 // positive inspection reconciles an ambiguous creation first, so the removal
-// always names an exact id; an exact absence is what proves it gone — and is
-// reported as absent, never as a removal this pass performed.
+// always names an exact id; an exact absence is what proves it gone.
 func recoverResource(ctx context.Context, evidence *networkstate.Evidence, docker recoverDocker,
-	record networkstate.Execution, resource networkstate.Resource) (networkstate.Execution, string, error) {
+	record networkstate.Execution, resource networkstate.Resource) (networkstate.Execution, bool, error) {
 	ref := networkResourceRef(record, resource.Role)
 	if ref.Name == "" {
-		return record, resourcePending, errors.New("this run recorded no exact id for that container or volume, so coop will not remove anything by guess")
+		return record, false, errors.New("this run recorded no exact id for that container or volume, so coop will not remove anything by guess")
 	}
 	present, id := false, ""
 	var err error
@@ -278,37 +234,31 @@ func recoverResource(ctx context.Context, evidence *networkstate.Evidence, docke
 		}
 	}
 	if err != nil {
-		return record, resourcePending, err
+		return record, false, err
 	}
 	if present && resource.ID == "" {
 		// The supervisor died between submitting the create and recording its
 		// outcome. This exact-owner observation binds the identity it left.
 		if record, err = evidence.ReconcileInterruptedResource(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, ref.Name, id); err != nil {
-			return record, resourcePending, err
+			return record, false, err
 		}
 		ref = networkResourceRef(record, resource.Role)
 	}
 	if present {
 		if resource.Kind == "container" {
 			if err := docker.StopContainer(ctx, ref, 0); err != nil {
-				return record, resourcePending, err
+				return record, false, err
 			}
 			err = docker.RemoveContainer(ctx, ref)
 		} else {
 			err = docker.RemoveVolume(ctx, ref)
 		}
 		if err != nil {
-			return record, resourcePending, err
+			return record, false, err
 		}
 	}
 	record, err = evidence.ConfirmResourceGone(ctx, record.ID, record.Revision, record.DaemonID, resource.Role, ref.Name, ref.ID)
-	switch {
-	case err != nil:
-		return record, resourcePending, err
-	case present:
-		return record, resourceRemoved, nil
-	}
-	return record, resourceAbsent, nil
+	return record, err == nil, err
 }
 
 func appendError(list []error, err error) []error {

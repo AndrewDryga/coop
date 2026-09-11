@@ -402,18 +402,35 @@ func TestForkRmRefusesTaskAuthorityAddedAfterConfirmation(t *testing.T) {
 	}
 }
 
+// The preview a person answers must name every consequence the snapshot found — grouped by what
+// happens, what is lost for good, and what survives — and nothing it did not find.
 func TestForkDestroyDescriptionNamesTaskBlastRadius(t *testing.T) {
-	description := ForkDestroyDescription("worker", true, true, tasks.ForkTaskStateSummary{
+	preview := ForkDestroyDescription(true, true, true, tasks.ForkTaskStateSummary{
 		Assignments: 2, Candidate: true, PreparedProposals: 1, PendingProposals: 2, ImportedReceipts: 3,
 	})
+	rendered := strings.Join(append(append(append([]string{}, preview.Will...), preview.Deleted...), preview.Kept...), "\n")
 	for _, want := range []string{
-		"discard uncommitted files", "discard unmerged commits", "return 2 canonical task assignment(s)",
-		"discard its reviewed merge candidate", "discard 3 not-yet-imported task proposal(s)",
-		"retain 3 imported canonical task(s)",
+		"Stop its running worker.",
+		"Return 2 assigned tasks to the project queue.",
+		"Uncommitted changes and unmerged commits.",
+		"Service containers, Docker volumes, and their stored data.",
+		"1 reviewed set of changes waiting to merge.",
+		"3 proposed tasks not yet added to the project.",
+		"3 tasks already added to the project.",
 	} {
-		if !strings.Contains(description, want) {
-			t.Fatalf("destroy description lost %q: %s", want, description)
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("destroy preview lost %q:\n%s", want, rendered)
 		}
+	}
+
+	// A clean, stopped fork with no task authority promises nothing it did not observe — but its
+	// services and their data still go, so that loss is never omitted.
+	quiet := ForkDestroyDescription(false, false, false, tasks.ForkTaskStateSummary{})
+	if len(quiet.Will) != 0 || len(quiet.Kept) != 0 {
+		t.Errorf("a clean fork must promise no actions and keep nothing: %+v", quiet)
+	}
+	if len(quiet.Deleted) != 1 || !strings.Contains(quiet.Deleted[0], "Service containers") {
+		t.Errorf("service data is always part of the loss: %+v", quiet.Deleted)
 	}
 }
 

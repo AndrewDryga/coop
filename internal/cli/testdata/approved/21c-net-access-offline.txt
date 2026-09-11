@@ -1,5 +1,0 @@
-New runs are offline because .agent/project.yaml says so.
-An agent cannot reach its provider.
-
-For more details see:
-  coop help net

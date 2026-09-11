@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -49,8 +50,16 @@ func TestDetectDocker(t *testing.T) {
 	}
 }
 
-func TestDetectDockerSetup(t *testing.T) {
-	// A Dockerized repo with no .agent/Dockerfile → the two files a person can point coop at.
+func TestSuggestDocker(t *testing.T) {
+	capture := func(repo string) string {
+		out, _ := captureScaffoldStderr(t, func() error {
+			SuggestDocker(repo)
+			return nil
+		})
+		return out
+	}
+
+	// A Dockerized repo with no .agent/Dockerfile → a suggestion naming the agent layer + services.
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, "Dockerfile"), []byte("FROM alpine\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -58,24 +67,26 @@ func TestDetectDockerSetup(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "docker-compose.yml"), []byte("services:\n  db:\n    image: postgres\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	setup := DetectDockerSetup(repo)
-	if setup == nil || setup.Dockerfile != "Dockerfile" || setup.Compose != "docker-compose.yml" {
-		t.Fatalf("detected setup = %+v, want the repo's own Dockerfile and Compose file", setup)
+	out := capture(repo)
+	for _, want := range []string{"base the agent box", "@anthropic-ai/claude-code", "db", ".agent/compose.yml"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("suggestion missing %q:\n%s", want, out)
+		}
 	}
 
-	// A repo that already has .agent/Dockerfile → nothing to suggest.
+	// A repo that already has .agent/Dockerfile → no nagging.
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM debian\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := DetectDockerSetup(repo); got != nil {
-		t.Errorf("should not suggest when .agent/Dockerfile exists: %+v", got)
+	if got := capture(repo); got != "" {
+		t.Errorf("should not suggest when .agent/Dockerfile exists:\n%s", got)
 	}
 
 	// A repo with no Docker → nothing.
-	if got := DetectDockerSetup(t.TempDir()); got != nil {
-		t.Errorf("no-Docker repo has nothing to point at: %+v", got)
+	if got := capture(t.TempDir()); got != "" {
+		t.Errorf("no-Docker repo should print nothing:\n%s", got)
 	}
 }

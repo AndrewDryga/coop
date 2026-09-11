@@ -1,6 +1,0 @@
-✗ Could not finish checking for secrets
-
-      config/credentials.txt could not be read: permission denied.
-
-  Fix the file permissions, then run coop check-secrets again.
-  No possible secrets were found in the files that could be checked.

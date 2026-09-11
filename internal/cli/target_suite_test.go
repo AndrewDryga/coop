@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,17 +25,15 @@ func TestEffortOnlyTargetHeadsReachTheSharedParser(t *testing.T) {
 	if !isTargetHead("gemini/high") {
 		t.Fatal("gemini/high was misclassified before ParseTarget could reject unsupported effort")
 	}
-	if _, _, _, _, err := takeHeadWho([]string{"gemini/high"}); err == nil ||
-		!strings.Contains(err.Error(), "does not support a reasoning-effort setting") {
+	if _, _, _, _, err := takeHeadWho([]string{"gemini/high"}); err == nil || !strings.Contains(err.Error(), "no reasoning-effort control") {
 		t.Fatalf("gemini effort error = %v", err)
 	}
 }
 
-// One grammar, one explanation: a malformed target is explained the SAME on every surface — the
-// CLI positional, a preset's lead.agent, and a preset role's agent: — because they all funnel
-// through agents.ParseTarget. A surface names the slot it owns ("The lead's agent …"), but the
-// CONSTRAINT sentence is the parser's own, verbatim, so a typo diagnoses identically wherever it
-// was written.
+// One grammar, one error set: a malformed target reads the SAME on every surface — the CLI
+// positional, a preset's lead.agent, and a preset role's agent: — because they all funnel through
+// agents.ParseTarget. Each surface's error must carry the parser's own
+// message verbatim, so a typo diagnoses identically wherever it was written.
 //
 // The cases are all TARGET-SHAPED (a known provider with a bad :model/@account) so they classify
 // as targets on every surface. A bare UNKNOWN word (e.g. "gpt4") is deliberately excluded: under
@@ -55,11 +52,7 @@ func TestTargetErrorsAgreeAcrossSurfaces(t *testing.T) {
 			if perr == nil {
 				t.Fatalf("ParseTarget(%q) = nil, the suite needs a malformed target", c.target)
 			}
-			var te *agents.TargetError
-			if !errors.As(perr, &te) || te.Cause == "" {
-				t.Fatalf("ParseTarget(%q) = %v, want a *TargetError carrying its constraint", c.target, perr)
-			}
-			want := strings.Join(strings.Split(te.Cause, "\n"), " ")
+			want := perr.Error()
 
 			// CLI surface: the loop's positional target.
 			if _, _, _, _, _, _, _, err := parseLoopArgs([]string{c.target}, false); err == nil || !strings.Contains(err.Error(), want) {

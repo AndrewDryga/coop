@@ -1,6 +1,0 @@
-
-✗ "coop claude" takes one account
-
-      Account lists such as "@work,personal" are supported by coop loop.
-
-  Help: coop help loop

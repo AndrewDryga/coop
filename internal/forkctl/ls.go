@@ -53,23 +53,41 @@ func (c *Control) ForkLs(args []string) (int, error) {
 	}
 	sort.Strings(names)
 	if len(names) == 0 {
-		ui.Note("no forks yet — open one with 'coop fork <name>'")
+		listing("No forks yet.")
+		listing("")
+		listing("  Create one: coop fork login claude")
 		return 0, nil
 	}
-	// Size the NAME column to the longest fork name (clamped). Rune-pad EVERY cell (padRight) rather
-	// than %-Ns: a glyph like ⚠/⚑ in TASKS/CHANGES (or a "…" in a truncated name) is multi-byte, so
-	// %-Ns would count bytes, short-pad, and shove later columns out from under their headers.
-	nw := colWidth(names, len("NAME"), 24)
 	statuses := make([]forkStatus, 0, len(names))
 	for _, name := range names {
 		statuses = append(statuses, c.gatherForkStatus(repo, name))
 	}
-	const format = "  %s %s %s %s %s %s %s %s\n"
-	// Bold the whole rendered line, not each cell: bolding a cell first would put ANSI
-	// escape bytes inside the width count and misalign the header against the rows.
-	fmt.Print(ui.For(os.Stdout).Bold(fmt.Sprintf(format, padRight("NAME", nw), padRight("AGENT", 8), padRight("BRANCH", 12), padRight("STATE", 9), padRight("TASKS", 8), padRight("CHANGES", 15), padRight("COST", 8), "UPDATED")))
+	// One compact block per fork, not an eight-column table: a table truncates names, hides what
+	// its symbols mean, and pads every fork to the widest one. Each row is a labeled fact, and a
+	// fact nobody recorded is left out rather than shown as a dash.
+	listing("Forks")
 	for _, s := range statuses {
-		fmt.Printf(format, padRight(truncate(s.Name, nw), nw), padRight(s.Agent, 8), padRight(s.Branch, 12), padRight(s.stateCell(), 9), padRight(s.tasksCell(), 8), padRight(s.changesCell(), 15), padRight(s.costCell(), 8), s.Updated)
+		listing("")
+		heading := "  " + s.Name + " · " + stateWords(s.stateCell())
+		if s.Updated != "" {
+			heading += " · updated " + s.Updated
+		}
+		listing("%s", heading)
+		if s.Agent != "" && s.Agent != "?" {
+			listing("    Agent: %s", s.Agent)
+		}
+		if s.Branch != "" {
+			listing("    Branch: %s", s.Branch)
+		}
+		if tasksLine := s.tasksLine(); tasksLine != "" {
+			listing("    Tasks: %s", tasksLine)
+		}
+		if s.Ins != 0 || s.Del != 0 || s.Dirty {
+			listing("    Changes: %s", s.changesLine())
+		}
+		if cost := s.costLine(); cost != "" {
+			listing("    Reported cost: %s", cost)
+		}
 	}
 	// A fork whose name is (or became) a reserved verb is unreachable by `coop fork <name>` — that
 	// spelling runs the subcommand. forkspace.ValidName now refuses such names, so this only catches
@@ -77,26 +95,52 @@ func (c *Control) ForkLs(args []string) (int, error) {
 	// arg).
 	for _, n := range names {
 		if forkspace.Reserved(n) {
-			ui.Warn("fork %q shadows the '%s' subcommand — reach it via 'coop fork path %s' or 'coop fork rm %s'", n, n, n, n)
+			forkProblem(n, "Its name is also a fork command, so coop fork "+n+" runs that command.", "Its folder: coop fork path "+n)
 		}
 	}
 	seenProblems := map[string]bool{}
 	for _, status := range statuses {
 		for _, problem := range status.Problems {
-			message := "fork " + status.Name + ": " + problem
-			if !seenProblems[message] {
-				ui.Warn("%s", message)
-				seenProblems[message] = true
+			if seenProblems[status.Name+problem] {
+				continue
 			}
+			seenProblems[status.Name+problem] = true
+			forkProblem(status.Name, problem, "")
 		}
 	}
 	for _, problem := range projectSnapshot.Problems {
 		if !seenProblems[problem] {
-			ui.Warn("project activity: %s", problem)
 			seenProblems[problem] = true
+			ui.Note("")
+			ui.Note("  %s", ui.Yellow("⚠ Could not read this project's fork activity"))
+			ui.Note("")
+			ui.Note("        %s", problem)
 		}
 	}
+	listing("")
+	listing("Review a fork: coop fork review <name>")
 	return 0, nil
+}
+
+// listing writes one line of `coop fork ls`'s RESULT to stdout — the listing is the answer the
+// command was run for, so it stays pipeable (`coop fork ls | grep`), exactly like the --json form
+// and every other listing. Warnings and problems keep ui's stderr, where exceptions belong.
+func listing(format string, a ...any) {
+	fmt.Fprintf(os.Stdout, format+"\n", a...)
+}
+
+// forkProblem reports why ONE fork's state could not be established, nested under the listing it
+// belongs to: the headline sits at the forks' own indent and its cause six spaces further in, the
+// same relationship a top-level block has.
+func forkProblem(name, cause, action string) {
+	ui.Note("")
+	ui.Note("  %s", ui.Yellow("⚠ Could not check fork "+name))
+	ui.Note("")
+	ui.Note("        %s", cause)
+	if action != "" {
+		ui.Note("")
+		ui.Note("    %s", action)
+	}
 }
 
 // forkLsJSON prints the repo's workspaces (root first, then forks) as JSON, each with its path and

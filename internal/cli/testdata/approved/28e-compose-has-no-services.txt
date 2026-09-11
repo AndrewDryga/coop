@@ -1,8 +1,0 @@
-Starting services from .agent/compose.yml
-  Waiting for services to be ready.
-
-✗ Could not start services
-
-      .agent/compose.yml defines no services.
-
-  Add services with coop init --services.

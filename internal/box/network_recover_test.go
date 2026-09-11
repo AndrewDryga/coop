@@ -146,13 +146,8 @@ func TestRecoverNetworkRunsProvesAbsenceAndKeepsFailuresPending(t *testing.T) {
 		}
 		d.mu.Unlock()
 		results, err := recoverNetworkRuns(context.Background(), evidence, f.record.ID, connect)
-		if err != nil || len(results) != 1 || !results[0].Sealed || slices.Contains(results[0].Pending, "agent") {
+		if err != nil || len(results) != 1 || !slices.Contains(results[0].Removed, "agent") || !results[0].Sealed {
 			t.Fatalf("an absent container was not settled: %+v %v", results, err)
-		}
-		// It was already gone, so this pass did not remove it: a report must not
-		// claim a container it never touched.
-		if slices.Contains(results[0].Removed, "agent") || results[0].RemovedContainers != 2 {
-			t.Errorf("an absent container was counted as removed: %+v", results[0])
 		}
 	})
 	t.Run("removal fails", func(t *testing.T) {

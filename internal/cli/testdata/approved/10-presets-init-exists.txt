@@ -1,7 +1,0 @@
-
-✗ Preset "frontier" already exists
-
-      .agent/presets/frontier/preset.yaml
-
-  Show it: coop presets frontier
-  Help:    coop help presets

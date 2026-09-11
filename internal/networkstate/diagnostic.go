@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/netip"
 	"slices"
-	"strings"
 
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkview"
@@ -157,7 +156,10 @@ func (e *Evidence) Why(runID string, query PolicyQuery, exportDestinations bool)
 	out := PolicyExplanation{Version: networkview.Version, Kind: "hypothetical", RunID: record.ID,
 		PolicyFingerprint: policy.Fingerprint, Integrity: retainedIntegrity, Mode: policy.Mode,
 		Protocol: query.Protocol, Port: query.Port, Allowed: decision.Allowed, Reason: decision.Reason,
-		Message: DiagnosticReason(decision.Reason), Resolution: "not_evaluated", CurrentPolicy: "not_evaluated", Withheld: !exportDestinations}
+		Message: diagnosticReason(decision.Reason), Resolution: "not_evaluated", CurrentPolicy: "not_evaluated", Withheld: !exportDestinations}
+	if name == "" && decision.Reason == "rule_allowed" {
+		out.Message = "a rule in this run allows this address, transport and port; nothing was sent, so this says nothing about whether it was up"
+	}
 	if name == "" {
 		out.ProtectedScope = "run-host-inventory"
 		if len(record.Protected) == 0 {
@@ -235,11 +237,8 @@ func (e *Evidence) Explain(runID, eventID string, exportDestinations bool) (Even
 	}
 	// The shared allowlist owns the destination/candidate privacy projection.
 	projected := (networkview.Snapshot{Denials: []networkview.Denial{*found}}).Project(exportDestinations).Denials[0]
-	message, known := diagnosticMessage(projected.Reason)
-	if !known {
-		// A code this build has no sentence for keeps its own text in the
-		// message and is retagged, so nothing downstream reads it as a reason
-		// it understands.
+	message := diagnosticReason(projected.Reason)
+	if message == "This version cannot explain the retained reason code." {
 		projected.Reason = "unknown_reason"
 	}
 	state := "none"
@@ -306,87 +305,32 @@ func validateDiagnosticDenial(d networkview.Denial, fingerprint string) error {
 	return nil
 }
 
-// diagnosticReasons is the ONE mapping from a retained reason code to the
-// sentence a person reads. It is DATA, not a renderer: every code the evidence
-// can carry has its own exact cause here, so a resolver, transport or recording
-// failure is never relabeled as a missing project approval — and nothing has to
-// guess a Docker, provider or firewall remedy it cannot prove.
-//
-// The codes themselves are the machine contract and never change. These
-// sentences are human copy and may.
-var diagnosticReasons = map[string]string{
-	"open":                        "This run allowed unrestricted internet access.",
-	"rule_allowed":                "Allowed by a rule this run started with.",
-	"unapproved_name":             "This run had no approved rule for this destination.",
-	"protected_destination":       "Coop blocks access to this protected destination.",
-	"unsafe_dns_answer":           "The hostname resolved to an address Coop blocks for safety.",
-	"protocol_not_allowed":        "This run had no approved rule for this protocol.",
-	"port_not_allowed":            "This run had no approved rule for this port.",
-	"fixed_egress_policy":         "This connection is blocked by the run's network policy.",
-	"tls_name_missing":            "The connection did not provide the server name needed to check a domain rule.",
-	"tls_name_invalid":            "The connection provided an invalid server name.",
-	"tls_ech_unsupported":         "The connection hid its server name, so Coop could not check the domain rule.",
-	"tls_malformed":               "The connection's TLS handshake was invalid.",
-	"tls_hello_too_large":         "The connection's TLS handshake was too large to check safely.",
-	"tls_inspection_timeout":      "Checking the connection's TLS handshake timed out.",
-	"tls_inspection_unavailable":  "Coop could not inspect the connection's TLS handshake.",
-	"dns_name_invalid":            "The requested hostname was invalid.",
-	"dns_query_invalid":           "The DNS request was invalid.",
-	"dns_answer_invalid":          "The DNS response was invalid.",
-	"dns_cname_limit":             "Resolving this hostname required too many redirects.",
-	"dns_answer_limit":            "The DNS response contained too many addresses.",
-	"dns_upstream_invalid":        "The upstream DNS response failed validation.",
-	"dns_unavailable":             "DNS resolution was unavailable.",
-	"dns_no_address":              "DNS returned no usable address for this hostname.",
-	"dns_ttl_expired":             "The resolved address expired before the connection could use it.",
-	"dns_capacity_exceeded":       "Coop's DNS resolver reached its capacity limit.",
-	"gateway_connection_capacity": "Coop's network gateway reached its connection limit.",
-	"gateway_lease_capacity":      "Coop's network gateway reached its capacity limit.",
-	"gateway_lease_refused":       "Coop's network gateway could not authorize this connection.",
-	"gateway_unavailable":         "Coop's network gateway was unavailable.",
-	"enforcement_unavailable":     "Network enforcement became unavailable.",
-	"clock_unavailable":           "Coop could not verify the time needed to authorize this connection.",
-	"observation_unavailable":     "Connection recording was unavailable.",
-	"upstream_unreachable":        "The destination could not be reached.",
-	"unsupported_capability":      "This connection needs a network capability Coop does not support.",
-}
-
-// DiagnosticReason is the human cause for one retained reason code, for a
-// renderer that holds a reason without an explanation around it.
-func DiagnosticReason(reason string) string {
-	message, _ := diagnosticMessage(reason)
-	return message
-}
-
-// diagnosticMessage returns that sentence and whether this build knows the
-// code. An unknown code is shown as itself — terminal-safe, since the reason
-// grammar is a fixed lowercase identifier — because a guess would be a worse
-// answer than the code.
-func diagnosticMessage(reason string) (string, bool) {
-	if message, ok := diagnosticReasons[reason]; ok {
-		return message, true
+// Fixed prose never reflects parser errors, DNS payloads or terminal controls.
+func diagnosticReason(reason string) string {
+	switch reason {
+	case "open":
+		return "this run was not filtered, so everything was reachable"
+	case "rule_allowed":
+		return "a rule in this run allows this name and port; whether the host answered is another question"
+	case "unapproved_name":
+		return "no rule in this run allows this name — a rule you approve now applies to the next run"
+	case "protected_destination", "unsafe_dns_answer":
+		return "this destination is protected, or the DNS answer pointed somewhere unsafe — no rule can allow it"
+	case "protocol_not_allowed", "port_not_allowed", "fixed_egress_policy":
+		return "no rule in this run allows that protocol and port"
+	case "tls_name_missing", "tls_name_invalid":
+		return "the TLS handshake carried no usable server name, so no domain rule could match it"
+	case "tls_ech_unsupported":
+		return "Encrypted ClientHello hides the server name, so a filtered box cannot allow this connection"
+	case "tls_malformed", "tls_hello_too_large", "tls_inspection_timeout", "tls_inspection_unavailable":
+		return "the TLS handshake could not be read safely — this is not a missing domain rule"
+	case "dns_name_invalid", "dns_query_invalid", "dns_answer_invalid", "dns_cname_limit", "dns_answer_limit", "dns_upstream_invalid":
+		return "the DNS answer failed validation, and it names no port or protocol to allow"
+	case "dns_unavailable", "dns_no_address", "dns_ttl_expired", "dns_capacity_exceeded":
+		return "the resolver could not give a usable address — fix the resolver, a rule will not help"
+	case "gateway_connection_capacity", "gateway_lease_capacity", "gateway_lease_refused", "gateway_unavailable", "enforcement_unavailable", "clock_unavailable", "observation_unavailable", "upstream_unreachable", "unsupported_capability":
+		return "the gateway could not check or record this — it is not a missing rule"
+	default:
+		return "this coop cannot explain that reason code"
 	}
-	return "This Coop version cannot explain the recorded reason: " + safeReasonCode(reason) + ".", false
-}
-
-// safeReasonCode keeps an unrecognized code printable: the retained grammar is
-// lowercase letters, digits and underscores, and anything else is replaced
-// rather than passed to a terminal.
-func safeReasonCode(reason string) string {
-	if reason == "" {
-		return "(none)"
-	}
-	var b strings.Builder
-	for i, r := range reason {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('?')
-		}
-		if i >= 63 {
-			break
-		}
-	}
-	return b.String()
 }

@@ -1,4 +1,0 @@
-
-✗ Unknown agent "claud" for "coop models"
-
-  Did you mean: coop models claude

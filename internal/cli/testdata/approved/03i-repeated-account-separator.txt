@@ -1,6 +1,0 @@
-
-✗ Invalid agent target "claude@work@personal"
-
-      Use one "@" before the account name.
-
-  Help: coop help models

@@ -472,16 +472,13 @@ func (a *Approval) checkDirectory(canonical string, info os.FileInfo) *PendingAp
 	}
 	device, inode, ok := directoryIdentity(info)
 	if !ok {
-		return &PendingApproval{Reason: "the project directory at " + canonical + " could not be read",
-			Cause: "This project folder could not be read, so its approval cannot be checked."}
+		return &PendingApproval{Reason: "the project directory at " + canonical + " could not be read"}
 	}
 	if a.Inode == 0 {
-		return &PendingApproval{Reason: "the network approval for " + canonical + " was made by an older coop",
-			Cause: "This project's network access was approved by an older Coop."}
+		return &PendingApproval{Reason: "the network approval for " + canonical + " was made by an older coop"}
 	}
 	if a.Device != device || a.Inode != inode {
-		return &PendingApproval{Reason: "the project directory at " + canonical + " was replaced since it was approved",
-			Cause: "This project folder was replaced after its network access was approved."}
+		return &PendingApproval{Reason: "the project directory at " + canonical + " was replaced since it was approved"}
 	}
 	return nil
 }

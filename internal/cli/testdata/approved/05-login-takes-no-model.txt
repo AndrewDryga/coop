@@ -1,5 +1,0 @@
-
-✗ "coop login" does not take a model
-
-  Usage: coop login <agent>[@<account>]
-  Help:  coop help login

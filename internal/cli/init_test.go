@@ -105,12 +105,12 @@ func TestInitWithoutTerminalAsksNothingAndNamesTheMissingStep(t *testing.T) {
 		t.Error("a non-interactive init created a Git repository nobody asked for")
 	}
 	for _, want := range []string{
-		"Setting up Coop",
+		"Setting up Coop for " + dir,
 		"✓ Coop project created",
 		"Claude and Codex share instructions, skills, and one task queue.",
-		"Network access is filtered.",
+		"Internet access is filtered.",
 		"Claude can reach Anthropic and Codex can reach OpenAI.",
-		"Other network traffic is blocked until you approve rules allowing it.",
+		"Other websites and services are blocked until you approve them.",
 		"Finish setup",
 		"→ git init",
 		"→ coop init",
@@ -124,7 +124,6 @@ func TestInitWithoutTerminalAsksNothingAndNamesTheMissingStep(t *testing.T) {
 		"Initialize Git here?", "Languages", "Services (",
 		"wrote AGENTS.md", "linked CLAUDE.md", "added skill", "updated .gitignore", "commit gate:",
 		"coop net setup", "kept ",
-		dir, // the working directory is not echoed as a header; only actionable paths appear
 	} {
 		if strings.Contains(out, absent) {
 			t.Errorf("init result should not contain %q:\n%s", absent, out)
@@ -225,7 +224,7 @@ func TestInitStackPreflightPreservesTree(t *testing.T) {
 						t.Fatalf("git init: %v, %s", err, out)
 					}
 					if state == "initialized" {
-						if _, err := scaffold.Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+						if err := scaffold.Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
 							t.Fatal(err)
 						}
 						write("repo/AGENTS.md", "custom instructions\n", 0o600)
@@ -242,8 +241,7 @@ func TestInitStackPreflightPreservesTree(t *testing.T) {
 					a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: cfgDir, MCPFile: filepath.Join(cfgDir, "mcp.json")}}
 					run := func() error {
 						if api == "scaffold" {
-							_, err := scaffold.Init(repo, stack, []string{"go"}, []string{"claude", "codex", "gemini"})
-							return err
+							return scaffold.Init(repo, stack, []string{"go"}, []string{"claude", "codex", "gemini"})
 						}
 						_, err := a.cmdInit([]string{"--stack", stack, "--services", "postgres", "--agents", "all"})
 						return err
@@ -263,27 +261,11 @@ func TestInitStackPreflightPreservesTree(t *testing.T) {
 					if err := log.Close(); err != nil {
 						t.Fatal(err)
 					}
-					if runErr == nil {
-						t.Fatal("invalid stack was not refused")
+					if runErr == nil || !strings.Contains(runErr.Error(), "--stack") {
+						t.Fatalf("invalid stack not refused: %v", runErr)
 					}
-					// The refusal itself is the only thing a denied init may print: it names the
-					// flag and what to do, and nothing before it claims scaffold work happened.
-					data, err := os.ReadFile(log.Name())
-					if err != nil {
-						t.Fatal(err)
-					}
-					printed := string(data)
-					if api == "scaffold" {
-						if len(printed) != 0 {
-							t.Errorf("the scaffold package printed %d bytes; the caller owns the refusal: %q", len(printed), printed)
-						}
-					} else if !strings.Contains(printed, "--stack") {
-						t.Errorf("the refusal did not name the flag it refused: %q", printed)
-					}
-					for _, leaked := range []string{"Coop project created", "Coop project updated", "Setting up Coop"} {
-						if strings.Contains(printed, leaked) {
-							t.Errorf("a denied init claimed setup work (%q): %q", leaked, printed)
-						}
+					if data, err := os.ReadFile(log.Name()); err != nil || len(data) != 0 {
+						t.Errorf("denied init produced %d progress bytes: %v", len(data), err)
 					}
 					after := snapshotInitTree(t, root)
 					if len(before) != len(after) {
@@ -341,10 +323,9 @@ func TestInitReportsAPendingNetworkRequestOnlyWhenThereIsOne(t *testing.T) {
 		})
 	}
 	out := initOutput()
-	// A fresh project has nothing pending, so init says nothing about approval.
-	for _, absent := range []string{"coop net approve", netPendingHeadline} {
+	for _, absent := range []string{"coop net", "approved", "network"} {
 		if strings.Contains(out, absent) {
-			t.Errorf("a fresh init claimed a pending network request (%q):\n%s", absent, out)
+			t.Errorf("a fresh init mentioned %q:\n%s", absent, out)
 		}
 	}
 	project := filepath.Join(repo, ".agent", "project.yaml")
@@ -358,9 +339,8 @@ func TestInitReportsAPendingNetworkRequestOnlyWhenThereIsOne(t *testing.T) {
 	if err := os.WriteFile(project, []byte("box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: docs.example.com}\n      protocol: tls\n      ports: [443]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	want := "⚠ " + netPendingHeadline + "\n  .agent/project.yaml requests changes to network access.\n  " + netPendingReview + "\n"
-	if out := initOutput(); !strings.HasSuffix(out, want) {
-		t.Errorf("a pending request did not end init with the approval notice:\n%s\nwant to end with:\n%s", out, want)
+	if out := initOutput(); !strings.HasSuffix(out, "⚠ This project asks for network access that has not been approved\n  Review it: coop net approve\n") {
+		t.Errorf("a pending request did not end init with the two-line notice:\n%s", out)
 	}
 	// The file a human edited is not rewritten by the re-init.
 	if after, _ := os.ReadFile(project); !strings.Contains(string(after), "docs.example.com") {

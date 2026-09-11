@@ -1,6 +1,0 @@
-
-✗ Invalid agent target "claude@"
-
-      Add an account after "@" or remove the at sign.
-
-  Help: coop help models

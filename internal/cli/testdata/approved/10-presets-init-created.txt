@@ -1,6 +1,0 @@
-✓ Created preset "frontier"
-
-Please edit the preset template: .agent/presets/frontier/preset.yaml
-
-To run it, use:
-  coop frontier

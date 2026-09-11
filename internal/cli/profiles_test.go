@@ -39,7 +39,7 @@ func TestCmdProfiles(t *testing.T) {
 	if code != 0 || err != nil {
 		t.Fatalf("cmdCredentials: code=%d err=%v", code, err)
 	}
-	for _, want := range []string{"Accounts available to Coop", "work", "refreshed", "personal", "⚠ Not signed in", "coop login claude@personal"} {
+	for _, want := range []string{"Accounts available to Coop", "work", "refreshed", "personal", "not signed in", "coop login claude@personal"} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
@@ -63,7 +63,7 @@ func TestCmdProfilesDanglingDefault(t *testing.T) {
 	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
-	if !strings.Contains(string(out), `⚠ Default account "ghost" is missing`) || !strings.Contains(string(out), "coop credentials claude work default") {
+	if !strings.Contains(string(out), "default account ghost is gone") || !strings.Contains(string(out), "coop credentials claude <account> default") {
 		t.Errorf("expected a dangling-default note naming ghost and its remedy:\n%s", out)
 	}
 }
@@ -210,31 +210,31 @@ func TestProfileStateRenewable(t *testing.T) {
 	}
 	// Expired access token (expiresAt in the past) but a refresh token present → signed in.
 	write("renew", `{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1,"scopes":["user:inference"]}}`)
-	if issue := a.profileIssue("claude", "renew"); issue != "" {
-		t.Errorf("expired-but-renewable = %q, want no issue", issue)
+	if label, expired := a.profileState("claude", "renew"); expired || label != "signed in" {
+		t.Errorf("expired-but-renewable = (%q, %v), want (\"signed in\", false)", label, expired)
 	}
 	// Expired access token, no refresh token → genuinely needs a re-login.
 	write("dead", `{"claudeAiOauth":{"accessToken":"a","expiresAt":1,"scopes":["user:inference"]}}`)
-	if issue := a.profileIssue("claude", "dead"); issue != "Sign in again" {
-		t.Errorf("expired-no-refresh = %q, want \"Sign in again\"", issue)
+	if label, expired := a.profileState("claude", "dead"); !expired || label != "re-login required" {
+		t.Errorf("expired-no-refresh = (%q, %v), want (\"re-login required\", true)", label, expired)
 	}
 	// A projected/stripped OAuth marker has no token or refresh authority. Presence alone must not
 	// claim it is signed in, or live verification sends the operator toward the wrong diagnosis.
 	write("stripped", `{"claudeAiOauth":{"expiresAt":0,"scopes":["user:inference"]}}`)
-	if issue := a.profileIssue("claude", "stripped"); issue != "Sign in again" {
-		t.Errorf("stripped = %q, want \"Sign in again\"", issue)
+	if label, expired := a.profileState("claude", "stripped"); !expired || label != "re-login required" {
+		t.Errorf("stripped = (%q, %v), want (\"re-login required\", true)", label, expired)
 	}
 	write("future-no-access", `{"claudeAiOauth":{"expiresAt":4102444800000,"scopes":["user:inference"]}}`)
-	if issue := a.profileIssue("claude", "future-no-access"); issue != "Sign in again" {
-		t.Errorf("future-no-access = %q, want \"Sign in again\"", issue)
+	if label, expired := a.profileState("claude", "future-no-access"); !expired || label != "re-login required" {
+		t.Errorf("future-no-access = (%q, %v), want (\"re-login required\", true)", label, expired)
 	}
 	write("malformed", `{`)
-	if issue := a.profileIssue("claude", "malformed"); issue != "Sign in again" {
-		t.Errorf("malformed = %q, want \"Sign in again\"", issue)
+	if label, expired := a.profileState("claude", "malformed"); !expired || label != "re-login required" {
+		t.Errorf("malformed = (%q, %v), want (\"re-login required\", true)", label, expired)
 	}
 	// No credential at all → not signed in.
-	if issue := a.profileIssue("claude", "ghost"); issue != "Not signed in" {
-		t.Errorf("missing credential = %q, want \"Not signed in\"", issue)
+	if label, _ := a.profileState("claude", "ghost"); label != "not signed in" {
+		t.Errorf("missing credential = %q, want \"not signed in\"", label)
 	}
 }
 
@@ -244,8 +244,8 @@ func TestProfileStateEnvOnlyDoesNotRequireRelogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile := cfg.DefaultProfileOf("claude")
-	if issue := (&app{cfg: cfg}).profileIssue("claude", profile); issue != "" {
-		t.Errorf("env-only Claude = %q, want no issue", issue)
+	if label, needsLogin := (&app{cfg: cfg}).profileState("claude", profile); needsLogin || label != "signed in" {
+		t.Errorf("env-only Claude = (%q, %v), want (\"signed in\", false)", label, needsLogin)
 	}
 }
 
@@ -259,14 +259,14 @@ func TestProfileStateExpiredGrok(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if issue := (&app{cfg: cfg}).profileIssue("grok", "default"); issue != "Sign in again" {
-		t.Errorf("expired Grok = %q, want \"Sign in again\"", issue)
+	if label, expired := (&app{cfg: cfg}).profileState("grok", "default"); !expired || label != "re-login required" {
+		t.Errorf("expired Grok = (%q, %v), want (\"re-login required\", true)", label, expired)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(grokProfileCredential("2020-01-01T00:00:00Z", "refresh")), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if issue := (&app{cfg: cfg}).profileIssue("grok", "default"); issue != "" {
-		t.Errorf("refreshable Grok = %q, want no issue", issue)
+	if label, expired := (&app{cfg: cfg}).profileState("grok", "default"); expired || label != "signed in" {
+		t.Errorf("refreshable Grok = (%q, %v), want (\"signed in\", false)", label, expired)
 	}
 }
 
@@ -285,7 +285,7 @@ func TestCredentialOutputOffersReloginForInvalidMarker(t *testing.T) {
 		"detail":  func() { _, _ = a.showProfile("claude", "work") },
 	} {
 		out := captureStdout(t, render)
-		if !strings.Contains(out, "Sign in again") || strings.Count(out, "coop login claude@work") != 1 {
+		if !strings.Contains(out, "re-login required") || strings.Count(out, "coop login claude@work") != 1 {
 			t.Errorf("%s did not show one exact re-login remedy:\n%s", name, out)
 		}
 	}
@@ -330,7 +330,7 @@ func TestCredentialsListingIsAnOverviewNotALedger(t *testing.T) {
 		}
 	}
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "signed in") && !strings.Contains(line, "Not signed in") {
+		if strings.Contains(line, "signed in") && !strings.Contains(line, "not signed in") {
 			t.Errorf("a healthy row still claims a status:\n%s", out)
 		}
 	}
@@ -342,7 +342,7 @@ func TestCredentialsListingIsAnOverviewNotALedger(t *testing.T) {
 				t.Errorf("`default` starts at a different column than the first block's:\n%s", out)
 			}
 		}
-		if strings.Contains(line, "Not signed in") {
+		if strings.Contains(line, "not signed in") {
 			issue++
 		}
 		if strings.TrimSpace(line) == "coop login codex@empty" {

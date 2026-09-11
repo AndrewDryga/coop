@@ -1,6 +1,0 @@
-✗ Could not add services to infra/dev-compose.yml
-
-      YAML line 8: could not find expected ':'.
-
-  Fix infra/dev-compose.yml, then run coop init --services again.
-  No services were changed.

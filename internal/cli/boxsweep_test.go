@@ -59,25 +59,17 @@ func TestSweepOrphanBoxesRunsOncePerRepo(t *testing.T) {
 	}
 }
 
-// doctor reports the box it cannot attribute to anyone and removes nothing: a box with no
-// supervisor label predates the label and may be someone's. A clean survey says nothing at all —
-// a healthy inspection shows findings, not a ledger of successful lookups.
+// doctor reports what it found — the count it checked, and the box it cannot attribute to anyone —
+// and removes nothing: a box with no supervisor label predates the label and may be someone's.
 func TestDoctorReportsOrphanBoxesWithoutReaping(t *testing.T) {
 	rt, events := sweepRuntime(t)
 	repo := t.TempDir()
 	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: rt, rtSet: true}
-	report := &doctorReport{}
-	a.doctorReportOrphanBoxes(report)
-	out := captureStderr(t, func() { report.print() })
-	for _, want := range []string{"Running boxes", "Could not identify the supervisor for 1 box", "legacy-box", "removing it manually"} {
+	out := captureStdout(t, a.doctorReportOrphanBoxes)
+	for _, want := range []string{"no orphaned boxes", "1 coop box checked", "legacy-box", "never swept"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor orphan report missing %q:\n%s", want, out)
 		}
-	}
-	// The unattributed box is host hygiene, not a hole in the isolation: it must not change the
-	// check tally the verdict reports.
-	if got := report.tally(); got != (doctorTally{}) {
-		t.Errorf("orphan survey entered the check tally: %+v", got)
 	}
 	if strings.Contains(sweepEvents(t, events), "rm ") {
 		t.Fatalf("doctor removed a container:\n%s", sweepEvents(t, events))

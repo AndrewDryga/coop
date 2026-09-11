@@ -239,7 +239,7 @@ func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
 	}
 	os.Stderr = w
 	var composeWriter bytes.Buffer
-	_, runErr := startServicesFile(runtime.Runtime{Name: shim}, repo, compose, io.Discard, &composeWriter, false, true)
+	_, runErr := startServicesFile(runtime.Runtime{Name: shim}, repo, compose, io.Discard, &composeWriter, false)
 	os.Stderr = old
 	w.Close()
 	var seen bytes.Buffer
@@ -293,11 +293,9 @@ func TestReviewLabelsWhatTheRepoAsksForAndWhatIsNew(t *testing.T) {
 	if env := byPath["certs/.env"]; env.Requested || env.New || env.Reason() != "nothing in the repo asks for it" {
 		t.Fatalf("unrequested file = %+v, reason %q", env, env.Reason())
 	}
-	// The list keeps the files' own order, so a reader can follow it against their Compose file;
-	// what deserves a second look is carried by each path's LABEL, not by its position (the
-	// approved prompt in the CLI design shows exactly that shape).
-	if got, want := review.Paths(), []string{"certs/.env", "certs/tls.key"}; !slices.Equal(got, want) {
-		t.Fatalf("review order = %v, want the files' own order %v", got, want)
+	// The file nobody asked for is listed FIRST, where a human cannot miss it.
+	if review.Files[0].Path != "certs/.env" {
+		t.Fatalf("review order = %v; want the unrequested file first", review.Paths())
 	}
 	if err := review.Approve(); err != nil {
 		t.Fatal(err)
@@ -318,10 +316,9 @@ func TestReviewLabelsWhatTheRepoAsksForAndWhatIsNew(t *testing.T) {
 	if byPath["certs/tls.key"].New || byPath["certs/.env"].New {
 		t.Fatalf("already-approved paths read as new: %+v", again.Files)
 	}
-	// Still the files' own order; "new since your last approval" is a label on the path, not a
-	// promotion to the top of the list.
-	if got, want := again.Paths(), []string{"certs/.env", "certs/extra.pem", "certs/tls.key"}; !slices.Equal(got, want) {
-		t.Fatalf("review order after the edit = %v, want the files' own order %v", got, want)
+	// Unrequested first, and among those the one that appeared since the last yes leads.
+	if got, want := again.Paths(), []string{"certs/extra.pem", "certs/.env", "certs/tls.key"}; !slices.Equal(got, want) {
+		t.Fatalf("review order after the edit = %v, want %v", got, want)
 	}
 	extra := byPath["certs/extra.pem"]
 	if !extra.New || extra.Requested || extra.Reason() != "nothing in the repo asks for it; new since you last approved this file" {

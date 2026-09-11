@@ -71,57 +71,19 @@ func DisplayTarget(target string) string {
 	return target
 }
 
-// TargetErrorKind says which slot of the grammar a token broke, because each one is refused
-// differently by the surface that owns the terminal: an empty token is a MISSING argument (whose
-// usage line only the command knows), an unrecognized provider is named against the command that
-// was typed, and everything else already knows its own headline.
-type TargetErrorKind int
-
-const (
-	TargetInvalid         TargetErrorKind = iota // a syntax rule the token broke
-	TargetEmpty                                  // no target at all
-	TargetUnknownProvider                        // the provider slot names no registered agent
-)
-
-// TargetError is a rejected target as DATA — the headline, the constraint behind it, and the help
-// page that explains the rule — so the CLI renders coop's one refusal block from it and this
-// package keeps no presentation dependency (see .agent/kb/rules/internal-import-dag.md). A
-// consumer that only logs an error gets the same facts on one line from Error().
-type TargetError struct {
-	Kind     TargetErrorKind
-	Target   string // the token as typed, made display-safe
-	Provider string // the provider slot, for TargetUnknownProvider
-	Headline string // what was refused ("Invalid agent target \"claude:\"")
-	Cause    string // the constraint, one sentence per line
-	Help     string // the command path whose page explains this rule: "models", "login"
-}
-
-func (e *TargetError) Error() string {
-	if e.Cause == "" {
-		return e.Headline
-	}
-	return e.Headline + " — " + strings.Join(strings.Split(e.Cause, "\n"), " ")
-}
-
 // ParseTarget parses one target token, validating SYNTAX and that the provider is a
 // registered agent. It does NOT check that the accounts exist (that needs the config's
-// signed-in list — the caller validates against cfg.Profiles). A malformed token returns a
-// *TargetError naming the fix; this is the single place every surface funnels through, so the
+// signed-in list — the caller validates against cfg.Profiles). A malformed token returns an
+// error naming the fix; this is the single place every surface funnels through, so the
 // diagnostics are identical everywhere.
 func ParseTarget(s string) (Target, error) {
 	raw := strings.TrimSpace(s)
-	bad := func(headline, cause, help string) (Target, error) {
-		return Target{}, &TargetError{Target: DisplayTarget(raw), Headline: headline, Cause: cause, Help: help}
-	}
-	invalid := func(cause string) (Target, error) {
-		return bad(fmt.Sprintf("Invalid agent target %q", DisplayTarget(raw)), cause, "models")
-	}
 	if raw == "" {
-		return Target{}, &TargetError{Kind: TargetEmpty, Headline: "Missing agent target", Cause: "Name an agent, such as " + Names()[0] + ".", Help: "models"}
+		return Target{}, fmt.Errorf("empty target — name a provider (%s), optionally provider:model@account", strings.Join(Names(), ", "))
 	}
 	head, accountSlot, hasAt := strings.Cut(raw, "@")
 	if strings.Contains(accountSlot, "@") {
-		return invalid(`Use one "@" before the account name.`)
+		return Target{}, fmt.Errorf("%q has more than one @ — the account rides one @ (provider:model@account,account)", raw)
 	}
 	// Effort binds to the model, before the account (provider:model/effort@account). A '/' in the
 	// account slot is left to the account path-safety check below, which rejects it as an invalid
@@ -130,37 +92,27 @@ func ParseTarget(s string) (Target, error) {
 	provider, model, hasColon := strings.Cut(modelSpec, ":")
 	provider = strings.TrimSpace(provider)
 	if !Valid(provider) {
-		return Target{}, &TargetError{
-			Kind:     TargetUnknownProvider,
-			Target:   DisplayTarget(raw),
-			Provider: DisplayTarget(provider),
-			Headline: fmt.Sprintf("Unknown agent %q", DisplayTarget(raw)),
-			Cause:    "Choose " + list(Names(), "or") + ".",
-			Help:     "models",
-		}
+		return Target{}, fmt.Errorf("unknown provider %q in %q — use %s", provider, raw, strings.Join(Names(), ", "))
 	}
 	if hasColon {
 		model = strings.TrimSpace(model)
 		if model == "" {
-			return invalid(`Add a model after ":" or remove the colon.`)
+			return Target{}, fmt.Errorf("%q has an empty model after ':' — use provider:model, or drop the ':'", raw)
 		}
 		if strings.ContainsAny(model, ":@/ \t") {
-			return invalid(`A model name cannot contain ":", "@", "/", or spaces.`)
+			return Target{}, fmt.Errorf("invalid model %q in %q — a model id has no ':' '@' '/' or spaces", model, raw)
 		}
 	}
 	effort = strings.TrimSpace(effort)
 	if hasSlash {
 		if effort == "" {
-			return invalid(`Add a reasoning effort after "/" or remove the slash.`)
+			return Target{}, fmt.Errorf("%q has an empty effort after '/' — use provider:model/effort (e.g. low, medium, high, xhigh, max), or drop the '/'", raw)
 		}
 		if !isEffortLevel(effort) {
-			return invalid(`Write the reasoning effort in lowercase letters, such as "high".`)
+			return Target{}, fmt.Errorf("invalid effort %q in %q — a reasoning level is lowercase letters (e.g. low, medium, high, xhigh, max)", effort, raw)
 		}
 		if a, _ := Get(provider); a != nil && !SupportsEffort(a) {
-			// The agent's own name title-cased, not DisplayName() — the refusal is about the
-			// token the user typed ("gemini"), not about the product behind it.
-			return bad(strings.ToUpper(provider[:1])+provider[1:]+" does not support a reasoning-effort setting",
-				fmt.Sprintf("Remove %q from %q.", "/"+effort, DisplayTarget(raw)), "models")
+			return Target{}, fmt.Errorf("%s has no reasoning-effort control — drop the /%s from %q", provider, effort, raw)
 		}
 	}
 	t := Target{Provider: provider, Model: model, Effort: effort}
@@ -168,32 +120,17 @@ func ParseTarget(s string) (Target, error) {
 		for _, a := range strings.Split(accountSlot, ",") {
 			a = strings.TrimSpace(a)
 			if a == "" {
-				return invalid(`Add an account after "@" or remove the at sign.`)
+				return Target{}, fmt.Errorf("%q has an empty account — list accounts as @a,b, not a trailing/`,,` comma", raw)
 			}
 			// An account becomes a profile DIRECTORY name, so it must be a single path-safe
 			// segment — no separators or traversal, and no leading '-' (would look like a flag).
 			if strings.ContainsAny(a, ":@/\\") || a == "." || a == ".." || strings.HasPrefix(a, "-") {
-				return bad(fmt.Sprintf("Invalid account name %q", DisplayTarget(a)),
-					"Use one name, without \":\", \"@\", \"/\", or \"\\\\\".\nThe name cannot be \".\", \"..\", or start with \"-\".", "login")
+				return Target{}, fmt.Errorf("invalid account %q in %q — a single path-safe segment (no ':' '@' '/' '..' or leading '-')", a, raw)
 			}
 			t.Accounts = append(t.Accounts, a)
 		}
 	}
 	return t, nil
-}
-
-// list punctuates a set the way a sentence does ("claude, codex, gemini, or grok"). ui.List says
-// the same thing for the surfaces that own the terminal; this package cannot import it.
-func list(items []string, conj string) string {
-	switch len(items) {
-	case 0:
-		return ""
-	case 1:
-		return items[0]
-	case 2:
-		return items[0] + " " + conj + " " + items[1]
-	}
-	return strings.Join(items[:len(items)-1], ", ") + ", " + conj + " " + items[len(items)-1]
 }
 
 // isEffortLevel reports whether s is a syntactically valid reasoning-effort token: lowercase

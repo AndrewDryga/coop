@@ -237,14 +237,14 @@ func TestCmdBacklogMonorepo(t *testing.T) {
 			t.Errorf("rollup: code=%d err=%v", code, err)
 		}
 	})
-	for _, want := range []string{"svc-a/.agent/tasks", "svc-b/.agent/tasks", "an a-side idea", "(backlog empty)"} {
+	for _, want := range []string{"svc-a/.agent/tasks", "svc-b/.agent/tasks", "an a-side idea", "No saved ideas yet."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rollup missing %q:\n%s", want, out)
 		}
 	}
 
 	// add must not guess which queue in a monorepo.
-	if code, err := CmdBacklog(cfg, []string{"add", "which queue?"}); code != 2 || err == nil || !strings.Contains(err.Error(), "one queue at a time") {
+	if code, err := CmdBacklog(cfg, []string{"add", "which queue?"}); code != 2 || err == nil || !strings.Contains(err.Error(), "Choose a queue for this idea") {
 		t.Errorf("monorepo add = (%d, %v), want the one-queue refusal", code, err)
 	}
 	// promote routes to the queue that holds the id.

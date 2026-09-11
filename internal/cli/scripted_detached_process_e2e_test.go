@@ -39,7 +39,7 @@ func TestProviderScriptedDetachedForkLifecycle(t *testing.T) {
 
 		started := runDetachedCLI(t, suite, suite.layout.Repo, suite.env,
 			"fork", name, target, "--loop", "--detach", "--tasks", filepath.Join(suite.layout.Repo, tasksRoot))
-		if started.Err != nil || started.ExitCode != 0 || !strings.Contains(started.Stderr, "started fork "+name) {
+		if started.Err != nil || started.ExitCode != 0 || !strings.Contains(started.Stderr, "Started fork "+name) {
 			t.Fatalf("start detached fork = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", started.ExitCode, started.Err, started.Stdout, started.Stderr, readProcessFile(t, suite.layout.Trace))
 		}
 		t.Cleanup(func() {
@@ -74,7 +74,7 @@ func TestProviderScriptedDetachedForkLifecycle(t *testing.T) {
 			}
 		}
 		status := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "ls")
-		if status.Err != nil || status.ExitCode != 0 || !strings.Contains(status.Stdout, name) || !strings.Contains(status.Stdout, "running") {
+		if status.Err != nil || status.ExitCode != 0 || !strings.Contains(status.Stdout, name) || !strings.Contains(status.Stdout, "background loop running") {
 			t.Fatalf("fork ls status = exit %d err %v\nstdout:\n%s\nstderr:\n%s", status.ExitCode, status.Err, status.Stdout, status.Stderr)
 		}
 
@@ -157,7 +157,7 @@ func TestProviderScriptedDetachedPresetLifecycle(t *testing.T) {
 		t.Fatalf("duplicate start launched another terminal provider: %d ready events", got)
 	}
 	status := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "ls")
-	if status.Err != nil || status.ExitCode != 0 || !strings.Contains(status.Stdout, name) || !strings.Contains(status.Stdout, "running") {
+	if status.Err != nil || status.ExitCode != 0 || !strings.Contains(status.Stdout, name) || !strings.Contains(status.Stdout, "background loop running") {
 		t.Fatalf("fork ls = exit %d err %v\nstdout:\n%s\nstderr:\n%s", status.ExitCode, status.Err, status.Stdout, status.Stderr)
 	}
 	stopped := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "stop", name)

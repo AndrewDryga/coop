@@ -7,7 +7,6 @@ package scaffold
 
 import (
 	"embed"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -19,15 +18,11 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/taskstate"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 //go:embed all:templates
 var templates embed.FS
-
-// ErrNotRegular is the one scaffold refusal that is not an OS error: the path a template would
-// occupy is already something else — a symlink, a directory — and replacing it is the caller's
-// call, not coop's. Exported because the remedy differs: this one is not fixed by permissions.
-var ErrNotRegular = errors.New("an existing entry is not a regular file")
 
 // Init scaffolds the working set into repo. The toolchain is driven by
 // .tool-versions: with no --stack a present .tool-versions auto-scaffolds the asdf
@@ -36,10 +31,10 @@ var ErrNotRegular = errors.New("an existing entry is not a regular file")
 // Routine per-artifact progress is NOT printed: the caller states the outcome once and lists
 // the actions it left. Only an exception a person must act on (a hooks path or prepare hook
 // coop refused to take over) speaks. Existing files are never clobbered.
-func Init(repo, stack string, gateLangs, agentDirs []string) ([]Notice, error) {
-	dockerfile, _, err := initDockerfile(repo, stack)
+func Init(repo, stack string, gateLangs, agentDirs []string) error {
+	dockerfile, detected, err := initDockerfile(repo, stack)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	s := &scaffolder{repo: repo}
 	// A per-agent dir (.claude/.codex/.gemini) is scaffolded only for agents in agentDirs — the ones
@@ -73,7 +68,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string) ([]Notice, error) {
 		dirs = append(dirs, filepath.Join(repo, ".agent", "tasks", st))
 	}
 	if err := mkdirs(repo, dirs...); err != nil {
-		return s.notices, err
+		return err
 	}
 
 	type scaffFile struct {
@@ -98,7 +93,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string) ([]Notice, error) {
 	}
 	for _, f := range files {
 		if err := s.writeIfAbsent(f.dest, f.src, f.perm); err != nil {
-			return s.notices, err
+			return err
 		}
 	}
 
@@ -107,12 +102,12 @@ func Init(repo, stack string, gateLangs, agentDirs []string) ([]Notice, error) {
 	// real .claude/skills. A real instruction file, skills dir, or valid skills link is never clobbered.
 	if has("claude") {
 		if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, "CLAUDE.md")); err != nil {
-			return s.notices, err
+			return err
 		}
 	}
 	if has("gemini") {
 		if err := s.linkIfAbsent("AGENTS.md", filepath.Join(repo, "GEMINI.md")); err != nil {
-			return s.notices, err
+			return err
 		}
 	}
 	for _, dir := range []string{".claude", ".codex", ".gemini"} {
@@ -122,50 +117,48 @@ func Init(repo, stack string, gateLangs, agentDirs []string) ([]Notice, error) {
 		link := filepath.Join(repo, dir, "skills")
 		target, err := filepath.Rel(filepath.Dir(link), skillsRoot)
 		if err != nil {
-			return s.notices, err
+			return err
 		}
 		if err := s.linkSkillsIfAbsent(target, link); err != nil {
-			return s.notices, err
+			return err
 		}
 	}
 
 	if skillsRoot == filepath.Join(repo, ".agent", "skills") {
 		if err := s.copySkills(); err != nil {
-			return s.notices, err
+			return err
 		}
 	}
 	// The committed per-project config (serve ports, monorepo members). Never clobbers an existing one.
 	if _, err := WriteProject(repo, DetectSubprojects(repo)); err != nil {
-		return s.notices, err
+		return err
 	}
 	if err := s.updateGitignore(has("gemini")); err != nil {
-		return s.notices, err
+		return err
 	}
 	// The shared Claude fallback needs the same stack-aware commit gate even when the repo keeps no
 	// project .claude/ adapter. A selected Claude adapter receives its project copy as before.
 	if err := s.installGitHooks(gateLangs, has("claude")); err != nil {
-		return s.notices, err
+		return err
 	}
 
 	if dockerfile != "" {
+		// Keep the announcement next to the write, and only when auto-detection
+		// actually adds a Dockerfile rather than keeping a customized one.
+		if detected {
+			if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(project.DefaultDockerfile))); err != nil {
+				ui.Detail("detected .tool-versions — scaffolding an asdf-driven .agent/Dockerfile")
+			}
+		}
 		if err := s.writeContentIfAbsent(filepath.Join(repo, filepath.FromSlash(project.DefaultDockerfile)), dockerfile, 0o644); err != nil {
-			return s.notices, err
+			return err
 		}
 	}
 
 	// The result line, the optional Docker-box suggestion, and the next actions are all printed
 	// by the caller (cmdInit), which has the full picture (agents, languages, services) and
-	// orders them as one block. The notices returned here are the exceptions it could not know
-	// about: something coop declined to take over, which only the person can finish.
-	return s.notices, nil
-}
-
-// Notice is something coop deliberately did NOT do, with what the person has to do instead. It
-// travels back to the caller rather than printing here, so one command owns one block of output.
-type Notice struct {
-	Headline string
-	Reason   string
-	Action   string
+	// orders them as one block.
+	return nil
 }
 
 // Validate and render before any scaffold or Git hook writes. Re-init follows the
@@ -182,11 +175,9 @@ func initDockerfile(repo, stack string) (content string, detected bool, err erro
 		return "", false, fmt.Errorf("unknown --stack %q: coop provisions toolchains from .tool-versions now\n"+
 			"  pin versions there and run `coop init` (auto-detected), or `coop init --stack asdf`", stack)
 	}
-	toolVersionsPath := filepath.Join(repo, ".tool-versions")
-	if _, err := os.Stat(toolVersionsPath); err != nil {
-		// Name the exact file coop looked for: "needs a .tool-versions" leaves the reader
-		// guessing which directory it was expected in when init ran from a subdirectory.
-		return "", false, fmt.Errorf("%s does not exist", toolVersionsPath)
+	if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err != nil {
+		return "", false, fmt.Errorf("--stack asdf needs a .tool-versions in the repo\n" +
+			"  e.g. `echo 'elixir 1.18.3-otp-27' > .tool-versions`, then re-run")
 	}
 	content, err = asdfDockerfile(toolVersions(repo))
 	return content, detected, err
@@ -215,8 +206,6 @@ func Initialized(repo string) bool {
 
 type scaffolder struct {
 	repo string
-	// notices are the exceptions the caller must print: an artifact coop refused to take over.
-	notices []Notice
 	// kept counts artifacts already in place, changed records whether anything was actually
 	// written. A re-init reports "kept N existing" as one line instead of N lines that all say
 	// nothing happened — the noise that made a routine `coop init` look like it did work.
@@ -304,9 +293,7 @@ func writeNewRepoFile(repo, dest string, data []byte, perm os.FileMode, write sc
 			if info.Mode().IsRegular() {
 				return false, nil
 			}
-			// Shaped like every other create failure so the caller renders one sentence for all
-			// of them: the path it could not produce, and why.
-			return false, &fs.PathError{Op: "create", Path: dest, Err: ErrNotRegular}
+			return false, fmt.Errorf("refusing to replace scaffold path %s: existing entry is not a regular file", dest)
 		}
 		return false, fmt.Errorf("create scaffold file %s: %w", dest, err)
 	}
@@ -464,18 +451,10 @@ func (s *scaffolder) installGitHooks(langs []string, projectClaude bool) error {
 		// The two hook exceptions still speak: coop declined to take something over, so only the
 		// user can finish the composition. Everything else it did is routine and stays silent.
 		if prepareExists && !prepareIsStock {
-			s.notices = append(s.notices, Notice{
-				Headline: "Coop kept your prepare-commit-msg hook",
-				Reason:   ".githooks/prepare-commit-msg already contains a custom hook.",
-				Action:   "Chain $HOME/.coop-git-hooks/prepare-commit-msg from it for box attribution.",
-			})
+			ui.Warn("kept your .githooks/prepare-commit-msg — chain $HOME/.coop-git-hooks/prepare-commit-msg from it for coop box attribution")
 		}
 	default:
-		s.notices = append(s.notices, Notice{
-			Headline: "Coop kept your Git hooks",
-			Reason:   "core.hooksPath points to " + current + ".",
-			Action:   "Add or chain .githooks/pre-commit and .githooks/prepare-commit-msg there.",
-		})
+		ui.Warn("kept your core.hooksPath=%q — copy or chain .githooks/pre-commit and .githooks/prepare-commit-msg there", current)
 	}
 	return nil
 }

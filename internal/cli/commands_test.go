@@ -279,31 +279,35 @@ func TestRecycleBoxesDistinguishesNoMatchFromFailure(t *testing.T) {
 	t.Run("no match", func(t *testing.T) {
 		rt, _ := recycleRuntime(t, "no-match")
 		a := &app{rt: rt, rtSet: true}
-		supervised, others, recycleErr := a.recycleBoxes("")
-		if recycleErr != nil || supervised != 0 || others != 0 {
-			t.Fatalf("empty recycle = (%d, %d, %v), want a quiet zero", supervised, others, recycleErr)
+		var recycleErr error
+		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
+		if recycleErr != nil || out != "" {
+			t.Fatalf("empty recycle = (%q, %v), want quiet success", out, recycleErr)
 		}
 	})
 
-	t.Run("success counts both effects", func(t *testing.T) {
+	t.Run("success preserves both notices", func(t *testing.T) {
 		rt, _ := recycleRuntime(t, "success")
 		a := &app{rt: rt, rtSet: true}
-		supervised, others, recycleErr := a.recycleBoxes("")
+		var recycleErr error
+		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
 		if recycleErr != nil {
 			t.Fatal(recycleErr)
 		}
-		if supervised != 2 || others != 1 {
-			t.Errorf("recycle = (%d supervised, %d other), want (2, 1)", supervised, others)
+		for _, want := range []string{"restarted 2 supervised sessions", "1 other running container still on the old image"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("recycle output missing %q:\n%s", want, out)
+			}
 		}
 	})
 
 	t.Run("query failure happens before removal", func(t *testing.T) {
 		rt, trace := recycleRuntime(t, "query-failure")
 		a := &app{rt: rt, rtSet: true}
-		_, _, recycleErr := a.recycleBoxes("")
-		if recycleErr == nil || !strings.Contains(recycleErr.Error(), "daemon query broke") ||
-			!strings.Contains(recycleErr.Error(), "did not respond while listing") {
-			t.Fatalf("query failure error = %v; want the step and the runtime diagnostic", recycleErr)
+		var recycleErr error
+		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
+		if recycleErr == nil || !strings.Contains(recycleErr.Error(), "daemon query broke") || out != "" {
+			t.Fatalf("query failure = output %q, error %v; want silent diagnostic error", out, recycleErr)
 		}
 		calls, err := os.ReadFile(trace)
 		if err != nil {
@@ -317,13 +321,14 @@ func TestRecycleBoxesDistinguishesNoMatchFromFailure(t *testing.T) {
 	t.Run("partial removal reports progress", func(t *testing.T) {
 		rt, _ := recycleRuntime(t, "partial")
 		a := &app{rt: rt, rtSet: true}
-		supervised, _, recycleErr := a.recycleBoxes("")
+		var recycleErr error
+		out := captureStderr(t, func() { recycleErr = a.recycleBoxes("") })
 		if recycleErr == nil || !strings.Contains(recycleErr.Error(), "1 removed before failure") ||
 			!strings.Contains(recycleErr.Error(), "container remove broke") {
 			t.Fatalf("partial removal error = %v, want count and runtime diagnostic", recycleErr)
 		}
-		if supervised != 0 {
-			t.Fatalf("partial removal reported %d restarted sessions; a failed removal counts none", supervised)
+		if strings.Contains(out, "restarted") {
+			t.Fatalf("partial removal printed a success summary:\n%s", out)
 		}
 	})
 }
@@ -360,7 +365,7 @@ func TestCmdUpReportsResolvedServiceNames(t *testing.T) {
 			if code != 0 || runErr != nil {
 				t.Fatalf("cmdUp = (%d, %v), want success; stderr:\n%s", code, runErr, out)
 			}
-			want := "✓ Services ready: " + strings.Join(tc.services, ", ")
+			want := "the box reaches " + strings.Join(tc.services, ", ") + " by name"
 			if !strings.Contains(out, want) {
 				t.Errorf("cmdUp output missing %q:\n%s", want, out)
 			}
@@ -389,11 +394,11 @@ func TestCmdUpStopsWhenServiceDiscoveryFails(t *testing.T) {
 	var runErr error
 	out := captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
 	if code == 0 || runErr == nil ||
-		!strings.Contains(out, "Compose config --services exited with status 19.") ||
-		!strings.Contains(out, "then run coop up again.") {
-		t.Fatalf("cmdUp discovery failure = (%d, %v), want named failure:\n%s", code, runErr, out)
+		!strings.Contains(runErr.Error(), "compose config --services exited with code 19") ||
+		!strings.Contains(runErr.Error(), "then retry: coop up") {
+		t.Fatalf("cmdUp discovery failure = (%d, %v), want named failure", code, runErr)
 	}
-	if strings.Contains(out, "Services ready") {
+	if strings.Contains(out, "up on network") {
 		t.Errorf("cmdUp printed success after discovery failed:\n%s", out)
 	}
 }
@@ -614,20 +619,20 @@ func TestResolvePeers(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
 	a := &app{cfg: &config.Config{ConfigDir: dir}}
 
-	peers, err := a.resolvePeers("coop claude", []string{"claude:opus-4.8"})
+	peers, err := a.resolvePeers("--peer", []string{"claude:opus-4.8"})
 	if err != nil || len(peers) != 1 || peers[0].Provider != "claude" || peers[0].Model != "opus-4.8" {
 		t.Fatalf("resolvePeers(claude:opus-4.8) = (%+v, %v)", peers, err)
 	}
-	if _, err := a.resolvePeers("coop claude", []string{"claude@work"}); err == nil {
+	if _, err := a.resolvePeers("--peer", []string{"claude@work"}); err == nil {
 		t.Error("a peer with an @account must be rejected (a peer runs on its default account)")
 	}
-	if _, err := a.resolvePeers("coop claude", []string{"codex"}); err == nil {
+	if _, err := a.resolvePeers("--peer", []string{"codex"}); err == nil {
 		t.Error("an unauthed peer must be rejected")
 	}
-	if _, err := a.resolvePeers("coop claude", []string{"borg"}); err == nil {
+	if _, err := a.resolvePeers("--peer", []string{"borg"}); err == nil {
 		t.Error("an unknown provider must be rejected")
 	}
-	if peers, err := a.resolvePeers("coop claude", nil); err != nil || peers != nil {
+	if peers, err := a.resolvePeers("--peer", nil); err != nil || peers != nil {
 		t.Errorf("resolvePeers(nil) = (%v, %v), want (nil, nil)", peers, err)
 	}
 }
@@ -642,20 +647,20 @@ func TestResolvePeersNamesTheFullPeerAndScansOnce(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
 	a := &app{cfg: &config.Config{ConfigDir: dir}}
 
-	_, err := a.resolvePeers("coop claude", []string{"codex:gpt-5.6-sol"})
-	if err == nil || !strings.Contains(err.Error(), "Codex needs a usable account") {
-		t.Fatalf("unauthed peer error = %v, want the shared account refusal", err)
+	_, err := a.resolvePeers("--peer", []string{"codex:gpt-5.6-sol"})
+	if err == nil || !strings.Contains(err.Error(), `"codex:gpt-5.6-sol"`) {
+		t.Fatalf("unauthed peer error = %v, want it to name the peer as typed", err)
 	}
 	if !strings.Contains(err.Error(), "coop login codex") {
 		t.Errorf("the remedy must still name the provider to log into, got %v", err)
 	}
 	// The list handed in is the only authority: claude IS signed in on disk, so a refusal here can
 	// only come from the passed slice — the scan is an input, never re-derived inside the loop.
-	if _, err := resolvePeerTargets("coop claude", []string{"claude:opus-4.8"}, nil); err == nil ||
-		!strings.Contains(err.Error(), "Claude needs a usable account") {
+	if _, err := resolvePeerTargets("--peer", []string{"claude:opus-4.8"}, nil); err == nil ||
+		!strings.Contains(err.Error(), `"claude:opus-4.8"`) {
 		t.Errorf("resolvePeerTargets ignored the signed-in list it was given: %v", err)
 	}
-	peers, err := resolvePeerTargets("coop claude", []string{"claude:opus-4.8", "codex"}, []string{"claude", "codex"})
+	peers, err := resolvePeerTargets("--peer", []string{"claude:opus-4.8", "codex"}, []string{"claude", "codex"})
 	if err != nil || len(peers) != 2 {
 		t.Fatalf("every peer in the given list = (%+v, %v), want both accepted", peers, err)
 	}
@@ -673,7 +678,7 @@ func TestCmdLoginTarget(t *testing.T) {
 	if _, err := a.cmdLogin([]string{"claude", "--credential", "work"}); err == nil || !strings.Contains(err.Error(), `Unknown option "--credential" for "coop login"`) {
 		t.Errorf("cmdLogin --credential must be an unknown option, got %v", err)
 	}
-	if _, err := a.cmdLogin([]string{"claude:opus"}); err == nil || !strings.Contains(err.Error(), "does not take a model") {
+	if _, err := a.cmdLogin([]string{"claude:opus"}); err == nil || !strings.Contains(err.Error(), "no model") {
 		t.Errorf("cmdLogin claude:opus must reject the model, got %v", err)
 	}
 	if _, err := a.cmdLogin([]string{"claude@work,personal"}); err == nil {
@@ -845,20 +850,15 @@ func TestInitActions(t *testing.T) {
 		}
 		return out
 	}
-	got := initActions(cfg, repo, nil, []string{"codex"}, true)
+	got := initActions(cfg, repo, nil, true)
 	if len(got) != 3 || !strings.HasPrefix(titles(got)[0], "Sign in") {
 		t.Fatalf("ready repo actions = %v", titles(got))
 	}
-	// A bare `coop loop` has no target in a fresh project, so the hint names the agent this
-	// project actually set up — otherwise the suggested command fails on the first try.
-	if !strings.Contains(got[1].actions[0], "coop doctor") || got[2].actions[1] != "coop loop codex" {
-		t.Errorf("fresh repo should verify then start working with a runnable loop: %+v", got)
-	}
-	if got[0].actions[0] != "coop login codex" {
-		t.Errorf("sign-in should name the same agent the loop hint does: %+v", got[0])
+	if !strings.Contains(got[1].actions[0], "coop doctor") || !strings.Contains(got[2].actions[1], "coop loop") {
+		t.Errorf("fresh repo should verify then start working: %+v", got)
 	}
 	// A re-init keeps only the actions real state still needs — no first-run advice.
-	if got := initActions(cfg, repo, nil, []string{"codex"}, false); len(got) != 1 || !strings.HasPrefix(got[0].title, "Sign in") {
+	if got := initActions(cfg, repo, nil, false); len(got) != 1 || !strings.HasPrefix(got[0].title, "Sign in") {
 		t.Errorf("re-init actions = %v, want only the sign-in job", titles(got))
 	}
 	// A scaffolded .agent/Dockerfile + services → build, then start them (named), before the
@@ -869,16 +869,16 @@ func TestInitActions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got = initActions(cfg, repo, []string{"postgres", "redis"}, []string{"codex"}, true)
+	got = initActions(cfg, repo, []string{"postgres", "redis"}, true)
 	if want := []string{"Sign in to an agent", "Build the box", "Start postgres and redis", "Verify the sandbox", "Start working"}; !slices.Equal(titles(got), want) {
 		t.Errorf("actions = %v, want %v", titles(got), want)
 	}
-	if got[1].actions[0] != "coop build" || got[1].note != "Review .agent/Dockerfile, then run:" || got[2].actions[0] != "coop up" {
+	if !strings.Contains(got[1].actions[0], "coop build") || got[2].actions[0] != "coop up" {
 		t.Errorf("build/up actions wrong: %+v", got)
 	}
 	// Outside a git repo the first job is the one that finishes setup — the exact two commands,
 	// in order, because only the re-init can set core.hooksPath.
-	got = initActions(cfg, t.TempDir(), nil, []string{"codex"}, true)
+	got = initActions(cfg, t.TempDir(), nil, true)
 	if len(got) == 0 || !strings.HasPrefix(got[0].title, "Finish setup") || !slices.Equal(got[0].actions, []string{"git init", "coop init"}) {
 		t.Errorf("non-git repo should lead with git init then coop init, got %+v", got)
 	}
@@ -1006,7 +1006,7 @@ func TestLoginRequiresAgentAndTTY(t *testing.T) {
 	if code, err := a.loginTo("claude", ""); code != 2 || err == nil || !strings.Contains(err.Error(), "interactive terminal") {
 		t.Errorf("loginTo(claude) non-tty = (%d, %v), want (2, interactive-terminal error)", code, err)
 	}
-	if code, err := a.loginTo("bogus", ""); code != 2 || err == nil || !strings.Contains(err.Error(), "Unknown agent") {
+	if code, err := a.loginTo("bogus", ""); code != 2 || err == nil || !strings.Contains(err.Error(), "unknown agent") {
 		t.Errorf("loginTo(bogus) = (%d, %v), want (2, unknown agent — before the tty check)", code, err)
 	}
 }
@@ -1028,8 +1028,8 @@ func TestLoginRejectsBadProfileName(t *testing.T) {
 	// A traversal name must be rejected before any vault/dir work — and before the tty check, so it
 	// fails the same way piped or at a terminal.
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	if code, err := a.loginTo("claude", "../../escape"); code != 2 || err == nil || !strings.Contains(err.Error(), "Invalid account name") {
-		t.Errorf("loginTo bad credential = (%d, %v), want (2, invalid account name)", code, err)
+	if code, err := a.loginTo("claude", "../../escape"); code != 2 || err == nil || !strings.Contains(err.Error(), "invalid credential name") {
+		t.Errorf("loginTo bad credential = (%d, %v), want (2, invalid credential name)", code, err)
 	}
 }
 
@@ -1211,7 +1211,7 @@ func TestResolveImageBlamesTheDaemonNotTheImage(t *testing.T) {
 		infoExit string
 		want     string
 	}{
-		{"daemon unreachable", "1", "Docker is unavailable"},
+		{"daemon unreachable", "1", "daemon isn't responding"},
 		{"daemon up, image absent", "0", "not built"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1314,7 +1314,7 @@ func TestLoopReportsUsageBeforeRuntimeDiscovery(t *testing.T) {
 	}{
 		{[]string{"loop", "--max-tasks", "x"}, "Use a whole number greater than 0."},
 		{[]string{"loop", "--max-tasks", "0"}, "Use a whole number greater than 0."},
-		{[]string{"loop", "nope:target"}, `Unknown agent "nope:target"`},
+		{[]string{"loop", "nope:target"}, `unknown provider "nope"`},
 	} {
 		code, err := a().dispatch(c.args)
 		if code != 2 || err == nil || !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), "runtime") {
@@ -1365,8 +1365,8 @@ func TestCmdUpRefusesWhileABoxRuns(t *testing.T) {
 	var code int
 	var runErr error
 	out := captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
-	if code != 1 || runErr == nil || !strings.Contains(out, "An agent box is running in this project") ||
-		!strings.Contains(out, "local-loop") {
+	if code != 1 || runErr == nil || !strings.Contains(runErr.Error(), "an agent box is running in this project") ||
+		!strings.Contains(runErr.Error(), "local-loop") {
 		t.Fatalf("cmdUp beside a running box = (%d, %v); want a refusal naming the box\n%s", code, runErr, out)
 	}
 	if err := forkspace.EndExecution(repo, running); err != nil {
@@ -1402,7 +1402,7 @@ func TestCmdUpWarnsAboutHiddenServiceSecretsWithoutATerminal(t *testing.T) {
 	if code != 0 || runErr != nil {
 		t.Fatalf("cmdUp = (%d, %v), want the services to start with decoys; stderr:\n%s", code, runErr, out)
 	}
-	for _, want := range []string{"⚠ Services will receive empty files", "  certs/tls.key", "To approve access, run coop up at a terminal."} {
+	for _, want := range []string{"empty file in place of certs/tls.key", "run `coop up` in a terminal"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("cmdUp did not explain the hidden file (%q):\n%s", want, out)
 		}
@@ -1415,7 +1415,7 @@ func TestCmdUpWarnsAboutHiddenServiceSecretsWithoutATerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
-	if code != 0 || runErr != nil || strings.Contains(out, "empty files") {
+	if code != 0 || runErr != nil || strings.Contains(out, "empty file") {
 		t.Fatalf("approved cmdUp = (%d, %v); stderr:\n%s", code, runErr, out)
 	}
 }

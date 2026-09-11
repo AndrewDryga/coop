@@ -26,7 +26,7 @@ func TestPruneNudge(t *testing.T) {
 		t.Errorf("below the threshold there should be no nudge, got %q", n)
 	}
 	n := pruneNudge(23)
-	if !strings.Contains(n, "23 done task folders") || !strings.Contains(n, "coop tasks rm --all-done") {
+	if !strings.Contains(n, "23 completed task folders are archived") || !strings.Contains(n, "coop tasks rm --all-done") {
 		t.Errorf("nudge should name the count and the exact command, got %q", n)
 	}
 }
@@ -71,20 +71,20 @@ func TestAdvanceStallHeadRead(t *testing.T) {
 
 func TestLoopTaskLimitCountsSettledTasks(t *testing.T) {
 	unlimited := loopTaskLimit{}
-	unlimited.assign("first")
+	unlimited.assign("first", "First task")
 	if got := unlimited.scope(); got != "" {
 		t.Fatalf("unlimited loop scope = %q, want empty", got)
 	}
 
 	limit := loopTaskLimit{max: 2}
-	limit.assign("first")
+	limit.assign("first", "First task")
 	if reached, err := limit.observe(map[string]string{"first": stateInProgress}); reached || err != nil || limit.settled != 0 {
 		t.Fatalf("active first task = (reached=%v, err=%v, settled=%d), want not counted", reached, err, limit.settled)
 	}
 	if reached, err := limit.observe(map[string]string{"first": stateDone}); reached || err != nil || limit.settled != 1 || limit.scope() != "" {
 		t.Fatalf("done first task = (reached=%v, err=%v, settled=%d, scope=%q), want 1 and unpinned", reached, err, limit.settled, limit.scope())
 	}
-	limit.assign("second")
+	limit.assign("second", "Second task")
 	if reached, err := limit.observe(map[string]string{"second": stateInProgress}); reached || err != nil {
 		t.Fatalf("review-reopened second task should remain selected: reached=%v err=%v", reached, err)
 	}
@@ -95,7 +95,7 @@ func TestLoopTaskLimitCountsSettledTasks(t *testing.T) {
 
 func TestLoopTaskLimitRejectsLostSelection(t *testing.T) {
 	limit := loopTaskLimit{max: 1}
-	limit.assign("missing")
+	limit.assign("missing", "Missing task")
 	if _, err := limit.observe(map[string]string{}); err == nil || !strings.Contains(err.Error(), "lost task missing") {
 		t.Fatalf("lost selected task error = %v", err)
 	}
@@ -248,7 +248,7 @@ func TestLoopBlamesTheDaemonNotTheImage(t *testing.T) {
 	if err == nil {
 		t.Fatal("loop succeeded with an unreachable daemon; want an error")
 	}
-	if !strings.Contains(err.Error(), "Docker is unavailable") {
+	if !strings.Contains(err.Error(), "daemon isn't responding") {
 		t.Errorf("loop = %q, want it to name the unreachable daemon", err)
 	}
 }

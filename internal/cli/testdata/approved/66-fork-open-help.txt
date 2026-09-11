@@ -1,0 +1,8 @@
+coop fork open — open a fork in your editor
+
+Usage: coop fork open <name>
+
+  Uses COOP_EDITOR, your global Git editor or an available editor.
+
+EXAMPLE
+  coop fork open login

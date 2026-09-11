@@ -1,9 +1,6 @@
 package secretscan
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
 	"math"
 	"regexp"
 	"strings"
@@ -11,78 +8,30 @@ import (
 
 // SecretFinding is one likely secret found in a file's content.
 type SecretFinding struct {
-	Line        int    // 1-based line number
-	Kind        string // what matched, e.g. "OpenAI API key"
-	Detector    string // the stable detector id this finding's identity is built on
-	Key         string // for an assignment finding: the key name, never its value
-	Fingerprint string // fp-v1:<sha256>, or "" when the scan was given no path to bind it to
+	Line int    // 1-based line number
+	Kind string // what matched, e.g. "OpenAI API key"
 }
-
-// Detector ids are the stable half of a finding's identity: a .coopsecretsignore entry written
-// today has to keep matching the same finding after a label is reworded or a pattern is tightened,
-// so these strings are a compatibility surface. Rename one and every saved exception for it
-// silently stops applying. Add ids; never repurpose them.
-const (
-	DetectorPrivateKey        = "private_key"
-	DetectorAWSAccessKeyID    = "aws_access_key_id"
-	DetectorAnthropicAPIKey   = "anthropic_api_key"
-	DetectorOpenAIAPIKey      = "openai_api_key"
-	DetectorGitHubToken       = "github_token"
-	DetectorGitHubPAT         = "github_fine_grained_token"
-	DetectorSlackToken        = "slack_token"
-	DetectorGoogleAPIKey      = "google_api_key"
-	DetectorStripeKey         = "stripe_key"
-	DetectorJWT               = "jwt"
-	DetectorURLPassword       = "url_password"
-	DetectorAssignedHighEntro = "assigned_high_entropy"
-)
 
 // secretPatterns are high-signal provider token shapes — precise enough to flag with
 // low false positives. Filename-based shadowing (SecretGlobs / .coopignore) catches
 // secret-*looking paths*; this catches a real token sitting in an ordinary file.
 var secretPatterns = []struct {
-	detector string
-	kind     string
-	label    string
-	re       *regexp.Regexp
+	kind string
+	re   *regexp.Regexp
 }{
-	{DetectorPrivateKey, "private key", "Private key", regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)},
-	{DetectorAWSAccessKeyID, "AWS access key id", "AWS access key ID", regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)},
-	{DetectorAnthropicAPIKey, "Anthropic API key", "Anthropic API key", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}`)},
-	{DetectorOpenAIAPIKey, "OpenAI API key", "OpenAI API key", regexp.MustCompile(`\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}`)},
-	{DetectorGitHubToken, "GitHub token", "GitHub token", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`)},
-	{DetectorGitHubPAT, "GitHub fine-grained token", "GitHub fine-grained token", regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{22,}`)},
-	{DetectorSlackToken, "Slack token", "Slack token", regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}`)},
-	{DetectorGoogleAPIKey, "Google API key", "Google API key", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)},
-	{DetectorStripeKey, "Stripe key", "Stripe key", regexp.MustCompile(`\b[sr]k_live_[0-9a-zA-Z]{24,}\b`)},
+	{"private key", regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)},
+	{"AWS access key id", regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)},
+	{"Anthropic API key", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}`)},
+	{"OpenAI API key", regexp.MustCompile(`\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}`)},
+	{"GitHub token", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`)},
+	{"GitHub fine-grained token", regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{22,}`)},
+	{"Slack token", regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}`)},
+	{"Google API key", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)},
+	{"Stripe key", regexp.MustCompile(`\b[sr]k_live_[0-9a-zA-Z]{24,}\b`)},
 	// A 3-part JWT: two dot-joined base64url segments each starting with eyJ ({" encoded)
 	// plus a signature. Matched precisely here because the entropy path can never catch one —
 	// a JWT's dotted shape parses as a code reference (codeRefRe) and gets skipped.
-	{DetectorJWT, "JWT", "JWT", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*`)},
-}
-
-// detectorLabels is what a person reads for each detector. The label is presentation and may be
-// reworded; the id above may not.
-var detectorLabels = map[string]string{
-	DetectorURLPassword: "Password in a connection URL",
-}
-
-func init() {
-	for _, p := range secretPatterns {
-		detectorLabels[p.detector] = p.label
-	}
-}
-
-// Label is the finding's human name. An assignment names the KEY it was found under and never
-// the value: the whole point of the report is that the value stays where it is.
-func (f SecretFinding) Label() string {
-	if f.Detector == DetectorAssignedHighEntro {
-		return "Possible secret assigned to " + f.Key
-	}
-	if label, ok := detectorLabels[f.Detector]; ok {
-		return label
-	}
-	return f.Kind
+	{"JWT", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*`)},
 }
 
 // secretAssignRe matches an assignment whose KEY name ENDS in a credential word —
@@ -200,49 +149,16 @@ func looksLikeURLOrPath(v string) bool {
 // ScanSecrets reports likely secrets in content: the provider patterns on every line,
 // plus a conservative entropy check (a long, high-entropy value assigned to a
 // secret-named key). It is pure; callers skip binary/oversized blobs before calling.
-// The findings carry no fingerprint — identity needs the file's path, which ScanFile supplies.
-func ScanSecrets(content string) []SecretFinding { return ScanFile("", content) }
-
-// ScanFile is ScanSecrets for a file whose findings must be nameable across runs: each finding
-// also carries the stable fingerprint a .coopsecretsignore entry refers to. path is the
-// repository-relative, slash-separated path — nothing machine-specific goes into an id, so the
-// same file in a second checkout produces the same ids and one exception file travels with the
-// project. The matched credential text is hashed and dropped; it is never stored on a finding,
-// so no caller can print or serialize it by accident.
-func ScanFile(path, content string) []SecretFinding {
+func ScanSecrets(content string) []SecretFinding {
 	var out []SecretFinding
-	seen := map[string]bool{}
-	add := func(f SecretFinding, material string) {
-		if path != "" {
-			f.Fingerprint = Fingerprint(path, f.Detector, material)
-		}
-		// One line repeating one exact value under one detector is one finding: a second copy
-		// would print the same row twice and be covered by the same exception anyway.
-		key := fmt.Sprintf("%d\x00%s\x00%s", f.Line, f.Detector, f.Fingerprint)
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		out = append(out, f)
-	}
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
+	for i, line := range strings.Split(content, "\n") {
 		n := i + 1
 		matched := false
 		for _, p := range secretPatterns {
-			// EVERY match on the line, not just the first: two tokens side by side are two
-			// independent findings, and ignoring one must never hide the other.
-			for _, tok := range p.re.FindAllString(line, -1) {
-				// Skip a token that is an obvious example/placeholder (AKIA…EXAMPLE) — a real
-				// provider token never contains "example"/"secret"/etc.
-				if placeholderRe.MatchString(tok) {
-					continue
-				}
-				material := tok
-				if p.detector == DetectorPrivateKey {
-					material = privateKeyBlock(lines, i, content)
-				}
-				add(SecretFinding{Line: n, Kind: p.kind, Detector: p.detector}, material)
+			// Skip a token that is an obvious example/placeholder (AKIA…EXAMPLE) — a real
+			// provider token never contains "example"/"secret"/etc.
+			if tok := p.re.FindString(line); tok != "" && !placeholderRe.MatchString(tok) {
+				out = append(out, SecretFinding{n, p.kind})
 				matched = true
 			}
 		}
@@ -251,7 +167,7 @@ func ScanFile(path, content string) []SecretFinding {
 		if !matched {
 			if m := urlCredRe.FindStringSubmatch(line); m != nil &&
 				!placeholderRe.MatchString(m[1]) && !looksLikeCodeRef(m[1]) {
-				add(SecretFinding{Line: n, Kind: "password in a connection-string URL", Detector: DetectorURLPassword}, m[1])
+				out = append(out, SecretFinding{n, "password in a connection-string URL"})
 				matched = true
 			}
 		}
@@ -264,47 +180,11 @@ func ScanFile(path, content string) []SecretFinding {
 				len(line)-len(m[0]) <= maxEntropyLineSlack &&
 				!looksLikeCodeRef(m[2]) && !looksLikeURLOrPath(m[2]) && !placeholderRe.MatchString(m[2]) &&
 				shannonEntropy(m[2]) >= entropyThreshold {
-				add(SecretFinding{Line: n, Kind: "high-entropy value assigned to '" + m[1] + "'",
-					Detector: DetectorAssignedHighEntro, Key: m[1]}, m[2])
+				out = append(out, SecretFinding{n, "high-entropy value assigned to '" + m[1] + "'"})
 			}
 		}
 	}
 	return out
-}
-
-// privateKeyBlock is the material a private-key finding is identified by: the whole armoured
-// block, BEGIN through END. Every key in a file shares the BEGIN line, so hashing the marker
-// would give two different keys one id and let an exception for the first hide the second.
-// An unterminated block falls back to the whole file — conservative in the safe direction: the
-// id then changes whenever anything else in the file changes, which re-reports rather than hides.
-func privateKeyBlock(lines []string, start int, content string) string {
-	for j := start; j < len(lines); j++ {
-		if strings.Contains(lines[j], "-----END") && strings.Contains(lines[j], "PRIVATE KEY-----") {
-			return strings.Join(lines[start:j+1], "\n")
-		}
-	}
-	return content
-}
-
-// FingerprintVersion prefixes every id, so a future change to what identity covers can be
-// introduced without silently re-interpreting the entries already written by hand.
-const FingerprintVersion = "fp-v1"
-
-// Fingerprint is a finding's portable identity: the repository-relative path, the stable detector
-// id, and the complete matched material, hashed together under a version tag. The line number is
-// deliberately absent — inserting a line above a finding must not invalidate the exception for it
-// — and so is anything about this machine, so the file can be committed and shared.
-//
-// It is a checksum, not encryption: it identifies a finding, it does NOT make the credential it
-// was computed from safe to publish. Lengths are encoded before each part so no combination of
-// path and material can be read two ways.
-func Fingerprint(path, detector, material string) string {
-	h := sha256.New()
-	for _, part := range []string{FingerprintVersion, path, detector, material} {
-		fmt.Fprintf(h, "%d\n", len(part))
-		h.Write([]byte(part))
-	}
-	return FingerprintVersion + ":" + hex.EncodeToString(h.Sum(nil))
 }
 
 // shannonEntropy returns the per-character Shannon entropy (bits) of s.

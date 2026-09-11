@@ -1,2 +1,0 @@
-✓ No new possible secrets found
-  12 findings ignored by .coopsecretsignore.

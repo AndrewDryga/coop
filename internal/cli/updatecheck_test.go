@@ -151,9 +151,9 @@ func TestCmdUpdateCheck(t *testing.T) {
 	}
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{
-		"Coop v9.0.0 is available; you have v2.9.0.", // the binary line
-		"was last built 40 days ago",                 // the box build age
-		"It was built by Coop v2.0.0",                // the definition skew
+		"v2.9.0 → v9.0.0",                  // the binary line
+		"built 40 days ago",                // the box build age
+		"built by coop v2.0.0", "days old", // skew + age nudges
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("--check output missing %q:\n%s", want, joined)
@@ -187,7 +187,7 @@ func TestCmdUpdateCheckNamesAnUnbuiltImage(t *testing.T) {
 		t.Fatalf("cmdUpdateCheck: code=%d err=%v", code, err)
 	}
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "No local build record was found for coop-box.") || !strings.Contains(joined, "coop build") {
+	if !strings.Contains(joined, "coop-box has no build record") || !strings.Contains(joined, "coop build") {
 		t.Errorf("unbuilt image must be named with the fix, got:\n%s", joined)
 	}
 	if strings.Contains(joined, "is current") {
@@ -201,10 +201,10 @@ func TestCmdUpdateCheckVersionRelations(t *testing.T) {
 		want            string
 		wantErr         bool
 	}{
-		"equal":            {"3.0.0", "v3.0.0", "Coop v3.0.0 is up to date.", false},
-		"ahead":            {"3.1.0", "v3.0.0", "is newer than the latest release, v3.0.0.", false},
-		"dev":              {"dev", "v3.0.0", "This is a development build: dev.", false},
-		"malformed latest": {"3.0.0", "latest", "GitHub did not return a valid release version.", true},
+		"equal":            {"3.0.0", "v3.0.0", "up to date", false},
+		"ahead":            {"3.1.0", "v3.0.0", "newer than GitHub's latest", false},
+		"dev":              {"dev", "v3.0.0", "dev/source build", false},
+		"malformed latest": {"3.0.0", "latest", "invalid latest release tag", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

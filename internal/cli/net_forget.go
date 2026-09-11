@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,28 +14,27 @@ import (
 )
 
 func parseNetForgetArgs(args []string) (string, error) {
-	const command, usage = "coop net forget", "coop net forget [--project <path>]"
 	project := ""
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(args[i], "=")
 		if name != "--project" {
 			if !strings.HasPrefix(args[i], "-") {
-				return "", ui.UnexpectedArgument(args[i], command, usage)
+				return "", errors.New("coop net forget takes the path as '--project <path>', or no path at all for this project")
 			}
-			return "", unknownOptionErr(args[i], command, []string{"--project"})
+			return "", unknownOptionErr(args[i], "coop net forget", []string{"--project"})
 		}
 		if project != "" {
-			return "", ui.RepeatedOption("--project", command)
+			return "", errors.New("coop net forget takes --project once")
 		}
 		if !inline {
 			i++
 			if i == len(args) {
-				return "", ui.MissingOptionValue("--project", command, "coop net forget --project ~/Projects/old-app")
+				return "", errors.New("coop net forget --project needs the path of the project to forget")
 			}
 			value = args[i]
 		}
 		if value == "" {
-			return "", ui.MissingOptionValue("--project", command, "coop net forget --project ~/Projects/old-app")
+			return "", errors.New("coop net forget --project needs the path of the project to forget")
 		}
 		project = value
 	}
@@ -54,7 +52,7 @@ func (a *app) cmdNetForget(args []string) (int, error) {
 		return 2, err
 	}
 	if !ui.IsTerminal(os.Stdin) || !ui.IsTerminal(os.Stderr) {
-		return 1, netTerminalOnly("coop net forget")
+		return 1, errors.New("coop net forget needs a terminal to ask you — an unattended run cannot drop an approval a human made")
 	}
 	if path == "" {
 		// No --project means this project, resolved the way every scoped net
@@ -75,7 +73,7 @@ func (a *app) cmdNetForget(args []string) (int, error) {
 		if err := review.Close(); err != nil {
 			return 1, err
 		}
-		ui.Note("%s", netForgetNothing)
+		ui.Note("nothing is approved for %s", review.Project())
 		if review.Gone() {
 			ui.Detail("a path that was a symlink was approved as the directory it pointed at — forget that path instead")
 		}
@@ -84,46 +82,19 @@ func (a *app) cmdNetForget(args []string) (int, error) {
 	err = confirmNetForget(context.Background(), review, os.Stderr, func() bool {
 		return ui.Confirm(netForgetPrompt, false)
 	})
-	declined := errors.Is(err, errNetDeclined)
-	if declined {
-		err = nil
-	}
 	if err = errors.Join(err, review.Close()); err != nil {
 		return 1, err
-	}
-	// Answering no is an answer, not a failure: nothing changed, and the run
-	// says so without an error marker or a nonzero status.
-	if declined {
-		ui.Note("%s", netForgetCancelled)
-		return 0, nil
 	}
 	ui.OK("%s", netForgetForgotten)
 	return 0, nil
 }
 
-// errNetDeclined is a confirmation answered "no". It carries no message of its
-// own: the caller says what was kept.
-var errNetDeclined = errors.New("declined")
-
-// The question and the answer carry what withdrawing costs — the next run waits
-// for a fresh approval — so the review above them can be the approval itself.
+// The question and the answer carry what forgetting costs — the next run asks
+// again — so the review above them can be the approval and nothing else.
 const (
-	netForgetTitle     = "Withdraw this project's network approval?"
-	netForgetPrompt    = "Withdraw this approval?"
-	netForgetForgotten = "Network approval withdrawn"
-	netForgetCancelled = "Cancelled. Network approval was kept."
-	netForgetNothing   = "No network approval is saved for this project."
-	netForgetRestore   = "Restore approval with:"
-	netForgetGone      = "The project folder no longer exists."
+	netForgetPrompt    = "Forget this approval?"
+	netForgetForgotten = "forgotten — a new run in this project asks for approval again; boxes already running keep their current rules"
 )
-
-// netForgetConsequences is what withdrawing does, grouped the way a person
-// checks it: what does not change, what stops, and what is kept.
-var netForgetConsequences = []string{
-	"The settings in .agent/project.yaml are unchanged.",
-	"New runs will wait for you to approve network access again.",
-	"Existing boxes, recorded runs, and host setup will be kept.",
-}
 
 // netForgetReview is what the confirmation needs: the project, the approval it
 // would remove, and one commit that consumes it.
@@ -141,24 +112,26 @@ func confirmNetForget(ctx context.Context, review netForgetReview, out io.Writer
 	}
 	var b strings.Builder
 	p := ui.For(os.Stderr)
-	fmt.Fprintf(&b, "%s\n", p.Bold(netForgetTitle))
-	// What is being withdrawn: the approved mode, and the rules it granted when
-	// it granted any. The same words every other network view uses for a mode.
-	fmt.Fprintf(&b, "\n  Approved: %s\n", netModeWord(approval.Posture))
-	for _, rule := range approval.Envelope {
-		fmt.Fprintf(&b, "    %s\n", netRuleText(rule))
+	block := newNetBlock(&b, p, "Forget the network approval for "+review.Project())
+	// The same words the approval review and bare `coop net` use for a posture, so forgetting
+	// reads as the reverse of approving rather than as a different vocabulary.
+	block.field("Access", netModeWord(approval.Posture)+" — approved until now")
+	if len(approval.Envelope) == 0 {
+		block.field("Rules", "none — this approval granted no websites or services")
+	} else {
+		block.field("Rules", ui.Count(len(approval.Envelope), "rule")+", all of them")
+		for _, rule := range approval.Envelope {
+			block.row(p.Red("- " + box.NetworkRuleText(rule)))
+		}
 	}
-	// A checkout that is gone is why this command takes a path at all: say so
-	// before the consequences, since the usual "edit the file instead" does not
-	// apply to a project that no longer has one.
 	if review.Gone() {
-		fmt.Fprintf(&b, "\n  %s\n", netForgetGone)
+		block.field("Project", "this directory is gone — only its approval is left to remove")
 	}
-	fmt.Fprintln(&b)
-	for _, line := range netForgetConsequences {
-		fmt.Fprintf(&b, "  - %s\n", line)
-	}
-	fmt.Fprintf(&b, "\n%s\n  %s\n\n", netForgetRestore, p.Cyan("coop net approve"))
+	// The blast radius, said before the question: one approval, and nothing that
+	// records what already happened.
+	block.field("Keeps", "the runs recorded for this project, their receipts, and this host's setup")
+	block.field("Then", "the next run of this project asks for approval again before it starts")
+	block.flush(&b)
 	if _, err := io.WriteString(out, b.String()); err != nil {
 		return err
 	}
@@ -166,7 +139,7 @@ func confirmNetForget(ctx context.Context, review netForgetReview, out io.Writer
 		return err
 	}
 	if !confirm() {
-		return errNetDeclined
+		return errors.New("cancelled — nothing was removed")
 	}
 	return review.Commit(ctx)
 }

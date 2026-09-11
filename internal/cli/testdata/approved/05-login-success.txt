@@ -1,4 +1,0 @@
-✓ Signed in to Claude as work
-
-Start Claude:
-  coop claude@work

@@ -183,9 +183,13 @@ func TestSelfUpdate(t *testing.T) {
 		t.Run(name+" is a no-op without network", func(t *testing.T) {
 			defer stub(&Version, version)()
 			defer stub(&githubLatestURL, "http://127.0.0.1:1/must-not-be-called")()
-			result, err := selfUpdate()
-			if result.Outcome != selfUpdateDev || err != nil {
-				t.Fatalf("source build: outcome=%v err=%v", result.Outcome, err)
+			var out bytes.Buffer
+			changed, err := selfUpdate(&out)
+			if changed || err != nil {
+				t.Fatalf("source build: changed=%v err=%v", changed, err)
+			}
+			if !strings.Contains(out.String(), "dev/source build") {
+				t.Errorf("missing dev note, got %q", out.String())
 			}
 		})
 	}
@@ -205,9 +209,13 @@ func TestSelfUpdate(t *testing.T) {
 		mustWrite(t, exe, "x")
 		defer stub(&executablePath, func() (string, error) { return exe, nil })()
 
-		result, err := selfUpdate()
-		if result.Outcome != selfUpdateCurrent || err != nil {
-			t.Fatalf("current: outcome=%v err=%v", result.Outcome, err)
+		var out bytes.Buffer
+		changed, err := selfUpdate(&out)
+		if changed || err != nil {
+			t.Fatalf("current: changed=%v err=%v", changed, err)
+		}
+		if !strings.Contains(out.String(), "up to date") {
+			t.Errorf("missing up-to-date note, got %q", out.String())
 		}
 	})
 
@@ -226,15 +234,16 @@ func TestSelfUpdate(t *testing.T) {
 		mustWrite(t, exe, "ahead")
 		defer stub(&executablePath, func() (string, error) { return exe, nil })()
 
-		result, err := selfUpdate()
-		if result.Outcome != selfUpdateAhead || err != nil {
-			t.Fatalf("ahead: outcome=%v err=%v", result.Outcome, err)
+		var out bytes.Buffer
+		changed, err := selfUpdate(&out)
+		if changed || err != nil {
+			t.Fatalf("ahead: changed=%v err=%v", changed, err)
 		}
 		if got, err := os.ReadFile(exe); err != nil || string(got) != "ahead" {
 			t.Fatalf("ahead executable changed: bytes=%q err=%v", got, err)
 		}
-		if result.Current != "3.1.0" || result.Latest != "3.0.0" {
-			t.Errorf("ahead result = %+v, want both versions named", result)
+		if !strings.Contains(out.String(), "newer than") || !strings.Contains(out.String(), "unchanged") {
+			t.Errorf("missing ahead note, got %q", out.String())
 		}
 	})
 
@@ -258,15 +267,16 @@ func TestSelfUpdate(t *testing.T) {
 		mustWrite(t, exe, "old")
 		defer stub(&executablePath, func() (string, error) { return exe, nil })()
 
-		result, err := selfUpdate()
-		if result.Outcome != selfUpdateInstalled || err != nil {
-			t.Fatalf("newer: outcome=%v err=%v", result.Outcome, err)
+		var out bytes.Buffer
+		changed, err := selfUpdate(&out)
+		if !changed || err != nil {
+			t.Fatalf("newer: changed=%v err=%v out=%s", changed, err, out.String())
 		}
 		if got, err := os.ReadFile(exe); err != nil || string(got) != "new" {
 			t.Errorf("verified release was not installed: bytes=%q err=%v", got, err)
 		}
-		if result.Current != "2.7.2" || result.Latest != "2.7.3" {
-			t.Errorf("install result = %+v, want 2.7.2 → 2.7.3", result)
+		if !strings.Contains(out.String(), "Updating 2.7.2 → 2.7.3") {
+			t.Errorf("missing update note, got %q", out.String())
 		}
 	})
 
@@ -277,7 +287,8 @@ func TestSelfUpdate(t *testing.T) {
 		}))
 		defer api.Close()
 		defer stub(&githubLatestURL, api.URL)()
-		_, err := selfUpdate()
+		var out bytes.Buffer
+		_, err := selfUpdate(&out)
 		var ce checkError
 		if !errors.As(err, &ce) {
 			t.Fatalf("want a checkError (soft), got %v", err)
@@ -295,7 +306,8 @@ func TestSelfUpdate(t *testing.T) {
 			t.Error("invalid release tag must not fetch artifacts")
 			return ""
 		})()
-		_, err := selfUpdate()
+		var out bytes.Buffer
+		_, err := selfUpdate(&out)
 		var ce checkError
 		if !errors.As(err, &ce) {
 			t.Fatalf("want a checkError (soft), got %v", err)
@@ -320,7 +332,8 @@ func TestSelfUpdate(t *testing.T) {
 		exe := filepath.Join(roDir, "coop")
 		defer stub(&executablePath, func() (string, error) { return exe, nil })()
 
-		_, err := selfUpdate()
+		var out bytes.Buffer
+		_, err := selfUpdate(&out)
 		if err == nil {
 			t.Fatal("want an error for an unwritable install location")
 		}
@@ -328,12 +341,8 @@ func TestSelfUpdate(t *testing.T) {
 		if errors.As(err, &ce) {
 			t.Error("unwritable should be a hard error, not a checkError")
 		}
-		var hard *installFailure
-		if !errors.As(err, &hard) || !hard.unchanged {
-			t.Errorf("err = %v, want an install failure that left the binary unchanged", err)
-		}
-		if !strings.Contains(err.Error(), "could not be replaced") {
-			t.Errorf("err = %v, want it to say the binary could not be replaced", err)
+		if !strings.Contains(err.Error(), "not writable") {
+			t.Errorf("err = %v, want it to mention 'not writable'", err)
 		}
 	})
 }

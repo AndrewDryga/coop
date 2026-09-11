@@ -1175,7 +1175,7 @@ func TestPolicyScanFlagsInteractionFiles(t *testing.T) {
 	}
 	// A hook runs by itself on the reviewer's next commit, so it blocks the merge; the Makefile
 	// only runs when they choose to run make, so it is listed for the review but never blocks.
-	if !strings.Contains(w, ".githooks/pre-commit — Runs during Git operations.") {
+	if !strings.Contains(w, ".githooks/pre-commit — a git hook: runs on your machine on `git commit`") {
 		t.Errorf("PolicyScan did not flag the commit hook:\n%s", w)
 	}
 	if strings.Contains(w, "Makefile") {
@@ -1264,7 +1264,7 @@ func TestMergeGateBlamesTheDaemonNotTheImage(t *testing.T) {
 		infoExit string
 		want     string
 	}{
-		{"daemon unreachable", "1", "Docker is unavailable"},
+		{"daemon unreachable", "1", "daemon isn't responding"},
 		{"daemon up, image absent", "0", "isn't built"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

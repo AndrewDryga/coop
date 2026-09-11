@@ -154,7 +154,7 @@ func TestEffortThreadsToConfig(t *testing.T) {
 	cfg2 := &config.Config{ConfigDir: t.TempDir()}
 	signInCred(t, cfg2, "codex", "work")
 	a2 := &app{cfg: cfg2}
-	if err := a2.applyRunTarget(agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"work"}}, "coop codex"); err != nil {
+	if err := a2.applyRunTarget(agents.Target{Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Accounts: []string{"work"}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := cfg2.EffortFor("codex"); got != "xhigh" {

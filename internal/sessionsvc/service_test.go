@@ -175,7 +175,7 @@ func TestParseSessionPoliciesAcceptsATargetLadder(t *testing.T) {
 		"[codex@oncall, codex@oncall]":  `target[1] "codex@oncall" is repeated`,
 		"[codex, codex@default]":        `target[1] "codex@default" is repeated`,
 		`["codex@oncall,default"]`:      "target[0] must name zero or one credential",
-		"[codex@oncall, nosuch@oncall]": `target[1] Unknown agent "nosuch@oncall"`,
+		"[codex@oncall, nosuch@oncall]": `target[1] unknown provider "nosuch"`,
 		"[codex@oncall, claude@oncall, codex:a@oncall, codex:b@oncall, codex:c@oncall]": "limited to 4 rungs",
 	} {
 		_, err := parseSessionPolicies(policy(target), cfg)

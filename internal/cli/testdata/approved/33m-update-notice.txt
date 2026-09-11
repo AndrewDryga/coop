@@ -1,1 +1,0 @@
-Coop v9.0.1 is available. Update with coop update.

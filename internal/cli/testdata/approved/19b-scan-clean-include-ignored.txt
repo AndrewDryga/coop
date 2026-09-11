@@ -1,2 +1,0 @@
-✓ No possible secrets found
-  Checked project files, including Git-ignored files the box can read.

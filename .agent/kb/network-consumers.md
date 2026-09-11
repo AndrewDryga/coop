@@ -84,24 +84,21 @@ at all, and the daemon owns the destination projection every one of them applies
 | bare `coop net` | this project's mode and its cause, the approved project rules, and — only when the file and the approval differ — the same access change `approve` would show; creates no owner key. Setup health and history cost no line: a launch sets the host up itself |
 | `approve` | TTY only, no flags; the exact snapshot of `.agent/project.yaml` (mode, rules, service digests) diffed against the remembered approval, digest-fenced. Nothing pending → `No approval needed — …`, nothing written |
 | `check <url-or-host>` | with no `--run`, the approved project rules plus each agent's provider bundle (`cli/net_diagnostic.go`, `netCurrentCheck`); with `--run`, that run's captured policy evaluated hypothetically. Never sends a packet |
-| `forget` | one of three mutating verbs: writes a withdrawal marker, THEN removes one project's approval (`networkstate/approval_withdrawal.go`). While the marker stands every ordinary launch of that project is pending — the open default cannot be regained — and only `approve` clears it |
+| `forget` | one of three mutating verbs: removes one project's approval |
 | `runs` · `inspect` · `watch` · `export` | the keyless `Evidence` handle over retained execution records — no runtime, no DNS, no key. Any unique prefix of a run id resolves (`netResolveRun`); an ambiguous one is refused with the prefixes that settle it |
-| `blocked <host>` | the newest RETAINED denial of that host in this project's runs (or in `--run`), grouped by boundary/reason/port; the exact event id still works with `--run`. A DNS-only refusal drafts no rule, because it cannot prove TLS/443 |
+| `explain <host>` | the newest RETAINED denial of that host in this project's runs (or in `--run`), grouped by boundary/reason/port; the exact event id still works with `--run`. A DNS-only refusal drafts no rule, because it cannot prove TLS/443 |
 | `setup` | mutating: builds the image pair and records the host qualification — the same work a filtered launch performs itself when this host has no current proof, so it is a prepare-ahead/recheck verb, not a prerequisite |
 | `recover [<run>]` | settles a run whose supervisor died — exact-owned removal, then a final `supervisor_lost` receipt (`box/network_recover.go:50`). The same pass runs from the orphan sweep at loop/fork start AND from `coop net inspect` before it reports a cleanup as incomplete (`cli/net_cmd.go`, `netSettleCleanup`) |
 
-`export` is redacted by default because it is the shareable artifact (`--include-addresses` puts the remote
-hostnames and IP addresses back); `inspect`/`check`/`blocked`/
+`export` is redacted by default because it is the shareable artifact; `inspect`/`check`/`explain`/
 `watch` show names, as the local operator view. An event that has aged out of a run's bounded
 ring reports `event_not_retained` — which is not proof the id ever existed.
 
 The human run projection lives in `internal/networkreport` (`WriteRun`), BELOW both `cli` and
 `box`, because both render it: standalone `coop net inspect` on stdout with no prefix, and an
-interactive box on stderr after cleanup sealed its receipt, under `Networking stats:`
-(`View.Inline`; `box/network_summary.go`, `printRun`, fed from the record the supervisor already
-holds through `networkstate.InspectExecution` — no reopen). The inline form puts each
-destination's own totals on its row instead of listing its remote addresses; everything from the
-exceptions down is the same body. It is destination-first and
+interactive box on stderr after cleanup sealed its receipt, under `coop: Network run <id>`
+(`View.Prefix`; `box/network_summary.go`, `printRun`, fed from the record the supervisor already
+holds through `networkstate.InspectExecution` — no reopen). It is destination-first and
 exception-only: the `Allowed` aggregate, then every PROVEN workload destination — only
 `NameSource == "sni"` rows, grouped by (name, port, transport) then by peer, bytes UNKNOWN when
 any member is unmeasured; a row in state `failed` is "N attempts failed — <reason>" and
@@ -119,9 +116,9 @@ reached its main process: a launch that failed earlier has no traffic to report.
 
 An interactive launch (`!Batch && !Quiet && !ForceNoTTY`, `box/launch_sections.go`) is narrated in
 bold unprefixed sections before agent output — `Protecting secrets` (the exact shadow count),
-`Configuring network access` (filtered: one row per selected provider's endpoints from
-`policy.Dependencies` and each agent's `Vendor()`, `Applied N approved network rules` counted over
-`project`/`operator` origins, the MCP servers over `mcp` origins, an unrecognized origin counted as "other", THEN
+`Internet access` (filtered: one row per selected provider's endpoints from `policy.Dependencies`
+and each agent's `Vendor()`, the approved websites/services counted over `project`/`operator`
+origins, the MCP servers over `mcp` origins, an unrecognized origin counted as "other", THEN
 `✓ Everything else blocked`; open/offline: one `⚠` row under the same heading), `Starting <agent>`
 — and `Checking the Coop box` first: in `box.Run` the remaining image nudges (age, a project
 Dockerfile that drifted) as `⚠` rows, and in the cli (`cli/launch_box.go`, after admission and only
@@ -139,12 +136,6 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
-- 2026-09-11 — the CLI design landed: `explain` became `blocked`, `export --include-destinations`
-  became `--include-addresses`, bare `coop net` lost its project header and keeps the YAML
-  explanation only where YAML selected the mode, `runs` shows 25 with a header row, the box's inline
-  summary is `Networking stats:` from the same renderer (`View.Inline`), the launch section is
-  `Configuring network access` / `Applied N approved network rules`, and `forget` now leaves a
-  withdrawal marker that fails closed. Every view is pinned in `internal/cli/testdata/approved`.
 - 2026-09-10 — `approve` reviews the exact project-file snapshot with no `--mode` and skips a no-op; the
   pending check it shares with `coop init`, bare `coop net` and every `AdmitNetwork` launch lives in
   `networkstate` (`pendingApproval`); a filtered launch qualifies the host itself. Rows above updated.

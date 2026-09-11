@@ -35,7 +35,7 @@ func scaffold(repo, name string, write func(*scaffoldBundle, string) error, publ
 	}
 	defer parent.Close()
 	if _, err := parent.Lstat(name); err == nil {
-		return "", scaffoldExists(parent, name)
+		return "", scaffoldExists(name)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
@@ -100,32 +100,8 @@ func scaffold(repo, name string, write func(*scaffoldBundle, string) error, publ
 	return path, nil
 }
 
-// ExistsError refuses a create whose destination is already there. Complete says the folder holds
-// a preset a reader can open — so the answer is to show it — while an incomplete folder is
-// somebody's half-finished work that coop must never merge into, repair, or overwrite. Path is
-// what the reader should open: the preset file, or the folder that is in the way.
-type ExistsError struct {
-	Name     string
-	Path     string
-	Complete bool
-}
-
-func (e *ExistsError) Error() string {
-	if e.Complete {
-		return fmt.Sprintf("preset %q already exists (%s)", e.Name, e.Path)
-	}
-	return fmt.Sprintf("%s already exists but is incomplete", e.Path)
-}
-
-// scaffoldExists reports the destination that blocked a create, asking the pinned parent directory
-// (never a path walked again) whether what is in the way is a loadable preset or an incomplete
-// folder.
-func scaffoldExists(parent *os.Root, name string) error {
-	e := &ExistsError{Name: name, Path: filepath.ToSlash(filepath.Join(Dir, name))}
-	if _, err := parent.Stat(filepath.Join(name, "preset.yaml")); err == nil {
-		e.Complete, e.Path = true, filepath.ToSlash(filepath.Join(Dir, name, "preset.yaml"))
-	}
-	return e
+func scaffoldExists(name string) error {
+	return fmt.Errorf("preset %q already exists (%s) — existing files were preserved; edit it or choose another name", name, filepath.Join(Dir, name))
 }
 
 // Opening one component at a time rejects links and pins the directory identity;
@@ -255,7 +231,7 @@ func publishScaffoldBundleSync(stage, parent *os.Root, name string, sync func(*o
 	defer to.Close()
 	if err := renameScaffoldBundle(int(from.Fd()), int(to.Fd()), name); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return scaffoldExists(parent, name)
+			return scaffoldExists(name)
 		}
 		return fmt.Errorf("publish preset %q: %w", name, err)
 	}
