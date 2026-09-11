@@ -855,6 +855,13 @@ available only through
 `GET /v1/operations/{patch_artifact_id}/review-patch`. The response is raw `text/x-diff`, with the
 review digest as its ETag. Consumers must verify its size and SHA-256 digest before use.
 
+Reviews may outlive the requesting connection. Look up the original operation key,
+then retrieve a succeeded review with
+`GET /v1/sessions/{session_id}/reviews/{operation_id}`. It returns the same public
+`operation` and `review` envelope without starting or resuming a gate. Another
+session, a non-review operation, and an unfinished review are refused. Both
+`policy_findings` and `not_publishable_reasons` are arrays, including when empty.
+
 `publishable` is evidence about this exact candidate, not permission to push or merge. It is false
 for conflict, no/failed gate, startup failure, policy findings, parent or source movement, active
 fork ownership, or an unavailable/oversized complete artifact. An external publisher applies the

@@ -221,14 +221,14 @@ type SessionReviewDTO struct {
 	Rebase                ReviewRebaseStatus          `json:"rebase"`
 	Gate                  ReviewGateStatus            `json:"gate"`
 	GateError             string                      `json:"gate_error,omitempty"`
-	PolicyFindings        []string                    `json:"policy_findings,omitempty"`
+	PolicyFindings        []string                    `json:"policy_findings"`
 	Patch                 []byte                      `json:"patch,omitempty"`
 	PatchTruncated        bool                        `json:"patch_truncated"`
 	PatchArtifactID       string                      `json:"patch_artifact_id,omitempty"`
 	PatchDigest           string                      `json:"patch_digest,omitempty"`
 	PatchBytes            int64                       `json:"patch_bytes"`
 	Publishable           bool                        `json:"publishable"`
-	NotPublishableReasons []string                    `json:"not_publishable_reasons,omitempty"`
+	NotPublishableReasons []string                    `json:"not_publishable_reasons"`
 }
 
 type SessionDiscardWorkspaceDTO struct {
@@ -525,6 +525,10 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 	case len(parts) == 2 && parts[1] == "review":
 		if sessionHTTPMethod(w, r, http.MethodPost) {
 			h.review(w, r, sessionID)
+		}
+	case len(parts) == 3 && parts[1] == "reviews" && validSessionHTTPPathID(parts[2]):
+		if sessionHTTPMethod(w, r, http.MethodGet) && sessionQueryOnly(w, r) {
+			h.getReview(w, r, sessionID, parts[2])
 		}
 	case len(parts) == 2 && parts[1] == "close":
 		if sessionHTTPMethod(w, r, http.MethodPost) {
@@ -1177,6 +1181,15 @@ func (h *sessionHTTPHandler) getChanges(w http.ResponseWriter, r *http.Request, 
 	writeSessionJSON(w, http.StatusOK, publicChanges(changes))
 }
 
+func (h *sessionHTTPHandler) getReview(w http.ResponseWriter, r *http.Request, sessionID, operationID string) {
+	op, dossier, err := h.service.GetReview(r.Context(), sessionID, operationID)
+	if err != nil {
+		writeSessionServiceError(w, err)
+		return
+	}
+	writeSessionJSON(w, http.StatusOK, sessionMutationReviewResponse{Operation: publicOperation(op), Review: publicReview(dossier)})
+}
+
 func (h *sessionHTTPHandler) review(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if !h.requirePost(w, r) {
 		return
@@ -1616,11 +1629,11 @@ func publicReview(value ReviewDossier) SessionReviewDTO {
 		CreationBase: value.CreationBase, SourceHead: value.SourceHead,
 		SourceTree: value.SourceTree, ParentHead: value.ParentHead, ParentTree: value.ParentTree,
 		CandidateHead: value.CandidateHead, CandidateTree: value.CandidateTree, Rebase: value.Rebase,
-		Gate: value.Gate, PolicyFindings: append([]string(nil), value.PolicyFindings...),
+		Gate: value.Gate, PolicyFindings: append([]string{}, value.PolicyFindings...),
 		Patch: append([]byte(nil), value.Patch...), PatchTruncated: value.PatchTruncated,
 		PatchArtifactID: value.PatchArtifactID, PatchDigest: value.PatchDigest,
 		PatchBytes: value.PatchBytes, Publishable: value.Publishable,
-		NotPublishableReasons: append([]string(nil), value.NotPublishableReasons...),
+		NotPublishableReasons: append([]string{}, value.NotPublishableReasons...),
 	}
 	if value.GateError != "" {
 		result.GateError = "review gate could not start"

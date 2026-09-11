@@ -2,8 +2,8 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, moves workspaces only as digest-verified bounded bundles, and never falls back to local execution
 subsystem: worker
-sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go, internal/sessionsvc/worker_connector_test.go, docs/worker.md, docs/examples/worker.json]
-updated: 2026-09-06
+sources: [internal/cli/worker_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/executor.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerproto/protocol.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/worker.md, docs/examples/worker.json]
+updated: 2026-09-10
 ---
 
 `coop worker connect --config <absolute-path>` runs one private Coop daemon as a fleet worker. Its
@@ -49,6 +49,11 @@ The traps the code does not make obvious:
   resolves only that original key and operation ID, verifies a succeeded CreateRemoteSession/session
   resource, then fsyncs the stream before marking its origin bound. Uncertain operations remain
   pending. Only exact event ACKs advance cursors; lookup/activity errors cannot block response commands.
+- **A transport timeout does not erase a review.** A RunReview may finish on the service context
+  after its HTTP request expires. Its uncertain command receipt remains immutable. The existing
+  reconcile_operation command enriches only a succeeded RunReview with the public saved dossier,
+  read through the session-bound reviews endpoint; it never resumes a gate or exports raw
+  Operation.Result. The controller must enqueue this read on the original placement.
 - **Generation markers outlive activity.** Bound/failed origins prevent old receipts from resurrecting
   a discarded or superseded stream. Legacy v1 streams remain readable; an acknowledged terminal
   legacy stream stays dormant if it is the only generation floor. Short metadata transitions use a
@@ -76,6 +81,9 @@ The traps the code does not make obvious:
   start event. The reconnect/ACK regression proves this metadata survives durable delivery.
 
 ## Changelog
+- 2026-09-10 — live Responder QA exposed a completed 54-second review stranded behind a
+  30-second worker timeout. Added read-only result reconciliation and explicit empty evidence
+  arrays; HTTP and worker regressions prove no repeated gate and preserved session identity.
 - 2026-09-06 — review caught URI-looking names masquerading as relative paths and edit
   previews dropping path evidence. Reject schemes before and after normalization; retain
   bounded typed paths before diff truncation, independently of the owner-private preview.

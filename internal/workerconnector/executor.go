@@ -150,8 +150,35 @@ func (e *Executor) Execute(ctx context.Context, command workerproto.Command) (wo
 		return e.complete(entry, failureResult(command, "invalid_command", err.Error()))
 	}
 	resource, callErr := e.api.Do(ctx, request)
+	if callErr == nil && command.Kind == "reconcile_operation" {
+		resource, callErr = e.completedReviewResource(ctx, resource)
+	}
 	result := resultFromCall(command, resource, callErr)
 	return e.complete(entry, result)
+}
+
+func (e *Executor) completedReviewResource(ctx context.Context, resource json.RawMessage) (json.RawMessage, error) {
+	var operation struct {
+		ID           string `json:"id"`
+		Method       string `json:"method"`
+		State        string `json:"state"`
+		ResourceType string `json:"resource_type"`
+		ResourceID   string `json:"resource_id"`
+	}
+	if err := json.Unmarshal(resource, &operation); err != nil {
+		return nil, err
+	}
+	if operation.Method != "RunReview" || operation.State != "succeeded" {
+		return resource, nil
+	}
+	if operation.ResourceType != "review" || !reference(operation.ID, 256) || !reference(operation.ResourceID, 1024) {
+		return nil, &APIError{Status: 502, Code: "invalid_review_operation", Detail: "completed review operation identity is invalid"}
+	}
+	// Transport uncertainty is an immutable receipt, not a reason to run the gate
+	// again. The existing reconciliation command reads its completed business result.
+	return e.api.Do(ctx, Request{
+		Method: "GET", Path: "/v1/sessions/" + url.PathEscape(operation.ResourceID) + "/reviews/" + url.PathEscape(operation.ID),
+	})
 }
 
 func (e *Executor) complete(entry journalEntry, result workerproto.CommandResult) (workerproto.CommandResult, error) {

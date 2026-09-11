@@ -177,6 +177,28 @@ func decodeSessionReviewDossier(data []byte) (ReviewDossier, error) {
 	return dossier, nil
 }
 
+// GetReview reads an immutable completed result. It never starts or resumes a gate.
+func (s *Service) GetReview(ctx context.Context, sessionID, operationID string) (session.Operation, ReviewDossier, error) {
+	op, err := s.store.GetOperationByID(ctx, operationID)
+	if err != nil {
+		return op, ReviewDossier{}, err
+	}
+	if op.Method != "RunReview" || op.State != session.OperationSucceeded ||
+		op.ResourceType != "review" || op.ResourceID != sessionID {
+		return op, ReviewDossier{}, &session.Error{
+			Code: session.CodeInvalidRequest, Detail: "operation is not a completed review for this session",
+		}
+	}
+	dossier, err := decodeSessionReviewDossier(op.Result)
+	if err != nil {
+		return op, ReviewDossier{}, err
+	}
+	if dossier.OperationID != operationID || dossier.SessionID != sessionID {
+		return op, ReviewDossier{}, errors.New("stored review identity does not match its operation")
+	}
+	return op, dossier, nil
+}
+
 func (s *Service) resumeReview(
 	ctx context.Context,
 	op session.Operation,

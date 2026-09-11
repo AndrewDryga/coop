@@ -58,6 +58,71 @@ func TestDurableCommandReceiptMakesRedeliveryOneIdempotentLocalOperation(t *test
 	}
 }
 
+func TestCompletedReviewLookupIsAReadOfTheExactSessionAndOperation(t *testing.T) {
+	now := time.Date(2026, 9, 10, 16, 43, 0, 0, time.UTC)
+	var requests []Request
+	response := json.RawMessage(`{"operation":{"id":"operation-review-1","method":"RunReview","state":"succeeded"},"review":{"gate":"failed"}}`)
+	api := reviewLookupAPI(func(_ context.Context, request Request) (json.RawMessage, error) {
+		requests = append(requests, request)
+		if len(requests) == 1 {
+			return json.RawMessage(`{"id":"operation-review-1","method":"RunReview","state":"succeeded","resource_type":"review","resource_id":"session-1"}`), nil
+		}
+		return response, nil
+	})
+	executor, err := NewExecutor(ExecutorConfig{
+		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := createCommand(now.Add(time.Minute))
+	command.Kind = "reconcile_operation"
+	command.Payload = json.RawMessage(`{"operation_key":"original-review-key"}`)
+	result, err := executor.Execute(context.Background(), command)
+	if err != nil || result.State != "succeeded" || string(result.Resource) != string(response) || len(requests) != 2 {
+		t.Fatalf("review lookup=%+v err=%v requests=%d", result, err, len(requests))
+	}
+	if requests[0].Method != "GET" || requests[0].Path != "/v1/operations?key=original-review-key" {
+		t.Fatalf("operation lookup = %+v", requests[0])
+	}
+	request := requests[1]
+	if request.Method != "GET" || request.Path != "/v1/sessions/session-1/reviews/operation-review-1" ||
+		request.IdempotencyKey != "" || len(request.Body) != 0 {
+		t.Fatalf("review lookup must not execute a gate: %+v", request)
+	}
+}
+
+type reviewLookupAPI func(context.Context, Request) (json.RawMessage, error)
+
+func (f reviewLookupAPI) Do(ctx context.Context, request Request) (json.RawMessage, error) {
+	return f(ctx, request)
+}
+
+func TestReviewReconciliationDoesNotFetchAnUnfinishedOrUnrelatedOperation(t *testing.T) {
+	for _, document := range []string{
+		`{"id":"operation-1","method":"RunReview","state":"reserved"}`,
+		`{"id":"operation-1","method":"RunReview","state":"running"}`,
+		`{"id":"operation-1","method":"RunReview","state":"failed","error_code":"revision_conflict"}`,
+		`{"id":"operation-1","method":"SubmitTurn","state":"succeeded","resource_type":"turn","resource_id":"turn-1"}`,
+	} {
+		now := time.Date(2026, 9, 10, 16, 43, 0, 0, time.UTC)
+		api := &fakeAPI{response: json.RawMessage(document)}
+		executor, err := NewExecutor(ExecutorConfig{
+			API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		command := createCommand(now.Add(time.Minute))
+		command.Kind = "reconcile_operation"
+		command.Payload = json.RawMessage(`{"operation_key":"original-operation"}`)
+		result, err := executor.Execute(context.Background(), command)
+		if err != nil || result.State != "succeeded" || string(result.Resource) != document || len(api.requests) != 1 {
+			t.Fatalf("operation metadata changed: result=%+v err=%v requests=%d", result, err, len(api.requests))
+		}
+	}
+}
+
 func TestCreateSessionCarriesTheExactPrivateResponderBinding(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	api := &fakeAPI{response: json.RawMessage(`{"operation":{"id":"operation-create-1","method":"CreateRemoteSession","state":"running"}}`)}

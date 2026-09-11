@@ -88,6 +88,12 @@ retains its original operation identity until session activity can be bound. Eve
 only after exact acknowledgements, so unacknowledged events replay and acknowledged events do not.
 Do not prune journal files or keep only the `commands` directory when moving or backing up a worker.
 
+If a review outlives its request, its uncertain transport receipt stays unchanged.
+The existing `reconcile_operation` command returns the saved public operation/review
+envelope once that exact review succeeds; pending or failed operations still return
+their operation metadata. This reads the completed result and never reruns the gate.
+The daemon and connector must both support completed-review lookup.
+
 An unavailable daemon or controller is reported and retried; it does not authorize local execution
 or receipt deletion. A malformed or expired saved identity fails closed instead of silently
 re-enrolling, even if an enrollment token is present. Check file ownership, configured trust,
