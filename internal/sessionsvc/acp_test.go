@@ -2675,8 +2675,13 @@ func (c deadlineOnCancel) Err() error {
 	return nil
 }
 
+// contextWithTurnDeadline is the fixture turn's deadline: the runner requires one, and no test
+// here waits for it to expire — the ones that test a hang use hangTimeout. So it is a fixture
+// guard, generous by the rule in .agent/kb/test-fixture-guards-vs-timing-bounds.md: a healthy
+// turn pays nothing, and a schema-repair turn (two full round trips) no longer times out at
+// 5 s when the gate's other suites load the host.
 func contextWithTurnDeadline(t *testing.T) context.Context {
-	return contextWithTurnTimeout(t, 5*time.Second)
+	return contextWithTurnTimeout(t, wait.Deadline)
 }
 
 func contextWithTurnTimeout(t *testing.T, timeout time.Duration) context.Context {
