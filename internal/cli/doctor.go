@@ -185,7 +185,14 @@ func doctorHeader(runtimeName, image, baseImage string, usingReal bool) {
 	}
 }
 
-// parseProbeResults reads the probe's RESULT lines into id → verdict. UID/CAPS/PIDS come back
+// probeMeasurements are the RESULT kinds that carry a MEASURED value rather than a verdict:
+// `RESULT UID 1000` is read as UID → "1000", where `RESULT PASS x` is read as x → "PASS". A kind
+// missing from this list is dropped silently and its check then reads as failed, which is how the
+// writable-config-home check reported failure on every host from 2026-07 until this list existed
+// (TestProbeKindsAreAllParsed keeps the two in step).
+var probeMeasurements = []string{"UID", "CAPS", "PIDS", "HOME"}
+
+// parseProbeResults reads the probe's RESULT lines into id → verdict. The measured kinds come back
 // under those same keys with their measured value, since the host interprets them.
 func parseProbeResults(stdout string) map[string]string {
 	results := map[string]string{}
@@ -195,10 +202,10 @@ func parseProbeResults(stdout string) map[string]string {
 			continue
 		}
 		kind, value, _ := strings.Cut(rest, " ")
-		switch kind {
-		case "PASS", "FAIL":
+		switch {
+		case kind == "PASS" || kind == "FAIL":
 			results[strings.TrimSpace(value)] = kind
-		case "UID", "CAPS", "PIDS":
+		case slices.Contains(probeMeasurements, kind):
 			results[kind] = strings.TrimSpace(value)
 		}
 	}
